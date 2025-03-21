@@ -1,0 +1,4 @@
+.idea/
+*.egg-info/
+__pycache__/
+*.hypothesis/
