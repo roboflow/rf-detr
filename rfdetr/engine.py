@@ -21,7 +21,7 @@ from typing import Iterable
 import torch
 import rfdetr.util.misc as utils
 from rfdetr.datasets.coco_eval import CocoEvaluator
-from torch.cuda.amp import autocast, GradScaler
+from torch.amp import autocast, GradScaler
 import torch.nn as nn
 import argparse
 from typing import DefaultDict, List, Callable
@@ -58,7 +58,7 @@ def train_one_epoch(
     print("Total batch size: ", batch_size * utils.get_world_size())
 
     # Add gradient scaler for AMP
-    scaler = GradScaler(enabled=args.amp)
+    scaler = GradScaler('cuda', enabled=args.amp)
 
     optimizer.zero_grad()
     assert batch_size % args.grad_accum_steps == 0
@@ -96,7 +96,7 @@ def train_one_epoch(
             new_samples = new_samples.to(device)
             new_targets = [{k: v.to(device) for k, v in t.items()} for t in targets[start_idx:final_idx]]
 
-            with autocast(enabled=args.amp, dtype=torch.bfloat16):
+            with autocast('cuda', enabled=args.amp, dtype=torch.bfloat16):
                 outputs = model(new_samples, new_targets)
                 loss_dict = criterion(outputs, new_targets)
                 weight_dict = criterion.weight_dict
@@ -173,7 +173,7 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, arg
             samples.tensors = samples.tensors.half()
 
         # Add autocast for evaluation
-        with autocast(enabled=args.amp, dtype=torch.bfloat16):
+        with autocast('cuda', enabled=args.amp, dtype=torch.bfloat16):
             outputs = model(samples)
 
         if args.fp16_eval:
