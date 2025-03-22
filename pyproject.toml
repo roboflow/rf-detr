@@ -1,0 +1,84 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rfdetr"
+version = "1.0.8"
+description = "RF-DETR"
+readme = "README.md"
+authors = [
+    {name = "Roboflow, Inc", email = "peter@roboflow.com"}
+]
+license = {text = "Apache License 2.0"}
+requires-python = ">=3.9"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Education",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Software Development",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+    "Operating System :: POSIX",
+    "Operating System :: Unix",
+    "Operating System :: MacOS"
+]
+keywords = ["machine-learning", "deep-learning", "vision", "ML", "DL", "AI", "DETR", "RF-DETR", "Roboflow"]
+
+dependencies = [
+    "cython",
+    "pycocotools",
+    "torch>=1.13.0",
+    "torchvision>=0.14.0",
+    "fairscale",
+    "scipy",
+    "timm",
+    "tqdm",
+    "numpy",
+    "accelerate",
+    "transformers",
+    "peft",
+    "ninja",
+    "einops",
+    "wandb",
+    "pandas",
+    "pylabel",
+    "onnx",
+    "onnxsim",
+    "onnx_graphsurgeon",
+    "polygraphy",
+    "open_clip_torch",
+    "rf100vl",
+    "pydantic",
+    "supervision",
+
+]
+
+[project.optional-dependencies]
+onnxruntime = [
+    "onnxruntime"
+]
+
+[project.urls]
+Homepage = "https://github.com/roboflow/rf-detr"
+
+[project.scripts]
+rfdetr = "rfdetr.cli.main:trainer"
+
+[tool.setuptools.packages.find]
+include = ["rfdetr*"]
+
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.package-data]
+rfdetr = ["py.typed"]
