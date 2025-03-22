@@ -44,7 +44,6 @@ from typing import DefaultDict, List, Callable
 from logging import getLogger
 import shutil
 from rfdetr.util.files import download_file
-from rfdetr.deploy.export import export_onnx, onnx_simplify, make_infer_image
 import os
 
 logger = getLogger(__name__)
@@ -433,6 +432,8 @@ class Model:
     def export(self, output_dir="output", infer_dir=None, simplify=False,  backbone_only=False, opset_version=17, verbose=True, force=False, shape=None, batch_size=1, **kwargs):
         """Export the trained model to ONNX format"""
         print(f"Exporting model to ONNX format")
+        from rfdetr.deploy.export import export_onnx, onnx_simplify, make_infer_image
+
 
         device = self.device
         model = deepcopy(self.model.to("cpu"))
