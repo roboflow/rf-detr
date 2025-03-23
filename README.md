@@ -7,6 +7,7 @@
 [![version](https://badge.fury.io/py/rfdetr.svg)](https://badge.fury.io/py/rfdetr)
 [![license](https://img.shields.io/pypi/l/rfdetr)](https://github.com/roboflow/rfdetr/blob/main/LICENSE)
 [![python-version](https://img.shields.io/pypi/pyversions/rfdetr)](https://badge.fury.io/py/rfdetr)
+[![replicate](https://img.shields.io/badge/Replicate-Deploy%20with%20Replicate-blue?logo=replicate)](https://replicate.com/hardikdava/rf-detr)
 
 RF-DETR is a real-time, transformer-based object detection model architecture developed by Roboflow and released under the Apache 2.0 license.
 
