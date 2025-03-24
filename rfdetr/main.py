@@ -43,7 +43,8 @@ from peft import LoraConfig, get_peft_model
 from typing import DefaultDict, List, Callable
 from logging import getLogger
 import shutil
-from rfdetr.util.files import download_file
+
+from huggingface_hub import hf_hub_download
 import os
 
 logger = getLogger(__name__)
@@ -61,10 +62,9 @@ def download_pretrain_weights(pretrain_weights: str, redownload=False):
             logger.info(
                 f"Downloading pretrained weights for {pretrain_weights}"
             )
-            download_file(
-                HOSTED_MODELS[pretrain_weights],
-                pretrain_weights,
-            )
+            hf_hub_download(repo_id="roboflow/rfdetr-weights", filename=pretrain_weights, local_dir="weights")
+    else:
+        raise ValueError(f"Pretrain weights {pretrain_weights} not found")
 
 class Model:
     def __init__(self, **kwargs):
