@@ -49,22 +49,22 @@ import os
 
 logger = getLogger(__name__)
 
-HOSTED_MODELS = {
-    "rf-detr-base.pth": "https://storage.googleapis.com/rfdetr/rf-detr-base-coco.pth",
+HOSTED_MODELS = [
+    "rf-detr-base",
     # below is a less converged model that may be better for finetuning but worse for inference
-    "rf-detr-base-2.pth": "https://storage.googleapis.com/rfdetr/rf-detr-base-2.pth",
-    "rf-detr-large.pth": "https://storage.googleapis.com/rfdetr/rf-detr-large.pth"
-}
+    "rf-detr-base-2",
+    "rf-detr-large",
+]
 
-def download_pretrain_weights(pretrain_weights: str, redownload=False):
-    if pretrain_weights in HOSTED_MODELS:
-        if redownload or not os.path.exists(pretrain_weights):
+def download_pretrain_weights(model_name: str, redownload=False):
+    if model_name in HOSTED_MODELS:
+        if redownload or not os.path.exists(model_name):
             logger.info(
-                f"Downloading pretrained weights for {pretrain_weights}"
+                f"Downloading pretrained weights for {model_name}"
             )
-            hf_hub_download(repo_id="roboflow/rfdetr-weights", filename=pretrain_weights, local_dir="weights")
+            hf_hub_download(repo_id=f"roboflow/{model_name}", filename=f"{model_name}.pth", local_dir="weights")
     else:
-        raise ValueError(f"Pretrain weights {pretrain_weights} not found")
+        raise ValueError(f"Pretrain weights of model {model_name} not found")
 
 class Model:
     def __init__(self, **kwargs):
