@@ -140,7 +140,8 @@ class Model:
         Load a pretrained model from the Hugging Face Hub.
         
         Args:
-            model_id (str): Name of the pretrained model to load. Must be one of: rf-detr-base, rf-detr-base-2, rf-detr-large
+            repo_id (str): Name of the repository to download the weights from.
+            Must be one of: roboflow/rf-detr-base, roboflow/rf-detr-base-2, roboflow/rf-detr-large.
             
         Returns:
             Model: A loaded model instance
