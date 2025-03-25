@@ -134,6 +134,27 @@ class Model:
         self.model = self.model.to(self.device)
         self.criterion, self.postprocessors = build_criterion_and_postprocessors(args)
     
+    @classmethod
+    def from_pretrained(cls, repo_id: str):
+        """
+        Load a pretrained model from the Hugging Face Hub.
+        
+        Args:
+            model_id (str): Name of the pretrained model to load. Must be one of: rf-detr-base, rf-detr-base-2, rf-detr-large
+            
+        Returns:
+            Model: A loaded model instance
+        """ 
+        # Download the weights if needed
+        filepath = hf_hub_download(repo_id, filename=f"{repo_id}.pth")
+        state_dict = torch.load(filepath, map_location='cpu')
+        
+        # Load the model
+        model = build_model(args)
+        model.load_state_dict(state_dict, strict=False)
+        
+        return model
+    
     def reinitialize_detection_head(self, num_classes):
         self.model.reinitialize_detection_head(num_classes)
 
