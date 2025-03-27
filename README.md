@@ -173,6 +173,110 @@ cv2.destroyAllWindows()
 
 </details>
 
+<details>
+<summary>RTSP Stream</summary>
+
+## InferencePipeline from Inference Stream
+
+```python
+import cv2
+import numpy as np
+from inference import InferencePipeline
+from inference.core.interfaces.camera.entities import VideoFrame
+import supervision as sv
+from rfdetr import RFDETRBase
+from rfdetr.util.coco_classes import COCO_CLASSES
+
+model = RFDETRBase()
+RTSP_URL = ""
+
+class StreamSink:
+    def __init__(self):
+        pass
+    
+    def on_prediction(self, result: sv.Detections, frame: VideoFrame) -> None:  
+        
+        detections = sv.Detections(
+            xyxy=np.array([result[0]]),
+            confidence=np.array([result[2]]),
+            class_id=np.array([result[3]]),
+        )
+        
+        detections = detections[detections.confidence > 0.5]
+
+        labels = [
+            f"{COCO_CLASSES[class_id]} {confidence:.2f}"
+            for class_id, confidence
+            in zip(detections.class_id, detections.confidence)
+        ]
+
+        annotated_frame = frame.image.copy()
+        annotated_frame = sv.BoxAnnotator().annotate(annotated_frame, detections)
+        annotated_frame = sv.LabelAnnotator().annotate(annotated_frame, detections, labels)
+        
+        cv2.imshow("RTSP Stream", annotated_frame)
+        cv2.waitKey(1)
+
+
+def inference_callback(frame: VideoFrame) -> sv.Detections:
+    return model.predict(frame[0].image, threshold=0.5)
+
+sink = StreamSink()
+
+pipeline = InferencePipeline.init_with_custom_logic(
+    video_reference=RTSP_URL,
+    on_video_frame=inference_callback,
+    on_prediction=sink.on_prediction,
+)
+
+pipeline.start()
+
+try:
+    pipeline.join()
+except KeyboardInterrupt:
+    pipeline.terminate()
+```
+
+## OpenCV Stream
+
+```python
+import cv2
+import supervision as sv
+from rfdetr import RFDETRBase
+from rfdetr.util.coco_classes import COCO_CLASSES
+
+model = RFDETRBase()
+RTSP_URL = ""
+
+cap = cv2.VideoCapture(RTSP_URL)
+while True:
+    success, frame = cap.read()
+    if not success:
+        break
+
+    detections = model.predict(frame, threshold=0.5)
+    
+    labels = [
+        f"{COCO_CLASSES[class_id]} {confidence:.2f}"
+        for class_id, confidence
+        in zip(detections.class_id, detections.confidence)
+    ]
+
+    annotated_frame = frame.copy()
+    annotated_frame = sv.BoxAnnotator().annotate(annotated_frame, detections)
+    annotated_frame = sv.LabelAnnotator().annotate(annotated_frame, detections, labels)
+
+    cv2.imshow("RTSP Stream", annotated_frame)
+
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()
+```
+
+</details>
+
 ![rf-detr-coco-results-2](https://media.roboflow.com/rf-detr/example_grid.png)
 
 
