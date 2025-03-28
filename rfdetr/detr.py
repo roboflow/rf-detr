@@ -13,7 +13,7 @@ from PIL import Image
 from rfdetr.config import RFDETRBaseConfig, RFDETRLargeConfig, TrainConfig, ModelConfig
 from rfdetr.main import Model, download_pretrain_weights
 from rfdetr.util.metrics import MetricsPlotSink, MetricsTensorBoardSink
-from rfdetr.util.coco_to_yolo import is_correct_yolo_format, convert_to_coco
+from rfdetr.util.coco_to_yolo import is_valid_yolo_format, convert_to_coco
 
 logger = getLogger(__name__)
 class RFDETR:
@@ -40,7 +40,7 @@ class RFDETR:
         self.model.export(**kwargs)
 
     def train_from_config(self, config: TrainConfig, **kwargs):
-        if is_correct_yolo_format(config.dataset_dir):
+        if is_valid_yolo_format(config.dataset_dir):
             config.dataset_dir = convert_to_coco(config.dataset_dir)
 
         with open(

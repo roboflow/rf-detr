@@ -13,7 +13,7 @@ NECESSARY_SPLIT_DIRS = ["train", "valid"]
 NECESSARY_DATA_SUBDIRS = ["images", "labels"]
 OPTIONAL_SPLIT_DIR = "test"
 
-def is_correct_yolo_format(dataset_dir: str) -> bool:
+def is_valid_yolo_format(dataset_dir: str) -> bool:
     """
     Checks if the specified dataset directory is in yolo format.
 
