@@ -238,6 +238,7 @@ class YoloDetection(torch.utils.data.Dataset):
         target = {}
         target["image_id"] = torch.tensor([image_id])
         target["orig_size"] = torch.as_tensor([int(h), int(w)])
+        target["size"] = torch.as_tensor([int(h), int(w)])
         
         boxes = []
         labels = []
@@ -287,6 +288,8 @@ class YoloDetection(torch.utils.data.Dataset):
         
         target["boxes"] = boxes
         target["labels"] = labels
+        target["area"] = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1]) if len(boxes) > 0 else torch.zeros(0)
+        target["iscrowd"] = torch.zeros_like(labels, dtype=torch.int64)
         
         if self.transforms is not None:
             img, target = self.transforms(img, target)
