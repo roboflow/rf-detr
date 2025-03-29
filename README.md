@@ -274,6 +274,35 @@ During training, two model checkpoints (the regular weights and an EMA-based set
   
 </details>
 
+### Logging with Weights and Biases (W&B)
+
+[W&B](https://www.wandb.ai) similar to TensorBoard is a very powerful platform to monitor training metrics. It is cloud-based and offers a more complex feature set compared to TensorBoard.
+
+<details>
+<summary>Get Started</summary>
+
+- To use W&B, make sure you are logged in:
+
+    ```bash
+    wandb login
+    ```
+
+    You will need to specify an API Key for your account that can be retrieved at https://wandb.ai/authorize.
+
+- For those familiar with W&B, you can specify the `project_name` and `run_name` in the `model.train` method:
+
+    ```python
+    from rfdetr import RFDETRBase
+
+    model = RFDETRBase()
+
+    detections = model.train(dataset_dir=<DATASET_PATH>, project_name=<PROJECT_NAME>, run_name=<RUN_NAME>)
+    ```
+
+    For those unfamiliar with W&B: projects are collections of related machine learning experiments, while runs are individual units of computation within a project that record specific experiments, such as training a model or conducting hyperparameter tuning. Not specifying a name, will result in random names provided by W&B.
+  
+</details>
+
 ### Load and run fine-tuned model
 
 ```python

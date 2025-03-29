@@ -23,7 +23,6 @@ from collections import defaultdict, deque
 import datetime
 import pickle
 from typing import Optional, List
-import wandb
 import copy
 import argparse
 
@@ -170,10 +169,14 @@ def reduce_dict(input_dict, average=True):
 
 
 class MetricLogger(object):
-    def __init__(self, delimiter="\t", wandb=False):
+    def __init__(self, delimiter="\t", wandb_logging=False):
         self.meters = defaultdict(SmoothedValue)
         self.delimiter = delimiter
-        self.wandb = wandb
+        if wandb_logging:
+            import wandb
+            self.wandb = wandb
+        else:
+            self.wandb = None
 
     def update(self, **kwargs):
         for k, v in kwargs.items():
@@ -244,7 +247,7 @@ class MetricLogger(object):
                 if self.wandb:
                     if is_main_process():
                         log_dict = {k: v.value for k, v in self.meters.items()}
-                        wandb.log(log_dict)
+                        self.wandb.log(log_dict)
                 if torch.cuda.is_available():
                     print(log_msg.format(
                         i, len(iterable), eta=eta_string,

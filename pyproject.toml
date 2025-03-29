@@ -50,7 +50,6 @@ dependencies = [
     "peft",
     "ninja",
     "einops",
-    "wandb",
     "pandas",
     "pylabel",
     "onnx",
@@ -69,7 +68,8 @@ onnxruntime = [
     "onnxruntime"
 ]
 metrics = [
-    "tensorboard>=2.13.0"
+    "tensorboard>=2.13.0",
+    "wandb"
 ]
 
 [project.urls]
