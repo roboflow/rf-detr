@@ -422,25 +422,11 @@ def save_on_master(obj, f, *args, **kwargs):
     Safely save objects, removing any callbacks that can't be pickled
     """
     if is_main_process():
-        try:
-            if isinstance(obj, dict):
-                obj_copy = {}
-                for k, v in obj.items():
-                    if k == 'args' and hasattr(v, '__dict__'):
-                        args_dict = copy.copy(v.__dict__)
-                        if 'callbacks' in args_dict:
-                            del args_dict['callbacks']
-                        obj_copy[k] = argparse.Namespace(**args_dict)
-                    elif k != 'callbacks':
-                        obj_copy[k] = v
-                obj = obj_copy
-            
-            torch.save(obj, f, *args, **kwargs)
-        except Exception as e:
-            print(f"Error in safe_save_on_master: {e}")
-            if isinstance(obj, dict) and 'model' in obj:
-                print("Falling back to saving only model state_dict")
-                torch.save({'model': obj['model']}, f, *args, **kwargs)
+        if isinstance(obj, dict) and 'model' in obj:
+            print("Falling back to saving only model state_dict")
+            torch.save({'model': obj['model']}, f, *args, **kwargs)
+        else:
+            raise ValueError("Invalid object type for saving")
 
 
 def init_distributed_mode(args):
