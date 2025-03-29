@@ -440,6 +440,8 @@ class Model:
 
         device = self.device
         model = deepcopy(self.model.to("cpu"))
+        if backbone_only:
+            model = model.backbone
         model.to(device)
 
         os.makedirs(output_dir, exist_ok=True)
@@ -456,10 +458,22 @@ class Model:
         dynamic_axes = {
             'input': {0: 'batch_size', 2: 'height', 3: 'width'},
         }
+        if backbone_only:
+            dynamic_axes.update({
+                'dets': {0: 'batch_size'},
+                'labels': {0: 'batch_size'},
+            })
+        else:
+            dynamic_axes.update({
+                'features': {0: 'batch_size', 2: 'num_patches_height', 3: 'num_patches_width'},
+            })
+
         self.model.eval()
         with torch.no_grad():
             if backbone_only:
-                features = model(input_tensors)
+                features = model(
+                    utils.nested_tensor_from_tensor_list([input_tensors[0]])
+                )[0][0].tensors
                 print(f"PyTorch inference output shape: {features.shape}")
             else:
                 outputs = model(input_tensors)
