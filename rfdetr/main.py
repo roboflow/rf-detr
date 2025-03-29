@@ -453,7 +453,9 @@ class Model:
         input_tensors = make_infer_image(infer_dir, shape, batch_size, device).to(device)
         input_names = ['input']
         output_names = ['features'] if backbone_only else ['dets', 'labels']
-        dynamic_axes = None
+        dynamic_axes = {
+            'input': {0: 'batch_size', 2: 'height', 3: 'width'},
+        }
         self.model.eval()
         with torch.no_grad():
             if backbone_only:

@@ -67,61 +67,6 @@ class DinoV2(nn.Module):
         if self._export:
             return
         self._export = True
-        shape = self.shape
-        def make_new_interpolated_pos_encoding(
-            position_embeddings, patch_size, height, width
-        ):
-
-            num_positions = position_embeddings.shape[1] - 1
-            dim = position_embeddings.shape[-1]
-            height = height // patch_size
-            width = width // patch_size
-
-            class_pos_embed = position_embeddings[:, 0]
-            patch_pos_embed = position_embeddings[:, 1:]
-
-            # Reshape and permute
-            patch_pos_embed = patch_pos_embed.reshape(
-                1, int(math.sqrt(num_positions)), int(math.sqrt(num_positions)), dim
-            )
-            patch_pos_embed = patch_pos_embed.permute(0, 3, 1, 2)
-
-            # Use bilinear interpolation without antialias
-            patch_pos_embed = F.interpolate(
-                patch_pos_embed,
-                size=(height, width),
-                mode="bicubic",
-                align_corners=False,
-                antialias=True,
-            )
-
-            # Reshape back
-            patch_pos_embed = patch_pos_embed.permute(0, 2, 3, 1).reshape(1, -1, dim)
-            return torch.cat((class_pos_embed.unsqueeze(0), patch_pos_embed), dim=1)
-
-        # If the shape of self.encoder.embeddings.position_embeddings
-        # matches the shape of your new tensor, use copy_:
-        with torch.no_grad():
-            new_positions = make_new_interpolated_pos_encoding(
-                self.encoder.embeddings.position_embeddings,
-                self.encoder.config.patch_size,
-                shape[0],
-                shape[1],
-            )
-        # Create a new Parameter with the new size
-        old_interpolate_pos_encoding = self.encoder.embeddings.interpolate_pos_encoding
-        def new_interpolate_pos_encoding(self_mod, embeddings, height, width):
-            num_patches = embeddings.shape[1] - 1
-            num_positions = self_mod.position_embeddings.shape[1] - 1
-            if num_patches == num_positions and height == width:
-                return self_mod.position_embeddings
-            return old_interpolate_pos_encoding(embeddings, height, width)
-
-        self.encoder.embeddings.position_embeddings = nn.Parameter(new_positions)
-        self.encoder.embeddings.interpolate_pos_encoding = types.MethodType(
-            new_interpolate_pos_encoding, 
-            self.encoder.embeddings
-        )
 
     def forward(self, x):
         assert x.shape[2] % 14 == 0 and x.shape[3] % 14 == 0, f"Dinov2 requires input shape to be divisible by 14, but got {x.shape}"

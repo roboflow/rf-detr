@@ -68,7 +68,7 @@ def gen_sineembed_for_position(pos_tensor, dim=128):
 
 
 def gen_encoder_output_proposals(memory, memory_padding_mask, spatial_shapes, unsigmoid=True):
-    """
+    r"""
     Input:
         - memory: bs, \sum{hw}, d_model
         - memory_padding_mask: bs, \sum{hw}
@@ -198,12 +198,12 @@ class Transformer(nn.Module):
         src_flatten = []
         mask_flatten = [] if masks is not None else None
         lvl_pos_embed_flatten = []
-        spatial_shapes = []
+        spatial_shapes = torch.empty((len(srcs), 2), device=srcs[0].device, dtype=torch.long)
         valid_ratios = [] if masks is not None else None
         for lvl, (src, pos_embed) in enumerate(zip(srcs, pos_embeds)):
             bs, c, h, w = src.shape
-            spatial_shape = (h, w)
-            spatial_shapes.append(spatial_shape)
+            spatial_shapes[lvl, 0] = h
+            spatial_shapes[lvl, 1] = w
 
             src = src.flatten(2).transpose(1, 2)                # bs, hw, c
             pos_embed = pos_embed.flatten(2).transpose(1, 2)    # bs, hw, c
@@ -217,7 +217,6 @@ class Transformer(nn.Module):
             mask_flatten = torch.cat(mask_flatten, 1)   # bs, \sum{hxw}
             valid_ratios = torch.stack([self.get_valid_ratio(m) for m in masks], 1)
         lvl_pos_embed_flatten = torch.cat(lvl_pos_embed_flatten, 1) # bs, \sum{hxw}, c 
-        spatial_shapes = torch.as_tensor(spatial_shapes, dtype=torch.long, device=memory.device)
         level_start_index = torch.cat((spatial_shapes.new_zeros((1, )), spatial_shapes.prod(1).cumsum(0)[:-1]))
         
         if self.two_stage:

@@ -283,7 +283,8 @@ class WindowedDinov2WithRegistersEmbeddings(nn.Module):
             size=(torch_int(height), torch_int(width)),  # Explicit size instead of scale_factor
             mode="bicubic",
             align_corners=False,
-            antialias=True,
+            # True by default, False during export
+            antialias=not torch.onnx.is_in_onnx_export(),
         ).to(dtype=target_dtype)
 
         # Validate output dimensions if not tracing
