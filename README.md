@@ -215,6 +215,51 @@ dataset/
 
 [Roboflow](https://roboflow.com/annotate) allows you to create object detection datasets from scratch or convert existing datasets from formats like YOLO, and then export them in COCO JSON format for training. You can also explore [Roboflow Universe](https://universe.roboflow.com/) to find pre-labeled datasets for a range of use cases.
 
+### YOLO Format Support
+
+RF-DETR now also supports training directly on YOLO format datasets. The dataset should follow the standard YOLO format structure:
+
+```
+dataset/
+├── data.yaml            # Contains class names, number of classes, etc.
+├── train/
+│   ├── images/
+│   │   ├── image1.jpg
+│   │   ├── image2.jpg
+│   │   └── ... (other image files)
+│   └── labels/
+│       ├── image1.txt
+│       ├── image2.txt
+│       └── ... (other label files)
+├── valid/               # Note: 'valid' is used instead of 'val'
+│   ├── images/
+│   │   └── ... (image files)
+│   └── labels/
+│       └── ... (label files)
+└── test/                # Optional
+    ├── images/
+    │   └── ... (image files)
+    └── labels/
+        └── ... (label files)
+```
+
+Each label file contains annotations in YOLO format: `class_id x_center y_center width height` with normalized coordinates (0-1).
+
+```python
+from rfdetr import RFDETRBase
+
+model = RFDETRBase()
+
+model.train(
+    dataset_dir=<YOLO_DATASET_PATH>, 
+    epochs=10, 
+    batch_size=4, 
+    grad_accum_steps=4, 
+    lr=1e-4, 
+    output_dir=<OUTPUT_PATH>
+)
+```
+
 ### Fine-tuning
 
 You can fine-tune RF-DETR from pre-trained COCO checkpoints. By default, the RF-DETR-B checkpoint will be used. To get started quickly, please refer to our fine-tuning Google Colab [notebook](https://colab.research.google.com/github/roboflow-ai/notebooks/blob/main/notebooks/how-to-finetune-rf-detr-on-detection-dataset.ipynb).

@@ -40,14 +40,32 @@ class RFDETR:
         self.model.export(**kwargs)
 
     def train_from_config(self, config: TrainConfig, **kwargs):
+        # Check if dataset is in YOLO format
         if is_valid_yolo_format(config.dataset_dir):
-            config.dataset_dir = convert_to_coco(config.dataset_dir)
+            logger.info(f"Using native YOLO dataloader for dataset: {config.dataset_dir}")
+            
+            # Read number of classes from data.yaml
+            data_yaml_path = os.path.join(config.dataset_dir, "data.yaml")
+            import yaml
+            with open(data_yaml_path, 'r') as f:
+                data = yaml.safe_load(f)
+                num_classes = len(data.get('names', []))
 
-        with open(
-            os.path.join(config.dataset_dir, "train", "_annotations.coco.json"), "r"
-        ) as f:
-            anns = json.load(f)
-            num_classes = len(anns["categories"])
+            # Update the dataset_file to use YOLO
+            kwargs['dataset_file'] = 'yolo'
+            config.dataset_file = 'yolo'
+        else:
+            # If not YOLO format, check if it's already in COCO format
+            coco_annotations_path = os.path.join(config.dataset_dir, "train", "_annotations.coco.json")
+            if os.path.exists(coco_annotations_path):
+                with open(coco_annotations_path, "r") as f:
+                    anns = json.load(f)
+                    num_classes = len(anns["categories"])
+            else:
+                raise ValueError(
+                    f"Dataset directory {config.dataset_dir} is neither in correct YOLO format "
+                    f"nor contains COCO annotations."
+                )
 
         if self.model_config.num_classes != num_classes:
             logger.warning(
