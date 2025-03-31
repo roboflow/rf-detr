@@ -222,6 +222,9 @@ class YoloDetection(torch.utils.data.Dataset):
         return len(self.img_files)
     
     def __getitem__(self, idx):
+        # Convert idx to integer if it's a string
+        if isinstance(idx, str):
+            idx = int(idx)
         img_path = self.img_files[idx]
         image_id = self.ids[idx]
 
