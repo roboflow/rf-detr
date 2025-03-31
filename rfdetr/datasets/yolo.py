@@ -1,9 +1,3 @@
-# ------------------------------------------------------------------------
-# LW-DETR
-# Copyright (c) 2024 Baidu. All Rights Reserved.
-# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
-# ------------------------------------------------------------------------
-
 """
 YOLO dataset loader.
 Optimized for large datasets to avoid the memory overhead of converting beforehand.
@@ -20,13 +14,40 @@ import torch
 import torch.utils.data
 
 from rfdetr.datasets.coco import make_coco_transforms, make_coco_transforms_square_div_64
+from rfdetr.util.files import load_txt_lines
+
+REQUIRED_YOLO_YAML_FILE = "data.yaml"
+REQUIRED_SPLIT_DIRS = ["train", "valid"]
+REQUIRED_DATA_SUBDIRS = ["images", "labels"]
+
+
+def is_valid_yolo_dataset(dataset_dir: str) -> bool:
+    """
+    Checks if the specified dataset directory is in yolo format.
+
+    We accept a dataset to be in yolo format if the following conditions are met:
+    - The dataset_dir contains a data.yaml file
+    - The dataset_dir contains "train" and "valid" subdirectories, each containing "images" and "labels" subdirectories
+    - The "test" subdirectory is optional
+
+    Returns a boolean indicating whether the dataset is in correct yolo format.
+    """
+    contains_required_data_yaml = os.path.exists(os.path.join(dataset_dir, REQUIRED_YOLO_YAML_FILE))
+    contains_required_split_dirs = all(
+        os.path.exists(os.path.join(dataset_dir, split_dir)) for split_dir in REQUIRED_SPLIT_DIRS
+    )
+    contains_required_data_subdirs = all(
+        os.path.exists(os.path.join(dataset_dir, split_dir, data_subdir))
+        for split_dir in REQUIRED_SPLIT_DIRS
+        for data_subdir in REQUIRED_DATA_SUBDIRS
+    )
+    return contains_required_data_yaml and contains_required_split_dirs and contains_required_data_subdirs
 
 
 def build_yolo(image_set, args, resolution):
     """Build YOLO dataset"""
     root = Path(args.dataset_dir)
     print(image_set)
-    # YOLO standard directory structure
     PATHS = {
         "train": (root / "train" / "images", root / "train" / "labels"),
         "val": (root / "valid" / "images", root / "valid" / "labels"),
@@ -36,13 +57,11 @@ def build_yolo(image_set, args, resolution):
     img_folder, labels_folder = PATHS[image_set.split("_")[0]]
     data_yaml_path = root / "data.yaml"
     
-    # Check for required transform options
     try:
         square_resize_div_64 = args.square_resize_div_64
     except:
         square_resize_div_64 = False
     
-    # Choose appropriate transforms
     if square_resize_div_64:
         dataset = YoloDetection(
             img_folder, 
@@ -82,7 +101,6 @@ class YoloDetection(torch.utils.data.Dataset):
                         glob.glob(os.path.join(img_folder, '*.jpeg')) + 
                         glob.glob(os.path.join(img_folder, '*.png')))
         
-        # Read class names from data.yaml
         with open(data_yaml_path, 'r') as f:
             data = yaml.safe_load(f)
             self.class_names = data.get('names', [])
@@ -91,27 +109,48 @@ class YoloDetection(torch.utils.data.Dataset):
             
         self.class_to_coco_id = {i: i for i in range(len(self.class_names))}
         
-        # Image IDs start from 1
         self.ids = [i+1 for i in list(range(len(self.img_files)))]
         
-        # Cache for the COCO-like API
         self._coco = None
         
     def __len__(self):
         return len(self.img_files)
+
+    def _parse_yolo_annotations(self, lines: list[str], width: int, height: int) -> tuple[list, list]:
+        boxes = []
+        labels = []
+        for line in lines:
+            data = line.strip().split()
+            if len(data) == 5: 
+                class_id = int(data[0])
+                
+                if class_id < 0 or class_id >= len(self.class_names):
+                    print(f"Warning: Skipping invalid class ID {class_id}")
+                    continue
+                    
+                x_center, y_center, width, height = map(float, data[1:5])
+                
+                if not all(0 <= v <= 1 for v in [x_center, y_center, width, height]):
+                    print(f"Warning: Skipping invalid coordinates {x_center}, {y_center}, {width}, {height}. (Not normalized)")
+                    continue
+                
+                x1 = (x_center - width / 2) * width
+                y1 = (y_center - height / 2) * height
+                x2 = (x_center + width / 2) * width
+                y2 = (y_center + height / 2) * height
+                
+                boxes.append([x1, y1, x2, y2])
+                labels.append(self.class_to_coco_id[class_id])
     
     def __getitem__(self, idx):
-        # Convert idx to integer if it's a string
         if isinstance(idx, str):
             idx = int(idx)
         img_path = self.img_files[idx]
         image_id = self.ids[idx]
 
-        # Get label file path (same name as image but with .txt extension)
         base_name = os.path.splitext(os.path.basename(img_path))[0]
         label_path = os.path.join(self.labels_folder, base_name + '.txt')
         
-        # Load image
         img = Image.open(img_path).convert('RGB')
         w, h = img.size
         
@@ -120,43 +159,7 @@ class YoloDetection(torch.utils.data.Dataset):
         target["orig_size"] = torch.as_tensor([int(h), int(w)])
         target["size"] = torch.as_tensor([int(h), int(w)])
         
-        boxes = []
-        labels = []
-        
-        # Check if label file exists
-        if os.path.exists(label_path):
-            with open(label_path, 'r') as f:
-                for line_idx, line in enumerate(f.readlines()):
-                    try:
-                        data = line.strip().split()
-                        if len(data) == 5:  # class_id, x_center, y_center, width, height
-                            class_id = int(data[0])
-                            
-                            # Validate class_id
-                            if class_id < 0 or class_id >= len(self.class_names):
-                                print(f"Warning: Skipping invalid class ID {class_id} in {label_path}:{line_idx+1}")
-                                continue
-                                
-                            # YOLO format: [class_id, x_center, y_center, width, height] (normalized [0,1])
-                            x_center, y_center, width, height = map(float, data[1:5])
-                            
-                            # Validate coordinates
-                            if not all(0 <= v <= 1 for v in [x_center, y_center, width, height]):
-                                print(f"Warning: Skipping invalid coordinates in {label_path}:{line_idx+1}")
-                                continue
-                            
-                            # Convert from YOLO format (center x, center y, width, height) to xyxy format
-                            x1 = (x_center - width / 2) * w
-                            y1 = (y_center - height / 2) * h
-                            x2 = (x_center + width / 2) * w
-                            y2 = (y_center + height / 2) * h
-                            
-                            # Store in xyxy format
-                            boxes.append([x1, y1, x2, y2])
-                            # Map to COCO-style IDs (starting from 1)
-                            labels.append(self.class_to_coco_id[class_id])
-                    except Exception as e:
-                        print(f"Error processing line in {label_path}:{line_idx+1} - {str(e)}")
+        boxes, labels = self._parse_yolo_annotations(load_txt_lines(label_path))
         
         if len(boxes) > 0:
             boxes = torch.as_tensor(boxes, dtype=torch.float32)

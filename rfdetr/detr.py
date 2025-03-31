@@ -12,8 +12,9 @@ from PIL import Image
 
 from rfdetr.config import RFDETRBaseConfig, RFDETRLargeConfig, TrainConfig, ModelConfig
 from rfdetr.main import Model, download_pretrain_weights
+from rfdetr.util.files import load_json, load_yaml
 from rfdetr.util.metrics import MetricsPlotSink, MetricsTensorBoardSink
-from rfdetr.util.coco_to_yolo import is_valid_yolo_format, convert_to_coco
+from rfdetr.datasets.yolo import is_valid_yolo_dataset
 
 logger = getLogger(__name__)
 class RFDETR:
@@ -40,32 +41,21 @@ class RFDETR:
         self.model.export(**kwargs)
 
     def train_from_config(self, config: TrainConfig, **kwargs):
-        # Check if dataset is in YOLO format
-        if is_valid_yolo_format(config.dataset_dir):
+        if is_valid_yolo_dataset(config.dataset_dir):
             logger.info(f"Using native YOLO dataloader for dataset: {config.dataset_dir}")
             
-            # Read number of classes from data.yaml
             data_yaml_path = os.path.join(config.dataset_dir, "data.yaml")
-            import yaml
-            with open(data_yaml_path, 'r') as f:
-                data = yaml.safe_load(f)
-                num_classes = len(data['names'])
+            data = load_yaml(data_yaml_path)
+            num_classes = len(data['names'])
 
-            # Update the dataset_file to use YOLO
+            # We need to update these, to ensure the training pipeline can continue the same way
+            # as if we were using the native COCO dataloader
             kwargs['dataset_file'] = 'yolo'
             config.dataset_file = 'yolo'
         else:
-            # If not YOLO format, check if it's already in COCO format
             coco_annotations_path = os.path.join(config.dataset_dir, "train", "_annotations.coco.json")
-            if os.path.exists(coco_annotations_path):
-                with open(coco_annotations_path, "r") as f:
-                    anns = json.load(f)
-                    num_classes = len(anns["categories"])
-            else:
-                raise ValueError(
-                    f"Dataset directory {config.dataset_dir} is neither in correct YOLO format "
-                    f"nor contains COCO annotations."
-                )
+            anns = load_json(coco_annotations_path)
+            num_classes = len(anns["categories"])
 
         if self.model_config.num_classes != num_classes:
             logger.warning(
