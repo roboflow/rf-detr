@@ -212,10 +212,10 @@ class YoloDetection(torch.utils.data.Dataset):
             
         # Mapping from class indices to IDs (to match COCO format)
         # COCO uses 1-indexed class IDs, with 0 reserved for background
-        self.class_to_coco_id = {i: i+1 for i in range(len(self.class_names))}
+        self.class_to_coco_id = {i: i for i in range(len(self.class_names))}
         
         # Image IDs same as indices for simplicity
-        self.ids = list(range(len(self.img_files)))
+        self.ids = [i+1 for i in list(range(len(self.img_files)))]
         
         # Cache for the COCO-like API
         self._coco = None
