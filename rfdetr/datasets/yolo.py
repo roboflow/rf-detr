@@ -231,7 +231,7 @@ class CocoLikeAPI:
             img = Image.open(img_path)
             width, height = img.size
             imgs.append({
-                'id': idx,
+                'id': self.orig_dataset.ids[idx],  # Use the same ID as the original dataset
                 'file_name': os.path.basename(img_path),
                 'width': width,
                 'height': height
@@ -271,7 +271,7 @@ class CocoLikeAPI:
                         # COCO annotation
                         anns[ann_id] = {
                             'id': ann_id,
-                            'image_id': img_id,
+                            'image_id': self.orig_dataset.ids[img_id],  # Use the same ID as the original dataset
                             'category_id': self.orig_dataset.class_to_coco_id[class_id],
                             'bbox': [x, y, w, h],
                             'area': w * h,
