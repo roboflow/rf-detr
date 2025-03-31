@@ -243,7 +243,7 @@ class CocoLikeAPI:
         anns = {}
         ann_id = 0
         
-        for img_id, img_path in enumerate(self.orig_dataset.img_files):
+        for idx, img_path in enumerate(self.orig_dataset.img_files):
             base_name = os.path.splitext(os.path.basename(img_path))[0]
             label_path = os.path.join(self.orig_dataset.labels_folder, base_name + '.txt')
             
@@ -271,7 +271,7 @@ class CocoLikeAPI:
                         # COCO annotation
                         anns[ann_id] = {
                             'id': ann_id,
-                            'image_id': self.orig_dataset.ids[img_id],  # Use the same ID as the original dataset
+                            'image_id': self.orig_dataset.ids[idx],  # Use the same ID as the original dataset
                             'category_id': self.orig_dataset.class_to_coco_id[class_id],
                             'bbox': [x, y, w, h],
                             'area': w * h,
