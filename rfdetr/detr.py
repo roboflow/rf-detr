@@ -3,10 +3,10 @@ import os
 from collections import defaultdict
 from logging import getLogger
 from typing import Union
-import supervision as sv
 
 import numpy as np
 import supervision as sv
+from supervision.utils.file import read_yaml_file, read_json_file
 import torch
 import torchvision.transforms.functional as F
 from PIL import Image
@@ -45,7 +45,7 @@ class RFDETR:
             logger.info(f"Using native YOLO dataloader for dataset: {config.dataset_dir}")
             
             data_yaml_path = os.path.join(config.dataset_dir, "data.yaml")
-            data = sv.utils.read_yaml_file(data_yaml_path)
+            data = read_yaml_file(data_yaml_path)
             num_classes = len(data['names'])
 
             # We need to update these, to ensure the training pipeline can continue the same way
@@ -54,7 +54,7 @@ class RFDETR:
             config.dataset_file = 'yolo'
         else:
             coco_annotations_path = os.path.join(config.dataset_dir, "train", "_annotations.coco.json")
-            anns = sv.utils.read_json_file(coco_annotations_path)
+            anns = read_json_file(coco_annotations_path)
             num_classes = len(anns["categories"])
 
         if self.model_config.num_classes != num_classes:

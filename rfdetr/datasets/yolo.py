@@ -10,6 +10,7 @@ from PIL import Image
 import numpy as np
 from collections import defaultdict
 import supervision as sv
+from supervision.utils.file import read_yaml_file, read_txt_file, list_files_with_extensions
 
 import torch
 import torch.utils.data
@@ -159,12 +160,12 @@ class YOLODataset(torch.utils.data.Dataset):
         self.transforms = transforms
         
         # Get all image and label paths
-        image_paths = sv.utils.list_files_with_extensions(
+        image_paths = list_files_with_extensions(
             directory=images_directory_path,
             extensions=["jpg", "jpeg", "png"],
         )
         
-        label_paths = sv.utils.list_files_with_extensions(
+        label_paths = list_files_with_extensions(
             directory=annotations_directory_path,
             extensions=["txt"],
         )
@@ -173,7 +174,7 @@ class YOLODataset(torch.utils.data.Dataset):
         self.image_paths, self.label_paths = match_image_label_pairs(
             image_paths=image_paths, label_paths=label_paths)
         
-        data = sv.utils.read_yaml_file(data_yaml_path)
+        data = read_yaml_file(data_yaml_path)
         self.class_names = data.get('names', [])
             
         print(f"Loaded {len(self.class_names)} classes from YOLO dataset: {self.class_names}")
@@ -202,7 +203,7 @@ class YOLODataset(torch.utils.data.Dataset):
         target["orig_size"] = torch.as_tensor([int(h), int(w)])
         target["size"] = torch.as_tensor([int(h), int(w)])
         
-        label_lines = sv.utils.read_txt_file(label_path).splitlines()
+        label_lines = read_txt_file(label_path).splitlines()
         boxes, labels = _parse_yolo_annotations(label_lines, (w, h))
         
         if len(boxes) > 0:
