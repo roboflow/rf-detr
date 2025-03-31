@@ -56,7 +56,7 @@ def build_yolo(image_set, args, resolution):
     }
     
     img_folder, labels_folder = PATHS[image_set.split("_")[0]]
-    data_yaml_path = root / "data.yaml"
+    data_yaml_path = root / REQUIRED_YOLO_YAML_FILE
     
     try:
         square_resize_div_64 = args.square_resize_div_64
