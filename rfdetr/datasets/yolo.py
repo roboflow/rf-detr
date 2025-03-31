@@ -91,7 +91,7 @@ def build_yolo(image_set, args, resolution):
     return dataset 
 
 
-def _parse_yolo_annotations(self, lines: list[str], resolution_wh: tuple[int, int]) -> tuple[list, list]:
+def _parse_yolo_annotations(lines: list[str], resolution_wh: tuple[int, int], class_names: list[str]) -> tuple[list, list]:
     boxes = []
     labels = []
     for line in lines:
@@ -99,7 +99,7 @@ def _parse_yolo_annotations(self, lines: list[str], resolution_wh: tuple[int, in
         if len(data) == 5: 
             class_id = int(data[0])
             
-            if class_id < 0 or class_id >= len(self.class_names):
+            if class_id < 0 or class_id >= len(class_names):
                 print(f"Warning: Skipping invalid class ID {class_id}")
                 continue
                 
@@ -224,7 +224,7 @@ class YOLODataset(torch.utils.data.Dataset):
         target["size"] = torch.as_tensor([int(h), int(w)])
         
         label_lines = read_txt_file(label_path)
-        boxes, labels = _parse_yolo_annotations(label_lines, (w, h))
+        boxes, labels = _parse_yolo_annotations(label_lines, (w, h), self.class_names)
         
         if len(boxes) > 0:
             boxes = torch.as_tensor(boxes, dtype=torch.float32)
