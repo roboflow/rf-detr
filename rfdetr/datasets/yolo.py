@@ -55,16 +55,16 @@ class CocoLikeAPI:
         
     def _create_image_mapping(self):
         """Create an image mapping similar to COCO format"""
-        imgs = {}
+        imgs = []
         for idx, img_path in enumerate(self.dataset.img_files):
             img = Image.open(img_path)
             width, height = img.size
-            imgs[idx] = {
+            imgs.append({
                 'id': idx,
                 'file_name': os.path.basename(img_path),
                 'width': width,
                 'height': height
-            }
+            })
         return imgs
         
     def _create_annotation_mapping(self):
@@ -155,7 +155,7 @@ class CocoLikeAPI:
     
     def getImgIds(self, imgIds=None, catIds=None):
         """Get image IDs matching the given filter conditions"""
-        imgs = self.imgs.values()
+        imgs = self.imgs
         
         if imgIds is not None:
             if not isinstance(imgIds, list):
