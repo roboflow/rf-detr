@@ -49,7 +49,7 @@ class RFDETR:
             import yaml
             with open(data_yaml_path, 'r') as f:
                 data = yaml.safe_load(f)
-                num_classes = len(data.get('names', []))
+                num_classes = len(data['names'])
 
             # Update the dataset_file to use YOLO
             kwargs['dataset_file'] = 'yolo'
