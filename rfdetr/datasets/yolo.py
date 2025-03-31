@@ -22,174 +22,53 @@ import torch.utils.data
 from rfdetr.datasets.coco import make_coco_transforms, make_coco_transforms_square_div_64
 
 
-class CocoLikeAPI:
-    """
-    A COCO-like API for compatibility with pycocotools evaluation.
-    This simulates the COCO API used for evaluation.
-    """
-    def __init__(self, dataset):
-        self.dataset = dataset
-        self.cats = self._create_category_mapping()
-        self.imgs = self._create_image_mapping()
-        self.anns = self._create_annotation_mapping()
-        
-        # Create lookup dictionaries
-        self.imgToAnns = defaultdict(list)
-        self.catToImgs = defaultdict(list)
-        
-        for ann in self.anns.values():
-            self.imgToAnns[ann['image_id']].append(ann)
-            self.catToImgs[ann['category_id']].append(ann['image_id'])
-        
-    def _create_category_mapping(self):
-        """Create a category mapping similar to COCO format"""
-        cats = {}
-        for idx, name in enumerate(self.dataset.class_names):
-            cat_id = self.dataset.class_to_coco_id[idx]
-            cats[cat_id] = {
-                'id': cat_id,
-                'name': name,
-                'supercategory': 'none'
-            }
-        return cats
-        
-    def _create_image_mapping(self):
-        """Create an image mapping similar to COCO format"""
-        imgs = []
-        for idx, img_path in enumerate(self.dataset.img_files):
-            img = Image.open(img_path)
-            width, height = img.size
-            imgs.append({
-                'id': idx,
-                'file_name': os.path.basename(img_path),
-                'width': width,
-                'height': height
-            })
-        return imgs
-        
-    def _create_annotation_mapping(self):
-        """Create an annotation mapping similar to COCO format"""
-        anns = {}
-        ann_id = 0
-        
-        for img_id, img_path in enumerate(self.dataset.img_files):
-            base_name = os.path.splitext(os.path.basename(img_path))[0]
-            label_path = os.path.join(self.dataset.labels_folder, base_name + '.txt')
-            
-            # Skip if no label file exists
-            if not os.path.exists(label_path):
-                continue
-                
-            img = Image.open(img_path)
-            width, height = img.size
-            
-            with open(label_path, 'r') as f:
-                for line in f.readlines():
-                    data = line.strip().split()
-                    if len(data) == 5:  # class_id, x_center, y_center, width, height
-                        class_id = int(data[0])
-                        # YOLO format: [class_id, x_center, y_center, width, height] (normalized [0,1])
-                        x_center, y_center, box_width, box_height = map(float, data[1:5])
-                        
-                        # Convert to COCO format (x, y, width, height) where x,y is top-left corner
-                        x = (x_center - box_width / 2) * width
-                        y = (y_center - box_height / 2) * height
-                        w = box_width * width
-                        h = box_height * height
-                        
-                        # COCO annotation
-                        anns[ann_id] = {
-                            'id': ann_id,
-                            'image_id': img_id,
-                            'category_id': self.dataset.class_to_coco_id[class_id],
-                            'bbox': [x, y, w, h],
-                            'area': w * h,
-                            'iscrowd': 0
-                        }
-                        ann_id += 1
-        
-        return anns
+def build_yolo(image_set, args, resolution):
+    """Build YOLO dataset"""
+    root = Path(args.dataset_dir)
+    print(image_set)
+    # YOLO standard directory structure
+    PATHS = {
+        "train": (root / "train" / "images", root / "train" / "labels"),
+        "val": (root / "valid" / "images", root / "valid" / "labels"),
+        "test": (root / "test" / "images", root / "test" / "labels"),
+    }
     
-    def getAnnIds(self, imgIds=None, catIds=None, areaRng=None, iscrowd=None):
-        """Get annotation IDs matching the given filter conditions"""
-        anns = self.anns.values()
-        
-        if imgIds is not None:
-            if not isinstance(imgIds, list):
-                imgIds = [imgIds]
-            anns = [ann for ann in anns if ann['image_id'] in imgIds]
-            
-        if catIds is not None:
-            if not isinstance(catIds, list):
-                catIds = [catIds]
-            anns = [ann for ann in anns if ann['category_id'] in catIds]
-            
-        if areaRng is not None:
-            anns = [ann for ann in anns if areaRng[0] <= ann['area'] <= areaRng[1]]
-            
-        if iscrowd is not None:
-            anns = [ann for ann in anns if ann['iscrowd'] == iscrowd]
-            
-        return [ann['id'] for ann in anns]
+    img_folder, labels_folder = PATHS[image_set.split("_")[0]]
+    data_yaml_path = root / "data.yaml"
     
-    def getCatIds(self, catNms=None, supNms=None, catIds=None):
-        """Get category IDs matching the given filter conditions"""
-        cats = self.cats.values()
-        
-        if catNms is not None:
-            if not isinstance(catNms, list):
-                catNms = [catNms]
-            cats = [cat for cat in cats if cat['name'] in catNms]
-            
-        if supNms is not None:
-            if not isinstance(supNms, list):
-                supNms = [supNms]
-            cats = [cat for cat in cats if cat['supercategory'] in supNms]
-            
-        if catIds is not None:
-            if not isinstance(catIds, list):
-                catIds = [catIds]
-            cats = [cat for cat in cats if cat['id'] in catIds]
-            
-        return [cat['id'] for cat in cats]
+    # Check for required transform options
+    try:
+        square_resize_div_64 = args.square_resize_div_64
+    except:
+        square_resize_div_64 = False
     
-    def getImgIds(self, imgIds=None, catIds=None):
-        """Get image IDs matching the given filter conditions"""
-        imgs = self.imgs
-        
-        if imgIds is not None:
-            if not isinstance(imgIds, list):
-                imgIds = [imgIds]
-            imgs = [img for img in imgs if img['id'] in imgIds]
-            
-        if catIds is not None:
-            if not isinstance(catIds, list):
-                catIds = [catIds]
-            # Use cached mapping for performance
-            img_ids = set()
-            for cat_id in catIds:
-                img_ids.update(self.catToImgs[cat_id])
-            imgs = [img for img in imgs if img['id'] in img_ids]
-            
-        return [img['id'] for img in imgs]
+    # Choose appropriate transforms
+    if square_resize_div_64:
+        dataset = YoloDetection(
+            img_folder, 
+            labels_folder,
+            data_yaml_path,
+            transforms=make_coco_transforms_square_div_64(
+                image_set, 
+                resolution, 
+                multi_scale=args.multi_scale, 
+                expanded_scales=args.expanded_scales
+            )
+        )
+    else:
+        dataset = YoloDetection(
+            img_folder, 
+            labels_folder,
+            data_yaml_path,
+            transforms=make_coco_transforms(
+                image_set, 
+                resolution, 
+                multi_scale=args.multi_scale, 
+                expanded_scales=args.expanded_scales
+            )
+        )
     
-    def loadAnns(self, ids):
-        """Load annotations with the specified IDs"""
-        if isinstance(ids, int):
-            ids = [ids]
-        return [self.anns[id] for id in ids if id in self.anns]
-    
-    def loadCats(self, ids):
-        """Load categories with the specified IDs"""
-        if isinstance(ids, int):
-            ids = [ids]
-        return [self.cats[id] for id in ids if id in self.cats]
-    
-    def loadImgs(self, ids):
-        """Load images with the specified IDs"""
-        if isinstance(ids, int):
-            ids = [ids]
-        return [self.imgs[id] for id in ids if id in self.imgs]
+    return dataset 
 
 
 class YoloDetection(torch.utils.data.Dataset):
@@ -307,50 +186,179 @@ class YoloDetection(torch.utils.data.Dataset):
         return self._coco
 
 
-def build_yolo(image_set, args, resolution):
-    """Build YOLO dataset"""
-    root = Path(args.dataset_dir)
-    print(image_set)
-    # YOLO standard directory structure
-    PATHS = {
-        "train": (root / "train" / "images", root / "train" / "labels"),
-        "val": (root / "valid" / "images", root / "valid" / "labels"),
-        "test": (root / "test" / "images", root / "test" / "labels"),
-    }
+class CocoLikeAPI:
+    """
+    A COCO-like API for compatibility with pycocotools evaluation.
+    This simulates the COCO API used for evaluation.
+    """
+    def __init__(self, dataset : YoloDetection):
+        self.orig_dataset = dataset
+        self.cats = self._create_category_mapping()
+        self.imgs = self._create_image_mapping()
+        self.anns = self._create_annotation_mapping()
+        
+        # Create lookup dictionaries
+        self.imgToAnns = defaultdict(list)
+        self.catToImgs = defaultdict(list)
+        
+        for ann in self.anns.values():
+            self.imgToAnns[ann['image_id']].append(ann)
+            self.catToImgs[ann['category_id']].append(ann['image_id'])
+            
+        # Create the dataset structure that COCO.loadRes expects
+        self.dataset = {
+            'images': self.imgs,
+            'annotations': list(self.anns.values()),
+            'categories': list(self.cats.values()),
+        }
+        
+    def _create_category_mapping(self):
+        """Create a category mapping similar to COCO format"""
+        cats = {}
+        for idx, name in enumerate(self.orig_dataset.class_names):
+            cat_id = self.orig_dataset.class_to_coco_id[idx]
+            cats[cat_id] = {
+                'id': cat_id,
+                'name': name,
+                'supercategory': 'none'
+            }
+        return cats
+        
+    def _create_image_mapping(self):
+        """Create an image mapping similar to COCO format"""
+        imgs = []
+        for idx, img_path in enumerate(self.orig_dataset.img_files):
+            img = Image.open(img_path)
+            width, height = img.size
+            imgs.append({
+                'id': idx,
+                'file_name': os.path.basename(img_path),
+                'width': width,
+                'height': height
+            })
+        return imgs
+        
+    def _create_annotation_mapping(self):
+        """Create an annotation mapping similar to COCO format"""
+        anns = {}
+        ann_id = 0
+        
+        for img_id, img_path in enumerate(self.orig_dataset.img_files):
+            base_name = os.path.splitext(os.path.basename(img_path))[0]
+            label_path = os.path.join(self.orig_dataset.labels_folder, base_name + '.txt')
+            
+            # Skip if no label file exists
+            if not os.path.exists(label_path):
+                continue
+                
+            img = Image.open(img_path)
+            width, height = img.size
+            
+            with open(label_path, 'r') as f:
+                for line in f.readlines():
+                    data = line.strip().split()
+                    if len(data) == 5:  # class_id, x_center, y_center, width, height
+                        class_id = int(data[0])
+                        # YOLO format: [class_id, x_center, y_center, width, height] (normalized [0,1])
+                        x_center, y_center, box_width, box_height = map(float, data[1:5])
+                        
+                        # Convert to COCO format (x, y, width, height) where x,y is top-left corner
+                        x = (x_center - box_width / 2) * width
+                        y = (y_center - box_height / 2) * height
+                        w = box_width * width
+                        h = box_height * height
+                        
+                        # COCO annotation
+                        anns[ann_id] = {
+                            'id': ann_id,
+                            'image_id': img_id,
+                            'category_id': self.orig_dataset.class_to_coco_id[class_id],
+                            'bbox': [x, y, w, h],
+                            'area': w * h,
+                            'iscrowd': 0
+                        }
+                        ann_id += 1
+        
+        return anns
     
-    img_folder, labels_folder = PATHS[image_set.split("_")[0]]
-    data_yaml_path = root / "data.yaml"
+    def getAnnIds(self, imgIds=None, catIds=None, areaRng=None, iscrowd=None):
+        """Get annotation IDs matching the given filter conditions"""
+        anns = self.anns.values()
+        
+        if imgIds is not None:
+            if not isinstance(imgIds, list):
+                imgIds = [imgIds]
+            anns = [ann for ann in anns if ann['image_id'] in imgIds]
+            
+        if catIds is not None:
+            if not isinstance(catIds, list):
+                catIds = [catIds]
+            anns = [ann for ann in anns if ann['category_id'] in catIds]
+            
+        if areaRng is not None:
+            anns = [ann for ann in anns if areaRng[0] <= ann['area'] <= areaRng[1]]
+            
+        if iscrowd is not None:
+            anns = [ann for ann in anns if ann['iscrowd'] == iscrowd]
+            
+        return [ann['id'] for ann in anns]
     
-    # Check for required transform options
-    try:
-        square_resize_div_64 = args.square_resize_div_64
-    except:
-        square_resize_div_64 = False
+    def getCatIds(self, catNms=None, supNms=None, catIds=None):
+        """Get category IDs matching the given filter conditions"""
+        cats = self.cats.values()
+        
+        if catNms is not None:
+            if not isinstance(catNms, list):
+                catNms = [catNms]
+            cats = [cat for cat in cats if cat['name'] in catNms]
+            
+        if supNms is not None:
+            if not isinstance(supNms, list):
+                supNms = [supNms]
+            cats = [cat for cat in cats if cat['supercategory'] in supNms]
+            
+        if catIds is not None:
+            if not isinstance(catIds, list):
+                catIds = [catIds]
+            cats = [cat for cat in cats if cat['id'] in catIds]
+            
+        return [cat['id'] for cat in cats]
     
-    # Choose appropriate transforms
-    if square_resize_div_64:
-        dataset = YoloDetection(
-            img_folder, 
-            labels_folder,
-            data_yaml_path,
-            transforms=make_coco_transforms_square_div_64(
-                image_set, 
-                resolution, 
-                multi_scale=args.multi_scale, 
-                expanded_scales=args.expanded_scales
-            )
-        )
-    else:
-        dataset = YoloDetection(
-            img_folder, 
-            labels_folder,
-            data_yaml_path,
-            transforms=make_coco_transforms(
-                image_set, 
-                resolution, 
-                multi_scale=args.multi_scale, 
-                expanded_scales=args.expanded_scales
-            )
-        )
+    def getImgIds(self, imgIds=None, catIds=None):
+        """Get image IDs matching the given filter conditions"""
+        imgs = self.imgs
+        
+        if imgIds is not None:
+            if not isinstance(imgIds, list):
+                imgIds = [imgIds]
+            imgs = [img for img in imgs if img['id'] in imgIds]
+            
+        if catIds is not None:
+            if not isinstance(catIds, list):
+                catIds = [catIds]
+            # Use cached mapping for performance
+            img_ids = set()
+            for cat_id in catIds:
+                img_ids.update(self.catToImgs[cat_id])
+            imgs = [img for img in imgs if img['id'] in img_ids]
+            
+        return [img['id'] for img in imgs]
     
-    return dataset 
+    def loadAnns(self, ids):
+        """Load annotations with the specified IDs"""
+        if isinstance(ids, int):
+            ids = [ids]
+        return [self.anns[id] for id in ids if id in self.anns]
+    
+    def loadCats(self, ids):
+        """Load categories with the specified IDs"""
+        if isinstance(ids, int):
+            ids = [ids]
+        return [self.cats[id] for id in ids if id in self.cats]
+    
+    def loadImgs(self, ids):
+        """Load images with the specified IDs"""
+        if isinstance(ids, int):
+            ids = [ids]
+        return [self.imgs[id] for id in ids if id in self.imgs]
+    
