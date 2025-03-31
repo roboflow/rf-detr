@@ -91,7 +91,7 @@ def build_yolo(image_set, args, resolution):
     return dataset 
 
 
-def _parse_yolo_annotations(lines: list[str], resolution_wh: tuple[int, int], class_names: list[str]) -> tuple[list, list]:
+def parse_yolo_annotations(lines: list[str], resolution_wh: tuple[int, int], class_names: list[str]) -> tuple[list, list]:
     boxes = []
     labels = []
     for line in lines:
@@ -116,6 +116,8 @@ def _parse_yolo_annotations(lines: list[str], resolution_wh: tuple[int, int], cl
             
             boxes.append([x1, y1, x2, y2])
             labels.append(class_id)
+    
+    return boxes, labels
 
 
 def match_image_label_pairs(image_paths, label_paths):
@@ -224,7 +226,7 @@ class YOLODataset(torch.utils.data.Dataset):
         target["size"] = torch.as_tensor([int(h), int(w)])
         
         label_lines = read_txt_file(label_path)
-        boxes, labels = _parse_yolo_annotations(label_lines, (w, h), self.class_names)
+        boxes, labels = parse_yolo_annotations(label_lines, (w, h), self.class_names)
         
         if len(boxes) > 0:
             boxes = torch.as_tensor(boxes, dtype=torch.float32)
