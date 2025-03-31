@@ -223,7 +223,7 @@ class YOLODataset(torch.utils.data.Dataset):
         target["orig_size"] = torch.as_tensor([int(h), int(w)])
         target["size"] = torch.as_tensor([int(h), int(w)])
         
-        label_lines = read_txt_file(label_path).splitlines()
+        label_lines = read_txt_file(label_path)
         boxes, labels = _parse_yolo_annotations(label_lines, (w, h))
         
         if len(boxes) > 0:
