@@ -165,7 +165,6 @@ class YoloDetection(torch.utils.data.Dataset):
             boxes = torch.as_tensor(boxes, dtype=torch.float32)
             labels = torch.as_tensor(labels, dtype=torch.int64)
         else:
-            # No objects in this image
             boxes = torch.zeros((0, 4), dtype=torch.float32)
             labels = torch.zeros(0, dtype=torch.int64)
         
@@ -200,7 +199,6 @@ class CocoLikeAPI:
         self.imgs = self._create_image_mapping()
         self.anns = self._create_annotation_mapping()
         
-        # Create lookup dictionaries
         self.imgToAnns = defaultdict(list)
         self.catToImgs = defaultdict(list)
         
@@ -208,7 +206,6 @@ class CocoLikeAPI:
             self.imgToAnns[ann['image_id']].append(ann)
             self.catToImgs[ann['category_id']].append(ann['image_id'])
             
-        # Create the dataset structure that COCO.loadRes expects
         self.dataset = {
             'images': self.imgs,
             'annotations': list(self.anns.values()),
@@ -234,7 +231,7 @@ class CocoLikeAPI:
             img = Image.open(img_path)
             width, height = img.size
             imgs.append({
-                'id': self.orig_dataset.ids[idx],  # Use the same ID as the original dataset
+                'id': self.orig_dataset.ids[idx],  
                 'file_name': os.path.basename(img_path),
                 'width': width,
                 'height': height
@@ -250,7 +247,6 @@ class CocoLikeAPI:
             base_name = os.path.splitext(os.path.basename(img_path))[0]
             label_path = os.path.join(self.orig_dataset.labels_folder, base_name + '.txt')
             
-            # Skip if no label file exists
             if not os.path.exists(label_path):
                 continue
                 
@@ -260,21 +256,18 @@ class CocoLikeAPI:
             with open(label_path, 'r') as f:
                 for line in f.readlines():
                     data = line.strip().split()
-                    if len(data) == 5:  # class_id, x_center, y_center, width, height
+                    if len(data) == 5:  
                         class_id = int(data[0])
-                        # YOLO format: [class_id, x_center, y_center, width, height] (normalized [0,1])
                         x_center, y_center, box_width, box_height = map(float, data[1:5])
                         
-                        # Convert to COCO format (x, y, width, height) where x,y is top-left corner
                         x = (x_center - box_width / 2) * width
                         y = (y_center - box_height / 2) * height
                         w = box_width * width
                         h = box_height * height
                         
-                        # COCO annotation
                         anns[ann_id] = {
                             'id': ann_id,
-                            'image_id': self.orig_dataset.ids[idx],  # Use the same ID as the original dataset
+                            'image_id': self.orig_dataset.ids[idx],  
                             'category_id': self.orig_dataset.class_to_coco_id[class_id],
                             'bbox': [x, y, w, h],
                             'area': w * h,
@@ -339,7 +332,7 @@ class CocoLikeAPI:
         if catIds is not None:
             if not isinstance(catIds, list):
                 catIds = [catIds]
-            # Use cached mapping for performance
+
             img_ids = set()
             for cat_id in catIds:
                 img_ids.update(self.catToImgs[cat_id])
