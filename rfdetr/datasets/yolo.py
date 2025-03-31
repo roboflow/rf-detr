@@ -210,11 +210,9 @@ class YoloDetection(torch.utils.data.Dataset):
             
         print(f"Loaded {len(self.class_names)} classes from YOLO dataset: {self.class_names}")
             
-        # Mapping from class indices to IDs (to match COCO format)
-        # COCO uses 1-indexed class IDs, with 0 reserved for background
         self.class_to_coco_id = {i: i for i in range(len(self.class_names))}
         
-        # Image IDs same as indices for simplicity
+        # Image IDs start from 1
         self.ids = [i+1 for i in list(range(len(self.img_files)))]
         
         # Cache for the COCO-like API
@@ -226,7 +224,7 @@ class YoloDetection(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         img_path = self.img_files[idx]
         image_id = self.ids[idx]
-        
+
         # Get label file path (same name as image but with .txt extension)
         base_name = os.path.splitext(os.path.basename(img_path))[0]
         label_path = os.path.join(self.labels_folder, base_name + '.txt')
