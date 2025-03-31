@@ -129,24 +129,46 @@ def match_image_label_pairs(image_paths, label_paths):
     Returns:
         Tuple of (matched_image_paths, matched_label_paths) with paired files in sorted order
     """
-    # Create mapping from base names to label paths
     label_dict = {}
+    label_basenames = set()
     for label_path in label_paths:
         base_name = os.path.splitext(os.path.basename(label_path))[0]
         label_dict[base_name] = label_path
+        label_basenames.add(base_name)
     
-    # Match image paths with label paths
+    image_count = len(image_paths)
+    label_count = len(label_paths)
+    skipped_images = []
+    unused_labels = set(label_basenames)
+    
     matched_pairs = []
     for image_path in image_paths:
         base_name = os.path.splitext(os.path.basename(image_path))[0]
         if base_name in label_dict:
             matched_pairs.append((image_path, label_dict[base_name]))
+            unused_labels.discard(base_name)
+        else:
+            skipped_images.append(os.path.basename(image_path))
     
-    # Sort by image path
     matched_pairs.sort(key=lambda x: x[0])
     
-    # Unzip into separate lists
     matched_image_paths, matched_label_paths = zip(*matched_pairs) if matched_pairs else ([], [])
+    
+    if skipped_images:
+        print(f"WARNING: Skipped {len(skipped_images)} images without matching labels")
+        if len(skipped_images) <= 10:
+            print(f"  Skipped images: {', '.join(skipped_images)}")
+        else:
+            print(f"  First 10 skipped images: {', '.join(skipped_images[:10])}...")
+    
+    if unused_labels:
+        print(f"WARNING: Found {len(unused_labels)} label files without matching images")
+        if len(unused_labels) <= 10:
+            print(f"  Unused labels: {', '.join(unused_labels)}")
+        else:
+            print(f"  First 10 unused labels: {', '.join(list(unused_labels)[:10])}...")
+    
+    print(f"Matching complete: {len(matched_pairs)}/{image_count} images matched with labels ({len(matched_pairs)}/{label_count} labels used)")
     
     return list(matched_image_paths), list(matched_label_paths)
 
@@ -159,7 +181,6 @@ class YOLODataset(torch.utils.data.Dataset):
         self.annotations_directory_path = annotations_directory_path
         self.transforms = transforms
         
-        # Get all image and label paths
         image_paths = list_files_with_extensions(
             directory=images_directory_path,
             extensions=["jpg", "jpeg", "png"],
@@ -170,7 +191,6 @@ class YOLODataset(torch.utils.data.Dataset):
             extensions=["txt"],
         )
         
-        # Match image and label pairs, dropping any that don't have a match
         self.image_paths, self.label_paths = match_image_label_pairs(
             image_paths=image_paths, label_paths=label_paths)
         
