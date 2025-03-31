@@ -16,7 +16,7 @@ import torchvision
 from .coco import build as build_coco
 from .o365 import build_o365
 from .coco import build_roboflow
-from .yolo import build_yolo, YoloDetection
+from .yolo import build_yolo, YOLODataset
 
 
 def get_coco_api_from_dataset(dataset):
@@ -25,7 +25,7 @@ def get_coco_api_from_dataset(dataset):
             dataset = dataset.dataset
     if isinstance(dataset, torchvision.datasets.CocoDetection):
         return dataset.coco
-    if isinstance(dataset, YoloDetection):
+    if isinstance(dataset, YOLODataset):
         return dataset.coco
 
 

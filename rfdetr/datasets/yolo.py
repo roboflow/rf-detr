@@ -9,12 +9,12 @@ import glob
 from PIL import Image
 import numpy as np
 from collections import defaultdict
+import supervision as sv
 
 import torch
 import torch.utils.data
 
 from rfdetr.datasets.coco import make_coco_transforms, make_coco_transforms_square_div_64
-from rfdetr.util.files import load_txt_lines
 
 REQUIRED_YOLO_YAML_FILE = "data.yaml"
 REQUIRED_SPLIT_DIRS = ["train", "valid"]
@@ -63,7 +63,7 @@ def build_yolo(image_set, args, resolution):
         square_resize_div_64 = False
     
     if square_resize_div_64:
-        dataset = YoloDetection(
+        dataset = YOLODataset(
             img_folder, 
             labels_folder,
             data_yaml_path,
@@ -75,7 +75,7 @@ def build_yolo(image_set, args, resolution):
             )
         )
     else:
-        dataset = YoloDetection(
+        dataset = YOLODataset(
             img_folder, 
             labels_folder,
             data_yaml_path,
@@ -90,66 +90,109 @@ def build_yolo(image_set, args, resolution):
     return dataset 
 
 
-class YoloDetection(torch.utils.data.Dataset):
-    """Dataset for YOLO format annotations"""
-    def __init__(self, img_folder, labels_folder, data_yaml_path, transforms=None):
-        super(YoloDetection, self).__init__()
-        self.img_folder = img_folder
-        self.labels_folder = labels_folder
-        self.transforms = transforms
-        self.img_files = sorted(glob.glob(os.path.join(img_folder, '*.jpg')) + 
-                        glob.glob(os.path.join(img_folder, '*.jpeg')) + 
-                        glob.glob(os.path.join(img_folder, '*.png')))
+def _parse_yolo_annotations(self, lines: list[str], resolution_wh: tuple[int, int]) -> tuple[list, list]:
+    boxes = []
+    labels = []
+    for line in lines:
+        data = line.strip().split()
+        if len(data) == 5: 
+            class_id = int(data[0])
+            
+            if class_id < 0 or class_id >= len(self.class_names):
+                print(f"Warning: Skipping invalid class ID {class_id}")
+                continue
+                
+            x_center, y_center, width, height = map(float, data[1:5])
+            
+            if not all(0 <= v <= 1 for v in [x_center, y_center, width, height]):
+                print(f"Warning: Skipping invalid coordinates {x_center}, {y_center}, {width}, {height}. (Not normalized)")
+                continue
+            
+            x1 = (x_center - width / 2) * resolution_wh[0]
+            y1 = (y_center - height / 2) * resolution_wh[1]
+            x2 = (x_center + width / 2) * resolution_wh[0]
+            y2 = (y_center + height / 2) * resolution_wh[1]
+            
+            boxes.append([x1, y1, x2, y2])
+            labels.append(class_id)
+
+
+def match_image_label_pairs(image_paths, label_paths):
+    """
+    Matches image paths with their corresponding label paths.
+    
+    Args:
+        image_paths: List of paths to image files
+        label_paths: List of paths to label files
         
-        with open(data_yaml_path, 'r') as f:
-            data = yaml.safe_load(f)
-            self.class_names = data.get('names', [])
+    Returns:
+        Tuple of (matched_image_paths, matched_label_paths) with paired files in sorted order
+    """
+    # Create mapping from base names to label paths
+    label_dict = {}
+    for label_path in label_paths:
+        base_name = os.path.splitext(os.path.basename(label_path))[0]
+        label_dict[base_name] = label_path
+    
+    # Match image paths with label paths
+    matched_pairs = []
+    for image_path in image_paths:
+        base_name = os.path.splitext(os.path.basename(image_path))[0]
+        if base_name in label_dict:
+            matched_pairs.append((image_path, label_dict[base_name]))
+    
+    # Sort by image path
+    matched_pairs.sort(key=lambda x: x[0])
+    
+    # Unzip into separate lists
+    matched_image_paths, matched_label_paths = zip(*matched_pairs) if matched_pairs else ([], [])
+    
+    return list(matched_image_paths), list(matched_label_paths)
+
+
+class YOLODataset(torch.utils.data.Dataset):
+    """Dataset for YOLO format annotations"""
+    def __init__(self, images_directory_path: str, annotations_directory_path: str, data_yaml_path: str, transforms=None):
+        super(YOLODataset, self).__init__()
+        self.images_directory_path = images_directory_path
+        self.annotations_directory_path = annotations_directory_path
+        self.transforms = transforms
+        
+        # Get all image and label paths
+        image_paths = sv.utils.list_files_with_extensions(
+            directory=images_directory_path,
+            extensions=["jpg", "jpeg", "png"],
+        )
+        
+        label_paths = sv.utils.list_files_with_extensions(
+            directory=annotations_directory_path,
+            extensions=["txt"],
+        )
+        
+        # Match image and label pairs, dropping any that don't have a match
+        self.image_paths, self.label_paths = match_image_label_pairs(
+            image_paths=image_paths, label_paths=label_paths)
+        
+        data = sv.utils.read_yaml_file(data_yaml_path)
+        self.class_names = data.get('names', [])
             
         print(f"Loaded {len(self.class_names)} classes from YOLO dataset: {self.class_names}")
+        print(f"Found {len(self.image_paths)} valid image-label pairs.")
             
-        self.class_to_coco_id = {i: i for i in range(len(self.class_names))}
-        
-        self.ids = [i+1 for i in list(range(len(self.img_files)))]
+        self.ids = [i+1 for i in list(range(len(self.image_paths)))]
         
         self._coco = None
         
     def __len__(self):
-        return len(self.img_files)
+        return len(self.image_paths)
 
-    def _parse_yolo_annotations(self, lines: list[str], width: int, height: int) -> tuple[list, list]:
-        boxes = []
-        labels = []
-        for line in lines:
-            data = line.strip().split()
-            if len(data) == 5: 
-                class_id = int(data[0])
-                
-                if class_id < 0 or class_id >= len(self.class_names):
-                    print(f"Warning: Skipping invalid class ID {class_id}")
-                    continue
-                    
-                x_center, y_center, width, height = map(float, data[1:5])
-                
-                if not all(0 <= v <= 1 for v in [x_center, y_center, width, height]):
-                    print(f"Warning: Skipping invalid coordinates {x_center}, {y_center}, {width}, {height}. (Not normalized)")
-                    continue
-                
-                x1 = (x_center - width / 2) * width
-                y1 = (y_center - height / 2) * height
-                x2 = (x_center + width / 2) * width
-                y2 = (y_center + height / 2) * height
-                
-                boxes.append([x1, y1, x2, y2])
-                labels.append(self.class_to_coco_id[class_id])
     
     def __getitem__(self, idx):
         if isinstance(idx, str):
             idx = int(idx)
-        img_path = self.img_files[idx]
+        img_path = self.image_paths[idx]
+        label_path = self.label_paths[idx]
         image_id = self.ids[idx]
-
-        base_name = os.path.splitext(os.path.basename(img_path))[0]
-        label_path = os.path.join(self.labels_folder, base_name + '.txt')
         
         img = Image.open(img_path).convert('RGB')
         w, h = img.size
@@ -159,7 +202,8 @@ class YoloDetection(torch.utils.data.Dataset):
         target["orig_size"] = torch.as_tensor([int(h), int(w)])
         target["size"] = torch.as_tensor([int(h), int(w)])
         
-        boxes, labels = self._parse_yolo_annotations(load_txt_lines(label_path))
+        label_lines = sv.utils.read_txt_file(label_path).splitlines()
+        boxes, labels = _parse_yolo_annotations(label_lines, (w, h))
         
         if len(boxes) > 0:
             boxes = torch.as_tensor(boxes, dtype=torch.float32)
@@ -193,7 +237,7 @@ class CocoLikeAPI:
     A COCO-like API for compatibility with pycocotools evaluation.
     This simulates the COCO API used for evaluation.
     """
-    def __init__(self, dataset : YoloDetection):
+    def __init__(self, dataset : YOLODataset):
         self.orig_dataset = dataset
         self.cats = self._create_category_mapping()
         self.imgs = self._create_image_mapping()
@@ -216,7 +260,7 @@ class CocoLikeAPI:
         """Create a category mapping similar to COCO format"""
         cats = {}
         for idx, name in enumerate(self.orig_dataset.class_names):
-            cat_id = self.orig_dataset.class_to_coco_id[idx]
+            cat_id = idx
             cats[cat_id] = {
                 'id': cat_id,
                 'name': name,
@@ -227,7 +271,7 @@ class CocoLikeAPI:
     def _create_image_mapping(self):
         """Create an image mapping similar to COCO format"""
         imgs = []
-        for idx, img_path in enumerate(self.orig_dataset.img_files):
+        for idx, img_path in enumerate(self.orig_dataset.image_paths):
             img = Image.open(img_path)
             width, height = img.size
             imgs.append({
@@ -243,13 +287,7 @@ class CocoLikeAPI:
         anns = {}
         ann_id = 0
         
-        for idx, img_path in enumerate(self.orig_dataset.img_files):
-            base_name = os.path.splitext(os.path.basename(img_path))[0]
-            label_path = os.path.join(self.orig_dataset.labels_folder, base_name + '.txt')
-            
-            if not os.path.exists(label_path):
-                continue
-                
+        for idx, (img_path, label_path) in enumerate(zip(self.orig_dataset.image_paths, self.orig_dataset.label_paths)):
             img = Image.open(img_path)
             width, height = img.size
             
@@ -268,7 +306,7 @@ class CocoLikeAPI:
                         anns[ann_id] = {
                             'id': ann_id,
                             'image_id': self.orig_dataset.ids[idx],  
-                            'category_id': self.orig_dataset.class_to_coco_id[class_id],
+                            'category_id': class_id,
                             'bbox': [x, y, w, h],
                             'area': w * h,
                             'iscrowd': 0
