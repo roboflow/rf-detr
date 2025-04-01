@@ -1,3 +1,5 @@
+from typing import Optional
+
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -5,6 +7,11 @@ try:
     from torch.utils.tensorboard import SummaryWriter
 except ModuleNotFoundError:
     SummaryWriter = None
+
+try:
+    import wandb
+except ModuleNotFoundError:
+    wandb = None
 
 plt.ioff()
 
@@ -118,7 +125,7 @@ class MetricsTensorBoardSink:
     def __init__(self, output_dir: str):
         if SummaryWriter:
             self.writer = SummaryWriter(log_dir=output_dir)
-            print(f"To monitor logs, use 'tensorboard --logdir {output_dir}' and open http://localhost:6006/ in brawser.")
+            print(f"To monitor logs, use 'tensorboard --logdir {output_dir}' and open http://localhost:6006/ in browser.")
         else:
             self.writer = None
             print("Unable to initialize TensorBoard. Logging is turned off for this session.")
@@ -165,3 +172,76 @@ class MetricsTensorBoardSink:
             return
         
         self.writer.close()
+
+class MetricsWandBSink:
+    """
+    The MetricsWandBSink class logs training metrics to Weights and Biases.
+
+    Args:
+        output_dir (str): Directory where W&B logs will be written locally.
+        project_name (str, optional): Associate this training run with a W&B project. If None, W&B will generate a name based on the git repo name.
+        run_name (str, optional): W&B run name. If None, W&B will generate a random name.
+        config (dict, optional): Input parameters, like hyperparameters or data preprocessing settings for the run for later comparison.
+    """
+
+    def __init__(self, output_dir: str, project_name: Optional[str] = None, run_name: Optional[str] = None, config: Optional[dict] = None):
+        self.output_dir = output_dir
+        if wandb:
+            self.run = wandb.init(
+                project=project_name,
+                name=run_name,
+                config=config,
+                dir=output_dir
+            )
+            print(f"Weights & Biases initialized. View logs at {wandb.run.url}")
+        else:
+            self.run = None
+            print("Unable to initialize Weights & Biases. Please install with 'pip install wandb' and 'wandb login'.")
+
+    def update(self, values: dict):
+        if not wandb or not self.run:
+            return
+
+        epoch = values['epoch']
+        log_dict = {"epoch": epoch}
+        
+        # Log losses
+        if 'train_loss' in values:
+            log_dict["Loss/Train"] = values['train_loss']
+        if 'test_loss' in values:
+            log_dict["Loss/Test"] = values['test_loss']
+
+        # Log COCO metrics for base model
+        if 'test_coco_eval_bbox' in values:
+            coco_eval = values['test_coco_eval_bbox']
+            ap50_90 = safe_index(coco_eval, 0)
+            ap50 = safe_index(coco_eval, 1)
+            ar50_90 = safe_index(coco_eval, 6)
+            if ap50_90 is not None:
+                log_dict["Metrics/Base/AP50_90"] = ap50_90
+            if ap50 is not None:
+                log_dict["Metrics/Base/AP50"] = ap50
+            if ar50_90 is not None:
+                log_dict["Metrics/Base/AR50_90"] = ar50_90
+
+        # Log COCO metrics for EMA model
+        if 'ema_test_coco_eval_bbox' in values:
+            ema_coco_eval = values['ema_test_coco_eval_bbox']
+            ema_ap50_90 = safe_index(ema_coco_eval, 0)
+            ema_ap50 = safe_index(ema_coco_eval, 1)
+            ema_ar50_90 = safe_index(ema_coco_eval, 6)
+            if ema_ap50_90 is not None:
+                log_dict["Metrics/EMA/AP50_90"] = ema_ap50_90
+            if ema_ap50 is not None:
+                log_dict["Metrics/EMA/AP50"] = ema_ap50
+            if ema_ar50_90 is not None:
+                log_dict["Metrics/EMA/AR50_90"] = ema_ar50_90
+
+        # Log all metrics in a single call
+        wandb.log(log_dict)
+
+    def close(self):
+        if not wandb or not self.run:
+            return
+            
+        self.run.finish()

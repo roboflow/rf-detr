@@ -246,11 +246,7 @@ class Model:
                 else:
                     del self.ema_m
                     self.ema_m = ModelEma(model, decay=args.ema_decay, tau=args.ema_tau) 
-            if not args.eval and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
-                checkpoint['optimizer']["param_groups"] = optimizer.state_dict()["param_groups"]
-                checkpoint['lr_scheduler'].pop("step_size")
-                checkpoint['lr_scheduler'].pop("_last_lr")
-                
+            if not args.eval and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:                
                 optimizer.load_state_dict(checkpoint['optimizer'])
                 lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
                 args.start_epoch = checkpoint['epoch'] + 1
