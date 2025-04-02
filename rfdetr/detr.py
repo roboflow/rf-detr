@@ -12,7 +12,7 @@ from PIL import Image
 
 from rfdetr.config import RFDETRBaseConfig, RFDETRLargeConfig, TrainConfig, ModelConfig
 from rfdetr.main import Model, download_pretrain_weights
-from rfdetr.util.metrics import MetricsPlotSink, MetricsTensorBoardSink, MetricsWandBSink
+from rfdetr.util.metrics import MetricsPlotSink, MetricsTensorBoardSink, MetricsWandBSink, MetricsMLFlowSink
 
 logger = getLogger(__name__)
 class RFDETR:
@@ -89,6 +89,16 @@ class RFDETR:
             )
             self.callbacks["on_fit_epoch_end"].append(metrics_wandb_sink.update)
             self.callbacks["on_train_end"].append(metrics_wandb_sink.close)
+
+        if config.mlflow:
+            metrics_mlflow_sink = MetricsMLFlowSink(
+                output_dir=config.output_dir,
+                experiment_name=config.project,
+                run_name=config.run,
+                config=config.model_dump(),
+            )
+            self.callbacks["on_fit_epoch_end"].append(metrics_mlflow_sink.update)
+            self.callbacks["on_train_end"].append(metrics_mlflow_sink.close)
 
         if config.early_stopping:
             from rfdetr.util.early_stopping import EarlyStoppingCallback
