@@ -79,3 +79,4 @@ class TrainConfig(BaseModel):
     wandb: bool = False
     project: Optional[str] = None
     run: Optional[str] = None
+    class_names: List[str] = None
