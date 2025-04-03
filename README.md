@@ -26,7 +26,8 @@ We validated the performance of RF-DETR on both Microsoft COCO and the RF100-VL 
 <summary>RF100-VL benchmark results</summary>
 
 <br>
-    
+
+
 <img src="https://github.com/user-attachments/assets/e61a7ba4-5294-40a9-8cd7-4fc924639924" alt="rf100-vl-map50">
 </details>
 
@@ -120,7 +121,8 @@ model = RFDETRBase()
 
 def callback(frame, index):
     detections = model.predict(frame, threshold=0.5)
-        
+
+
     labels = [
         f"{COCO_CLASSES[class_id]} {confidence:.2f}"
         for class_id, confidence
@@ -161,7 +163,8 @@ while True:
         break
 
     detections = model.predict(frame, threshold=0.5)
-    
+
+
     labels = [
         f"{COCO_CLASSES[class_id]} {confidence:.2f}"
         for class_id, confidence
@@ -203,7 +206,8 @@ while True:
         break
 
     detections = model.predict(frame, threshold=0.5)
-    
+
+
     labels = [
         f"{COCO_CLASSES[class_id]} {confidence:.2f}"
         for class_id, confidence
@@ -441,14 +445,17 @@ During training, two model checkpoints (the regular weights and an EMA-based set
     ```bash
     pip install "rfdetr[metrics]"
     ```
-  
+
+
 - To activate logging, pass the extra parameter `tensorboard=True` to `.train()`:
 
     ```python
     from rfdetr import RFDETRBase
-    
+
+
     model = RFDETRBase()
-    
+
+
     model.train(
         dataset_dir=<DATASET_PATH>,
         epochs=10,
@@ -474,7 +481,8 @@ During training, two model checkpoints (the regular weights and an EMA-based set
     %load_ext tensorboard
     %tensorboard --logdir <OUTPUT_DIR>
     ```
-      
+
+
 </details>
 
 ### Logging with Weights and Biases
@@ -504,9 +512,11 @@ During training, two model checkpoints (the regular weights and an EMA-based set
 
     ```python
     from rfdetr import RFDETRBase
-    
+
+
     model = RFDETRBase()
-    
+
+
     model.train(
         dataset_dir=<DATASET_PATH>,
         epochs=10,
@@ -521,8 +531,78 @@ During training, two model checkpoints (the regular weights and an EMA-based set
     ```
 
     In W&B, projects are collections of related machine learning experiments, and runs are individual sessions where training or evaluation happens. If you don't specify a name for a run, W&B will assign a random one automatically.
-  
+
+
 </details>
+
+### Logging with MLflow
+
+> [!IMPORTANT]
+> MLflow support isn't officially released yet.
+> Install from source to access it: `pip install git+https://github.com/roboflow/rf-detr.git`.
+
+[MLflow](https://mlflow.org/) is an open-source platform for the machine learning lifecycle that helps you track experiments, package code into reproducible runs, and share and deploy models. To enable logging, simply pass `mlflow=True` when training the model.
+
+<details>
+<summary>Using MLflow with RF-DETR</summary>
+
+<br>
+
+- MLflow logging requires additional packages. Install them with:
+
+    ```bash
+    pip install "rfdetr[metrics]"
+    ```
+
+- To activate logging, pass the extra parameter `mlflow=True` to `.train()`:
+
+    ```python
+    from rfdetr import RFDETRBase
+
+    model = RFDETRBase()
+
+    model.train(
+        dataset_dir=<DATASET_PATH>,
+        epochs=10,
+        batch_size=4,
+        grad_accum_steps=4,
+        lr=1e-4,
+        output_dir=<OUTPUT_PATH>,
+        mlflow=True,
+        project=<EXPERIMENT_NAME>,
+        run=<RUN_NAME>
+    )
+    ```
+
+- The `project` parameter sets the experiment name in MLflow, while `run` sets the run name. If you don't specify these, MLflow will use default values.
+
+- To use a custom MLflow tracking server, set the `MLFLOW_TRACKING_URI` environment variable:
+
+    ```python
+    import os
+
+    # Set MLflow tracking URI
+    os.environ["MLFLOW_TRACKING_URI"] = "https://your-mlflow-server.com"
+
+    # For authentication with tracking servers that require it
+    os.environ["MLFLOW_TRACKING_TOKEN"] = "your-auth-token"
+
+    # Then initialize and train your model
+    model = RFDETRBase()
+    model.train(..., mlflow=True)
+    ```
+
+- For teams using a hosted MLflow service (like Databricks), you'll typically need to set:
+  - `MLFLOW_TRACKING_URI`: The URL of your MLflow tracking server
+  - `MLFLOW_TRACKING_TOKEN`: Authentication token for your MLflow server
+
+- To view your logs after training, start the MLflow UI:
+
+    ```bash
+    mlflow ui
+    ```
+
+    Then open `http://localhost:5000` in your browser to access the MLflow dashboard.
 
 ### Load and run fine-tuned model
 
