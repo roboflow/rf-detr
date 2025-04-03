@@ -95,7 +95,7 @@ class RFDETR:
                 output_dir=config.output_dir,
                 experiment_name=config.project,
                 run_name=config.run,
-                config=config.model_dump(),
+                config=config.dict(),
             )
             self.callbacks["on_fit_epoch_end"].append(metrics_mlflow_sink.update)
             self.callbacks["on_train_end"].append(metrics_mlflow_sink.close)
