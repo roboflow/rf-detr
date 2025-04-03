@@ -43,7 +43,8 @@ from peft import LoraConfig, get_peft_model
 from typing import DefaultDict, List, Callable
 from logging import getLogger
 import shutil
-from rfdetr.util.files import download_file
+
+from huggingface_hub import hf_hub_download
 import os
 if str(os.environ.get("USE_FILE_SYSTEM_SHARING", "False")).lower() in ["true", "1"]:
     import torch.multiprocessing
@@ -51,23 +52,22 @@ if str(os.environ.get("USE_FILE_SYSTEM_SHARING", "False")).lower() in ["true", "
 
 logger = getLogger(__name__)
 
-HOSTED_MODELS = {
-    "rf-detr-base.pth": "https://storage.googleapis.com/rfdetr/rf-detr-base-coco.pth",
+HOSTED_MODELS = [
+    "rf-detr-base",
     # below is a less converged model that may be better for finetuning but worse for inference
-    "rf-detr-base-2.pth": "https://storage.googleapis.com/rfdetr/rf-detr-base-2.pth",
-    "rf-detr-large.pth": "https://storage.googleapis.com/rfdetr/rf-detr-large.pth"
-}
+    "rf-detr-base-2",
+    "rf-detr-large",
+]
 
-def download_pretrain_weights(pretrain_weights: str, redownload=False):
-    if pretrain_weights in HOSTED_MODELS:
-        if redownload or not os.path.exists(pretrain_weights):
+def download_pretrain_weights(model_name: str, redownload=False):
+    if model_name in HOSTED_MODELS:
+        if redownload or not os.path.exists(model_name):
             logger.info(
-                f"Downloading pretrained weights for {pretrain_weights}"
+                f"Downloading pretrained weights for {model_name}"
             )
-            download_file(
-                HOSTED_MODELS[pretrain_weights],
-                pretrain_weights,
-            )
+            hf_hub_download(repo_id=f"roboflow/{model_name}", filename=f"{model_name}.pth", local_dir="weights")
+    else:
+        raise ValueError(f"Pretrain weights of model {model_name} not found")
 
 class Model:
     def __init__(self, **kwargs):
@@ -137,6 +137,28 @@ class Model:
         self.model = self.model.to(self.device)
         self.criterion, self.postprocessors = build_criterion_and_postprocessors(args)
         self.stop_early = False
+    
+    @classmethod
+    def from_pretrained(cls, repo_id: str):
+        """
+        Load a pretrained model from the Hugging Face Hub.
+        
+        Args:
+            repo_id (str): Name of the repository to download the weights from.
+            Must be one of: roboflow/rf-detr-base, roboflow/rf-detr-base-2, roboflow/rf-detr-large.
+            
+        Returns:
+            Model: A loaded model instance
+        """ 
+        # Download the weights if needed
+        filepath = hf_hub_download(repo_id, filename=f"{repo_id}.pth")
+        state_dict = torch.load(filepath, map_location='cpu')
+        
+        # Load the model
+        model = build_model(args)
+        model.load_state_dict(state_dict, strict=False)
+        
+        return model
     
     def reinitialize_detection_head(self, num_classes):
         self.model.reinitialize_detection_head(num_classes)
