@@ -391,6 +391,10 @@ Different GPUs have different VRAM capacities, so adjust batch_size and grad_acc
 
 ### Resume training
 
+> [!IMPORTANT]
+> Resume support isn’t officially released yet.
+> Install from source to access it: `pip install git+https://github.com/roboflow/rf-detr.git`.
+
 You can resume training from a previously saved checkpoint by passing the path to the `checkpoint.pth` file using the `resume` argument. This is useful when training is interrupted or you want to continue fine-tuning an already partially trained model. The training loop will automatically load the weights and optimizer state from the provided checkpoint file.
 
 ```python
@@ -428,6 +432,10 @@ Replace `8` in the `--nproc_per_node argument` with the number of GPUs you want 
 During training, two model checkpoints (the regular weights and an EMA-based set of weights) will be saved in the specified output directory. The EMA (Exponential Moving Average) file is a smoothed version of the model’s weights over time, often yielding better stability and generalization.
 
 ### Logging with TensorBoard
+
+> [!IMPORTANT]
+> TensorBoard support isn’t officially released yet.
+> Install from source to access it: `pip install git+https://github.com/roboflow/rf-detr.git`.
 
 [TensorBoard](https://www.tensorflow.org/tensorboard) is a powerful toolkit that helps you visualize and track training metrics. With TensorBoard set up, you can train your model and keep an eye on the logs to monitor performance, compare experiments, and optimize model training. To enable logging, simply pass `tensorboard=True` when training the model.
 
@@ -478,6 +486,10 @@ During training, two model checkpoints (the regular weights and an EMA-based set
 </details>
 
 ### Logging with Weights and Biases
+
+> [!IMPORTANT]
+> Weights and Biases support isn’t officially released yet.
+> Install from source to access it: `pip install git+https://github.com/roboflow/rf-detr.git`.
 
 [Weights and Biases (W&B)](https://www.wandb.ai) is a powerful cloud-based platform that helps you visualize and track training metrics. With W&B set up, you can monitor performance, compare experiments, and optimize model training using its rich feature set. To enable logging, simply pass `wandb=True` when training the model.
 
