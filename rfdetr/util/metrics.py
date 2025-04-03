@@ -248,7 +248,6 @@ class MetricsWandBSink:
         self.run.finish()
 
 
-
 class MetricsMLFlowSink:
     """
     Training metrics via MLFlow.
@@ -260,6 +259,9 @@ class MetricsMLFlowSink:
         run_name (str, optional): MLFlow run name. If None, MLFlow will generate a random name.
         config (dict, optional): Input parameters, like hyperparameters or data preprocessing settings
                                 for the run for later comparison.
+        track_system_metrics (bool, optional): Whether to track system metrics like CPU, memory, GPU usage.
+                                              Default is True.
+        system_metrics_interval (int, optional): Interval in seconds for system metrics logging. Default is 10.
     """
 
     def __init__(
@@ -268,6 +270,7 @@ class MetricsMLFlowSink:
         experiment_name: Optional[str] = None,
         run_name: Optional[str] = None,
         config: Optional[dict] = None,
+        track_system_metrics: bool = True,
     ):
         self.output_dir = output_dir
 
@@ -275,8 +278,15 @@ class MetricsMLFlowSink:
             self.run = None
             print(
                 "Unable to initialize MLFlow. Logging is turned off for this session. Run 'pip install mlflow' to enable logging."
+                "\nAfter installing, you can start the MLflow UI with: 'mlflow ui"
+                "\nThen access the MLflow dashboard at http://localhost:5000"
             )
             return
+
+        print(
+            "To start the MLflow UI, run: 'mlflow ui'"
+            "\nThen access the MLflow dashboard at http://localhost:5000"
+        )
 
         experiment_id = None
 
@@ -292,6 +302,9 @@ class MetricsMLFlowSink:
 
         try:
             self.run = mlflow.start_run(experiment_id=experiment_id, run_name=run_name)
+            if track_system_metrics:
+                mlflow.enable_system_metrics_logging()
+
             print(
                 f"MLFlow logging initialized. Run ID: {mlflow.active_run().info.run_id}"
             )
@@ -302,6 +315,7 @@ class MetricsMLFlowSink:
                         mlflow.log_param(key, value)
                     except Exception as e:
                         print(f"Error logging parameter {key}: {e}")
+
         except Exception as e:
             print(f"Error starting MLFlow run: {e}")
             self.run = None
