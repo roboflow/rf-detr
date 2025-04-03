@@ -160,6 +160,7 @@ class WindowedDinov2WithRegistersConfig(BackboneConfigMixin, PretrainedConfig):
         reshape_hidden_states=True,
         num_windows=1,
         window_block_indexes=None,
+        gradient_checkpointing=False,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -189,7 +190,7 @@ class WindowedDinov2WithRegistersConfig(BackboneConfigMixin, PretrainedConfig):
         self.reshape_hidden_states = reshape_hidden_states
         self.num_windows = num_windows
         self.window_block_indexes = list(range(num_hidden_layers)) if window_block_indexes is None else window_block_indexes
-
+        self.gradient_checkpointing = gradient_checkpointing
 
 
 class Dinov2WithRegistersPatchEmbeddings(nn.Module):
@@ -666,7 +667,7 @@ class WindowedDinov2WithRegistersEncoder(nn.Module):
         super().__init__()
         self.config = config
         self.layer = nn.ModuleList([WindowedDinov2WithRegistersLayer(config) for _ in range(config.num_hidden_layers)])
-        self.gradient_checkpointing = False
+        self.gradient_checkpointing = config.gradient_checkpointing
 
     def forward(
         self,

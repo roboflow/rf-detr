@@ -45,6 +45,9 @@ from logging import getLogger
 import shutil
 from rfdetr.util.files import download_file
 import os
+if str(os.environ.get("USE_FILE_SYSTEM_SHARING", "False")).lower() in ["true", "1"]:
+    import torch.multiprocessing
+    torch.multiprocessing.set_sharing_strategy('file_system')
 
 logger = getLogger(__name__)
 
@@ -133,9 +136,14 @@ class Model:
             self.model.backbone[0].encoder = get_peft_model(self.model.backbone[0].encoder, lora_config)
         self.model = self.model.to(self.device)
         self.criterion, self.postprocessors = build_criterion_and_postprocessors(args)
+        self.stop_early = False
     
     def reinitialize_detection_head(self, num_classes):
         self.model.reinitialize_detection_head(num_classes)
+
+    def request_early_stop(self):
+        self.stop_early = True
+        print("Early stopping requested, will complete current epoch and stop")
 
     def train(self, callbacks: DefaultDict[str, List[Callable]], **kwargs):
         currently_supported_callbacks = ["on_fit_epoch_end", "on_train_batch_start", "on_train_end"]
@@ -150,7 +158,7 @@ class Model:
         print("git:\n  {}\n".format(utils.get_sha()))
         print(args)
         device = torch.device(args.device)
-
+        
         # fix the seed for reproducibility
         seed = args.seed + utils.get_rank()
         torch.manual_seed(seed)
@@ -246,11 +254,7 @@ class Model:
                 else:
                     del self.ema_m
                     self.ema_m = ModelEma(model, decay=args.ema_decay, tau=args.ema_tau) 
-            if not args.eval and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
-                checkpoint['optimizer']["param_groups"] = optimizer.state_dict()["param_groups"]
-                checkpoint['lr_scheduler'].pop("step_size")
-                checkpoint['lr_scheduler'].pop("_last_lr")
-                
+            if not args.eval and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:                
                 optimizer.load_state_dict(checkpoint['optimizer'])
                 lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
                 args.start_epoch = checkpoint['epoch'] + 1
@@ -397,6 +401,10 @@ class Model:
             
             for callback in callbacks["on_fit_epoch_end"]:
                 callback(log_stats)
+
+            if self.stop_early:
+                print(f"Early stopping requested, stopping at epoch {epoch}")
+                break
 
         best_is_ema = best_map_ema_5095 > best_map_5095
         if best_is_ema:
@@ -740,6 +748,15 @@ def get_args_parser():
     )
     parser.add_argument('--lr_min_factor', default=0.0, type=float, 
         help='Minimum learning rate factor (as a fraction of initial lr) at the end of cosine annealing')
+    # Early stopping parameters
+    parser.add_argument('--early_stopping', action='store_true',
+                        help='Enable early stopping based on mAP improvement')
+    parser.add_argument('--early_stopping_patience', default=10, type=int,
+                        help='Number of epochs with no improvement after which training will be stopped')
+    parser.add_argument('--early_stopping_min_delta', default=0.001, type=float,
+                        help='Minimum change in mAP to qualify as an improvement')
+    parser.add_argument('--early_stopping_use_ema', action='store_true',
+                        help='Use EMA model metrics for early stopping')
     # subparsers
     subparsers = parser.add_subparsers(title='sub-commands', dest='subcommand',
         description='valid subcommands', help='additional help')
@@ -870,6 +887,12 @@ def populate_args(
     warmup_epochs=1,
     lr_scheduler='step',
     lr_min_factor=0.0,
+    # Early stopping parameters
+    early_stopping=True,
+    early_stopping_patience=10,
+    early_stopping_min_delta=0.001,
+    early_stopping_use_ema=False,
+    gradient_checkpointing=False,
     # Additional
     subcommand=None,
     **extra_kwargs  # To handle any unexpected arguments
@@ -964,6 +987,11 @@ def populate_args(
         warmup_epochs=warmup_epochs,
         lr_scheduler=lr_scheduler,
         lr_min_factor=lr_min_factor,
+        early_stopping=early_stopping,
+        early_stopping_patience=early_stopping_patience,
+        early_stopping_min_delta=early_stopping_min_delta,
+        early_stopping_use_ema=early_stopping_use_ema,
+        gradient_checkpointing=gradient_checkpointing,
         **extra_kwargs
     )
     return args

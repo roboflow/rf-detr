@@ -12,7 +12,7 @@ from PIL import Image
 
 from rfdetr.config import RFDETRBaseConfig, RFDETRLargeConfig, TrainConfig, ModelConfig
 from rfdetr.main import Model, download_pretrain_weights
-from rfdetr.util.metrics import MetricsPlotSink, MetricsTensorBoardSink
+from rfdetr.util.metrics import MetricsPlotSink, MetricsTensorBoardSink, MetricsWandBSink
 
 logger = getLogger(__name__)
 class RFDETR:
@@ -44,6 +44,7 @@ class RFDETR:
         ) as f:
             anns = json.load(f)
             num_classes = len(anns["categories"])
+            class_names = [c["name"] for c in anns["categories"] if c["supercategory"] != "none"]
 
         if self.model_config.num_classes != num_classes:
             logger.warning(
@@ -52,9 +53,16 @@ class RFDETR:
             )
             self.model.reinitialize_detection_head(num_classes)
         
+        
         train_config = config.dict()
         model_config = self.model_config.dict()
         model_config.pop("num_classes")
+        if "class_names" in model_config:
+            model_config.pop("class_names")
+        
+        if "class_names" in train_config and train_config["class_names"] is None:
+            train_config["class_names"] = class_names
+
         for k, v in train_config.items():
             if k in model_config:
                 model_config.pop(k)
@@ -67,9 +75,30 @@ class RFDETR:
         self.callbacks["on_fit_epoch_end"].append(metrics_plot_sink.update)
         self.callbacks["on_train_end"].append(metrics_plot_sink.save)
 
-        metrics_tensor_board_sink = MetricsTensorBoardSink(output_dir=config.output_dir)
-        self.callbacks["on_fit_epoch_end"].append(metrics_tensor_board_sink.update)
-        self.callbacks["on_train_end"].append(metrics_tensor_board_sink.close)
+        if config.tensorboard:
+            metrics_tensor_board_sink = MetricsTensorBoardSink(output_dir=config.output_dir)
+            self.callbacks["on_fit_epoch_end"].append(metrics_tensor_board_sink.update)
+            self.callbacks["on_train_end"].append(metrics_tensor_board_sink.close)
+
+        if config.wandb:
+            metrics_wandb_sink = MetricsWandBSink(
+                output_dir=config.output_dir,
+                project=config.project,
+                run=config.run,
+                config=config.model_dump()
+            )
+            self.callbacks["on_fit_epoch_end"].append(metrics_wandb_sink.update)
+            self.callbacks["on_train_end"].append(metrics_wandb_sink.close)
+
+        if config.early_stopping:
+            from rfdetr.util.early_stopping import EarlyStoppingCallback
+            early_stopping_callback = EarlyStoppingCallback(
+                model=self.model,
+                patience=config.early_stopping_patience,
+                min_delta=config.early_stopping_min_delta,
+                use_ema=config.early_stopping_use_ema
+            )
+            self.callbacks["on_fit_epoch_end"].append(early_stopping_callback.update)
 
         self.model.train(
             **all_kwargs,

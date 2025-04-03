@@ -46,6 +46,7 @@ class Backbone(BackboneBase):
                  target_shape: tuple[int, int] = (640, 640),
                  rms_norm: bool = False,
                  backbone_lora: bool = False,
+                 gradient_checkpointing: bool = False,
                  ):
         super().__init__()
         # an example name here would be "dinov2_base" or "dinov2_registers_windowed_base"
@@ -71,6 +72,7 @@ class Backbone(BackboneBase):
             shape=target_shape,
             use_registers=use_registers,
             use_windowed_attn=use_windowed_attn,
+            gradient_checkpointing=gradient_checkpointing,
         )
         # build encoder + projector as backbone module
         if freeze_encoder:

@@ -60,6 +60,7 @@ def build_backbone(
     rms_norm,
     backbone_lora,
     force_no_pretrain,
+    gradient_checkpointing,
 ):
     """
     Useful args:
@@ -85,6 +86,7 @@ def build_backbone(
         target_shape=target_shape,
         rms_norm=rms_norm,
         backbone_lora=backbone_lora,
+        gradient_checkpointing=gradient_checkpointing,
     )
 
     model = Joiner(backbone, position_embedding)

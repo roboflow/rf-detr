@@ -609,6 +609,7 @@ def build_model(args):
         rms_norm=args.rms_norm,
         backbone_lora=args.backbone_lora,
         force_no_pretrain=args.force_no_pretrain,
+        gradient_checkpointing=args.gradient_checkpointing,
     )
     if args.encoder_only:
         return backbone[0].encoder, None, None

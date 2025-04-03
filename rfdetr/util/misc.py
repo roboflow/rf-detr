@@ -23,7 +23,6 @@ from collections import defaultdict, deque
 import datetime
 import pickle
 from typing import Optional, List
-import wandb
 import copy
 import argparse
 
@@ -170,10 +169,14 @@ def reduce_dict(input_dict, average=True):
 
 
 class MetricLogger(object):
-    def __init__(self, delimiter="\t", wandb=False):
+    def __init__(self, delimiter="\t", wandb_logging=False):
         self.meters = defaultdict(SmoothedValue)
         self.delimiter = delimiter
-        self.wandb = wandb
+        if wandb_logging:
+            import wandb
+            self.wandb = wandb
+        else:
+            self.wandb = None
 
     def update(self, **kwargs):
         for k, v in kwargs.items():
@@ -244,7 +247,7 @@ class MetricLogger(object):
                 if self.wandb:
                     if is_main_process():
                         log_dict = {k: v.value for k, v in self.meters.items()}
-                        wandb.log(log_dict)
+                        self.wandb.log(log_dict)
                 if torch.cuda.is_available():
                     print(log_msg.format(
                         i, len(iterable), eta=eta_string,
@@ -422,26 +425,7 @@ def save_on_master(obj, f, *args, **kwargs):
     Safely save objects, removing any callbacks that can't be pickled
     """
     if is_main_process():
-        try:
-            if isinstance(obj, dict):
-                obj_copy = {}
-                for k, v in obj.items():
-                    if k == 'args' and hasattr(v, '__dict__'):
-                        args_dict = copy.copy(v.__dict__)
-                        if 'callbacks' in args_dict:
-                            del args_dict['callbacks']
-                        obj_copy[k] = argparse.Namespace(**args_dict)
-                    elif k != 'callbacks':
-                        obj_copy[k] = v
-                obj = obj_copy
-            
-            torch.save(obj, f, *args, **kwargs)
-        except Exception as e:
-            print(f"Error in safe_save_on_master: {e}")
-            if isinstance(obj, dict) and 'model' in obj:
-                print("Falling back to saving only model state_dict")
-                torch.save({'model': obj['model']}, f, *args, **kwargs)
-
+        torch.save(obj, f, *args, **kwargs)
 
 def init_distributed_mode(args):
     if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:

@@ -16,7 +16,7 @@ size_to_width = {
 }
 
 class DinoV2(nn.Module):
-    def __init__(self, shape=(640, 640), out_feature_indexes=[2, 4, 5, 9], size="base", use_registers=True, use_windowed_attn=True):
+    def __init__(self, shape=(640, 640), out_feature_indexes=[2, 4, 5, 9], size="base", use_registers=True, use_windowed_attn=True, gradient_checkpointing=False):
         super().__init__()
 
         name = f"facebook/dinov2-with-registers-{size}" if use_registers else f"facebook/dinov2-{size}"
@@ -26,6 +26,7 @@ class DinoV2(nn.Module):
         # Create the encoder
         
         if not use_windowed_attn:
+            assert not gradient_checkpointing, "Gradient checkpointing is not supported for non-windowed attention"
             self.encoder = AutoBackbone.from_pretrained(
                 name,
                 out_features=[f"stage{i}" for i in out_feature_indexes],
@@ -46,6 +47,7 @@ class DinoV2(nn.Module):
                     **dino_config.to_dict(),
                     num_windows=4,
                     window_block_indexes=window_block_indexes,
+                    gradient_checkpointing=gradient_checkpointing,
                 )
             else:
                 windowed_dino_config = WindowedDinov2WithRegistersConfig(
@@ -53,6 +55,7 @@ class DinoV2(nn.Module):
                     num_windows=4,
                     window_block_indexes=window_block_indexes,
                     num_register_tokens=0,
+                    gradient_checkpointing=gradient_checkpointing,
                 )
             self.encoder = WindowedDinov2WithRegistersBackbone.from_pretrained(
                 name,
