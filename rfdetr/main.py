@@ -407,32 +407,38 @@ class Model:
                 break
 
         best_is_ema = best_map_ema_5095 > best_map_5095
-        if best_is_ema:
-            shutil.copy2(output_dir / 'checkpoint_best_ema.pth', output_dir / 'checkpoint_best_total.pth')
-        else:
-            shutil.copy2(output_dir / 'checkpoint_best_regular.pth', output_dir / 'checkpoint_best_total.pth')
-        best_map_5095 = max(best_map_5095, best_map_ema_5095)
-        best_map_50 = max(best_map_50, best_map_ema_50)
+        
+        if utils.is_main_process():
+            if best_is_ema:
+                shutil.copy2(output_dir / 'checkpoint_best_ema.pth', output_dir / 'checkpoint_best_total.pth')
+            else:
+                shutil.copy2(output_dir / 'checkpoint_best_regular.pth', output_dir / 'checkpoint_best_total.pth')
+            
+            utils.strip_checkpoint(output_dir / 'checkpoint_best_total.pth')
+        
+            best_map_5095 = max(best_map_5095, best_map_ema_5095)
+            best_map_50 = max(best_map_50, best_map_ema_50)
 
-        results_json = {
-            "map95": best_map_5095,
-            "map50": best_map_50,
-            "class": "all"
-        }
-        results = {
-            "class_map": {
-                "valid": [
-                    results_json
-                ]
+            results_json = {
+                "map95": best_map_5095,
+                "map50": best_map_50,
+                "class": "all"
             }
-        }
-        with open(output_dir / "results.json", "w") as f:
-            json.dump(results, f)
+            results = {
+                "class_map": {
+                    "valid": [
+                        results_json
+                    ]
+                }
+            }
+            with open(output_dir / "results.json", "w") as f:
+                json.dump(results, f)
 
-        total_time = time.time() - start_time
-        total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-        print('Training time {}'.format(total_time_str))
-        print('Results saved to {}'.format(output_dir / "results.json"))
+            total_time = time.time() - start_time
+            total_time_str = str(datetime.timedelta(seconds=int(total_time)))
+            print('Training time {}'.format(total_time_str))
+            print('Results saved to {}'.format(output_dir / "results.json"))
+        
         if best_is_ema:
             self.model = self.ema_m.module
         self.model.eval()

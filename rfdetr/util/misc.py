@@ -496,3 +496,11 @@ def inverse_sigmoid(x, eps=1e-5):
     x1 = x.clamp(min=eps)
     x2 = (1 - x).clamp(min=eps)
     return torch.log(x1/x2)
+
+
+def strip_checkpoint(checkpoint):
+    state_dict = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    new_state_dict = {
+        'model': state_dict['model'],
+    }
+    torch.save(new_state_dict, checkpoint)
