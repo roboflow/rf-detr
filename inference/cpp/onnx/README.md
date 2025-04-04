@@ -59,7 +59,7 @@ This PR introduces a C++ demo for the RF-DETR model, allowing users to perform r
 #### **Image Inference**
 Detect objects in a static image and save the output:
 ```sh
-./onnxExample --model path/to/model.onnx --source_type image \
+./main --model path/to/model.onnx --source_type image \
   --input path/to/image.jpg --output path/to/output.jpg \
   --conf 0.6 --labels path/to/coco.names
 ```
@@ -67,7 +67,7 @@ Detect objects in a static image and save the output:
 #### **Video Inference**
 Process a video file and save the annotated output:
 ```sh
-./onnxExample --model path/to/model.onnx --source_type video \
+./main --model path/to/model.onnx --source_type video \
   --input path/to/video.mp4 --output path/to/output.mp4 \
   --conf 0.5 --use_cuda
 ```
@@ -75,20 +75,20 @@ Process a video file and save the annotated output:
 #### **Live Camera Inference (Default ID 0)**
 Run inference on the default webcam (ID 0) with GPU acceleration:
 ```sh
-./onnxExample --model path/to/model.onnx --source_type camera \
+./main --model path/to/model.onnx --source_type camera \
   --input 0 --conf 0.55 --use_cuda
 ```
 
 #### **Live Camera Inference (Specific Camera ID 1)**
 Run inference on a specific camera (ID 1):
 ```sh
-./onnxExample --model path/to/model.onnx --source_type camera \
+./"Hi @SkalskiP, I have added a README file to the project. Please let me know if you need any further changes or additional information." --model path/to/model.onnx --source_type camera \
   --input 1 --conf 0.55
 ```
 
 #### **Get Help & Available Options**
 ```sh
-./onnxExample --help
+./main --help
 ```
 
 ### 🔹 Dependencies
@@ -101,6 +101,6 @@ Run inference on a specific camera (ID 1):
 ## 📝 Notes
 
 - Ensure the ONNX model and input image are accessible.
-- On Windows, make sure `onnxruntime.dll` is in the same directory as `onnxExample.exe` or added to the `PATH`.
-- Modify `onnxExample.cpp` as needed for preprocessing or output handling.
+- On Windows, make sure `onnxruntime.dll` is in the same directory as `main.exe` or added to the `PATH`.
+- Modify `main.cpp` as needed for preprocessing or output handling.
 
