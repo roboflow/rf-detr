@@ -86,6 +86,10 @@ class Model:
                 download_pretrain_weights(args.pretrain_weights, redownload=True)
                 checkpoint = torch.load(args.pretrain_weights, map_location='cpu', weights_only=False)
 
+            # Extract class_names from checkpoint if available
+            if 'args' in checkpoint and hasattr(checkpoint['args'], 'class_names'):
+                self.class_names = checkpoint['args'].class_names
+                
             checkpoint_num_classes = checkpoint['model']['class_embed.bias'].shape[0]
             if checkpoint_num_classes != args.num_classes + 1:
                 logger.warning(

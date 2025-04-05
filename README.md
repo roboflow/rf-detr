@@ -84,9 +84,9 @@ import requests
 import supervision as sv
 from PIL import Image
 from rfdetr import RFDETRBase
-from rfdetr.util.coco_classes import COCO_CLASSES
 
 model = RFDETRBase()
+CLASS_NAMES = model.class_names
 
 url = "https://media.roboflow.com/notebooks/examples/dog-2.jpeg"
 
@@ -94,7 +94,7 @@ image = Image.open(io.BytesIO(requests.get(url).content))
 detections = model.predict(image, threshold=0.5)
 
 labels = [
-    f"{COCO_CLASSES[class_id]} {confidence:.2f}"
+    f"{CLASS_NAMES[class_id]} {confidence:.2f}"
     for class_id, confidence
     in zip(detections.class_id, detections.confidence)
 ]
@@ -114,15 +114,15 @@ sv.plot_image(annotated_image)
 ```python
 import supervision as sv
 from rfdetr import RFDETRBase
-from rfdetr.util.coco_classes import COCO_CLASSES
 
 model = RFDETRBase()
+CLASS_NAMES = model.class_names
 
 def callback(frame, index):
     detections = model.predict(frame, threshold=0.5)
         
     labels = [
-        f"{COCO_CLASSES[class_id]} {confidence:.2f}"
+        f"{CLASS_NAMES[class_id]} {confidence:.2f}"
         for class_id, confidence
         in zip(detections.class_id, detections.confidence)
     ]
@@ -150,9 +150,9 @@ sv.process_video(
 import cv2
 import supervision as sv
 from rfdetr import RFDETRBase
-from rfdetr.util.coco_classes import COCO_CLASSES
 
 model = RFDETRBase()
+CLASS_NAMES = model.class_names
 
 cap = cv2.VideoCapture(0)
 while True:
@@ -163,7 +163,7 @@ while True:
     detections = model.predict(frame, threshold=0.5)
     
     labels = [
-        f"{COCO_CLASSES[class_id]} {confidence:.2f}"
+        f"{CLASS_NAMES[class_id]} {confidence:.2f}"
         for class_id, confidence
         in zip(detections.class_id, detections.confidence)
     ]
@@ -192,9 +192,9 @@ cv2.destroyAllWindows()
 import cv2
 import supervision as sv
 from rfdetr import RFDETRBase
-from rfdetr.util.coco_classes import COCO_CLASSES
 
 model = RFDETRBase()
+CLASS_NAMES = model.class_names
 
 cap = cv2.VideoCapture(<RTSP_STREAM_URL>)
 while True:
@@ -205,7 +205,7 @@ while True:
     detections = model.predict(frame, threshold=0.5)
     
     labels = [
-        f"{COCO_CLASSES[class_id]} {confidence:.2f}"
+        f"{CLASS_NAMES[class_id]} {confidence:.2f}"
         for class_id, confidence
         in zip(detections.class_id, detections.confidence)
     ]

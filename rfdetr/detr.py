@@ -13,6 +13,7 @@ from PIL import Image
 from rfdetr.config import RFDETRBaseConfig, RFDETRLargeConfig, TrainConfig, ModelConfig
 from rfdetr.main import Model, download_pretrain_weights
 from rfdetr.util.metrics import MetricsPlotSink, MetricsTensorBoardSink, MetricsWandBSink
+from rfdetr.util.coco_classes import COCO_CLASSES
 
 logger = getLogger(__name__)
 class RFDETR:
@@ -110,6 +111,14 @@ class RFDETR:
 
     def get_model(self, config: ModelConfig):
         return Model(**config.dict())
+    
+    # Get class_names from the model
+    @property
+    def class_names(self):
+        if hasattr(self.model, 'class_names') and self.model.class_names:
+            return {i+1: name for i, name in enumerate(self.model.class_names)}
+            
+        return COCO_CLASSES
 
     def predict(
         self,
