@@ -21,6 +21,20 @@ class RFDETR:
 
     def __init__(self, **kwargs):
         self.model_config = self.get_model_config(**kwargs)
+
+        self.onnx_model = None
+        if self.model_config.onnx_path:
+            import onnxruntime as ort
+
+            if self.model_config.device == "cuda":
+                providers = [
+                    "CUDAExecutionProvider", # optionally add device id ("CUDAExecutionProvider", {"device_id": cuda_device_id})
+                    "CPUExecutionProvider",
+                ]
+            else:
+                providers = ["CPUExecutionProvider"]
+            self.onnx_model = ort.InferenceSession(self.model_config.onnx_path, providers=providers)
+
         self.maybe_download_pretrain_weights()
         self.model = self.get_model(self.model_config)
         self.callbacks = defaultdict(list)
@@ -139,8 +153,18 @@ class RFDETR:
             image = F.normalize(image, self.means, self.stds)
             image = F.resize(image, (self.model.resolution, self.model.resolution))
 
-            predictions = self.model.model.forward(image[None, :])
-            bboxes = predictions["pred_boxes"]
+            if self.onnx_model:
+                image = image.cpu().unsqueeze(0).float().numpy()
+                outputs = self.onnx_model.run(
+                    None, {self.onnx_model.get_inputs()[0].name: image}
+                )
+                predictions = {
+                    "pred_boxes": torch.tensor(outputs[0]).to(self.model.device),
+                    "pred_logits": torch.tensor(outputs[1]).to(self.model.device),
+                }
+            else:
+                predictions = self.model.model.forward(image[None, :])
+
             results = self.model.postprocessors["bbox"](
                 predictions,
                 target_sizes=torch.tensor([[h, w]], device=self.model.device),

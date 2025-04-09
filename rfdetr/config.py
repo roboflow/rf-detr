@@ -19,6 +19,7 @@ class ModelConfig(BaseModel):
     amp: bool = True
     num_classes: int = 90
     pretrain_weights: Optional[str] = None
+    onnx_path: Optional[str] = None
     device: Literal["cpu", "cuda", "mps"] = DEVICE
     resolution: int = 560
     group_detr: int = 13
