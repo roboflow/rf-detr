@@ -26,7 +26,8 @@ class RFDETR:
         self.callbacks = defaultdict(list)
 
     def maybe_download_pretrain_weights(self):
-        download_pretrain_weights(self.model_config.pretrain_weights)
+        download_pretrain_weights(self.model_config.pretrain_weights, self.model_config.pretrain_save_file)
+
 
     def get_model_config(self, **kwargs):
         return ModelConfig(**kwargs)

@@ -52,24 +52,29 @@ if str(os.environ.get("USE_FILE_SYSTEM_SHARING", "False")).lower() in ["true", "
 logger = getLogger(__name__)
 
 HOSTED_MODELS = {
-    "rf-detr-base.pth": "https://storage.googleapis.com/rfdetr/rf-detr-base-coco.pth",
+    "rfdetr_base": "https://storage.googleapis.com/rfdetr/rf-detr-base-coco.pth",
     # below is a less converged model that may be better for finetuning but worse for inference
-    "rf-detr-base-2.pth": "https://storage.googleapis.com/rfdetr/rf-detr-base-2.pth",
-    "rf-detr-large.pth": "https://storage.googleapis.com/rfdetr/rf-detr-large.pth"
+    "rfdetr_base2": "https://storage.googleapis.com/rfdetr/rf-detr-base-2.pth",
+    "rfdetr_large": "https://storage.googleapis.com/rfdetr/rf-detr-large.pth"
 }
 
-def download_pretrain_weights(pretrain_weights: str, redownload=False):
-    name = os.path.basename(pretrain_weights)
-    if name in HOSTED_MODELS:
-        if redownload or not os.path.exists(pretrain_weights):
-            os.makedirs(os.path.dirname(pretrain_weights), exist_ok=True)
-            logger.info(
-                f"Downloading pretrained weights for {name}"
-            )
-            download_file(
-                HOSTED_MODELS[name],
-                pretrain_weights,
-            )
+def download_pretrain_weights(model_type: str, output_path: str, redownload:bool = False):
+    if model_type not in HOSTED_MODELS:
+        raise ValueError(f"Unknown model type '{model_type}'. Valid options are: {list(HOSTED_MODELS.keys())}")
+
+    if redownload or not os.path.exists(output_path):
+        # Create parent directory only if there is one
+        output_dir = os.path.dirname(output_path)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+
+        logger.info(
+            f"Downloading pretrained weights for {model_type}"
+        )
+        download_file(
+            HOSTED_MODELS[model_type],
+            output_path,
+        )
 
 class Model:
     def __init__(self, **kwargs):
@@ -77,16 +82,16 @@ class Model:
         self.resolution = args.resolution
         self.model = build_model(args)
         self.device = torch.device(args.device)
-        if args.pretrain_weights is not None:
+        if args.pretrain_save_file is not None:
             print("Loading pretrain weights")
             try:
-                checkpoint = torch.load(args.pretrain_weights, map_location='cpu', weights_only=False)
+                checkpoint = torch.load(args.pretrain_save_file, map_location='cpu', weights_only=False)
             except Exception as e:
                 print(f"Failed to load pretrain weights: {e}")
                 # re-download weights if they are corrupted
                 print("Failed to load pretrain weights, re-downloading")
-                download_pretrain_weights(args.pretrain_weights, redownload=True)
-                checkpoint = torch.load(args.pretrain_weights, map_location='cpu', weights_only=False)
+                download_pretrain_weights(args.pretrain_weights,args.pretrain_save_file, redownload=True)
+                checkpoint = torch.load(args.pretrain_save_file, map_location='cpu', weights_only=False)
 
             checkpoint_num_classes = checkpoint['model']['class_embed.bias'].shape[0]
             if checkpoint_num_classes != args.num_classes + 1:
@@ -543,6 +548,7 @@ if __name__ == '__main__':
             "cutoff_epoch",
             "pretrained_encoder",
             "pretrain_weights",
+            "pretrain_save_file",
             "pretrain_exclude_keys",
             "pretrain_keys_modify_to_load",
             "freeze_florence",
@@ -632,6 +638,8 @@ def get_args_parser():
     parser.add_argument('--pretrained_encoder', type=str, default=None, 
                         help="Path to the pretrained encoder.")
     parser.add_argument('--pretrain_weights', type=str, default=None, 
+                        help="Model type to use.")
+    parser.add_argument('--pretrain_save_file', type=str, default='model.pth',
                         help="Path to the pretrained model.")
     parser.add_argument('--pretrain_exclude_keys', type=str, default=None, nargs='+', 
                         help="Keys you do not want to load.")
@@ -808,6 +816,7 @@ def populate_args(
     # Model parameters
     pretrained_encoder=None,
     pretrain_weights=None, 
+    pretrain_save_file=None,
     pretrain_exclude_keys=None,
     pretrain_keys_modify_to_load=None,
     pretrained_distiller=None,
@@ -926,6 +935,7 @@ def populate_args(
         cutoff_epoch=cutoff_epoch,
         pretrained_encoder=pretrained_encoder,
         pretrain_weights=pretrain_weights,
+        pretrain_save_file=pretrain_save_file,
         pretrain_exclude_keys=pretrain_exclude_keys,
         pretrain_keys_modify_to_load=pretrain_keys_modify_to_load,
         pretrained_distiller=pretrained_distiller,
