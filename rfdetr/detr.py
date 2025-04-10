@@ -22,8 +22,6 @@ from rfdetr.main import Model, download_pretrain_weights
 from rfdetr.util.metrics import MetricsPlotSink, MetricsTensorBoardSink, MetricsWandBSink
 
 logger = getLogger(__name__)
-
-
 class RFDETR:
     means = [0.485, 0.456, 0.406]
     stds = [0.229, 0.224, 0.225]
@@ -64,7 +62,7 @@ class RFDETR:
 
     def train_from_config(self, config: TrainConfig, **kwargs):
         with open(
-                os.path.join(config.dataset_dir, "train", "_annotations.coco.json"), "r"
+            os.path.join(config.dataset_dir, "train", "_annotations.coco.json"), "r"
         ) as f:
             anns = json.load(f)
             num_classes = len(anns["categories"])
