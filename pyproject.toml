@@ -52,9 +52,6 @@ dependencies = [
     "einops",
     "pandas",
     "pylabel",
-    "onnx",
-    "onnxsim",
-    "onnx_graphsurgeon",
     "polygraphy",
     "open_clip_torch",
     "rf100vl",
@@ -64,14 +61,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-onnxruntime = [
+onnxexport = [
+    "onnx",
+    "onnxsim",
+    "onnx_graphsurgeon",
     "onnxruntime"
 ]
 metrics = [
     "tensorboard>=2.13.0",
     "wandb"
 ]
-
 build = [
     "twine>=5.1.1",
     "wheel>=0.40",
