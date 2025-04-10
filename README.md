@@ -76,7 +76,7 @@ pip install git+https://github.com/roboflow/rf-detr.git
 
 ## Inference
 
-RF-DETR comes out of the box with checkpoints pre-trained on the Microsoft COCO dataset.
+The `.predict()` method accepts various input formats, including file paths, PIL images, NumPy arrays, and torch tensors. Please ensure inputs use RGB channel order. For `torch.Tensor` inputs specifically, they must have a shape of `(3, H, W)` with values normalized to the `[0..1)` range.
 
 ```python
 import io
@@ -119,7 +119,7 @@ from rfdetr.util.coco_classes import COCO_CLASSES
 model = RFDETRBase()
 
 def callback(frame, index):
-    detections = model.predict(frame, threshold=0.5)
+    detections = model.predict(frame[:, :, ::-1], threshold=0.5)
         
     labels = [
         f"{COCO_CLASSES[class_id]} {confidence:.2f}"
@@ -160,7 +160,7 @@ while True:
     if not success:
         break
 
-    detections = model.predict(frame, threshold=0.5)
+    detections = model.predict(frame[:, :, ::-1], threshold=0.5)
     
     labels = [
         f"{COCO_CLASSES[class_id]} {confidence:.2f}"
@@ -202,7 +202,7 @@ while True:
     if not success:
         break
 
-    detections = model.predict(frame, threshold=0.5)
+    detections = model.predict(frame[:, :, ::-1], threshold=0.5)
     
     labels = [
         f"{COCO_CLASSES[class_id]} {confidence:.2f}"
@@ -224,6 +224,47 @@ cv2.destroyAllWindows()
 ```
 
 </details>
+
+### Batch Inference
+
+> [!IMPORTANT] 
+> Batch inference isn’t officially released yet.
+> Install from source to access it: `pip install git+https://github.com/roboflow/rf-detr.git`.
+
+You can provide `.predict()` with either a single image or a list of images. When multiple images are supplied, they are processed together in a single forward pass, resulting in a corresponding list of detections.
+
+```python
+import io
+import requests
+import supervision as sv
+from PIL import Image
+from rfdetr import RFDETRBase
+from rfdetr.util.coco_classes import COCO_CLASSES
+
+model = RFDETRBase()
+
+urls = [
+    "https://media.roboflow.com/notebooks/examples/dog-2.jpeg",
+    "https://media.roboflow.com/notebooks/examples/dog-3.jpeg"
+]
+
+images = [Image.open(io.BytesIO(requests.get(url).content)) for url in urls]
+
+detections_list = model.predict(images, threshold=0.5)
+
+for image, detections in zip(images, detections_list):
+    labels = [
+        f"{COCO_CLASSES[class_id]} {confidence:.2f}"
+        for class_id, confidence
+        in zip(detections.class_id, detections.confidence)
+    ]
+
+    annotated_image = image.copy()
+    annotated_image = sv.BoxAnnotator().annotate(annotated_image, detections)
+    annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
+
+    sv.plot_image(annotated_image)
+```
 
 ![rf-detr-coco-results-2](https://media.roboflow.com/rf-detr/example_grid.png)
 
@@ -535,6 +576,9 @@ detections = model.predict(<IMAGE_PATH>)
 ```
 
 ## ONNX export
+
+> [!IMPORTANT]
+> Starting with RF-DETR 1.2.0, you'll have to run `pip install rfdetr[onnxexport]` before exporting model weights to ONNX format.  
 
 RF-DETR supports exporting models to the ONNX format, which enables interoperability with various inference frameworks and can improve deployment efficiency. To export your model, simply initialize it and call the `.export()` method.
 

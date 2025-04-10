@@ -1,7 +1,10 @@
 # ------------------------------------------------------------------------
-# LW-DETR
-# Copyright (c) 2024 Baidu. All Rights Reserved.
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+# Modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
+# Copyright (c) 2024 Baidu. All Rights Reserved.
 # ------------------------------------------------------------------------
 # Modified from Conditional DETR (https://github.com/Atten4Vis/ConditionalDETR)
 # Copyright (c) 2021 Microsoft. All Rights Reserved.
@@ -14,37 +17,35 @@
 cleaned main file
 """
 import argparse
-import datetime
-import json
-import random
-import time
-import string
 import ast
 import copy
+import datetime
+import json
 import math
-from pathlib import Path
+import os
+import random
+import shutil
+import time
 from copy import deepcopy
+from logging import getLogger
+from pathlib import Path
+from typing import DefaultDict, List, Callable
 
 import numpy as np
 import torch
+from peft import LoraConfig, get_peft_model
 from torch.utils.data import DataLoader, DistributedSampler
 
+import rfdetr.util.misc as utils
 from rfdetr.datasets import build_dataset, get_coco_api_from_dataset
 from rfdetr.engine import evaluate, train_one_epoch
 from rfdetr.models import build_model, build_criterion_and_postprocessors
-from rfdetr.util.drop_scheduler import drop_scheduler
-from rfdetr.util.get_param_dicts import get_param_dict
-import rfdetr.util.misc as utils
-from rfdetr.util.utils import ModelEma, BestMetricHolder, clean_state_dict
 from rfdetr.util.benchmark import benchmark
-from torch import nn
-import torch.nn.functional as F
-from peft import LoraConfig, get_peft_model
-from typing import DefaultDict, List, Callable
-from logging import getLogger
-import shutil
+from rfdetr.util.drop_scheduler import drop_scheduler
 from rfdetr.util.files import download_file
-import os
+from rfdetr.util.get_param_dicts import get_param_dict
+from rfdetr.util.utils import ModelEma, BestMetricHolder, clean_state_dict
+
 if str(os.environ.get("USE_FILE_SYSTEM_SHARING", "False")).lower() in ["true", "1"]:
     import torch.multiprocessing
     torch.multiprocessing.set_sharing_strategy('file_system')
@@ -449,7 +450,11 @@ class Model:
     def export(self, output_dir="output", infer_dir=None, simplify=False,  backbone_only=False, opset_version=17, verbose=True, force=False, shape=None, batch_size=1, **kwargs):
         """Export the trained model to ONNX format"""
         print(f"Exporting model to ONNX format")
-        from rfdetr.deploy.export import export_onnx, onnx_simplify, make_infer_image
+        try:
+            from rfdetr.deploy.export import export_onnx, onnx_simplify, make_infer_image
+        except ImportError:
+            print("It seems some dependencies for ONNX export are missing. Please run `pip install rfdetr[onnxexport]` and try again.")
+            raise
 
 
         device = self.device
