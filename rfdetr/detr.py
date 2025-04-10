@@ -138,7 +138,29 @@ class RFDETR:
                 str, Image.Image, np.ndarray, torch.Tensor, List[Union[str, np.ndarray, Image.Image, torch.Tensor]]],
             threshold: float = 0.5,
             **kwargs,
-    ):
+    ) -> Union[sv.Detections, List[sv.Detections]]:
+        """Performs object detection on the input images and returns bounding box
+        predictions.
+
+        This method accepts a single image or a list of images in various formats
+        (file path, PIL Image, NumPy array, or torch.Tensor). The images should be in
+        RGB channel order. If a torch.Tensor is provided, it must already be normalized
+        to values in the [0, 1] range and have the shape (C, H, W).
+
+        Args:
+            images (Union[str, Image.Image, np.ndarray, torch.Tensor, List[Union[str, np.ndarray, Image.Image, torch.Tensor]]]):
+                A single image or a list of images to process. Images can be provided
+                as file paths, PIL Images, NumPy arrays, or torch.Tensors.
+            threshold (float, optional):
+                The minimum confidence score needed to consider a detected bounding box valid.
+            **kwargs:
+                Additional keyword arguments.
+
+        Returns:
+            Union[sv.Detections, List[sv.Detections]]: A single or multiple Detections
+                objects, each containing bounding box coordinates, confidence scores,
+                and class IDs.
+        """
         self.model.model.eval()
 
         if not isinstance(images, list):
@@ -155,10 +177,17 @@ class RFDETR:
             if not isinstance(img, torch.Tensor):
                 img_tensor = F.to_tensor(img)
             else:
-
-                logger.warning("Image is a torch.Tensor, we expect an image divided by 255 at (C, H, W)")
+                if (img > 1).any():
+                    raise ValueError(
+                        "Image has pixel values above 1. Please ensure the image is "
+                        "normalized (scaled to [0, 1])."
+                    )
+                if img.shape[0] != 3:
+                    raise ValueError(
+                        f"Invalid image shape. Expected 3 channels (RGB), but got "
+                        f"{img.shape[0]} channels."
+                    )
                 img_tensor = img
-                assert img_tensor.shape[0] == 3, "image must have 3 channels"
 
             h, w = img_tensor.shape[1:]
             orig_sizes.append((h, w))
