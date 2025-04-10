@@ -36,9 +36,9 @@ from rfdetr.util.misc import NestedTensor
 
 def get_autocast_args(args):
     if DEPRECATED_AMP:
-        return {'enabled': args.amp, 'dtype': torch.bfloat16}
+        return {'enabled': args.amp, 'dtype': torch.float16}
     else:
-        return {'device_type': 'cuda', 'enabled': args.amp, 'dtype': torch.bfloat16}
+        return {'device_type': 'cuda', 'enabled': args.amp, 'dtype': torch.float16}
 
 
 def train_one_epoch(
