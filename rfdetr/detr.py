@@ -29,6 +29,21 @@ class RFDETR:
 
     def __init__(self, **kwargs):
         self.model_config = self.get_model_config(**kwargs)
+
+        self.onnx_model = None
+        if self.model_config.onnx_path:
+            import onnxruntime as ort
+
+            if self.model_config.device == "cuda":
+                providers = [
+                    "CUDAExecutionProvider",
+                    # optionally add device id ("CUDAExecutionProvider", {"device_id": cuda_device_id})
+                    "CPUExecutionProvider",
+                ]
+            else:
+                providers = ["CPUExecutionProvider"]
+            self.onnx_model = ort.InferenceSession(self.model_config.onnx_path, providers=providers)
+
         self.maybe_download_pretrain_weights()
         self.model = self.get_model(self.model_config)
         self.callbacks = defaultdict(list)
@@ -42,7 +57,7 @@ class RFDETR:
     def train(self, **kwargs):
         config = self.get_train_config(**kwargs)
         self.train_from_config(config, **kwargs)
-    
+
     def export(self, **kwargs):
         self.model.export(**kwargs)
 
@@ -61,14 +76,13 @@ class RFDETR:
                 f"reinitializing your detection head with {num_classes} classes."
             )
             self.model.reinitialize_detection_head(num_classes)
-        
-        
+
         train_config = config.dict()
         model_config = self.model_config.dict()
         model_config.pop("num_classes")
         if "class_names" in model_config:
             model_config.pop("class_names")
-        
+
         if "class_names" in train_config and train_config["class_names"] is None:
             train_config["class_names"] = class_names
 
@@ -77,7 +91,7 @@ class RFDETR:
                 model_config.pop(k)
             if k in kwargs:
                 kwargs.pop(k)
-        
+
         all_kwargs = {**model_config, **train_config, **kwargs, "num_classes": num_classes}
 
         metrics_plot_sink = MetricsPlotSink(output_dir=config.output_dir)
@@ -130,7 +144,8 @@ class RFDETR:
 
     def predict(
             self,
-            images: Union[str, Image.Image, np.ndarray, torch.Tensor, List[Union[str, np.ndarray, Image.Image, torch.Tensor]]],
+            images: Union[
+                str, Image.Image, np.ndarray, torch.Tensor, List[Union[str, np.ndarray, Image.Image, torch.Tensor]]],
             threshold: float = 0.5,
             **kwargs,
     ) -> Union[sv.Detections, List[sv.Detections]]:
@@ -196,7 +211,18 @@ class RFDETR:
         batch_tensor = torch.stack(processed_images)
 
         with torch.inference_mode():
-            predictions = self.model.model(batch_tensor)
+            if self.onnx_model:
+                image_np = batch_tensor.cpu().float().numpy()
+
+                input_name = self.onnx_model.get_inputs()[0].name
+                outputs = self.onnx_model.run(None, {input_name: image_np})
+
+                predictions = {
+                    "pred_boxes": torch.tensor(outputs[0]).to(self.model.device),
+                    "pred_logits": torch.tensor(outputs[1]).to(self.model.device),
+                }
+            else:
+                predictions = self.model.model(batch_tensor)
             target_sizes = torch.tensor(orig_sizes, device=self.model.device)
             results = self.model.postprocessors["bbox"](predictions, target_sizes=target_sizes)
 
@@ -227,6 +253,7 @@ class RFDETRBase(RFDETR):
 
     def get_train_config(self, **kwargs):
         return TrainConfig(**kwargs)
+
 
 class RFDETRLarge(RFDETR):
     def get_model_config(self, **kwargs):
