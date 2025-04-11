@@ -308,6 +308,24 @@ dataset/
 
 [Roboflow](https://roboflow.com/annotate) allows you to create object detection datasets from scratch or convert existing datasets from formats like YOLO, and then export them in COCO JSON format for training. You can also explore [Roboflow Universe](https://universe.roboflow.com/) to find pre-labeled datasets for a range of use cases.
 
+### Pretraining
+
+If you prefer pretraining RF-DETR, ideally before fine-tuning, you could use [LightlyTrain](https://docs.lightly.ai/train/stable/index.html) with RF-DETR support. LightlyTrain is a novel framework that let you pretrain any computer vision model on your unlabeled data, by leveraging distillation from foundation models and using self-supervised learning.
+
+You can pretrain your RF-DETR model by simply
+
+```python
+import lightly_train
+if __name__ == "__main__":
+    lightly_train.train(
+        out="out/my_experiment",                # Output directory.
+        data="my_data_dir",                     # Directory with images.
+        model="rfdetr/rf-detr-base",            # Pass the RF-DETR model.
+    )
+```
+
+You could also check [this Colab tutoria](colab-link) for full guides on also fine-tuning with RF-DETR on a Roboflow COCO dataset.
+
 ### Fine-tuning
 
 You can fine-tune RF-DETR from pre-trained COCO checkpoints. By default, the RF-DETR-B checkpoint will be used. To get started quickly, please refer to our fine-tuning Google Colab [notebook](https://colab.research.google.com/github/roboflow-ai/notebooks/blob/main/notebooks/how-to-finetune-rf-detr-on-detection-dataset.ipynb).
