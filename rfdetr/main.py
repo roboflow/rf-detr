@@ -26,6 +26,7 @@ import os
 import random
 import shutil
 import time
+import cv2
 from copy import deepcopy
 from logging import getLogger
 from pathlib import Path
@@ -45,6 +46,7 @@ from rfdetr.util.drop_scheduler import drop_scheduler
 from rfdetr.util.files import download_file
 from rfdetr.util.get_param_dicts import get_param_dict
 from rfdetr.util.utils import ModelEma, BestMetricHolder, clean_state_dict
+from rfdetr.util.box_ops import box_cxcywh_to_xyxy
 
 if str(os.environ.get("USE_FILE_SYSTEM_SHARING", "False")).lower() in ["true", "1"]:
     import torch.multiprocessing
@@ -316,7 +318,26 @@ class Model:
         best_map_50 = 0
         best_map_ema_5095 = 0
         best_map_ema_50 = 0
+
         for epoch in range(args.start_epoch, args.epochs):
+            if epoch == 0:
+                # Show some samples of train augmented images
+                print(f'Saving sample train images in {output_dir}')
+                sample, target = next(iter(data_loader_train))
+                for sample_index, (single_image, single_target) in enumerate(zip(sample.tensors, target)): 
+                    resized_size = single_target['size']
+                    img_numpy = (np.array(single_image).transpose(1, 2, 0) * 255).copy()
+                    for (box,label) in zip(single_target['boxes'], single_target['labels']):
+                        int_label = int(label)
+                        b = box_cxcywh_to_xyxy(box)
+                        x_min, y_min, x_max, y_max = int(b[0] * resized_size[1]), int(b[1] * resized_size[0]),\
+                                                     int(b[2] * resized_size[1]), int(b[3] * resized_size[0])
+                        cv2.rectangle(img_numpy, (x_min, y_min), (x_max, y_max), (0, 255, 0), 2)
+                        text_size = cv2.getTextSize(str(int_label), cv2.FONT_HERSHEY_SIMPLEX, 1, 2)[0]
+                        text_x, text_y = x_min, y_min - 10
+                        cv2.rectangle(img_numpy, (text_x, text_y - text_size[1] - 5), (text_x + text_size[0] + 5, text_y + 5), (0, 255, 0), -1)  
+                        cv2.putText(img_numpy, str(int_label), (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
+                    cv2.imwrite(f'{output_dir}/train_augmented_sample_{sample_index}.jpg', img_numpy)
             epoch_start_time = time.time()
             if args.distributed:
                 sampler_train.set_epoch(epoch)
