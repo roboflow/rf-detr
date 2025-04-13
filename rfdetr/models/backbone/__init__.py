@@ -1,3 +1,12 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+# Modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
+# Copyright (c) 2024 Baidu. All Rights Reserved.
+# ------------------------------------------------------------------------
+
 from typing import Dict, List
 
 import torch
@@ -60,6 +69,8 @@ def build_backbone(
     rms_norm,
     backbone_lora,
     force_no_pretrain,
+    gradient_checkpointing,
+    load_dinov2_weights,
 ):
     """
     Useful args:
@@ -85,6 +96,8 @@ def build_backbone(
         target_shape=target_shape,
         rms_norm=rms_norm,
         backbone_lora=backbone_lora,
+        gradient_checkpointing=gradient_checkpointing,
+        load_dinov2_weights=load_dinov2_weights,
     )
 
     model = Joiner(backbone, position_embedding)

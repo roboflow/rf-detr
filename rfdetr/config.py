@@ -1,3 +1,10 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+
+
 from pydantic import BaseModel
 from typing import List, Optional, Literal, Type
 import torch
@@ -22,6 +29,7 @@ class ModelConfig(BaseModel):
     device: Literal["cpu", "cuda", "mps"] = DEVICE
     resolution: int = 560
     group_detr: int = 13
+    gradient_checkpointing: bool = False
 
 class RFDETRBaseConfig(ModelConfig):
     encoder: Literal["dinov2_windowed_small", "dinov2_windowed_base"] = "dinov2_windowed_small"
@@ -30,6 +38,7 @@ class RFDETRBaseConfig(ModelConfig):
     ca_nheads: int = 16
     dec_n_points: int = 2
     num_queries: int = 300
+    num_select: int = 300
     projector_scale: List[Literal["P3", "P4", "P5"]] = ["P4"]
     out_feature_indexes: List[int] = [2, 5, 8, 11]
     pretrain_weights: Optional[str] = "rf-detr-base.pth"
@@ -70,3 +79,12 @@ class TrainConfig(BaseModel):
     use_ema: bool = True
     num_workers: int = 2
     weight_decay: float = 1e-4
+    early_stopping: bool = False
+    early_stopping_patience: int = 10
+    early_stopping_min_delta: float = 0.001
+    early_stopping_use_ema: bool = False
+    tensorboard: bool = True
+    wandb: bool = False
+    project: Optional[str] = None
+    run: Optional[str] = None
+    class_names: List[str] = None

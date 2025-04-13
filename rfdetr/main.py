@@ -1,7 +1,10 @@
 # ------------------------------------------------------------------------
-# LW-DETR
-# Copyright (c) 2024 Baidu. All Rights Reserved.
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+# Modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
+# Copyright (c) 2024 Baidu. All Rights Reserved.
 # ------------------------------------------------------------------------
 # Modified from Conditional DETR (https://github.com/Atten4Vis/ConditionalDETR)
 # Copyright (c) 2021 Microsoft. All Rights Reserved.
@@ -14,37 +17,38 @@
 cleaned main file
 """
 import argparse
-import datetime
-import json
-import random
-import time
-import string
 import ast
 import copy
+import datetime
+import json
 import math
-from pathlib import Path
+import os
+import random
+import shutil
+import time
 from copy import deepcopy
+from logging import getLogger
+from pathlib import Path
+from typing import DefaultDict, List, Callable
 
 import numpy as np
 import torch
+from peft import LoraConfig, get_peft_model
 from torch.utils.data import DataLoader, DistributedSampler
 
+import rfdetr.util.misc as utils
 from rfdetr.datasets import build_dataset, get_coco_api_from_dataset
 from rfdetr.engine import evaluate, train_one_epoch
 from rfdetr.models import build_model, build_criterion_and_postprocessors
-from rfdetr.util.drop_scheduler import drop_scheduler
-from rfdetr.util.get_param_dicts import get_param_dict
-import rfdetr.util.misc as utils
-from rfdetr.util.utils import ModelEma, BestMetricHolder, clean_state_dict
 from rfdetr.util.benchmark import benchmark
-from torch import nn
-import torch.nn.functional as F
-from peft import LoraConfig, get_peft_model
-from typing import DefaultDict, List, Callable
-from logging import getLogger
-import shutil
+from rfdetr.util.drop_scheduler import drop_scheduler
 from rfdetr.util.files import download_file
-import os
+from rfdetr.util.get_param_dicts import get_param_dict
+from rfdetr.util.utils import ModelEma, BestMetricHolder, clean_state_dict
+
+if str(os.environ.get("USE_FILE_SYSTEM_SHARING", "False")).lower() in ["true", "1"]:
+    import torch.multiprocessing
+    torch.multiprocessing.set_sharing_strategy('file_system')
 
 logger = getLogger(__name__)
 
@@ -83,6 +87,10 @@ class Model:
                 download_pretrain_weights(args.pretrain_weights, redownload=True)
                 checkpoint = torch.load(args.pretrain_weights, map_location='cpu', weights_only=False)
 
+            # Extract class_names from checkpoint if available
+            if 'args' in checkpoint and hasattr(checkpoint['args'], 'class_names'):
+                self.class_names = checkpoint['args'].class_names
+                
             checkpoint_num_classes = checkpoint['model']['class_embed.bias'].shape[0]
             if checkpoint_num_classes != args.num_classes + 1:
                 logger.warning(
@@ -133,9 +141,14 @@ class Model:
             self.model.backbone[0].encoder = get_peft_model(self.model.backbone[0].encoder, lora_config)
         self.model = self.model.to(self.device)
         self.criterion, self.postprocessors = build_criterion_and_postprocessors(args)
+        self.stop_early = False
     
     def reinitialize_detection_head(self, num_classes):
         self.model.reinitialize_detection_head(num_classes)
+
+    def request_early_stop(self):
+        self.stop_early = True
+        print("Early stopping requested, will complete current epoch and stop")
 
     def train(self, callbacks: DefaultDict[str, List[Callable]], **kwargs):
         currently_supported_callbacks = ["on_fit_epoch_end", "on_train_batch_start", "on_train_end"]
@@ -150,7 +163,7 @@ class Model:
         print("git:\n  {}\n".format(utils.get_sha()))
         print(args)
         device = torch.device(args.device)
-
+        
         # fix the seed for reproducibility
         seed = args.seed + utils.get_rank()
         torch.manual_seed(seed)
@@ -210,11 +223,33 @@ class Model:
             sampler_val = torch.utils.data.SequentialSampler(dataset_val)
 
         effective_batch_size = args.batch_size * args.grad_accum_steps
-        batch_sampler_train = torch.utils.data.BatchSampler(
-            sampler_train, effective_batch_size, drop_last=True)
-
-        data_loader_train = DataLoader(dataset_train, batch_sampler=batch_sampler_train,
-                                    collate_fn=utils.collate_fn, num_workers=args.num_workers)
+        min_batches = kwargs.get('min_batches', 5)
+        if len(dataset_train) < effective_batch_size * min_batches:
+            logger.info(
+                f"Training with uniform sampler because dataset is too small: {len(dataset_train)} < {effective_batch_size * min_batches}"
+            )
+            sampler = torch.utils.data.RandomSampler(
+                dataset_train,
+                replacement=True,
+                num_samples=effective_batch_size * min_batches,
+            )
+            data_loader_train = DataLoader(
+                dataset_train,
+                batch_size=effective_batch_size,
+                collate_fn=utils.collate_fn,
+                num_workers=args.num_workers,
+                sampler=sampler,
+            )
+        else:
+            batch_sampler_train = torch.utils.data.BatchSampler(
+                sampler_train, effective_batch_size, drop_last=True)
+            data_loader_train = DataLoader(
+                dataset_train, 
+                batch_sampler=batch_sampler_train,
+                collate_fn=utils.collate_fn, 
+                num_workers=args.num_workers
+            )
+        
         data_loader_val = DataLoader(dataset_val, args.batch_size, sampler=sampler_val,
                                     drop_last=False, collate_fn=utils.collate_fn, 
                                     num_workers=args.num_workers)
@@ -394,33 +429,43 @@ class Model:
             for callback in callbacks["on_fit_epoch_end"]:
                 callback(log_stats)
 
+            if self.stop_early:
+                print(f"Early stopping requested, stopping at epoch {epoch}")
+                break
+
         best_is_ema = best_map_ema_5095 > best_map_5095
-        if best_is_ema:
-            shutil.copy2(output_dir / 'checkpoint_best_ema.pth', output_dir / 'checkpoint_best_total.pth')
-        else:
-            shutil.copy2(output_dir / 'checkpoint_best_regular.pth', output_dir / 'checkpoint_best_total.pth')
-        best_map_5095 = max(best_map_5095, best_map_ema_5095)
-        best_map_50 = max(best_map_50, best_map_ema_50)
+        
+        if utils.is_main_process():
+            if best_is_ema:
+                shutil.copy2(output_dir / 'checkpoint_best_ema.pth', output_dir / 'checkpoint_best_total.pth')
+            else:
+                shutil.copy2(output_dir / 'checkpoint_best_regular.pth', output_dir / 'checkpoint_best_total.pth')
+            
+            utils.strip_checkpoint(output_dir / 'checkpoint_best_total.pth')
+        
+            best_map_5095 = max(best_map_5095, best_map_ema_5095)
+            best_map_50 = max(best_map_50, best_map_ema_50)
 
-        results_json = {
-            "map95": best_map_5095,
-            "map50": best_map_50,
-            "class": "all"
-        }
-        results = {
-            "class_map": {
-                "valid": [
-                    results_json
-                ]
+            results_json = {
+                "map95": best_map_5095,
+                "map50": best_map_50,
+                "class": "all"
             }
-        }
-        with open(output_dir / "results.json", "w") as f:
-            json.dump(results, f)
+            results = {
+                "class_map": {
+                    "valid": [
+                        results_json
+                    ]
+                }
+            }
+            with open(output_dir / "results.json", "w") as f:
+                json.dump(results, f)
 
-        total_time = time.time() - start_time
-        total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-        print('Training time {}'.format(total_time_str))
-        print('Results saved to {}'.format(output_dir / "results.json"))
+            total_time = time.time() - start_time
+            total_time_str = str(datetime.timedelta(seconds=int(total_time)))
+            print('Training time {}'.format(total_time_str))
+            print('Results saved to {}'.format(output_dir / "results.json"))
+        
         if best_is_ema:
             self.model = self.ema_m.module
         self.model.eval()
@@ -431,7 +476,11 @@ class Model:
     def export(self, output_dir="output", infer_dir=None, simplify=False,  backbone_only=False, opset_version=17, verbose=True, force=False, shape=None, batch_size=1, **kwargs):
         """Export the trained model to ONNX format"""
         print(f"Exporting model to ONNX format")
-        from rfdetr.deploy.export import export_onnx, onnx_simplify, make_infer_image
+        try:
+            from rfdetr.deploy.export import export_onnx, onnx_simplify, make_infer_image
+        except ImportError:
+            print("It seems some dependencies for ONNX export are missing. Please run `pip install rfdetr[onnxexport]` and try again.")
+            raise
 
 
         device = self.device
@@ -736,6 +785,15 @@ def get_args_parser():
     )
     parser.add_argument('--lr_min_factor', default=0.0, type=float, 
         help='Minimum learning rate factor (as a fraction of initial lr) at the end of cosine annealing')
+    # Early stopping parameters
+    parser.add_argument('--early_stopping', action='store_true',
+                        help='Enable early stopping based on mAP improvement')
+    parser.add_argument('--early_stopping_patience', default=10, type=int,
+                        help='Number of epochs with no improvement after which training will be stopped')
+    parser.add_argument('--early_stopping_min_delta', default=0.001, type=float,
+                        help='Minimum change in mAP to qualify as an improvement')
+    parser.add_argument('--early_stopping_use_ema', action='store_true',
+                        help='Use EMA model metrics for early stopping')
     # subparsers
     subparsers = parser.add_subparsers(title='sub-commands', dest='subcommand',
         description='valid subcommands', help='additional help')
@@ -866,6 +924,12 @@ def populate_args(
     warmup_epochs=1,
     lr_scheduler='step',
     lr_min_factor=0.0,
+    # Early stopping parameters
+    early_stopping=True,
+    early_stopping_patience=10,
+    early_stopping_min_delta=0.001,
+    early_stopping_use_ema=False,
+    gradient_checkpointing=False,
     # Additional
     subcommand=None,
     **extra_kwargs  # To handle any unexpected arguments
@@ -960,6 +1024,11 @@ def populate_args(
         warmup_epochs=warmup_epochs,
         lr_scheduler=lr_scheduler,
         lr_min_factor=lr_min_factor,
+        early_stopping=early_stopping,
+        early_stopping_patience=early_stopping_patience,
+        early_stopping_min_delta=early_stopping_min_delta,
+        early_stopping_use_ema=early_stopping_use_ema,
+        gradient_checkpointing=gradient_checkpointing,
         **extra_kwargs
     )
     return args

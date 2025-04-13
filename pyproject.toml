@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rfdetr"
-version = "1.1.0rc0"
+version = "1.1.0"
 description = "RF-DETR"
 readme = "README.md"
 authors = [
@@ -52,9 +52,6 @@ dependencies = [
     "einops",
     "pandas",
     "pylabel",
-    "onnx",
-    "onnxsim",
-    "onnx_graphsurgeon",
     "polygraphy",
     "open_clip_torch",
     "rf100vl",
@@ -64,14 +61,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-onnxruntime = [
+onnxexport = [
+    "onnx",
+    "onnxsim",
+    "onnx_graphsurgeon",
     "onnxruntime"
 ]
 metrics = [
     "tensorboard>=2.13.0",
     "wandb"
 ]
-
 build = [
     "twine>=5.1.1",
     "wheel>=0.40",
@@ -91,4 +90,4 @@ include = ["rfdetr*"]
 include-package-data = false
 
 [tool.setuptools.package-data]
-rfdetr = ["py.typed"]
+rfdetr = ["py.typed", "models/backbone/dinov2_configs/*.json"]

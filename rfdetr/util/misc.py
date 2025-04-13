@@ -16,21 +16,20 @@ Misc functions, including distributed helpers.
 
 Mostly copy-paste from torchvision references.
 """
+import datetime
 import os
+import pickle
 import subprocess
 import time
 from collections import defaultdict, deque
-import datetime
-import pickle
 from typing import Optional, List
-import copy
-import argparse
 
 import torch
 import torch.distributed as dist
-from torch import Tensor
 # needed due to empty tensor bug in pytorch and torchvision 0.5
 import torchvision
+from torch import Tensor
+
 if float(torchvision.__version__.split(".")[1]) < 7.0:
     from torchvision.ops import _new_empty_tensor
     from torchvision.ops.misc import _output_size
@@ -425,26 +424,7 @@ def save_on_master(obj, f, *args, **kwargs):
     Safely save objects, removing any callbacks that can't be pickled
     """
     if is_main_process():
-        try:
-            if isinstance(obj, dict):
-                obj_copy = {}
-                for k, v in obj.items():
-                    if k == 'args' and hasattr(v, '__dict__'):
-                        args_dict = copy.copy(v.__dict__)
-                        if 'callbacks' in args_dict:
-                            del args_dict['callbacks']
-                        obj_copy[k] = argparse.Namespace(**args_dict)
-                    elif k != 'callbacks':
-                        obj_copy[k] = v
-                obj = obj_copy
-            
-            torch.save(obj, f, *args, **kwargs)
-        except Exception as e:
-            print(f"Error in safe_save_on_master: {e}")
-            if isinstance(obj, dict) and 'model' in obj:
-                print("Falling back to saving only model state_dict")
-                torch.save({'model': obj['model']}, f, *args, **kwargs)
-
+        torch.save(obj, f, *args, **kwargs)
 
 def init_distributed_mode(args):
     if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
@@ -515,3 +495,12 @@ def inverse_sigmoid(x, eps=1e-5):
     x1 = x.clamp(min=eps)
     x2 = (1 - x).clamp(min=eps)
     return torch.log(x1/x2)
+
+
+def strip_checkpoint(checkpoint):
+    state_dict = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    new_state_dict = {
+        'model': state_dict['model'],
+        'args': state_dict['args'],
+    }
+    torch.save(new_state_dict, checkpoint)
