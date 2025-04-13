@@ -77,6 +77,7 @@ class Backbone(BackboneBase):
             use_registers=use_registers,
             use_windowed_attn=use_windowed_attn,
             gradient_checkpointing=gradient_checkpointing,
+            encoder_weights_path = pretrained_encoder,
             load_dinov2_weights=load_dinov2_weights,
         )
         # build encoder + projector as backbone module

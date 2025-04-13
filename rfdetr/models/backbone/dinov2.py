@@ -46,10 +46,13 @@ def get_config(size, use_registers):
 
 
 class DinoV2(nn.Module):
-    def __init__(self, shape=(640, 640), out_feature_indexes=[2, 4, 5, 9], size="base", use_registers=True, use_windowed_attn=True, gradient_checkpointing=False, load_dinov2_weights=True):
+    def __init__(self, shape=(640, 640), out_feature_indexes=[2, 4, 5, 9], size="base", use_registers=True, use_windowed_attn=True, gradient_checkpointing=False,encoder_weights_path=None, load_dinov2_weights=True):
         super().__init__()
 
-        name = f"facebook/dinov2-with-registers-{size}" if use_registers else f"facebook/dinov2-{size}"
+        if encoder_weights_path is None:
+            name = f"facebook/dinov2-with-registers-{size}" if use_registers else f"facebook/dinov2-{size}"
+        else:
+            name = encoder_weights_path
 
         self.shape = shape
         
