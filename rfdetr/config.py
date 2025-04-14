@@ -66,6 +66,7 @@ class TrainConfig(BaseModel):
     square_resize_div_64: bool = True
     dataset_dir: str
     output_dir: str = "output"
+    datasets_dir: str = "/data/datasets/detr_train_testalgo"
     multi_scale: bool = True
     expanded_scales: bool = True
     use_ema: bool = True

@@ -2,6 +2,7 @@ from typing import Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
+import os
 
 try:
     from torch.utils.tensorboard import SummaryWriter
@@ -184,8 +185,9 @@ class MetricsWandBSink:
         config (dict, optional): Input parameters, like hyperparameters or data preprocessing settings for the run for later comparison.
     """
 
-    def __init__(self, output_dir: str, project: Optional[str] = None, run: Optional[str] = None, config: Optional[dict] = None):
+    def __init__(self, output_dir: str, datasets_dir: str, project: Optional[str] = None, run: Optional[str] = None, config: Optional[dict] = None):
         self.output_dir = output_dir
+        self.ds_dir = datasets_dir
         if wandb:
             self.run = wandb.init(
                 project=project,
@@ -197,6 +199,28 @@ class MetricsWandBSink:
         else:
             self.run = None
             print("Unable to initialize W&B. Logging is turned off for this session. Run 'pip install wandb' to enable logging.")
+
+        #Add datasets table to wandb run
+        folders = [f for f in os.listdir(ds_dir) if os.path.isdir(os.path.join(ds_dir, f))]
+        files_dict = {}
+
+        for folder in folders:
+            folder_path = os.path.join(ds_dir, folder)
+            files = [f for f in os.listdir(folder_path) if os.path.isfile(os.path.join(folder_path, f))]
+            files_dict[folder] = files
+
+        data_tab = [files_dict['train'], files_dict['test'], files_dict['valid']]
+        max_len = max(map(len, data_tab))
+        data_tab = np.array([i + [""] * (max_len - len(i)) for i in data_tab]).T
+        ds_table = wandb.Table(columns=["train", "test", "valid"], data=data_tab)
+        wandb.log({"Datasets": ds_table})
+
+        #Add ONNX model and checkpoint.pth to wandb run
+        if output_dir + "/inference_model.onnx":
+            wandb.log_model(path=output_dir + "inference_model.onnx", name=run)
+            artifact = wandb.Artifact(name="checkpoint.pth", type="checkpoint")
+            artifact.add_file(local_path=output_dir + "/checkpoint.pth", name="checkpoint")
+            artifact.save()
 
     def update(self, values: dict):
         if not wandb or not self.run:

@@ -45,6 +45,10 @@ from logging import getLogger
 import shutil
 from rfdetr.util.files import download_file
 import os
+
+from rfdetr.config import RFDETRBaseConfig, RFDETRLargeConfig, TrainConfig, ModelConfig
+from rfdetr.util.metrics import MetricsPlotSink, MetricsTensorBoardSink, MetricsWandBSink
+
 if str(os.environ.get("USE_FILE_SYSTEM_SHARING", "False")).lower() in ["true", "1"]:
     import torch.multiprocessing
     torch.multiprocessing.set_sharing_strategy('file_system')
@@ -440,7 +444,7 @@ class Model:
         for callback in callbacks["on_train_end"]:
             callback()
     
-    def export(self, output_dir="output", infer_dir=None, simplify=False,  backbone_only=False, opset_version=17, verbose=True, force=False, shape=None, batch_size=1, **kwargs):
+    def export(self, config: TrainConfig, output_dir="output", infer_dir=None, simplify=False,  backbone_only=False, opset_version=17, verbose=True, force=False, shape=None, batch_size=1, **kwargs):
         """Export the trained model to ONNX format"""
         print(f"Exporting model to ONNX format")
         from rfdetr.deploy.export import export_onnx, onnx_simplify, make_infer_image
@@ -501,6 +505,17 @@ class Model:
         
         print("ONNX export completed successfully")
         self.model = self.model.to(device)
+
+        if config.wandb:
+            metrics_wandb_sink = MetricsWandBSink(
+                output_dir=config.output_dir,
+                datasets_dir=config.datasets_dir, 
+                project=config.project,
+                run=config.run,
+                config=config.model_dump()
+            )
+            self.callbacks["on_fit_epoch_end"].append(metrics_wandb_sink.update)
+            self.callbacks["on_train_end"].append(metrics_wandb_sink.close)
             
 
 if __name__ == '__main__':
