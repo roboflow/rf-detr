@@ -324,7 +324,7 @@ if __name__ == "__main__":
     )
 ```
 
-You could also check [this Colab tutoria](colab-link) for full guides on also fine-tuning with RF-DETR on a Roboflow COCO dataset.
+You could also check [this Colab tutorial](https://colab.research.google.com/github/lightly-ai/lightly-train/blob/main/examples/notebooks/rfdetr.ipynb) for full guides on also fine-tuning with RF-DETR on a Roboflow COCO dataset.
 
 ### Fine-tuning
 
