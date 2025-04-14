@@ -310,7 +310,7 @@ dataset/
 
 ### Pretraining
 
-If you prefer pretraining RF-DETR, ideally before fine-tuning, you could use [LightlyTrain](https://docs.lightly.ai/train/stable/index.html) with RF-DETR support. LightlyTrain is a novel framework that let you pretrain any computer vision model on your unlabeled data, by leveraging distillation from foundation models and using self-supervised learning.
+If you have unlabeled data and would like to pretrain RF-DETR on it before fine-tuning, you could use [LightlyTrain](https://docs.lightly.ai/train/stable/index.html) with RF-DETR support. LightlyTrain is a novel framework that let you pretrain any computer vision model on your unlabeled data, by leveraging distillation from foundation models and using self-supervised learning.
 
 You can pretrain your RF-DETR model by simply
 
