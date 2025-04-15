@@ -244,7 +244,7 @@ class Transformer(nn.Module):
                     enc_outputs_coord_unselected_gidx = self.enc_out_bbox_embed[g_idx](
                         output_memory_gidx) + output_proposals # (bs, \sum{hw}, 4) unsigmoid
 
-                topk = self.num_queries
+                topk = min(self.num_queries, enc_outputs_class_unselected_gidx.shape[-2])
                 topk_proposals_gidx = torch.topk(enc_outputs_class_unselected_gidx.max(-1)[0], topk, dim=1)[1] # bs, nq
                 
                 refpoint_embed_gidx_undetach = torch.gather(
@@ -268,15 +268,22 @@ class Transformer(nn.Module):
         tgt = query_feat.unsqueeze(0).repeat(bs, 1, 1)
         refpoint_embed = refpoint_embed.unsqueeze(0).repeat(bs, 1, 1)
         if self.two_stage:
+            ts_len = refpoint_embed_ts.shape[-2]
+            refpoint_embed_ts_subset = refpoint_embed[..., :ts_len, :]
+            refpoint_embed_subset = refpoint_embed[..., ts_len:, :]
+
             if self.bbox_reparam:
-                refpoint_embed_cxcy = refpoint_embed[..., :2] * refpoint_embed_ts[..., 2:]
+                refpoint_embed_cxcy = refpoint_embed_ts_subset[..., :2] * refpoint_embed_ts[..., 2:]
                 refpoint_embed_cxcy = refpoint_embed_cxcy + refpoint_embed_ts[..., :2]
-                refpoint_embed_wh = refpoint_embed[..., 2:].exp() * refpoint_embed_ts[..., 2:]
-                refpoint_embed = torch.concat(
+                refpoint_embed_wh = refpoint_embed_ts_subset[..., 2:].exp() * refpoint_embed_ts[..., 2:]
+                refpoint_embed_ts_subset = torch.concat(
                     [refpoint_embed_cxcy, refpoint_embed_wh], dim=-1
                 )
             else:
-                refpoint_embed = refpoint_embed + refpoint_embed_ts
+                refpoint_embed_ts_subset = refpoint_embed_ts_subset + refpoint_embed_ts
+            
+            refpoint_embed = torch.concat(
+                [refpoint_embed_ts_subset, refpoint_embed_subset], dim=-2)
 
         hs, references = self.decoder(tgt, memory, memory_key_padding_mask=mask_flatten,
                           pos=lvl_pos_embed_flatten, refpoints_unsigmoid=refpoint_embed,

@@ -181,9 +181,9 @@ class LWDETR(nn.Module):
             out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
 
         if self.two_stage:
-            hs_enc_list = hs_enc.split(self.num_queries, dim=1)
-            cls_enc = []
             group_detr = self.group_detr if self.training else 1
+            hs_enc_list = hs_enc.chunk(group_detr, dim=1)
+            cls_enc = []
             for g_idx in range(group_detr):
                 cls_enc_gidx = self.transformer.enc_out_class_embed[g_idx](hs_enc_list[g_idx])
                 cls_enc.append(cls_enc_gidx)

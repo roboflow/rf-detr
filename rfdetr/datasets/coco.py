@@ -43,7 +43,9 @@ def compute_multi_scale_scales(resolution, expanded_scales=False):
     base_num_patches_per_window = resolution // (patch_size * 4)
     offsets = [-3, -2, -1, 0, 1, 2, 3, 4] if not expanded_scales else [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5]
     scales = [base_num_patches_per_window + offset for offset in offsets]
-    return [scale * patch_size * 4 for scale in scales]
+    proposed_scales = [scale * patch_size * 4 for scale in scales]
+    proposed_scales = [scale for scale in proposed_scales if scale >= patch_size * 4]  # ensure minimum image size
+    return proposed_scales
 
 
 class CocoDetection(torchvision.datasets.CocoDetection):
