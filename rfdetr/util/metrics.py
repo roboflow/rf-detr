@@ -201,11 +201,11 @@ class MetricsWandBSink:
             print("Unable to initialize W&B. Logging is turned off for this session. Run 'pip install wandb' to enable logging.")
 
         #Add datasets table to wandb run
-        folders = [f for f in os.listdir(ds_dir) if os.path.isdir(os.path.join(ds_dir, f))]
+        folders = [f for f in os.listdir(datasets_dir) if os.path.isdir(os.path.join(datasets_dir, f))]
         files_dict = {}
 
         for folder in folders:
-            folder_path = os.path.join(ds_dir, folder)
+            folder_path = os.path.join(datasets_dir, folder)
             files = [f for f in os.listdir(folder_path) if os.path.isfile(os.path.join(folder_path, f))]
             files_dict[folder] = files
 

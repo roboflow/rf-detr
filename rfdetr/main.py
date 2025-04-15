@@ -46,9 +46,6 @@ import shutil
 from rfdetr.util.files import download_file
 import os
 
-from rfdetr.config import RFDETRBaseConfig, RFDETRLargeConfig, TrainConfig, ModelConfig
-from rfdetr.util.metrics import MetricsPlotSink, MetricsTensorBoardSink, MetricsWandBSink
-
 if str(os.environ.get("USE_FILE_SYSTEM_SHARING", "False")).lower() in ["true", "1"]:
     import torch.multiprocessing
     torch.multiprocessing.set_sharing_strategy('file_system')
@@ -444,11 +441,14 @@ class Model:
         for callback in callbacks["on_train_end"]:
             callback()
     
-    def export(self, config: TrainConfig, output_dir="output", infer_dir=None, simplify=False,  backbone_only=False, opset_version=17, verbose=True, force=False, shape=None, batch_size=1, **kwargs):
+    def export(self, output_dir="output", infer_dir=None, simplify=False,  backbone_only=False, opset_version=17, verbose=True, force=False, shape=None, batch_size=1, **kwargs):
         """Export the trained model to ONNX format"""
         print(f"Exporting model to ONNX format")
         from rfdetr.deploy.export import export_onnx, onnx_simplify, make_infer_image
 
+        from rfdetr.config import RFDETRBaseConfig, RFDETRLargeConfig, TrainConfig, ModelConfig
+        from rfdetr.util.metrics import MetricsPlotSink, MetricsTensorBoardSink, MetricsWandBSink 
+        config = TrainConfig
 
         device = self.device
         model = deepcopy(self.model.to("cpu"))
