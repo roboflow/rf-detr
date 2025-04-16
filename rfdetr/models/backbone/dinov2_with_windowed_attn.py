@@ -286,6 +286,8 @@ class WindowedDinov2WithRegistersEmbeddings(nn.Module):
         return torch.cat((class_pos_embed.unsqueeze(0), patch_pos_embed), dim=1)
 
     def forward(self, pixel_values: torch.Tensor, bool_masked_pos: Optional[torch.Tensor] = None) -> torch.Tensor:
+        assert pixel_values.shape[2] % (self.patch_size * self.config.num_windows) == 0 and pixel_values.shape[3] % (self.patch_size * self.config.num_windows) == 0, f"WindowedDinov2 requires input shape to be divisible by {self.patch_size * self.config.num_windows}={self.patch_size}x{self.config.num_windows}, but got {pixel_values.shape}"
+
         batch_size, _, height, width = pixel_values.shape
         target_dtype = self.patch_embeddings.projection.weight.dtype
         embeddings = self.patch_embeddings(pixel_values.to(dtype=target_dtype))
