@@ -6,7 +6,7 @@
 
 
 from pydantic import BaseModel
-from typing import List, Optional, Literal, Type
+from typing import List, Optional, Literal, Type, Union
 import torch
 DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 
@@ -27,7 +27,7 @@ class ModelConfig(BaseModel):
     num_classes: int = 90
     pretrain_weights: Optional[str] = None
     device: Literal["cpu", "cuda", "mps"] = DEVICE
-    resolution: int = 560
+    resolution: Union[int, List[int]] = 560
     group_detr: int = 13
     gradient_checkpointing: bool = False
 
