@@ -215,13 +215,6 @@ class MetricsWandBSink:
         ds_table = wandb.Table(columns=["train", "test", "valid"], data=data_tab)
         wandb.log({"Datasets": ds_table})
 
-        #Add ONNX model and checkpoint.pth to wandb run
-        if output_dir + "/inference_model.onnx":
-            wandb.log_model(path=output_dir + "inference_model.onnx", name=run)
-            artifact = wandb.Artifact(name="checkpoint.pth", type="checkpoint")
-            artifact.add_file(local_path=output_dir + "/checkpoint.pth", name="checkpoint")
-            artifact.save()
-
     def update(self, values: dict):
         if not wandb or not self.run:
             return

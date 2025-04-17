@@ -446,9 +446,8 @@ class Model:
         print(f"Exporting model to ONNX format")
         from rfdetr.deploy.export import export_onnx, onnx_simplify, make_infer_image
 
-        from rfdetr.config import RFDETRBaseConfig, RFDETRLargeConfig, TrainConfig, ModelConfig
-        from rfdetr.util.metrics import MetricsPlotSink, MetricsTensorBoardSink, MetricsWandBSink 
-        config = TrainConfig
+        from rfdetr.config import TrainConfig
+        from rfdetr.util.metrics import MetricsWandBSink 
 
         device = self.device
         model = deepcopy(self.model.to("cpu"))
@@ -506,16 +505,16 @@ class Model:
         print("ONNX export completed successfully")
         self.model = self.model.to(device)
 
-        if config.wandb:
-            metrics_wandb_sink = MetricsWandBSink(
-                output_dir=config.output_dir,
-                datasets_dir=config.datasets_dir, 
-                project=config.project,
-                run=config.run,
-                config=config.model_dump()
-            )
-            self.callbacks["on_fit_epoch_end"].append(metrics_wandb_sink.update)
-            self.callbacks["on_train_end"].append(metrics_wandb_sink.close)
+        import wandb
+        if os.path.exists("/detr_train/output/inference_model.onnx"):
+            with wandb.init(id="test", resume="allow", project="detr_kudo") as run:       
+                art_model = wandb.Artifact("inference_model.onnx", type='model')
+                art_model.add_file(local_path="/detr_train/output/inference_model.onnx", name="model")
+                run.log_artifact(art_model)  
+                artifact = wandb.Artifact(name="checkpoint.pth", type="checkpoint")
+                artifact.add_file(local_path="/detr_train/output/checkpoint.pth", name="checkpoint")
+                run.log_artifact(artifact) 
+
             
 
 if __name__ == '__main__':
