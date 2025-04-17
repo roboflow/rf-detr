@@ -4,6 +4,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 
+import yaml
+import json
+
 try:
     from torch.utils.tensorboard import SummaryWriter
 except ModuleNotFoundError:
@@ -185,9 +188,9 @@ class MetricsWandBSink:
         config (dict, optional): Input parameters, like hyperparameters or data preprocessing settings for the run for later comparison.
     """
 
-    def __init__(self, output_dir: str, datasets_dir: str, project: Optional[str] = None, run: Optional[str] = None, config: Optional[dict] = None):
+    def __init__(self, output_dir: str, datasets_conf: str, project: Optional[str] = None, run: Optional[str] = None, config: Optional[dict] = None):
         self.output_dir = output_dir
-        self.ds_dir = datasets_dir
+        self.ds_dir = config.dataset_dir
         if wandb:
             self.run = wandb.init(
                 project=project,
@@ -200,21 +203,29 @@ class MetricsWandBSink:
             self.run = None
             print("Unable to initialize W&B. Logging is turned off for this session. Run 'pip install wandb' to enable logging.")
 
-        #Add datasets table to wandb run
-        folders = [f for f in os.listdir(datasets_dir) if os.path.isdir(os.path.join(datasets_dir, f))]
-        files_dict = {}
+        #Add datasets table and labels to wandb run
+        conf_folder = "/detr_train/configs"
+        ann_file = "/train/_annotations.coco.json"
+        yaml_path = os.path.join(conf_folder, config.datasets_conf)
+        json_path = os.path.join(config.dataset_dir, ann_file)
 
-        for folder in folders:
-            folder_path = os.path.join(datasets_dir, folder)
-            files = [f for f in os.listdir(folder_path) if os.path.isfile(os.path.join(folder_path, f))]
-            files_dict[folder] = files
+        with open(yaml_path, 'r') as file:
+            data_yaml = yaml.safe_load(file)
+        
+        with open(json_path, 'r') as file:
+            data_json = json.load(file)
+        
+        labels = [i["name"] for i in data_json["categories"]]
 
-        data_tab = [files_dict['train'], files_dict['test'], files_dict['valid']]
+        yaml_key = "datasets"
+        data_tab = [data_yaml[yaml_key], [60, 20, 20], labels]
         max_len = max(map(len, data_tab))
         data_tab = np.array([i + [""] * (max_len - len(i)) for i in data_tab]).T
-        ds_table = wandb.Table(columns=["train", "test", "valid"], data=data_tab)
-        wandb.log({"Datasets": ds_table})
 
+
+        ds_table = wandb.Table(columns=["datasets", "division", "labels"], data=data_tab)
+        wandb.log({"Datasets": ds_table})
+        
     def update(self, values: dict):
         if not wandb or not self.run:
             return

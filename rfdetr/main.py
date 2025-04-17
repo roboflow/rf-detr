@@ -446,9 +446,6 @@ class Model:
         print(f"Exporting model to ONNX format")
         from rfdetr.deploy.export import export_onnx, onnx_simplify, make_infer_image
 
-        from rfdetr.config import TrainConfig
-        from rfdetr.util.metrics import MetricsWandBSink 
-
         device = self.device
         model = deepcopy(self.model.to("cpu"))
         model.to(device)
@@ -507,13 +504,13 @@ class Model:
 
         import wandb
         if os.path.exists("/detr_train/output/inference_model.onnx"):
-            with wandb.init(id="test", resume="allow", project="detr_kudo") as run:       
-                art_model = wandb.Artifact("inference_model.onnx", type='model')
-                art_model.add_file(local_path="/detr_train/output/inference_model.onnx", name="model")
-                run.log_artifact(art_model)  
-                artifact = wandb.Artifact(name="checkpoint.pth", type="checkpoint")
-                artifact.add_file(local_path="/detr_train/output/checkpoint.pth", name="checkpoint")
-                run.log_artifact(artifact) 
+        #with wandb.init(id="test", resume="allow", project="detr_kudo") as run:       
+            art_model = wandb.Artifact("inference_model.onnx", type='model')
+            art_model.add_file(local_path="/detr_train/output/inference_model.onnx", name="model")
+            wandb.log_artifact(art_model)  
+            artifact = wandb.Artifact(name="checkpoint.pth", type="checkpoint")
+            artifact.add_file(local_path="/detr_train/output/checkpoint.pth", name="checkpoint")
+            wandb.log_artifact(artifact) 
 
             
 

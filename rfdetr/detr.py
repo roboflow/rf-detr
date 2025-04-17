@@ -83,7 +83,7 @@ class RFDETR:
         if config.wandb:
             metrics_wandb_sink = MetricsWandBSink(
                 output_dir=config.output_dir,
-                datasets_dir=config.datasets_dir, 
+                datasets_conf=config.datasets_conf, 
                 project=config.project,
                 run=config.run,
                 config=config.model_dump()

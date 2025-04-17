@@ -64,9 +64,9 @@ class TrainConfig(BaseModel):
     num_select: int = 300
     dataset_file: Literal["coco", "o365", "roboflow"] = "roboflow"
     square_resize_div_64: bool = True
-    dataset_dir: str
+    dataset_dir: str = "/data/datasets/detr_train_testalgo"
     output_dir: str = "output"
-    datasets_dir: str = "/data/datasets/detr_train_testalgo"
+    datasets_conf: str = "config_kudo.yaml"
     multi_scale: bool = True
     expanded_scales: bool = True
     use_ema: bool = True
