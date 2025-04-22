@@ -36,7 +36,8 @@ class RFDETR:
         self.train_from_config(config, **kwargs)
     
     def export(self, **kwargs):
-        self.model.export(**kwargs)
+        config = self.get_train_config(**kwargs)
+        self.model.export(config, **kwargs)
 
     def train_from_config(self, config: TrainConfig, **kwargs):
         with open(
@@ -82,14 +83,16 @@ class RFDETR:
 
         if config.wandb:
             metrics_wandb_sink = MetricsWandBSink(
+                config_train = self.get_train_config(**kwargs),
                 output_dir=config.output_dir,
-                datasets_conf=config.datasets_conf, 
+                datasets_conf=config.datasets_conf,
+                #data_dir=config.data_dir, 
                 project=config.project,
                 run=config.run,
                 config=config.model_dump()
             )
             self.callbacks["on_fit_epoch_end"].append(metrics_wandb_sink.update)
-            self.callbacks["on_train_end"].append(metrics_wandb_sink.close)
+            #self.callbacks["on_train_end"].append(metrics_wandb_sink.close)
 
         if config.early_stopping:
             from rfdetr.util.early_stopping import EarlyStoppingCallback

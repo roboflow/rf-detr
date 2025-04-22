@@ -7,6 +7,8 @@ import os
 import yaml
 import json
 
+from rfdetr.config import TrainConfig
+
 try:
     from torch.utils.tensorboard import SummaryWriter
 except ModuleNotFoundError:
@@ -188,9 +190,10 @@ class MetricsWandBSink:
         config (dict, optional): Input parameters, like hyperparameters or data preprocessing settings for the run for later comparison.
     """
 
-    def __init__(self, output_dir: str, datasets_conf: str, project: Optional[str] = None, run: Optional[str] = None, config: Optional[dict] = None):
+    def __init__(self, config_train: TrainConfig, output_dir: str, datasets_conf: str, project: Optional[str] = None, run: Optional[str] = None, config: Optional[dict] = None):
         self.output_dir = output_dir
-        self.ds_dir = config.dataset_dir
+        #self.ds_dir = config.data_dir
+        #self.ds_conf = config.datasets_conf
         if wandb:
             self.run = wandb.init(
                 project=project,
@@ -204,10 +207,12 @@ class MetricsWandBSink:
             print("Unable to initialize W&B. Logging is turned off for this session. Run 'pip install wandb' to enable logging.")
 
         #Add datasets table and labels to wandb run
-        conf_folder = "/detr_train/configs"
-        ann_file = "/train/_annotations.coco.json"
-        yaml_path = os.path.join(conf_folder, config.datasets_conf)
-        json_path = os.path.join(config.dataset_dir, ann_file)
+        #conf_folder = "/detr_train/configs"
+        #ann_file = "train/_annotations.coco.json"
+        #data_dir="/data/datasets/detr_train_testalgo"
+        #datasets_conf="config_kudo.yaml"
+        yaml_path = os.path.join(config_train.conf_folder, config_train.datasets_conf)
+        json_path = config_train.ann_file
 
         with open(yaml_path, 'r') as file:
             data_yaml = yaml.safe_load(file)
@@ -225,6 +230,9 @@ class MetricsWandBSink:
 
         ds_table = wandb.Table(columns=["datasets", "division", "labels"], data=data_tab)
         wandb.log({"Datasets": ds_table})
+        #artifact = wandb.Artifact("datasets", type = "dataset")
+        #artifact.add(ds_table, "datasets")
+        #wandb.log_artifact(artifact)
         
     def update(self, values: dict):
         if not wandb or not self.run:
@@ -243,6 +251,10 @@ class MetricsWandBSink:
             ap50_90 = safe_index(coco_eval, 0)
             ap50 = safe_index(coco_eval, 1)
             ar50_90 = safe_index(coco_eval, 6)
+            f1_50_90 = 2*(ap50_90*ar50_90)/(ap50_90+ar50_90)
+            
+            log_dict["Metrics/Base/F1_50_90"] = f1_50_90
+            
             if ap50_90 is not None:
                 log_dict["Metrics/Base/AP50_90"] = ap50_90
             if ap50 is not None:
@@ -255,6 +267,10 @@ class MetricsWandBSink:
             ema_ap50_90 = safe_index(ema_coco_eval, 0)
             ema_ap50 = safe_index(ema_coco_eval, 1)
             ema_ar50_90 = safe_index(ema_coco_eval, 6)
+            ema_f1_50_90 = 2*(ema_ap50_90*ema_ar50_90)/(ema_ap50_90+ema_ar50_90)
+            
+            log_dict["Metrics/EMA/F1_50_90"] = ema_f1_50_90
+             
             if ema_ap50_90 is not None:
                 log_dict["Metrics/EMA/AP50_90"] = ema_ap50_90
             if ema_ap50 is not None:

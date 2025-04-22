@@ -66,6 +66,8 @@ class TrainConfig(BaseModel):
     square_resize_div_64: bool = True
     dataset_dir: str = "/data/datasets/detr_train_testalgo"
     output_dir: str = "output"
+    ann_file: str = "/data/datasets/detr_train_testalgo/train/_annotations.coco.json"
+    conf_folder: str = "/detr_train/configs"
     datasets_conf: str = "config_kudo.yaml"
     multi_scale: bool = True
     expanded_scales: bool = True
