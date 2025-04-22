@@ -33,8 +33,8 @@ First download and install TensorRT>=8.6.1 from [TensorRT](https://developer.nvi
 
 To export your ONNX model to TensorRT, initialize and call the `trtexec()` method with the path to your ONNX model and three arguments:
 
-1. `verbose` [tensorRT_docs](https://docs.nvidia.com/deeplearning/tensorrt/latest/reference/command-line-programs.)html#trtexec
-2. If you want to use nsight-systems profiling install it from [nsigh-systems_install](https://docs.nvidia.com/nsight-systems/InstallationGuide/index.html). Documentation is available at [night-systems_docs](https://docs.nvidia.com/nsight-systems/UserGuide/index.html#profiling-from-the-cli). This provides you with detailed information about TensorRT execution on the GPU.
+1. `verbose` [tensorRT_docs](https://docs.nvidia.com/deeplearning/tensorrt/latest/reference/command-line-programs.)
+2. If you want to use nsight-systems profiling install it from [nsight-systems_installation](https://docs.nvidia.com/nsight-systems/InstallationGuide/index.html). Documentation is available at [nsight-systems_docs](https://docs.nvidia.com/nsight-systems/UserGuide/index.html#profiling-from-the-cli). This provides you with detailed information about TensorRT execution on the GPU.
 3. Setting `dry_run` to true enables you to print the command that would be executed.
 
 Run the code below to convert your ONNX model to TensorRT. Change `onnx_model_path`.
