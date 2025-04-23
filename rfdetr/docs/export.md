@@ -14,6 +14,7 @@ To export your model, simply initialize it and call the `.export()` method. Ther
 *   `infer_dir`: A directory where a single sample image exists.
 *   `simplify`: A boolean indicating whether you want to simplify the ONNX model. This improves inference speed and reduces model complexity and size.
 *   `backbone_only`: A boolean indicating whether you want to export the backbone only. Setting this boolean to true renders the model unable to perform object detection.
+*   `resolution`: The resolution on which the model was trained on.
 
 ```python
 from rfdetr import RFDETRBase
