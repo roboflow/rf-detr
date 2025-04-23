@@ -14,34 +14,25 @@ reliable measurements of inference latency using ONNX Runtime or TensorRT
 on the device.
 """
 import argparse
-import copy
 import contextlib
-import datetime
+import copy
 import json
 import os
 import os.path as osp
 import random
 import time
-import ast
-from pathlib import Path
 from collections import namedtuple, OrderedDict
 
-from pycocotools.cocoeval import COCOeval
-from pycocotools.coco import COCO
-import pycocotools.mask as mask_util
-
 import numpy as np
-from PIL import Image
+import onnxruntime as nxrun
+import pycuda.driver as cuda
+import tensorrt as trt
 import torch
-from torch.utils.data import DataLoader, DistributedSampler
-import torchvision.transforms as T
 import torchvision.transforms.functional as F
 import tqdm
-
-import pycuda.driver as cuda
-import pycuda.autoinit
-import onnxruntime as nxrun
-import tensorrt as trt
+from PIL import Image
+from pycocotools.coco import COCO
+from pycocotools.cocoeval import COCOeval
 
 
 def parser_args():

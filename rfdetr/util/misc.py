@@ -266,24 +266,34 @@ class MetricLogger(object):
             header, total_time_str, total_time / len(iterable)))
 
 
-def get_sha():
+def get_sha() -> Optional[dict[str, str]]:
+    """Get git repository information.
+
+    Returns:
+        Optional[Dict[str, str]]: A dictionary containing git information with keys:
+            - 'sha': The git commit hash
+            - 'status': Repository status ('clean' or 'has uncommitted changes')
+            - 'branch': Current git branch
+            Returns None if git information cannot be retrieved.
+    """
     cwd = os.path.dirname(os.path.abspath(__file__))
 
-    def _run(command):
+    def _run(command: List[str]) -> str:
         return subprocess.check_output(command, cwd=cwd).decode('ascii').strip()
-    sha = 'N/A'
-    diff = "clean"
-    branch = 'N/A'
+
     try:
         sha = _run(['git', 'rev-parse', 'HEAD'])
-        subprocess.check_output(['git', 'diff'], cwd=cwd)
         diff = _run(['git', 'diff-index', 'HEAD'])
-        diff = "has uncommited changes" if diff else "clean"
+        status = "has uncommitted changes" if diff else "clean"
         branch = _run(['git', 'rev-parse', '--abbrev-ref', 'HEAD'])
-    except Exception:
-        pass
-    message = f"sha: {sha}, status: {diff}, branch: {branch}"
-    return message
+
+        return {
+            'sha': sha,
+            'status': status,
+            'branch': branch
+        }
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
 
 
 def collate_fn(batch):

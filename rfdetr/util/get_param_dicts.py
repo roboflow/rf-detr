@@ -1,41 +1,15 @@
 # ------------------------------------------------------------------------
-# LW-DETR
-# Copyright (c) 2024 Baidu. All Rights Reserved.
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
+# Modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
+# Copyright (c) 2024 Baidu. All Rights Reserved.
+# ------------------------------------------------------------------------
 
-"""Functions to get params dict"""
 import torch.nn as nn
 
 from rfdetr.models.backbone import Joiner
-
-
-def get_vit_lr_decay_rate(name, lr_decay_rate=1.0, num_layers=12):
-    """
-    Calculate lr decay rate for different ViT blocks.
-    
-    Args:
-        name (string): parameter name.
-        lr_decay_rate (float): base lr decay rate.
-        num_layers (int): number of ViT blocks.
-    Returns:
-        lr decay rate for the given parameter.
-    """
-    layer_id = num_layers + 1
-    if name.startswith("backbone"):
-        if ".pos_embed" in name or ".patch_embed" in name:
-            layer_id = 0
-        elif ".blocks." in name and ".residual." not in name:
-            layer_id = int(name[name.find(".blocks.") :].split(".")[2]) + 1
-    print("name: {}, lr_decay: {}".format(name, lr_decay_rate ** (num_layers + 1 - layer_id)))
-    return lr_decay_rate ** (num_layers + 1 - layer_id)
-
-
-def get_vit_weight_decay_rate(name, weight_decay_rate=1.0):
-    if ('gamma' in name) or ('pos_embed' in name) or ('rel_pos' in name) or ('bias' in name) or ('norm' in name):
-        weight_decay_rate = 0.
-    print("name: {}, weight_decay rate: {}".format(name, weight_decay_rate))
-    return weight_decay_rate
 
 
 def get_param_dict(args, model_without_ddp: nn.Module):
