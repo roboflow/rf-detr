@@ -21,7 +21,7 @@ from rfdetr import RFDETRBase
 
 model = RFDETRBase(pretrain_weights=<CHECKPOINT_PATH>)
 
-model.export(output_dir="onnx-models", infer_dir=None, simplify=True,  backbone_only=False)
+model.export(output_dir="onnx-models", infer_dir=None, simplify=True,  backbone_only=False, resolution=1120)
 ```
 
 ## TensorRT conversion
