@@ -7,6 +7,7 @@
 
 import json
 import os
+from itertools import cycle
 from collections import defaultdict
 from logging import getLogger
 from typing import Union, List
@@ -32,6 +33,11 @@ class RFDETR:
         self.maybe_download_pretrain_weights()
         self.model = self.get_model(self.model_config)
         self.callbacks = defaultdict(list)
+
+        # repeat means and stds for non-rgb images
+        if self.model_config.num_channels != 3:
+            self.means = [val for _, val in zip(range(self.model_config.num_channels), cycle(self.means))]
+            self.stds = [val for _, val in zip(range(self.model_config.num_channels), cycle(self.stds))]
 
     def maybe_download_pretrain_weights(self):
         download_pretrain_weights(self.model_config.pretrain_weights)
@@ -177,9 +183,9 @@ class RFDETR:
                     "Image has pixel values above 1. Please ensure the image is "
                     "normalized (scaled to [0, 1])."
                 )
-            if img.shape[0] != 3:
+            if img.shape[0] != self.model_config.num_channels:
                 raise ValueError(
-                    f"Invalid image shape. Expected 3 channels (RGB), but got "
+                    f"Invalid image shape. Expected {self.model_config.num_channels} channels, but got "
                     f"{img.shape[0]} channels."
                 )
             img_tensor = img

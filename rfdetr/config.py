@@ -12,6 +12,7 @@ DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is
 
 class ModelConfig(BaseModel):
     encoder: Literal["dinov2_windowed_small", "dinov2_windowed_base"]
+    num_channels: int = 3
     out_feature_indexes: List[int]
     dec_layers: int = 3
     two_stage: bool = True
@@ -33,6 +34,7 @@ class ModelConfig(BaseModel):
 
 class RFDETRBaseConfig(ModelConfig):
     encoder: Literal["dinov2_windowed_small", "dinov2_windowed_base"] = "dinov2_windowed_small"
+    num_channels: int = 3
     hidden_dim: int = 256
     sa_nheads: int = 8
     ca_nheads: int = 16
@@ -45,6 +47,7 @@ class RFDETRBaseConfig(ModelConfig):
 
 class RFDETRLargeConfig(RFDETRBaseConfig):
     encoder: Literal["dinov2_windowed_small", "dinov2_windowed_base"] = "dinov2_windowed_base"
+    num_channels: int = 3
     hidden_dim: int = 384
     sa_nheads: int = 12
     ca_nheads: int = 24

@@ -33,8 +33,10 @@ from typing import DefaultDict, List, Callable
 
 import numpy as np
 import torch
+import torch.nn as nn
 from peft import LoraConfig, get_peft_model
 from torch.utils.data import DataLoader, DistributedSampler
+from timm.models._manipulate import adapt_input_conv
 
 import rfdetr.util.misc as utils
 from rfdetr.datasets import build_dataset, get_coco_api_from_dataset
@@ -69,6 +71,16 @@ def download_pretrain_weights(pretrain_weights: str, redownload=False):
                 HOSTED_MODELS[pretrain_weights],
                 pretrain_weights,
             )
+
+def modify_input_conv(conv: nn.Conv2d, num_channels: int) -> nn.Conv2d:
+    """Modify the pretrained input conv layer to accept a different number of input channels."""
+    new_conv = copy.deepcopy(conv)
+    new_conv.in_channels = num_channels
+    new_weight = adapt_input_conv(in_chans=num_channels, conv_weight=conv.weight)
+    new_conv.weight = torch.nn.Parameter(new_weight)
+    new_conv.weight.requires_grad = conv.weight.requires_grad
+    return new_conv
+
 
 class Model:
     def __init__(self, **kwargs):
@@ -125,6 +137,12 @@ class Model:
                     checkpoint['model'][name] = state[:num_desired_queries]
 
             self.model.load_state_dict(checkpoint['model'], strict=False)
+
+        # Modify input conv if needed
+        if args.num_channels != 3:
+            conv = self.model.backbone[0].encoder.encoder.embeddings.patch_embeddings.projection
+            self.model.backbone[0].encoder.encoder.embeddings.patch_embeddings.projection = modify_input_conv(conv, args.num_channels)
+            self.model.backbone[0].encoder.encoder.embeddings.patch_embeddings.num_channels = args.num_channels
 
         if args.backbone_lora:
             print("Applying LORA to backbone")
@@ -814,6 +832,7 @@ def get_args_parser():
 def populate_args(
     # Basic training parameters
     num_classes=2,
+    num_channels=3,
     grad_accum_steps=1,
     amp=False,
     lr=1e-4,
@@ -936,6 +955,7 @@ def populate_args(
 ):
     args = argparse.Namespace(
         num_classes=num_classes,
+        num_channels=num_channels,
         grad_accum_steps=grad_accum_steps,
         amp=amp,
         lr=lr,
