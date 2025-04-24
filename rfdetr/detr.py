@@ -39,7 +39,6 @@ class RFDETR:
             self.means = [val for _, val in zip(range(self.model_config.num_channels), cycle(self.means))]
             self.stds = [val for _, val in zip(range(self.model_config.num_channels), cycle(self.stds))]
 
-
     def maybe_download_pretrain_weights(self):
         download_pretrain_weights(self.model_config.pretrain_weights)
 
