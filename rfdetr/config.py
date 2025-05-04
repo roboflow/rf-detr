@@ -5,7 +5,7 @@
 # ------------------------------------------------------------------------
 
 
-from pydantic import BaseModel
+from pydantic import BaseModel, root_validator, Extra
 from typing import List, Optional, Literal, Type
 import torch
 DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
@@ -30,6 +30,21 @@ class ModelConfig(BaseModel):
     resolution: int = 560
     group_detr: int = 13
     gradient_checkpointing: bool = False
+    @root_validator(pre=True)
+    def catch_typo_kwargs(cls, values):
+        allowed = set(cls.__fields__)
+        provided = set(values)
+        extra   = provided - allowed
+        if extra:
+            bad = ", ".join(f"'{k}'" for k in extra)
+            raise ValueError(
+                f"Unknown parameter(s): {bad}. "
+                f"Available fields are: {', '.join(sorted(allowed))}"
+            )
+        return values
+
+    class Config:
+        extra = Extra.ignore
 
 class RFDETRBaseConfig(ModelConfig):
     encoder: Literal["dinov2_windowed_small", "dinov2_windowed_base"] = "dinov2_windowed_small"
