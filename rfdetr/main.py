@@ -45,7 +45,6 @@ from logging import getLogger
 import shutil
 from rfdetr.util.files import download_file
 import os
-
 from rfdetr.config import TrainConfig
 
 if str(os.environ.get("USE_FILE_SYSTEM_SHARING", "False")).lower() in ["true", "1"]:
@@ -448,7 +447,7 @@ class Model:
         print(f"Exporting model to ONNX format")
         from rfdetr.deploy.export import export_onnx, onnx_simplify, make_infer_image
         import onnx
-        print(config)
+
         device = self.device
         model = deepcopy(self.model.to("cpu"))
         model.to(device)
@@ -508,9 +507,8 @@ class Model:
         import wandb
         with open(config.ann_file, 'r') as file:
             data_json = json.load(file)
-        
+
         labels = [i["name"] for i in data_json["categories"]]
-        print(labels)
         model = onnx.load("/detr_train/output/inference_model.onnx")
         metadata = model.metadata_props.add()
         metadata.key = "labels"
@@ -524,9 +522,15 @@ class Model:
             artifact = wandb.Artifact(name="checkpoint.pth", type="checkpoint")
             artifact.add_file(local_path="/detr_train/output/checkpoint.pth", name="checkpoint")
             wandb.log_artifact(artifact) 
-            wandb.finish()
-
             
+        #IMPORT TEST IMAGES TO WANDB
+        from rfdetr.util.detr_inf import process_images_from_folder
+        processed_10 = process_images_from_folder(
+            labelmap=labels, 
+            src_folder = config.dataset_dir, 
+            model_path = "/detr_train/output/model_metadata.onnx")
+        print(len(processed_10))
+        wandb.finish()            
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('LWDETR training and evaluation script', parents=[get_args_parser()])

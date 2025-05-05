@@ -190,7 +190,7 @@ class MetricsWandBSink:
         config (dict, optional): Input parameters, like hyperparameters or data preprocessing settings for the run for later comparison.
     """
 
-    def __init__(self, config_train: TrainConfig, output_dir: str, datasets_conf: str, project: Optional[str] = None, run: Optional[str] = None, config: Optional[dict] = None):
+    def __init__(self,config_train: TrainConfig, output_dir: str, datasets_conf: str, project: Optional[str] = None, run: Optional[str] = None, config: Optional[dict] = None):
         self.output_dir = output_dir
         #self.ds_dir = config.data_dir
         #self.ds_conf = config.datasets_conf
@@ -213,7 +213,6 @@ class MetricsWandBSink:
         #datasets_conf="config_kudo.yaml"
         yaml_path = os.path.join(config_train.conf_folder, config_train.datasets_conf)
         json_path = config_train.ann_file
-
         with open(yaml_path, 'r') as file:
             data_yaml = yaml.safe_load(file)
         
