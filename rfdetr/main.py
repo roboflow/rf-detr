@@ -525,11 +525,16 @@ class Model:
             
         #IMPORT TEST IMAGES TO WANDB
         from rfdetr.util.detr_inf import process_images_from_folder
-        processed_10 = process_images_from_folder(
+        processed_20 = process_images_from_folder(
             labelmap=labels, 
             src_folder = config.dataset_dir, 
             model_path = "/detr_train/output/model_metadata.onnx")
-        print(len(processed_10))
+        #print(len(processed_20))
+        examples = []
+        for i in range(len(processed_20)):      
+                image = wandb.Image(processed_20[i], caption=f"test_images")
+                examples.append(image)
+        wandb.log({"test_images": examples})
         wandb.finish()            
 
 if __name__ == '__main__':

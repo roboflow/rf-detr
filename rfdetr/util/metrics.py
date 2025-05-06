@@ -268,14 +268,14 @@ class MetricsWandBSink:
             ema_ar50_90 = safe_index(ema_coco_eval, 6)
             ema_f1_50_90 = 2*(ema_ap50_90*ema_ar50_90)/(ema_ap50_90+ema_ar50_90)
             
-            log_dict["Metrics/EMA/F1_50_90"] = ema_f1_50_90
+            #log_dict["Metrics/EMA/F1_50_90"] = ema_f1_50_90
              
-            if ema_ap50_90 is not None:
-                log_dict["Metrics/EMA/AP50_90"] = ema_ap50_90
-            if ema_ap50 is not None:
-                log_dict["Metrics/EMA/AP50"] = ema_ap50
-            if ema_ar50_90 is not None:
-                log_dict["Metrics/EMA/AR50_90"] = ema_ar50_90
+            #if ema_ap50_90 is not None:
+                #log_dict["Metrics/EMA/AP50_90"] = ema_ap50_90
+            #if ema_ap50 is not None:
+                #log_dict["Metrics/EMA/AP50"] = ema_ap50
+            #if ema_ar50_90 is not None:
+                #log_dict["Metrics/EMA/AR50_90"] = ema_ar50_90
 
         wandb.log(log_dict)
 

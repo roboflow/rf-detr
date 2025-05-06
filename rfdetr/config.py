@@ -68,7 +68,7 @@ class TrainConfig(BaseModel):
     output_dir: str = "output"
     ann_file: str = "/data/datasets/detr_train_dixy/train/_annotations.coco.json"
     conf_folder: str = "/detr_train/configs"
-    datasets_conf: str = "config_kudo.yaml"
+    datasets_conf: str = "config_dixy.yaml"
     multi_scale: bool = True
     expanded_scales: bool = True
     use_ema: bool = True
