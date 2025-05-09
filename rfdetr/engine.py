@@ -182,7 +182,7 @@ def train_one_epoch(
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
 
-def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, header='Test', args=None):
+def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, args=None, header='Eval'):
     model.eval()
     if args.fp16_eval:
         model.half()
