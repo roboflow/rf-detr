@@ -14,7 +14,7 @@ RF-DETR is a real-time, transformer-based object detection model architecture de
 
 RF-DETR is the first real-time model to exceed 60 AP on the [Microsoft COCO benchmark](https://cocodataset.org/#home) alongside competitive performance at base sizes. It also achieves state-of-the-art performance on [RF100-VL](https://github.com/roboflow/rf100-vl), an object detection benchmark that measures model domain adaptability to real world problems. RF-DETR is comparable speed to current real-time objection models.
 
-**RF-DETR is small enough to run on the edge, making it an ideal model for deployments that need both strong accuracy and real-time performance.**
+**RF-DETR is small enough to run on the edge using [Inference], making it an ideal model for deployments that need both strong accuracy and real-time performance.**
 
 ## Results
 
@@ -76,7 +76,53 @@ pip install git+https://github.com/roboflow/rf-detr.git
 
 ## Inference
 
-The `.predict()` method accepts various input formats, including file paths, PIL images, NumPy arrays, and torch tensors. Please ensure inputs use RGB channel order. For `torch.Tensor` inputs specifically, they must have a shape of `(3, H, W)` with values normalized to the `[0..1)` range.
+The easiest path to deployment is using Roboflow's [Inference](https://github.com/roboflow/inference) package. You can use model's uploaded to Roboflow's platform with Inference's `infer` method:
+
+```python
+import os
+import supervision as sv
+from inference import get_model
+from PIL import Image
+from io import BytesIO
+import requests
+
+url = "https://media.roboflow.com/dog.jpeg"
+image = Image.open(io.BytesIO(requests.get(url).content))
+
+model = get_model("rfdetr-base")
+
+predictions = model.infer(image, confidence=0.5)[0]
+
+detections = sv.Detections.from_inference(predictions)
+
+labels = [prediction.class_name for prediction in predictions.predictions]
+
+annotated_image = image.copy()
+annotated_image = sv.BoxAnnotator().annotate(annotated_image, detections)
+annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
+
+sv.plot_image(annotated_image)
+
+annotated_image.save("annotated_image_base.jpg")
+
+model = get_model("rfdetr-large")
+
+predictions = model.infer(image, confidence=0.5)[0]
+
+detections = sv.Detections.from_inference(predictions)
+
+labels = [prediction.class_name for prediction in predictions.predictions]
+
+annotated_image = image.copy()
+annotated_image = sv.BoxAnnotator().annotate(annotated_image, detections)
+annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
+
+sv.plot_image(annotated_image)
+```
+
+## Predict
+
+You can also use the .predict method to perform inference during local development. The `.predict()` method accepts various input formats, including file paths, PIL images, NumPy arrays, and torch tensors. Please ensure inputs use RGB channel order. For `torch.Tensor` inputs specifically, they must have a shape of `(3, H, W)` with values normalized to the `[0..1)` range.
 
 ```python
 import io
