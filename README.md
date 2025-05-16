@@ -51,6 +51,7 @@ We validated the performance of RF-DETR on both Microsoft COCO and the RF100-VL 
 
 - `2025/03/20`: We release RF-DETR real-time object detection model. **Code and checkpoint for RF-DETR-large and RF-DETR-base are available.**
 - `2025/04/03`: We release early stopping, gradient checkpointing, metrics saving, training resume, TensorBoard and W&B logging support.
+- `2025/05/16`: We release an 'optimize_for_inference' method which speeds up native PyTorch by up to 2x, depending on platform.
 
 ## Installation
 
@@ -76,7 +77,7 @@ pip install git+https://github.com/roboflow/rf-detr.git
 
 ## Inference
 
-The `.predict()` method accepts various input formats, including file paths, PIL images, NumPy arrays, and torch tensors. Please ensure inputs use RGB channel order. For `torch.Tensor` inputs specifically, they must have a shape of `(3, H, W)` with values normalized to the `[0..1)` range.
+The `.predict()` method accepts various input formats, including file paths, PIL images, NumPy arrays, and torch tensors. Please ensure inputs use RGB channel order. For `torch.Tensor` inputs specifically, they must have a shape of `(3, H, W)` with values normalized to the `[0..1)` range. If you don't plan to modify the image or batch size dynamically at runtime, you can also use `.optimize_for_inference()` to get up to 2x end-to-end speedup, depending on platform.
 
 ```python
 import io
@@ -87,6 +88,8 @@ from rfdetr import RFDETRBase
 from rfdetr.util.coco_classes import COCO_CLASSES
 
 model = RFDETRBase()
+
+model = model.optimize_for_inference()
 
 url = "https://media.roboflow.com/notebooks/examples/dog-2.jpeg"
 

@@ -23,7 +23,6 @@ import torch
 import torch.nn.functional as F
 from torch import nn, Tensor
 
-from rfdetr.models.attention import MultiheadAttention
 from rfdetr.models.ops.modules import MSDeformAttn
 
 class MLP(nn.Module):
@@ -45,7 +44,7 @@ def gen_sineembed_for_position(pos_tensor, dim=128):
     # n_query, bs, _ = pos_tensor.size()
     # sineembed_tensor = torch.zeros(n_query, bs, 256)
     scale = 2 * math.pi
-    dim_t = torch.arange(dim, dtype=torch.float32, device=pos_tensor.device)
+    dim_t = torch.arange(dim, dtype=pos_tensor.dtype, device=pos_tensor.device)
     dim_t = 10000 ** (2 * (dim_t // 2) / dim)
     x_embed = pos_tensor[:, :, 0] * scale
     y_embed = pos_tensor[:, :, 1] * scale
@@ -445,7 +444,7 @@ class TransformerDecoderLayer(nn.Module):
                  skip_self_attn=False):
         super().__init__()
         # Decoder Self-Attention
-        self.self_attn = MultiheadAttention(embed_dim=d_model, num_heads=sa_nhead, dropout=dropout, batch_first=True)
+        self.self_attn = nn.MultiheadAttention(embed_dim=d_model, num_heads=sa_nhead, dropout=dropout, batch_first=True)
         self.dropout1 = nn.Dropout(dropout)
         self.norm1 = nn.LayerNorm(d_model)
 
@@ -499,7 +498,8 @@ class TransformerDecoderLayer(nn.Module):
             v = torch.cat(v.split(num_queries // self.group_detr, dim=1), dim=0)
 
         tgt2 = self.self_attn(q, k, v, attn_mask=tgt_mask,
-                            key_padding_mask=tgt_key_padding_mask)[0]
+                            key_padding_mask=tgt_key_padding_mask,
+                            need_weights=False)[0]
         
         if self.training:
             tgt2 = torch.cat(tgt2.split(bs, dim=0), dim=1)
