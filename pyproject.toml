@@ -58,6 +58,7 @@ dependencies = [
     "pydantic",
     "supervision",
     "matplotlib",
+    "opencv-python",
 ]
 
 [project.optional-dependencies]
