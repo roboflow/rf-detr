@@ -85,7 +85,7 @@ def train_one_epoch(
     
     header = f"Epoch: [{epoch+1}/{args.epochs}]"
     if args.progress_bar:
-        progress = tqdm(enumerate(data_loader), total=len(data_loader), desc=header)
+        progress = tqdm(enumerate(data_loader), total=len(data_loader), desc=header, colour="green")
     else:
         progress = enumerate(metric_logger.log_every(data_loader, print_freq=10, header=header))
     for data_iter_step, (samples, targets) in progress:
@@ -195,7 +195,7 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, arg
     coco_evaluator = CocoEvaluator(base_ds, iou_types)
 
     if args.progress_bar:
-        progress = tqdm(data_loader, total=len(data_loader), desc=header)
+        progress = tqdm(data_loader, total=len(data_loader), desc=header, colour="green")
     else:
         progress = metric_logger.log_every(data_loader, print_freq=10, header=header)
     for samples, targets in progress:
