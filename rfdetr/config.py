@@ -5,12 +5,36 @@
 # ------------------------------------------------------------------------
 
 
-from pydantic import BaseModel, root_validator, Extra
-from typing import List, Optional, Literal, Type
+from typing import List, Optional, Literal
+from pydantic import BaseModel, ConfigDict, model_validator
 import torch
+
 DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 
-class ModelConfig(BaseModel):
+
+class BaseConfig(BaseModel):
+    """
+    Base configuration class that validates input parameters against the defined model schema.
+    If any unknown fields are provided, a ValueError is raised listing the unknown and available parameters.
+    """
+    model_config = ConfigDict(extra='ignore')
+    
+    @model_validator(mode="before")
+    def catch_typo_kwargs(cls, values):
+        allowed_params = set(cls.model_json_schema().get('properties').keys())
+        provided_params = set(values)
+        unknown_params = provided_params - allowed_params
+        if unknown_params:
+            unknown_params_list = ", ".join(f"'{param}'" for param in sorted(unknown_params))
+            allowed_params_list = ", ".join(sorted(allowed_params))
+            raise ValueError(
+                f"Unknown parameter(s): {unknown_params_list}. "
+                f"Available parameter(s): {allowed_params_list}."
+            )
+        return values
+
+
+class ModelConfig(BaseConfig):
     encoder: Literal["dinov2_windowed_small", "dinov2_windowed_base"]
     out_feature_indexes: List[int]
     dec_layers: int = 3
@@ -30,21 +54,6 @@ class ModelConfig(BaseModel):
     resolution: int = 560
     group_detr: int = 13
     gradient_checkpointing: bool = False
-    @root_validator(pre=True)
-    def catch_typo_kwargs(cls, values):
-        allowed = set(cls.__fields__)
-        provided = set(values)
-        extra   = provided - allowed
-        if extra:
-            bad = ", ".join(f"'{k}'" for k in extra)
-            raise ValueError(
-                f"Unknown parameter(s): {bad}. "
-                f"Available fields are: {', '.join(sorted(allowed))}"
-            )
-        return values
-
-    class Config:
-        extra = Extra.ignore
 
 class RFDETRBaseConfig(ModelConfig):
     encoder: Literal["dinov2_windowed_small", "dinov2_windowed_base"] = "dinov2_windowed_small"
@@ -67,7 +76,7 @@ class RFDETRLargeConfig(RFDETRBaseConfig):
     projector_scale: List[Literal["P3", "P4", "P5"]] = ["P3", "P5"]
     pretrain_weights: Optional[str] = "rf-detr-large.pth"
 
-class TrainConfig(BaseModel):
+class TrainConfig(BaseConfig):
     lr: float = 1e-4
     lr_encoder: float = 1.5e-4
     batch_size: int = 4
