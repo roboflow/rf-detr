@@ -25,6 +25,9 @@ import torch.utils.data
 import torchvision
 
 import rfdetr.datasets.transforms as T
+from rfdetr.util.logger import get_logger
+
+logger = get_logger()
 
 
 def compute_multi_scale_scales(resolution, expanded_scales=False):
@@ -118,7 +121,7 @@ def make_coco_transforms(image_set, resolution, multi_scale=False, expanded_scal
     if multi_scale:
         # scales = [448, 512, 576, 640, 704, 768, 832, 896]
         scales = compute_multi_scale_scales(resolution, expanded_scales)
-        print(scales)
+        logger.info(f"Using multi-scale training with scales: {scales}")
 
     if image_set == 'train':
         return T.Compose([
@@ -162,7 +165,7 @@ def make_coco_transforms_square_div_64(image_set, resolution, multi_scale=False,
     if multi_scale:
         # scales = [448, 512, 576, 640, 704, 768, 832, 896]
         scales = compute_multi_scale_scales(resolution, expanded_scales)
-        print(scales)
+        logger.info(f"Using multi-scale training with square resize and scales: {scales}")
 
     if image_set == 'train':
         return T.Compose([
@@ -193,58 +196,55 @@ def make_coco_transforms_square_div_64(image_set, resolution, multi_scale=False,
 
 def build(image_set, args, resolution):
     root = Path(args.coco_path)
-    assert root.exists(), f'provided COCO path {root} does not exist'
-    mode = 'instances'
-    PATHS = {
-        "train": (root / "train2017", root / "annotations" / f'{mode}_train2017.json'),
-        "val": (root /  "val2017", root / "annotations" / f'{mode}_val2017.json'),
-        "test": (root / "test2017", root / "annotations" / f'image_info_test-dev2017.json'),
-    }
-    
-    img_folder, ann_file = PATHS[image_set.split("_")[0]]
-    
     try:
-        square_resize = args.square_resize
-    except:
-        square_resize = False
-    
-    try:
-        square_resize_div_64 = args.square_resize_div_64
-    except:
-        square_resize_div_64 = False
-
-    
-    if square_resize_div_64:
-        dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms_square_div_64(image_set, resolution, multi_scale=args.multi_scale, expanded_scales=args.expanded_scales))
-    else:
-        dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms(image_set, resolution, multi_scale=args.multi_scale, expanded_scales=args.expanded_scales))
-    return dataset
+        if not root.exists():
+            logger.error(f"COCO path {root} does not exist")
+            raise FileNotFoundError(f"COCO path {root} does not exist")
+            
+        mode = 'instances'
+        PATHS = {
+            "train": (root / "train2017", root / "annotations" / f'{mode}_train2017.json'),
+            "val": (root /  "val2017", root / "annotations" / f'{mode}_val2017.json'),
+            "test": (root / "test2017", root / "annotations" / f'image_info_test-dev2017.json'),
+        }
+        
+        img_folder, ann_file = PATHS[image_set.split("_")[0]]
+        square_resize_div_64 = getattr(args, 'square_resize_div_64', False)
+        
+        if square_resize_div_64:
+            logger.info(f"Building COCO {image_set} dataset with square resize at resolution {resolution}")
+            dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms_square_div_64(image_set, resolution, multi_scale=args.multi_scale, expanded_scales=args.expanded_scales))
+        else:
+            logger.info(f"Building COCO {image_set} dataset at resolution {resolution}")
+            dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms(image_set, resolution, multi_scale=args.multi_scale, expanded_scales=args.expanded_scales))
+        return dataset
+    except Exception as e:
+        logger.error(f"Failed to build COCO dataset: {e}")
+        raise
 
 def build_roboflow(image_set, args, resolution):
     root = Path(args.dataset_dir)
-    assert root.exists(), f'provided Roboflow path {root} does not exist'
-    mode = 'instances'
-    PATHS = {
-        "train": (root / "train", root / "train" / "_annotations.coco.json"),
-        "val": (root /  "valid", root / "valid" / "_annotations.coco.json"),
-        "test": (root / "test", root / "test" / "_annotations.coco.json"),
-    }
-    
-    img_folder, ann_file = PATHS[image_set.split("_")[0]]
-    
     try:
-        square_resize = args.square_resize
-    except:
-        square_resize = False
-    
-    try:
-        square_resize_div_64 = args.square_resize_div_64
-    except:
-        square_resize_div_64 = False
-
-    
-    if square_resize_div_64:
-        dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms_square_div_64(image_set, resolution, multi_scale=args.multi_scale))
-    else:
-        dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms(image_set, resolution, multi_scale=args.multi_scale))
-    return dataset
+        if not root.exists():
+            logger.error(f"Roboflow dataset path {root} does not exist")
+            raise FileNotFoundError(f"Roboflow dataset path {root} does not exist")
+            
+        PATHS = {
+            "train": (root / "train", root / "train" / "_annotations.coco.json"),
+            "val": (root /  "valid", root / "valid" / "_annotations.coco.json"),
+            "test": (root / "test", root / "test" / "_annotations.coco.json"),
+        }
+        
+        img_folder, ann_file = PATHS[image_set.split("_")[0]]
+        square_resize_div_64 = getattr(args, 'square_resize_div_64', False)
+        
+        if square_resize_div_64:
+            logger.info(f"Building Roboflow {image_set} dataset with square resize at resolution {resolution}")
+            dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms_square_div_64(image_set, resolution, multi_scale=args.multi_scale, expanded_scales=args.expanded_scales))
+        else:
+            logger.info(f"Building Roboflow {image_set} dataset at resolution {resolution}")
+            dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms(image_set, resolution, multi_scale=args.multi_scale, expanded_scales=args.expanded_scales))
+        return dataset
+    except Exception as e:
+        logger.error(f"Failed to build Roboflow dataset: {e}")
+        raise

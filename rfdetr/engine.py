@@ -18,13 +18,13 @@
 Train and eval functions used in main.py
 """
 import math
-import sys
 from typing import Iterable
 
 import torch
 
 import rfdetr.util.misc as utils
 from rfdetr.datasets.coco_eval import CocoEvaluator
+from rfdetr.util.logger import get_logger
 
 try:
     from torch.amp import autocast, GradScaler
@@ -35,6 +35,8 @@ except ImportError:
 from typing import DefaultDict, List, Callable
 from rfdetr.util.misc import NestedTensor
 
+
+logger = get_logger()
 
 
 def get_autocast_args(args):
@@ -70,9 +72,6 @@ def train_one_epoch(
     print_freq = 10
     start_steps = epoch * num_training_steps_per_epoch
 
-    print("Grad accum steps: ", args.grad_accum_steps)
-    print("Total batch size: ", batch_size * utils.get_world_size())
-
     # Add gradient scaler for AMP
     if DEPRECATED_AMP:
         scaler = GradScaler(enabled=args.amp)
@@ -80,9 +79,18 @@ def train_one_epoch(
         scaler = GradScaler('cuda', enabled=args.amp)
 
     optimizer.zero_grad()
-    assert batch_size % args.grad_accum_steps == 0
+    
+    # Check if batch size is divisible by gradient accumulation steps
+    if batch_size % args.grad_accum_steps != 0:
+        logger.error(f"Batch size ({batch_size}) must be divisible by gradient accumulation steps ({args.grad_accum_steps})")
+        raise ValueError(f"Batch size ({batch_size}) must be divisible by gradient accumulation steps ({args.grad_accum_steps})")
+    
+    logger.info(f"Training config: grad_accum_steps={args.grad_accum_steps}, "
+                f"total_batch_size={batch_size * utils.get_world_size()}, "
+                f"dataloader_length={len(data_loader)}")
+
     sub_batch_size = batch_size // args.grad_accum_steps
-    print("LENGTH OF DATA LOADER:", len(data_loader))
+    
     for data_iter_step, (samples, targets) in enumerate(
         metric_logger.log_every(data_loader, print_freq, header)
     ):
@@ -143,8 +151,8 @@ def train_one_epoch(
         loss_value = losses_reduced_scaled.item()
 
         if not math.isfinite(loss_value):
-            print(loss_dict_reduced)
-            raise ValueError("Loss is {}, stopping training".format(loss_value))
+            logger.error(f"Loss is {loss_value}, stopping training. Loss dict: {loss_dict_reduced}")
+            raise ValueError(f"Loss is {loss_value}, stopping training")
 
         if max_norm > 0:
             scaler.unscale_(optimizer)
@@ -164,7 +172,7 @@ def train_one_epoch(
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
-    print("Averaged stats:", metric_logger)
+    logger.info(f"Epoch {epoch} stats: {metric_logger}")
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
 
@@ -239,7 +247,7 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, arg
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
-    print("Averaged stats:", metric_logger)
+    logger.info(f"Evaluation results: {metric_logger}")
     if coco_evaluator is not None:
         coco_evaluator.synchronize_between_processes()
 

@@ -11,40 +11,38 @@
 export ONNX model and TensorRT engine for deployment
 """
 import os
-import ast
 import random
-import argparse
 import subprocess
-import torch.nn as nn
-from pathlib import Path
-import time
-from collections import defaultdict
 
-import onnx
-import torch
-import onnxsim
 import numpy as np
+import onnx
+import onnxsim
+import torch
+import torch.nn as nn
 from PIL import Image
 
-import rfdetr.util.misc as utils
 import rfdetr.datasets.transforms as T
-from rfdetr.models import build_model
 from rfdetr.deploy._onnx import OnnxOptimizer
 import re
-import sys
+from rfdetr.models import build_model
+from rfdetr.util.logger import get_logger
+from rfdetr.util.misc import get_sha, get_rank
+from rfdetr.util.package import get_version
+
+logger = get_logger()
 
 
 def run_command_shell(command, dry_run:bool = False) -> int:
     if dry_run:
-        print("")
-        print(f"CUDA_VISIBLE_DEVICES={os.environ['CUDA_VISIBLE_DEVICES']} {command}")
-        print("")
+        logger.info("")
+        logger.info(f"CUDA_VISIBLE_DEVICES={os.environ['CUDA_VISIBLE_DEVICES']} {command}")
+        logger.info("")
     try:
         result = subprocess.run(command, shell=True, capture_output=True, text=True)
         return result
     except subprocess.CalledProcessError as e:
-        print(f"Command failed with exit code {e.returncode}")
-        print(f"Error output:\n{e.stderr.decode('utf-8')}")
+        logger.error(f"Command failed with exit code {e.returncode}")
+        logger.error(f"Error output:\n{e.stderr.decode('utf-8')}")
         raise
 
 
@@ -88,7 +86,7 @@ def export_onnx(output_dir, model, input_names, input_tensors, output_names, dyn
         opset_version=opset_version,
         dynamic_axes=dynamic_axes)
 
-    print(f'\nSuccessfully exported ONNX model: {output_file}')
+    logger.info(f'\nSuccessfully exported ONNX model: {output_file}')
     return output_file
 
 
@@ -100,7 +98,7 @@ def onnx_simplify(onnx_dir:str, input_names, input_tensors, force=False):
     if isinstance(input_tensors, torch.Tensor):
         input_tensors = [input_tensors]
     
-    print(f'start simplify ONNX model: {onnx_dir}')
+    logger.info(f'start simplify ONNX model: {onnx_dir}')
     opt = OnnxOptimizer(onnx_dir)
     opt.info('Model: original')
     opt.common_opt()
@@ -116,7 +114,7 @@ def onnx_simplify(onnx_dir:str, input_names, input_tensors, force=False):
         onnx.save(model_opt, sim_onnx_dir)
     else:
         raise RuntimeError("Failed to simplify ONNX model.")
-    print(f'Successfully simplified ONNX model: {sim_onnx_dir}')
+    logger.info(f'Successfully simplified ONNX model: {sim_onnx_dir}')
     return sim_onnx_dir
 
 
@@ -142,7 +140,7 @@ def trtexec(onnx_dir:str, args) -> None:
                 "--force-overwrite true",
                 trt_command
         ])
-        print(f'Profile data will be saved to: {profile_dir}')
+        logger.info(f'Profile data will be saved to: {profile_dir}')
     else:
         command = trt_command
 
@@ -150,7 +148,7 @@ def trtexec(onnx_dir:str, args) -> None:
     stats = parse_trtexec_output(output.stdout)
 
 def parse_trtexec_output(output_text):
-    print(output_text)
+    logger.info(output_text)
     # Common patterns in trtexec output
     gpu_compute_pattern = r"GPU Compute Time: min = (\d+\.\d+) ms, max = (\d+\.\d+) ms, mean = (\d+\.\d+) ms, median = (\d+\.\d+) ms"
     h2d_pattern = r"Host to Device Transfer Time: min = (\d+\.\d+) ms, max = (\d+\.\d+) ms, mean = (\d+\.\d+) ms"
@@ -204,8 +202,14 @@ def no_batch_norm(model):
             raise ValueError("BatchNorm2d found in the model. Please remove it.")
 
 def main(args):
-    print("git:\n  {}\n".format(utils.get_sha()))
-    print(args)
+    git_info = get_sha()
+    if git_info:
+        logger.info(
+            f"Running from git repository: {git_info['sha']} ({git_info['branch']}, {git_info['status']})")
+    else:
+        version = get_version()
+        logger.info(f"Running RF-DETR version: {version or 'unknown'}")
+    logger.info(f"Export config: {vars(args)}")
     # convert device to device_id
     if args.device == 'cuda':
         device_id = "0"
@@ -221,26 +225,27 @@ def main(args):
     os.environ["CUDA_VISIBLE_DEVICES"] = device_id
 
     # fix the seed for reproducibility
-    seed = args.seed + utils.get_rank()
+    seed = args.seed + get_rank()
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
 
     model, criterion, postprocessors = build_model(args)
     n_parameters = sum(p.numel() for p in model.parameters())
-    print(f"number of parameters: {n_parameters}")
+    logger.info(f"number of parameters: {n_parameters}")
+    logger.info(f"number of parameters: {n_parameters}")
     n_backbone_parameters = sum(p.numel() for p in model.backbone.parameters())
-    print(f"number of backbone parameters: {n_backbone_parameters}")
+    logger.info(f"number of backbone parameters: {n_backbone_parameters}")
     n_projector_parameters = sum(p.numel() for p in model.backbone[0].projector.parameters())
-    print(f"number of projector parameters: {n_projector_parameters}")
+    logger.info(f"number of projector parameters: {n_projector_parameters}")
     n_backbone_encoder_parameters = sum(p.numel() for p in model.backbone[0].encoder.parameters())
-    print(f"number of backbone encoder parameters: {n_backbone_encoder_parameters}")
+    logger.info(f"number of backbone encoder parameters: {n_backbone_encoder_parameters}")
     n_transformer_parameters = sum(p.numel() for p in model.transformer.parameters())
-    print(f"number of transformer parameters: {n_transformer_parameters}")
+    logger.info(f"number of transformer parameters: {n_transformer_parameters}")
     if args.resume:
         checkpoint = torch.load(args.resume, map_location='cpu')
         model.load_state_dict(checkpoint['model'], strict=True)
-        print(f"load checkpoints {args.resume}")
+        logger.info(f"load checkpoints {args.resume}")
 
     if args.layer_norm:
         no_batch_norm(model)
@@ -257,12 +262,12 @@ def main(args):
     with torch.no_grad():
         if args.backbone_only:
             features = model(input_tensors)
-            print(f"PyTorch inference output shape: {features.shape}")
+            logger.info(f"PyTorch inference output shape: {features.shape}")
         else:
             outputs = model(input_tensors)
             dets = outputs['pred_boxes']
             labels = outputs['pred_logits']
-            print(f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}")
+            logger.info(f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}")
     model.cpu()
     input_tensors = input_tensors.cpu()
 

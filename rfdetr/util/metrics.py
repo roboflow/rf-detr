@@ -1,7 +1,15 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+
 from typing import Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
+
+from rfdetr.util.logger import get_logger
 
 try:
     from torch.utils.tensorboard import SummaryWriter
@@ -15,6 +23,7 @@ except ModuleNotFoundError:
 
 plt.ioff()
 
+logger = get_logger()
 PLOT_FILE_NAME = "metrics_plot.png"
 
 
@@ -39,7 +48,7 @@ class MetricsPlotSink:
 
     def save(self):
         if not self.history:
-            print("No data to plot.")
+            logger.warning("No metrics data available to generate plot. Skipping plot generation.")
             return
 
         def get_array(key):
@@ -111,7 +120,7 @@ class MetricsPlotSink:
         plt.tight_layout()
         plt.savefig(f"{self.output_dir}/{PLOT_FILE_NAME}")
         plt.close(fig)
-        print(f"Results saved to {self.output_dir}/{PLOT_FILE_NAME}")
+        logger.info(f"Results saved to {self.output_dir}/{PLOT_FILE_NAME}")
 
 
 class MetricsTensorBoardSink:
@@ -125,10 +134,10 @@ class MetricsTensorBoardSink:
     def __init__(self, output_dir: str):
         if SummaryWriter:
             self.writer = SummaryWriter(log_dir=output_dir)
-            print(f"TensorBoard logging initialized. To monitor logs, use 'tensorboard --logdir {output_dir}' and open http://localhost:6006/ in browser.")
+            logger.info(f"TensorBoard logging initialized. To monitor logs, use 'tensorboard --logdir {output_dir}' and open http://localhost:6006/ in browser.")
         else:
             self.writer = None
-            print("Unable to initialize TensorBoard. Logging is turned off for this session.  Run 'pip install tensorboard' to enable logging.")
+            logger.warning("Unable to initialize TensorBoard. Logging is turned off for this session. Run 'pip install tensorboard' to enable logging.")
 
     def update(self, values: dict):
         if not self.writer:
@@ -193,10 +202,10 @@ class MetricsWandBSink:
                 config=config,
                 dir=output_dir
             )
-            print(f"W&B logging initialized. To monitor logs, open {wandb.run.url}.")
+            logger.info(f"W&B logging initialized. To monitor logs, open {wandb.run.url}.")
         else:
             self.run = None
-            print("Unable to initialize W&B. Logging is turned off for this session. Run 'pip install wandb' to enable logging.")
+            logger.warning("Unable to initialize W&B. Logging is turned off for this session. Run 'pip install wandb' to enable logging.")
 
     def update(self, values: dict):
         if not wandb or not self.run:

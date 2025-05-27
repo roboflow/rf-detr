@@ -13,6 +13,9 @@ import roboflow
 from rfdetr import RFDETRBase
 import torch
 import os
+from rfdetr.util.logger import get_logger
+
+logger = get_logger()
 
 def download_dataset(rf_project: roboflow.Project, dataset_version: int):
     versions = rf_project.versions()
@@ -34,7 +37,7 @@ def download_dataset(rf_project: roboflow.Project, dataset_version: int):
 
 def train_from_rf_project(rf_project: roboflow.Project, dataset_version: int):
     location = download_dataset(rf_project, dataset_version)
-    print(location)
+    logger.info(f"Using dataset from location: {location}")
     rf_detr = RFDETRBase()
     device_supports_cuda = torch.cuda.is_available()
     rf_detr.train(
@@ -46,6 +49,7 @@ def train_from_rf_project(rf_project: roboflow.Project, dataset_version: int):
 
 def train_from_coco_dir(coco_dir: str):
     rf_detr = RFDETRBase()
+    device_supports_cuda = torch.cuda.is_available()
     rf_detr.train(
         dataset_dir=coco_dir,
         epochs=1,
@@ -63,6 +67,7 @@ def trainer():
     args = parser.parse_args()
     
     if args.coco_dir is not None:
+        logger.info(f"Training from COCO directory: {args.coco_dir}")
         train_from_coco_dir(args.coco_dir)
         return
 
@@ -74,9 +79,11 @@ def trainer():
         )
 
     if args.workspace is not None:
+        logger.info(f"Using Roboflow project: {args.workspace}/{args.project_name}")
         rf = roboflow.Roboflow(api_key=args.api_key)
         project = rf.workspace(args.workspace).project(args.project_name)
     else:
+        logger.info("No project specified, using first project from RF100VL")
         projects = get_rf100vl_projects(api_key=args.api_key)
         project = projects[0].rf_project
 

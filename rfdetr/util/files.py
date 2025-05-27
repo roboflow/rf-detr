@@ -1,6 +1,6 @@
 import requests
 from tqdm import tqdm
-from logging import getLogger
+
 
 def download_file(url, filename):
     response = requests.get(url, stream=True)

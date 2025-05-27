@@ -8,7 +8,7 @@
 import json
 import os
 from collections import defaultdict
-from logging import getLogger
+from rfdetr.util.logger import get_logger
 from typing import Union, List
 from copy import deepcopy
 
@@ -28,7 +28,8 @@ from rfdetr.main import Model, download_pretrain_weights
 from rfdetr.util.metrics import MetricsPlotSink, MetricsTensorBoardSink, MetricsWandBSink
 from rfdetr.util.coco_classes import COCO_CLASSES
 
-logger = getLogger(__name__)
+logger = get_logger()
+
 class RFDETR:
     means = [0.485, 0.456, 0.406]
     stds = [0.229, 0.224, 0.225]
@@ -103,9 +104,9 @@ class RFDETR:
             self.model.class_names = class_names
 
         if self.model_config.num_classes != num_classes:
-            logger.warning(
-                f"num_classes mismatch: model has {self.model_config.num_classes} classes, but your dataset has {num_classes} classes\n"
-                f"reinitializing your detection head with {num_classes} classes."
+            logger.info(
+                f"Model configured with {self.model_config.num_classes} classes, dataset contains {num_classes} classes. "
+                f"Reinitializing detection head to match dataset ({num_classes} classes)."
             )
             self.model.reinitialize_detection_head(num_classes)
         
