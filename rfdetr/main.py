@@ -182,7 +182,7 @@ class Model:
             model_without_ddp = model.module
 
         n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        print('number of params:', n_parameters)
+        print('\nnumber of params:', n_parameters)
         param_dicts = get_param_dict(args, model_without_ddp)
 
         param_dicts = [p for p in param_dicts if p['params'].requires_grad]
@@ -191,7 +191,9 @@ class Model:
                                     weight_decay=args.weight_decay)
         # Choose the learning rate scheduler based on the new argument
 
+        print("\nloading training data:")
         dataset_train = build_dataset(image_set='train', args=args, resolution=args.resolution)
+        print("\nloading validation data:")
         dataset_val = build_dataset(image_set='val', args=args, resolution=args.resolution)
 
         # for cosine annealing, calculate total training steps and warmup steps
@@ -265,7 +267,7 @@ class Model:
         output_dir = Path(args.output_dir)
         
         if  utils.is_main_process():
-            print("Get benchmark")
+            print("\nGetting benchmark")
             if args.do_benchmark:
                 benchmark_model = copy.deepcopy(model_without_ddp)
                 bm = benchmark(benchmark_model.float(), dataset_val, output_dir)
@@ -309,7 +311,12 @@ class Model:
                 args.cutoff_epoch, args.drop_mode, args.drop_schedule)
             print("Min DP = %.7f, Max DP = %.7f" % (min(schedules['dp']), max(schedules['dp'])))
 
-        print("Start training")
+        print("batch size:", args.batch_size)
+        print("Grad accum steps:", args.grad_accum_steps)
+        print("Effective batch size:", effective_batch_size)
+        print("Training steps/epoch:", len(data_loader_train))
+        print("\ntraining...")
+
         start_time = time.time()
         best_map_holder = BestMetricHolder(use_ema=args.use_ema)
         best_map_5095 = 0
@@ -355,7 +362,7 @@ class Model:
 
             with torch.inference_mode():
                 test_stats, coco_evaluator = evaluate(
-                    model, criterion, postprocessors, data_loader_val, base_ds, device, args=args
+                    model, criterion, postprocessors, data_loader_val, base_ds, device, args=args, header="Test"
                 )
             
             map_regular = test_stats['coco_eval_bbox'][0]
@@ -378,7 +385,7 @@ class Model:
                         'n_parameters': n_parameters}
             if args.use_ema:
                 ema_test_stats, _ = evaluate(
-                    self.ema_m.module, criterion, postprocessors, data_loader_val, base_ds, device, args=args
+                    self.ema_m.module, criterion, postprocessors, data_loader_val, base_ds, device, args=args, header="Test-ema"
                 )
                 log_stats.update({f'ema_test_{k}': v for k,v in ema_test_stats.items()})
                 map_ema = ema_test_stats['coco_eval_bbox'][0]

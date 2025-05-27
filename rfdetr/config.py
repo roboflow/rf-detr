@@ -83,6 +83,7 @@ class TrainConfig(BaseModel):
     early_stopping_patience: int = 10
     early_stopping_min_delta: float = 0.001
     early_stopping_use_ema: bool = False
+    progress_bar: bool = False
     tensorboard: bool = True
     wandb: bool = False
     project: Optional[str] = None
