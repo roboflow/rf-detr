@@ -12,6 +12,8 @@
 # Copied from DETR (https://github.com/facebookresearch/detr)
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 # ------------------------------------------------------------------------
+# Modifed with faster-coco-eval by @MiXaiLL76
+# ------------------------------------------------------------------------
 
 """
 COCO dataset which returns image_id for evaluation.
@@ -21,9 +23,7 @@ Mostly copy-paste from https://github.com/pytorch/vision/blob/13b35ff/references
 from pathlib import Path
 
 import torch
-import torch.utils.data
-import torchvision
-
+from faster_coco_eval.utils.pytorch import FasterCocoDetection
 import rfdetr.datasets.transforms as T
 
 
@@ -48,14 +48,14 @@ def compute_multi_scale_scales(resolution, expanded_scales=False):
     return proposed_scales
 
 
-class CocoDetection(torchvision.datasets.CocoDetection):
+class CocoDetection(FasterCocoDetection):
     def __init__(self, img_folder, ann_file, transforms):
-        super(CocoDetection, self).__init__(img_folder, ann_file)
+        super(FasterCocoDetection, self).__init__(img_folder, ann_file)
         self._transforms = transforms
         self.prepare = ConvertCoco()
 
     def __getitem__(self, idx):
-        img, target = super(CocoDetection, self).__getitem__(idx)
+        img, target = super(FasterCocoDetection, self).__getitem__(idx)
         image_id = self.ids[idx]
         target = {'image_id': image_id, 'annotations': target}
         img, target = self.prepare(img, target)
