@@ -599,7 +599,7 @@ During training, two model checkpoints (the regular weights and an EMA-based set
 - To view your logs after training, start the MLflow UI:
 
     ```bash
-    mlflow ui
+    mlflow ui --backend-store-uri <OUTPUT_PATH>
     ```
 
     Then open `http://localhost:5000` in your browser to access the MLflow dashboard.

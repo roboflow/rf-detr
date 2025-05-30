@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Optional
 
 import matplotlib.pyplot as plt
@@ -272,7 +273,9 @@ class MetricsMLFlowSink:
         config: Optional[dict] = None,
         track_system_metrics: bool = True,
     ):
-        self.output_dir = output_dir
+        if not mlflow.is_tracking_uri_set():
+            output_dir = Path(output_dir).absolute().as_uri()
+            mlflow.set_tracking_uri(output_dir)
 
         if not mlflow:
             self.run = None
