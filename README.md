@@ -135,7 +135,7 @@ from rfdetr.util.coco_classes import COCO_CLASSES
 
 model = RFDETRBase()
 
-model = model.optimize_for_inference()
+model.optimize_for_inference()
 
 url = "https://media.roboflow.com/notebooks/examples/dog-2.jpeg"
 
