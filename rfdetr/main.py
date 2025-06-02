@@ -56,7 +56,10 @@ HOSTED_MODELS = {
     "rf-detr-base.pth": "https://storage.googleapis.com/rfdetr/rf-detr-base-coco.pth",
     # below is a less converged model that may be better for finetuning but worse for inference
     "rf-detr-base-2.pth": "https://storage.googleapis.com/rfdetr/rf-detr-base-2.pth",
-    "rf-detr-large.pth": "https://storage.googleapis.com/rfdetr/rf-detr-large.pth"
+    "rf-detr-large.pth": "https://storage.googleapis.com/rfdetr/rf-detr-large.pth",
+    "rf-detr-nano.pth": "https://storage.googleapis.com/rfdetr/nano_coco/checkpoint_best_regular.pth",
+    "rf-detr-small.pth": "https://storage.googleapis.com/rfdetr/small_coco/checkpoint_best_regular.pth",
+    "rf-detr-medium.pth": "https://storage.googleapis.com/rfdetr/medium_coco/checkpoint_best_regular.pth",
 }
 
 def download_pretrain_weights(pretrain_weights: str, redownload=False):
@@ -790,6 +793,7 @@ def get_args_parser():
     parser.add_argument('--use_cls_token', action='store_true', help='use cls token')
     parser.add_argument('--multi_scale', action='store_true', help='use multi scale')
     parser.add_argument('--expanded_scales', action='store_true', help='use expanded scales')
+    parser.add_argument('--do_random_resize_via_padding', action='store_true', help='use random resize via padding')
     parser.add_argument('--warmup_epochs', default=1, type=float, 
         help='Number of warmup epochs for linear warmup before cosine annealing')
     # Add scheduler type argument: 'step' or 'cosine'
@@ -937,6 +941,7 @@ def populate_args(
     use_cls_token=False,
     multi_scale=False,
     expanded_scales=False,
+    do_random_resize_via_padding=False,
     warmup_epochs=1,
     lr_scheduler='step',
     lr_min_factor=0.0,
@@ -1037,6 +1042,7 @@ def populate_args(
         use_cls_token=use_cls_token,
         multi_scale=multi_scale,
         expanded_scales=expanded_scales,
+        do_random_resize_via_padding=do_random_resize_via_padding,
         warmup_epochs=warmup_epochs,
         lr_scheduler=lr_scheduler,
         lr_min_factor=lr_min_factor,

@@ -264,31 +264,37 @@ class Transformer(nn.Module):
             memory_ts = torch.cat(memory_ts, dim=1)#.transpose(0, 1)
             boxes_ts = torch.cat(boxes_ts, dim=1)#.transpose(0, 1)
         
-        tgt = query_feat.unsqueeze(0).repeat(bs, 1, 1)
-        refpoint_embed = refpoint_embed.unsqueeze(0).repeat(bs, 1, 1)
-        if self.two_stage:
-            ts_len = refpoint_embed_ts.shape[-2]
-            refpoint_embed_ts_subset = refpoint_embed[..., :ts_len, :]
-            refpoint_embed_subset = refpoint_embed[..., ts_len:, :]
+        if self.dec_layers > 0:
+            tgt = query_feat.unsqueeze(0).repeat(bs, 1, 1)
+            refpoint_embed = refpoint_embed.unsqueeze(0).repeat(bs, 1, 1)
+            if self.two_stage:
+                ts_len = refpoint_embed_ts.shape[-2]
+                refpoint_embed_ts_subset = refpoint_embed[..., :ts_len, :]
+                refpoint_embed_subset = refpoint_embed[..., ts_len:, :]
 
-            if self.bbox_reparam:
-                refpoint_embed_cxcy = refpoint_embed_ts_subset[..., :2] * refpoint_embed_ts[..., 2:]
-                refpoint_embed_cxcy = refpoint_embed_cxcy + refpoint_embed_ts[..., :2]
-                refpoint_embed_wh = refpoint_embed_ts_subset[..., 2:].exp() * refpoint_embed_ts[..., 2:]
-                refpoint_embed_ts_subset = torch.concat(
-                    [refpoint_embed_cxcy, refpoint_embed_wh], dim=-1
-                )
-            else:
-                refpoint_embed_ts_subset = refpoint_embed_ts_subset + refpoint_embed_ts
-            
-            refpoint_embed = torch.concat(
-                [refpoint_embed_ts_subset, refpoint_embed_subset], dim=-2)
+                if self.bbox_reparam:
+                    refpoint_embed_cxcy = refpoint_embed_ts_subset[..., :2] * refpoint_embed_ts[..., 2:]
+                    refpoint_embed_cxcy = refpoint_embed_cxcy + refpoint_embed_ts[..., :2]
+                    refpoint_embed_wh = refpoint_embed_ts_subset[..., 2:].exp() * refpoint_embed_ts[..., 2:]
+                    refpoint_embed_ts_subset = torch.concat(
+                        [refpoint_embed_cxcy, refpoint_embed_wh], dim=-1
+                    )
+                else:
+                    refpoint_embed_ts_subset = refpoint_embed_ts_subset + refpoint_embed_ts
+                
+                refpoint_embed = torch.concat(
+                    [refpoint_embed_ts_subset, refpoint_embed_subset], dim=-2)
 
-        hs, references = self.decoder(tgt, memory, memory_key_padding_mask=mask_flatten,
-                          pos=lvl_pos_embed_flatten, refpoints_unsigmoid=refpoint_embed,
-                          level_start_index=level_start_index, 
-                          spatial_shapes=spatial_shapes,
-                          valid_ratios=valid_ratios.to(memory.dtype) if valid_ratios is not None else valid_ratios)
+            hs, references = self.decoder(tgt, memory, memory_key_padding_mask=mask_flatten,
+                            pos=lvl_pos_embed_flatten, refpoints_unsigmoid=refpoint_embed,
+                            level_start_index=level_start_index, 
+                            spatial_shapes=spatial_shapes,
+                            valid_ratios=valid_ratios.to(memory.dtype) if valid_ratios is not None else valid_ratios)
+        else:
+            assert self.two_stage, "if not using decoder, two_stage must be True"
+            hs = None
+            references = None
+        
         if self.two_stage:
             if self.bbox_reparam:
                 return hs, references, memory_ts, boxes_ts

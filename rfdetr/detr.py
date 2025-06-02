@@ -23,7 +23,15 @@ try:
 except:
     pass
 
-from rfdetr.config import RFDETRBaseConfig, RFDETRLargeConfig, TrainConfig, ModelConfig
+from rfdetr.config import (
+    RFDETRBaseConfig,
+    RFDETRLargeConfig,
+    RFDETRNanoConfig,
+    RFDETRSmallConfig,
+    RFDETRMediumConfig,
+    TrainConfig,
+    ModelConfig
+)
 from rfdetr.main import Model, download_pretrain_weights
 from rfdetr.util.metrics import MetricsPlotSink, MetricsTensorBoardSink, MetricsWandBSink
 from rfdetr.util.coco_classes import COCO_CLASSES
@@ -310,6 +318,27 @@ class RFDETRBase(RFDETR):
 class RFDETRLarge(RFDETR):
     def get_model_config(self, **kwargs):
         return RFDETRLargeConfig(**kwargs)
+
+    def get_train_config(self, **kwargs):
+        return TrainConfig(**kwargs)
+
+class RFDETRNano(RFDETR):
+    def get_model_config(self, **kwargs):
+        return RFDETRNanoConfig(**kwargs)
+
+    def get_train_config(self, **kwargs):
+        return TrainConfig(**kwargs)
+
+class RFDETRSmall(RFDETR):
+    def get_model_config(self, **kwargs):
+        return RFDETRSmallConfig(**kwargs)
+
+    def get_train_config(self, **kwargs):
+        return TrainConfig(**kwargs)
+
+class RFDETRMedium(RFDETR):
+    def get_model_config(self, **kwargs):
+        return RFDETRMediumConfig(**kwargs)
 
     def get_train_config(self, **kwargs):
         return TrainConfig(**kwargs)
