@@ -53,37 +53,9 @@ class Backbone(BackboneBase):
                  load_dinov2_weights: bool = True,
                  ):
         super().__init__()
-        # --- ViT-300M backbone selection ---
-        if name.startswith("vit_300m"):
-            model_name = pretrained_encoder or "google/vit-large-patch16-224-in21k"
-            self.encoder = ViTModel.from_pretrained(model_name)
-            in_channels = self.encoder.config.hidden_size  # 1024 for ViT-Large
-            self._is_vit = True
-        else:
-            # --- DINOv2 fallback (original code) ---
-            name_parts = name.split("_")
-            assert name_parts[0] == "dinov2"
-            size = name_parts[-1]
-            use_registers = False
-            if "registers" in name_parts:
-                use_registers = True
-                name_parts.remove("registers")
-            use_windowed_attn = False
-            if "windowed" in name_parts:
-                use_windowed_attn = True
-                name_parts.remove("windowed")
-            assert len(name_parts) == 2, "name should be dinov2, then either registers, windowed, both, or none, then the size"
-            self.encoder = DinoV2(
-                size=name_parts[-1],
-                out_feature_indexes=out_feature_indexes,
-                shape=target_shape,
-                use_registers=use_registers,
-                use_windowed_attn=use_windowed_attn,
-                gradient_checkpointing=gradient_checkpointing,
-                load_dinov2_weights=load_dinov2_weights,
-            )
-            in_channels = self.encoder._out_feature_channels
-            self._is_vit = False
+        model_name = pretrained_encoder or "google/vit-large-patch16-224-in21k"
+        self.encoder = ViTModel.from_pretrained(model_name)
+        in_channels = self.encoder.config.hidden_size  # 1024 for ViT-Large
 
         if freeze_encoder:
             for param in self.encoder.parameters():
@@ -117,18 +89,14 @@ class Backbone(BackboneBase):
             self.encoder.merge_and_unload()
 
     def forward(self, tensor_list: NestedTensor):
-        """ """
-        if getattr(self, '_is_vit', False):
-            x = tensor_list.tensors  # (B, 3, H, W)
-            outputs = self.encoder(pixel_values=x)
-            feats = outputs.last_hidden_state[:, 1:, :]  # Remove CLS token
-            B, N, C = feats.shape
-            patch_size = self.encoder.config.patch_size
-            H = W = int(N ** 0.5)
-            feats = feats.transpose(1, 2).reshape(B, C, H, W)
-            feats = [feats]
-        else:
-            feats = self.encoder(tensor_list.tensors)
+        x = tensor_list.tensors  # (B, 3, H, W)
+        outputs = self.encoder(pixel_values=x)
+        feats = outputs.last_hidden_state[:, 1:, :]  # Remove CLS token
+        B, N, C = feats.shape
+        patch_size = self.encoder.config.patch_size
+        H = W = int(N ** 0.5)
+        feats = feats.transpose(1, 2).reshape(B, C, H, W)
+        feats = [feats]
         feats = self.projector(feats)
         out = []
         for feat in feats:
@@ -139,16 +107,13 @@ class Backbone(BackboneBase):
         return out
 
     def forward_export(self, tensors: torch.Tensor):
-        if getattr(self, '_is_vit', False):
-            outputs = self.encoder(pixel_values=tensors)
-            feats = outputs.last_hidden_state[:, 1:, :]
-            B, N, C = feats.shape
-            patch_size = self.encoder.config.patch_size
-            H = W = int(N ** 0.5)
-            feats = feats.transpose(1, 2).reshape(B, C, H, W)
-            feats = [feats]
-        else:
-            feats = self.encoder(tensors)
+        outputs = self.encoder(pixel_values=tensors)
+        feats = outputs.last_hidden_state[:, 1:, :]
+        B, N, C = feats.shape
+        patch_size = self.encoder.config.patch_size
+        H = W = int(N ** 0.5)
+        feats = feats.transpose(1, 2).reshape(B, C, H, W)
+        feats = [feats]
         feats = self.projector(feats)
         out_feats = []
         out_masks = []
