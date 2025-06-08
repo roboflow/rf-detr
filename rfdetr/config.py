@@ -11,7 +11,7 @@ import torch
 DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 
 class ModelConfig(BaseModel):
-    encoder: Literal["dinov2_windowed_small", "dinov2_windowed_base"]
+    encoder: Literal["dinov2_windowed_small", "dinov2_windowed_base", "vit_large_patch16_224"]
     out_feature_indexes: List[int]
     dec_layers: int = 3
     two_stage: bool = True
@@ -30,6 +30,17 @@ class ModelConfig(BaseModel):
     resolution: int = 560
     group_detr: int = 13
     gradient_checkpointing: bool = False
+
+class RFDETRViTLargeConfig(ModelConfig):
+    encoder: Literal["vit_large_patch16_224"] = "vit_large_patch16_224"
+    out_feature_indexes: List[int] = [-1]
+    projector_scale: List[Literal["P3", "P4", "P5"]] = ["P3", "P4", "P5"]
+    hidden_dim: int = 256
+    sa_nheads: int = 8
+    ca_nheads: int = 8
+    dec_n_points: int = 4
+    num_classes: int = 8
+    resolution: int = 224
 
 class RFDETRBaseConfig(ModelConfig):
     encoder: Literal["dinov2_windowed_small", "dinov2_windowed_base"] = "dinov2_windowed_small"

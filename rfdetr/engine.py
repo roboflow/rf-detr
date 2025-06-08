@@ -23,8 +23,8 @@ from typing import Iterable
 
 import torch
 
-import rfdetr.util.misc as utils
-from rfdetr.datasets.coco_eval import CocoEvaluator
+import util.misc as utils
+from datasets.coco_eval import CocoEvaluator
 
 try:
     from torch.amp import autocast, GradScaler
@@ -33,7 +33,7 @@ except ImportError:
     from torch.cuda.amp import autocast, GradScaler
     DEPRECATED_AMP = True
 from typing import DefaultDict, List, Callable
-from rfdetr.util.misc import NestedTensor
+from util.misc import NestedTensor
 
 
 

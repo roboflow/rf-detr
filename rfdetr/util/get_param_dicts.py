@@ -7,7 +7,7 @@
 """Functions to get params dict"""
 import torch.nn as nn
 
-from rfdetr.models.backbone import Joiner
+from models.backbone import Joiner
 
 
 def get_vit_lr_decay_rate(name, lr_decay_rate=1.0, num_layers=12):

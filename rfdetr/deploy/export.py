@@ -26,10 +26,10 @@ import onnxsim
 import numpy as np
 from PIL import Image
 
-import rfdetr.util.misc as utils
-import rfdetr.datasets.transforms as T
-from rfdetr.models import build_model
-from rfdetr.deploy._onnx import OnnxOptimizer
+import util.misc as utils
+import datasets.transforms as T
+from models import build_model
+from deploy._onnx import OnnxOptimizer
 import re
 import sys
 

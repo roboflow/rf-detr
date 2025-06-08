@@ -23,10 +23,10 @@ try:
 except:
     pass
 
-from rfdetr.config import RFDETRBaseConfig, RFDETRLargeConfig, TrainConfig, ModelConfig
-from rfdetr.main import Model, download_pretrain_weights
-from rfdetr.util.metrics import MetricsPlotSink, MetricsTensorBoardSink, MetricsWandBSink
-from rfdetr.util.coco_classes import COCO_CLASSES
+from config import RFDETRBaseConfig, RFDETRLargeConfig, TrainConfig, ModelConfig, RFDETRViTLargeConfig
+from main import Model, download_pretrain_weights
+from util.metrics import MetricsPlotSink, MetricsTensorBoardSink, MetricsWandBSink
+from util.coco_classes import COCO_CLASSES
 
 logger = getLogger(__name__)
 class RFDETR:
@@ -147,7 +147,7 @@ class RFDETR:
             self.callbacks["on_train_end"].append(metrics_wandb_sink.close)
 
         if config.early_stopping:
-            from rfdetr.util.early_stopping import EarlyStoppingCallback
+            from util.early_stopping import EarlyStoppingCallback
             early_stopping_callback = EarlyStoppingCallback(
                 model=self.model,
                 patience=config.early_stopping_patience,
@@ -303,6 +303,13 @@ class RFDETR:
 class RFDETRBase(RFDETR):
     def get_model_config(self, **kwargs):
         return RFDETRBaseConfig(**kwargs)
+
+    def get_train_config(self, **kwargs):
+        return TrainConfig(**kwargs)
+
+class ViTLarge(RFDETR):
+    def get_model_config(self, **kwargs):
+        return RFDETRViTLargeConfig(**kwargs)
 
     def get_train_config(self, **kwargs):
         return TrainConfig(**kwargs)

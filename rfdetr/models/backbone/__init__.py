@@ -12,9 +12,9 @@ from typing import Dict, List
 import torch
 from torch import nn
 
-from rfdetr.util.misc import NestedTensor
-from rfdetr.models.position_encoding import build_position_encoding
-from rfdetr.models.backbone.backbone import *
+from util.misc import NestedTensor
+from models.position_encoding import build_position_encoding
+from models.backbone.backbone import *
 from typing import Callable
 
 class Joiner(nn.Sequential):

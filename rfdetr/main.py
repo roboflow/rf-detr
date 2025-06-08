@@ -36,15 +36,15 @@ import torch
 from peft import LoraConfig, get_peft_model
 from torch.utils.data import DataLoader, DistributedSampler
 
-import rfdetr.util.misc as utils
-from rfdetr.datasets import build_dataset, get_coco_api_from_dataset
-from rfdetr.engine import evaluate, train_one_epoch
-from rfdetr.models import build_model, build_criterion_and_postprocessors
-from rfdetr.util.benchmark import benchmark
-from rfdetr.util.drop_scheduler import drop_scheduler
-from rfdetr.util.files import download_file
-from rfdetr.util.get_param_dicts import get_param_dict
-from rfdetr.util.utils import ModelEma, BestMetricHolder, clean_state_dict
+import util.misc as utils
+from datasets import build_dataset, get_coco_api_from_dataset
+from engine import evaluate, train_one_epoch
+from models import build_model, build_criterion_and_postprocessors
+from util.benchmark import benchmark
+from util.drop_scheduler import drop_scheduler
+from util.files import download_file
+from util.get_param_dicts import get_param_dict
+from util.utils import ModelEma, BestMetricHolder, clean_state_dict
 
 if str(os.environ.get("USE_FILE_SYSTEM_SHARING", "False")).lower() in ["true", "1"]:
     import torch.multiprocessing
@@ -124,7 +124,19 @@ class Model:
                 if any(name.endswith(x) for x in query_param_names):
                     checkpoint['model'][name] = state[:num_desired_queries]
 
-            self.model.load_state_dict(checkpoint['model'], strict=False)
+            model_state = checkpoint['model']
+
+            keys_to_remove = []
+            for k, v in model_state.items():
+                if "projector" in k:
+                    param = dict(self.model.named_parameters()).get(k, None)
+                    if param is not None and param.shape != v.shape:
+                        print(f"Skipping {k} due to shape mismatch: {param.shape} vs {v.shape}")
+                        keys_to_remove.append(k)
+            for k in keys_to_remove:
+                del model_state[k]
+
+            self.model.load_state_dict(model_state, strict=False)
 
         if args.backbone_lora:
             print("Applying LORA to backbone")
@@ -477,7 +489,7 @@ class Model:
         """Export the trained model to ONNX format"""
         print(f"Exporting model to ONNX format")
         try:
-            from rfdetr.deploy.export import export_onnx, onnx_simplify, make_infer_image
+            from deploy.export import export_onnx, onnx_simplify, make_infer_image
         except ImportError:
             print("It seems some dependencies for ONNX export are missing. Please run `pip install rfdetr[onnxexport]` and try again.")
             raise

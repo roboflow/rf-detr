@@ -24,7 +24,7 @@ import torch
 import torch.utils.data
 import torchvision
 
-import rfdetr.datasets.transforms as T
+import datasets.transforms as T
 
 
 def compute_multi_scale_scales(resolution, expanded_scales=False):
@@ -118,6 +118,7 @@ def make_coco_transforms(image_set, resolution, multi_scale=False, expanded_scal
     if multi_scale:
         # scales = [448, 512, 576, 640, 704, 768, 832, 896]
         scales = compute_multi_scale_scales(resolution, expanded_scales)
+        scales = [224] # overriding for ViT-224
         print(scales)
 
     if image_set == 'train':
@@ -162,6 +163,7 @@ def make_coco_transforms_square_div_64(image_set, resolution, multi_scale=False,
     if multi_scale:
         # scales = [448, 512, 576, 640, 704, 768, 832, 896]
         scales = compute_multi_scale_scales(resolution, expanded_scales)
+        scales = [224] # overriding for ViT-224
         print(scales)
 
     if image_set == 'train':

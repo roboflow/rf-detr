@@ -23,7 +23,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn, Tensor
 
-from rfdetr.models.ops.modules import MSDeformAttn
+from models.ops.modules import MSDeformAttn
 
 class MLP(nn.Module):
     """ Very simple multi-layer perceptron (also called FFN)"""
