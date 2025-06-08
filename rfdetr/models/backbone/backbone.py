@@ -21,7 +21,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from transformers import AutoModel, AutoProcessor, AutoModelForCausalLM, AutoConfig, AutoBackbone
+from transformers import AutoModel, AutoProcessor, AutoModelForCausalLM, AutoConfig, AutoBackbone, ViTModel
 from peft import LoraConfig, get_peft_model, PeftModel
 
 from rfdetr.util.misc import NestedTensor, is_main_process
@@ -53,40 +53,44 @@ class Backbone(BackboneBase):
                  load_dinov2_weights: bool = True,
                  ):
         super().__init__()
-        # an example name here would be "dinov2_base" or "dinov2_registers_windowed_base"
-        # if "registers" is in the name, then use_registers is set to True, otherwise it is set to False
-        # similarly, if "windowed" is in the name, then use_windowed_attn is set to True, otherwise it is set to False
-        # the last part of the name should be the size
-        # and the start should be dinov2
-        name_parts = name.split("_")
-        assert name_parts[0] == "dinov2"
-        size = name_parts[-1]
-        use_registers = False
-        if "registers" in name_parts:
-            use_registers = True
-            name_parts.remove("registers")
-        use_windowed_attn = False
-        if "windowed" in name_parts:
-            use_windowed_attn = True
-            name_parts.remove("windowed")
-        assert len(name_parts) == 2, "name should be dinov2, then either registers, windowed, both, or none, then the size"
-        self.encoder = DinoV2(
-            size=name_parts[-1],
-            out_feature_indexes=out_feature_indexes,
-            shape=target_shape,
-            use_registers=use_registers,
-            use_windowed_attn=use_windowed_attn,
-            gradient_checkpointing=gradient_checkpointing,
-            load_dinov2_weights=load_dinov2_weights,
-        )
-        # build encoder + projector as backbone module
+        # --- ViT-300M backbone selection ---
+        if name.startswith("vit_300m"):
+            model_name = pretrained_encoder or "google/vit-large-patch16-224-in21k"
+            self.encoder = ViTModel.from_pretrained(model_name)
+            in_channels = self.encoder.config.hidden_size  # 1024 for ViT-Large
+            self._is_vit = True
+        else:
+            # --- DINOv2 fallback (original code) ---
+            name_parts = name.split("_")
+            assert name_parts[0] == "dinov2"
+            size = name_parts[-1]
+            use_registers = False
+            if "registers" in name_parts:
+                use_registers = True
+                name_parts.remove("registers")
+            use_windowed_attn = False
+            if "windowed" in name_parts:
+                use_windowed_attn = True
+                name_parts.remove("windowed")
+            assert len(name_parts) == 2, "name should be dinov2, then either registers, windowed, both, or none, then the size"
+            self.encoder = DinoV2(
+                size=name_parts[-1],
+                out_feature_indexes=out_feature_indexes,
+                shape=target_shape,
+                use_registers=use_registers,
+                use_windowed_attn=use_windowed_attn,
+                gradient_checkpointing=gradient_checkpointing,
+                load_dinov2_weights=load_dinov2_weights,
+            )
+            in_channels = self.encoder._out_feature_channels
+            self._is_vit = False
+
         if freeze_encoder:
             for param in self.encoder.parameters():
                 param.requires_grad = False
 
         self.projector_scale = projector_scale
         assert len(self.projector_scale) > 0
-        # x[0]
         assert (
             sorted(self.projector_scale) == self.projector_scale
         ), "only support projector scale P3/P4/P5/P6 in ascending order."
@@ -94,7 +98,7 @@ class Backbone(BackboneBase):
         scale_factors = [level2scalefactor[lvl] for lvl in self.projector_scale]
 
         self.projector = MultiScaleProjector(
-            in_channels=self.encoder._out_feature_channels,
+            in_channels=in_channels if isinstance(in_channels, int) else in_channels[0],
             out_channels=out_channels,
             scale_factors=scale_factors,
             layer_norm=layer_norm,
@@ -114,27 +118,41 @@ class Backbone(BackboneBase):
 
     def forward(self, tensor_list: NestedTensor):
         """ """
-        # (H, W, B, C)
-        feats = self.encoder(tensor_list.tensors)
+        if getattr(self, '_is_vit', False):
+            x = tensor_list.tensors  # (B, 3, H, W)
+            outputs = self.encoder(pixel_values=x)
+            feats = outputs.last_hidden_state[:, 1:, :]  # Remove CLS token
+            B, N, C = feats.shape
+            patch_size = self.encoder.config.patch_size
+            H = W = int(N ** 0.5)
+            feats = feats.transpose(1, 2).reshape(B, C, H, W)
+            feats = [feats]
+        else:
+            feats = self.encoder(tensor_list.tensors)
         feats = self.projector(feats)
-        # x: [(B, C, H, W)]
         out = []
         for feat in feats:
             m = tensor_list.mask
             assert m is not None
-            mask = F.interpolate(m[None].float(), size=feat.shape[-2:]).to(torch.bool)[
-                0
-            ]
+            mask = F.interpolate(m[None].float(), size=feat.shape[-2:]).to(torch.bool)[0]
             out.append(NestedTensor(feat, mask))
         return out
 
     def forward_export(self, tensors: torch.Tensor):
-        feats = self.encoder(tensors)
+        if getattr(self, '_is_vit', False):
+            outputs = self.encoder(pixel_values=tensors)
+            feats = outputs.last_hidden_state[:, 1:, :]
+            B, N, C = feats.shape
+            patch_size = self.encoder.config.patch_size
+            H = W = int(N ** 0.5)
+            feats = feats.transpose(1, 2).reshape(B, C, H, W)
+            feats = [feats]
+        else:
+            feats = self.encoder(tensors)
         feats = self.projector(feats)
         out_feats = []
         out_masks = []
         for feat in feats:
-            # x: [(B, C, H, W)]
             b, _, h, w = feat.shape
             out_masks.append(
                 torch.zeros((b, h, w), dtype=torch.bool, device=feat.device)
