@@ -11,7 +11,8 @@
 # ------------------------------------------------------------------------
 
 import torch.utils.data
-import torchvision
+from faster_coco_eval.utils.pytorch import FasterCocoDetection
+
 
 from .coco import build as build_coco
 from .o365 import build_o365
@@ -22,7 +23,7 @@ def get_coco_api_from_dataset(dataset):
     for _ in range(10):
         if isinstance(dataset, torch.utils.data.Subset):
             dataset = dataset.dataset
-    if isinstance(dataset, torchvision.datasets.CocoDetection):
+    if isinstance(dataset, FasterCocoDetection):
         return dataset.coco
 
 
