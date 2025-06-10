@@ -14,7 +14,7 @@ RF-DETR is a real-time, transformer-based object detection model architecture de
 
 RF-DETR is the first real-time model to exceed 60 AP on the [Microsoft COCO benchmark](https://cocodataset.org/#home) alongside competitive performance at base sizes. It also achieves state-of-the-art performance on [RF100-VL](https://github.com/roboflow/rf100-vl), an object detection benchmark that measures model domain adaptability to real world problems. RF-DETR is comparable speed to current real-time objection models.
 
-**RF-DETR is small enough to run on the edge using [Inference], making it an ideal model for deployments that need both strong accuracy and real-time performance.**
+**RF-DETR is small enough to run on the edge using [Inference](https://github.com/roboflow/inference), making it an ideal model for deployments that need both strong accuracy and real-time performance.**
 
 ## Results
 
