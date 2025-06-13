@@ -45,6 +45,7 @@ from rfdetr.util.drop_scheduler import drop_scheduler
 from rfdetr.util.files import download_file
 from rfdetr.util.get_param_dicts import get_param_dict
 from rfdetr.util.utils import ModelEma, BestMetricHolder, clean_state_dict
+from rfdetr.util.save_grids import DatasetGridSaver
 
 if str(os.environ.get("USE_FILE_SYSTEM_SHARING", "False")).lower() in ["true", "1"]:
     import torch.multiprocessing
@@ -315,6 +316,11 @@ class Model:
                 args.cutoff_epoch, args.drop_mode, args.drop_schedule)
             print("Min DP = %.7f, Max DP = %.7f" % (min(schedules['dp']), max(schedules['dp'])))
 
+        grid_saver = DatasetGridSaver(data_loader_train, output_dir, max_batches=3, dataset_type='train')
+        grid_saver.save_grid()
+
+        grid_saver = DatasetGridSaver(data_loader_val, output_dir, max_batches=3, dataset_type='val')
+        grid_saver.save_grid()
         print("Start training")
         start_time = time.time()
         best_map_holder = BestMetricHolder(use_ema=args.use_ema)
@@ -322,6 +328,7 @@ class Model:
         best_map_50 = 0
         best_map_ema_5095 = 0
         best_map_ema_50 = 0
+
         for epoch in range(args.start_epoch, args.epochs):
             epoch_start_time = time.time()
             if args.distributed:
