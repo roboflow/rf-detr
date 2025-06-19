@@ -150,7 +150,7 @@ class Transformer(nn.Module):
                  lite_refpoint_refine=False,
                  decoder_norm_type='LN',
                  bbox_reparam=False,
-                 MoE=False, MoE_params=[2,32]):
+                 MoE=False, MoE_params=[32,2]):
         super().__init__()
         self.encoder = None
 
