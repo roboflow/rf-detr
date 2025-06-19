@@ -150,7 +150,7 @@ class Transformer(nn.Module):
                  lite_refpoint_refine=False,
                  decoder_norm_type='LN',
                  bbox_reparam=False,
-                 MoE=False, MoE_params=[32,2]):
+                 MoE=False, MoE_params=[32,1]):
         super().__init__()
         self.encoder = None
 
@@ -457,7 +457,7 @@ class TransformerDecoderLayer(nn.Module):
     def __init__(self, d_model, sa_nhead, ca_nhead, dim_feedforward=2048, dropout=0.1,
                  activation="relu", normalize_before=False, group_detr=1, 
                  num_feature_levels=4, dec_n_points=4, 
-                 skip_self_attn=False, MoE=False, MoE_params=[32,2]):
+                 skip_self_attn=False, MoE=False, MoE_params=[32,1]):
         super().__init__()
         # Decoder Self-Attention
         self.self_attn = nn.MultiheadAttention(embed_dim=d_model, num_heads=sa_nhead, dropout=dropout, batch_first=True)
