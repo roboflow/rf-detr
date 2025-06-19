@@ -31,7 +31,7 @@ class ModelConfig(BaseModel):
     group_detr: int = 13
     gradient_checkpointing: bool = False
     MoE: bool = False
-    MoE_params: List[int] = [16, 1]
+    MoE_params: List[int] = [32, 1]
 
 class RFDETRBaseConfig(ModelConfig):
     encoder: Literal["dinov2_windowed_small", "dinov2_windowed_base"] = "dinov2_windowed_small"
