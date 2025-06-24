@@ -320,7 +320,6 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, arg
     stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
     if coco_evaluator is not None:
         results_json = coco_extended_metrics(coco_evaluator.coco_eval["bbox"])
-        print("Results JSON:", results_json)
         stats["results_json"] = results_json
         if "bbox" in postprocessors.keys():
             stats["coco_eval_bbox"] = coco_evaluator.coco_eval["bbox"].stats.tolist()
