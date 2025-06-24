@@ -45,12 +45,13 @@ def train_from_rf_project(rf_project: roboflow.Project, dataset_version: int):
 
 
 def train_from_coco_dir(coco_dir: str):
+    from rfdetr.config import DEVICE
+    
     rf_detr = RFDETRBase()
-    device_supports_cuda = torch.cuda.is_available()
     rf_detr.train(
         dataset_dir=coco_dir,
         epochs=1,
-        device="cuda" if device_supports_cuda else "cpu",
+        device=DEVICE,
     )
 
 
