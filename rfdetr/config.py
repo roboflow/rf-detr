@@ -88,3 +88,4 @@ class TrainConfig(BaseModel):
     project: Optional[str] = None
     run: Optional[str] = None
     class_names: List[str] = None
+    run_test: bool = True
