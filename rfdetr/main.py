@@ -471,9 +471,14 @@ class Model:
 
 
         if args.run_test:
+            best_state_dict = torch.load(output_dir / 'checkpoint_best_total.pth', map_location='cpu', weights_only=False)['model']
+            model.load_state_dict(best_state_dict)
+            model.eval()
+
             test_stats, _ = evaluate(
                 model, criterion, postprocessors, data_loader_test, base_ds_test, device, args=args
             )
+            print(f"Test results: {test_stats}")
             with open(output_dir / "results.json", "r") as f:
                 results = json.load(f)
             test_metrics = test_stats["results_json"]["class_map"]
