@@ -127,7 +127,7 @@ class LWDETR(nn.Module):
                 m.export()
 
     def forward(self, samples: NestedTensor, targets=None):
-        """ The forward expects a NestedTensor, which consists of:
+        """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
 
@@ -551,12 +551,12 @@ class PostProcess(nn.Module):
         assert target_sizes.shape[1] == 2
 
         prob = out_logits.sigmoid()
-        scores, labels = prob.max(dim=2)
-        num_outputs = min(self.num_select, scores.shape[1])
-        scores, topk_indexes = torch.topk(scores, num_outputs, dim=1)
-        labels = torch.gather(labels, 1, topk_indexes)
-        boxes = torch.gather(out_bbox, 1, topk_indexes.unsqueeze(-1).repeat(1, 1, 4))
-        boxes = box_ops.box_cxcywh_to_xyxy(boxes)
+        topk_values, topk_indexes = torch.topk(prob.view(out_logits.shape[0], -1), self.num_select, dim=1)
+        scores = topk_values
+        topk_boxes = topk_indexes // out_logits.shape[2]
+        labels = topk_indexes % out_logits.shape[2]
+        boxes = box_ops.box_cxcywh_to_xyxy(out_bbox)
+        boxes = torch.gather(boxes, 1, topk_boxes.unsqueeze(-1).repeat(1,1,4))
 
         # and from relative [0, 1] to absolute [0, height] coordinates
         img_h, img_w = target_sizes.unbind(1)
