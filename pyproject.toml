@@ -58,6 +58,7 @@ dependencies = [
     "pydantic",
     "supervision",
     "matplotlib",
+    "soft_moe",
 ]
 
 [project.optional-dependencies]
