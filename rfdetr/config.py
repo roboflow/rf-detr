@@ -76,6 +76,7 @@ class TrainConfig(BaseModel):
     output_dir: str = "output"
     multi_scale: bool = True
     expanded_scales: bool = True
+    do_random_resize_via_padding: bool = False
     use_ema: bool = True
     num_workers: int = 2
     weight_decay: float = 1e-4
