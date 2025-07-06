@@ -58,6 +58,7 @@ dependencies = [
     "pydantic",
     "supervision",
     "matplotlib",
+    "pre-commit==4.2.0",
 ]
 
 [project.optional-dependencies]

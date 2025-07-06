@@ -22,13 +22,18 @@ Your contributions can be in many forms—whether it’s enhancing existing feat
    git checkout -b feature/your-descriptive-name
    ```
 4. Develop Your Changes: Make your updates, ensuring your commit messages clearly describe your modifications.
-5. [Commit and Push](https://docs.github.com/en/desktop/making-changes-in-a-branch/committing-and-reviewing-changes-to-your-project-in-github-desktop): Run:
+5. Make sure to format your code using `pre-commit`:
+    ```bash
+    pre-commit install
+    pre-commit run --all-files
+    ```
+6. [Commit and Push](https://docs.github.com/en/desktop/making-changes-in-a-branch/committing-and-reviewing-changes-to-your-project-in-github-desktop): Run:
    ```bash
    git add .
    git commit -m "A brief description of your changes"
    git push -u origin your-descriptive-name
    ```
-6. [Open a Pull Request](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/creating-a-pull-request): Submit your pull request against the main development branch. Please detail your changes and link any related issues.
+7. [Open a Pull Request](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/creating-a-pull-request): Submit your pull request against the main development branch. Please detail your changes and link any related issues.
 
 Before merging, check that all tests pass and that your changes adhere to our development and documentation standards.
 
