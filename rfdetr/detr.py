@@ -104,7 +104,7 @@ class RFDETR:
 
         if self.model_config.num_classes != num_classes:
             logger.warning(
-                f"Reinitializing your detection head with {num_classes} classes."
+                f"Reinitializing your detection head with {num_classes-1} classes."
             )
             self.model.reinitialize_detection_head(num_classes)
         
