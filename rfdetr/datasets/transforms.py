@@ -33,6 +33,9 @@ import torchvision.transforms.functional as F
 from rfdetr.util.box_ops import box_xyxy_to_cxcywh
 from rfdetr.util.misc import interpolate
 
+import albumentations as A
+from PIL import Image
+
 
 def crop(image, target, region):
     cropped_image = F.crop(image, *region)
@@ -473,3 +476,374 @@ class Compose(object):
             format_string += "    {0}".format(t)
         format_string += "\n)"
         return format_string
+
+# Define augmentations from albumentation
+class AlbumentationsHorizontalFlip:
+    def __init__(self, p=0.5):
+        self.transform = A.HorizontalFlip(p=p)
+        self.bbox_params = A.BboxParams(format='pascal_voc', label_fields=['category_ids'], clip=True)
+    
+    def __call__(self, image, target):
+        image_np = np.array(image)
+        
+        # Convert boxes to numpy array and ensure proper format
+        if isinstance(target['boxes'], torch.Tensor):
+            bboxes = target['boxes'].cpu().numpy()
+        else:
+            bboxes = np.array(target['boxes'])
+        
+        # Convert labels to list
+        if isinstance(target['labels'], torch.Tensor):
+            labels = target['labels'].cpu().tolist()
+        else:
+            labels = list(target['labels'])
+        
+        # Create transform with bbox_params for this specific call
+        transform = A.Compose([self.transform], bbox_params=self.bbox_params)
+        
+        # Apply transformation
+        augmented = transform(image=image_np, bboxes=bboxes, category_ids=labels)
+        
+        image_out = Image.fromarray(augmented['image'])
+        target_out = target.copy()
+        target_out['boxes'] = torch.tensor(augmented['bboxes'], dtype=torch.float32)
+        target_out['labels'] = torch.tensor(augmented['category_ids'], dtype=torch.long)
+        
+        return image_out, target_out
+
+class AlbumentationsRotate:
+    def __init__(self, limit=15, p=0.5):
+        self.transform = A.Rotate(limit=limit, p=p)
+        self.bbox_params = A.BboxParams(format='pascal_voc', label_fields=['category_ids'], clip=True)
+    
+    def __call__(self, image, target):
+        image_np = np.array(image)
+        
+        # Convert boxes to numpy array and ensure proper format
+        if isinstance(target['boxes'], torch.Tensor):
+            bboxes = target['boxes'].cpu().numpy()
+        else:
+            bboxes = np.array(target['boxes'])
+        # print(bboxes)
+        
+        # Convert labels to list
+        if isinstance(target['labels'], torch.Tensor):
+            labels = target['labels'].cpu().tolist()
+        else:
+            labels = list(target['labels'])
+        
+        # Create transform with bbox_params for this specific call
+        transform = A.Compose([self.transform], bbox_params=self.bbox_params)
+        
+        # Apply transformation
+        augmented = transform(image=image_np, bboxes=bboxes, category_ids=labels)
+        
+        image_out = Image.fromarray(augmented['image'])
+        target_out = target.copy()
+        target_out['boxes'] = torch.tensor(augmented['bboxes'], dtype=torch.float32)
+        target_out['labels'] = torch.tensor(augmented['category_ids'], dtype=torch.long)
+        
+        return image_out, target_out
+
+class AlbumentationsRandomBrightnessContrast:
+    def __init__(self, p=0.2):
+        self.transform = A.RandomBrightnessContrast(p=p)
+        # Note: This transform doesn't affect bboxes, but we keep consistency
+        self.bbox_params = A.BboxParams(format='pascal_voc', label_fields=['category_ids'], clip=True)
+    
+    def __call__(self, image, target):
+        image_np = np.array(image)
+        
+        # Convert boxes to numpy array and ensure proper format
+        if isinstance(target['boxes'], torch.Tensor):
+            bboxes = target['boxes'].cpu().numpy()
+        else:
+            bboxes = np.array(target['boxes'])
+        
+        # Convert labels to list
+        if isinstance(target['labels'], torch.Tensor):
+            labels = target['labels'].cpu().tolist()
+        else:
+            labels = list(target['labels'])
+        
+        # Create transform with bbox_params for this specific call
+        transform = A.Compose([self.transform], bbox_params=self.bbox_params)
+        
+        # Apply transformation
+        augmented = transform(image=image_np, bboxes=bboxes, category_ids=labels)
+        
+        image_out = Image.fromarray(augmented['image'])
+        target_out = target.copy()
+        target_out['boxes'] = torch.tensor(augmented['bboxes'], dtype=torch.float32)
+        target_out['labels'] = torch.tensor(augmented['category_ids'], dtype=torch.long)
+        
+        return image_out, target_out
+
+class AlbumentationsShiftScaleRotate:
+    def __init__(self, shift_limit=0.0625, scale_limit=0.1, rotate_limit=15, p=0.5):
+        self.transform = A.ShiftScaleRotate(shift_limit=shift_limit, scale_limit=scale_limit,
+                                            rotate_limit=rotate_limit, p=p, border_mode=0)
+        self.bbox_params = A.BboxParams(format='pascal_voc', label_fields=['category_ids'], clip=True)
+    
+    def __call__(self, image, target):
+        image_np = np.array(image)
+        bboxes = target['boxes'].cpu().numpy() if isinstance(target['boxes'], torch.Tensor) else np.array(target['boxes'])
+        labels = target['labels'].cpu().tolist() if isinstance(target['labels'], torch.Tensor) else list(target['labels'])
+
+        transform = A.Compose([self.transform], bbox_params=self.bbox_params)
+        augmented = transform(image=image_np, bboxes=bboxes, category_ids=labels)
+
+        image_out = Image.fromarray(augmented['image'])
+        target_out = target.copy()
+        target_out['boxes'] = torch.tensor(augmented['bboxes'], dtype=torch.float32)
+        target_out['labels'] = torch.tensor(augmented['category_ids'], dtype=torch.long)
+
+        return image_out, target_out
+
+class AlbumentationsGaussNoise:
+    def __init__(self, var_limit=(10.0, 50.0), p=0.3):
+        self.transform = A.GaussNoise(var_limit=var_limit, p=p)
+        # Noise doesn't affect bboxes, but keep bbox_params for consistency
+        self.bbox_params = A.BboxParams(format='pascal_voc', label_fields=['category_ids'], clip=True)
+
+    def __call__(self, image, target):
+        image_np = np.array(image)
+        bboxes = target['boxes'].cpu().numpy() if isinstance(target['boxes'], torch.Tensor) else np.array(target['boxes'])
+        labels = target['labels'].cpu().tolist() if isinstance(target['labels'], torch.Tensor) else list(target['labels'])
+
+        transform = A.Compose([self.transform], bbox_params=self.bbox_params)
+        augmented = transform(image=image_np, bboxes=bboxes, category_ids=labels)
+
+        image_out = Image.fromarray(augmented['image'])
+        target_out = target.copy()
+        target_out['boxes'] = torch.tensor(augmented['bboxes'], dtype=torch.float32)
+        target_out['labels'] = torch.tensor(augmented['category_ids'], dtype=torch.long)
+
+        return image_out, target_out
+
+class AlbumentationsColorJitter:
+    def __init__(self, brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1, p=0.5):
+        self.transform = A.ColorJitter(brightness=brightness, contrast=contrast,
+                                       saturation=saturation, hue=hue, p=p)
+        self.bbox_params = A.BboxParams(format='pascal_voc', label_fields=['category_ids'], clip=True)
+
+    def __call__(self, image, target):
+        image_np = np.array(image)
+        bboxes = target['boxes'].cpu().numpy() if isinstance(target['boxes'], torch.Tensor) else np.array(target['boxes'])
+        labels = target['labels'].cpu().tolist() if isinstance(target['labels'], torch.Tensor) else list(target['labels'])
+
+        transform = A.Compose([self.transform], bbox_params=self.bbox_params)
+        augmented = transform(image=image_np, bboxes=bboxes, category_ids=labels)
+
+        image_out = Image.fromarray(augmented['image'])
+        target_out = target.copy()
+        target_out['boxes'] = torch.tensor(augmented['bboxes'], dtype=torch.float32)
+        target_out['labels'] = torch.tensor(augmented['category_ids'], dtype=torch.long)
+
+        return image_out, target_out
+
+class AlbumentationsBlur:
+    def __init__(self, blur_limit=7, p=0.3):
+        self.transform = A.Blur(blur_limit=blur_limit, p=p)
+        self.bbox_params = A.BboxParams(format='pascal_voc', label_fields=['category_ids'], clip=True)
+
+    def __call__(self, image, target):
+        image_np = np.array(image)
+        bboxes = target['boxes'].cpu().numpy() if isinstance(target['boxes'], torch.Tensor) else np.array(target['boxes'])
+        labels = target['labels'].cpu().tolist() if isinstance(target['labels'], torch.Tensor) else list(target['labels'])
+
+        transform = A.Compose([self.transform], bbox_params=self.bbox_params)
+        augmented = transform(image=image_np, bboxes=bboxes, category_ids=labels)
+
+        image_out = Image.fromarray(augmented['image'])
+        target_out = target.copy()
+        target_out['boxes'] = torch.tensor(augmented['bboxes'], dtype=torch.float32)
+        target_out['labels'] = torch.tensor(augmented['category_ids'], dtype=torch.long)
+
+        return image_out, target_out
+
+class AlbumentationsCoarseDropout:
+    def __init__(self, max_holes=8, max_height=16, max_width=16, p=0.5):
+        self.transform = A.CoarseDropout(max_holes=max_holes, max_height=max_height, max_width=max_width, p=p)
+        self.bbox_params = A.BboxParams(format='pascal_voc', label_fields=['category_ids'], clip=True)
+
+    def __call__(self, image, target):
+        image_np = np.array(image)
+        bboxes = target['boxes'].cpu().numpy() if isinstance(target['boxes'], torch.Tensor) else np.array(target['boxes'])
+        labels = target['labels'].cpu().tolist() if isinstance(target['labels'], torch.Tensor) else list(target['labels'])
+
+        transform = A.Compose([self.transform], bbox_params=self.bbox_params)
+        augmented = transform(image=image_np, bboxes=bboxes, category_ids=labels)
+
+        image_out = Image.fromarray(augmented['image'])
+        target_out = target.copy()
+        target_out['boxes'] = torch.tensor(augmented['bboxes'], dtype=torch.float32)
+        target_out['labels'] = torch.tensor(augmented['category_ids'], dtype=torch.long)
+
+        return image_out, target_out
+
+class AlbumentationsVerticalFlip:
+    def __init__(self, p=0.5):
+        self.transform = A.VerticalFlip(p=p)
+        self.bbox_params = A.BboxParams(format='pascal_voc', label_fields=['category_ids'], clip=True)
+    
+    def __call__(self, image, target):
+        image_np = np.array(image)
+        bboxes = target['boxes'].cpu().numpy() if isinstance(target['boxes'], torch.Tensor) else np.array(target['boxes'])
+        labels = target['labels'].cpu().tolist() if isinstance(target['labels'], torch.Tensor) else list(target['labels'])
+        transform = A.Compose([self.transform], bbox_params=self.bbox_params)
+        augmented = transform(image=image_np, bboxes=bboxes, category_ids=labels)
+        image_out = Image.fromarray(augmented['image'])
+        target_out = target.copy()
+        target_out['boxes'] = torch.tensor(augmented['bboxes'], dtype=torch.float32)
+        target_out['labels'] = torch.tensor(augmented['category_ids'], dtype=torch.long)
+        return image_out, target_out
+
+
+class AlbumentationsHueSaturationValue:
+    def __init__(self, hue_shift_limit=20, sat_shift_limit=30, val_shift_limit=20, p=0.5):
+        self.transform = A.HueSaturationValue(hue_shift_limit=hue_shift_limit,
+                                              sat_shift_limit=sat_shift_limit,
+                                              val_shift_limit=val_shift_limit,
+                                              p=p)
+        self.bbox_params = A.BboxParams(format='pascal_voc', label_fields=['category_ids'], clip=True)
+    
+    def __call__(self, image, target):
+        image_np = np.array(image)
+        bboxes = target['boxes'].cpu().numpy() if isinstance(target['boxes'], torch.Tensor) else np.array(target['boxes'])
+        labels = target['labels'].cpu().tolist() if isinstance(target['labels'], torch.Tensor) else list(target['labels'])
+        transform = A.Compose([self.transform], bbox_params=self.bbox_params)
+        augmented = transform(image=image_np, bboxes=bboxes, category_ids=labels)
+        image_out = Image.fromarray(augmented['image'])
+        target_out = target.copy()
+        target_out['boxes'] = torch.tensor(augmented['bboxes'], dtype=torch.float32)
+        target_out['labels'] = torch.tensor(augmented['category_ids'], dtype=torch.long)
+        return image_out, target_out
+
+class AlbumentationsCLAHE:
+    def __init__(self, clip_limit=4.0, tile_grid_size=(8, 8), p=0.5):
+        self.transform = A.CLAHE(clip_limit=clip_limit, tile_grid_size=tile_grid_size, p=p)
+        self.bbox_params = A.BboxParams(format='pascal_voc', label_fields=['category_ids'], clip=True)
+
+    def __call__(self, image, target):
+        image_np = np.array(image)
+        bboxes = target['boxes'].cpu().numpy() if isinstance(target['boxes'], torch.Tensor) else np.array(target['boxes'])
+        labels = target['labels'].cpu().tolist() if isinstance(target['labels'], torch.Tensor) else list(target['labels'])
+        transform = A.Compose([self.transform], bbox_params=self.bbox_params)
+        augmented = transform(image=image_np, bboxes=bboxes, category_ids=labels)
+        image_out = Image.fromarray(augmented['image'])
+        target_out = target.copy()
+        target_out['boxes'] = torch.tensor(augmented['bboxes'], dtype=torch.float32)
+        target_out['labels'] = torch.tensor(augmented['category_ids'], dtype=torch.long)
+        return image_out, target_out
+
+class AlbumentationsChannelShuffle:
+    def __init__(self, p=0.5):
+        self.transform = A.ChannelShuffle(p=p)
+        self.bbox_params = A.BboxParams(format='pascal_voc', label_fields=['category_ids'], clip=True)
+
+    def __call__(self, image, target):
+        image_np = np.array(image)
+        bboxes = target['boxes'].cpu().numpy() if isinstance(target['boxes'], torch.Tensor) else np.array(target['boxes'])
+        labels = target['labels'].cpu().tolist() if isinstance(target['labels'], torch.Tensor) else list(target['labels'])
+        transform = A.Compose([self.transform], bbox_params=self.bbox_params)
+        augmented = transform(image=image_np, bboxes=bboxes, category_ids=labels)
+        image_out = Image.fromarray(augmented['image'])
+        target_out = target.copy()
+        target_out['boxes'] = torch.tensor(augmented['bboxes'], dtype=torch.float32)
+        target_out['labels'] = torch.tensor(augmented['category_ids'], dtype=torch.long)
+        return image_out, target_out
+
+class AlbumentationsRandomCrop:
+    def __init__(self, height=224, width=224, p=0.5):
+        self.transform = A.RandomCrop(height=height, width=width, p=p)
+        self.bbox_params = A.BboxParams(format='pascal_voc', label_fields=['category_ids'], clip=True)
+
+    def __call__(self, image, target):
+        image_np = np.array(image)
+        bboxes = target['boxes'].cpu().numpy() if isinstance(target['boxes'], torch.Tensor) else np.array(target['boxes'])
+        labels = target['labels'].cpu().tolist() if isinstance(target['labels'], torch.Tensor) else list(target['labels'])
+        transform = A.Compose([self.transform], bbox_params=self.bbox_params)
+        augmented = transform(image=image_np, bboxes=bboxes, category_ids=labels)
+        image_out = Image.fromarray(augmented['image'])
+        target_out = target.copy()
+        target_out['boxes'] = torch.tensor(augmented['bboxes'], dtype=torch.float32)
+        target_out['labels'] = torch.tensor(augmented['category_ids'], dtype=torch.long)
+        return image_out, target_out
+
+class AlbumentationsAffine:
+    def __init__(self, scale=(0.9, 1.1), translate_percent=(0.1, 0.1), rotate=(-15, 15), shear=(-10, 10), p=0.5):
+        self.transform = A.Affine(scale=scale, translate_percent=translate_percent, rotate=rotate, shear=shear, p=p)
+        self.bbox_params = A.BboxParams(format='pascal_voc', label_fields=['category_ids'], clip=True)
+    
+    def __call__(self, image, target):
+        image_np = np.array(image)
+        bboxes = target['boxes'].cpu().numpy() if isinstance(target['boxes'], torch.Tensor) else np.array(target['boxes'])
+        labels = target['labels'].cpu().tolist() if isinstance(target['labels'], torch.Tensor) else list(target['labels'])
+        transform = A.Compose([self.transform], bbox_params=self.bbox_params)
+        augmented = transform(image=image_np, bboxes=bboxes, category_ids=labels)
+        image_out = Image.fromarray(augmented['image'])
+        target_out = target.copy()
+        target_out['boxes'] = torch.tensor(augmented['bboxes'], dtype=torch.float32)
+        target_out['labels'] = torch.tensor(augmented['category_ids'], dtype=torch.long)
+        return image_out, target_out
+
+class AlbumentationsRandomShadow:
+    def __init__(self, flare_roi=(0, 0.5, 1, 1), angle_lower=0.3, angle_upper=1.3, num_flare_circles_lower=1, num_flare_circles_upper=3, p=0.5):
+        self.transform = A.RandomSunFlare(flare_roi=flare_roi,
+                                          angle_lower=angle_lower,
+                                          angle_upper=angle_upper,
+                                          num_flare_circles_lower=num_flare_circles_lower,
+                                          num_flare_circles_upper=num_flare_circles_upper,
+                                          p=p)
+        self.bbox_params = A.BboxParams(format='pascal_voc', label_fields=['category_ids'], clip=True)
+        
+    def __call__(self, image, target):
+        image_np = np.array(image)
+        bboxes = target['boxes'].cpu().numpy() if isinstance(target['boxes'], torch.Tensor) else np.array(target['boxes'])
+        labels = target['labels'].cpu().tolist() if isinstance(target['labels'], torch.Tensor) else list(target['labels'])
+        transform = A.Compose([self.transform], bbox_params=self.bbox_params)
+        augmented = transform(image=image_np, bboxes=bboxes, category_ids=labels)
+        image_out = Image.fromarray(augmented['image'])
+        target_out = target.copy()
+        target_out['boxes'] = torch.tensor(augmented['bboxes'], dtype=torch.float32)
+        target_out['labels'] = torch.tensor(augmented['category_ids'], dtype=torch.long)
+        return image_out, target_out
+
+# Update this dictionary with all available transforms
+ALBUMENTATIONS_AUGS = {
+    "AlbumentationsHorizontalFlip": AlbumentationsHorizontalFlip,
+    "AlbumentationsRotate": AlbumentationsRotate,
+    "AlbumentationsRandomBrightnessContrast": AlbumentationsRandomBrightnessContrast,
+    "AlbumentationsShiftScaleRotate": AlbumentationsShiftScaleRotate,
+    "AlbumentationsGaussNoise": AlbumentationsGaussNoise,
+    "AlbumentationsColorJitter": AlbumentationsColorJitter,
+    "AlbumentationsBlur": AlbumentationsBlur,
+    "AlbumentationsCoarseDropout": AlbumentationsCoarseDropout,
+    "AlbumentationsVerticalFlip": AlbumentationsVerticalFlip,
+    "AlbumentationsHueSaturationValue": AlbumentationsHueSaturationValue,
+    "AlbumentationsCLAHE": AlbumentationsCLAHE,
+    "AlbumentationsChannelShuffle": AlbumentationsChannelShuffle,
+    "AlbumentationsRandomCrop": AlbumentationsRandomCrop,
+    "AlbumentationsAffine": AlbumentationsAffine,
+    "AlbumentationsRandomShadow": AlbumentationsRandomShadow,
+}
+
+def build_albumentations_from_config(config_dict):
+    augmentations = []
+    for aug_name, params in config_dict.items():
+        aug_class = ALBUMENTATIONS_AUGS.get(aug_name)
+        if aug_class:
+            augmentations.append(aug_class(**params))
+        else:
+            print(f"Warning: Unknown augmentation {aug_name}")
+    return augmentations
+
+class ComposeAugmentations:
+    def __init__(self, transforms):
+        self.transforms = transforms
+    
+    def __call__(self, image, target):
+        for t in self.transforms:
+            image, target = t(image, target)
+        return image, target
