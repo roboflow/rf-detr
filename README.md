@@ -511,7 +511,7 @@ You can fine-tune RF-DETR on multiple GPUs using PyTorch’s Distributed Data Pa
 python -m torch.distributed.launch --nproc_per_node=8 --use_env main.py
 ```
 
-Replace `8` in the `--nproc_per_node argument` with the number of GPUs you want to use. This approach creates one training process per GPU and splits the workload automatically. Note that your effective batch size is multiplied by the number of GPUs, so you may need to adjust your `batch_size` and `grad_accum_steps` to maintain the same overall batch size.
+Replace `8` in the `--nproc_per_node argument` with the number of GPUs you want to use. This approach creates one training process per GPU and splits the workload automatically. **Note that your effective batch size is multiplied by the number of GPUs**, so **you may need to adjust your `batch_size` and `grad_accum_steps` to maintain the same overall batch size!**
 
 ### Result checkpoints
 
