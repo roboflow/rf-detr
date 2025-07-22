@@ -4,7 +4,7 @@ hide:
 - navigation
 ---
 
-# RF-DETR: SOTA Real-Time Object Detection
+# RF-DETR: SOTA Real-Time Object Detection Model
 
 ## Introduction
 
@@ -18,9 +18,9 @@ RF-DETR is small enough to run on the edge using [Inference](https://github.com/
 
 We validated the performance of RF-DETR on both Microsoft COCO and the RF100-VL benchmarks.
 
-![rfdetr-coco-rf100-vl-9](https://github.com/user-attachments/assets/fdb6c31d-f11f-4518-8377-5671566265a4)
+[See our full benchmarks.](learn/benchmarks/)
 
-[See our full benchmarks](/learn/benchmarks/)
+![rfdetr-coco-rf100-vl-9](https://github.com/user-attachments/assets/fdb6c31d-f11f-4518-8377-5671566265a4)
 
 ## 💻 Install
 
