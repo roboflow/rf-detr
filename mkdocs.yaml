@@ -22,6 +22,18 @@ extra:
 
 nav:
   - Home: index.md
+  - Learn:
+     - Run a Pre-Trained Model: learn/pretrained.md
+     - Train an RF-DETR Model: learn/train.md
+     - Benchmarks: learn/benchmarks.md
+  - Reference:
+      - RF-DETR: reference/rfdetr.md
+      - Models:
+        - RF-DETR Small: reference/small.md
+        - RF-DETR Base: reference/base.md
+        - RF-DETR Medium: reference/medium.md
+        - RF-DETR Large: reference/large.md
+  - Changelog: https://github.com/roboflow/rf-detr/releases
 
 theme:
   name: 'material'

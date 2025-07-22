@@ -48,12 +48,21 @@ class RFDETR:
         self._optimized_dtype = None
 
     def maybe_download_pretrain_weights(self):
+        """
+        Download pre-trained weights if they are not already downloaded.
+        """
         download_pretrain_weights(self.model_config.pretrain_weights)
 
     def get_model_config(self, **kwargs):
+        """
+        Retrieve the configuration parameters used by the model.
+        """
         return ModelConfig(**kwargs)
 
     def train(self, **kwargs):
+        """
+        Train an RF-DETR model.
+        """
         config = self.get_train_config(**kwargs)
         self.train_from_config(config, **kwargs)
     
@@ -91,6 +100,11 @@ class RFDETR:
         self._optimized_half = False
     
     def export(self, **kwargs):
+        """
+        Export your model to an ONNX file.
+
+        See [the ONNX export documentation](https://rfdetr.roboflow.com/learn/train/#onnx-export) for more information.
+        """
         self.model.export(**kwargs)
 
     def train_from_config(self, config: TrainConfig, **kwargs):
@@ -162,14 +176,26 @@ class RFDETR:
         )
 
     def get_train_config(self, **kwargs):
+        """
+        Retrieve the configuration parameters that will be used for training.
+        """
         return TrainConfig(**kwargs)
 
     def get_model(self, config: ModelConfig):
+        """
+        Retrieve a model instance based on the provided configuration.
+        """
         return Model(**config.dict())
     
     # Get class_names from the model
     @property
     def class_names(self):
+        """
+        Retrieve the class names supported by the loaded model.
+
+        Returns:
+            dict: A dictionary mapping class IDs to class names. The keys are integers starting from
+        """
         if hasattr(self.model, 'class_names') and self.model.class_names:
             return {i+1: name for i, name in enumerate(self.model.class_names)}
             
@@ -301,6 +327,9 @@ class RFDETR:
 
 
 class RFDETRBase(RFDETR):
+    """
+    Train an RF-DETR Base model (29M parameters).
+    """
     def get_model_config(self, **kwargs):
         return RFDETRBaseConfig(**kwargs)
 
@@ -308,6 +337,9 @@ class RFDETRBase(RFDETR):
         return TrainConfig(**kwargs)
 
 class RFDETRLarge(RFDETR):
+    """
+    Train an RF-DETR Base model.
+    """
     def get_model_config(self, **kwargs):
         return RFDETRLargeConfig(**kwargs)
 
