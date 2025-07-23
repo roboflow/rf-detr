@@ -8,6 +8,7 @@ Training in the Roboflow Cloud is ideal if you want managed training whose weigh
 
 For this guide, we will train a model using the `rfdetr` Python package.
 
+Once you have trained a model with this guide, see our [deploy an RF-DETR model guide](/learn/deploy/) to learn how to run inference with your model.
 
 ### Dataset structure
 

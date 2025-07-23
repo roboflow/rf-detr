@@ -82,20 +82,7 @@ pip install git+https://github.com/roboflow/rf-detr.git
 
 The easiest path to deployment is using Roboflow's [Inference](https://github.com/roboflow/inference) package. 
 
-You can upload models using `.deploy_to_roboflow` like so:
-
-```python
-from rfdetr import RFDETRNano
-
-x = RFDETRNano(pretrain_weights="<path/to/prtrain/weights/dir>")
-x.deploy_to_roboflow(
-  workspace="<your-workspace>",
-  project_ids=["<your-project-id>"],
-  api_key="<YOUR_API_KEY>"
-)
-```
-
-These models will be available to use with Inference's `infer` method:
+The code below lets you run `rfdetr-base` on an image:
 
 ```python
 import os

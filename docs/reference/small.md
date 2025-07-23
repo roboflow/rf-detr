@@ -1,3 +1,3 @@
-<!-- :::rfdetr.detr.RFDETRSmall
+:::rfdetr.detr.RFDETRSmall
     options:
-      inherited_members: true -->
+      inherited_members: true

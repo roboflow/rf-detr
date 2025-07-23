@@ -1,3 +1,3 @@
-<!-- :::rfdetr.detr.RFDETRMedium
+:::rfdetr.detr.RFDETRMedium
     options:
-      inherited_members: true -->
+      inherited_members: true

@@ -35,6 +35,9 @@ class ModelConfig(BaseModel):
     positional_encoding_size: int
 
 class RFDETRBaseConfig(ModelConfig):
+    """
+    The configuration for an RF-DETR Base model.
+    """
     encoder: Literal["dinov2_windowed_small", "dinov2_windowed_base"] = "dinov2_windowed_small"
     hidden_dim: int = 256
     patch_size: int = 14
@@ -52,6 +55,9 @@ class RFDETRBaseConfig(ModelConfig):
     positional_encoding_size: int = 37
 
 class RFDETRLargeConfig(RFDETRBaseConfig):
+    """
+    The configuration for an RF-DETR Large model.
+    """
     encoder: Literal["dinov2_windowed_small", "dinov2_windowed_base"] = "dinov2_windowed_base"
     hidden_dim: int = 384
     sa_nheads: int = 12
@@ -61,6 +67,9 @@ class RFDETRLargeConfig(RFDETRBaseConfig):
     pretrain_weights: Optional[str] = "rf-detr-large.pth"
 
 class RFDETRNanoConfig(RFDETRBaseConfig):
+    """
+    The configuration for an RF-DETR Nano model.
+    """
     out_feature_indexes: List[int] = [3, 6, 9, 12]
     num_windows: int = 2
     dec_layers: int = 2
@@ -70,6 +79,15 @@ class RFDETRNanoConfig(RFDETRBaseConfig):
     pretrain_weights: Optional[str] = "rf-detr-nano.pth"
 
 class RFDETRSmallConfig(RFDETRBaseConfig):
+    """
+    The configuration for an RF-DETR Small model.
+
+    Args:
+        out_feature_indexes (List[int]): out_feature_indexes
+        num_windows (int): num_windows
+        dec_layers (int): dec_layers
+        patch_size (int): patch_size
+    """
     out_feature_indexes: List[int] = [3, 6, 9, 12]
     num_windows: int = 2
     dec_layers: int = 3
@@ -79,6 +97,9 @@ class RFDETRSmallConfig(RFDETRBaseConfig):
     pretrain_weights: Optional[str] = "rf-detr-small.pth"
 
 class RFDETRMediumConfig(RFDETRBaseConfig):
+    """
+    The configuration for an RF-DETR Medium model.
+    """
     out_feature_indexes: List[int] = [3, 6, 9, 12]
     num_windows: int = 2
     dec_layers: int = 4
