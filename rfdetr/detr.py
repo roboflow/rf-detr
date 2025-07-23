@@ -377,7 +377,7 @@ class RFDETR:
         size = self.size or size
         tmp_out_dir = ".roboflow_temp_upload"
         os.makedirs(tmp_out_dir, exist_ok=True)
-        outpath = os.path.join(tmp_out_dir, "weights.pth")
+        outpath = os.path.join(tmp_out_dir, "weights.pt")
         torch.save(
             {
                 "model": self.model.model.state_dict(),
@@ -391,6 +391,7 @@ class RFDETR:
             project_ids=project_ids,
             model_name=model_name or size + "-uploaded"
         )
+        shutil.rmtree(tmp_out_dir)
         return out
 
 
