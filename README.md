@@ -54,11 +54,11 @@ The table below shows the performance of RF-DETR medium, compared to comparable 
 
 [See our benchmark notes in the RF-DETR documentation.](https://rfdetr.roboflow.com/learn/benchmarks/)
 
-_We are actively working on a new RF-DETR Large model that will substantially outperform the current RF-DETR Large available in this repository. This is why RF-DETR Large is not yet reported on our pareto graph. Check back in the next few weeks for our RF-DETR Large launch._
+_We are actively working on RF-DETR Large and X-Large models using the same techniques we used to achieve the strong accuracy that RF-DETR Medium attains. This is why RF-DETR Large and X-Large is not yet reported on our pareto charts. Check back in the next few weeks for the launch of new RF-DETR Large and X-Large models._
 
 ## Installation
 
-Pip install the `rfdetr` package in a [**Python>=3.9**](https://www.python.org/) environment.
+To install RF-DETR, install the `rfdetr` package in a [**Python>=3.9**](https://www.python.org/) environment with `pip`:
 
 ```bash
 pip install rfdetr
