@@ -71,11 +71,6 @@
     <label class="md-overlay" for="__drawer"></label>
     <div data-md-component="skip">
       
-        
-        <a href="#rf-detr-on-microsoft-coco" class="md-skip">
-          Skip to content
-        </a>
-      
     </div>
     <div data-md-component="announce">
       
@@ -562,17 +557,6 @@
       
       
       
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  <span class="md-ellipsis">
-    Benchmarks
-  </span>
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
       <a href="./" class="md-nav__link md-nav__link--active">
         
   
@@ -582,56 +566,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#rf-detr-on-microsoft-coco" class="md-nav__link">
-    <span class="md-ellipsis">
-      RF-DETR on Microsoft COCO
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#rf-detr-on-rf100-vl" class="md-nav__link">
-    <span class="md-ellipsis">
-      RF-DETR on RF100-VL
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="RF-DETR on RF100-VL">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#rf100-vl-benchmarking-notes" class="md-nav__link">
-    <span class="md-ellipsis">
-      RF100-VL Benchmarking Notes
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-    </ul>
-  
-</nav>
       
     </li>
   
@@ -904,47 +838,6 @@
   
   
   
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#rf-detr-on-microsoft-coco" class="md-nav__link">
-    <span class="md-ellipsis">
-      RF-DETR on Microsoft COCO
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#rf-detr-on-rf100-vl" class="md-nav__link">
-    <span class="md-ellipsis">
-      RF-DETR on RF100-VL
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="RF-DETR on RF100-VL">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#rf100-vl-benchmarking-notes" class="md-nav__link">
-    <span class="md-ellipsis">
-      RF100-VL Benchmarking Notes
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-    </ul>
-  
 </nav>
                   </div>
                 </div>
@@ -965,74 +858,150 @@
 
 <p>RF-DETR is the first real-time model to exceed 60 AP on the Microsoft COCO benchmark alongside competitive performance at base sizes. It also achieves state-of-the-art performance on RF100-VL, an object detection benchmark that measures model domain adaptability to real world problems. RF-DETR is fastest and most accurate for its size when compared current real-time objection models.</p>
 <p>On this page, we outline our results from our Microsoft COCO benchmarks, benchmarks across all seven categories in the RF100-VL benchmark, and notes from our benchmarking.</p>
-<p><img alt="rf-detr-coco-rf100-vl-9" src="https://media.roboflow.com/rfdetr/pareto.png" /></p>
-<h2 id="rf-detr-on-microsoft-coco">RF-DETR on Microsoft COCO<a class="headerlink" href="#rf-detr-on-microsoft-coco" title="Permanent link">&para;</a></h2>
+<p>The table below shows the performance of RF-DETR, compared to other object detection models:</p>
+<p><img alt="rf-detr-coco-rf100-vl-9" src="https://media.roboflow.com/rfdetr/pareto1.png" /></p>
 <table>
 <thead>
 <tr>
-<th>Model</th>
-<th>params<br><sup>(M)</th>
-<th>mAP<sup>COCO val<br>@0.50:0.95</th>
-<th>mAP<sup>RF100-VL<br>Average @0.50</th>
-<th>mAP<sup>RF100-VL<br>Average @0.50:95</th>
-<th>Total Latency<br><sup>T4 bs=1<br>(ms)</th>
+<th>family</th>
+<th>size</th>
+<th>coco_map50</th>
+<th>coco_map5095</th>
+<th>rf100vl_map50</th>
+<th>rv100vl_map5095</th>
+<th>latency</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>D-FINE-M</td>
-<td>19.3</td>
-<td><ins>55.1</ins></td>
-<td>N/A</td>
-<td>N/A</td>
-<td>6.3</td>
+<td>RF-DETR</td>
+<td>Nano</td>
+<td>67.6</td>
+<td>48.4</td>
+<td>84.1</td>
+<td>57.1</td>
+<td>2.32</td>
 </tr>
 <tr>
-<td>LW-DETR-M</td>
-<td>28.2</td>
-<td>52.5</td>
-<td>84.0</td>
-<td>57.5</td>
-<td>6.0</td>
+<td>RF-DETR</td>
+<td>Small</td>
+<td>72.1</td>
+<td>53.0</td>
+<td>85.9</td>
+<td>59.6</td>
+<td>3.52</td>
 </tr>
 <tr>
-<td>YOLO11m</td>
-<td>20.0</td>
-<td>51.5</td>
-<td>84.9</td>
+<td>RF-DETR</td>
+<td>Medium</td>
+<td>73.6</td>
+<td>54.7</td>
+<td>86.6</td>
+<td>60.6</td>
+<td>4.52</td>
+</tr>
+<tr>
+<td>YOLO11</td>
+<td>n</td>
+<td>52.0</td>
+<td>37.4</td>
+<td>81.4</td>
+<td>55.3</td>
+<td>2.49</td>
+</tr>
+<tr>
+<td>YOLO11</td>
+<td>s</td>
 <td>59.7</td>
-<td><ins>5.7</ins></td>
+<td>44.4</td>
+<td>82.3</td>
+<td>56.2</td>
+<td>3.16</td>
 </tr>
 <tr>
-<td>YOLOv8m</td>
-<td>28.9</td>
-<td>50.6</td>
-<td>85.0</td>
-<td>59.8</td>
-<td>6.3</td>
+<td>YOLO11</td>
+<td>m</td>
+<td>64.1</td>
+<td>48.6</td>
+<td>82.5</td>
+<td>56.5</td>
+<td>5.13</td>
 </tr>
 <tr>
-<td>RF-DETR-Medium</td>
-<td>33.7</td>
-<td>54.8</td>
-<td><ins>86.6</ins></td>
-<td><ins>60.6</ins></td>
-<td><ins>4.31</ins></td>
+<td>YOLO11</td>
+<td>l</td>
+<td>65.3</td>
+<td>50.2</td>
+<td>x</td>
+<td>x</td>
+<td>6.65</td>
+</tr>
+<tr>
+<td>YOLO11</td>
+<td>x</td>
+<td>66.5</td>
+<td>51.2</td>
+<td>x</td>
+<td>x</td>
+<td>11.92</td>
+</tr>
+<tr>
+<td>LW-DETR</td>
+<td>Tiny</td>
+<td>60.7</td>
+<td>42.9</td>
+<td>x</td>
+<td>x</td>
+<td>1.91</td>
+</tr>
+<tr>
+<td>LW-DETR</td>
+<td>Small</td>
+<td>66.8</td>
+<td>48.0</td>
+<td>84.5</td>
+<td>58.0</td>
+<td>2.62</td>
+</tr>
+<tr>
+<td>LW-DETR</td>
+<td>Medium</td>
+<td>72.0</td>
+<td>52.6</td>
+<td>85.2</td>
+<td>59.4</td>
+<td>4.49</td>
+</tr>
+<tr>
+<td>D-FINE</td>
+<td>Nano</td>
+<td>60.2</td>
+<td>42.7</td>
+<td>83.6</td>
+<td>57.7</td>
+<td>2.12</td>
+</tr>
+<tr>
+<td>D-FINE</td>
+<td>Small</td>
+<td>67.6</td>
+<td>50.7</td>
+<td>84.5</td>
+<td>59.9</td>
+<td>3.55</td>
+</tr>
+<tr>
+<td>D-FINE</td>
+<td>Medium</td>
+<td>72.6</td>
+<td>55.1</td>
+<td>84.6</td>
+<td>60.2</td>
+<td>5.68</td>
 </tr>
 </tbody>
 </table>
-<h2 id="rf-detr-on-rf100-vl">RF-DETR on RF100-VL<a class="headerlink" href="#rf-detr-on-rf100-vl" title="Permanent link">&para;</a></h2>
-<p><img src="https://github.com/user-attachments/assets/e61a7ba4-5294-40a9-8cd7-4fc924639924" alt="rf100-vl-map50"></p>
-<h3 id="rf100-vl-benchmarking-notes">RF100-VL Benchmarking Notes<a class="headerlink" href="#rf100-vl-benchmarking-notes" title="Permanent link">&para;</a></h3>
-<ul>
-<li>
-<p>The "Total Latency" reported is measured on a T4 GPU using TensorRT10 FP16 (ms/img) and was introduced by LW-DETR. Unlike transformer-based models, YOLO models perform Non-Maximum Suppression (NMS) after generating predictions to refine bounding box candidates. While NMS boosts accuracy, it also slightly reduces speed due to the additional computation required, which varies with the number of objects in an image. Notably, many YOLO benchmarks include NMS in accuracy measurements but exclude it from speed metrics. By contrast, our benchmarking—following LW-DETR’s approach—factors in NMS latency to provide a uniform measure of the total time needed to obtain a final result across all models on the same hardware.</p>
-</li>
-<li>
-<p>D-FINE’s fine-tuning capability is currently unavailable, making its domain adaptability performance inaccessible. The authors <a href="https://github.com/Peterande/D-FINE">caution</a> that “if your categories are very simple, it might lead to overfitting and suboptimal performance.” Furthermore, several open issues (<a href="https://github.com/Peterande/D-FINE/issues/108">#108</a>, <a href="https://github.com/Peterande/D-FINE/issues/146">#146</a>, <a href="https://github.com/Peterande/D-FINE/issues/169">#169</a>, <a href="https://github.com/Peterande/D-FINE/issues/214">#214</a>) currently prevent successful fine-tuning. We have opened an additional issue in hopes of ultimately benchmarking D-FINE with RF100-VL.
-</details></p>
-</li>
-</ul>
+<p><em>We are actively working on RF-DETR Large and X-Large models using the same techniques we used to achieve the strong accuracy that RF-DETR Medium attains. This is why RF-DETR Large and X-Large is not yet reported on our pareto charts and why we haven't benchmarked other models at similar sizes. Check back in the next few weeks for the launch of new RF-DETR Large and X-Large models.</em></p>
 
 
 
