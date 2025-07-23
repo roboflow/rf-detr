@@ -3,6 +3,8 @@ name: 🧪 Docs Test WorkFlow 📚
 on:
   pull_request:
     branches: [main, develop]
+  push:
+    branches: [docs/wip]
 
 # Restrict permissions by default
 permissions:
