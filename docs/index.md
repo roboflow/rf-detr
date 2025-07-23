@@ -20,7 +20,7 @@ We validated the performance of RF-DETR on both Microsoft COCO and the RF100-VL 
 
 [See our full benchmarks.](learn/benchmarks/)
 
-![rfdetr-coco-rf100-vl-9](https://github.com/user-attachments/assets/fdb6c31d-f11f-4518-8377-5671566265a4)
+![rf-detr-coco-rf100-vl-9](https://media.roboflow.com/rfdetr/pareto.png)
 
 ## 💻 Install
 
