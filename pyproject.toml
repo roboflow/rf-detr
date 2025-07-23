@@ -58,6 +58,7 @@ dependencies = [
     "pydantic",
     "supervision",
     "matplotlib",
+    "roboflow"
 ]
 
 [project.optional-dependencies]

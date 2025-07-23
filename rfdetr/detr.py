@@ -40,6 +40,7 @@ logger = getLogger(__name__)
 class RFDETR:
     means = [0.485, 0.456, 0.406]
     stds = [0.229, 0.224, 0.225]
+    size = None
 
     def __init__(self, **kwargs):
         self.model_config = self.get_model_config(**kwargs)
@@ -306,9 +307,45 @@ class RFDETR:
             detections_list.append(detections)
 
         return detections_list if len(detections_list) > 1 else detections_list[0]
+    
+    def deploy_to_roboflow(self, workspace: str, project_ids: List[str], api_key: str = None, size: str = None, model_name: str = None):
+        from roboflow import Roboflow
+        import shutil
+        if api_key is None:
+            api_key = os.getenv("ROBOFLOW_API_KEY")
+            if api_key is None:
+                raise ValueError("Set api_key=<KEY> in deploy_to_roboflow or export ROBOFLOW_API_KEY=<KEY>")
+
+
+        rf = Roboflow(api_key=api_key)
+        workspace = rf.workspace(workspace)
+
+        if self.size is None and size is None:
+            raise ValueError("Must set size for custom architectures")
+
+        size = self.size or size
+        tmp_out_dir = ".roboflow_temp_upload"
+        os.makedirs(tmp_out_dir, exist_ok=True)
+        outpath = os.path.join(tmp_out_dir, "weights.pth")
+        torch.save(
+            {
+                "model": self.model.model,
+                "args": self.model.args
+            }, outpath
+        )
+
+        out = workspace.deploy_model(
+            model_type=size,
+            model_path=tmp_out_dir,
+            project_ids=project_ids,
+            model_name=model_name or size + "-uploaded"
+        )
+        return out
+
 
 
 class RFDETRBase(RFDETR):
+    size = "rfdetr-base"
     def get_model_config(self, **kwargs):
         return RFDETRBaseConfig(**kwargs)
 
@@ -316,6 +353,7 @@ class RFDETRBase(RFDETR):
         return TrainConfig(**kwargs)
 
 class RFDETRLarge(RFDETR):
+    size = "rfdetr-large"
     def get_model_config(self, **kwargs):
         return RFDETRLargeConfig(**kwargs)
 
@@ -323,6 +361,7 @@ class RFDETRLarge(RFDETR):
         return TrainConfig(**kwargs)
 
 class RFDETRNano(RFDETR):
+    size = "rfdetr-nano"
     def get_model_config(self, **kwargs):
         return RFDETRNanoConfig(**kwargs)
 
@@ -330,6 +369,7 @@ class RFDETRNano(RFDETR):
         return TrainConfig(**kwargs)
 
 class RFDETRSmall(RFDETR):
+    size = "rfdetr-small"
     def get_model_config(self, **kwargs):
         return RFDETRSmallConfig(**kwargs)
 
@@ -337,6 +377,7 @@ class RFDETRSmall(RFDETR):
         return TrainConfig(**kwargs)
 
 class RFDETRMedium(RFDETR):
+    size = "rfdetr-medium"
     def get_model_config(self, **kwargs):
         return RFDETRMediumConfig(**kwargs)
 

@@ -76,6 +76,7 @@ def download_pretrain_weights(pretrain_weights: str, redownload=False):
 class Model:
     def __init__(self, **kwargs):
         args = populate_args(**kwargs)
+        self.args = args
         self.resolution = args.resolution
         self.model = build_model(args)
         self.device = torch.device(args.device)
@@ -92,6 +93,7 @@ class Model:
 
             # Extract class_names from checkpoint if available
             if 'args' in checkpoint and hasattr(checkpoint['args'], 'class_names'):
+                self.args.class_names = checkpoint['args'].class_names
                 self.class_names = checkpoint['args'].class_names
                 
             checkpoint_num_classes = checkpoint['model']['class_embed.bias'].shape[0]
