@@ -158,3 +158,40 @@ You can change the RF-DETR model that the code snippet above uses. To do so, upd
 - `rfdetr-small`
 - `rfdetr-medium`
 - `rfdetr-large`
+
+## Batch Inference
+
+You can provide `.predict()` with either a single image or a list of images. When multiple images are supplied, they are processed together in a single forward pass, resulting in a corresponding list of detections.
+
+```python
+import io
+import requests
+import supervision as sv
+from PIL import Image
+from rfdetr import RFDETRBase
+from rfdetr.util.coco_classes import COCO_CLASSES
+
+model = RFDETRBase()
+
+urls = [
+    "https://media.roboflow.com/notebooks/examples/dog-2.jpeg",
+    "https://media.roboflow.com/notebooks/examples/dog-3.jpeg"
+]
+
+images = [Image.open(io.BytesIO(requests.get(url).content)) for url in urls]
+
+detections_list = model.predict(images, threshold=0.5)
+
+for image, detections in zip(images, detections_list):
+    labels = [
+        f"{COCO_CLASSES[class_id]} {confidence:.2f}"
+        for class_id, confidence
+        in zip(detections.class_id, detections.confidence)
+    ]
+
+    annotated_image = image.copy()
+    annotated_image = sv.BoxAnnotator().annotate(annotated_image, detections)
+    annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
+
+    sv.plot_image(annotated_image)
+```
