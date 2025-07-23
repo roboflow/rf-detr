@@ -339,7 +339,7 @@ class RFDETR:
 
         return detections_list if len(detections_list) > 1 else detections_list[0]
     
-    def deploy_to_roboflow(self, workspace: str, project_ids: List[str], api_key: str = None, size: str = None, model_name: str = None):
+    def deploy_to_roboflow(self, workspace: str, project_id: str, version: str, api_key: str = None, size: str = None):
         """
         Deploy the trained RF-DETR model to Roboflow.
 
@@ -384,15 +384,14 @@ class RFDETR:
                 "args": self.model.args
             }, outpath
         )
-
-        out = workspace.deploy_model(
+        project = workspace.project(project_id)
+        version = project.version(version)
+        version.deploy(
             model_type=size,
             model_path=tmp_out_dir,
-            project_ids=project_ids,
-            model_name=model_name or size + "-uploaded"
+            filename="weights.pt"
         )
         shutil.rmtree(tmp_out_dir)
-        return out
 
 
 
