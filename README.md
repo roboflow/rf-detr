@@ -18,6 +18,15 @@ RF-DETR is small enough to run on the edge using [Inference](https://github.com/
 
 [Read the documentation to get started training.](https://rfdetr.roboflow.com)
 
+## News
+
+- `2025/07/23`: We release three new checkpoints for RF-DETR: Nano, Small, and Medium.
+    - RF-DETR Base is now deprecated. We recommend using RF-DETR Medium which offers subtantially better accuracy at comparable latency.
+- `2025/03/20`: We release RF-DETR real-time object detection model. **Code and checkpoint for RF-DETR-large and RF-DETR-base are available.**
+- `2025/04/03`: We release early stopping, gradient checkpointing, metrics saving, training resume, TensorBoard and W&B logging support.
+- `2025/05/16`: We release an 'optimize_for_inference' method which speeds up native PyTorch by up to 2x, depending on platform.
+- `2025/07/23`: We release new SOTA model sizes: RF-DETR-Nano, RF-DETR-Small, RF-DETR-Medium.
+
 ## Results
 
 RF-DETR achieves state-of-the-art performance on both the Microsoft COCO and the RF100-VL benchmarks.
@@ -45,14 +54,6 @@ The table below shows the performance of RF-DETR medium, compared to comparable 
 [See our benchmark notes in the RF-DETR documentation](https://rfdetr.roboflow.com/learn/benchmarks/)
 
 _We are actively working on a new RF-DETR Large model that will substantially outperform the current RF-DETR Large available in this repository. This is why RF-DETR Large is not yet reported on our pareto graph. Check back in the next few weeks for our RF-DETR Large launch._
-
-## News
-
-- `2025/07/23`: We release three new checkpoints for RF-DETR: Nano, Small, and Medium.
-- `2025/03/20`: We release RF-DETR real-time object detection model. **Code and checkpoint for RF-DETR-large and RF-DETR-base are available.**
-- `2025/04/03`: We release early stopping, gradient checkpointing, metrics saving, training resume, TensorBoard and W&B logging support.
-- `2025/05/16`: We release an 'optimize_for_inference' method which speeds up native PyTorch by up to 2x, depending on platform.
-- `2025/07/23`: We release new SOTA model sizes: RF-DETR-Nano, RF-DETR-Small, RF-DETR-Medium.
 
 ## Installation
 
