@@ -35,7 +35,7 @@ The table below shows the performance of RF-DETR medium, compared to comparable 
 
 ![rf-detr-coco-rf100-vl-9](https://media.roboflow.com/rfdetr/pareto.png)
 
-|family|size  |coco_map50|coco_map5095|rf100vl_map50|rv100vl_map5095|latency|
+|family|size  |coco_map50|coco_map50@95|rf100vl_map50|rv100vl_map50@95|latency|
 |------|------|----------|------------|-------------|---------------|-------|
 |RF-DETR|Nano  |67.6      |48.4        |84.1         |57.1           |2.32   |
 |RF-DETR|Small |72.1      |53.0        |85.9         |59.6           |3.52   |
