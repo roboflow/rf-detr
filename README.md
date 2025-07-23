@@ -16,6 +16,8 @@ RF-DETR is the first real-time model to exceed 60 AP on the [Microsoft COCO benc
 
 RF-DETR is small enough to run on the edge using [Inference](https://github.com/roboflow/inference), making it an ideal model for deployments that need both strong accuracy and real-time performance.
 
+[Read the documentation to get started training.](https://rfdetr.roboflow.com)
+
 ## Results
 
 We validated the performance of RF-DETR on both Microsoft COCO and the RF100-VL benchmarks.
