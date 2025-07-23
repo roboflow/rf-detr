@@ -329,7 +329,7 @@ class RFDETR:
         outpath = os.path.join(tmp_out_dir, "weights.pth")
         torch.save(
             {
-                "model": self.model.model,
+                "model": self.model.model.state_dict(),
                 "args": self.model.args
             }, outpath
         )
