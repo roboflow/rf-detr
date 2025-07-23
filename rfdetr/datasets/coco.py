@@ -27,24 +27,13 @@ import torchvision
 import rfdetr.datasets.transforms as T
 
 
-def compute_multi_scale_scales(resolution, expanded_scales=False):
-    if resolution == 640:
-        # assume we're doing the original 640x640 and therefore patch_size is 16
-        patch_size = 16
-    elif resolution % (14 * 4) == 0:
-        # assume we're doing some dinov2 resolution variant and therefore patch_size is 14
-        patch_size = 14
-    elif resolution % (16 * 4) == 0:
-        # assume we're doing some other resolution and therefore patch_size is 16
-        patch_size = 16
-    else:
-        raise ValueError(f"Resolution {resolution} is not divisible by 16*4 or 14*4")
+def compute_multi_scale_scales(resolution, expanded_scales=False, patch_size=16, num_windows=4):
     # round to the nearest multiple of 4*patch_size to enable both patching and windowing
-    base_num_patches_per_window = resolution // (patch_size * 4)
+    base_num_patches_per_window = resolution // (patch_size * num_windows)
     offsets = [-3, -2, -1, 0, 1, 2, 3, 4] if not expanded_scales else [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5]
     scales = [base_num_patches_per_window + offset for offset in offsets]
-    proposed_scales = [scale * patch_size * 4 for scale in scales]
-    proposed_scales = [scale for scale in proposed_scales if scale >= patch_size * 4]  # ensure minimum image size
+    proposed_scales = [scale * patch_size * num_windows for scale in scales]
+    proposed_scales = [scale for scale in proposed_scales if scale >= patch_size * num_windows * 2]  # ensure minimum image size
     return proposed_scales
 
 
@@ -107,7 +96,7 @@ class ConvertCoco(object):
         return image, target
 
 
-def make_coco_transforms(image_set, resolution, multi_scale=False, expanded_scales=False):
+def make_coco_transforms(image_set, resolution, multi_scale=False, expanded_scales=False, skip_random_resize=False, patch_size=16, num_windows=4):
 
     normalize = T.Compose([
         T.ToTensor(),
@@ -117,7 +106,9 @@ def make_coco_transforms(image_set, resolution, multi_scale=False, expanded_scal
     scales = [resolution]
     if multi_scale:
         # scales = [448, 512, 576, 640, 704, 768, 832, 896]
-        scales = compute_multi_scale_scales(resolution, expanded_scales)
+        scales = compute_multi_scale_scales(resolution, expanded_scales, patch_size, num_windows)
+        if skip_random_resize:
+            scales = [scales[-1]]
         print(scales)
 
     if image_set == 'train':
@@ -148,7 +139,7 @@ def make_coco_transforms(image_set, resolution, multi_scale=False, expanded_scal
     raise ValueError(f'unknown {image_set}')
 
 
-def make_coco_transforms_square_div_64(image_set, resolution, multi_scale=False, expanded_scales=False):
+def make_coco_transforms_square_div_64(image_set, resolution, multi_scale=False, expanded_scales=False, skip_random_resize=False, patch_size=16, num_windows=4):
     """
     """
 
@@ -161,7 +152,9 @@ def make_coco_transforms_square_div_64(image_set, resolution, multi_scale=False,
     scales = [resolution]
     if multi_scale:
         # scales = [448, 512, 576, 640, 704, 768, 832, 896]
-        scales = compute_multi_scale_scales(resolution, expanded_scales)
+        scales = compute_multi_scale_scales(resolution, expanded_scales, patch_size, num_windows)
+        if skip_random_resize:
+            scales = [scales[-1]]
         print(scales)
 
     if image_set == 'train':
@@ -220,9 +213,25 @@ def build(image_set, args, resolution):
 
     
     if square_resize_div_64:
-        dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms_square_div_64(image_set, resolution, multi_scale=args.multi_scale, expanded_scales=args.expanded_scales))
+        dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms_square_div_64(
+            image_set,
+            resolution,
+            multi_scale=args.multi_scale,
+            expanded_scales=args.expanded_scales,
+            skip_random_resize=not args.do_random_resize_via_padding,
+            patch_size=args.patch_size,
+            num_windows=args.num_windows
+        ))
     else:
-        dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms(image_set, resolution, multi_scale=args.multi_scale, expanded_scales=args.expanded_scales))
+        dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms(
+            image_set,
+            resolution,
+            multi_scale=args.multi_scale,
+            expanded_scales=args.expanded_scales,
+            skip_random_resize=not args.do_random_resize_via_padding,
+            patch_size=args.patch_size,
+            num_windows=args.num_windows
+        ))
     return dataset
 
 def build_roboflow(image_set, args, resolution):
@@ -249,7 +258,23 @@ def build_roboflow(image_set, args, resolution):
 
     
     if square_resize_div_64:
-        dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms_square_div_64(image_set, resolution, multi_scale=args.multi_scale))
+        dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms_square_div_64(
+            image_set,
+            resolution,
+            multi_scale=args.multi_scale,
+            expanded_scales=args.expanded_scales,
+            skip_random_resize=not args.do_random_resize_via_padding,
+            patch_size=args.patch_size,
+            num_windows=args.num_windows
+        ))
     else:
-        dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms(image_set, resolution, multi_scale=args.multi_scale))
+        dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms(
+            image_set,
+            resolution,
+            multi_scale=args.multi_scale,
+            expanded_scales=args.expanded_scales,
+            skip_random_resize=not args.do_random_resize_via_padding,
+            patch_size=args.patch_size,
+            num_windows=args.num_windows
+        ))
     return dataset

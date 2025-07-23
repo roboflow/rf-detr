@@ -38,7 +38,7 @@ We validated the performance of RF-DETR on both Microsoft COCO and the RF100-VL 
 | LW-DETR-M        | 28.2               | 52.5                           | 84.0                              | 57.5                                  | 6.0                                   |
 | YOLO11m          | 20.0               | 51.5                           | 84.9                              | 59.7                                  | <ins>5.7</ins>                        |
 | YOLOv8m          | 28.9               | 50.6                           | 85.0                              | 59.8                                  | 6.3                                   |
-| RF-DETR-B        | 29.0               | 53.3                           | <ins>86.7</ins>                   | <ins>60.3</ins>                       | 6.0                                   |
+| RF-DETR-Medium    | 33.7               | 54.8                           | <ins>86.6</ins>                   | <ins>60.6</ins>                       | <ins>4.31</ins>                                   |
 
 
 <details>
@@ -55,6 +55,7 @@ We validated the performance of RF-DETR on both Microsoft COCO and the RF100-VL 
 - `2025/03/20`: We release RF-DETR real-time object detection model. **Code and checkpoint for RF-DETR-large and RF-DETR-base are available.**
 - `2025/04/03`: We release early stopping, gradient checkpointing, metrics saving, training resume, TensorBoard and W&B logging support.
 - `2025/05/16`: We release an 'optimize_for_inference' method which speeds up native PyTorch by up to 2x, depending on platform.
+- `2025/07/23`: We release new SOTA model sizes: RF-DETR-Nano, RF-DETR-Small, RF-DETR-Medium.
 
 ## Installation
 
@@ -79,7 +80,22 @@ pip install git+https://github.com/roboflow/rf-detr.git
 
 ## Inference
 
-The easiest path to deployment is using Roboflow's [Inference](https://github.com/roboflow/inference) package. You can use model's uploaded to Roboflow's platform with Inference's `infer` method:
+The easiest path to deployment is using Roboflow's [Inference](https://github.com/roboflow/inference) package. 
+
+You can upload models using `.deploy_to_roboflow` like so:
+
+```python
+from rfdetr import RFDETRNano
+
+x = RFDETRNano(pretrain_weights="<path/to/prtrain/weights/dir>")
+x.deploy_to_roboflow(
+  workspace="<your-workspace>",
+  project_ids=["<your-project-id>"],
+  api_key="<YOUR_API_KEY>"
+)
+```
+
+These models will be available to use with Inference's `infer` method:
 
 ```python
 import os
