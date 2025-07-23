@@ -14,7 +14,7 @@ RF-DETR is a real-time, transformer-based object detection model architecture de
 
 RF-DETR is the first real-time model to exceed 60 AP on the [Microsoft COCO benchmark](https://cocodataset.org/#home) alongside competitive performance at base sizes. It also achieves state-of-the-art performance on [RF100-VL](https://github.com/roboflow/rf100-vl), an object detection benchmark that measures model domain adaptability to real world problems. RF-DETR is comparable speed to current real-time objection models.
 
-**RF-DETR is small enough to run on the edge using [Inference](https://github.com/roboflow/inference), making it an ideal model for deployments that need both strong accuracy and real-time performance.**
+RF-DETR is small enough to run on the edge using [Inference](https://github.com/roboflow/inference), making it an ideal model for deployments that need both strong accuracy and real-time performance.
 
 ## Results
 
@@ -49,6 +49,7 @@ We validated the performance of RF-DETR on both Microsoft COCO and the RF100-VL 
 
 ## News
 
+- `2025/07/23`: We release three new checkpoints for RF-DETR: Nano, Small, and Medium.
 - `2025/03/20`: We release RF-DETR real-time object detection model. **Code and checkpoint for RF-DETR-large and RF-DETR-base are available.**
 - `2025/04/03`: We release early stopping, gradient checkpointing, metrics saving, training resume, TensorBoard and W&B logging support.
 - `2025/05/16`: We release an 'optimize_for_inference' method which speeds up native PyTorch by up to 2x, depending on platform.
@@ -73,7 +74,6 @@ pip install git+https://github.com/roboflow/rf-detr.git
 ```
 
 </details>
-
 
 ## Inference
 
@@ -137,145 +137,15 @@ annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labe
 sv.plot_image(annotated_image)
 ```
 
-<details>
-<summary>Webcam inference</summary>
+### Train a Model
 
-<br>
+You can fine-tune an RF-DETR Nano, Small, Medium, and Base model with a custom dataset using the `rfdetr` Python package.
 
-```python
-import cv2
-import supervision as sv
-from rfdetr import RFDETRBase
-from rfdetr.util.coco_classes import COCO_CLASSES
+[Read our training tutorial to get started](https://rfdetr.roboflow.com/learn/train/)
 
-model = RFDETRBase()
+## Documentation
 
-cap = cv2.VideoCapture(0)
-while True:
-    success, frame = cap.read()
-    if not success:
-        break
-
-    detections = model.predict(frame[:, :, ::-1], threshold=0.5)
-    
-    labels = [
-        f"{COCO_CLASSES[class_id]} {confidence:.2f}"
-        for class_id, confidence
-        in zip(detections.class_id, detections.confidence)
-    ]
-
-    annotated_frame = frame.copy()
-    annotated_frame = sv.BoxAnnotator().annotate(annotated_frame, detections)
-    annotated_frame = sv.LabelAnnotator().annotate(annotated_frame, detections, labels)
-
-    cv2.imshow("Webcam", annotated_frame)
-
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
-
-cap.release()
-cv2.destroyAllWindows()
-```
-
-</details>
-
-<details>
-<summary>RTSP stream inference</summary>
-
-<br>
-
-```python
-import cv2
-import supervision as sv
-from rfdetr import RFDETRBase
-from rfdetr.util.coco_classes import COCO_CLASSES
-
-model = RFDETRBase()
-
-cap = cv2.VideoCapture(<RTSP_STREAM_URL>)
-while True:
-    success, frame = cap.read()
-    if not success:
-        break
-
-    detections = model.predict(frame[:, :, ::-1], threshold=0.5)
-    
-    labels = [
-        f"{COCO_CLASSES[class_id]} {confidence:.2f}"
-        for class_id, confidence
-        in zip(detections.class_id, detections.confidence)
-    ]
-
-    annotated_frame = frame.copy()
-    annotated_frame = sv.BoxAnnotator().annotate(annotated_frame, detections)
-    annotated_frame = sv.LabelAnnotator().annotate(annotated_frame, detections, labels)
-
-    cv2.imshow("RTSP Stream", annotated_frame)
-
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
-
-cap.release()
-cv2.destroyAllWindows()
-```
-
-</details>
-
-### Batch Inference
-
-> [!IMPORTANT] 
-> Batch inference isn’t officially released yet.
-> Install from source to access it: `pip install git+https://github.com/roboflow/rf-detr.git`.
-
-You can provide `.predict()` with either a single image or a list of images. When multiple images are supplied, they are processed together in a single forward pass, resulting in a corresponding list of detections.
-
-```python
-import io
-import requests
-import supervision as sv
-from PIL import Image
-from rfdetr import RFDETRBase
-from rfdetr.util.coco_classes import COCO_CLASSES
-
-model = RFDETRBase()
-
-urls = [
-    "https://media.roboflow.com/notebooks/examples/dog-2.jpeg",
-    "https://media.roboflow.com/notebooks/examples/dog-3.jpeg"
-]
-
-images = [Image.open(io.BytesIO(requests.get(url).content)) for url in urls]
-
-detections_list = model.predict(images, threshold=0.5)
-
-for image, detections in zip(images, detections_list):
-    labels = [
-        f"{COCO_CLASSES[class_id]} {confidence:.2f}"
-        for class_id, confidence
-        in zip(detections.class_id, detections.confidence)
-    ]
-
-    annotated_image = image.copy()
-    annotated_image = sv.BoxAnnotator().annotate(annotated_image, detections)
-    annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
-
-    sv.plot_image(annotated_image)
-```
-
-![rf-detr-coco-results-2](https://media.roboflow.com/rf-detr/example_grid.png)
-
-
-### Model Variants
-
-RF-DETR is available in two variants: RF-DETR-B 29M [`RFDETRBase`](https://github.com/roboflow/rf-detr/blob/ed1af5144343ea52d3d26ce466719d064bb92b9c/rfdetr/detr.py#L133) and RF-DETR-L 128M [`RFDETRLarge`](https://github.com/roboflow/rf-detr/blob/ed1af5144343ea52d3d26ce466719d064bb92b9c/rfdetr/detr.py#L140). The corresponding COCO pretrained checkpoints are automatically loaded when you initialize either class.
-
-### Input Resolution
-
-Both model variants support configurable input resolutions. A higher resolution usually improves prediction quality by capturing more detail, though it can slow down inference. You can adjust the resolution by passing the `resolution` argument when initializing the model. `resolution` value must be divisible by `56`.
-
-```python
-model = RFDETRBase(resolution=560)
-```
+Visit our [documentation website](https://rfdetr.roboflow.com) to learn more about how to use RF-DETR.
 
 ## License
 
@@ -299,7 +169,6 @@ If you find our work helpful for your research, please consider citing the follo
   note = {SOTA Real-Time Object Detection Model}
 }
 ```
-
 
 ## Contribution
 
