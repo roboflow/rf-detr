@@ -23,4 +23,4 @@ The table below shows the performance of RF-DETR, compared to other object detec
 |D-FINE |Small |67.6      |50.7        |84.5         |59.9           |3.55   |
 |D-FINE |Medium|72.6      |55.1        |84.6         |60.2           |5.68   |
 
-_We are actively working on RF-DETR Large and X-Large models using the same techniques we used to achieve the strong accuracy that RF-DETR Medium attains. This is why RF-DETR Large and X-Large is not yet reported on our pareto charts. Check back in the next few weeks for the launch of new RF-DETR Large and X-Large models._
+_We are actively working on RF-DETR Large and X-Large models using the same techniques we used to achieve the strong accuracy that RF-DETR Medium attains. This is why RF-DETR Large and X-Large is not yet reported on our pareto charts and why we haven't benchmarked other models at similar sizes. Check back in the next few weeks for the launch of new RF-DETR Large and X-Large models._
