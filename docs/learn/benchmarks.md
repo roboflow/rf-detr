@@ -2,7 +2,7 @@ RF-DETR is the first real-time model to exceed 60 AP on the Microsoft COCO bench
 
 On this page, we outline our results from our Microsoft COCO benchmarks, benchmarks across all seven categories in the RF100-VL benchmark, and notes from our benchmarking.
 
-![rfdetr-coco-rf100-vl-9](https://github.com/user-attachments/assets/fdb6c31d-f11f-4518-8377-5671566265a4)
+![rf-detr-coco-rf100-vl-9](https://media.roboflow.com/rfdetr/pareto.png)
 
 ## RF-DETR on Microsoft COCO
 
@@ -12,7 +12,7 @@ On this page, we outline our results from our Microsoft COCO benchmarks, benchma
 | LW-DETR-M        | 28.2               | 52.5                           | 84.0                              | 57.5                                  | 6.0                                   |
 | YOLO11m          | 20.0               | 51.5                           | 84.9                              | 59.7                                  | <ins>5.7</ins>                        |
 | YOLOv8m          | 28.9               | 50.6                           | 85.0                              | 59.8                                  | 6.3                                   |
-| RF-DETR-B        | 29.0               | 53.3                           | <ins>86.7</ins>                   | <ins>60.3</ins>                       | 6.0                                   |
+| RF-DETR-Medium    | 33.7               | 54.8                           | <ins>86.6</ins>                   | <ins>60.6</ins>                       | <ins>4.31</ins>                                   |                               |
 
 ## RF-DETR on RF100-VL
 

@@ -22,7 +22,7 @@ RF-DETR is small enough to run on the edge using [Inference](https://github.com/
 
 We validated the performance of RF-DETR on both Microsoft COCO and the RF100-VL benchmarks.
 
-![rf-detr-coco-rf100-vl-9](https://github.com/user-attachments/assets/fdb6c31d-f11f-4518-8377-5671566265a4)
+![rf-detr-coco-rf100-vl-9](https://media.roboflow.com/rfdetr/pareto.png)
 
 <details>
 <summary>RF100-VL benchmark results</summary>
@@ -40,14 +40,7 @@ We validated the performance of RF-DETR on both Microsoft COCO and the RF100-VL 
 | YOLOv8m          | 28.9               | 50.6                           | 85.0                              | 59.8                                  | 6.3                                   |
 | RF-DETR-Medium    | 33.7               | 54.8                           | <ins>86.6</ins>                   | <ins>60.6</ins>                       | <ins>4.31</ins>                                   |
 
-
-<details>
-<summary>RF100-VL benchmark notes</summary>
-
-- The "Total Latency" reported here is measured on a T4 GPU using TensorRT10 FP16 (ms/img) and was introduced by LW-DETR. Unlike transformer-based models, YOLO models perform Non-Maximum Suppression (NMS) after generating predictions to refine bounding box candidates. While NMS boosts accuracy, it also slightly reduces speed due to the additional computation required, which varies with the number of objects in an image. Notably, many YOLO benchmarks include NMS in accuracy measurements but exclude it from speed metrics. By contrast, our benchmarking—following LW-DETR’s approach—factors in NMS latency to provide a uniform measure of the total time needed to obtain a final result across all models on the same hardware.
-
-- D-FINE’s fine-tuning capability is currently unavailable, making its domain adaptability performance inaccessible. The authors [caution](https://github.com/Peterande/D-FINE) that “if your categories are very simple, it might lead to overfitting and suboptimal performance.” Furthermore, several open issues ([#108](https://github.com/Peterande/D-FINE/issues/108), [#146](https://github.com/Peterande/D-FINE/issues/146), [#169](https://github.com/Peterande/D-FINE/issues/169), [#214](https://github.com/Peterande/D-FINE/issues/214)) currently prevent successful fine-tuning. We have opened an additional issue in hopes of ultimately benchmarking D-FINE with RF100-VL.
-</details>
+[See our benchmark notes in the RF-DETR documentation](https://rfdetr.roboflow.com/learn/benchmarks/)
 
 ## News
 
@@ -175,10 +168,9 @@ If you find our work helpful for your research, please consider citing the follo
 }
 ```
 
-## Contribution
+## Contribute
 
 We welcome and appreciate all contributions! If you notice any issues or bugs, have questions, or would like to suggest new features, please [open an issue](https://github.com/roboflow/rf-detr/issues/new) or pull request. By sharing your ideas and improvements, you help make RF-DETR better for everyone.
-
 
 <div align="center">
       <a href="https://youtube.com/roboflow">
