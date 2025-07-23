@@ -51,6 +51,9 @@ class Backbone(BackboneBase):
                  backbone_lora: bool = False,
                  gradient_checkpointing: bool = False,
                  load_dinov2_weights: bool = True,
+                 patch_size: int = 14,
+                 num_windows: int = 4,
+                 positional_encoding_size: bool = False,
                  ):
         super().__init__()
         # an example name here would be "dinov2_base" or "dinov2_registers_windowed_base"
@@ -78,6 +81,9 @@ class Backbone(BackboneBase):
             use_windowed_attn=use_windowed_attn,
             gradient_checkpointing=gradient_checkpointing,
             load_dinov2_weights=load_dinov2_weights,
+            patch_size=patch_size,
+            num_windows=num_windows,
+            positional_encoding_size=positional_encoding_size,
         )
         # build encoder + projector as backbone module
         if freeze_encoder:
