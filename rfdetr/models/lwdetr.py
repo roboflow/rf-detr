@@ -1,7 +1,10 @@
 # ------------------------------------------------------------------------
-# LW-DETR
-# Copyright (c) 2024 Baidu. All Rights Reserved.
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+# Modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
+# Copyright (c) 2024 Baidu. All Rights Reserved.
 # ------------------------------------------------------------------------
 # Modified from Conditional DETR (https://github.com/Atten4Vis/ConditionalDETR)
 # Copyright (c) 2021 Microsoft. All Rights Reserved.
@@ -124,7 +127,7 @@ class LWDETR(nn.Module):
                 m.export()
 
     def forward(self, samples: NestedTensor, targets=None):
-        """ The forward expects a NestedTensor, which consists of:
+        """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
 
@@ -161,31 +164,36 @@ class LWDETR(nn.Module):
         hs, ref_unsigmoid, hs_enc, ref_enc = self.transformer(
             srcs, masks, poss, refpoint_embed_weight, query_feat_weight)
 
-        if self.bbox_reparam:
-            outputs_coord_delta = self.bbox_embed(hs)
-            outputs_coord_cxcy = outputs_coord_delta[..., :2] * ref_unsigmoid[..., 2:] + ref_unsigmoid[..., :2]
-            outputs_coord_wh = outputs_coord_delta[..., 2:].exp() * ref_unsigmoid[..., 2:]
-            outputs_coord = torch.concat(
-                [outputs_coord_cxcy, outputs_coord_wh], dim=-1
-            )
-        else:
-            outputs_coord = (self.bbox_embed(hs) + ref_unsigmoid).sigmoid()
+        if hs is not None:
+            if self.bbox_reparam:
+                outputs_coord_delta = self.bbox_embed(hs)
+                outputs_coord_cxcy = outputs_coord_delta[..., :2] * ref_unsigmoid[..., 2:] + ref_unsigmoid[..., :2]
+                outputs_coord_wh = outputs_coord_delta[..., 2:].exp() * ref_unsigmoid[..., 2:]
+                outputs_coord = torch.concat(
+                    [outputs_coord_cxcy, outputs_coord_wh], dim=-1
+                )
+            else:
+                outputs_coord = (self.bbox_embed(hs) + ref_unsigmoid).sigmoid()
 
-        outputs_class = self.class_embed(hs)
+            outputs_class = self.class_embed(hs)
 
-        out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1]}
-        if self.aux_loss:
-            out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
+            out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1]}
+            if self.aux_loss:
+                out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
 
         if self.two_stage:
-            hs_enc_list = hs_enc.split(self.num_queries, dim=1)
-            cls_enc = []
             group_detr = self.group_detr if self.training else 1
+            hs_enc_list = hs_enc.chunk(group_detr, dim=1)
+            cls_enc = []
             for g_idx in range(group_detr):
                 cls_enc_gidx = self.transformer.enc_out_class_embed[g_idx](hs_enc_list[g_idx])
                 cls_enc.append(cls_enc_gidx)
             cls_enc = torch.cat(cls_enc, dim=1)
-            out['enc_outputs'] = {'pred_logits': cls_enc, 'pred_boxes': ref_enc}
+            if hs is not None:
+                out['enc_outputs'] = {'pred_logits': cls_enc, 'pred_boxes': ref_enc}
+            else:
+                out = {'pred_logits': cls_enc, 'pred_boxes': ref_enc}
+        
         return out
 
     def forward_export(self, tensors):
@@ -197,16 +205,22 @@ class LWDETR(nn.Module):
         hs, ref_unsigmoid, hs_enc, ref_enc = self.transformer(
             srcs, None, poss, refpoint_embed_weight, query_feat_weight)
 
-        if self.bbox_reparam:
-            outputs_coord_delta = self.bbox_embed(hs)
-            outputs_coord_cxcy = outputs_coord_delta[..., :2] * ref_unsigmoid[..., 2:] + ref_unsigmoid[..., :2]
-            outputs_coord_wh = outputs_coord_delta[..., 2:].exp() * ref_unsigmoid[..., 2:]
-            outputs_coord = torch.concat(
-                [outputs_coord_cxcy, outputs_coord_wh], dim=-1
-            )
+        if hs is not None:
+            if self.bbox_reparam:
+                outputs_coord_delta = self.bbox_embed(hs)
+                outputs_coord_cxcy = outputs_coord_delta[..., :2] * ref_unsigmoid[..., 2:] + ref_unsigmoid[..., :2]
+                outputs_coord_wh = outputs_coord_delta[..., 2:].exp() * ref_unsigmoid[..., 2:]
+                outputs_coord = torch.concat(
+                    [outputs_coord_cxcy, outputs_coord_wh], dim=-1
+                )
+            else:
+                outputs_coord = (self.bbox_embed(hs) + ref_unsigmoid).sigmoid()
+            outputs_class = self.class_embed(hs)
         else:
-            outputs_coord = (self.bbox_embed(hs) + ref_unsigmoid).sigmoid()
-        outputs_class = self.class_embed(hs)
+            assert self.two_stage, "if not using decoder, two_stage must be True"
+            outputs_class = self.transformer.enc_out_class_embed[0](hs_enc)
+            outputs_coord = ref_enc
+            
         return outputs_coord, outputs_class
 
     @torch.jit.unused
@@ -305,7 +319,9 @@ class SetCriterion(nn.Module):
 
             pos_weights[pos_ind] = t.to(pos_weights.dtype)
             neg_weights[pos_ind] = 1 - t.to(neg_weights.dtype)
-            loss_ce = - pos_weights * prob.log() - neg_weights * (1 - prob).log()
+            # a reformulation of the standard loss_ce = - pos_weights * prob.log() - neg_weights * (1 - prob).log()
+            # with a focus on statistical stability by using fused logsigmoid
+            loss_ce = neg_weights * src_logits - F.logsigmoid(src_logits) * (pos_weights + neg_weights)
             loss_ce = loss_ce.sum() / num_boxes
 
         elif self.use_position_supervised_loss:
@@ -610,6 +626,10 @@ def build_model(args):
         backbone_lora=args.backbone_lora,
         force_no_pretrain=args.force_no_pretrain,
         gradient_checkpointing=args.gradient_checkpointing,
+        load_dinov2_weights=args.pretrain_weights is None,
+        patch_size=args.patch_size,
+        num_windows=args.num_windows,
+        positional_encoding_size=args.positional_encoding_size,
     )
     if args.encoder_only:
         return backbone[0].encoder, None, None

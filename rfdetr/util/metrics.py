@@ -51,12 +51,12 @@ class MetricsPlotSink:
         test_coco_eval = [h['test_coco_eval_bbox'] for h in self.history if 'test_coco_eval_bbox' in h]
         ap50_90 = np.array([safe_index(x, 0) for x in test_coco_eval if x is not None], dtype=np.float32)
         ap50 = np.array([safe_index(x, 1) for x in test_coco_eval if x is not None], dtype=np.float32)
-        ar50_90 = np.array([safe_index(x, 6) for x in test_coco_eval if x is not None], dtype=np.float32)
+        ar50_90 = np.array([safe_index(x, 8) for x in test_coco_eval if x is not None], dtype=np.float32)
 
         ema_coco_eval = [h['ema_test_coco_eval_bbox'] for h in self.history if 'ema_test_coco_eval_bbox' in h]
         ema_ap50_90 = np.array([safe_index(x, 0) for x in ema_coco_eval if x is not None], dtype=np.float32)
         ema_ap50 = np.array([safe_index(x, 1) for x in ema_coco_eval if x is not None], dtype=np.float32)
-        ema_ar50_90 = np.array([safe_index(x, 6) for x in ema_coco_eval if x is not None], dtype=np.float32)
+        ema_ar50_90 = np.array([safe_index(x, 8) for x in ema_coco_eval if x is not None], dtype=np.float32)
 
         fig, axes = plt.subplots(2, 2, figsize=(18, 12))
 
@@ -145,7 +145,7 @@ class MetricsTensorBoardSink:
             coco_eval = values['test_coco_eval_bbox']
             ap50_90 = safe_index(coco_eval, 0)
             ap50 = safe_index(coco_eval, 1)
-            ar50_90 = safe_index(coco_eval, 6)
+            ar50_90 = safe_index(coco_eval, 8)
             if ap50_90 is not None:
                 self.writer.add_scalar("Metrics/Base/AP50_90", ap50_90, epoch)
             if ap50 is not None:
@@ -157,7 +157,7 @@ class MetricsTensorBoardSink:
             ema_coco_eval = values['ema_test_coco_eval_bbox']
             ema_ap50_90 = safe_index(ema_coco_eval, 0)
             ema_ap50 = safe_index(ema_coco_eval, 1)
-            ema_ar50_90 = safe_index(ema_coco_eval, 6)
+            ema_ar50_90 = safe_index(ema_coco_eval, 8)
             if ema_ap50_90 is not None:
                 self.writer.add_scalar("Metrics/EMA/AP50_90", ema_ap50_90, epoch)
             if ema_ap50 is not None:
@@ -214,7 +214,7 @@ class MetricsWandBSink:
             coco_eval = values['test_coco_eval_bbox']
             ap50_90 = safe_index(coco_eval, 0)
             ap50 = safe_index(coco_eval, 1)
-            ar50_90 = safe_index(coco_eval, 6)
+            ar50_90 = safe_index(coco_eval, 8)
             if ap50_90 is not None:
                 log_dict["Metrics/Base/AP50_90"] = ap50_90
             if ap50 is not None:
@@ -226,7 +226,7 @@ class MetricsWandBSink:
             ema_coco_eval = values['ema_test_coco_eval_bbox']
             ema_ap50_90 = safe_index(ema_coco_eval, 0)
             ema_ap50 = safe_index(ema_coco_eval, 1)
-            ema_ar50_90 = safe_index(ema_coco_eval, 6)
+            ema_ar50_90 = safe_index(ema_coco_eval, 8)
             if ema_ap50_90 is not None:
                 log_dict["Metrics/EMA/AP50_90"] = ema_ap50_90
             if ema_ap50 is not None:
