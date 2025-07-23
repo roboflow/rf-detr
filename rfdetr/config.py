@@ -81,12 +81,6 @@ class RFDETRNanoConfig(RFDETRBaseConfig):
 class RFDETRSmallConfig(RFDETRBaseConfig):
     """
     The configuration for an RF-DETR Small model.
-
-    Args:
-        out_feature_indexes (List[int]): out_feature_indexes
-        num_windows (int): num_windows
-        dec_layers (int): dec_layers
-        patch_size (int): patch_size
     """
     out_feature_indexes: List[int] = [3, 6, 9, 12]
     num_windows: int = 2
