@@ -20,7 +20,9 @@ RF-DETR is small enough to run on the edge using [Inference](https://github.com/
 
 ## Results
 
-We validated the performance of RF-DETR on both Microsoft COCO and the RF100-VL benchmarks.
+RF-DETR achieves state-of-the-art performance on both the Microsoft COCO and the RF100-VL benchmarks.
+
+The table below shows the performance of RF-DETR medium, compared to comparable medium models:
 
 ![rf-detr-coco-rf100-vl-9](https://media.roboflow.com/rfdetr/pareto.png)
 
@@ -41,6 +43,8 @@ We validated the performance of RF-DETR on both Microsoft COCO and the RF100-VL 
 | RF-DETR-Medium    | 33.7               | 54.8                           | <ins>86.6</ins>                   | <ins>60.6</ins>                       | <ins>4.31</ins>                                   |
 
 [See our benchmark notes in the RF-DETR documentation](https://rfdetr.roboflow.com/learn/benchmarks/)
+
+_We are actively working on a new RF-DETR Large model that will substantially outperform the current RF-DETR Large available in this repository. This is why RF-DETR Large is not yet reported on our pareto graph. Check back in the next few weeks for our RF-DETR Large launch._
 
 ## News
 
