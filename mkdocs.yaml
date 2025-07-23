@@ -30,6 +30,7 @@ nav:
   - Reference:
       - RF-DETR: reference/rfdetr.md
       - Models:
+        - RF-DETR Nano: reference/nano.md
         - RF-DETR Small: reference/small.md
         - RF-DETR Base: reference/base.md
         - RF-DETR Medium: reference/medium.md
