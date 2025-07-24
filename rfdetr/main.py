@@ -164,6 +164,10 @@ class Model:
                     f"Currently supported callbacks: {currently_supported_callbacks}"
                 )
         args = populate_args(**kwargs)
+        if getattr(args, 'class_names') is not None:
+            self.args.class_names = args.class_names
+            self.args.num_classes = args.num_classes
+
         utils.init_distributed_mode(args)
         print("git:\n  {}\n".format(utils.get_sha()))
         print(args)
