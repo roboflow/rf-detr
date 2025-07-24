@@ -20,7 +20,7 @@ We validated the performance of RF-DETR on both Microsoft COCO and the RF100-VL 
 
 [See our full benchmarks.](learn/benchmarks/)
 
-<img src="https://media.roboflow.com/rfdetr/pareto.png" style="max-height: 50rem" />
+<img src="https://media.roboflow.com/rfdetr/pareto1.png" style="max-height: 50rem" />
 
 ## 💻 Install
 
@@ -116,7 +116,7 @@ You can install and use `rfdetr` in a
 
     Load and run a pre-trained RF-DETR model.
 
-    [:octicons-arrow-right-24: Tutorial](how_to/detect_and_annotate.md)
+    [:octicons-arrow-right-24: Tutorial](/learn/pretrained)
 
 - **Train an RF-DETR Model**
 
@@ -124,6 +124,14 @@ You can install and use `rfdetr` in a
 
     Learn how to train an RF-DETR model with the `rfdetr` Python package.
 
-    [:octicons-arrow-right-24: Tutorial](how_to/track_objects.md)
+    [:octicons-arrow-right-24: Tutorial](/learn/train/)
+
+- **Deploy an RF-DETR Model**
+
+    ---
+
+    Learn how to deploy an RF-DETR model in the cloud and on your device.
+
+    [:octicons-arrow-right-24: Tutorial](/learn/deploy/)
 
 </div>

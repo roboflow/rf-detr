@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rfdetr"
-version = "1.2.0"
+version = "1.2.1"
 description = "RF-DETR"
 readme = "README.md"
 authors = [
