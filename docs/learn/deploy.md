@@ -9,10 +9,11 @@ To deploy your model to Roboflow, run:
 ```python
 from rfdetr import RFDETRNano
 
-x = RFDETRNano(pretrain_weights="<path/to/prtrain/weights/dir>")
+x = RFDETRNano(pretrain_weights="<path/to/pretrain/weights/dir>")
 x.deploy_to_roboflow(
   workspace="<your-workspace>",
-  project_ids=["<your-project-id>"],
+  project_id="<your-project-id>",
+  version=1,
   api_key="<YOUR_API_KEY>"
 )
 ```

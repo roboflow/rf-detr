@@ -4,7 +4,7 @@ On this page, we outline our results from our Microsoft COCO benchmarks, benchma
 
 The table below shows the performance of RF-DETR, compared to other object detection models:
 
-![rf-detr-coco-rf100-vl-9](https://media.roboflow.com/rfdetr/pareto.png)
+![rf-detr-coco-rf100-vl-9](https://media.roboflow.com/rfdetr/pareto1.png)
 
 |family|size  |coco_map50|coco_map5095|rf100vl_map50|rv100vl_map5095|latency|
 |------|------|----------|------------|-------------|---------------|-------|
