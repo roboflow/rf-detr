@@ -19,9 +19,9 @@ To export your model, simply initialize it and call the `.export()` method. Ther
 ```python
 from rfdetr import RFDETRBase
 
-model = RFDETRBase(pretrain_weights=<CHECKPOINT_PATH>)
+model = RFDETRBase(pretrain_weights=<CHECKPOINT_PATH>, resolution=TRAINING_RESOLUTION)
 
-model.export(output_dir="onnx-models", infer_dir=None, simplify=True,  backbone_only=False, resolution=1120)
+model.export(output_dir="onnx-models", infer_dir=None, simplify=True,  backbone_only=False)
 ```
 
 ## TensorRT conversion
