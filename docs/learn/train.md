@@ -164,6 +164,30 @@ Different GPUs have different VRAM capacities, so adjust batch_size and grad_acc
 
 </details>
 
+### Result checkpoints
+
+During training, multiple model checkpoints are saved to the output directory:
+
+- `checkpoint.pth` – the most recent checkpoint, saved at the end of the latest epoch.
+
+- `checkpoint_<number>.pth` – periodic checkpoints saved every N epochs (default is every 10).
+
+- `checkpoint_best_ema.pth` – best checkpoint based on validation score, using the EMA (Exponential Moving Average) weights. EMA weights are a smoothed version of the model’s parameters across training steps, often yielding better generalization.
+
+- `checkpoint_best_regular.pth` – best checkpoint based on validation score, using the raw (non-EMA) model weights.
+
+- `checkpoint_best_total.pth` – final checkpoint selected for inference and benchmarking. It contains only the model weights (no optimizer state or scheduler) and is chosen as the better of the EMA and non-EMA models based on validation performance.
+
+??? note "Checkpoint file sizes"
+
+    Checkpoint sizes vary based on what they contain:
+
+    - **Training checkpoints** (e.g. `checkpoint.pth`, `checkpoint_<number>.pth`) include model weights, optimizer state, scheduler state, and training metadata. Use these to resume training.
+    
+    - **Evaluation checkpoints** (e.g. `checkpoint_best_ema.pth`, `checkpoint_best_regular.pth`) store only the model weights — either EMA or raw — and are used to track the best-performing models. These may come from different epochs depending on which version achieved the highest validation score.
+    
+    - **Stripped checkpoint** (e.g. `checkpoint_best_total.pth`) contains only the final model weights and is optimized for inference and deployment.
+
 ### Resume training
 
 You can resume training from a previously saved checkpoint by passing the path to the `checkpoint.pth` file using the `resume` argument. This is useful when training is interrupted or you want to continue fine-tuning an already partially trained model. The training loop will automatically load the weights and optimizer state from the provided checkpoint file.
@@ -213,10 +237,6 @@ python -m torch.distributed.launch --nproc_per_node=8 --use_env main.py
 ```
 
 Replace `8` in the `--nproc_per_node argument` with the number of GPUs you want to use. This approach creates one training process per GPU and splits the workload automatically. Note that your effective batch size is multiplied by the number of GPUs, so you may need to adjust your `batch_size` and `grad_accum_steps` to maintain the same overall batch size.
-
-### Result checkpoints
-
-During training, two model checkpoints (the regular weights and an EMA-based set of weights) will be saved in the specified output directory. The EMA (Exponential Moving Average) file is a smoothed version of the model’s weights over time, often yielding better stability and generalization.
 
 ### Logging with TensorBoard
 
