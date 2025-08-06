@@ -905,141 +905,141 @@
 <table>
 <thead>
 <tr>
-<th>family</th>
-<th>size</th>
-<th>coco_map50</th>
-<th>coco_map5095</th>
-<th>rf100vl_map50</th>
-<th>rv100vl_map5095</th>
-<th>latency</th>
+<th style="text-align: center;">Architecture</th>
+<th style="text-align: center;">COCO AP<sub>50</sub></th>
+<th style="text-align: center;">COCO AP<sub>50:95</sub></th>
+<th style="text-align: center;">RF100VL AP<sub>50</sub></th>
+<th style="text-align: center;">RF100VL AP<sub>50:95</sub></th>
+<th style="text-align: center;">Latency (ms)</th>
+<th style="text-align: center;">Params (M)</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>RF-DETR</td>
-<td>Nano</td>
-<td>67.6</td>
-<td>48.4</td>
-<td>84.1</td>
-<td>57.1</td>
-<td>2.32</td>
+<td style="text-align: center;">RF-DETR-N</td>
+<td style="text-align: center;">67.6</td>
+<td style="text-align: center;">48.4</td>
+<td style="text-align: center;">84.1</td>
+<td style="text-align: center;">57.1</td>
+<td style="text-align: center;">2.32</td>
+<td style="text-align: center;">30.5</td>
 </tr>
 <tr>
-<td>RF-DETR</td>
-<td>Small</td>
-<td>72.1</td>
-<td>53.0</td>
-<td>85.9</td>
-<td>59.6</td>
-<td>3.52</td>
+<td style="text-align: center;">RF-DETR-S</td>
+<td style="text-align: center;">72.1</td>
+<td style="text-align: center;">53.0</td>
+<td style="text-align: center;">85.9</td>
+<td style="text-align: center;">59.6</td>
+<td style="text-align: center;">3.52</td>
+<td style="text-align: center;">32.1</td>
 </tr>
 <tr>
-<td>RF-DETR</td>
-<td>Medium</td>
-<td>73.6</td>
-<td>54.7</td>
-<td>86.6</td>
-<td>60.6</td>
-<td>4.52</td>
+<td style="text-align: center;">RF-DETR-M</td>
+<td style="text-align: center;">73.6</td>
+<td style="text-align: center;">54.7</td>
+<td style="text-align: center;">86.6</td>
+<td style="text-align: center;">60.6</td>
+<td style="text-align: center;">4.52</td>
+<td style="text-align: center;">33.7</td>
 </tr>
 <tr>
-<td>YOLO11</td>
-<td>n</td>
-<td>52.0</td>
-<td>37.4</td>
-<td>81.4</td>
-<td>55.3</td>
-<td>2.49</td>
+<td style="text-align: center;">YOLO11-N</td>
+<td style="text-align: center;">52.0</td>
+<td style="text-align: center;">37.4</td>
+<td style="text-align: center;">81.4</td>
+<td style="text-align: center;">55.3</td>
+<td style="text-align: center;">2.49</td>
+<td style="text-align: center;">2.6</td>
 </tr>
 <tr>
-<td>YOLO11</td>
-<td>s</td>
-<td>59.7</td>
-<td>44.4</td>
-<td>82.3</td>
-<td>56.2</td>
-<td>3.16</td>
+<td style="text-align: center;">YOLO11-S</td>
+<td style="text-align: center;">59.7</td>
+<td style="text-align: center;">44.4</td>
+<td style="text-align: center;">82.3</td>
+<td style="text-align: center;">56.2</td>
+<td style="text-align: center;">3.16</td>
+<td style="text-align: center;">9.4</td>
 </tr>
 <tr>
-<td>YOLO11</td>
-<td>m</td>
-<td>64.1</td>
-<td>48.6</td>
-<td>82.5</td>
-<td>56.5</td>
-<td>5.13</td>
+<td style="text-align: center;">YOLO11-M</td>
+<td style="text-align: center;">64.1</td>
+<td style="text-align: center;">48.6</td>
+<td style="text-align: center;">82.5</td>
+<td style="text-align: center;">56.5</td>
+<td style="text-align: center;">5.13</td>
+<td style="text-align: center;">20.1</td>
 </tr>
 <tr>
-<td>YOLO11</td>
-<td>l</td>
-<td>65.3</td>
-<td>50.2</td>
-<td>x</td>
-<td>x</td>
-<td>6.65</td>
+<td style="text-align: center;">YOLO11-L</td>
+<td style="text-align: center;">65.3</td>
+<td style="text-align: center;">50.2</td>
+<td style="text-align: center;">x</td>
+<td style="text-align: center;">x</td>
+<td style="text-align: center;">6.65</td>
+<td style="text-align: center;">25.3</td>
 </tr>
 <tr>
-<td>YOLO11</td>
-<td>x</td>
-<td>66.5</td>
-<td>51.2</td>
-<td>x</td>
-<td>x</td>
-<td>11.92</td>
+<td style="text-align: center;">YOLO11-X</td>
+<td style="text-align: center;">66.5</td>
+<td style="text-align: center;">51.2</td>
+<td style="text-align: center;">x</td>
+<td style="text-align: center;">x</td>
+<td style="text-align: center;">11.92</td>
+<td style="text-align: center;">56.9</td>
 </tr>
 <tr>
-<td>LW-DETR</td>
-<td>Tiny</td>
-<td>60.7</td>
-<td>42.9</td>
-<td>x</td>
-<td>x</td>
-<td>1.91</td>
+<td style="text-align: center;">LW-DETR-T</td>
+<td style="text-align: center;">60.7</td>
+<td style="text-align: center;">42.9</td>
+<td style="text-align: center;">x</td>
+<td style="text-align: center;">x</td>
+<td style="text-align: center;">1.91</td>
+<td style="text-align: center;">12.1</td>
 </tr>
 <tr>
-<td>LW-DETR</td>
-<td>Small</td>
-<td>66.8</td>
-<td>48.0</td>
-<td>84.5</td>
-<td>58.0</td>
-<td>2.62</td>
+<td style="text-align: center;">LW-DETR-S</td>
+<td style="text-align: center;">66.8</td>
+<td style="text-align: center;">48.0</td>
+<td style="text-align: center;">84.5</td>
+<td style="text-align: center;">58.0</td>
+<td style="text-align: center;">2.62</td>
+<td style="text-align: center;">14.6</td>
 </tr>
 <tr>
-<td>LW-DETR</td>
-<td>Medium</td>
-<td>72.0</td>
-<td>52.6</td>
-<td>85.2</td>
-<td>59.4</td>
-<td>4.49</td>
+<td style="text-align: center;">LW-DETR-M</td>
+<td style="text-align: center;">72.0</td>
+<td style="text-align: center;">52.6</td>
+<td style="text-align: center;">85.2</td>
+<td style="text-align: center;">59.4</td>
+<td style="text-align: center;">4.49</td>
+<td style="text-align: center;">28.2</td>
 </tr>
 <tr>
-<td>D-FINE</td>
-<td>Nano</td>
-<td>60.2</td>
-<td>42.7</td>
-<td>83.6</td>
-<td>57.7</td>
-<td>2.12</td>
+<td style="text-align: center;">D-FINE-N</td>
+<td style="text-align: center;">60.2</td>
+<td style="text-align: center;">42.7</td>
+<td style="text-align: center;">83.6</td>
+<td style="text-align: center;">57.7</td>
+<td style="text-align: center;">2.12</td>
+<td style="text-align: center;">3.8</td>
 </tr>
 <tr>
-<td>D-FINE</td>
-<td>Small</td>
-<td>67.6</td>
-<td>50.7</td>
-<td>84.5</td>
-<td>59.9</td>
-<td>3.55</td>
+<td style="text-align: center;">D-FINE-S</td>
+<td style="text-align: center;">67.6</td>
+<td style="text-align: center;">50.7</td>
+<td style="text-align: center;">84.5</td>
+<td style="text-align: center;">59.9</td>
+<td style="text-align: center;">3.55</td>
+<td style="text-align: center;">10.2</td>
 </tr>
 <tr>
-<td>D-FINE</td>
-<td>Medium</td>
-<td>72.6</td>
-<td>55.1</td>
-<td>84.6</td>
-<td>60.2</td>
-<td>5.68</td>
+<td style="text-align: center;">D-FINE-M</td>
+<td style="text-align: center;">72.6</td>
+<td style="text-align: center;">55.1</td>
+<td style="text-align: center;">84.6</td>
+<td style="text-align: center;">60.2</td>
+<td style="text-align: center;">5.68</td>
+<td style="text-align: center;">19.2</td>
 </tr>
 </tbody>
 </table>
