@@ -103,20 +103,19 @@ class LWDETR(nn.Module):
         self._export = False
 
     def reinitialize_detection_head(self, num_classes):
-        # Create new classification head
-        del self.class_embed
-        self.add_module("class_embed", nn.Linear(self.transformer.d_model, num_classes))
+        base = self.class_embed.weight.shape[0]
+        num_repeats = int(math.ceil(num_classes / base))
+        self.class_embed.weight.data = self.class_embed.weight.data.repeat(num_repeats, 1)
+        self.class_embed.weight.data = self.class_embed.weight.data[:num_classes]
+        self.class_embed.bias.data = self.class_embed.bias.data.repeat(num_repeats)
+        self.class_embed.bias.data = self.class_embed.bias.data[:num_classes]
         
-        # Initialize with focal loss bias adjustment
-        prior_prob = 0.01
-        bias_value = -math.log((1 - prior_prob) / prior_prob)
-        self.class_embed.bias.data = torch.ones(num_classes) * bias_value
-
         if self.two_stage:
-            del self.transformer.enc_out_class_embed
-            self.transformer.add_module("enc_out_class_embed", nn.ModuleList(
-                [copy.deepcopy(self.class_embed) for _ in range(self.group_detr)]))
-
+            for enc_out_class_embed in self.transformer.enc_out_class_embed:
+                enc_out_class_embed.weight.data = enc_out_class_embed.weight.data.repeat(num_repeats, 1)
+                enc_out_class_embed.weight.data = enc_out_class_embed.weight.data[:num_classes]
+                enc_out_class_embed.bias.data = enc_out_class_embed.bias.data.repeat(num_repeats)
+                enc_out_class_embed.bias.data = enc_out_class_embed.bias.data[:num_classes]
 
     def export(self):
         self._export = True
