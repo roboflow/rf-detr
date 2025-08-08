@@ -137,7 +137,6 @@ class RFDETR:
             )
             self.model.reinitialize_detection_head(num_classes)
         
-        
         train_config = config.dict()
         model_config = self.model_config.dict()
         model_config.pop("num_classes")
