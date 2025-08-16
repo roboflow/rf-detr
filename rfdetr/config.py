@@ -11,7 +11,12 @@ import torch
 DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 
 class ModelConfig(BaseModel):
-    encoder: Literal["dinov2_windowed_small", "dinov2_windowed_base"]
+    encoder: Literal[
+        "dinov2_windowed_small",
+        "dinov2_windowed_base",
+        "dinov3_small",
+        "dinov3_base",
+    ]
     out_feature_indexes: List[int]
     dec_layers: int
     two_stage: bool = True
@@ -53,6 +58,24 @@ class RFDETRBaseConfig(ModelConfig):
     pretrain_weights: Optional[str] = "rf-detr-base.pth"
     resolution: int = 560
     positional_encoding_size: int = 37
+
+class RFDETRV3BaseConfig(ModelConfig):
+    """The configuration for an RF-DETR model using a DINOv3 backbone."""
+    encoder: Literal["dinov3_small", "dinov3_base"] = "dinov3_base"
+    hidden_dim: int = 768
+    patch_size: int = 16
+    num_windows: int = 1
+    dec_layers: int = 3
+    sa_nheads: int = 8
+    ca_nheads: int = 16
+    dec_n_points: int = 2
+    num_queries: int = 300
+    num_select: int = 300
+    projector_scale: List[Literal["P3", "P4", "P5"]] = ["P4"]
+    out_feature_indexes: List[int] = [2, 5, 8, 11]
+    pretrain_weights: Optional[str] = None
+    resolution: int = 640
+    positional_encoding_size: int = 40
 
 class RFDETRLargeConfig(RFDETRBaseConfig):
     """

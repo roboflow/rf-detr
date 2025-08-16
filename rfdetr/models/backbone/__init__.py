@@ -15,6 +15,9 @@ from torch import nn
 from rfdetr.util.misc import NestedTensor
 from rfdetr.models.position_encoding import build_position_encoding
 from rfdetr.models.backbone.backbone import *
+from rfdetr.models.backbone.dinov3 import DinoV3
+
+__all__ = ["Joiner", "build_backbone", "Backbone", "DinoV3"]
 from typing import Callable
 
 class Joiner(nn.Sequential):
