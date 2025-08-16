@@ -5,14 +5,14 @@ This document lists the required changes to integrate **DINOv3** as a backbone i
 ---
 
 ## 1. Dependencies
-- [ ] Add Hugging Face `transformers>=4.40` or enable `torch.hub.load()` for DINOv3 models.
+- [x] Add Hugging Face `transformers>=4.40` or enable `torch.hub.load()` for DINOv3 models.
 - [ ] Update deployment scripts to download DINOv3 checkpoints (official links from the [DINOv3 repo](https://github.com/facebookresearch/dinov3).
 
 ---
 
 ## 2. Configuration
-- [ ] In `rfdetr/config.py`, extend the `encoder` literal to include `"dinov3_base"`, `"dinov3_small"`, etc.
-- [ ] Define DINOv3 defaults:
+- [x] In `rfdetr/config.py`, extend the `encoder` literal to include `"dinov3_base"`, `"dinov3_small"`, etc.
+- [x] Define DINOv3 defaults:
   - `patch_size = 16`
   - `out_feature_indexes = [2,5,8,11]` (for 12-layer ViT-B/16 backbone).
   - `positional_encoding_size = resolution / patch_size`
@@ -22,8 +22,8 @@ This document lists the required changes to integrate **DINOv3** as a backbone i
 ---
 
 ## 3. DINOv3 Backbone Class
-- [ ] Create `rfdetr/models/backbone/dinov3.py`.
-- [ ] Implement a `DinoV3` class:
+- [x] Create `rfdetr/models/backbone/dinov3.py`.
+- [x] Implement a `DinoV3` class:
   - Load backbone via:
     ```python
     from transformers import AutoModel
@@ -43,17 +43,18 @@ This document lists the required changes to integrate **DINOv3** as a backbone i
 ---
 
 ## 4. Backbone Wrapper
-- [ ] In `rfdetr/models/backbone/backbone.py`:
+- [x] In `rfdetr/models/backbone/backbone.py`:
   - Allow `encoder` names beginning with `"dinov3"`.
   - Dispatch to `DinoV3` when prefix is `"dinov3"`.
-- [ ] Add a mapping:
+- [x] Add a mapping:
   ```python
-  size_to_width_dinov3 = {
-      "small": 384,
-      "base": 768,
-      "large": 1024,
-  }
-- [ ] Implement get_dinov3_lr_decay_rate() and get_dinov3_weight_decay_rate() similar to the DINOv2 versions, adapted to DINOv3's parameter naming (blocks.0, blocks.1, …).
+    size_to_width_dinov3 = {
+        "small": 384,
+        "base": 768,
+        "large": 1024,
+    }
+    ```
+  - [x] Implement get_dinov3_lr_decay_rate() and get_dinov3_weight_decay_rate() similar to the DINOv2 versions, adapted to DINOv3's parameter naming (blocks.0, blocks.1, …).
 
 ---
 
@@ -68,7 +69,7 @@ This document lists the required changes to integrate **DINOv3** as a backbone i
 
 ## 6. Registration
 
-- [ ] Update rfdetr/models/backbone/__init__.py to import and expose DinoV3.
+- [x] Update rfdetr/models/backbone/__init__.py to import and expose DinoV3.
 - [ ] Update CLI help/docs to mention new "dinov3_*" encoder options.
 
 ## 7. Testing

@@ -29,6 +29,7 @@ from rfdetr.util.misc import NestedTensor, is_main_process
 from rfdetr.models.backbone.base import BackboneBase
 from rfdetr.models.backbone.projector import MultiScaleProjector
 from rfdetr.models.backbone.dinov2 import DinoV2
+from rfdetr.models.backbone.dinov3 import DinoV3
 
 __all__ = ["Backbone"]
 
@@ -56,35 +57,43 @@ class Backbone(BackboneBase):
                  positional_encoding_size: bool = False,
                  ):
         super().__init__()
-        # an example name here would be "dinov2_base" or "dinov2_registers_windowed_base"
-        # if "registers" is in the name, then use_registers is set to True, otherwise it is set to False
-        # similarly, if "windowed" is in the name, then use_windowed_attn is set to True, otherwise it is set to False
-        # the last part of the name should be the size
-        # and the start should be dinov2
         name_parts = name.split("_")
-        assert name_parts[0] == "dinov2"
-        size = name_parts[-1]
-        use_registers = False
-        if "registers" in name_parts:
-            use_registers = True
-            name_parts.remove("registers")
-        use_windowed_attn = False
-        if "windowed" in name_parts:
-            use_windowed_attn = True
-            name_parts.remove("windowed")
-        assert len(name_parts) == 2, "name should be dinov2, then either registers, windowed, both, or none, then the size"
-        self.encoder = DinoV2(
-            size=name_parts[-1],
-            out_feature_indexes=out_feature_indexes,
-            shape=target_shape,
-            use_registers=use_registers,
-            use_windowed_attn=use_windowed_attn,
-            gradient_checkpointing=gradient_checkpointing,
-            load_dinov2_weights=load_dinov2_weights,
-            patch_size=patch_size,
-            num_windows=num_windows,
-            positional_encoding_size=positional_encoding_size,
-        )
+        if name_parts[0] == "dinov2":
+            size = name_parts[-1]
+            use_registers = False
+            if "registers" in name_parts:
+                use_registers = True
+                name_parts.remove("registers")
+            use_windowed_attn = False
+            if "windowed" in name_parts:
+                use_windowed_attn = True
+                name_parts.remove("windowed")
+            assert (
+                len(name_parts) == 2
+            ), "name should be dinov2, then either registers, windowed, both, or none, then the size"
+            self.encoder = DinoV2(
+                size=name_parts[-1],
+                out_feature_indexes=out_feature_indexes,
+                shape=target_shape,
+                use_registers=use_registers,
+                use_windowed_attn=use_windowed_attn,
+                gradient_checkpointing=gradient_checkpointing,
+                load_dinov2_weights=load_dinov2_weights,
+                patch_size=patch_size,
+                num_windows=num_windows,
+                positional_encoding_size=positional_encoding_size,
+            )
+        elif name_parts[0] == "dinov3":
+            size = name_parts[-1]
+            self.encoder = DinoV3(
+                size=size,
+                out_feature_indexes=out_feature_indexes,
+                shape=target_shape,
+                patch_size=patch_size,
+                positional_encoding_size=positional_encoding_size,
+            )
+        else:
+            raise AssertionError("encoder name must start with dinov2 or dinov3")
         # build encoder + projector as backbone module
         if freeze_encoder:
             for param in self.encoder.parameters():
@@ -155,16 +164,28 @@ class Backbone(BackboneBase):
         for n, p in self.named_parameters():
             n = prefix + "." + n
             if backbone_key in n and p.requires_grad:
-                lr = (
-                    args.lr_encoder
-                    * get_dinov2_lr_decay_rate(
-                        n,
-                        lr_decay_rate=args.lr_vit_layer_decay,
-                        num_layers=num_layers,
+                if isinstance(self.encoder, DinoV3):
+                    lr = (
+                        args.lr_encoder
+                        * get_dinov3_lr_decay_rate(
+                            n,
+                            lr_decay_rate=args.lr_vit_layer_decay,
+                            num_layers=num_layers,
+                        )
+                        * args.lr_component_decay**2
                     )
-                    * args.lr_component_decay**2
-                )
-                wd = args.weight_decay * get_dinov2_weight_decay_rate(n)
+                    wd = args.weight_decay * get_dinov3_weight_decay_rate(n)
+                else:
+                    lr = (
+                        args.lr_encoder
+                        * get_dinov2_lr_decay_rate(
+                            n,
+                            lr_decay_rate=args.lr_vit_layer_decay,
+                            num_layers=num_layers,
+                        )
+                        * args.lr_component_decay**2
+                    )
+                    wd = args.weight_decay * get_dinov2_weight_decay_rate(n)
                 named_param_lr_pairs[n] = {
                     "params": p,
                     "lr": lr,
@@ -201,5 +222,21 @@ def get_dinov2_weight_decay_rate(name, weight_decay_rate=1.0):
         or ("norm" in name)
         or ("embeddings" in name)
     ):
+        weight_decay_rate = 0.0
+    return weight_decay_rate
+
+
+def get_dinov3_lr_decay_rate(name, lr_decay_rate=1.0, num_layers=12):
+    layer_id = num_layers + 1
+    if name.startswith("backbone"):
+        if any(k in name for k in ["cls_token", "pos_embed", "patch_embed"]):
+            layer_id = 0
+        elif "blocks." in name:
+            layer_id = int(name.split("blocks.")[1].split(".")[0]) + 1
+    return lr_decay_rate ** (num_layers + 1 - layer_id)
+
+
+def get_dinov3_weight_decay_rate(name, weight_decay_rate=1.0):
+    if any(k in name for k in ["bias", "pos_embed", "cls_token", "norm"]):
         weight_decay_rate = 0.0
     return weight_decay_rate
