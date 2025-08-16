@@ -41,9 +41,16 @@ class DinoV3(nn.Module):
             "large": "facebook/dinov3-vitl16",
         }
 
-        self.shape = shape
+        # Ensure the spatial resolution aligns with the positional encodings.
         self.patch_size = patch_size
         self.out_feature_indexes = out_feature_indexes
+        if positional_encoding_size is None:
+            positional_encoding_size = shape[0] // patch_size
+        implied_resolution = positional_encoding_size * patch_size
+        if implied_resolution != shape[0] or implied_resolution != shape[1]:
+            shape = (implied_resolution, implied_resolution)
+        self.shape = shape
+        self.positional_encoding_size = positional_encoding_size
 
         self.encoder = AutoModel.from_pretrained(
             model_names[size],
