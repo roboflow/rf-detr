@@ -46,10 +46,15 @@ class RFDETR:
     """
     means = [0.485, 0.456, 0.406]
     stds = [0.229, 0.224, 0.225]
+    satellite_means = [0.5, 0.5, 0.5]
+    satellite_stds = [0.5, 0.5, 0.5]
     size = None
 
     def __init__(self, **kwargs):
         self.model_config = self.get_model_config(**kwargs)
+        if getattr(self.model_config, "satellite_pretrained", False):
+            self.means = self.satellite_means
+            self.stds = self.satellite_stds
         self.maybe_download_pretrain_weights()
         self.model = self.get_model(self.model_config)
         self.callbacks = defaultdict(list)

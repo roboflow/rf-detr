@@ -63,7 +63,7 @@ This document lists the required changes to integrate **DINOv3** as a backbone i
   ```python
   mean = (0.485, 0.456, 0.406)
   std = (0.229, 0.224, 0.225)
-- [ ] If using satellite-pretrained weights, use alternate normalization.
+ - [x] If using satellite-pretrained weights, use alternate normalization.
 - [x] Update positional encoding logic to match 16×16 patch size.
 - [ ] Adjust detection head/projector assumptions about feature dimensions.
 

@@ -33,6 +33,7 @@ class ModelConfig(BaseModel):
     amp: bool = True
     num_classes: int = 90
     pretrain_weights: Optional[str] = None
+    satellite_pretrained: bool = False
     device: Literal["cpu", "cuda", "mps"] = DEVICE
     resolution: int
     group_detr: int = 13
