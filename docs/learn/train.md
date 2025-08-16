@@ -40,9 +40,10 @@ dataset/
 You can fine-tune RF-DETR from pre-trained COCO checkpoints. By default, the RF-DETR-B checkpoint will be used. To get started quickly, please refer to our fine-tuning Google Colab [notebook](https://colab.research.google.com/github/roboflow-ai/notebooks/blob/main/notebooks/how-to-finetune-rf-detr-on-detection-dataset.ipynb).
 
 ```python
-from rfdetr import RFDETRBase
+from rfdetr import RFDETRV3Base
 
-model = RFDETRBase()
+# Uses DINOv3 Base encoder by default
+model = RFDETRV3Base()
 
 model.train(
     dataset_dir=<DATASET_PATH>,
@@ -53,6 +54,8 @@ model.train(
     output_dir=<OUTPUT_PATH>
 )
 ```
+
+To use the original DINOv2 backbone instead, import `RFDETRBase`.
 
 Different GPUs have different VRAM capacities, so adjust batch_size and grad_accum_steps to maintain a total batch size of 16. For example, on a powerful GPU like the A100, use `batch_size=16` and `grad_accum_steps=1`; on smaller GPUs like the T4, use `batch_size=4` and `grad_accum_steps=4`. This gradient accumulation strategy helps train effectively even with limited memory.
 

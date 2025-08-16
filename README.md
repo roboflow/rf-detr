@@ -80,7 +80,7 @@ pip install git+https://github.com/roboflow/rf-detr.git
 
 The easiest path to deployment is using Roboflow's [Inference](https://github.com/roboflow/inference) package. 
 
-The code below lets you run `rfdetr-base` on an image:
+The code below lets you run `RFDETRV3` with the DINOv3 Base backbone on an image:
 
 ```python
 import os
@@ -110,15 +110,18 @@ annotated_image = sv.LabelAnnotator(color=sv.ColorPalette.ROBOFLOW).annotate(ann
 
 You can also use the .predict method to perform inference during local development. The `.predict()` method accepts various input formats, including file paths, PIL images, NumPy arrays, and torch tensors. Please ensure inputs use RGB channel order. For `torch.Tensor` inputs specifically, they must have a shape of `(3, H, W)` with values normalized to the `[0..1)` range. If you don't plan to modify the image or batch size dynamically at runtime, you can also use `.optimize_for_inference()` to get up to 2x end-to-end speedup, depending on platform.
 
+RF-DETR supports both DINOv2 and the newer DINOv3 encoders. The examples below use the DINOv3 Base backbone via `RFDETRV3Base`, but you can select other encoders with the `--encoder` flag in the CLI or by passing `encoder="dinov3_small"` when constructing the model.
+
 ```python
 import io
 import requests
 import supervision as sv
 from PIL import Image
-from rfdetr import RFDETRBase
+from rfdetr import RFDETRV3Base
 from rfdetr.util.coco_classes import COCO_CLASSES
 
-model = RFDETRBase()
+# DINOv3 backbone ("dinov3_base") is used by default
+model = RFDETRV3Base()
 
 model.optimize_for_inference()
 

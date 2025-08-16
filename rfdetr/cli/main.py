@@ -10,7 +10,7 @@
 import argparse
 from rf100vl import get_rf100vl_projects
 import roboflow
-from rfdetr import RFDETRBase
+from rfdetr import RFDETRBase, RFDETRV3Base
 import torch
 import os
 
@@ -32,10 +32,16 @@ def download_dataset(rf_project: roboflow.Project, dataset_version: int):
     return location
 
 
-def train_from_rf_project(rf_project: roboflow.Project, dataset_version: int):
+def build_model(encoder: str):
+    if encoder.startswith("dinov3"):
+        return RFDETRV3Base(encoder=encoder)
+    return RFDETRBase(encoder=encoder)
+
+
+def train_from_rf_project(rf_project: roboflow.Project, dataset_version: int, encoder: str):
     location = download_dataset(rf_project, dataset_version)
     print(location)
-    rf_detr = RFDETRBase()
+    rf_detr = build_model(encoder)
     device_supports_cuda = torch.cuda.is_available()
     rf_detr.train(
         dataset_dir=location,
@@ -44,8 +50,9 @@ def train_from_rf_project(rf_project: roboflow.Project, dataset_version: int):
     )
 
 
-def train_from_coco_dir(coco_dir: str):
-    rf_detr = RFDETRBase()
+def train_from_coco_dir(coco_dir: str, encoder: str):
+    rf_detr = build_model(encoder)
+    device_supports_cuda = torch.cuda.is_available()
     rf_detr.train(
         dataset_dir=coco_dir,
         epochs=1,
@@ -60,10 +67,22 @@ def trainer():
     parser.add_argument("--workspace", type=str, required=False, default=None)
     parser.add_argument("--project_name", type=str, required=False, default=None)
     parser.add_argument("--dataset_version", type=int, required=False, default=None)
+    parser.add_argument(
+        "--encoder",
+        type=str,
+        default="dinov3_base",
+        choices=[
+            "dinov2_windowed_small",
+            "dinov2_windowed_base",
+            "dinov3_small",
+            "dinov3_base",
+        ],
+        help="Backbone encoder to use",
+    )
     args = parser.parse_args()
-    
+
     if args.coco_dir is not None:
-        train_from_coco_dir(args.coco_dir)
+        train_from_coco_dir(args.coco_dir, args.encoder)
         return
 
     if (args.workspace is None and args.project_name is not None) or (
@@ -80,7 +99,7 @@ def trainer():
         projects = get_rf100vl_projects(api_key=args.api_key)
         project = projects[0].rf_project
 
-    train_from_rf_project(project, args.dataset_version)
+    train_from_rf_project(project, args.dataset_version, args.encoder)
 
 
 if __name__ == "__main__":

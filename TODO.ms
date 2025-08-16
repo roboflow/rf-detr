@@ -70,7 +70,7 @@ This document lists the required changes to integrate **DINOv3** as a backbone i
 ## 6. Registration
 
 - [x] Update rfdetr/models/backbone/__init__.py to import and expose DinoV3.
-- [ ] Update CLI help/docs to mention new "dinov3_*" encoder options.
+- [x] Update CLI help/docs to mention new "dinov3_*" encoder options.
 
 ## 7. Testing
 
