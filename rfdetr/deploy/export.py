@@ -32,6 +32,33 @@ from rfdetr.models import build_model
 from rfdetr.deploy._onnx import OnnxOptimizer
 import re
 import sys
+from transformers import AutoModel
+
+DINOV3_HF_IDS = {
+    "dinov3_small": "facebook/dinov3-vits16",
+    "dinov3_base": "facebook/dinov3-vitb16",
+    "dinov3_large": "facebook/dinov3-vitl16",
+}
+
+
+def download_dinov3_checkpoint(encoder: str) -> None:
+    """Ensure the DINOv3 backbone weights are cached locally.
+
+    This uses ``transformers.AutoModel`` to fetch the official
+    checkpoints from the Hugging Face Hub. Errors are swallowed so that
+    the export script can still run in offline environments.
+    """
+
+    model_id = DINOV3_HF_IDS.get(encoder)
+    if model_id is None:
+        size = encoder.split("_")[-1]
+        model_id = DINOV3_HF_IDS.get(f"dinov3_{size}")
+    if model_id is None:
+        return
+    try:
+        AutoModel.from_pretrained(model_id, output_hidden_states=True)
+    except Exception as err:  # pragma: no cover - network access
+        print(f"Warning: could not download {model_id}: {err}")
 
 
 def run_command_shell(command, dry_run:bool = False) -> int:
@@ -225,6 +252,9 @@ def main(args):
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
+
+    if getattr(args, "encoder", "").startswith("dinov3"):
+        download_dinov3_checkpoint(args.encoder)
 
     model, criterion, postprocessors = build_model(args)
     n_parameters = sum(p.numel() for p in model.parameters())

@@ -6,7 +6,7 @@ This document lists the required changes to integrate **DINOv3** as a backbone i
 
 ## 1. Dependencies
 - [x] Add Hugging Face `transformers>=4.40` or enable `torch.hub.load()` for DINOv3 models.
-- [ ] Update deployment scripts to download DINOv3 checkpoints (official links from the [DINOv3 repo](https://github.com/facebookresearch/dinov3).
+- [x] Update deployment scripts to download DINOv3 checkpoints (official links from the [DINOv3 repo](https://github.com/facebookresearch/dinov3).
 
 ---
 
@@ -59,7 +59,7 @@ This document lists the required changes to integrate **DINOv3** as a backbone i
 ---
 
 ## 5. Training and Data Pipeline
-- [ ] Update input transforms to use **ImageNet normalization**:
+- [x] Update input transforms to use **ImageNet normalization**:
   ```python
   mean = (0.485, 0.456, 0.406)
   std = (0.229, 0.224, 0.225)
