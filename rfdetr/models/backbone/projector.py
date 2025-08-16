@@ -177,15 +177,16 @@ class MultiScaleProjector(nn.Module):
         # use_bias = norm == ""
         use_bias = False
         self.use_extra_pool = False
+
+        # Reduce very high-dimensional backbone features to a manageable size
+        reduced_in_channels = [min(c, 512) for c in in_channels]
+
         for scale in scale_factors:
             stages_sampling.append([])
-            for in_dim in in_channels:
-                out_dim = in_dim
+            for orig_dim, in_dim in zip(in_channels, reduced_in_channels):
                 layers = []
-
-                # if in_dim > 512:
-                #     layers.append(ConvX(in_dim, in_dim // 2, kernel=1))
-                #     in_dim = in_dim // 2
+                if orig_dim != in_dim:
+                    layers.append(ConvX(orig_dim, in_dim, kernel=1, layer_norm=layer_norm))
 
                 if scale == 4.0:
                     layers.extend([
@@ -196,14 +197,7 @@ class MultiScaleProjector(nn.Module):
                     ])
                     out_dim = in_dim // 4
                 elif scale == 2.0:
-                    # a hack to reduce the FLOPs and Params when the dimention of output feature is too large
-                    # if in_dim > 512:
-                    #     layers = [
-                    #         ConvX(in_dim, in_dim // 2, kernel=1),
-                    #         nn.ConvTranspose2d(in_dim // 2, in_dim // 4, kernel_size=2, stride=2),
-                    #     ]
-                    #     out_dim = in_dim // 4
-                    # else:
+                    # a hack to reduce the FLOPs and Params when the dimension of output feature is too large
                     layers.extend([
                         nn.ConvTranspose2d(in_dim, in_dim // 2, kernel_size=2, stride=2),
                     ])
@@ -223,7 +217,9 @@ class MultiScaleProjector(nn.Module):
                 stages_sampling[-1].append(layers)
             stages_sampling[-1] = nn.ModuleList(stages_sampling[-1])
 
-            in_dim = int(sum(in_channel // max(1, scale) for in_channel in in_channels))
+            in_dim = int(
+                sum(c // max(1, scale) for c in reduced_in_channels)
+            )
             layers = [
                 C2f(in_dim, out_channels, num_blocks, layer_norm=layer_norm),
                 get_norm('LN', out_channels),

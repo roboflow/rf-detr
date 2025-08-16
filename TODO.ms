@@ -65,7 +65,7 @@ This document lists the required changes to integrate **DINOv3** as a backbone i
   std = (0.229, 0.224, 0.225)
  - [x] If using satellite-pretrained weights, use alternate normalization.
 - [x] Update positional encoding logic to match 16×16 patch size.
-- [ ] Adjust detection head/projector assumptions about feature dimensions.
+- [x] Adjust detection head/projector assumptions about feature dimensions.
 
 ## 6. Registration
 
