@@ -21,7 +21,7 @@ import math
 import sys
 from typing import Iterable
 import random
-
+from contextlib import nullcontext
 import torch
 import torch.nn.functional as F
 
@@ -39,12 +39,16 @@ from typing import DefaultDict, List, Callable
 from rfdetr.util.misc import NestedTensor
 import numpy as np
 
-def get_autocast_args(args):
-    if DEPRECATED_AMP:
-        return {'enabled': args.amp, 'dtype': torch.bfloat16}
-    else:
-        return {'device_type': 'cuda', 'enabled': args.amp, 'dtype': torch.bfloat16}
 
+def get_autocast_args(args):
+    """Return autocast arguments based on the DEPRECATED_AMP flag and args."""
+    use_cuda = torch.cuda.is_available()
+    enabled = bool(getattr(args, "amp", False) and use_cuda)
+    if DEPRECATED_AMP:
+        return {"enabled": enabled, "dtype": torch.bfloat16}
+    else:
+        # only use CUDA autocast when CUDA exists
+        return {"device_type": "cuda", "enabled": enabled, "dtype": torch.bfloat16}
 
 def train_one_epoch(
     model: torch.nn.Module,
@@ -75,11 +79,11 @@ def train_one_epoch(
     print("Grad accum steps: ", args.grad_accum_steps)
     print("Total batch size: ", batch_size * utils.get_world_size())
 
-    # Add gradient scaler for AMP
+    use_amp = bool(getattr(args, "amp", False) and torch.cuda.is_available())
     if DEPRECATED_AMP:
-        scaler = GradScaler(enabled=args.amp)
+        scaler = GradScaler(enabled=use_amp)
     else:
-        scaler = GradScaler('cuda', enabled=args.amp)
+        scaler = GradScaler("cuda", enabled=use_amp)
 
     optimizer.zero_grad()
     assert batch_size % args.grad_accum_steps == 0
@@ -113,7 +117,9 @@ def train_one_epoch(
             scales = compute_multi_scale_scales(args.resolution, args.expanded_scales, args.patch_size, args.num_windows)
             random.seed(it)
             scale = random.choice(scales)
-            with torch.inference_mode():
+            # DO NOT use inference_mode() here; it creates inference tensors
+            #with torch.inference_mode():
+            with torch.no_grad():
                 samples.tensors = F.interpolate(samples.tensors, size=scale, mode='bilinear', align_corners=False)
                 samples.mask = F.interpolate(samples.mask.unsqueeze(1).float(), size=scale, mode='nearest').squeeze(1).bool()
 
@@ -124,16 +130,17 @@ def train_one_epoch(
             new_samples = NestedTensor(new_samples_tensors, samples.mask[start_idx:final_idx])
             new_samples = new_samples.to(device)
             new_targets = [{k: v.to(device) for k, v in t.items()} for t in targets[start_idx:final_idx]]
-
-            with autocast(**get_autocast_args(args)):
-                outputs = model(new_samples, new_targets)
-                loss_dict = criterion(outputs, new_targets)
-                weight_dict = criterion.weight_dict
-                losses = sum(
-                    (1 / args.grad_accum_steps) * loss_dict[k] * weight_dict[k]
-                    for k in loss_dict.keys()
-                    if k in weight_dict
-                )
+            torch.set_grad_enabled(True)  # safety
+            with torch.inference_mode(False):
+                with autocast(**get_autocast_args(args)):
+                    outputs = model(new_samples, new_targets)
+                    loss_dict = criterion(outputs, new_targets)
+                    weight_dict = criterion.weight_dict
+                    losses = sum(
+                        (1 / args.grad_accum_steps) * loss_dict[k] * weight_dict[k]
+                        for k in loss_dict.keys()
+                        if k in weight_dict
+                    )
 
 
             scaler.scale(losses).backward()
