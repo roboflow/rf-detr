@@ -29,6 +29,7 @@ from rfdetr.util.misc import NestedTensor, is_main_process
 from rfdetr.models.backbone.base import BackboneBase
 from rfdetr.models.backbone.projector import MultiScaleProjector
 from rfdetr.models.backbone.dinov2 import DinoV2
+from rfdetr.models.backbone.dinov3 import DinoV3
 
 __all__ = ["Backbone"]
 
@@ -53,38 +54,60 @@ class Backbone(BackboneBase):
                  load_dinov2_weights: bool = True,
                  patch_size: int = 14,
                  num_windows: int = 4,
-                 positional_encoding_size: bool = False,
+                 #positional_encoding_size: bool = False,
+                 positional_encoding_size: int = 0,
+                 # optional DINOv3 loading knobs (HF/Hub) ----
+                 dinov3_repo_dir: str | None = None,
+                 dinov3_weights_path: str | None = None,
+                 dinov3_hf_token: str | None = None,
+                 dinov3_prefer_hf: bool = True,
                  ):
         super().__init__()
-        # an example name here would be "dinov2_base" or "dinov2_registers_windowed_base"
-        # if "registers" is in the name, then use_registers is set to True, otherwise it is set to False
-        # similarly, if "windowed" is in the name, then use_windowed_attn is set to True, otherwise it is set to False
-        # the last part of the name should be the size
-        # and the start should be dinov2
+
+        # Accept either "dinov2_*" (existing) or "dinov3_*" (new).
         name_parts = name.split("_")
-        assert name_parts[0] == "dinov2"
+        family = name_parts[0]
         size = name_parts[-1]
-        use_registers = False
-        if "registers" in name_parts:
-            use_registers = True
-            name_parts.remove("registers")
-        use_windowed_attn = False
-        if "windowed" in name_parts:
-            use_windowed_attn = True
-            name_parts.remove("windowed")
-        assert len(name_parts) == 2, "name should be dinov2, then either registers, windowed, both, or none, then the size"
-        self.encoder = DinoV2(
-            size=name_parts[-1],
-            out_feature_indexes=out_feature_indexes,
-            shape=target_shape,
-            use_registers=use_registers,
-            use_windowed_attn=use_windowed_attn,
-            gradient_checkpointing=gradient_checkpointing,
-            load_dinov2_weights=load_dinov2_weights,
-            patch_size=patch_size,
-            num_windows=num_windows,
-            positional_encoding_size=positional_encoding_size,
-        )
+
+        if family == "dinov2":
+            # Existing semantics: optional "registers" and/or "windowed" tokens. :contentReference[oaicite:7]{index=7}
+            use_registers = False
+            if "registers" in name_parts:
+                use_registers = True
+                name_parts.remove("registers")
+            use_windowed_attn = False
+            if "windowed" in name_parts:
+                use_windowed_attn = True
+                name_parts.remove("windowed")
+            assert len(name_parts) == 2, "name should be dinov2, then either registers, windowed, both, or none, then the size"
+            self.encoder = DinoV2(
+                size=size,
+                out_feature_indexes=out_feature_indexes,
+                shape=target_shape,
+                use_registers=use_registers,
+                use_windowed_attn=use_windowed_attn,
+                gradient_checkpointing=gradient_checkpointing,
+                load_dinov2_weights=load_dinov2_weights,
+                patch_size=patch_size,
+                num_windows=num_windows,
+                positional_encoding_size=positional_encoding_size,
+            )
+        elif family == "dinov3":
+            # new DINOv3 branch (no registers/windowing here)
+            self.encoder = DinoV3(
+                size=size,
+                out_feature_indexes=out_feature_indexes,
+                shape=target_shape,
+                patch_size=patch_size if patch_size else 16,
+                # reuse your existing flag for "load pretrained?" to avoid config churn
+                load_dinov3_weights=load_dinov2_weights,
+                hf_token=dinov3_hf_token,
+                repo_dir=dinov3_repo_dir,
+                weights=dinov3_weights_path,
+                prefer_hf=dinov3_prefer_hf,
+            )
+        else:
+            raise AssertionError(f"Backbone name must start with 'dinov2' or 'dinov3', got: {family}")
         # build encoder + projector as backbone module
         if freeze_encoder:
             for param in self.encoder.parameters():
