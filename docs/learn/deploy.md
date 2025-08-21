@@ -4,7 +4,9 @@ You can deploy a fine-tuned RF-DETR model to Roboflow.
 
 Deploying to Roboflow allows you to create multi-step computer vision applications that run both in the cloud and your own hardware.
 
-To deploy your model to Roboflow, run:
+Uploading your model to Roboflow will give you a serverless API that you can use to run your model. You can also deploy your model to a Raspberry Pi, NVIDIA Jetson, or another edge device using your model with [Roboflow Inference](https://inference.roboflow.com).
+
+To deploy your model to the Roboflow Cloud -- which will give you both a cloud endpoint and prepare your weights for on-device deployment with [Inference](https://inference.roboflow.com), run:
 
 ```python
 from rfdetr import RFDETRNano

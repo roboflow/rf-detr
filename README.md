@@ -14,7 +14,7 @@ RF-DETR is a real-time, transformer-based object detection model architecture de
 
 RF-DETR is the first real-time model to exceed 60 AP on the [Microsoft COCO benchmark](https://cocodataset.org/#home) alongside competitive performance at base sizes. It also achieves state-of-the-art performance on [RF100-VL](https://github.com/roboflow/rf100-vl), an object detection benchmark that measures model domain adaptability to real world problems. RF-DETR is fastest and most accurate for its size when compared current real-time objection models.
 
-RF-DETR is small enough to run on the edge using [Inference](https://github.com/roboflow/inference), making it an ideal model for deployments that need both strong accuracy and real-time performance.
+RF-DETR is small enough to run on the edge (i.e. Raspberry Pi, NVIDIA Jetson) using [Inference](https://github.com/roboflow/inference), making it an ideal model for deployments that need both strong accuracy and real-time performance.
 
 [Read the documentation to get started training.](https://rfdetr.roboflow.com)
 
@@ -149,6 +149,14 @@ You can fine-tune an RF-DETR Nano, Small, Medium, and Base model with a custom d
 ## Documentation
 
 Visit our [documentation website](https://rfdetr.roboflow.com) to learn more about how to use RF-DETR.
+
+## Supported Deployment Devices
+
+For edge use, we recommend running RF-DETR on an NVIDIA Jetson.
+
+For cloud use, we recommend running your model on a server configured with an NVIDIA GPU.
+
+You do not need a GPU to run RF-DETR, but you will achieve significantly lower latency with a GPU. 
 
 ## License
 
