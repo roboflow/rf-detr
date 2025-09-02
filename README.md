@@ -10,27 +10,23 @@
 [![roboflow](https://raw.githubusercontent.com/roboflow-ai/notebooks/main/assets/badges/roboflow-blogpost.svg)](https://blog.roboflow.com/rf-detr)
 [![discord](https://img.shields.io/discord/1159501506232451173?logo=discord&label=discord&labelColor=fff&color=5865f2&link=https%3A%2F%2Fdiscord.gg%2FGbfgXGJ8Bk)](https://discord.gg/GbfgXGJ8Bk)
 
-RF-DETR is a real-time, transformer-based object detection model architecture developed by Roboflow and released under the Apache 2.0 license.
+RF-DETR is a real-time, transformer-based object detection model developed by Roboflow and released under the Apache 2.0 license.
 
-RF-DETR is the first real-time model to exceed 60 AP on the [Microsoft COCO benchmark](https://cocodataset.org/#home) alongside competitive performance at base sizes. It also achieves state-of-the-art performance on [RF100-VL](https://github.com/roboflow/rf100-vl), an object detection benchmark that measures model domain adaptability to real world problems. RF-DETR is fastest and most accurate for its size when compared current real-time objection models.
+RF-DETR-N outperforms YOLO11-N by 10 mAP points on the [Microsoft COCO](https://cocodataset.org/#home) benchmark while running faster at inference. On [RF100-VL](https://github.com/roboflow/rf100-vl), RF-DETR achieves state-of-the-art results, with RF-DETR-M beating YOLO11-M by an average of 5 mAP points across aerial datasets including drone, satellite, and radar.
 
-RF-DETR is small enough to run on the edge using [Inference](https://github.com/roboflow/inference), making it an ideal model for deployments that need both strong accuracy and real-time performance.
-
-[Read the documentation to get started training.](https://rfdetr.roboflow.com)
+[![rf-detr-tutorial-banner](https://github.com/user-attachments/assets/555a45c3-96e8-4d8a-ad29-f23403c8edfd)](https://youtu.be/-OvpdLAElFA)
 
 ## News
 
-- `2025/07/23`: We release three new checkpoints for RF-DETR: Nano, Small, and Medium.
-    - RF-DETR Base is now deprecated. We recommend using RF-DETR Medium which offers subtantially better accuracy at comparable latency.
-- `2025/03/20`: We release RF-DETR real-time object detection model. **Code and checkpoint for RF-DETR-large and RF-DETR-base are available.**
-- `2025/04/03`: We release early stopping, gradient checkpointing, metrics saving, training resume, TensorBoard and W&B logging support.
-- `2025/05/16`: We release an 'optimize_for_inference' method which speeds up native PyTorch by up to 2x, depending on platform.
+- `2025/09/02`: RF-DETR fine-tuning YouTube tutorial released. Learn step-by-step how to fine-tune RF-DETR on your custom dataset.
+- `2025/07/23`: Released three new checkpoints for RF-DETR: Nano, Small, and Medium.
+- `2025/05/16`: Added `optimize_for_inference` method, improving native PyTorch inference speed by up to 2x depending on platform.
+- `2025/04/03`: Introduced early stopping, gradient checkpointing, metric saving, training resume, TensorBoard, and W&B logging.
+- `2025/03/20`: Released RF-DETR real-time object detection model. Code and checkpoints for RF-DETR-Large and RF-DETR-Base are available.
 
 ## Results
 
 RF-DETR achieves state-of-the-art performance on both the Microsoft COCO and the RF100-VL benchmarks.
-
-The table below shows the performance of RF-DETR medium, compared to comparable medium models:
 
 ![rf-detr-coco-rf100-vl-9](https://media.roboflow.com/rfdetr/pareto1.png)
 
