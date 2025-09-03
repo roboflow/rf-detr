@@ -524,7 +524,7 @@ class Model:
         input_names = ['input']
         output_names = ['features'] if backbone_only else ['dets', 'labels']
         dynamic_axes = None
-        self.model.eval()
+        model.eval()
         with torch.no_grad():
             if backbone_only:
                 features = model(input_tensors)
@@ -562,7 +562,6 @@ class Model:
             print(f"Successfully simplified ONNX model to: {sim_output_file}")
         
         print("ONNX export completed successfully")
-        self.model = self.model.to(device)
             
 
 if __name__ == '__main__':
