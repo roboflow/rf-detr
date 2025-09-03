@@ -622,7 +622,6 @@ class Model:
             logger.info(f"Successfully simplified ONNX model to: {sim_output_file}")
 
         logger.info("ONNX export completed successfully")
-        self.model = self.model.to(device)
 
 
 if __name__ == '__main__':
