@@ -127,7 +127,7 @@ class RFDETR:
         ) as f:
             anns = json.load(f)
             class_names = [c["name"] for c in anns["categories"] if c["supercategory"] != "none"]
-            num_classes = len(class_names)
+            num_classes = max(c["id"] for c in anns["categories"] if c["supercategory"] != "none")
             self.model.class_names = class_names
 
         if self.model_config.num_classes != num_classes:
