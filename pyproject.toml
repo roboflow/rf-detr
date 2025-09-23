@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rfdetr"
-version = "1.1.0"
+version = "1.2.1"
 description = "RF-DETR"
 readme = "README.md"
 authors = [
@@ -58,6 +58,7 @@ dependencies = [
     "pydantic",
     "supervision",
     "matplotlib",
+    "roboflow"
 ]
 
 [project.optional-dependencies]
@@ -70,6 +71,15 @@ onnxexport = [
 metrics = [
     "tensorboard>=2.13.0",
     "wandb"
+]
+docs = [
+    "mkdocs-material[imaging]>=9.5.5",
+    "mkdocstrings>=0.25.2,<0.30.0",
+    "mkdocstrings-python>=1.10.9",
+    "mike>=2.0.0",
+    "mkdocs-jupyter>=0.24.3",
+    "mkdocs-git-committers-plugin-2>=2.4.1; python_version >= '3.8' and python_version < '4'",
+    "mkdocs-git-revision-date-localized-plugin>=1.2.4"
 ]
 build = [
     "twine>=5.1.1",

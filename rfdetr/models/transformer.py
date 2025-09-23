@@ -23,7 +23,6 @@ import torch
 import torch.nn.functional as F
 from torch import nn, Tensor
 
-from rfdetr.models.attention import MultiheadAttention
 from rfdetr.models.ops.modules import MSDeformAttn
 
 class MLP(nn.Module):
@@ -45,7 +44,7 @@ def gen_sineembed_for_position(pos_tensor, dim=128):
     # n_query, bs, _ = pos_tensor.size()
     # sineembed_tensor = torch.zeros(n_query, bs, 256)
     scale = 2 * math.pi
-    dim_t = torch.arange(dim, dtype=torch.float32, device=pos_tensor.device)
+    dim_t = torch.arange(dim, dtype=pos_tensor.dtype, device=pos_tensor.device)
     dim_t = 10000 ** (2 * (dim_t // 2) / dim)
     x_embed = pos_tensor[:, :, 0] * scale
     y_embed = pos_tensor[:, :, 1] * scale
@@ -265,31 +264,37 @@ class Transformer(nn.Module):
             memory_ts = torch.cat(memory_ts, dim=1)#.transpose(0, 1)
             boxes_ts = torch.cat(boxes_ts, dim=1)#.transpose(0, 1)
         
-        tgt = query_feat.unsqueeze(0).repeat(bs, 1, 1)
-        refpoint_embed = refpoint_embed.unsqueeze(0).repeat(bs, 1, 1)
-        if self.two_stage:
-            ts_len = refpoint_embed_ts.shape[-2]
-            refpoint_embed_ts_subset = refpoint_embed[..., :ts_len, :]
-            refpoint_embed_subset = refpoint_embed[..., ts_len:, :]
+        if self.dec_layers > 0:
+            tgt = query_feat.unsqueeze(0).repeat(bs, 1, 1)
+            refpoint_embed = refpoint_embed.unsqueeze(0).repeat(bs, 1, 1)
+            if self.two_stage:
+                ts_len = refpoint_embed_ts.shape[-2]
+                refpoint_embed_ts_subset = refpoint_embed[..., :ts_len, :]
+                refpoint_embed_subset = refpoint_embed[..., ts_len:, :]
 
-            if self.bbox_reparam:
-                refpoint_embed_cxcy = refpoint_embed_ts_subset[..., :2] * refpoint_embed_ts[..., 2:]
-                refpoint_embed_cxcy = refpoint_embed_cxcy + refpoint_embed_ts[..., :2]
-                refpoint_embed_wh = refpoint_embed_ts_subset[..., 2:].exp() * refpoint_embed_ts[..., 2:]
-                refpoint_embed_ts_subset = torch.concat(
-                    [refpoint_embed_cxcy, refpoint_embed_wh], dim=-1
-                )
-            else:
-                refpoint_embed_ts_subset = refpoint_embed_ts_subset + refpoint_embed_ts
-            
-            refpoint_embed = torch.concat(
-                [refpoint_embed_ts_subset, refpoint_embed_subset], dim=-2)
+                if self.bbox_reparam:
+                    refpoint_embed_cxcy = refpoint_embed_ts_subset[..., :2] * refpoint_embed_ts[..., 2:]
+                    refpoint_embed_cxcy = refpoint_embed_cxcy + refpoint_embed_ts[..., :2]
+                    refpoint_embed_wh = refpoint_embed_ts_subset[..., 2:].exp() * refpoint_embed_ts[..., 2:]
+                    refpoint_embed_ts_subset = torch.concat(
+                        [refpoint_embed_cxcy, refpoint_embed_wh], dim=-1
+                    )
+                else:
+                    refpoint_embed_ts_subset = refpoint_embed_ts_subset + refpoint_embed_ts
+                
+                refpoint_embed = torch.concat(
+                    [refpoint_embed_ts_subset, refpoint_embed_subset], dim=-2)
 
-        hs, references = self.decoder(tgt, memory, memory_key_padding_mask=mask_flatten,
-                          pos=lvl_pos_embed_flatten, refpoints_unsigmoid=refpoint_embed,
-                          level_start_index=level_start_index, 
-                          spatial_shapes=spatial_shapes,
-                          valid_ratios=valid_ratios.to(memory.dtype) if valid_ratios is not None else valid_ratios)
+            hs, references = self.decoder(tgt, memory, memory_key_padding_mask=mask_flatten,
+                            pos=lvl_pos_embed_flatten, refpoints_unsigmoid=refpoint_embed,
+                            level_start_index=level_start_index, 
+                            spatial_shapes=spatial_shapes,
+                            valid_ratios=valid_ratios.to(memory.dtype) if valid_ratios is not None else valid_ratios)
+        else:
+            assert self.two_stage, "if not using decoder, two_stage must be True"
+            hs = None
+            references = None
+        
         if self.two_stage:
             if self.bbox_reparam:
                 return hs, references, memory_ts, boxes_ts
@@ -445,7 +450,7 @@ class TransformerDecoderLayer(nn.Module):
                  skip_self_attn=False):
         super().__init__()
         # Decoder Self-Attention
-        self.self_attn = MultiheadAttention(embed_dim=d_model, num_heads=sa_nhead, dropout=dropout, batch_first=True)
+        self.self_attn = nn.MultiheadAttention(embed_dim=d_model, num_heads=sa_nhead, dropout=dropout, batch_first=True)
         self.dropout1 = nn.Dropout(dropout)
         self.norm1 = nn.LayerNorm(d_model)
 
@@ -499,7 +504,8 @@ class TransformerDecoderLayer(nn.Module):
             v = torch.cat(v.split(num_queries // self.group_detr, dim=1), dim=0)
 
         tgt2 = self.self_attn(q, k, v, attn_mask=tgt_mask,
-                            key_padding_mask=tgt_key_padding_mask)[0]
+                            key_padding_mask=tgt_key_padding_mask,
+                            need_weights=False)[0]
         
         if self.training:
             tgt2 = torch.cat(tgt2.split(bs, dim=0), dim=1)

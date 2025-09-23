@@ -103,20 +103,19 @@ class LWDETR(nn.Module):
         self._export = False
 
     def reinitialize_detection_head(self, num_classes):
-        # Create new classification head
-        del self.class_embed
-        self.add_module("class_embed", nn.Linear(self.transformer.d_model, num_classes))
+        base = self.class_embed.weight.shape[0]
+        num_repeats = int(math.ceil(num_classes / base))
+        self.class_embed.weight.data = self.class_embed.weight.data.repeat(num_repeats, 1)
+        self.class_embed.weight.data = self.class_embed.weight.data[:num_classes]
+        self.class_embed.bias.data = self.class_embed.bias.data.repeat(num_repeats)
+        self.class_embed.bias.data = self.class_embed.bias.data[:num_classes]
         
-        # Initialize with focal loss bias adjustment
-        prior_prob = 0.01
-        bias_value = -math.log((1 - prior_prob) / prior_prob)
-        self.class_embed.bias.data = torch.ones(num_classes) * bias_value
-
         if self.two_stage:
-            del self.transformer.enc_out_class_embed
-            self.transformer.add_module("enc_out_class_embed", nn.ModuleList(
-                [copy.deepcopy(self.class_embed) for _ in range(self.group_detr)]))
-
+            for enc_out_class_embed in self.transformer.enc_out_class_embed:
+                enc_out_class_embed.weight.data = enc_out_class_embed.weight.data.repeat(num_repeats, 1)
+                enc_out_class_embed.weight.data = enc_out_class_embed.weight.data[:num_classes]
+                enc_out_class_embed.bias.data = enc_out_class_embed.bias.data.repeat(num_repeats)
+                enc_out_class_embed.bias.data = enc_out_class_embed.bias.data[:num_classes]
 
     def export(self):
         self._export = True
@@ -127,7 +126,7 @@ class LWDETR(nn.Module):
                 m.export()
 
     def forward(self, samples: NestedTensor, targets=None):
-        """ The forward expects a NestedTensor, which consists of:
+        """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
 
@@ -164,21 +163,22 @@ class LWDETR(nn.Module):
         hs, ref_unsigmoid, hs_enc, ref_enc = self.transformer(
             srcs, masks, poss, refpoint_embed_weight, query_feat_weight)
 
-        if self.bbox_reparam:
-            outputs_coord_delta = self.bbox_embed(hs)
-            outputs_coord_cxcy = outputs_coord_delta[..., :2] * ref_unsigmoid[..., 2:] + ref_unsigmoid[..., :2]
-            outputs_coord_wh = outputs_coord_delta[..., 2:].exp() * ref_unsigmoid[..., 2:]
-            outputs_coord = torch.concat(
-                [outputs_coord_cxcy, outputs_coord_wh], dim=-1
-            )
-        else:
-            outputs_coord = (self.bbox_embed(hs) + ref_unsigmoid).sigmoid()
+        if hs is not None:
+            if self.bbox_reparam:
+                outputs_coord_delta = self.bbox_embed(hs)
+                outputs_coord_cxcy = outputs_coord_delta[..., :2] * ref_unsigmoid[..., 2:] + ref_unsigmoid[..., :2]
+                outputs_coord_wh = outputs_coord_delta[..., 2:].exp() * ref_unsigmoid[..., 2:]
+                outputs_coord = torch.concat(
+                    [outputs_coord_cxcy, outputs_coord_wh], dim=-1
+                )
+            else:
+                outputs_coord = (self.bbox_embed(hs) + ref_unsigmoid).sigmoid()
 
-        outputs_class = self.class_embed(hs)
+            outputs_class = self.class_embed(hs)
 
-        out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1]}
-        if self.aux_loss:
-            out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
+            out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1]}
+            if self.aux_loss:
+                out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
 
         if self.two_stage:
             group_detr = self.group_detr if self.training else 1
@@ -188,7 +188,11 @@ class LWDETR(nn.Module):
                 cls_enc_gidx = self.transformer.enc_out_class_embed[g_idx](hs_enc_list[g_idx])
                 cls_enc.append(cls_enc_gidx)
             cls_enc = torch.cat(cls_enc, dim=1)
-            out['enc_outputs'] = {'pred_logits': cls_enc, 'pred_boxes': ref_enc}
+            if hs is not None:
+                out['enc_outputs'] = {'pred_logits': cls_enc, 'pred_boxes': ref_enc}
+            else:
+                out = {'pred_logits': cls_enc, 'pred_boxes': ref_enc}
+        
         return out
 
     def forward_export(self, tensors):
@@ -200,16 +204,22 @@ class LWDETR(nn.Module):
         hs, ref_unsigmoid, hs_enc, ref_enc = self.transformer(
             srcs, None, poss, refpoint_embed_weight, query_feat_weight)
 
-        if self.bbox_reparam:
-            outputs_coord_delta = self.bbox_embed(hs)
-            outputs_coord_cxcy = outputs_coord_delta[..., :2] * ref_unsigmoid[..., 2:] + ref_unsigmoid[..., :2]
-            outputs_coord_wh = outputs_coord_delta[..., 2:].exp() * ref_unsigmoid[..., 2:]
-            outputs_coord = torch.concat(
-                [outputs_coord_cxcy, outputs_coord_wh], dim=-1
-            )
+        if hs is not None:
+            if self.bbox_reparam:
+                outputs_coord_delta = self.bbox_embed(hs)
+                outputs_coord_cxcy = outputs_coord_delta[..., :2] * ref_unsigmoid[..., 2:] + ref_unsigmoid[..., :2]
+                outputs_coord_wh = outputs_coord_delta[..., 2:].exp() * ref_unsigmoid[..., 2:]
+                outputs_coord = torch.concat(
+                    [outputs_coord_cxcy, outputs_coord_wh], dim=-1
+                )
+            else:
+                outputs_coord = (self.bbox_embed(hs) + ref_unsigmoid).sigmoid()
+            outputs_class = self.class_embed(hs)
         else:
-            outputs_coord = (self.bbox_embed(hs) + ref_unsigmoid).sigmoid()
-        outputs_class = self.class_embed(hs)
+            assert self.two_stage, "if not using decoder, two_stage must be True"
+            outputs_class = self.transformer.enc_out_class_embed[0](hs_enc)
+            outputs_coord = ref_enc
+            
         return outputs_coord, outputs_class
 
     @torch.jit.unused
@@ -616,6 +626,9 @@ def build_model(args):
         force_no_pretrain=args.force_no_pretrain,
         gradient_checkpointing=args.gradient_checkpointing,
         load_dinov2_weights=args.pretrain_weights is None,
+        patch_size=args.patch_size,
+        num_windows=args.num_windows,
+        positional_encoding_size=args.positional_encoding_size,
     )
     if args.encoder_only:
         return backbone[0].encoder, None, None
