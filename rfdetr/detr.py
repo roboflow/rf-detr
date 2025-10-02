@@ -318,7 +318,7 @@ class RFDETR:
             if isinstance(predictions, tuple):
                 predictions = {
                     "pred_logits": predictions[1],
-                    "pred_boxes": predictions[0]
+                    "pred_boxes": predictions[0],
                     "pred_masks": predictions[2]
                 }
             target_sizes = torch.tensor(orig_sizes, device=self.model.device)
