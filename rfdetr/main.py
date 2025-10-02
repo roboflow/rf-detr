@@ -39,7 +39,7 @@ from torch.utils.data import DataLoader, DistributedSampler
 import rfdetr.util.misc as utils
 from rfdetr.datasets import build_dataset, get_coco_api_from_dataset
 from rfdetr.engine import evaluate, train_one_epoch
-from rfdetr.models import build_model, build_criterion_and_postprocessors
+from rfdetr.models import build_model, build_criterion_and_postprocessors, PostProcess
 from rfdetr.util.benchmark import benchmark
 from rfdetr.util.drop_scheduler import drop_scheduler
 from rfdetr.util.files import download_file
@@ -54,12 +54,14 @@ logger = getLogger(__name__)
 
 HOSTED_MODELS = {
     "rf-detr-base.pth": "https://storage.googleapis.com/rfdetr/rf-detr-base-coco.pth",
+    "rf-detr-base-o365.pth": "https://storage.googleapis.com/rfdetr/top-secret-1234/lwdetr_dinov2_small_o365_checkpoint.pth",
     # below is a less converged model that may be better for finetuning but worse for inference
     "rf-detr-base-2.pth": "https://storage.googleapis.com/rfdetr/rf-detr-base-2.pth",
     "rf-detr-large.pth": "https://storage.googleapis.com/rfdetr/rf-detr-large.pth",
     "rf-detr-nano.pth": "https://storage.googleapis.com/rfdetr/nano_coco/checkpoint_best_regular.pth",
     "rf-detr-small.pth": "https://storage.googleapis.com/rfdetr/small_coco/checkpoint_best_regular.pth",
     "rf-detr-medium.pth": "https://storage.googleapis.com/rfdetr/medium_coco/checkpoint_best_regular.pth",
+    "rf-detr-seg-preview.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-preview.pt",
 }
 
 def download_pretrain_weights(pretrain_weights: str, redownload=False):
@@ -98,10 +100,6 @@ class Model:
                 
             checkpoint_num_classes = checkpoint['model']['class_embed.bias'].shape[0]
             if checkpoint_num_classes != args.num_classes + 1:
-                logger.warning(
-                    f"num_classes mismatch: pretrain weights has {checkpoint_num_classes - 1} classes, but your model has {args.num_classes} classes\n"
-                    f"reinitializing detection head with {checkpoint_num_classes - 1} classes"
-                )
                 self.reinitialize_detection_head(checkpoint_num_classes)
             # add support to exclude_keys
             # e.g., when load object365 pretrain, do not load `class_embed.[weight, bias]`
@@ -110,7 +108,7 @@ class Model:
                 for exclude_key in args.pretrain_exclude_keys:
                     checkpoint['model'].pop(exclude_key)
             if args.pretrain_keys_modify_to_load is not None:
-                from util.obj365_to_coco_model import get_coco_pretrain_from_obj365
+                from rfdetr.util.obj365_to_coco_model import get_coco_pretrain_from_obj365
                 assert isinstance(args.pretrain_keys_modify_to_load, list)
                 for modify_key_to_load in args.pretrain_keys_modify_to_load:
                     try:
@@ -145,7 +143,7 @@ class Model:
             )
             self.model.backbone[0].encoder = get_peft_model(self.model.backbone[0].encoder, lora_config)
         self.model = self.model.to(self.device)
-        self.criterion, self.postprocessors = build_criterion_and_postprocessors(args)
+        self.postprocess = PostProcess(num_select=args.num_select)
         self.stop_early = False
     
     def reinitialize_detection_head(self, num_classes):
@@ -179,7 +177,7 @@ class Model:
         np.random.seed(seed)
         random.seed(seed)
 
-        criterion, postprocessors = build_criterion_and_postprocessors(args)
+        criterion, postprocess = build_criterion_and_postprocessors(args)
         model = self.model
         model.to(device)
 
@@ -202,7 +200,7 @@ class Model:
 
         dataset_train = build_dataset(image_set='train', args=args, resolution=args.resolution)
         dataset_val = build_dataset(image_set='val', args=args, resolution=args.resolution)
-        dataset_test = build_dataset(image_set='test', args=args, resolution=args.resolution)
+        dataset_test = build_dataset(image_set='test' if args.dataset_file == "roboflow" else "val", args=args, resolution=args.resolution)
 
         # for cosine annealing, calculate total training steps and warmup steps
         total_batch_size_for_lr = args.batch_size * utils.get_world_size() * args.grad_accum_steps
@@ -303,9 +301,12 @@ class Model:
 
         if args.eval:
             test_stats, coco_evaluator = evaluate(
-                model, criterion, postprocessors, data_loader_val, base_ds, device, args)
+                model, criterion, postprocess, data_loader_val, base_ds, device, args)
             if args.output_dir:
-                utils.save_on_master(coco_evaluator.coco_eval["bbox"].eval, output_dir / "eval.pth")
+                if not args.segmentation_head:
+                    utils.save_on_master(coco_evaluator.coco_eval["bbox"].eval, output_dir / "eval.pth")
+                else:
+                    utils.save_on_master(coco_evaluator.coco_eval["segm"].eval, output_dir / "eval.pth")
             return
         
         # for drop
@@ -323,7 +324,6 @@ class Model:
                 args.drop_path, args.epochs, num_training_steps_per_epoch,
                 args.cutoff_epoch, args.drop_mode, args.drop_schedule)
             print("Min DP = %.7f, Max DP = %.7f" % (min(schedules['dp']), max(schedules['dp'])))
-
         print("Start training")
         start_time = time.time()
         best_map_holder = BestMetricHolder(use_ema=args.use_ema)
@@ -370,13 +370,20 @@ class Model:
 
             with torch.inference_mode():
                 test_stats, coco_evaluator = evaluate(
-                    model, criterion, postprocessors, data_loader_val, base_ds, device, args=args
+                    model, criterion, postprocess, data_loader_val, base_ds, device, args=args
                 )
-            map_regular = test_stats["coco_eval_bbox"][0]
+            if not args.segmentation_head:
+                map_regular = test_stats["coco_eval_bbox"][0]
+            else:
+                map_regular = test_stats["coco_eval_masks"][0]
             _isbest = best_map_holder.update(map_regular, epoch, is_ema=False)
             if _isbest:
                 best_map_5095 = max(best_map_5095, map_regular)
-                best_map_50 = max(best_map_50, test_stats["coco_eval_bbox"][1])
+                if not args.segmentation_head:
+                    map50 = test_stats["coco_eval_bbox"][1]
+                else:
+                    map50 = test_stats["coco_eval_masks"][1]
+                best_map_50 = max(best_map_50, map50)
                 checkpoint_path = output_dir / 'checkpoint_best_regular.pth'
                 if not args.dont_save_weights:
                     utils.save_on_master({
@@ -392,14 +399,21 @@ class Model:
                         'n_parameters': n_parameters}
             if args.use_ema:
                 ema_test_stats, _ = evaluate(
-                    self.ema_m.module, criterion, postprocessors, data_loader_val, base_ds, device, args=args
+                    self.ema_m.module, criterion, postprocess, data_loader_val, base_ds, device, args=args
                 )
                 log_stats.update({f'ema_test_{k}': v for k,v in ema_test_stats.items()})
-                map_ema = ema_test_stats["coco_eval_bbox"][0]
+                if not args.segmentation_head:
+                    map_ema = ema_test_stats["coco_eval_bbox"][0]
+                else:
+                    map_ema = ema_test_stats["coco_eval_masks"][0]
                 best_map_ema_5095 = max(best_map_ema_5095, map_ema)
                 _isbest = best_map_holder.update(map_ema, epoch, is_ema=True)
                 if _isbest:
-                    best_map_ema_50 = max(best_map_ema_50, ema_test_stats["coco_eval_bbox"][1])
+                    if not args.segmentation_head:
+                        map_ema_50 = ema_test_stats["coco_eval_bbox"][1]
+                    else:
+                        map_ema_50 = ema_test_stats["coco_eval_masks"][1]
+                    best_map_ema_50 = max(best_map_ema_50, map_ema_50)
                     checkpoint_path = output_dir / 'checkpoint_best_ema.pth'
                     if not args.dont_save_weights:
                         utils.save_on_master({
@@ -437,8 +451,13 @@ class Model:
                         if epoch % 50 == 0:
                             filenames.append(f'{epoch:03}.pth')
                         for name in filenames:
-                            torch.save(coco_evaluator.coco_eval["bbox"].eval,
+                            if not args.segmentation_head:
+                                torch.save(coco_evaluator.coco_eval["bbox"].eval,
+                                        output_dir / "eval" / name)
+                            else:
+                                torch.save(coco_evaluator.coco_eval["segm"].eval,
                                     output_dir / "eval" / name)
+
             
             for callback in callbacks["on_fit_epoch_end"]:
                 callback(log_stats)
@@ -478,14 +497,13 @@ class Model:
             self.model = self.ema_m.module
         self.model.eval()
 
-
         if args.run_test:
             best_state_dict = torch.load(output_dir / 'checkpoint_best_total.pth', map_location='cpu', weights_only=False)['model']
             model.load_state_dict(best_state_dict)
             model.eval()
 
             test_stats, _ = evaluate(
-                model, criterion, postprocessors, data_loader_test, base_ds_test, device, args=args
+                model, criterion, postprocess, data_loader_test, base_ds_test, device, args=args
             )
             print(f"Test results: {test_stats}")
             with open(output_dir / "results.json", "r") as f:
@@ -529,6 +547,12 @@ class Model:
             if backbone_only:
                 features = model(input_tensors)
                 print(f"PyTorch inference output shape: {features.shape}")
+            elif self.args.segmentation_head:
+                outputs = model(input_tensors)
+                dets = outputs['pred_boxes']
+                labels = outputs['pred_logits']
+                masks = outputs['pred_masks']
+                print(f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}, Masks: {masks.shape}")
             else:
                 outputs = model(input_tensors)
                 dets = outputs['pred_boxes']
