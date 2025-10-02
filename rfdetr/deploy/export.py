@@ -258,6 +258,12 @@ def main(args):
         if args.backbone_only:
             features = model(input_tensors)
             print(f"PyTorch inference output shape: {features.shape}")
+        elif args.segmentation_head:
+            outputs = model(input_tensors)
+            dets = outputs['pred_boxes']
+            labels = outputs['pred_logits']
+            masks = outputs['pred_masks']
+            print(f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}, Masks: {masks.shape}")
         else:
             outputs = model(input_tensors)
             dets = outputs['pred_boxes']

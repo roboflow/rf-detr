@@ -18,7 +18,7 @@ class EarlyStoppingCallback:
         verbose (bool): Whether to print early stopping messages
     """
     
-    def __init__(self, model, patience=5, min_delta=0.001, use_ema=False, verbose=True):
+    def __init__(self, model, patience=5, min_delta=0.001, use_ema=False, verbose=True, segmentation_head=False):
         self.patience = patience
         self.min_delta = min_delta
         self.use_ema = use_ema
@@ -26,6 +26,7 @@ class EarlyStoppingCallback:
         self.best_map = 0.0
         self.counter = 0
         self.model = model
+        self.segmentation_head = segmentation_head
         
     def update(self, log_stats):
         """Update early stopping state based on epoch validation metrics"""
@@ -33,10 +34,16 @@ class EarlyStoppingCallback:
         ema_map = None
         
         if 'test_coco_eval_bbox' in log_stats:
-            regular_map = log_stats['test_coco_eval_bbox'][0]
+            if not self.segmentation_head:
+                regular_map = log_stats['test_coco_eval_bbox'][0]
+            else:
+                regular_map = log_stats['test_coco_eval_masks'][0]
         
         if 'ema_test_coco_eval_bbox' in log_stats:
-            ema_map = log_stats['ema_test_coco_eval_bbox'][0]
+            if not self.segmentation_head:
+                ema_map = log_stats['ema_test_coco_eval_bbox'][0]
+            else:
+                ema_map = log_stats['ema_test_coco_eval_masks'][0]
         
         current_map = None
         if regular_map is not None and ema_map is not None:
