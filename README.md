@@ -60,7 +60,7 @@ _We are actively working on RF-DETR Large and X-Large models using the same tech
 
 ### Instance Segmentation Benchmarks
 
-![rf-detr-coco-rf100-vl-9](https://media.roboflow.com/rfdetr/pareto_seg.png)
+![rf-detr-coco-rf100-vl-9](https://media.roboflow.com/rfdetr/pareto_segmentation.png)
 
 | Model Name              | Reported Latency | Reported mAP | Measured Latency | Measured mAP |
 |-------------------------|------------------|--------------|------------------|--------------|
@@ -76,7 +76,9 @@ _We are actively working on RF-DETR Large and X-Large models using the same tech
 | YOLO11l-Seg             | 7.8              | 42.9         | 8.3              | 39.5         |
 | YOLOv8l-Seg             |                  | 42.6         | 9.7              | 39.0         |
 | YOLO11x-Seg             | 15.8             | 43.8         | 13.7             | 40.1         |
-| YOLO8x-Seg              |                  | 43.4         | 14.0             | 39.5         |
+| YOLOv8x-Seg             |                  | 43.4         | 14.0             | 39.5         |
+
+For more information on measuring end-to-end latency for models, see our open source [Single Artifact Benchmarking tool](https://github.com/roboflow/single_artifact_benchmarking).
 
 ## Installation
 
