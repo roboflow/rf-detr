@@ -29,6 +29,7 @@ nav:
     - Train a Model: learn/train/index.md
     - Deploy a Trained Model: learn/deploy.md
     - Benchmarks: learn/benchmarks.md
+  - Tutorials: tutorials/index.md
   - Reference:
       - RF-DETR: reference/rfdetr.md
       - Object Detection Models:
