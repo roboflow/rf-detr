@@ -66,12 +66,17 @@ _We are actively working on RF-DETR Large and X-Large models using the same tech
 |-------------------------|------------------|--------------|------------------|--------------|
 | RF-DETR Seg-Preview@312 |                  |              | 3.3              | 39.4         |
 | YOLO11n-Seg             | 1.8              | 32.0         | 3.6              | 30.0         |
+| YOLOv8n-Seg             |                  | 30.5         | 3.5              | 28.3         |
 | RF-DETR Seg-Preview@384 |                  |              | 4.5              | 42.7         |
 | YOLO11s-Seg             | 2.9              | 37.8         | 4.6              | 35.0         |
+| YOLOv8s-Seg             |                  | 36.8         | 4.2              | 34.0         |
 | RF-DETR Seg-Preview@432 |                  |              | 5.6              | 44.3         |
 | YOLO11m-Seg             | 6.3              | 41.5         | 6.9              | 38.5         |
+| YOLOv8m-Seg             |                  | 40.8         | 7.0              | 37.3         |
 | YOLO11l-Seg             | 7.8              | 42.9         | 8.3              | 39.5         |
+| YOLOv8l-Seg             |                  | 42.6         | 9.7              | 39.0         |
 | YOLO11x-Seg             | 15.8             | 43.8         | 13.7             | 40.1         |
+| YOLO8x-Seg              |                  | 43.4         | 14.0             | 39.5         |
 
 ## Installation
 
