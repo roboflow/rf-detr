@@ -23,18 +23,22 @@ extra:
 nav:
   - Home: index.md
   - Learn:
-     - Run a Pre-Trained Model: learn/pretrained.md
-     - Train an RF-DETR Model: learn/train.md
-     - Deploy a Trained Model: learn/deploy.md
-     - Benchmarks: learn/benchmarks.md
+    - Run a Model:
+      - Object Detection: learn/run/detection.md
+      - Segmentation: learn/run/segmentation.md
+    - Train a Model: learn/train/index.md
+    - Deploy a Trained Model: learn/deploy.md
+    - Benchmarks: learn/benchmarks.md
   - Reference:
       - RF-DETR: reference/rfdetr.md
-      - Models:
+      - Object Detection Models:
         - RF-DETR Nano: reference/nano.md
         - RF-DETR Small: reference/small.md
-        - RF-DETR Base: reference/base.md
+        - RF-DETR Base (Deprecated): reference/base.md
         - RF-DETR Medium: reference/medium.md
         - RF-DETR Large: reference/large.md
+      - Image Segmentation Models:
+        - RF-DETR Seg Preview: reference/seg_preview.md
   - Changelog: https://github.com/roboflow/rf-detr/releases
 
 theme:

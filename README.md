@@ -1,4 +1,4 @@
-# RF-DETR: SOTA Real-Time Object Detection Model
+# RF-DETR: SOTA Real-Time Detection and Segmentation Model
 
 [![version](https://badge.fury.io/py/rfdetr.svg)](https://badge.fury.io/py/rfdetr)
 [![downloads](https://img.shields.io/pypi/dm/rfdetr)](https://pypistats.org/packages/rfdetr)
@@ -10,23 +10,30 @@
 [![roboflow](https://raw.githubusercontent.com/roboflow-ai/notebooks/main/assets/badges/roboflow-blogpost.svg)](https://blog.roboflow.com/rf-detr)
 [![discord](https://img.shields.io/discord/1159501506232451173?logo=discord&label=discord&labelColor=fff&color=5865f2&link=https%3A%2F%2Fdiscord.gg%2FGbfgXGJ8Bk)](https://discord.gg/GbfgXGJ8Bk)
 
-RF-DETR is a real-time, transformer-based object detection model developed by Roboflow and released under the Apache 2.0 license.
+RF-DETR is a real-time, transformer-based object detection and instance segmentation model architecture developed by Roboflow and released under the Apache 2.0 license.
 
-RF-DETR-N outperforms YOLO11-N by 10 mAP points on the [Microsoft COCO](https://cocodataset.org/#home) benchmark while running faster at inference. On [RF100-VL](https://github.com/roboflow/rf100-vl), RF-DETR achieves state-of-the-art results, with RF-DETR-M beating YOLO11-M by an average of 5 mAP points across aerial datasets including drone, satellite, and radar.
+RF-DETR is the first real-time model to exceed 60 AP on the [Microsoft COCO object detection benchmark](https://cocodataset.org/#home) alongside competitive performance at base sizes. It also achieves state-of-the-art performance on [RF100-VL](https://github.com/roboflow/rf100-vl), an object detection benchmark that measures model domain adaptability to real world problems. RF-DETR is fastest and most accurate for its size when compared current real-time objection models.
+
+On image segmentation, RF-DETR Seg (Preview) is 3x faster and more accurate than the largest YOLO when evaluated on the Microsoft COCO Segmentation benchmark, defining a new real-time state-of-the-art for the industry-standard benchmark in segmentation model evaluation.
 
 [![rf-detr-tutorial-banner](https://github.com/user-attachments/assets/555a45c3-96e8-4d8a-ad29-f23403c8edfd)](https://youtu.be/-OvpdLAElFA)
 
 ## News
 
-- `2025/09/02`: RF-DETR fine-tuning YouTube tutorial released. Learn step-by-step how to fine-tune RF-DETR on your custom dataset.
-- `2025/07/23`: Released three new checkpoints for RF-DETR: Nano, Small, and Medium.
-- `2025/05/16`: Added `optimize_for_inference` method, improving native PyTorch inference speed by up to 2x depending on platform.
-- `2025/04/03`: Introduced early stopping, gradient checkpointing, metric saving, training resume, TensorBoard, and W&B logging.
-- `2025/03/20`: Released RF-DETR real-time object detection model. Code and checkpoints for RF-DETR-Large and RF-DETR-Base are available.
+- `2025/10/02`: We release RF-DETR-Seg (Preview), a preview of our instance segmentation head for RF-DETR.
+- `2025/07/23`: We release three new checkpoints for RF-DETR: Nano, Small, and Medium.
+    - RF-DETR Base is now deprecated. We recommend using RF-DETR Medium which offers subtantially better accuracy at comparable latency.
+- `2025/03/20`: We release RF-DETR real-time object detection model. **Code and checkpoint for RF-DETR-large and RF-DETR-base are available.**
+- `2025/04/03`: We release early stopping, gradient checkpointing, metrics saving, training resume, TensorBoard and W&B logging support.
+- `2025/05/16`: We release an 'optimize_for_inference' method which speeds up native PyTorch by up to 2x, depending on platform.
 
 ## Results
 
 RF-DETR achieves state-of-the-art performance on both the Microsoft COCO and the RF100-VL benchmarks.
+
+The below tables shows how RF-DETR performs when validated on the Microsoft COCO benchmark for object detection and image segmentation.
+
+### Object Detection Benchmarks
 
 ![rf-detr-coco-rf100-vl-9](https://media.roboflow.com/rfdetr/pareto1.png)
 
@@ -50,6 +57,28 @@ RF-DETR achieves state-of-the-art performance on both the Microsoft COCO and the
 [See our benchmark notes in the RF-DETR documentation.](https://rfdetr.roboflow.com/learn/benchmarks/)
 
 _We are actively working on RF-DETR Large and X-Large models using the same techniques we used to achieve the strong accuracy that RF-DETR Medium attains. This is why RF-DETR Large and X-Large is not yet reported on our pareto charts and why we haven't benchmarked other models at similar sizes. Check back in the next few weeks for the launch of new RF-DETR Large and X-Large models._
+
+### Instance Segmentation Benchmarks
+
+![rf-detr-coco-rf100-vl-9](https://media.roboflow.com/rfdetr/pareto_segmentation.png)
+
+| Model Name              | Reported Latency | Reported mAP | Measured Latency | Measured mAP |
+|-------------------------|------------------|--------------|------------------|--------------|
+| RF-DETR Seg-Preview@312 |                  |              | 3.3              | 39.4         |
+| YOLO11n-Seg             | 1.8              | 32.0         | 3.6              | 30.0         |
+| YOLOv8n-Seg             |                  | 30.5         | 3.5              | 28.3         |
+| RF-DETR Seg-Preview@384 |                  |              | 4.5              | 42.7         |
+| YOLO11s-Seg             | 2.9              | 37.8         | 4.6              | 35.0         |
+| YOLOv8s-Seg             |                  | 36.8         | 4.2              | 34.0         |
+| RF-DETR Seg-Preview@432 |                  |              | 5.6              | 44.3         |
+| YOLO11m-Seg             | 6.3              | 41.5         | 6.9              | 38.5         |
+| YOLOv8m-Seg             |                  | 40.8         | 7.0              | 37.3         |
+| YOLO11l-Seg             | 7.8              | 42.9         | 8.3              | 39.5         |
+| YOLOv8l-Seg             |                  | 42.6         | 9.7              | 39.0         |
+| YOLO11x-Seg             | 15.8             | 43.8         | 13.7             | 40.1         |
+| YOLOv8x-Seg             |                  | 43.4         | 14.0             | 39.5         |
+
+For more information on measuring end-to-end latency for models, see our open source [Single Artifact Benchmarking tool](https://github.com/roboflow/single_artifact_benchmarking).
 
 ## Installation
 
@@ -102,6 +131,8 @@ annotated_image = sv.BoxAnnotator(color=sv.ColorPalette.ROBOFLOW).annotate(annot
 annotated_image = sv.LabelAnnotator(color=sv.ColorPalette.ROBOFLOW).annotate(annotated_image, detections, labels)
 ```
 
+To use segmentation, use the `rfdetr-seg-preview` model ID. This model will return segmentation masks from a RF-DETR-Seg (Preview) model trained on the Microsoft COCO dataset.
+
 ## Predict
 
 You can also use the .predict method to perform inference during local development. The `.predict()` method accepts various input formats, including file paths, PIL images, NumPy arrays, and torch tensors. Please ensure inputs use RGB channel order. For `torch.Tensor` inputs specifically, they must have a shape of `(3, H, W)` with values normalized to the `[0..1)` range. If you don't plan to modify the image or batch size dynamically at runtime, you can also use `.optimize_for_inference()` to get up to 2x end-to-end speedup, depending on platform.
@@ -140,7 +171,7 @@ sv.plot_image(annotated_image)
 
 You can fine-tune an RF-DETR Nano, Small, Medium, and Base model with a custom dataset using the `rfdetr` Python package.
 
-[Read our training tutorial to get started](https://rfdetr.roboflow.com/learn/train/)
+[Learn how to train an RF-DETR model.](https://rfdetr.roboflow.com/learn/train/)
 
 ## Documentation
 
