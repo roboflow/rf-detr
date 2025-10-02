@@ -12,13 +12,11 @@
         <meta name="author" content="Roboflow">
       
       
-        <link rel="canonical" href="https://roboflow.github.io/rf-detr/develop/reference/base/">
+        <link rel="canonical" href="https://roboflow.github.io/rf-detr/develop/reference/seg_preview/">
       
       
-        <link rel="prev" href="../small/">
+        <link rel="prev" href="../large/">
       
-      
-        <link rel="next" href="../medium/">
       
       
         
@@ -29,7 +27,7 @@
     
     
       
-        <title>RF-DETR Base (Deprecated) - RF-DETR</title>
+        <title>RF-DETR Seg Preview - RF-DETR</title>
       
     
     
@@ -74,7 +72,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfdetr.detr.RFDETRBase" class="md-skip">
+        <a href="#rfdetr.detr.RFDETRSegPreview" class="md-skip">
           Skip to content
         </a>
       
@@ -142,7 +140,7 @@
 
             </a>
             
-              RF-DETR Base (Deprecated)
+              RF-DETR Seg Preview
             
           </span>
         </div>
@@ -793,8 +791,6 @@
                 
   
   
-    
-  
   
   
     
@@ -804,11 +800,13 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" checked>
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3_2" >
         
           
           <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
@@ -828,7 +826,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -897,34 +895,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  <span class="md-ellipsis">
-    
-  
-    RF-DETR Base (Deprecated)
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../base/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -939,246 +913,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#rfdetr.detr.RFDETRBase" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;RFDETRBase
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#rfdetr.detr.RFDETRBase-attributes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Attributes
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Attributes">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#rfdetr.detr.RFDETRBase.class_names" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-attribute"></code>&nbsp;class_names
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#rfdetr.detr.RFDETRBase-functions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Functions
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Functions">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#rfdetr.detr.RFDETRBase.deploy_to_roboflow" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;deploy_to_roboflow
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label=" deploy_to_roboflow">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#rfdetr.detr.RFDETRBase.deploy_to_roboflow(workspace)" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;workspace
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#rfdetr.detr.RFDETRBase.deploy_to_roboflow(project_ids)" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;project_ids
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#rfdetr.detr.RFDETRBase.deploy_to_roboflow(api_key)" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;api_key
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#rfdetr.detr.RFDETRBase.deploy_to_roboflow(size)" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;size
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#rfdetr.detr.RFDETRBase.deploy_to_roboflow(model_name)" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;model_name
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#rfdetr.detr.RFDETRBase.export" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;export
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#rfdetr.detr.RFDETRBase.get_model" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;get_model
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#rfdetr.detr.RFDETRBase.maybe_download_pretrain_weights" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;maybe_download_pretrain_weights
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#rfdetr.detr.RFDETRBase.predict" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;predict
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label=" predict">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#rfdetr.detr.RFDETRBase.predict(images)" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;images
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#rfdetr.detr.RFDETRBase.predict(threshold)" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;threshold
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#rfdetr.detr.RFDETRBase.predict(**kwargs)" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;**kwargs
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#rfdetr.detr.RFDETRBase.train" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;train
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1250,8 +984,10 @@
                 
   
   
+    
   
   
+  
     
     
     
@@ -1259,13 +995,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-          
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" checked>
         
           
           <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
@@ -1285,7 +1019,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1300,10 +1034,34 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../seg_preview/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  <span class="md-ellipsis">
+    
+  
+    RF-DETR Seg Preview
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   <span class="md-ellipsis">
@@ -1318,6 +1076,246 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.detr.RFDETRSegPreview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;RFDETRSegPreview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.detr.RFDETRSegPreview-attributes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Attributes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Attributes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.detr.RFDETRSegPreview.class_names" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-attribute"></code>&nbsp;class_names
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.detr.RFDETRSegPreview-functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Functions
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Functions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.detr.RFDETRSegPreview.deploy_to_roboflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;deploy_to_roboflow
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label=" deploy_to_roboflow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.detr.RFDETRSegPreview.deploy_to_roboflow(workspace)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;workspace
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.detr.RFDETRSegPreview.deploy_to_roboflow(project_ids)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;project_ids
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.detr.RFDETRSegPreview.deploy_to_roboflow(api_key)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;api_key
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.detr.RFDETRSegPreview.deploy_to_roboflow(size)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;size
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.detr.RFDETRSegPreview.deploy_to_roboflow(model_name)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;model_name
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.detr.RFDETRSegPreview.export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;export
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.detr.RFDETRSegPreview.get_model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;get_model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.detr.RFDETRSegPreview.maybe_download_pretrain_weights" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;maybe_download_pretrain_weights
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.detr.RFDETRSegPreview.predict" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;predict
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label=" predict">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.detr.RFDETRSegPreview.predict(images)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;images
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.detr.RFDETRSegPreview.predict(threshold)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;threshold
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.detr.RFDETRSegPreview.predict(**kwargs)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;**kwargs
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.detr.RFDETRSegPreview.train" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;train
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1389,10 +1387,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#rfdetr.detr.RFDETRBase" class="md-nav__link">
+  <a href="#rfdetr.detr.RFDETRSegPreview" class="md-nav__link">
     <span class="md-ellipsis">
       
-        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;RFDETRBase
+        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;RFDETRSegPreview
       
     </span>
   </a>
@@ -1400,7 +1398,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#rfdetr.detr.RFDETRBase-attributes" class="md-nav__link">
+  <a href="#rfdetr.detr.RFDETRSegPreview-attributes" class="md-nav__link">
     <span class="md-ellipsis">
       
         Attributes
@@ -1412,7 +1410,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#rfdetr.detr.RFDETRBase.class_names" class="md-nav__link">
+  <a href="#rfdetr.detr.RFDETRSegPreview.class_names" class="md-nav__link">
     <span class="md-ellipsis">
       
         <code class="doc-symbol doc-symbol-toc doc-symbol-attribute"></code>&nbsp;class_names
@@ -1428,7 +1426,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#rfdetr.detr.RFDETRBase-functions" class="md-nav__link">
+  <a href="#rfdetr.detr.RFDETRSegPreview-functions" class="md-nav__link">
     <span class="md-ellipsis">
       
         Functions
@@ -1440,7 +1438,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#rfdetr.detr.RFDETRBase.deploy_to_roboflow" class="md-nav__link">
+  <a href="#rfdetr.detr.RFDETRSegPreview.deploy_to_roboflow" class="md-nav__link">
     <span class="md-ellipsis">
       
         <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;deploy_to_roboflow
@@ -1452,7 +1450,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#rfdetr.detr.RFDETRBase.deploy_to_roboflow(workspace)" class="md-nav__link">
+  <a href="#rfdetr.detr.RFDETRSegPreview.deploy_to_roboflow(workspace)" class="md-nav__link">
     <span class="md-ellipsis">
       
         <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;workspace
@@ -1463,7 +1461,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#rfdetr.detr.RFDETRBase.deploy_to_roboflow(project_ids)" class="md-nav__link">
+  <a href="#rfdetr.detr.RFDETRSegPreview.deploy_to_roboflow(project_ids)" class="md-nav__link">
     <span class="md-ellipsis">
       
         <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;project_ids
@@ -1474,7 +1472,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#rfdetr.detr.RFDETRBase.deploy_to_roboflow(api_key)" class="md-nav__link">
+  <a href="#rfdetr.detr.RFDETRSegPreview.deploy_to_roboflow(api_key)" class="md-nav__link">
     <span class="md-ellipsis">
       
         <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;api_key
@@ -1485,7 +1483,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#rfdetr.detr.RFDETRBase.deploy_to_roboflow(size)" class="md-nav__link">
+  <a href="#rfdetr.detr.RFDETRSegPreview.deploy_to_roboflow(size)" class="md-nav__link">
     <span class="md-ellipsis">
       
         <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;size
@@ -1496,7 +1494,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#rfdetr.detr.RFDETRBase.deploy_to_roboflow(model_name)" class="md-nav__link">
+  <a href="#rfdetr.detr.RFDETRSegPreview.deploy_to_roboflow(model_name)" class="md-nav__link">
     <span class="md-ellipsis">
       
         <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;model_name
@@ -1512,7 +1510,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#rfdetr.detr.RFDETRBase.export" class="md-nav__link">
+  <a href="#rfdetr.detr.RFDETRSegPreview.export" class="md-nav__link">
     <span class="md-ellipsis">
       
         <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;export
@@ -1523,7 +1521,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#rfdetr.detr.RFDETRBase.get_model" class="md-nav__link">
+  <a href="#rfdetr.detr.RFDETRSegPreview.get_model" class="md-nav__link">
     <span class="md-ellipsis">
       
         <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;get_model
@@ -1534,7 +1532,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#rfdetr.detr.RFDETRBase.maybe_download_pretrain_weights" class="md-nav__link">
+  <a href="#rfdetr.detr.RFDETRSegPreview.maybe_download_pretrain_weights" class="md-nav__link">
     <span class="md-ellipsis">
       
         <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;maybe_download_pretrain_weights
@@ -1545,7 +1543,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#rfdetr.detr.RFDETRBase.predict" class="md-nav__link">
+  <a href="#rfdetr.detr.RFDETRSegPreview.predict" class="md-nav__link">
     <span class="md-ellipsis">
       
         <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;predict
@@ -1557,7 +1555,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#rfdetr.detr.RFDETRBase.predict(images)" class="md-nav__link">
+  <a href="#rfdetr.detr.RFDETRSegPreview.predict(images)" class="md-nav__link">
     <span class="md-ellipsis">
       
         <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;images
@@ -1568,7 +1566,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#rfdetr.detr.RFDETRBase.predict(threshold)" class="md-nav__link">
+  <a href="#rfdetr.detr.RFDETRSegPreview.predict(threshold)" class="md-nav__link">
     <span class="md-ellipsis">
       
         <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;threshold
@@ -1579,7 +1577,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#rfdetr.detr.RFDETRBase.predict(**kwargs)" class="md-nav__link">
+  <a href="#rfdetr.detr.RFDETRSegPreview.predict(**kwargs)" class="md-nav__link">
     <span class="md-ellipsis">
       
         <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;**kwargs
@@ -1595,7 +1593,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#rfdetr.detr.RFDETRBase.train" class="md-nav__link">
+  <a href="#rfdetr.detr.RFDETRSegPreview.train" class="md-nav__link">
     <span class="md-ellipsis">
       
         <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;train
@@ -1630,19 +1628,17 @@
   
 
 
-  <h1>RF-DETR Base (Deprecated)</h1>
+  <h1>RF-DETR Seg Preview</h1>
 
 <div class="doc doc-object doc-class">
 
 
 
-<a id="rfdetr.detr.RFDETRBase"></a>
+<a id="rfdetr.detr.RFDETRSegPreview"></a>
     <div class="doc doc-contents first">
             <p class="doc doc-class-bases">
               Bases: <code><a class="autorefs autorefs-internal" title="&lt;code&gt;rfdetr.detr.RFDETR&lt;/code&gt;" href="../rfdetr/#rfdetr.detr.RFDETR">RFDETR</a></code></p>
 
-
-        <p>Train an RF-DETR Base model (29M parameters).</p>
 
 
 
@@ -1652,25 +1648,19 @@
 
               <details class="quote">
                 <summary>Source code in <code>rfdetr/detr.py</code></summary>
-                <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-415">415</a></span>
-<span class="normal"><a href="#__codelineno-0-416">416</a></span>
-<span class="normal"><a href="#__codelineno-0-417">417</a></span>
-<span class="normal"><a href="#__codelineno-0-418">418</a></span>
-<span class="normal"><a href="#__codelineno-0-419">419</a></span>
-<span class="normal"><a href="#__codelineno-0-420">420</a></span>
-<span class="normal"><a href="#__codelineno-0-421">421</a></span>
-<span class="normal"><a href="#__codelineno-0-422">422</a></span>
-<span class="normal"><a href="#__codelineno-0-423">423</a></span>
-<span class="normal"><a href="#__codelineno-0-424">424</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-415"><a id="__codelineno-0-415" name="__codelineno-0-415"></a><span class="k">class</span><span class="w"> </span><span class="nc">RFDETRBase</span><span class="p">(</span><span class="n">RFDETR</span><span class="p">):</span>
-</span><span id="__span-0-416"><a id="__codelineno-0-416" name="__codelineno-0-416"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-</span><span id="__span-0-417"><a id="__codelineno-0-417" name="__codelineno-0-417"></a><span class="sd">    Train an RF-DETR Base model (29M parameters).</span>
-</span><span id="__span-0-418"><a id="__codelineno-0-418" name="__codelineno-0-418"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-419"><a id="__codelineno-0-419" name="__codelineno-0-419"></a>    <span class="n">size</span> <span class="o">=</span> <span class="s2">&quot;rfdetr-base&quot;</span>
-</span><span id="__span-0-420"><a id="__codelineno-0-420" name="__codelineno-0-420"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">get_model_config</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
-</span><span id="__span-0-421"><a id="__codelineno-0-421" name="__codelineno-0-421"></a>        <span class="k">return</span> <span class="n">RFDETRBaseConfig</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
-</span><span id="__span-0-422"><a id="__codelineno-0-422" name="__codelineno-0-422"></a>
-</span><span id="__span-0-423"><a id="__codelineno-0-423" name="__codelineno-0-423"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">get_train_config</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
-</span><span id="__span-0-424"><a id="__codelineno-0-424" name="__codelineno-0-424"></a>        <span class="k">return</span> <span class="n">TrainConfig</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+                <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-470">470</a></span>
+<span class="normal"><a href="#__codelineno-0-471">471</a></span>
+<span class="normal"><a href="#__codelineno-0-472">472</a></span>
+<span class="normal"><a href="#__codelineno-0-473">473</a></span>
+<span class="normal"><a href="#__codelineno-0-474">474</a></span>
+<span class="normal"><a href="#__codelineno-0-475">475</a></span>
+<span class="normal"><a href="#__codelineno-0-476">476</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-470"><a id="__codelineno-0-470" name="__codelineno-0-470"></a><span class="k">class</span><span class="w"> </span><span class="nc">RFDETRSegPreview</span><span class="p">(</span><span class="n">RFDETR</span><span class="p">):</span>
+</span><span id="__span-0-471"><a id="__codelineno-0-471" name="__codelineno-0-471"></a>    <span class="n">size</span> <span class="o">=</span> <span class="s2">&quot;rfdetr-seg-preview&quot;</span>
+</span><span id="__span-0-472"><a id="__codelineno-0-472" name="__codelineno-0-472"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">get_model_config</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+</span><span id="__span-0-473"><a id="__codelineno-0-473" name="__codelineno-0-473"></a>        <span class="k">return</span> <span class="n">RFDETRSegPreviewConfig</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+</span><span id="__span-0-474"><a id="__codelineno-0-474" name="__codelineno-0-474"></a>
+</span><span id="__span-0-475"><a id="__codelineno-0-475" name="__codelineno-0-475"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">get_train_config</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+</span><span id="__span-0-476"><a id="__codelineno-0-476" name="__codelineno-0-476"></a>        <span class="k">return</span> <span class="n">SegmentationTrainConfig</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
               </details>
 
@@ -1682,20 +1672,20 @@
 
 
 
-<h2 id="rfdetr.detr.RFDETRBase-attributes">Attributes<a href="#rfdetr.detr.RFDETRBase-attributes" class="headerlink" title="Permanent link">&para;</a></h2>
+<h2 id="rfdetr.detr.RFDETRSegPreview-attributes">Attributes<a href="#rfdetr.detr.RFDETRSegPreview-attributes" class="headerlink" title="Permanent link">&para;</a></h2>
 
 <div class="doc doc-object doc-attribute">
 
 
 
-<h3 id="rfdetr.detr.RFDETRBase.class_names" class="doc doc-heading">
+<h3 id="rfdetr.detr.RFDETRSegPreview.class_names" class="doc doc-heading">
 <code class="doc-symbol doc-symbol-heading doc-symbol-attribute"></code>            <code class="highlight language-python"><span class="n">class_names</span></code>
 
   <span class="doc doc-labels">
       <small class="doc doc-label doc-label-property"><code>property</code></small>
   </span>
 
-<a href="#rfdetr.detr.RFDETRBase.class_names" class="headerlink" title="Permanent link">&para;</a></h3>
+<a href="#rfdetr.detr.RFDETRSegPreview.class_names" class="headerlink" title="Permanent link">&para;</a></h3>
 
 
     <div class="doc doc-contents ">
@@ -1728,15 +1718,15 @@
 
 </div>
 
-<h2 id="rfdetr.detr.RFDETRBase-functions">Functions<a href="#rfdetr.detr.RFDETRBase-functions" class="headerlink" title="Permanent link">&para;</a></h2>
+<h2 id="rfdetr.detr.RFDETRSegPreview-functions">Functions<a href="#rfdetr.detr.RFDETRSegPreview-functions" class="headerlink" title="Permanent link">&para;</a></h2>
 
 <div class="doc doc-object doc-function">
 
 
-<h3 id="rfdetr.detr.RFDETRBase.deploy_to_roboflow" class="doc doc-heading">
+<h3 id="rfdetr.detr.RFDETRSegPreview.deploy_to_roboflow" class="doc doc-heading">
 <code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="n">deploy_to_roboflow</span><span class="p">(</span><span class="n">workspace</span><span class="p">,</span> <span class="n">project_id</span><span class="p">,</span> <span class="n">version</span><span class="p">,</span> <span class="n">api_key</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span></code>
 
-<a href="#rfdetr.detr.RFDETRBase.deploy_to_roboflow" class="headerlink" title="Permanent link">&para;</a></h3>
+<a href="#rfdetr.detr.RFDETRSegPreview.deploy_to_roboflow" class="headerlink" title="Permanent link">&para;</a></h3>
 
 
     <div class="doc doc-contents ">
@@ -1759,8 +1749,8 @@
       <tbody>
           <tr class="doc-section-item">
             <td>
-<h4 id="rfdetr.detr.RFDETRBase.deploy_to_roboflow(workspace)" class="doc doc-heading doc-heading-parameter">                  <code>workspace</code>
-<a href="#rfdetr.detr.RFDETRBase.deploy_to_roboflow(workspace)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
+<h4 id="rfdetr.detr.RFDETRSegPreview.deploy_to_roboflow(workspace)" class="doc doc-heading doc-heading-parameter">                  <code>workspace</code>
+<a href="#rfdetr.detr.RFDETRSegPreview.deploy_to_roboflow(workspace)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
             <td>
                   <code><span title="str">str</span></code>
             </td>
@@ -1775,8 +1765,8 @@
           </tr>
           <tr class="doc-section-item">
             <td>
-<h4 id="rfdetr.detr.RFDETRBase.deploy_to_roboflow(project_ids)" class="doc doc-heading doc-heading-parameter">                  <code>project_ids</code>
-<a href="#rfdetr.detr.RFDETRBase.deploy_to_roboflow(project_ids)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
+<h4 id="rfdetr.detr.RFDETRSegPreview.deploy_to_roboflow(project_ids)" class="doc doc-heading doc-heading-parameter">                  <code>project_ids</code>
+<a href="#rfdetr.detr.RFDETRSegPreview.deploy_to_roboflow(project_ids)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
             <td>
                   <code><span title="typing.List">List</span>[<span title="str">str</span>]</code>
             </td>
@@ -1791,8 +1781,8 @@
           </tr>
           <tr class="doc-section-item">
             <td>
-<h4 id="rfdetr.detr.RFDETRBase.deploy_to_roboflow(api_key)" class="doc doc-heading doc-heading-parameter">                  <code>api_key</code>
-<a href="#rfdetr.detr.RFDETRBase.deploy_to_roboflow(api_key)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
+<h4 id="rfdetr.detr.RFDETRSegPreview.deploy_to_roboflow(api_key)" class="doc doc-heading doc-heading-parameter">                  <code>api_key</code>
+<a href="#rfdetr.detr.RFDETRSegPreview.deploy_to_roboflow(api_key)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
             <td>
                   <code><span title="str">str</span></code>
             </td>
@@ -1808,8 +1798,8 @@ it will be read from the environment variable <code>ROBOFLOW_API_KEY</code>.</p>
           </tr>
           <tr class="doc-section-item">
             <td>
-<h4 id="rfdetr.detr.RFDETRBase.deploy_to_roboflow(size)" class="doc doc-heading doc-heading-parameter">                  <code>size</code>
-<a href="#rfdetr.detr.RFDETRBase.deploy_to_roboflow(size)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
+<h4 id="rfdetr.detr.RFDETRSegPreview.deploy_to_roboflow(size)" class="doc doc-heading doc-heading-parameter">                  <code>size</code>
+<a href="#rfdetr.detr.RFDETRSegPreview.deploy_to_roboflow(size)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
             <td>
                   <code><span title="str">str</span></code>
             </td>
@@ -1825,8 +1815,8 @@ it will default to the size of the model being trained (e.g., "rfdetr-base", "rf
           </tr>
           <tr class="doc-section-item">
             <td>
-<h4 id="rfdetr.detr.RFDETRBase.deploy_to_roboflow(model_name)" class="doc doc-heading doc-heading-parameter">                  <code>model_name</code>
-<a href="#rfdetr.detr.RFDETRBase.deploy_to_roboflow(model_name)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
+<h4 id="rfdetr.detr.RFDETRSegPreview.deploy_to_roboflow(model_name)" class="doc doc-heading doc-heading-parameter">                  <code>model_name</code>
+<a href="#rfdetr.detr.RFDETRSegPreview.deploy_to_roboflow(model_name)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
             <td>
                   <code><span title="str">str</span></code>
             </td>
@@ -1962,10 +1952,10 @@ it will default to the size of the model being trained (e.g., "rfdetr-base", "rf
 <div class="doc doc-object doc-function">
 
 
-<h3 id="rfdetr.detr.RFDETRBase.export" class="doc doc-heading">
+<h3 id="rfdetr.detr.RFDETRSegPreview.export" class="doc doc-heading">
 <code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="n">export</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span></code>
 
-<a href="#rfdetr.detr.RFDETRBase.export" class="headerlink" title="Permanent link">&para;</a></h3>
+<a href="#rfdetr.detr.RFDETRSegPreview.export" class="headerlink" title="Permanent link">&para;</a></h3>
 
 
     <div class="doc doc-contents ">
@@ -1998,10 +1988,10 @@ it will default to the size of the model being trained (e.g., "rfdetr-base", "rf
 <div class="doc doc-object doc-function">
 
 
-<h3 id="rfdetr.detr.RFDETRBase.get_model" class="doc doc-heading">
+<h3 id="rfdetr.detr.RFDETRSegPreview.get_model" class="doc doc-heading">
 <code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="n">get_model</span><span class="p">(</span><span class="n">config</span><span class="p">)</span></code>
 
-<a href="#rfdetr.detr.RFDETRBase.get_model" class="headerlink" title="Permanent link">&para;</a></h3>
+<a href="#rfdetr.detr.RFDETRSegPreview.get_model" class="headerlink" title="Permanent link">&para;</a></h3>
 
 
     <div class="doc doc-contents ">
@@ -2029,10 +2019,10 @@ it will default to the size of the model being trained (e.g., "rfdetr-base", "rf
 <div class="doc doc-object doc-function">
 
 
-<h3 id="rfdetr.detr.RFDETRBase.maybe_download_pretrain_weights" class="doc doc-heading">
+<h3 id="rfdetr.detr.RFDETRSegPreview.maybe_download_pretrain_weights" class="doc doc-heading">
 <code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="n">maybe_download_pretrain_weights</span><span class="p">()</span></code>
 
-<a href="#rfdetr.detr.RFDETRBase.maybe_download_pretrain_weights" class="headerlink" title="Permanent link">&para;</a></h3>
+<a href="#rfdetr.detr.RFDETRSegPreview.maybe_download_pretrain_weights" class="headerlink" title="Permanent link">&para;</a></h3>
 
 
     <div class="doc doc-contents ">
@@ -2060,10 +2050,10 @@ it will default to the size of the model being trained (e.g., "rfdetr-base", "rf
 <div class="doc doc-object doc-function">
 
 
-<h3 id="rfdetr.detr.RFDETRBase.predict" class="doc doc-heading">
+<h3 id="rfdetr.detr.RFDETRSegPreview.predict" class="doc doc-heading">
 <code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="n">predict</span><span class="p">(</span><span class="n">images</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span></code>
 
-<a href="#rfdetr.detr.RFDETRBase.predict" class="headerlink" title="Permanent link">&para;</a></h3>
+<a href="#rfdetr.detr.RFDETRSegPreview.predict" class="headerlink" title="Permanent link">&para;</a></h3>
 
 
     <div class="doc doc-contents ">
@@ -2089,8 +2079,8 @@ to values in the [0, 1] range and have the shape (C, H, W).</p>
       <tbody>
           <tr class="doc-section-item">
             <td>
-<h4 id="rfdetr.detr.RFDETRBase.predict(images)" class="doc doc-heading doc-heading-parameter">                  <code>images</code>
-<a href="#rfdetr.detr.RFDETRBase.predict(images)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
+<h4 id="rfdetr.detr.RFDETRSegPreview.predict(images)" class="doc doc-heading doc-heading-parameter">                  <code>images</code>
+<a href="#rfdetr.detr.RFDETRSegPreview.predict(images)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
             <td>
                   <code><span title="typing.Union">Union</span>[<span title="str">str</span>, <span title="PIL.Image.Image">Image</span>, <span title="numpy.ndarray">ndarray</span>, <span title="torch.Tensor">Tensor</span>, <span title="typing.List">List</span>[<span title="typing.Union">Union</span>[<span title="str">str</span>, <span title="numpy.ndarray">ndarray</span>, <span title="PIL.Image.Image">Image</span>, <span title="torch.Tensor">Tensor</span>]]]</code>
             </td>
@@ -2106,8 +2096,8 @@ as file paths, PIL Images, NumPy arrays, or torch.Tensors.</p>
           </tr>
           <tr class="doc-section-item">
             <td>
-<h4 id="rfdetr.detr.RFDETRBase.predict(threshold)" class="doc doc-heading doc-heading-parameter">                  <code>threshold</code>
-<a href="#rfdetr.detr.RFDETRBase.predict(threshold)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
+<h4 id="rfdetr.detr.RFDETRSegPreview.predict(threshold)" class="doc doc-heading doc-heading-parameter">                  <code>threshold</code>
+<a href="#rfdetr.detr.RFDETRSegPreview.predict(threshold)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
             <td>
                   <code><span title="float">float</span></code>
             </td>
@@ -2122,8 +2112,8 @@ as file paths, PIL Images, NumPy arrays, or torch.Tensors.</p>
           </tr>
           <tr class="doc-section-item">
             <td>
-<h4 id="rfdetr.detr.RFDETRBase.predict(**kwargs)" class="doc doc-heading doc-heading-parameter">                  <code>**kwargs</code>
-<a href="#rfdetr.detr.RFDETRBase.predict(**kwargs)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
+<h4 id="rfdetr.detr.RFDETRSegPreview.predict(**kwargs)" class="doc doc-heading doc-heading-parameter">                  <code>**kwargs</code>
+<a href="#rfdetr.detr.RFDETRSegPreview.predict(**kwargs)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
             <td>
             </td>
             <td>
@@ -2446,10 +2436,10 @@ and class IDs.</p>
 <div class="doc doc-object doc-function">
 
 
-<h3 id="rfdetr.detr.RFDETRBase.train" class="doc doc-heading">
+<h3 id="rfdetr.detr.RFDETRSegPreview.train" class="doc doc-heading">
 <code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="n">train</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span></code>
 
-<a href="#rfdetr.detr.RFDETRBase.train" class="headerlink" title="Permanent link">&para;</a></h3>
+<a href="#rfdetr.detr.RFDETRSegPreview.train" class="headerlink" title="Permanent link">&para;</a></h3>
 
 
     <div class="doc doc-contents ">

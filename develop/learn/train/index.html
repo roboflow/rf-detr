@@ -15,7 +15,7 @@
         <link rel="canonical" href="https://roboflow.github.io/rf-detr/develop/learn/train/">
       
       
-        <link rel="prev" href="../pretrained/">
+        <link rel="prev" href="../run/segmentation/">
       
       
         <link rel="next" href="../deploy/">
@@ -29,7 +29,7 @@
     
     
       
-        <title>Train an RF-DETR Model - RF-DETR</title>
+        <title>Train a Model - RF-DETR</title>
       
     
     
@@ -142,7 +142,7 @@
 
             </a>
             
-              Train an RF-DETR Model
+              Train a Model
             
           </span>
         </div>
@@ -327,14 +327,25 @@
   
     
     
+      
+  
+  
+    
+  
+  
+    
+    
       <li class="md-tabs__item md-tabs__item--active">
-        <a href="../pretrained/" class="md-tabs__link">
+        <a href="../run/detection/" class="md-tabs__link">
           
   
   Learn
 
         </a>
       </li>
+    
+  
+
     
   
 
@@ -509,14 +520,64 @@
   
   
   
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_1" id="__nav_2_1_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    
+  
+    Run a Model
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Run a Model
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
     <li class="md-nav__item">
-      <a href="../pretrained/" class="md-nav__link">
+      <a href="../run/detection/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
     
   
-    Run a Pre-Trained Model
+    Object Detection
   
 
     
@@ -525,6 +586,41 @@
   
 
       </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../run/segmentation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    
+  
+    Segmentation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
     </li>
   
 
@@ -552,7 +648,7 @@
   <span class="md-ellipsis">
     
   
-    Train an RF-DETR Model
+    Train a Model
   
 
     
@@ -569,7 +665,7 @@
   <span class="md-ellipsis">
     
   
-    Train an RF-DETR Model
+    Train a Model
   
 
     
@@ -606,17 +702,18 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#fine-tuning" class="md-nav__link">
+  <a href="#start-training" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Fine-tuning
+        Start Training
       
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
+    <nav class="md-nav" aria-label="Start Training">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
   <a href="#result-checkpoints" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -626,8 +723,8 @@
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
+        
+          <li class="md-nav__item">
   <a href="#resume-training" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -637,8 +734,8 @@
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
+        
+          <li class="md-nav__item">
   <a href="#early-stopping" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -648,8 +745,8 @@
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
+        
+          <li class="md-nav__item">
   <a href="#multi-gpu-training" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -659,8 +756,8 @@
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
+        
+          <li class="md-nav__item">
   <a href="#logging-with-tensorboard" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -670,8 +767,8 @@
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
+        
+          <li class="md-nav__item">
   <a href="#logging-with-weights-and-biases" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -681,8 +778,8 @@
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
+        
+          <li class="md-nav__item">
   <a href="#load-and-run-fine-tuned-model" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -690,6 +787,11 @@
       
     </span>
   </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -879,7 +981,7 @@
   <span class="md-ellipsis">
     
   
-    Models
+    Object Detection Models
   
 
     
@@ -895,7 +997,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    Models
+    Object Detection Models
   
 
           </label>
@@ -968,7 +1070,7 @@
   <span class="md-ellipsis">
     
   
-    RF-DETR Base
+    RF-DETR Base (Deprecated)
   
 
     
@@ -1023,6 +1125,91 @@
     
   
     RF-DETR Large
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    
+  
+    Image Segmentation Models
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Image Segmentation Models
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/seg_preview/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    
+  
+    RF-DETR Seg Preview
   
 
     
@@ -1115,17 +1302,18 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#fine-tuning" class="md-nav__link">
+  <a href="#start-training" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Fine-tuning
+        Start Training
       
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
+    <nav class="md-nav" aria-label="Start Training">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
   <a href="#result-checkpoints" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1135,8 +1323,8 @@
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
+        
+          <li class="md-nav__item">
   <a href="#resume-training" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1146,8 +1334,8 @@
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
+        
+          <li class="md-nav__item">
   <a href="#early-stopping" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1157,8 +1345,8 @@
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
+        
+          <li class="md-nav__item">
   <a href="#multi-gpu-training" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1168,8 +1356,8 @@
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
+        
+          <li class="md-nav__item">
   <a href="#logging-with-tensorboard" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1179,8 +1367,8 @@
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
+        
+          <li class="md-nav__item">
   <a href="#logging-with-weights-and-biases" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1190,8 +1378,8 @@
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
+        
+          <li class="md-nav__item">
   <a href="#load-and-run-fine-tuned-model" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1199,6 +1387,11 @@
       
     </span>
   </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1234,13 +1427,10 @@
 
 
 <h1 id="train-an-rf-detr-model">Train an RF-DETR Model<a class="headerlink" href="#train-an-rf-detr-model" title="Permanent link">&para;</a></h1>
-<p>You can train an RF-DETR model on a custom dataset using the <code>rfdetr</code> Python package, or in the cloud using Roboflow.</p>
-<p>Training on device is ideal if you want to manage your training pipeline and have a GPU available for training.</p>
-<p>Training in the Roboflow Cloud is ideal if you want managed training whose weights you can deploy on your own hardware and with a hosted API.</p>
-<p>For this guide, we will train a model using the <code>rfdetr</code> Python package.</p>
-<p>Once you have trained a model with this guide, see our <a href="/learn/deploy/">deploy an RF-DETR model guide</a> to learn how to run inference with your model.</p>
+<p>You can train RF-DETR object detection and segmentation models on a custom dataset using the <code>rfdetr</code> Python package, or in the cloud using Roboflow.</p>
+<p>This guide describes how to train both an object detection and segmentation RF-DETR model.</p>
 <h3 id="dataset-structure">Dataset structure<a class="headerlink" href="#dataset-structure" title="Permanent link">&para;</a></h3>
-<p>RF-DETR expects the dataset to be in COCO format. Divide your dataset into three subdirectories: <code>train</code>, <code>valid</code>, and <code>test</code>. Each subdirectory should contain its own <code>_annotations.coco.json</code> file that holds the annotations for that particular split, along with the corresponding image files. Below is an example of the directory structure:</p>
+<p>RF-DETR expects the dataset to be in COCO format. Divide your dataset into three subdirectories: <code>train</code>, <code>valid</code>, and <code>test</code>. Each sub-directory should contain its own <code>_annotations.coco.json</code> file that holds the annotations for that particular split, along with the corresponding image files. Below is an example of the directory structure:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>dataset/
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>├── train/
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>│   ├── _annotations.coco.json
@@ -1259,21 +1449,45 @@
 </span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>    └── ... (other image files)
 </span></code></pre></div>
 <p><a href="https://roboflow.com/annotate">Roboflow</a> allows you to create object detection datasets from scratch or convert existing datasets from formats like YOLO, and then export them in COCO JSON format for training. You can also explore <a href="https://universe.roboflow.com/">Roboflow Universe</a> to find pre-labeled datasets for a range of use cases.</p>
-<h3 id="fine-tuning">Fine-tuning<a class="headerlink" href="#fine-tuning" title="Permanent link">&para;</a></h3>
-<p>You can fine-tune RF-DETR from pre-trained COCO checkpoints. By default, the RF-DETR-B checkpoint will be used. To get started quickly, please refer to our fine-tuning Google Colab <a href="https://colab.research.google.com/github/roboflow-ai/notebooks/blob/main/notebooks/how-to-finetune-rf-detr-on-detection-dataset.ipynb">notebook</a>.</p>
+<p>If you are training a segmentation model, your COCO JSON annotations should have a <code>segmentation</code> key with the polygon associated with each annotation.</p>
+<h2 id="start-training">Start Training<a class="headerlink" href="#start-training" title="Permanent link">&para;</a></h2>
+<p>You can fine-tune RF-DETR from pre-trained COCO checkpoints.</p>
+<p>For object detection, the RF-DETR-B checkpoint is used by default. To get started quickly with training an object detection model, please refer to our fine-tuning Google Colab <a href="https://colab.research.google.com/github/roboflow-ai/notebooks/blob/main/notebooks/how-to-finetune-rf-detr-on-detection-dataset.ipynb">notebook</a>.</p>
+<p>For image segmentation, the RF-DETR-Seg (Preview) checkpoint is used by default.</p>
+<div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">Object Detection</label><label for="__tabbed_1_2">Image Segmentation</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
 <div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRBase</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
 </span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRBase</span><span class="p">()</span>
 </span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>
 </span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
 </span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>    <span class="n">dataset_dir</span><span class="o">=&lt;</span><span class="n">DATASET_PATH</span><span class="o">&gt;</span><span class="p">,</span>
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
 </span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
 </span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>    <span class="n">grad_accum_steps</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
 </span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>    <span class="n">lr</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span>
 </span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>    <span class="n">output_dir</span><span class="o">=&lt;</span><span class="n">OUTPUT_PATH</span><span class="o">&gt;</span>
 </span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="p">)</span>
 </span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSegPreview</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSegPreview</span><span class="p">()</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">dataset_dir</span><span class="o">=&lt;</span><span class="n">DATASET_PATH</span><span class="o">&gt;</span><span class="p">,</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>    <span class="n">grad_accum_steps</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>    <span class="n">lr</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span>
+</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>    <span class="n">output_dir</span><span class="o">=&lt;</span><span class="n">OUTPUT_PATH</span><span class="o">&gt;</span>
+</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="p">)</span>
+</span></code></pre></div>
+</div>
+</div>
+</div>
 <p>Different GPUs have different VRAM capacities, so adjust batch_size and grad_accum_steps to maintain a total batch size of 16. For example, on a powerful GPU like the A100, use <code>batch_size=16</code> and <code>grad_accum_steps=1</code>; on smaller GPUs like the T4, use <code>batch_size=4</code> and <code>grad_accum_steps=4</code>. This gradient accumulation strategy helps train effectively even with limited memory.</p>
 </details>
 <details>
@@ -1418,39 +1632,83 @@
 </details>
 <h3 id="resume-training">Resume training<a class="headerlink" href="#resume-training" title="Permanent link">&para;</a></h3>
 <p>You can resume training from a previously saved checkpoint by passing the path to the <code>checkpoint.pth</code> file using the <code>resume</code> argument. This is useful when training is interrupted or you want to continue fine-tuning an already partially trained model. The training loop will automatically load the weights and optimizer state from the provided checkpoint file.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRBase</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRBase</span><span class="p">()</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">dataset_dir</span><span class="o">=&lt;</span><span class="n">DATASET_PATH</span><span class="o">&gt;</span><span class="p">,</span>
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
-</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
-</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>    <span class="n">grad_accum_steps</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
-</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>    <span class="n">lr</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span>
-</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>    <span class="n">output_dir</span><span class="o">=&lt;</span><span class="n">OUTPUT_PATH</span><span class="o">&gt;</span><span class="p">,</span>
-</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>    <span class="n">resume</span><span class="o">=&lt;</span><span class="n">CHECKPOINT_PATH</span><span class="o">&gt;</span>
-</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="p">)</span>
-</span></code></pre></div>
-<h3 id="early-stopping">Early stopping<a class="headerlink" href="#early-stopping" title="Permanent link">&para;</a></h3>
-<p>Early stopping monitors validation mAP and halts training if improvements remain below a threshold for a set number of epochs. This can reduce wasted computation once the model converges. Additional parameters—such as <code>early_stopping_patience</code>, <code>early_stopping_min_delta</code>, and <code>early_stopping_use_ema</code>—let you fine-tune the stopping behavior.</p>
+<div class="tabbed-set tabbed-alternate" data-tabs="2:2"><input checked="checked" id="__tabbed_2_1" name="__tabbed_2" type="radio" /><input id="__tabbed_2_2" name="__tabbed_2" type="radio" /><div class="tabbed-labels"><label for="__tabbed_2_1">Object Detection</label><label for="__tabbed_2_2">Image Segmentation</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
 <div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRBase</span>
 </span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
 </span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRBase</span><span class="p">()</span>
 </span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>
 </span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
 </span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="n">dataset_dir</span><span class="o">=&lt;</span><span class="n">DATASET_PATH</span><span class="o">&gt;</span><span class="p">,</span>
-</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
-</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">4</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
 </span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>    <span class="n">grad_accum_steps</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
 </span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>    <span class="n">lr</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span>
 </span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>    <span class="n">output_dir</span><span class="o">=&lt;</span><span class="n">OUTPUT_PATH</span><span class="o">&gt;</span><span class="p">,</span>
-</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>    <span class="n">early_stopping</span><span class="o">=</span><span class="kc">True</span>
+</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>    <span class="n">resume</span><span class="o">=&lt;</span><span class="n">CHECKPOINT_PATH</span><span class="o">&gt;</span>
 </span><span id="__span-3-13"><a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="p">)</span>
 </span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSegPreview</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSegPreview</span><span class="p">()</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    <span class="n">dataset_dir</span><span class="o">=&lt;</span><span class="n">DATASET_PATH</span><span class="o">&gt;</span><span class="p">,</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>    <span class="n">grad_accum_steps</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>    <span class="n">lr</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span>
+</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>    <span class="n">output_dir</span><span class="o">=&lt;</span><span class="n">OUTPUT_PATH</span><span class="o">&gt;</span><span class="p">,</span>
+</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>    <span class="n">resume</span><span class="o">=&lt;</span><span class="n">CHECKPOINT_PATH</span><span class="o">&gt;</span>
+</span><span id="__span-4-13"><a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="p">)</span>
+</span></code></pre></div>
+</div>
+</div>
+</div>
+<h3 id="early-stopping">Early stopping<a class="headerlink" href="#early-stopping" title="Permanent link">&para;</a></h3>
+<p>Early stopping monitors validation mAP and halts training if improvements remain below a threshold for a set number of epochs. This can reduce wasted computation once the model converges. Additional parameters—such as <code>early_stopping_patience</code>, <code>early_stopping_min_delta</code>, and <code>early_stopping_use_ema</code>—let you fine-tune the stopping behavior.</p>
+<div class="tabbed-set tabbed-alternate" data-tabs="3:2"><input checked="checked" id="__tabbed_3_1" name="__tabbed_3" type="radio" /><input id="__tabbed_3_2" name="__tabbed_3" type="radio" /><div class="tabbed-labels"><label for="__tabbed_3_1">Object Detection</label><label for="__tabbed_3_2">Image Segmentation</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRBase</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRBase</span><span class="p">()</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>    <span class="n">dataset_dir</span><span class="o">=&lt;</span><span class="n">DATASET_PATH</span><span class="o">&gt;</span><span class="p">,</span>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">4</span>
+</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>    <span class="n">grad_accum_steps</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>    <span class="n">lr</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span>
+</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>    <span class="n">output_dir</span><span class="o">=&lt;</span><span class="n">OUTPUT_PATH</span><span class="o">&gt;</span><span class="p">,</span>
+</span><span id="__span-5-12"><a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a>    <span class="n">early_stopping</span><span class="o">=</span><span class="kc">True</span>
+</span><span id="__span-5-13"><a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="p">)</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSegPreview</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSegPreview</span><span class="p">()</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>    <span class="n">dataset_dir</span><span class="o">=&lt;</span><span class="n">DATASET_PATH</span><span class="o">&gt;</span><span class="p">,</span>
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
+</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">4</span>
+</span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>    <span class="n">grad_accum_steps</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-6-10"><a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>    <span class="n">lr</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span>
+</span><span id="__span-6-11"><a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>    <span class="n">output_dir</span><span class="o">=&lt;</span><span class="n">OUTPUT_PATH</span><span class="o">&gt;</span><span class="p">,</span>
+</span><span id="__span-6-12"><a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a>    <span class="n">early_stopping</span><span class="o">=</span><span class="kc">True</span>
+</span><span id="__span-6-13"><a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a><span class="p">)</span>
+</span></code></pre></div>
+</div>
+</div>
+</div>
 <h3 id="multi-gpu-training">Multi-GPU training<a class="headerlink" href="#multi-gpu-training" title="Permanent link">&para;</a></h3>
 <p>You can fine-tune RF-DETR on multiple GPUs using PyTorch’s Distributed Data Parallel (DDP). Create a <code>main.py</code> script that initializes your model and calls <code>.train()</code> as usual than run it in terminal.</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>python<span class="w"> </span>-m<span class="w"> </span>torch.distributed.launch<span class="w"> </span>--nproc_per_node<span class="o">=</span><span class="m">8</span><span class="w"> </span>--use_env<span class="w"> </span>main.py
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>python<span class="w"> </span>-m<span class="w"> </span>torch.distributed.launch<span class="w"> </span>--nproc_per_node<span class="o">=</span><span class="m">8</span><span class="w"> </span>--use_env<span class="w"> </span>main.py
 </span></code></pre></div>
 <p>Replace <code>8</code> in the <code>--nproc_per_node argument</code> with the number of GPUs you want to use. This approach creates one training process per GPU and splits the workload automatically. Note that your effective batch size is multiplied by the number of GPUs, so you may need to adjust your <code>batch_size</code> and <code>grad_accum_steps</code> to maintain the same overall batch size.</p>
 <h3 id="logging-with-tensorboard">Logging with TensorBoard<a class="headerlink" href="#logging-with-tensorboard" title="Permanent link">&para;</a></h3>
@@ -1462,37 +1720,37 @@
 
 - TensorBoard logging requires additional packages. Install them with:
 
-    <div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;rfdetr[metrics]&quot;</span>
+    <div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;rfdetr[metrics]&quot;</span>
 </span></code></pre></div>
 
 - To activate logging, pass the extra parameter `tensorboard=True` to `.train()`:
 
-    <div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRBase</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRBase</span><span class="p">()</span>
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>
-</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
-</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>    <span class="n">dataset_dir</span><span class="o">=&lt;</span><span class="n">DATASET_PATH</span><span class="o">&gt;</span><span class="p">,</span>
-</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
-</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
-</span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>    <span class="n">grad_accum_steps</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
-</span><span id="__span-6-10"><a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>    <span class="n">lr</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span>
-</span><span id="__span-6-11"><a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>    <span class="n">output_dir</span><span class="o">=&lt;</span><span class="n">OUTPUT_PATH</span><span class="o">&gt;</span><span class="p">,</span>
-</span><span id="__span-6-12"><a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a>    <span class="n">tensorboard</span><span class="o">=</span><span class="kc">True</span>
-</span><span id="__span-6-13"><a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a><span class="p">)</span>
+    <div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRBase</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRBase</span><span class="p">()</span>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>
+</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
+</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>    <span class="n">dataset_dir</span><span class="o">=&lt;</span><span class="n">DATASET_PATH</span><span class="o">&gt;</span><span class="p">,</span>
+</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
+</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-9-9"><a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>    <span class="n">grad_accum_steps</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-9-10"><a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a>    <span class="n">lr</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span>
+</span><span id="__span-9-11"><a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a>    <span class="n">output_dir</span><span class="o">=&lt;</span><span class="n">OUTPUT_PATH</span><span class="o">&gt;</span><span class="p">,</span>
+</span><span id="__span-9-12"><a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a>    <span class="n">tensorboard</span><span class="o">=</span><span class="kc">True</span>
+</span><span id="__span-9-13"><a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a><span class="p">)</span>
 </span></code></pre></div>
 
 - To use TensorBoard locally, navigate to your project directory and run:
 
-    <div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>tensorboard<span class="w"> </span>--logdir<span class="w"> </span>&lt;OUTPUT_DIR&gt;
+    <div class="language-bash highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>tensorboard<span class="w"> </span>--logdir<span class="w"> </span>&lt;OUTPUT_DIR&gt;
 </span></code></pre></div>
 
     Then open `http://localhost:6006/` in your browser to view your logs.
 
 - To use TensorBoard in Google Colab run:
 
-    <div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>%load_ext<span class="w"> </span>tensorboard
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>%tensorboard<span class="w"> </span>--logdir<span class="w"> </span>&lt;OUTPUT_DIR&gt;
+    <div class="language-bash highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>%load_ext<span class="w"> </span>tensorboard
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>%tensorboard<span class="w"> </span>--logdir<span class="w"> </span>&lt;OUTPUT_DIR&gt;
 </span></code></pre></div>
 
 </details>
@@ -1506,33 +1764,33 @@
 
 - Weights and Biases logging requires additional packages. Install them with:
 
-    <div class="language-bash highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;rfdetr[metrics]&quot;</span>
+    <div class="language-bash highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;rfdetr[metrics]&quot;</span>
 </span></code></pre></div>
 
 - Before using W&B, make sure you are logged in:
 
-    <div class="language-bash highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>wandb<span class="w"> </span>login
+    <div class="language-bash highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>wandb<span class="w"> </span>login
 </span></code></pre></div>
 
     You can retrieve your API key at wandb.ai/authorize.
 
 - To activate logging, pass the extra parameter `wandb=True` to `.train()`:
 
-    <div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRBase</span>
-</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>
-</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRBase</span><span class="p">()</span>
-</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>
-</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
-</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>    <span class="n">dataset_dir</span><span class="o">=&lt;</span><span class="n">DATASET_PATH</span><span class="o">&gt;</span><span class="p">,</span>
-</span><span id="__span-11-7"><a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
-</span><span id="__span-11-8"><a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
-</span><span id="__span-11-9"><a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a>    <span class="n">grad_accum_steps</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
-</span><span id="__span-11-10"><a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a>    <span class="n">lr</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span>
-</span><span id="__span-11-11"><a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a>    <span class="n">output_dir</span><span class="o">=&lt;</span><span class="n">OUTPUT_PATH</span><span class="o">&gt;</span><span class="p">,</span>
-</span><span id="__span-11-12"><a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a>    <span class="n">wandb</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-</span><span id="__span-11-13"><a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a>    <span class="n">project</span><span class="o">=&lt;</span><span class="n">PROJECT_NAME</span><span class="o">&gt;</span><span class="p">,</span>
-</span><span id="__span-11-14"><a id="__codelineno-11-14" name="__codelineno-11-14" href="#__codelineno-11-14"></a>    <span class="n">run</span><span class="o">=&lt;</span><span class="n">RUN_NAME</span><span class="o">&gt;</span>
-</span><span id="__span-11-15"><a id="__codelineno-11-15" name="__codelineno-11-15" href="#__codelineno-11-15"></a><span class="p">)</span>
+    <div class="language-python highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRBase</span>
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>
+</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRBase</span><span class="p">()</span>
+</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>
+</span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
+</span><span id="__span-14-6"><a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>    <span class="n">dataset_dir</span><span class="o">=&lt;</span><span class="n">DATASET_PATH</span><span class="o">&gt;</span><span class="p">,</span>
+</span><span id="__span-14-7"><a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
+</span><span id="__span-14-8"><a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-14-9"><a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a>    <span class="n">grad_accum_steps</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-14-10"><a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a>    <span class="n">lr</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span>
+</span><span id="__span-14-11"><a id="__codelineno-14-11" name="__codelineno-14-11" href="#__codelineno-14-11"></a>    <span class="n">output_dir</span><span class="o">=&lt;</span><span class="n">OUTPUT_PATH</span><span class="o">&gt;</span><span class="p">,</span>
+</span><span id="__span-14-12"><a id="__codelineno-14-12" name="__codelineno-14-12" href="#__codelineno-14-12"></a>    <span class="n">wandb</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-14-13"><a id="__codelineno-14-13" name="__codelineno-14-13" href="#__codelineno-14-13"></a>    <span class="n">project</span><span class="o">=&lt;</span><span class="n">PROJECT_NAME</span><span class="o">&gt;</span><span class="p">,</span>
+</span><span id="__span-14-14"><a id="__codelineno-14-14" name="__codelineno-14-14" href="#__codelineno-14-14"></a>    <span class="n">run</span><span class="o">=&lt;</span><span class="n">RUN_NAME</span><span class="o">&gt;</span>
+</span><span id="__span-14-15"><a id="__codelineno-14-15" name="__codelineno-14-15" href="#__codelineno-14-15"></a><span class="p">)</span>
 </span></code></pre></div>
 
     In W&B, projects are collections of related machine learning experiments, and runs are individual sessions where training or evaluation happens. If you don't specify a name for a run, W&B will assign a random one automatically.
@@ -1540,24 +1798,52 @@
 </details>
 
 <h3 id="load-and-run-fine-tuned-model">Load and run fine-tuned model<a class="headerlink" href="#load-and-run-fine-tuned-model" title="Permanent link">&para;</a></h3>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRBase</span>
-</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>
-</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRBase</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=&lt;</span><span class="n">CHECKPOINT_PATH</span><span class="o">&gt;</span><span class="p">)</span>
-</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>
-</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="n">detections</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="o">&lt;</span><span class="n">IMAGE_PATH</span><span class="o">&gt;</span><span class="p">)</span>
+<div class="tabbed-set tabbed-alternate" data-tabs="4:2"><input checked="checked" id="__tabbed_4_1" name="__tabbed_4" type="radio" /><input id="__tabbed_4_2" name="__tabbed_4" type="radio" /><div class="tabbed-labels"><label for="__tabbed_4_1">Object Detection</label><label for="__tabbed_4_2">Image Segmentation</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRBase</span>
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>
+</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRBase</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=&lt;</span><span class="n">CHECKPOINT_PATH</span><span class="o">&gt;</span><span class="p">)</span>
+</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>
+</span><span id="__span-15-5"><a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="n">detections</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="o">&lt;</span><span class="n">IMAGE_PATH</span><span class="o">&gt;</span><span class="p">)</span>
 </span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSegPreview</span>
+</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>
+</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSegPreview</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=&lt;</span><span class="n">CHECKPOINT_PATH</span><span class="o">&gt;</span><span class="p">)</span>
+</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>
+</span><span id="__span-16-5"><a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="n">detections</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="o">&lt;</span><span class="n">IMAGE_PATH</span><span class="o">&gt;</span><span class="p">)</span>
+</span></code></pre></div>
+</div>
+</div>
+</div>
 <h2 id="onnx-export">ONNX export<a class="headerlink" href="#onnx-export" title="Permanent link">&para;</a></h2>
 <p>RF-DETR supports exporting models to the ONNX format, which enables interoperability with various inference frameworks and can improve deployment efficiency.</p>
 <p>To export your model, first install the <code>onnxexport</code> extension:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>pip install rfdetr[onnxexport]
+<div class="language-text highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>pip install rfdetr[onnxexport]
 </span></code></pre></div>
 <p>Then, run:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRBase</span>
-</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>
-</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRBase</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=&lt;</span><span class="n">CHECKPOINT_PATH</span><span class="o">&gt;</span><span class="p">)</span>
-</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>
-</span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">()</span>
+<div class="tabbed-set tabbed-alternate" data-tabs="5:2"><input checked="checked" id="__tabbed_5_1" name="__tabbed_5" type="radio" /><input id="__tabbed_5_2" name="__tabbed_5" type="radio" /><div class="tabbed-labels"><label for="__tabbed_5_1">Object Detection</label><label for="__tabbed_5_2">Image Segmentation</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRBase</span>
+</span><span id="__span-18-2"><a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>
+</span><span id="__span-18-3"><a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRBase</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=&lt;</span><span class="n">CHECKPOINT_PATH</span><span class="o">&gt;</span><span class="p">)</span>
+</span><span id="__span-18-4"><a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>
+</span><span id="__span-18-5"><a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">()</span>
 </span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSegPreview</span>
+</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>
+</span><span id="__span-19-3"><a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSegPreview</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=&lt;</span><span class="n">CHECKPOINT_PATH</span><span class="o">&gt;</span><span class="p">)</span>
+</span><span id="__span-19-4"><a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a>
+</span><span id="__span-19-5"><a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">()</span>
+</span></code></pre></div>
+</div>
+</div>
+</div>
 <p>This command saves the ONNX model to the <code>output</code> directory.</p>
 
 

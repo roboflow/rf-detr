@@ -16,7 +16,7 @@
       
       
       
-        <link rel="next" href="learn/pretrained/">
+        <link rel="next" href="learn/run/detection/">
       
       
         
@@ -72,7 +72,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rf-detr-sota-real-time-object-detection-model" class="md-skip">
+        <a href="#rf-detr-sota-real-time-detection-and-segmentation-model" class="md-skip">
           Skip to content
         </a>
       
@@ -325,14 +325,23 @@
   
     
     
+      
+  
+  
+  
+    
+    
       <li class="md-tabs__item">
-        <a href="learn/pretrained/" class="md-tabs__link">
+        <a href="learn/run/detection/" class="md-tabs__link">
           
   
   Learn
 
         </a>
       </li>
+    
+  
+
     
   
 
@@ -500,13 +509,41 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#results" class="md-nav__link">
+  <a href="#benchmark-results" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Results
+        Benchmark Results
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Benchmark Results">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#object-detection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Object Detection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#instance-segmentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Instance Segmentation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -596,14 +633,64 @@
   
   
   
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_1" id="__nav_2_1_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    
+  
+    Run a Model
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Run a Model
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
     <li class="md-nav__item">
-      <a href="learn/pretrained/" class="md-nav__link">
+      <a href="learn/run/detection/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
     
   
-    Run a Pre-Trained Model
+    Object Detection
   
 
     
@@ -624,13 +711,48 @@
   
   
     <li class="md-nav__item">
+      <a href="learn/run/segmentation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    
+  
+    Segmentation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="learn/train/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
     
   
-    Train an RF-DETR Model
+    Train a Model
   
 
     
@@ -810,7 +932,7 @@
   <span class="md-ellipsis">
     
   
-    Models
+    Object Detection Models
   
 
     
@@ -826,7 +948,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    Models
+    Object Detection Models
   
 
           </label>
@@ -899,7 +1021,7 @@
   <span class="md-ellipsis">
     
   
-    RF-DETR Base
+    RF-DETR Base (Deprecated)
   
 
     
@@ -975,6 +1097,91 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    
+  
+    Image Segmentation Models
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Image Segmentation Models
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="reference/seg_preview/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    
+  
+    RF-DETR Seg Preview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1018,7 +1225,7 @@
               
                 
               
-              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" hidden>
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
                 <div class="md-sidebar__scrollwrap">
                   <div class="md-sidebar__inner">
                     
@@ -1048,13 +1255,41 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#results" class="md-nav__link">
+  <a href="#benchmark-results" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Results
+        Benchmark Results
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Benchmark Results">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#object-detection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Object Detection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#instance-segmentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Instance Segmentation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1102,15 +1337,20 @@
   
 
 
-<h1 id="rf-detr-sota-real-time-object-detection-model">RF-DETR: SOTA Real-Time Object Detection Model<a class="headerlink" href="#rf-detr-sota-real-time-object-detection-model" title="Permanent link">&para;</a></h1>
+<h1 id="rf-detr-sota-real-time-detection-and-segmentation-model">RF-DETR: SOTA Real-Time Detection and Segmentation Model<a class="headerlink" href="#rf-detr-sota-real-time-detection-and-segmentation-model" title="Permanent link">&para;</a></h1>
 <h2 id="introduction">Introduction<a class="headerlink" href="#introduction" title="Permanent link">&para;</a></h2>
-<p>RF-DETR is a real-time, transformer-based object detection model architecture developed by Roboflow and released under the Apache 2.0 license.</p>
-<p>RF-DETR is the first real-time model to exceed 60 AP on the <a href="https://cocodataset.org/#home">Microsoft COCO benchmark</a> alongside competitive performance at base sizes. It also achieves state-of-the-art performance on <a href="https://github.com/roboflow/rf100-vl">RF100-VL</a>, an object detection benchmark that measures model domain adaptability to real world problems. RF-DETR is fastest and most accurate for its size when compared current real-time objection models.</p>
+<p>RF-DETR is a real-time, transformer-based object detection and instance segmentation model architecture developed by Roboflow and released under the Apache 2.0 license.</p>
+<p>RF-DETR is the first real-time model to exceed 60 AP on the <a href="https://cocodataset.org/#home">Microsoft COCO object detection benchmark</a> alongside competitive performance at base sizes. It also achieves state-of-the-art performance on <a href="https://github.com/roboflow/rf100-vl">RF100-VL</a>, an object detection benchmark that measures model domain adaptability to real world problems. RF-DETR is fastest and most accurate for its size when compared current real-time objection models.</p>
+<p>On image segmentation, RF-DETR Seg (Preview) is 3x faster and more accurate than the largest YOLO when evaluated on the Microsoft COCO Segmentation benchmark, defining a new real-time state-of-the-art for the industry-standard benchmark in segmentation model evaluation.</p>
 <p>RF-DETR is small enough to run on the edge using <a href="https://github.com/roboflow/inference">Inference</a>, making it an ideal model for deployments that need both strong accuracy and real-time performance.</p>
-<h2 id="results">Results<a class="headerlink" href="#results" title="Permanent link">&para;</a></h2>
+<h2 id="benchmark-results">Benchmark Results<a class="headerlink" href="#benchmark-results" title="Permanent link">&para;</a></h2>
+<h3 id="object-detection">Object Detection<a class="headerlink" href="#object-detection" title="Permanent link">&para;</a></h3>
 <p>We validated the performance of RF-DETR on both Microsoft COCO and the RF100-VL benchmarks.</p>
 <p><a href="learn/benchmarks/">See our full benchmarks.</a></p>
 <p><img src="https://media.roboflow.com/rfdetr/pareto1.png" style="max-height: 50rem" /></p>
+<h3 id="instance-segmentation">Instance Segmentation<a class="headerlink" href="#instance-segmentation" title="Permanent link">&para;</a></h3>
+<p>We benchmarked RF-DETR on the Microsoft COCO dataset for segmentation. Our results are below.</p>
+<p><img alt="rf-detr-coco-rf100-vl-9" src="https://media.roboflow.com/rfdetr/pareto_seg.png" /></p>
 <h2 id="install">💻 Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h2>
 <p>You can install and use <code>rfdetr</code> in a
 <a href="https://www.python.org/"><strong>Python&gt;=3.9</strong></a> environment.</p>

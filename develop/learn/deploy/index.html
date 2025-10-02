@@ -327,14 +327,25 @@
   
     
     
+      
+  
+  
+    
+  
+  
+    
+    
       <li class="md-tabs__item md-tabs__item--active">
-        <a href="../pretrained/" class="md-tabs__link">
+        <a href="../run/detection/" class="md-tabs__link">
           
   
   Learn
 
         </a>
       </li>
+    
+  
+
     
   
 
@@ -509,14 +520,64 @@
   
   
   
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_1" id="__nav_2_1_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    
+  
+    Run a Model
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Run a Model
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
     <li class="md-nav__item">
-      <a href="../pretrained/" class="md-nav__link">
+      <a href="../run/detection/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
     
   
-    Run a Pre-Trained Model
+    Object Detection
   
 
     
@@ -537,13 +598,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../run/segmentation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    
+  
+    Segmentation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../train/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
     
   
-    Train an RF-DETR Model
+    Train a Model
   
 
     
@@ -733,7 +829,7 @@
   <span class="md-ellipsis">
     
   
-    Models
+    Object Detection Models
   
 
     
@@ -749,7 +845,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    Models
+    Object Detection Models
   
 
           </label>
@@ -822,7 +918,7 @@
   <span class="md-ellipsis">
     
   
-    RF-DETR Base
+    RF-DETR Base (Deprecated)
   
 
     
@@ -877,6 +973,91 @@
     
   
     RF-DETR Large
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    
+  
+    Image Segmentation Models
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Image Segmentation Models
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/seg_preview/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    
+  
+    RF-DETR Seg Preview
   
 
     
@@ -973,6 +1154,9 @@
 <p>You can deploy a fine-tuned RF-DETR model to Roboflow.</p>
 <p>Deploying to Roboflow allows you to create multi-step computer vision applications that run both in the cloud and your own hardware.</p>
 <p>To deploy your model to Roboflow, run:</p>
+<div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">Object Detection</label><label for="__tabbed_1_2">Image Segmentation</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
 <div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRNano</span>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">x</span> <span class="o">=</span> <span class="n">RFDETRNano</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">&quot;&lt;path/to/pretrain/weights/dir&gt;&quot;</span><span class="p">)</span>
@@ -983,36 +1167,83 @@
 </span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>  <span class="n">api_key</span><span class="o">=</span><span class="s2">&quot;&lt;YOUR_API_KEY&gt;&quot;</span>
 </span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="p">)</span>
 </span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSegPreview</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">x</span> <span class="o">=</span> <span class="n">RFDETRSegPreview</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">&quot;&lt;path/to/pretrain/weights/dir&gt;&quot;</span><span class="p">)</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="n">x</span><span class="o">.</span><span class="n">deploy_to_roboflow</span><span class="p">(</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>  <span class="n">workspace</span><span class="o">=</span><span class="s2">&quot;&lt;your-workspace&gt;&quot;</span><span class="p">,</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>  <span class="n">project_id</span><span class="o">=</span><span class="s2">&quot;&lt;your-project-id&gt;&quot;</span><span class="p">,</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>  <span class="n">version</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>  <span class="n">api_key</span><span class="o">=</span><span class="s2">&quot;&lt;YOUR_API_KEY&gt;&quot;</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="p">)</span>
+</span></code></pre></div>
+</div>
+</div>
+</div>
 <p>Above, set your Roboflow Workspace ID, the ID of the project to which you want to upload your model, and your Roboflow API key.</p>
 <ul>
 <li><a href="https://docs.roboflow.com/developer/authentication/workspace-and-project-ids">Learn how to find your Workspace and Project ID.</a></li>
 <li><a href="https://docs.roboflow.com/developer/authentication/find-your-roboflow-api-key">Learn how to find your API key.</a></li>
 </ul>
 <p>You can then run your model with Roboflow Inference:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">supervision</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sv</span>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">inference</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_model</span>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="kn">from</span><span class="w"> </span><span class="nn">io</span><span class="w"> </span><span class="kn">import</span> <span class="n">BytesIO</span>
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="kn">import</span><span class="w"> </span><span class="nn">requests</span>
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>
-</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="n">url</span> <span class="o">=</span> <span class="s2">&quot;https://media.roboflow.com/dog.jpeg&quot;</span>
-</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="n">image</span> <span class="o">=</span> <span class="n">Image</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="n">BytesIO</span><span class="p">(</span><span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">url</span><span class="p">)</span><span class="o">.</span><span class="n">content</span><span class="p">))</span>
-</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>
-</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="n">model</span> <span class="o">=</span> <span class="n">get_model</span><span class="p">(</span><span class="s2">&quot;rfdetr-base&quot;</span><span class="p">)</span>  <span class="c1"># replace with your Roboflow model ID</span>
-</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>
-</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="n">predictions</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">infer</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">confidence</span><span class="o">=</span><span class="mf">0.5</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
-</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>
-</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="n">detections</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">Detections</span><span class="o">.</span><span class="n">from_inference</span><span class="p">(</span><span class="n">predictions</span><span class="p">)</span>
-</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a>
-</span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="n">labels</span> <span class="o">=</span> <span class="p">[</span><span class="n">prediction</span><span class="o">.</span><span class="n">class_name</span> <span class="k">for</span> <span class="n">prediction</span> <span class="ow">in</span> <span class="n">predictions</span><span class="o">.</span><span class="n">predictions</span><span class="p">]</span>
-</span><span id="__span-1-18"><a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a>
-</span><span id="__span-1-19"><a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="n">annotated_image</span> <span class="o">=</span> <span class="n">image</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
-</span><span id="__span-1-20"><a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a><span class="n">annotated_image</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">BoxAnnotator</span><span class="p">(</span><span class="n">color</span><span class="o">=</span><span class="n">sv</span><span class="o">.</span><span class="n">ColorPalette</span><span class="o">.</span><span class="n">ROBOFLOW</span><span class="p">)</span><span class="o">.</span><span class="n">annotate</span><span class="p">(</span><span class="n">annotated_image</span><span class="p">,</span> <span class="n">detections</span><span class="p">)</span>
-</span><span id="__span-1-21"><a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a><span class="n">annotated_image</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">LabelAnnotator</span><span class="p">(</span><span class="n">color</span><span class="o">=</span><span class="n">sv</span><span class="o">.</span><span class="n">ColorPalette</span><span class="o">.</span><span class="n">ROBOFLOW</span><span class="p">)</span><span class="o">.</span><span class="n">annotate</span><span class="p">(</span><span class="n">annotated_image</span><span class="p">,</span> <span class="n">detections</span><span class="p">,</span> <span class="n">labels</span><span class="p">)</span>
-</span><span id="__span-1-22"><a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a>
-</span><span id="__span-1-23"><a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a><span class="n">sv</span><span class="o">.</span><span class="n">plot_image</span><span class="p">(</span><span class="n">annotated_image</span><span class="p">)</span>
+<div class="tabbed-set tabbed-alternate" data-tabs="2:2"><input checked="checked" id="__tabbed_2_1" name="__tabbed_2" type="radio" /><input id="__tabbed_2_2" name="__tabbed_2" type="radio" /><div class="tabbed-labels"><label for="__tabbed_2_1">Object Detection</label><label for="__tabbed_2_2">Image Segmentation</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">supervision</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sv</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">inference</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_model</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="kn">from</span><span class="w"> </span><span class="nn">io</span><span class="w"> </span><span class="kn">import</span> <span class="n">BytesIO</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="kn">import</span><span class="w"> </span><span class="nn">requests</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="n">url</span> <span class="o">=</span> <span class="s2">&quot;https://media.roboflow.com/dog.jpeg&quot;</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="n">image</span> <span class="o">=</span> <span class="n">Image</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="n">BytesIO</span><span class="p">(</span><span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">url</span><span class="p">)</span><span class="o">.</span><span class="n">content</span><span class="p">))</span>
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>
+</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="n">model</span> <span class="o">=</span> <span class="n">get_model</span><span class="p">(</span><span class="s2">&quot;rfdetr-base&quot;</span><span class="p">)</span>  <span class="c1"># replace with your Roboflow model ID</span>
+</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>
+</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="n">predictions</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">infer</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">confidence</span><span class="o">=</span><span class="mf">0.5</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
+</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>
+</span><span id="__span-2-15"><a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a><span class="n">detections</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">Detections</span><span class="o">.</span><span class="n">from_inference</span><span class="p">(</span><span class="n">predictions</span><span class="p">)</span>
+</span><span id="__span-2-16"><a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>
+</span><span id="__span-2-17"><a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a><span class="n">labels</span> <span class="o">=</span> <span class="p">[</span><span class="n">prediction</span><span class="o">.</span><span class="n">class_name</span> <span class="k">for</span> <span class="n">prediction</span> <span class="ow">in</span> <span class="n">predictions</span><span class="o">.</span><span class="n">predictions</span><span class="p">]</span>
+</span><span id="__span-2-18"><a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>
+</span><span id="__span-2-19"><a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a><span class="n">annotated_image</span> <span class="o">=</span> <span class="n">image</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+</span><span id="__span-2-20"><a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a><span class="n">annotated_image</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">BoxAnnotator</span><span class="p">(</span><span class="n">color</span><span class="o">=</span><span class="n">sv</span><span class="o">.</span><span class="n">ColorPalette</span><span class="o">.</span><span class="n">ROBOFLOW</span><span class="p">)</span><span class="o">.</span><span class="n">annotate</span><span class="p">(</span><span class="n">annotated_image</span><span class="p">,</span> <span class="n">detections</span><span class="p">)</span>
+</span><span id="__span-2-21"><a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a><span class="n">annotated_image</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">LabelAnnotator</span><span class="p">(</span><span class="n">color</span><span class="o">=</span><span class="n">sv</span><span class="o">.</span><span class="n">ColorPalette</span><span class="o">.</span><span class="n">ROBOFLOW</span><span class="p">)</span><span class="o">.</span><span class="n">annotate</span><span class="p">(</span><span class="n">annotated_image</span><span class="p">,</span> <span class="n">detections</span><span class="p">,</span> <span class="n">labels</span><span class="p">)</span>
+</span><span id="__span-2-22"><a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a>
+</span><span id="__span-2-23"><a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a><span class="n">sv</span><span class="o">.</span><span class="n">plot_image</span><span class="p">(</span><span class="n">annotated_image</span><span class="p">)</span>
 </span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">supervision</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sv</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">inference</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_model</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="kn">from</span><span class="w"> </span><span class="nn">io</span><span class="w"> </span><span class="kn">import</span> <span class="n">BytesIO</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="kn">import</span><span class="w"> </span><span class="nn">requests</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="n">url</span> <span class="o">=</span> <span class="s2">&quot;https://media.roboflow.com/dog.jpeg&quot;</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="n">image</span> <span class="o">=</span> <span class="n">Image</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="n">BytesIO</span><span class="p">(</span><span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">url</span><span class="p">)</span><span class="o">.</span><span class="n">content</span><span class="p">))</span>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>
+</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="n">model</span> <span class="o">=</span> <span class="n">get_model</span><span class="p">(</span><span class="s2">&quot;rfdetr-seg-preview&quot;</span><span class="p">)</span>  <span class="c1"># replace with your Roboflow model ID</span>
+</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>
+</span><span id="__span-3-13"><a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="n">predictions</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">infer</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">confidence</span><span class="o">=</span><span class="mf">0.5</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
+</span><span id="__span-3-14"><a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a>
+</span><span id="__span-3-15"><a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="n">detections</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">Detections</span><span class="o">.</span><span class="n">from_inference</span><span class="p">(</span><span class="n">predictions</span><span class="p">)</span>
+</span><span id="__span-3-16"><a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a>
+</span><span id="__span-3-17"><a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a><span class="n">labels</span> <span class="o">=</span> <span class="p">[</span><span class="n">prediction</span><span class="o">.</span><span class="n">class_name</span> <span class="k">for</span> <span class="n">prediction</span> <span class="ow">in</span> <span class="n">predictions</span><span class="o">.</span><span class="n">predictions</span><span class="p">]</span>
+</span><span id="__span-3-18"><a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a>
+</span><span id="__span-3-19"><a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a><span class="n">annotated_image</span> <span class="o">=</span> <span class="n">image</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+</span><span id="__span-3-20"><a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a><span class="n">annotated_image</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">MaskAnnotator</span><span class="p">(</span><span class="n">color</span><span class="o">=</span><span class="n">sv</span><span class="o">.</span><span class="n">ColorPalette</span><span class="o">.</span><span class="n">ROBOFLOW</span><span class="p">)</span><span class="o">.</span><span class="n">annotate</span><span class="p">(</span><span class="n">annotated_image</span><span class="p">,</span> <span class="n">detections</span><span class="p">)</span>
+</span><span id="__span-3-21"><a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a><span class="n">annotated_image</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">LabelAnnotator</span><span class="p">(</span><span class="n">color</span><span class="o">=</span><span class="n">sv</span><span class="o">.</span><span class="n">ColorPalette</span><span class="o">.</span><span class="n">ROBOFLOW</span><span class="p">)</span><span class="o">.</span><span class="n">annotate</span><span class="p">(</span><span class="n">annotated_image</span><span class="p">,</span> <span class="n">detections</span><span class="p">,</span> <span class="n">labels</span><span class="p">)</span>
+</span><span id="__span-3-22"><a id="__codelineno-3-22" name="__codelineno-3-22" href="#__codelineno-3-22"></a>
+</span><span id="__span-3-23"><a id="__codelineno-3-23" name="__codelineno-3-23" href="#__codelineno-3-23"></a><span class="n">sv</span><span class="o">.</span><span class="n">plot_image</span><span class="p">(</span><span class="n">annotated_image</span><span class="p">)</span>
+</span></code></pre></div>
+</div>
+</div>
+</div>
 <p>Above, replace <code>rfdetr-base</code> with the your Roboflow model ID. You can find this ID from the "Models" list in your Roboflow dashboard:</p>
 <p><img alt="" src="https://media.roboflow.com/rfdetr/models-list.png" /></p>
 <p>When you first run this model, your model weights will be cached for local use with Inference.</p>
