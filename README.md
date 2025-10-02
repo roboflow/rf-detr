@@ -191,7 +191,7 @@ If you find our work helpful for your research, please consider citing the follo
 
 ```bibtex
 @software{rf-detr,
-  author = {Robinson, Isaac and Robicheaux, Peter and Popov, Matvei},
+  author = {Robinson, Isaac and Robicheaux, Peter and Popov, Matvei and Ramanan, Deva and Peri, Neehar},
   license = {Apache-2.0},
   title = {RF-DETR},
   howpublished = {\url{https://github.com/roboflow/rf-detr}},
