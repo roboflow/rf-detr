@@ -244,7 +244,10 @@ class LWDETR(nn.Module):
             if self.segmentation_head is not None:
                 outputs_masks = self.segmentation_head(srcs[0], [hs_enc,], tensors.shape[-2:], skip_blocks=True)[0]
 
-        return outputs_coord, outputs_class, outputs_masks
+        if outputs_masks is not None:
+            return outputs_coord, outputs_class, outputs_masks
+        else:
+            return outputs_coord, outputs_class
 
     @torch.jit.unused
     def _set_aux_loss(self, outputs_class, outputs_coord, outputs_masks):
