@@ -20,11 +20,14 @@ Train and eval functions used in main.py
 import math
 import sys
 from typing import Iterable
+import random
 
 import torch
+import torch.nn.functional as F
 
 import rfdetr.util.misc as utils
 from rfdetr.datasets.coco_eval import CocoEvaluator
+from rfdetr.datasets.coco import compute_multi_scale_scales
 
 try:
     from torch.amp import autocast, GradScaler
@@ -105,6 +108,14 @@ def train_one_epoch(
                 model.module.update_dropout(schedules["do"][it])
             else:
                 model.update_dropout(schedules["do"][it])
+
+        if args.multi_scale and not args.do_random_resize_via_padding:
+            scales = compute_multi_scale_scales(args.resolution, args.expanded_scales, args.patch_size, args.num_windows)
+            random.seed(it)
+            scale = random.choice(scales)
+            with torch.inference_mode():
+                samples.tensors = F.interpolate(samples.tensors, size=scale, mode='bilinear', align_corners=False)
+                samples.mask = F.interpolate(samples.mask.unsqueeze(1).float(), size=scale, mode='nearest').squeeze(1).bool()
 
         for i in range(args.grad_accum_steps):
             start_idx = i * sub_batch_size
@@ -238,7 +249,7 @@ def coco_extended_metrics(coco_eval):
         "recall"   : macro_recall
     }
 
-def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, args=None):
+def evaluate(model, criterion, postprocess, data_loader, base_ds, device, args=None):
     model.eval()
     if args.fp16_eval:
         model.half()
@@ -250,7 +261,7 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, arg
     )
     header = "Test:"
 
-    iou_types = tuple(k for k in ("segm", "bbox") if k in postprocessors.keys())
+    iou_types = ("bbox",) if not args.segmentation_head else ("bbox", "segm")
     coco_evaluator = CocoEvaluator(base_ds, iou_types)
 
     for samples, targets in metric_logger.log_every(data_loader, 10, header):
@@ -299,10 +310,10 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, arg
         metric_logger.update(class_error=loss_dict_reduced["class_error"])
 
         orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
-        results = postprocessors["bbox"](outputs, orig_target_sizes)
+        results_all = postprocess(outputs, orig_target_sizes)
         res = {
             target["image_id"].item(): output
-            for target, output in zip(targets, results)
+            for target, output in zip(targets, results_all)
         }
         if coco_evaluator is not None:
             coco_evaluator.update(res)
@@ -321,9 +332,10 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, arg
     if coco_evaluator is not None:
         results_json = coco_extended_metrics(coco_evaluator.coco_eval["bbox"])
         stats["results_json"] = results_json
-        if "bbox" in postprocessors.keys():
+        if "bbox" in iou_types:
             stats["coco_eval_bbox"] = coco_evaluator.coco_eval["bbox"].stats.tolist()
 
-        if "segm" in postprocessors.keys():
+        if "segm" in iou_types:
+            results_json = coco_extended_metrics(coco_evaluator.coco_eval["segm"])
             stats["coco_eval_masks"] = coco_evaluator.coco_eval["segm"].stats.tolist()
     return stats, coco_evaluator

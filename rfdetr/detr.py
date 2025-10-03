@@ -23,15 +23,31 @@ try:
 except:
     pass
 
-from rfdetr.config import RFDETRBaseConfig, RFDETRLargeConfig, TrainConfig, ModelConfig
+from rfdetr.config import (
+    RFDETRBaseConfig,
+    RFDETRLargeConfig,
+    RFDETRNanoConfig,
+    RFDETRSmallConfig,
+    RFDETRMediumConfig,
+    RFDETRSegPreviewConfig,
+    TrainConfig,
+    SegmentationTrainConfig,
+    ModelConfig
+)
 from rfdetr.main import Model, download_pretrain_weights
 from rfdetr.util.metrics import MetricsPlotSink, MetricsTensorBoardSink, MetricsWandBSink
 from rfdetr.util.coco_classes import COCO_CLASSES
 
 logger = getLogger(__name__)
 class RFDETR:
+    """
+    The base RF-DETR class implements the core methods for training RF-DETR models,
+    running inference on the models, optimising models, and uploading trained
+    models for deployment.
+    """
     means = [0.485, 0.456, 0.406]
     stds = [0.229, 0.224, 0.225]
+    size = None
 
     def __init__(self, **kwargs):
         self.model_config = self.get_model_config(**kwargs)
@@ -48,12 +64,21 @@ class RFDETR:
         self._optimized_dtype = None
 
     def maybe_download_pretrain_weights(self):
+        """
+        Download pre-trained weights if they are not already downloaded.
+        """
         download_pretrain_weights(self.model_config.pretrain_weights)
 
     def get_model_config(self, **kwargs):
+        """
+        Retrieve the configuration parameters used by the model.
+        """
         return ModelConfig(**kwargs)
 
     def train(self, **kwargs):
+        """
+        Train an RF-DETR model.
+        """
         config = self.get_train_config(**kwargs)
         self.train_from_config(config, **kwargs)
     
@@ -91,23 +116,33 @@ class RFDETR:
         self._optimized_half = False
     
     def export(self, **kwargs):
+        """
+        Export your model to an ONNX file.
+
+        See [the ONNX export documentation](https://rfdetr.roboflow.com/learn/train/#onnx-export) for more information.
+        """
         self.model.export(**kwargs)
 
     def train_from_config(self, config: TrainConfig, **kwargs):
-        with open(
-            os.path.join(config.dataset_dir, "train", "_annotations.coco.json"), "r"
-        ) as f:
-            anns = json.load(f)
-            num_classes = len(anns["categories"])
-            class_names = [c["name"] for c in anns["categories"] if c["supercategory"] != "none"]
-            self.model.class_names = class_names
+        if config.dataset_file == "roboflow":
+            with open(
+                os.path.join(config.dataset_dir, "train", "_annotations.coco.json"), "r"
+            ) as f:
+                anns = json.load(f)
+                num_classes = len(anns["categories"])
+                class_names = [c["name"] for c in anns["categories"] if c["supercategory"] != "none"]
+                self.model.class_names = class_names
+        elif config.dataset_file == "coco":
+            class_names = COCO_CLASSES
+            num_classes = 90
+        else:
+            raise ValueError(f"Invalid dataset file: {config.dataset_file}")
 
         if self.model_config.num_classes != num_classes:
             logger.warning(
                 f"Reinitializing your detection head with {num_classes} classes."
             )
             self.model.reinitialize_detection_head(num_classes)
-        
         
         train_config = config.dict()
         model_config = self.model_config.dict()
@@ -151,7 +186,8 @@ class RFDETR:
                 model=self.model,
                 patience=config.early_stopping_patience,
                 min_delta=config.early_stopping_min_delta,
-                use_ema=config.early_stopping_use_ema
+                use_ema=config.early_stopping_use_ema,
+                segmentation_head=config.segmentation_head
             )
             self.callbacks["on_fit_epoch_end"].append(early_stopping_callback.update)
 
@@ -161,24 +197,36 @@ class RFDETR:
         )
 
     def get_train_config(self, **kwargs):
+        """
+        Retrieve the configuration parameters that will be used for training.
+        """
         return TrainConfig(**kwargs)
 
     def get_model(self, config: ModelConfig):
+        """
+        Retrieve a model instance based on the provided configuration.
+        """
         return Model(**config.dict())
     
     # Get class_names from the model
     @property
     def class_names(self):
+        """
+        Retrieve the class names supported by the loaded model.
+
+        Returns:
+            dict: A dictionary mapping class IDs to class names. The keys are integers starting from
+        """
         if hasattr(self.model, 'class_names') and self.model.class_names:
             return {i+1: name for i, name in enumerate(self.model.class_names)}
             
         return COCO_CLASSES
 
     def predict(
-            self,
-            images: Union[str, Image.Image, np.ndarray, torch.Tensor, List[Union[str, np.ndarray, Image.Image, torch.Tensor]]],
-            threshold: float = 0.5,
-            **kwargs,
+        self,
+        images: Union[str, Image.Image, np.ndarray, torch.Tensor, List[Union[str, np.ndarray, Image.Image, torch.Tensor]]],
+        threshold: float = 0.5,
+        **kwargs,
     ) -> Union[sv.Detections, List[sv.Detections]]:
         """Performs object detection on the input images and returns bounding box
         predictions.
@@ -273,10 +321,11 @@ class RFDETR:
             if isinstance(predictions, tuple):
                 predictions = {
                     "pred_logits": predictions[1],
-                    "pred_boxes": predictions[0]
+                    "pred_boxes": predictions[0],
+                    "pred_masks": predictions[2]
                 }
             target_sizes = torch.tensor(orig_sizes, device=self.model.device)
-            results = self.model.postprocessors["bbox"](predictions, target_sizes=target_sizes)
+            results = self.model.postprocess(predictions, target_sizes=target_sizes)
 
         detections_list = []
         for result in results:
@@ -289,17 +338,88 @@ class RFDETR:
             labels = labels[keep]
             boxes = boxes[keep]
 
-            detections = sv.Detections(
-                xyxy=boxes.float().cpu().numpy(),
-                confidence=scores.float().cpu().numpy(),
-                class_id=labels.cpu().numpy(),
-            )
+            if "masks" in result:
+                masks = result["masks"]
+                masks = masks[keep]
+
+                detections = sv.Detections(
+                    xyxy=boxes.float().cpu().numpy(),
+                    confidence=scores.float().cpu().numpy(),
+                    class_id=labels.cpu().numpy(),
+                    mask=masks.squeeze(1).cpu().numpy(),
+                )
+            else:
+                detections = sv.Detections(
+                    xyxy=boxes.float().cpu().numpy(),
+                    confidence=scores.float().cpu().numpy(),
+                    class_id=labels.cpu().numpy(),
+                )
+
             detections_list.append(detections)
 
         return detections_list if len(detections_list) > 1 else detections_list[0]
+    
+    def deploy_to_roboflow(self, workspace: str, project_id: str, version: str, api_key: str = None, size: str = None):
+        """
+        Deploy the trained RF-DETR model to Roboflow.
+
+        Deploying with Roboflow will create a Serverless API to which you can make requests.
+
+        You can also download weights into a Roboflow Inference deployment for use in Roboflow Workflows and on-device deployment.
+
+        Args:
+            workspace (str): The name of the Roboflow workspace to deploy to.
+            project_ids (List[str]): A list of project IDs to which the model will be deployed
+            api_key (str, optional): Your Roboflow API key. If not provided,
+                it will be read from the environment variable `ROBOFLOW_API_KEY`.
+            size (str, optional): The size of the model to deploy. If not provided,
+                it will default to the size of the model being trained (e.g., "rfdetr-base", "rfdetr-large", etc.).
+            model_name (str, optional): The name you want to give the uploaded model.
+            If not provided, it will default to "<size>-uploaded".
+        Raises:
+            ValueError: If the `api_key` is not provided and not found in the environment
+                variable `ROBOFLOW_API_KEY`, or if the `size` is not set for custom architectures.
+        """
+        from roboflow import Roboflow
+        import shutil
+        if api_key is None:
+            api_key = os.getenv("ROBOFLOW_API_KEY")
+            if api_key is None:
+                raise ValueError("Set api_key=<KEY> in deploy_to_roboflow or export ROBOFLOW_API_KEY=<KEY>")
+
+
+        rf = Roboflow(api_key=api_key)
+        workspace = rf.workspace(workspace)
+
+        if self.size is None and size is None:
+            raise ValueError("Must set size for custom architectures")
+
+        size = self.size or size
+        tmp_out_dir = ".roboflow_temp_upload"
+        os.makedirs(tmp_out_dir, exist_ok=True)
+        outpath = os.path.join(tmp_out_dir, "weights.pt")
+        torch.save(
+            {
+                "model": self.model.model.state_dict(),
+                "args": self.model.args
+            }, outpath
+        )
+        project = workspace.project(project_id)
+        version = project.version(version)
+        version.deploy(
+            model_type=size,
+            model_path=tmp_out_dir,
+            filename="weights.pt"
+        )
+        shutil.rmtree(tmp_out_dir)
+
 
 
 class RFDETRBase(RFDETR):
+    """
+    Train an RF-DETR Base model (29M parameters).
+    """
+    size = "rfdetr-base"
     def get_model_config(self, **kwargs):
         return RFDETRBaseConfig(**kwargs)
 
@@ -307,8 +427,53 @@ class RFDETRBase(RFDETR):
         return TrainConfig(**kwargs)
 
 class RFDETRLarge(RFDETR):
+    """
+    Train an RF-DETR Large model.
+    """
+    size = "rfdetr-large"
     def get_model_config(self, **kwargs):
         return RFDETRLargeConfig(**kwargs)
 
     def get_train_config(self, **kwargs):
         return TrainConfig(**kwargs)
+
+class RFDETRNano(RFDETR):
+    """
+    Train an RF-DETR Nano model.
+    """
+    size = "rfdetr-nano"
+    def get_model_config(self, **kwargs):
+        return RFDETRNanoConfig(**kwargs)
+
+    def get_train_config(self, **kwargs):
+        return TrainConfig(**kwargs)
+
+class RFDETRSmall(RFDETR):
+    """
+    Train an RF-DETR Small model.
+    """
+    size = "rfdetr-small"
+    def get_model_config(self, **kwargs):
+        return RFDETRSmallConfig(**kwargs)
+
+    def get_train_config(self, **kwargs):
+        return TrainConfig(**kwargs)
+
+class RFDETRMedium(RFDETR):
+    """
+    Train an RF-DETR Medium model.
+    """
+    size = "rfdetr-medium"
+    def get_model_config(self, **kwargs):
+        return RFDETRMediumConfig(**kwargs)
+
+    def get_train_config(self, **kwargs):
+        return TrainConfig(**kwargs)
+
+class RFDETRSegPreview(RFDETR):
+    size = "rfdetr-seg-preview"
+    def get_model_config(self, **kwargs):
+        return RFDETRSegPreviewConfig(**kwargs)
+
+    def get_train_config(self, **kwargs):
+        return SegmentationTrainConfig(**kwargs)

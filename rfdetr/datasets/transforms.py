@@ -256,6 +256,10 @@ class SquareResize(object):
 
         target["size"] = torch.tensor([h, w])
 
+        if "masks" in target:
+            target['masks'] = interpolate(
+                target['masks'][:, None].float(), (h, w), mode="nearest")[:, 0] > 0.5
+
         return rescaled_img, target
 
 

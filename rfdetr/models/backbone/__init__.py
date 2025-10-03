@@ -71,6 +71,9 @@ def build_backbone(
     force_no_pretrain,
     gradient_checkpointing,
     load_dinov2_weights,
+    patch_size,
+    num_windows,
+    positional_encoding_size,
 ):
     """
     Useful args:
@@ -98,6 +101,9 @@ def build_backbone(
         backbone_lora=backbone_lora,
         gradient_checkpointing=gradient_checkpointing,
         load_dinov2_weights=load_dinov2_weights,
+        patch_size=patch_size,
+        num_windows=num_windows,
+        positional_encoding_size=positional_encoding_size,
     )
 
     model = Joiner(backbone, position_embedding)

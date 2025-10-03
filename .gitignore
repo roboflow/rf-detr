@@ -174,3 +174,9 @@ cython_debug/
 .pypirc
 
 .idea/
+
+# model artifacts
+rf-detr*
+output/*
+
+train_test.py
