@@ -1,0 +1,123 @@
+site_name: RF-DETR
+site_url: https://roboflow.github.io/rf-detr/
+site_author: Roboflow
+site_description: 'SOTA Real-Time Object Detection Model'
+repo_name: roboflow/rf-detr
+repo_url: https://github.com/roboflow/rf-detr
+edit_uri: https://github.com/roboflow/rf-detr/tree/main/docs
+copyright: Roboflow 2025. All rights reserved.
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/roboflow
+    - icon: fontawesome/brands/youtube
+      link: https://www.youtube.com/roboflow
+    - icon: fontawesome/brands/linkedin
+      link: https://www.linkedin.com/company/roboflow-ai/mycompany/
+    - icon: fontawesome/brands/twitter
+      link: https://twitter.com/roboflow
+  version:
+    provider: mike
+
+nav:
+  - Home: index.md
+  - Learn:
+    - Run a Model:
+      - Object Detection: learn/run/detection.md
+      - Segmentation: learn/run/segmentation.md
+    - Train a Model: learn/train/index.md
+    - Deploy a Trained Model: learn/deploy.md
+    - Benchmarks: learn/benchmarks.md
+  - Tutorials: tutorials/index.md
+  - Reference:
+      - RF-DETR: reference/rfdetr.md
+      - Object Detection Models:
+        - RF-DETR Nano: reference/nano.md
+        - RF-DETR Small: reference/small.md
+        - RF-DETR Base (Deprecated): reference/base.md
+        - RF-DETR Medium: reference/medium.md
+        - RF-DETR Large: reference/large.md
+      - Image Segmentation Models:
+        - RF-DETR Seg Preview: reference/seg_preview.md
+  - Changelog: https://github.com/roboflow/rf-detr/releases
+
+theme:
+  name: 'material'
+  icon:
+    edit: material/pencil
+  logo: assets/roboflow-logo.svg
+  favicon: assets/roboflow-logo.svg
+  custom_dir: docs/theme
+
+#  palette:
+#    # Palette for light mode
+#    - scheme: default
+#      primary: "custom"
+#      toggle:
+#        icon: material/brightness-7
+#        name: Switch to dark mode
+#
+#    # Palette toggle for dark mode
+#    - scheme: slate
+#      primary: "custom"
+#      toggle:
+#        icon: material/brightness-4
+#        name: Switch to light mode
+
+  font:
+    text: Inter
+    code: IBM Plex Mono
+
+  features:
+    - content.tabs.link
+    - content.code.copy
+    - navigation.expand
+    - navigation.tabs
+    - content.code.annotate
+    - navigation.tracking
+    - content.tooltips
+    - navigation.tabs.sticky
+
+plugins:
+  - search
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          paths: [rf-detr]
+          load_external_modules: true
+          options:
+            parameter_headings: true
+            allow_inspection: true
+            show_bases: true
+            group_by_category: true
+            docstring_style: google
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            show_category_heading: true
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - attr_list
+  - md_in_html
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.snippets:
+      check_paths: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+
+extra_css:
+  - stylesheets/rf.css
