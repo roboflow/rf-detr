@@ -22,8 +22,7 @@ Use the resources below to learn how to train, build with, and deploy RF-DETR mo
 
     [:octicons-arrow-right-24: Learn more](https://blog.roboflow.com/rf-detr-segmentation-preview/)
 
-- 
-    **Announcing RF-DETR Nano, Small, and Medium [July 2025]**
+-   **Announcing RF-DETR Nano, Small, and Medium [July 2025]**
 
     ---
 
