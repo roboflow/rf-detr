@@ -147,11 +147,11 @@ class MetricsTensorBoardSink:
             ap50 = safe_index(coco_eval, 1)
             ar50_90 = safe_index(coco_eval, 8)
             if ap50_90 is not None:
-                self.writer.add_scalar("Metrics/Base/AP50_90", ap50_90, epoch)
+                self.writer.add_scalar("Metrics-BBox/Base/AP50_90", ap50_90, epoch)
             if ap50 is not None:
-                self.writer.add_scalar("Metrics/Base/AP50", ap50, epoch)
+                self.writer.add_scalar("Metrics-BBox/Base/AP50", ap50, epoch)
             if ar50_90 is not None:
-                self.writer.add_scalar("Metrics/Base/AR50_90", ar50_90, epoch)
+                self.writer.add_scalar("Metrics-BBox/Base/AR50_90", ar50_90, epoch)
 
         if 'ema_test_coco_eval_bbox' in values:
             ema_coco_eval = values['ema_test_coco_eval_bbox']
@@ -159,11 +159,35 @@ class MetricsTensorBoardSink:
             ema_ap50 = safe_index(ema_coco_eval, 1)
             ema_ar50_90 = safe_index(ema_coco_eval, 8)
             if ema_ap50_90 is not None:
-                self.writer.add_scalar("Metrics/EMA/AP50_90", ema_ap50_90, epoch)
+                self.writer.add_scalar("Metrics-BBox/EMA/AP50_90", ema_ap50_90, epoch)
             if ema_ap50 is not None:
-                self.writer.add_scalar("Metrics/EMA/AP50", ema_ap50, epoch)
+                self.writer.add_scalar("Metrics-BBox/EMA/AP50", ema_ap50, epoch)
             if ema_ar50_90 is not None:
-                self.writer.add_scalar("Metrics/EMA/AR50_90", ema_ar50_90, epoch)
+                self.writer.add_scalar("Metrics-BBox/EMA/AR50_90", ema_ar50_90, epoch)
+
+        if 'test_coco_eval_masks' in values:
+            coco_eval = values['test_coco_eval_masks']
+            ap50_90 = safe_index(coco_eval, 0)
+            ap50 = safe_index(coco_eval, 1)
+            ar50_90 = safe_index(coco_eval, 8)
+            if ap50_90 is not None:
+                self.writer.add_scalar("Metrics-Masks/Base/AP50_90", ap50_90, epoch)
+            if ap50 is not None:
+                self.writer.add_scalar("Metrics-Masks/Base/AP50", ap50, epoch)
+            if ar50_90 is not None:
+                self.writer.add_scalar("Metrics-Masks/Base/AR50_90", ar50_90, epoch)
+
+        if 'ema_test_coco_eval_masks' in values:
+            ema_coco_eval = values['ema_test_coco_eval_masks']
+            ema_ap50_90 = safe_index(ema_coco_eval, 0)
+            ema_ap50 = safe_index(ema_coco_eval, 1)
+            ema_ar50_90 = safe_index(ema_coco_eval, 8)
+            if ema_ap50_90 is not None:
+                self.writer.add_scalar("Metrics-Masks/EMA/AP50_90", ema_ap50_90, epoch)
+            if ema_ap50 is not None:
+                self.writer.add_scalar("Metrics-Masks/EMA/AP50", ema_ap50, epoch)
+            if ema_ar50_90 is not None:
+                self.writer.add_scalar("Metrics-Masks/EMA/AR50_90", ema_ar50_90, epoch)
 
         self.writer.flush()
 
