@@ -319,8 +319,9 @@ class RFDETR:
                 predictions = {
                     "pred_logits": predictions[1],
                     "pred_boxes": predictions[0],
-                    "pred_masks": predictions[2]
                 }
+                if len(predictions) == 3:
+                    predictions["pred_masks"] = predictions[2]
             target_sizes = torch.tensor(orig_sizes, device=self.model.device)
             results = self.model.postprocess(predictions, target_sizes=target_sizes)
 
