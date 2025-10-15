@@ -34,7 +34,7 @@ from rfdetr.util.misc import (NestedTensor, nested_tensor_from_tensor_list,
 from rfdetr.models.backbone import build_backbone
 from rfdetr.models.matcher import build_matcher
 from rfdetr.models.transformer import build_transformer
-from rfdetr.models.segmentation_head import SegmentationHead, get_uncertain_point_coords_with_randomness, point_sample
+from rfdetr.models.segmentation_head import SegmentationHead, get_uncertain_point_coords_with_randomness, point_sample, calculate_uncertainty
 
 class LWDETR(nn.Module):
     """ This is the Group DETR v3 module that performs object detection """
@@ -162,6 +162,9 @@ class LWDETR(nn.Module):
             # only use one group in inference
             refpoint_embed_weight = self.refpoint_embed.weight[:self.num_queries]
             query_feat_weight = self.query_feat.weight[:self.num_queries]
+        
+        if self.segmentation_head is not None:
+            seg_head_fwd = self.segmentation_head.sparse_forward if self.training else self.segmentation_head.forward
 
         hs, ref_unsigmoid, hs_enc, ref_enc = self.transformer(
             srcs, masks, poss, refpoint_embed_weight, query_feat_weight)
@@ -180,7 +183,7 @@ class LWDETR(nn.Module):
             outputs_class = self.class_embed(hs)
 
             if self.segmentation_head is not None:
-                outputs_masks = self.segmentation_head(features[0].tensors, hs, samples.tensors.shape[-2:])
+                outputs_masks = seg_head_fwd(features[0].tensors, hs, samples.tensors.shape[-2:])
 
             out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1]}
             if self.segmentation_head is not None:
@@ -199,8 +202,7 @@ class LWDETR(nn.Module):
             cls_enc = torch.cat(cls_enc, dim=1)
 
             if self.segmentation_head is not None:
-                masks_enc = self.segmentation_head(features[0].tensors, [hs_enc,], samples.tensors.shape[-2:], skip_blocks=True)
-                masks_enc = torch.cat(masks_enc, dim=1)
+                masks_enc = seg_head_fwd(features[0].tensors, [hs_enc,], samples.tensors.shape[-2:], skip_blocks=True)[0]
 
             if hs is not None:
                 out['enc_outputs'] = {'pred_logits': cls_enc, 'pred_boxes': ref_enc}
@@ -451,11 +453,35 @@ class SetCriterion(nn.Module):
         Expects outputs to contain 'pred_masks' of shape [B, Q, H, W] and targets with key 'masks'.
         """
         assert 'pred_masks' in outputs, "pred_masks missing in model outputs"
-        pred_masks = outputs['pred_masks']  # [B, Q, H, W]
-        # gather matched prediction masks
         idx = self._get_src_permutation_idx(indices)
-        src_masks = pred_masks[idx]  # [N, H, W]
-        # handle no matches
+        pred_masks = outputs['pred_masks']  # [B, Q, H, W]
+        
+        if isinstance(pred_masks, torch.Tensor):
+            # gather matched prediction masks
+            # handle no matches
+            src_masks = pred_masks[idx]  # [N, H, W]
+        else:
+            spatial_features = outputs["pred_masks"]["spatial_features"]
+            query_features = outputs["pred_masks"]["query_features"]
+            bias = outputs["pred_masks"]["bias"]
+            
+            batched_selected_masks = []
+            per_batch_counts = idx[0].unique(return_counts=True)[1]
+            batch_indices = torch.cat((torch.zeros_like(per_batch_counts[:1]), per_batch_counts), dim=0).cumsum(0)
+            
+            for i in range(per_batch_counts.shape[0]):
+                batch_indicator = idx[0][batch_indices[i]:batch_indices[i+1]]
+                box_indicator = idx[1][batch_indices[i]:batch_indices[i+1]]
+                
+                this_batch_queries = query_features[(batch_indicator, box_indicator)]
+                this_batch_spatial_features = spatial_features[idx[0][batch_indices[i+1]-1]]
+                
+                this_batch_masks = torch.einsum("chw,nc->nhw", this_batch_spatial_features, this_batch_queries) + bias
+                
+                batched_selected_masks.append(this_batch_masks)
+            
+            src_masks = torch.cat(batched_selected_masks)
+            
         if src_masks.numel() == 0:
             return {
                 'loss_mask_ce': src_masks.sum(),
@@ -463,7 +489,7 @@ class SetCriterion(nn.Module):
             }
         # gather matched target masks
         target_masks = torch.cat([t['masks'][j] for t, (_, j) in zip(targets, indices)], dim=0)  # [N, Ht, Wt]
-        
+                
         # No need to upsample predictions as we are using normalized coordinates :)
         # N x 1 x H x W
         src_masks = src_masks.unsqueeze(1)
@@ -480,6 +506,16 @@ class SetCriterion(nn.Module):
                 3,
                 0.75,
             )
+
+        point_logits = point_sample(
+            src_masks,
+            point_coords,
+            align_corners=False,
+        ).squeeze(1)
+            
+            
+
+        with torch.no_grad():
             # get gt labels
             point_labels = point_sample(
                 target_masks,
@@ -487,12 +523,6 @@ class SetCriterion(nn.Module):
                 align_corners=False,
                 mode="nearest",
             ).squeeze(1)
-
-        point_logits = point_sample(
-            src_masks,
-            point_coords,
-            align_corners=False,
-        ).squeeze(1)
 
         losses = {
             "loss_mask_ce": sigmoid_ce_loss_jit(point_logits, point_labels, num_boxes),
@@ -682,23 +712,6 @@ def sigmoid_ce_loss(
 sigmoid_ce_loss_jit = torch.jit.script(
     sigmoid_ce_loss
 )  # type: torch.jit.ScriptModule
-
-
-def calculate_uncertainty(logits):
-    """
-    We estimate uncerainty as L1 distance between 0.0 and the logit prediction in 'logits' for the
-        foreground class in `classes`.
-    Args:
-        logits (Tensor): A tensor of shape (R, 1, ...) for class-specific or
-            class-agnostic, where R is the total number of predicted masks in all images and C is
-            the number of foreground classes. The values are logits.
-    Returns:
-        scores (Tensor): A tensor of shape (R, 1, ...) that contains uncertainty scores with
-            the most uncertain locations having the highest uncertainty score.
-    """
-    assert logits.shape[1] == 1
-    gt_class_logits = logits.clone()
-    return -(torch.abs(gt_class_logits))
 
 
 class PostProcess(nn.Module):

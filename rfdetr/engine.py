@@ -134,7 +134,7 @@ def train_one_epoch(
                     for k in loss_dict.keys()
                     if k in weight_dict
                 )
-
+                del outputs
 
             scaler.scale(losses).backward()
 

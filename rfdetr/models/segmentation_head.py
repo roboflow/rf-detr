@@ -103,6 +103,41 @@ class SegmentationHead(nn.Module):
             mask_logits.append(torch.einsum('bchw,bnc->bnhw', spatial_features, qf) + self.bias)
 
         return mask_logits
+
+    def sparse_forward(self, spatial_features: torch.Tensor, query_features: list[torch.Tensor], image_size: tuple[int, int], skip_blocks: bool=False) -> list[torch.Tensor]:
+        # spatial features: (B, C, H, W)
+        # query features: [(B, N, C)] for each decoder layer
+        # output: dict containing the intermediate results
+        target_size = (image_size[0] // self.downsample_ratio, image_size[1] // self.downsample_ratio)
+        spatial_features = F.interpolate(spatial_features, size=target_size, mode='bilinear', align_corners=False)
+
+        num_points = max(spatial_features.shape[-2], spatial_features.shape[-2] * spatial_features.shape[-1] // 16)
+
+        output_dicts = []
+
+        if not skip_blocks:
+            for block, qf in zip(self.blocks, query_features):
+                spatial_features = block(spatial_features)
+                spatial_features_proj = self.spatial_features_proj(spatial_features)
+                qf = self.query_features_proj(self.query_features_block(qf))
+
+                output_dicts.append({
+                    "spatial_features": spatial_features_proj,
+                    "query_features": qf,
+                    "bias": self.bias,
+                })
+        else:
+            assert len(query_features) == 1, "skip_blocks is only supported for length 1 query features"
+
+            qf = self.query_features_proj(self.query_features_block(query_features[0]))
+
+            output_dicts.append({
+                "spatial_features": spatial_features,
+                "query_features": qf,
+                "bias": self.bias,
+            })
+
+        return output_dicts
     
     def forward_export(self, spatial_features: torch.Tensor, query_features: list[torch.Tensor], image_size: tuple[int, int], skip_blocks: bool=False) -> list[torch.Tensor]:
         assert len(query_features) == 1, "at export time, segmentation head expects exactly one query feature"
@@ -200,3 +235,76 @@ def get_uncertain_point_coords_with_randomness(
             dim=1,
         )
     return point_coords
+
+
+def calculate_uncertainty(logits):
+    """
+    We estimate uncerainty as L1 distance between 0.0 and the logit prediction in 'logits' for the
+        foreground class in `classes`.
+    Args:
+        logits (Tensor): A tensor of shape (R, 1, ...) for class-specific or
+            class-agnostic, where R is the total number of predicted masks in all images and C is
+            the number of foreground classes. The values are logits.
+    Returns:
+        scores (Tensor): A tensor of shape (R, 1, ...) that contains uncertainty scores with
+            the most uncertain locations having the highest uncertainty score.
+    """
+    assert logits.shape[1] == 1
+    gt_class_logits = logits.clone()
+    return -(torch.abs(gt_class_logits))
+
+
+def get_uncertain_point_coords_with_randomness_from_spatial_features(
+    spatial_features, query_features, bias, num_points, oversample_ratio=3, importance_sample_ratio=0.75
+):
+    """
+    Spatial features: (B, C, H, W)
+    Query features: (B, N, C)
+    Bias: (1)
+    Num points: (int)
+    Oversample ratio: (int)
+    Importance sample ratio: (float)
+
+    Returns:
+        point_coords (Tensor): A tensor of shape (N, P, 2) that contains the coordinates of P
+            sampled points.
+    """
+    B, N, C = query_features.shape
+
+    sample_points = torch.rand(B, N, num_points*oversample_ratio, 2, device=spatial_features.device)
+
+    sampled_spatial_features = point_sample(spatial_features, sample_points, align_corners=False)
+
+    print(f"sampled_spatial_features.shape: {sampled_spatial_features.shape}, query_features.shape: {query_features.shape}")
+
+    sampled_logits = torch.einsum('bcnp,bnc->bnp', sampled_spatial_features, query_features) + bias
+
+    flat_sampled_logits = sampled_logits.view(B*N, 1, num_points*oversample_ratio)
+
+    point_uncertainties = calculate_uncertainty(flat_sampled_logits)
+
+    num_uncertain_points = int(importance_sample_ratio * num_points)
+    num_random_points = num_points - num_uncertain_points
+    idx = torch.topk(point_uncertainties[:, 0, :], k=num_uncertain_points, dim=1)[1]
+    shift = num_points * torch.arange(B*N, dtype=torch.long, device=spatial_features.device)
+    idx += shift[:, None]
+    point_coords = sample_points.view(-1, 2)[idx.view(-1), :].view(B, N, num_uncertain_points, 2)
+    if num_random_points > 0:
+        point_coords = torch.cat([point_coords, torch.rand(B, N, num_random_points, 2, device=spatial_features.device)], dim=2)
+    return point_coords
+
+
+def generate_sparse_mask_logits(spatial_features, query_features, bias, num_points, matcher_sample_coords, oversample_ratio=3, importance_sample_ratio=0.75):
+    sparse_matcher_spatial_features = point_sample(spatial_features, matcher_sample_coords.repeat(spatial_features.shape[0], 1, 1), align_corners=False)
+    sparse_matcher_mask_logits = torch.einsum('bcm,bnc->bnm', sparse_matcher_spatial_features, query_features) + bias
+
+    with torch.no_grad():
+        this_loss_sample_coords = get_uncertain_point_coords_with_randomness_from_spatial_features(spatial_features, query_features, bias, num_points, oversample_ratio, importance_sample_ratio)
+        _B, _N, _M, _ = this_loss_sample_coords.shape
+        loss_sample_coords = this_loss_sample_coords
+    
+    sparse_loss_spatial_features = point_sample(spatial_features, loss_sample_coords.view(_B, _N, _M, 2), align_corners=False)
+    print(f"sparse_loss_spatial_features.shape: {sparse_loss_spatial_features.shape}, query_features.shape: {query_features.shape}")
+    sparse_loss_mask_logits = torch.einsum('bcnm,bnc->bnm', sparse_loss_spatial_features, query_features) + bias
+
+    return sparse_matcher_mask_logits, sparse_loss_mask_logits, loss_sample_coords
