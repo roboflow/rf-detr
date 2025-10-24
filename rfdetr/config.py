@@ -167,3 +167,31 @@ class SegmentationTrainConfig(TrainConfig):
     mask_dice_loss_coef: float = 5.0
     cls_loss_coef: float = 5.0
     segmentation_head: bool = True
+
+
+class RFDETRSegEnhancedConfig(RFDETRSegPreviewConfig):
+    """
+    Enhanced configuration for RF-DETR with:
+    1. Color Attention Module
+    2. Color Contrast Loss
+    3. Enhanced Deformable Attention
+    4. Boundary Refinement Network
+    """
+    use_color_attention: bool = True
+    use_boundary_refinement: bool = True
+    use_enhanced_deformable_attention: bool = True
+    use_color_contrast_loss: bool = True
+    color_contrast_loss_weight: float = 0.5
+    enhanced_dec_n_points: int = 8  # More sampling points for enhanced attention
+    pretrain_weights: Optional[str] = "rf-detr-seg-preview.pt"  # Start from seg-preview weights
+
+
+class EnhancedSegmentationTrainConfig(SegmentationTrainConfig):
+    """
+    Training configuration for enhanced segmentation model.
+    """
+    use_color_attention: bool = True
+    use_boundary_refinement: bool = True
+    use_enhanced_deformable_attention: bool = True
+    use_color_contrast_loss: bool = True
+    color_contrast_loss_weight: float = 0.5

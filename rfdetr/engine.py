@@ -28,6 +28,7 @@ import torch.nn.functional as F
 import rfdetr.util.misc as utils
 from rfdetr.datasets.coco_eval import CocoEvaluator
 from rfdetr.datasets.coco import compute_multi_scale_scales
+from rfdetr.engine_enhanced import call_criterion_with_images
 
 try:
     from torch.amp import autocast, GradScaler
@@ -127,7 +128,7 @@ def train_one_epoch(
 
             with autocast(**get_autocast_args(args)):
                 outputs = model(new_samples, new_targets)
-                loss_dict = criterion(outputs, new_targets)
+                loss_dict = call_criterion_with_images(criterion, outputs, new_targets, new_samples)
                 weight_dict = criterion.weight_dict
                 losses = sum(
                     (1 / args.grad_accum_steps) * loss_dict[k] * weight_dict[k]
@@ -289,7 +290,7 @@ def evaluate(model, criterion, postprocess, data_loader, base_ds, device, args=N
                 else:
                     outputs[key] = outputs[key].float()
 
-        loss_dict = criterion(outputs, targets)
+        loss_dict = call_criterion_with_images(criterion, outputs, targets, samples)
         weight_dict = criterion.weight_dict
 
         # reduce losses over all GPUs for logging purposes

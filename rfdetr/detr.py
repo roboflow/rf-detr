@@ -475,3 +475,36 @@ class RFDETRSegPreview(RFDETR):
 
     def get_train_config(self, **kwargs):
         return SegmentationTrainConfig(**kwargs)
+
+
+class RFDETRSegEnhanced(RFDETR):
+    """
+    Enhanced RF-DETR Segmentation model with:
+    1. Color Attention Module - Enhances color-sensitive feature extraction
+    2. Color Contrast Loss - Encourages distinct color representations for different instances
+    3. Enhanced Deformable Attention - Improved sampling with more points
+    4. Boundary Refinement Network - Precise instance boundary prediction
+
+    This model is specifically optimized for tasks like car interior segmentation
+    where color differentiation and precise boundaries are important.
+    """
+    size = "rfdetr-seg-enhanced"
+
+    def get_model_config(self, **kwargs):
+        from rfdetr.config import RFDETRSegEnhancedConfig
+        return RFDETRSegEnhancedConfig(**kwargs)
+
+    def get_train_config(self, **kwargs):
+        from rfdetr.config import EnhancedSegmentationTrainConfig
+        return EnhancedSegmentationTrainConfig(**kwargs)
+
+    def get_model(self, args):
+        """Override to use enhanced model builder."""
+        from rfdetr.models.enhanced_build import build_enhanced_model
+        model, _, _ = build_enhanced_model(args)
+        return model
+
+    def get_criterion_and_postprocessors(self, args):
+        """Override to use enhanced criterion with color contrast loss."""
+        from rfdetr.models.enhanced_build import build_enhanced_criterion_and_postprocessors
+        return build_enhanced_criterion_and_postprocessors(args)
