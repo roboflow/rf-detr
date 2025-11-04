@@ -498,10 +498,14 @@ class Model:
         self.model.eval()
 
         if args.run_test:
-            best_state_dict = torch.load(output_dir / 'checkpoint_best_total.pth', map_location='cpu', weights_only=False)['model']
-            model.load_state_dict(best_state_dict)
+            time.sleep(5)
+            checkpoint = torch.load(output_dir / 'checkpoint_best_total.pth', map_location='cpu', weights_only=False)
+            best_state_dict = checkpoint['model'] if 'model' in checkpoint else checkpoint
+    
+            # Load into the unwrapped model to match non-DDP-saved checkpoint keys
+            model.module.load_state_dict(best_state_dict)
+            
             model.eval()
-
             test_stats, _ = evaluate(
                 model, criterion, postprocess, data_loader_test, base_ds_test, device, args=args
             )
