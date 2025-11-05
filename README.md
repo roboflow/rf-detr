@@ -131,7 +131,7 @@ annotated_image = sv.BoxAnnotator(color=sv.ColorPalette.ROBOFLOW).annotate(annot
 annotated_image = sv.LabelAnnotator(color=sv.ColorPalette.ROBOFLOW).annotate(annotated_image, detections, labels)
 ```
 
-To use segmentation, use the `rfdetr-seg-preview` model ID. This model will return segmentation masks from a RF-DETR-Seg (Preview) model trained on the Microsoft COCO dataset.
+To use segmentation, use the `rf-detr-seg-preview` model ID. This model will return segmentation masks from a RF-DETR-Seg (Preview) model trained on the Microsoft COCO dataset.
 
 ## Predict
 
