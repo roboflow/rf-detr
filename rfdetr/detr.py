@@ -130,7 +130,9 @@ class RFDETR:
             ) as f:
                 anns = json.load(f)
                 num_classes = len(anns["categories"])
-                class_names = [c["name"] for c in anns["categories"] if c["supercategory"] != "none"]
+                class_names = [c["name"] for c in anns["categories"] if c["supercategory"] != "none" and c["name"] != "background_class83422"]
+                class_names.insert(0, "background_class83422")
+                num_classes = len(class_names)
                 self.model.class_names = class_names
         elif config.dataset_file == "coco":
             class_names = COCO_CLASSES
