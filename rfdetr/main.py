@@ -473,7 +473,7 @@ class Model:
 
         best_is_ema = best_map_ema_5095 > best_map_5095
         
-        if utils.is_main_process():
+        if utils.is_main_process() and (output_dir / 'checkpoint_best_regular.pth').exists():
             if best_is_ema:
                 shutil.copy2(output_dir / 'checkpoint_best_ema.pth', output_dir / 'checkpoint_best_total.pth')
             else:
