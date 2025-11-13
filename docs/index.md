@@ -15,6 +15,8 @@ On image segmentation, RF-DETR Seg (Preview) is 3x faster and more accurate than
 
 RF-DETR is small enough to run on the edge using [Inference](https://github.com/roboflow/inference), making it an ideal model for deployments that need both strong accuracy and real-time performance.
 
+RF-DETR is documented in the [RF-DETR: Neural Architecture Search for Real-Time Detection Transformers](https://arxiv.org/abs/2511.09554) research paper, available on Arxiv.
+
 ## Benchmark Results
 
 ### Object Detection
