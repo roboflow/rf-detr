@@ -368,6 +368,11 @@ class Model:
                         
                         utils.save_on_master(weights, checkpoint_path)
 
+            # Run validation and log stats every validation_interval
+            if (epoch + 1) % args.validation_interval != 0:
+                print(f"Skipping epoch {epoch} for evaluation. validation_interval = {args.validation_interval}")
+                continue
+
             with torch.inference_mode():
                 test_stats, coco_evaluator = evaluate(
                     model, criterion, postprocess, data_loader_val, base_ds, device, args=args
@@ -946,6 +951,7 @@ def populate_args(
     output_dir='output',
     dont_save_weights=False,
     checkpoint_interval=10,
+    validation_interval=1,
     seed=42,
     resume='',
     start_epoch=0,
@@ -1053,6 +1059,7 @@ def populate_args(
         output_dir=output_dir,
         dont_save_weights=dont_save_weights,
         checkpoint_interval=checkpoint_interval,
+        validation_interval=validation_interval,
         seed=seed,
         resume=resume,
         start_epoch=start_epoch,

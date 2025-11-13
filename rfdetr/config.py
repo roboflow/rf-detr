@@ -130,6 +130,7 @@ class TrainConfig(BaseModel):
     ema_tau: int = 100
     lr_drop: int = 100
     checkpoint_interval: int = 10
+    validation_interval: int = 1
     warmup_epochs: float = 0.0
     lr_vit_layer_decay: float = 0.8
     lr_component_decay: float = 0.7
