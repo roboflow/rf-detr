@@ -502,7 +502,7 @@ class Model:
             self.model = self.ema_m.module
         self.model.eval()
 
-        if args.run_test:
+        if args.run_test and (output_dir / 'checkpoint_best_total.pth').exists():
             best_state_dict = torch.load(output_dir / 'checkpoint_best_total.pth', map_location='cpu', weights_only=False)['model']
             model.load_state_dict(best_state_dict)
             model.eval()
