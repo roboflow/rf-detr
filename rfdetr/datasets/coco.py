@@ -282,11 +282,28 @@ def build_roboflow(image_set, args, resolution):
     root = Path(args.dataset_dir)
     assert root.exists(), f'provided Roboflow path {root} does not exist'
     mode = 'instances'
+    
+    # Adaptively detect val/valid folder name
+    val_folder = None
+    if (root / "valid").exists():
+        val_folder = "valid"
+    elif (root / "val").exists():
+        val_folder = "val"
+    else:
+        raise FileNotFoundError(f"Neither 'val' nor 'valid' folder found in {root}")
+    
+    # Build path mapping, optimizing test dataset handling
     PATHS = {
         "train": (root / "train", root / "train" / "_annotations.coco.json"),
-        "val": (root /  "valid", root / "valid" / "_annotations.coco.json"),
-        "test": (root / "test", root / "test" / "_annotations.coco.json"),
+        "val": (root / val_folder, root / val_folder / "_annotations.coco.json"),
     }
+    
+    # Handle test dataset: if test doesn't exist, use val dataset instead
+    if (root / "test").exists() and (root / "test" / "_annotations.coco.json").exists():
+        PATHS["test"] = (root / "test", root / "test" / "_annotations.coco.json")
+    else:
+        print(f"Warning: test dataset not found, using {val_folder} dataset for testing")
+        PATHS["test"] = (root / val_folder, root / val_folder / "_annotations.coco.json")
     
     img_folder, ann_file = PATHS[image_set.split("_")[0]]
     
