@@ -25,6 +25,7 @@ from typing import Callable
 import torch
 import torch.nn.functional as F
 from torch import nn
+from scipy.spatial.distance import directed_hausdorff
 
 from rfdetr.util import box_ops
 from rfdetr.util.misc import (NestedTensor, nested_tensor_from_tensor_list,
@@ -129,7 +130,7 @@ class LWDETR(nn.Module):
                 m.export()
 
     def forward(self, samples: NestedTensor, targets=None):
-        """ The forward expects a NestedTensor, which consists of:
+        """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
 
@@ -503,7 +504,28 @@ class SetCriterion(nn.Module):
         del target_masks
         return losses
     
- 
+    def loss_hausdorff(self, outputs, targets, indices, num_boxes):
+        """
+        @TODO: 11/18 edit - test bbox
+        Compute the Hausdorff distance loss between predicted and target masks."""
+        assert 'pred_masks' in outputs
+        idx = self._get_src_permutation_idx(indices)
+        src_masks = outputs['pred_masks'][idx]
+        target_masks = torch.cat([t['masks'][i] for t, (_, i) in zip(targets, indices)], dim=0)
+
+        # Convert masks to numpy arrays
+        src_masks_np = src_masks.cpu().detach().numpy()
+        target_masks_np = target_masks.cpu().detach().numpy()
+
+        hausdorff_distances = []
+        for src, tgt in zip(src_masks_np, target_masks_np):
+            forward_hd = directed_hausdorff(src.reshape(-1, 2), tgt.reshape(-1, 2))[0]
+            backward_hd = directed_hausdorff(tgt.reshape(-1, 2), src.reshape(-1, 2))[0]
+            hausdorff_distances.append(max(forward_hd, backward_hd))
+
+        hausdorff_loss = torch.tensor(hausdorff_distances, device=src_masks.device).sum() / num_boxes
+        return {'loss_hausdorff': hausdorff_loss}
+
     def _get_src_permutation_idx(self, indices):
         # permute predictions following indices
         batch_idx = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])
@@ -522,6 +544,7 @@ class SetCriterion(nn.Module):
             'cardinality': self.loss_cardinality,
             'boxes': self.loss_boxes,
             'masks': self.loss_masks,
+            'hausdorff': self.loss_hausdorff, 
         }
         assert loss in loss_map, f'do you really want to compute {loss} loss?'
         return loss_map[loss](outputs, targets, indices, num_boxes, **kwargs)
@@ -581,7 +604,7 @@ class SetCriterion(nn.Module):
         return losses
 
 
-def sigmoid_focal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: float = 2):
+def sigmoid_focal_loss(inputs, targets, num_boxes, alpha: float = 0.75, gamma: float = 2):
     """
     Loss used in RetinaNet for dense detection: https://arxiv.org/abs/1708.02002.
     Args:
@@ -831,7 +854,7 @@ def build_model(args):
 def build_criterion_and_postprocessors(args):
     device = torch.device(args.device)
     matcher = build_matcher(args)
-    weight_dict = {'loss_ce': args.cls_loss_coef, 'loss_bbox': args.bbox_loss_coef}
+    weight_dict = {'loss_ce': args.cls_loss_coef, 'loss_bbox': args.bbox_loss_coef, 'loss_hausdorff': args.hausdorff_loss_coef}
     weight_dict['loss_giou'] = args.giou_loss_coef
     if args.segmentation_head:
         weight_dict['loss_mask_ce'] = args.mask_ce_loss_coef
@@ -848,6 +871,7 @@ def build_criterion_and_postprocessors(args):
     losses = ['labels', 'boxes', 'cardinality']
     if args.segmentation_head:
         losses.append('masks')
+        losses.append('hausdorff')
 
     try:
         sum_group_losses = args.sum_group_losses
