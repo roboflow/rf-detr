@@ -391,7 +391,7 @@ class RandomExpand(object):
         self.fill_value = fill_value
 
     def __call__(self, img, target):
-        if np.random.uniform(0., 1.) < self.prob:
+        if np.random.uniform(0., 1.) >= self.prob:
             return img, target
 
         height, width = img.shape[:2]
