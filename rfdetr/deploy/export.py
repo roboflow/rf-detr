@@ -247,7 +247,7 @@ def main(args):
 
     model.to(device)
 
-    input_tensors = make_infer_image(args, device)
+    input_tensors = make_infer_image(args.infer_dir, args.shape, args.batch_size, device)
     input_names = ['input']
     output_names = ['features'] if args.backbone_only else ['dets', 'labels']
     dynamic_axes = None
@@ -258,7 +258,7 @@ def main(args):
         if args.backbone_only:
             features = model(input_tensors)
             print(f"PyTorch inference output shape: {features.shape}")
-        elif args.segmentation_head:
+        elif getattr(args, 'segmentation_head', False):
             outputs = model(input_tensors)
             dets = outputs['pred_boxes']
             labels = outputs['pred_logits']
@@ -273,10 +273,21 @@ def main(args):
     input_tensors = input_tensors.cpu()
 
 
-    output_file = export_onnx(model, args, input_names, input_tensors, output_names, dynamic_axes)
+    output_file = export_onnx(
+        output_dir=args.output_dir,
+        model=model,
+        input_names=input_names,
+        input_tensors=input_tensors,
+        output_names=output_names,
+        dynamic_axes=dynamic_axes,
+        backbone_only=args.backbone_only,
+        verbose=args.verbose,
+        opset_version=args.opset_version
+    )
     
     if args.simplify:
-        output_file = onnx_simplify(output_file, input_names, input_tensors, args)
+        force = getattr(args, 'force', False)
+        output_file = onnx_simplify(output_file, input_names, input_tensors, force=force)
 
     if args.tensorrt:
         output_file = trtexec(output_file, args)

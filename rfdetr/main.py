@@ -665,9 +665,11 @@ if __name__ == '__main__':
         ]
         for key in filter_keys:
             config.pop(key, None)  # Use pop with None to avoid KeyError
-            
+
         from deploy.export import main as export_main
-        export_main(**config)
+        # export_main expects an argparse Namespace, not **kwargs
+        # Pass the original args which contains all needed fields
+        export_main(args)
 
 def get_args_parser():
     parser = argparse.ArgumentParser('Set transformer detector', add_help=False)

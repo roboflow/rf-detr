@@ -474,8 +474,8 @@ class TRTInference(object):
         self.device = device
         self.sync_mode = sync_mode
         self.max_batch_size = max_batch_size
-        
-        self.logger = trt.Logger(trt.Logger.VERBOSE) if verbose else trt.Logger(trt.Logger.INFO)  
+
+        self.logger = trt.Logger(trt.Logger.VERBOSE) if verbose else trt.Logger(trt.Logger.INFO)
 
         self.engine = self.load_engine(engine_path)
 
@@ -486,7 +486,11 @@ class TRTInference(object):
 
         self.input_names = self.get_input_names()
         self.output_names = self.get_output_names()
-        
+
+        # Store the engine's expected batch size from input shape
+        self.engine_batch_size = self.bindings[self.input_names[0]].shape[0]
+        print(f"TensorRT engine loaded with batch_size={self.engine_batch_size}")
+
         if not self.sync_mode:
             self.stream = cuda.Stream()
 
@@ -556,12 +560,28 @@ class TRTInference(object):
         return bindings
     
     def run_sync(self, blob):
+        # Validate input batch size matches engine's expected batch size
+        input_batch_size = blob[self.input_names[0]].shape[0]
+        if input_batch_size != self.engine_batch_size:
+            raise ValueError(
+                f"Input batch size ({input_batch_size}) does not match engine batch size ({self.engine_batch_size}). "
+                f"Please export ONNX with --batch_size {input_batch_size} and rebuild the TensorRT engine."
+            )
+
         self.bindings_addr.update({n: blob[n].data_ptr() for n in self.input_names})
         self.context.execute_v2(list(self.bindings_addr.values()))
         outputs = {n: self.bindings[n].data for n in self.output_names}
         return outputs
 
     def run_async(self, blob):
+        # Validate input batch size matches engine's expected batch size
+        input_batch_size = blob[self.input_names[0]].shape[0]
+        if input_batch_size != self.engine_batch_size:
+            raise ValueError(
+                f"Input batch size ({input_batch_size}) does not match engine batch size ({self.engine_batch_size}). "
+                f"Please export ONNX with --batch_size {input_batch_size} and rebuild the TensorRT engine."
+            )
+
         self.bindings_addr.update({n: blob[n].data_ptr() for n in self.input_names})
         bindings_addr = [int(v) for _, v in self.bindings_addr.items()]
         self.context.execute_async_v2(bindings=bindings_addr, stream_handle=self.stream.handle)
@@ -661,6 +681,14 @@ def main(args):
         infer_onnx(sess, coco_evaluator, time_profile, prefix, img_list, device=f'cuda:{args.device}', repeats=repeats)
     elif args.path.endswith(".engine"):
         model = TRTInference(args.path, sync_mode=True, device=f'cuda:{args.device}')
+
+        # Validate batch_size matches engine's compiled batch size
+        if args.batch_size != model.engine_batch_size:
+            print(f"\nWARNING: Requested batch_size={args.batch_size} but engine was built with batch_size={model.engine_batch_size}")
+            print(f"Using engine's batch_size={model.engine_batch_size} instead.")
+            print(f"To use batch_size={args.batch_size}, re-export ONNX with: --batch_size {args.batch_size}\n")
+            args.batch_size = model.engine_batch_size
+
         if args.batch_size > 1:
             infer_engine_batched(model, coco_evaluator, time_profile, prefix, img_list,
                                 device=f'cuda:{args.device}', batch_size=args.batch_size, repeats=repeats)
