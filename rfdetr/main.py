@@ -667,10 +667,6 @@ if __name__ == '__main__':
             config.pop(key, None)  # Use pop with None to avoid KeyError
             
         from deploy.export import main as export_main
-        if args.batch_size != 1:
-            config['batch_size'] = 1
-            print(f"Only batch_size 1 is supported for onnx export, \
-                 but got batchsize = {args.batch_size}. batch_size is forcibly set to 1.")
         export_main(**config)
 
 def get_args_parser():
@@ -859,6 +855,7 @@ def get_args_parser():
     parser_export.add_argument('--dry-run', '--test', '-t', action='store_true', help="just print command")
     parser_export.add_argument('--profile', action='store_true', help='Run nsys profiling during TensorRT export')
     parser_export.add_argument('--shape', type=int, nargs=2, default=(640, 640), help="input shape (width, height)")
+    parser_export.add_argument('--batch_size', type=int, default=1, help="Batch size for ONNX/TensorRT export")
     return parser
 
 def populate_args(

@@ -49,6 +49,7 @@ def parser_args():
     parser.add_argument('--path', type=str, help='engine file path')
     parser.add_argument('--coco_path', type=str, default="data/coco", help='coco dataset path')
     parser.add_argument('--device', default=0, type=int)
+    parser.add_argument('--batch_size', default=1, type=int, help='batch size for inference (must match exported engine)')
     parser.add_argument('--run_benchmark', action='store_true', help='repeat the inference to benchmark the latency')
     parser.add_argument('--disable_eval', action='store_true', help='disable evaluation')
     return parser.parse_args()
@@ -389,6 +390,82 @@ def infer_engine(model, coco_evaluator, time_profile, prefix, img_list, device, 
         print(stats)
 
 
+def infer_engine_batched(model, coco_evaluator, time_profile, prefix, img_list,
+                         device, batch_size=1, repeats=1):
+    """Batched TensorRT inference for benchmark evaluation.
+
+    Args:
+        model: TRTInference model instance
+        coco_evaluator: COCO evaluation instance (or None to skip evaluation)
+        time_profile: TimeProfiler instance for timing
+        prefix: Path prefix for image files
+        img_list: List of image dictionaries with 'file_name' and 'id' keys
+        device: Device string (e.g., 'cuda:0')
+        batch_size: Number of images to process per batch
+        repeats: Number of times to repeat inference for timing
+    """
+    time_list = []
+    num_images = len(img_list)
+
+    for batch_start in tqdm.tqdm(range(0, num_images, batch_size)):
+        batch_end = min(batch_start + batch_size, num_images)
+        batch_img_dicts = img_list[batch_start:batch_end]
+        actual_batch_size = len(batch_img_dicts)
+
+        # Prepare batch tensors
+        batch_tensors = []
+        batch_orig_sizes = []
+        batch_ids = []
+
+        for img_dict in batch_img_dicts:
+            image = load_image(os.path.join(prefix, img_dict['file_name']))
+            width, height = image.size
+            batch_orig_sizes.append(torch.Tensor([height, width]))
+            batch_ids.append(img_dict['id'])
+            image_tensor, _ = infer_transforms()(image, None)
+            batch_tensors.append(image_tensor)
+
+        # Pad batch if needed (for fixed batch engine with partial final batch)
+        while len(batch_tensors) < batch_size:
+            batch_tensors.append(torch.zeros_like(batch_tensors[0]))
+
+        samples = torch.stack(batch_tensors).to(device)
+
+        # Time inference
+        time_profile.reset()
+        with time_profile:
+            for _ in range(repeats):
+                outputs = model({"input": samples})
+        time_list.append(time_profile.total / repeats)
+
+        # Post-process only valid batch entries
+        if coco_evaluator is not None:
+            orig_target_sizes = torch.stack(batch_orig_sizes).to(device)
+            batch_outputs = {
+                'labels': outputs['labels'][:actual_batch_size],
+                'dets': outputs['dets'][:actual_batch_size]
+            }
+            results = post_process(batch_outputs, orig_target_sizes)
+            for i, img_id in enumerate(batch_ids):
+                coco_evaluator.update({img_id: results[i]})
+
+    # Report performance
+    total_time = sum(time_list)
+    avg_latency_per_image = 1000 * total_time / num_images
+    throughput = num_images / total_time
+    print(f"TensorRT Batched (batch_size={batch_size}): "
+          f"{avg_latency_per_image:.2f}ms/image, {throughput:.1f} images/sec")
+
+    # accumulate predictions from all images
+    stats = {}
+    if coco_evaluator is not None:
+        coco_evaluator.synchronize_between_processes()
+        coco_evaluator.accumulate()
+        coco_evaluator.summarize()
+        stats['coco_eval_bbox'] = coco_evaluator.coco_eval['bbox'].stats.tolist()
+        print(stats)
+
+
 class TRTInference(object):
     """TensorRT inference engine
     """
@@ -456,7 +533,11 @@ class TRTInference(object):
             dtype = trt.nptype(engine.get_tensor_dtype(name))
 
             if shape[0] == -1:
-                raise NotImplementedError
+                raise ValueError(
+                    f"Dynamic batch dimension detected for tensor '{name}'. "
+                    "This TensorRT inference implementation requires fixed batch sizes. "
+                    "Please export your ONNX model with a specific batch_size parameter."
+                )
             
             if False:
                 if engine.get_tensor_mode(name) == trt.TensorIOMode.INPUT:
@@ -580,7 +661,11 @@ def main(args):
         infer_onnx(sess, coco_evaluator, time_profile, prefix, img_list, device=f'cuda:{args.device}', repeats=repeats)
     elif args.path.endswith(".engine"):
         model = TRTInference(args.path, sync_mode=True, device=f'cuda:{args.device}')
-        infer_engine(model, coco_evaluator, time_profile, prefix, img_list, device=f'cuda:{args.device}', repeats=repeats)
+        if args.batch_size > 1:
+            infer_engine_batched(model, coco_evaluator, time_profile, prefix, img_list,
+                                device=f'cuda:{args.device}', batch_size=args.batch_size, repeats=repeats)
+        else:
+            infer_engine(model, coco_evaluator, time_profile, prefix, img_list, device=f'cuda:{args.device}', repeats=repeats)
     else:
         raise NotImplementedError('Only model file names ending with ".onnx" and ".engine" are supported.')
 
