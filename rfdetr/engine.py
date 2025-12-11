@@ -262,7 +262,7 @@ def evaluate(model, criterion, postprocess, data_loader, base_ds, device, args=N
     header = "Test:"
 
     iou_types = ("bbox",) if not args.segmentation_head else ("bbox", "segm")
-    coco_evaluator = CocoEvaluator(base_ds, iou_types)
+    coco_evaluator = CocoEvaluator(base_ds, iou_types, args.eval_max_dets)
 
     for samples, targets in metric_logger.log_every(data_loader, 10, header):
         samples = samples.to(device)
