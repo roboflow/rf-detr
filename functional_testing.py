@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""
-Test script for RF-DETR enhancements.
-Validates IoU-aware query selection, enhanced segmentation, and knowledge distillation.
+"""Test script for RF-DETR enhancements.
+
+Validates IoU-aware query selection, adaptive query allocation,
+and enhanced segmentation head integration.
 """
 
 import torch
@@ -15,7 +16,6 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from rfdetr.models.iou_aware_query_selector import IoUAwareQuerySelector, AdaptiveQueryAllocator
 from rfdetr.models.enhanced_segmentation_head import EnhancedSegmentationHead, AdaptiveMaskLoss
-from rfdetr.models.knowledge_distillation import KnowledgeDistillationTrainer, FeatureDistillationLoss
 
 
 def test_iou_aware_query_selector():
@@ -120,67 +120,6 @@ def test_enhanced_segmentation_head():
         return False
 
 
-def test_knowledge_distillation():
-    """Test knowledge distillation framework."""
-    print("Testing knowledge distillation...")
-    
-    # Create dummy models
-    feature_dim = 256
-    num_classes = 91
-    num_queries = 300
-    
-    # Simple teacher and student models
-    teacher_model = torch.nn.Sequential(
-        torch.nn.Linear(feature_dim, feature_dim),
-        torch.nn.ReLU(),
-        torch.nn.Linear(feature_dim, num_classes)
-    )
-    
-    student_model = torch.nn.Sequential(
-        torch.nn.Linear(feature_dim, feature_dim),
-        torch.nn.ReLU(),
-        torch.nn.Linear(feature_dim, num_classes)
-    )
-    
-    # Initialize distillation trainer
-    try:
-        distiller = KnowledgeDistillationTrainer(
-            teacher_model=teacher_model,
-            student_model=student_model
-        )
-        print("✓ Knowledge distillation trainer initialization passed")
-        return True
-    except Exception as e:
-        print(f"✗ Knowledge distillation test failed: {e}")
-        return False
-
-
-def test_feature_distillation_loss():
-    """Test feature distillation loss."""
-    print("Testing feature distillation loss...")
-    
-    # Create dummy data
-    batch_size = 2
-    feature_dim = 256
-    spatial_size = 32
-    
-    # Initialize loss function
-    loss_fn = FeatureDistillationLoss()
-    
-    # Create dummy features
-    student_features = torch.randn(batch_size, feature_dim, spatial_size, spatial_size)
-    teacher_features = torch.randn(batch_size, feature_dim, spatial_size, spatial_size)
-    
-    # Forward pass
-    try:
-        loss = loss_fn(student_features, teacher_features)
-        assert isinstance(loss, torch.Tensor)
-        assert loss.item() >= 0
-        print("✓ Feature distillation loss test passed")
-        return True
-    except Exception as e:
-        print(f"✗ Feature distillation loss test failed: {e}")
-        return False
 
 
 def test_integration():
@@ -233,9 +172,7 @@ def main():
         test_iou_aware_query_selector,
         test_adaptive_query_allocator,
         test_enhanced_segmentation_head,
-        test_knowledge_distillation,
-        test_feature_distillation_loss,
-        test_integration
+        test_integration,
     ]
     
     passed = 0

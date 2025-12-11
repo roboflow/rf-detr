@@ -46,10 +46,6 @@ The following features are available when installing RF-DETR from source and ena
   - Mosaic, MixUp, and Copy-Paste augmentations implemented in `rfdetr.datasets.advanced_augmentations`.
   - Can be plugged into custom training scripts for stronger data augmentation pipelines.
 
-- **Knowledge distillation utilities** (training efficiency)
-  - Feature- and detection-level distillation utilities in `rfdetr.models.knowledge_distillation`.
-  - Useful for training smaller/faster student variants from a larger teacher.
-
 ## Results
 
 RF-DETR achieves state-of-the-art performance on both the Microsoft COCO and the RF100-VL benchmarks.
@@ -202,7 +198,7 @@ Visit our [documentation website](https://rfdetr.roboflow.com) to learn more abo
 
 ### Testing and CI
 
-For contributors, a small functional test suite is provided to validate core enhancements (IoU-aware queries, enhanced segmentation head, distillation utilities):
+For contributors, a small functional test suite is provided to validate core enhancements (IoU-aware queries, adaptive query allocation, and enhanced segmentation head):
 
 ```bash
 python functional_testing.py
