@@ -24,6 +24,7 @@ import torch.nn.functional as F
 from torch import nn, Tensor
 
 from rfdetr.models.ops.modules import MSDeformAttn
+from rfdetr.models.iou_aware_query_selector import IoUAwareQuerySelector, AdaptiveQueryAllocator
 
 class MLP(nn.Module):
     """ Very simple multi-layer perceptron (also called FFN)"""
@@ -136,7 +137,9 @@ class Transformer(nn.Module):
                  num_feature_levels=4, dec_n_points=4,
                  lite_refpoint_refine=False,
                  decoder_norm_type='LN',
-                 bbox_reparam=False):
+                 bbox_reparam=False,
+                 use_iou_aware_query=False,
+                 adaptive_query_allocation=False):
         super().__init__()
         self.encoder = None
 
@@ -164,6 +167,22 @@ class Transformer(nn.Module):
         if two_stage:
             self.enc_output = nn.ModuleList([nn.Linear(d_model, d_model) for _ in range(group_detr)])
             self.enc_output_norm = nn.ModuleList([nn.LayerNorm(d_model) for _ in range(group_detr)])
+
+        # Initialize IoU-aware query selector
+        self.use_iou_aware_query = use_iou_aware_query
+        self.adaptive_query_allocation = adaptive_query_allocation
+        
+        if use_iou_aware_query:
+            self.iou_query_selector = IoUAwareQuerySelector(
+                d_model=d_model,
+                num_queries=num_queries,
+                dropout=dropout
+            )
+        
+        if adaptive_query_allocation:
+            self.adaptive_allocator = AdaptiveQueryAllocator(
+                base_queries=num_queries
+            )
 
         self._reset_parameters()
 
@@ -264,6 +283,45 @@ class Transformer(nn.Module):
             memory_ts = torch.cat(memory_ts, dim=1)#.transpose(0, 1)
             boxes_ts = torch.cat(boxes_ts, dim=1)#.transpose(0, 1)
         
+        # Apply adaptive query allocation if enabled
+        if self.adaptive_query_allocation and not self.two_stage:
+            # Dynamically adjust number of queries based on image complexity
+            adaptive_num_queries = self.adaptive_allocator(memory)
+            if adaptive_num_queries != self.num_queries:
+                # Adjust query embeddings based on adaptive allocation
+                if adaptive_num_queries < self.num_queries:
+                    # Reduce queries
+                    query_feat = query_feat[:adaptive_num_queries]
+                    refpoint_embed = refpoint_embed[:adaptive_num_queries]
+                elif adaptive_num_queries > self.num_queries:
+                    # Increase queries (pad with learned embeddings)
+                    padding_size = adaptive_num_queries - self.num_queries
+                    query_padding = query_feat[:padding_size]  # reuse first few embeddings
+                    refpoint_padding = refpoint_embed[:padding_size]
+                    query_feat = torch.cat([query_feat, query_padding], dim=0)
+                    refpoint_embed = torch.cat([refpoint_embed, refpoint_padding], dim=0)
+
+        # Apply IoU-aware query selection if enabled
+        if self.use_iou_aware_query and not self.two_stage:
+            # Use IoU-aware query selection to improve query initialization
+            selected_memory, selection_scores = self.iou_query_selector(
+                memory=memory,
+                spatial_shapes=spatial_shapes,
+                level_start_index=level_start_index,
+                reference_points=refpoint_embed.unsqueeze(0).repeat(bs, 1, 1)
+            )
+            
+            # Update memory with selected features
+            memory = torch.cat([memory, selected_memory], dim=1)
+            
+            # Update spatial shapes and level start index
+            new_spatial_shape = torch.tensor([self.num_queries, 1], device=spatial_shapes.device)
+            spatial_shapes = torch.cat([spatial_shapes, new_spatial_shape.unsqueeze(0)], dim=0)
+            level_start_index = torch.cat([
+                level_start_index, 
+                torch.tensor([spatial_shapes[:-1].prod(1).sum()], device=level_start_index.device)
+            ], dim=0)
+
         if self.dec_layers > 0:
             tgt = query_feat.unsqueeze(0).repeat(bs, 1, 1)
             refpoint_embed = refpoint_embed.unsqueeze(0).repeat(bs, 1, 1)
@@ -577,6 +635,8 @@ def build_transformer(args):
         lite_refpoint_refine=args.lite_refpoint_refine,
         decoder_norm_type=args.decoder_norm,
         bbox_reparam=args.bbox_reparam,
+        use_iou_aware_query=getattr(args, 'use_iou_aware_query', False),
+        adaptive_query_allocation=getattr(args, 'adaptive_query_allocation', False),
     )
 
 
