@@ -37,6 +37,11 @@ class ModelConfig(BaseModel):
     cls_loss_coef: float = 1.0
     segmentation_head: bool = False
     mask_downsample_ratio: int = 4
+    use_iou_aware_query: bool = False
+    adaptive_query_allocation: bool = False
+    enhanced_segmentation: bool = False
+    mask_quality_prediction: bool = True
+    dynamic_mask_refinement: bool = True
 
 
 class RFDETRBaseConfig(ModelConfig):

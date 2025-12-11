@@ -35,6 +35,7 @@ from rfdetr.models.backbone import build_backbone
 from rfdetr.models.matcher import build_matcher
 from rfdetr.models.transformer import build_transformer
 from rfdetr.models.segmentation_head import SegmentationHead, get_uncertain_point_coords_with_randomness, point_sample
+from rfdetr.models.enhanced_segmentation_head import EnhancedSegmentationHead, AdaptiveMaskLoss
 
 class LWDETR(nn.Module):
     """ This is the Group DETR v3 module that performs object detection """
@@ -812,7 +813,17 @@ def build_model(args):
     args.num_feature_levels = len(args.projector_scale)
     transformer = build_transformer(args)
 
-    segmentation_head = SegmentationHead(args.hidden_dim, args.dec_layers, downsample_ratio=args.mask_downsample_ratio) if args.segmentation_head else None
+    # Build enhanced segmentation head if enabled
+    if args.segmentation_head and getattr(args, 'enhanced_segmentation', False):
+        segmentation_head = EnhancedSegmentationHead(
+            feature_dim=args.hidden_dim,
+            num_layers=args.dec_layers,
+            downsample_ratio=args.mask_downsample_ratio,
+            use_quality_prediction=getattr(args, 'mask_quality_prediction', True),
+            use_dynamic_refinement=getattr(args, 'dynamic_mask_refinement', True)
+        )
+    else:
+        segmentation_head = SegmentationHead(args.hidden_dim, args.dec_layers, downsample_ratio=args.mask_downsample_ratio) if args.segmentation_head else None
 
     model = LWDETR(
         backbone,

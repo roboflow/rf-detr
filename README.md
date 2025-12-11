@@ -30,6 +30,26 @@ On image segmentation, RF-DETR Seg (Preview) is 3x faster and more accurate than
 - `2025/04/03`: We release early stopping, gradient checkpointing, metrics saving, training resume, TensorBoard and W&B logging support.
 - `2025/03/20`: We release RF-DETR real-time object detection model. **Code and checkpoint for RF-DETR-large and RF-DETR-base are available.**
 
+## Advanced Features (Experimental)
+
+The following features are available when installing RF-DETR from source and enable more advanced research and customization use cases:
+
+- **IoU-aware query selection and adaptive query allocation** (detection)
+  - Optional improvements to query initialization inside the transformer.
+  - Controlled via `ModelConfig` / CLI flags: `use_iou_aware_query`, `adaptive_query_allocation`.
+
+- **Enhanced segmentation head with mask quality scoring** (segmentation)
+  - New head that adds mask quality prediction and dynamic refinement.
+  - Controlled via `ModelConfig` / CLI flags: `enhanced_segmentation`, `mask_quality_prediction`, `dynamic_mask_refinement`.
+
+- **Advanced data augmentations** (training)
+  - Mosaic, MixUp, and Copy-Paste augmentations implemented in `rfdetr.datasets.advanced_augmentations`.
+  - Can be plugged into custom training scripts for stronger data augmentation pipelines.
+
+- **Knowledge distillation utilities** (training efficiency)
+  - Feature- and detection-level distillation utilities in `rfdetr.models.knowledge_distillation`.
+  - Useful for training smaller/faster student variants from a larger teacher.
+
 ## Results
 
 RF-DETR achieves state-of-the-art performance on both the Microsoft COCO and the RF100-VL benchmarks.
@@ -179,6 +199,16 @@ You can fine-tune an RF-DETR Nano, Small, Medium, and Base model with a custom d
 ## Documentation
 
 Visit our [documentation website](https://rfdetr.roboflow.com) to learn more about how to use RF-DETR.
+
+### Testing and CI
+
+For contributors, a small functional test suite is provided to validate core enhancements (IoU-aware queries, enhanced segmentation head, distillation utilities):
+
+```bash
+python functional_testing.py
+```
+
+GitHub Actions runs these tests automatically via the `functional-tests` workflow on pull requests targeting the main development branches.
 
 ## License
 
