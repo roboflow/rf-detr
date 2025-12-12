@@ -62,6 +62,9 @@ HOSTED_MODELS = {
     "rf-detr-small.pth": "https://storage.googleapis.com/rfdetr/small_coco/checkpoint_best_regular.pth",
     "rf-detr-medium.pth": "https://storage.googleapis.com/rfdetr/medium_coco/checkpoint_best_regular.pth",
     "rf-detr-seg-preview.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-preview.pt",
+    "rf-detr-large-o365.pth": "https://storage.googleapis.com/rfdetr/rf-detr-large-2-o365.pth",
+    "rf-detr-xlarge-o365.pth": "https://storage.googleapis.com/rfdetr/rf-detr-xlarge-o365.pth",
+    "rf-detr-xxlarge-o365.pth": "https://storage.googleapis.com/rfdetr/rf-detr-xxlarge-o365.pth",
 }
 
 def download_pretrain_weights(pretrain_weights: str, redownload=False):

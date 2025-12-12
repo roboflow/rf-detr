@@ -107,6 +107,57 @@ class RFDETRMediumConfig(RFDETRBaseConfig):
     positional_encoding_size: int = 36
     pretrain_weights: Optional[str] = "rf-detr-medium.pth"
 
+
+#res 704, ps 16, 2 windows, 4 dec layers, 300 queries, ViT-S basis    
+class RFDETRLargeEdgeConfig(ModelConfig):
+    encoder: Literal["dinov2_windowed_small"] = "dinov2_windowed_small"
+    hidden_dim: int = 256
+    dec_layers: int = 4
+    sa_nheads: int = 8
+    ca_nheads: int = 16
+    dec_n_points: int = 2
+    num_windows: int = 2
+    patch_size: int = 16
+    projector_scale: List[Literal["P4",]] = ["P4"]
+    out_feature_indexes: List[int] = [3, 6, 9, 12]
+    num_classes: int = 365
+    positional_encoding_size: int = 704 // 16
+    pretrain_weights: Optional[str] = "rf-detr-large-o365.pth"
+    resolution: int = 704
+
+class RFDETRXLCloudConfig(ModelConfig):
+    encoder: Literal["dinov2_windowed_base"] = "dinov2_windowed_base"
+    hidden_dim: int = 512
+    dec_layers: int = 5
+    sa_nheads: int = 16
+    ca_nheads: int = 32
+    dec_n_points: int = 4
+    num_windows: int = 1
+    patch_size: int = 20
+    projector_scale: List[Literal["P4",]] = ["P4"]
+    out_feature_indexes: List[int] = [3, 6, 9, 12]
+    num_classes: int = 365
+    positional_encoding_size: int = 700 // 20
+    pretrain_weights: Optional[str] = "rf-detr-xlarge-o365.pth"
+    resolution: int = 700
+
+class RFDETRXXLCloudConfig(ModelConfig):
+    encoder: Literal["dinov2_windowed_base"] = "dinov2_windowed_base"
+    hidden_dim: int = 512
+    dec_layers: int = 5
+    sa_nheads: int = 16
+    ca_nheads: int = 32
+    dec_n_points: int = 4
+    num_windows: int = 2
+    patch_size: int = 20
+    projector_scale: List[Literal["P4",]] = ["P4"]
+    out_feature_indexes: List[int] = [3, 6, 9, 12]
+    num_classes: int = 365
+    positional_encoding_size: int = 880 // 20
+    pretrain_weights: Optional[str] = "rf-detr-xxlarge-o365.pth" #"rf-detr-nas-cloud-o365.pth"
+    resolution: int = 880
+
+
 class RFDETRSegPreviewConfig(RFDETRBaseConfig):
     segmentation_head: bool = True
     out_feature_indexes: List[int] = [3, 6, 9, 12]
