@@ -22,6 +22,7 @@ LW-DETR model and criterion classes
 import copy
 import math
 from typing import Callable
+import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -506,24 +507,43 @@ class SetCriterion(nn.Module):
     
     def loss_hausdorff(self, outputs, targets, indices, num_boxes):
         """
-        @TODO: 11/18 edit - test bbox
-        Compute the Hausdorff distance loss between predicted and target masks."""
+        Compute the Hausdorff distance loss between predicted and target masks.
+        GPU-accelerated implementation using PyTorch distance computation.
+        """
         assert 'pred_masks' in outputs
         idx = self._get_src_permutation_idx(indices)
         src_masks = outputs['pred_masks'][idx]
         target_masks = torch.cat([t['masks'][i] for t, (_, i) in zip(targets, indices)], dim=0)
 
-        # Convert masks to numpy arrays
-        src_masks_np = src_masks.cpu().detach().numpy()
-        target_masks_np = target_masks.cpu().detach().numpy()
+        # Handle empty case
+        if src_masks.numel() == 0:
+            return {'loss_hausdorff': torch.tensor(0.0, device=src_masks.device)}
 
-        hausdorff_distances = []
-        for src, tgt in zip(src_masks_np, target_masks_np):
-            forward_hd = directed_hausdorff(src.reshape(-1, 2), tgt.reshape(-1, 2))[0]
-            backward_hd = directed_hausdorff(tgt.reshape(-1, 2), src.reshape(-1, 2))[0]
-            hausdorff_distances.append(max(forward_hd, backward_hd))
+        # Binarize masks (threshold at 0.5) - stay on GPU
+        src_masks_binary = (src_masks.sigmoid() > 0.5)
+        target_masks_binary = (target_masks > 0.5)
 
-        hausdorff_loss = torch.tensor(hausdorff_distances, device=src_masks.device).sum() / num_boxes
+        # Accumulate loss directly on GPU to avoid list append overhead
+        hausdorff_loss = torch.tensor(0.0, device=src_masks.device)
+        
+        for src, tgt in zip(src_masks_binary, target_masks_binary):
+            # Extract coordinates of positive pixels on GPU
+            src_coords = torch.nonzero(src, as_tuple=False).float()
+            tgt_coords = torch.nonzero(tgt, as_tuple=False).float()
+            
+            # Skip if either mask is empty
+            if src_coords.shape[0] == 0 or tgt_coords.shape[0] == 0:
+                continue
+                
+            # Compute directed Hausdorff distance on GPU
+            # Forward: max over src of (min distance to any tgt point)
+            dist_matrix = torch.cdist(src_coords, tgt_coords, p=2)
+            forward_hd = dist_matrix.min(dim=1)[0].max()
+            backward_hd = dist_matrix.min(dim=0)[0].max()
+            hausdorff_loss += torch.max(forward_hd, backward_hd)
+
+        # Normalize by num_boxes instead of valid_count to match other losses
+        hausdorff_loss = hausdorff_loss / num_boxes
         return {'loss_hausdorff': hausdorff_loss}
 
     def _get_src_permutation_idx(self, indices):
@@ -854,11 +874,12 @@ def build_model(args):
 def build_criterion_and_postprocessors(args):
     device = torch.device(args.device)
     matcher = build_matcher(args)
-    weight_dict = {'loss_ce': args.cls_loss_coef, 'loss_bbox': args.bbox_loss_coef, 'loss_hausdorff': args.hausdorff_loss_coef}
+    weight_dict = {'loss_ce': args.cls_loss_coef, 'loss_bbox': args.bbox_loss_coef}
     weight_dict['loss_giou'] = args.giou_loss_coef
     if args.segmentation_head:
         weight_dict['loss_mask_ce'] = args.mask_ce_loss_coef
         weight_dict['loss_mask_dice'] = args.mask_dice_loss_coef
+        weight_dict['loss_hausdorff'] = args.hausdorff_loss_coef
     # TODO this is a hack
     if args.aux_loss:
         aux_weight_dict = {}
