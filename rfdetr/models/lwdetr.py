@@ -22,9 +22,11 @@ LW-DETR model and criterion classes
 import copy
 import math
 from typing import Callable
+import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
+from scipy.spatial.distance import directed_hausdorff
 
 from rfdetr.util import box_ops
 from rfdetr.util.misc import (NestedTensor, nested_tensor_from_tensor_list,
@@ -129,7 +131,7 @@ class LWDETR(nn.Module):
                 m.export()
 
     def forward(self, samples: NestedTensor, targets=None):
-        """ The forward expects a NestedTensor, which consists of:
+        """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
 
@@ -503,7 +505,47 @@ class SetCriterion(nn.Module):
         del target_masks
         return losses
     
- 
+    def loss_hausdorff(self, outputs, targets, indices, num_boxes):
+        """
+        Compute the Hausdorff distance loss between predicted and target masks.
+        GPU-accelerated implementation using PyTorch distance computation.
+        """
+        assert 'pred_masks' in outputs
+        idx = self._get_src_permutation_idx(indices)
+        src_masks = outputs['pred_masks'][idx]
+        target_masks = torch.cat([t['masks'][i] for t, (_, i) in zip(targets, indices)], dim=0)
+
+        # Handle empty case
+        if src_masks.numel() == 0:
+            return {'loss_hausdorff': torch.tensor(0.0, device=src_masks.device)}
+
+        # Binarize masks (threshold at 0.5) - stay on GPU
+        src_masks_binary = (src_masks.sigmoid() > 0.5)
+        target_masks_binary = (target_masks > 0.5)
+
+        # Accumulate loss directly on GPU to avoid list append overhead
+        hausdorff_loss = torch.tensor(0.0, device=src_masks.device)
+        
+        for src, tgt in zip(src_masks_binary, target_masks_binary):
+            # Extract coordinates of positive pixels on GPU
+            src_coords = torch.nonzero(src, as_tuple=False).float()
+            tgt_coords = torch.nonzero(tgt, as_tuple=False).float()
+            
+            # Skip if either mask is empty
+            if src_coords.shape[0] == 0 or tgt_coords.shape[0] == 0:
+                continue
+                
+            # Compute directed Hausdorff distance on GPU
+            # Forward: max over src of (min distance to any tgt point)
+            dist_matrix = torch.cdist(src_coords, tgt_coords, p=2)
+            forward_hd = dist_matrix.min(dim=1)[0].max()
+            backward_hd = dist_matrix.min(dim=0)[0].max()
+            hausdorff_loss += torch.max(forward_hd, backward_hd)
+
+        # Normalize by num_boxes instead of valid_count to match other losses
+        hausdorff_loss = hausdorff_loss / num_boxes
+        return {'loss_hausdorff': hausdorff_loss}
+
     def _get_src_permutation_idx(self, indices):
         # permute predictions following indices
         batch_idx = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])
@@ -522,6 +564,7 @@ class SetCriterion(nn.Module):
             'cardinality': self.loss_cardinality,
             'boxes': self.loss_boxes,
             'masks': self.loss_masks,
+            'hausdorff': self.loss_hausdorff, 
         }
         assert loss in loss_map, f'do you really want to compute {loss} loss?'
         return loss_map[loss](outputs, targets, indices, num_boxes, **kwargs)
@@ -581,7 +624,7 @@ class SetCriterion(nn.Module):
         return losses
 
 
-def sigmoid_focal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: float = 2):
+def sigmoid_focal_loss(inputs, targets, num_boxes, alpha: float = 0.75, gamma: float = 2):
     """
     Loss used in RetinaNet for dense detection: https://arxiv.org/abs/1708.02002.
     Args:
@@ -836,6 +879,7 @@ def build_criterion_and_postprocessors(args):
     if args.segmentation_head:
         weight_dict['loss_mask_ce'] = args.mask_ce_loss_coef
         weight_dict['loss_mask_dice'] = args.mask_dice_loss_coef
+        weight_dict['loss_hausdorff'] = args.hausdorff_loss_coef
     # TODO this is a hack
     if args.aux_loss:
         aux_weight_dict = {}
@@ -848,6 +892,7 @@ def build_criterion_and_postprocessors(args):
     losses = ['labels', 'boxes', 'cardinality']
     if args.segmentation_head:
         losses.append('masks')
+        losses.append('hausdorff')
 
     try:
         sum_group_losses = args.sum_group_losses

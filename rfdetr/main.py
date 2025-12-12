@@ -287,7 +287,8 @@ class Model:
         
         if args.resume:
             checkpoint = torch.load(args.resume, map_location='cpu', weights_only=False)
-            model_without_ddp.load_state_dict(checkpoint['model'], strict=True)
+            state_dict = checkpoint['model'] if 'model' in checkpoint else checkpoint
+            model_without_ddp.load_state_dict(state_dict, strict=True)
             if args.use_ema:
                 if 'ema_model' in checkpoint:
                     self.ema_m.module.load_state_dict(clean_state_dict(checkpoint['ema_model']))
@@ -498,10 +499,17 @@ class Model:
         self.model.eval()
 
         if args.run_test:
-            best_state_dict = torch.load(output_dir / 'checkpoint_best_total.pth', map_location='cpu', weights_only=False)['model']
-            model.load_state_dict(best_state_dict)
+            time.sleep(5)
+            checkpoint = torch.load(output_dir / 'checkpoint_best_total.pth', map_location='cpu', weights_only=False)
+            best_state_dict = checkpoint['model'] if 'model' in checkpoint else checkpoint
+    
+            # Clean the state dict to remove 'module.' prefix if present
+            best_state_dict = clean_state_dict(best_state_dict)
+            
+            # Load into the unwrapped model to match non-DDP-saved checkpoint keys
+            model.module.load_state_dict(best_state_dict)
+            
             model.eval()
-
             test_stats, _ = evaluate(
                 model, criterion, postprocess, data_loader_test, base_ds_test, device, args=args
             )
@@ -770,6 +778,8 @@ def get_args_parser():
     parser.add_argument('--bbox_loss_coef', default=5, type=float)
     parser.add_argument('--giou_loss_coef', default=2, type=float)
     parser.add_argument('--focal_alpha', default=0.25, type=float)
+    parser.add_argument('--hausdorff_loss_coef', default=1.0, type=float,
+                        help="Coefficient for the Hausdorff distance loss")
     
     # Loss
     parser.add_argument('--no_aux_loss', dest='aux_loss', action='store_false',
@@ -930,6 +940,7 @@ def populate_args(
     bbox_loss_coef=5,
     giou_loss_coef=2,
     focal_alpha=0.25,
+    hausdorff_loss_coef=1.0,
     aux_loss=True,
     sum_group_losses=False,
     use_varifocal_loss=False,
@@ -1041,6 +1052,7 @@ def populate_args(
         bbox_loss_coef=bbox_loss_coef,
         giou_loss_coef=giou_loss_coef,
         focal_alpha=focal_alpha,
+        hausdorff_loss_coef=hausdorff_loss_coef,
         aux_loss=aux_loss,
         sum_group_losses=sum_group_losses,
         use_varifocal_loss=use_varifocal_loss,

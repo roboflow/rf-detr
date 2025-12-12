@@ -169,6 +169,95 @@ def pad(image, target, padding):
             target['masks'], (0, padding[0], 0, padding[1]))
     return padded_image, target
 
+def rotate(image, target, angle):
+    rotated_image = F.rotate(image, angle, expand=True)
+
+    w, h = image.size
+        # original image size
+
+    new_w, new_h = rotated_image.size
+    cx_old, cy_old = w / 2, h / 2
+    cx_new, cy_new = new_w / 2, new_h / 2
+
+    target = target.copy()
+    target["size"] = torch.tensor([new_h, new_w])
+
+    # ============================================================
+    # 1. Rotate masks
+    # ============================================================
+    if "masks" in target:
+        # masks: (N, H, W) tensor -> convert each to PIL image for safe rotation
+        rotated_masks = []
+        for m in target["masks"]:
+            pil_m = F.to_pil_image(m.byte() * 255)
+            pil_m = F.rotate(pil_m, angle, expand=True)
+            rotated_m = torch.from_numpy(np.array(pil_m)).bool()
+            rotated_masks.append(rotated_m)
+
+        target["masks"] = torch.stack(rotated_masks, dim=0)
+
+    # ============================================================
+    # 2. Rotate bounding boxes
+    # ============================================================
+    if "boxes" in target:
+        boxes = target["boxes"]  # (N, 4), xyxy format
+
+        # convert xyxy into 4 corner points
+        x1, y1, x2, y2 = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
+        corners = torch.stack([
+            torch.stack([x1, y1], dim=1),
+            torch.stack([x2, y1], dim=1),
+            torch.stack([x2, y2], dim=1),
+            torch.stack([x1, y2], dim=1),
+        ], dim=1)  # (N, 4, 2)
+
+        # rotation matrix
+        theta = torch.tensor(angle * np.pi / 180.0)
+        R = torch.tensor([
+            [ torch.cos(theta), -torch.sin(theta)],
+            [ torch.sin(theta),  torch.cos(theta)]
+        ])
+
+        # shift corners to original center
+        corners_shifted = corners - torch.tensor([cx_old, cy_old])
+
+        # rotate
+        rotated = corners_shifted @ R.T
+
+        # shift to new center
+        rotated = rotated + torch.tensor([cx_new, cy_new])
+
+        # new xyxy boxes from rotated corners
+        x_coords = rotated[:, :, 0]
+        y_coords = rotated[:, :, 1]
+        new_boxes = torch.stack([
+            x_coords.min(dim=1).values,
+            y_coords.min(dim=1).values,
+            x_coords.max(dim=1).values,
+            y_coords.max(dim=1).values,
+        ], dim=1)
+
+        target["boxes"] = new_boxes
+
+    # ============================================================
+    # 3. Update area if present
+    # ============================================================
+    if "area" in target and "boxes" in target:
+        new_boxes = target["boxes"]
+        wh = (new_boxes[:, 2:] - new_boxes[:, :2]).clamp(min=0)
+        target["area"] = wh[:, 0] * wh[:, 1]
+
+    return rotated_image, target
+
+class RandomRotate(object):
+    def __init__(self, max_angle):
+        self.max_angle = max_angle
+
+    def __call__(self, image, target):
+        # Sample random angle
+        angle = float(torch.empty(1).uniform_(-self.max_angle, self.max_angle))
+        return rotate(image, target, angle)
+
 
 class RandomCrop(object):
     def __init__(self, size):
