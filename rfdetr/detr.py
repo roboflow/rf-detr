@@ -427,17 +427,6 @@ class RFDETRBase(RFDETR):
     def get_train_config(self, **kwargs):
         return TrainConfig(**kwargs)
 
-class RFDETRLarge(RFDETR):
-    """
-    Train an RF-DETR Large model.
-    """
-    size = "rfdetr-large"
-    def get_model_config(self, **kwargs):
-        return RFDETRLargeConfig(**kwargs)
-
-    def get_train_config(self, **kwargs):
-        return TrainConfig(**kwargs)
-
 class RFDETRNano(RFDETR):
     """
     Train an RF-DETR Nano model.
@@ -471,65 +460,9 @@ class RFDETRMedium(RFDETR):
     def get_train_config(self, **kwargs):
         return TrainConfig(**kwargs)
 
-<<<<<<< HEAD
-=======
-class RFDETRPicoO365(RFDETR):
-    def get_model_config(self, **kwargs):
-        return RFDETRPicoO365Config(**kwargs)
-
-    def get_train_config(self, **kwargs):
-        return TrainConfig(**kwargs)
-
-class RFDETRNanoO365(RFDETR):
-    def get_model_config(self, **kwargs):
-        return RFDETRNanoO365Config(**kwargs)
-
-    def get_train_config(self, **kwargs):
-        return TrainConfig(**kwargs)
-
-class RFDETRSmallO365(RFDETR):
-    def get_model_config(self, **kwargs):
-        return RFDETRSmallO365Config(**kwargs)
-
-    def get_train_config(self, **kwargs):
-        return TrainConfig(**kwargs)
-
-class RFDETRMediumO365(RFDETR):
-    def get_model_config(self, **kwargs):
-        return RFDETRMediumO365Config(**kwargs)
-
-    def get_train_config(self, **kwargs):
-        return TrainConfig(**kwargs)
-
-class RFDETRBaseO365(RFDETR):
-    def get_model_config(self, **kwargs):
-        return RFDETRBaseO365Config(**kwargs)
-
-    def get_train_config(self, **kwargs):
-        return TrainConfig(**kwargs)
-
-class RFDETRLargeExpo365(RFDETR):
-    def get_model_config(self, **kwargs):
-        return RFDETRLargeExpo365Config(**kwargs)
-
-    def get_train_config(self, **kwargs):
-        return TrainConfig(**kwargs)
-
-class RFDETRXLExpV1o365(RFDETR):
-    def get_model_config(self, **kwargs):
-        return RFDETRXLExpV1o365Config(**kwargs)
-
-    def get_train_config(self, **kwargs):
-        return TrainConfig(**kwargs)
-
-class RFDETRXLExpV2o365(RFDETR):
-    def get_model_config(self, **kwargs):
-        return RFDETRXLExpV2o365Config(**kwargs)
-
-    def get_train_config(self, **kwargs):
-        return TrainConfig(**kwargs)
 
 class RFDETREdgeL(RFDETR):
+    size = "rfdetr-large"
     def get_model_config(self, **kwargs):
         return RFDETRLargeEdgeConfig(**kwargs)
 
@@ -537,6 +470,7 @@ class RFDETREdgeL(RFDETR):
         return TrainConfig(**kwargs)  
     
 class RFDETRCloudXL(RFDETR):
+    size = "rfdetr-xlarge"
     def get_model_config(self, **kwargs):
         return RFDETRXLCloudConfig(**kwargs)
 
@@ -544,13 +478,13 @@ class RFDETRCloudXL(RFDETR):
         return TrainConfig(**kwargs)    
     
 class RFDETRCloudXXL(RFDETR):
+    size = "rfdetr-xxlarge"
     def get_model_config(self, **kwargs):
         return RFDETRXXLCloudConfig(**kwargs)
 
     def get_train_config(self, **kwargs):
         return TrainConfig(**kwargs)
 
->>>>>>> f529920 (New large, xlarge, xxlarge)
 class RFDETRSegPreview(RFDETR):
     size = "rfdetr-seg-preview"
     def get_model_config(self, **kwargs):
