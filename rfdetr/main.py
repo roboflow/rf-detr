@@ -540,7 +540,14 @@ class Model:
 
         input_tensors = make_infer_image(infer_dir, shape, batch_size, device).to(device)
         input_names = ['input']
-        output_names = ['features'] if backbone_only else ['dets', 'labels']
+        #output_names = ['features'] if backbone_only else ['dets', 'labels']
+        if backbone_only:
+            output_names = ['features']
+        else:
+            if self.args.segmentation_head:
+                output_names = ['dets', 'labels', 'masks']
+            else:
+                output_names = ['dets', 'labels']
         dynamic_axes = None
         self.model.eval()
         with torch.no_grad():
