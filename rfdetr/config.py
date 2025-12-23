@@ -141,6 +141,7 @@ class TrainConfig(BaseModel):
     dataset_file: Literal["coco", "o365", "roboflow"] = "roboflow"
     square_resize_div_64: bool = True
     dataset_dir: str
+    image_root: Optional[str] = None
     output_dir: str = "output"
     multi_scale: bool = True
     expanded_scales: bool = True

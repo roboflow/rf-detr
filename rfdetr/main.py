@@ -784,6 +784,8 @@ def get_args_parser():
     parser.add_argument('--dataset_file', default='coco')
     parser.add_argument('--coco_path', type=str)
     parser.add_argument('--dataset_dir', type=str)
+    parser.add_argument('--image_root', type=str, default=None,
+                        help='Optional base directory for resolving COCO image file_name entries')
     parser.add_argument('--square_resize_div_64', action='store_true')
 
     parser.add_argument('--output_dir', default='output',
@@ -940,6 +942,7 @@ def populate_args(
     dataset_file='coco',
     coco_path=None,
     dataset_dir=None,
+    image_root=None,
     square_resize_div_64=False,
     
     # Output parameters
@@ -1049,6 +1052,7 @@ def populate_args(
         dataset_file=dataset_file,
         coco_path=coco_path,
         dataset_dir=dataset_dir,
+        image_root=image_root,
         square_resize_div_64=square_resize_div_64,
         output_dir=output_dir,
         dont_save_weights=dont_save_weights,

@@ -25,6 +25,7 @@ def build_o365_raw(image_set, args, resolution):
         "val": (root, root / 'zhiyuan_objv2_minival5k.json'),
     }
     img_folder, ann_file = PATHS[image_set]
+    image_root = getattr(args, "image_root", None)
     
     try:
         square_resize = args.square_resize
@@ -37,9 +38,19 @@ def build_o365_raw(image_set, args, resolution):
         square_resize_div_64 = False
 
     if square_resize_div_64:
-        dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms_square_div_64(image_set, resolution, multi_scale=args.multi_scale, expanded_scales=args.expanded_scales))
+        dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms_square_div_64(
+            image_set,
+            resolution,
+            multi_scale=args.multi_scale,
+            expanded_scales=args.expanded_scales
+        ), image_root=image_root)
     else:
-        dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms(image_set, resolution, multi_scale=args.multi_scale, expanded_scales=args.expanded_scales))
+        dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms(
+            image_set,
+            resolution,
+            multi_scale=args.multi_scale,
+            expanded_scales=args.expanded_scales
+        ), image_root=image_root)
     return dataset
 
 
