@@ -18,12 +18,13 @@ COCO dataset which returns image_id for evaluation.
 
 Mostly copy-paste from https://github.com/pytorch/vision/blob/13b35ff/references/detection/coco_utils.py
 """
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import torch
 import torch.utils.data
 import torchvision
 import pycocotools.mask as coco_mask
+from PIL import Image
 
 import rfdetr.datasets.transforms as T
 
@@ -64,15 +65,69 @@ def convert_coco_poly_to_mask(segmentations, height, width):
 
 
 class CocoDetection(torchvision.datasets.CocoDetection):
-    def __init__(self, img_folder, ann_file, transforms, include_masks=False):
+    def __init__(self, img_folder, ann_file, transforms, include_masks=False, image_root=None):
         super(CocoDetection, self).__init__(img_folder, ann_file)
         self._transforms = transforms
         self.include_masks = include_masks
         self.prepare = ConvertCoco(include_masks=include_masks)
+        self.image_root = Path(image_root).expanduser() if image_root else None
+        self.ann_file = Path(ann_file)
+        self.ann_root = self.ann_file.parent
+        self.img_folder = Path(self.root)
+
+    @staticmethod
+    def _is_absolute_path(path_value):
+        return Path(path_value).is_absolute() or PureWindowsPath(path_value).is_absolute()
+
+    def _resolve_image_path(self, file_name):
+        if file_name is None:
+            raise FileNotFoundError(
+                f"COCO image entry is missing file_name in {self.ann_file}."
+            )
+
+        file_name = str(file_name).strip()
+        if not file_name:
+            raise FileNotFoundError(
+                f"COCO image entry has empty file_name in {self.ann_file}."
+            )
+
+        normalized = file_name.replace("\\", "/") if "\\" in file_name else file_name
+
+        if self._is_absolute_path(file_name):
+            candidate = Path(file_name)
+            if candidate.exists():
+                return candidate
+            raise FileNotFoundError(
+                "COCO image path is absolute but does not exist: "
+                f"{file_name} (annotation file: {self.ann_file})"
+            )
+
+        candidates = []
+        if self.image_root is not None:
+            candidates.append(self.image_root / normalized)
+        candidates.append(self.img_folder / normalized)
+        if self.ann_root not in (self.img_folder, self.image_root):
+            candidates.append(self.ann_root / normalized)
+
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+
+        tried = ", ".join(str(path) for path in candidates)
+        raise FileNotFoundError(
+            "COCO image path could not be resolved for "
+            f"file_name='{file_name}'. Tried: {tried}. "
+            f"image_root={self.image_root} img_folder={self.img_folder} "
+            f"ann_file={self.ann_file}"
+        )
 
     def __getitem__(self, idx):
-        img, target = super(CocoDetection, self).__getitem__(idx)
         image_id = self.ids[idx]
+        ann_ids = self.coco.getAnnIds(imgIds=image_id)
+        target = self.coco.loadAnns(ann_ids)
+        file_name = self.coco.loadImgs(image_id)[0].get("file_name")
+        image_path = self._resolve_image_path(file_name)
+        img = Image.open(image_path).convert("RGB")
         target = {'image_id': image_id, 'annotations': target}
         img, target = self.prepare(img, target)
         if self._transforms is not None:
@@ -244,6 +299,7 @@ def build(image_set, args, resolution):
     }
     
     img_folder, ann_file = PATHS[image_set.split("_")[0]]
+    image_root = getattr(args, "image_root", None)
     
     try:
         square_resize = args.square_resize
@@ -265,7 +321,7 @@ def build(image_set, args, resolution):
             skip_random_resize=not args.do_random_resize_via_padding,
             patch_size=args.patch_size,
             num_windows=args.num_windows
-        ))
+        ), image_root=image_root)
     else:
         dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms(
             image_set,
@@ -275,7 +331,7 @@ def build(image_set, args, resolution):
             skip_random_resize=not args.do_random_resize_via_padding,
             patch_size=args.patch_size,
             num_windows=args.num_windows
-        ))
+        ), image_root=image_root)
     return dataset
 
 def build_roboflow(image_set, args, resolution):
@@ -289,6 +345,7 @@ def build_roboflow(image_set, args, resolution):
     }
     
     img_folder, ann_file = PATHS[image_set.split("_")[0]]
+    image_root = getattr(args, "image_root", None)
     
     try:
         square_resize = args.square_resize
@@ -315,7 +372,7 @@ def build_roboflow(image_set, args, resolution):
             skip_random_resize=not args.do_random_resize_via_padding,
             patch_size=args.patch_size,
             num_windows=args.num_windows
-        ), include_masks=include_masks)
+        ), include_masks=include_masks, image_root=image_root)
     else:
         dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms(
             image_set,
@@ -325,5 +382,5 @@ def build_roboflow(image_set, args, resolution):
             skip_random_resize=not args.do_random_resize_via_padding,
             patch_size=args.patch_size,
             num_windows=args.num_windows
-        ), include_masks=include_masks)
+        ), include_masks=include_masks, image_root=image_root)
     return dataset
