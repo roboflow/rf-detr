@@ -70,7 +70,8 @@ onnxexport = [
 ]
 metrics = [
     "tensorboard>=2.13.0",
-    "wandb"
+    "wandb",
+    "clearml"
 ]
 docs = [
     "mkdocs-material[imaging]>=9.5.5",
