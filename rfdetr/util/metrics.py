@@ -13,6 +13,11 @@ try:
 except ModuleNotFoundError:
     wandb = None
 
+try:
+    from clearml import Task
+except ModuleNotFoundError:
+    Task = None
+
 plt.ioff()
 
 PLOT_FILE_NAME = "metrics_plot.png"
@@ -241,3 +246,72 @@ class MetricsWandBSink:
             return
             
         self.run.finish()
+
+
+class MetricsClearMLSink:
+    """
+    Training metrics via ClearML.
+
+    Args:
+        output_dir (str): Directory where ClearML logs will be written locally.
+        project (str, optional): Associate this training run with a ClearML project.
+        run (str, optional): ClearML task name.
+        config (dict, optional): Input parameters.
+    """
+
+    def __init__(self, output_dir: str, project: Optional[str] = None, run: Optional[str] = None, config: Optional[dict] = None):
+        self.output_dir = output_dir
+        if Task:
+            self.task = Task.init(
+                project_name=project,
+                task_name=run,
+                output_uri=output_dir
+            )
+            if config:
+                self.task.connect(config)
+            self.logger = self.task.get_logger()
+            print(f"ClearML logging initialized. To monitor logs, open the ClearML Web UI.")
+        else:
+            self.task = None
+            self.logger = None
+            print("Unable to initialize ClearML. Logging is turned off for this session. Run 'pip install clearml' to enable logging.")
+
+    def update(self, values: dict):
+        if not self.task or not self.logger:
+            return
+
+        epoch = values['epoch']
+
+        if 'train_loss' in values:
+            self.logger.report_scalar("Loss", "Train", values['train_loss'], epoch)
+        if 'test_loss' in values:
+            self.logger.report_scalar("Loss", "Test", values['test_loss'], epoch)
+
+        if 'test_coco_eval_bbox' in values:
+            coco_eval = values['test_coco_eval_bbox']
+            ap50_90 = safe_index(coco_eval, 0)
+            ap50 = safe_index(coco_eval, 1)
+            ar50_90 = safe_index(coco_eval, 8)
+            if ap50_90 is not None:
+                self.logger.report_scalar("Metrics/Base", "AP50_90", ap50_90, epoch)
+            if ap50 is not None:
+                self.logger.report_scalar("Metrics/Base", "AP50", ap50, epoch)
+            if ar50_90 is not None:
+                self.logger.report_scalar("Metrics/Base", "AR50_90", ar50_90, epoch)
+
+        if 'ema_test_coco_eval_bbox' in values:
+            ema_coco_eval = values['ema_test_coco_eval_bbox']
+            ema_ap50_90 = safe_index(ema_coco_eval, 0)
+            ema_ap50 = safe_index(ema_coco_eval, 1)
+            ema_ar50_90 = safe_index(ema_coco_eval, 8)
+            if ema_ap50_90 is not None:
+                self.logger.report_scalar("Metrics/EMA", "AP50_90", ema_ap50_90, epoch)
+            if ema_ap50 is not None:
+                self.logger.report_scalar("Metrics/EMA", "AP50", ema_ap50, epoch)
+            if ema_ar50_90 is not None:
+                self.logger.report_scalar("Metrics/EMA", "AR50_90", ema_ar50_90, epoch)
+
+    def close(self):
+        if not self.task:
+            return
+        self.task.close()

@@ -155,12 +155,16 @@ Different GPUs have different VRAM capacities, so adjust batch_size and grad_acc
       <td>Activates logging to Weights &amp; Biases, facilitating cloud-based experiment tracking and visualization.</td>
     </tr>
     <tr>
+      <td><code>clearml</code></td>
+      <td>Activates logging to ClearML, facilitating cloud-based experiment tracking and visualization.</td>
+    </tr>
+    <tr>
       <td><code>project</code></td>
-      <td>Project name for Weights &amp; Biases logging. Groups multiple runs under a single heading.</td>
+      <td>Project name for Weights &amp; Biases or ClearML logging. Groups multiple runs under a single heading.</td>
     </tr>
     <tr>
       <td><code>run</code></td>
-      <td>Run name for Weights &amp; Biases logging, helping differentiate individual training sessions within a project.</td>
+      <td>Run name for Weights &amp; Biases or ClearML logging, helping differentiate individual training sessions within a project.</td>
     </tr>
     <tr>
       <td><code>early_stopping</code></td>
@@ -394,6 +398,53 @@ Replace `8` in the `--nproc_per_node argument` with the number of GPUs you want 
 
     In W&B, projects are collections of related machine learning experiments, and runs are individual sessions where training or evaluation happens. If you don't specify a name for a run, W&B will assign a random one automatically.
   
+</details>
+
+### Logging with ClearML
+
+[ClearML](https://clear.ml) is an open-source platform that helps you manage, track, and automate your machine learning experiments. With ClearML set up, you can monitor performance, compare experiments, and optimize model training using its comprehensive suite of tools. To enable logging, simply pass `clearml=True` when training the model.
+
+<details>
+<summary>Using ClearML with RF-DETR</summary>
+
+<br>
+
+- ClearML logging requires additional packages. Install them with:
+
+    ```bash
+    pip install "rfdetr[metrics]"
+    ```
+
+- Before using ClearML, make sure you have configured your environment. You can initialize ClearML by running:
+
+    ```bash
+    clearml-init
+    ```
+
+    Follow the instructions to connect to your ClearML server (hosted or self-hosted).
+
+- To activate logging, pass the extra parameter `clearml=True` to `.train()`:
+
+    ```python
+    from rfdetr import RFDETRBase
+    
+    model = RFDETRBase()
+    
+    model.train(
+        dataset_dir=<DATASET_PATH>,
+        epochs=100,
+        batch_size=4,
+        grad_accum_steps=4,
+        lr=1e-4,
+        output_dir=<OUTPUT_PATH>,
+        clearml=True,
+        project=<PROJECT_NAME>,
+        run=<RUN_NAME>
+    )
+    ```
+
+    In ClearML, projects are collections of related machine learning experiments, and runs (tasks) are individual sessions where training or evaluation happens.
+
 </details>
 
 ### Load and run fine-tuned model

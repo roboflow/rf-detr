@@ -35,7 +35,7 @@ from rfdetr.config import (
     ModelConfig
 )
 from rfdetr.main import Model, download_pretrain_weights
-from rfdetr.util.metrics import MetricsPlotSink, MetricsTensorBoardSink, MetricsWandBSink
+from rfdetr.util.metrics import MetricsPlotSink, MetricsTensorBoardSink, MetricsWandBSink, MetricsClearMLSink
 from rfdetr.util.coco_classes import COCO_CLASSES
 
 logger = getLogger(__name__)
@@ -176,6 +176,16 @@ class RFDETR:
             )
             self.callbacks["on_fit_epoch_end"].append(metrics_wandb_sink.update)
             self.callbacks["on_train_end"].append(metrics_wandb_sink.close)
+
+        if config.clearml:
+            metrics_clearml_sink = MetricsClearMLSink(
+                output_dir=config.output_dir,
+                project=config.project,
+                run=config.run,
+                config=config.model_dump()
+            )
+            self.callbacks["on_fit_epoch_end"].append(metrics_clearml_sink.update)
+            self.callbacks["on_train_end"].append(metrics_clearml_sink.close)
 
         if config.early_stopping:
             from rfdetr.util.early_stopping import EarlyStoppingCallback
