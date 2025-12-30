@@ -4,9 +4,12 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+"""
+Pytest configuration for RF-DETR tests.
+"""
+import sys
+from pathlib import Path
 
-import os
-if os.environ.get("PYTORCH_ENABLE_MPS_FALLBACK") is None:
-    os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
-
-from rfdetr.detr import RFDETRBase, RFDETRLarge, RFDETRNano, RFDETRSmall, RFDETRMedium, RFDETRSegPreview, RFDETRPose
+# Add the project root to the Python path so rfdetr can be imported
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))

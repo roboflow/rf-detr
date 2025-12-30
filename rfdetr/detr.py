@@ -30,8 +30,10 @@ from rfdetr.config import (
     RFDETRSmallConfig,
     RFDETRMediumConfig,
     RFDETRSegPreviewConfig,
+    RFDETRPoseConfig,
     TrainConfig,
     SegmentationTrainConfig,
+    KeypointTrainConfig,
     ModelConfig
 )
 from rfdetr.main import Model, download_pretrain_weights
@@ -336,22 +338,25 @@ class RFDETR:
             labels = labels[keep]
             boxes = boxes[keep]
 
+            # Build base detection
+            detections = sv.Detections(
+                xyxy=boxes.float().cpu().numpy(),
+                confidence=scores.float().cpu().numpy(),
+                class_id=labels.cpu().numpy(),
+            )
+
+            # Add masks if available
             if "masks" in result:
                 masks = result["masks"]
                 masks = masks[keep]
+                detections.mask = masks.squeeze(1).cpu().numpy()
 
-                detections = sv.Detections(
-                    xyxy=boxes.float().cpu().numpy(),
-                    confidence=scores.float().cpu().numpy(),
-                    class_id=labels.cpu().numpy(),
-                    mask=masks.squeeze(1).cpu().numpy(),
-                )
-            else:
-                detections = sv.Detections(
-                    xyxy=boxes.float().cpu().numpy(),
-                    confidence=scores.float().cpu().numpy(),
-                    class_id=labels.cpu().numpy(),
-                )
+            # Add keypoints if available
+            if "keypoints" in result:
+                keypoints = result["keypoints"]
+                keypoints = keypoints[keep]
+                # Store keypoints in the data dict: [N, K, 3] where 3 = (x, y, visibility)
+                detections.data["keypoints"] = keypoints.cpu().numpy()
 
             detections_list.append(detections)
 
@@ -475,3 +480,25 @@ class RFDETRSegPreview(RFDETR):
 
     def get_train_config(self, **kwargs):
         return SegmentationTrainConfig(**kwargs)
+
+
+class RFDETRPose(RFDETR):
+    """
+    RF-DETR Pose estimation model for keypoint/pose detection.
+
+    Outputs (x, y, visibility) for each keypoint per detected object,
+    following YOLOv11's approach for pose estimation.
+
+    Example:
+        >>> model = RFDETRPose()
+        >>> detections = model.predict("image.jpg")
+        >>> # Access keypoints via detections.data["keypoints"]
+        >>> keypoints = detections.data.get("keypoints")  # [N, K, 3]
+    """
+    size = "rfdetr-pose"
+
+    def get_model_config(self, **kwargs):
+        return RFDETRPoseConfig(**kwargs)
+
+    def get_train_config(self, **kwargs):
+        return KeypointTrainConfig(**kwargs)

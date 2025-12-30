@@ -261,7 +261,12 @@ def evaluate(model, criterion, postprocess, data_loader, base_ds, device, args=N
     )
     header = "Test:"
 
-    iou_types = ("bbox",) if not args.segmentation_head else ("bbox", "segm")
+    iou_types = ["bbox"]
+    if getattr(args, 'segmentation_head', False):
+        iou_types.append("segm")
+    if getattr(args, 'keypoint_head', False):
+        iou_types.append("keypoints")
+    iou_types = tuple(iou_types)
     coco_evaluator = CocoEvaluator(base_ds, iou_types)
 
     for samples, targets in metric_logger.log_every(data_loader, 10, header):
@@ -338,4 +343,7 @@ def evaluate(model, criterion, postprocess, data_loader, base_ds, device, args=N
         if "segm" in iou_types:
             results_json = coco_extended_metrics(coco_evaluator.coco_eval["segm"])
             stats["coco_eval_masks"] = coco_evaluator.coco_eval["segm"].stats.tolist()
+
+        if "keypoints" in iou_types:
+            stats["coco_eval_keypoints"] = coco_evaluator.coco_eval["keypoints"].stats.tolist()
     return stats, coco_evaluator

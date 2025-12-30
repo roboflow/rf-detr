@@ -26,6 +26,7 @@ nav:
     - Run a Model:
       - Object Detection: learn/run/detection.md
       - Segmentation: learn/run/segmentation.md
+      - Pose Estimation: learn/run/pose.md
     - Train a Model: learn/train/index.md
     - Deploy a Trained Model: learn/deploy.md
     - Benchmarks: learn/benchmarks.md
@@ -40,6 +41,8 @@ nav:
         - RF-DETR Large: reference/large.md
       - Image Segmentation Models:
         - RF-DETR Seg Preview: reference/seg_preview.md
+      - Pose Estimation Models:
+        - RF-DETR Pose: reference/pose.md
   - Changelog: https://github.com/roboflow/rf-detr/releases
 
 theme:

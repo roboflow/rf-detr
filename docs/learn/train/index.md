@@ -1,8 +1,8 @@
 # Train an RF-DETR Model
 
-You can train RF-DETR object detection and segmentation models on a custom dataset using the `rfdetr` Python package, or in the cloud using Roboflow.
+You can train RF-DETR object detection, segmentation, and pose estimation models on a custom dataset using the `rfdetr` Python package, or in the cloud using Roboflow.
 
-This guide describes how to train both an object detection and segmentation RF-DETR model.
+This guide describes how to train object detection, segmentation, and pose estimation RF-DETR models.
 
 ### Dataset structure
 
@@ -30,6 +30,8 @@ dataset/
 [Roboflow](https://roboflow.com/annotate) allows you to create object detection datasets from scratch or convert existing datasets from formats like YOLO, and then export them in COCO JSON format for training. You can also explore [Roboflow Universe](https://universe.roboflow.com/) to find pre-labeled datasets for a range of use cases.
 
 If you are training a segmentation model, your COCO JSON annotations should have a `segmentation` key with the polygon associated with each annotation.
+
+If you are training a pose estimation model, your COCO JSON annotations should have a `keypoints` key with the keypoint coordinates in the format `[x1, y1, v1, x2, y2, v2, ...]` where `v` is the visibility flag (0=not labeled, 1=labeled but not visible, 2=labeled and visible).
 
 ## Start Training
 
@@ -62,6 +64,23 @@ For image segmentation, the RF-DETR-Seg (Preview) checkpoint is used by default.
     from rfdetr import RFDETRSegPreview
 
     model = RFDETRSegPreview()
+
+    model.train(
+        dataset_dir=<DATASET_PATH>,
+        epochs=100,
+        batch_size=4,
+        grad_accum_steps=4,
+        lr=1e-4,
+        output_dir=<OUTPUT_PATH>
+    )
+    ```
+
+=== "Pose Estimation"
+
+    ```python
+    from rfdetr import RFDETRPose
+
+    model = RFDETRPose()
 
     model.train(
         dataset_dir=<DATASET_PATH>,
@@ -247,6 +266,24 @@ You can resume training from a previously saved checkpoint by passing the path t
     )
     ```
 
+=== "Pose Estimation"
+
+    ```python
+    from rfdetr import RFDETRPose
+
+    model = RFDETRPose()
+
+    model.train(
+        dataset_dir=<DATASET_PATH>,
+        epochs=100,
+        batch_size=4,
+        grad_accum_steps=4,
+        lr=1e-4,
+        output_dir=<OUTPUT_PATH>,
+        resume=<CHECKPOINT_PATH>
+    )
+    ```
+
 
 ### Early stopping
 
@@ -281,6 +318,24 @@ Early stopping monitors validation mAP and halts training if improvements remain
         dataset_dir=<DATASET_PATH>,
         epochs=100,
         batch_size=4
+        grad_accum_steps=4,
+        lr=1e-4,
+        output_dir=<OUTPUT_PATH>,
+        early_stopping=True
+    )
+    ```
+
+=== "Pose Estimation"
+
+    ```python
+    from rfdetr import RFDETRPose
+
+    model = RFDETRPose()
+
+    model.train(
+        dataset_dir=<DATASET_PATH>,
+        epochs=100,
+        batch_size=4,
         grad_accum_steps=4,
         lr=1e-4,
         output_dir=<OUTPUT_PATH>,
@@ -418,6 +473,18 @@ Replace `8` in the `--nproc_per_node argument` with the number of GPUs you want 
     detections = model.predict(<IMAGE_PATH>)
     ```
 
+=== "Pose Estimation"
+
+    ```python
+    from rfdetr import RFDETRPose
+
+    model = RFDETRPose(pretrain_weights=<CHECKPOINT_PATH>)
+
+    detections = model.predict(<IMAGE_PATH>)
+    # Access keypoints
+    keypoints = detections.data.get("keypoints")  # [N, 17, 3]
+    ```
+
 ## ONNX export
 
 RF-DETR supports exporting models to the ONNX format, which enables interoperability with various inference frameworks and can improve deployment efficiency.
@@ -446,6 +513,16 @@ Then, run:
     from rfdetr import RFDETRSegPreview
 
     model = RFDETRSegPreview(pretrain_weights=<CHECKPOINT_PATH>)
+
+    model.export()
+    ```
+
+=== "Pose Estimation"
+
+    ```python
+    from rfdetr import RFDETRPose
+
+    model = RFDETRPose(pretrain_weights=<CHECKPOINT_PATH>)
 
     model.export()
     ```

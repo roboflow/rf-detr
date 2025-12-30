@@ -61,6 +61,36 @@ def crop(image, target, region):
         target['masks'] = target['masks'][:, i:i + h, j:j + w]
         fields.append("masks")
 
+    if "keypoints" in target:
+        # Get original image size from target
+        orig_h, orig_w = target.get("orig_size", target["size"]).tolist()
+
+        keypoints = target["keypoints"].clone()  # [N, K, 3]
+
+        # Convert normalized coords to pixel coords in original image
+        keypoints[..., 0] = keypoints[..., 0] * orig_w
+        keypoints[..., 1] = keypoints[..., 1] * orig_h
+
+        # Apply crop offset
+        keypoints[..., 0] = keypoints[..., 0] - j
+        keypoints[..., 1] = keypoints[..., 1] - i
+
+        # Mark keypoints outside crop region as invisible
+        outside = (keypoints[..., 0] < 0) | (keypoints[..., 0] >= w) | \
+                  (keypoints[..., 1] < 0) | (keypoints[..., 1] >= h)
+        keypoints[..., 2] = torch.where(outside, torch.zeros_like(keypoints[..., 2]), keypoints[..., 2])
+
+        # Clamp to valid range
+        keypoints[..., 0] = keypoints[..., 0].clamp(0, w - 1)
+        keypoints[..., 1] = keypoints[..., 1].clamp(0, h - 1)
+
+        # Convert back to normalized coords
+        keypoints[..., 0] = keypoints[..., 0] / w
+        keypoints[..., 1] = keypoints[..., 1] / h
+
+        target["keypoints"] = keypoints
+        fields.append("keypoints")
+
     # remove elements for which the boxes or masks that have zero area
     if "boxes" in target or "masks" in target:
         # favor boxes selection when defining which elements to keep
@@ -90,6 +120,33 @@ def hflip(image, target):
 
     if "masks" in target:
         target['masks'] = target['masks'].flip(-1)
+
+    if "keypoints" in target:
+        keypoints = target["keypoints"].clone()  # [N, K, 3]
+
+        # Flip x coordinate (keypoints are in normalized [0,1] coords)
+        keypoints[..., 0] = 1.0 - keypoints[..., 0]
+
+        # Swap left/right keypoint pairs (COCO 17-keypoint format)
+        # Pairs: (left_eye, right_eye), (left_ear, right_ear), ...
+        flip_pairs = [
+            (1, 2),   # left_eye <-> right_eye
+            (3, 4),   # left_ear <-> right_ear
+            (5, 6),   # left_shoulder <-> right_shoulder
+            (7, 8),   # left_elbow <-> right_elbow
+            (9, 10),  # left_wrist <-> right_wrist
+            (11, 12), # left_hip <-> right_hip
+            (13, 14), # left_knee <-> right_knee
+            (15, 16)  # left_ankle <-> right_ankle
+        ]
+
+        # Only swap if we have enough keypoints
+        num_keypoints = keypoints.shape[1]
+        for left, right in flip_pairs:
+            if left < num_keypoints and right < num_keypoints:
+                keypoints[:, [left, right]] = keypoints[:, [right, left]]
+
+        target["keypoints"] = keypoints
 
     return flipped_image, target
 
