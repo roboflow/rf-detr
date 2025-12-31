@@ -3,7 +3,34 @@
 You can run pose estimation models with RF-DETR to detect keypoints and body poses on people and objects. The pose model outputs bounding boxes along with keypoints in (x, y, visibility) format for each detection, following a similar approach to YOLOv11 pose estimation.
 
 !!! note "Training Required"
-    RF-DETR Pose requires training on a keypoint dataset before inference. By default, it loads RF-DETR Medium detection weights (`rf-detr-medium.pth`) as a starting point - the backbone and detection heads are initialized from this checkpoint, while the keypoint head is randomly initialized and learned during fine-tuning.
+    RF-DETR Pose requires training on a keypoint dataset before inference. By default, it loads detection weights as a starting point - the backbone and detection heads are initialized from this checkpoint, while the keypoint head is randomly initialized and learned during fine-tuning.
+
+## Model Sizes
+
+RF-DETR Pose is available in multiple sizes to balance speed and accuracy:
+
+| Model | Class | Resolution | Decoder Layers | Use Case |
+|-------|-------|------------|----------------|----------|
+| Nano | `RFDETRPoseNano` | 384 | 2 | Real-time, edge devices |
+| Small | `RFDETRPoseSmall` | 512 | 3 | Good speed/accuracy balance |
+| Medium | `RFDETRPoseMedium` | 576 | 4 | Default, good accuracy |
+| Large | `RFDETRPoseLarge` | 768 | 6 | Highest accuracy |
+
+```python
+from rfdetr import RFDETRPoseNano, RFDETRPoseSmall, RFDETRPoseMedium, RFDETRPoseLarge
+
+# Choose the size that fits your needs
+model = RFDETRPoseNano()   # Fastest, lowest accuracy
+model = RFDETRPoseSmall()  # Balanced
+model = RFDETRPoseMedium() # Default
+model = RFDETRPoseLarge()  # Slowest, highest accuracy
+```
+
+!!! tip "Choosing a Model Size"
+    - Use **Nano** for real-time applications or when running on edge devices
+    - Use **Small** for a good balance of speed and accuracy
+    - Use **Medium** (default) for most use cases
+    - Use **Large** when accuracy is critical and speed is less important
 
 ## Run a Model
 

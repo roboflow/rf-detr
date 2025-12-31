@@ -77,10 +77,21 @@ For image segmentation, the RF-DETR-Seg (Preview) checkpoint is used by default.
 
 === "Pose Estimation"
 
-    ```python
-    from rfdetr import RFDETRPose
+    RF-DETR Pose is available in multiple sizes. Choose based on your speed/accuracy needs:
 
-    model = RFDETRPose()
+    | Model | Resolution | Speed | Import |
+    |-------|------------|-------|--------|
+    | Nano | 384 | Fastest | `RFDETRPoseNano` |
+    | Small | 512 | Fast | `RFDETRPoseSmall` |
+    | Medium | 576 | Medium | `RFDETRPoseMedium` |
+    | Large | 768 | Slow | `RFDETRPoseLarge` |
+
+    ```python
+    from rfdetr import RFDETRPoseNano  # or RFDETRPoseSmall, RFDETRPoseMedium, RFDETRPoseLarge
+
+    model = RFDETRPoseNano(
+        num_keypoints=17,  # Number of keypoints to detect
+    )
 
     model.train(
         dataset_dir=<DATASET_PATH>,
@@ -88,7 +99,30 @@ For image segmentation, the RF-DETR-Seg (Preview) checkpoint is used by default.
         batch_size=4,
         grad_accum_steps=4,
         lr=1e-4,
-        output_dir=<OUTPUT_PATH>
+        output_dir=<OUTPUT_PATH>,
+        num_keypoints=17,  # Must match model config
+    )
+    ```
+
+    For custom keypoints (e.g., 2 keypoints for start/end points):
+
+    ```python
+    from rfdetr import RFDETRPoseNano
+
+    model = RFDETRPoseNano(
+        num_keypoints=2,
+        keypoint_names=["start", "end"],
+        skeleton=[[0, 1]],  # Connect start to end
+    )
+
+    model.train(
+        dataset_dir=<DATASET_PATH>,
+        epochs=100,
+        batch_size=4,
+        grad_accum_steps=4,
+        lr=1e-4,
+        output_dir=<OUTPUT_PATH>,
+        num_keypoints=2,
     )
     ```
 
@@ -269,9 +303,9 @@ You can resume training from a previously saved checkpoint by passing the path t
 === "Pose Estimation"
 
     ```python
-    from rfdetr import RFDETRPose
+    from rfdetr import RFDETRPoseNano  # Use the same size as original training
 
-    model = RFDETRPose()
+    model = RFDETRPoseNano(num_keypoints=2)  # Match your keypoint config
 
     model.train(
         dataset_dir=<DATASET_PATH>,
@@ -280,6 +314,7 @@ You can resume training from a previously saved checkpoint by passing the path t
         grad_accum_steps=4,
         lr=1e-4,
         output_dir=<OUTPUT_PATH>,
+        num_keypoints=2,
         resume=<CHECKPOINT_PATH>
     )
     ```
@@ -328,9 +363,9 @@ Early stopping monitors validation mAP and halts training if improvements remain
 === "Pose Estimation"
 
     ```python
-    from rfdetr import RFDETRPose
+    from rfdetr import RFDETRPoseNano
 
-    model = RFDETRPose()
+    model = RFDETRPoseNano(num_keypoints=2)
 
     model.train(
         dataset_dir=<DATASET_PATH>,
@@ -339,6 +374,7 @@ Early stopping monitors validation mAP and halts training if improvements remain
         grad_accum_steps=4,
         lr=1e-4,
         output_dir=<OUTPUT_PATH>,
+        num_keypoints=2,
         early_stopping=True
     )
     ```
@@ -476,13 +512,16 @@ Replace `8` in the `--nproc_per_node argument` with the number of GPUs you want 
 === "Pose Estimation"
 
     ```python
-    from rfdetr import RFDETRPose
+    from rfdetr import RFDETRPoseNano  # Use the same size as training
 
-    model = RFDETRPose(pretrain_weights=<CHECKPOINT_PATH>)
+    model = RFDETRPoseNano(
+        pretrain_weights=<CHECKPOINT_PATH>,
+        num_keypoints=2,  # Match your training config
+    )
 
     detections = model.predict(<IMAGE_PATH>)
     # Access keypoints
-    keypoints = detections.data.get("keypoints")  # [N, 17, 3]
+    keypoints = detections.data.get("keypoints")  # [N, K, 3] where K=num_keypoints
     ```
 
 ## ONNX export
@@ -520,9 +559,12 @@ Then, run:
 === "Pose Estimation"
 
     ```python
-    from rfdetr import RFDETRPose
+    from rfdetr import RFDETRPoseNano  # Use the same size as training
 
-    model = RFDETRPose(pretrain_weights=<CHECKPOINT_PATH>)
+    model = RFDETRPoseNano(
+        pretrain_weights=<CHECKPOINT_PATH>,
+        num_keypoints=2,  # Match your training config
+    )
 
     model.export()
     ```
