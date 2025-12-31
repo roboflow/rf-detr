@@ -362,6 +362,12 @@ class RFDETR:
                 # Store keypoints in the data dict: [N, K, 3] where 3 = (x, y, visibility)
                 detections.data["keypoints"] = keypoints.cpu().numpy()
 
+                # Also copy keypoints_confidence (actual confidence scores 0.0-1.0)
+                if "keypoints_confidence" in result:
+                    keypoints_conf = result["keypoints_confidence"]
+                    keypoints_conf = keypoints_conf[keep]
+                    detections.data["keypoints_confidence"] = keypoints_conf.cpu().numpy()
+
             detections_list.append(detections)
 
         return detections_list if len(detections_list) > 1 else detections_list[0]
