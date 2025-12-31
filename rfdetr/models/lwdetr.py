@@ -540,7 +540,14 @@ class SetCriterion(nn.Module):
         where K is num_keypoints and 3 is (x, y, visibility_logit).
         Targets must have 'keypoints' key with shape [N, K, 3] where visibility is 0/1/2.
         """
-        assert 'pred_keypoints' in outputs, "pred_keypoints missing in model outputs"
+        # Skip keypoint loss for encoder outputs (two-stage) which don't have keypoint predictions
+        if 'pred_keypoints' not in outputs:
+            device = outputs['pred_logits'].device
+            return {
+                'loss_keypoints_l1': torch.tensor(0.0, device=device),
+                'loss_keypoints_vis': torch.tensor(0.0, device=device),
+                'loss_keypoints_oks': torch.tensor(0.0, device=device),
+            }
 
         idx = self._get_src_permutation_idx(indices)
         src_keypoints = outputs['pred_keypoints'][idx]  # [N, K, 3]
@@ -554,7 +561,15 @@ class SetCriterion(nn.Module):
                 'loss_keypoints_oks': torch.tensor(0.0, device=device),
             }
 
-        # Gather target keypoints
+        # Gather target keypoints - skip if any target is missing keypoints
+        if not all('keypoints' in t for t in targets):
+            device = outputs['pred_keypoints'].device
+            return {
+                'loss_keypoints_l1': torch.tensor(0.0, device=device),
+                'loss_keypoints_vis': torch.tensor(0.0, device=device),
+                'loss_keypoints_oks': torch.tensor(0.0, device=device),
+            }
+
         target_keypoints = torch.cat([
             t['keypoints'][j] for t, (_, j) in zip(targets, indices)
         ], dim=0)  # [N, K, 3]
