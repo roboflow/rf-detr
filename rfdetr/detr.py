@@ -31,6 +31,10 @@ from rfdetr.config import (
     RFDETRMediumConfig,
     RFDETRSegPreviewConfig,
     RFDETRPoseConfig,
+    RFDETRPoseNanoConfig,
+    RFDETRPoseSmallConfig,
+    RFDETRPoseMediumConfig,
+    RFDETRPoseLargeConfig,
     TrainConfig,
     SegmentationTrainConfig,
     KeypointTrainConfig,
@@ -502,3 +506,55 @@ class RFDETRPose(RFDETR):
 
     def get_train_config(self, **kwargs):
         return KeypointTrainConfig(**kwargs)
+
+
+class RFDETRPoseNano(RFDETRPose):
+    """
+    RF-DETR Pose Nano - smallest and fastest pose estimation model.
+
+    Uses rf-detr-nano.pth backbone with keypoint head.
+    Resolution: 384, Decoder layers: 2
+    """
+    size = "rfdetr-pose-nano"
+
+    def get_model_config(self, **kwargs):
+        return RFDETRPoseNanoConfig(**kwargs)
+
+
+class RFDETRPoseSmall(RFDETRPose):
+    """
+    RF-DETR Pose Small - balance of speed and accuracy.
+
+    Uses rf-detr-small.pth backbone with keypoint head.
+    Resolution: 512, Decoder layers: 3
+    """
+    size = "rfdetr-pose-small"
+
+    def get_model_config(self, **kwargs):
+        return RFDETRPoseSmallConfig(**kwargs)
+
+
+class RFDETRPoseMedium(RFDETRPose):
+    """
+    RF-DETR Pose Medium - default pose estimation model.
+
+    Uses rf-detr-medium.pth backbone with keypoint head.
+    Resolution: 576, Decoder layers: 4
+    """
+    size = "rfdetr-pose-medium"
+
+    def get_model_config(self, **kwargs):
+        return RFDETRPoseMediumConfig(**kwargs)
+
+
+class RFDETRPoseLarge(RFDETRPose):
+    """
+    RF-DETR Pose Large - highest accuracy pose estimation model.
+
+    Uses rf-detr-large.pth backbone with keypoint head.
+    Resolution: 768, Decoder layers: 6
+    """
+    size = "rfdetr-pose-large"
+
+    def get_model_config(self, **kwargs):
+        return RFDETRPoseLargeConfig(**kwargs)

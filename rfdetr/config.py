@@ -164,6 +164,44 @@ class RFDETRPoseConfig(RFDETRBaseConfig):
     num_classes: int = 1  # Typically just "person" class for pose
 
 
+class RFDETRPoseNanoConfig(RFDETRPoseConfig):
+    """
+    Configuration for RF-DETR Pose Nano - smallest and fastest pose model.
+    """
+    dec_layers: int = 2
+    resolution: int = 384
+    positional_encoding_size: int = 24
+    pretrain_weights: Optional[str] = "rf-detr-nano.pth"
+
+
+class RFDETRPoseSmallConfig(RFDETRPoseConfig):
+    """
+    Configuration for RF-DETR Pose Small - balance of speed and accuracy.
+    """
+    dec_layers: int = 3
+    resolution: int = 512
+    positional_encoding_size: int = 32
+    pretrain_weights: Optional[str] = "rf-detr-small.pth"
+
+
+class RFDETRPoseMediumConfig(RFDETRPoseConfig):
+    """
+    Configuration for RF-DETR Pose Medium - default pose model.
+    """
+    # Inherits all defaults from RFDETRPoseConfig (Medium architecture)
+    pass
+
+
+class RFDETRPoseLargeConfig(RFDETRPoseConfig):
+    """
+    Configuration for RF-DETR Pose Large - highest accuracy pose model.
+    """
+    dec_layers: int = 6
+    resolution: int = 768
+    positional_encoding_size: int = 48
+    pretrain_weights: Optional[str] = "rf-detr-large.pth"
+
+
 class TrainConfig(BaseModel):
     lr: float = 1e-4
     lr_encoder: float = 1.5e-4
