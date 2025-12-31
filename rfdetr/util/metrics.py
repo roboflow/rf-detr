@@ -141,6 +141,22 @@ class MetricsTensorBoardSink:
         if 'test_loss' in values:
             self.writer.add_scalar("Loss/Test", values['test_loss'], epoch)
 
+        # Log keypoint losses if present
+        if 'train_loss_keypoints_l1' in values:
+            self.writer.add_scalar("Loss/Keypoints/L1", values['train_loss_keypoints_l1'], epoch)
+        if 'train_loss_keypoints_vis' in values:
+            self.writer.add_scalar("Loss/Keypoints/Visibility", values['train_loss_keypoints_vis'], epoch)
+        if 'train_loss_keypoints_oks' in values:
+            self.writer.add_scalar("Loss/Keypoints/OKS", values['train_loss_keypoints_oks'], epoch)
+
+        # Log bbox and classification losses
+        if 'train_loss_ce' in values:
+            self.writer.add_scalar("Loss/Classification", values['train_loss_ce'], epoch)
+        if 'train_loss_bbox' in values:
+            self.writer.add_scalar("Loss/BBox", values['train_loss_bbox'], epoch)
+        if 'train_loss_giou' in values:
+            self.writer.add_scalar("Loss/GIoU", values['train_loss_giou'], epoch)
+
         if 'test_coco_eval_bbox' in values:
             coco_eval = values['test_coco_eval_bbox']
             ap50_90 = safe_index(coco_eval, 0)
@@ -209,6 +225,22 @@ class MetricsWandBSink:
             log_dict["Loss/Train"] = values['train_loss']
         if 'test_loss' in values:
             log_dict["Loss/Test"] = values['test_loss']
+
+        # Log keypoint losses if present
+        if 'train_loss_keypoints_l1' in values:
+            log_dict["Loss/Keypoints/L1"] = values['train_loss_keypoints_l1']
+        if 'train_loss_keypoints_vis' in values:
+            log_dict["Loss/Keypoints/Visibility"] = values['train_loss_keypoints_vis']
+        if 'train_loss_keypoints_oks' in values:
+            log_dict["Loss/Keypoints/OKS"] = values['train_loss_keypoints_oks']
+
+        # Log bbox and classification losses
+        if 'train_loss_ce' in values:
+            log_dict["Loss/Classification"] = values['train_loss_ce']
+        if 'train_loss_bbox' in values:
+            log_dict["Loss/BBox"] = values['train_loss_bbox']
+        if 'train_loss_giou' in values:
+            log_dict["Loss/GIoU"] = values['train_loss_giou']
 
         if 'test_coco_eval_bbox' in values:
             coco_eval = values['test_coco_eval_bbox']
