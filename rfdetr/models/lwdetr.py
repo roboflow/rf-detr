@@ -918,9 +918,14 @@ class PostProcess(nn.Module):
                 kpts_i_scaled[..., 0] = kpts_i[..., 0] * w  # x
                 kpts_i_scaled[..., 1] = kpts_i[..., 1] * h  # y
                 # Convert visibility logits to confidence scores via sigmoid
-                kpts_i_scaled[..., 2] = kpts_i[..., 2].sigmoid()
+                vis_conf = kpts_i[..., 2].sigmoid()
+                # For COCO evaluation: 2 = visible, 1 = occluded, 0 = not labeled
+                # We output 2 if confident (>0.5), else 0
+                kpts_i_scaled[..., 2] = (vis_conf > 0.5).float() * 2
 
                 res_i['keypoints'] = kpts_i_scaled
+                # Also store raw visibility confidence for user access
+                res_i['keypoints_confidence'] = vis_conf
 
             results.append(res_i)
 

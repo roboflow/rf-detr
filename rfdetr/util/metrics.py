@@ -181,6 +181,16 @@ class MetricsTensorBoardSink:
             if ema_ar50_90 is not None:
                 self.writer.add_scalar("Metrics/EMA/AR50_90", ema_ar50_90, epoch)
 
+        # Log keypoint mAP if present
+        if 'test_coco_eval_keypoints' in values:
+            kpt_eval = values['test_coco_eval_keypoints']
+            kpt_ap = safe_index(kpt_eval, 0)
+            kpt_ap50 = safe_index(kpt_eval, 1)
+            if kpt_ap is not None:
+                self.writer.add_scalar("Metrics/Keypoints/AP", kpt_ap, epoch)
+            if kpt_ap50 is not None:
+                self.writer.add_scalar("Metrics/Keypoints/AP50", kpt_ap50, epoch)
+
         self.writer.flush()
 
     def close(self):
@@ -265,6 +275,16 @@ class MetricsWandBSink:
                 log_dict["Metrics/EMA/AP50"] = ema_ap50
             if ema_ar50_90 is not None:
                 log_dict["Metrics/EMA/AR50_90"] = ema_ar50_90
+
+        # Log keypoint mAP if present
+        if 'test_coco_eval_keypoints' in values:
+            kpt_eval = values['test_coco_eval_keypoints']
+            kpt_ap = safe_index(kpt_eval, 0)
+            kpt_ap50 = safe_index(kpt_eval, 1)
+            if kpt_ap is not None:
+                log_dict["Metrics/Keypoints/AP"] = kpt_ap
+            if kpt_ap50 is not None:
+                log_dict["Metrics/Keypoints/AP50"] = kpt_ap50
 
         wandb.log(log_dict)
 

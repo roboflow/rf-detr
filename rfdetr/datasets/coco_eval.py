@@ -34,15 +34,23 @@ from rfdetr.util.misc import all_gather
 
 
 class CocoEvaluator(object):
-    def __init__(self, coco_gt, iou_types):
+    def __init__(self, coco_gt, iou_types, num_keypoints=17):
         assert isinstance(iou_types, (list, tuple))
         coco_gt = copy.deepcopy(coco_gt)
         self.coco_gt = coco_gt
+        self.num_keypoints = num_keypoints
 
         self.iou_types = iou_types
         self.coco_eval = {}
         for iou_type in iou_types:
             self.coco_eval[iou_type] = COCOeval(coco_gt, iouType=iou_type)
+            # Set custom sigmas for keypoint evaluation with non-COCO keypoint counts
+            if iou_type == "keypoints" and num_keypoints != 17:
+                # Use uniform sigma of 0.05 for all custom keypoints
+                # (COCO sigmas range from 0.025 to 0.107)
+                self.coco_eval[iou_type].params.kpt_oks_sigmas = np.array(
+                    [0.05] * num_keypoints
+                )
 
         self.img_ids = []
         self.eval_imgs = {k: [] for k in iou_types}

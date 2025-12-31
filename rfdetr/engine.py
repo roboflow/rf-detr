@@ -264,10 +264,11 @@ def evaluate(model, criterion, postprocess, data_loader, base_ds, device, args=N
     iou_types = ["bbox"]
     if getattr(args, 'segmentation_head', False):
         iou_types.append("segm")
+    num_keypoints = getattr(args, 'num_keypoints', 17)
     if getattr(args, 'keypoint_head', False):
         iou_types.append("keypoints")
     iou_types = tuple(iou_types)
-    coco_evaluator = CocoEvaluator(base_ds, iou_types)
+    coco_evaluator = CocoEvaluator(base_ds, iou_types, num_keypoints=num_keypoints)
 
     for samples, targets in metric_logger.log_every(data_loader, 10, header):
         samples = samples.to(device)
