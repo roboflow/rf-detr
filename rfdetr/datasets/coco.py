@@ -69,7 +69,20 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         self._transforms = transforms
         self.include_masks = include_masks
         self.include_keypoints = include_keypoints
-        self.prepare = ConvertCoco(include_masks=include_masks, include_keypoints=include_keypoints, num_keypoints=num_keypoints)
+        # Create mapping from category_id to contiguous 0-indexed class labels.
+        # COCO format uses 1-indexed category IDs (e.g., 1-16), but PyTorch models
+        # expect 0-indexed class labels (e.g., 0-15). This mapping handles:
+        #   - 1-indexed datasets: {1:0, 2:1, ...} -> correctly remaps
+        #   - 0-indexed datasets: {0:0, 1:1, ...} -> identity mapping (no change)
+        #   - Non-contiguous IDs: {1:0, 5:1, 10:2, ...} -> becomes contiguous
+        cat_ids = sorted(self.coco.getCatIds())
+        self.cat_id_to_continuous = {cat_id: i for i, cat_id in enumerate(cat_ids)}
+        self.prepare = ConvertCoco(
+            include_masks=include_masks,
+            include_keypoints=include_keypoints,
+            num_keypoints=num_keypoints,
+            cat_id_to_continuous=self.cat_id_to_continuous
+        )
 
     def __getitem__(self, idx):
         img, target = super(CocoDetection, self).__getitem__(idx)
@@ -82,11 +95,21 @@ class CocoDetection(torchvision.datasets.CocoDetection):
 
 
 class ConvertCoco(object):
+    """Convert COCO annotations to the format expected by RF-DETR.
 
-    def __init__(self, include_masks=False, include_keypoints=False, num_keypoints=17):
+    Args:
+        include_masks: Whether to include segmentation masks.
+        include_keypoints: Whether to include keypoint annotations.
+        num_keypoints: Number of keypoints per instance (default: 17 for COCO).
+        cat_id_to_continuous: Optional dict mapping COCO category IDs to contiguous
+            0-indexed class labels. If None, category_id values are used directly.
+    """
+
+    def __init__(self, include_masks=False, include_keypoints=False, num_keypoints=17, cat_id_to_continuous=None):
         self.include_masks = include_masks
         self.include_keypoints = include_keypoints
         self.num_keypoints = num_keypoints
+        self.cat_id_to_continuous = cat_id_to_continuous
 
     def __call__(self, image, target):
         w, h = image.size
@@ -105,7 +128,14 @@ class ConvertCoco(object):
         boxes[:, 0::2].clamp_(min=0, max=w)
         boxes[:, 1::2].clamp_(min=0, max=h)
 
-        classes = [obj["category_id"] for obj in anno]
+        # Map category_id to contiguous 0-indexed class labels.
+        # This ensures compatibility with both 1-indexed COCO datasets (standard)
+        # and 0-indexed datasets, producing consistent 0-indexed labels for the model.
+        if self.cat_id_to_continuous is not None:
+            classes = [self.cat_id_to_continuous[obj["category_id"]] for obj in anno]
+        else:
+            # Fallback: use category_id directly (assumes already 0-indexed)
+            classes = [obj["category_id"] for obj in anno]
         classes = torch.tensor(classes, dtype=torch.int64)
 
         keep = (boxes[:, 3] > boxes[:, 1]) & (boxes[:, 2] > boxes[:, 0])
