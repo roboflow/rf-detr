@@ -505,6 +505,9 @@ class RFDETRPose(RFDETR):
         return RFDETRPoseConfig(**kwargs)
 
     def get_train_config(self, **kwargs):
+        # Automatically use num_keypoints from model config if not specified
+        if 'num_keypoints' not in kwargs:
+            kwargs['num_keypoints'] = self.model_config.num_keypoints
         return KeypointTrainConfig(**kwargs)
 
 
