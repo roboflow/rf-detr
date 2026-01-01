@@ -33,6 +33,34 @@ If you are training a segmentation model, your COCO JSON annotations should have
 
 If you are training a pose estimation model, your COCO JSON annotations should have a `keypoints` key with the keypoint coordinates in the format `[x1, y1, v1, x2, y2, v2, ...]` where `v` is the visibility flag (0=not labeled, 1=labeled but not visible, 2=labeled and visible).
 
+### Category ID handling
+
+RF-DETR automatically handles both 0-indexed and 1-indexed category IDs in your COCO annotations. You don't need to modify your dataset - the model will work correctly regardless of how your `category_id` values are numbered.
+
+| Dataset category_ids | What happens |
+|---------------------|--------------|
+| `[0, 1, 2]` (0-indexed) | Identity mapping, no change |
+| `[1, 2, 3]` (1-indexed) | Automatically mapped to `[0, 1, 2]` internally |
+| `[1, 5, 10]` (gaps) | Mapped to contiguous `[0, 1, 2]` |
+
+**How it works:**
+
+- **Training**: Category IDs are mapped to contiguous 0-indexed labels for the model
+- **Evaluation**: Predictions are mapped back to original category IDs for correct COCO metrics
+- **Prediction**: `model.predict()` returns 0-indexed class labels that directly index into your `class_names` list
+
+```python
+detections = model.predict("image.jpg")
+class_ids = detections.class_id  # 0-indexed: [0, 1, 2, ...]
+
+# Directly index into class_names
+class_names = ["cat", "dog", "bird"]
+for class_id in class_ids:
+    print(class_names[class_id])  # Works correctly
+```
+
+This means you can use datasets exported from Roboflow (which use 1-indexed IDs) or any other source without modification.
+
 ## Start Training
 
 You can fine-tune RF-DETR from pre-trained COCO checkpoints.
