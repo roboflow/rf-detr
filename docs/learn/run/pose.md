@@ -54,7 +54,7 @@ model = RFDETRPoseLarge()  # Slowest, highest accuracy
     detections = model.predict(image, threshold=0.5)
 
     # Access keypoints from detections
-    keypoints = detections.data.get("keypoints")  # [N, K, 3] where K=17 for COCO
+    keypoints = detections.data.get("keypoints")  # [N, K, 3] where K=num_keypoints
 
     # Annotate image with boxes
     annotated_image = image.copy()
@@ -138,12 +138,19 @@ model = RFDETRPoseLarge()  # Slowest, highest accuracy
 RF-DETR Pose outputs keypoints in the `detections.data["keypoints"]` field as a NumPy array with shape `[N, K, 3]`:
 
 - `N` = number of detections
-- `K` = number of keypoints (default: 17 for COCO pose)
+- `K` = number of keypoints (configured via `num_keypoints`, default: 17 for COCO pose)
 - `3` = (x, y, visibility) for each keypoint
 
-The visibility value ranges from 0 to 1:
-- Values close to 0 indicate the keypoint is not visible or not confident
-- Values close to 1 indicate the keypoint is visible and confident
+The visibility value follows the COCO format:
+- `0` = keypoint not visible / not confident
+- `2` = keypoint visible and confident
+
+For the raw confidence scores (0.0 to 1.0), use `detections.data["keypoints_confidence"]`:
+
+```python
+keypoints = detections.data["keypoints"]  # [N, K, 3] - (x, y, visibility)
+confidence = detections.data["keypoints_confidence"]  # [N, K] - raw scores 0.0-1.0
+```
 
 ## COCO Keypoint Format
 
