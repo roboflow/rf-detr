@@ -40,6 +40,12 @@ class CocoEvaluator(object):
         self.coco_gt = coco_gt
         self.num_keypoints = num_keypoints
 
+        # Create reverse mapping: contiguous 0-indexed labels -> original COCO category IDs
+        # This is needed because the model predicts 0-indexed class labels, but COCO
+        # evaluation expects the original category IDs from the dataset.
+        cat_ids = sorted(coco_gt.getCatIds())
+        self.continuous_to_cat_id = {i: cat_id for i, cat_id in enumerate(cat_ids)}
+
         self.iou_types = iou_types
         self.coco_eval = {}
         for iou_type in iou_types:
@@ -113,7 +119,8 @@ class CocoEvaluator(object):
                 [
                     {
                         "image_id": original_id,
-                        "category_id": labels[k],
+                        # Convert 0-indexed class label back to original COCO category ID
+                        "category_id": self.continuous_to_cat_id.get(labels[k], labels[k]),
                         "bbox": box,
                         "score": scores[k],
                     }
@@ -148,7 +155,8 @@ class CocoEvaluator(object):
                 [
                     {
                         "image_id": original_id,
-                        "category_id": labels[k],
+                        # Convert 0-indexed class label back to original COCO category ID
+                        "category_id": self.continuous_to_cat_id.get(labels[k], labels[k]),
                         "segmentation": rle,
                         "score": scores[k],
                     }
@@ -174,7 +182,8 @@ class CocoEvaluator(object):
                 [
                     {
                         "image_id": original_id,
-                        "category_id": labels[k],
+                        # Convert 0-indexed class label back to original COCO category ID
+                        "category_id": self.continuous_to_cat_id.get(labels[k], labels[k]),
                         'keypoints': keypoint,
                         "score": scores[k],
                     }
