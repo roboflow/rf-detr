@@ -291,3 +291,96 @@ for image, detections in zip(images, detections_list):
     keypoints = detections.data.get("keypoints")
     print(f"Detected {len(detections)} people with keypoints shape: {keypoints.shape if keypoints is not None else None}")
 ```
+
+## Technical Architecture
+
+This section explains the keypoint implementation for those interested in the underlying design.
+
+### Query-Based Keypoint Regression
+
+RF-DETR Pose predicts keypoints directly from transformer decoder query features using lightweight MLP heads:
+
+```
+Decoder Query Features [B, N, hidden_dim]
+           │
+           ├──► Coordinate MLP ──► [B, N, K×2] ──► (x, y) per keypoint
+           │
+           └──► Visibility MLP ──► [B, N, K]   ──► visibility logits
+```
+
+**Why this works well for DETR:**
+
+1. **Query-Object Correspondence**: Each decoder query already attends to a specific object instance via cross-attention. The query feature encodes both *where* the object is and *what* it looks like—ideal context for predicting instance-specific keypoints.
+
+2. **End-to-End Learning**: Unlike anchor-based methods that require keypoint-to-anchor assignment heuristics, DETR's Hungarian matching naturally extends to keypoints. The matched query predicts all attributes (class, box, keypoints) for its assigned ground truth.
+
+3. **Global Context via Attention**: Transformer self-attention allows queries to reason about other objects in the scene, helping with occluded keypoints and crowded scenarios where local CNN features struggle.
+
+### Coordinate Prediction: Box-Relative Regression
+
+Keypoint coordinates are predicted as **offsets relative to the detection bounding box**, then converted to absolute coordinates:
+
+```python
+# Predicted: normalized offsets in [0, 1] relative to box
+kpt_offsets = coord_head(query_features).sigmoid()  # [B, N, K, 2]
+
+# Convert to absolute: kpt = box_topleft + offset * box_size
+x = box_x + kpt_offsets[..., 0] * box_w
+y = box_y + kpt_offsets[..., 1] * box_h
+```
+
+**Advantages:**
+
+- **Translation invariance**: Model learns relative positions, generalizes across image locations
+- **Scale invariance**: Offsets normalized by box size, handles objects of varying scales
+- **Bounded output**: Sigmoid ensures predictions stay within reasonable range
+
+### Separate Visibility Head
+
+Visibility is predicted by an independent MLP rather than sharing weights with coordinates:
+
+```python
+self.coord_head = MLP(hidden_dim, hidden_dim, num_keypoints * 2, num_layers=3)
+self.visibility_head = MLP(hidden_dim, hidden_dim, num_keypoints, num_layers=3)
+```
+
+**Rationale:**
+
+- Visibility is a **classification task** (visible vs. not visible)
+- Coordinates are a **regression task**
+- Separate heads allow independent gradient flow and task-specific optimization
+- Prevents visibility predictions from interfering with coordinate precision
+
+### Loss Functions
+
+Three complementary losses for keypoint supervision:
+
+| Loss | Purpose | Details |
+|------|---------|---------|
+| **L1 Loss** | Coordinate regression | Applied only on visible keypoints |
+| **BCE Loss** | Visibility classification | Applied on all keypoints |
+| **OKS Loss** | COCO-compatible similarity | Incorporates scale and per-keypoint σ |
+
+**Why OKS Loss:**
+
+- Object Keypoint Similarity (OKS) is the COCO evaluation metric
+- Training with OKS loss directly optimizes for the evaluation target
+- Incorporates per-keypoint σ values (some keypoints are harder to localize)
+- Scale-aware: larger objects tolerate more absolute error
+
+### Comparison to Alternative Methods
+
+| Method | Approach | Pros | Cons |
+|--------|----------|------|------|
+| **RF-DETR Pose** | Query → MLP | End-to-end, global context, no anchors | Needs more epochs |
+| **YOLO Pose** | Grid cell → Conv | Fast, well-optimized | Anchor assignment heuristics, local features only |
+| **HRNet** | High-res heatmaps | Very accurate | Expensive, separate from detection |
+| **ViTPose** | ViT + heatmaps | Strong features | Two-stage, not end-to-end |
+
+### Design Benefits for RF-DETR
+
+1. **Minimal Architecture Changes**: Adds only two MLP heads (~100K params), reuses existing decoder features
+2. **Unified Detection + Pose**: Single forward pass produces boxes and keypoints
+3. **Leverages DETR Strengths**: Hungarian matching, global attention, no NMS post-processing
+4. **Configurable**: `num_keypoints`, `keypoint_names`, `skeleton` all user-defined
+5. **COCO-Compatible**: Same output format and evaluation as standard pose benchmarks
