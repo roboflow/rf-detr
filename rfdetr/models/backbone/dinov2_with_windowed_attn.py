@@ -671,7 +671,7 @@ class WindowedDinov2WithRegistersEncoder(nn.Module):
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
             
-            if i > int(self.config.out_features[-1][5:]):
+            if i > int(self.config.out_features[-1][5:])-1:
                 # early stop if we have reached the last output feature
                 break
             
