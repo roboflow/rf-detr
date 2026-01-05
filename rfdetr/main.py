@@ -770,6 +770,10 @@ def get_args_parser():
     parser.add_argument('--bbox_loss_coef', default=5, type=float)
     parser.add_argument('--giou_loss_coef', default=2, type=float)
     parser.add_argument('--focal_alpha', default=0.25, type=float)
+    # Attributes
+    parser.add_argument('--num_attributes', default=0, type=int, help='Number of attributes per annotation (0 to disable)')
+    parser.add_argument('--attr_loss_coef', default=1.0, type=float, help='Loss weight for attribute BCE loss')
+    parser.add_argument('--attribute_names', default=None, nargs='+', help='Optional ordered attribute names to map dict attributes')
     
     # Loss
     parser.add_argument('--no_aux_loss', dest='aux_loss', action='store_false',
@@ -935,6 +939,10 @@ def populate_args(
     use_varifocal_loss=False,
     use_position_supervised_loss=False,
     ia_bce_loss=False,
+    # Attributes
+    num_attributes=0,
+    attr_loss_coef=1.0,
+    attribute_names=None,
     
     # Dataset parameters
     dataset_file='coco',
@@ -1046,6 +1054,9 @@ def populate_args(
         use_varifocal_loss=use_varifocal_loss,
         use_position_supervised_loss=use_position_supervised_loss,
         ia_bce_loss=ia_bce_loss,
+        num_attributes=num_attributes,
+        attr_loss_coef=attr_loss_coef,
+        attribute_names=attribute_names,
         dataset_file=dataset_file,
         coco_path=coco_path,
         dataset_dir=dataset_dir,

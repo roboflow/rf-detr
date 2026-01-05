@@ -309,6 +309,22 @@ def evaluate(model, criterion, postprocess, data_loader, base_ds, device, args=N
         )
         metric_logger.update(class_error=loss_dict_reduced["class_error"])
 
+        # Optional attribute evaluation on matched pairs (simple BCE and accuracy)
+        if 'pred_attributes' in outputs and any('attributes' in t for t in targets):
+            try:
+                outputs_wo_aux = {k: v for k, v in outputs.items() if k != 'aux_outputs'}
+                indices = criterion.matcher(outputs_wo_aux, targets, group_detr=(args.group_detr if hasattr(args, 'group_detr') else 1))
+                pred_attr = outputs['pred_attributes']
+                b_idx, s_idx = criterion._get_src_permutation_idx(indices)
+                if b_idx.numel() > 0:
+                    src_attr = pred_attr[b_idx, s_idx]
+                    tgt_attr = torch.cat([t['attributes'][j] for t, (_, j) in zip(targets, indices)], dim=0).to(src_attr.dtype)
+                    bce = F.binary_cross_entropy_with_logits(src_attr, tgt_attr, reduction='mean').item()
+                    acc = ((src_attr.sigmoid() > 0.5) == (tgt_attr > 0.5)).float().mean().item()
+                    metric_logger.update(attr_bce=bce, attr_acc=acc)
+            except Exception:
+                pass
+
         orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
         results_all = postprocess(outputs, orig_target_sizes)
         res = {

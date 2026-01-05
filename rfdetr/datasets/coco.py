@@ -64,11 +64,14 @@ def convert_coco_poly_to_mask(segmentations, height, width):
 
 
 class CocoDetection(torchvision.datasets.CocoDetection):
-    def __init__(self, img_folder, ann_file, transforms, include_masks=False):
+    def __init__(self, img_folder, ann_file, transforms, include_masks=False, include_attributes=False, attribute_names=None, num_attributes=None):
         super(CocoDetection, self).__init__(img_folder, ann_file)
         self._transforms = transforms
         self.include_masks = include_masks
-        self.prepare = ConvertCoco(include_masks=include_masks)
+        self.include_attributes = include_attributes
+        self.attribute_names = attribute_names
+        self.num_attributes = num_attributes
+        self.prepare = ConvertCoco(include_masks=include_masks, include_attributes=include_attributes, attribute_names=attribute_names, num_attributes=num_attributes)
 
     def __getitem__(self, idx):
         img, target = super(CocoDetection, self).__getitem__(idx)
@@ -82,8 +85,11 @@ class CocoDetection(torchvision.datasets.CocoDetection):
 
 class ConvertCoco(object):
 
-    def __init__(self, include_masks=False):
+    def __init__(self, include_masks=False, include_attributes=False, attribute_names=None, num_attributes=None):
         self.include_masks = include_masks
+        self.include_attributes = include_attributes
+        self.attribute_names = attribute_names
+        self.num_attributes = num_attributes
 
     def __call__(self, image, target):
         w, h = image.size
@@ -133,6 +139,65 @@ class ConvertCoco(object):
                 target["masks"] = torch.zeros((0, h, w), dtype=torch.uint8)
 
             target["masks"] = target["masks"].bool()
+
+        # optional: parse attributes
+        if self.include_attributes:
+            attrs_list = []
+            attr_len = None
+            for obj in anno:
+                attrs = obj.get("attributes", None)
+                if attrs is None:
+                    continue
+                if isinstance(attrs, list):
+                    vec = torch.as_tensor(attrs, dtype=torch.float32)
+                elif isinstance(attrs, dict):
+                    if self.attribute_names is not None:
+                        vec = torch.as_tensor([float(attrs.get(k, 0.0)) for k in self.attribute_names], dtype=torch.float32)
+                    else:
+                        # stable order by key for deterministic behavior
+                        keys = sorted(attrs.keys())
+                        vec = torch.as_tensor([float(attrs[k]) for k in keys], dtype=torch.float32)
+                else:
+                    continue
+                if self.num_attributes is not None:
+                    # pad or truncate to desired length
+                    if vec.numel() < self.num_attributes:
+                        pad = torch.zeros(self.num_attributes - vec.numel(), dtype=torch.float32)
+                        vec = torch.cat([vec, pad], dim=0)
+                    elif vec.numel() > self.num_attributes:
+                        vec = vec[:self.num_attributes]
+                attrs_list.append(vec)
+
+            if len(attrs_list) > 0:
+                # make tensor and filter with keep mask, aligning with boxes/classes
+                # fill missing ones with zeros to match anno length
+                if len(attrs_list) != len(anno):
+                    # create zero vectors for missing
+                    if self.attribute_names is not None:
+                        A = len(self.attribute_names)
+                    elif self.num_attributes is not None:
+                        A = int(self.num_attributes)
+                    else:
+                        A = int(attrs_list[0].numel())
+                    full_attrs = []
+                    ai = 0
+                    for obj in anno:
+                        a = obj.get("attributes", None)
+                        if a is None:
+                            full_attrs.append(torch.zeros(A, dtype=torch.float32))
+                        else:
+                            full_attrs.append(attrs_list[ai])
+                            ai += 1
+                    attrs_tensor = torch.stack(full_attrs, dim=0)
+                else:
+                    attrs_tensor = torch.stack(attrs_list, dim=0)
+                if attrs_tensor.numel() > 0 and keep.numel() > 0:
+                    target["attributes"] = attrs_tensor[keep]
+                else:
+                    target["attributes"] = torch.zeros((0, attrs_tensor.shape[-1] if attrs_tensor.ndim == 2 else 0), dtype=torch.float32)
+            else:
+                if self.num_attributes is not None:
+                    target["attributes"] = torch.zeros((0, int(self.num_attributes)), dtype=torch.float32)
 
         target["orig_size"] = torch.as_tensor([int(h), int(w)])
         target["size"] = torch.as_tensor([int(h), int(w)])
@@ -256,6 +321,9 @@ def build(image_set, args, resolution):
         square_resize_div_64 = False
 
     
+    include_attributes = hasattr(args, 'num_attributes') and args.num_attributes is not None and int(args.num_attributes) > 0
+    include_masks = getattr(args, 'segmentation_head', False)
+
     if square_resize_div_64:
         dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms_square_div_64(
             image_set,
@@ -265,7 +333,7 @@ def build(image_set, args, resolution):
             skip_random_resize=not args.do_random_resize_via_padding,
             patch_size=args.patch_size,
             num_windows=args.num_windows
-        ))
+        ), include_masks=include_masks, include_attributes=include_attributes, attribute_names=getattr(args, 'attribute_names', None), num_attributes=getattr(args, 'num_attributes', None))
     else:
         dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms(
             image_set,
@@ -275,7 +343,7 @@ def build(image_set, args, resolution):
             skip_random_resize=not args.do_random_resize_via_padding,
             patch_size=args.patch_size,
             num_windows=args.num_windows
-        ))
+        ), include_masks=include_masks, include_attributes=include_attributes, attribute_names=getattr(args, 'attribute_names', None), num_attributes=getattr(args, 'num_attributes', None))
     return dataset
 
 def build_roboflow(image_set, args, resolution):
@@ -304,6 +372,7 @@ def build_roboflow(image_set, args, resolution):
         include_masks = args.segmentation_head
     except:
         include_masks = False
+    include_attributes = hasattr(args, 'num_attributes') and args.num_attributes is not None and int(args.num_attributes) > 0
 
     
     if square_resize_div_64:
@@ -315,7 +384,7 @@ def build_roboflow(image_set, args, resolution):
             skip_random_resize=not args.do_random_resize_via_padding,
             patch_size=args.patch_size,
             num_windows=args.num_windows
-        ), include_masks=include_masks)
+        ), include_masks=include_masks, include_attributes=include_attributes, attribute_names=getattr(args, 'attribute_names', None), num_attributes=getattr(args, 'num_attributes', None))
     else:
         dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms(
             image_set,
@@ -325,5 +394,5 @@ def build_roboflow(image_set, args, resolution):
             skip_random_resize=not args.do_random_resize_via_padding,
             patch_size=args.patch_size,
             num_windows=args.num_windows
-        ), include_masks=include_masks)
+        ), include_masks=include_masks, include_attributes=include_attributes, attribute_names=getattr(args, 'attribute_names', None), num_attributes=getattr(args, 'num_attributes', None))
     return dataset

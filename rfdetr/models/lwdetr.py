@@ -67,6 +67,8 @@ class LWDETR(nn.Module):
         self.class_embed = nn.Linear(hidden_dim, num_classes)
         self.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
         self.segmentation_head = segmentation_head
+        # optional attribute head (set later via re-init in build_model if args specifies)
+        self.attr_embed = None
         
         query_dim=4
         self.refpoint_embed = nn.Embedding(num_queries * group_detr, query_dim)
@@ -178,15 +180,20 @@ class LWDETR(nn.Module):
                 outputs_coord = (self.bbox_embed(hs) + ref_unsigmoid).sigmoid()
 
             outputs_class = self.class_embed(hs)
+            outputs_attr = None
+            if self.attr_embed is not None:
+                outputs_attr = self.attr_embed(hs)
 
             if self.segmentation_head is not None:
                 outputs_masks = self.segmentation_head(features[0].tensors, hs, samples.tensors.shape[-2:])
 
             out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1]}
+            if outputs_attr is not None:
+                out['pred_attributes'] = outputs_attr[-1]
             if self.segmentation_head is not None:
                 out['pred_masks'] = outputs_masks[-1]
             if self.aux_loss:
-                out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord, outputs_masks if self.segmentation_head is not None else None)
+                out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord, outputs_masks if self.segmentation_head is not None else None, outputs_attr)
 
         if self.two_stage:
             group_detr = self.group_detr if self.training else 1
@@ -250,16 +257,20 @@ class LWDETR(nn.Module):
             return outputs_coord, outputs_class
 
     @torch.jit.unused
-    def _set_aux_loss(self, outputs_class, outputs_coord, outputs_masks):
+    def _set_aux_loss(self, outputs_class, outputs_coord, outputs_masks, outputs_attr):
         # this is a workaround to make torchscript happy, as torchscript
         # doesn't support dictionary with non-homogeneous values, such
         # as a dict having both a Tensor and a list.
         if outputs_masks is not None:
-            return [{'pred_logits': a, 'pred_boxes': b, 'pred_masks': c}
+            aux = [{'pred_logits': a, 'pred_boxes': b, 'pred_masks': c}
                     for a, b, c in zip(outputs_class[:-1], outputs_coord[:-1], outputs_masks[:-1])]
         else:
-            return [{'pred_logits': a, 'pred_boxes': b}
+            aux = [{'pred_logits': a, 'pred_boxes': b}
                     for a, b in zip(outputs_class[:-1], outputs_coord[:-1])]
+        if outputs_attr is not None:
+            for d, a in zip(aux, outputs_attr[:-1]):
+                d['pred_attributes'] = a
+        return aux
 
     def update_drop_path(self, drop_path_rate, vit_encoder_num_layers):
         """ """
@@ -502,6 +513,21 @@ class SetCriterion(nn.Module):
         del src_masks
         del target_masks
         return losses
+    def loss_attributes(self, outputs, targets, indices, num_boxes):
+        """Compute BCE-with-logits loss for attributes on matched pairs.
+        Expects outputs to contain 'pred_attributes' of shape [B, Q, A] and targets with key 'attributes' as [N, A].
+        """
+        assert 'pred_attributes' in outputs, "pred_attributes missing in model outputs"
+        pred_attr = outputs['pred_attributes']  # [B, Q, A]
+        idx = self._get_src_permutation_idx(indices)
+        src_attr = pred_attr[idx]  # [N, A]
+        if src_attr.numel() == 0:
+            return {
+                'loss_attr': src_attr.sum(),
+            }
+        tgt_attr = torch.cat([t['attributes'][j] for t, (_, j) in zip(targets, indices)], dim=0).to(src_attr.dtype)
+        loss = F.binary_cross_entropy_with_logits(src_attr, tgt_attr, reduction='sum') / max(num_boxes, 1)
+        return {'loss_attr': loss}
     
  
     def _get_src_permutation_idx(self, indices):
@@ -522,6 +548,7 @@ class SetCriterion(nn.Module):
             'cardinality': self.loss_cardinality,
             'boxes': self.loss_boxes,
             'masks': self.loss_masks,
+            'attributes': self.loss_attributes,
         }
         assert loss in loss_map, f'do you really want to compute {loss} loss?'
         return loss_map[loss](outputs, targets, indices, num_boxes, **kwargs)
@@ -717,6 +744,7 @@ class PostProcess(nn.Module):
                           For visualization, this should be the image size after data augment, but before padding
         """
         out_logits, out_bbox = outputs['pred_logits'], outputs['pred_boxes']
+        out_attrs = outputs.get('pred_attributes', None)
         out_masks = outputs.get('pred_masks', None)
 
         assert len(out_logits) == len(target_sizes)
@@ -745,9 +773,19 @@ class PostProcess(nn.Module):
                 h, w = target_sizes[i].tolist()
                 masks_i = F.interpolate(masks_i.unsqueeze(1), size=(int(h), int(w)), mode='bilinear', align_corners=False)  # [K,1,H,W]
                 res_i['masks'] = masks_i > 0.0
+                if out_attrs is not None:
+                    attrs_i = torch.gather(out_attrs[i], 0, k_idx.unsqueeze(-1).repeat(1, out_attrs.shape[-1]))
+                    res_i['attributes'] = attrs_i.sigmoid()
                 results.append(res_i)
         else:
-            results = [{'scores': s, 'labels': l, 'boxes': b} for s, l, b in zip(scores, labels, boxes)]
+            results = []
+            for i in range(out_logits.shape[0]):
+                res_i = {'scores': scores[i], 'labels': labels[i], 'boxes': boxes[i]}
+                if out_attrs is not None:
+                    k_idx = topk_boxes[i]
+                    attrs_i = torch.gather(out_attrs[i], 0, k_idx.unsqueeze(-1).repeat(1, out_attrs.shape[-1]))
+                    res_i['attributes'] = attrs_i.sigmoid()
+                results.append(res_i)
 
         return results
 
@@ -826,6 +864,11 @@ def build_model(args):
         lite_refpoint_refine=args.lite_refpoint_refine,
         bbox_reparam=args.bbox_reparam,
     )
+    # optional attribute head
+    if hasattr(args, 'num_attributes') and args.num_attributes is not None and int(args.num_attributes) > 0:
+        model.attr_embed = nn.Linear(args.hidden_dim, int(args.num_attributes))
+        nn.init.constant_(model.attr_embed.weight.data, 0)
+        nn.init.constant_(model.attr_embed.bias.data, 0)
     return model
 
 def build_criterion_and_postprocessors(args):
@@ -833,6 +876,8 @@ def build_criterion_and_postprocessors(args):
     matcher = build_matcher(args)
     weight_dict = {'loss_ce': args.cls_loss_coef, 'loss_bbox': args.bbox_loss_coef}
     weight_dict['loss_giou'] = args.giou_loss_coef
+    if hasattr(args, 'attr_loss_coef') and args.attr_loss_coef is not None and args.attr_loss_coef > 0:
+        weight_dict['loss_attr'] = args.attr_loss_coef
     if args.segmentation_head:
         weight_dict['loss_mask_ce'] = args.mask_ce_loss_coef
         weight_dict['loss_mask_dice'] = args.mask_dice_loss_coef
@@ -846,6 +891,8 @@ def build_criterion_and_postprocessors(args):
         weight_dict.update(aux_weight_dict)
 
     losses = ['labels', 'boxes', 'cardinality']
+    if hasattr(args, 'num_attributes') and args.num_attributes is not None and int(args.num_attributes) > 0:
+        losses.append('attributes')
     if args.segmentation_head:
         losses.append('masks')
 
