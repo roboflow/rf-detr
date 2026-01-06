@@ -293,6 +293,7 @@ class TrainConfig(BaseModel):
     class_names: List[str] = None
     run_test: bool = True
     segmentation_head: bool = False
+    eval_max_dets: int = 500
 
 
 class SegmentationTrainConfig(TrainConfig):
