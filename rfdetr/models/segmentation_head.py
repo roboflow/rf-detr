@@ -175,7 +175,7 @@ def point_sample(input, point_coords, **kwargs):
     if point_coords.dim() == 3:
         add_dim = True
         point_coords = point_coords.unsqueeze(2)
-    output = F.grid_sample(input, 2.0 * point_coords - 1.0, **kwargs)
+    output = F.grid_sample(input, 2.0 * point_coords - 1.0, padding_mode='border', **kwargs)
     if add_dim:
         output = output.squeeze(3)
     return output
