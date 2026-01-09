@@ -33,9 +33,15 @@ from rfdetr.config import (
     RFDETRXLCloudConfig,
     RFDETRXXLCloudConfig,
     RFDETRSegPreviewConfig,
+    RFDETRSegNanoConfig,
+    RFDETRSegSmallConfig,
+    RFDETRSegMediumConfig,
+    RFDETRSegLargeConfig,
+    RFDETRSegXLConfig,
+    RFDETRSegXXLConfig,
     TrainConfig,
     SegmentationTrainConfig,
-    ModelConfig
+    ModelConfig,
 )
 from rfdetr.main import Model, download_pretrain_weights
 from rfdetr.util.metrics import MetricsPlotSink, MetricsTensorBoardSink, MetricsWandBSink
@@ -489,6 +495,54 @@ class RFDETRSegPreview(RFDETR):
     size = "rfdetr-seg-preview"
     def get_model_config(self, **kwargs):
         return RFDETRSegPreviewConfig(**kwargs)
+
+    def get_train_config(self, **kwargs):
+        return SegmentationTrainConfig(**kwargs)
+
+class RFDETRSegNano(RFDETR):
+    size = "rfdetr-seg-nano"
+    def get_model_config(self, **kwargs):
+        return RFDETRSegNanoConfig(**kwargs)
+
+    def get_train_config(self, **kwargs):
+        return SegmentationTrainConfig(**kwargs)
+
+class RFDETRSegSmall(RFDETR):
+    size = "rfdetr-seg-small"
+    def get_model_config(self, **kwargs):
+        return RFDETRSegSmallConfig(**kwargs)
+
+    def get_train_config(self, **kwargs):
+        return SegmentationTrainConfig(**kwargs)
+
+class RFDETRSegMedium(RFDETR):
+    size = "rfdetr-seg-medium"
+    def get_model_config(self, **kwargs):
+        return RFDETRSegMediumConfig(**kwargs)
+    
+    def get_train_config(self, **kwargs):
+        return SegmentationTrainConfig(**kwargs)
+
+class RFDETRSegLarge(RFDETR):
+    size = "rfdetr-seg-large"
+    def get_model_config(self, **kwargs):
+        return RFDETRSegLargeConfig(**kwargs)
+
+    def get_train_config(self, **kwargs):
+        return SegmentationTrainConfig(**kwargs)
+
+class RFDETRSegXL(RFDETR):
+    size = "rfdetr-seg-xlarge"
+    def get_model_config(self, **kwargs):
+        return RFDETRSegXLConfig(**kwargs)
+
+    def get_train_config(self, **kwargs):
+        return SegmentationTrainConfig(**kwargs)
+
+class RFDETRSegXXL(RFDETR):
+    size = "rfdetr-seg-xxlarge"
+    def get_model_config(self, **kwargs):
+        return RFDETRSegXXLConfig(**kwargs)
 
     def get_train_config(self, **kwargs):
         return SegmentationTrainConfig(**kwargs)

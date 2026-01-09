@@ -19,4 +19,10 @@ from rfdetr.detr import (
     RFDETREdgeL,
     RFDETRCloudXL,
     RFDETRCloudXXL,
+    RFDETRSegNano,
+    RFDETRSegSmall,
+    RFDETRSegMedium,
+    RFDETRSegLarge,
+    RFDETRSegXL,
+    RFDETRSegXXL,
 )

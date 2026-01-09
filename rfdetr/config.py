@@ -171,6 +171,90 @@ class RFDETRSegPreviewConfig(RFDETRBaseConfig):
     pretrain_weights: Optional[str] = "rf-detr-seg-preview.pt"
     num_classes: int = 90
 
+
+class RFDETRSegNanoConfig(RFDETRBaseConfig):
+    segmentation_head: bool = True
+    out_feature_indexes: List[int] = [3, 6, 9, 12]
+    num_windows: int = 1
+    dec_layers: int = 4
+    patch_size: int = 12
+    resolution: int = 312
+    positional_encoding_size: int = 312 // 12
+    num_queries: int = 100
+    num_select: int = 100
+    pretrain_weights: Optional[str] = "rf-detr-seg-nano.pt"
+    num_classes: int = 90
+
+
+class RFDETRSegSmallConfig(RFDETRBaseConfig):
+    segmentation_head: bool = True
+    out_feature_indexes: List[int] = [3, 6, 9, 12]
+    num_windows: int = 2
+    dec_layers: int = 4
+    patch_size: int = 12
+    resolution: int = 384
+    positional_encoding_size: int = 384 // 12
+    num_queries: int = 100
+    num_select: int = 100
+    pretrain_weights: Optional[str] = "rf-detr-seg-small.pt"
+    num_classes: int = 90
+
+
+class RFDETRSegMediumConfig(RFDETRBaseConfig):
+    segmentation_head: bool = True
+    out_feature_indexes: List[int] = [3, 6, 9, 12]
+    num_windows: int = 2
+    dec_layers: int = 5
+    patch_size: int = 12
+    resolution: int = 432
+    positional_encoding_size: int = 432 // 12
+    num_queries: int = 200
+    num_select: int = 200
+    pretrain_weights: Optional[str] = "rf-detr-seg-medium.pt"
+    num_classes: int = 90
+
+
+class RFDETRSegLargeConfig(RFDETRBaseConfig):
+    segmentation_head: bool = True
+    out_feature_indexes: List[int] = [3, 6, 9, 12]
+    num_windows: int = 2
+    dec_layers: int = 5
+    patch_size: int = 12
+    resolution: int = 504
+    positional_encoding_size: int = 504 // 12
+    num_queries: int = 200
+    num_select: int = 200
+    pretrain_weights: Optional[str] = "rf-detr-seg-large.pt"
+    num_classes: int = 90
+
+
+class RFDETRSegXLConfig(RFDETRBaseConfig):
+    segmentation_head: bool = True
+    out_feature_indexes: List[int] = [3, 6, 9, 12]
+    num_windows: int = 2
+    dec_layers: int = 6
+    patch_size: int = 12
+    resolution: int = 624
+    positional_encoding_size: int = 624 // 12
+    num_queries: int = 300
+    num_select: int = 300
+    pretrain_weights: Optional[str] = "rf-detr-seg-xlarge.pt"
+    num_classes: int = 90
+
+
+class RFDETRSegXXLConfig(RFDETRBaseConfig):
+    segmentation_head: bool = True
+    out_feature_indexes: List[int] = [3, 6, 9, 12]
+    num_windows: int = 2
+    dec_layers: int = 6
+    patch_size: int = 12
+    resolution: int = 768
+    positional_encoding_size: int = 768 // 12
+    num_queries: int = 300
+    num_select: int = 300
+    pretrain_weights: Optional[str] = "rf-detr-seg-xxlarge.pt"
+    num_classes: int = 90
+
 class TrainConfig(BaseModel):
     lr: float = 1e-4
     lr_encoder: float = 1.5e-4
@@ -188,7 +272,6 @@ class TrainConfig(BaseModel):
     group_detr: int = 13
     ia_bce_loss: bool = True
     cls_loss_coef: float = 1.0
-    num_select: int = 300
     dataset_file: Literal["coco", "o365", "roboflow"] = "roboflow"
     square_resize_div_64: bool = True
     dataset_dir: str

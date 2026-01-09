@@ -65,6 +65,12 @@ HOSTED_MODELS = {
     "rf-detr-large-o365.pth": "https://storage.googleapis.com/rfdetr/rf-detr-large-2-o365.pth",
     "rf-detr-xlarge-o365.pth": "https://storage.googleapis.com/rfdetr/rf-detr-xlarge-o365.pth",
     "rf-detr-xxlarge-o365.pth": "https://storage.googleapis.com/rfdetr/rf-detr-xxlarge-o365.pth",
+    "rf-detr-seg-nano.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-nano.pth",
+    "rf-detr-seg-small.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-small.pth",
+    "rf-detr-seg-medium.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-medium.pth",
+    "rf-detr-seg-large.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-large.pth",
+    "rf-detr-seg-xlarge.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-xlarge.pth",
+    "rf-detr-seg-xxlarge.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-xxlarge.pth",
 }
 
 def download_pretrain_weights(pretrain_weights: str, redownload=False):
