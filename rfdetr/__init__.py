@@ -11,7 +11,6 @@ if os.environ.get("PYTORCH_ENABLE_MPS_FALLBACK") is None:
 
 from rfdetr.detr import (
     RFDETRBase,
-    RFDETRLarge,
     RFDETRNano,
     RFDETRSmall,
     RFDETRMedium,
