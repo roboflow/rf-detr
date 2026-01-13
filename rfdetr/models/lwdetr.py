@@ -464,23 +464,27 @@ class SetCriterion(nn.Module):
             spatial_features = outputs["pred_masks"]["spatial_features"]
             query_features = outputs["pred_masks"]["query_features"]
             bias = outputs["pred_masks"]["bias"]
-            
-            batched_selected_masks = []
-            per_batch_counts = idx[0].unique(return_counts=True)[1]
-            batch_indices = torch.cat((torch.zeros_like(per_batch_counts[:1]), per_batch_counts), dim=0).cumsum(0)
-            
-            for i in range(per_batch_counts.shape[0]):
-                batch_indicator = idx[0][batch_indices[i]:batch_indices[i+1]]
-                box_indicator = idx[1][batch_indices[i]:batch_indices[i+1]]
+            # If there are no matches, return an empty tensor like the Tensor branch does.
+            if idx[0].numel() == 0:
+                device = spatial_features.device
+                src_masks = torch.tensor([], device=device)
+            else:
+                batched_selected_masks = []
+                per_batch_counts = idx[0].unique(return_counts=True)[1]
+                batch_indices = torch.cat((torch.zeros_like(per_batch_counts[:1]), per_batch_counts), dim=0).cumsum(0)
                 
-                this_batch_queries = query_features[(batch_indicator, box_indicator)]
-                this_batch_spatial_features = spatial_features[idx[0][batch_indices[i+1]-1]]
+                for i in range(per_batch_counts.shape[0]):
+                    batch_indicator = idx[0][batch_indices[i]:batch_indices[i+1]]
+                    box_indicator = idx[1][batch_indices[i]:batch_indices[i+1]]
+                    
+                    this_batch_queries = query_features[(batch_indicator, box_indicator)]
+                    this_batch_spatial_features = spatial_features[idx[0][batch_indices[i+1]-1]]
+                    
+                    this_batch_masks = torch.einsum("chw,nc->nhw", this_batch_spatial_features, this_batch_queries) + bias
+                    
+                    batched_selected_masks.append(this_batch_masks)
                 
-                this_batch_masks = torch.einsum("chw,nc->nhw", this_batch_spatial_features, this_batch_queries) + bias
-                
-                batched_selected_masks.append(this_batch_masks)
-            
-            src_masks = torch.cat(batched_selected_masks)
+                src_masks = torch.cat(batched_selected_masks)
             
         if src_masks.numel() == 0:
             return {
