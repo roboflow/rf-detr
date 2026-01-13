@@ -185,7 +185,7 @@ def coco_extended_metrics(coco_eval):
 
     iou_thrs, rec_thrs = coco_eval.params.iouThrs, coco_eval.params.recThrs
     iou50_idx, area_idx, maxdet_idx = (
-        int(np.argwhere(np.isclose(iou_thrs, 0.50))), 0, 2)
+        int(np.argmax(np.isclose(iou_thrs, 0.50))), 0, 2)
 
     P = coco_eval.eval["precision"]
     S = coco_eval.eval["scores"]
