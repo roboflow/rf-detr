@@ -110,7 +110,7 @@ class RFDETRMediumConfig(RFDETRBaseConfig):
 
 
 #res 704, ps 16, 2 windows, 4 dec layers, 300 queries, ViT-S basis    
-class RFDETRLargeEdgeConfig(ModelConfig):
+class RFDETRLargeConfig(ModelConfig):
     encoder: Literal["dinov2_windowed_small"] = "dinov2_windowed_small"
     hidden_dim: int = 256
     dec_layers: int = 4
@@ -212,7 +212,7 @@ class RFDETRSegXLConfig(RFDETRBaseConfig):
     num_classes: int = 90
 
 
-class RFDETRSegXXLConfig(RFDETRBaseConfig):
+class RFDETRSeg2XLConfig(RFDETRBaseConfig):
     segmentation_head: bool = True
     out_feature_indexes: List[int] = [3, 6, 9, 12]
     num_windows: int = 2

@@ -29,14 +29,14 @@ from rfdetr.config import (
     RFDETRNanoConfig,
     RFDETRSmallConfig,
     RFDETRMediumConfig,
-    RFDETRLargeEdgeConfig,
+    RFDETRLargeConfig,
     RFDETRSegPreviewConfig,
     RFDETRSegNanoConfig,
     RFDETRSegSmallConfig,
     RFDETRSegMediumConfig,
     RFDETRSegLargeConfig,
     RFDETRSegXLConfig,
-    RFDETRSegXXLConfig,
+    RFDETRSeg2XLConfig,
     TrainConfig,
     SegmentationTrainConfig,
     ModelConfig,
@@ -431,16 +431,6 @@ class RFDETRBase(RFDETR):
     def get_train_config(self, **kwargs):
         return TrainConfig(**kwargs)
 
-class RFDETRLargeDeprecated(RFDETR):
-    """
-    Train an RF-DETR Large model.
-    """
-    size = "rfdetr-large-deprecated"
-    def get_model_config(self, **kwargs):
-        return RFDETRLargeDeprecatedConfig(**kwargs)
-
-    def get_train_config(self, **kwargs):
-        return TrainConfig(**kwargs)
 
 class RFDETRNano(RFDETR):
     """
@@ -476,15 +466,54 @@ class RFDETRMedium(RFDETR):
         return TrainConfig(**kwargs)
 
 
-class RFDETRLargeEdge(RFDETR):
+class RFDETRLargeNew(RFDETR):
     size = "rfdetr-large"
     def get_model_config(self, **kwargs):
-        return RFDETRLargeEdgeConfig(**kwargs)
+        return RFDETRLargeConfig(**kwargs)
 
     def get_train_config(self, **kwargs):
         return TrainConfig(**kwargs)  
 
+class RFDETRLargeDeprecated(RFDETR):
+    """
+    Train an RF-DETR Large model.
+    """
+    size = "rfdetr-large"
+    def __init__(self, **kwargs):
+        logger.warning("RFDETRLargeDeprecated is deprecated, and will be removed in a future version. Please use RFDETRLarge instead.")
+        super().__init__(**kwargs)
+
+    def get_model_config(self, **kwargs):
+        return RFDETRLargeDeprecatedConfig(**kwargs)
+
+    def get_train_config(self, **kwargs):
+        return TrainConfig(**kwargs)
+
+class RFDETRLarge(RFDETR):
+    size = "rfdetr-large"
+    def __init__(self, **kwargs):
+        self.init_error = None
+        self.is_deprecated = False
+        try:
+            super().__init__(**kwargs)
+        except Exception as e:
+            self.init_error = e
+            self.get_model_config = self.get_model_config_deprecated
+            self.is_deprecated = True
+            try:
+                super().__init__(**kwargs)
+            except Exception as e_deprecated:
+                raise self.init_error
     
+    def get_model_config(self, **kwargs):
+        return RFDETRLargeConfig(**kwargs)
+    
+    def get_model_config_deprecated(self, **kwargs):
+        return RFDETRLargeDeprecatedConfig(**kwargs)
+    
+    def get_train_config(self, **kwargs):
+        return TrainConfig(**kwargs)
+
 
 class RFDETRSegPreview(RFDETR):
     size = "rfdetr-seg-preview"
@@ -534,10 +563,10 @@ class RFDETRSegXL(RFDETR):
     def get_train_config(self, **kwargs):
         return SegmentationTrainConfig(**kwargs)
 
-class RFDETRSegXXL(RFDETR):
-    size = "rfdetr-seg-xxlarge"
+class RFDETRSeg2XL(RFDETR):
+    size = "rfdetr-seg-2xlarge"
     def get_model_config(self, **kwargs):
-        return RFDETRSegXXLConfig(**kwargs)
+        return RFDETRSeg2XLConfig(**kwargs)
 
     def get_train_config(self, **kwargs):
         return SegmentationTrainConfig(**kwargs)

@@ -1,3 +1,3 @@
-:::rfdetr.detr.RFDETRLarge
+:::rfdetr.config.SegmentationTrainConfig
     options:
       inherited_members: true

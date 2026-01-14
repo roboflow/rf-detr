@@ -39,7 +39,7 @@ nav:
         - RF-DETR Medium: reference/medium.md
         - RF-DETR Large (Edge): reference/large.md
         - RF-DETR XLarge (Cloud): reference/xlarge.md
-        - RF-DETR XXLarge (Cloud): reference/xxlarge.md
+        - RF-DETR 2XLarge (Cloud): reference/2xlarge.md
         - RF-DETR Large (Deprecated): reference/large_deprecated.md
       - Image Segmentation Models:
         - RF-DETR Seg Nano: reference/seg_nano.md

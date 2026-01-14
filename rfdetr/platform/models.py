@@ -4,7 +4,7 @@ from typing import Literal, List, Optional
 
 
 # THE FOLLOWING CONFIGS ARE COVERED BY THE PLATFORM MODEL LICENSE (./LICENSE.pml)
-class RFDETRXLCloudConfig(ModelConfig):
+class RFDETRXLargeConfig(ModelConfig):
     encoder: Literal["dinov2_windowed_base"] = "dinov2_windowed_base"
     hidden_dim: int = 512
     dec_layers: int = 5
@@ -22,7 +22,7 @@ class RFDETRXLCloudConfig(ModelConfig):
     license: str = "PML-1.0"
 
 
-class RFDETRXXLCloudConfig(ModelConfig):
+class RFDETR2XLargeConfig(ModelConfig):
     encoder: Literal["dinov2_windowed_base"] = "dinov2_windowed_base"
     hidden_dim: int = 512
     dec_layers: int = 5
@@ -41,7 +41,7 @@ class RFDETRXXLCloudConfig(ModelConfig):
 
 
 # THE FOLLOWING MODELS ARE COVERED BY THE PLATFORM MODEL LICENSE (./LICENSE.pml)
-class RFDETRXLCloud(RFDETR):
+class RFDETRXLarge(RFDETR):
     size = "rfdetr-xlarge"
 
     def __init__(self, accept_platform_model_license: bool = False, **kwargs):
@@ -53,14 +53,14 @@ class RFDETRXLCloud(RFDETR):
         super().__init__(**kwargs)
 
     def get_model_config(self, **kwargs):
-        return RFDETRXLCloudConfig(**kwargs)
+        return RFDETRXLargeConfig(**kwargs)
 
     def get_train_config(self, **kwargs):
         return TrainConfig(**kwargs)
 
 
-class RFDETRXXLCloud(RFDETR):
-    size = "rfdetr-xxlarge"
+class RFDETR2XLarge(RFDETR):
+    size = "rfdetr-2xlarge"
 
     def __init__(self, accept_platform_model_license: bool = False, **kwargs):
         if not accept_platform_model_license is True:
@@ -71,7 +71,7 @@ class RFDETRXXLCloud(RFDETR):
         super().__init__(**kwargs)
 
     def get_model_config(self, **kwargs):
-        return RFDETRXXLCloudConfig(**kwargs)
+        return RFDETR2XLargeConfig(**kwargs)
 
     def get_train_config(self, **kwargs):
         return TrainConfig(**kwargs)

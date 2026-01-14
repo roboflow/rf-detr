@@ -22,9 +22,9 @@ On image segmentation, RF-DETR Seg (Preview) is 3x faster and more accurate than
 
 ## News
 
-- `2026/1/13`: We release new RF-DETR Seg sizes (N,S,M,L,XL,XXL) and RF-DETR sizes (LargeEdge, XLCloud, XXLCloud).
-    - The prior RF-DETR-Large model is deprecated in favor of RF-DETR-LargeEdge, which is much more accurate at the same latency.
-    - The XLCloud and XXLCloud models are licensed according to the terms of the Platform Model License (`rfdetr/platform/LICENSE.pml`) and require a [Roboflow account](https://app.roboflow.com) to use and fine-tune. Researchers may request a [free upgraded account](https://research.roboflow.com/credits).
+- `2026/1/13`: We release new RF-DETR Seg sizes (N,S,M,L,XL,2XL) and RF-DETR sizes (Large, XLarge, 2XLarge).
+    - The prior RF-DETR-Large model is deprecated in favor of the new RF-DETR-LargeEdge, which is much more accurate at the same latency.
+    - The XLarge and 2XLarge models use a different backbone and are licensed according to the terms of the Platform Model License (`rfdetr/platform/LICENSE.pml`) and require a [Roboflow account](https://app.roboflow.com) to use and fine-tune. Researchers may request a [free upgraded account](https://research.roboflow.com/credits).
 - `2025/11/13`: We release a paper representing our work on RF-DETR, [RF-DETR: Neural Architecture Search for Real-Time Detection Transformers](https://arxiv.org/abs/2511.09554), on Arxiv.
 - `2025/10/02`: We release RF-DETR-Seg (Preview), a preview of our instance segmentation head for RF-DETR.
 - `2025/07/23`: We release three new checkpoints for RF-DETR: Nano, Small, and Medium.
@@ -50,7 +50,7 @@ The below tables shows how RF-DETR performs when validated on the Microsoft COCO
 |  RF-DETR-M   |         73.6         |            54.7            |            87.4            |            61.2             |       4.4       |         33.7 |       576x576 |
 |  RF-DETR-L   |         75.1         |            56.5            |            88.2            |            62.2             |       6.8       |         33.9 |       704x704 |
 |  RF-DETR-XL  |         77.4         |            58.6            |            88.5            |            62.9             |       11.5      |        126.4 |       700x700 |
-|  RF-DETR-XXL |         78.5         |            60.1            |            89.0            |            63.2             |       17.2      |        126.9 |       880x880 |
+|  RF-DETR-2XL |         78.5         |            60.1            |            89.0            |            63.2             |       17.2      |        126.9 |       880x880 |
 |   YOLO11-N   |         52.0         |            37.4            |            81.4            |            55.3             |       2.5       |          2.6 |       640x640 |
 |   YOLO11-S   |         59.7         |            44.4            |            82.3            |            56.2             |       3.2       |          9.4 |       640x640 |
 |   YOLO11-M   |         64.1         |            48.6            |            82.5            |            56.5             |       5.1       |         20.1 |       640x640 |
@@ -86,7 +86,7 @@ The below tables shows how RF-DETR performs when validated on the Microsoft COCO
 | RF-DETR-Seg-XLarge      |                  |              | 13.5             | 48.8         |
 | YOLO11x-Seg             | 15.8             | 43.8         | 13.7             | 40.1         |
 | YOLOv8x-Seg             |                  | 43.4         | 14.0             | 39.5         |
-| RF-DETR-Seg-XXLarge     |                  |              | 21.8             | 49.9         |
+| RF-DETR-Seg-2XLarge     |                  |              | 21.8             | 49.9         |
 
 For more information on measuring end-to-end latency for models, see our open source [Single Artifact Benchmarking tool](https://github.com/roboflow/single_artifact_benchmarking).
 
