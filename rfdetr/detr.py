@@ -502,9 +502,12 @@ class RFDETRLarge(RFDETR):
             try:
                 super().__init__(**kwargs)
                 logger.warning(
-                    "Automatically switched to deprecated model configuration, due to using deprecated weights. "
+                    "\n"
+                    "="*100 + "\n"
+                    "WARNING: Automatically switched to deprecated model configuration, due to using deprecated weights. "
                     "This will be removed in a future version.\n"
-                    "Please retrain your model with the new weights and configuration."
+                    "Please retrain your model with the new weights and configuration.\n"
+                    "="*100 + "\n"
                 )
             except Exception as e_deprecated:
                 raise self.init_error
