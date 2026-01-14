@@ -37,7 +37,7 @@ nav:
         - RF-DETR Small: reference/small.md
         - RF-DETR Base (Deprecated): reference/base.md
         - RF-DETR Medium: reference/medium.md
-        - RF-DETR Large (Edge): reference/large_edge.md
+        - RF-DETR Large (Edge): reference/large.md
         - RF-DETR XLarge (Cloud): reference/xlarge.md
         - RF-DETR XXLarge (Cloud): reference/xxlarge.md
         - RF-DETR Large (Deprecated): reference/large_deprecated.md
