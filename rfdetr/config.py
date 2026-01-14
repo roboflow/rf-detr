@@ -198,7 +198,7 @@ class RFDETRSegLargeConfig(RFDETRBaseConfig):
     num_classes: int = 90
 
 
-class RFDETRSegXLConfig(RFDETRBaseConfig):
+class RFDETRSegXLargeConfig(RFDETRBaseConfig):
     segmentation_head: bool = True
     out_feature_indexes: List[int] = [3, 6, 9, 12]
     num_windows: int = 2
@@ -212,7 +212,7 @@ class RFDETRSegXLConfig(RFDETRBaseConfig):
     num_classes: int = 90
 
 
-class RFDETRSeg2XLConfig(RFDETRBaseConfig):
+class RFDETRSeg2XLargeConfig(RFDETRBaseConfig):
     segmentation_head: bool = True
     out_feature_indexes: List[int] = [3, 6, 9, 12]
     num_windows: int = 2

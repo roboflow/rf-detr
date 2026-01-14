@@ -25,7 +25,7 @@ from rfdetr.detr import (
     RFDETRSegSmall,
     RFDETRSegMedium,
     RFDETRSegLarge,
-    RFDETRSegXL,
-    RFDETRSeg2XL,
+    RFDETRSegXLarge,
+    RFDETRSeg2XLarge,
 )
 
