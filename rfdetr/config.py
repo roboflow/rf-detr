@@ -37,6 +37,7 @@ class ModelConfig(BaseModel):
     cls_loss_coef: float = 1.0
     segmentation_head: bool = False
     mask_downsample_ratio: int = 4
+    license: str = "apache-2.0"
 
 
 class RFDETRBaseConfig(ModelConfig):
@@ -59,7 +60,7 @@ class RFDETRBaseConfig(ModelConfig):
     resolution: int = 560
     positional_encoding_size: int = 37
 
-class RFDETRLargeConfig(RFDETRBaseConfig):
+class RFDETRLargeDeprecatedConfig(RFDETRBaseConfig):
     """
     The configuration for an RF-DETR Large model.
     """
@@ -120,42 +121,11 @@ class RFDETRLargeEdgeConfig(ModelConfig):
     patch_size: int = 16
     projector_scale: List[Literal["P4",]] = ["P4"]
     out_feature_indexes: List[int] = [3, 6, 9, 12]
-    num_classes: int = 365
+    num_classes: int = 90
     positional_encoding_size: int = 704 // 16
-    pretrain_weights: Optional[str] = "rf-detr-large-o365.pth"
+    pretrain_weights: Optional[str] = "rf-detr-large-edge.pth"
     resolution: int = 704
 
-class RFDETRXLCloudConfig(ModelConfig):
-    encoder: Literal["dinov2_windowed_base"] = "dinov2_windowed_base"
-    hidden_dim: int = 512
-    dec_layers: int = 5
-    sa_nheads: int = 16
-    ca_nheads: int = 32
-    dec_n_points: int = 4
-    num_windows: int = 1
-    patch_size: int = 20
-    projector_scale: List[Literal["P4",]] = ["P4"]
-    out_feature_indexes: List[int] = [3, 6, 9, 12]
-    num_classes: int = 365
-    positional_encoding_size: int = 700 // 20
-    pretrain_weights: Optional[str] = "rf-detr-xlarge-o365.pth"
-    resolution: int = 700
-
-class RFDETRXXLCloudConfig(ModelConfig):
-    encoder: Literal["dinov2_windowed_base"] = "dinov2_windowed_base"
-    hidden_dim: int = 512
-    dec_layers: int = 5
-    sa_nheads: int = 16
-    ca_nheads: int = 32
-    dec_n_points: int = 4
-    num_windows: int = 2
-    patch_size: int = 20
-    projector_scale: List[Literal["P4",]] = ["P4"]
-    out_feature_indexes: List[int] = [3, 6, 9, 12]
-    num_classes: int = 365
-    positional_encoding_size: int = 880 // 20
-    pretrain_weights: Optional[str] = "rf-detr-xxlarge-o365.pth" #"rf-detr-nas-cloud-o365.pth"
-    resolution: int = 880
 
 
 class RFDETRSegPreviewConfig(RFDETRBaseConfig):

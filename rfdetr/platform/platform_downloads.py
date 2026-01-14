@@ -1,0 +1,5 @@
+# THE FOLLOWING FILES IN THE ENTERPRISE FOLDER ARE COVERED BY THE PLATFORM MODEL LICENSE
+PLATFORM_MODELS = {
+    "rf-detr-xlarge.pth": "https://storage.googleapis.com/rfdetr/enterprise/rf-detr-xlarge.pth",
+    "rf-detr-xxlarge.pth": "https://storage.googleapis.com/rfdetr/enterprise/rf-detr-xxlarge.pth",
+}

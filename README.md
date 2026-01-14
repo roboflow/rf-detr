@@ -22,6 +22,9 @@ On image segmentation, RF-DETR Seg (Preview) is 3x faster and more accurate than
 
 ## News
 
+- `2026/1/13`: We release new RF-DETR Seg sizes (N,S,M,L,XL,XXL) and RF-DETR sizes (LargeEdge, XLCloud, XXLCloud).
+    - The prior RF-DETR-Large model is deprecated in favor of RF-DETR-LargeEdge, which is much more accurate at the same latency.
+    - The XLCloud and XXLCloud models are licensed according to the terms of the Platform Model License (`rfdetr/platform/LICENSE.pml`) and require a [Roboflow account](https://app.roboflow.com) to use and fine-tune. Researchers may request a [free upgraded account](https://research.roboflow.com/credits).
 - `2025/11/13`: We release a paper representing our work on RF-DETR, [RF-DETR: Neural Architecture Search for Real-Time Detection Transformers](https://arxiv.org/abs/2511.09554), on Arxiv.
 - `2025/10/02`: We release RF-DETR-Seg (Preview), a preview of our instance segmentation head for RF-DETR.
 - `2025/07/23`: We release three new checkpoints for RF-DETR: Nano, Small, and Medium.
@@ -42,24 +45,25 @@ The below tables shows how RF-DETR performs when validated on the Microsoft COCO
 
 | Architecture | COCO AP<sub>50</sub> |  COCO AP<sub>50:95</sub>   |  RF100VL AP<sub>50</sub>   | RF100VL AP<sub>50:95</sub>  |  Latency (ms)   |   Params (M) |   Resolution  |
 |:------------:|:--------------------:|:--------------------------:|:--------------------------:|:---------------------------:|:---------------:|:------------:|:-------------:|
-|  RF-DETR-N   |         67.6         |            48.4            |            84.1            |            57.1             |      2.32       |         30.5 |       384x384 |
-|  RF-DETR-S   |         72.1         |            53.0            |            85.9            |            59.6             |      3.52       |         32.1 |       512x512 |
-|  RF-DETR-M   |         73.6         |            54.7            |            86.6            |            60.6             |      4.52       |         33.7 |       576x576 |
-|   YOLO11-N   |         52.0         |            37.4            |            81.4            |            55.3             |      2.49       |          2.6 |       640x640 |
-|   YOLO11-S   |         59.7         |            44.4            |            82.3            |            56.2             |      3.16       |          9.4 |       640x640 |
-|   YOLO11-M   |         64.1         |            48.6            |            82.5            |            56.5             |      5.13       |         20.1 |       640x640 |
-|   YOLO11-L   |         65.3         |            50.2            |             x              |              x              |      6.65       |         25.3 |       640x640 |
-|   YOLO11-X   |         66.5         |            51.2            |             x              |              x              |      11.92      |         56.9 |       640x640 |
-|  LW-DETR-T   |         60.7         |            42.9            |             x              |              x              |      1.91       |         12.1 |       640x640 |
-|  LW-DETR-S   |         66.8         |            48.0            |            84.5            |            58.0             |      2.62       |         14.6 |       640x640 |
-|  LW-DETR-M   |         72.0         |            52.6            |            85.2            |            59.4             |      4.49       |         28.2 |       640x640 |
-|   D-FINE-N   |         60.2         |            42.7            |            83.6            |            57.7             |      2.12       |          3.8 |       640x640 |
-|   D-FINE-S   |         67.6         |            50.7            |            84.5            |            59.9             |      3.55       |         10.2 |       640x640 |
-|   D-FINE-M   |         72.6         |            55.1            |            84.6            |            60.2             |      5.68       |         19.2 |       640x640 |
+|  RF-DETR-N   |         67.6         |            48.4            |            85.0            |            57.7             |       2.3       |         30.5 |       384x384 |
+|  RF-DETR-S   |         72.1         |            53.0            |            86.7            |            60.2             |       3.5       |         32.1 |       512x512 |
+|  RF-DETR-M   |         73.6         |            54.7            |            87.4            |            61.2             |       4.4       |         33.7 |       576x576 |
+|  RF-DETR-L   |         75.1         |            56.5            |            88.2            |            62.2             |       6.8       |         33.9 |       704x704 |
+|  RF-DETR-XL  |         77.4         |            58.6            |            88.5            |            62.9             |       11.5      |        126.4 |       700x700 |
+|  RF-DETR-XXL |         78.5         |            60.1            |            89.0            |            63.2             |       17.2      |        126.9 |       880x880 |
+|   YOLO11-N   |         52.0         |            37.4            |            81.4            |            55.3             |       2.5       |          2.6 |       640x640 |
+|   YOLO11-S   |         59.7         |            44.4            |            82.3            |            56.2             |       3.2       |          9.4 |       640x640 |
+|   YOLO11-M   |         64.1         |            48.6            |            82.5            |            56.5             |       5.1       |         20.1 |       640x640 |
+|   YOLO11-L   |         65.3         |            50.2            |             x              |              x              |       6.7       |         25.3 |       640x640 |
+|   YOLO11-X   |         66.5         |            51.2            |             x              |              x              |       11.9      |         56.9 |       640x640 |
+|  LW-DETR-T   |         60.7         |            42.9            |             x              |              x              |       1.9       |         12.1 |       640x640 |
+|  LW-DETR-S   |         66.8         |            48.0            |            84.5            |            58.0             |       2.6       |         14.6 |       640x640 |
+|  LW-DETR-M   |         72.0         |            52.6            |            85.2            |            59.4             |       4.5       |         28.2 |       640x640 |
+|   D-FINE-N   |         60.2         |            42.7            |            83.6            |            57.7             |       2.1       |          3.8 |       640x640 |
+|   D-FINE-S   |         67.6         |            50.7            |            84.5            |            59.9             |       3.6       |         10.2 |       640x640 |
+|   D-FINE-M   |         72.6         |            55.1            |            84.6            |            60.2             |       5.7       |         19.2 |       640x640 |
 
 [See our benchmark notes in the RF-DETR documentation.](https://rfdetr.roboflow.com/learn/benchmarks/)
-
-_We are actively working on RF-DETR Large and X-Large models using the same techniques we used to achieve the strong accuracy that RF-DETR Medium attains. This is why RF-DETR Large and X-Large is not yet reported on our pareto charts and why we haven't benchmarked other models at similar sizes. Check back in the next few weeks for the launch of new RF-DETR Large and X-Large models._
 
 ### Instance Segmentation Benchmarks
 
@@ -67,19 +71,22 @@ _We are actively working on RF-DETR Large and X-Large models using the same tech
 
 | Model Name              | Reported Latency | Reported mAP | Measured Latency | Measured mAP |
 |-------------------------|------------------|--------------|------------------|--------------|
-| RF-DETR Seg-Preview@312 |                  |              | 3.3              | 39.4         |
+| RF-DETR-Seg-Nano        |                  |              | 3.4              | 40.3         |
 | YOLO11n-Seg             | 1.8              | 32.0         | 3.6              | 30.0         |
 | YOLOv8n-Seg             |                  | 30.5         | 3.5              | 28.3         |
-| RF-DETR Seg-Preview@384 |                  |              | 4.5              | 42.7         |
+| RF-DETR-Seg-Small       |                  |              | 4.4              | 43.1         |
 | YOLO11s-Seg             | 2.9              | 37.8         | 4.6              | 35.0         |
 | YOLOv8s-Seg             |                  | 36.8         | 4.2              | 34.0         |
-| RF-DETR Seg-Preview@432 |                  |              | 5.6              | 44.3         |
+| RF-DETR-Seg-Medium      |                  |              | 5.9              | 45.3         |
 | YOLO11m-Seg             | 6.3              | 41.5         | 6.9              | 38.5         |
 | YOLOv8m-Seg             |                  | 40.8         | 7.0              | 37.3         |
 | YOLO11l-Seg             | 7.8              | 42.9         | 8.3              | 39.5         |
+| RF-DETR-Seg-Large       |                  |              | 8.8              | 47.1         |
 | YOLOv8l-Seg             |                  | 42.6         | 9.7              | 39.0         |
+| RF-DETR-Seg-XLarge      |                  |              | 13.5             | 48.8         |
 | YOLO11x-Seg             | 15.8             | 43.8         | 13.7             | 40.1         |
 | YOLOv8x-Seg             |                  | 43.4         | 14.0             | 39.5         |
+| RF-DETR-Seg-XXLarge     |                  |              | 21.8             | 49.9         |
 
 For more information on measuring end-to-end latency for models, see our open source [Single Artifact Benchmarking tool](https://github.com/roboflow/single_artifact_benchmarking).
 

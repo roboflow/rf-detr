@@ -45,6 +45,7 @@ from rfdetr.util.drop_scheduler import drop_scheduler
 from rfdetr.util.files import download_file
 from rfdetr.util.get_param_dicts import get_param_dict
 from rfdetr.util.utils import ModelEma, BestMetricHolder, clean_state_dict
+from rfdetr.platform.platform_downloads import PLATFORM_MODELS
 
 if str(os.environ.get("USE_FILE_SYSTEM_SHARING", "False")).lower() in ["true", "1"]:
     import torch.multiprocessing
@@ -52,7 +53,8 @@ if str(os.environ.get("USE_FILE_SYSTEM_SHARING", "False")).lower() in ["true", "
 
 logger = getLogger(__name__)
 
-HOSTED_MODELS = {
+# THE FOLLOWING OPEN_SOURCE_MODELS ARE COVERED BY THE APACHE 2.0 LICENSE
+OPEN_SOURCE_MODELS = {
     "rf-detr-base.pth": "https://storage.googleapis.com/rfdetr/rf-detr-base-coco.pth",
     "rf-detr-base-o365.pth": "https://storage.googleapis.com/rfdetr/top-secret-1234/lwdetr_dinov2_small_o365_checkpoint.pth",
     # below is a less converged model that may be better for finetuning but worse for inference
@@ -62,9 +64,7 @@ HOSTED_MODELS = {
     "rf-detr-small.pth": "https://storage.googleapis.com/rfdetr/small_coco/checkpoint_best_regular.pth",
     "rf-detr-medium.pth": "https://storage.googleapis.com/rfdetr/medium_coco/checkpoint_best_regular.pth",
     "rf-detr-seg-preview.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-preview.pt",
-    "rf-detr-large-o365.pth": "https://storage.googleapis.com/rfdetr/rf-detr-large-2-o365.pth",
-    "rf-detr-xlarge-o365.pth": "https://storage.googleapis.com/rfdetr/rf-detr-xlarge-o365.pth",
-    "rf-detr-xxlarge-o365.pth": "https://storage.googleapis.com/rfdetr/rf-detr-xxlarge-o365.pth",
+    "rf-detr-large-edge.pth": "https://storage.googleapis.com/rfdetr/rf-detr-large-edge.pth",
     "rf-detr-seg-nano.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-nano.pth",
     "rf-detr-seg-small.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-small.pth",
     "rf-detr-seg-medium.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-medium.pth",
@@ -72,6 +72,9 @@ HOSTED_MODELS = {
     "rf-detr-seg-xlarge.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-xlarge.pth",
     "rf-detr-seg-xxlarge.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-xxlarge.pth",
 }
+
+
+HOSTED_MODELS = {**OPEN_SOURCE_MODELS, **PLATFORM_MODELS}
 
 def download_pretrain_weights(pretrain_weights: str, redownload=False):
     if pretrain_weights in HOSTED_MODELS:

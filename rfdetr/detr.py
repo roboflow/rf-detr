@@ -25,13 +25,11 @@ except:
 
 from rfdetr.config import (
     RFDETRBaseConfig,
-    RFDETRLargeConfig,
+    RFDETRLargeDeprecatedConfig,
     RFDETRNanoConfig,
     RFDETRSmallConfig,
     RFDETRMediumConfig,
     RFDETRLargeEdgeConfig,
-    RFDETRXLCloudConfig,
-    RFDETRXXLCloudConfig,
     RFDETRSegPreviewConfig,
     RFDETRSegNanoConfig,
     RFDETRSegSmallConfig,
@@ -433,6 +431,17 @@ class RFDETRBase(RFDETR):
     def get_train_config(self, **kwargs):
         return TrainConfig(**kwargs)
 
+class RFDETRLargeDeprecated(RFDETR):
+    """
+    Train an RF-DETR Large model.
+    """
+    size = "rfdetr-large-deprecated"
+    def get_model_config(self, **kwargs):
+        return RFDETRLargeDeprecatedConfig(**kwargs)
+
+    def get_train_config(self, **kwargs):
+        return TrainConfig(**kwargs)
+
 class RFDETRNano(RFDETR):
     """
     Train an RF-DETR Nano model.
@@ -467,29 +476,15 @@ class RFDETRMedium(RFDETR):
         return TrainConfig(**kwargs)
 
 
-class RFDETREdgeL(RFDETR):
+class RFDETRLargeEdge(RFDETR):
     size = "rfdetr-large"
     def get_model_config(self, **kwargs):
         return RFDETRLargeEdgeConfig(**kwargs)
 
     def get_train_config(self, **kwargs):
         return TrainConfig(**kwargs)  
-    
-class RFDETRCloudXL(RFDETR):
-    size = "rfdetr-xlarge"
-    def get_model_config(self, **kwargs):
-        return RFDETRXLCloudConfig(**kwargs)
 
-    def get_train_config(self, **kwargs):
-        return TrainConfig(**kwargs)    
     
-class RFDETRCloudXXL(RFDETR):
-    size = "rfdetr-xxlarge"
-    def get_model_config(self, **kwargs):
-        return RFDETRXXLCloudConfig(**kwargs)
-
-    def get_train_config(self, **kwargs):
-        return TrainConfig(**kwargs)
 
 class RFDETRSegPreview(RFDETR):
     size = "rfdetr-seg-preview"
