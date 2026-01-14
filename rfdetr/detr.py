@@ -498,18 +498,18 @@ class RFDETRLarge(RFDETR):
             super().__init__(**kwargs)
         except Exception as e:
             self.init_error = e
-            self.get_model_config = self.get_model_config_deprecated
             self.is_deprecated = True
             try:
                 super().__init__(**kwargs)
+                logger.warning("Automatically switched to deprecated model configuration, due to using deprecated weights. This will be removed in a future version.")
             except Exception as e_deprecated:
                 raise self.init_error
     
     def get_model_config(self, **kwargs):
-        return RFDETRLargeConfig(**kwargs)
-    
-    def get_model_config_deprecated(self, **kwargs):
-        return RFDETRLargeDeprecatedConfig(**kwargs)
+        if not self.is_deprecated:
+            return RFDETRLargeConfig(**kwargs)
+        else:
+            return RFDETRLargeDeprecatedConfig(**kwargs)
     
     def get_train_config(self, **kwargs):
         return TrainConfig(**kwargs)
