@@ -187,11 +187,10 @@ def coco_extended_metrics(coco_eval):
     iou50_idx = np.argwhere(np.isclose(coco_eval.params.iouThrs, 0.50)).item()
     cat_ids = coco_eval.params.catIds
     num_classes = len(cat_ids)
-    area_idx = 0  # "all" area range
+    area_idx = 0
     maxdet_idx = 2
 
     # Unflatten evalImgs into a nested dict
-    # evalImgs_unflat[cat_id][area_rng_tuple][img_id] = evalImg
     evalImgs_unflat = {}
     for e in coco_eval.evalImgs:
         if e is None:
@@ -206,15 +205,12 @@ def coco_extended_metrics(coco_eval):
             evalImgs_unflat[cat_id][area_rng] = {}
         evalImgs_unflat[cat_id][area_rng][img_id] = e
 
-    # Get the "all" area range tuple for lookup (index 0 is "all")
     area_rng_all = tuple(coco_eval.params.areaRng[area_idx])
 
-    # Gather per-class detection data from evalImgs
-    # For each class, collect all (score, matched_gt_id, dt_ignore) tuples and total gt count
     per_class_data = []
     for cid in cat_ids:
         dt_scores = []
-        dt_matches = []  # gt ID if matched at IoU=0.50, else 0
+        dt_matches = []
         dt_ignore = []
         total_gt = 0
 
@@ -226,11 +222,9 @@ def coco_extended_metrics(coco_eval):
             num_dt = len(e['dtIds'])
             num_gt = len(e['gtIds'])
 
-            # Count non-ignored ground truths
             gt_ignore = e['gtIgnore']
             total_gt += sum(1 for ig in gt_ignore if not ig)
 
-            # Collect detection info at IoU=0.50
             for d in range(num_dt):
                 dt_scores.append(e['dtScores'][d])
                 dt_matches.append(e['dtMatches'][iou50_idx, d])
@@ -243,7 +237,6 @@ def coco_extended_metrics(coco_eval):
             'total_gt': total_gt,
         })
 
-    # Sweep confidence thresholds to find best macro-F1
     conf_thresholds = np.linspace(0.0, 1.0, 101)
     classes_with_gt = [k for k in range(num_classes) if per_class_data[k]['total_gt'] > 0]
 
@@ -260,7 +253,6 @@ def coco_extended_metrics(coco_eval):
             ignore = data['ignore']
             total_gt = data['total_gt']
 
-            # Filter to detections above confidence threshold and not ignored
             above_thresh = scores >= conf_thresh
             valid = above_thresh & ~ignore
 
@@ -268,7 +260,7 @@ def coco_extended_metrics(coco_eval):
 
             tp = np.sum(valid_matches != 0)
             fp = np.sum(valid_matches == 0)
-            fn = total_gt - tp  # FN = total GT - matched GT
+            fn = total_gt - tp
 
             precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
             recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
@@ -278,7 +270,6 @@ def coco_extended_metrics(coco_eval):
             per_class_recalls.append(recall)
             per_class_f1s.append(f1)
 
-        # Compute macro averages (only over classes with GT)
         if len(classes_with_gt) > 0:
             macro_precision = np.mean([per_class_precisions[k] for k in classes_with_gt])
             macro_recall = np.mean([per_class_recalls[k] for k in classes_with_gt])
@@ -321,7 +312,6 @@ def coco_extended_metrics(coco_eval):
         ap_50_95 = float(np.nanmean(ap_per_iou))
         ap_50    = float(np.nanmean(p_masked[iou50_idx]))
 
-        # Skip classes with no valid data
         if (
             np.isnan(ap_50_95) 
             or np.isnan(ap_50)
