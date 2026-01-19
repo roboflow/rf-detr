@@ -37,6 +37,11 @@ class ModelConfig(BaseModel):
     cls_loss_coef: float = 1.0
     segmentation_head: bool = False
     mask_downsample_ratio: int = 4
+    # Keypoint/pose estimation settings
+    keypoint_head: bool = False
+    num_keypoints: int = 17
+    keypoint_names: Optional[List[str]] = None
+    skeleton: Optional[List[List[int]]] = None
 
 
 class RFDETRBaseConfig(ModelConfig):
@@ -120,6 +125,83 @@ class RFDETRSegPreviewConfig(RFDETRBaseConfig):
     pretrain_weights: Optional[str] = "rf-detr-seg-preview.pt"
     num_classes: int = 90
 
+
+class RFDETRPoseConfig(RFDETRBaseConfig):
+    """
+    Configuration for RF-DETR Pose estimation model with keypoint detection.
+    """
+    keypoint_head: bool = True
+    num_keypoints: int = 17
+    keypoint_names: List[str] = [
+        "nose",
+        "left_eye", "right_eye",
+        "left_ear", "right_ear",
+        "left_shoulder", "right_shoulder",
+        "left_elbow", "right_elbow",
+        "left_wrist", "right_wrist",
+        "left_hip", "right_hip",
+        "left_knee", "right_knee",
+        "left_ankle", "right_ankle"
+    ]
+    skeleton: List[List[int]] = [
+        [15, 13], [13, 11], [16, 14], [14, 12], [11, 12],  # legs
+        [5, 11], [6, 12],  # torso to hips
+        [5, 6],  # shoulders
+        [5, 7], [6, 8], [7, 9], [8, 10],  # arms
+        [1, 2], [0, 1], [0, 2], [1, 3], [2, 4], [3, 5], [4, 6]  # face
+    ]
+    out_feature_indexes: List[int] = [3, 6, 9, 12]
+    num_windows: int = 2
+    dec_layers: int = 4
+    patch_size: int = 16
+    resolution: int = 576
+    positional_encoding_size: int = 36
+    num_queries: int = 300
+    num_select: int = 300
+    # Uses detection weights as starting point; keypoint_head will be randomly initialized
+    # and learned during fine-tuning on a pose dataset
+    pretrain_weights: Optional[str] = "rf-detr-medium.pth"
+    num_classes: int = 1  # Typically just "person" class for pose
+
+
+class RFDETRPoseNanoConfig(RFDETRPoseConfig):
+    """
+    Configuration for RF-DETR Pose Nano - smallest and fastest pose model.
+    """
+    dec_layers: int = 2
+    resolution: int = 384
+    positional_encoding_size: int = 24
+    pretrain_weights: Optional[str] = "rf-detr-nano.pth"
+
+
+class RFDETRPoseSmallConfig(RFDETRPoseConfig):
+    """
+    Configuration for RF-DETR Pose Small - balance of speed and accuracy.
+    """
+    dec_layers: int = 3
+    resolution: int = 512
+    positional_encoding_size: int = 32
+    pretrain_weights: Optional[str] = "rf-detr-small.pth"
+
+
+class RFDETRPoseMediumConfig(RFDETRPoseConfig):
+    """
+    Configuration for RF-DETR Pose Medium - default pose model.
+    """
+    # Inherits all defaults from RFDETRPoseConfig (Medium architecture)
+    pass
+
+
+class RFDETRPoseLargeConfig(RFDETRPoseConfig):
+    """
+    Configuration for RF-DETR Pose Large - highest accuracy pose model.
+    """
+    dec_layers: int = 6
+    resolution: int = 768
+    positional_encoding_size: int = 48
+    pretrain_weights: Optional[str] = "rf-detr-large.pth"
+
+
 class TrainConfig(BaseModel):
     lr: float = 1e-4
     lr_encoder: float = 1.5e-4
@@ -159,6 +241,9 @@ class TrainConfig(BaseModel):
     class_names: List[str] = None
     run_test: bool = True
     segmentation_head: bool = False
+    # Keypoint training settings
+    keypoint_head: bool = False
+    num_keypoints: int = 17
 
 
 class SegmentationTrainConfig(TrainConfig):
@@ -167,3 +252,13 @@ class SegmentationTrainConfig(TrainConfig):
     mask_dice_loss_coef: float = 5.0
     cls_loss_coef: float = 5.0
     segmentation_head: bool = True
+
+
+class KeypointTrainConfig(TrainConfig):
+    """Training configuration for keypoint/pose estimation."""
+    keypoint_head: bool = True
+    num_keypoints: int = 17
+    keypoint_loss_coef: float = 5.0
+    keypoint_visibility_loss_coef: float = 2.0
+    keypoint_oks_loss_coef: float = 2.0
+    cls_loss_coef: float = 2.0  # Slightly higher for pose since fewer classes

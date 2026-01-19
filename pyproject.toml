@@ -101,3 +101,10 @@ include-package-data = false
 
 [tool.setuptools.package-data]
 rfdetr = ["py.typed", "models/backbone/dinov2_configs/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]

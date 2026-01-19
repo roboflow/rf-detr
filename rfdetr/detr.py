@@ -30,8 +30,14 @@ from rfdetr.config import (
     RFDETRSmallConfig,
     RFDETRMediumConfig,
     RFDETRSegPreviewConfig,
+    RFDETRPoseConfig,
+    RFDETRPoseNanoConfig,
+    RFDETRPoseSmallConfig,
+    RFDETRPoseMediumConfig,
+    RFDETRPoseLargeConfig,
     TrainConfig,
     SegmentationTrainConfig,
+    KeypointTrainConfig,
     ModelConfig
 )
 from rfdetr.main import Model, download_pretrain_weights
@@ -336,22 +342,31 @@ class RFDETR:
             labels = labels[keep]
             boxes = boxes[keep]
 
+            # Build base detection
+            detections = sv.Detections(
+                xyxy=boxes.float().cpu().numpy(),
+                confidence=scores.float().cpu().numpy(),
+                class_id=labels.cpu().numpy(),
+            )
+
+            # Add masks if available
             if "masks" in result:
                 masks = result["masks"]
                 masks = masks[keep]
+                detections.mask = masks.squeeze(1).cpu().numpy()
 
-                detections = sv.Detections(
-                    xyxy=boxes.float().cpu().numpy(),
-                    confidence=scores.float().cpu().numpy(),
-                    class_id=labels.cpu().numpy(),
-                    mask=masks.squeeze(1).cpu().numpy(),
-                )
-            else:
-                detections = sv.Detections(
-                    xyxy=boxes.float().cpu().numpy(),
-                    confidence=scores.float().cpu().numpy(),
-                    class_id=labels.cpu().numpy(),
-                )
+            # Add keypoints if available
+            if "keypoints" in result:
+                keypoints = result["keypoints"]
+                keypoints = keypoints[keep]
+                # Store keypoints in the data dict: [N, K, 3] where 3 = (x, y, visibility)
+                detections.data["keypoints"] = keypoints.cpu().numpy()
+
+                # Also copy keypoints_confidence (actual confidence scores 0.0-1.0)
+                if "keypoints_confidence" in result:
+                    keypoints_conf = result["keypoints_confidence"]
+                    keypoints_conf = keypoints_conf[keep]
+                    detections.data["keypoints_confidence"] = keypoints_conf.cpu().numpy()
 
             detections_list.append(detections)
 
@@ -475,3 +490,80 @@ class RFDETRSegPreview(RFDETR):
 
     def get_train_config(self, **kwargs):
         return SegmentationTrainConfig(**kwargs)
+
+
+class RFDETRPose(RFDETR):
+    """
+    RF-DETR Pose estimation model for keypoint/pose detection.
+
+    Outputs (x, y, visibility) for each keypoint per detected object,
+    following YOLOv11's approach for pose estimation.
+
+    Example:
+        >>> model = RFDETRPose()
+        >>> detections = model.predict("image.jpg")
+        >>> # Access keypoints via detections.data["keypoints"]
+        >>> keypoints = detections.data.get("keypoints")  # [N, K, 3]
+    """
+    size = "rfdetr-pose"
+
+    def get_model_config(self, **kwargs):
+        return RFDETRPoseConfig(**kwargs)
+
+    def get_train_config(self, **kwargs):
+        # Automatically use num_keypoints from model config if not specified
+        if 'num_keypoints' not in kwargs:
+            kwargs['num_keypoints'] = self.model_config.num_keypoints
+        return KeypointTrainConfig(**kwargs)
+
+
+class RFDETRPoseNano(RFDETRPose):
+    """
+    RF-DETR Pose Nano - smallest and fastest pose estimation model.
+
+    Uses rf-detr-nano.pth backbone with keypoint head.
+    Resolution: 384, Decoder layers: 2
+    """
+    size = "rfdetr-pose-nano"
+
+    def get_model_config(self, **kwargs):
+        return RFDETRPoseNanoConfig(**kwargs)
+
+
+class RFDETRPoseSmall(RFDETRPose):
+    """
+    RF-DETR Pose Small - balance of speed and accuracy.
+
+    Uses rf-detr-small.pth backbone with keypoint head.
+    Resolution: 512, Decoder layers: 3
+    """
+    size = "rfdetr-pose-small"
+
+    def get_model_config(self, **kwargs):
+        return RFDETRPoseSmallConfig(**kwargs)
+
+
+class RFDETRPoseMedium(RFDETRPose):
+    """
+    RF-DETR Pose Medium - default pose estimation model.
+
+    Uses rf-detr-medium.pth backbone with keypoint head.
+    Resolution: 576, Decoder layers: 4
+    """
+    size = "rfdetr-pose-medium"
+
+    def get_model_config(self, **kwargs):
+        return RFDETRPoseMediumConfig(**kwargs)
+
+
+class RFDETRPoseLarge(RFDETRPose):
+    """
+    RF-DETR Pose Large - highest accuracy pose estimation model.
+
+    Uses rf-detr-large.pth backbone with keypoint head.
+    Resolution: 768, Decoder layers: 6
+    """
+    size = "rfdetr-pose-large"
+
+    def get_model_config(self, **kwargs):
+        return RFDETRPoseLargeConfig(**kwargs)
