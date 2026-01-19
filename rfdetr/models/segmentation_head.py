@@ -20,7 +20,7 @@ class DepthwiseConvBlock(nn.Module):
         self.norm = nn.LayerNorm(dim, eps=1e-6)
         self.pwconv1 = nn.Linear(dim, dim) # pointwise/1x1 convs, implemented with linear layers
         self.act = nn.GELU()
-        self.gamma = nn.Parameter(layer_scale_init_value * torch.ones((dim)), 
+        self.gamma = nn.Parameter(layer_scale_init_value * torch.ones((dim)),
                                     requires_grad=True) if layer_scale_init_value > 0 else None
 
     def forward(self, x):
@@ -46,7 +46,7 @@ class MLPBlock(nn.Module):
             nn.GELU(),
             nn.Linear(dim*4, dim),
         ])
-        self.gamma = nn.Parameter(layer_scale_init_value * torch.ones((dim)), 
+        self.gamma = nn.Parameter(layer_scale_init_value * torch.ones((dim)),
                                     requires_grad=True) if layer_scale_init_value > 0 else None
 
     def forward(self, x):
@@ -82,7 +82,7 @@ class SegmentationHead(nn.Module):
         for name, m in self.named_modules():
             if hasattr(m, "export") and isinstance(m.export, Callable) and hasattr(m, "_export") and not m._export:
                 m.export()
-    
+
     def forward(self, spatial_features: torch.Tensor, query_features: list[torch.Tensor], image_size: tuple[int, int], skip_blocks: bool=False) -> list[torch.Tensor]:
         # spatial features: (B, C, H, W)
         # query features: [(B, N, C)] for each decoder layer
@@ -103,17 +103,17 @@ class SegmentationHead(nn.Module):
             mask_logits.append(torch.einsum('bchw,bnc->bnhw', spatial_features, qf) + self.bias)
 
         return mask_logits
-    
+
     def forward_export(self, spatial_features: torch.Tensor, query_features: list[torch.Tensor], image_size: tuple[int, int], skip_blocks: bool=False) -> list[torch.Tensor]:
         assert len(query_features) == 1, "at export time, segmentation head expects exactly one query feature"
-        
+
         target_size = (image_size[0] // self.downsample_ratio, image_size[1] // self.downsample_ratio)
         spatial_features = F.interpolate(spatial_features, size=target_size, mode='bilinear', align_corners=False)
 
         if not skip_blocks:
             for block in self.blocks:
                 spatial_features = block(spatial_features)
-        
+
         spatial_features_proj = self.spatial_features_proj(spatial_features)
 
         qf = self.query_features_proj(self.query_features_block(query_features[0]))

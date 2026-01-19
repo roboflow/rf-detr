@@ -11,7 +11,7 @@ Use the resources below to learn how to train, build with, and deploy RF-DETR mo
 
 <div class="grid cards" markdown>
 
-- 
+-
     **SOTA Instance Segmentation with RF-DETR Seg (Preview) [October 2025]**
 
     ---
@@ -22,7 +22,7 @@ Use the resources below to learn how to train, build with, and deploy RF-DETR mo
 
     [:octicons-arrow-right-24: Learn more](https://blog.roboflow.com/rf-detr-segmentation-preview/)
 
-- 
+-
     **Announcing RF-DETR Nano, Small, and Medium [July 2025]**
 
     ---
@@ -43,7 +43,7 @@ Use the resources below to learn how to train, build with, and deploy RF-DETR mo
     Learn how to train an RF-DETR model on a custom dataset.
 
     [:octicons-arrow-right-24: Watch the video](https://www.youtube.com/watch?v=-OvpdLAElFA)
-    
+
 -   **How to Train RF-DETR on a Custom Dataset [article]**
 
     ---

@@ -53,7 +53,7 @@ You can run any of the four supported RF-DETR base models -- Nano, Small, Medium
 
     def callback(frame, index):
         detections = model.predict(frame[:, :, ::-1], threshold=0.5)
-            
+
         labels = [
             f"{COCO_CLASSES[class_id]} {confidence:.2f}"
             for class_id, confidence
@@ -93,7 +93,7 @@ You can run any of the four supported RF-DETR base models -- Nano, Small, Medium
             break
 
         detections = model.predict(frame[:, :, ::-1], threshold=0.5)
-        
+
         labels = [
             f"{COCO_CLASSES[class_id]} {confidence:.2f}"
             for class_id, confidence
@@ -132,7 +132,7 @@ You can run any of the four supported RF-DETR base models -- Nano, Small, Medium
             break
 
         detections = model.predict(frame[:, :, ::-1], threshold=0.5)
-        
+
         labels = [
             f"{COCO_CLASSES[class_id]} {confidence:.2f}"
             for class_id, confidence
