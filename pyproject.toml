@@ -72,13 +72,14 @@ metrics = [
     "tensorboard>=2.13.0",
     "wandb"
 ]
+
+[dependency-groups]
 build = [
     "twine>=5.1.1",
     "wheel>=0.40",
     "build>=0.10"
 ]
 
-[dependency-groups]
 docs = [
     "mkdocs-material[imaging]>=9.7",
     "mkdocstrings>=0.25.2,<0.30.0",
