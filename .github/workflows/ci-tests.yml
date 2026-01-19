@@ -1,4 +1,4 @@
-name: Testing all
+name: Pytest/Test Workflow
 
 on:
   push:

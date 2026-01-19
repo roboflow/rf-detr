@@ -1,4 +1,4 @@
-name: Testing Docs
+name: Docs/Test WorkFlow
 
 on:
   pull_request:
