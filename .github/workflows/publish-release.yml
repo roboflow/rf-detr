@@ -32,13 +32,13 @@ jobs:
       id-token: write # Required for PyPI publishing
     steps:
       - name: 📥 Download distribution artifacts
-        uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v4
+        uses: actions/download-artifact@v4
         with:
           name: dist
           path: dist/
 
       - name: 🚀 Publish to PyPi
         if: github.event_name != 'pull_request'
-        uses: pypa/gh-action-pypi-publish@76f52bc884231f62b9a034ebfe128415bbaabdfc # v1.12.4
+        uses: pypa/gh-action-pypi-publish@v1.13.0
         with:
           attestations: true
