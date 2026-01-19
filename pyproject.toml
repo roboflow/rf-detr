@@ -80,6 +80,11 @@ build = [
     "build>=0.10"
 ]
 
+tests = [
+  "pytest>=7.2.2,<9",
+  "pytest-cov>=4,<8",
+]
+
 docs = [
     "mkdocs-material[imaging]>=9.7",
     "mkdocstrings>=0.25.2,<0.30.0",
