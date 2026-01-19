@@ -1,6 +1,6 @@
 {
     "architectures": [
-      "Dinov2Model"
+        "Dinov2Model"
     ],
     "attention_probs_dropout_prob": 0.0,
     "drop_path_rate": 0.0,

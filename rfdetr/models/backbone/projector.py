@@ -254,7 +254,7 @@ class MultiScaleProjector(nn.Module):
             for i in range(self.force_drop_last_n_features):
                 # don't do it inplace to ensure the compiler can optimize out the backbone layers
                 x[-(i+1)] = torch.zeros_like(x[-(i+1)])
-                
+
         results = []
         # x list of len(out_features_indexes)
         for i, stage in enumerate(self.stages):
