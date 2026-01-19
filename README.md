@@ -57,7 +57,7 @@ _We are actively working on RF-DETR Large and X-Large models using the same tech
 
 ## Installation
 
-To install RF-DETR, install the `rfdetr` package in a [**Python>=3.9**](https://www.python.org/) environment with `pip`:
+To install RF-DETR, install the `rfdetr` package in a [**Python>=3.10**](https://www.python.org/) environment with `pip`:
 
 ```bash
 pip install rfdetr

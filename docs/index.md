@@ -25,7 +25,7 @@ We validated the performance of RF-DETR on both Microsoft COCO and the RF100-VL 
 ## 💻 Install
 
 You can install and use `rfdetr` in a
-[**Python>=3.9**](https://www.python.org/) environment.
+[**Python>=3.10**](https://www.python.org/) environment.
 
 !!! example "Installation"
 
