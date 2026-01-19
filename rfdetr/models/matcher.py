@@ -94,7 +94,7 @@ class HungarianMatcher(nn.Module):
         # Compute the classification cost.
         alpha = 0.25
         gamma = 2.0
-        
+
         # neg_cost_class = (1 - alpha) * (out_prob ** gamma) * (-(1 - out_prob + 1e-8).log())
         # pos_cost_class = alpha * ((1 - out_prob) ** gamma) * (-(out_prob + 1e-8).log())
         # we refactor these with logsigmoid for numerical stability

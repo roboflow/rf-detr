@@ -71,7 +71,7 @@ class MSDeformAttn(nn.Module):
         self.output_proj = nn.Linear(d_model, d_model)
 
         self._reset_parameters()
-        
+
         self._export = False
 
     def export(self):
