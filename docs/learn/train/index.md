@@ -202,9 +202,9 @@ During training, multiple model checkpoints are saved to the output directory:
     Checkpoint sizes vary based on what they contain:
 
     - **Training checkpoints** (e.g. `checkpoint.pth`, `checkpoint_<number>.pth`) include model weights, optimizer state, scheduler state, and training metadata. Use these to resume training.
-    
+
     - **Evaluation checkpoints** (e.g. `checkpoint_best_ema.pth`, `checkpoint_best_regular.pth`) store only the model weights — either EMA or raw — and are used to track the best-performing models. These may come from different epochs depending on which version achieved the highest validation score.
-    
+
     - **Stripped checkpoint** (e.g. `checkpoint_best_total.pth`) contains only the final model weights and is optimized for inference and deployment.
 
 ### Resume training
@@ -313,14 +313,14 @@ Replace `8` in the `--nproc_per_node argument` with the number of GPUs you want 
     ```bash
     pip install "rfdetr[metrics]"
     ```
-  
+
 - To activate logging, pass the extra parameter `tensorboard=True` to `.train()`:
 
     ```python
     from rfdetr import RFDETRBase
-    
+
     model = RFDETRBase()
-    
+
     model.train(
         dataset_dir=<DATASET_PATH>,
         epochs=100,
@@ -346,7 +346,7 @@ Replace `8` in the `--nproc_per_node argument` with the number of GPUs you want 
     %load_ext tensorboard
     %tensorboard --logdir <OUTPUT_DIR>
     ```
-      
+
 </details>
 
 ### Logging with Weights and Biases
@@ -376,9 +376,9 @@ Replace `8` in the `--nproc_per_node argument` with the number of GPUs you want 
 
     ```python
     from rfdetr import RFDETRBase
-    
+
     model = RFDETRBase()
-    
+
     model.train(
         dataset_dir=<DATASET_PATH>,
         epochs=100,
@@ -393,7 +393,7 @@ Replace `8` in the `--nproc_per_node argument` with the number of GPUs you want 
     ```
 
     In W&B, projects are collections of related machine learning experiments, and runs are individual sessions where training or evaluation happens. If you don't specify a name for a run, W&B will assign a random one automatically.
-  
+
 </details>
 
 ### Load and run fine-tuned model

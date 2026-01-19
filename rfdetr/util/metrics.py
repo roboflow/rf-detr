@@ -170,7 +170,7 @@ class MetricsTensorBoardSink:
     def close(self):
         if not self.writer:
             return
-        
+
         self.writer.close()
 
 class MetricsWandBSink:
@@ -239,5 +239,5 @@ class MetricsWandBSink:
     def close(self):
         if not wandb or not self.run:
             return
-            
+
         self.run.finish()

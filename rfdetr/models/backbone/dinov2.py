@@ -65,9 +65,9 @@ class DinoV2(nn.Module):
         self.shape = shape
         self.patch_size = patch_size
         self.num_windows = num_windows
-        
+
         # Create the encoder
-        
+
         if not use_windowed_attn:
             assert not gradient_checkpointing, "Gradient checkpointing is not supported for non-windowed attention"
             assert load_dinov2_weights, "Using non-windowed attention requires loading dinov2 weights from hub"
@@ -178,7 +178,7 @@ class DinoV2(nn.Module):
 
         self.encoder.embeddings.position_embeddings = nn.Parameter(new_positions)
         self.encoder.embeddings.interpolate_pos_encoding = types.MethodType(
-            new_interpolate_pos_encoding, 
+            new_interpolate_pos_encoding,
             self.encoder.embeddings
         )
 

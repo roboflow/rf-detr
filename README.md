@@ -106,7 +106,7 @@ pip install git+https://github.com/roboflow/rf-detr.git
 
 ## Inference
 
-The easiest path to deployment is using Roboflow's [Inference](https://github.com/roboflow/inference) package. 
+The easiest path to deployment is using Roboflow's [Inference](https://github.com/roboflow/inference) package.
 
 The code below lets you run `rfdetr-base` on an image:
 
@@ -194,13 +194,13 @@ If you find our work helpful for your research, please consider citing the follo
 
 ```bibtex
 @misc{rf-detr,
-    title={RF-DETR: Neural Architecture Search for Real-Time Detection Transformers}, 
+    title={RF-DETR: Neural Architecture Search for Real-Time Detection Transformers},
     author={Isaac Robinson and Peter Robicheaux and Matvei Popov and Deva Ramanan and Neehar Peri},
     year={2025},
     eprint={2511.09554},
     archivePrefix={arXiv},
     primaryClass={cs.CV},
-    url={https://arxiv.org/abs/2511.09554}, 
+    url={https://arxiv.org/abs/2511.09554},
 }
 ```
 

@@ -1,0 +1,46 @@
+ci:
+  autofix_prs: true
+  autoupdate_schedule: weekly
+  autofix_commit_msg: "fix(pre-commit): 🎨 auto format pre-commit hooks"
+  autoupdate_commit_msg: "chore(pre-commit): ⬆ pre_commit autoupdate"
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: check-yaml
+        exclude: mkdocs.yaml
+      - id: check-executables-have-shebangs
+      - id: check-toml
+      - id: check-case-conflict
+      - id: check-added-large-files
+      - id: detect-private-key
+      - id: pretty-format-json
+        args: ['--autofix', '--no-sort-keys', '--indent=4']
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+
+  #- repo: https://github.com/astral-sh/ruff-pre-commit
+  #  rev: v0.14.11
+  #  hooks:
+  #    - id: ruff-check
+  #      args: [--fix]
+  #    - id: ruff-format
+  #      types_or: [ python, pyi, jupyter ]
+
+  #- repo: https://github.com/executablebooks/mdformat
+  #  rev: 1.0.0
+  #  hooks:
+  #    - id: mdformat
+  #      additional_dependencies:
+  #        - "mdformat-mkdocs[recommended]>=2.1.0"
+  #      args: ["--number"]
+  #      exclude: ^docs/
+
+  #- repo: https://github.com/codespell-project/codespell
+  #  rev: v2.4.1
+  #  hooks:
+  #    - id: codespell
+  #      additional_dependencies:
+  #        - tomli
