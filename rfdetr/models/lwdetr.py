@@ -67,7 +67,7 @@ class LWDETR(nn.Module):
         self.class_embed = nn.Linear(hidden_dim, num_classes)
         self.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
         self.segmentation_head = segmentation_head
-        
+
         query_dim=4
         self.refpoint_embed = nn.Embedding(num_queries * group_detr, query_dim)
         self.query_feat = nn.Embedding(num_queries * group_detr, hidden_dim)
@@ -112,7 +112,7 @@ class LWDETR(nn.Module):
         self.class_embed.weight.data = self.class_embed.weight.data[:num_classes]
         self.class_embed.bias.data = self.class_embed.bias.data.repeat(num_repeats)
         self.class_embed.bias.data = self.class_embed.bias.data[:num_classes]
-        
+
         if self.two_stage:
             for enc_out_class_embed in self.transformer.enc_out_class_embed:
                 enc_out_class_embed.weight.data = enc_out_class_embed.weight.data.repeat(num_repeats, 1)
@@ -330,7 +330,7 @@ class SetCriterion(nn.Module):
 
         if self.ia_bce_loss:
             alpha = self.focal_alpha
-            gamma = 2 
+            gamma = 2
             src_boxes = outputs['pred_boxes'][idx]
             target_boxes = torch.cat([t['boxes'][i] for t, (_, i) in zip(targets, indices)], dim=0)
 
@@ -445,7 +445,7 @@ class SetCriterion(nn.Module):
             box_ops.box_cxcywh_to_xyxy(target_boxes)))
         losses['loss_giou'] = loss_giou.sum() / num_boxes
         return losses
-    
+
     def loss_masks(self, outputs, targets, indices, num_boxes):
         """Compute BCE-with-logits and Dice losses for segmentation masks on matched pairs.
         Expects outputs to contain 'pred_masks' of shape [B, Q, H, W] and targets with key 'masks'.
@@ -463,7 +463,7 @@ class SetCriterion(nn.Module):
             }
         # gather matched target masks
         target_masks = torch.cat([t['masks'][j] for t, (_, j) in zip(targets, indices)], dim=0)  # [N, Ht, Wt]
-        
+
         # No need to upsample predictions as we are using normalized coordinates :)
         # N x 1 x H x W
         src_masks = src_masks.unsqueeze(1)
@@ -502,8 +502,8 @@ class SetCriterion(nn.Module):
         del src_masks
         del target_masks
         return losses
-    
- 
+
+
     def _get_src_permutation_idx(self, indices):
         # permute predictions following indices
         batch_idx = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])
@@ -855,7 +855,7 @@ def build_criterion_and_postprocessors(args):
         sum_group_losses = False
     if args.segmentation_head:
         criterion = SetCriterion(args.num_classes + 1, matcher=matcher, weight_dict=weight_dict,
-                                focal_alpha=args.focal_alpha, losses=losses, 
+                                focal_alpha=args.focal_alpha, losses=losses,
                                 group_detr=args.group_detr, sum_group_losses=sum_group_losses,
                                 use_varifocal_loss = args.use_varifocal_loss,
                                 use_position_supervised_loss=args.use_position_supervised_loss,
@@ -863,7 +863,7 @@ def build_criterion_and_postprocessors(args):
                                 mask_point_sample_ratio=args.mask_point_sample_ratio)
     else:
         criterion = SetCriterion(args.num_classes + 1, matcher=matcher, weight_dict=weight_dict,
-                                focal_alpha=args.focal_alpha, losses=losses, 
+                                focal_alpha=args.focal_alpha, losses=losses,
                                 group_detr=args.group_detr, sum_group_losses=sum_group_losses,
                                 use_varifocal_loss = args.use_varifocal_loss,
                                 use_position_supervised_loss=args.use_position_supervised_loss,
