@@ -1,9 +1,19 @@
+# ------------------------------------------------------------------------
+# Platform Model License 1.0 (PML-1.0)
+# Copyright (c) 2026 Roboflow, Inc. All Rights Reserved.
+#
+# Licensed under the Platform Model License 1.0.
+# Use, modification, and distribution of code and checkpoints require
+# an active Roboflow platform plan or agreement.
+#
+# See the LICENSE.platform file for full terms and conditions.
+# ------------------------------------------------------------------------
+
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.detr import RFDETR
-from typing import Literal, List, Optional
+from typing import Literal, List
 
 
-# THE FOLLOWING CONFIGS ARE COVERED BY THE PLATFORM MODEL LICENSE (./LICENSE.pml)
 class RFDETRXLargeConfig(ModelConfig):
     encoder: Literal["dinov2_windowed_base"] = "dinov2_windowed_base"
     hidden_dim: int = 512
@@ -40,14 +50,13 @@ class RFDETR2XLargeConfig(ModelConfig):
     license: str = "PML-1.0"
 
 
-# THE FOLLOWING MODELS ARE COVERED BY THE PLATFORM MODEL LICENSE (./LICENSE.pml)
 class RFDETRXLarge(RFDETR):
     size = "rfdetr-xlarge"
 
     def __init__(self, accept_platform_model_license: bool = False, **kwargs):
         if not accept_platform_model_license is True:
             raise ValueError(
-                "You must accept the platform model license (rfdetr/platform/LICENSE.pml) to use this model. "
+                "You must accept the platform model license (LICENSE.platform) to use this model. "
                 "You can do this by setting accept_platform_model_license=True when initializing the model."
             )
         super().__init__(**kwargs)
@@ -65,7 +74,7 @@ class RFDETR2XLarge(RFDETR):
     def __init__(self, accept_platform_model_license: bool = False, **kwargs):
         if not accept_platform_model_license is True:
             raise ValueError(
-                "You must accept the platform model license (rfdetr/platform/LICENSE.pml) to use this model. "
+                "You must accept the platform model license (LICENSE.platform) to use this model. "
                 "You can do this by setting accept_platform_model_license=True when initializing the model."
             )
         super().__init__(**kwargs)

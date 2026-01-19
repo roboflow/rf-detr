@@ -22,13 +22,10 @@ On image segmentation, RF-DETR Seg (Preview) is 3x faster and more accurate than
 
 ## News
 
-- `2026/1/13`: We release new RF-DETR Seg sizes (N,S,M,L,XL,2XL) and RF-DETR sizes (Large, XLarge, 2XLarge).
-    - The prior RF-DETR-Large model is deprecated in favor of the new RF-DETR-LargeEdge, which is much more accurate at the same latency.
-    - The XLarge and 2XLarge models use a different backbone and are licensed according to the terms of the Platform Model License (`rfdetr/platform/LICENSE.pml`) and require a [Roboflow account](https://app.roboflow.com) to use and fine-tune. Researchers may request a [free upgraded account](https://research.roboflow.com/credits).
+- `2026/01/13`: We release new RF-DETR-Seg sizes Nano, Small, Medium, Large, XLarge, and 2XLarge, along with new RF-DETR sizes Large, XLarge, and 2XLarge. Old RF-DETR Large weights still load but are now deprecated. RF-DETR XLarge and 2XLarge models follow Platform Model License and require a Roboflow account to run and fine-tune.
 - `2025/11/13`: We release a paper representing our work on RF-DETR, [RF-DETR: Neural Architecture Search for Real-Time Detection Transformers](https://arxiv.org/abs/2511.09554), on Arxiv.
 - `2025/10/02`: We release RF-DETR-Seg (Preview), a preview of our instance segmentation head for RF-DETR.
-- `2025/07/23`: We release three new checkpoints for RF-DETR: Nano, Small, and Medium.
-    - RF-DETR Base is now deprecated. We recommend using RF-DETR Medium which offers subtantially better accuracy at comparable latency.
+- `2025/07/23`: We release three new checkpoints for RF-DETR: Nano, Small, and Medium. RF-DETR Base is now deprecated. We recommend using RF-DETR Medium which offers better accuracy at comparable latency.
 - `2025/05/16`: We release an 'optimize_for_inference' method which speeds up native PyTorch by up to 2x, depending on platform.
 - `2025/04/03`: We release early stopping, gradient checkpointing, metrics saving, training resume, TensorBoard and W&B logging support.
 - `2025/03/20`: We release RF-DETR real-time object detection model. **Code and checkpoint for RF-DETR-large and RF-DETR-base are available.**
@@ -189,7 +186,12 @@ Visit our [documentation website](https://rfdetr.roboflow.com) to learn more abo
 
 ## License
 
-Both the code and the weights pretrained on the COCO dataset are released under the [Apache 2.0 license](https://github.com/roboflow/r-flow/blob/main/LICENSE).
+All source code and model weights are licensed under the Apache License 2.0.
+See [`LICENSE.core`](LICENSE.core) for details.
+
+RF-DETR XLarge and 2XLarge code and checkpoints are licensed under the
+Platform Model License 1.0. See [`LICENSE.platform`](LICENSE.platform) for details.
+These models require a Roboflow account to run and fine-tune.
 
 ## Acknowledgements
 

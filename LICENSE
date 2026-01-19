@@ -1,5 +1,12 @@
-LICENSE.core (Apache 2.0) applies to all files in this repository
-except for files in or under any directory that contains a superseding
-license file (such as the files and folders in the `rfdetr/platform/`
-directory which are governed by the Platform Model License located
-at `rfdetr/platform/LICENSE.pml`).
+# ------------------------------------------------------------------------
+# Licensing
+#
+# Unless stated otherwise, all code in this repository is licensed under
+# the Apache License, Version 2.0. See LICENSE.core for full terms.
+#
+# Code located under the `rfdetr/platform` directory is licensed under the
+# Platform Model License 1.0 (PML-1.0). See LICENSE.platform for full terms.
+#
+# Copyright (c) 2026 Roboflow, Inc.
+# All Rights Reserved.
+# ------------------------------------------------------------------------

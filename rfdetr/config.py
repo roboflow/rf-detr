@@ -37,7 +37,7 @@ class ModelConfig(BaseModel):
     cls_loss_coef: float = 1.0
     segmentation_head: bool = False
     mask_downsample_ratio: int = 4
-    license: str = "apache-2.0"
+    license: str = "Apache-2.0"
 
 
 class RFDETRBaseConfig(ModelConfig):
