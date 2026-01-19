@@ -19,7 +19,8 @@ on:
       - '.github/workflows/build-package.yml'
       - '.github/workflows/publish-pre-release.yml'
 
-permissions: {} # Explicitly remove all permissions by default
+permissions:
+  contents: read
 
 jobs:
   build-pkg:
