@@ -109,7 +109,7 @@ class RFDETRMediumConfig(RFDETRBaseConfig):
     pretrain_weights: Optional[str] = "rf-detr-medium.pth"
 
 
-#res 704, ps 16, 2 windows, 4 dec layers, 300 queries, ViT-S basis    
+#res 704, ps 16, 2 windows, 4 dec layers, 300 queries, ViT-S basis
 class RFDETRLargeConfig(ModelConfig):
     encoder: Literal["dinov2_windowed_small"] = "dinov2_windowed_small"
     hidden_dim: int = 256

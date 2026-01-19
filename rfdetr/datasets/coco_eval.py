@@ -275,7 +275,7 @@ def evaluate(self):
 
 #################################################################
 # From pycocotools, but patched the first _summarize() call to
-# reference the last element of the maxDets list (like all the 
+# reference the last element of the maxDets list (like all the
 # other calls to _summarize() do) instead of hardcoding maxDets to 100.
 #################################################################
 def patched_pycocotools_summarize(self):

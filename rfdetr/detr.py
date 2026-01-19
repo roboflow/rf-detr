@@ -472,7 +472,7 @@ class RFDETRLargeNew(RFDETR):
         return RFDETRLargeConfig(**kwargs)
 
     def get_train_config(self, **kwargs):
-        return TrainConfig(**kwargs)  
+        return TrainConfig(**kwargs)
 
 class RFDETRLargeDeprecated(RFDETR):
     """
@@ -511,13 +511,13 @@ class RFDETRLarge(RFDETR):
                 )
             except Exception as e_deprecated:
                 raise self.init_error
-    
+
     def get_model_config(self, **kwargs):
         if not self.is_deprecated:
             return RFDETRLargeConfig(**kwargs)
         else:
             return RFDETRLargeDeprecatedConfig(**kwargs)
-    
+
     def get_train_config(self, **kwargs):
         return TrainConfig(**kwargs)
 
@@ -550,7 +550,7 @@ class RFDETRSegMedium(RFDETR):
     size = "rfdetr-seg-medium"
     def get_model_config(self, **kwargs):
         return RFDETRSegMediumConfig(**kwargs)
-    
+
     def get_train_config(self, **kwargs):
         return SegmentationTrainConfig(**kwargs)
 

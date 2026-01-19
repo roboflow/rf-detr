@@ -28,4 +28,3 @@ from rfdetr.detr import (
     RFDETRSegXLarge,
     RFDETRSeg2XLarge,
 )
-
