@@ -67,8 +67,10 @@ class BestMetricSingle():
     def isbetter(self, new_res: float, old_res: float) -> bool:
         if self.better == 'large':
             return new_res > old_res
-        if self.better == 'small':
+        elif self.better == 'small':
             return new_res < old_res
+        else:
+            raise ValueError(f"Unexpected value for 'better': {self.better!r}")
 
     def update(self, new_res: float, ep: int) -> bool:
         if self.isbetter(new_res, self.best_res):

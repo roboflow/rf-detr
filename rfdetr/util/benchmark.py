@@ -32,7 +32,7 @@ from functools import partial
 import time
 
 
-from typing import Any, Callable, Dict, List, Optional, Sequence, Union
+from typing import Any, Callable, Dict, List, Sequence, Union
 from numbers import Number
 
 Handle = Callable[[List[Any], List[Any]], Union[typing.Counter[str], Number]]
