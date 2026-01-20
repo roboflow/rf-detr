@@ -1,0 +1,85 @@
+name: Pytest/Test Workflow
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pytest-test-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build-pkg:
+    uses: ./.github/workflows/build-package.yml
+
+  run-tests:
+    name: Pytest Run
+    # needs: build  # todo: consider using this build package for testing
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ["ubuntu-latest"]
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        include:
+          - { os: "windows-latest", python-version: "3.9" }
+          - { os: "macos-latest", python-version: "3.9" }
+          - { os: "windows-latest", python-version: "3.13" }
+          - { os: "macos-latest", python-version: "3.13" }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: 📥 Checkout the repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: 🐍 Install uv and set Python version ${{ matrix.python-version }}
+        uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          activate-environment: true
+
+      - name: 🚀 Install Packages
+        run: uv pip install -e . --group tests
+
+      - name: 🧪 Run the Test
+        run: uv run pytest --cov=rfdetr --cov-report=xml
+
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: "coverage.xml"
+          flags: cpu,${{ runner.os }},python${{ matrix.python-version }}
+          env_vars: OS,PYTHON
+          name: codecov-umbrella
+          fail_ci_if_error: false
+
+      - name: Minimize uv cache
+        run: uv cache prune --ci
+
+
+  testing-guardian:
+    runs-on: ubuntu-latest
+    needs: run-tests
+    if: always()
+    steps:
+      - name: 📋 Display test result
+        run: echo "${{ needs.run-tests.result }}"
+      - name: ❌ Fail guardian on test failure
+        if: needs.run-tests.result == 'failure'
+        run: exit 1
+      # Ensure that cancelled or skipped test runs still cause this guardian job to fail,
+      # using an explicit exit code instead of relying on timeout behavior.
+      - name: ⚠️ cancelled or skipped...
+        if: contains(fromJSON('["cancelled", "skipped"]'), needs.run-tests.result)
+        run: |
+          echo "run-tests job result is '${{ needs.run-tests.result }}'; failing explicitly."
+          exit 1
+      - name: ✅ tests succeeded
+        if: needs.run-tests.result == 'success'
+        run: echo "All tests completed successfully in job 'run-tests'."
