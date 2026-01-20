@@ -11,7 +11,7 @@ authors = [
     {name = "Roboflow, Inc", email = "peter@roboflow.com"}
 ]
 license = {text = "Apache License 2.0"}
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -78,6 +78,11 @@ build = [
     "twine>=5.1.1",
     "wheel>=0.40",
     "build>=0.10"
+]
+
+tests = [
+  "pytest>=7.2.2,<9",
+  "pytest-cov>=4,<8",
 ]
 
 docs = [
