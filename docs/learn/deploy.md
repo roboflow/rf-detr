@@ -64,8 +64,8 @@ You can then run your model with Roboflow Inference:
     labels = [prediction.class_name for prediction in predictions.predictions]
 
     annotated_image = image.copy()
-    annotated_image = sv.BoxAnnotator(color=sv.ColorPalette.ROBOFLOW).annotate(annotated_image, detections)
-    annotated_image = sv.LabelAnnotator(color=sv.ColorPalette.ROBOFLOW).annotate(annotated_image, detections, labels)
+    annotated_image = sv.BoxAnnotator().annotate(annotated_image, detections)
+    annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
 
     sv.plot_image(annotated_image)
     ```
@@ -92,8 +92,8 @@ You can then run your model with Roboflow Inference:
     labels = [prediction.class_name for prediction in predictions.predictions]
 
     annotated_image = image.copy()
-    annotated_image = sv.MaskAnnotator(color=sv.ColorPalette.ROBOFLOW).annotate(annotated_image, detections)
-    annotated_image = sv.LabelAnnotator(color=sv.ColorPalette.ROBOFLOW).annotate(annotated_image, detections, labels)
+    annotated_image = sv.MaskAnnotator().annotate(annotated_image, detections)
+    annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
 
     sv.plot_image(annotated_image)
     ```

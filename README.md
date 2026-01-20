@@ -129,12 +129,8 @@ detections = sv.Detections.from_inference(predictions)
 labels = [prediction.class_name for prediction in predictions.predictions]
 
 annotated_image = image.copy()
-annotated_image = sv.BoxAnnotator(
-  color=sv.ColorPalette.ROBOFLOW
-).annotate(annotated_image, detections)
-annotated_image = sv.LabelAnnotator(
-  color=sv.ColorPalette.ROBOFLOW
-).annotate(annotated_image, detections, labels)
+annotated_image = sv.BoxAnnotator().annotate(annotated_image, detections)
+annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
 ```
 
 To use segmentation, use the `rfdetr-seg-preview` model ID. This model will return segmentation masks from a RF-DETR-Seg (Preview) model trained on the Microsoft COCO dataset.
