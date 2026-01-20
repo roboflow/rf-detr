@@ -224,7 +224,6 @@ def create_common_coco_eval(coco_eval: COCOeval, img_ids: List[int], eval_imgs: 
 def evaluate(self: COCOeval) -> Tuple[List[int], np.ndarray]:
     '''
     Run per image evaluation on given images and store results (a list of dict) in self.evalImgs
-    :return: None
     '''
     # tic = time.time()
     # print('Running per image evaluation...')
