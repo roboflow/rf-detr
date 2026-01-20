@@ -151,7 +151,7 @@ def resize(image, target, size, max_size=None):
     if "masks" in target:
         target['masks'] = interpolate(
             target['masks'][:, None].float(), size, mode="nearest")[:, 0] > 0.5
-    
+
 
     return rescaled_image, target
 
@@ -252,6 +252,10 @@ class SquareResize(object):
             target["area"] = scaled_area
 
         target["size"] = torch.tensor([h, w])
+
+        if "masks" in target:
+            target['masks'] = interpolate(
+                target['masks'][:, None].float(), (h, w), mode="nearest")[:, 0] > 0.5
 
         return rescaled_img, target
 

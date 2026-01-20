@@ -28,7 +28,7 @@ def download_dataset(rf_project: roboflow.Project, dataset_version: int):
         location = version.download(
             model_format="coco", location=location, overwrite=False
         ).location
-    
+
     return location
 
 
@@ -61,7 +61,7 @@ def trainer():
     parser.add_argument("--project_name", type=str, required=False, default=None)
     parser.add_argument("--dataset_version", type=int, required=False, default=None)
     args = parser.parse_args()
-    
+
     if args.coco_dir is not None:
         train_from_coco_dir(args.coco_dir)
         return

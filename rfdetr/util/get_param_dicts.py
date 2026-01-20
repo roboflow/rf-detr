@@ -13,7 +13,7 @@ from rfdetr.models.backbone import Joiner
 def get_vit_lr_decay_rate(name, lr_decay_rate=1.0, num_layers=12):
     """
     Calculate lr decay rate for different ViT blocks.
-    
+
     Args:
         name (string): parameter name.
         lr_decay_rate (float): base lr decay rate.
@@ -51,7 +51,7 @@ def get_param_dict(args, model_without_ddp: nn.Module):
     ]
 
     decoder_param_lr_pairs = [
-        {"params": param, "lr": args.lr * args.lr_component_decay} 
+        {"params": param, "lr": args.lr * args.lr_component_decay}
         for param in decoder_params
     ]
 
@@ -61,10 +61,10 @@ def get_param_dict(args, model_without_ddp: nn.Module):
             n not in backbone_named_param_lr_pairs and decoder_key not in n and p.requires_grad)
     ]
     other_param_dicts = [
-        {"params": param, "lr": args.lr} 
+        {"params": param, "lr": args.lr}
         for param in other_params
     ]
-    
+
     final_param_dicts = (
         other_param_dicts + backbone_param_lr_pairs + decoder_param_lr_pairs
     )

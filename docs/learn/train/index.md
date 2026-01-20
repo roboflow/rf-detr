@@ -1,18 +1,12 @@
 # Train an RF-DETR Model
 
-You can train an RF-DETR model on a custom dataset using the `rfdetr` Python package, or in the cloud using Roboflow.
+You can train RF-DETR object detection and segmentation models on a custom dataset using the `rfdetr` Python package, or in the cloud using Roboflow.
 
-Training on device is ideal if you want to manage your training pipeline and have a GPU available for training.
-
-Training in the Roboflow Cloud is ideal if you want managed training whose weights you can deploy on your own hardware and with a hosted API.
-
-For this guide, we will train a model using the `rfdetr` Python package.
-
-Once you have trained a model with this guide, see our [deploy an RF-DETR model guide](/learn/deploy/) to learn how to run inference with your model.
+This guide describes how to train both an object detection and segmentation RF-DETR model.
 
 ### Dataset structure
 
-RF-DETR expects the dataset to be in COCO format. Divide your dataset into three subdirectories: `train`, `valid`, and `test`. Each subdirectory should contain its own `_annotations.coco.json` file that holds the annotations for that particular split, along with the corresponding image files. Below is an example of the directory structure:
+RF-DETR expects the dataset to be in COCO format. Divide your dataset into three subdirectories: `train`, `valid`, and `test`. Each sub-directory should contain its own `_annotations.coco.json` file that holds the annotations for that particular split, along with the corresponding image files. Below is an example of the directory structure:
 
 ```
 dataset/
@@ -35,24 +29,49 @@ dataset/
 
 [Roboflow](https://roboflow.com/annotate) allows you to create object detection datasets from scratch or convert existing datasets from formats like YOLO, and then export them in COCO JSON format for training. You can also explore [Roboflow Universe](https://universe.roboflow.com/) to find pre-labeled datasets for a range of use cases.
 
-### Fine-tuning
+If you are training a segmentation model, your COCO JSON annotations should have a `segmentation` key with the polygon associated with each annotation.
 
-You can fine-tune RF-DETR from pre-trained COCO checkpoints. By default, the RF-DETR-B checkpoint will be used. To get started quickly, please refer to our fine-tuning Google Colab [notebook](https://colab.research.google.com/github/roboflow-ai/notebooks/blob/main/notebooks/how-to-finetune-rf-detr-on-detection-dataset.ipynb).
+## Start Training
 
-```python
-from rfdetr import RFDETRBase
+You can fine-tune RF-DETR from pre-trained COCO checkpoints.
 
-model = RFDETRBase()
+For object detection, the RF-DETR-B checkpoint is used by default. To get started quickly with training an object detection model, please refer to our fine-tuning Google Colab [notebook](https://colab.research.google.com/github/roboflow-ai/notebooks/blob/main/notebooks/how-to-finetune-rf-detr-on-detection-dataset.ipynb).
 
-model.train(
-    dataset_dir=<DATASET_PATH>,
-    epochs=10,
-    batch_size=4,
-    grad_accum_steps=4,
-    lr=1e-4,
-    output_dir=<OUTPUT_PATH>
-)
-```
+For image segmentation, the RF-DETR-Seg (Preview) checkpoint is used by default.
+
+=== "Object Detection"
+
+    ```python
+    from rfdetr import RFDETRBase
+
+    model = RFDETRBase()
+
+    model.train(
+        dataset_dir=<DATASET_PATH>,
+        epochs=100,
+        batch_size=4,
+        grad_accum_steps=4,
+        lr=1e-4,
+        output_dir=<OUTPUT_PATH>
+    )
+    ```
+
+=== "Image Segmentation"
+
+    ```python
+    from rfdetr import RFDETRSegPreview
+
+    model = RFDETRSegPreview()
+
+    model.train(
+        dataset_dir=<DATASET_PATH>,
+        epochs=100,
+        batch_size=4,
+        grad_accum_steps=4,
+        lr=1e-4,
+        output_dir=<OUTPUT_PATH>
+    )
+    ```
 
 Different GPUs have different VRAM capacities, so adjust batch_size and grad_accum_steps to maintain a total batch size of 16. For example, on a powerful GPU like the A100, use `batch_size=16` and `grad_accum_steps=1`; on smaller GPUs like the T4, use `batch_size=4` and `grad_accum_steps=4`. This gradient accumulation strategy helps train effectively even with limited memory.
 
@@ -164,45 +183,111 @@ Different GPUs have different VRAM capacities, so adjust batch_size and grad_acc
 
 </details>
 
+### Result checkpoints
+
+During training, multiple model checkpoints are saved to the output directory:
+
+- `checkpoint.pth` – the most recent checkpoint, saved at the end of the latest epoch.
+
+- `checkpoint_<number>.pth` – periodic checkpoints saved every N epochs (default is every 10).
+
+- `checkpoint_best_ema.pth` – best checkpoint based on validation score, using the EMA (Exponential Moving Average) weights. EMA weights are a smoothed version of the model’s parameters across training steps, often yielding better generalization.
+
+- `checkpoint_best_regular.pth` – best checkpoint based on validation score, using the raw (non-EMA) model weights.
+
+- `checkpoint_best_total.pth` – final checkpoint selected for inference and benchmarking. It contains only the model weights (no optimizer state or scheduler) and is chosen as the better of the EMA and non-EMA models based on validation performance.
+
+??? note "Checkpoint file sizes"
+
+    Checkpoint sizes vary based on what they contain:
+
+    - **Training checkpoints** (e.g. `checkpoint.pth`, `checkpoint_<number>.pth`) include model weights, optimizer state, scheduler state, and training metadata. Use these to resume training.
+
+    - **Evaluation checkpoints** (e.g. `checkpoint_best_ema.pth`, `checkpoint_best_regular.pth`) store only the model weights — either EMA or raw — and are used to track the best-performing models. These may come from different epochs depending on which version achieved the highest validation score.
+
+    - **Stripped checkpoint** (e.g. `checkpoint_best_total.pth`) contains only the final model weights and is optimized for inference and deployment.
+
 ### Resume training
 
 You can resume training from a previously saved checkpoint by passing the path to the `checkpoint.pth` file using the `resume` argument. This is useful when training is interrupted or you want to continue fine-tuning an already partially trained model. The training loop will automatically load the weights and optimizer state from the provided checkpoint file.
 
-```python
-from rfdetr import RFDETRBase
+=== "Object Detection"
 
-model = RFDETRBase()
+    ```python
+    from rfdetr import RFDETRBase
 
-model.train(
-    dataset_dir=<DATASET_PATH>,
-    epochs=10,
-    batch_size=4,
-    grad_accum_steps=4,
-    lr=1e-4,
-    output_dir=<OUTPUT_PATH>,
-    resume=<CHECKPOINT_PATH>
-)
-```
+    model = RFDETRBase()
+
+    model.train(
+        dataset_dir=<DATASET_PATH>,
+        epochs=100,
+        batch_size=4,
+        grad_accum_steps=4,
+        lr=1e-4,
+        output_dir=<OUTPUT_PATH>,
+        resume=<CHECKPOINT_PATH>
+    )
+    ```
+
+=== "Image Segmentation"
+
+    ```python
+    from rfdetr import RFDETRSegPreview
+
+    model = RFDETRSegPreview()
+
+    model.train(
+        dataset_dir=<DATASET_PATH>,
+        epochs=100,
+        batch_size=4,
+        grad_accum_steps=4,
+        lr=1e-4,
+        output_dir=<OUTPUT_PATH>,
+        resume=<CHECKPOINT_PATH>
+    )
+    ```
+
 
 ### Early stopping
 
 Early stopping monitors validation mAP and halts training if improvements remain below a threshold for a set number of epochs. This can reduce wasted computation once the model converges. Additional parameters—such as `early_stopping_patience`, `early_stopping_min_delta`, and `early_stopping_use_ema`—let you fine-tune the stopping behavior.
 
-```python
-from rfdetr import RFDETRBase
+=== "Object Detection"
 
-model = RFDETRBase()
+    ```python
+    from rfdetr import RFDETRBase
 
-model.train(
-    dataset_dir=<DATASET_PATH>,
-    epochs=10,
-    batch_size=4
-    grad_accum_steps=4,
-    lr=1e-4,
-    output_dir=<OUTPUT_PATH>,
-    early_stopping=True
-)
-```
+    model = RFDETRBase()
+
+    model.train(
+        dataset_dir=<DATASET_PATH>,
+        epochs=100,
+        batch_size=4
+        grad_accum_steps=4,
+        lr=1e-4,
+        output_dir=<OUTPUT_PATH>,
+        early_stopping=True
+    )
+    ```
+
+=== "Image Segmentation"
+
+    ```python
+    from rfdetr import RFDETRSegPreview
+
+    model = RFDETRSegPreview()
+
+    model.train(
+        dataset_dir=<DATASET_PATH>,
+        epochs=100,
+        batch_size=4
+        grad_accum_steps=4,
+        lr=1e-4,
+        output_dir=<OUTPUT_PATH>,
+        early_stopping=True
+    )
+    ```
+
 
 ### Multi-GPU training
 
@@ -213,10 +298,6 @@ python -m torch.distributed.launch --nproc_per_node=8 --use_env main.py
 ```
 
 Replace `8` in the `--nproc_per_node argument` with the number of GPUs you want to use. This approach creates one training process per GPU and splits the workload automatically. Note that your effective batch size is multiplied by the number of GPUs, so you may need to adjust your `batch_size` and `grad_accum_steps` to maintain the same overall batch size.
-
-### Result checkpoints
-
-During training, two model checkpoints (the regular weights and an EMA-based set of weights) will be saved in the specified output directory. The EMA (Exponential Moving Average) file is a smoothed version of the model’s weights over time, often yielding better stability and generalization.
 
 ### Logging with TensorBoard
 
@@ -232,17 +313,17 @@ During training, two model checkpoints (the regular weights and an EMA-based set
     ```bash
     pip install "rfdetr[metrics]"
     ```
-  
+
 - To activate logging, pass the extra parameter `tensorboard=True` to `.train()`:
 
     ```python
     from rfdetr import RFDETRBase
-    
+
     model = RFDETRBase()
-    
+
     model.train(
         dataset_dir=<DATASET_PATH>,
-        epochs=10,
+        epochs=100,
         batch_size=4,
         grad_accum_steps=4,
         lr=1e-4,
@@ -265,7 +346,7 @@ During training, two model checkpoints (the regular weights and an EMA-based set
     %load_ext tensorboard
     %tensorboard --logdir <OUTPUT_DIR>
     ```
-      
+
 </details>
 
 ### Logging with Weights and Biases
@@ -295,12 +376,12 @@ During training, two model checkpoints (the regular weights and an EMA-based set
 
     ```python
     from rfdetr import RFDETRBase
-    
+
     model = RFDETRBase()
-    
+
     model.train(
         dataset_dir=<DATASET_PATH>,
-        epochs=10,
+        epochs=100,
         batch_size=4,
         grad_accum_steps=4,
         lr=1e-4,
@@ -312,18 +393,30 @@ During training, two model checkpoints (the regular weights and an EMA-based set
     ```
 
     In W&B, projects are collections of related machine learning experiments, and runs are individual sessions where training or evaluation happens. If you don't specify a name for a run, W&B will assign a random one automatically.
-  
+
 </details>
 
 ### Load and run fine-tuned model
 
-```python
-from rfdetr import RFDETRBase
+=== "Object Detection"
 
-model = RFDETRBase(pretrain_weights=<CHECKPOINT_PATH>)
+    ```python
+    from rfdetr import RFDETRBase
 
-detections = model.predict(<IMAGE_PATH>)
-```
+    model = RFDETRBase(pretrain_weights=<CHECKPOINT_PATH>)
+
+    detections = model.predict(<IMAGE_PATH>)
+    ```
+
+=== "Image Segmentation"
+
+    ```python
+    from rfdetr import RFDETRSegPreview
+
+    model = RFDETRSegPreview(pretrain_weights=<CHECKPOINT_PATH>)
+
+    detections = model.predict(<IMAGE_PATH>)
+    ```
 
 ## ONNX export
 
@@ -337,12 +430,24 @@ pip install rfdetr[onnxexport]
 
 Then, run:
 
-```python
-from rfdetr import RFDETRBase
+=== "Object Detection"
 
-model = RFDETRBase(pretrain_weights=<CHECKPOINT_PATH>)
+    ```python
+    from rfdetr import RFDETRBase
 
-model.export()
-```
+    model = RFDETRBase(pretrain_weights=<CHECKPOINT_PATH>)
+
+    model.export()
+    ```
+
+=== "Image Segmentation"
+
+    ```python
+    from rfdetr import RFDETRSegPreview
+
+    model = RFDETRSegPreview(pretrain_weights=<CHECKPOINT_PATH>)
+
+    model.export()
+    ```
 
 This command saves the ONNX model to the `output` directory.

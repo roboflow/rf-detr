@@ -41,12 +41,9 @@ class LayerNorm(nn.Module):
         LayerNorm forward
         TODO: this is a hack to avoid overflow when using fp16
         """
-        #if x.dtype == torch.half:
-        #    x = x / (x.max() + self.eps)
-        u = x.mean(1, keepdim=True)
-        s = (x - u).pow(2).mean(1, keepdim=True)
-        x = (x - u) / torch.sqrt(s + self.eps)
-        x = self.weight[:, None, None] * x + self.bias[:, None, None]
+        x = x.permute(0, 2, 3, 1)
+        x = F.layer_norm(x, (x.size(3),), self.weight, self.bias, self.eps)
+        x = x.permute(0, 3, 1, 2)
         return x
 
 
@@ -103,7 +100,7 @@ class ConvX(nn.Module):
 
     def forward(self, x):
         """ forward """
-        out = self.act(self.bn(self.conv(x)))
+        out = self.act(self.bn(self.conv(x.contiguous())))
         return out
 
 
@@ -257,7 +254,7 @@ class MultiScaleProjector(nn.Module):
             for i in range(self.force_drop_last_n_features):
                 # don't do it inplace to ensure the compiler can optimize out the backbone layers
                 x[-(i+1)] = torch.zeros_like(x[-(i+1)])
-                
+
         results = []
         # x list of len(out_features_indexes)
         for i, stage in enumerate(self.stages):

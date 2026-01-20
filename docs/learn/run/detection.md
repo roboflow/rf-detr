@@ -1,4 +1,8 @@
-You can run any of the four supported RF-DETR base models -- Nano, Small, Medium, Large -- with [Inference](https://github.com/roboflow/inference), an open source computer vision inference server. The base models are trained on the [Microsoft COCO dataset](https://universe.roboflow.com/microsoft/coco).
+# Run an RF-DETR Object Detection Model
+
+You can run any of the four supported object detection RF-DETR base models (Nano, Small, Medium, Large) with [Inference](https://github.com/roboflow/inference), an open source computer vision inference server. The base models are trained on the [Microsoft COCO dataset](https://universe.roboflow.com/microsoft/coco).
+
+## Run a Model
 
 === "Run on an Image"
 

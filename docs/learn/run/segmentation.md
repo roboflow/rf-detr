@@ -1,4 +1,8 @@
-You can run any of the four supported RF-DETR base models -- Nano, Small, Medium, Large -- with [Inference](https://github.com/roboflow/inference), an open source computer vision inference server. The base models are trained on the [Microsoft COCO dataset](https://universe.roboflow.com/microsoft/coco).
+# Run an RF-DETR Instance Segmentation Model
+
+You can run models trained with the RF-DETR-Seg (Preview) architecture with [Inference](https://github.com/roboflow/inference), an open source computer vision inference server. The base models are trained on the [Microsoft COCO dataset](https://universe.roboflow.com/microsoft/coco).
+
+## Run a Model
 
 === "Run on an Image"
 
@@ -15,7 +19,7 @@ You can run any of the four supported RF-DETR base models -- Nano, Small, Medium
     url = "https://media.roboflow.com/dog.jpeg"
     image = Image.open(BytesIO(requests.get(url).content))
 
-    model = get_model("rfdetr-base")
+    model = get_model("rfdetr-seg-preview")
 
     predictions = model.infer(image, confidence=0.5)[0]
 
@@ -24,7 +28,7 @@ You can run any of the four supported RF-DETR base models -- Nano, Small, Medium
     labels = [prediction.class_name for prediction in predictions.predictions]
 
     annotated_image = image.copy()
-    annotated_image = sv.BoxAnnotator(color=sv.ColorPalette.ROBOFLOW).annotate(annotated_image, detections)
+    annotated_image = sv.MaskAnnotator(color=sv.ColorPalette.ROBOFLOW).annotate(annotated_image, detections)
     annotated_image = sv.LabelAnnotator(color=sv.ColorPalette.ROBOFLOW).annotate(annotated_image, detections, labels)
 
     sv.plot_image(annotated_image)
@@ -35,7 +39,7 @@ You can run any of the four supported RF-DETR base models -- Nano, Small, Medium
     Here are the results from the code above:
 
     <figure markdown="span">
-    ![](https://media.roboflow.com/rfdetr-docs/annotated_image_base.jpg){ width=300 }
+    ![](https://media.roboflow.com/rfdetr-docs/rfdetr_seg.jpg){ width=300 }
     <figcaption>RF-DETR Base predictions</figcaption>
     </figure>
 
@@ -61,7 +65,7 @@ You can run any of the four supported RF-DETR base models -- Nano, Small, Medium
         ]
 
         annotated_frame = frame.copy()
-        annotated_frame = sv.BoxAnnotator().annotate(annotated_frame, detections)
+        annotated_frame = sv.MaskAnnotator().annotate(annotated_frame, detections)
         annotated_frame = sv.LabelAnnotator().annotate(annotated_frame, detections, labels)
         return annotated_frame
 
@@ -101,7 +105,7 @@ You can run any of the four supported RF-DETR base models -- Nano, Small, Medium
         ]
 
         annotated_frame = frame.copy()
-        annotated_frame = sv.BoxAnnotator().annotate(annotated_frame, detections)
+        annotated_frame = sv.MaskAnnotator().annotate(annotated_frame, detections)
         annotated_frame = sv.LabelAnnotator().annotate(annotated_frame, detections, labels)
 
         cv2.imshow("Webcam", annotated_frame)
@@ -140,7 +144,7 @@ You can run any of the four supported RF-DETR base models -- Nano, Small, Medium
         ]
 
         annotated_frame = frame.copy()
-        annotated_frame = sv.BoxAnnotator().annotate(annotated_frame, detections)
+        annotated_frame = sv.MaskAnnotator().annotate(annotated_frame, detections)
         annotated_frame = sv.LabelAnnotator().annotate(annotated_frame, detections, labels)
 
         cv2.imshow("RTSP Stream", annotated_frame)
@@ -152,26 +156,19 @@ You can run any of the four supported RF-DETR base models -- Nano, Small, Medium
     cv2.destroyAllWindows()
     ```
 
-You can change the RF-DETR model that the code snippet above uses. To do so, update `rfdetr-base` to any of the following values:
-
-- `rfdetr-nano`
-- `rfdetr-small`
-- `rfdetr-medium`
-- `rfdetr-large`
-
 ## Batch Inference
 
-You can provide `.predict()` with either a single image or a list of images. When multiple images are supplied, they are processed together in a single forward pass, resulting in a corresponding list of detections.
+You can provide `.predict()` with either a single image or a list of images using the `rfdetr` package for use in batch inference applications. When multiple images are supplied, they are processed together in a single forward pass, resulting in a corresponding list of detections.
 
 ```python
 import io
 import requests
 import supervision as sv
 from PIL import Image
-from rfdetr import RFDETRBase
+from rfdetr import RFDETRSegPreview
 from rfdetr.util.coco_classes import COCO_CLASSES
 
-model = RFDETRBase()
+model = RFDETRSegPreview()
 
 urls = [
     "https://media.roboflow.com/notebooks/examples/dog-2.jpeg",
@@ -190,7 +187,7 @@ for image, detections in zip(images, detections_list):
     ]
 
     annotated_image = image.copy()
-    annotated_image = sv.BoxAnnotator().annotate(annotated_image, detections)
+    annotated_image = sv.MaskAnnotator().annotate(annotated_image, detections)
     annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
 
     sv.plot_image(annotated_image)
