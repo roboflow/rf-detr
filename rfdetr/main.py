@@ -368,7 +368,7 @@ class Model:
 
                         utils.save_on_master(weights, checkpoint_path)
 
-            with torch.inference_mode():
+            with torch.inference_mode() and torch.no_grad():
                 test_stats, coco_evaluator = evaluate(
                     model, criterion, postprocess, data_loader_val, base_ds, device, args=args
                 )

@@ -310,7 +310,7 @@ class RFDETR:
                                      "Alternatively, you can recompile the optimized model for a different batch size "
                                      "by calling model.optimize_for_inference(batch_size=<new_batch_size>).")
 
-        with torch.inference_mode():
+        with torch.inference_mode() and torch.no_grad():
             if self._is_optimized_for_inference:
                 predictions = self.model.inference_model(batch_tensor.to(dtype=self._optimized_dtype))
             else:
