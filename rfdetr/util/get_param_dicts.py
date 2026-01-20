@@ -5,12 +5,14 @@
 # ------------------------------------------------------------------------
 
 """Functions to get params dict"""
+from typing import Any, Dict, List
+
 import torch.nn as nn
 
 from rfdetr.models.backbone import Joiner
 
 
-def get_vit_lr_decay_rate(name, lr_decay_rate=1.0, num_layers=12):
+def get_vit_lr_decay_rate(name: str, lr_decay_rate: float = 1.0, num_layers: int = 12) -> float:
     """
     Calculate lr decay rate for different ViT blocks.
 
@@ -31,14 +33,23 @@ def get_vit_lr_decay_rate(name, lr_decay_rate=1.0, num_layers=12):
     return lr_decay_rate ** (num_layers + 1 - layer_id)
 
 
-def get_vit_weight_decay_rate(name, weight_decay_rate=1.0):
+def get_vit_weight_decay_rate(name: str, weight_decay_rate: float = 1.0) -> float:
+    """
+    Calculate weight decay rate for different ViT parameters.
+
+    Args:
+        name (str): parameter name.
+        weight_decay_rate (float): base weight decay rate.
+    Returns:
+        float: weight decay rate for the given parameter.
+    """
     if ('gamma' in name) or ('pos_embed' in name) or ('rel_pos' in name) or ('bias' in name) or ('norm' in name):
         weight_decay_rate = 0.
     print("name: {}, weight_decay rate: {}".format(name, weight_decay_rate))
     return weight_decay_rate
 
 
-def get_param_dict(args, model_without_ddp: nn.Module):
+def get_param_dict(args: Any, model_without_ddp: nn.Module) -> List[Dict[str, Any]]:
     assert isinstance(model_without_ddp.backbone, Joiner)
     backbone = model_without_ddp.backbone[0]
     backbone_named_param_lr_pairs = backbone.get_named_param_lr_pairs(args, prefix="backbone.0")

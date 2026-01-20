@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Any, Dict, List, Optional, Sequence, TypeVar
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -17,8 +17,10 @@ plt.ioff()
 
 PLOT_FILE_NAME = "metrics_plot.png"
 
+_T = TypeVar("_T")
 
-def safe_index(arr, idx):
+
+def safe_index(arr: Sequence[_T], idx: int) -> Optional[_T]:
     return arr[idx] if 0 <= idx < len(arr) else None
 
 
@@ -30,19 +32,19 @@ class MetricsPlotSink:
         output_dir (str): Directory where the plot will be saved.
     """
 
-    def __init__(self, output_dir: str):
+    def __init__(self, output_dir: str) -> None:
         self.output_dir = output_dir
-        self.history = []
+        self.history: List[Dict[str, Any]] = []
 
-    def update(self, values: dict):
+    def update(self, values: Dict[str, Any]) -> None:
         self.history.append(values)
 
-    def save(self):
+    def save(self) -> None:
         if not self.history:
             print("No data to plot.")
             return
 
-        def get_array(key):
+        def get_array(key: str) -> np.ndarray:
             return np.array([h[key] for h in self.history if key in h])
 
         epochs = get_array('epoch')
@@ -122,7 +124,7 @@ class MetricsTensorBoardSink:
         output_dir (str): Directory where TensorBoard logs will be written.
     """
 
-    def __init__(self, output_dir: str):
+    def __init__(self, output_dir: str) -> None:
         if SummaryWriter:
             self.writer = SummaryWriter(log_dir=output_dir)
             print(f"TensorBoard logging initialized. To monitor logs, use 'tensorboard --logdir {output_dir}' and open http://localhost:6006/ in browser.")
@@ -130,7 +132,7 @@ class MetricsTensorBoardSink:
             self.writer = None
             print("Unable to initialize TensorBoard. Logging is turned off for this session.  Run 'pip install tensorboard' to enable logging.")
 
-    def update(self, values: dict):
+    def update(self, values: Dict[str, Any]) -> None:
         if not self.writer:
             return
 

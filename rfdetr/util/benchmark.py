@@ -32,13 +32,13 @@ from functools import partial
 import time
 
 
-from typing import Any, Callable, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Union
 from numbers import Number
 
 Handle = Callable[[List[Any], List[Any]], Union[typing.Counter[str], Number]]
 
 
-def get_shape(val: object) -> typing.List[int]:
+def get_shape(val: Any) -> typing.List[int]:
     """
     Get the shapes from a jit value object.
     Args:
@@ -64,7 +64,7 @@ def get_shape(val: object) -> typing.List[int]:
 
 
 def addmm_flop_jit(
-    inputs: typing.List[object], outputs: typing.List[object]
+    inputs: typing.List[Any], outputs: typing.List[Any]
 ) -> typing.Counter[str]:
     """
     This method counts the flops for fully connected layers with torch script.
@@ -91,7 +91,7 @@ def addmm_flop_jit(
     return flop_counter
 
 
-def bmm_flop_jit(inputs, outputs):
+def bmm_flop_jit(inputs: typing.List[Any], outputs: typing.List[Any]) -> Counter[str]:
     # Count flop for nn.Linear
     # inputs is a list of length 3.
     input_shapes = [get_shape(v) for v in inputs]
@@ -106,7 +106,7 @@ def bmm_flop_jit(inputs, outputs):
     return flop_counter
 
 
-def basic_binary_op_flop_jit(inputs, outputs, name):
+def basic_binary_op_flop_jit(inputs: typing.List[Any], outputs: typing.List[Any], name: str) -> Counter[str]:
     input_shapes = [get_shape(v) for v in inputs]
     # for broadcasting
     input_shapes = [s[::-1] for s in input_shapes]
@@ -116,21 +116,21 @@ def basic_binary_op_flop_jit(inputs, outputs, name):
     return flop_counter
 
 
-def rsqrt_flop_jit(inputs, outputs):
+def rsqrt_flop_jit(inputs: typing.List[Any], outputs: typing.List[Any]) -> Counter[str]:
     input_shapes = [get_shape(v) for v in inputs]
     flop = prod(input_shapes[0]) * 2
     flop_counter = Counter({"rsqrt": flop})
     return flop_counter
 
 
-def dropout_flop_jit(inputs, outputs):
+def dropout_flop_jit(inputs: typing.List[Any], outputs: typing.List[Any]) -> Counter[str]:
     input_shapes = [get_shape(v) for v in inputs[:1]]
     flop = prod(input_shapes[0])
     flop_counter = Counter({"dropout": flop})
     return flop_counter
 
 
-def softmax_flop_jit(inputs, outputs):
+def softmax_flop_jit(inputs: typing.List[Any], outputs: typing.List[Any]) -> Counter[str]:
     # from https://github.com/tensorflow/tensorflow/blob/master/tensorflow/python/profiler/internal/flops_registry.py
     input_shapes = [get_shape(v) for v in inputs[:1]]
     flop = prod(input_shapes[0]) * 5
@@ -138,7 +138,12 @@ def softmax_flop_jit(inputs, outputs):
     return flop_counter
 
 
-def _reduction_op_flop_jit(inputs, outputs, reduce_flops=1, finalize_flops=0):
+def _reduction_op_flop_jit(
+    inputs: typing.List[Any],
+    outputs: typing.List[Any],
+    reduce_flops: int = 1,
+    finalize_flops: int = 0,
+) -> int:
     input_shapes = [get_shape(v) for v in inputs]
     output_shapes = [get_shape(v) for v in outputs]
 
@@ -177,7 +182,7 @@ def conv_flop_count(
 
 
 def conv_flop_jit(
-    inputs: typing.List[object], outputs: typing.List[object]
+    inputs: typing.List[Any], outputs: typing.List[Any]
 ) -> typing.Counter[str]:
     """
     This method counts the flops for convolution using torch script.
@@ -206,7 +211,7 @@ def conv_flop_jit(
 
 
 def einsum_flop_jit(
-    inputs: typing.List[object], outputs: typing.List[object]
+    inputs: typing.List[Any], outputs: typing.List[Any]
 ) -> typing.Counter[str]:
     """
     This method counts the flops for the einsum operation. We currently support
@@ -254,7 +259,7 @@ def einsum_flop_jit(
 
 
 def matmul_flop_jit(
-    inputs: typing.List[object], outputs: typing.List[object]
+    inputs: typing.List[Any], outputs: typing.List[Any]
 ) -> typing.Counter[str]:
     """
     This method counts the flops for matmul.
@@ -287,7 +292,7 @@ def matmul_flop_jit(
 
 
 def batchnorm_flop_jit(
-    inputs: typing.List[object], outputs: typing.List[object]
+    inputs: typing.List[Any], outputs: typing.List[Any]
 ) -> typing.Counter[str]:
     """
     This method counts the flops for batch norm.
@@ -470,9 +475,9 @@ _HAS_ALREADY_SKIPPED = False
 
 def flop_count(
     model: nn.Module,
-    inputs: typing.Tuple[object, ...],
-    whitelist: typing.Union[typing.List[str], None] = None,
-    customized_ops: typing.Union[typing.Dict[str, typing.Callable], None] = None,
+    inputs: typing.Tuple[Any, ...],
+    whitelist: typing.Optional[typing.List[str]] = None,
+    customized_ops: typing.Optional[typing.Dict[str, typing.Callable]] = None,
 ) -> typing.DefaultDict[str, float]:
     """
     Given a model and an input to the model, compute the Gflops of the given
@@ -557,13 +562,13 @@ def flop_count(
     return final_count
 
 
-def warmup(model, inputs, N=10):
+def warmup(model: torch.nn.Module, inputs: Any, N: int = 10) -> None:
     for i in range(N):
         out = model(inputs)
     torch.cuda.synchronize()
 
 
-def measure_time(model, inputs, N=10):
+def measure_time(model: torch.nn.Module, inputs: Any, N: int = 10) -> float:
     warmup(model, inputs)
     s = time.time()
     for i in range(N):
@@ -573,7 +578,7 @@ def measure_time(model, inputs, N=10):
     return t
 
 
-def fmt_res(data):
+def fmt_res(data: np.ndarray) -> Dict[str, float]:
     # return data.mean(), data.std(), data.min(), data.max()
     return {
         "mean": data.mean(),
@@ -583,7 +588,7 @@ def fmt_res(data):
     }
 
 
-def benchmark(model, dataset, output_dir):
+def benchmark(model: torch.nn.Module, dataset: Sequence[Any], output_dir: Any) -> Dict[str, Any]:
     print("Get model size, FLOPs, and FPS")
     # import pdb; pdb.set_trace()
     _outputs = {}
