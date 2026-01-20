@@ -1,4 +1,4 @@
-# RF-DETR: SOTA Real-Time Detection and Segmentation Model
+# RF-DETR: Real-Time SOTA Detection and Segmentation
 
 [![version](https://badge.fury.io/py/rfdetr.svg)](https://badge.fury.io/py/rfdetr)
 [![downloads](https://img.shields.io/pypi/dm/rfdetr)](https://pypistats.org/packages/rfdetr)
@@ -12,11 +12,11 @@
 [![discord](https://img.shields.io/discord/1159501506232451173?logo=discord&label=discord&labelColor=fff&color=5865f2&link=https%3A%2F%2Fdiscord.gg%2FGbfgXGJ8Bk)](https://discord.gg/GbfgXGJ8Bk)
 
 
-RF-DETR is a real-time, transformer-based object detection and instance segmentation model architecture developed by Roboflow and released under the Apache 2.0 license.
+RF-DETR (Roboflow DEtection TRansformer) is a real-time, transformer-based object detection and instance segmentation model architecture developed by Roboflow and released under the Apache 2.0 license.
 
-RF-DETR is the first real-time model to exceed 60 AP on the [Microsoft COCO object detection benchmark](https://cocodataset.org/#home) alongside competitive performance at base sizes. It also achieves state-of-the-art performance on [RF100-VL](https://github.com/roboflow/rf100-vl), an object detection benchmark that measures model domain adaptability to real world problems. RF-DETR is fastest and most accurate for its size when compared current real-time objection models.
+RF-DETR is the first real-time model to exceed 60 AP (Average Precision) on the [Microsoft COCO (Common Objects in Context) object detection benchmark](https://cocodataset.org/#home) alongside competitive performance at base sizes. It also achieves state-of-the-art (SOTA) performance on [RF100-VL](https://github.com/roboflow/rf100-vl), an object detection benchmark that measures model domain adaptability to real world problems. RF-DETR is fastest and most accurate for its size when compared current real-time objection models.
 
-On image segmentation, RF-DETR Seg (Preview) is 3x faster and more accurate than the largest YOLO when evaluated on the Microsoft COCO Segmentation benchmark, defining a new real-time state-of-the-art for the industry-standard benchmark in segmentation model evaluation.
+On image segmentation, RF-DETR Seg (Preview) is 3x faster and more accurate than the largest YOLO (You Only Look Once) when evaluated on the Microsoft COCO Segmentation benchmark, defining a new real-time SOTA for the industry-standard benchmark in segmentation model evaluation.
 
 [![rf-detr-tutorial-banner](https://github.com/user-attachments/assets/555a45c3-96e8-4d8a-ad29-f23403c8edfd)](https://youtu.be/-OvpdLAElFA)
 
@@ -26,8 +26,8 @@ On image segmentation, RF-DETR Seg (Preview) is 3x faster and more accurate than
 - `2025/10/02`: We release RF-DETR-Seg (Preview), a preview of our instance segmentation head for RF-DETR.
 - `2025/07/23`: We release three new checkpoints for RF-DETR: Nano, Small, and Medium.
     - RF-DETR Base is now deprecated. We recommend using RF-DETR Medium which offers subtantially better accuracy at comparable latency.
-- `2025/05/16`: We release an 'optimize_for_inference' method which speeds up native PyTorch by up to 2x, depending on platform.
-- `2025/04/03`: We release early stopping, gradient checkpointing, metrics saving, training resume, TensorBoard and W&B logging support.
+- `2025/05/16`: We release an 'optimize_for_inference' method which speeds up native PyTorch (a machine learning framework) by up to 2x, depending on platform.
+- `2025/04/03`: We release early stopping, gradient checkpointing, metrics saving, training resume, TensorBoard and W&B (Weights & Biases) logging support.
 - `2025/03/20`: We release RF-DETR real-time object detection model. **Code and checkpoint for RF-DETR-large and RF-DETR-base are available.**
 
 ## Results

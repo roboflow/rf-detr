@@ -115,7 +115,7 @@ You can run any of the four supported RF-DETR base models -- Nano, Small, Medium
 
 === "Run on an RTSP Stream"
 
-    To run RF-DETR on an RTSP stream, use the following code:
+    To run RF-DETR on an RTSP (Real Time Streaming Protocol) stream, use the following code:
 
     ```python
     import cv2
