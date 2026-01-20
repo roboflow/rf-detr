@@ -103,7 +103,7 @@ def all_gather(data: Any) -> List[Any]:
     Args:
         data: any picklable object
     Returns:
-        list[data]: list of data gathered from each rank
+        list of data gathered from each rank
     """
     world_size = get_world_size()
     if world_size == 1:

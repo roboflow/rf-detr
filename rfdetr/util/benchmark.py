@@ -42,9 +42,9 @@ def get_shape(val: Any) -> typing.List[int]:
     """
     Get the shapes from a jit value object.
     Args:
-        val (torch._C.Value): jit value object.
+        val: jit value object.
     Returns:
-        list(int): return a list of ints.
+        return a list of ints.
     """
     if val.isCompleteTensor():  # pyre-ignore
         r = val.type().sizes()  # pyre-ignore
@@ -69,12 +69,12 @@ def addmm_flop_jit(
     """
     This method counts the flops for fully connected layers with torch script.
     Args:
-        inputs (list(torch._C.Value)): The input shape in the form of a list of
+        inputs: The input shape in the form of a list of
             jit object.
-        outputs (list(torch._C.Value)): The output shape in the form of a list
+        outputs: The output shape in the form of a list
             of jit object.
     Returns:
-        Counter: A Counter dictionary that records the number of flops for each
+        A Counter dictionary that records the number of flops for each
             operation.
     """
     # Count flop for nn.Linear
@@ -166,11 +166,11 @@ def conv_flop_count(
     This method counts the flops for convolution. Note only multiplication is
     counted. Computation for addition and bias is ignored.
     Args:
-        x_shape (list(int)): The input shape before convolution.
-        w_shape (list(int)): The filter shape.
-        out_shape (list(int)): The output shape after convolution.
+        x_shape: The input shape before convolution.
+        w_shape: The filter shape.
+        out_shape: The output shape after convolution.
     Returns:
-        Counter: A Counter dictionary that records the number of flops for each
+        A Counter dictionary that records the number of flops for each
             operation.
     """
     batch_size, Cin_dim, Cout_dim = x_shape[0], w_shape[1], out_shape[1]
@@ -187,12 +187,12 @@ def conv_flop_jit(
     """
     This method counts the flops for convolution using torch script.
     Args:
-        inputs (list(torch._C.Value)): The input shape in the form of a list of
+        inputs: The input shape in the form of a list of
             jit object before convolution.
-        outputs (list(torch._C.Value)): The output shape in the form of a list
+        outputs: The output shape in the form of a list
             of jit object after convolution.
     Returns:
-        Counter: A Counter dictionary that records the number of flops for each
+        A Counter dictionary that records the number of flops for each
             operation.
     """
     # Inputs of Convolution should be a list of length 12. They represent:
@@ -217,12 +217,12 @@ def einsum_flop_jit(
     This method counts the flops for the einsum operation. We currently support
     two einsum operations: "nct,ncp->ntp" and "ntg,ncg->nct".
     Args:
-        inputs (list(torch._C.Value)): The input shape in the form of a list of
+        inputs: The input shape in the form of a list of
             jit object before einsum.
-        outputs (list(torch._C.Value)): The output shape in the form of a list
+        outputs: The output shape in the form of a list
             of jit object after einsum.
     Returns:
-        Counter: A Counter dictionary that records the number of flops for each
+        A Counter dictionary that records the number of flops for each
             operation.
     """
     # Inputs of einsum should be a list of length 2.
@@ -264,12 +264,12 @@ def matmul_flop_jit(
     """
     This method counts the flops for matmul.
     Args:
-        inputs (list(torch._C.Value)): The input shape in the form of a list of
+        inputs: The input shape in the form of a list of
             jit object before matmul.
-        outputs (list(torch._C.Value)): The output shape in the form of a list
+        outputs: The output shape in the form of a list
             of jit object after matmul.
     Returns:
-        Counter: A Counter dictionary that records the number of flops for each
+        A Counter dictionary that records the number of flops for each
             operation.
     """
 
@@ -297,12 +297,12 @@ def batchnorm_flop_jit(
     """
     This method counts the flops for batch norm.
     Args:
-        inputs (list(torch._C.Value)): The input shape in the form of a list of
+        inputs: The input shape in the form of a list of
             jit object before batch norm.
-        outputs (list(torch._C.Value)): The output shape in the form of a list
+        outputs: The output shape in the form of a list
             of jit object after batch norm.
     Returns:
-        Counter: A Counter dictionary that records the number of flops for each
+        A Counter dictionary that records the number of flops for each
             operation.
     """
     # Inputs[0] contains the shape of the input.
@@ -483,18 +483,18 @@ def flop_count(
     Given a model and an input to the model, compute the Gflops of the given
     model. Note the input should have a batch size of 1.
     Args:
-        model (nn.Module): The model to compute flop counts.
-        inputs (tuple): Inputs that are passed to `model` to count flops.
+        model: The model to compute flop counts.
+        inputs: Inputs that are passed to `model` to count flops.
             Inputs need to be in a tuple.
-        whitelist (list(str)): Whitelist of operations that will be counted. It
+        whitelist: Whitelist of operations that will be counted. It
             needs to be a subset of _SUPPORTED_OPS. By default, the function
             computes flops for all supported operations.
-        customized_ops (dict(str,Callable)) : A dictionary contains customized
+        customized_ops: A dictionary contains customized
             operations and their flop handles. If customized_ops contains an
             operation in _SUPPORTED_OPS, then the default handle in
              _SUPPORTED_OPS will be overwritten.
     Returns:
-        defaultdict: A dictionary that records the number of gflops for each
+        A dictionary that records the number of gflops for each
             operation.
     """
     # Copy _SUPPORTED_OPS to flop_count_ops.

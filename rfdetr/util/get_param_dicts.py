@@ -17,9 +17,9 @@ def get_vit_lr_decay_rate(name: str, lr_decay_rate: float = 1.0, num_layers: int
     Calculate lr decay rate for different ViT blocks.
 
     Args:
-        name (string): parameter name.
-        lr_decay_rate (float): base lr decay rate.
-        num_layers (int): number of ViT blocks.
+        name: parameter name.
+        lr_decay_rate: base lr decay rate.
+        num_layers: number of ViT blocks.
     Returns:
         lr decay rate for the given parameter.
     """
@@ -38,10 +38,10 @@ def get_vit_weight_decay_rate(name: str, weight_decay_rate: float = 1.0) -> floa
     Calculate weight decay rate for different ViT parameters.
 
     Args:
-        name (str): parameter name.
-        weight_decay_rate (float): base weight decay rate.
+        name: parameter name.
+        weight_decay_rate: base weight decay rate.
     Returns:
-        float: weight decay rate for the given parameter.
+        weight decay rate for the given parameter.
     """
     if ('gamma' in name) or ('pos_embed' in name) or ('rel_pos' in name) or ('bias' in name) or ('norm' in name):
         weight_decay_rate = 0.

@@ -39,9 +39,9 @@ def box_xyxy_to_cxcywh(x: torch.Tensor) -> torch.Tensor:
 def box_iou(boxes1: torch.Tensor, boxes2: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Returns:
-        iou (Tensor[N, M]): the NxM matrix containing the pairwise
+        iou: the NxM matrix containing the pairwise
             IoU values for every element in boxes1 and boxes2
-        union (Tensor[N, M]): the NxM matrix containing the pairwise
+        union: the NxM matrix containing the pairwise
             union values for every element in boxes1 and boxes2
     """
     area1 = box_area(boxes1)
