@@ -48,15 +48,7 @@ class ModelConfig(BaseModel):
         """
         if v is None:
             return v
-
-        # Only treat the value as a filesystem path if it has a separator or starts with '~'.
-        has_sep = os.path.sep in v
-        has_altsep = os.path.altsep is not None and os.path.altsep in v
-        if v.startswith("~") or has_sep or has_altsep:
-            return os.path.realpath(os.path.expanduser(v))
-
-        # Leave simple filenames unchanged for downstream logic (e.g., hosted model lookup).
-        return v
+        return os.path.realpath(os.path.expanduser(v))
 
 
 class RFDETRBaseConfig(ModelConfig):
@@ -189,12 +181,7 @@ class TrainConfig(BaseModel):
         """
         if v is None:
             return v
-        # Only treat the value as a filesystem path if it has a separator or starts with '~'.
-        has_sep = os.path.sep in v
-        has_altsep = os.path.altsep is not None and os.path.altsep in v
-        if v.startswith("~") or has_sep or has_altsep:
-            return os.path.realpath(os.path.expanduser(v))
-        # Leave simple filenames unchanged for downstream logic (e.g., hosted model lookup).
+        return os.path.realpath(os.path.expanduser(v))
 
 
 class SegmentationTrainConfig(TrainConfig):
