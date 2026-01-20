@@ -239,8 +239,8 @@ class Model:
 
         num_workers = args.num_workers
         # Hotfix for https://github.com/roboflow/rf-detr/issues/428
-        # On platforms using 'spawn' (Windows, macOS), multiprocessing requires the entry point 
-        # to be protected by `if __name__ == '__main__':`. If it's missing, we force 
+        # On platforms using 'spawn' (Windows, macOS), multiprocessing requires the entry point
+        # to be protected by `if __name__ == '__main__':`. If it's missing, we force
         # num_workers=0 to prevent a RuntimeError that crashes the process.
         if num_workers > 0 and multiprocessing.get_start_method(allow_none=True) == 'spawn':
             import __main__
