@@ -85,7 +85,7 @@ For more information on measuring end-to-end latency for models, see our open so
 
 ## Installation
 
-To install RF-DETR, install the `rfdetr` package in a [**Python>=3.9**](https://www.python.org/) environment with `pip`:
+To install RF-DETR, install the `rfdetr` package in a [**Python>=3.10**](https://www.python.org/) environment with `pip`:
 
 ```bash
 pip install rfdetr
