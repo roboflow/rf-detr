@@ -98,7 +98,7 @@ By installing RF-DETR from source, you can explore the most recent features and 
 Please note that these updates are still in development and may not be as stable as the latest published release.
 
 ```bash
-pip install https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip
+pip install git+https://github.com/roboflow/rf-detr.git@develop
 ```
 
 </details>
