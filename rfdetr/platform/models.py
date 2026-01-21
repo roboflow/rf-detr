@@ -54,7 +54,7 @@ class RFDETRXLarge(RFDETR):
     size = "rfdetr-xlarge"
 
     def __init__(self, accept_platform_model_license: bool = False, **kwargs):
-        if not accept_platform_model_license is True:
+        if accept_platform_model_license is not True:
             raise ValueError(
                 "You must accept the platform model license (LICENSE.platform) to use this model. "
                 "You can do this by setting accept_platform_model_license=True when initializing the model."
@@ -72,7 +72,7 @@ class RFDETR2XLarge(RFDETR):
     size = "rfdetr-2xlarge"
 
     def __init__(self, accept_platform_model_license: bool = False, **kwargs):
-        if not accept_platform_model_license is True:
+        if accept_platform_model_license is not True:
             raise ValueError(
                 "You must accept the platform model license (LICENSE.platform) to use this model. "
                 "You can do this by setting accept_platform_model_license=True when initializing the model."
