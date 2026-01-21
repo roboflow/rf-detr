@@ -94,12 +94,10 @@ pip install rfdetr
 <details>
 <summary>Install from source</summary>
 
-<br>
-
 By installing RF-DETR from source, you can explore the most recent features and enhancements that have not yet been officially released. Please note that these updates are still in development and may not be as stable as the latest published release.
 
 ```bash
-pip install git+https://github.com/roboflow/rf-detr.git
+pip install git+https://github.com/roboflow/rf-detr.git@develop
 ```
 
 </details>
@@ -130,8 +128,8 @@ detections = sv.Detections.from_inference(predictions)
 labels = [prediction.class_name for prediction in predictions.predictions]
 
 annotated_image = image.copy()
-annotated_image = sv.BoxAnnotator(color=sv.ColorPalette.ROBOFLOW).annotate(annotated_image, detections)
-annotated_image = sv.LabelAnnotator(color=sv.ColorPalette.ROBOFLOW).annotate(annotated_image, detections, labels)
+annotated_image = sv.BoxAnnotator().annotate(annotated_image, detections)
+annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
 ```
 
 To use segmentation, use the `rfdetr-seg-preview` model ID. This model will return segmentation masks from a RF-DETR-Seg (Preview) model trained on the Microsoft COCO dataset.

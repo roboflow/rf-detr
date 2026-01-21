@@ -28,8 +28,8 @@ You can run models trained with the RF-DETR-Seg (Preview) architecture with [Inf
     labels = [prediction.class_name for prediction in predictions.predictions]
 
     annotated_image = image.copy()
-    annotated_image = sv.MaskAnnotator(color=sv.ColorPalette.ROBOFLOW).annotate(annotated_image, detections)
-    annotated_image = sv.LabelAnnotator(color=sv.ColorPalette.ROBOFLOW).annotate(annotated_image, detections, labels)
+    annotated_image = sv.MaskAnnotator().annotate(annotated_image, detections)
+    annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
 
     sv.plot_image(annotated_image)
     ```

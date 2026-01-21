@@ -5,9 +5,10 @@
 # ------------------------------------------------------------------------
 
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import List, Optional, Literal, Type
 import torch
+import os
 DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 
 class ModelConfig(BaseModel):
@@ -37,6 +38,17 @@ class ModelConfig(BaseModel):
     cls_loss_coef: float = 1.0
     segmentation_head: bool = False
     mask_downsample_ratio: int = 4
+
+    @field_validator("pretrain_weights", mode="after")
+    @classmethod
+    def expand_path(cls, v: Optional[str]) -> Optional[str]:
+        """
+        Expand user paths (e.g., '~' or paths with separators) but leave simple filenames
+        (like 'rf-detr-base.pth') unchanged so they can match hosted model keys.
+        """
+        if v is None:
+            return v
+        return os.path.realpath(os.path.expanduser(v))
 
 
 class RFDETRBaseConfig(ModelConfig):
@@ -159,6 +171,17 @@ class TrainConfig(BaseModel):
     class_names: List[str] = None
     run_test: bool = True
     segmentation_head: bool = False
+
+    @field_validator("dataset_dir", "output_dir", mode="after")
+    @classmethod
+    def expand_paths(cls, v: str) -> str:
+        """
+        Expand user paths (e.g., '~' or paths with separators) but leave simple filenames
+        (like 'rf-detr-base.pth') unchanged so they can match hosted model keys.
+        """
+        if v is None:
+            return v
+        return os.path.realpath(os.path.expanduser(v))
 
 
 class SegmentationTrainConfig(TrainConfig):
