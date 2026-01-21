@@ -23,7 +23,7 @@ in the end of the file, as python3 can suppress prints with contextlib
 import os
 import contextlib
 import copy
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 import torch

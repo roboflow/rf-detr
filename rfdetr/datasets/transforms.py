@@ -423,7 +423,7 @@ class RandomSelect(object):
         self.transforms2 = transforms2
         self.p = p
 
-    def __call__(self, img: Any, target: Any) -> Any:
+    def __call__(self, img: Any, target: Any) -> Tuple[Any, Any]:
         if random.random() < self.p:
             return self.transforms1(img, target)
         return self.transforms2(img, target)
