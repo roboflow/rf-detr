@@ -6,7 +6,7 @@ Tests three scenarios:
 2. Degenerate: All predictions have zero IoU with GTs (precision = 0.0, recall = 0.0)
 3. Intermediate: Mixed IoU/confidence predictions with hand-calculated expected values
 
-Running this file will create and save visualizations of each scenario in a local 
+Running this file will create and save visualizations of each scenario in a local
 `test_visualizations` directory if you'd like to visually inspect them.
 """
 
@@ -353,27 +353,27 @@ def build_intermediate_scenario():
     - Row 2: Class 2 FPs (no GTs)
 
     Class 1: 10 GTs, 10 matching preds, 0 FPs
-      - True positive IoU levels: 
+      - True positive IoU levels:
           [0.975, 0.925, 0.875, 0.825, 0.775, 0.725, 0.675, 0.625, 0.575, 0.525]
-      - True positive confidence levels: 
+      - True positive confidence levels:
           [0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.0]
-      
+
       - No false positives.
 
     Class 2: 10 GTs, 10 matching preds, 10 FPs
-      - True positive IoU levels: 
+      - True positive IoU levels:
           [0.975, 0.925, 0.875, 0.825, 0.775, 0.725, 0.675, 0.625, 0.575, 0.525]
-      - True positive confidence levels: 
+      - True positive confidence levels:
           [0.95, 0.90, 0.85, 0.80, 0.75, 0.70, 0.65, 0.60, 0.55, 0.50]
 
       - False positive IoU levels: 0.0 (all false positives are completely non-overlapping with any GT)
       - False positive confidences: [0.45, 0.40, 0.35, 0.30, 0.25, 0.20, 0.15, 0.10, 0.05, 0.00]
 
-    
-      How to calculate expected metrics 
+
+      How to calculate expected metrics
       (Note: These calculations were written out by hand without LLM assistance):
         For macro-F1 calculations, pinning IoU threshold to 0.5, area=all, max_dets=100 and sweeping over confidence:
-          
+
           - confidence in (0.95, 1.0]:
             - Class 1: 0 TP, 0 FP, 10 FN. Precision = 0.0, Recall = 0.0, F1 = 0.0
             - Class 2: 0 TP, 0 FP, 10 FN. Precision = 0.0, Recall = 0.0, F1 = 0.0
@@ -383,12 +383,12 @@ def build_intermediate_scenario():
             - Class 1: 0 TP, 0 FP, 10 FN. Precision = 0, Recall = 0, F1 = 0.0
             - Class 2: 1 TP, 0 FP, 9 FN. Precision = 1/1, Recall = 1/10, F1 = 0.1818
             - Mean-Precision = 0.5, Mean-Recall = 0.05, Mean-F1 = 0.0909
-          
+
           ...
 
           Precision in both class 1 and class 2 will remain 1.0,
           and recall will continue to improve
-          until false positives start showing up in class 2 at a confidence of 0.45. 
+          until false positives start showing up in class 2 at a confidence of 0.45.
 
           At a confidence of 0.46, the last entry before false positives show up, it looks like this:
 
@@ -420,7 +420,7 @@ def build_intermediate_scenario():
             - Class 1: 7 TP, 0 FP, 3 FN. Precision = 7/7, Recall = 7/10, F1 = 0.8235
             - Class 2: 10 TP, 4 FP, 0 FN. Precision = 10/14, Recall = 10/10, F1 = 0.8333
             - Mean-Precision = 0.8571, Mean-Recall = 0.85, Mean-F1 = 0.8284
-          
+
           - confidence in (0.20, 0.25]:
             - Class 1: 7 TP, 0 FP, 3 FN. Precision = 7/7, Recall = 7/10, F1 = 0.8235
             - Class 2: 10 TP, 5 FP, 0 FN. Precision = 10/15, Recall = 10/10, F1 = 0.8000
@@ -440,26 +440,26 @@ def build_intermediate_scenario():
             - Class 1: 9 TP, 0 FP, 1 FN. Precision = 9/9, Recall = 9/10, F1 = 0.9474
             - Class 2: 10 TP, 8 FP, 0 FN. Precision = 10/18, Recall = 10/10, F1 = 0.7143
             - Mean-precision = 0.7778, Mean-Recall = 0.95, Mean-F1 = 0.8309
-        
+
           - confidence in (0.00, 0.05]:
             - Class 1: 9 TP, 0 FP, 1 FN. Precision = 9/9, Recall = 9/10, F1 = 0.9474
             - Class 2: 10 TP, 9 FP, 0 FN. Precision = 10/19, Recall = 10/10, F1 = 0.6897
             - Mean-Precision = 0.7632, Mean-Recall = 0.95, Mean-F1 = 0.8186
-        
+
           - confidence = 0.00:
             - Class 1: 10 TP, 0 FP, 0 FN. Precision = 10/10, Recall = 10/10, F1 = 1.0
             - Class 2: 10 TP, 10 FP, 0 FN. Precision = 10/20, Recall = 10/10, F1 = 0.6667
             - Mean-Precision = 0.75, Mean-Recall = 1.0, Mean-F1 = 0.8334
 
         Suprisingly, if confidence of 0 ties with confidence of 0.46 for the best macro-F1.
-        So an algorithm that sweeps confidence from 0 to 1 will probably just choose 
+        So an algorithm that sweeps confidence from 0 to 1 will probably just choose
         confidence of 0.0, resulting in a Mean-F1 of 0.8334, a Mean-Precision of 0.75,
         and a Mean-Recall of 1.0.
 
         I have set these values as the expected metrics for this intermediate scenario.
-        The test passes if the precision and recall values are within 0.01 of the 
+        The test passes if the precision and recall values are within 0.01 of the
         expected values.
-            
+
         """
     image_id = 1
     n_boxes = 10
