@@ -50,7 +50,7 @@ dependencies = [
     "supervision",
     "matplotlib",
     "roboflow",
-    "pillow-avif-plugin<1.5.3"
+    "pillow-avif-plugin<1.5.3" # TODO: # Temporary pin. pillow-avif-plugin 1.5.3 fails to install in CI due to a broken wheel. Remove once the upstream issue is fixed.
 ]
 
 [project.optional-dependencies]
