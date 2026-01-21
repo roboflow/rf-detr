@@ -29,27 +29,6 @@ BOX_SPACING = 250
 ROW_SPACING = 260
 
 
-@pytest.fixture
-def coco_gt_fixture():
-    """Fixture for creating a COCO ground truth object."""
-    coco_gt = COCO()
-    coco_gt.dataset = {
-        "images": [],
-        "annotations": [],
-        "categories": [],
-    }
-    coco_gt.createIndex()
-    return coco_gt
-
-
-@pytest.fixture
-def coco_eval_fixture(coco_gt_fixture):
-    """Fixture for creating a COCOeval object."""
-    coco_dt = coco_gt_fixture
-    coco_eval = COCOeval(coco_gt_fixture, coco_dt, iouType="bbox")
-    return coco_eval
-
-
 def _create_coco_gt(
     images: list[dict], annotations: list[dict], categories: list[dict]
 ) -> COCO:
@@ -239,7 +218,8 @@ def _save_visualization(
     print(f"Saved visualization to {VIS_DIR}/{scenario_name}.png")
 
 
-def _build_perfect_scenario():
+@pytest.fixture
+def perfect_scenario_cocoeval():
     """
     Build the "perfect" scenario: all predictions nearly perfectly match GTs.
 
@@ -299,7 +279,8 @@ def _build_perfect_scenario():
     return _initialize_coco_eval(coco_gt, predictions)
 
 
-def _build_degenerate_scenario():
+@pytest.fixture
+def degenerate_scenario_cocoeval():
     """
     Build the degenerate scenario: all predictions have zero IoU with GTs.
 
@@ -364,7 +345,8 @@ def _build_degenerate_scenario():
     return _initialize_coco_eval(coco_gt, predictions)
 
 
-def _build_intermediate_scenario():
+@pytest.fixture
+def intermediate_scenario_cocoeval():
     """
     Build the intermediate scenario: mixed IoU/confidence predictions.
 
@@ -564,37 +546,31 @@ def _build_intermediate_scenario():
     return _initialize_coco_eval(coco_gt, predictions)
 
 
-class TestPerfectScenario:
+def test_perfect_scenario(perfect_scenario_cocoeval):
     """
     Test that perfect predictions (exact GT matches) yield perfect metrics.
 
     Expected: Precision = 1.0, Recall = 1.0
     """
+    results = coco_extended_metrics(perfect_scenario_cocoeval)
 
-    def test_perfect_metrics(self, coco_eval_fixture):
-        coco_eval = _build_perfect_scenario()
-        results = coco_extended_metrics(coco_eval)
-
-        assert results["precision"] == pytest.approx(1.0, abs=0.01)
-        assert results["recall"] == pytest.approx(1.0, abs=0.01)
+    assert results["precision"] == pytest.approx(1.0, abs=0.01)
+    assert results["recall"] == pytest.approx(1.0, abs=0.01)
 
 
-class TestDegenerateScenario:
+def test_degenerate_scenario(degenerate_scenario_cocoeval):
     """
     Test that completely wrong predictions (zero IoU) yield zero metrics.
 
     Expected: Precision = 0.0, Recall = 0.0
     """
+    results = coco_extended_metrics(degenerate_scenario_cocoeval)
 
-    def test_degenerate_metrics(self, coco_eval_fixture):
-        coco_eval = _build_degenerate_scenario()
-        results = coco_extended_metrics(coco_eval)
-
-        assert results["precision"] == pytest.approx(0.0, abs=0.01)
-        assert results["recall"] == pytest.approx(0.0, abs=0.01)
+    assert results["precision"] == pytest.approx(0.0, abs=0.01)
+    assert results["recall"] == pytest.approx(0.0, abs=0.01)
 
 
-class TestIntermediateScenario:
+def test_intermediate_scenario(intermediate_scenario_cocoeval):
     """
     Test intermediate scenario with verifiable expected metrics.
 
@@ -611,19 +587,16 @@ class TestIntermediateScenario:
     - Best macro-F1 = 0.8334 (at confidence 0.0 or 0.46)
     - At confidence 0.0: Mean-Precision = 0.75, Mean-Recall = 1.0
     """
+    results = coco_extended_metrics(intermediate_scenario_cocoeval)
 
-    def test_intermediate_metrics(self, coco_eval_fixture):
-        coco_eval = _build_intermediate_scenario()
-        results = coco_extended_metrics(coco_eval)
+    assert results["precision"] == pytest.approx(0.75, abs=0.01)
+    assert results["recall"] == pytest.approx(1.0, abs=0.01)
 
-        assert results["precision"] == pytest.approx(0.75, abs=0.01)
-        assert results["recall"] == pytest.approx(1.0, abs=0.01)
+    class_map = results["class_map"]
+    per_class_metrics = {entry["class"]: entry for entry in class_map if entry["class"] != "all"}
 
-        class_map = results["class_map"]
-        per_class_metrics = {entry["class"]: entry for entry in class_map if entry["class"] != "all"}
+    assert per_class_metrics["class_1"]["precision"] == pytest.approx(1.0, abs=0.01)
+    assert per_class_metrics["class_1"]["recall"] == pytest.approx(1.0, abs=0.01)
 
-        assert per_class_metrics["class_1"]["precision"] == pytest.approx(1.0, abs=0.01)
-        assert per_class_metrics["class_1"]["recall"] == pytest.approx(1.0, abs=0.01)
-
-        assert per_class_metrics["class_2"]["precision"] == pytest.approx(0.5, abs=0.01)
-        assert per_class_metrics["class_2"]["recall"] == pytest.approx(1.0, abs=0.01)
+    assert per_class_metrics["class_2"]["precision"] == pytest.approx(0.5, abs=0.01)
+    assert per_class_metrics["class_2"]["recall"] == pytest.approx(1.0, abs=0.01)
