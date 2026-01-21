@@ -536,7 +536,7 @@ class Model:
 
     def export(self, output_dir="output", infer_dir=None, simplify=False,  backbone_only=False, opset_version=17, verbose=True, force=False, shape=None, batch_size=1, **kwargs):
         """Export the trained model to ONNX format"""
-        print(f"Exporting model to ONNX format")
+        print("Exporting model to ONNX format")
         try:
             from rfdetr.deploy.export import export_onnx, onnx_simplify, make_infer_image
         except ImportError:

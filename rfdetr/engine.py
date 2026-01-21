@@ -18,7 +18,6 @@
 Train and eval functions used in main.py
 """
 import math
-import sys
 from typing import Iterable
 import random
 

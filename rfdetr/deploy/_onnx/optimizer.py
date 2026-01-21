@@ -16,7 +16,6 @@ from copy import deepcopy
 
 import numpy as np
 import onnx
-import torch
 from onnx import shape_inference
 import onnx_graphsurgeon as gs
 from polygraphy.backend.onnx.loader import fold_constants

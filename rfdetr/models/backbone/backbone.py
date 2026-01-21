@@ -16,15 +16,12 @@
 """
 Backbone modules.
 """
-from functools import partial
 import torch
 import torch.nn.functional as F
-from torch import nn
 
-from transformers import AutoModel, AutoProcessor, AutoModelForCausalLM, AutoConfig, AutoBackbone
-from peft import LoraConfig, get_peft_model, PeftModel
+from peft import PeftModel
 
-from rfdetr.util.misc import NestedTensor, is_main_process
+from rfdetr.util.misc import NestedTensor
 
 from rfdetr.models.backbone.base import BackboneBase
 from rfdetr.models.backbone.projector import MultiScaleProjector

@@ -11,14 +11,9 @@
 export ONNX model and TensorRT engine for deployment
 """
 import os
-import ast
 import random
-import argparse
 import subprocess
 import torch.nn as nn
-from pathlib import Path
-import time
-from collections import defaultdict
 
 import onnx
 import torch
@@ -31,7 +26,6 @@ import rfdetr.datasets.transforms as T
 from rfdetr.models import build_model
 from rfdetr.deploy._onnx import OnnxOptimizer
 import re
-import sys
 
 
 def run_command_shell(command, dry_run:bool = False) -> int:
@@ -121,19 +115,19 @@ def onnx_simplify(onnx_dir:str, input_names, input_tensors, force=False):
 
 
 def trtexec(onnx_dir:str, args) -> None:
-    engine_dir = onnx_dir.replace(".onnx", f".engine")
+    engine_dir = onnx_dir.replace(".onnx", ".engine")
 
     # Base trtexec command
     trt_command = " ".join([
         "trtexec",
             f"--onnx={onnx_dir}",
             f"--saveEngine={engine_dir}",
-            f"--memPoolSize=workspace:4096 --fp16",
-            f"--useCudaGraph --useSpinWait --warmUp=500 --avgRuns=1000 --duration=10",
+            "--memPoolSize=workspace:4096 --fp16",
+            "--useCudaGraph --useSpinWait --warmUp=500 --avgRuns=1000 --duration=10",
             f"{'--verbose' if args.verbose else ''}"])
 
     if args.profile:
-        profile_dir = onnx_dir.replace(".onnx", f".nsys-rep")
+        profile_dir = onnx_dir.replace(".onnx", ".nsys-rep")
         # Wrap with nsys profile command
         command = " ".join([
             "nsys profile",

@@ -13,8 +13,6 @@
 from collections import OrderedDict, Counter, defaultdict
 import json
 import os
-import pdb
-from posixpath import join
 import sys
 
 
@@ -32,7 +30,7 @@ from functools import partial
 import time
 
 
-from typing import Any, Callable, List, Optional, Union
+from typing import Any, Callable, List, Union
 from numbers import Number
 
 Handle = Callable[[List[Any], List[Any]], Union[typing.Counter[str], Number]]
