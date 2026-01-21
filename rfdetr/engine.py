@@ -178,6 +178,61 @@ def train_one_epoch(
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
 
+def sweep_confidence_thresholds(per_class_data, conf_thresholds, classes_with_gt):
+    """Sweep confidence thresholds and compute precision/recall/F1 at each."""
+    num_classes = len(per_class_data)
+    results = []
+
+    for conf_thresh in conf_thresholds:
+        per_class_precisions = []
+        per_class_recalls = []
+        per_class_f1s = []
+
+        for k in range(num_classes):
+            data = per_class_data[k]
+            scores = data['scores']
+            matches = data['matches']
+            ignore = data['ignore']
+            total_gt = data['total_gt']
+
+            above_thresh = scores >= conf_thresh
+            valid = above_thresh & ~ignore
+
+            valid_matches = matches[valid]
+
+            tp = np.sum(valid_matches != 0)
+            fp = np.sum(valid_matches == 0)
+            fn = total_gt - tp
+
+            precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+            recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+            f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+
+            per_class_precisions.append(precision)
+            per_class_recalls.append(recall)
+            per_class_f1s.append(f1)
+
+        if len(classes_with_gt) > 0:
+            macro_precision = np.mean([per_class_precisions[k] for k in classes_with_gt])
+            macro_recall = np.mean([per_class_recalls[k] for k in classes_with_gt])
+            macro_f1 = np.mean([per_class_f1s[k] for k in classes_with_gt])
+        else:
+            macro_precision = 0.0
+            macro_recall = 0.0
+            macro_f1 = 0.0
+
+        results.append({
+            'confidence_threshold': conf_thresh,
+            'macro_f1': macro_f1,
+            'macro_precision': macro_precision,
+            'macro_recall': macro_recall,
+            'per_class_prec': np.array(per_class_precisions),
+            'per_class_rec': np.array(per_class_recalls),
+        })
+
+    return results
+
+
 def coco_extended_metrics(coco_eval):
     """
     Compute precision/recall by sweeping confidence thresholds to maximize macro-F1.
@@ -240,53 +295,9 @@ def coco_extended_metrics(coco_eval):
     conf_thresholds = np.linspace(0.0, 1.0, 101)
     classes_with_gt = [k for k in range(num_classes) if per_class_data[k]['total_gt'] > 0]
 
-    confidence_sweep_metric_dicts = []
-    for conf_thresh in conf_thresholds:
-        per_class_precisions = []
-        per_class_recalls = []
-        per_class_f1s = []
-
-        for k in range(num_classes):
-            data = per_class_data[k]
-            scores = data['scores']
-            matches = data['matches']
-            ignore = data['ignore']
-            total_gt = data['total_gt']
-
-            above_thresh = scores >= conf_thresh
-            valid = above_thresh & ~ignore
-
-            valid_matches = matches[valid]
-
-            tp = np.sum(valid_matches != 0)
-            fp = np.sum(valid_matches == 0)
-            fn = total_gt - tp
-
-            precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-            recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-            f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
-
-            per_class_precisions.append(precision)
-            per_class_recalls.append(recall)
-            per_class_f1s.append(f1)
-
-        if len(classes_with_gt) > 0:
-            macro_precision = np.mean([per_class_precisions[k] for k in classes_with_gt])
-            macro_recall = np.mean([per_class_recalls[k] for k in classes_with_gt])
-            macro_f1 = np.mean([per_class_f1s[k] for k in classes_with_gt])
-        else:
-            macro_precision = 0.0
-            macro_recall = 0.0
-            macro_f1 = 0.0
-
-        confidence_sweep_metric_dicts.append({
-            'confidence_threshold': conf_thresh,
-            'macro_f1': macro_f1,
-            'macro_precision': macro_precision,
-            'macro_recall': macro_recall,
-            'per_class_prec': np.array(per_class_precisions),
-            'per_class_rec': np.array(per_class_recalls),
-        })
+    confidence_sweep_metric_dicts = sweep_confidence_thresholds(
+        per_class_data, conf_thresholds, classes_with_gt
+    )
 
     best = max(confidence_sweep_metric_dicts, key=lambda x: x['macro_f1'])
 
