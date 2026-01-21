@@ -14,13 +14,11 @@ import math
 from pathlib import Path
 
 import pytest
-import numpy as np
-import supervision as sv
-from PIL import Image
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 
 from rfdetr.engine import coco_extended_metrics
+from rfdetr.util.visualize import save_gt_predictions_visualization
 
 
 VIS_DIR = Path("test_visualizations")
@@ -97,19 +95,6 @@ def _initialize_coco_eval(coco_gt: COCO, predictions: list[dict]) -> COCOeval:
     return coco_eval
 
 
-def _xywh_to_xyxy(boxes: list[list[float]]) -> np.ndarray:
-    """Convert list of [x, y, w, h] boxes to numpy array of [x1, y1, x2, y2]."""
-    if not boxes:
-        return np.empty((0, 4))
-    arr = np.array(boxes)
-    xyxy = np.zeros_like(arr)
-    xyxy[:, 0] = arr[:, 0]
-    xyxy[:, 1] = arr[:, 1]
-    xyxy[:, 2] = arr[:, 0] + arr[:, 2]
-    xyxy[:, 3] = arr[:, 1] + arr[:, 3]
-    return xyxy
-
-
 def _save_visualization(
     scenario_name: str,
     image_width: int,
@@ -121,101 +106,19 @@ def _save_visualization(
     pred_confidences: list[float],
     pred_ious: list[float | None],
 ) -> None:
-    """
-    Save a visualization image showing both GT and prediction boxes.
-
-    Boxes are labeled with class ID and confidence (for predictions).
-    For predictions with known IoU, the IoU value is also shown.
-    """
-    VIS_DIR.mkdir(exist_ok=True)
-
-    top_padding = 60
-    image = np.zeros((image_height + top_padding, image_width, 3), dtype=np.uint8)
-
-    gt_boxes_offset = [[x, y + top_padding, w, h] for x, y, w, h in gt_boxes]
-    pred_boxes_offset = [[x, y + top_padding, w, h] for x, y, w, h in pred_boxes]
-
-    gt_xyxy = _xywh_to_xyxy(gt_boxes_offset)
-    pred_xyxy = _xywh_to_xyxy(pred_boxes_offset)
-
-    gt_detections = None
-    pred_detections = None
-
-    if len(gt_xyxy) > 0:
-        gt_detections = sv.Detections(
-            xyxy=gt_xyxy,
-            class_id=np.array(gt_class_ids),
-        )
-
-    if len(pred_xyxy) > 0:
-        pred_detections = sv.Detections(
-            xyxy=pred_xyxy,
-            class_id=np.array(pred_class_ids),
-            confidence=np.array(pred_confidences),
-        )
-
-    # Index 0 is unused because class IDs start at 1
-    gt_colors = sv.ColorPalette(
-        [
-            sv.Color(128, 128, 128), # dummy color for index 0
-            sv.Color(0, 255, 100),
-            sv.Color(0, 200, 255),
-        ]
+    """Wrapper to call save_gt_predictions_visualization with VIS_DIR."""
+    save_gt_predictions_visualization(
+        scenario_name=scenario_name,
+        image_width=image_width,
+        image_height=image_height,
+        gt_boxes=gt_boxes,
+        gt_class_ids=gt_class_ids,
+        pred_boxes=pred_boxes,
+        pred_class_ids=pred_class_ids,
+        pred_confidences=pred_confidences,
+        pred_ious=pred_ious,
+        save_dir=VIS_DIR,
     )
-    pred_colors = sv.ColorPalette(
-        [
-            sv.Color(128, 128, 128), # dummy color for index 0
-            sv.Color(255, 100, 50),
-            sv.Color(255, 50, 200),
-        ]
-    )
-
-    gt_box_annotator = sv.BoxAnnotator(
-        color=gt_colors, thickness=3, color_lookup=sv.ColorLookup.CLASS
-    )
-    pred_box_annotator = sv.BoxAnnotator(
-        color=pred_colors, thickness=3, color_lookup=sv.ColorLookup.CLASS
-    )
-
-    gt_label_annotator = sv.LabelAnnotator(
-        color=gt_colors,
-        text_color=sv.Color.BLACK,
-        text_scale=0.5,
-        text_padding=3,
-        text_position=sv.Position.TOP_LEFT,
-        color_lookup=sv.ColorLookup.CLASS,
-    )
-    pred_label_annotator = sv.LabelAnnotator(
-        color=pred_colors,
-        text_color=sv.Color.BLACK,
-        text_scale=0.5,
-        text_padding=3,
-        text_position=sv.Position.TOP_RIGHT,
-        color_lookup=sv.ColorLookup.CLASS,
-    )
-
-    gt_labels = [f"c{class_id}" for class_id in gt_class_ids]
-
-    pred_labels = []
-    for class_id, conf, iou in zip(pred_class_ids, pred_confidences, pred_ious):
-        if iou is not None:
-            pred_labels.append(f"c{class_id}\nconf={conf:.3f}\niou={iou:.3f}")
-        else:
-            pred_labels.append(f"c{class_id}\nconf={conf:.3f}")
-
-    if gt_detections is not None:
-        image = gt_box_annotator.annotate(scene=image, detections=gt_detections)
-        image = gt_label_annotator.annotate(
-            scene=image, detections=gt_detections, labels=gt_labels
-        )
-    if pred_detections is not None:
-        image = pred_box_annotator.annotate(scene=image, detections=pred_detections)
-        image = pred_label_annotator.annotate(
-            scene=image, detections=pred_detections, labels=pred_labels
-        )
-
-    Image.fromarray(image).save(VIS_DIR / f"{scenario_name}.png")
-    print(f"Saved visualization to {VIS_DIR}/{scenario_name}.png")
 
 
 @pytest.fixture
@@ -454,7 +357,7 @@ def intermediate_scenario_cocoeval():
             - Class 2: 10 TP, 10 FP, 0 FN. Precision = 10/20, Recall = 10/10, F1 = 0.6667
             - Mean-Precision = 0.75, Mean-Recall = 1.0, Mean-F1 = 0.8334
 
-        Suprisingly, if confidence of 0 ties with confidence of 0.46 for the best macro-F1.
+        Suprisingly, confidence=0 ties with confidence=0.46 for the best macro-F1.
         So an algorithm that sweeps confidence from 0 to 1 will probably just choose
         confidence of 0.0, resulting in a Mean-F1 of 0.8334, a Mean-Precision of 0.75,
         and a Mean-Recall of 1.0.
