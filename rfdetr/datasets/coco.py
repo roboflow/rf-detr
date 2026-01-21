@@ -273,7 +273,7 @@ def build(image_set, args, resolution):
 
 def build_roboflow_from_coco(image_set, args, resolution):
     """Build a Roboflow COCO-format dataset.
-    
+
     This uses Roboflow's standard directory structure
     (train/valid/test folders with _annotations.coco.json).
     """
