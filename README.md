@@ -117,6 +117,8 @@ RF-DETR achieves state-of-the-art results in both object detection and instance 
 
 ### Detection
 
+RF-DETR provides multiple model sizes, ranging from Nano to 2XLarge. To use a different model size, replace the class name in the code snippet below with another class from the table.
+
 ```python
 import requests
 import supervision as sv
@@ -150,6 +152,8 @@ annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labe
 
 ### Segmantation
 
+RF-DETR supports instance segmentation with model sizes from Nano to 2XLarge. To use a different model size, replace the class name in the code snippet below with another class from the table.
+
 ```python
 import requests
 import supervision as sv
@@ -182,6 +186,8 @@ annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labe
 | 2XL  | `RFDETRSeg2XLarge`    | 73.1                 | 49.9                    | 21.8         | 38.6       | 768x768    |
 
 ### Train
+
+RF-DETR supports training for both object detection and instance segmentation. You can train models in [Google Colab](https://colab.research.google.com/github/roboflow-ai/notebooks/blob/main/notebooks/how-to-finetune-rf-detr-on-detection-dataset.ipynb) or directly on the Roboflow platform. Below you will find a step-by-step video fine-tuning tutorial.
 
 [![rf-detr-tutorial-banner](https://github.com/user-attachments/assets/555a45c3-96e8-4d8a-ad29-f23403c8edfd)](https://youtu.be/-OvpdLAElFA)
 
