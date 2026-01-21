@@ -312,16 +312,16 @@ class RFDETR:
 
         with torch.no_grad():
             if self._is_optimized_for_inference:
-                predictions = self.model.inference_model(batch_tensor.to(dtype=self._optimized_dtype))
+                model_predictions = self.model.inference_model(batch_tensor.to(dtype=self._optimized_dtype))
             else:
-                predictions = self.model.model(batch_tensor)
-            if isinstance(predictions, tuple):
+                model_predictions = self.model.model(batch_tensor)
+            if isinstance(model_predictions, tuple):
                 predictions = {
-                    "pred_logits": predictions[1],
-                    "pred_boxes": predictions[0],
+                    "pred_logits": model_predictions[1],
+                    "pred_boxes": model_predictions[0],
                 }
-                if len(predictions) == 3:
-                    predictions["pred_masks"] = predictions[2]
+                if len(model_predictions) == 3:
+                    predictions["pred_masks"] = model_predictions[2]
             target_sizes = torch.tensor(orig_sizes, device=self.model.device)
             results = self.model.postprocess(predictions, target_sizes=target_sizes)
 
@@ -338,7 +338,7 @@ class RFDETR:
 
             if "masks" in result:
                 masks = result["masks"]
-                masks = masks[keep]
+                masks = masks[keep.cpu()]
 
                 detections = sv.Detections(
                     xyxy=boxes.float().cpu().numpy(),
