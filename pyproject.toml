@@ -120,4 +120,13 @@ select = [
     "W",  # pycodestyle warnings
     "F",  # pyflakes
 ]
-ignore = []
+ignore = [
+    "E501",  # todo: will be fixed with enabling ruff-format
+    "E722",  # todo: Do not use bare `except`
+    "E741",  # todo: Ambiguous variable name: `...`
+    "F401",  # todo: `...` imported but unused; consider removing, adding to `__all__`, or using a redundant alias
+    "F403",  # todo: `from ... import *` used; unable to detect undefined names
+    "F405",  # todo: `...` may be undefined, or defined from star imports
+    "E721",  # todo: Use `is` and `is not` for type comparisons, or `isinstance()` for isinstance checks
+    "F821",  # todo: Undefined name `...`
+]
