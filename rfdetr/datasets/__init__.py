@@ -27,7 +27,7 @@ def get_coco_api_from_dataset(dataset):
 
 
 def build_dataset(image_set, args, resolution):
-    if args.dataset_file == 'coco':
+    if args.dataset_file == "coco":
         return build_coco(image_set, args, resolution)
     if args.dataset_file == 'o365':
         return build_o365(image_set, args, resolution)
