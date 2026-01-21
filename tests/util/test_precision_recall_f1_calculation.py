@@ -2,7 +2,7 @@
 Test suite for precision, recall, and F1 calculation in coco_extended_metrics.
 
 Tests three scenarios:
-1. Perfect: All predictions have IoU > 0.95 and match 1-to1 with GTs (precision = 1.0, recall = 1.0)
+1. Perfect: All predictions have IoU > 0.95 and match 1-to-1 with GTs (precision = 1.0, recall = 1.0)
 2. Degenerate: All predictions have zero IoU with GTs (precision = 0.0, recall = 0.0)
 3. Intermediate: Mixed IoU/confidence predictions with hand-calculated expected values
 
@@ -608,5 +608,3 @@ class TestIntermediateScenario:
         assert per_class_metrics["class_2"]["recall"] == pytest.approx(1.0, abs=0.01)
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
