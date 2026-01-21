@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rfdetr"
-version = "1.3.0"
+version = "1.4.0rc0"
 description = "RF-DETR"
 readme = "README.md"
 authors = [
@@ -36,29 +36,21 @@ classifiers = [
 keywords = ["machine-learning", "deep-learning", "vision", "ML", "DL", "AI", "DETR", "RF-DETR", "Roboflow"]
 
 dependencies = [
-    "cython",
     "pycocotools",
-    "torch>=1.13.0",
+    "torch>=1.13.0,<=2.8.0", # TODO: Torch >=2.9.0 is excluded due to known issues. PRs that help lift this restriction are welcome.
     "torchvision>=0.14.0",
-    "fairscale",
     "scipy",
-    "timm",
     "tqdm",
     "numpy",
-    "accelerate",
     "transformers",
     "peft",
-    "ninja",
-    "einops",
-    "pandas",
-    "pylabel",
     "polygraphy",
-    "open_clip_torch",
     "rf100vl",
     "pydantic",
     "supervision",
     "matplotlib",
-    "roboflow"
+    "roboflow",
+    "pillow-avif-plugin<1.5.3" # TODO: # Temporary pin. pillow-avif-plugin 1.5.3 fails to install in CI due to a broken wheel. Remove once the upstream issue is fixed.
 ]
 
 [project.optional-dependencies]
