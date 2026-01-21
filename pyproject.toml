@@ -11,7 +11,7 @@ authors = [
     {name = "Roboflow, Inc", email = "peter@roboflow.com"}
 ]
 license = {text = "Apache License 2.0"}
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -72,19 +72,27 @@ metrics = [
     "tensorboard>=2.13.0",
     "wandb"
 ]
+
+[dependency-groups]
+build = [
+    "twine>=5.1.1",
+    "wheel>=0.40",
+    "build>=0.10"
+]
+
+tests = [
+  "pytest>=7.2.2,<9",
+  "pytest-cov>=4,<8",
+]
+
 docs = [
-    "mkdocs-material[imaging]>=9.5.5",
+    "mkdocs-material[imaging]>=9.7",
     "mkdocstrings>=0.25.2,<0.30.0",
     "mkdocstrings-python>=1.10.9",
     "mike>=2.0.0",
     "mkdocs-jupyter>=0.24.3",
     "mkdocs-git-committers-plugin-2>=2.4.1; python_version >= '3.8' and python_version < '4'",
     "mkdocs-git-revision-date-localized-plugin>=1.2.4"
-]
-build = [
-    "twine>=5.1.1",
-    "wheel>=0.40",
-    "build>=0.10"
 ]
 
 [project.urls]

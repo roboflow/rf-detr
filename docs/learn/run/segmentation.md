@@ -57,7 +57,7 @@ You can run models trained with the RF-DETR-Seg (Preview) architecture with [Inf
 
     def callback(frame, index):
         detections = model.predict(frame[:, :, ::-1], threshold=0.5)
-            
+
         labels = [
             f"{COCO_CLASSES[class_id]} {confidence:.2f}"
             for class_id, confidence
@@ -97,7 +97,7 @@ You can run models trained with the RF-DETR-Seg (Preview) architecture with [Inf
             break
 
         detections = model.predict(frame[:, :, ::-1], threshold=0.5)
-        
+
         labels = [
             f"{COCO_CLASSES[class_id]} {confidence:.2f}"
             for class_id, confidence
@@ -136,7 +136,7 @@ You can run models trained with the RF-DETR-Seg (Preview) architecture with [Inf
             break
 
         detections = model.predict(frame[:, :, ::-1], threshold=0.5)
-        
+
         labels = [
             f"{COCO_CLASSES[class_id]} {confidence:.2f}"
             for class_id, confidence
