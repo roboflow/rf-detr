@@ -313,7 +313,7 @@ def coco_extended_metrics(coco_eval):
         ap_50    = float(np.nanmean(p_masked[iou50_idx]))
 
         if (
-            np.isnan(ap_50_95) 
+            np.isnan(ap_50_95)
             or np.isnan(ap_50)
             or np.isnan(best['per_class_prec'][k])
             or np.isnan(best['per_class_rec'][k])
