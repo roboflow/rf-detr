@@ -38,7 +38,7 @@ The below tables shows how RF-DETR performs when validated on the Microsoft COCO
 
 ### Object Detection Benchmarks
 
-
+<img width="2934" height="2926" alt="rf_detr_1-4_latency_accuracy_object_detection" src="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png" />
 
 | Architecture | COCO AP<sub>50</sub> |  COCO AP<sub>50:95</sub>   |  RF100VL AP<sub>50</sub>   | RF100VL AP<sub>50:95</sub>  |  Latency (ms)   |   Params (M) |   Resolution  |
 |:------------:|:--------------------:|:--------------------------:|:--------------------------:|:---------------------------:|:---------------:|:------------:|:-------------:|
@@ -71,6 +71,7 @@ The below tables shows how RF-DETR performs when validated on the Microsoft COCO
 
 ### Instance Segmentation Benchmarks
 
+<img width="2932" height="1463" alt="rf_detr_1-4_latency_accuracy_instance_segmentation" src="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_instance_segmentation.png" />
 
 |   Architecture   | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |
 |:----------------:|:--------------------:|:-----------------------:|:------------:|:----------:|:----------:|
