@@ -777,7 +777,7 @@ def build_model(args):
     # For more details on this, check the following discussion
     # https://github.com/facebookresearch/detr/issues/108#issuecomment-650269223
     num_classes = args.num_classes + 1
-    device = torch.device(args.device)
+    torch.device(args.device)
 
 
     backbone = build_backbone(

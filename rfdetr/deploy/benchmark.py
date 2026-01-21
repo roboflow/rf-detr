@@ -355,8 +355,8 @@ def infer_engine(model, coco_evaluator, time_profile, prefix, img_list, device, 
 
         samples = image_tensor[None].to(device)
         _, _, h, w = samples.shape
-        im_shape = torch.Tensor(np.array([h, w]).reshape((1, 2)).astype(np.float32)).to(device)
-        scale_factor = torch.Tensor(np.array([h / height, w / width]).reshape((1, 2)).astype(np.float32)).to(device)
+        torch.Tensor(np.array([h, w]).reshape((1, 2)).astype(np.float32)).to(device)
+        torch.Tensor(np.array([h / height, w / width]).reshape((1, 2)).astype(np.float32)).to(device)
 
         time_profile.reset()
         with time_profile:

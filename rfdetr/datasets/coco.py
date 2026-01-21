@@ -246,9 +246,9 @@ def build(image_set, args, resolution):
     img_folder, ann_file = PATHS[image_set.split("_")[0]]
 
     try:
-        square_resize = args.square_resize
+        pass
     except:
-        square_resize = False
+        pass
 
     try:
         square_resize_div_64 = args.square_resize_div_64
@@ -281,7 +281,6 @@ def build(image_set, args, resolution):
 def build_roboflow(image_set, args, resolution):
     root = Path(args.dataset_dir)
     assert root.exists(), f'provided Roboflow path {root} does not exist'
-    mode = 'instances'
     PATHS = {
         "train": (root / "train", root / "train" / "_annotations.coco.json"),
         "val": (root /  "valid", root / "valid" / "_annotations.coco.json"),
@@ -291,9 +290,9 @@ def build_roboflow(image_set, args, resolution):
     img_folder, ann_file = PATHS[image_set.split("_")[0]]
 
     try:
-        square_resize = args.square_resize
+        pass
     except:
-        square_resize = False
+        pass
 
     try:
         square_resize_div_64 = args.square_resize_div_64

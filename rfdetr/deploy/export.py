@@ -141,7 +141,7 @@ def trtexec(onnx_dir:str, args) -> None:
         command = trt_command
 
     output = run_command_shell(command, args.dry_run)
-    stats = parse_trtexec_output(output.stdout)
+    parse_trtexec_output(output.stdout)
 
 def parse_trtexec_output(output_text):
     print(output_text)

@@ -27,9 +27,9 @@ def build_o365_raw(image_set, args, resolution):
     img_folder, ann_file = PATHS[image_set]
 
     try:
-        square_resize = args.square_resize
+        pass
     except:
-        square_resize = False
+        pass
 
     try:
         square_resize_div_64 = args.square_resize_div_64

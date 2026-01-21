@@ -201,11 +201,11 @@ def coco_extended_metrics(coco_eval):
 
     macro_precision = float(np.nanmean(prec[best_j]))
     macro_recall    = float(rec_thrs[best_j])
-    macro_f1        = float(f1_macro[best_j])
+    float(f1_macro[best_j])
 
     score_vec = S[iou50_idx, best_j, :, area_idx, maxdet_idx].astype(float)
     score_vec[prec_raw[best_j] < 0] = np.nan
-    score_thr = float(np.nanmean(score_vec))
+    float(np.nanmean(score_vec))
 
     map_50_95, map_50 = float(coco_eval.stats[0]), float(coco_eval.stats[1])
 

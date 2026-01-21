@@ -557,7 +557,7 @@ def flop_count(
 
 def warmup(model, inputs, N=10):
     for i in range(N):
-        out = model(inputs)
+        model(inputs)
     torch.cuda.synchronize()
 
 
@@ -565,7 +565,7 @@ def measure_time(model, inputs, N=10):
     warmup(model, inputs)
     s = time.time()
     for i in range(N):
-        out = model(inputs)
+        model(inputs)
     torch.cuda.synchronize()
     t = (time.time() - s) / N
     return t
