@@ -18,7 +18,7 @@ import torchvision
 from .coco import build as build_coco
 from .o365 import build_o365
 from .coco import build_roboflow_from_coco
-from .yolo import build_roboflow_yolo
+from .yolo import build_roboflow_from_yolo, YoloDetection
 
 
 def get_coco_api_from_dataset(dataset):
@@ -26,6 +26,8 @@ def get_coco_api_from_dataset(dataset):
         if isinstance(dataset, torch.utils.data.Subset):
             dataset = dataset.dataset
     if isinstance(dataset, torchvision.datasets.CocoDetection):
+        return dataset.coco
+    if isinstance(dataset, YoloDetection):
         return dataset.coco
 
 
@@ -72,8 +74,7 @@ def build_roboflow(image_set, args, resolution):
     
     if dataset_format == "coco":
         return build_roboflow_from_coco(image_set, args, resolution)
-    else:  # yolo
-        return build_roboflow_yolo(image_set, args, resolution)
+    return build_roboflow_from_yolo(image_set, args, resolution)
 
 
 def build_dataset(image_set, args, resolution):

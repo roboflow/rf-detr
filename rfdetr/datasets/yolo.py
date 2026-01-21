@@ -113,6 +113,187 @@ class ConvertYolo:
         return image, target_out
 
 
+class YoloCoco:
+    """
+    A minimal COCO-compatible API wrapper for YOLO datasets.
+    
+    This provides the necessary interface for CocoEvaluator to work with
+    YOLO format datasets.
+    """
+    
+    def __init__(self, classes: list, dataset: sv.DetectionDataset):
+        self.classes = classes
+        self.sv_dataset = dataset
+        
+        # Build the dataset dict that COCO API expects
+        self.dataset = self._build_coco_dataset()
+        self.imgs = {img["id"]: img for img in self.dataset["images"]}
+        self.anns = {ann["id"]: ann for ann in self.dataset["annotations"]}
+        self.cats = {cat["id"]: cat for cat in self.dataset["categories"]}
+        
+        # Build imgToAnns index
+        self.imgToAnns = {}
+        for ann in self.dataset["annotations"]:
+            img_id = ann["image_id"]
+            if img_id not in self.imgToAnns:
+                self.imgToAnns[img_id] = []
+            self.imgToAnns[img_id].append(ann)
+        
+        # Ensure all images have an entry
+        for img_id in self.imgs:
+            if img_id not in self.imgToAnns:
+                self.imgToAnns[img_id] = []
+        
+        # Build catToImgs index
+        self.catToImgs = {}
+        for cat_id in self.cats:
+            self.catToImgs[cat_id] = []
+        for ann in self.dataset["annotations"]:
+            cat_id = ann["category_id"]
+            img_id = ann["image_id"]
+            if img_id not in self.catToImgs[cat_id]:
+                self.catToImgs[cat_id].append(img_id)
+    
+    def _build_coco_dataset(self) -> dict:
+        """Build a COCO-format dataset dict from YOLO data."""
+        images = []
+        annotations = []
+        categories = []
+        
+        # Build categories (0-indexed class IDs in YOLO)
+        for idx, class_name in enumerate(self.classes):
+            categories.append({
+                "id": idx,
+                "name": class_name,
+                "supercategory": "none"
+            })
+        
+        ann_id = 0
+        for img_id in range(len(self.sv_dataset)):
+            image_path, cv2_image, detections = self.sv_dataset[img_id]
+            h, w = cv2_image.shape[:2]
+            
+            images.append({
+                "id": img_id,
+                "file_name": str(image_path),
+                "height": h,
+                "width": w
+            })
+            
+            if len(detections) > 0:
+                for i in range(len(detections)):
+                    x1, y1, x2, y2 = detections.xyxy[i]
+                    bbox_w = x2 - x1
+                    bbox_h = y2 - y1
+                    
+                    ann = {
+                        "id": ann_id,
+                        "image_id": img_id,
+                        "category_id": int(detections.class_id[i]),
+                        "bbox": [float(x1), float(y1), float(bbox_w), float(bbox_h)],
+                        "area": float(bbox_w * bbox_h),
+                        "iscrowd": 0
+                    }
+                    
+                    # Add segmentation if available
+                    if detections.mask is not None:
+                        # For now, use empty polygon - evaluation will still work for bbox
+                        ann["segmentation"] = []
+                    
+                    annotations.append(ann)
+                    ann_id += 1
+        
+        return {
+            "images": images,
+            "annotations": annotations,
+            "categories": categories
+        }
+    
+    def getAnnIds(self, imgIds=None, catIds=None, areaRng=None, iscrowd=None):
+        """Get annotation IDs that satisfy given filter conditions."""
+        if imgIds is None:
+            imgIds = []
+        if catIds is None:
+            catIds = []
+        if areaRng is None:
+            areaRng = []
+        
+        imgIds = imgIds if isinstance(imgIds, list) else [imgIds]
+        catIds = catIds if isinstance(catIds, list) else [catIds]
+        
+        if len(imgIds) == 0:
+            anns = self.dataset["annotations"]
+        else:
+            anns = []
+            for img_id in imgIds:
+                anns.extend(self.imgToAnns.get(img_id, []))
+        
+        if len(catIds) > 0:
+            anns = [ann for ann in anns if ann["category_id"] in catIds]
+        
+        if len(areaRng) == 2:
+            anns = [ann for ann in anns if ann["area"] >= areaRng[0] and ann["area"] <= areaRng[1]]
+        
+        if iscrowd is not None:
+            anns = [ann for ann in anns if ann["iscrowd"] == iscrowd]
+        
+        return [ann["id"] for ann in anns]
+    
+    def getCatIds(self, catNms=None, supNms=None, catIds=None):
+        """Get category IDs that satisfy given filter conditions."""
+        if catNms is None:
+            catNms = []
+        if supNms is None:
+            supNms = []
+        if catIds is None:
+            catIds = []
+        
+        cats = self.dataset["categories"]
+        
+        if len(catNms) > 0:
+            cats = [cat for cat in cats if cat["name"] in catNms]
+        if len(catIds) > 0:
+            cats = [cat for cat in cats if cat["id"] in catIds]
+        
+        return [cat["id"] for cat in cats]
+    
+    def getImgIds(self, imgIds=None, catIds=None):
+        """Get image IDs that satisfy given filter conditions."""
+        if imgIds is None:
+            imgIds = []
+        if catIds is None:
+            catIds = []
+        
+        imgIds = set(imgIds) if imgIds else set(self.imgs.keys())
+        
+        if len(catIds) > 0:
+            for cat_id in catIds:
+                imgIds &= set(self.catToImgs.get(cat_id, []))
+        
+        return list(imgIds)
+    
+    def loadAnns(self, ids=None):
+        """Load annotations with the specified IDs."""
+        if ids is None:
+            return []
+        ids = ids if isinstance(ids, list) else [ids]
+        return [self.anns[ann_id] for ann_id in ids if ann_id in self.anns]
+    
+    def loadCats(self, ids=None):
+        """Load categories with the specified IDs."""
+        if ids is None:
+            return list(self.cats.values())
+        ids = ids if isinstance(ids, list) else [ids]
+        return [self.cats[cat_id] for cat_id in ids if cat_id in self.cats]
+    
+    def loadImgs(self, ids=None):
+        """Load images with the specified IDs."""
+        if ids is None:
+            return []
+        ids = ids if isinstance(ids, list) else [ids]
+        return [self.imgs[img_id] for img_id in ids if img_id in self.imgs]
+
+
 class YoloDetection(VisionDataset):
     """
     YOLO format dataset using supervision.DetectionDataset.from_yolo().
@@ -151,6 +332,9 @@ class YoloDetection(VisionDataset):
         
         self.classes = self.sv_dataset.classes
         self.ids = list(range(len(self.sv_dataset)))
+        
+        # Create COCO-compatible API for evaluation
+        self.coco = YoloCoco(self.classes, self.sv_dataset)
 
     def __len__(self) -> int:
         return len(self.sv_dataset)
