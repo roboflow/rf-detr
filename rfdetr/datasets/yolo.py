@@ -4,12 +4,18 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-import os
+from pathlib import Path
+
 import torch
 import numpy as np
 from PIL import Image
 from torchvision.datasets import VisionDataset
 import supervision as sv
+
+from rfdetr.datasets.coco import (
+    make_coco_transforms,
+    make_coco_transforms_square_div_64,
+)
 
 
 class ConvertYolo:
@@ -164,3 +170,64 @@ class YoloDetection(VisionDataset):
             img, target = self._transforms(img, target)
 
         return img, target
+
+
+def build_roboflow_from_yolo(image_set, args, resolution):
+    """Build a Roboflow YOLO-format dataset.
+    
+    This uses Roboflow's standard YOLO directory structure
+    (train/valid/test folders with images/ and labels/ subdirectories).
+    """
+    root = Path(args.dataset_dir)
+    assert root.exists(), f'provided Roboflow path {root} does not exist'
+    
+    # YOLO format uses images/ and labels/ subdirectories
+    PATHS = {
+        "train": (root / "train" / "images", root / "train" / "labels"),
+        "val": (root / "valid" / "images", root / "valid" / "labels"),
+        "test": (root / "test" / "images", root / "test" / "labels"),
+    }
+    
+    data_file = root / "data.yaml"
+    img_folder, lb_folder = PATHS[image_set.split("_")[0]]
+    square_resize_div_64 = getattr(args, "square_resize_div_64", False)
+    include_masks = getattr(args, "segmentation_head", False)
+    multi_scale = args.multi_scale
+    expanded_scales = args.expanded_scales
+    do_random_resize_via_padding = args.do_random_resize_via_padding
+    patch_size = args.patch_size
+    num_windows = args.num_windows
+
+    if square_resize_div_64:
+        dataset = YoloDetection(
+            img_folder=str(img_folder),
+            lb_folder=str(lb_folder),
+            data_file=str(data_file),
+            transforms=make_coco_transforms_square_div_64(
+                image_set,
+                resolution,
+                multi_scale=multi_scale,
+                expanded_scales=expanded_scales,
+                skip_random_resize=not do_random_resize_via_padding,
+                patch_size=patch_size,
+                num_windows=num_windows
+            ),
+            include_masks=include_masks
+        )
+    else:
+        dataset = YoloDetection(
+            img_folder=str(img_folder),
+            lb_folder=str(lb_folder),
+            data_file=str(data_file),
+            transforms=make_coco_transforms(
+                image_set,
+                resolution,
+                multi_scale=multi_scale,
+                expanded_scales=expanded_scales,
+                skip_random_resize=not do_random_resize_via_padding,
+                patch_size=patch_size,
+                num_windows=num_windows
+            ),
+            include_masks=include_masks
+        )
+    return dataset

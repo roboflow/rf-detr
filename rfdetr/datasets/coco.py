@@ -271,37 +271,29 @@ def build(image_set, args, resolution):
         ))
     return dataset
 
-def build_roboflow_from_coco(
-    image_set: str,
-    resolution: int,
-    img_folder: Path,
-    ann_file: Path,
-    square_resize_div_64: bool = False,
-    include_masks: bool = False,
-    multi_scale: bool = False,
-    expanded_scales: bool = False,
-    do_random_resize_via_padding: bool = False,
-    patch_size: int = 16,
-    num_windows: int = 4,
-):
-    """Build a COCO-format dataset with the given configuration.
+def build_roboflow_from_coco(image_set, args, resolution):
+    """Build a Roboflow COCO-format dataset.
     
-    Args:
-        image_set: Dataset split ('train', 'val', 'test', 'val_speed')
-        resolution: Base image resolution
-        img_folder: Path to the folder containing images
-        ann_file: Path to the COCO annotation JSON file
-        square_resize_div_64: Whether to use square resize divisible by 64
-        include_masks: Whether to include segmentation masks
-        multi_scale: Whether to use multi-scale training
-        expanded_scales: Whether to use expanded scale range
-        do_random_resize_via_padding: Whether to do random resize via padding
-        patch_size: Patch size for scale computation
-        num_windows: Number of windows for scale computation
-    
-    Returns:
-        CocoDetection dataset instance
+    This uses Roboflow's standard directory structure
+    (train/valid/test folders with _annotations.coco.json).
     """
+    root = Path(args.dataset_dir)
+    assert root.exists(), f'provided Roboflow path {root} does not exist'
+    PATHS = {
+        "train": (root / "train", root / "train" / "_annotations.coco.json"),
+        "val": (root /  "valid", root / "valid" / "_annotations.coco.json"),
+        "test": (root / "test", root / "test" / "_annotations.coco.json"),
+    }
+
+    img_folder, ann_file = PATHS[image_set.split("_")[0]]
+    square_resize_div_64 = getattr(args, "square_resize_div_64", False)
+    include_masks = getattr(args, "segmentation_head", False)
+    multi_scale = args.multi_scale
+    expanded_scales = args.expanded_scales
+    do_random_resize_via_padding = args.do_random_resize_via_padding
+    patch_size = args.patch_size
+    num_windows = args.num_windows
+
     if square_resize_div_64:
         dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms_square_div_64(
             image_set,
@@ -323,36 +315,3 @@ def build_roboflow_from_coco(
             num_windows=num_windows
         ), include_masks=include_masks)
     return dataset
-
-
-def build_roboflow(image_set, args, resolution):
-    """Build a Roboflow COCO-format dataset.
-    
-    This is a convenience wrapper around build_coco that uses Roboflow's
-    standard directory structure (train/valid/test folders with _annotations.coco.json).
-    """
-    root = Path(args.dataset_dir)
-    assert root.exists(), f'provided Roboflow path {root} does not exist'
-    PATHS = {
-        "train": (root / "train", root / "train" / "_annotations.coco.json"),
-        "val": (root /  "valid", root / "valid" / "_annotations.coco.json"),
-        "test": (root / "test", root / "test" / "_annotations.coco.json"),
-    }
-
-    img_folder, ann_file = PATHS[image_set.split("_")[0]]
-    square_resize_div_64 = getattr(args, "square_resize_div_64", False)
-    include_masks = getattr(args, "segmentation_head", False)
-
-    return build_roboflow_from_coco(
-        image_set=image_set,
-        resolution=resolution,
-        img_folder=img_folder,
-        ann_file=ann_file,
-        square_resize_div_64=square_resize_div_64,
-        include_masks=include_masks,
-        multi_scale=args.multi_scale,
-        expanded_scales=args.expanded_scales,
-        do_random_resize_via_padding=args.do_random_resize_via_padding,
-        patch_size=args.patch_size,
-        num_windows=args.num_windows,
-    )
