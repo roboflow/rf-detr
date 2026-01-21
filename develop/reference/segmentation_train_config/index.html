@@ -12,13 +12,11 @@
         <meta name="author" content="Roboflow">
       
       
-        <link rel="canonical" href="https://roboflow.github.io/rf-detr/develop/learn/benchmarks/">
+        <link rel="canonical" href="https://roboflow.github.io/rf-detr/develop/reference/segmentation_train_config/">
       
       
-        <link rel="prev" href="../deploy/">
+        <link rel="prev" href="../train_config/">
       
-      
-        <link rel="next" href="../../tutorials/">
       
       
         
@@ -29,7 +27,7 @@
     
     
       
-        <title>Benchmarks - RF-DETR</title>
+        <title>Segmentation Train Config - RF-DETR</title>
       
     
     
@@ -72,6 +70,11 @@
     <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
     <label class="md-overlay" for="__drawer"></label>
     <div data-md-component="skip">
+      
+        
+        <a href="#rfdetr.config.SegmentationTrainConfig" class="md-skip">
+          Skip to content
+        </a>
       
     </div>
     <div data-md-component="announce">
@@ -137,7 +140,7 @@
 
             </a>
             
-              Benchmarks
+              Segmentation Train Config
             
           </span>
         </div>
@@ -320,8 +323,6 @@
   
   
   
-    
-  
   
     
     
@@ -329,13 +330,11 @@
   
   
   
-    
-  
   
     
     
-      <li class="md-tabs__item md-tabs__item--active">
-        <a href="../run/detection/" class="md-tabs__link">
+      <li class="md-tabs__item">
+        <a href="../../learn/run/detection/" class="md-tabs__link">
           
   
   
@@ -373,11 +372,13 @@
   
   
   
+    
+  
   
     
     
-      <li class="md-tabs__item">
-        <a href="../../reference/rfdetr/" class="md-tabs__link">
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../rfdetr/" class="md-tabs__link">
           
   
   
@@ -489,29 +490,26 @@
       
   
   
-    
   
   
-  
     
     
     
     
       
-        
-        
-      
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
         
           
-          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
             
   
   
@@ -529,7 +527,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -599,7 +597,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../run/detection/" class="md-nav__link">
+      <a href="../../learn/run/detection/" class="md-nav__link">
         
   
   
@@ -627,7 +625,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../run/segmentation/" class="md-nav__link">
+      <a href="../../learn/run/segmentation/" class="md-nav__link">
         
   
   
@@ -663,7 +661,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../train/" class="md-nav__link">
+      <a href="../../learn/train/" class="md-nav__link">
         
   
   
@@ -691,7 +689,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../deploy/" class="md-nav__link">
+      <a href="../../learn/deploy/" class="md-nav__link">
         
   
   
@@ -716,17 +714,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../learn/benchmarks/" class="md-nav__link">
         
   
   
@@ -742,7 +733,6 @@
   
 
       </a>
-      
     </li>
   
 
@@ -786,26 +776,29 @@
       
   
   
+    
   
   
+  
     
     
     
     
-      
-      
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
       
         
+        
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
         
           
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
-        
-          
-          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
             
   
   
@@ -823,7 +816,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_4">
             <span class="md-nav__icon md-icon"></span>
             
@@ -841,7 +834,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/rfdetr/" class="md-nav__link">
+      <a href="../rfdetr/" class="md-nav__link">
         
   
   
@@ -921,7 +914,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/nano/" class="md-nav__link">
+      <a href="../nano/" class="md-nav__link">
         
   
   
@@ -949,7 +942,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/small/" class="md-nav__link">
+      <a href="../small/" class="md-nav__link">
         
   
   
@@ -977,7 +970,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/base/" class="md-nav__link">
+      <a href="../base/" class="md-nav__link">
         
   
   
@@ -1005,7 +998,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/medium/" class="md-nav__link">
+      <a href="../medium/" class="md-nav__link">
         
   
   
@@ -1033,7 +1026,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/large/" class="md-nav__link">
+      <a href="../large/" class="md-nav__link">
         
   
   
@@ -1061,7 +1054,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/xlarge/" class="md-nav__link">
+      <a href="../xlarge/" class="md-nav__link">
         
   
   
@@ -1089,7 +1082,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/2xlarge/" class="md-nav__link">
+      <a href="../2xlarge/" class="md-nav__link">
         
   
   
@@ -1117,7 +1110,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/large_deprecated/" class="md-nav__link">
+      <a href="../large_deprecated/" class="md-nav__link">
         
   
   
@@ -1205,7 +1198,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/seg_nano/" class="md-nav__link">
+      <a href="../seg_nano/" class="md-nav__link">
         
   
   
@@ -1233,7 +1226,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/seg_small/" class="md-nav__link">
+      <a href="../seg_small/" class="md-nav__link">
         
   
   
@@ -1261,7 +1254,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/seg_medium/" class="md-nav__link">
+      <a href="../seg_medium/" class="md-nav__link">
         
   
   
@@ -1289,7 +1282,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/seg_large/" class="md-nav__link">
+      <a href="../seg_large/" class="md-nav__link">
         
   
   
@@ -1317,7 +1310,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/seg_xlarge/" class="md-nav__link">
+      <a href="../seg_xlarge/" class="md-nav__link">
         
   
   
@@ -1345,7 +1338,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/seg_2xlarge/" class="md-nav__link">
+      <a href="../seg_2xlarge/" class="md-nav__link">
         
   
   
@@ -1373,7 +1366,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/seg_preview/" class="md-nav__link">
+      <a href="../seg_preview/" class="md-nav__link">
         
   
   
@@ -1406,8 +1399,10 @@
                 
   
   
+    
   
   
+  
     
     
     
@@ -1416,13 +1411,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-          
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4_4" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4" checked>
         
           
           <label class="md-nav__link" for="__nav_4_4" id="__nav_4_4_label" tabindex="0">
@@ -1443,7 +1436,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_4_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_4_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_4_4">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1461,7 +1454,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/train_config/" class="md-nav__link">
+      <a href="../train_config/" class="md-nav__link">
         
   
   
@@ -1486,10 +1479,35 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../reference/segmentation_train_config/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Segmentation Train Config
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1505,6 +1523,63 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.config.SegmentationTrainConfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;SegmentationTrainConfig
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.config.SegmentationTrainConfig-functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Functions
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Functions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.config.SegmentationTrainConfig.expand_paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;expand_paths
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1570,6 +1645,53 @@
   
   
   
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.config.SegmentationTrainConfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;SegmentationTrainConfig
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.config.SegmentationTrainConfig-functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Functions
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Functions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.config.SegmentationTrainConfig.expand_paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;expand_paths
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
 </nav>
                   </div>
                 </div>
@@ -1588,154 +1710,105 @@
   
 
 
-  <h1>Benchmarks</h1>
+  <h1>Segmentation Train Config</h1>
 
-<p>RF-DETR is the first real-time model to exceed 60 AP (Average Precision) on the Microsoft COCO (Common Objects in Context) benchmark alongside competitive performance at base sizes. It also achieves state-of-the-art (SOTA) performance on RF100-VL, an object detection benchmark that measures model domain adaptability to real world problems. RF-DETR is fastest and most accurate for its size when compared current real-time objection models.</p>
-<p>On this page, we outline our results from our Microsoft COCO benchmarks, benchmarks across all seven categories in the RF100-VL benchmark, and notes from our benchmarking.</p>
-<p>The table below shows the performance of RF-DETR, compared to other object detection models:</p>
-<p><img alt="rf-detr-coco-rf100-vl-9" src="https://media.roboflow.com/rfdetr/pareto1.png" /></p>
-<table>
-<thead>
-<tr>
-<th style="text-align: center;">Architecture</th>
-<th style="text-align: center;">COCO AP<sub>50</sub></th>
-<th style="text-align: center;">COCO AP<sub>50:95</sub></th>
-<th style="text-align: center;">RF100VL AP<sub>50</sub></th>
-<th style="text-align: center;">RF100VL AP<sub>50:95</sub></th>
-<th style="text-align: center;">Latency (ms)</th>
-<th style="text-align: center;">Params (M)</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td style="text-align: center;">RF-DETR-N</td>
-<td style="text-align: center;">67.6</td>
-<td style="text-align: center;">48.4</td>
-<td style="text-align: center;">84.1</td>
-<td style="text-align: center;">57.1</td>
-<td style="text-align: center;">2.32</td>
-<td style="text-align: center;">30.5</td>
-</tr>
-<tr>
-<td style="text-align: center;">RF-DETR-S</td>
-<td style="text-align: center;">72.1</td>
-<td style="text-align: center;">53.0</td>
-<td style="text-align: center;">85.9</td>
-<td style="text-align: center;">59.6</td>
-<td style="text-align: center;">3.52</td>
-<td style="text-align: center;">32.1</td>
-</tr>
-<tr>
-<td style="text-align: center;">RF-DETR-M</td>
-<td style="text-align: center;">73.6</td>
-<td style="text-align: center;">54.7</td>
-<td style="text-align: center;">86.6</td>
-<td style="text-align: center;">60.6</td>
-<td style="text-align: center;">4.52</td>
-<td style="text-align: center;">33.7</td>
-</tr>
-<tr>
-<td style="text-align: center;">YOLO11-N</td>
-<td style="text-align: center;">52.0</td>
-<td style="text-align: center;">37.4</td>
-<td style="text-align: center;">81.4</td>
-<td style="text-align: center;">55.3</td>
-<td style="text-align: center;">2.49</td>
-<td style="text-align: center;">2.6</td>
-</tr>
-<tr>
-<td style="text-align: center;">YOLO11-S</td>
-<td style="text-align: center;">59.7</td>
-<td style="text-align: center;">44.4</td>
-<td style="text-align: center;">82.3</td>
-<td style="text-align: center;">56.2</td>
-<td style="text-align: center;">3.16</td>
-<td style="text-align: center;">9.4</td>
-</tr>
-<tr>
-<td style="text-align: center;">YOLO11-M</td>
-<td style="text-align: center;">64.1</td>
-<td style="text-align: center;">48.6</td>
-<td style="text-align: center;">82.5</td>
-<td style="text-align: center;">56.5</td>
-<td style="text-align: center;">5.13</td>
-<td style="text-align: center;">20.1</td>
-</tr>
-<tr>
-<td style="text-align: center;">YOLO11-L</td>
-<td style="text-align: center;">65.3</td>
-<td style="text-align: center;">50.2</td>
-<td style="text-align: center;">x</td>
-<td style="text-align: center;">x</td>
-<td style="text-align: center;">6.65</td>
-<td style="text-align: center;">25.3</td>
-</tr>
-<tr>
-<td style="text-align: center;">YOLO11-X</td>
-<td style="text-align: center;">66.5</td>
-<td style="text-align: center;">51.2</td>
-<td style="text-align: center;">x</td>
-<td style="text-align: center;">x</td>
-<td style="text-align: center;">11.92</td>
-<td style="text-align: center;">56.9</td>
-</tr>
-<tr>
-<td style="text-align: center;">LW-DETR-T</td>
-<td style="text-align: center;">60.7</td>
-<td style="text-align: center;">42.9</td>
-<td style="text-align: center;">x</td>
-<td style="text-align: center;">x</td>
-<td style="text-align: center;">1.91</td>
-<td style="text-align: center;">12.1</td>
-</tr>
-<tr>
-<td style="text-align: center;">LW-DETR-S</td>
-<td style="text-align: center;">66.8</td>
-<td style="text-align: center;">48.0</td>
-<td style="text-align: center;">84.5</td>
-<td style="text-align: center;">58.0</td>
-<td style="text-align: center;">2.62</td>
-<td style="text-align: center;">14.6</td>
-</tr>
-<tr>
-<td style="text-align: center;">LW-DETR-M</td>
-<td style="text-align: center;">72.0</td>
-<td style="text-align: center;">52.6</td>
-<td style="text-align: center;">85.2</td>
-<td style="text-align: center;">59.4</td>
-<td style="text-align: center;">4.49</td>
-<td style="text-align: center;">28.2</td>
-</tr>
-<tr>
-<td style="text-align: center;">D-FINE-N</td>
-<td style="text-align: center;">60.2</td>
-<td style="text-align: center;">42.7</td>
-<td style="text-align: center;">83.6</td>
-<td style="text-align: center;">57.7</td>
-<td style="text-align: center;">2.12</td>
-<td style="text-align: center;">3.8</td>
-</tr>
-<tr>
-<td style="text-align: center;">D-FINE-S</td>
-<td style="text-align: center;">67.6</td>
-<td style="text-align: center;">50.7</td>
-<td style="text-align: center;">84.5</td>
-<td style="text-align: center;">59.9</td>
-<td style="text-align: center;">3.55</td>
-<td style="text-align: center;">10.2</td>
-</tr>
-<tr>
-<td style="text-align: center;">D-FINE-M</td>
-<td style="text-align: center;">72.6</td>
-<td style="text-align: center;">55.1</td>
-<td style="text-align: center;">84.6</td>
-<td style="text-align: center;">60.2</td>
-<td style="text-align: center;">5.68</td>
-<td style="text-align: center;">19.2</td>
-</tr>
-</tbody>
-</table>
-<p><em>We are actively working on RF-DETR Large and X-Large models using the same techniques we used to achieve the strong accuracy that RF-DETR Medium attains. This is why RF-DETR Large and X-Large is not yet reported on our pareto charts and why we haven't benchmarked other models at similar sizes. Check back in the next few weeks for the launch of new RF-DETR Large and X-Large models.</em></p>
+<div class="doc doc-object doc-class">
+
+
+
+<a id="rfdetr.config.SegmentationTrainConfig"></a>
+    <div class="doc doc-contents first">
+            <p class="doc doc-class-bases">
+              Bases: <code><a class="autorefs autorefs-internal" title="&lt;code&gt;rfdetr.config.TrainConfig&lt;/code&gt;" href="../train_config/#rfdetr.config.TrainConfig">TrainConfig</a></code></p>
+
+
+
+
+
+
+
+
+              <details class="quote">
+                <summary>Source code in <code>rfdetr/config.py</code></summary>
+                <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-292">292</a></span>
+<span class="normal"><a href="#__codelineno-0-293">293</a></span>
+<span class="normal"><a href="#__codelineno-0-294">294</a></span>
+<span class="normal"><a href="#__codelineno-0-295">295</a></span>
+<span class="normal"><a href="#__codelineno-0-296">296</a></span>
+<span class="normal"><a href="#__codelineno-0-297">297</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-292"><a id="__codelineno-0-292" name="__codelineno-0-292"></a><span class="k">class</span><span class="w"> </span><span class="nc">SegmentationTrainConfig</span><span class="p">(</span><span class="n">TrainConfig</span><span class="p">):</span>
+</span><span id="__span-0-293"><a id="__codelineno-0-293" name="__codelineno-0-293"></a>    <span class="n">mask_point_sample_ratio</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">16</span>
+</span><span id="__span-0-294"><a id="__codelineno-0-294" name="__codelineno-0-294"></a>    <span class="n">mask_ce_loss_coef</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">5.0</span>
+</span><span id="__span-0-295"><a id="__codelineno-0-295" name="__codelineno-0-295"></a>    <span class="n">mask_dice_loss_coef</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">5.0</span>
+</span><span id="__span-0-296"><a id="__codelineno-0-296" name="__codelineno-0-296"></a>    <span class="n">cls_loss_coef</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">5.0</span>
+</span><span id="__span-0-297"><a id="__codelineno-0-297" name="__codelineno-0-297"></a>    <span class="n">segmentation_head</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
+</span></code></pre></div></td></tr></table></div>
+              </details>
+
+
+
+  <div class="doc doc-children">
+
+
+
+
+
+
+
+<h2 id="rfdetr.config.SegmentationTrainConfig-functions">Functions<a href="#rfdetr.config.SegmentationTrainConfig-functions" class="headerlink" title="Permanent link">&para;</a></h2>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="rfdetr.config.SegmentationTrainConfig.expand_paths" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="n">expand_paths</span><span class="p">(</span><span class="n">v</span><span class="p">)</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-classmethod"><code>classmethod</code></small>
+  </span>
+
+<a href="#rfdetr.config.SegmentationTrainConfig.expand_paths" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Expand user paths (e.g., '~' or paths with separators) but leave simple filenames
+(like 'rf-detr-base.pth') unchanged so they can match hosted model keys.</p>
+
+
+            <details class="quote">
+              <summary>Source code in <code>rfdetr/config.py</code></summary>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-280">280</a></span>
+<span class="normal"><a href="#__codelineno-0-281">281</a></span>
+<span class="normal"><a href="#__codelineno-0-282">282</a></span>
+<span class="normal"><a href="#__codelineno-0-283">283</a></span>
+<span class="normal"><a href="#__codelineno-0-284">284</a></span>
+<span class="normal"><a href="#__codelineno-0-285">285</a></span>
+<span class="normal"><a href="#__codelineno-0-286">286</a></span>
+<span class="normal"><a href="#__codelineno-0-287">287</a></span>
+<span class="normal"><a href="#__codelineno-0-288">288</a></span>
+<span class="normal"><a href="#__codelineno-0-289">289</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-280"><a id="__codelineno-0-280" name="__codelineno-0-280"></a><span class="nd">@field_validator</span><span class="p">(</span><span class="s2">&quot;dataset_dir&quot;</span><span class="p">,</span> <span class="s2">&quot;output_dir&quot;</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">&quot;after&quot;</span><span class="p">)</span>
+</span><span id="__span-0-281"><a id="__codelineno-0-281" name="__codelineno-0-281"></a><span class="nd">@classmethod</span>
+</span><span id="__span-0-282"><a id="__codelineno-0-282" name="__codelineno-0-282"></a><span class="k">def</span><span class="w"> </span><span class="nf">expand_paths</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+</span><span id="__span-0-283"><a id="__codelineno-0-283" name="__codelineno-0-283"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+</span><span id="__span-0-284"><a id="__codelineno-0-284" name="__codelineno-0-284"></a><span class="sd">    Expand user paths (e.g., &#39;~&#39; or paths with separators) but leave simple filenames</span>
+</span><span id="__span-0-285"><a id="__codelineno-0-285" name="__codelineno-0-285"></a><span class="sd">    (like &#39;rf-detr-base.pth&#39;) unchanged so they can match hosted model keys.</span>
+</span><span id="__span-0-286"><a id="__codelineno-0-286" name="__codelineno-0-286"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-287"><a id="__codelineno-0-287" name="__codelineno-0-287"></a>    <span class="k">if</span> <span class="n">v</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-288"><a id="__codelineno-0-288" name="__codelineno-0-288"></a>        <span class="k">return</span> <span class="n">v</span>
+</span><span id="__span-0-289"><a id="__codelineno-0-289" name="__codelineno-0-289"></a>    <span class="k">return</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">realpath</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">expanduser</span><span class="p">(</span><span class="n">v</span><span class="p">))</span>
+</span></code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div>
 
 
 
