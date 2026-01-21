@@ -130,7 +130,7 @@ class YoloCoco:
 
     This provides the necessary interface for CocoEvaluator to work with
     YOLO format datasets.
-    
+
     Examples:
         >>> mock = _MockSvDataset()
         >>> coco = YoloCoco(mock.classes, mock)
@@ -258,13 +258,13 @@ class YoloCoco:
 
     def getAnnIds(self, imgIds=None, catIds=None, areaRng=None, iscrowd=None):
         """Get annotation IDs that satisfy given filter conditions.
-        
+
         Args:
             imgIds: Filter by image IDs (list or single ID)
             catIds: Filter by category IDs (list or single ID)
             areaRng: Filter by area range [min, max]
             iscrowd: Filter by iscrowd flag (0 or 1)
-        
+
         Returns:
             List of annotation IDs matching the filter conditions
         """
@@ -298,12 +298,12 @@ class YoloCoco:
 
     def getCatIds(self, catNms=None, supNms=None, catIds=None):
         """Get category IDs that satisfy given filter conditions.
-        
+
         Args:
             catNms: Filter by category names (list)
             supNms: Filter by supercategory names (list, not used)
             catIds: Filter by category IDs (list)
-        
+
         Returns:
             List of category IDs matching the filter conditions
         """
@@ -325,11 +325,11 @@ class YoloCoco:
 
     def getImgIds(self, imgIds=None, catIds=None):
         """Get image IDs that satisfy given filter conditions.
-        
+
         Args:
             imgIds: Filter to these image IDs (list)
             catIds: Filter by images containing these category IDs (list)
-        
+
         Returns:
             List of image IDs matching the filter conditions
         """
@@ -348,10 +348,10 @@ class YoloCoco:
 
     def loadAnns(self, ids=None):
         """Load annotations with the specified IDs.
-        
+
         Args:
             ids: Annotation IDs to load (list or single ID)
-        
+
         Returns:
             List of annotation dicts with keys: id, image_id, category_id, bbox, area, iscrowd
         """
@@ -362,10 +362,10 @@ class YoloCoco:
 
     def loadCats(self, ids=None):
         """Load categories with the specified IDs.
-        
+
         Args:
             ids: Category IDs to load (list or single ID). If None, returns all categories.
-        
+
         Returns:
             List of category dicts with keys: id, name, supercategory
         """
@@ -376,10 +376,10 @@ class YoloCoco:
 
     def loadImgs(self, ids=None):
         """Load images with the specified IDs.
-        
+
         Args:
             ids: Image IDs to load (list or single ID)
-        
+
         Returns:
             List of image dicts with keys: id, file_name, height, width
         """
