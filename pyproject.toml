@@ -49,7 +49,8 @@ dependencies = [
     "pydantic",
     "supervision",
     "matplotlib",
-    "roboflow"
+    "roboflow",
+    "pillow-avif-plugin<1.5.3"
 ]
 
 [project.optional-dependencies]
