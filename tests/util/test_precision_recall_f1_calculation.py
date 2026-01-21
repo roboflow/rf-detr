@@ -606,5 +606,3 @@ class TestIntermediateScenario:
 
         assert per_class_metrics["class_2"]["precision"] == pytest.approx(0.5, abs=0.01)
         assert per_class_metrics["class_2"]["recall"] == pytest.approx(1.0, abs=0.01)
-
-
