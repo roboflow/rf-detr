@@ -227,28 +227,27 @@ class YoloCoco:
                 "width": w
             })
 
-            if len(detections) > 0:
-                for i in range(len(detections)):
-                    x1, y1, x2, y2 = detections.xyxy[i]
-                    bbox_w = x2 - x1
-                    bbox_h = y2 - y1
+            for i in range(len(detections)):
+                x1, y1, x2, y2 = detections.xyxy[i]
+                bbox_w = x2 - x1
+                bbox_h = y2 - y1
 
-                    ann = {
-                        "id": ann_id,
-                        "image_id": img_id,
-                        "category_id": int(detections.class_id[i]),
-                        "bbox": [float(x1), float(y1), float(bbox_w), float(bbox_h)],
-                        "area": float(bbox_w * bbox_h),
-                        "iscrowd": 0
-                    }
+                ann = {
+                    "id": ann_id,
+                    "image_id": img_id,
+                    "category_id": int(detections.class_id[i]),
+                    "bbox": [float(x1), float(y1), float(bbox_w), float(bbox_h)],
+                    "area": float(bbox_w * bbox_h),
+                    "iscrowd": 0
+                }
 
-                    # Add segmentation if available
-                    if detections.mask is not None:
-                        # For now, use empty polygon - evaluation will still work for bbox
-                        ann["segmentation"] = []
+                # Add segmentation if available
+                if detections.mask is not None:
+                    # For now, use empty polygon - evaluation will still work for bbox
+                    ann["segmentation"] = []
 
-                    annotations.append(ann)
-                    ann_id += 1
+                annotations.append(ann)
+                ann_id += 1
 
         return {
             "images": images,
