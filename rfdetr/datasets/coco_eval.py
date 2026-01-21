@@ -47,7 +47,7 @@ class CocoEvaluator(object):
             self.coco_eval[iou_type] = COCOeval(coco_gt, iouType=iou_type)
 
         self.img_ids: List[int] = []
-        self.eval_imgs: Dict[str, List[Any]] = {k: [] for k in iou_types}
+        self.eval_imgs: Dict[str, List[COCOeval]] = {k: [] for k in iou_types}
 
     def update(self, predictions: Dict[int, Any]) -> None:
         img_ids = list(np.unique(list(predictions.keys())))
