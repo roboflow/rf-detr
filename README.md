@@ -11,34 +11,43 @@
 [![roboflow](https://raw.githubusercontent.com/roboflow-ai/notebooks/main/assets/badges/roboflow-blogpost.svg)](https://blog.roboflow.com/rf-detr)
 [![discord](https://img.shields.io/discord/1159501506232451173?logo=discord&label=discord&labelColor=fff&color=5865f2&link=https%3A%2F%2Fdiscord.gg%2FGbfgXGJ8Bk)](https://discord.gg/GbfgXGJ8Bk)
 
-
-RF-DETR (Roboflow DEtection TRansformer) is a real-time, transformer-based object detection and instance segmentation model architecture developed by Roboflow and released under the Apache 2.0 license.
-
-RF-DETR is the first real-time model to exceed 60 AP (Average Precision) on the [Microsoft COCO (Common Objects in Context) object detection benchmark](https://cocodataset.org/#home) alongside competitive performance at base sizes. It also achieves state-of-the-art (SOTA) performance on [RF100-VL](https://github.com/roboflow/rf100-vl), an object detection benchmark that measures model domain adaptability to real world problems. RF-DETR is fastest and most accurate for its size when compared current real-time objection models.
-
-On image segmentation, RF-DETR Seg (Preview) is 3x faster and more accurate than the largest YOLO (You Only Look Once) when evaluated on the Microsoft COCO Segmentation benchmark, defining a new real-time SOTA for the industry-standard benchmark in segmentation model evaluation.
+RF-DETR is a real-time transformer architecture for object detection and instance segmentation developed by Roboflow. Built on a DINOv2 vision transformer backbone, RF-DETR delivers state-of-the-art accuracy and latency trade-offs on [Microsoft COCO](https://cocodataset.org/#home) and [RF100-VL](https://github.com/roboflow/rf100-vl). The codebase and core model weights are released under the Apache 2.0 license.
 
 [![rf-detr-tutorial-banner](https://github.com/user-attachments/assets/555a45c3-96e8-4d8a-ad29-f23403c8edfd)](https://youtu.be/-OvpdLAElFA)
 
-## News
+## Install
 
-- `2026/01/13`: We release new RF-DETR-Seg sizes Nano, Small, Medium, Large, XLarge, and 2XLarge, along with new RF-DETR sizes Large, XLarge, and 2XLarge. Old RF-DETR Large weights still load but are now deprecated. RF-DETR XLarge and 2XLarge models follow Platform Model License and require a Roboflow account to run and fine-tune.
-- `2025/11/13`: We release a paper representing our work on RF-DETR, [RF-DETR: Neural Architecture Search for Real-Time Detection Transformers](https://arxiv.org/abs/2511.09554), on Arxiv.
-- `2025/10/02`: We release RF-DETR-Seg (Preview), a preview of our instance segmentation head for RF-DETR.
-- `2025/07/23`: We release three new checkpoints for RF-DETR: Nano, Small, and Medium. RF-DETR Base is now deprecated. We recommend using RF-DETR Medium which offers better accuracy at comparable latency.
-- `2025/05/16`: We release an 'optimize_for_inference' method which speeds up native PyTorch by up to 2x, depending on platform.
-- `2025/04/03`: We release early stopping, gradient checkpointing, metrics saving, training resume, TensorBoard and W&B logging support.
-- `2025/03/20`: We release RF-DETR real-time object detection model. **Code and checkpoint for RF-DETR-large and RF-DETR-base are available.**
+To install RF-DETR, install the `rfdetr` package in a [**Python>=3.10**](https://www.python.org/) environment with `pip`.
 
-## Results
+```bash
+pip install rfdetr
+```
 
-RF-DETR achieves state-of-the-art performance on both the Microsoft COCO and the RF100-VL benchmarks.
+<details>
+<summary>Install from source</summary>
 
-The below tables shows how RF-DETR performs when validated on the Microsoft COCO benchmark for object detection and image segmentation.
+<br>
 
-### Object Detection Benchmarks
+By installing RF-DETR from source, you can explore the most recent features and enhancements that have not yet been officially released. **Please note that these updates are still in development and may not be as stable as the latest published release.**
+
+```bash
+pip install git+https://github.com/roboflow/rf-detr.git@develop
+```
+
+</details>
+
+## Benchmarks
+
+RF-DETR achieves state-of-the-art results in both object detection and instance segmentation, with benchmarks reported on Microsoft COCO and RF100-VL. The charts and tables below compare RF-DETR against other top real-time models across accuracy and latency for detection and segmentation. All latency numbers were measured on an NVIDIA T4 using TensorRT, FP16, and batch size 1. For full benchmarking methodology and reproducibility details, see [roboflow/sab](https://github.com/roboflow/single_artifact_benchmarking).
+
+### Object Detection
 
 <img width="2934" height="2926" alt="rf_detr_1-4_latency_accuracy_object_detection" src="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png" />
+
+<details>
+<summary>See object detection benchmark numbers</summary>
+
+<br>
 
 | Architecture | COCO AP<sub>50</sub> |  COCO AP<sub>50:95</sub>   |  RF100VL AP<sub>50</sub>   | RF100VL AP<sub>50:95</sub>  |  Latency (ms)   |   Params (M) |   Resolution  |
 |:------------:|:--------------------:|:--------------------------:|:--------------------------:|:---------------------------:|:---------------:|:------------:|:-------------:|
@@ -69,9 +78,16 @@ The below tables shows how RF-DETR performs when validated on the Microsoft COCO
 |   D-FINE-L   |         74.9         |            57.2            |            86.4            |            61.6             |       7.5       |         31.0 |       640x640 |
 |   D-FINE-X   |         76.8         |            59.3            |            86.9            |            62.2             |       11.5      |         62.0 |       640x640 |
 
-### Instance Segmentation Benchmarks
+</details>
+
+### Instance Segmentation
 
 <img width="2932" height="1463" alt="rf_detr_1-4_latency_accuracy_instance_segmentation" src="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_instance_segmentation.png" />
+
+<details>
+<summary>See instance segmentation benchmark numbers</summary>
+
+<br>
 
 |   Architecture   | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |
 |:----------------:|:--------------------:|:-----------------------:|:------------:|:----------:|:----------:|
@@ -96,25 +112,6 @@ The below tables shows how RF-DETR performs when validated on the Microsoft COCO
 |   YOLO26-M-Seg   |         67.8         |          44.0           |     6.32     |    23.6    |  640x640   |
 |   YOLO26-L-Seg   |         69.8         |          45.5           |     7.58     |    28.0    |  640x640   |
 |   YOLO26-X-Seg   |         71.6         |          46.8           |    12.92     |    62.8    |  640x640   |
-
-## Installation
-
-To install RF-DETR, install the `rfdetr` package in a [**Python>=3.10**](https://www.python.org/) environment with `pip`:
-
-```bash
-pip install rfdetr
-```
-
-<details>
-<summary>Install from source</summary>
-
-<br>
-
-By installing RF-DETR from source, you can explore the most recent features and enhancements that have not yet been officially released. Please note that these updates are still in development and may not be as stable as the latest published release.
-
-```bash
-pip install git+https://github.com/roboflow/rf-detr.git@develop
-```
 
 </details>
 
