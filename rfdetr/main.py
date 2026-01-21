@@ -22,10 +22,12 @@ import copy
 import datetime
 import json
 import math
+import multiprocessing
 import os
 import random
 import shutil
 import time
+import warnings
 from copy import deepcopy
 from logging import getLogger
 from pathlib import Path
@@ -234,6 +236,22 @@ class Model:
 
         effective_batch_size = args.batch_size * args.grad_accum_steps
         min_batches = kwargs.get('min_batches', 5)
+
+        num_workers = args.num_workers
+        # Hotfix for https://github.com/roboflow/rf-detr/issues/428
+        # On platforms using 'spawn' (Windows, macOS), multiprocessing requires the entry point
+        # to be protected by `if __name__ == '__main__':`. If it's missing, we force
+        # num_workers=0 to prevent a RuntimeError that crashes the process.
+        if num_workers > 0 and multiprocessing.get_start_method(allow_none=True) == 'spawn':
+            import __main__
+            if not hasattr(__main__, '__file__') or not __main__.__name__ == '__main__':
+                warnings.warn(
+                    "Setting num_workers to 0 because the script is not wrapped in "
+                    "`if __name__ == '__main__':`. This is required for multiprocessing with the 'spawn' start method.",
+                    RuntimeWarning
+                )
+                num_workers = 0
+
         if len(dataset_train) < effective_batch_size * min_batches:
             logger.info(
                 f"Training with uniform sampler because dataset is too small: {len(dataset_train)} < {effective_batch_size * min_batches}"
@@ -247,7 +265,7 @@ class Model:
                 dataset_train,
                 batch_size=effective_batch_size,
                 collate_fn=utils.collate_fn,
-                num_workers=args.num_workers,
+                num_workers=num_workers,
                 sampler=sampler,
             )
         else:
@@ -257,15 +275,15 @@ class Model:
                 dataset_train,
                 batch_sampler=batch_sampler_train,
                 collate_fn=utils.collate_fn,
-                num_workers=args.num_workers
+                num_workers=num_workers
             )
 
         data_loader_val = DataLoader(dataset_val, args.batch_size, sampler=sampler_val,
                                     drop_last=False, collate_fn=utils.collate_fn,
-                                    num_workers=args.num_workers)
+                                    num_workers=num_workers)
         data_loader_test = DataLoader(dataset_test, args.batch_size, sampler=sampler_test,
                                     drop_last=False, collate_fn=utils.collate_fn,
-                                    num_workers=args.num_workers)
+                                    num_workers=num_workers)
 
         base_ds = get_coco_api_from_dataset(dataset_val)
         base_ds_test = get_coco_api_from_dataset(dataset_test)
@@ -368,7 +386,7 @@ class Model:
 
                         utils.save_on_master(weights, checkpoint_path)
 
-            with torch.inference_mode():
+            with torch.no_grad():
                 test_stats, coco_evaluator = evaluate(
                     model, criterion, postprocess, data_loader_val, base_ds, device, args=args
                 )
