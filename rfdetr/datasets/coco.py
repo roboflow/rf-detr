@@ -271,7 +271,7 @@ def build(image_set, args, resolution):
         ))
     return dataset
 
-def build_coco(
+def build_roboflow_from_coco(
     image_set: str,
     resolution: int,
     img_folder: Path,
@@ -340,18 +340,10 @@ def build_roboflow(image_set, args, resolution):
     }
 
     img_folder, ann_file = PATHS[image_set.split("_")[0]]
+    square_resize_div_64 = getattr(args, "square_resize_div_64", False)
+    include_masks = getattr(args, "segmentation_head", False)
 
-    try:
-        square_resize_div_64 = args.square_resize_div_64
-    except:
-        square_resize_div_64 = False
-
-    try:
-        include_masks = args.segmentation_head
-    except:
-        include_masks = False
-
-    return build_coco(
+    return build_roboflow_from_coco(
         image_set=image_set,
         resolution=resolution,
         img_folder=img_folder,
