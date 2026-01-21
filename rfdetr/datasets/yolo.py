@@ -21,10 +21,10 @@ from rfdetr.datasets.coco import (
 class ConvertYolo:
     """
     Converts supervision Detections to the target dict format expected by RF-DETR.
-    
+
     Args:
         include_masks: whether to include segmentation masks
-    
+
     Examples:
         >>> import numpy as np
         >>> import supervision as sv
@@ -49,28 +49,28 @@ class ConvertYolo:
         >>> result["image_id"].tolist()
         [0]
     """
-    
+
     def __init__(self, include_masks: bool = False):
         self.include_masks = include_masks
-    
+
     def __call__(self, image: Image.Image, target: dict) -> tuple:
         """
         Convert image and YOLO detections to RF-DETR format.
-        
+
         Args:
             image: PIL Image
             target: dict with 'image_id' and 'detections' (sv.Detections)
-            
+
         Returns:
             tuple of (image, target_dict)
         """
         w, h = image.size
-        
+
         image_id = target["image_id"]
         image_id = torch.tensor([image_id])
-        
+
         detections = target["detections"]
-        
+
         if len(detections) > 0:
             boxes = torch.from_numpy(detections.xyxy).to(torch.float32)
             classes = torch.from_numpy(detections.class_id).to(torch.int64)
@@ -104,7 +104,7 @@ class ConvertYolo:
                 target_out["masks"] = masks
             else:
                 target_out["masks"] = torch.zeros((0, h, w), dtype=torch.uint8)
-            
+
             target_out["masks"] = target_out["masks"].bool()
 
         target_out["orig_size"] = torch.as_tensor([int(h), int(w)])
@@ -127,7 +127,7 @@ class _MockSvDataset:
 class YoloCoco:
     """
     A minimal COCO-compatible API wrapper for YOLO datasets.
-    
+
     This provides the necessary interface for CocoEvaluator to work with
     YOLO format datasets.
     
@@ -167,17 +167,17 @@ class YoloCoco:
         >>> coco.loadImgs([1])[0]["file_name"]
         'img_1.jpg'
     """
-    
+
     def __init__(self, classes: list, dataset: sv.DetectionDataset):
         self.classes = classes
         self.sv_dataset = dataset
-        
+
         # Build the dataset dict that COCO API expects
         self.dataset = self._build_coco_dataset()
         self.imgs = {img["id"]: img for img in self.dataset["images"]}
         self.anns = {ann["id"]: ann for ann in self.dataset["annotations"]}
         self.cats = {cat["id"]: cat for cat in self.dataset["categories"]}
-        
+
         # Build imgToAnns index
         self.imgToAnns = {}
         for ann in self.dataset["annotations"]:
@@ -185,12 +185,12 @@ class YoloCoco:
             if img_id not in self.imgToAnns:
                 self.imgToAnns[img_id] = []
             self.imgToAnns[img_id].append(ann)
-        
+
         # Ensure all images have an entry
         for img_id in self.imgs:
             if img_id not in self.imgToAnns:
                 self.imgToAnns[img_id] = []
-        
+
         # Build catToImgs index
         self.catToImgs = {}
         for cat_id in self.cats:
@@ -200,13 +200,13 @@ class YoloCoco:
             img_id = ann["image_id"]
             if img_id not in self.catToImgs[cat_id]:
                 self.catToImgs[cat_id].append(img_id)
-    
+
     def _build_coco_dataset(self) -> dict:
         """Build a COCO-format dataset dict from YOLO data."""
         images = []
         annotations = []
         categories = []
-        
+
         # Build categories (0-indexed class IDs in YOLO)
         for idx, class_name in enumerate(self.classes):
             categories.append({
@@ -214,25 +214,25 @@ class YoloCoco:
                 "name": class_name,
                 "supercategory": "none"
             })
-        
+
         ann_id = 0
         for img_id in range(len(self.sv_dataset)):
             image_path, cv2_image, detections = self.sv_dataset[img_id]
             h, w = cv2_image.shape[:2]
-            
+
             images.append({
                 "id": img_id,
                 "file_name": str(image_path),
                 "height": h,
                 "width": w
             })
-            
+
             if len(detections) > 0:
                 for i in range(len(detections)):
                     x1, y1, x2, y2 = detections.xyxy[i]
                     bbox_w = x2 - x1
                     bbox_h = y2 - y1
-                    
+
                     ann = {
                         "id": ann_id,
                         "image_id": img_id,
@@ -241,21 +241,21 @@ class YoloCoco:
                         "area": float(bbox_w * bbox_h),
                         "iscrowd": 0
                     }
-                    
+
                     # Add segmentation if available
                     if detections.mask is not None:
                         # For now, use empty polygon - evaluation will still work for bbox
                         ann["segmentation"] = []
-                    
+
                     annotations.append(ann)
                     ann_id += 1
-        
+
         return {
             "images": images,
             "annotations": annotations,
             "categories": categories
         }
-    
+
     def getAnnIds(self, imgIds=None, catIds=None, areaRng=None, iscrowd=None):
         """Get annotation IDs that satisfy given filter conditions.
         
@@ -274,28 +274,28 @@ class YoloCoco:
             catIds = []
         if areaRng is None:
             areaRng = []
-        
+
         imgIds = imgIds if isinstance(imgIds, list) else [imgIds]
         catIds = catIds if isinstance(catIds, list) else [catIds]
-        
+
         if len(imgIds) == 0:
             anns = self.dataset["annotations"]
         else:
             anns = []
             for img_id in imgIds:
                 anns.extend(self.imgToAnns.get(img_id, []))
-        
+
         if len(catIds) > 0:
             anns = [ann for ann in anns if ann["category_id"] in catIds]
-        
+
         if len(areaRng) == 2:
             anns = [ann for ann in anns if ann["area"] >= areaRng[0] and ann["area"] <= areaRng[1]]
-        
+
         if iscrowd is not None:
             anns = [ann for ann in anns if ann["iscrowd"] == iscrowd]
-        
+
         return [ann["id"] for ann in anns]
-    
+
     def getCatIds(self, catNms=None, supNms=None, catIds=None):
         """Get category IDs that satisfy given filter conditions.
         
@@ -313,16 +313,16 @@ class YoloCoco:
             supNms = []
         if catIds is None:
             catIds = []
-        
+
         cats = self.dataset["categories"]
-        
+
         if len(catNms) > 0:
             cats = [cat for cat in cats if cat["name"] in catNms]
         if len(catIds) > 0:
             cats = [cat for cat in cats if cat["id"] in catIds]
-        
+
         return [cat["id"] for cat in cats]
-    
+
     def getImgIds(self, imgIds=None, catIds=None):
         """Get image IDs that satisfy given filter conditions.
         
@@ -337,15 +337,15 @@ class YoloCoco:
             imgIds = []
         if catIds is None:
             catIds = []
-        
+
         imgIds = set(imgIds) if imgIds else set(self.imgs.keys())
-        
+
         if len(catIds) > 0:
             for cat_id in catIds:
                 imgIds &= set(self.catToImgs.get(cat_id, []))
-        
+
         return list(imgIds)
-    
+
     def loadAnns(self, ids=None):
         """Load annotations with the specified IDs.
         
@@ -359,7 +359,7 @@ class YoloCoco:
             return []
         ids = ids if isinstance(ids, list) else [ids]
         return [self.anns[ann_id] for ann_id in ids if ann_id in self.anns]
-    
+
     def loadCats(self, ids=None):
         """Load categories with the specified IDs.
         
@@ -373,7 +373,7 @@ class YoloCoco:
             return list(self.cats.values())
         ids = ids if isinstance(ids, list) else [ids]
         return [self.cats[cat_id] for cat_id in ids if cat_id in self.cats]
-    
+
     def loadImgs(self, ids=None):
         """Load images with the specified IDs.
         
@@ -392,10 +392,10 @@ class YoloCoco:
 class YoloDetection(VisionDataset):
     """
     YOLO format dataset using supervision.DetectionDataset.from_yolo().
-    
+
     This class provides a VisionDataset interface compatible with RF-DETR training,
     matching the API of CocoDetection.
-    
+
     Args:
         img_folder: Path to the directory containing images
         lb_folder: Path to the directory containing YOLO annotation .txt files
@@ -403,7 +403,7 @@ class YoloDetection(VisionDataset):
         transforms: Optional transforms to apply to images and targets
         include_masks: Whether to load segmentation masks (for YOLO segmentation format)
     """
-    
+
     def __init__(
         self,
         img_folder: str,
@@ -416,7 +416,7 @@ class YoloDetection(VisionDataset):
         self._transforms = transforms
         self.include_masks = include_masks
         self.prepare = ConvertYolo(include_masks=include_masks)
-        
+
         # Load dataset using supervision's from_yolo method
         self.sv_dataset = sv.DetectionDataset.from_yolo(
             images_directory_path=img_folder,
@@ -424,10 +424,10 @@ class YoloDetection(VisionDataset):
             data_yaml_path=data_file,
             force_masks=include_masks,
         )
-        
+
         self.classes = self.sv_dataset.classes
         self.ids = list(range(len(self.sv_dataset)))
-        
+
         # Create COCO-compatible API for evaluation
         self.coco = YoloCoco(self.classes, self.sv_dataset)
 
@@ -437,14 +437,14 @@ class YoloDetection(VisionDataset):
     def __getitem__(self, idx: int):
         image_id = self.ids[idx]
         image_path, cv2_image, detections = self.sv_dataset[idx]
-        
+
         # Convert BGR (OpenCV) to RGB (PIL)
         rgb_image = cv2_image[:, :, ::-1]
         img = Image.fromarray(rgb_image)
-        
+
         target = {'image_id': image_id, 'detections': detections}
         img, target = self.prepare(img, target)
-        
+
         if self._transforms is not None:
             img, target = self._transforms(img, target)
 
@@ -453,20 +453,20 @@ class YoloDetection(VisionDataset):
 
 def build_roboflow_from_yolo(image_set, args, resolution):
     """Build a Roboflow YOLO-format dataset.
-    
+
     This uses Roboflow's standard YOLO directory structure
     (train/valid/test folders with images/ and labels/ subdirectories).
     """
     root = Path(args.dataset_dir)
     assert root.exists(), f'provided Roboflow path {root} does not exist'
-    
+
     # YOLO format uses images/ and labels/ subdirectories
     PATHS = {
         "train": (root / "train" / "images", root / "train" / "labels"),
         "val": (root / "valid" / "images", root / "valid" / "labels"),
         "test": (root / "test" / "images", root / "test" / "labels"),
     }
-    
+
     data_file = root / "data.yaml"
     img_folder, lb_folder = PATHS[image_set.split("_")[0]]
     square_resize_div_64 = getattr(args, "square_resize_div_64", False)

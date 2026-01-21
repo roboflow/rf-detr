@@ -33,13 +33,13 @@ def get_coco_api_from_dataset(dataset):
 
 def detect_roboflow_format(dataset_dir: Path) -> str:
     """Detect if a Roboflow dataset is in COCO or YOLO format.
-    
+
     Args:
         dataset_dir: Path to the Roboflow dataset root directory
-        
+
     Returns:
         'coco' if COCO format detected, 'yolo' if YOLO format detected
-        
+
     Raises:
         ValueError: If neither format is detected
     """
@@ -47,13 +47,13 @@ def detect_roboflow_format(dataset_dir: Path) -> str:
     coco_annotation = dataset_dir / "train" / "_annotations.coco.json"
     if coco_annotation.exists():
         return "coco"
-    
+
     # Check for YOLO format: look for data.yaml and train/images folder
     yolo_data_file = dataset_dir / "data.yaml"
     yolo_images_dir = dataset_dir / "train" / "images"
     if yolo_data_file.exists() and yolo_images_dir.exists():
         return "yolo"
-    
+
     raise ValueError(
         f"Could not detect dataset format in {dataset_dir}. "
         f"Expected either COCO format (train/_annotations.coco.json) "
@@ -63,15 +63,15 @@ def detect_roboflow_format(dataset_dir: Path) -> str:
 
 def build_roboflow(image_set, args, resolution):
     """Build a Roboflow dataset, auto-detecting COCO or YOLO format.
-    
+
     This function detects the dataset format and delegates to the
     appropriate builder function.
     """
     root = Path(args.dataset_dir)
     assert root.exists(), f'provided Roboflow path {root} does not exist'
-    
+
     dataset_format = detect_roboflow_format(root)
-    
+
     if dataset_format == "coco":
         return build_roboflow_from_coco(image_set, args, resolution)
     return build_roboflow_from_yolo(image_set, args, resolution)
