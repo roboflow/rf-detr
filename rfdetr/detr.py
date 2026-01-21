@@ -124,7 +124,7 @@ class RFDETR:
         self.model.export(**kwargs)
 
     @staticmethod
-    def _load_classes(dataset_dir) -> list[str]:
+    def _load_classes(dataset_dir) -> List[str]:
         """Load class names from a COCO or YOLO dataset directory."""
         coco_path = os.path.join(dataset_dir, "train", "_annotations.coco.json")
         if os.path.exists(coco_path):
@@ -153,7 +153,7 @@ class RFDETR:
 
         raise FileNotFoundError(
             f"Could not find class names in {dataset_dir}. "
-            "Checked for COCO (train/_annotations.coco.json) and YOLO (data.yaml, dataset.yaml) styles."
+            "Checked for COCO (train/_annotations.coco.json) and YOLO (data.yaml, data.yml) styles."
         )
 
     def train_from_config(self, config: TrainConfig, **kwargs):

@@ -288,11 +288,11 @@ def build_roboflow_from_coco(image_set, args, resolution):
     img_folder, ann_file = PATHS[image_set.split("_")[0]]
     square_resize_div_64 = getattr(args, "square_resize_div_64", False)
     include_masks = getattr(args, "segmentation_head", False)
-    multi_scale = args.multi_scale
-    expanded_scales = args.expanded_scales
-    do_random_resize_via_padding = args.do_random_resize_via_padding
-    patch_size = args.patch_size
-    num_windows = args.num_windows
+    multi_scale = getattr(args, "multi_scale", False)
+    expanded_scales = getattr(args, "expanded_scales", False)
+    do_random_resize_via_padding = getattr(args, "do_random_resize_via_padding", False)
+    patch_size = getattr(args, "patch_size", 16)
+    num_windows = getattr(args, "num_windows", 4)
 
     if square_resize_div_64:
         dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms_square_div_64(

@@ -99,8 +99,8 @@ class ConvertYolo:
         target_out["iscrowd"] = iscrowd
 
         if self.include_masks:
-            if detections.mask is not None and len(detections.mask) > 0:
-                masks = torch.from_numpy(detections.mask[keep.numpy()]).to(torch.uint8)
+            if detections.mask is not None and np.size(detections.mask) > 0:
+                masks = torch.from_numpy(detections.mask[keep.cpu().numpy()]).to(torch.uint8)
                 target_out["masks"] = masks
             else:
                 target_out["masks"] = torch.zeros((0, h, w), dtype=torch.uint8)
@@ -471,11 +471,11 @@ def build_roboflow_from_yolo(image_set, args, resolution):
     img_folder, lb_folder = PATHS[image_set.split("_")[0]]
     square_resize_div_64 = getattr(args, "square_resize_div_64", False)
     include_masks = getattr(args, "segmentation_head", False)
-    multi_scale = args.multi_scale
-    expanded_scales = args.expanded_scales
-    do_random_resize_via_padding = args.do_random_resize_via_padding
-    patch_size = args.patch_size
-    num_windows = args.num_windows
+    multi_scale = getattr(args, "multi_scale", False)
+    expanded_scales = getattr(args, "expanded_scales", None)
+    do_random_resize_via_padding = getattr(args, "do_random_resize_via_padding", False)
+    patch_size = getattr(args, "patch_size", None)
+    num_windows = getattr(args, "num_windows", None)
 
     if square_resize_div_64:
         dataset = YoloDetection(

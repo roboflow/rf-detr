@@ -48,16 +48,17 @@ def detect_roboflow_format(dataset_dir: Path) -> str:
     if coco_annotation.exists():
         return "coco"
 
-    # Check for YOLO format: look for data.yaml and train/images folder
-    yolo_data_file = dataset_dir / "data.yaml"
+    # Check for YOLO format: look for data.yaml or data.yml and train/images folder
+    yolo_data_file_yaml = dataset_dir / "data.yaml"
+    yolo_data_file_yml = dataset_dir / "data.yml"
     yolo_images_dir = dataset_dir / "train" / "images"
-    if yolo_data_file.exists() and yolo_images_dir.exists():
+    if (yolo_data_file_yaml.exists() or yolo_data_file_yml.exists()) and yolo_images_dir.exists():
         return "yolo"
 
     raise ValueError(
         f"Could not detect dataset format in {dataset_dir}. "
         f"Expected either COCO format (train/_annotations.coco.json) "
-        f"or YOLO format (data.yaml + train/images/)"
+        f"or YOLO format (data.yaml or data.yml + train/images/)"
     )
 
 
