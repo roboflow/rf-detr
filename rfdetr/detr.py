@@ -480,7 +480,12 @@ class RFDETRLargeDeprecated(RFDETR):
     """
     size = "rfdetr-large"
     def __init__(self, **kwargs):
-        logger.warning("RFDETRLargeDeprecated is deprecated, and will be removed in a future version. Please use RFDETRLarge instead.")
+        warnings.warn(
+    "RFDETRLargeDeprecated is deprecated and will be removed in a future version. "
+    "Please use RFDETRLarge instead.",
+    category=DeprecationWarning,
+    stacklevel=2
+)
         super().__init__(**kwargs)
 
     def get_model_config(self, **kwargs):
