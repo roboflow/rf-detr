@@ -113,12 +113,59 @@ class ConvertYolo:
         return image, target_out
 
 
+class _MockSvDataset:
+    """Mock supervision dataset for testing YoloCoco."""
+    classes = ["cat", "dog"]
+    def __len__(self): return 2
+    def __getitem__(self, i):
+        import numpy as np
+        import supervision as sv
+        det = sv.Detections(xyxy=np.array([[10*i, 20, 30, 40]]), class_id=np.array([i]))
+        return f"img_{i}.jpg", np.zeros((100, 100, 3), dtype=np.uint8), det
+
+
 class YoloCoco:
     """
     A minimal COCO-compatible API wrapper for YOLO datasets.
     
     This provides the necessary interface for CocoEvaluator to work with
     YOLO format datasets.
+    
+    Examples:
+        >>> mock = _MockSvDataset()
+        >>> coco = YoloCoco(mock.classes, mock)
+        >>> # dataset structure
+        >>> len(coco.dataset["images"]), len(coco.dataset["categories"]), len(coco.dataset["annotations"])
+        (2, 2, 2)
+        >>> # getAnnIds
+        >>> coco.getAnnIds()
+        [0, 1]
+        >>> coco.getAnnIds(imgIds=[0])
+        [0]
+        >>> coco.getAnnIds(catIds=[1])
+        [1]
+        >>> # getCatIds
+        >>> sorted(coco.getCatIds())
+        [0, 1]
+        >>> coco.getCatIds(catNms=["cat"])
+        [0]
+        >>> # getImgIds
+        >>> sorted(coco.getImgIds())
+        [0, 1]
+        >>> coco.getImgIds(catIds=[0])
+        [0]
+        >>> # loadAnns
+        >>> ann = coco.loadAnns([0])[0]
+        >>> ann["category_id"], ann["image_id"]
+        (0, 0)
+        >>> # loadCats
+        >>> coco.loadCats([0])[0]["name"]
+        'cat'
+        >>> len(coco.loadCats())
+        2
+        >>> # loadImgs
+        >>> coco.loadImgs([1])[0]["file_name"]
+        'img_1.jpg'
     """
     
     def __init__(self, classes: list, dataset: sv.DetectionDataset):
@@ -210,7 +257,17 @@ class YoloCoco:
         }
     
     def getAnnIds(self, imgIds=None, catIds=None, areaRng=None, iscrowd=None):
-        """Get annotation IDs that satisfy given filter conditions."""
+        """Get annotation IDs that satisfy given filter conditions.
+        
+        Args:
+            imgIds: Filter by image IDs (list or single ID)
+            catIds: Filter by category IDs (list or single ID)
+            areaRng: Filter by area range [min, max]
+            iscrowd: Filter by iscrowd flag (0 or 1)
+        
+        Returns:
+            List of annotation IDs matching the filter conditions
+        """
         if imgIds is None:
             imgIds = []
         if catIds is None:
@@ -240,7 +297,16 @@ class YoloCoco:
         return [ann["id"] for ann in anns]
     
     def getCatIds(self, catNms=None, supNms=None, catIds=None):
-        """Get category IDs that satisfy given filter conditions."""
+        """Get category IDs that satisfy given filter conditions.
+        
+        Args:
+            catNms: Filter by category names (list)
+            supNms: Filter by supercategory names (list, not used)
+            catIds: Filter by category IDs (list)
+        
+        Returns:
+            List of category IDs matching the filter conditions
+        """
         if catNms is None:
             catNms = []
         if supNms is None:
@@ -258,7 +324,15 @@ class YoloCoco:
         return [cat["id"] for cat in cats]
     
     def getImgIds(self, imgIds=None, catIds=None):
-        """Get image IDs that satisfy given filter conditions."""
+        """Get image IDs that satisfy given filter conditions.
+        
+        Args:
+            imgIds: Filter to these image IDs (list)
+            catIds: Filter by images containing these category IDs (list)
+        
+        Returns:
+            List of image IDs matching the filter conditions
+        """
         if imgIds is None:
             imgIds = []
         if catIds is None:
@@ -273,21 +347,42 @@ class YoloCoco:
         return list(imgIds)
     
     def loadAnns(self, ids=None):
-        """Load annotations with the specified IDs."""
+        """Load annotations with the specified IDs.
+        
+        Args:
+            ids: Annotation IDs to load (list or single ID)
+        
+        Returns:
+            List of annotation dicts with keys: id, image_id, category_id, bbox, area, iscrowd
+        """
         if ids is None:
             return []
         ids = ids if isinstance(ids, list) else [ids]
         return [self.anns[ann_id] for ann_id in ids if ann_id in self.anns]
     
     def loadCats(self, ids=None):
-        """Load categories with the specified IDs."""
+        """Load categories with the specified IDs.
+        
+        Args:
+            ids: Category IDs to load (list or single ID). If None, returns all categories.
+        
+        Returns:
+            List of category dicts with keys: id, name, supercategory
+        """
         if ids is None:
             return list(self.cats.values())
         ids = ids if isinstance(ids, list) else [ids]
         return [self.cats[cat_id] for cat_id in ids if cat_id in self.cats]
     
     def loadImgs(self, ids=None):
-        """Load images with the specified IDs."""
+        """Load images with the specified IDs.
+        
+        Args:
+            ids: Image IDs to load (list or single ID)
+        
+        Returns:
+            List of image dicts with keys: id, file_name, height, width
+        """
         if ids is None:
             return []
         ids = ids if isinstance(ids, list) else [ids]
