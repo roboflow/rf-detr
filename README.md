@@ -13,8 +13,6 @@
 
 RF-DETR is a real-time transformer architecture for object detection and instance segmentation developed by Roboflow. Built on a DINOv2 vision transformer backbone, RF-DETR delivers state-of-the-art accuracy and latency trade-offs on [Microsoft COCO](https://cocodataset.org/#home) and [RF100-VL](https://github.com/roboflow/rf100-vl). The codebase and core model weights are released under the Apache 2.0 license.
 
-[![rf-detr-tutorial-banner](https://github.com/user-attachments/assets/555a45c3-96e8-4d8a-ad29-f23403c8edfd)](https://youtu.be/-OvpdLAElFA)
-
 ## Install
 
 To install RF-DETR, install the `rfdetr` package in a [**Python>=3.10**](https://www.python.org/) environment with `pip`.
@@ -40,7 +38,7 @@ pip install git+https://github.com/roboflow/rf-detr.git@develop
 
 RF-DETR achieves state-of-the-art results in both object detection and instance segmentation, with benchmarks reported on Microsoft COCO and RF100-VL. The charts and tables below compare RF-DETR against other top real-time models across accuracy and latency for detection and segmentation. All latency numbers were measured on an NVIDIA T4 using TensorRT, FP16, and batch size 1. For full benchmarking methodology and reproducibility details, see [roboflow/sab](https://github.com/roboflow/single_artifact_benchmarking).
 
-### Object Detection
+### Detection
 
 <img width="2934" height="2926" alt="rf_detr_1-4_latency_accuracy_object_detection" src="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png" />
 
@@ -80,7 +78,7 @@ RF-DETR achieves state-of-the-art results in both object detection and instance 
 
 </details>
 
-### Instance Segmentation
+### Segmentation
 
 <img width="2932" height="1463" alt="rf_detr_1-4_latency_accuracy_instance_segmentation" src="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_instance_segmentation.png" />
 
@@ -117,55 +115,18 @@ RF-DETR achieves state-of-the-art results in both object detection and instance 
 
 ## Inference
 
-The easiest path to deployment is using Roboflow's [Inference](https://github.com/roboflow/inference) package.
-
-The code below lets you run `rfdetr-base` on an image:
+### Detection
 
 ```python
-import os
-import supervision as sv
-from inference import get_model
-from PIL import Image
-from io import BytesIO
-import requests
-
-url = "https://media.roboflow.com/dog.jpeg"
-image = Image.open(BytesIO(requests.get(url).content))
-
-model = get_model("rfdetr-base")
-
-predictions = model.infer(image, confidence=0.5)[0]
-
-detections = sv.Detections.from_inference(predictions)
-
-labels = [prediction.class_name for prediction in predictions.predictions]
-
-annotated_image = image.copy()
-annotated_image = sv.BoxAnnotator().annotate(annotated_image, detections)
-annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
-```
-
-To use segmentation, use the `rfdetr-seg-preview` model ID. This model will return segmentation masks from a RF-DETR-Seg (Preview) model trained on the Microsoft COCO dataset.
-
-## Predict
-
-You can also use the .predict method to perform inference during local development. The `.predict()` method accepts various input formats, including file paths, PIL images, NumPy arrays, and torch tensors. Please ensure inputs use RGB channel order. For `torch.Tensor` inputs specifically, they must have a shape of `(3, H, W)` with values normalized to the `[0..1)` range. If you don't plan to modify the image or batch size dynamically at runtime, you can also use `.optimize_for_inference()` to get up to 2x end-to-end speedup, depending on platform.
-
-```python
-import io
 import requests
 import supervision as sv
 from PIL import Image
-from rfdetr import RFDETRBase
+from rfdetr import RFDETRMedium
 from rfdetr.util.coco_classes import COCO_CLASSES
 
-model = RFDETRBase()
+model = RFDETRMedium()
 
-model.optimize_for_inference()
-
-url = "https://media.roboflow.com/notebooks/examples/dog-2.jpeg"
-
-image = Image.open(io.BytesIO(requests.get(url).content))
+image = Image.open(requests.get('https://media.roboflow.com/dog.jpg', stream=True).raw)
 detections = model.predict(image, threshold=0.5)
 
 labels = [
@@ -174,18 +135,55 @@ labels = [
     in zip(detections.class_id, detections.confidence)
 ]
 
-annotated_image = image.copy()
-annotated_image = sv.BoxAnnotator().annotate(annotated_image, detections)
+annotated_image = sv.BoxAnnotator().annotate(image, detections)
 annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
-
-sv.plot_image(annotated_image)
 ```
 
-### Train a Model
+| Size | RF-DETR package class | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |
+|:----:|:---------------------:|:--------------------:|:-----------------------:|:------------:|:----------:|:----------:|
+| N    | `RFDETRNano`          | 67.6                 | 48.4                    | 2.3          | 30.5       | 384x384    |
+| S    | `RFDETRSmall`         | 72.1                 | 53.0                    | 3.5          | 32.1       | 512x512    |
+| M    | `RFDETRMedium`        | 73.6                 | 54.7                    | 4.4          | 33.7       | 576x576    |
+| L    | `RFDETRLarge`         | 75.1                 | 56.5                    | 6.8          | 33.9       | 704x704    |
+| XL   | `RFDETRXLarge`        | 77.4                 | 58.6                    | 11.5         | 126.4      | 700x700    |
+| 2XL  | `RFDETR2XLarge`       | 78.5                 | 60.1                    | 17.2         | 126.9      | 880x880    |
 
-You can fine-tune an RF-DETR Nano, Small, Medium, and Base model with a custom dataset using the `rfdetr` Python package.
+### Segmantation
 
-[Learn how to train an RF-DETR model.](https://rfdetr.roboflow.com/learn/train/)
+```python
+import requests
+import supervision as sv
+from PIL import Image
+from rfdetr import RFDETRSegMedium
+from rfdetr.util.coco_classes import COCO_CLASSES
+
+model = RFDETRSegMedium()
+
+image = Image.open(requests.get('https://media.roboflow.com/dog.jpg', stream=True).raw)
+detections = model.predict(image, threshold=0.5)
+
+labels = [
+    f"{COCO_CLASSES[class_id]} {confidence:.2f}"
+    for class_id, confidence
+    in zip(detections.class_id, detections.confidence)
+]
+
+annotated_image = sv.MaskAnnotator().annotate(image, detections)
+annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
+```
+
+| Size | RF-DETR package class | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |
+|:----:|:---------------------:|:--------------------:|:-----------------------:|:------------:|:----------:|:----------:|
+| N    | `RFDETRSegNano`       | 63.0                 | 40.3                    | 3.4          | 33.6       | 312x312    |
+| S    | `RFDETRSegSmall`      | 66.2                 | 43.1                    | 4.4          | 33.7       | 384x384    |
+| M    | `RFDETRSegMedium`     | 68.4                 | 45.3                    | 5.9          | 35.7       | 432x432    |
+| L    | `RFDETRSegLarge`      | 70.5                 | 47.1                    | 8.8          | 36.2       | 504x504    |
+| XL   | `RFDETRSegXLarge`     | 72.2                 | 48.8                    | 13.5         | 38.1       | 624x624    |
+| 2XL  | `RFDETRSeg2XLarge`    | 73.1                 | 49.9                    | 21.8         | 38.6       | 768x768    |
+
+### Train
+
+[![rf-detr-tutorial-banner](https://github.com/user-attachments/assets/555a45c3-96e8-4d8a-ad29-f23403c8edfd)](https://youtu.be/-OvpdLAElFA)
 
 ## Documentation
 
