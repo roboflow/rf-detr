@@ -200,9 +200,7 @@ Visit our [documentation website](https://rfdetr.roboflow.com) to learn more abo
 ## License
 
 All source code and model weights are licensed under the Apache License 2.0.
-See [`LICENSE.core`](LICENSE.core) for details.
-
-RF-DETR XLarge and 2XLarge code and checkpoints are licensed under the
+See [`LICENSE.core`](LICENSE.core) for details. RF-DETR XLarge and 2XLarge code and checkpoints are licensed under the
 Platform Model License 1.0. See [`LICENSE.platform`](LICENSE.platform) for details.
 These models require a Roboflow account to run and fine-tune.
 
