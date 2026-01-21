@@ -29,7 +29,28 @@ BOX_SPACING = 250
 ROW_SPACING = 260
 
 
-def create_coco_gt(
+@pytest.fixture
+def coco_gt_fixture():
+    """Fixture for creating a COCO ground truth object."""
+    coco_gt = COCO()
+    coco_gt.dataset = {
+        "images": [],
+        "annotations": [],
+        "categories": [],
+    }
+    coco_gt.createIndex()
+    return coco_gt
+
+
+@pytest.fixture
+def coco_eval_fixture(coco_gt_fixture):
+    """Fixture for creating a COCOeval object."""
+    coco_dt = coco_gt_fixture
+    coco_eval = COCOeval(coco_gt_fixture, coco_dt, iouType="bbox")
+    return coco_eval
+
+
+def _create_coco_gt(
     images: list[dict], annotations: list[dict], categories: list[dict]
 ) -> COCO:
     coco_gt = COCO()
@@ -42,7 +63,7 @@ def create_coco_gt(
     return coco_gt
 
 
-def create_gt_annotation(
+def _create_gt_annotation(
     ann_id: int, image_id: int, category_id: int, bbox: list[float]
 ) -> dict:
     """Create a single GT annotation in COCO format. bbox is [x, y, width, height]."""
@@ -56,7 +77,7 @@ def create_gt_annotation(
     }
 
 
-def create_prediction(
+def _create_prediction(
     image_id: int, category_id: int, bbox: list[float], score: float
 ) -> dict:
     """Create a single prediction in COCO results format. bbox is [x, y, width, height]."""
@@ -68,7 +89,7 @@ def create_prediction(
     }
 
 
-def make_contained_pred_box(gt_box: list[float], target_iou: float) -> list[float]:
+def _make_contained_pred_box(gt_box: list[float], target_iou: float) -> list[float]:
     """
     Create a prediction box centered inside gt_box with the specified IoU.
 
@@ -87,7 +108,7 @@ def make_contained_pred_box(gt_box: list[float], target_iou: float) -> list[floa
     return [x + offset, y + offset, pred_size, pred_size]
 
 
-def initialize_coco_eval(coco_gt: COCO, predictions: list[dict]) -> COCOeval:
+def _initialize_coco_eval(coco_gt: COCO, predictions: list[dict]) -> COCOeval:
     """Initialize and run COCOeval, returning the evaluator object."""
     coco_dt = coco_gt.loadRes(predictions) if predictions else COCO()
     coco_eval = COCOeval(coco_gt, coco_dt, iouType="bbox")
@@ -97,7 +118,7 @@ def initialize_coco_eval(coco_gt: COCO, predictions: list[dict]) -> COCOeval:
     return coco_eval
 
 
-def xywh_to_xyxy(boxes: list[list[float]]) -> np.ndarray:
+def _xywh_to_xyxy(boxes: list[list[float]]) -> np.ndarray:
     """Convert list of [x, y, w, h] boxes to numpy array of [x1, y1, x2, y2]."""
     if not boxes:
         return np.empty((0, 4))
@@ -110,7 +131,7 @@ def xywh_to_xyxy(boxes: list[list[float]]) -> np.ndarray:
     return xyxy
 
 
-def save_visualization(
+def _save_visualization(
     scenario_name: str,
     image_width: int,
     image_height: int,
@@ -135,8 +156,8 @@ def save_visualization(
     gt_boxes_offset = [[x, y + top_padding, w, h] for x, y, w, h in gt_boxes]
     pred_boxes_offset = [[x, y + top_padding, w, h] for x, y, w, h in pred_boxes]
 
-    gt_xyxy = xywh_to_xyxy(gt_boxes_offset)
-    pred_xyxy = xywh_to_xyxy(pred_boxes_offset)
+    gt_xyxy = _xywh_to_xyxy(gt_boxes_offset)
+    pred_xyxy = _xywh_to_xyxy(pred_boxes_offset)
 
     gt_detections = None
     pred_detections = None
@@ -218,7 +239,7 @@ def save_visualization(
     print(f"Saved visualization to {VIS_DIR}/{scenario_name}.png")
 
 
-def build_perfect_scenario():
+def _build_perfect_scenario():
     """
     Build the "perfect" scenario: all predictions nearly perfectly match GTs.
 
@@ -250,9 +271,9 @@ def build_perfect_scenario():
     for cat_id, row_y in [(1, 0), (2, ROW_SPACING)]:
         for i in range(n_boxes):
             gt_box = [float(i * BOX_SPACING), float(row_y), float(BOX_SIZE), float(BOX_SIZE)]
-            pred_box = make_contained_pred_box(gt_box, target_iou=target_iou)
-            annotations.append(create_gt_annotation(ann_id, image_id, cat_id, gt_box))
-            predictions.append(create_prediction(image_id, cat_id, pred_box, score=1.0))
+            pred_box = _make_contained_pred_box(gt_box, target_iou=target_iou)
+            annotations.append(_create_gt_annotation(ann_id, image_id, cat_id, gt_box))
+            predictions.append(_create_prediction(image_id, cat_id, pred_box, score=1.0))
             ann_id += 1
 
             gt_boxes.append(gt_box)
@@ -262,7 +283,7 @@ def build_perfect_scenario():
             pred_confidences.append(1.0)
             pred_ious.append(target_iou)
 
-    save_visualization(
+    _save_visualization(
         "perfect",
         image_width,
         image_height,
@@ -274,11 +295,11 @@ def build_perfect_scenario():
         pred_ious,
     )
 
-    coco_gt = create_coco_gt(images, annotations, categories)
-    return initialize_coco_eval(coco_gt, predictions)
+    coco_gt = _create_coco_gt(images, annotations, categories)
+    return _initialize_coco_eval(coco_gt, predictions)
 
 
-def build_degenerate_scenario():
+def _build_degenerate_scenario():
     """
     Build the degenerate scenario: all predictions have zero IoU with GTs.
 
@@ -310,7 +331,7 @@ def build_degenerate_scenario():
     for cat_id, row_y in [(1, 0), (2, ROW_SPACING)]:
         for i in range(n_boxes):
             box = [float(i * BOX_SPACING), float(row_y), float(BOX_SIZE), float(BOX_SIZE)]
-            annotations.append(create_gt_annotation(ann_id, image_id, cat_id, box))
+            annotations.append(_create_gt_annotation(ann_id, image_id, cat_id, box))
             ann_id += 1
 
             gt_boxes.append(box)
@@ -320,14 +341,14 @@ def build_degenerate_scenario():
     for cat_id, row_y in [(1, 0), (2, ROW_SPACING)]:
         for i in range(n_boxes):
             box = [float(pred_x_offset + i * BOX_SPACING), float(row_y), float(BOX_SIZE), float(BOX_SIZE)]
-            predictions.append(create_prediction(image_id, cat_id, box, score=1.0))
+            predictions.append(_create_prediction(image_id, cat_id, box, score=1.0))
 
             pred_boxes.append(box)
             pred_class_ids.append(cat_id)
             pred_confidences.append(1.0)
             pred_ious.append(0.0)
 
-    save_visualization(
+    _save_visualization(
         "degenerate",
         image_width,
         image_height,
@@ -339,11 +360,11 @@ def build_degenerate_scenario():
         pred_ious,
     )
 
-    coco_gt = create_coco_gt(images, annotations, categories)
-    return initialize_coco_eval(coco_gt, predictions)
+    coco_gt = _create_coco_gt(images, annotations, categories)
+    return _initialize_coco_eval(coco_gt, predictions)
 
 
-def build_intermediate_scenario():
+def _build_intermediate_scenario():
     """
     Build the intermediate scenario: mixed IoU/confidence predictions.
 
@@ -490,9 +511,9 @@ def build_intermediate_scenario():
     # Row 0: Class 1 GTs with TP predictions
     for i, (iou, conf) in enumerate(zip(class1_ious, class1_confs)):
         gt_box = [float(i * BOX_SPACING), 0.0, float(BOX_SIZE), float(BOX_SIZE)]
-        pred_box = make_contained_pred_box(gt_box, target_iou=iou)
-        annotations.append(create_gt_annotation(ann_id, image_id, 1, gt_box))
-        predictions.append(create_prediction(image_id, 1, pred_box, score=conf))
+        pred_box = _make_contained_pred_box(gt_box, target_iou=iou)
+        annotations.append(_create_gt_annotation(ann_id, image_id, 1, gt_box))
+        predictions.append(_create_prediction(image_id, 1, pred_box, score=conf))
         ann_id += 1
 
         gt_boxes.append(gt_box)
@@ -505,9 +526,9 @@ def build_intermediate_scenario():
     # Row 1: Class 2 GTs with TP predictions
     for i, (iou, conf) in enumerate(zip(class2_ious, class2_confs)):
         gt_box = [float(i * BOX_SPACING), float(ROW_SPACING), float(BOX_SIZE), float(BOX_SIZE)]
-        pred_box = make_contained_pred_box(gt_box, target_iou=iou)
-        annotations.append(create_gt_annotation(ann_id, image_id, 2, gt_box))
-        predictions.append(create_prediction(image_id, 2, pred_box, score=conf))
+        pred_box = _make_contained_pred_box(gt_box, target_iou=iou)
+        annotations.append(_create_gt_annotation(ann_id, image_id, 2, gt_box))
+        predictions.append(_create_prediction(image_id, 2, pred_box, score=conf))
         ann_id += 1
 
         gt_boxes.append(gt_box)
@@ -520,14 +541,14 @@ def build_intermediate_scenario():
     # Row 2: Class 2 FPs
     for i, fp_conf in enumerate(class2_fp_confs):
         fp_box = [float(i * BOX_SPACING), float(2 * ROW_SPACING), float(BOX_SIZE), float(BOX_SIZE)]
-        predictions.append(create_prediction(image_id, 2, fp_box, score=fp_conf))
+        predictions.append(_create_prediction(image_id, 2, fp_box, score=fp_conf))
 
         pred_boxes.append(fp_box)
         pred_class_ids.append(2)
         pred_confidences.append(fp_conf)
         pred_ious.append(None)
 
-    save_visualization(
+    _save_visualization(
         "intermediate",
         image_width,
         image_height,
@@ -539,8 +560,8 @@ def build_intermediate_scenario():
         pred_ious,
     )
 
-    coco_gt = create_coco_gt(images, annotations, categories)
-    return initialize_coco_eval(coco_gt, predictions)
+    coco_gt = _create_coco_gt(images, annotations, categories)
+    return _initialize_coco_eval(coco_gt, predictions)
 
 
 class TestPerfectScenario:
@@ -550,8 +571,8 @@ class TestPerfectScenario:
     Expected: Precision = 1.0, Recall = 1.0
     """
 
-    def test_perfect_metrics(self):
-        coco_eval = build_perfect_scenario()
+    def test_perfect_metrics(self, coco_eval_fixture):
+        coco_eval = _build_perfect_scenario()
         results = coco_extended_metrics(coco_eval)
 
         assert results["precision"] == pytest.approx(1.0, abs=0.01)
@@ -565,8 +586,8 @@ class TestDegenerateScenario:
     Expected: Precision = 0.0, Recall = 0.0
     """
 
-    def test_degenerate_metrics(self):
-        coco_eval = build_degenerate_scenario()
+    def test_degenerate_metrics(self, coco_eval_fixture):
+        coco_eval = _build_degenerate_scenario()
         results = coco_extended_metrics(coco_eval)
 
         assert results["precision"] == pytest.approx(0.0, abs=0.01)
@@ -591,8 +612,8 @@ class TestIntermediateScenario:
     - At confidence 0.0: Mean-Precision = 0.75, Mean-Recall = 1.0
     """
 
-    def test_intermediate_metrics(self):
-        coco_eval = build_intermediate_scenario()
+    def test_intermediate_metrics(self, coco_eval_fixture):
+        coco_eval = _build_intermediate_scenario()
         results = coco_extended_metrics(coco_eval)
 
         assert results["precision"] == pytest.approx(0.75, abs=0.01)
@@ -606,7 +627,3 @@ class TestIntermediateScenario:
 
         assert per_class_metrics["class_2"]["precision"] == pytest.approx(0.5, abs=0.01)
         assert per_class_metrics["class_2"]["recall"] == pytest.approx(1.0, abs=0.01)
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
