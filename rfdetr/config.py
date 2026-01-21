@@ -135,7 +135,7 @@ class RFDETRLargeConfig(ModelConfig):
     out_feature_indexes: List[int] = [3, 6, 9, 12]
     num_classes: int = 90
     positional_encoding_size: int = 704 // 16
-    pretrain_weights: Optional[str] = "rf-detr-large-edge.pth"
+    pretrain_weights: Optional[str] = "rf-detr-large-2026.pth"
     resolution: int = 704
 
 

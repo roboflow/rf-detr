@@ -323,12 +323,13 @@ class RFDETR:
             else:
                 predictions = self.model.model(batch_tensor)
             if isinstance(predictions, tuple):
-                predictions = {
+                return_predictions = {
                     "pred_logits": predictions[1],
                     "pred_boxes": predictions[0],
                 }
                 if len(predictions) == 3:
-                    predictions["pred_masks"] = predictions[2]
+                    return_predictions["pred_masks"] = predictions[2]
+                predictions = return_predictions
             target_sizes = torch.tensor(orig_sizes, device=self.model.device)
             results = self.model.postprocess(predictions, target_sizes=target_sizes)
 

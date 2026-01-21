@@ -237,7 +237,7 @@ def get_uncertain_point_coords_with_randomness(
     return point_coords
 
 
-def calculate_uncertainty(logits):
+def calculate_uncertainty(logits: torch.Tensor) -> torch.Tensor:
     """
     We estimate uncerainty as L1 distance between 0.0 and the logit prediction in 'logits' for the
         foreground class in `classes`.
