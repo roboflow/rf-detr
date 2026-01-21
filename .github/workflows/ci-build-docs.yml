@@ -34,3 +34,6 @@ jobs:
 
       - name: 🧪 Test Docs Build
         run: uv run mkdocs build --verbose
+
+      - name: Minimize uv cache
+        run: uv cache prune --ci

@@ -59,3 +59,6 @@ jobs:
         run: |
           latest_tag=$(git describe --tags `git rev-list --tags --max-count=1`)
           uv run mike deploy --push --update-aliases $latest_tag latest
+
+      - name: Minimize uv cache
+        run: uv cache prune --ci
