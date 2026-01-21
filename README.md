@@ -38,7 +38,7 @@ The below tables shows how RF-DETR performs when validated on the Microsoft COCO
 
 ### Object Detection Benchmarks
 
-![rf-detr-coco-rf100-vl-9](https://media.roboflow.com/rfdetr/pareto1.png)
+
 
 | Architecture | COCO AP<sub>50</sub> |  COCO AP<sub>50:95</sub>   |  RF100VL AP<sub>50</sub>   | RF100VL AP<sub>50:95</sub>  |  Latency (ms)   |   Params (M) |   Resolution  |
 |:------------:|:--------------------:|:--------------------------:|:--------------------------:|:---------------------------:|:---------------:|:------------:|:-------------:|
@@ -69,32 +69,32 @@ The below tables shows how RF-DETR performs when validated on the Microsoft COCO
 |   D-FINE-L   |         74.9         |            57.2            |            86.4            |            61.6             |       7.5       |         31.0 |       640x640 |
 |   D-FINE-X   |         76.8         |            59.3            |            86.9            |            62.2             |       11.5      |         62.0 |       640x640 |
 
-[See our benchmark notes in the RF-DETR documentation.](https://rfdetr.roboflow.com/learn/benchmarks/)
-
 ### Instance Segmentation Benchmarks
 
-![rf-detr-coco-rf100-vl-9](https://media.roboflow.com/rfdetr/pareto_segmentation.png)
 
-| Model Name              | Reported Latency | Reported mAP | Measured Latency | Measured mAP |
-|-------------------------|------------------|--------------|------------------|--------------|
-| RF-DETR-Seg-Nano        |                  |              | 3.4              | 40.3         |
-| YOLO11n-Seg             | 1.8              | 32.0         | 3.6              | 30.0         |
-| YOLOv8n-Seg             |                  | 30.5         | 3.5              | 28.3         |
-| RF-DETR-Seg-Small       |                  |              | 4.4              | 43.1         |
-| YOLO11s-Seg             | 2.9              | 37.8         | 4.6              | 35.0         |
-| YOLOv8s-Seg             |                  | 36.8         | 4.2              | 34.0         |
-| RF-DETR-Seg-Medium      |                  |              | 5.9              | 45.3         |
-| YOLO11m-Seg             | 6.3              | 41.5         | 6.9              | 38.5         |
-| YOLOv8m-Seg             |                  | 40.8         | 7.0              | 37.3         |
-| YOLO11l-Seg             | 7.8              | 42.9         | 8.3              | 39.5         |
-| RF-DETR-Seg-Large       |                  |              | 8.8              | 47.1         |
-| YOLOv8l-Seg             |                  | 42.6         | 9.7              | 39.0         |
-| RF-DETR-Seg-XLarge      |                  |              | 13.5             | 48.8         |
-| YOLO11x-Seg             | 15.8             | 43.8         | 13.7             | 40.1         |
-| YOLOv8x-Seg             |                  | 43.4         | 14.0             | 39.5         |
-| RF-DETR-Seg-2XLarge     |                  |              | 21.8             | 49.9         |
-
-For more information on measuring end-to-end latency for models, see our open source [Single Artifact Benchmarking tool](https://github.com/roboflow/single_artifact_benchmarking).
+|   Architecture   | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |
+|:----------------:|:--------------------:|:-----------------------:|:------------:|:----------:|:----------:|
+|  RF-DETR-Seg-N   |         63.0         |          40.3           |     3.4      |    33.6    |  312x312   |
+|  RF-DETR-Seg-S   |         66.2         |          43.1           |     4.4      |    33.7    |  384x384   |
+|  RF-DETR-Seg-M   |         68.4         |          45.3           |     5.9      |    35.7    |  432x432   |
+|  RF-DETR-Seg-L   |         70.5         |          47.1           |     8.8      |    36.2    |  504x504   |
+|  RF-DETR-Seg-XL  |         72.2         |          48.8           |     13.5     |    38.1    |  624x624   |
+| RF-DETR-Seg-2XL  |         73.1         |          49.9           |     21.8     |    38.6    |  768x768   |
+|   YOLOv8-N-Seg   |         45.6         |          28.3           |     3.5      |    3.4     |  640x640   |
+|   YOLOv8-S-Seg   |         53.8         |          34.0           |     4.2      |    11.8    |  640x640   |
+|   YOLOv8-M-Seg   |         58.2         |          37.3           |     7.0      |    27.3    |  640x640   |
+|   YOLOv8-L-Seg   |         60.5         |          39.0           |     9.7      |    46.0    |  640x640   |
+|  YOLOv8-XL-Seg   |         61.3         |          39.5           |     14.0     |    71.8    |  640x640   |
+|  YOLOv11-N-Seg   |         47.8         |          30.0           |     3.6      |    2.9     |  640x640   |
+|  YOLOv11-S-Seg   |         55.4         |          35.0           |     4.6      |    10.1    |  640x640   |
+|  YOLOv11-M-Seg   |         60.0         |          38.5           |     6.9      |    22.4    |  640x640   |
+|  YOLOv11-L-Seg   |         61.5         |          39.5           |     8.3      |    27.6    |  640x640   |
+|  YOLOv11-XL-Seg  |         62.4         |          40.1           |     13.7     |    62.1    |  640x640   |
+|   YOLO26-N-Seg   |         54.3         |          34.7           |     2.31     |    2.7     |  640x640   |
+|   YOLO26-S-Seg   |         62.4         |          40.2           |     3.47     |    10.4    |  640x640   |
+|   YOLO26-M-Seg   |         67.8         |          44.0           |     6.32     |    23.6    |  640x640   |
+|   YOLO26-L-Seg   |         69.8         |          45.5           |     7.58     |    28.0    |  640x640   |
+|   YOLO26-X-Seg   |         71.6         |          46.8           |    12.92     |    62.8    |  640x640   |
 
 ## Installation
 
