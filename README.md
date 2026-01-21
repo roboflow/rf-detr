@@ -94,8 +94,7 @@ pip install rfdetr
 <details>
 <summary>Install from source</summary>
 
-By installing RF-DETR from source, you can explore the most recent features and enhancements that have not yet been officially released.
-Please note that these updates are still in development and may not be as stable as the latest published release.
+By installing RF-DETR from source, you can explore the most recent features and enhancements that have not yet been officially released. Please note that these updates are still in development and may not be as stable as the latest published release.
 
 ```bash
 pip install git+https://github.com/roboflow/rf-detr.git@develop
