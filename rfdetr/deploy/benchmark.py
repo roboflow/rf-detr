@@ -26,6 +26,7 @@ from collections import OrderedDict, namedtuple
 import numpy as np
 import onnxruntime as nxrun
 import pycuda.driver as cuda
+import supervision as sv
 import tensorrt as trt
 import torch
 import torchvision.transforms.functional as F
@@ -33,7 +34,6 @@ import tqdm
 from PIL import Image
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
-import supervision as sv
 
 
 def parser_args():

@@ -27,9 +27,8 @@ from typing import Any, Dict, List, Tuple
 
 import numpy as np
 import pycocotools.mask as mask_util
-import torch
-from pycocotools.coco import COCO
 import supervision as sv
+from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 
 from rfdetr.util.misc import all_gather
