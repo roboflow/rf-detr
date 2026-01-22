@@ -418,36 +418,9 @@ Replace `8` in the `--nproc_per_node argument` with the number of GPUs you want 
     detections = model.predict(<IMAGE_PATH>)
     ```
 
-## ONNX export
+## Next Steps
 
-RF-DETR supports exporting models to the ONNX format, which enables interoperability with various inference frameworks and can improve deployment efficiency.
+After training your model, you can:
 
-To export your model, first install the `onnxexport` extension:
-
-```
-pip install rfdetr[onnxexport]
-```
-
-Then, run:
-
-=== "Object Detection"
-
-    ```python
-    from rfdetr import RFDETRMedium
-
-    model = RFDETRMedium(pretrain_weights=<CHECKPOINT_PATH>)
-
-    model.export()
-    ```
-
-=== "Image Segmentation"
-
-    ```python
-    from rfdetr import RFDETRSegMedium
-
-    model = RFDETRSegMedium(pretrain_weights=<CHECKPOINT_PATH>)
-
-    model.export()
-    ```
-
-This command saves the ONNX model to the `output` directory.
+- [Export your model to ONNX](../export.md) for deployment with various inference frameworks
+- [Deploy to Roboflow](../deploy.md) for cloud-based inference and workflow integration
