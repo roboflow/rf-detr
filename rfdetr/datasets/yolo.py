@@ -228,16 +228,14 @@ class YoloCoco:
                 "width": w
             })
 
-            for i in range(len(detections)):
-                x1, y1, x2, y2 = detections.xyxy[i]
-                bbox_w = x2 - x1
-                bbox_h = y2 - y1
+            for i, detection in enumerate(detections):
+                bbox_x, bbox_y, bbox_w, bbox_h = sv.xyxy_to_xywh(detection.xyxy)
 
                 ann = {
                     "id": ann_id,
                     "image_id": img_id,
                     "category_id": int(detections.class_id[i]),
-                    "bbox": [float(x1), float(y1), float(bbox_w), float(bbox_h)],
+                    "bbox": [float(bbox_x), float(bbox_y), float(bbox_w), float(bbox_h)],
                     "area": float(bbox_w * bbox_h),
                     "iscrowd": 0
                 }
