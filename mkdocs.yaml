@@ -22,7 +22,7 @@ extra:
 
 nav:
   - Home: index.md
-  - Learn:
+  - How to:
     - Install: learn/install.md
     - Run Model:
       - Detection: learn/run/detection.md
@@ -34,7 +34,7 @@ nav:
       - Advanced Training: learn/train/advanced.md
     - Deploy Model: learn/deploy.md
     - Benchmarks: learn/benchmarks.md
-  - Reference:
+  - API Reference:
       - RF-DETR: reference/rfdetr.md
       - Detection Models:
         - RF-DETR Nano: reference/nano.md
