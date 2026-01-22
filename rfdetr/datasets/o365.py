@@ -26,10 +26,8 @@ def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
     }
     img_folder, ann_file = PATHS[image_set]
 
-    try:
-        square_resize_div_64 = args.square_resize_div_64
-    except:
-        square_resize_div_64 = False
+
+    square_resize_div_64 = getattr(args, 'square_resize_div_64', False)
 
     if square_resize_div_64:
         dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms_square_div_64(image_set, resolution, multi_scale=args.multi_scale, expanded_scales=args.expanded_scales))

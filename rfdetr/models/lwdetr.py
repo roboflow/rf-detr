@@ -876,10 +876,7 @@ def build_criterion_and_postprocessors(args):
     if args.segmentation_head:
         losses.append('masks')
 
-    try:
-        sum_group_losses = args.sum_group_losses
-    except:
-        sum_group_losses = False
+    sum_group_losses = getattr(args, 'sum_group_losses', False)
     if args.segmentation_head:
         criterion = SetCriterion(args.num_classes + 1, matcher=matcher, weight_dict=weight_dict,
                                 focal_alpha=args.focal_alpha, losses=losses,
