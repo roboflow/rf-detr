@@ -9,9 +9,10 @@
 # See the LICENSE.platform file for full terms and conditions.
 # ------------------------------------------------------------------------
 
+from typing import List, Literal
+
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.detr import RFDETR
-from typing import Literal, List
 
 
 class RFDETRXLargeConfig(ModelConfig):

@@ -21,10 +21,10 @@ Mostly copy-paste from https://github.com/pytorch/vision/blob/13b35ff/references
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+import pycocotools.mask as coco_mask
 import torch
 import torch.utils.data
 import torchvision
-import pycocotools.mask as coco_mask
 from PIL import Image
 
 import rfdetr.datasets.transforms as T

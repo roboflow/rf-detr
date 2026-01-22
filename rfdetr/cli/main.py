@@ -8,11 +8,14 @@
 # ------------------------------------------------------------------------
 
 import argparse
-from rf100vl import get_rf100vl_projects
-import roboflow
-from rfdetr import RFDETRBase
-import torch
 import os
+
+import roboflow
+import torch
+from rf100vl import get_rf100vl_projects
+
+from rfdetr import RFDETRBase
+
 
 def download_dataset(rf_project: roboflow.Project, dataset_version: int):
     versions = rf_project.versions()

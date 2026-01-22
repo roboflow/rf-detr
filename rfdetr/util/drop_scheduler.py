@@ -4,8 +4,9 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 """util for drop scheduler."""
-import numpy as np
 from typing import Literal
+
+import numpy as np
 
 
 def drop_scheduler(
