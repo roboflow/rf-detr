@@ -112,6 +112,9 @@ select = [
     "W",  # pycodestyle warnings
     "F",  # pyflakes
 ]
+extend-select = [
+    "I",  # isort
+]
 ignore = [
     "E501",  # todo: will be fixed with enabling ruff-format
     "E722",  # todo: Do not use bare `except`

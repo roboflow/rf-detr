@@ -13,7 +13,7 @@ import math
 import json
 import os
 
-from .dinov2_with_windowed_attn import WindowedDinov2WithRegistersConfig, WindowedDinov2WithRegistersBackbone
+from rfdetr.models.backbone.dinov2_with_windowed_attn import WindowedDinov2WithRegistersConfig, WindowedDinov2WithRegistersBackbone
 
 
 size_to_width = {

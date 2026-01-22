@@ -21,7 +21,7 @@ import onnx_graphsurgeon as gs
 from polygraphy.backend.onnx.loader import fold_constants
 from onnx_graphsurgeon.logger.logger import G_LOGGER
 
-from .symbolic import CustomOpSymbolicRegistry
+from rfdetr.deploy._onnx.symbolic import CustomOpSymbolicRegistry
 
 
 class OnnxOptimizer():

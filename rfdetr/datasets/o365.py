@@ -11,7 +11,7 @@
 from pathlib import Path
 from typing import Any
 
-from .coco import (
+from rfdetr.datasets.coco import (
     CocoDetection, make_coco_transforms, make_coco_transforms_square_div_64
 )
 
