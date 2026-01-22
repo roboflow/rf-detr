@@ -187,7 +187,7 @@ class MultiScaleProjector(nn.Module):
                         nn.GELU(),
                         nn.ConvTranspose2d(in_dim // 2, in_dim // 4, kernel_size=2, stride=2),
                     ])
-                    in_dim // 4
+                    # in_dim // 4
                 elif scale == 2.0:
                     # a hack to reduce the FLOPs and Params when the dimention of output feature is too large
                     # if in_dim > 512:
@@ -200,7 +200,7 @@ class MultiScaleProjector(nn.Module):
                     layers.extend([
                         nn.ConvTranspose2d(in_dim, in_dim // 2, kernel_size=2, stride=2),
                     ])
-                    in_dim // 2
+                    # in_dim // 2
                 elif scale == 1.0:
                     pass
                 elif scale == 0.5:
