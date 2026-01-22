@@ -30,6 +30,7 @@ These are the essential parameters for training:
 | `epochs` | `int` | `100` | Number of full passes over the training dataset. |
 | `batch_size` | `int` | `4` | Number of samples processed per iteration. Higher values require more GPU memory. |
 | `grad_accum_steps` | `int` | `4` | Accumulates gradients over multiple mini-batches. Use with `batch_size` to achieve effective batch size. |
+| `resume` | `str` | `None` | Path to a saved checkpoint to continue training. Restores model weights, optimizer state, and scheduler. |
 
 ### Understanding Batch Size
 
@@ -147,7 +148,7 @@ This configuration will:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `tensorboard` | `bool` | `False` | Enable TensorBoard logging. Requires `pip install "rfdetr[metrics]"`. |
+| `tensorboard` | `bool` | `True` | Enable TensorBoard logging. Requires `pip install "rfdetr[metrics]"`. |
 | `wandb` | `bool` | `False` | Enable Weights & Biases logging. Requires `pip install "rfdetr[metrics]"`. |
 | `project` | `str` | `None` | Project name for W&B logging. |
 | `run` | `str` | `None` | Run name for W&B logging. If not specified, W&B assigns a random name. |
@@ -185,7 +186,7 @@ Below is a summary table of all training parameters:
 | `gradient_checkpointing` | bool | False | Trade compute for memory during backprop. |
 | `checkpoint_interval` | int | 10 | Save checkpoint every N epochs. |
 | `resume` | str | None | Path to checkpoint for resuming training. |
-| `tensorboard` | bool | False | Enable TensorBoard logging. |
+| `tensorboard` | bool | True | Enable TensorBoard logging. |
 | `wandb` | bool | False | Enable Weights & Biases logging. |
 | `project` | str | None | W&B project name. |
 | `run` | str | None | W&B run name. |

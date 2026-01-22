@@ -102,7 +102,7 @@ Early stopping monitors validation mAP and halts training if improvements remain
 |-----------|---------|-------------|
 | `early_stopping_patience` | 10 | Number of epochs without improvement before stopping |
 | `early_stopping_min_delta` | 0.001 | Minimum mAP change to count as improvement |
-| `early_stopping_use_ema` | True | Use EMA model's mAP for comparisons |
+| `early_stopping_use_ema` | False | Use EMA model's mAP for comparisons |
 
 ### Advanced Example
 

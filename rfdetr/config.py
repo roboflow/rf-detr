@@ -245,6 +245,7 @@ class TrainConfig(BaseModel):
     batch_size: int = 4
     grad_accum_steps: int = 4
     epochs: int = 100
+    resume: Optional[str] = None
     ema_decay: float = 0.993
     ema_tau: int = 100
     lr_drop: int = 100

@@ -72,15 +72,8 @@ RF-DETR provides many configuration options to customize your training run. See 
 - [Multi-GPU training](advanced.md#multi-gpu-training) with PyTorch DDP
 - [Logging with TensorBoard](advanced.md#logging-with-tensorboard)
 - [Logging with Weights and Biases](advanced.md#logging-with-weights-and-biases)
-- [Training via CLI](cli.md) using the command-line interface
 
 → **[Learn more about advanced training](advanced.md)**
-
-## Command-Line Training
-
-RF-DETR provides a powerful command-line interface for training. You can use it directly from your terminal for quick experiments or integration into scripts.
-
-→ **[Learn more about training via CLI](cli.md)**
 
 ## Result Checkpoints
 
