@@ -27,18 +27,18 @@ Perform inference on an image using either the `rfdetr` package or the `inferenc
     from PIL import Image
     from rfdetr import RFDETRMedium
     from rfdetr.util.coco_classes import COCO_CLASSES
-    
+
     model = RFDETRMedium()
-    
+
     image = Image.open(requests.get('https://media.roboflow.com/dog.jpg', stream=True).raw)
     detections = model.predict(image, threshold=0.5)
-    
+
     labels = [
         f"{COCO_CLASSES[class_id]}"
         for class_id
         in detections.class_id
     ]
-    
+
     annotated_image = sv.BoxAnnotator().annotate(image, detections)
     annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
     ```
@@ -50,13 +50,13 @@ Perform inference on an image using either the `rfdetr` package or the `inferenc
     import supervision as sv
     from PIL import Image
     from inference import get_model
-    
+
     model = get_model("rfdetr-medium")
-    
+
     image = Image.open(requests.get('https://media.roboflow.com/dog.jpg', stream=True).raw)
     predictions = model.infer(image, confidence=0.5)[0]
     detections = sv.Detections.from_inference(predictions)
-    
+
     annotated_image = sv.BoxAnnotator().annotate(image, detections)
     annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections)
     ```
