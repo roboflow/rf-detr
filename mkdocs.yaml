@@ -38,9 +38,22 @@ nav:
         - RF-DETR Base (Deprecated): reference/base.md
         - RF-DETR Medium: reference/medium.md
         - RF-DETR Large: reference/large.md
+        - RF-DETR XLarge: reference/xlarge.md
+        - RF-DETR 2XLarge: reference/2xlarge.md
+        - RF-DETR Large (Deprecated): reference/large_deprecated.md
       - Image Segmentation Models:
-        - RF-DETR Seg Preview: reference/seg_preview.md
+        - RF-DETR Seg Nano: reference/seg_nano.md
+        - RF-DETR Seg Small: reference/seg_small.md
+        - RF-DETR Seg Medium: reference/seg_medium.md
+        - RF-DETR Seg Large: reference/seg_large.md
+        - RF-DETR Seg XLarge: reference/seg_xlarge.md
+        - RF-DETR Seg 2XLarge: reference/seg_2xlarge.md
+        - RF-DETR Seg Preview (Deprecated): reference/seg_preview.md
+      - Training Configs:
+        - Train Config: reference/train_config.md
+        - Segmentation Train Config: reference/segmentation_train_config.md
   - Changelog: https://github.com/roboflow/rf-detr/releases
+
 
 theme:
   name: 'material'

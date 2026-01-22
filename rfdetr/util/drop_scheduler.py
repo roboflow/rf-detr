@@ -5,9 +5,17 @@
 # ------------------------------------------------------------------------
 """util for drop scheduler."""
 import numpy as np
+from typing import Literal
 
 
-def drop_scheduler(drop_rate, epochs, niter_per_ep, cutoff_epoch=0, mode='standard', schedule='constant'):
+def drop_scheduler(
+    drop_rate: float,
+    epochs: int,
+    niter_per_ep: int,
+    cutoff_epoch: int = 0,
+    mode: Literal['standard', 'early', 'late'] = 'standard',
+    schedule: Literal['constant', 'linear'] = 'constant',
+) -> np.ndarray:
     """drop scheduler"""
     assert mode in ['standard', 'early', 'late']
     if mode == 'standard':

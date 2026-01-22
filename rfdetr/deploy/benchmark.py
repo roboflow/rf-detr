@@ -16,30 +16,23 @@ on the device.
 import argparse
 import copy
 import contextlib
-import datetime
 import json
 import os
 import os.path as osp
 import random
 import time
-import ast
-from pathlib import Path
 from collections import namedtuple, OrderedDict
 
 from pycocotools.cocoeval import COCOeval
 from pycocotools.coco import COCO
-import pycocotools.mask as mask_util
 
 import numpy as np
 from PIL import Image
 import torch
-from torch.utils.data import DataLoader, DistributedSampler
-import torchvision.transforms as T
 import torchvision.transforms.functional as F
 import tqdm
 
 import pycuda.driver as cuda
-import pycuda.autoinit
 import onnxruntime as nxrun
 import tensorrt as trt
 
@@ -362,8 +355,8 @@ def infer_engine(model, coco_evaluator, time_profile, prefix, img_list, device, 
 
         samples = image_tensor[None].to(device)
         _, _, h, w = samples.shape
-        im_shape = torch.Tensor(np.array([h, w]).reshape((1, 2)).astype(np.float32)).to(device)
-        scale_factor = torch.Tensor(np.array([h / height, w / width]).reshape((1, 2)).astype(np.float32)).to(device)
+        # torch.Tensor(np.array([h, w]).reshape((1, 2)).astype(np.float32)).to(device)
+        # torch.Tensor(np.array([h / height, w / width]).reshape((1, 2)).astype(np.float32)).to(device)
 
         time_profile.reset()
         with time_profile:

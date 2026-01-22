@@ -104,6 +104,41 @@ class SegmentationHead(nn.Module):
 
         return mask_logits
 
+    def sparse_forward(self, spatial_features: torch.Tensor, query_features: list[torch.Tensor], image_size: tuple[int, int], skip_blocks: bool=False) -> list[torch.Tensor]:
+        # spatial features: (B, C, H, W)
+        # query features: [(B, N, C)] for each decoder layer
+        # output: dict containing the intermediate results
+        target_size = (image_size[0] // self.downsample_ratio, image_size[1] // self.downsample_ratio)
+        spatial_features = F.interpolate(spatial_features, size=target_size, mode='bilinear', align_corners=False)
+
+        # num_points = max(spatial_features.shape[-2], spatial_features.shape[-2] * spatial_features.shape[-1] // 16)
+
+        output_dicts = []
+
+        if not skip_blocks:
+            for block, qf in zip(self.blocks, query_features):
+                spatial_features = block(spatial_features)
+                spatial_features_proj = self.spatial_features_proj(spatial_features)
+                qf = self.query_features_proj(self.query_features_block(qf))
+
+                output_dicts.append({
+                    "spatial_features": spatial_features_proj,
+                    "query_features": qf,
+                    "bias": self.bias,
+                })
+        else:
+            assert len(query_features) == 1, "skip_blocks is only supported for length 1 query features"
+
+            qf = self.query_features_proj(self.query_features_block(query_features[0]))
+
+            output_dicts.append({
+                "spatial_features": spatial_features,
+                "query_features": qf,
+                "bias": self.bias,
+            })
+
+        return output_dicts
+
     def forward_export(self, spatial_features: torch.Tensor, query_features: list[torch.Tensor], image_size: tuple[int, int], skip_blocks: bool=False) -> list[torch.Tensor]:
         assert len(query_features) == 1, "at export time, segmentation head expects exactly one query feature"
 
@@ -140,7 +175,7 @@ def point_sample(input, point_coords, **kwargs):
     if point_coords.dim() == 3:
         add_dim = True
         point_coords = point_coords.unsqueeze(2)
-    output = F.grid_sample(input, 2.0 * point_coords - 1.0, **kwargs)
+    output = F.grid_sample(input, 2.0 * point_coords - 1.0, padding_mode='border', **kwargs)
     if add_dim:
         output = output.squeeze(3)
     return output
@@ -200,3 +235,20 @@ def get_uncertain_point_coords_with_randomness(
             dim=1,
         )
     return point_coords
+
+
+def calculate_uncertainty(logits: torch.Tensor) -> torch.Tensor:
+    """
+    We estimate uncerainty as L1 distance between 0.0 and the logit prediction in 'logits' for the
+        foreground class in `classes`.
+    Args:
+        logits (Tensor): A tensor of shape (R, 1, ...) for class-specific or
+            class-agnostic, where R is the total number of predicted masks in all images and C is
+            the number of foreground classes. The values are logits.
+    Returns:
+        scores (Tensor): A tensor of shape (R, 1, ...) that contains uncertainty scores with
+            the most uncertain locations having the highest uncertainty score.
+    """
+    assert logits.shape[1] == 1
+    gt_class_logits = logits.clone()
+    return -(torch.abs(gt_class_logits))
