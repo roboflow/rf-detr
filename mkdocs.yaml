@@ -22,6 +22,7 @@ extra:
 
 nav:
   - Home: index.md
+  - Install: install.md
   - Learn:
     - Run a Model:
       - Object Detection: learn/run/detection.md
