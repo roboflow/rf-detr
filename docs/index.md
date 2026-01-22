@@ -38,34 +38,18 @@ We benchmarked RF-DETR on the Microsoft COCO dataset for segmentation. Our resul
 You can install and use `rfdetr` in a
 [**Python>=3.10**](https://www.python.org/) environment.
 
-!!! example "Installation"
+!!! example "Quick Installation"
+    [![version](https://badge.fury.io/py/rfdetr.svg)](https://badge.fury.io/py/rfdetr)
+    [![downloads](https://img.shields.io/pypi/dm/rfdetr)](https://pypistats.org/packages/rfdetr)
+    [![license](https://img.shields.io/pypi/l/rfdetr)](https://github.com/roboflow/rfdetr/blob/main/LICENSE.md)
+    [![python-version](https://img.shields.io/pypi/pyversions/rfdetr)](https://badge.fury.io/py/rfdetr)
 
-    === "pip (recommended)"
-        [![version](https://badge.fury.io/py/rfdetr.svg)](https://badge.fury.io/py/rfdetr)
-        [![downloads](https://img.shields.io/pypi/dm/rfdetr)](https://pypistats.org/packages/rfdetr)
-        [![license](https://img.shields.io/pypi/l/rfdetr)](https://github.com/roboflow/rfdetr/blob/main/LICENSE.md)
-        [![python-version](https://img.shields.io/pypi/pyversions/rfdetr)](https://badge.fury.io/py/rfdetr)
-
+    === "pip"
         ```bash
         pip install rfdetr
         ```
 
-    === "poetry"
-        [![version](https://badge.fury.io/py/rfdetr.svg)](https://badge.fury.io/py/rfdetr)
-        [![downloads](https://img.shields.io/pypi/dm/rfdetr)](https://pypistats.org/packages/rfdetr)
-        [![license](https://img.shields.io/pypi/l/rfdetr)](https://github.com/roboflow/rfdetr/blob/main/LICENSE.md)
-        [![python-version](https://img.shields.io/pypi/pyversions/rfdetr)](https://badge.fury.io/py/rfdetr)
-
-        ```bash
-        poetry add rfdetr
-        ```
-
     === "uv"
-        [![version](https://badge.fury.io/py/rfdetr.svg)](https://badge.fury.io/py/rfdetr)
-        [![downloads](https://img.shields.io/pypi/dm/rfdetr)](https://pypistats.org/packages/rfdetr)
-        [![license](https://img.shields.io/pypi/l/rfdetr)](https://github.com/roboflow/rfdetr/blob/main/LICENSE.md)
-        [![python-version](https://img.shields.io/pypi/pyversions/rfdetr)](https://badge.fury.io/py/rfdetr)
-
         ```bash
         uv pip install rfdetr
         ```
@@ -76,46 +60,7 @@ You can install and use `rfdetr` in a
         uv add rfdetr
         ```
 
-    === "rye"
-        [![version](https://badge.fury.io/py/rfdetr.svg)](https://badge.fury.io/py/rfdetr)
-        [![downloads](https://img.shields.io/pypi/dm/rfdetr)](https://pypistats.org/packages/rfdetr)
-        [![license](https://img.shields.io/pypi/l/rfdetr)](https://github.com/roboflow/rfdetr/blob/main/LICENSE.md)
-        [![python-version](https://img.shields.io/pypi/pyversions/rfdetr)](https://badge.fury.io/py/rfdetr)
-
-        ```bash
-        rye add rfdetr
-        ```
-
-!!! example "git clone (for development)"
-    === "virtualenv"
-        ```bash
-        # clone repository and navigate to root directory
-        git clone --depth 1 -b develop https://github.com/roboflow/rf-detr.git
-        cd rf-detr
-
-        # setup python environment and activate it
-        python3 -m venv venv
-        source venv/bin/activate
-        pip install --upgrade pip
-
-        # installation
-        pip install -e "."
-        ```
-
-    === "uv"
-        ```bash
-        # clone repository and navigate to root directory
-        git clone --depth 1 -b develop https://github.com/roboflow/rf-detr.git
-        cd rf-detr
-
-        # setup python environment and activate it
-        uv venv
-        source .venv/bin/activate
-
-        # installation
-        uv pip install -r pyproject.toml -e . --all-extras
-
-        ```
+For detailed installation instructions, including installing from source, and setting up a local development environment, check out our [Install](learn/install/) page.
 
 ## 🚀 Quickstart
 
