@@ -12,28 +12,28 @@
         <meta name="author" content="Roboflow">
       
       
-        <link rel="canonical" href="https://roboflow.github.io/rf-detr/develop/learn/benchmarks/">
+        <link rel="canonical" href="https://roboflow.github.io/rf-detr/develop/learn/train/training-parameters/">
       
       
-        <link rel="prev" href="../deploy/">
+        <link rel="prev" href="../dataset-formats/">
       
       
-        <link rel="next" href="../../reference/rfdetr/">
+        <link rel="next" href="../advanced/">
       
       
         
       
       
-      <link rel="icon" href="../../assets/roboflow-logo.svg">
+      <link rel="icon" href="../../../assets/roboflow-logo.svg">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.1">
     
     
       
-        <title>Benchmarks - RF-DETR</title>
+        <title>Training Parameters - RF-DETR</title>
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.484c7ddc.min.css">
       
       
 
@@ -52,11 +52,11 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+      <link rel="stylesheet" href="../../../assets/_mkdocstrings.css">
     
-      <link rel="stylesheet" href="../../stylesheets/rf.css">
+      <link rel="stylesheet" href="../../../stylesheets/rf.css">
     
-    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -74,7 +74,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#benchmarks" class="md-skip">
+        <a href="#training-parameters" class="md-skip">
           Skip to content
         </a>
       
@@ -102,14 +102,14 @@
 
     <!-- Link to home -->
     <a
-      href="../.."
+      href="../../.."
       title="RF-DETR"
       class="md-header__button md-logo"
       aria-label="RF-DETR"
       data-md-component="logo"
     >
       
-  <img src="../../assets/roboflow-logo.svg" alt="logo">
+  <img src="../../../assets/roboflow-logo.svg" alt="logo">
 
     </a>
 
@@ -130,7 +130,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis" style="display: flex; align-items: center; gap: 0.5rem;">
             <a
-            href="../.."
+            href="../../.."
             title="RF-DETR"
             class="md-header__button md-logo"
             aria-label="RF-DETR"
@@ -138,11 +138,11 @@
             id="item-logo"
             >
             
-  <img src="../../assets/roboflow-logo.svg" alt="logo">
+  <img src="../../../assets/roboflow-logo.svg" alt="logo">
 
             </a>
             
-              Benchmarks
+              Training Parameters
             
           </span>
         </div>
@@ -308,7 +308,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../.." class="md-tabs__link">
+      <a href="../../.." class="md-tabs__link">
         
   
   
@@ -331,7 +331,7 @@
     
     
       <li class="md-tabs__item md-tabs__item--active">
-        <a href="../install/" class="md-tabs__link">
+        <a href="../../install/" class="md-tabs__link">
           
   
   
@@ -351,7 +351,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../reference/rfdetr/" class="md-tabs__link">
+        <a href="../../../reference/rfdetr/" class="md-tabs__link">
           
   
   
@@ -410,9 +410,9 @@
 
 <nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../.." title="RF-DETR" class="md-nav__button md-logo" aria-label="RF-DETR" data-md-component="logo">
+    <a href="../../.." title="RF-DETR" class="md-nav__button md-logo" aria-label="RF-DETR" data-md-component="logo">
       
-  <img src="../../assets/roboflow-logo.svg" alt="logo">
+  <img src="../../../assets/roboflow-logo.svg" alt="logo">
 
     </a>
     RF-DETR
@@ -439,7 +439,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../.." class="md-nav__link">
+      <a href="../../.." class="md-nav__link">
         
   
   
@@ -521,7 +521,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../install/" class="md-nav__link">
+      <a href="../../install/" class="md-nav__link">
         
   
   
@@ -601,7 +601,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../run/detection/" class="md-nav__link">
+      <a href="../../run/detection/" class="md-nav__link">
         
   
   
@@ -629,7 +629,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../run/segmentation/" class="md-nav__link">
+      <a href="../../run/segmentation/" class="md-nav__link">
         
   
   
@@ -662,8 +662,10 @@
                 
   
   
+    
   
   
+  
     
     
     
@@ -672,13 +674,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-          
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_3" checked>
         
           
           <label class="md-nav__link" for="__nav_2_3" id="__nav_2_3_label" tabindex="0">
@@ -699,7 +699,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_2_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -717,7 +717,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../train/" class="md-nav__link">
+      <a href="../" class="md-nav__link">
         
   
   
@@ -745,7 +745,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../train/dataset-formats/" class="md-nav__link">
+      <a href="../dataset-formats/" class="md-nav__link">
         
   
   
@@ -753,126 +753,6 @@
     
   
     Dataset Formats
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../train/training-parameters/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Training Parameters
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../train/advanced/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Advanced Training
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../export/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Export Model
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../deploy/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Deploy Model
   
 
     
@@ -909,7 +789,7 @@
   <span class="md-ellipsis">
     
   
-    Benchmarks
+    Training Parameters
   
 
     
@@ -927,7 +807,7 @@
   <span class="md-ellipsis">
     
   
-    Benchmarks
+    Training Parameters
   
 
     
@@ -953,10 +833,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#methodology" class="md-nav__link">
+  <a href="#basic-example" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Methodology
+        Basic Example
       
     </span>
   </a>
@@ -964,10 +844,38 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#detection" class="md-nav__link">
+  <a href="#core-parameters" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Detection
+        Core Parameters
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Core Parameters">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#understanding-batch-size" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Understanding Batch Size
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#learning-rate-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Learning Rate Parameters
       
     </span>
   </a>
@@ -975,10 +883,138 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#segmentation" class="md-nav__link">
+  <a href="#resolution-parameters" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Segmentation
+        Resolution Parameters
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#regularization-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Regularization Parameters
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#hardware-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hardware Parameters
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ema-exponential-moving-average" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        EMA (Exponential Moving Average)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#checkpoint-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Checkpoint Parameters
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Checkpoint Parameters">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#checkpoint-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Checkpoint Files
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#early-stopping-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Early Stopping Parameters
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Early Stopping Parameters">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#early-stopping-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Early Stopping Example
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#logging-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Logging Parameters
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Logging Parameters">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#logging-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Logging Example
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#complete-parameter-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Complete Parameter Reference
       
     </span>
   </a>
@@ -989,6 +1025,126 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../advanced/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced Training
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../export/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Export Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deploy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../benchmarks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Benchmarks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -1060,7 +1216,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/rfdetr/" class="md-nav__link">
+      <a href="../../../reference/rfdetr/" class="md-nav__link">
         
   
   
@@ -1140,7 +1296,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/nano/" class="md-nav__link">
+      <a href="../../../reference/nano/" class="md-nav__link">
         
   
   
@@ -1168,7 +1324,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/small/" class="md-nav__link">
+      <a href="../../../reference/small/" class="md-nav__link">
         
   
   
@@ -1196,7 +1352,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/base/" class="md-nav__link">
+      <a href="../../../reference/base/" class="md-nav__link">
         
   
   
@@ -1224,7 +1380,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/medium/" class="md-nav__link">
+      <a href="../../../reference/medium/" class="md-nav__link">
         
   
   
@@ -1252,7 +1408,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/large/" class="md-nav__link">
+      <a href="../../../reference/large/" class="md-nav__link">
         
   
   
@@ -1280,7 +1436,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/xlarge/" class="md-nav__link">
+      <a href="../../../reference/xlarge/" class="md-nav__link">
         
   
   
@@ -1308,7 +1464,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/2xlarge/" class="md-nav__link">
+      <a href="../../../reference/2xlarge/" class="md-nav__link">
         
   
   
@@ -1336,7 +1492,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/large_deprecated/" class="md-nav__link">
+      <a href="../../../reference/large_deprecated/" class="md-nav__link">
         
   
   
@@ -1424,7 +1580,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/seg_nano/" class="md-nav__link">
+      <a href="../../../reference/seg_nano/" class="md-nav__link">
         
   
   
@@ -1452,7 +1608,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/seg_small/" class="md-nav__link">
+      <a href="../../../reference/seg_small/" class="md-nav__link">
         
   
   
@@ -1480,7 +1636,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/seg_medium/" class="md-nav__link">
+      <a href="../../../reference/seg_medium/" class="md-nav__link">
         
   
   
@@ -1508,7 +1664,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/seg_large/" class="md-nav__link">
+      <a href="../../../reference/seg_large/" class="md-nav__link">
         
   
   
@@ -1536,7 +1692,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/seg_xlarge/" class="md-nav__link">
+      <a href="../../../reference/seg_xlarge/" class="md-nav__link">
         
   
   
@@ -1564,7 +1720,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/seg_2xlarge/" class="md-nav__link">
+      <a href="../../../reference/seg_2xlarge/" class="md-nav__link">
         
   
   
@@ -1592,7 +1748,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/seg_preview/" class="md-nav__link">
+      <a href="../../../reference/seg_preview/" class="md-nav__link">
         
   
   
@@ -1680,7 +1836,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/train_config/" class="md-nav__link">
+      <a href="../../../reference/train_config/" class="md-nav__link">
         
   
   
@@ -1708,7 +1864,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/segmentation_train_config/" class="md-nav__link">
+      <a href="../../../reference/segmentation_train_config/" class="md-nav__link">
         
   
   
@@ -1798,10 +1954,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#methodology" class="md-nav__link">
+  <a href="#basic-example" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Methodology
+        Basic Example
       
     </span>
   </a>
@@ -1809,10 +1965,38 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#detection" class="md-nav__link">
+  <a href="#core-parameters" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Detection
+        Core Parameters
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Core Parameters">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#understanding-batch-size" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Understanding Batch Size
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#learning-rate-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Learning Rate Parameters
       
     </span>
   </a>
@@ -1820,10 +2004,138 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#segmentation" class="md-nav__link">
+  <a href="#resolution-parameters" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Segmentation
+        Resolution Parameters
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#regularization-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Regularization Parameters
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#hardware-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hardware Parameters
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ema-exponential-moving-average" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        EMA (Exponential Moving Average)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#checkpoint-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Checkpoint Parameters
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Checkpoint Parameters">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#checkpoint-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Checkpoint Files
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#early-stopping-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Early Stopping Parameters
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Early Stopping Parameters">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#early-stopping-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Early Stopping Example
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#logging-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Logging Parameters
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Logging Parameters">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#logging-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Logging Example
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#complete-parameter-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Complete Parameter Reference
       
     </span>
   </a>
@@ -1850,471 +2162,561 @@
   
 
 
-<h1 id="benchmarks">Benchmarks<a class="headerlink" href="#benchmarks" title="Permanent link">&para;</a></h1>
-<p>This page reports RF-DETR benchmark results for object detection and instance segmentation on Microsoft COCO and RF100-VL. All benchmark numbers and plots match the latest released checkpoints and tables shown below. Latency values are measured on an NVIDIA T4 with TensorRT in FP16 at batch size 1. For full methodology details and architectural context, see the RF-DETR paper.</p>
-<h2 id="methodology">Methodology<a class="headerlink" href="#methodology" title="Permanent link">&para;</a></h2>
-<p>Accuracy is reported using standard COCO metrics computed with pycocotools. For object detection, we report COCO AP50 and COCO AP50:95, and the same metrics are also reported for RF100-VL. COCO results are evaluated on the validation split, following common practice in detector benchmarking. RF100-VL results are averaged across all 100 datasets to reflect performance under diverse real-world data distributions.</p>
-<p>Latency is measured as single-image inference latency rather than sustained throughput. All latency numbers are obtained on an NVIDIA T4 GPU using TensorRT 10.4 and CUDA 12.4 with FP16 inference and batch size 1. To reduce variance caused by GPU power throttling and thermal effects, a 200 ms buffer is inserted between consecutive forward passes. This procedure improves reproducibility of latency measurements but is not intended to measure maximum throughput.</p>
-<p>Accuracy and latency are always measured using the same model artifact and the same numerical precision. This avoids reporting FP32 accuracy together with FP16 latency, which can lead to misleading comparisons because naive FP16 conversion can significantly degrade accuracy for some models.</p>
-<h2 id="detection">Detection<a class="headerlink" href="#detection" title="Permanent link">&para;</a></h2>
-<p><img alt="rf_detr_1-4_latency_accuracy_object_detection" src="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png" /></p>
+<h1 id="training-parameters">Training Parameters<a class="headerlink" href="#training-parameters" title="Permanent link">&para;</a></h1>
+<p>This page provides a complete reference of all parameters available when training RF-DETR models.</p>
+<h2 id="basic-example">Basic Example<a class="headerlink" href="#basic-example" title="Permanent link">&para;</a></h2>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRMedium</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRMedium</span><span class="p">()</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">&quot;path/to/dataset&quot;</span><span class="p">,</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    <span class="n">grad_accum_steps</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    <span class="n">lr</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>    <span class="n">output_dir</span><span class="o">=</span><span class="s2">&quot;output&quot;</span>
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="p">)</span>
+</span></code></pre></div>
+<h2 id="core-parameters">Core Parameters<a class="headerlink" href="#core-parameters" title="Permanent link">&para;</a></h2>
+<p>These are the essential parameters for training:</p>
 <table>
 <thead>
 <tr>
-<th style="text-align: center;">Architecture</th>
-<th style="text-align: center;">COCO AP<sub>50</sub></th>
-<th style="text-align: center;">COCO AP<sub>50:95</sub></th>
-<th style="text-align: center;">RF100VL AP<sub>50</sub></th>
-<th style="text-align: center;">RF100VL AP<sub>50:95</sub></th>
-<th style="text-align: center;">Latency (ms)</th>
-<th style="text-align: center;">Params (M)</th>
-<th style="text-align: center;">Resolution</th>
+<th>Parameter</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td style="text-align: center;">RF-DETR-N</td>
-<td style="text-align: center;">67.6</td>
-<td style="text-align: center;">48.4</td>
-<td style="text-align: center;">85.0</td>
-<td style="text-align: center;">57.7</td>
-<td style="text-align: center;">2.3</td>
-<td style="text-align: center;">30.5</td>
-<td style="text-align: center;">384x384</td>
+<td><code>dataset_dir</code></td>
+<td><code>str</code></td>
+<td>Required</td>
+<td>Path to your dataset directory. RF-DETR auto-detects if it's in COCO or YOLO format. See <a href="../dataset-formats/">Dataset Formats</a>.</td>
 </tr>
 <tr>
-<td style="text-align: center;">RF-DETR-S</td>
-<td style="text-align: center;">72.1</td>
-<td style="text-align: center;">53.0</td>
-<td style="text-align: center;">86.7</td>
-<td style="text-align: center;">60.2</td>
-<td style="text-align: center;">3.5</td>
-<td style="text-align: center;">32.1</td>
-<td style="text-align: center;">512x512</td>
+<td><code>output_dir</code></td>
+<td><code>str</code></td>
+<td><code>"output"</code></td>
+<td>Directory where training artifacts (checkpoints, logs) are saved.</td>
 </tr>
 <tr>
-<td style="text-align: center;">RF-DETR-M</td>
-<td style="text-align: center;">73.6</td>
-<td style="text-align: center;">54.7</td>
-<td style="text-align: center;">87.4</td>
-<td style="text-align: center;">61.2</td>
-<td style="text-align: center;">4.4</td>
-<td style="text-align: center;">33.7</td>
-<td style="text-align: center;">576x576</td>
+<td><code>epochs</code></td>
+<td><code>int</code></td>
+<td><code>100</code></td>
+<td>Number of full passes over the training dataset.</td>
 </tr>
 <tr>
-<td style="text-align: center;">RF-DETR-L</td>
-<td style="text-align: center;">75.1</td>
-<td style="text-align: center;">56.5</td>
-<td style="text-align: center;">88.2</td>
-<td style="text-align: center;">62.2</td>
-<td style="text-align: center;">6.8</td>
-<td style="text-align: center;">33.9</td>
-<td style="text-align: center;">704x704</td>
+<td><code>batch_size</code></td>
+<td><code>int</code></td>
+<td><code>4</code></td>
+<td>Number of samples processed per iteration. Higher values require more GPU memory.</td>
 </tr>
 <tr>
-<td style="text-align: center;">RF-DETR-XL</td>
-<td style="text-align: center;">77.4</td>
-<td style="text-align: center;">58.6</td>
-<td style="text-align: center;">88.5</td>
-<td style="text-align: center;">62.9</td>
-<td style="text-align: center;">11.5</td>
-<td style="text-align: center;">126.4</td>
-<td style="text-align: center;">700x700</td>
+<td><code>grad_accum_steps</code></td>
+<td><code>int</code></td>
+<td><code>4</code></td>
+<td>Accumulates gradients over multiple mini-batches. Use with <code>batch_size</code> to achieve effective batch size.</td>
 </tr>
 <tr>
-<td style="text-align: center;">RF-DETR-2XL</td>
-<td style="text-align: center;">78.5</td>
-<td style="text-align: center;">60.1</td>
-<td style="text-align: center;">89.0</td>
-<td style="text-align: center;">63.2</td>
-<td style="text-align: center;">17.2</td>
-<td style="text-align: center;">126.9</td>
-<td style="text-align: center;">880x880</td>
-</tr>
-<tr>
-<td style="text-align: center;">YOLO11-N</td>
-<td style="text-align: center;">52.0</td>
-<td style="text-align: center;">37.4</td>
-<td style="text-align: center;">81.4</td>
-<td style="text-align: center;">55.3</td>
-<td style="text-align: center;">2.5</td>
-<td style="text-align: center;">2.6</td>
-<td style="text-align: center;">640x640</td>
-</tr>
-<tr>
-<td style="text-align: center;">YOLO11-S</td>
-<td style="text-align: center;">59.7</td>
-<td style="text-align: center;">44.4</td>
-<td style="text-align: center;">82.3</td>
-<td style="text-align: center;">56.2</td>
-<td style="text-align: center;">3.2</td>
-<td style="text-align: center;">9.4</td>
-<td style="text-align: center;">640x640</td>
-</tr>
-<tr>
-<td style="text-align: center;">YOLO11-M</td>
-<td style="text-align: center;">64.1</td>
-<td style="text-align: center;">48.6</td>
-<td style="text-align: center;">82.5</td>
-<td style="text-align: center;">56.5</td>
-<td style="text-align: center;">5.1</td>
-<td style="text-align: center;">20.1</td>
-<td style="text-align: center;">640x640</td>
-</tr>
-<tr>
-<td style="text-align: center;">YOLO11-L</td>
-<td style="text-align: center;">64.9</td>
-<td style="text-align: center;">49.9</td>
-<td style="text-align: center;">82.2</td>
-<td style="text-align: center;">56.5</td>
-<td style="text-align: center;">6.5</td>
-<td style="text-align: center;">25.3</td>
-<td style="text-align: center;">640x640</td>
-</tr>
-<tr>
-<td style="text-align: center;">YOLO11-X</td>
-<td style="text-align: center;">66.1</td>
-<td style="text-align: center;">50.9</td>
-<td style="text-align: center;">81.7</td>
-<td style="text-align: center;">56.2</td>
-<td style="text-align: center;">10.5</td>
-<td style="text-align: center;">56.9</td>
-<td style="text-align: center;">640x640</td>
-</tr>
-<tr>
-<td style="text-align: center;">YOLO26-N</td>
-<td style="text-align: center;">55.8</td>
-<td style="text-align: center;">40.3</td>
-<td style="text-align: center;">76.7</td>
-<td style="text-align: center;">52.0</td>
-<td style="text-align: center;">1.7</td>
-<td style="text-align: center;">2.6</td>
-<td style="text-align: center;">640x640</td>
-</tr>
-<tr>
-<td style="text-align: center;">YOLO26-S</td>
-<td style="text-align: center;">64.3</td>
-<td style="text-align: center;">47.7</td>
-<td style="text-align: center;">82.7</td>
-<td style="text-align: center;">57.0</td>
-<td style="text-align: center;">2.6</td>
-<td style="text-align: center;">9.4</td>
-<td style="text-align: center;">640x640</td>
-</tr>
-<tr>
-<td style="text-align: center;">YOLO26-M</td>
-<td style="text-align: center;">69.7</td>
-<td style="text-align: center;">52.5</td>
-<td style="text-align: center;">84.4</td>
-<td style="text-align: center;">58.7</td>
-<td style="text-align: center;">4.4</td>
-<td style="text-align: center;">20.1</td>
-<td style="text-align: center;">640x640</td>
-</tr>
-<tr>
-<td style="text-align: center;">YOLO26-L</td>
-<td style="text-align: center;">71.1</td>
-<td style="text-align: center;">54.1</td>
-<td style="text-align: center;">85.0</td>
-<td style="text-align: center;">59.3</td>
-<td style="text-align: center;">5.7</td>
-<td style="text-align: center;">25.3</td>
-<td style="text-align: center;">640x640</td>
-</tr>
-<tr>
-<td style="text-align: center;">YOLO26-X</td>
-<td style="text-align: center;">74.0</td>
-<td style="text-align: center;">56.9</td>
-<td style="text-align: center;">85.6</td>
-<td style="text-align: center;">60.0</td>
-<td style="text-align: center;">9.6</td>
-<td style="text-align: center;">56.9</td>
-<td style="text-align: center;">640x640</td>
-</tr>
-<tr>
-<td style="text-align: center;">LW-DETR-T</td>
-<td style="text-align: center;">60.7</td>
-<td style="text-align: center;">42.9</td>
-<td style="text-align: center;">84.7</td>
-<td style="text-align: center;">57.1</td>
-<td style="text-align: center;">1.9</td>
-<td style="text-align: center;">12.1</td>
-<td style="text-align: center;">640x640</td>
-</tr>
-<tr>
-<td style="text-align: center;">LW-DETR-S</td>
-<td style="text-align: center;">66.8</td>
-<td style="text-align: center;">48.0</td>
-<td style="text-align: center;">85.0</td>
-<td style="text-align: center;">57.4</td>
-<td style="text-align: center;">2.6</td>
-<td style="text-align: center;">14.6</td>
-<td style="text-align: center;">640x640</td>
-</tr>
-<tr>
-<td style="text-align: center;">LW-DETR-M</td>
-<td style="text-align: center;">72.0</td>
-<td style="text-align: center;">52.6</td>
-<td style="text-align: center;">86.8</td>
-<td style="text-align: center;">59.8</td>
-<td style="text-align: center;">4.4</td>
-<td style="text-align: center;">28.2</td>
-<td style="text-align: center;">640x640</td>
-</tr>
-<tr>
-<td style="text-align: center;">LW-DETR-L</td>
-<td style="text-align: center;">74.6</td>
-<td style="text-align: center;">56.1</td>
-<td style="text-align: center;">87.4</td>
-<td style="text-align: center;">61.5</td>
-<td style="text-align: center;">6.9</td>
-<td style="text-align: center;">46.8</td>
-<td style="text-align: center;">640x640</td>
-</tr>
-<tr>
-<td style="text-align: center;">LW-DETR-X</td>
-<td style="text-align: center;">76.9</td>
-<td style="text-align: center;">58.3</td>
-<td style="text-align: center;">87.9</td>
-<td style="text-align: center;">62.1</td>
-<td style="text-align: center;">13.0</td>
-<td style="text-align: center;">118.0</td>
-<td style="text-align: center;">640x640</td>
-</tr>
-<tr>
-<td style="text-align: center;">D-FINE-N</td>
-<td style="text-align: center;">60.2</td>
-<td style="text-align: center;">42.7</td>
-<td style="text-align: center;">84.4</td>
-<td style="text-align: center;">58.2</td>
-<td style="text-align: center;">2.1</td>
-<td style="text-align: center;">3.8</td>
-<td style="text-align: center;">640x640</td>
-</tr>
-<tr>
-<td style="text-align: center;">D-FINE-S</td>
-<td style="text-align: center;">67.6</td>
-<td style="text-align: center;">50.6</td>
-<td style="text-align: center;">85.3</td>
-<td style="text-align: center;">60.3</td>
-<td style="text-align: center;">3.5</td>
-<td style="text-align: center;">10.2</td>
-<td style="text-align: center;">640x640</td>
-</tr>
-<tr>
-<td style="text-align: center;">D-FINE-M</td>
-<td style="text-align: center;">72.6</td>
-<td style="text-align: center;">55.0</td>
-<td style="text-align: center;">85.5</td>
-<td style="text-align: center;">60.6</td>
-<td style="text-align: center;">5.4</td>
-<td style="text-align: center;">19.2</td>
-<td style="text-align: center;">640x640</td>
-</tr>
-<tr>
-<td style="text-align: center;">D-FINE-L</td>
-<td style="text-align: center;">74.9</td>
-<td style="text-align: center;">57.2</td>
-<td style="text-align: center;">86.4</td>
-<td style="text-align: center;">61.6</td>
-<td style="text-align: center;">7.5</td>
-<td style="text-align: center;">31.0</td>
-<td style="text-align: center;">640x640</td>
-</tr>
-<tr>
-<td style="text-align: center;">D-FINE-X</td>
-<td style="text-align: center;">76.8</td>
-<td style="text-align: center;">59.3</td>
-<td style="text-align: center;">86.9</td>
-<td style="text-align: center;">62.2</td>
-<td style="text-align: center;">11.5</td>
-<td style="text-align: center;">62.0</td>
-<td style="text-align: center;">640x640</td>
+<td><code>resume</code></td>
+<td><code>str</code></td>
+<td><code>None</code></td>
+<td>Path to a saved checkpoint to continue training. Restores model weights, optimizer state, and scheduler.</td>
 </tr>
 </tbody>
 </table>
-<h2 id="segmentation">Segmentation<a class="headerlink" href="#segmentation" title="Permanent link">&para;</a></h2>
-<p><img alt="rf_detr_1-4_latency_accuracy_instance_segmentation" src="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_instance_segmentation.png" /></p>
+<h3 id="understanding-batch-size">Understanding Batch Size<a class="headerlink" href="#understanding-batch-size" title="Permanent link">&para;</a></h3>
+<p>The <strong>effective batch size</strong> is calculated as:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>effective_batch_size = batch_size × grad_accum_steps × num_gpus
+</span></code></pre></div>
+<p>Recommended configurations for different GPUs (targeting effective batch size of 16):</p>
 <table>
 <thead>
 <tr>
-<th style="text-align: center;">Architecture</th>
-<th style="text-align: center;">COCO AP<sub>50</sub></th>
-<th style="text-align: center;">COCO AP<sub>50:95</sub></th>
-<th style="text-align: center;">Latency (ms)</th>
-<th style="text-align: center;">Params (M)</th>
-<th style="text-align: center;">Resolution</th>
+<th>GPU</th>
+<th>VRAM</th>
+<th><code>batch_size</code></th>
+<th><code>grad_accum_steps</code></th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td style="text-align: center;">RF-DETR-Seg-N</td>
-<td style="text-align: center;">63.0</td>
-<td style="text-align: center;">40.3</td>
-<td style="text-align: center;">3.4</td>
-<td style="text-align: center;">33.6</td>
-<td style="text-align: center;">312x312</td>
+<td>A100</td>
+<td>40-80GB</td>
+<td>16</td>
+<td>1</td>
 </tr>
 <tr>
-<td style="text-align: center;">RF-DETR-Seg-S</td>
-<td style="text-align: center;">66.2</td>
-<td style="text-align: center;">43.1</td>
-<td style="text-align: center;">4.4</td>
-<td style="text-align: center;">33.7</td>
-<td style="text-align: center;">384x384</td>
+<td>RTX 4090</td>
+<td>24GB</td>
+<td>8</td>
+<td>2</td>
 </tr>
 <tr>
-<td style="text-align: center;">RF-DETR-Seg-M</td>
-<td style="text-align: center;">68.4</td>
-<td style="text-align: center;">45.3</td>
-<td style="text-align: center;">5.9</td>
-<td style="text-align: center;">35.7</td>
-<td style="text-align: center;">432x432</td>
+<td>RTX 3090</td>
+<td>24GB</td>
+<td>8</td>
+<td>2</td>
 </tr>
 <tr>
-<td style="text-align: center;">RF-DETR-Seg-L</td>
-<td style="text-align: center;">70.5</td>
-<td style="text-align: center;">47.1</td>
-<td style="text-align: center;">8.8</td>
-<td style="text-align: center;">36.2</td>
-<td style="text-align: center;">504x504</td>
+<td>T4</td>
+<td>16GB</td>
+<td>4</td>
+<td>4</td>
 </tr>
 <tr>
-<td style="text-align: center;">RF-DETR-Seg-XL</td>
-<td style="text-align: center;">72.2</td>
-<td style="text-align: center;">48.8</td>
-<td style="text-align: center;">13.5</td>
-<td style="text-align: center;">38.1</td>
-<td style="text-align: center;">624x624</td>
+<td>RTX 3070</td>
+<td>8GB</td>
+<td>2</td>
+<td>8</td>
+</tr>
+</tbody>
+</table>
+<h2 id="learning-rate-parameters">Learning Rate Parameters<a class="headerlink" href="#learning-rate-parameters" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>lr</code></td>
+<td><code>float</code></td>
+<td><code>1e-4</code></td>
+<td>Learning rate for most parts of the model.</td>
 </tr>
 <tr>
-<td style="text-align: center;">RF-DETR-Seg-2XL</td>
-<td style="text-align: center;">73.1</td>
-<td style="text-align: center;">49.9</td>
-<td style="text-align: center;">21.8</td>
-<td style="text-align: center;">38.6</td>
-<td style="text-align: center;">768x768</td>
+<td><code>lr_encoder</code></td>
+<td><code>float</code></td>
+<td><code>1.5e-4</code></td>
+<td>Learning rate specifically for the backbone encoder. Can be set lower than <code>lr</code> if you want to fine-tune the encoder more conservatively than the rest of the model.</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition tip">
+<p class="admonition-title">Learning rate tips</p>
+<ul>
+<li>Start with the default values for fine-tuning</li>
+<li>If the model doesn't converge, try reducing <code>lr</code> by half</li>
+<li>For training from scratch (not recommended), you may need higher learning rates</li>
+</ul>
+</div>
+<h2 id="resolution-parameters">Resolution Parameters<a class="headerlink" href="#resolution-parameters" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>resolution</code></td>
+<td><code>int</code></td>
+<td>Model-dependent</td>
+<td>Input image resolution. Higher values can improve accuracy but require more memory. <strong>Must be divisible by 56.</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Common resolution values:</p>
+<table>
+<thead>
+<tr>
+<th>Resolution</th>
+<th>Memory Usage</th>
+<th>Use Case</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>560</td>
+<td>Low</td>
+<td>Small objects, limited GPU memory</td>
 </tr>
 <tr>
-<td style="text-align: center;">YOLOv8-N-Seg</td>
-<td style="text-align: center;">45.6</td>
-<td style="text-align: center;">28.3</td>
-<td style="text-align: center;">3.5</td>
-<td style="text-align: center;">3.4</td>
-<td style="text-align: center;">640x640</td>
+<td>672</td>
+<td>Medium</td>
+<td>Balanced (default for many models)</td>
 </tr>
 <tr>
-<td style="text-align: center;">YOLOv8-S-Seg</td>
-<td style="text-align: center;">53.8</td>
-<td style="text-align: center;">34.0</td>
-<td style="text-align: center;">4.2</td>
-<td style="text-align: center;">11.8</td>
-<td style="text-align: center;">640x640</td>
+<td>784</td>
+<td>High</td>
+<td>High accuracy requirements</td>
 </tr>
 <tr>
-<td style="text-align: center;">YOLOv8-M-Seg</td>
-<td style="text-align: center;">58.2</td>
-<td style="text-align: center;">37.3</td>
-<td style="text-align: center;">7.0</td>
-<td style="text-align: center;">27.3</td>
-<td style="text-align: center;">640x640</td>
+<td>896</td>
+<td>Very High</td>
+<td>Maximum quality (requires large GPU)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="regularization-parameters">Regularization Parameters<a class="headerlink" href="#regularization-parameters" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>weight_decay</code></td>
+<td><code>float</code></td>
+<td><code>1e-4</code></td>
+<td>L2 regularization coefficient. Helps prevent overfitting by penalizing large weights.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="hardware-parameters">Hardware Parameters<a class="headerlink" href="#hardware-parameters" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>device</code></td>
+<td><code>str</code></td>
+<td><code>"cuda"</code></td>
+<td>Device to run training on. Options: <code>"cuda"</code>, <code>"cpu"</code>, <code>"mps"</code> (Apple Silicon).</td>
 </tr>
 <tr>
-<td style="text-align: center;">YOLOv8-L-Seg</td>
-<td style="text-align: center;">60.5</td>
-<td style="text-align: center;">39.0</td>
-<td style="text-align: center;">9.7</td>
-<td style="text-align: center;">46.0</td>
-<td style="text-align: center;">640x640</td>
+<td><code>gradient_checkpointing</code></td>
+<td><code>bool</code></td>
+<td><code>False</code></td>
+<td>Re-computes parts of the forward pass during backpropagation to reduce memory usage. Lowers memory needs but increases training time.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="ema-exponential-moving-average">EMA (Exponential Moving Average)<a class="headerlink" href="#ema-exponential-moving-average" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>use_ema</code></td>
+<td><code>bool</code></td>
+<td><code>True</code></td>
+<td>Enables Exponential Moving Average of weights. Produces a smoothed checkpoint that often improves final performance.</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition info">
+<p class="admonition-title">What is EMA?</p>
+<p>EMA maintains a moving average of the model weights throughout training. This smoothed version often generalizes better than the raw weights and is commonly used for the final model.</p>
+</div>
+<h2 id="checkpoint-parameters">Checkpoint Parameters<a class="headerlink" href="#checkpoint-parameters" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>checkpoint_interval</code></td>
+<td><code>int</code></td>
+<td><code>10</code></td>
+<td>Frequency (in epochs) at which model checkpoints are saved. More frequent saves provide better coverage but consume more storage.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="checkpoint-files">Checkpoint Files<a class="headerlink" href="#checkpoint-files" title="Permanent link">&para;</a></h3>
+<p>During training, multiple checkpoints are saved:</p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>checkpoint.pth</code></td>
+<td>Most recent checkpoint (for resuming)</td>
 </tr>
 <tr>
-<td style="text-align: center;">YOLOv8-XL-Seg</td>
-<td style="text-align: center;">61.3</td>
-<td style="text-align: center;">39.5</td>
-<td style="text-align: center;">14.0</td>
-<td style="text-align: center;">71.8</td>
-<td style="text-align: center;">640x640</td>
+<td><code>checkpoint_&lt;N&gt;.pth</code></td>
+<td>Periodic checkpoint at epoch N</td>
 </tr>
 <tr>
-<td style="text-align: center;">YOLOv11-N-Seg</td>
-<td style="text-align: center;">47.8</td>
-<td style="text-align: center;">30.0</td>
-<td style="text-align: center;">3.6</td>
-<td style="text-align: center;">2.9</td>
-<td style="text-align: center;">640x640</td>
+<td><code>checkpoint_best_ema.pth</code></td>
+<td>Best validation performance (EMA weights)</td>
 </tr>
 <tr>
-<td style="text-align: center;">YOLOv11-S-Seg</td>
-<td style="text-align: center;">55.4</td>
-<td style="text-align: center;">35.0</td>
-<td style="text-align: center;">4.6</td>
-<td style="text-align: center;">10.1</td>
-<td style="text-align: center;">640x640</td>
+<td><code>checkpoint_best_regular.pth</code></td>
+<td>Best validation performance (raw weights)</td>
 </tr>
 <tr>
-<td style="text-align: center;">YOLOv11-M-Seg</td>
-<td style="text-align: center;">60.0</td>
-<td style="text-align: center;">38.5</td>
-<td style="text-align: center;">6.9</td>
-<td style="text-align: center;">22.4</td>
-<td style="text-align: center;">640x640</td>
+<td><code>checkpoint_best_total.pth</code></td>
+<td>Final best model for inference</td>
+</tr>
+</tbody>
+</table>
+<h2 id="early-stopping-parameters">Early Stopping Parameters<a class="headerlink" href="#early-stopping-parameters" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>early_stopping</code></td>
+<td><code>bool</code></td>
+<td><code>False</code></td>
+<td>Enable early stopping based on validation mAP.</td>
 </tr>
 <tr>
-<td style="text-align: center;">YOLOv11-L-Seg</td>
-<td style="text-align: center;">61.5</td>
-<td style="text-align: center;">39.5</td>
-<td style="text-align: center;">8.3</td>
-<td style="text-align: center;">27.6</td>
-<td style="text-align: center;">640x640</td>
+<td><code>early_stopping_patience</code></td>
+<td><code>int</code></td>
+<td><code>10</code></td>
+<td>Number of epochs without improvement before stopping.</td>
 </tr>
 <tr>
-<td style="text-align: center;">YOLOv11-XL-Seg</td>
-<td style="text-align: center;">62.4</td>
-<td style="text-align: center;">40.1</td>
-<td style="text-align: center;">13.7</td>
-<td style="text-align: center;">62.1</td>
-<td style="text-align: center;">640x640</td>
+<td><code>early_stopping_min_delta</code></td>
+<td><code>float</code></td>
+<td><code>0.001</code></td>
+<td>Minimum change in mAP to qualify as an improvement.</td>
 </tr>
 <tr>
-<td style="text-align: center;">YOLO26-N-Seg</td>
-<td style="text-align: center;">54.3</td>
-<td style="text-align: center;">34.7</td>
-<td style="text-align: center;">2.31</td>
-<td style="text-align: center;">2.7</td>
-<td style="text-align: center;">640x640</td>
+<td><code>early_stopping_use_ema</code></td>
+<td><code>bool</code></td>
+<td><code>False</code></td>
+<td>Whether to track improvements using EMA model metrics.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="early-stopping-example">Early Stopping Example<a class="headerlink" href="#early-stopping-example" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">&quot;path/to/dataset&quot;</span><span class="p">,</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">200</span><span class="p">,</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">early_stopping</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">early_stopping_patience</span><span class="o">=</span><span class="mi">15</span><span class="p">,</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="n">early_stopping_min_delta</span><span class="o">=</span><span class="mf">0.005</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="p">)</span>
+</span></code></pre></div>
+<p>This configuration will:
+- Train for up to 200 epochs
+- Stop early if mAP doesn't improve by at least 0.005 for 15 consecutive epochs</p>
+<h2 id="logging-parameters">Logging Parameters<a class="headerlink" href="#logging-parameters" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tensorboard</code></td>
+<td><code>bool</code></td>
+<td><code>True</code></td>
+<td>Enable TensorBoard logging. Requires <code>pip install "rfdetr[metrics]"</code>.</td>
 </tr>
 <tr>
-<td style="text-align: center;">YOLO26-S-Seg</td>
-<td style="text-align: center;">62.4</td>
-<td style="text-align: center;">40.2</td>
-<td style="text-align: center;">3.47</td>
-<td style="text-align: center;">10.4</td>
-<td style="text-align: center;">640x640</td>
+<td><code>wandb</code></td>
+<td><code>bool</code></td>
+<td><code>False</code></td>
+<td>Enable Weights &amp; Biases logging. Requires <code>pip install "rfdetr[metrics]"</code>.</td>
 </tr>
 <tr>
-<td style="text-align: center;">YOLO26-M-Seg</td>
-<td style="text-align: center;">67.8</td>
-<td style="text-align: center;">44.0</td>
-<td style="text-align: center;">6.32</td>
-<td style="text-align: center;">23.6</td>
-<td style="text-align: center;">640x640</td>
+<td><code>project</code></td>
+<td><code>str</code></td>
+<td><code>None</code></td>
+<td>Project name for W&amp;B logging.</td>
 </tr>
 <tr>
-<td style="text-align: center;">YOLO26-L-Seg</td>
-<td style="text-align: center;">69.8</td>
-<td style="text-align: center;">45.5</td>
-<td style="text-align: center;">7.58</td>
-<td style="text-align: center;">28.0</td>
-<td style="text-align: center;">640x640</td>
+<td><code>run</code></td>
+<td><code>str</code></td>
+<td><code>None</code></td>
+<td>Run name for W&amp;B logging. If not specified, W&amp;B assigns a random name.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="logging-example">Logging Example<a class="headerlink" href="#logging-example" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">&quot;path/to/dataset&quot;</span><span class="p">,</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="n">tensorboard</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="n">wandb</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="n">project</span><span class="o">=</span><span class="s2">&quot;my-detection-project&quot;</span><span class="p">,</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>    <span class="n">run</span><span class="o">=</span><span class="s2">&quot;experiment-001&quot;</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="p">)</span>
+</span></code></pre></div>
+<h2 id="complete-parameter-reference">Complete Parameter Reference<a class="headerlink" href="#complete-parameter-reference" title="Permanent link">&para;</a></h2>
+<p>Below is a summary table of all training parameters:</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>dataset_dir</code></td>
+<td>str</td>
+<td>Required</td>
+<td>Path to COCO or YOLO formatted dataset with train/valid/test splits.</td>
 </tr>
 <tr>
-<td style="text-align: center;">YOLO26-X-Seg</td>
-<td style="text-align: center;">71.6</td>
-<td style="text-align: center;">46.8</td>
-<td style="text-align: center;">12.92</td>
-<td style="text-align: center;">62.8</td>
-<td style="text-align: center;">640x640</td>
+<td><code>output_dir</code></td>
+<td>str</td>
+<td>"output"</td>
+<td>Directory for checkpoints, logs, and other training artifacts.</td>
+</tr>
+<tr>
+<td><code>epochs</code></td>
+<td>int</td>
+<td>100</td>
+<td>Number of full passes over the dataset.</td>
+</tr>
+<tr>
+<td><code>batch_size</code></td>
+<td>int</td>
+<td>4</td>
+<td>Samples per iteration. Balance with <code>grad_accum_steps</code>.</td>
+</tr>
+<tr>
+<td><code>grad_accum_steps</code></td>
+<td>int</td>
+<td>4</td>
+<td>Gradient accumulation steps for effective larger batch sizes.</td>
+</tr>
+<tr>
+<td><code>lr</code></td>
+<td>float</td>
+<td>1e-4</td>
+<td>Learning rate for the model (excluding encoder).</td>
+</tr>
+<tr>
+<td><code>lr_encoder</code></td>
+<td>float</td>
+<td>1.5e-4</td>
+<td>Learning rate for the backbone encoder.</td>
+</tr>
+<tr>
+<td><code>resolution</code></td>
+<td>int</td>
+<td>Model-specific</td>
+<td>Input image size (must be divisible by 56).</td>
+</tr>
+<tr>
+<td><code>weight_decay</code></td>
+<td>float</td>
+<td>1e-4</td>
+<td>L2 regularization coefficient.</td>
+</tr>
+<tr>
+<td><code>device</code></td>
+<td>str</td>
+<td>"cuda"</td>
+<td>Training device: cuda, cpu, or mps.</td>
+</tr>
+<tr>
+<td><code>use_ema</code></td>
+<td>bool</td>
+<td>True</td>
+<td>Enable Exponential Moving Average of weights.</td>
+</tr>
+<tr>
+<td><code>gradient_checkpointing</code></td>
+<td>bool</td>
+<td>False</td>
+<td>Trade compute for memory during backprop.</td>
+</tr>
+<tr>
+<td><code>checkpoint_interval</code></td>
+<td>int</td>
+<td>10</td>
+<td>Save checkpoint every N epochs.</td>
+</tr>
+<tr>
+<td><code>resume</code></td>
+<td>str</td>
+<td>None</td>
+<td>Path to checkpoint for resuming training.</td>
+</tr>
+<tr>
+<td><code>tensorboard</code></td>
+<td>bool</td>
+<td>True</td>
+<td>Enable TensorBoard logging.</td>
+</tr>
+<tr>
+<td><code>wandb</code></td>
+<td>bool</td>
+<td>False</td>
+<td>Enable Weights &amp; Biases logging.</td>
+</tr>
+<tr>
+<td><code>project</code></td>
+<td>str</td>
+<td>None</td>
+<td>W&amp;B project name.</td>
+</tr>
+<tr>
+<td><code>run</code></td>
+<td>str</td>
+<td>None</td>
+<td>W&amp;B run name.</td>
+</tr>
+<tr>
+<td><code>early_stopping</code></td>
+<td>bool</td>
+<td>False</td>
+<td>Enable early stopping.</td>
+</tr>
+<tr>
+<td><code>early_stopping_patience</code></td>
+<td>int</td>
+<td>10</td>
+<td>Epochs without improvement before stopping.</td>
+</tr>
+<tr>
+<td><code>early_stopping_min_delta</code></td>
+<td>float</td>
+<td>0.001</td>
+<td>Minimum mAP change to qualify as improvement.</td>
+</tr>
+<tr>
+<td><code>early_stopping_use_ema</code></td>
+<td>bool</td>
+<td>False</td>
+<td>Use EMA model for early stopping metrics.</td>
 </tr>
 </tbody>
 </table>
@@ -2422,10 +2824,10 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.tabs.link", "content.code.copy", "navigation.expand", "navigation.tabs", "content.code.annotate", "navigation.tracking", "content.tooltips", "navigation.tabs.sticky"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["content.tabs.link", "content.code.copy", "navigation.expand", "navigation.tabs", "content.code.annotate", "navigation.tracking", "content.tooltips", "navigation.tabs.sticky"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../../assets/javascripts/bundle.79ae519e.min.js"></script>
       
     
   </body>
