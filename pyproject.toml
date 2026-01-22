@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rfdetr"
-version = "1.3.0"
+version = "1.4.0"
 description = "RF-DETR"
 readme = "README.md"
 authors = [
     {name = "Roboflow, Inc", email = "peter@roboflow.com"}
 ]
 license = {text = "Apache License 2.0"}
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -36,29 +36,21 @@ classifiers = [
 keywords = ["machine-learning", "deep-learning", "vision", "ML", "DL", "AI", "DETR", "RF-DETR", "Roboflow"]
 
 dependencies = [
-    "cython",
     "pycocotools",
-    "torch>=1.13.0",
+    "torch>=1.13.0,<=2.8.0", # TODO: Torch >=2.9.0 is excluded due to known issues. PRs that help lift this restriction are welcome.
     "torchvision>=0.14.0",
-    "fairscale",
     "scipy",
-    "timm",
     "tqdm",
     "numpy",
-    "accelerate",
     "transformers",
     "peft",
-    "ninja",
-    "einops",
-    "pandas",
-    "pylabel",
     "polygraphy",
-    "open_clip_torch",
     "rf100vl",
     "pydantic",
     "supervision",
     "matplotlib",
-    "roboflow"
+    "roboflow",
+    "pillow-avif-plugin<1.5.3" # TODO: # Temporary pin. pillow-avif-plugin 1.5.3 fails to install in CI due to a broken wheel. Remove once the upstream issue is fixed.
 ]
 
 [project.optional-dependencies]
@@ -72,19 +64,27 @@ metrics = [
     "tensorboard>=2.13.0",
     "wandb"
 ]
+
+[dependency-groups]
+build = [
+    "twine>=5.1.1",
+    "wheel>=0.40",
+    "build>=0.10"
+]
+
+tests = [
+  "pytest>=7.2.2,<9",
+  "pytest-cov>=4,<8",
+]
+
 docs = [
-    "mkdocs-material[imaging]>=9.5.5",
+    "mkdocs-material[imaging]>=9.7",
     "mkdocstrings>=0.25.2,<0.30.0",
     "mkdocstrings-python>=1.10.9",
     "mike>=2.0.0",
     "mkdocs-jupyter>=0.24.3",
     "mkdocs-git-committers-plugin-2>=2.4.1; python_version >= '3.8' and python_version < '4'",
     "mkdocs-git-revision-date-localized-plugin>=1.2.4"
-]
-build = [
-    "twine>=5.1.1",
-    "wheel>=0.40",
-    "build>=0.10"
 ]
 
 [project.urls]
@@ -101,3 +101,27 @@ include-package-data = false
 
 [tool.setuptools.package-data]
 rfdetr = ["py.typed", "models/backbone/dinov2_configs/*.json"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+]
+extend-select = [
+    "I",  # isort
+]
+ignore = [
+    "E501",  # todo: will be fixed with enabling ruff-format
+    "E722",  # todo: Do not use bare `except`
+    "E741",  # todo: Ambiguous variable name: `...`
+    "F401",  # todo: `...` imported but unused; consider removing, adding to `__all__`, or using a redundant alias
+    "F403",  # todo: `from ... import *` used; unable to detect undefined names
+    "F405",  # todo: `...` may be undefined, or defined from star imports
+    "E721",  # todo: Use `is` and `is not` for type comparisons, or `isinstance()` for isinstance checks
+    "F821",  # todo: Undefined name `...`
+]
