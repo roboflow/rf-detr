@@ -38,7 +38,29 @@ We benchmarked RF-DETR on the Microsoft COCO dataset for segmentation. Our resul
 You can install and use `rfdetr` in a
 [**Python>=3.10**](https://www.python.org/) environment.
 
-For detailed installation instructions, including installing with pip, uv, from PyPI, from source, and setting up a local development environment, check out our [Install](/install/) page.
+!!! example "Quick Installation"
+    [![version](https://badge.fury.io/py/rfdetr.svg)](https://badge.fury.io/py/rfdetr)
+    [![downloads](https://img.shields.io/pypi/dm/rfdetr)](https://pypistats.org/packages/rfdetr)
+    [![license](https://img.shields.io/pypi/l/rfdetr)](https://github.com/roboflow/rfdetr/blob/main/LICENSE.md)
+    [![python-version](https://img.shields.io/pypi/pyversions/rfdetr)](https://badge.fury.io/py/rfdetr)
+
+    === "pip"
+        ```bash
+        pip install rfdetr
+        ```
+
+    === "uv"
+        ```bash
+        uv pip install rfdetr
+        ```
+
+        For uv projects:
+
+        ```bash
+        uv add rfdetr
+        ```
+
+For detailed installation instructions, including installing from source, and setting up a local development environment, check out our [Install](/install/) page.
 
 ## 🚀 Quickstart
 
