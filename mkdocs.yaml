@@ -32,6 +32,7 @@ nav:
       - Dataset Formats: learn/train/dataset-formats.md
       - Training Parameters: learn/train/training-parameters.md
       - Advanced Training: learn/train/advanced.md
+    - Export Model: learn/export.md
     - Deploy Model: learn/deploy.md
     - Benchmarks: learn/benchmarks.md
   - API Reference:
