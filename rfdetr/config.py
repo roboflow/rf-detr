@@ -5,10 +5,12 @@
 # ------------------------------------------------------------------------
 
 
-from pydantic import BaseModel, field_validator
-from typing import List, Optional, Literal
-import torch
 import os
+from typing import List, Literal, Optional
+
+import torch
+from pydantic import BaseModel, field_validator
+
 DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 
 class ModelConfig(BaseModel):
