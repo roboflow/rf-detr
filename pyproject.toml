@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rfdetr"
-version = "1.4.0rc0"
+version = "1.4.0rc1"
 description = "RF-DETR"
 readme = "README.md"
 authors = [
@@ -111,6 +111,9 @@ select = [
     "E",  # pycodestyle errors
     "W",  # pycodestyle warnings
     "F",  # pyflakes
+]
+extend-select = [
+    "I",  # isort
 ]
 ignore = [
     "E501",  # todo: will be fixed with enabling ruff-format

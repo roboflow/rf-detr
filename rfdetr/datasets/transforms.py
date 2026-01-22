@@ -19,15 +19,18 @@ Transforms and data augmentation for both image + bbox.
 import random
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-import PIL
 import numpy as np
+import PIL
+
 try:
     from collections.abc import Sequence
 except Exception:
     from collections import Sequence
 from numbers import Number
+
 import torch
 import torchvision.transforms as T
+
 # from detectron2.data import transforms as DT
 import torchvision.transforms.functional as F
 

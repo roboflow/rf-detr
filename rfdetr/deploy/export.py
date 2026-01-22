@@ -12,20 +12,20 @@ export ONNX model and TensorRT engine for deployment
 """
 import os
 import random
+import re
 import subprocess
-import torch.nn as nn
 
-import onnx
-import torch
-import onnxsim
 import numpy as np
+import onnx
+import onnxsim
+import torch
+import torch.nn as nn
 from PIL import Image
 
-import rfdetr.util.misc as utils
 import rfdetr.datasets.transforms as T
-from rfdetr.models import build_model
+import rfdetr.util.misc as utils
 from rfdetr.deploy._onnx import OnnxOptimizer
-import re
+from rfdetr.models import build_model
 
 
 def run_command_shell(command, dry_run:bool = False) -> int:

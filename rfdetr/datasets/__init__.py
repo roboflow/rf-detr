@@ -15,15 +15,14 @@
 # ------------------------------------------------------------------------
 
 from pathlib import Path
+from typing import Any, Optional
 
 import torch.utils.data
 import torchvision
-from typing import Any, Optional
 
-from .coco import build as build_coco
-from .o365 import build_o365
-from .coco import build_roboflow_from_coco
-from .yolo import build_roboflow_from_yolo, YoloDetection
+from rfdetr.datasets.coco import build_coco, build_roboflow_from_coco
+from rfdetr.datasets.o365 import build_o365
+from rfdetr.datasets.yolo import YoloDetection, build_roboflow_from_yolo
 
 
 def get_coco_api_from_dataset(dataset: torch.utils.data.Dataset) -> Optional[Any]:

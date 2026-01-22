@@ -20,18 +20,17 @@ Mostly copy-paste from https://github.com/pytorch/vision/blob/edfd5a7/references
 The difference is that there is less copy-pasting from pycocotools
 in the end of the file, as python3 can suppress prints with contextlib
 """
-import os
 import contextlib
 import copy
+import os
 from typing import Any, Dict, List, Tuple
 
 import numpy as np
-import torch
-import supervision as sv
-
-from pycocotools.cocoeval import COCOeval
-from pycocotools.coco import COCO
 import pycocotools.mask as mask_util
+import torch
+from pycocotools.coco import COCO
+import supervision as sv
+from pycocotools.cocoeval import COCOeval
 
 from rfdetr.util.misc import all_gather
 
@@ -179,8 +178,6 @@ class CocoEvaluator(object):
                 ]
             )
         return coco_results
-
-
 
 
 def merge(img_ids: List[int], eval_imgs: Any) -> Tuple[np.ndarray, np.ndarray]:

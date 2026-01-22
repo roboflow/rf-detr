@@ -6,16 +6,16 @@
 import glob
 import json
 import os
-import yaml
 from collections import defaultdict
-from logging import getLogger
-from typing import Union, List
 from copy import deepcopy
+from logging import getLogger
+from typing import List, Union
 
 import numpy as np
 import supervision as sv
 import torch
 import torchvision.transforms.functional as F
+import yaml
 from PIL import Image
 
 try:
@@ -24,26 +24,26 @@ except:
     pass
 
 from rfdetr.config import (
-    RFDETRBaseConfig,
-    RFDETRLargeDeprecatedConfig,
-    RFDETRNanoConfig,
-    RFDETRSmallConfig,
-    RFDETRMediumConfig,
-    RFDETRLargeConfig,
-    RFDETRSegPreviewConfig,
-    RFDETRSegNanoConfig,
-    RFDETRSegSmallConfig,
-    RFDETRSegMediumConfig,
-    RFDETRSegLargeConfig,
-    RFDETRSegXLargeConfig,
-    RFDETRSeg2XLargeConfig,
-    TrainConfig,
-    SegmentationTrainConfig,
     ModelConfig,
+    RFDETRBaseConfig,
+    RFDETRLargeConfig,
+    RFDETRLargeDeprecatedConfig,
+    RFDETRMediumConfig,
+    RFDETRNanoConfig,
+    RFDETRSeg2XLargeConfig,
+    RFDETRSegLargeConfig,
+    RFDETRSegMediumConfig,
+    RFDETRSegNanoConfig,
+    RFDETRSegPreviewConfig,
+    RFDETRSegSmallConfig,
+    RFDETRSegXLargeConfig,
+    RFDETRSmallConfig,
+    SegmentationTrainConfig,
+    TrainConfig,
 )
 from rfdetr.main import Model, download_pretrain_weights
-from rfdetr.util.metrics import MetricsPlotSink, MetricsTensorBoardSink, MetricsWandBSink
 from rfdetr.util.coco_classes import COCO_CLASSES
+from rfdetr.util.metrics import MetricsPlotSink, MetricsTensorBoardSink, MetricsWandBSink
 
 logger = getLogger(__name__)
 class RFDETR:
@@ -126,7 +126,7 @@ class RFDETR:
         """
         Export your model to an ONNX file.
 
-        See [the ONNX export documentation](https://rfdetr.roboflow.com/learn/train/#onnx-export) for more information.
+        See [the ONNX export documentation](https://rfdetr.roboflow.com/learn/export/) for more information.
         """
         self.model.export(**kwargs)
 
@@ -415,8 +415,9 @@ class RFDETR:
             ValueError: If the `api_key` is not provided and not found in the environment
                 variable `ROBOFLOW_API_KEY`, or if the `size` is not set for custom architectures.
         """
-        from roboflow import Roboflow
         import shutil
+
+        from roboflow import Roboflow
         if api_key is None:
             api_key = os.getenv("ROBOFLOW_API_KEY")
             if api_key is None:

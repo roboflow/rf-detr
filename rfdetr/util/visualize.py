@@ -1,4 +1,5 @@
 from pathlib import Path
+
 import numpy as np
 import supervision as sv
 from PIL import Image

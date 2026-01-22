@@ -15,15 +15,16 @@
 """
 Transformer class
 """
-import math
 import copy
+import math
 from typing import Optional
 
 import torch
 import torch.nn.functional as F
-from torch import nn, Tensor
+from torch import Tensor, nn
 
 from rfdetr.models.ops.modules import MSDeformAttn
+
 
 class MLP(nn.Module):
     """ Very simple multi-layer perceptron (also called FFN)"""
