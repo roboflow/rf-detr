@@ -372,7 +372,7 @@ class CocoLikeAPI:
             matching_img_ids = set()
             for cat_id in catIds:
                 matching_img_ids.update(self.catToImgs.get(cat_id, []))
-            
+
             # Intersect with existing imgIds filter
             imgIds &= matching_img_ids
 
