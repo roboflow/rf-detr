@@ -12,21 +12,23 @@
 
 import torch.utils.data
 import torchvision
+from typing import Any, Optional
 
 from .coco import build as build_coco
 from .o365 import build_o365
 from .coco import build_roboflow
 
 
-def get_coco_api_from_dataset(dataset):
+def get_coco_api_from_dataset(dataset: torch.utils.data.Dataset) -> Optional[Any]:
     for _ in range(10):
         if isinstance(dataset, torch.utils.data.Subset):
             dataset = dataset.dataset
     if isinstance(dataset, torchvision.datasets.CocoDetection):
         return dataset.coco
+    return None
 
 
-def build_dataset(image_set, args, resolution):
+def build_dataset(image_set: str, args: Any, resolution: int) -> torch.utils.data.Dataset:
     if args.dataset_file == 'coco':
         return build_coco(image_set, args, resolution)
     if args.dataset_file == 'o365':

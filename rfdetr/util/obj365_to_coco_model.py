@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 
 """Utils to load object365 pretrain."""
+import torch
 
 # obj365_classes = [
 #         'Person', 'Sneakers', 'Chair', 'Other Shoes', 'Hat', 'Car', 'Lamp', 'Glasses',
@@ -78,7 +79,7 @@
 #                'vase', 'scissors', 'stuffed toy', 'hair dryer', 'toothbrush']
 
 
-def get_coco_pretrain_from_obj365(cur_tensor, pretrain_tensor):
+def get_coco_pretrain_from_obj365(cur_tensor: torch.Tensor, pretrain_tensor: torch.Tensor) -> torch.Tensor:
     """Get coco weights from obj365 pretrained model."""
     if pretrain_tensor.size() == cur_tensor.size():
         return pretrain_tensor

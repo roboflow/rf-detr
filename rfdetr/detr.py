@@ -515,7 +515,7 @@ class RFDETRLarge(RFDETR):
                     "Please retrain your model with the new weights and configuration.\n"
                     "="*100 + "\n"
                 )
-            except Exception as e_deprecated:
+            except Exception:
                 raise self.init_error
 
     def get_model_config(self, **kwargs):

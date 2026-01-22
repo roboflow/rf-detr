@@ -89,7 +89,7 @@ class DinoV2(nn.Module):
             implied_resolution = positional_encoding_size * patch_size
 
             if implied_resolution != dino_config["image_size"]:
-                print(f"Using a different number of positional encodings than DINOv2, which means we're not loading DINOv2 backbone weights. This is not a problem if finetuning a pretrained RF-DETR model.")
+                print("Using a different number of positional encodings than DINOv2, which means we're not loading DINOv2 backbone weights. This is not a problem if finetuning a pretrained RF-DETR model.")
                 dino_config["image_size"] = implied_resolution
                 load_dinov2_weights = False
 
