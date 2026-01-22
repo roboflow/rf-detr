@@ -14,6 +14,7 @@ from pathlib import Path
 
 import torch.utils.data
 import torchvision
+from typing import Any, Optional
 
 from .coco import build as build_coco
 from .o365 import build_o365
@@ -21,7 +22,7 @@ from .coco import build_roboflow_from_coco
 from .yolo import build_roboflow_from_yolo, YoloDetection
 
 
-def get_coco_api_from_dataset(dataset):
+def get_coco_api_from_dataset(dataset: torch.utils.data.Dataset) -> Optional[Any]:
     for _ in range(10):
         if isinstance(dataset, torch.utils.data.Subset):
             dataset = dataset.dataset
@@ -29,6 +30,7 @@ def get_coco_api_from_dataset(dataset):
         return dataset.coco
     if isinstance(dataset, YoloDetection):
         return dataset.coco
+    return None
 
 
 def detect_roboflow_format(dataset_dir: Path) -> str:
@@ -78,7 +80,7 @@ def build_roboflow(image_set, args, resolution):
     return build_roboflow_from_yolo(image_set, args, resolution)
 
 
-def build_dataset(image_set, args, resolution):
+def build_dataset(image_set: str, args: Any, resolution: int) -> torch.utils.data.Dataset:
     if args.dataset_file == 'coco':
         return build_coco(image_set, args, resolution)
     if args.dataset_file == 'o365':

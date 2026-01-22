@@ -47,6 +47,7 @@ from rfdetr.util.drop_scheduler import drop_scheduler
 from rfdetr.util.files import download_file
 from rfdetr.util.get_param_dicts import get_param_dict
 from rfdetr.util.utils import ModelEma, BestMetricHolder, clean_state_dict
+from rfdetr.platform.platform_downloads import PLATFORM_MODELS
 
 if str(os.environ.get("USE_FILE_SYSTEM_SHARING", "False")).lower() in ["true", "1"]:
     import torch.multiprocessing
@@ -54,7 +55,8 @@ if str(os.environ.get("USE_FILE_SYSTEM_SHARING", "False")).lower() in ["true", "
 
 logger = getLogger(__name__)
 
-HOSTED_MODELS = {
+# THE FOLLOWING OPEN_SOURCE_MODELS ARE COVERED BY THE APACHE 2.0 LICENSE
+OPEN_SOURCE_MODELS = {
     "rf-detr-base.pth": "https://storage.googleapis.com/rfdetr/rf-detr-base-coco.pth",
     "rf-detr-base-o365.pth": "https://storage.googleapis.com/rfdetr/top-secret-1234/lwdetr_dinov2_small_o365_checkpoint.pth",
     # below is a less converged model that may be better for finetuning but worse for inference
@@ -64,7 +66,19 @@ HOSTED_MODELS = {
     "rf-detr-small.pth": "https://storage.googleapis.com/rfdetr/small_coco/checkpoint_best_regular.pth",
     "rf-detr-medium.pth": "https://storage.googleapis.com/rfdetr/medium_coco/checkpoint_best_regular.pth",
     "rf-detr-seg-preview.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-preview.pt",
+    "rf-detr-large-2026.pth": "https://storage.googleapis.com/rfdetr/rf-detr-large-2026.pth",
+    "rf-detr-xlarge.pth": "https://storage.googleapis.com/rfdetr/rf-detr-xl-ft.pth",
+    "rf-detr-xxlarge.pth": "https://storage.googleapis.com/rfdetr/rf-detr-2xl-ft.pth",
+    "rf-detr-seg-nano.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-n-ft.pth",
+    "rf-detr-seg-small.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-s-ft.pth",
+    "rf-detr-seg-medium.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-m-ft.pth",
+    "rf-detr-seg-large.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-l-ft.pth",
+    "rf-detr-seg-xlarge.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-xl-ft.pth",
+    "rf-detr-seg-xxlarge.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-2xl-ft.pth",
 }
+
+
+HOSTED_MODELS = {**OPEN_SOURCE_MODELS, **PLATFORM_MODELS}
 
 def download_pretrain_weights(pretrain_weights: str, redownload=False):
     if pretrain_weights in HOSTED_MODELS:
@@ -536,7 +550,7 @@ class Model:
 
     def export(self, output_dir="output", infer_dir=None, simplify=False,  backbone_only=False, opset_version=17, verbose=True, force=False, shape=None, batch_size=1, **kwargs):
         """Export the trained model to ONNX format"""
-        print(f"Exporting model to ONNX format")
+        print("Exporting model to ONNX format")
         try:
             from rfdetr.deploy.export import export_onnx, onnx_simplify, make_infer_image
         except ImportError:
@@ -799,7 +813,7 @@ def get_args_parser():
     parser.add_argument('--ia_bce_loss', action='store_true')
 
     # dataset parameters
-    parser.add_argument('--dataset_file', default='coco')
+    parser.add_argument('--dataset_file', default="coco")
     parser.add_argument('--coco_path', type=str)
     parser.add_argument('--dataset_dir', type=str)
     parser.add_argument('--square_resize_div_64', action='store_true')
@@ -955,7 +969,7 @@ def populate_args(
     ia_bce_loss=False,
 
     # Dataset parameters
-    dataset_file='coco',
+    dataset_file="coco",
     coco_path=None,
     dataset_dir=None,
     square_resize_div_64=False,

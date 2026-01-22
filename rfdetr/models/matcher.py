@@ -87,10 +87,6 @@ class HungarianMatcher(nn.Module):
 
         masks_present = "masks" in targets[0]
 
-        if masks_present:
-            tgt_masks = torch.cat([v["masks"] for v in targets])
-            out_masks = outputs["pred_masks"].flatten(0, 1)
-
         # Compute the giou cost betwen boxes
         giou = generalized_box_iou(box_cxcywh_to_xyxy(out_bbox), box_cxcywh_to_xyxy(tgt_bbox))
         cost_giou = -giou
@@ -119,12 +115,30 @@ class HungarianMatcher(nn.Module):
             # pred_masks_logits = out_masks.flatten(1)  # [P, HW]
             # tgt_masks_flat = tgt_masks.flatten(1).float()  # [T, HW]
 
-            num_points = out_masks.shape[-2] * out_masks.shape[-1] // self.mask_point_sample_ratio
+            tgt_masks = torch.cat([v["masks"] for v in targets])
 
-            tgt_masks = tgt_masks.to(out_masks.dtype)
+            if isinstance(outputs["pred_masks"], torch.Tensor):
+                out_masks = outputs["pred_masks"].flatten(0, 1)
 
-            point_coords = torch.rand(1, num_points, 2, device=out_masks.device)
-            pred_masks_logits = point_sample(out_masks.unsqueeze(1), point_coords.repeat(out_masks.shape[0], 1, 1), align_corners=False).squeeze(1)
+                num_points = out_masks.shape[-2] * out_masks.shape[-1] // self.mask_point_sample_ratio
+
+                point_coords = torch.rand(1, num_points, 2, device=out_masks.device)
+                pred_masks_logits = point_sample(out_masks.unsqueeze(1), point_coords.repeat(out_masks.shape[0], 1, 1), align_corners=False).squeeze(1)
+            else:
+                # pred_masks_logits = outputs["sparse_matcher_mask_logits"].flatten(0, 1)
+                # point_coords = outputs["matcher_sample_coords"]
+                spatial_features = outputs["pred_masks"]["spatial_features"]
+                query_features = outputs["pred_masks"]["query_features"]
+                bias = outputs["pred_masks"]["bias"]
+
+                num_points = spatial_features.shape[-2] * spatial_features.shape[-1] // self.mask_point_sample_ratio
+                point_coords = torch.rand(1, num_points, 2, device=spatial_features.device)
+                pred_masks_logits = point_sample(spatial_features, point_coords.repeat(spatial_features.shape[0], 1, 1), align_corners=False)
+                # print(f"pred_masks_logits.shape: {pred_masks_logits.shape}")
+                pred_masks_logits = torch.einsum('bcp,bnc->bnp', pred_masks_logits, query_features) + bias
+                pred_masks_logits = pred_masks_logits.flatten(0, 1)
+
+            tgt_masks = tgt_masks.to(pred_masks_logits.dtype)
             tgt_masks_flat = point_sample(tgt_masks.unsqueeze(1), point_coords.repeat(tgt_masks.shape[0], 1, 1), align_corners=False, mode="nearest").squeeze(1)
 
             # Binary cross-entropy with logits cost (mean over pixels), computed pairwise efficiently
