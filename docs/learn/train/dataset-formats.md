@@ -265,7 +265,7 @@ dataset = sv.DetectionDataset.from_coco(
     annotations_path="path/to/annotations.json"
 )
 
-# Save as YOLO  
+# Save as YOLO
 dataset.as_yolo(
     images_directory_path="output/images",
     annotations_directory_path="output/labels",
