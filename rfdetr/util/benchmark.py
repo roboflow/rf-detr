@@ -13,8 +13,6 @@
 from collections import OrderedDict, Counter, defaultdict
 import json
 import os
-import pdb
-from posixpath import join
 import sys
 
 
@@ -564,7 +562,7 @@ def flop_count(
 
 def warmup(model: torch.nn.Module, inputs: Any, N: int = 10) -> None:
     for i in range(N):
-        out = model(inputs)
+        model(inputs)
     torch.cuda.synchronize()
 
 
@@ -572,7 +570,7 @@ def measure_time(model: torch.nn.Module, inputs: Any, N: int = 10) -> float:
     warmup(model, inputs)
     s = time.time()
     for i in range(N):
-        out = model(inputs)
+        model(inputs)
     torch.cuda.synchronize()
     t = (time.time() - s) / N
     return t

@@ -242,15 +242,10 @@ def build(image_set: str, args: Any, resolution: int) -> CocoDetection:
     PATHS = {
         "train": (root / "train2017", root / "annotations" / f'{mode}_train2017.json'),
         "val": (root /  "val2017", root / "annotations" / f'{mode}_val2017.json'),
-        "test": (root / "test2017", root / "annotations" / f'image_info_test-dev2017.json'),
+        "test": (root / "test2017", root / "annotations" / 'image_info_test-dev2017.json'),
     }
 
     img_folder, ann_file = PATHS[image_set.split("_")[0]]
-
-    try:
-        square_resize = args.square_resize
-    except:
-        square_resize = False
 
     try:
         square_resize_div_64 = args.square_resize_div_64
@@ -283,7 +278,6 @@ def build(image_set: str, args: Any, resolution: int) -> CocoDetection:
 def build_roboflow(image_set: str, args: Any, resolution: int) -> CocoDetection:
     root = Path(args.dataset_dir)
     assert root.exists(), f'provided Roboflow path {root} does not exist'
-    mode = 'instances'
     PATHS = {
         "train": (root / "train", root / "train" / "_annotations.coco.json"),
         "val": (root /  "valid", root / "valid" / "_annotations.coco.json"),
@@ -291,11 +285,6 @@ def build_roboflow(image_set: str, args: Any, resolution: int) -> CocoDetection:
     }
 
     img_folder, ann_file = PATHS[image_set.split("_")[0]]
-
-    try:
-        square_resize = args.square_resize
-    except:
-        square_resize = False
 
     try:
         square_resize_div_64 = args.square_resize_div_64

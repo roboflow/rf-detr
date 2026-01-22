@@ -1,6 +1,5 @@
 import requests
 from tqdm import tqdm
-from logging import getLogger
 
 
 def download_file(url: str, filename: str) -> None:
