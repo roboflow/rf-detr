@@ -22,8 +22,8 @@ extra:
 
 nav:
   - Home: index.md
-  - Install: install.md
   - Learn:
+    - Install: learn/install.md
     - Run a Model:
       - Object Detection: learn/run/detection.md
       - Segmentation: learn/run/segmentation.md
