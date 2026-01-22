@@ -24,12 +24,16 @@ nav:
   - Home: index.md
   - How to:
     - Install: learn/install.md
-    - Run Models:
+    - Run Model:
       - Detection: learn/run/detection.md
       - Segmentation: learn/run/segmentation.md
-    - Train Models: learn/train/index.md
-    - Export Models: learn/export.md
-    - Deploy Models: learn/deploy.md
+    - Train Model:
+      - Overview: learn/train/index.md
+      - Dataset Formats: learn/train/dataset-formats.md
+      - Training Parameters: learn/train/training-parameters.md
+      - Advanced Training: learn/train/advanced.md
+    - Export Model: learn/export.md
+    - Deploy Model: learn/deploy.md
     - Benchmarks: learn/benchmarks.md
   - API Reference:
       - RF-DETR: reference/rfdetr.md
