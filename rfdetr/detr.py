@@ -13,11 +13,14 @@ from typing import List, Union
 
 import numpy as np
 import supervision as sv
-from supervision.utils.file import read_yaml_file, read_json_file
 import torch
 import torchvision.transforms.functional as F
 import yaml
 from PIL import Image
+from supervision.utils.file import read_json_file, read_yaml_file
+
+from rfdetr.datasets.coco import is_valid_coco_dataset
+from rfdetr.datasets.yolo import is_valid_yolo_dataset
 
 try:
     torch.set_float32_matmul_precision('high')
@@ -134,18 +137,18 @@ class RFDETR:
     @staticmethod
     def _load_classes(dataset_dir) -> List[str]:
         """Load class names from a COCO or YOLO dataset directory."""
-        coco_path = os.path.join(dataset_dir, "train", "_annotations.coco.json")
-        if os.path.exists(coco_path):
+        if is_valid_coco_dataset(dataset_dir):
+            coco_path = os.path.join(dataset_dir, "train", "_annotations.coco.json")
             with open(coco_path, "r") as f:
                 anns = json.load(f)
             class_names = [c["name"] for c in anns["categories"] if c["supercategory"] != "none"]
             return class_names
 
         # list all YAML files in the folder
-        yaml_paths = glob.glob(os.path.join(dataset_dir, "*.yaml")) + glob.glob(os.path.join(dataset_dir, "*.yml"))
-        # any YAML file starting with data e.g. data.yaml, dataset.yaml
-        yaml_data_files = [yp for yp in yaml_paths if os.path.basename(yp).startswith("data")]
-        if len(yaml_data_files) == 1:
+        if is_valid_yolo_dataset(dataset_dir):
+            yaml_paths = glob.glob(os.path.join(dataset_dir, "*.yaml")) + glob.glob(os.path.join(dataset_dir, "*.yml"))
+            # any YAML file starting with data e.g. data.yaml, dataset.yaml
+            yaml_data_files = [yp for yp in yaml_paths if os.path.basename(yp).startswith("data")]
             yaml_path = yaml_data_files[0]
             with open(yaml_path, "r") as f:
                 data = yaml.safe_load(f)
@@ -155,9 +158,6 @@ class RFDETR:
                 return data["names"]
             else:
                 raise ValueError(f"Found {yaml_path} but it does not contain 'names' field.")
-        elif len(yaml_data_files) > 1:
-            raise ValueError(f"Found multiple YAML files starting with 'data' in {dataset_dir}: {yaml_data_files}. "
-                             "Please rename one of them to avoid conflicts.")
 
         raise FileNotFoundError(
             f"Could not find class names in {dataset_dir}. "
@@ -165,28 +165,15 @@ class RFDETR:
         )
 
     def train_from_config(self, config: TrainConfig, **kwargs):
-        if is_valid_yolo_dataset(config.dataset_dir):
-            logger.info(f"Using native YOLO dataloader for dataset: {config.dataset_dir}")
-
-            data_yaml_path = os.path.join(config.dataset_dir, "data.yaml")
-            data = read_yaml_file(data_yaml_path)
-            num_classes = len(data['names'])
-
-            # We need to update these, to ensure the training pipeline can continue the same way
-            # as if we were using the native COCO dataloader
-            kwargs['dataset_file'] = 'yolo'
-            config.dataset_file = 'yolo'
-        else:
-            coco_annotations_path = os.path.join(config.dataset_dir, "train", "_annotations.coco.json")
-            anns = read_json_file(coco_annotations_path)
-            num_classes = len(anns["categories"])
-            class_names = [c["name"] for c in anns["categories"] if c["supercategory"] != "none"]
-            self.model.class_names = class_names
-
         if config.dataset_file == "roboflow":
             class_names = self._load_classes(config.dataset_dir)
             num_classes = len(class_names)
             self.model.class_names = class_names
+        elif config.dataset_file == "yolo":
+            class_names = self._load_classes(config.dataset_dir)
+            num_classes = len(class_names)
+            self.model.class_names = class_names
+        # NOTE: this not any yolo dataset but the one
         elif config.dataset_file == "coco":
             class_names = COCO_CLASSES
             num_classes = 90

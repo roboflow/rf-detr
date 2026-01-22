@@ -4,6 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,32 @@ from rfdetr.datasets.coco import (
     make_coco_transforms_square_div_64,
 )
 
+REQUIRED_YOLO_YAML_FILE = "data.yaml"
+REQUIRED_SPLIT_DIRS = ["train", "valid"]
+REQUIRED_DATA_SUBDIRS = ["images", "labels"]
+
+
+def is_valid_yolo_dataset(dataset_dir: str) -> bool:
+    """
+    Checks if the specified dataset directory is in yolo format.
+
+    We accept a dataset to be in yolo format if the following conditions are met:
+    - The dataset_dir contains a data.yaml file
+    - The dataset_dir contains "train" and "valid" subdirectories, each containing "images" and "labels" subdirectories
+    - The "test" subdirectory is optional
+
+    Returns a boolean indicating whether the dataset is in correct yolo format.
+    """
+    contains_required_data_yaml = os.path.exists(os.path.join(dataset_dir, REQUIRED_YOLO_YAML_FILE))
+    contains_required_split_dirs = all(
+        os.path.exists(os.path.join(dataset_dir, split_dir)) for split_dir in REQUIRED_SPLIT_DIRS
+    )
+    contains_required_data_subdirs = all(
+        os.path.exists(os.path.join(dataset_dir, split_dir, data_subdir))
+        for split_dir in REQUIRED_SPLIT_DIRS
+        for data_subdir in REQUIRED_DATA_SUBDIRS
+    )
+    return contains_required_data_yaml and contains_required_split_dirs and contains_required_data_subdirs
 
 class ConvertYolo:
     """
@@ -115,7 +142,7 @@ class ConvertYolo:
 
 
 class _MockSvDataset:
-    """Mock supervision dataset for testing YoloCoco."""
+    """Mock supervision dataset for testing CocoLikeAPI."""
     classes = ["cat", "dog"]
     def __len__(self): return 2
     def __getitem__(self, i):
@@ -125,7 +152,7 @@ class _MockSvDataset:
         return f"img_{i}.jpg", np.zeros((100, 100, 3), dtype=np.uint8), det
 
 
-class YoloCoco:
+class CocoLikeAPI:
     """
     A minimal COCO-compatible API wrapper for YOLO datasets.
 
@@ -228,8 +255,10 @@ class YoloCoco:
                 "width": w
             })
 
-            for i, detection in enumerate(detections):
-                bbox_x, bbox_y, bbox_w, bbox_h = sv.xyxy_to_xywh(detection.xyxy)
+            if len(detections) == 0:
+                continue
+            for i in range(len(detections)):
+                bbox_x, bbox_y, bbox_w, bbox_h = sv.xyxy_to_xywh(detections.xyxy[i:i+1])[0]
 
                 ann = {
                     "id": ann_id,
@@ -240,13 +269,13 @@ class YoloCoco:
                     "iscrowd": 0
                 }
 
-                # Add segmentation if available
-                if detections.mask is not None:
-                    # For now, use empty polygon - evaluation will still work for bbox
-                    ann["segmentation"] = []
+            # Add segmentation if available
+            if detections.mask is not None:
+                # For now, use empty polygon - evaluation will still work for bbox
+                ann["segmentation"] = []
 
-                annotations.append(ann)
-                ann_id += 1
+            annotations.append(ann)
+            ann_id += 1
 
         return {
             "images": images,
@@ -339,8 +368,13 @@ class YoloCoco:
         imgIds = set(imgIds) if imgIds else set(self.imgs.keys())
 
         if len(catIds) > 0:
+            # Find all images that contain at least one of the specified categories
+            matching_img_ids = set()
             for cat_id in catIds:
-                imgIds &= set(self.catToImgs.get(cat_id, []))
+                matching_img_ids.update(self.catToImgs.get(cat_id, []))
+            
+            # Intersect with existing imgIds filter
+            imgIds &= matching_img_ids
 
         return list(imgIds)
 
@@ -427,7 +461,7 @@ class YoloDetection(VisionDataset):
         self.ids = list(range(len(self.sv_dataset)))
 
         # Create COCO-compatible API for evaluation
-        self.coco = YoloCoco(self.classes, self.sv_dataset)
+        self.coco = CocoLikeAPI(self.classes, self.sv_dataset)
 
     def __len__(self) -> int:
         return len(self.sv_dataset)
@@ -508,167 +542,3 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
             include_masks=include_masks
         )
     return dataset
-
-class CocoLikeAPI:
-    """
-    A COCO-like API for compatibility with pycocotools evaluation.
-    This simulates the COCO API used for evaluation.
-    """
-    def __init__(self, dataset : YOLODataset):
-        self.orig_dataset = dataset
-        self.cats = self._create_category_mapping()
-        self.imgs = self._create_image_mapping()
-        self.anns = self._create_annotation_mapping()
-
-        self.imgToAnns = defaultdict(list)
-        self.catToImgs = defaultdict(list)
-
-        for ann in self.anns.values():
-            self.imgToAnns[ann['image_id']].append(ann)
-            self.catToImgs[ann['category_id']].append(ann['image_id'])
-
-        self.dataset = {
-            'images': self.imgs,
-            'annotations': list(self.anns.values()),
-            'categories': list(self.cats.values()),
-        }
-
-    def _create_category_mapping(self):
-        """Create a category mapping similar to COCO format"""
-        cats = {}
-        for idx, name in enumerate(self.orig_dataset.class_names):
-            cat_id = idx
-            cats[cat_id] = {
-                'id': cat_id,
-                'name': name,
-                'supercategory': 'none'
-            }
-        return cats
-
-    def _create_image_mapping(self):
-        """Create an image mapping similar to COCO format"""
-        imgs = []
-        for idx, img_path in enumerate(self.orig_dataset.image_paths):
-            img = Image.open(img_path)
-            width, height = img.size
-            imgs.append({
-                'id': self.orig_dataset.ids[idx],
-                'file_name': os.path.basename(img_path),
-                'width': width,
-                'height': height
-            })
-        return imgs
-
-    def _create_annotation_mapping(self):
-        """Create an annotation mapping similar to COCO format"""
-        anns = {}
-        ann_id = 0
-
-        for idx, (img_path, label_path) in enumerate(zip(self.orig_dataset.image_paths, self.orig_dataset.label_paths)):
-            img = Image.open(img_path)
-            width, height = img.size
-
-            with open(label_path, 'r') as f:
-                for line in f.readlines():
-                    data = line.strip().split()
-                    if len(data) == 5:
-                        class_id = int(data[0])
-                        x_center, y_center, box_width, box_height = map(float, data[1:5])
-
-                        x = (x_center - box_width / 2) * width
-                        y = (y_center - box_height / 2) * height
-                        w = box_width * width
-                        h = box_height * height
-
-                        anns[ann_id] = {
-                            'id': ann_id,
-                            'image_id': self.orig_dataset.ids[idx],
-                            'category_id': class_id,
-                            'bbox': [x, y, w, h],
-                            'area': w * h,
-                            'iscrowd': 0
-                        }
-                        ann_id += 1
-
-        return anns
-
-    def getAnnIds(self, imgIds=None, catIds=None, areaRng=None, iscrowd=None):
-        """Get annotation IDs matching the given filter conditions"""
-        anns = self.anns.values()
-
-        if imgIds is not None:
-            if not isinstance(imgIds, list):
-                imgIds = [imgIds]
-            anns = [ann for ann in anns if ann['image_id'] in imgIds]
-
-        if catIds is not None:
-            if not isinstance(catIds, list):
-                catIds = [catIds]
-            anns = [ann for ann in anns if ann['category_id'] in catIds]
-
-        if areaRng is not None:
-            anns = [ann for ann in anns if areaRng[0] <= ann['area'] <= areaRng[1]]
-
-        if iscrowd is not None:
-            anns = [ann for ann in anns if ann['iscrowd'] == iscrowd]
-
-        return [ann['id'] for ann in anns]
-
-    def getCatIds(self, catNms=None, supNms=None, catIds=None):
-        """Get category IDs matching the given filter conditions"""
-        cats = self.cats.values()
-
-        if catNms is not None:
-            if not isinstance(catNms, list):
-                catNms = [catNms]
-            cats = [cat for cat in cats if cat['name'] in catNms]
-
-        if supNms is not None:
-            if not isinstance(supNms, list):
-                supNms = [supNms]
-            cats = [cat for cat in cats if cat['supercategory'] in supNms]
-
-        if catIds is not None:
-            if not isinstance(catIds, list):
-                catIds = [catIds]
-            cats = [cat for cat in cats if cat['id'] in catIds]
-
-        return [cat['id'] for cat in cats]
-
-    def getImgIds(self, imgIds=None, catIds=None):
-        """Get image IDs matching the given filter conditions"""
-        imgs = self.imgs
-
-        if imgIds is not None:
-            if not isinstance(imgIds, list):
-                imgIds = [imgIds]
-            imgs = [img for img in imgs if img['id'] in imgIds]
-
-        if catIds is not None:
-            if not isinstance(catIds, list):
-                catIds = [catIds]
-
-            img_ids = set()
-            for cat_id in catIds:
-                img_ids.update(self.catToImgs[cat_id])
-            imgs = [img for img in imgs if img['id'] in img_ids]
-
-        return [img['id'] for img in imgs]
-
-    def loadAnns(self, ids):
-        """Load annotations with the specified IDs"""
-        if isinstance(ids, int):
-            ids = [ids]
-        return [self.anns[id] for id in ids if id in self.anns]
-
-    def loadCats(self, ids):
-        """Load categories with the specified IDs"""
-        if isinstance(ids, int):
-            ids = [ids]
-        return [self.cats[id] for id in ids if id in self.cats]
-
-    def loadImgs(self, ids):
-        """Load images with the specified IDs"""
-        if isinstance(ids, int):
-            ids = [ids]
-        return [self.imgs[id] for id in ids if id in self.imgs]
