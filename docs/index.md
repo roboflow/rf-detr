@@ -11,7 +11,7 @@ RF-DETR (Roboflow DEtection TRansformer) is a real-time, transformer-based objec
 
 RF-DETR is the first real-time model to exceed 60 AP (Average Precision) on the [Microsoft COCO (Common Objects in Context) object detection benchmark](https://cocodataset.org/#home) alongside competitive performance at base sizes. It also achieves state-of-the-art (SOTA) performance on [RF100-VL](https://github.com/roboflow/rf100-vl), an object detection benchmark that measures model domain adaptability to real world problems. RF-DETR is fastest and most accurate for its size when compared current real-time objection models.
 
-On image segmentation, RF-DETR Seg (Preview) is 3x faster and more accurate than the largest YOLO (You Only Look Once) when evaluated on the Microsoft COCO Segmentation benchmark, defining a new real-time SOTA for the industry-standard benchmark in segmentation model evaluation.
+On image segmentation, RF-DETR Seg is 3x faster and more accurate than the largest YOLO (You Only Look Once) when evaluated on the Microsoft COCO Segmentation benchmark, defining a new real-time SOTA for the industry-standard benchmark in segmentation model evaluation.
 
 RF-DETR is small enough to run on the edge using [Inference](https://github.com/roboflow/inference), making it an ideal model for deployments that need both strong accuracy and real-time performance.
 
@@ -38,34 +38,18 @@ We benchmarked RF-DETR on the Microsoft COCO dataset for segmentation. Our resul
 You can install and use `rfdetr` in a
 [**Python>=3.10**](https://www.python.org/) environment.
 
-!!! example "Installation"
+!!! example "Quick Installation"
+    [![version](https://badge.fury.io/py/rfdetr.svg)](https://badge.fury.io/py/rfdetr)
+    [![downloads](https://img.shields.io/pypi/dm/rfdetr)](https://pypistats.org/packages/rfdetr)
+    [![license](https://img.shields.io/pypi/l/rfdetr)](https://github.com/roboflow/rfdetr/blob/main/LICENSE.md)
+    [![python-version](https://img.shields.io/pypi/pyversions/rfdetr)](https://badge.fury.io/py/rfdetr)
 
-    === "pip (recommended)"
-        [![version](https://badge.fury.io/py/rfdetr.svg)](https://badge.fury.io/py/rfdetr)
-        [![downloads](https://img.shields.io/pypi/dm/rfdetr)](https://pypistats.org/packages/rfdetr)
-        [![license](https://img.shields.io/pypi/l/rfdetr)](https://github.com/roboflow/rfdetr/blob/main/LICENSE.md)
-        [![python-version](https://img.shields.io/pypi/pyversions/rfdetr)](https://badge.fury.io/py/rfdetr)
-
+    === "pip"
         ```bash
         pip install rfdetr
         ```
 
-    === "poetry"
-        [![version](https://badge.fury.io/py/rfdetr.svg)](https://badge.fury.io/py/rfdetr)
-        [![downloads](https://img.shields.io/pypi/dm/rfdetr)](https://pypistats.org/packages/rfdetr)
-        [![license](https://img.shields.io/pypi/l/rfdetr)](https://github.com/roboflow/rfdetr/blob/main/LICENSE.md)
-        [![python-version](https://img.shields.io/pypi/pyversions/rfdetr)](https://badge.fury.io/py/rfdetr)
-
-        ```bash
-        poetry add rfdetr
-        ```
-
     === "uv"
-        [![version](https://badge.fury.io/py/rfdetr.svg)](https://badge.fury.io/py/rfdetr)
-        [![downloads](https://img.shields.io/pypi/dm/rfdetr)](https://pypistats.org/packages/rfdetr)
-        [![license](https://img.shields.io/pypi/l/rfdetr)](https://github.com/roboflow/rfdetr/blob/main/LICENSE.md)
-        [![python-version](https://img.shields.io/pypi/pyversions/rfdetr)](https://badge.fury.io/py/rfdetr)
-
         ```bash
         uv pip install rfdetr
         ```
@@ -76,46 +60,7 @@ You can install and use `rfdetr` in a
         uv add rfdetr
         ```
 
-    === "rye"
-        [![version](https://badge.fury.io/py/rfdetr.svg)](https://badge.fury.io/py/rfdetr)
-        [![downloads](https://img.shields.io/pypi/dm/rfdetr)](https://pypistats.org/packages/rfdetr)
-        [![license](https://img.shields.io/pypi/l/rfdetr)](https://github.com/roboflow/rfdetr/blob/main/LICENSE.md)
-        [![python-version](https://img.shields.io/pypi/pyversions/rfdetr)](https://badge.fury.io/py/rfdetr)
-
-        ```bash
-        rye add rfdetr
-        ```
-
-!!! example "git clone (for development)"
-    === "virtualenv"
-        ```bash
-        # clone repository and navigate to root directory
-        git clone --depth 1 -b develop https://github.com/roboflow/rf-detr.git
-        cd rf-detr
-
-        # setup python environment and activate it
-        python3 -m venv venv
-        source venv/bin/activate
-        pip install --upgrade pip
-
-        # installation
-        pip install -e "."
-        ```
-
-    === "uv"
-        ```bash
-        # clone repository and navigate to root directory
-        git clone --depth 1 -b develop https://github.com/roboflow/rf-detr.git
-        cd rf-detr
-
-        # setup python environment and activate it
-        uv venv
-        source .venv/bin/activate
-
-        # installation
-        uv pip install -r pyproject.toml -e . --all-extras
-
-        ```
+For detailed installation instructions, including installing from source, and setting up a local development environment, check out our [Install](learn/install/) page.
 
 ## 🚀 Quickstart
 

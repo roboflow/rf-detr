@@ -275,7 +275,7 @@ def coco_extended_metrics(coco_eval):
                 continue
 
             num_dt = len(e['dtIds'])
-            num_gt = len(e['gtIds'])
+            # num_gt = len(e['gtIds'])
 
             gt_ignore = e['gtIgnore']
             total_gt += sum(1 for ig in gt_ignore if not ig)

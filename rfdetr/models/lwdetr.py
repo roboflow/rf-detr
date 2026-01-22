@@ -609,7 +609,7 @@ class SetCriterion(nn.Module):
                     # Logging is enabled only for the last layer
                     kwargs['log'] = False
                 l_dict = self.get_loss(loss, enc_outputs, targets, indices, num_boxes, **kwargs)
-                l_dict = {k + f'_enc': v for k, v in l_dict.items()}
+                l_dict = {k + '_enc': v for k, v in l_dict.items()}
                 losses.update(l_dict)
 
         return losses
@@ -794,7 +794,7 @@ def build_model(args):
     # For more details on this, check the following discussion
     # https://github.com/facebookresearch/detr/issues/108#issuecomment-650269223
     num_classes = args.num_classes + 1
-    device = torch.device(args.device)
+    torch.device(args.device)
 
 
     backbone = build_backbone(
@@ -859,7 +859,7 @@ def build_criterion_and_postprocessors(args):
         for i in range(args.dec_layers - 1):
             aux_weight_dict.update({k + f'_{i}': v for k, v in weight_dict.items()})
         if args.two_stage:
-            aux_weight_dict.update({k + f'_enc': v for k, v in weight_dict.items()})
+            aux_weight_dict.update({k + '_enc': v for k, v in weight_dict.items()})
         weight_dict.update(aux_weight_dict)
 
     losses = ['labels', 'boxes', 'cardinality']

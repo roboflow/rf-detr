@@ -6,7 +6,7 @@
 
 
 from pydantic import BaseModel, field_validator
-from typing import List, Optional, Literal, Type
+from typing import List, Optional, Literal
 import torch
 import os
 DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"

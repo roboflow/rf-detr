@@ -13,8 +13,6 @@
 """
 Projector
 """
-import math
-import random
 import numpy as np
 import torch
 import torch.nn as nn
@@ -172,12 +170,10 @@ class MultiScaleProjector(nn.Module):
         stages_sampling = []
         stages = []
         # use_bias = norm == ""
-        use_bias = False
         self.use_extra_pool = False
         for scale in scale_factors:
             stages_sampling.append([])
             for in_dim in in_channels:
-                out_dim = in_dim
                 layers = []
 
                 # if in_dim > 512:
@@ -191,7 +187,7 @@ class MultiScaleProjector(nn.Module):
                         nn.GELU(),
                         nn.ConvTranspose2d(in_dim // 2, in_dim // 4, kernel_size=2, stride=2),
                     ])
-                    out_dim = in_dim // 4
+                    # in_dim // 4
                 elif scale == 2.0:
                     # a hack to reduce the FLOPs and Params when the dimention of output feature is too large
                     # if in_dim > 512:
@@ -204,7 +200,7 @@ class MultiScaleProjector(nn.Module):
                     layers.extend([
                         nn.ConvTranspose2d(in_dim, in_dim // 2, kernel_size=2, stride=2),
                     ])
-                    out_dim = in_dim // 2
+                    # in_dim // 2
                 elif scale == 1.0:
                     pass
                 elif scale == 0.5:

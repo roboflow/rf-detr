@@ -111,7 +111,7 @@ class SegmentationHead(nn.Module):
         target_size = (image_size[0] // self.downsample_ratio, image_size[1] // self.downsample_ratio)
         spatial_features = F.interpolate(spatial_features, size=target_size, mode='bilinear', align_corners=False)
 
-        num_points = max(spatial_features.shape[-2], spatial_features.shape[-2] * spatial_features.shape[-1] // 16)
+        # num_points = max(spatial_features.shape[-2], spatial_features.shape[-2] * spatial_features.shape[-1] // 16)
 
         output_dicts = []
 

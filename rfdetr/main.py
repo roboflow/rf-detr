@@ -550,7 +550,7 @@ class Model:
 
     def export(self, output_dir="output", infer_dir=None, simplify=False,  backbone_only=False, opset_version=17, verbose=True, force=False, shape=None, batch_size=1, **kwargs):
         """Export the trained model to ONNX format"""
-        print(f"Exporting model to ONNX format")
+        print("Exporting model to ONNX format")
         try:
             from rfdetr.deploy.export import export_onnx, onnx_simplify, make_infer_image
         except ImportError:
@@ -813,7 +813,7 @@ def get_args_parser():
     parser.add_argument('--ia_bce_loss', action='store_true')
 
     # dataset parameters
-    parser.add_argument('--dataset_file', default='coco')
+    parser.add_argument('--dataset_file', default="coco")
     parser.add_argument('--coco_path', type=str)
     parser.add_argument('--dataset_dir', type=str)
     parser.add_argument('--square_resize_div_64', action='store_true')
@@ -969,7 +969,7 @@ def populate_args(
     ia_bce_loss=False,
 
     # Dataset parameters
-    dataset_file='coco',
+    dataset_file="coco",
     coco_path=None,
     dataset_dir=None,
     square_resize_div_64=False,
