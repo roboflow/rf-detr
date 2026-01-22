@@ -6,17 +6,33 @@ Deploying to Roboflow allows you to create multi-step computer vision applicatio
 
 To deploy your model to Roboflow, run:
 
-```python
-from rfdetr import RFDETRNano
+=== "Object Detection"
 
-x = RFDETRNano(pretrain_weights="<path/to/pretrain/weights/dir>")
-x.deploy_to_roboflow(
-  workspace="<your-workspace>",
-  project_id="<your-project-id>",
-  version=1,
-  api_key="<YOUR_API_KEY>"
-)
-```
+    ```python
+    from rfdetr import RFDETRNano
+
+    x = RFDETRNano(pretrain_weights="<path/to/pretrain/weights/dir>")
+    x.deploy_to_roboflow(
+      workspace="<your-workspace>",
+      project_id="<your-project-id>",
+      version=1,
+      api_key="<YOUR_API_KEY>"
+    )
+    ```
+
+=== "Image Segmentation"
+
+    ```python
+    from rfdetr import RFDETRSegMedium
+
+    x = RFDETRSegMedium(pretrain_weights="<path/to/pretrain/weights/dir>")
+    x.deploy_to_roboflow(
+      workspace="<your-workspace>",
+      project_id="<your-project-id>",
+      version=1,
+      api_key="<YOUR_API_KEY>"
+    )
+    ```
 
 Above, set your Roboflow Workspace ID, the ID of the project to which you want to upload your model, and your Roboflow API key.
 
@@ -25,33 +41,62 @@ Above, set your Roboflow Workspace ID, the ID of the project to which you want t
 
 You can then run your model with Roboflow Inference:
 
-```python
-import os
-import supervision as sv
-from inference import get_model
-from PIL import Image
-from io import BytesIO
-import requests
 
-url = "https://media.roboflow.com/dog.jpeg"
-image = Image.open(BytesIO(requests.get(url).content))
+=== "Object Detection"
 
-model = get_model("rfdetr-base")  # replace with your Roboflow model ID
+    ```python
+    import supervision as sv
+    from inference import get_model
+    from PIL import Image
+    from io import BytesIO
+    import requests
 
-predictions = model.infer(image, confidence=0.5)[0]
+    url = "https://media.roboflow.com/dog.jpeg"
+    image = Image.open(BytesIO(requests.get(url).content))
 
-detections = sv.Detections.from_inference(predictions)
+    model = get_model("rfdetr-large")  # replace with your Roboflow model ID
 
-labels = [prediction.class_name for prediction in predictions.predictions]
+    predictions = model.infer(image, confidence=0.5)[0]
 
-annotated_image = image.copy()
-annotated_image = sv.BoxAnnotator(color=sv.ColorPalette.ROBOFLOW).annotate(annotated_image, detections)
-annotated_image = sv.LabelAnnotator(color=sv.ColorPalette.ROBOFLOW).annotate(annotated_image, detections, labels)
+    detections = sv.Detections.from_inference(predictions)
 
-sv.plot_image(annotated_image)
-```
+    labels = [prediction.class_name for prediction in predictions.predictions]
 
-Above, replace `rfdetr-base` with the your Roboflow model ID. You can find this ID from the "Models" list in your Roboflow dashboard:
+    annotated_image = image.copy()
+    annotated_image = sv.BoxAnnotator().annotate(annotated_image, detections)
+    annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
+
+    sv.plot_image(annotated_image)
+    ```
+
+=== "Image Segmentation"
+
+    ```python
+    import supervision as sv
+    from inference import get_model
+    from PIL import Image
+    from io import BytesIO
+    import requests
+
+    url = "https://media.roboflow.com/dog.jpeg"
+    image = Image.open(BytesIO(requests.get(url).content))
+
+    model = get_model("rfdetr-seg-small")  # replace with your Roboflow model ID
+
+    predictions = model.infer(image, confidence=0.5)[0]
+
+    detections = sv.Detections.from_inference(predictions)
+
+    labels = [prediction.class_name for prediction in predictions.predictions]
+
+    annotated_image = image.copy()
+    annotated_image = sv.MaskAnnotator().annotate(annotated_image, detections)
+    annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
+
+    sv.plot_image(annotated_image)
+    ```
+
+Above, replace `rfdetr-large` with the your Roboflow model ID. You can find this ID from the "Models" list in your Roboflow dashboard:
 
 ![](https://media.roboflow.com/rfdetr/models-list.png)
 

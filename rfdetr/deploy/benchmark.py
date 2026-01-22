@@ -8,40 +8,32 @@
 # ------------------------------------------------------------------------
 
 """
-This tool provides performance benchmarks by using ONNX Runtime and TensorRT 
-to run inference on a given model with the COCO validation set. It offers 
-reliable measurements of inference latency using ONNX Runtime or TensorRT 
+This tool provides performance benchmarks by using ONNX Runtime and TensorRT
+to run inference on a given model with the COCO validation set. It offers
+reliable measurements of inference latency using ONNX Runtime or TensorRT
 on the device.
 """
 import argparse
-import copy
 import contextlib
-import datetime
+import copy
 import json
 import os
 import os.path as osp
 import random
 import time
-import ast
-from pathlib import Path
-from collections import namedtuple, OrderedDict
-
-from pycocotools.cocoeval import COCOeval
-from pycocotools.coco import COCO
-import pycocotools.mask as mask_util
+from collections import OrderedDict, namedtuple
 
 import numpy as np
-from PIL import Image
+import onnxruntime as nxrun
+import pycuda.driver as cuda
+import supervision as sv
+import tensorrt as trt
 import torch
-from torch.utils.data import DataLoader, DistributedSampler
-import torchvision.transforms as T
 import torchvision.transforms.functional as F
 import tqdm
-
-import pycuda.driver as cuda
-import pycuda.autoinit
-import onnxruntime as nxrun
-import tensorrt as trt
+from PIL import Image
+from pycocotools.coco import COCO
+from pycocotools.cocoeval import COCOeval
 
 
 def parser_args():
@@ -115,7 +107,7 @@ class CocoEvaluator(object):
                 continue
 
             boxes = prediction["boxes"]
-            boxes = convert_to_xywh(boxes).tolist()
+            boxes = sv.xyxy_to_xywh(boxes.cpu().numpy()).tolist()
             scores = prediction["scores"].tolist()
             labels = prediction["labels"].tolist()
 
@@ -184,9 +176,6 @@ def evaluate(self):
     self._paramsEval = copy.deepcopy(self.params)
     return p.imgIds, evalImgs
 
-def convert_to_xywh(boxes):
-    boxes[:, 2:] -= boxes[:, :2]
-    return boxes
 
 
 def get_image_list(ann_file):
@@ -304,7 +293,7 @@ def post_process(outputs, target_sizes):
     labels = topk_indexes % out_logits.shape[2]
     boxes = box_cxcywh_to_xyxy(out_bbox)
     boxes = torch.gather(boxes, 1, topk_boxes.unsqueeze(-1).repeat(1,1,4))
-    
+
     # and from relative [0, 1] to absolute [0, height] coordinates
     img_h, img_w = target_sizes.unbind(1)
     scale_fct = torch.stack([img_w, img_h, img_w, img_h], dim=1)
@@ -324,7 +313,7 @@ def infer_onnx(sess, coco_evaluator, time_profile, prefix, img_list, device, rep
         image_tensor, _ = infer_transforms()(image, None)  # target is None
 
         samples = image_tensor[None].numpy()
-        
+
         time_profile.reset()
         with time_profile:
             for _ in range(repeats):
@@ -339,7 +328,7 @@ def infer_onnx(sess, coco_evaluator, time_profile, prefix, img_list, device, rep
         res = {img_dict['id']: results[0]}
         if coco_evaluator is not None:
             coco_evaluator.update(res)
-    
+
     print("Model latency with ONNX Runtime: {}ms".format(1000 * sum(time_list) / len(img_list)))
 
     # accumulate predictions from all images
@@ -362,9 +351,9 @@ def infer_engine(model, coco_evaluator, time_profile, prefix, img_list, device, 
 
         samples = image_tensor[None].to(device)
         _, _, h, w = samples.shape
-        im_shape = torch.Tensor(np.array([h, w]).reshape((1, 2)).astype(np.float32)).to(device)
-        scale_factor = torch.Tensor(np.array([h / height, w / width]).reshape((1, 2)).astype(np.float32)).to(device)
-        
+        # torch.Tensor(np.array([h, w]).reshape((1, 2)).astype(np.float32)).to(device)
+        # torch.Tensor(np.array([h / height, w / width]).reshape((1, 2)).astype(np.float32)).to(device)
+
         time_profile.reset()
         with time_profile:
             for _ in range(repeats):
@@ -376,7 +365,7 @@ def infer_engine(model, coco_evaluator, time_profile, prefix, img_list, device, 
             results = post_process(outputs, orig_target_sizes)
             res = {img_dict['id']: results[0]}
             coco_evaluator.update(res)
-    
+
     print("Model latency with TensorRT: {}ms".format(1000 * sum(time_list) / len(img_list)))
 
     # accumulate predictions from all images
@@ -397,8 +386,8 @@ class TRTInference(object):
         self.device = device
         self.sync_mode = sync_mode
         self.max_batch_size = max_batch_size
-        
-        self.logger = trt.Logger(trt.Logger.VERBOSE) if verbose else trt.Logger(trt.Logger.INFO)  
+
+        self.logger = trt.Logger(trt.Logger.VERBOSE) if verbose else trt.Logger(trt.Logger.INFO)
 
         self.engine = self.load_engine(engine_path)
 
@@ -409,7 +398,7 @@ class TRTInference(object):
 
         self.input_names = self.get_input_names()
         self.output_names = self.get_output_names()
-        
+
         if not self.sync_mode:
             self.stream = cuda.Stream()
 
@@ -423,14 +412,14 @@ class TRTInference(object):
                 print(f"make dummy input {name} with shape {binding.shape}")
                 blob[name] = torch.rand(batch_size, *binding.shape[1:]).float().to('cuda:0')
         return blob
-    
+
     def load_engine(self, path):
         '''load engine
         '''
         trt.init_libnvinfer_plugins(self.logger, '')
         with open(path, 'rb') as f, trt.Runtime(self.logger) as runtime:
             return runtime.deserialize_cuda_engine(f.read())
-    
+
     def get_input_names(self, ):
         names = []
         for _, name in enumerate(self.engine):
@@ -444,7 +433,7 @@ class TRTInference(object):
             if self.engine.get_tensor_mode(name) == trt.TensorIOMode.OUTPUT:
                 names.append(name)
         return names
-    
+
     def get_bindings(self, engine, context, max_batch_size=32, device=None):
         '''build binddings
         '''
@@ -457,23 +446,23 @@ class TRTInference(object):
 
             if shape[0] == -1:
                 raise NotImplementedError
-            
+
             if False:
                 if engine.get_tensor_mode(name) == trt.TensorIOMode.INPUT:
                     data = np.random.randn(*shape).astype(dtype)
                     ptr = cuda.mem_alloc(data.nbytes)
-                    bindings[name] = Binding(name, dtype, shape, data, ptr) 
+                    bindings[name] = Binding(name, dtype, shape, data, ptr)
                 else:
                     data = cuda.pagelocked_empty(trt.volume(shape), dtype)
                     ptr = cuda.mem_alloc(data.nbytes)
-                    bindings[name] = Binding(name, dtype, shape, data, ptr) 
+                    bindings[name] = Binding(name, dtype, shape, data, ptr)
 
             else:
                 data = torch.from_numpy(np.empty(shape, dtype=dtype)).to(device)
                 bindings[name] = Binding(name, dtype, shape, data, data.data_ptr())
-        
+
         return bindings
-    
+
     def run_sync(self, blob):
         self.bindings_addr.update({n: blob[n].data_ptr() for n in self.input_names})
         self.context.execute_v2(list(self.bindings_addr.values()))
@@ -499,13 +488,13 @@ class TRTInference(object):
             torch.cuda.synchronize()
         elif self.sync_mode:
             self.stream.synchronize()
-    
+
     def speed(self, blob, n):
         self.time_profile.reset()
         with self.time_profile:
             for _ in range(n):
                 _ = self(blob)
-        return self.time_profile.total / n 
+        return self.time_profile.total / n
 
 
     def build_engine(self, onnx_file_path, engine_file_path, max_batch_size=32):
@@ -517,7 +506,7 @@ class TRTInference(object):
             builder.create_network(EXPLICIT_BATCH) as network, \
             trt.OnnxParser(network, self.logger) as parser, \
             builder.create_builder_config() as config:
-            
+
             config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, 1 << 30) # 1024 MiB
             config.set_flag(trt.BuilderFlag.FP16)
 
@@ -538,17 +527,17 @@ class TRTInference(object):
 class TimeProfiler(contextlib.ContextDecorator):
     def __init__(self, ):
         self.total = 0
-        
+
     def __enter__(self, ):
         self.start = self.time()
-        return self 
-    
+        return self
+
     def __exit__(self, type, value, traceback):
         self.total += self.time() - self.start
-    
+
     def reset(self, ):
         self.total = 0
-    
+
     def time(self, ):
         if torch.cuda.is_available():
             torch.cuda.synchronize()
@@ -566,13 +555,13 @@ def main(args):
         print('Inference for each image will be repeated 10 times to obtain '
               'a reliable measurement of inference latency.')
     else:
-        repeats = 1 
+        repeats = 1
 
     if args.disable_eval:
         coco_evaluator = None
     else:
         coco_evaluator = CocoEvaluator(coco_gt, ('bbox',))
-    
+
     time_profile = TimeProfiler()
 
     if args.path.endswith(".onnx"):
