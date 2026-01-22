@@ -179,7 +179,7 @@ annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections)
 | XL   | `RFDETRXLarge`        | `rfdetr-xlarge`         | 77.4                 |           58.6            | 11.5         | 126.4      | 700x700    |
 | 2XL  | `RFDETR2XLarge`       | `rfdetr-2xlarge`        | 78.5                 |           60.1            | 17.2         | 126.9      | 880x880    |
 
-### Segmantation
+### Segmentation
 
 RF-DETR supports instance segmentation with model sizes from Nano to 2XLarge. To use a different model size, replace the class name in the code snippet below with another class from the table.
 
