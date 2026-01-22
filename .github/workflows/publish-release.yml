@@ -21,7 +21,6 @@ jobs:
     name: Publish Release Package
     needs: build-pkg
     runs-on: ubuntu-latest
-    if: github.event_name != 'release' || github.event.release.prerelease != true
     environment:
       name: release
       url: https://pypi.org/project/rfdetr/
@@ -45,7 +44,8 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 🚀 Publish to PyPi
-        if: github.event_name != 'pull_request'
+        # Only publish non-pre-releases
+        if: github.event_name == 'release' && github.event.release.prerelease != true
         uses: pypa/gh-action-pypi-publish@v1.13.0
         with:
           attestations: true
