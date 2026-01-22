@@ -73,6 +73,11 @@
     <label class="md-overlay" for="__drawer"></label>
     <div data-md-component="skip">
       
+        
+        <a href="#benchmarks" class="md-skip">
+          Skip to content
+        </a>
+      
     </div>
     <div data-md-component="announce">
       
@@ -725,6 +730,26 @@
       <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
       
       
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Benchmarks
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
       
       <a href="./" class="md-nav__link md-nav__link--active">
         
@@ -742,6 +767,58 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#methodology" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Methodology
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#detection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Detection
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#segmentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Segmentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
       
     </li>
   
@@ -1569,6 +1646,49 @@
   
   
   
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#methodology" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Methodology
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#detection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Detection
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#segmentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Segmentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
   
 </nav>
                   </div>
@@ -1588,12 +1708,14 @@
   
 
 
-  <h1>Benchmarks</h1>
-
-<p>RF-DETR is the first real-time model to exceed 60 AP (Average Precision) on the Microsoft COCO (Common Objects in Context) benchmark alongside competitive performance at base sizes. It also achieves state-of-the-art (SOTA) performance on RF100-VL, an object detection benchmark that measures model domain adaptability to real world problems. RF-DETR is fastest and most accurate for its size when compared current real-time objection models.</p>
-<p>On this page, we outline our results from our Microsoft COCO benchmarks, benchmarks across all seven categories in the RF100-VL benchmark, and notes from our benchmarking.</p>
-<p>The table below shows the performance of RF-DETR, compared to other object detection models:</p>
-<p><img alt="rf-detr-coco-rf100-vl-9" src="https://media.roboflow.com/rfdetr/pareto1.png" /></p>
+<h1 id="benchmarks">Benchmarks<a class="headerlink" href="#benchmarks" title="Permanent link">&para;</a></h1>
+<p>This page reports RF-DETR benchmark results for object detection and instance segmentation on Microsoft COCO and RF100-VL. All benchmark numbers and plots match the latest released checkpoints and tables shown below. Latency values are measured on an NVIDIA T4 with TensorRT in FP16 at batch size 1. For full methodology details and architectural context, see the RF-DETR paper.</p>
+<h2 id="methodology">Methodology<a class="headerlink" href="#methodology" title="Permanent link">&para;</a></h2>
+<p>Accuracy is reported using standard COCO metrics computed with pycocotools. For object detection, we report COCO AP50 and COCO AP50:95, and the same metrics are also reported for RF100-VL. COCO results are evaluated on the validation split, following common practice in detector benchmarking. RF100-VL results are averaged across all 100 datasets to reflect performance under diverse real-world data distributions.</p>
+<p>Latency is measured as single-image inference latency rather than sustained throughput. All latency numbers are obtained on an NVIDIA T4 GPU using TensorRT 10.4 and CUDA 12.4 with FP16 inference and batch size 1. To reduce variance caused by GPU power throttling and thermal effects, a 200 ms buffer is inserted between consecutive forward passes. This procedure improves reproducibility of latency measurements but is not intended to measure maximum throughput.</p>
+<p>Accuracy and latency are always measured using the same model artifact and the same numerical precision. This avoids reporting FP32 accuracy together with FP16 latency, which can lead to misleading comparisons because naive FP16 conversion can significantly degrade accuracy for some models.</p>
+<h2 id="detection">Detection<a class="headerlink" href="#detection" title="Permanent link">&para;</a></h2>
+<p><img alt="rf_detr_1-4_latency_accuracy_object_detection" src="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png" /></p>
 <table>
 <thead>
 <tr>
@@ -1604,6 +1726,7 @@
 <th style="text-align: center;">RF100VL AP<sub>50:95</sub></th>
 <th style="text-align: center;">Latency (ms)</th>
 <th style="text-align: center;">Params (M)</th>
+<th style="text-align: center;">Resolution</th>
 </tr>
 </thead>
 <tbody>
@@ -1611,28 +1734,61 @@
 <td style="text-align: center;">RF-DETR-N</td>
 <td style="text-align: center;">67.6</td>
 <td style="text-align: center;">48.4</td>
-<td style="text-align: center;">84.1</td>
-<td style="text-align: center;">57.1</td>
-<td style="text-align: center;">2.32</td>
+<td style="text-align: center;">85.0</td>
+<td style="text-align: center;">57.7</td>
+<td style="text-align: center;">2.3</td>
 <td style="text-align: center;">30.5</td>
+<td style="text-align: center;">384x384</td>
 </tr>
 <tr>
 <td style="text-align: center;">RF-DETR-S</td>
 <td style="text-align: center;">72.1</td>
 <td style="text-align: center;">53.0</td>
-<td style="text-align: center;">85.9</td>
-<td style="text-align: center;">59.6</td>
-<td style="text-align: center;">3.52</td>
+<td style="text-align: center;">86.7</td>
+<td style="text-align: center;">60.2</td>
+<td style="text-align: center;">3.5</td>
 <td style="text-align: center;">32.1</td>
+<td style="text-align: center;">512x512</td>
 </tr>
 <tr>
 <td style="text-align: center;">RF-DETR-M</td>
 <td style="text-align: center;">73.6</td>
 <td style="text-align: center;">54.7</td>
-<td style="text-align: center;">86.6</td>
-<td style="text-align: center;">60.6</td>
-<td style="text-align: center;">4.52</td>
+<td style="text-align: center;">87.4</td>
+<td style="text-align: center;">61.2</td>
+<td style="text-align: center;">4.4</td>
 <td style="text-align: center;">33.7</td>
+<td style="text-align: center;">576x576</td>
+</tr>
+<tr>
+<td style="text-align: center;">RF-DETR-L</td>
+<td style="text-align: center;">75.1</td>
+<td style="text-align: center;">56.5</td>
+<td style="text-align: center;">88.2</td>
+<td style="text-align: center;">62.2</td>
+<td style="text-align: center;">6.8</td>
+<td style="text-align: center;">33.9</td>
+<td style="text-align: center;">704x704</td>
+</tr>
+<tr>
+<td style="text-align: center;">RF-DETR-XL</td>
+<td style="text-align: center;">77.4</td>
+<td style="text-align: center;">58.6</td>
+<td style="text-align: center;">88.5</td>
+<td style="text-align: center;">62.9</td>
+<td style="text-align: center;">11.5</td>
+<td style="text-align: center;">126.4</td>
+<td style="text-align: center;">700x700</td>
+</tr>
+<tr>
+<td style="text-align: center;">RF-DETR-2XL</td>
+<td style="text-align: center;">78.5</td>
+<td style="text-align: center;">60.1</td>
+<td style="text-align: center;">89.0</td>
+<td style="text-align: center;">63.2</td>
+<td style="text-align: center;">17.2</td>
+<td style="text-align: center;">126.9</td>
+<td style="text-align: center;">880x880</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLO11-N</td>
@@ -1640,8 +1796,9 @@
 <td style="text-align: center;">37.4</td>
 <td style="text-align: center;">81.4</td>
 <td style="text-align: center;">55.3</td>
-<td style="text-align: center;">2.49</td>
+<td style="text-align: center;">2.5</td>
 <td style="text-align: center;">2.6</td>
+<td style="text-align: center;">640x640</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLO11-S</td>
@@ -1649,8 +1806,9 @@
 <td style="text-align: center;">44.4</td>
 <td style="text-align: center;">82.3</td>
 <td style="text-align: center;">56.2</td>
-<td style="text-align: center;">3.16</td>
+<td style="text-align: center;">3.2</td>
 <td style="text-align: center;">9.4</td>
+<td style="text-align: center;">640x640</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLO11-M</td>
@@ -1658,84 +1816,366 @@
 <td style="text-align: center;">48.6</td>
 <td style="text-align: center;">82.5</td>
 <td style="text-align: center;">56.5</td>
-<td style="text-align: center;">5.13</td>
+<td style="text-align: center;">5.1</td>
 <td style="text-align: center;">20.1</td>
+<td style="text-align: center;">640x640</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLO11-L</td>
-<td style="text-align: center;">65.3</td>
-<td style="text-align: center;">50.2</td>
-<td style="text-align: center;">x</td>
-<td style="text-align: center;">x</td>
-<td style="text-align: center;">6.65</td>
+<td style="text-align: center;">64.9</td>
+<td style="text-align: center;">49.9</td>
+<td style="text-align: center;">82.2</td>
+<td style="text-align: center;">56.5</td>
+<td style="text-align: center;">6.5</td>
 <td style="text-align: center;">25.3</td>
+<td style="text-align: center;">640x640</td>
 </tr>
 <tr>
 <td style="text-align: center;">YOLO11-X</td>
-<td style="text-align: center;">66.5</td>
-<td style="text-align: center;">51.2</td>
-<td style="text-align: center;">x</td>
-<td style="text-align: center;">x</td>
-<td style="text-align: center;">11.92</td>
+<td style="text-align: center;">66.1</td>
+<td style="text-align: center;">50.9</td>
+<td style="text-align: center;">81.7</td>
+<td style="text-align: center;">56.2</td>
+<td style="text-align: center;">10.5</td>
 <td style="text-align: center;">56.9</td>
+<td style="text-align: center;">640x640</td>
+</tr>
+<tr>
+<td style="text-align: center;">YOLO26-N</td>
+<td style="text-align: center;">55.8</td>
+<td style="text-align: center;">40.3</td>
+<td style="text-align: center;">76.7</td>
+<td style="text-align: center;">52.0</td>
+<td style="text-align: center;">1.7</td>
+<td style="text-align: center;">2.6</td>
+<td style="text-align: center;">640x640</td>
+</tr>
+<tr>
+<td style="text-align: center;">YOLO26-S</td>
+<td style="text-align: center;">64.3</td>
+<td style="text-align: center;">47.7</td>
+<td style="text-align: center;">82.7</td>
+<td style="text-align: center;">57.0</td>
+<td style="text-align: center;">2.6</td>
+<td style="text-align: center;">9.4</td>
+<td style="text-align: center;">640x640</td>
+</tr>
+<tr>
+<td style="text-align: center;">YOLO26-M</td>
+<td style="text-align: center;">69.7</td>
+<td style="text-align: center;">52.5</td>
+<td style="text-align: center;">84.4</td>
+<td style="text-align: center;">58.7</td>
+<td style="text-align: center;">4.4</td>
+<td style="text-align: center;">20.1</td>
+<td style="text-align: center;">640x640</td>
+</tr>
+<tr>
+<td style="text-align: center;">YOLO26-L</td>
+<td style="text-align: center;">71.1</td>
+<td style="text-align: center;">54.1</td>
+<td style="text-align: center;">85.0</td>
+<td style="text-align: center;">59.3</td>
+<td style="text-align: center;">5.7</td>
+<td style="text-align: center;">25.3</td>
+<td style="text-align: center;">640x640</td>
+</tr>
+<tr>
+<td style="text-align: center;">YOLO26-X</td>
+<td style="text-align: center;">74.0</td>
+<td style="text-align: center;">56.9</td>
+<td style="text-align: center;">85.6</td>
+<td style="text-align: center;">60.0</td>
+<td style="text-align: center;">9.6</td>
+<td style="text-align: center;">56.9</td>
+<td style="text-align: center;">640x640</td>
 </tr>
 <tr>
 <td style="text-align: center;">LW-DETR-T</td>
 <td style="text-align: center;">60.7</td>
 <td style="text-align: center;">42.9</td>
-<td style="text-align: center;">x</td>
-<td style="text-align: center;">x</td>
-<td style="text-align: center;">1.91</td>
+<td style="text-align: center;">84.7</td>
+<td style="text-align: center;">57.1</td>
+<td style="text-align: center;">1.9</td>
 <td style="text-align: center;">12.1</td>
+<td style="text-align: center;">640x640</td>
 </tr>
 <tr>
 <td style="text-align: center;">LW-DETR-S</td>
 <td style="text-align: center;">66.8</td>
 <td style="text-align: center;">48.0</td>
-<td style="text-align: center;">84.5</td>
-<td style="text-align: center;">58.0</td>
-<td style="text-align: center;">2.62</td>
+<td style="text-align: center;">85.0</td>
+<td style="text-align: center;">57.4</td>
+<td style="text-align: center;">2.6</td>
 <td style="text-align: center;">14.6</td>
+<td style="text-align: center;">640x640</td>
 </tr>
 <tr>
 <td style="text-align: center;">LW-DETR-M</td>
 <td style="text-align: center;">72.0</td>
 <td style="text-align: center;">52.6</td>
-<td style="text-align: center;">85.2</td>
-<td style="text-align: center;">59.4</td>
-<td style="text-align: center;">4.49</td>
+<td style="text-align: center;">86.8</td>
+<td style="text-align: center;">59.8</td>
+<td style="text-align: center;">4.4</td>
 <td style="text-align: center;">28.2</td>
+<td style="text-align: center;">640x640</td>
+</tr>
+<tr>
+<td style="text-align: center;">LW-DETR-L</td>
+<td style="text-align: center;">74.6</td>
+<td style="text-align: center;">56.1</td>
+<td style="text-align: center;">87.4</td>
+<td style="text-align: center;">61.5</td>
+<td style="text-align: center;">6.9</td>
+<td style="text-align: center;">46.8</td>
+<td style="text-align: center;">640x640</td>
+</tr>
+<tr>
+<td style="text-align: center;">LW-DETR-X</td>
+<td style="text-align: center;">76.9</td>
+<td style="text-align: center;">58.3</td>
+<td style="text-align: center;">87.9</td>
+<td style="text-align: center;">62.1</td>
+<td style="text-align: center;">13.0</td>
+<td style="text-align: center;">118.0</td>
+<td style="text-align: center;">640x640</td>
 </tr>
 <tr>
 <td style="text-align: center;">D-FINE-N</td>
 <td style="text-align: center;">60.2</td>
 <td style="text-align: center;">42.7</td>
-<td style="text-align: center;">83.6</td>
-<td style="text-align: center;">57.7</td>
-<td style="text-align: center;">2.12</td>
+<td style="text-align: center;">84.4</td>
+<td style="text-align: center;">58.2</td>
+<td style="text-align: center;">2.1</td>
 <td style="text-align: center;">3.8</td>
+<td style="text-align: center;">640x640</td>
 </tr>
 <tr>
 <td style="text-align: center;">D-FINE-S</td>
 <td style="text-align: center;">67.6</td>
-<td style="text-align: center;">50.7</td>
-<td style="text-align: center;">84.5</td>
-<td style="text-align: center;">59.9</td>
-<td style="text-align: center;">3.55</td>
+<td style="text-align: center;">50.6</td>
+<td style="text-align: center;">85.3</td>
+<td style="text-align: center;">60.3</td>
+<td style="text-align: center;">3.5</td>
 <td style="text-align: center;">10.2</td>
+<td style="text-align: center;">640x640</td>
 </tr>
 <tr>
 <td style="text-align: center;">D-FINE-M</td>
 <td style="text-align: center;">72.6</td>
-<td style="text-align: center;">55.1</td>
-<td style="text-align: center;">84.6</td>
-<td style="text-align: center;">60.2</td>
-<td style="text-align: center;">5.68</td>
+<td style="text-align: center;">55.0</td>
+<td style="text-align: center;">85.5</td>
+<td style="text-align: center;">60.6</td>
+<td style="text-align: center;">5.4</td>
 <td style="text-align: center;">19.2</td>
+<td style="text-align: center;">640x640</td>
+</tr>
+<tr>
+<td style="text-align: center;">D-FINE-L</td>
+<td style="text-align: center;">74.9</td>
+<td style="text-align: center;">57.2</td>
+<td style="text-align: center;">86.4</td>
+<td style="text-align: center;">61.6</td>
+<td style="text-align: center;">7.5</td>
+<td style="text-align: center;">31.0</td>
+<td style="text-align: center;">640x640</td>
+</tr>
+<tr>
+<td style="text-align: center;">D-FINE-X</td>
+<td style="text-align: center;">76.8</td>
+<td style="text-align: center;">59.3</td>
+<td style="text-align: center;">86.9</td>
+<td style="text-align: center;">62.2</td>
+<td style="text-align: center;">11.5</td>
+<td style="text-align: center;">62.0</td>
+<td style="text-align: center;">640x640</td>
 </tr>
 </tbody>
 </table>
-<p><em>We are actively working on RF-DETR Large and X-Large models using the same techniques we used to achieve the strong accuracy that RF-DETR Medium attains. This is why RF-DETR Large and X-Large is not yet reported on our pareto charts and why we haven't benchmarked other models at similar sizes. Check back in the next few weeks for the launch of new RF-DETR Large and X-Large models.</em></p>
+<h2 id="segmentation">Segmentation<a class="headerlink" href="#segmentation" title="Permanent link">&para;</a></h2>
+<p><img alt="rf_detr_1-4_latency_accuracy_instance_segmentation" src="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_instance_segmentation.png" /></p>
+<table>
+<thead>
+<tr>
+<th style="text-align: center;">Architecture</th>
+<th style="text-align: center;">COCO AP<sub>50</sub></th>
+<th style="text-align: center;">COCO AP<sub>50:95</sub></th>
+<th style="text-align: center;">Latency (ms)</th>
+<th style="text-align: center;">Params (M)</th>
+<th style="text-align: center;">Resolution</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: center;">RF-DETR-Seg-N</td>
+<td style="text-align: center;">63.0</td>
+<td style="text-align: center;">40.3</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">33.6</td>
+<td style="text-align: center;">312x312</td>
+</tr>
+<tr>
+<td style="text-align: center;">RF-DETR-Seg-S</td>
+<td style="text-align: center;">66.2</td>
+<td style="text-align: center;">43.1</td>
+<td style="text-align: center;">4.4</td>
+<td style="text-align: center;">33.7</td>
+<td style="text-align: center;">384x384</td>
+</tr>
+<tr>
+<td style="text-align: center;">RF-DETR-Seg-M</td>
+<td style="text-align: center;">68.4</td>
+<td style="text-align: center;">45.3</td>
+<td style="text-align: center;">5.9</td>
+<td style="text-align: center;">35.7</td>
+<td style="text-align: center;">432x432</td>
+</tr>
+<tr>
+<td style="text-align: center;">RF-DETR-Seg-L</td>
+<td style="text-align: center;">70.5</td>
+<td style="text-align: center;">47.1</td>
+<td style="text-align: center;">8.8</td>
+<td style="text-align: center;">36.2</td>
+<td style="text-align: center;">504x504</td>
+</tr>
+<tr>
+<td style="text-align: center;">RF-DETR-Seg-XL</td>
+<td style="text-align: center;">72.2</td>
+<td style="text-align: center;">48.8</td>
+<td style="text-align: center;">13.5</td>
+<td style="text-align: center;">38.1</td>
+<td style="text-align: center;">624x624</td>
+</tr>
+<tr>
+<td style="text-align: center;">RF-DETR-Seg-2XL</td>
+<td style="text-align: center;">73.1</td>
+<td style="text-align: center;">49.9</td>
+<td style="text-align: center;">21.8</td>
+<td style="text-align: center;">38.6</td>
+<td style="text-align: center;">768x768</td>
+</tr>
+<tr>
+<td style="text-align: center;">YOLOv8-N-Seg</td>
+<td style="text-align: center;">45.6</td>
+<td style="text-align: center;">28.3</td>
+<td style="text-align: center;">3.5</td>
+<td style="text-align: center;">3.4</td>
+<td style="text-align: center;">640x640</td>
+</tr>
+<tr>
+<td style="text-align: center;">YOLOv8-S-Seg</td>
+<td style="text-align: center;">53.8</td>
+<td style="text-align: center;">34.0</td>
+<td style="text-align: center;">4.2</td>
+<td style="text-align: center;">11.8</td>
+<td style="text-align: center;">640x640</td>
+</tr>
+<tr>
+<td style="text-align: center;">YOLOv8-M-Seg</td>
+<td style="text-align: center;">58.2</td>
+<td style="text-align: center;">37.3</td>
+<td style="text-align: center;">7.0</td>
+<td style="text-align: center;">27.3</td>
+<td style="text-align: center;">640x640</td>
+</tr>
+<tr>
+<td style="text-align: center;">YOLOv8-L-Seg</td>
+<td style="text-align: center;">60.5</td>
+<td style="text-align: center;">39.0</td>
+<td style="text-align: center;">9.7</td>
+<td style="text-align: center;">46.0</td>
+<td style="text-align: center;">640x640</td>
+</tr>
+<tr>
+<td style="text-align: center;">YOLOv8-XL-Seg</td>
+<td style="text-align: center;">61.3</td>
+<td style="text-align: center;">39.5</td>
+<td style="text-align: center;">14.0</td>
+<td style="text-align: center;">71.8</td>
+<td style="text-align: center;">640x640</td>
+</tr>
+<tr>
+<td style="text-align: center;">YOLOv11-N-Seg</td>
+<td style="text-align: center;">47.8</td>
+<td style="text-align: center;">30.0</td>
+<td style="text-align: center;">3.6</td>
+<td style="text-align: center;">2.9</td>
+<td style="text-align: center;">640x640</td>
+</tr>
+<tr>
+<td style="text-align: center;">YOLOv11-S-Seg</td>
+<td style="text-align: center;">55.4</td>
+<td style="text-align: center;">35.0</td>
+<td style="text-align: center;">4.6</td>
+<td style="text-align: center;">10.1</td>
+<td style="text-align: center;">640x640</td>
+</tr>
+<tr>
+<td style="text-align: center;">YOLOv11-M-Seg</td>
+<td style="text-align: center;">60.0</td>
+<td style="text-align: center;">38.5</td>
+<td style="text-align: center;">6.9</td>
+<td style="text-align: center;">22.4</td>
+<td style="text-align: center;">640x640</td>
+</tr>
+<tr>
+<td style="text-align: center;">YOLOv11-L-Seg</td>
+<td style="text-align: center;">61.5</td>
+<td style="text-align: center;">39.5</td>
+<td style="text-align: center;">8.3</td>
+<td style="text-align: center;">27.6</td>
+<td style="text-align: center;">640x640</td>
+</tr>
+<tr>
+<td style="text-align: center;">YOLOv11-XL-Seg</td>
+<td style="text-align: center;">62.4</td>
+<td style="text-align: center;">40.1</td>
+<td style="text-align: center;">13.7</td>
+<td style="text-align: center;">62.1</td>
+<td style="text-align: center;">640x640</td>
+</tr>
+<tr>
+<td style="text-align: center;">YOLO26-N-Seg</td>
+<td style="text-align: center;">54.3</td>
+<td style="text-align: center;">34.7</td>
+<td style="text-align: center;">2.31</td>
+<td style="text-align: center;">2.7</td>
+<td style="text-align: center;">640x640</td>
+</tr>
+<tr>
+<td style="text-align: center;">YOLO26-S-Seg</td>
+<td style="text-align: center;">62.4</td>
+<td style="text-align: center;">40.2</td>
+<td style="text-align: center;">3.47</td>
+<td style="text-align: center;">10.4</td>
+<td style="text-align: center;">640x640</td>
+</tr>
+<tr>
+<td style="text-align: center;">YOLO26-M-Seg</td>
+<td style="text-align: center;">67.8</td>
+<td style="text-align: center;">44.0</td>
+<td style="text-align: center;">6.32</td>
+<td style="text-align: center;">23.6</td>
+<td style="text-align: center;">640x640</td>
+</tr>
+<tr>
+<td style="text-align: center;">YOLO26-L-Seg</td>
+<td style="text-align: center;">69.8</td>
+<td style="text-align: center;">45.5</td>
+<td style="text-align: center;">7.58</td>
+<td style="text-align: center;">28.0</td>
+<td style="text-align: center;">640x640</td>
+</tr>
+<tr>
+<td style="text-align: center;">YOLO26-X-Seg</td>
+<td style="text-align: center;">71.6</td>
+<td style="text-align: center;">46.8</td>
+<td style="text-align: center;">12.92</td>
+<td style="text-align: center;">62.8</td>
+<td style="text-align: center;">640x640</td>
+</tr>
+</tbody>
+</table>
 
 
 
