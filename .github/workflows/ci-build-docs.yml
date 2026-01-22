@@ -1,0 +1,39 @@
+name: Docs/Test WorkFlow
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main, develop]
+  workflow_dispatch: {}
+
+# Restrict permissions by default
+permissions:
+  contents: read # Required for checkout
+  checks: write # Required for test reporting
+
+jobs:
+  docs-build-test:
+    name: Test docs build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 📥 Checkout the repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: 🐍 Install uv and set Python
+        uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
+        with:
+          python-version: "3.10"
+          activate-environment: true
+
+      - name: 🏗️ Install dependencies
+        run: uv pip install -r pyproject.toml --group docs
+
+      - name: 🧪 Test Docs Build
+        run: uv run mkdocs build --verbose
+
+      - name: Minimize uv cache
+        run: uv cache prune --ci

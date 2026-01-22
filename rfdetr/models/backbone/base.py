@@ -7,8 +7,6 @@
 # Copyright (c) 2024 Baidu. All Rights Reserved.
 # ------------------------------------------------------------------------
 
-import torch
-import torch.nn.functional as F
 from torch import nn
 
 

@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Any, Dict, List, Optional, Sequence, TypeVar
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -17,8 +17,10 @@ plt.ioff()
 
 PLOT_FILE_NAME = "metrics_plot.png"
 
+_T = TypeVar("_T")
 
-def safe_index(arr, idx):
+
+def safe_index(arr: Sequence[_T], idx: int) -> Optional[_T]:
     return arr[idx] if 0 <= idx < len(arr) else None
 
 
@@ -30,19 +32,19 @@ class MetricsPlotSink:
         output_dir (str): Directory where the plot will be saved.
     """
 
-    def __init__(self, output_dir: str):
+    def __init__(self, output_dir: str) -> None:
         self.output_dir = output_dir
-        self.history = []
+        self.history: List[Dict[str, Any]] = []
 
-    def update(self, values: dict):
+    def update(self, values: Dict[str, Any]) -> None:
         self.history.append(values)
 
-    def save(self):
+    def save(self) -> None:
         if not self.history:
             print("No data to plot.")
             return
 
-        def get_array(key):
+        def get_array(key: str) -> np.ndarray:
             return np.array([h[key] for h in self.history if key in h])
 
         epochs = get_array('epoch')
@@ -51,12 +53,12 @@ class MetricsPlotSink:
         test_coco_eval = [h['test_coco_eval_bbox'] for h in self.history if 'test_coco_eval_bbox' in h]
         ap50_90 = np.array([safe_index(x, 0) for x in test_coco_eval if x is not None], dtype=np.float32)
         ap50 = np.array([safe_index(x, 1) for x in test_coco_eval if x is not None], dtype=np.float32)
-        ar50_90 = np.array([safe_index(x, 6) for x in test_coco_eval if x is not None], dtype=np.float32)
+        ar50_90 = np.array([safe_index(x, 8) for x in test_coco_eval if x is not None], dtype=np.float32)
 
         ema_coco_eval = [h['ema_test_coco_eval_bbox'] for h in self.history if 'ema_test_coco_eval_bbox' in h]
         ema_ap50_90 = np.array([safe_index(x, 0) for x in ema_coco_eval if x is not None], dtype=np.float32)
         ema_ap50 = np.array([safe_index(x, 1) for x in ema_coco_eval if x is not None], dtype=np.float32)
-        ema_ar50_90 = np.array([safe_index(x, 6) for x in ema_coco_eval if x is not None], dtype=np.float32)
+        ema_ar50_90 = np.array([safe_index(x, 8) for x in ema_coco_eval if x is not None], dtype=np.float32)
 
         fig, axes = plt.subplots(2, 2, figsize=(18, 12))
 
@@ -122,7 +124,7 @@ class MetricsTensorBoardSink:
         output_dir (str): Directory where TensorBoard logs will be written.
     """
 
-    def __init__(self, output_dir: str):
+    def __init__(self, output_dir: str) -> None:
         if SummaryWriter:
             self.writer = SummaryWriter(log_dir=output_dir)
             print(f"TensorBoard logging initialized. To monitor logs, use 'tensorboard --logdir {output_dir}' and open http://localhost:6006/ in browser.")
@@ -130,7 +132,7 @@ class MetricsTensorBoardSink:
             self.writer = None
             print("Unable to initialize TensorBoard. Logging is turned off for this session.  Run 'pip install tensorboard' to enable logging.")
 
-    def update(self, values: dict):
+    def update(self, values: Dict[str, Any]) -> None:
         if not self.writer:
             return
 
@@ -145,7 +147,7 @@ class MetricsTensorBoardSink:
             coco_eval = values['test_coco_eval_bbox']
             ap50_90 = safe_index(coco_eval, 0)
             ap50 = safe_index(coco_eval, 1)
-            ar50_90 = safe_index(coco_eval, 6)
+            ar50_90 = safe_index(coco_eval, 8)
             if ap50_90 is not None:
                 self.writer.add_scalar("Metrics/Base/AP50_90", ap50_90, epoch)
             if ap50 is not None:
@@ -157,7 +159,7 @@ class MetricsTensorBoardSink:
             ema_coco_eval = values['ema_test_coco_eval_bbox']
             ema_ap50_90 = safe_index(ema_coco_eval, 0)
             ema_ap50 = safe_index(ema_coco_eval, 1)
-            ema_ar50_90 = safe_index(ema_coco_eval, 6)
+            ema_ar50_90 = safe_index(ema_coco_eval, 8)
             if ema_ap50_90 is not None:
                 self.writer.add_scalar("Metrics/EMA/AP50_90", ema_ap50_90, epoch)
             if ema_ap50 is not None:
@@ -170,7 +172,7 @@ class MetricsTensorBoardSink:
     def close(self):
         if not self.writer:
             return
-        
+
         self.writer.close()
 
 class MetricsWandBSink:
@@ -214,7 +216,7 @@ class MetricsWandBSink:
             coco_eval = values['test_coco_eval_bbox']
             ap50_90 = safe_index(coco_eval, 0)
             ap50 = safe_index(coco_eval, 1)
-            ar50_90 = safe_index(coco_eval, 6)
+            ar50_90 = safe_index(coco_eval, 8)
             if ap50_90 is not None:
                 log_dict["Metrics/Base/AP50_90"] = ap50_90
             if ap50 is not None:
@@ -226,7 +228,7 @@ class MetricsWandBSink:
             ema_coco_eval = values['ema_test_coco_eval_bbox']
             ema_ap50_90 = safe_index(ema_coco_eval, 0)
             ema_ap50 = safe_index(ema_coco_eval, 1)
-            ema_ar50_90 = safe_index(ema_coco_eval, 6)
+            ema_ar50_90 = safe_index(ema_coco_eval, 8)
             if ema_ap50_90 is not None:
                 log_dict["Metrics/EMA/AP50_90"] = ema_ap50_90
             if ema_ap50 is not None:
@@ -239,5 +241,5 @@ class MetricsWandBSink:
     def close(self):
         if not wandb or not self.run:
             return
-            
+
         self.run.finish()
