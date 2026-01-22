@@ -37,14 +37,14 @@ You can fine-tune RF-DETR from pre-trained COCO checkpoints.
 
 For object detection, the RF-DETR-B checkpoint is used by default. To get started quickly with training an object detection model, please refer to our fine-tuning Google Colab [notebook](https://colab.research.google.com/github/roboflow-ai/notebooks/blob/main/notebooks/how-to-finetune-rf-detr-on-detection-dataset.ipynb).
 
-For image segmentation, the RF-DETR-Seg (Preview) checkpoint is used by default.
+For image segmentation, the RF-DETR-Seg checkpoint is used by default.
 
 === "Object Detection"
 
     ```python
-    from rfdetr import RFDETRBase
+    from rfdetr import RFDETRMedium
 
-    model = RFDETRBase()
+    model = RFDETRMedium()
 
     model.train(
         dataset_dir=<DATASET_PATH>,
@@ -59,9 +59,9 @@ For image segmentation, the RF-DETR-Seg (Preview) checkpoint is used by default.
 === "Image Segmentation"
 
     ```python
-    from rfdetr import RFDETRSegPreview
+    from rfdetr import RFDETRSegMedium
 
-    model = RFDETRSegPreview()
+    model = RFDETRSegMedium()
 
     model.train(
         dataset_dir=<DATASET_PATH>,
@@ -214,9 +214,9 @@ You can resume training from a previously saved checkpoint by passing the path t
 === "Object Detection"
 
     ```python
-    from rfdetr import RFDETRBase
+    from rfdetr import RFDETRMedium
 
-    model = RFDETRBase()
+    model = RFDETRMedium()
 
     model.train(
         dataset_dir=<DATASET_PATH>,
@@ -232,9 +232,9 @@ You can resume training from a previously saved checkpoint by passing the path t
 === "Image Segmentation"
 
     ```python
-    from rfdetr import RFDETRSegPreview
+    from rfdetr import RFDETRSegMedium
 
-    model = RFDETRSegPreview()
+    model = RFDETRSegMedium()
 
     model.train(
         dataset_dir=<DATASET_PATH>,
@@ -255,9 +255,9 @@ Early stopping monitors validation mAP and halts training if improvements remain
 === "Object Detection"
 
     ```python
-    from rfdetr import RFDETRBase
+    from rfdetr import RFDETRMedium
 
-    model = RFDETRBase()
+    model = RFDETRMedium()
 
     model.train(
         dataset_dir=<DATASET_PATH>,
@@ -273,9 +273,9 @@ Early stopping monitors validation mAP and halts training if improvements remain
 === "Image Segmentation"
 
     ```python
-    from rfdetr import RFDETRSegPreview
+    from rfdetr import RFDETRSegMedium
 
-    model = RFDETRSegPreview()
+    model = RFDETRSegMedium()
 
     model.train(
         dataset_dir=<DATASET_PATH>,
@@ -317,9 +317,9 @@ Replace `8` in the `--nproc_per_node argument` with the number of GPUs you want 
 - To activate logging, pass the extra parameter `tensorboard=True` to `.train()`:
 
     ```python
-    from rfdetr import RFDETRBase
+    from rfdetr import RFDETRMedium
 
-    model = RFDETRBase()
+    model = RFDETRMedium()
 
     model.train(
         dataset_dir=<DATASET_PATH>,
@@ -375,9 +375,9 @@ Replace `8` in the `--nproc_per_node argument` with the number of GPUs you want 
 - To activate logging, pass the extra parameter `wandb=True` to `.train()`:
 
     ```python
-    from rfdetr import RFDETRBase
+    from rfdetr import RFDETRMedium
 
-    model = RFDETRBase()
+    model = RFDETRMedium()
 
     model.train(
         dataset_dir=<DATASET_PATH>,
@@ -401,9 +401,9 @@ Replace `8` in the `--nproc_per_node argument` with the number of GPUs you want 
 === "Object Detection"
 
     ```python
-    from rfdetr import RFDETRBase
+    from rfdetr import RFDETRMedium
 
-    model = RFDETRBase(pretrain_weights=<CHECKPOINT_PATH>)
+    model = RFDETRMedium(pretrain_weights=<CHECKPOINT_PATH>)
 
     detections = model.predict(<IMAGE_PATH>)
     ```
@@ -411,9 +411,9 @@ Replace `8` in the `--nproc_per_node argument` with the number of GPUs you want 
 === "Image Segmentation"
 
     ```python
-    from rfdetr import RFDETRSegPreview
+    from rfdetr import RFDETRSegMedium
 
-    model = RFDETRSegPreview(pretrain_weights=<CHECKPOINT_PATH>)
+    model = RFDETRSegMedium(pretrain_weights=<CHECKPOINT_PATH>)
 
     detections = model.predict(<IMAGE_PATH>)
     ```
@@ -433,9 +433,9 @@ Then, run:
 === "Object Detection"
 
     ```python
-    from rfdetr import RFDETRBase
+    from rfdetr import RFDETRMedium
 
-    model = RFDETRBase(pretrain_weights=<CHECKPOINT_PATH>)
+    model = RFDETRMedium(pretrain_weights=<CHECKPOINT_PATH>)
 
     model.export()
     ```
@@ -443,9 +443,9 @@ Then, run:
 === "Image Segmentation"
 
     ```python
-    from rfdetr import RFDETRSegPreview
+    from rfdetr import RFDETRSegMedium
 
-    model = RFDETRSegPreview(pretrain_weights=<CHECKPOINT_PATH>)
+    model = RFDETRSegMedium(pretrain_weights=<CHECKPOINT_PATH>)
 
     model.export()
     ```
