@@ -29,7 +29,7 @@ RF-DETR supports several installation methods. Choose the option which best fits
         ```
 
     === "Source Archive"
-        To install the latest development version of RF-DETR from source without cloning the entire repository, use the following command:
+        To install the latest development version of RF-DETR from source without cloning the full repository, run the command below.
 
         ```bash
         pip install https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip

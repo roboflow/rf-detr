@@ -117,7 +117,7 @@ RF-DETR achieves state-of-the-art results in both object detection and instance 
 
 </details>
 
-## Inference
+## Run a Model
 
 ### Detection
 
@@ -136,25 +136,50 @@ image = Image.open(requests.get('https://media.roboflow.com/dog.jpg', stream=Tru
 detections = model.predict(image, threshold=0.5)
 
 labels = [
-    f"{COCO_CLASSES[class_id]} {confidence:.2f}"
-    for class_id, confidence
-    in zip(detections.class_id, detections.confidence)
+    f"{COCO_CLASSES[class_id]}"
+    for class_id
+    in detections.class_id
 ]
 
 annotated_image = sv.BoxAnnotator().annotate(image, detections)
 annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
 ```
 
-| Size | RF-DETR package class | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |
-|:----:|:---------------------:|:--------------------:|:-----------------------:|:------------:|:----------:|:----------:|
-| N    | `RFDETRNano`          | 67.6                 | 48.4                    | 2.3          | 30.5       | 384x384    |
-| S    | `RFDETRSmall`         | 72.1                 | 53.0                    | 3.5          | 32.1       | 512x512    |
-| M    | `RFDETRMedium`        | 73.6                 | 54.7                    | 4.4          | 33.7       | 576x576    |
-| L    | `RFDETRLarge`         | 75.1                 | 56.5                    | 6.8          | 33.9       | 704x704    |
-| XL   | `RFDETRXLarge`        | 77.4                 | 58.6                    | 11.5         | 126.4      | 700x700    |
-| 2XL  | `RFDETR2XLarge`       | 78.5                 | 60.1                    | 17.2         | 126.9      | 880x880    |
+<details>
+<summary>Run RF-DETR with Inference</summary>
 
-### Segmantation
+<br>
+
+You can also run RF-DETR models using the Inference library. To switch model size, select the appropriate inference package alias from the table below.
+
+```python
+import requests
+import supervision as sv
+from PIL import Image
+from inference import get_model
+
+model = get_model("rfdetr-medium")
+
+image = Image.open(requests.get('https://media.roboflow.com/dog.jpg', stream=True).raw)
+predictions = model.infer(image, confidence=0.5)[0]
+detections = sv.Detections.from_inference(predictions)
+
+annotated_image = sv.BoxAnnotator().annotate(image, detections)
+annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections)
+```
+
+</details>
+
+| Size | RF-DETR package class | Inference package alias | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub>   | Latency (ms) | Params (M) | Resolution |
+|:----:|:---------------------:|:------------------------|:--------------------:|:-------------------------:|:------------:|:----------:|:----------:|
+| N    | `RFDETRNano`          | `rfdetr-nano`           | 67.6                 |           48.4            | 2.3          | 30.5       | 384x384    |
+| S    | `RFDETRSmall`         | `rfdetr-small`          | 72.1                 |           53.0            | 3.5          | 32.1       | 512x512    |
+| M    | `RFDETRMedium`        | `rfdetr-medium`         | 73.6                 |           54.7            | 4.4          | 33.7       | 576x576    |
+| L    | `RFDETRLarge`         | `rfdetr-large`          | 75.1                 |           56.5            | 6.8          | 33.9       | 704x704    |
+| XL   | `RFDETRXLarge`        | `rfdetr-xlarge`         | 77.4                 |           58.6            | 11.5         | 126.4      | 700x700    |
+| 2XL  | `RFDETR2XLarge`       | `rfdetr-2xlarge`        | 78.5                 |           60.1            | 17.2         | 126.9      | 880x880    |
+
+### Segmentation
 
 RF-DETR supports instance segmentation with model sizes from Nano to 2XLarge. To use a different model size, replace the class name in the code snippet below with another class from the table.
 
@@ -171,25 +196,50 @@ image = Image.open(requests.get('https://media.roboflow.com/dog.jpg', stream=Tru
 detections = model.predict(image, threshold=0.5)
 
 labels = [
-    f"{COCO_CLASSES[class_id]} {confidence:.2f}"
-    for class_id, confidence
-    in zip(detections.class_id, detections.confidence)
+    f"{COCO_CLASSES[class_id]}"
+    for class_id
+    in detections.class_id
 ]
 
 annotated_image = sv.MaskAnnotator().annotate(image, detections)
 annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
 ```
 
-| Size | RF-DETR package class | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |
-|:----:|:---------------------:|:--------------------:|:-----------------------:|:------------:|:----------:|:----------:|
-| N    | `RFDETRSegNano`       | 63.0                 | 40.3                    | 3.4          | 33.6       | 312x312    |
-| S    | `RFDETRSegSmall`      | 66.2                 | 43.1                    | 4.4          | 33.7       | 384x384    |
-| M    | `RFDETRSegMedium`     | 68.4                 | 45.3                    | 5.9          | 35.7       | 432x432    |
-| L    | `RFDETRSegLarge`      | 70.5                 | 47.1                    | 8.8          | 36.2       | 504x504    |
-| XL   | `RFDETRSegXLarge`     | 72.2                 | 48.8                    | 13.5         | 38.1       | 624x624    |
-| 2XL  | `RFDETRSeg2XLarge`    | 73.1                 | 49.9                    | 21.8         | 38.6       | 768x768    |
+<details>
+<summary>Run RF-DETR-Seg with Inference</summary>
 
-### Train
+<br>
+
+You can also run RF-DETR-Seg models using the Inference library. To switch model size, select the appropriate inference package alias from the table below.
+
+```python
+import requests
+import supervision as sv
+from PIL import Image
+from inference import get_model
+
+model = get_model("rfdetr-seg-medium")
+
+image = Image.open(requests.get('https://media.roboflow.com/dog.jpg', stream=True).raw)
+predictions = model.infer(image, confidence=0.5)[0]
+detections = sv.Detections.from_inference(predictions)
+
+annotated_image = sv.MaskAnnotator().annotate(image, detections)
+annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections)
+```
+
+</details>
+
+| Size | RF-DETR package class | Inference package alias     | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub>  | Latency (ms) | Params (M) | Resolution |
+|:----:|:---------------------:|:----------------------------|:--------------------:|:------------------------:|:------------:|:----------:|:----------:|
+| N    | `RFDETRSegNano`       | `rfdetr-seg-nano`           | 63.0                 |           40.3           | 3.4          | 33.6       |  312x312   |
+| S    | `RFDETRSegSmall`      | `rfdetr-seg-small`          | 66.2                 |           43.1           | 4.4          | 33.7       |  384x384   |
+| M    | `RFDETRSegMedium`     | `rfdetr-seg-medium`         | 68.4                 |           45.3           | 5.9          | 35.7       |  432x432   |
+| L    | `RFDETRSegLarge`      | `rfdetr-seg-large`          | 70.5                 |           47.1           | 8.8          | 36.2       |  504x504   |
+| XL   | `RFDETRSegXLarge`     | `rfdetr-seg-xlarge`         | 72.2                 |           48.8           | 13.5         | 38.1       |  624x624   |
+| 2XL  | `RFDETRSeg2XLarge`    | `rfdetr-seg-2xlarge`        | 73.1                 |           49.9           | 21.8         | 38.6       |  768x768   |
+
+### Train a Model
 
 RF-DETR supports training for both object detection and instance segmentation. You can train models in [Google Colab](https://colab.research.google.com/github/roboflow-ai/notebooks/blob/main/notebooks/how-to-finetune-rf-detr-on-detection-dataset.ipynb) or directly on the Roboflow platform. Below you will find a step-by-step video fine-tuning tutorial.
 
