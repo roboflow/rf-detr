@@ -23,6 +23,8 @@ in the end of the file, as python3 can suppress prints with contextlib
 import os
 import contextlib
 import copy
+from typing import Any, Dict, List, Tuple
+
 import numpy as np
 import torch
 
@@ -34,7 +36,7 @@ from rfdetr.util.misc import all_gather
 
 
 class CocoEvaluator(object):
-    def __init__(self, coco_gt, iou_types, max_dets: int = 100):
+    def __init__(self, coco_gt: COCO, iou_types: List[str], max_dets: int = 100) -> None:
         assert isinstance(iou_types, (list, tuple))
         coco_gt = copy.deepcopy(coco_gt)
         self.coco_gt = coco_gt
@@ -46,10 +48,10 @@ class CocoEvaluator(object):
             self.coco_eval[iou_type] = COCOeval(coco_gt, iouType=iou_type)
             self.coco_eval[iou_type].params.maxDets = [1, 10, max_dets]
 
-        self.img_ids = []
-        self.eval_imgs = {k: [] for k in iou_types}
+        self.img_ids: List[int] = []
+        self.eval_imgs: Dict[str, List[COCOeval]] = {k: [] for k in iou_types}
 
-    def update(self, predictions):
+    def update(self, predictions: Dict[int, Any]) -> None:
         img_ids = list(np.unique(list(predictions.keys())))
         self.img_ids.extend(img_ids)
 
@@ -68,21 +70,21 @@ class CocoEvaluator(object):
 
             self.eval_imgs[iou_type].append(eval_imgs)
 
-    def synchronize_between_processes(self):
+    def synchronize_between_processes(self) -> None:
         for iou_type in self.iou_types:
             self.eval_imgs[iou_type] = np.concatenate(self.eval_imgs[iou_type], 2)
             create_common_coco_eval(self.coco_eval[iou_type], self.img_ids, self.eval_imgs[iou_type])
 
-    def accumulate(self):
+    def accumulate(self) -> None:
         for coco_eval in self.coco_eval.values():
             coco_eval.accumulate()
 
-    def summarize(self):
+    def summarize(self) -> None:
         for iou_type, coco_eval in self.coco_eval.items():
             print("IoU metric: {}".format(iou_type))
             patched_pycocotools_summarize(coco_eval)
 
-    def prepare(self, predictions, iou_type):
+    def prepare(self, predictions: Dict[int, Any], iou_type: str) -> List[Dict[str, Any]]:
         if iou_type == "bbox":
             return self.prepare_for_coco_detection(predictions)
         elif iou_type == "segm":
@@ -92,7 +94,7 @@ class CocoEvaluator(object):
         else:
             raise ValueError("Unknown iou type {}".format(iou_type))
 
-    def prepare_for_coco_detection(self, predictions):
+    def prepare_for_coco_detection(self, predictions: Dict[int, Any]) -> List[Dict[str, Any]]:
         coco_results = []
         for original_id, prediction in predictions.items():
             if len(prediction) == 0:
@@ -116,7 +118,7 @@ class CocoEvaluator(object):
             )
         return coco_results
 
-    def prepare_for_coco_segmentation(self, predictions):
+    def prepare_for_coco_segmentation(self, predictions: Dict[int, Any]) -> List[Dict[str, Any]]:
         coco_results = []
         for original_id, prediction in predictions.items():
             if len(prediction) == 0:
@@ -151,7 +153,7 @@ class CocoEvaluator(object):
             )
         return coco_results
 
-    def prepare_for_coco_keypoint(self, predictions):
+    def prepare_for_coco_keypoint(self, predictions: Dict[int, Any]) -> List[Dict[str, Any]]:
         coco_results = []
         for original_id, prediction in predictions.items():
             if len(prediction) == 0:
@@ -178,12 +180,12 @@ class CocoEvaluator(object):
         return coco_results
 
 
-def convert_to_xywh(boxes):
+def convert_to_xywh(boxes: torch.Tensor) -> torch.Tensor:
     xmin, ymin, xmax, ymax = boxes.unbind(1)
     return torch.stack((xmin, ymin, xmax - xmin, ymax - ymin), dim=1)
 
 
-def merge(img_ids, eval_imgs):
+def merge(img_ids: List[int], eval_imgs: Any) -> Tuple[np.ndarray, np.ndarray]:
     all_img_ids = all_gather(img_ids)
     all_eval_imgs = all_gather(eval_imgs)
 
@@ -205,7 +207,7 @@ def merge(img_ids, eval_imgs):
     return merged_img_ids, merged_eval_imgs
 
 
-def create_common_coco_eval(coco_eval, img_ids, eval_imgs):
+def create_common_coco_eval(coco_eval: COCOeval, img_ids: List[int], eval_imgs: Any) -> None:
     img_ids, eval_imgs = merge(img_ids, eval_imgs)
     img_ids = list(img_ids)
     eval_imgs = list(eval_imgs.flatten())
@@ -248,10 +250,9 @@ def create_common_coco_eval(coco_eval, img_ids, eval_imgs):
 #################################################################
 
 
-def evaluate(self):
+def evaluate(self: COCOeval) -> Tuple[List[int], np.ndarray]:
     '''
     Run per image evaluation on given images and store results (a list of dict) in self.evalImgs
-    :return: None
     '''
     # tic = time.time()
     # print('Running per image evaluation...')
