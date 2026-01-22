@@ -11,11 +11,10 @@
 from pathlib import Path
 from typing import Any
 
-from rfdetr.datasets.coco import (
-    CocoDetection, make_coco_transforms, make_coco_transforms_square_div_64
-)
-
 from PIL import Image
+
+from rfdetr.datasets.coco import CocoDetection, make_coco_transforms, make_coco_transforms_square_div_64
+
 Image.MAX_IMAGE_PIXELS = None
 
 

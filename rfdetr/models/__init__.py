@@ -13,4 +13,4 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 # ------------------------------------------------------------------------
 
-from rfdetr.models.lwdetr import build_model, build_criterion_and_postprocessors, PostProcess
+from rfdetr.models.lwdetr import PostProcess, build_criterion_and_postprocessors, build_model

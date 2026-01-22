@@ -20,7 +20,6 @@ from pycocotools.cocoeval import COCOeval
 from rfdetr.engine import coco_extended_metrics
 from rfdetr.util.visualize import save_gt_predictions_visualization
 
-
 VIS_DIR = Path("test_visualizations")
 BOX_SIZE = 200
 BOX_SPACING = 250

@@ -16,10 +16,10 @@ from copy import deepcopy
 
 import numpy as np
 import onnx
-from onnx import shape_inference
 import onnx_graphsurgeon as gs
-from polygraphy.backend.onnx.loader import fold_constants
+from onnx import shape_inference
 from onnx_graphsurgeon.logger.logger import G_LOGGER
+from polygraphy.backend.onnx.loader import fold_constants
 
 from rfdetr.deploy._onnx.symbolic import CustomOpSymbolicRegistry
 

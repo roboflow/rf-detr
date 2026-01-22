@@ -15,17 +15,15 @@
 Multi-Scale Deformable Attention Module
 """
 
-from __future__ import absolute_import
-from __future__ import print_function
-from __future__ import division
+from __future__ import absolute_import, division, print_function
 
-import warnings
 import math
+import warnings
 
 import torch
-from torch import nn
 import torch.nn.functional as F
-from torch.nn.init import xavier_uniform_, constant_
+from torch import nn
+from torch.nn.init import constant_, xavier_uniform_
 
 from rfdetr.models.ops.functions import ms_deform_attn_core_pytorch
 

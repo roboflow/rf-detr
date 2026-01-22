@@ -5,10 +5,11 @@
 # ------------------------------------------------------------------------
 
 
+from typing import Callable
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Callable
 
 
 class DepthwiseConvBlock(nn.Module):

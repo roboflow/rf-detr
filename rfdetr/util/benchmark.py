@@ -10,28 +10,26 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 # ------------------------------------------------------------------------
 
-from collections import OrderedDict, Counter, defaultdict
 import json
 import os
 import sys
-
+from collections import Counter, OrderedDict, defaultdict
 
 sys.path.append(os.path.dirname(sys.path[0]))
 
-import numpy as np
-from numpy import prod
-from itertools import zip_longest
-import tqdm
 import logging
+import time
 import typing
+from functools import partial
+from itertools import zip_longest
+from numbers import Number
+from typing import Any, Callable, Dict, List, Sequence, Union
+
+import numpy as np
 import torch
 import torch.nn as nn
-from functools import partial
-import time
-
-
-from typing import Any, Callable, Dict, List, Sequence, Union
-from numbers import Number
+import tqdm
+from numpy import prod
 
 Handle = Callable[[List[Any], List[Any]], Union[typing.Counter[str], Number]]
 

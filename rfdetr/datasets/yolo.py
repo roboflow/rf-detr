@@ -5,14 +5,14 @@
 # ------------------------------------------------------------------------
 
 from pathlib import Path
+from typing import Any
 
-import torch
 import numpy as np
+import supervision as sv
+import torch
 from PIL import Image
 from torchvision.datasets import VisionDataset
-import supervision as sv
 
-from typing import Any
 from rfdetr.datasets.coco import (
     make_coco_transforms,
     make_coco_transforms_square_div_64,

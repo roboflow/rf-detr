@@ -18,14 +18,12 @@ Backbone modules.
 """
 import torch
 import torch.nn.functional as F
-
 from peft import PeftModel
 
-from rfdetr.util.misc import NestedTensor
-
 from rfdetr.models.backbone.base import BackboneBase
-from rfdetr.models.backbone.projector import MultiScaleProjector
 from rfdetr.models.backbone.dinov2 import DinoV2
+from rfdetr.models.backbone.projector import MultiScaleProjector
+from rfdetr.util.misc import NestedTensor
 
 __all__ = ["Backbone"]
 

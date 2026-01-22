@@ -4,17 +4,20 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+import json
+import math
+import os
+import types
+
 import torch
 import torch.nn as nn
-from transformers import AutoBackbone
 import torch.nn.functional as F
-import types
-import math
-import json
-import os
+from transformers import AutoBackbone
 
-from rfdetr.models.backbone.dinov2_with_windowed_attn import WindowedDinov2WithRegistersConfig, WindowedDinov2WithRegistersBackbone
-
+from rfdetr.models.backbone.dinov2_with_windowed_attn import (
+    WindowedDinov2WithRegistersBackbone,
+    WindowedDinov2WithRegistersConfig,
+)
 
 size_to_width = {
     "tiny": 192,
