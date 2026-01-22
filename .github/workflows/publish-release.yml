@@ -45,7 +45,7 @@ jobs:
 
       - name: 🚀 Publish to PyPi
         # Only publish non-pre-releases
-        if: github.event_name == 'release' && github.event.release.prerelease != true
+        if: (github.event_name == 'release' && github.event.release.prerelease != true) || github.event_name == 'workflow_dispatch'
         uses: pypa/gh-action-pypi-publish@v1.13.0
         with:
           attestations: true
