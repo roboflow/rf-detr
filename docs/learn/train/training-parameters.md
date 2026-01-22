@@ -104,7 +104,6 @@ Common resolution values:
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `checkpoint_interval` | `int` | `10` | Frequency (in epochs) at which model checkpoints are saved. More frequent saves provide better coverage but consume more storage. |
-| `resume` | `str` | `None` | Path to a saved checkpoint to continue training. Restores model weights, optimizer state, and scheduler. |
 
 ### Checkpoint Files
 
