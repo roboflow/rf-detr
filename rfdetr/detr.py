@@ -173,7 +173,6 @@ class RFDETR:
             class_names = self._load_classes(config.dataset_dir)
             num_classes = len(class_names)
             self.model.class_names = class_names
-        # NOTE: this not any yolo dataset but the one
         elif config.dataset_file == "coco":
             class_names = COCO_CLASSES
             num_classes = 90

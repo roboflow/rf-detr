@@ -31,7 +31,7 @@ import rfdetr.datasets.transforms as T
 
 
 def is_valid_coco_dataset(dataset_dir: str) -> bool:
-    return Path(dataset_dir).joinpath("_annotations.coco.json").exists()
+    return (Path(dataset_dir) / "train" / "_annotations.coco.json").exists()
 
 def compute_multi_scale_scales(resolution: int, expanded_scales: bool = False, patch_size: int = 16, num_windows: int = 4) -> List[int]:
     # round to the nearest multiple of 4*patch_size to enable both patching and windowing
