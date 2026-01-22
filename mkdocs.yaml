@@ -22,15 +22,15 @@ extra:
 
 nav:
   - Home: index.md
-  - Learn:
+  - How to:
     - Install: learn/install.md
-    - Run a Model:
+    - Run Models:
       - Detection: learn/run/detection.md
       - Segmentation: learn/run/segmentation.md
-    - Train a Model: learn/train/index.md
-    - Deploy a Trained Model: learn/deploy.md
+    - Train Models: learn/train/index.md
+    - Deploy Models: learn/deploy.md
     - Benchmarks: learn/benchmarks.md
-  - Reference:
+  - API Reference:
       - RF-DETR: reference/rfdetr.md
       - Detection Models:
         - RF-DETR Nano: reference/nano.md
