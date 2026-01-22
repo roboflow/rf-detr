@@ -248,11 +248,6 @@ def build(image_set: str, args: Any, resolution: int) -> CocoDetection:
     img_folder, ann_file = PATHS[image_set.split("_")[0]]
 
     try:
-        pass
-    except:
-        pass
-
-    try:
         square_resize_div_64 = args.square_resize_div_64
     except:
         square_resize_div_64 = False
@@ -290,11 +285,6 @@ def build_roboflow(image_set: str, args: Any, resolution: int) -> CocoDetection:
     }
 
     img_folder, ann_file = PATHS[image_set.split("_")[0]]
-
-    try:
-        pass
-    except:
-        pass
 
     try:
         square_resize_div_64 = args.square_resize_div_64
