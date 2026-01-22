@@ -55,7 +55,7 @@ Recommended configurations for different GPUs (targeting effective batch size of
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `lr` | `float` | `1e-4` | Learning rate for most parts of the model. |
-| `lr_encoder` | `float` | `1.5e-4` | Learning rate specifically for the backbone encoder. Useful for fine-tuning the encoder at a slower pace than the rest of the model. |
+| `lr_encoder` | `float` | `1.5e-4` | Learning rate specifically for the backbone encoder. Can be set lower than `lr` if you want to fine-tune the encoder more conservatively than the rest of the model. |
 
 !!! tip "Learning rate tips"
     - Start with the default values for fine-tuning

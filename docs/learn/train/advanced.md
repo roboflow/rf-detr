@@ -371,7 +371,7 @@ This re-computes activations during the backward pass instead of storing them, r
 
 ### Learning Rate Tuning
 
-- **Fine-tuning from COCO weights (default):** Use default learning rates (`lr=1e-4`, `lr_encoder=1e-5`)
+- **Fine-tuning from COCO weights (default):** Use default learning rates (`lr=1e-4`, `lr_encoder=1.5e-4`)
 - **Small dataset (<1000 images):** Consider lower `lr` (e.g., `5e-5`) to prevent overfitting
 - **Large dataset (>10000 images):** May benefit from higher `lr` (e.g., `2e-4`)
 
