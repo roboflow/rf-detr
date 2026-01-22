@@ -66,6 +66,41 @@ You can install and use `rfdetr` in a [**Python>=3.10**](https://www.python.org/
 
 </div>
 
+## Tutorials
+
+<div class="grid cards" markdown>
+
+-   **Train RF-DETR on a Custom Dataset. Video**
+
+    ---
+
+    ![](https://i.ytimg.com/vi/-OvpdLAElFA/maxresdefault.jpg)
+
+    End to end walkthrough of training RF-DETR on a custom dataset.
+
+    [:octicons-arrow-right-24: Watch the video](https://www.youtube.com/watch?v=-OvpdLAElFA)
+
+-   **Deploy RF-DETR to NVIDIA Jetson. Article**
+
+    ---
+
+    ![](https://blog.roboflow.com/content/images/size/w1000/format/webp/2025/06/inst-3-.png)
+
+    Instructions for deploying RF-DETR on NVIDIA Jetson with Roboflow Inference.
+
+    [:octicons-arrow-right-24: Read the tutorial](https://blog.roboflow.com/how-to-deploy-rf-detr-to-an-nvidia-jetson/)
+
+-   **Train and Deploy RF-DETR with Roboflow**
+
+    ---
+
+    ![](https://blog.roboflow.com/content/images/size/w1000/format/webp/2025/03/img-blog-nycerebro-2.png)
+
+    Cloud training and hardware deployment workflow using Roboflow.
+
+    [:octicons-arrow-right-24: Read the tutorial](https://blog.roboflow.com/train-and-deploy-rf-detr-models-with-roboflow/)
+
+</div>
 
 ## Benchmarks
 
