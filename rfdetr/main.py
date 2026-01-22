@@ -66,7 +66,7 @@ OPEN_SOURCE_MODELS = {
     "rf-detr-small.pth": "https://storage.googleapis.com/rfdetr/small_coco/checkpoint_best_regular.pth",
     "rf-detr-medium.pth": "https://storage.googleapis.com/rfdetr/medium_coco/checkpoint_best_regular.pth",
     "rf-detr-seg-preview.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-preview.pt",
-    "rf-detr-large-2026.pth": "https://storage.googleapis.com/rfdetr/rf-detr-large-2026.pth",
+    "rf-detr-large-2026.pth": "https://storage.googleapis.com/rfdetr/rf-detr-large-ft.pth",
     "rf-detr-xlarge.pth": "https://storage.googleapis.com/rfdetr/rf-detr-xl-ft.pth",
     "rf-detr-xxlarge.pth": "https://storage.googleapis.com/rfdetr/rf-detr-2xl-ft.pth",
     "rf-detr-seg-nano.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-n-ft.pth",
@@ -574,7 +574,7 @@ class Model:
         input_names = ['input']
         output_names = ['features'] if backbone_only else ['dets', 'labels']
         dynamic_axes = None
-        #self.model.eval()
+
         model.eval()
         with torch.no_grad():
             if backbone_only:
