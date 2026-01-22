@@ -12,13 +12,13 @@ Use the resources below to learn how to train, build with, and deploy RF-DETR mo
 <div class="grid cards" markdown>
 
 -
-    **SOTA Instance Segmentation with RF-DETR Seg (Preview) [October 2025]**
+    **SOTA Instance Segmentation with RF-DETR Seg [October 2025]**
 
     ---
 
     ![](https://blog.roboflow.com/content/images/size/w1000/format/webp/2025/10/rfdetr-seg.png)
 
-    Read more about the RF-DETR Segmentation architecture and how to train an RF-DETR Seg (Preview) model.
+    Read more about the RF-DETR Segmentation architecture and how to train an RF-DETR Seg model.
 
     [:octicons-arrow-right-24: Learn more](https://blog.roboflow.com/rf-detr-segmentation-preview/)
 

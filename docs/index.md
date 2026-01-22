@@ -11,7 +11,7 @@ RF-DETR (Roboflow DEtection TRansformer) is a real-time, transformer-based objec
 
 RF-DETR is the first real-time model to exceed 60 AP (Average Precision) on the [Microsoft COCO (Common Objects in Context) object detection benchmark](https://cocodataset.org/#home) alongside competitive performance at base sizes. It also achieves state-of-the-art (SOTA) performance on [RF100-VL](https://github.com/roboflow/rf100-vl), an object detection benchmark that measures model domain adaptability to real world problems. RF-DETR is fastest and most accurate for its size when compared current real-time objection models.
 
-On image segmentation, RF-DETR Seg (Preview) is 3x faster and more accurate than the largest YOLO (You Only Look Once) when evaluated on the Microsoft COCO Segmentation benchmark, defining a new real-time SOTA for the industry-standard benchmark in segmentation model evaluation.
+On image segmentation, RF-DETR Seg is 3x faster and more accurate than the largest YOLO (You Only Look Once) when evaluated on the Microsoft COCO Segmentation benchmark, defining a new real-time SOTA for the industry-standard benchmark in segmentation model evaluation.
 
 RF-DETR is small enough to run on the edge using [Inference](https://github.com/roboflow/inference), making it an ideal model for deployments that need both strong accuracy and real-time performance.
 

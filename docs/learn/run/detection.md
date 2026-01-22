@@ -9,7 +9,6 @@ You can run any of the four supported object detection RF-DETR base models (Nano
     To run RF-DETR on an image, use the following code:
 
     ```python
-    import os
     import supervision as sv
     from inference import get_model
     from PIL import Image
@@ -19,7 +18,7 @@ You can run any of the four supported object detection RF-DETR base models (Nano
     url = "https://media.roboflow.com/dog.jpeg"
     image = Image.open(BytesIO(requests.get(url).content))
 
-    model = get_model("rfdetr-base")
+    model = get_model("rfdetr-medium")
 
     predictions = model.infer(image, confidence=0.5)[0]
 
@@ -50,10 +49,10 @@ You can run any of the four supported object detection RF-DETR base models (Nano
 
     ```python
     import supervision as sv
-    from rfdetr import RFDETRBase
+    from rfdetr import RFDETRMedium
     from rfdetr.util.coco_classes import COCO_CLASSES
 
-    model = RFDETRBase()
+    model = RFDETRMedium()
 
     def callback(frame, index):
         detections = model.predict(frame[:, :, ::-1], threshold=0.5)
@@ -85,10 +84,10 @@ You can run any of the four supported object detection RF-DETR base models (Nano
     ```python
     import cv2
     import supervision as sv
-    from rfdetr import RFDETRBase
+    from rfdetr import RFDETRMedium
     from rfdetr.util.coco_classes import COCO_CLASSES
 
-    model = RFDETRBase()
+    model = RFDETRMedium()
 
     cap = cv2.VideoCapture(0)
     while True:
@@ -124,10 +123,10 @@ You can run any of the four supported object detection RF-DETR base models (Nano
     ```python
     import cv2
     import supervision as sv
-    from rfdetr import RFDETRBase
+    from rfdetr import RFDETRMedium
     from rfdetr.util.coco_classes import COCO_CLASSES
 
-    model = RFDETRBase()
+    model = RFDETRMedium()
 
     cap = cv2.VideoCapture(<RTSP_STREAM_URL>)
     while True:
@@ -172,10 +171,10 @@ import io
 import requests
 import supervision as sv
 from PIL import Image
-from rfdetr import RFDETRBase
+from rfdetr import RFDETRMedium
 from rfdetr.util.coco_classes import COCO_CLASSES
 
-model = RFDETRBase()
+model = RFDETRMedium()
 
 urls = [
     "https://media.roboflow.com/notebooks/examples/dog-2.jpeg",
