@@ -28,6 +28,7 @@ nav:
       - Detection: learn/run/detection.md
       - Segmentation: learn/run/segmentation.md
     - Train Models: learn/train/index.md
+    - Export Models: learn/export.md
     - Deploy Models: learn/deploy.md
     - Benchmarks: learn/benchmarks.md
   - API Reference:

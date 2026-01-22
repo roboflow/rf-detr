@@ -126,7 +126,7 @@ class RFDETR:
         """
         Export your model to an ONNX file.
 
-        See [the ONNX export documentation](https://rfdetr.roboflow.com/learn/train/#onnx-export) for more information.
+        See [the ONNX export documentation](https://rfdetr.roboflow.com/learn/export/) for more information.
         """
         self.model.export(**kwargs)
 
