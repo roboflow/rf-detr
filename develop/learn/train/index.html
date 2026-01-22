@@ -18,7 +18,7 @@
         <link rel="prev" href="../run/segmentation/">
       
       
-        <link rel="next" href="../deploy/">
+        <link rel="next" href="../export/">
       
       
         
@@ -830,10 +830,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#onnx-export" class="md-nav__link">
+  <a href="#next-steps" class="md-nav__link">
     <span class="md-ellipsis">
       
-        ONNX export
+        Next Steps
       
     </span>
   </a>
@@ -844,6 +844,34 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../export/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Export Models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -1814,10 +1842,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#onnx-export" class="md-nav__link">
+  <a href="#next-steps" class="md-nav__link">
     <span class="md-ellipsis">
       
-        ONNX export
+        Next Steps
       
     </span>
   </a>
@@ -2236,33 +2264,12 @@
 </div>
 </div>
 </div>
-<h2 id="onnx-export">ONNX export<a class="headerlink" href="#onnx-export" title="Permanent link">&para;</a></h2>
-<p>RF-DETR supports exporting models to the ONNX format, which enables interoperability with various inference frameworks and can improve deployment efficiency.</p>
-<p>To export your model, first install the <code>onnxexport</code> extension:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>pip install rfdetr[onnxexport]
-</span></code></pre></div>
-<p>Then, run:</p>
-<div class="tabbed-set tabbed-alternate" data-tabs="5:2"><input checked="checked" id="__tabbed_5_1" name="__tabbed_5" type="radio" /><input id="__tabbed_5_2" name="__tabbed_5" type="radio" /><div class="tabbed-labels"><label for="__tabbed_5_1">Object Detection</label><label for="__tabbed_5_2">Image Segmentation</label></div>
-<div class="tabbed-content">
-<div class="tabbed-block">
-<div class="language-python highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRMedium</span>
-</span><span id="__span-18-2"><a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>
-</span><span id="__span-18-3"><a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRMedium</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=&lt;</span><span class="n">CHECKPOINT_PATH</span><span class="o">&gt;</span><span class="p">)</span>
-</span><span id="__span-18-4"><a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>
-</span><span id="__span-18-5"><a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">()</span>
-</span></code></pre></div>
-</div>
-<div class="tabbed-block">
-<div class="language-python highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSegMedium</span>
-</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>
-</span><span id="__span-19-3"><a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSegMedium</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=&lt;</span><span class="n">CHECKPOINT_PATH</span><span class="o">&gt;</span><span class="p">)</span>
-</span><span id="__span-19-4"><a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a>
-</span><span id="__span-19-5"><a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">()</span>
-</span></code></pre></div>
-</div>
-</div>
-</div>
-<p>This command saves the ONNX model to the <code>output</code> directory.</p>
+<h2 id="next-steps">Next Steps<a class="headerlink" href="#next-steps" title="Permanent link">&para;</a></h2>
+<p>After training your model, you can:</p>
+<ul>
+<li><a href="../export/">Export your model to ONNX</a> for deployment with various inference frameworks</li>
+<li><a href="../deploy/">Deploy to Roboflow</a> for cloud-based inference and workflow integration</li>
+</ul>
 
 
 
