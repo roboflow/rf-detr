@@ -12,6 +12,7 @@ from PIL import Image
 from torchvision.datasets import VisionDataset
 import supervision as sv
 
+from typing import Any
 from rfdetr.datasets.coco import (
     make_coco_transforms,
     make_coco_transforms_square_div_64,
@@ -450,7 +451,7 @@ class YoloDetection(VisionDataset):
         return img, target
 
 
-def build_roboflow_from_yolo(image_set, args, resolution):
+def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> YoloDetection:
     """Build a Roboflow YOLO-format dataset.
 
     This uses Roboflow's standard YOLO directory structure

@@ -68,7 +68,7 @@ def detect_roboflow_format(dataset_dir: Path) -> str:
     )
 
 
-def build_roboflow(image_set, args, resolution):
+def build_roboflow(image_set: str, args: Any, resolution: int) -> torch.utils.data.Dataset:
     """Build a Roboflow dataset, auto-detecting COCO or YOLO format.
 
     This function detects the dataset format and delegates to the
