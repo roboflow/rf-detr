@@ -3,19 +3,19 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
-
+import glob
 import json
 import os
 from collections import defaultdict
-from logging import getLogger
-from typing import Union, List
 from copy import deepcopy
+from logging import getLogger
+from typing import List, Union
 
 import numpy as np
 import supervision as sv
 import torch
 import torchvision.transforms.functional as F
+import yaml
 from PIL import Image
 
 try:
@@ -24,26 +24,26 @@ except:
     pass
 
 from rfdetr.config import (
-    RFDETRBaseConfig,
-    RFDETRLargeDeprecatedConfig,
-    RFDETRNanoConfig,
-    RFDETRSmallConfig,
-    RFDETRMediumConfig,
-    RFDETRLargeConfig,
-    RFDETRSegPreviewConfig,
-    RFDETRSegNanoConfig,
-    RFDETRSegSmallConfig,
-    RFDETRSegMediumConfig,
-    RFDETRSegLargeConfig,
-    RFDETRSegXLargeConfig,
-    RFDETRSeg2XLargeConfig,
-    TrainConfig,
-    SegmentationTrainConfig,
     ModelConfig,
+    RFDETRBaseConfig,
+    RFDETRLargeConfig,
+    RFDETRLargeDeprecatedConfig,
+    RFDETRMediumConfig,
+    RFDETRNanoConfig,
+    RFDETRSeg2XLargeConfig,
+    RFDETRSegLargeConfig,
+    RFDETRSegMediumConfig,
+    RFDETRSegNanoConfig,
+    RFDETRSegPreviewConfig,
+    RFDETRSegSmallConfig,
+    RFDETRSegXLargeConfig,
+    RFDETRSmallConfig,
+    SegmentationTrainConfig,
+    TrainConfig,
 )
 from rfdetr.main import Model, download_pretrain_weights
-from rfdetr.util.metrics import MetricsPlotSink, MetricsTensorBoardSink, MetricsWandBSink
 from rfdetr.util.coco_classes import COCO_CLASSES
+from rfdetr.util.metrics import MetricsPlotSink, MetricsTensorBoardSink, MetricsWandBSink
 
 logger = getLogger(__name__)
 class RFDETR:
@@ -126,19 +126,48 @@ class RFDETR:
         """
         Export your model to an ONNX file.
 
-        See [the ONNX export documentation](https://rfdetr.roboflow.com/learn/train/#onnx-export) for more information.
+        See [the ONNX export documentation](https://rfdetr.roboflow.com/learn/export/) for more information.
         """
         self.model.export(**kwargs)
 
+    @staticmethod
+    def _load_classes(dataset_dir) -> List[str]:
+        """Load class names from a COCO or YOLO dataset directory."""
+        coco_path = os.path.join(dataset_dir, "train", "_annotations.coco.json")
+        if os.path.exists(coco_path):
+            with open(coco_path, "r") as f:
+                anns = json.load(f)
+            class_names = [c["name"] for c in anns["categories"] if c["supercategory"] != "none"]
+            return class_names
+
+        # list all YAML files in the folder
+        yaml_paths = glob.glob(os.path.join(dataset_dir, "*.yaml")) + glob.glob(os.path.join(dataset_dir, "*.yml"))
+        # any YAML file starting with data e.g. data.yaml, dataset.yaml
+        yaml_data_files = [yp for yp in yaml_paths if os.path.basename(yp).startswith("data")]
+        if len(yaml_data_files) == 1:
+            yaml_path = yaml_data_files[0]
+            with open(yaml_path, "r") as f:
+                data = yaml.safe_load(f)
+            if "names" in data:
+                if isinstance(data["names"], dict):
+                    return [data["names"][i] for i in sorted(data["names"].keys())]
+                return data["names"]
+            else:
+                raise ValueError(f"Found {yaml_path} but it does not contain 'names' field.")
+        elif len(yaml_data_files) > 1:
+            raise ValueError(f"Found multiple YAML files starting with 'data' in {dataset_dir}: {yaml_data_files}. "
+                             "Please rename one of them to avoid conflicts.")
+
+        raise FileNotFoundError(
+            f"Could not find class names in {dataset_dir}. "
+            "Checked for COCO (train/_annotations.coco.json) and YOLO (data.yaml, data.yml) styles."
+        )
+
     def train_from_config(self, config: TrainConfig, **kwargs):
         if config.dataset_file == "roboflow":
-            with open(
-                os.path.join(config.dataset_dir, "train", "_annotations.coco.json"), "r"
-            ) as f:
-                anns = json.load(f)
-                num_classes = len(anns["categories"])
-                class_names = [c["name"] for c in anns["categories"] if c["supercategory"] != "none"]
-                self.model.class_names = class_names
+            class_names = self._load_classes(config.dataset_dir)
+            num_classes = len(class_names)
+            self.model.class_names = class_names
         elif config.dataset_file == "coco":
             class_names = COCO_CLASSES
             num_classes = 90
@@ -386,8 +415,9 @@ class RFDETR:
             ValueError: If the `api_key` is not provided and not found in the environment
                 variable `ROBOFLOW_API_KEY`, or if the `size` is not set for custom architectures.
         """
-        from roboflow import Roboflow
         import shutil
+
+        from roboflow import Roboflow
         if api_key is None:
             api_key = os.getenv("ROBOFLOW_API_KEY")
             if api_key is None:
