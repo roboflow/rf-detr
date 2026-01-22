@@ -60,7 +60,7 @@ You can install and use `rfdetr` in a
         uv add rfdetr
         ```
 
-For detailed installation instructions, including installing from source, and setting up a local development environment, check out our [Install](/install/) page.
+For detailed installation instructions, including installing from source, and setting up a local development environment, check out our [Install](learn/install/) page.
 
 ## 🚀 Quickstart
 
