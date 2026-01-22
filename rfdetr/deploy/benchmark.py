@@ -109,7 +109,7 @@ class CocoEvaluator(object):
                 continue
 
             boxes = prediction["boxes"]
-            boxes = sv.xyxy_to_xywh(boxes).tolist()
+            boxes = sv.xyxy_to_xywh(boxes.cpu().numpy()).tolist()
             scores = prediction["scores"].tolist()
             labels = prediction["labels"].tolist()
 
