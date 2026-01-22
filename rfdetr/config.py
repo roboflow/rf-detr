@@ -13,6 +13,7 @@ from pydantic import BaseModel, field_validator
 
 DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 
+
 class ModelConfig(BaseModel):
     encoder: Literal["dinov2_windowed_small", "dinov2_windowed_base"]
     out_feature_indexes: List[int]
@@ -58,6 +59,7 @@ class RFDETRBaseConfig(ModelConfig):
     """
     The configuration for an RF-DETR Base model.
     """
+
     encoder: Literal["dinov2_windowed_small", "dinov2_windowed_base"] = "dinov2_windowed_small"
     hidden_dim: int = 256
     patch_size: int = 14
@@ -74,10 +76,12 @@ class RFDETRBaseConfig(ModelConfig):
     resolution: int = 560
     positional_encoding_size: int = 37
 
+
 class RFDETRLargeDeprecatedConfig(RFDETRBaseConfig):
     """
     The configuration for an RF-DETR Large model.
     """
+
     encoder: Literal["dinov2_windowed_small", "dinov2_windowed_base"] = "dinov2_windowed_base"
     hidden_dim: int = 384
     sa_nheads: int = 12
@@ -86,10 +90,12 @@ class RFDETRLargeDeprecatedConfig(RFDETRBaseConfig):
     projector_scale: List[Literal["P3", "P4", "P5"]] = ["P3", "P5"]
     pretrain_weights: Optional[str] = "rf-detr-large.pth"
 
+
 class RFDETRNanoConfig(RFDETRBaseConfig):
     """
     The configuration for an RF-DETR Nano model.
     """
+
     out_feature_indexes: List[int] = [3, 6, 9, 12]
     num_windows: int = 2
     dec_layers: int = 2
@@ -98,10 +104,12 @@ class RFDETRNanoConfig(RFDETRBaseConfig):
     positional_encoding_size: int = 24
     pretrain_weights: Optional[str] = "rf-detr-nano.pth"
 
+
 class RFDETRSmallConfig(RFDETRBaseConfig):
     """
     The configuration for an RF-DETR Small model.
     """
+
     out_feature_indexes: List[int] = [3, 6, 9, 12]
     num_windows: int = 2
     dec_layers: int = 3
@@ -110,10 +118,12 @@ class RFDETRSmallConfig(RFDETRBaseConfig):
     positional_encoding_size: int = 32
     pretrain_weights: Optional[str] = "rf-detr-small.pth"
 
+
 class RFDETRMediumConfig(RFDETRBaseConfig):
     """
     The configuration for an RF-DETR Medium model.
     """
+
     out_feature_indexes: List[int] = [3, 6, 9, 12]
     num_windows: int = 2
     dec_layers: int = 4
@@ -123,7 +133,7 @@ class RFDETRMediumConfig(RFDETRBaseConfig):
     pretrain_weights: Optional[str] = "rf-detr-medium.pth"
 
 
-#res 704, ps 16, 2 windows, 4 dec layers, 300 queries, ViT-S basis
+# res 704, ps 16, 2 windows, 4 dec layers, 300 queries, ViT-S basis
 class RFDETRLargeConfig(ModelConfig):
     encoder: Literal["dinov2_windowed_small"] = "dinov2_windowed_small"
     hidden_dim: int = 256
@@ -139,7 +149,6 @@ class RFDETRLargeConfig(ModelConfig):
     positional_encoding_size: int = 704 // 16
     pretrain_weights: Optional[str] = "rf-detr-large-2026.pth"
     resolution: int = 704
-
 
 
 class RFDETRSegPreviewConfig(RFDETRBaseConfig):
@@ -238,6 +247,7 @@ class RFDETRSeg2XLargeConfig(RFDETRBaseConfig):
     num_select: int = 300
     pretrain_weights: Optional[str] = "rf-detr-seg-xxlarge.pt"
     num_classes: int = 90
+
 
 class TrainConfig(BaseModel):
     lr: float = 1e-4

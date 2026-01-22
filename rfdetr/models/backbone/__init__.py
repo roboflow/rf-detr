@@ -35,12 +35,7 @@ class Joiner(nn.Sequential):
         self._forward_origin = self.forward
         self.forward = self.forward_export
         for name, m in self.named_modules():
-            if (
-                hasattr(m, "export")
-                and isinstance(m.export, Callable)
-                and hasattr(m, "_export")
-                and not m._export
-            ):
+            if hasattr(m, "export") and isinstance(m.export, Callable) and hasattr(m, "_export") and not m._export:
                 m.export()
 
     def forward_export(self, inputs: torch.Tensor):

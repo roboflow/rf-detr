@@ -7,11 +7,14 @@ from rfdetr.util.misc import SmoothedValue
 
 
 class TestSmoothedValue:
-    @pytest.mark.parametrize("window_size, fmt", [
-        (10, "{avg:.2f}"),
-        (20, None),
-        (5, "{median:.1f} ({global_avg:.1f})"),
-    ])
+    @pytest.mark.parametrize(
+        "window_size, fmt",
+        [
+            (10, "{avg:.2f}"),
+            (20, None),
+            (5, "{median:.1f} ({global_avg:.1f})"),
+        ],
+    )
     def test_init(self, window_size, fmt):
         """
         Validate the initialization of SmoothedValue.
@@ -27,11 +30,14 @@ class TestSmoothedValue:
         assert sv.total == 0.0
         assert sv.count == 0
 
-    @pytest.mark.parametrize("updates, expected_count, expected_total", [
-        ([(1.0, 1)], 1, 1.0),
-        ([(1.0, 1), (2.0, 2)], 3, 5.0),
-        ([(1.0, 1), (2.0, 1), (3.0, 1)], 3, 6.0),
-    ])
+    @pytest.mark.parametrize(
+        "updates, expected_count, expected_total",
+        [
+            ([(1.0, 1)], 1, 1.0),
+            ([(1.0, 1), (2.0, 2)], 3, 5.0),
+            ([(1.0, 1), (2.0, 1), (3.0, 1)], 3, 6.0),
+        ],
+    )
     def test_update(self, updates, expected_count, expected_total):
         """
         Validate the update method of SmoothedValue.
@@ -47,10 +53,13 @@ class TestSmoothedValue:
         assert sv.count == expected_count
         assert sv.total == pytest.approx(expected_total)
 
-    @pytest.mark.parametrize("window_size, updates, expected", [
-        (3, [1.0, 3.0, 2.0], {"value": 2.0, "max": 3.0, "avg": 2.0, "global_avg": 2.0, "median": 2.0}),
-        (3, [1.0, 3.0, 2.0, 4.0], {"value": 4.0, "max": 4.0, "avg": 3.0, "global_avg": 2.5, "median": 3.0}),
-    ])
+    @pytest.mark.parametrize(
+        "window_size, updates, expected",
+        [
+            (3, [1.0, 3.0, 2.0], {"value": 2.0, "max": 3.0, "avg": 2.0, "global_avg": 2.0, "median": 2.0}),
+            (3, [1.0, 3.0, 2.0, 4.0], {"value": 4.0, "max": 4.0, "avg": 3.0, "global_avg": 2.5, "median": 3.0}),
+        ],
+    )
     def test_properties(self, window_size, updates, expected):
         """
         Validate the calculated properties of SmoothedValue.
@@ -85,11 +94,14 @@ class TestSmoothedValue:
 
         assert f"{expected_median:.1f} ({expected_global_avg:.1f})" == str(sv)
 
-    @pytest.mark.parametrize("property_name, expected_exception, expected_message", [
-        ("max", ValueError, r"max\(\) (arg is an empty sequence|iterable argument is empty)"),
-        ("value", IndexError, "deque index out of range"),
-        ("global_avg", ZeroDivisionError, "float division by zero"),
-    ])
+    @pytest.mark.parametrize(
+        "property_name, expected_exception, expected_message",
+        [
+            ("max", ValueError, r"max\(\) (arg is an empty sequence|iterable argument is empty)"),
+            ("value", IndexError, "deque index out of range"),
+            ("global_avg", ZeroDivisionError, "float division by zero"),
+        ],
+    )
     def test_empty_exceptions(self, property_name, expected_exception, expected_message):
         """
         Validate that accessing certain properties on an empty SmoothedValue raises exceptions.
