@@ -21,6 +21,7 @@ jobs:
     name: Publish Release Package
     needs: build-pkg
     runs-on: ubuntu-latest
+    if: github.event_name != 'release' || github.event.release.prerelease != true
     environment:
       name: release
       url: https://pypi.org/project/rfdetr/
