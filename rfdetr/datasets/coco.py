@@ -23,7 +23,7 @@ Mostly copy-paste from https://github.com/pytorch/vision/blob/13b35ff/references
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-import pycocotools.mask as coco_mask
+import faster_coco_eval.core.mask as coco_mask
 import torch
 import torch.utils.data
 import torchvision
@@ -48,7 +48,7 @@ def compute_multi_scale_scales(resolution: int, expanded_scales: bool = False, p
 
 def convert_coco_poly_to_mask(segmentations: List[Any], height: int, width: int) -> torch.Tensor:
     """Convert polygon segmentation to a binary mask tensor of shape [N, H, W].
-    Requires pycocotools.
+    Requires faster-coco-eval.
     """
     masks = []
     for polygons in segmentations:

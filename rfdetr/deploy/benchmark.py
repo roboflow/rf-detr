@@ -32,7 +32,6 @@ import torch
 import torchvision.transforms.functional as F
 import tqdm
 from PIL import Image
-from pycocotools.coco import COCO
 
 from rfdetr.datasets.coco_eval import CocoEvaluator
 
