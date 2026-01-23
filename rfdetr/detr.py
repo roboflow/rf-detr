@@ -166,7 +166,7 @@ class RFDETR:
     def train_from_config(self, config: TrainConfig, **kwargs):
         if config.dataset_file == "roboflow":
             class_names = self._load_classes(config.dataset_dir)
-            num_classes = len(class_names)
+            num_classes = len(class_names) + 1
             self.model.class_names = class_names
         elif config.dataset_file == "yolo":
             class_names = self._load_classes(config.dataset_dir)
