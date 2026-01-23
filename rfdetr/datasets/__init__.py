@@ -90,4 +90,6 @@ def build_dataset(image_set: str, args: Any, resolution: int) -> torch.utils.dat
         return build_o365(image_set, args, resolution)
     if args.dataset_file == 'roboflow':
         return build_roboflow(image_set, args, resolution)
+    if args.dataset_file == 'yolo':
+        return build_roboflow_from_yolo(image_set, args, resolution)
     raise ValueError(f'dataset {args.dataset_file} not supported')

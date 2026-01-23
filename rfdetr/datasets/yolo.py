@@ -4,6 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,32 @@ from rfdetr.datasets.coco import (
     make_coco_transforms_square_div_64,
 )
 
+REQUIRED_YOLO_YAML_FILE = "data.yaml"
+REQUIRED_SPLIT_DIRS = ["train", "valid"]
+REQUIRED_DATA_SUBDIRS = ["images", "labels"]
+
+
+def is_valid_yolo_dataset(dataset_dir: str) -> bool:
+    """
+    Checks if the specified dataset directory is in yolo format.
+
+    We accept a dataset to be in yolo format if the following conditions are met:
+    - The dataset_dir contains a data.yaml file
+    - The dataset_dir contains "train" and "valid" subdirectories, each containing "images" and "labels" subdirectories
+    - The "test" subdirectory is optional
+
+    Returns a boolean indicating whether the dataset is in correct yolo format.
+    """
+    contains_required_data_yaml = os.path.exists(os.path.join(dataset_dir, REQUIRED_YOLO_YAML_FILE))
+    contains_required_split_dirs = all(
+        os.path.exists(os.path.join(dataset_dir, split_dir)) for split_dir in REQUIRED_SPLIT_DIRS
+    )
+    contains_required_data_subdirs = all(
+        os.path.exists(os.path.join(dataset_dir, split_dir, data_subdir))
+        for split_dir in REQUIRED_SPLIT_DIRS
+        for data_subdir in REQUIRED_DATA_SUBDIRS
+    )
+    return contains_required_data_yaml and contains_required_split_dirs and contains_required_data_subdirs
 
 class ConvertYolo:
     """
@@ -115,7 +142,7 @@ class ConvertYolo:
 
 
 class _MockSvDataset:
-    """Mock supervision dataset for testing YoloCoco."""
+    """Mock supervision dataset for testing CocoLikeAPI."""
     classes = ["cat", "dog"]
     def __len__(self): return 2
     def __getitem__(self, i):
@@ -125,7 +152,7 @@ class _MockSvDataset:
         return f"img_{i}.jpg", np.zeros((100, 100, 3), dtype=np.uint8), det
 
 
-class YoloCoco:
+class CocoLikeAPI:
     """
     A minimal COCO-compatible API wrapper for YOLO datasets.
 
@@ -228,8 +255,10 @@ class YoloCoco:
                 "width": w
             })
 
-            for i, detection in enumerate(detections):
-                bbox_x, bbox_y, bbox_w, bbox_h = sv.xyxy_to_xywh(detection.xyxy)
+            if len(detections) == 0:
+                continue
+            for i in range(len(detections)):
+                bbox_x, bbox_y, bbox_w, bbox_h = sv.xyxy_to_xywh(detections.xyxy[i:i+1])[0]
 
                 ann = {
                     "id": ann_id,
@@ -266,12 +295,9 @@ class YoloCoco:
         Returns:
             List of annotation IDs matching the filter conditions
         """
-        if imgIds is None:
-            imgIds = []
-        if catIds is None:
-            catIds = []
-        if areaRng is None:
-            areaRng = []
+        imgIds = imgIds or []
+        catIds = catIds or []
+        areaRng = areaRng or []
 
         imgIds = imgIds if isinstance(imgIds, list) else [imgIds]
         catIds = catIds if isinstance(catIds, list) else [catIds]
@@ -305,12 +331,9 @@ class YoloCoco:
         Returns:
             List of category IDs matching the filter conditions
         """
-        if catNms is None:
-            catNms = []
-        if supNms is None:
-            supNms = []
-        if catIds is None:
-            catIds = []
+        catNms = catNms or []
+        # supNms = supNms or []
+        catIds = catIds or []
 
         cats = self.dataset["categories"]
 
@@ -331,16 +354,18 @@ class YoloCoco:
         Returns:
             List of image IDs matching the filter conditions
         """
-        if imgIds is None:
-            imgIds = []
-        if catIds is None:
-            catIds = []
-
+        imgIds = imgIds or []
+        catIds = catIds or []
         imgIds = set(imgIds) if imgIds else set(self.imgs.keys())
 
         if len(catIds) > 0:
+            # Find all images that contain at least one of the specified categories
+            matching_img_ids = set()
             for cat_id in catIds:
-                imgIds &= set(self.catToImgs.get(cat_id, []))
+                matching_img_ids.update(self.catToImgs.get(cat_id, []))
+
+            # Intersect with existing imgIds filter
+            imgIds &= matching_img_ids
 
         return list(imgIds)
 
@@ -427,7 +452,7 @@ class YoloDetection(VisionDataset):
         self.ids = list(range(len(self.sv_dataset)))
 
         # Create COCO-compatible API for evaluation
-        self.coco = YoloCoco(self.classes, self.sv_dataset)
+        self.coco = CocoLikeAPI(self.classes, self.sv_dataset)
 
     def __len__(self) -> int:
         return len(self.sv_dataset)
