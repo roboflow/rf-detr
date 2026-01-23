@@ -59,9 +59,7 @@ def get_shape(val: Any) -> typing.List[int]:
         raise ValueError()
 
 
-def addmm_flop_jit(
-    inputs: typing.List[Any], outputs: typing.List[Any]
-) -> typing.Counter[str]:
+def addmm_flop_jit(inputs: typing.List[Any], outputs: typing.List[Any]) -> typing.Counter[str]:
     """
     This method counts the flops for fully connected layers with torch script.
     Args:
@@ -146,9 +144,7 @@ def _reduction_op_flop_jit(
     in_elements = prod(input_shapes[0])
     out_elements = prod(output_shapes[0])
 
-    num_flops = in_elements * reduce_flops + out_elements * (
-        finalize_flops - reduce_flops
-    )
+    num_flops = in_elements * reduce_flops + out_elements * (finalize_flops - reduce_flops)
 
     return num_flops
 
@@ -177,9 +173,7 @@ def conv_flop_count(
     return flop_counter
 
 
-def conv_flop_jit(
-    inputs: typing.List[Any], outputs: typing.List[Any]
-) -> typing.Counter[str]:
+def conv_flop_jit(inputs: typing.List[Any], outputs: typing.List[Any]) -> typing.Counter[str]:
     """
     This method counts the flops for convolution using torch script.
     Args:
@@ -206,9 +200,7 @@ def conv_flop_jit(
     return conv_flop_count(x_shape, w_shape, out_shape)
 
 
-def einsum_flop_jit(
-    inputs: typing.List[Any], outputs: typing.List[Any]
-) -> typing.Counter[str]:
+def einsum_flop_jit(inputs: typing.List[Any], outputs: typing.List[Any]) -> typing.Counter[str]:
     """
     This method counts the flops for the einsum operation. We currently support
     two einsum operations: "nct,ncp->ntp" and "ntg,ncg->nct".
@@ -254,9 +246,7 @@ def einsum_flop_jit(
         raise NotImplementedError("Unsupported einsum operation.")
 
 
-def matmul_flop_jit(
-    inputs: typing.List[Any], outputs: typing.List[Any]
-) -> typing.Counter[str]:
+def matmul_flop_jit(inputs: typing.List[Any], outputs: typing.List[Any]) -> typing.Counter[str]:
     """
     This method counts the flops for matmul.
     Args:
@@ -287,9 +277,7 @@ def matmul_flop_jit(
     return flop_counter
 
 
-def batchnorm_flop_jit(
-    inputs: typing.List[Any], outputs: typing.List[Any]
-) -> typing.Counter[str]:
+def batchnorm_flop_jit(inputs: typing.List[Any], outputs: typing.List[Any]) -> typing.Counter[str]:
     """
     This method counts the flops for batch norm.
     Args:
@@ -512,9 +500,9 @@ def flop_count(
     ):
         model = model.module  # pyre-ignore
 
-    assert set(whitelist_set).issubset(
-        flop_count_ops
-    ), "whitelist needs to be a subset of _SUPPORTED_OPS and customized_ops."
+    assert set(whitelist_set).issubset(flop_count_ops), (
+        "whitelist needs to be a subset of _SUPPORTED_OPS and customized_ops."
+    )
     assert isinstance(inputs, tuple), "Inputs need to be in a tuple."
 
     # Compatibility with torch.jit.

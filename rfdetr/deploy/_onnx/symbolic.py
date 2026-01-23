@@ -11,7 +11,6 @@ CustomOpSymbolicRegistry class
 """
 
 
-
 class CustomOpSymbolicRegistry:
     # _SYMBOLICS = {}
     _OPTIMIZER = []
@@ -25,4 +24,5 @@ def register_optimizer():
     def optimizer_wrapper(fn):
         CustomOpSymbolicRegistry.optimizer(fn)
         return fn
+
     return optimizer_wrapper

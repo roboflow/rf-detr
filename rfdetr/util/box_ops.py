@@ -14,6 +14,7 @@
 """
 Utilities for bounding box manipulation and GIoU.
 """
+
 from typing import Tuple
 
 import torch
@@ -23,15 +24,18 @@ from torchvision.ops.boxes import box_area
 
 def box_cxcywh_to_xyxy(x: torch.Tensor) -> torch.Tensor:
     x_c, y_c, w, h = x.unbind(-1)
-    b = [(x_c - 0.5 * w.clamp(min=0.0)), (y_c - 0.5 * h.clamp(min=0.0)),
-         (x_c + 0.5 * w.clamp(min=0.0)), (y_c + 0.5 * h.clamp(min=0.0))]
+    b = [
+        (x_c - 0.5 * w.clamp(min=0.0)),
+        (y_c - 0.5 * h.clamp(min=0.0)),
+        (x_c + 0.5 * w.clamp(min=0.0)),
+        (y_c + 0.5 * h.clamp(min=0.0)),
+    ]
     return torch.stack(b, dim=-1)
 
 
 def box_xyxy_to_cxcywh(x: torch.Tensor) -> torch.Tensor:
     x0, y0, x1, y1 = x.unbind(-1)
-    b = [(x0 + x1) / 2, (y0 + y1) / 2,
-         (x1 - x0), (y1 - y0)]
+    b = [(x0 + x1) / 2, (y0 + y1) / 2, (x1 - x0), (y1 - y0)]
     return torch.stack(b, dim=-1)
 
 
@@ -97,11 +101,11 @@ def masks_to_boxes(masks: torch.Tensor) -> torch.Tensor:
     x = torch.arange(0, w, dtype=torch.float)
     y, x = torch.meshgrid(y, x)
 
-    x_mask = (masks * x.unsqueeze(0))
+    x_mask = masks * x.unsqueeze(0)
     x_max = x_mask.flatten(1).max(-1)[0]
     x_min = x_mask.masked_fill(~(masks.bool()), 1e8).flatten(1).min(-1)[0]
 
-    y_mask = (masks * y.unsqueeze(0))
+    y_mask = masks * y.unsqueeze(0)
     y_max = y_mask.flatten(1).max(-1)[0]
     y_min = y_mask.masked_fill(~(masks.bool()), 1e8).flatten(1).min(-1)[0]
 
@@ -126,9 +130,7 @@ def batch_dice_loss(inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor
     return loss
 
 
-batch_dice_loss_jit = torch.jit.script(
-    batch_dice_loss
-)  # type: torch.jit.ScriptModule
+batch_dice_loss_jit = torch.jit.script(batch_dice_loss)  # type: torch.jit.ScriptModule
 
 
 def batch_sigmoid_ce_loss(inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
@@ -144,20 +146,12 @@ def batch_sigmoid_ce_loss(inputs: torch.Tensor, targets: torch.Tensor) -> torch.
     """
     hw = inputs.shape[1]
 
-    pos = F.binary_cross_entropy_with_logits(
-        inputs, torch.ones_like(inputs), reduction="none"
-    )
-    neg = F.binary_cross_entropy_with_logits(
-        inputs, torch.zeros_like(inputs), reduction="none"
-    )
+    pos = F.binary_cross_entropy_with_logits(inputs, torch.ones_like(inputs), reduction="none")
+    neg = F.binary_cross_entropy_with_logits(inputs, torch.zeros_like(inputs), reduction="none")
 
-    loss = torch.einsum("nc,mc->nm", pos, targets) + torch.einsum(
-        "nc,mc->nm", neg, (1 - targets)
-    )
+    loss = torch.einsum("nc,mc->nm", pos, targets) + torch.einsum("nc,mc->nm", neg, (1 - targets))
 
     return loss / hw
 
 
-batch_sigmoid_ce_loss_jit = torch.jit.script(
-    batch_sigmoid_ce_loss
-)  # type: torch.jit.ScriptModule
+batch_sigmoid_ce_loss_jit = torch.jit.script(batch_sigmoid_ce_loss)  # type: torch.jit.ScriptModule

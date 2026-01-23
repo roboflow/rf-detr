@@ -13,27 +13,30 @@ import torch.nn.functional as F
 
 
 class DepthwiseConvBlock(nn.Module):
-    r""" Simplified ConvNeXt block without the MLP subnet
-    """
+    r"""Simplified ConvNeXt block without the MLP subnet"""
+
     def __init__(self, dim, layer_scale_init_value=0):
         super().__init__()
-        self.dwconv = nn.Conv2d(dim, dim, kernel_size=3, padding=1, groups=dim) # depthwise conv
+        self.dwconv = nn.Conv2d(dim, dim, kernel_size=3, padding=1, groups=dim)  # depthwise conv
         self.norm = nn.LayerNorm(dim, eps=1e-6)
-        self.pwconv1 = nn.Linear(dim, dim) # pointwise/1x1 convs, implemented with linear layers
+        self.pwconv1 = nn.Linear(dim, dim)  # pointwise/1x1 convs, implemented with linear layers
         self.act = nn.GELU()
-        self.gamma = nn.Parameter(layer_scale_init_value * torch.ones((dim)),
-                                    requires_grad=True) if layer_scale_init_value > 0 else None
+        self.gamma = (
+            nn.Parameter(layer_scale_init_value * torch.ones((dim)), requires_grad=True)
+            if layer_scale_init_value > 0
+            else None
+        )
 
     def forward(self, x):
         input = x
         x = self.dwconv(x)
-        x = x.permute(0, 2, 3, 1) # (N, C, H, W) -> (N, H, W, C)
+        x = x.permute(0, 2, 3, 1)  # (N, C, H, W) -> (N, H, W, C)
         x = self.norm(x)
         x = self.pwconv1(x)
         x = self.act(x)
         if self.gamma is not None:
             x = self.gamma * x
-        x = x.permute(0, 3, 1, 2) # (N, H, W, C) -> (N, C, H, W)
+        x = x.permute(0, 3, 1, 2)  # (N, H, W, C) -> (N, C, H, W)
 
         return x + input
 
@@ -42,13 +45,18 @@ class MLPBlock(nn.Module):
     def __init__(self, dim, layer_scale_init_value=0):
         super().__init__()
         self.norm_in = nn.LayerNorm(dim)
-        self.layers = nn.ModuleList([
-            nn.Linear(dim, dim*4),
-            nn.GELU(),
-            nn.Linear(dim*4, dim),
-        ])
-        self.gamma = nn.Parameter(layer_scale_init_value * torch.ones((dim)),
-                                    requires_grad=True) if layer_scale_init_value > 0 else None
+        self.layers = nn.ModuleList(
+            [
+                nn.Linear(dim, dim * 4),
+                nn.GELU(),
+                nn.Linear(dim * 4, dim),
+            ]
+        )
+        self.gamma = (
+            nn.Parameter(layer_scale_init_value * torch.ones((dim)), requires_grad=True)
+            if layer_scale_init_value > 0
+            else None
+        )
 
     def forward(self, x):
         input = x
@@ -61,16 +69,20 @@ class MLPBlock(nn.Module):
 
 
 class SegmentationHead(nn.Module):
-    def __init__(self, in_dim, num_blocks: int, bottleneck_ratio: int=1, downsample_ratio: int=4):
+    def __init__(self, in_dim, num_blocks: int, bottleneck_ratio: int = 1, downsample_ratio: int = 4):
         super().__init__()
 
         self.downsample_ratio = downsample_ratio
         self.interaction_dim = in_dim // bottleneck_ratio if bottleneck_ratio is not None else in_dim
         self.blocks = nn.ModuleList([DepthwiseConvBlock(in_dim) for _ in range(num_blocks)])
-        self.spatial_features_proj = nn.Identity() if bottleneck_ratio is None else nn.Conv2d(in_dim, self.interaction_dim, kernel_size=1)
+        self.spatial_features_proj = (
+            nn.Identity() if bottleneck_ratio is None else nn.Conv2d(in_dim, self.interaction_dim, kernel_size=1)
+        )
 
         self.query_features_block = MLPBlock(in_dim)
-        self.query_features_proj = nn.Identity() if bottleneck_ratio is None else nn.Linear(in_dim, self.interaction_dim)
+        self.query_features_proj = (
+            nn.Identity() if bottleneck_ratio is None else nn.Linear(in_dim, self.interaction_dim)
+        )
 
         self.bias = nn.Parameter(torch.zeros(1), requires_grad=True)
 
@@ -84,12 +96,18 @@ class SegmentationHead(nn.Module):
             if hasattr(m, "export") and isinstance(m.export, Callable) and hasattr(m, "_export") and not m._export:
                 m.export()
 
-    def forward(self, spatial_features: torch.Tensor, query_features: list[torch.Tensor], image_size: tuple[int, int], skip_blocks: bool=False) -> list[torch.Tensor]:
+    def forward(
+        self,
+        spatial_features: torch.Tensor,
+        query_features: list[torch.Tensor],
+        image_size: tuple[int, int],
+        skip_blocks: bool = False,
+    ) -> list[torch.Tensor]:
         # spatial features: (B, C, H, W)
         # query features: [(B, N, C)] for each decoder layer
         # output: (B, N, H*r, W*r)
         target_size = (image_size[0] // self.downsample_ratio, image_size[1] // self.downsample_ratio)
-        spatial_features = F.interpolate(spatial_features, size=target_size, mode='bilinear', align_corners=False)
+        spatial_features = F.interpolate(spatial_features, size=target_size, mode="bilinear", align_corners=False)
 
         mask_logits = []
         if not skip_blocks:
@@ -97,20 +115,26 @@ class SegmentationHead(nn.Module):
                 spatial_features = block(spatial_features)
                 spatial_features_proj = self.spatial_features_proj(spatial_features)
                 qf = self.query_features_proj(self.query_features_block(qf))
-                mask_logits.append(torch.einsum('bchw,bnc->bnhw', spatial_features_proj, qf) + self.bias)
+                mask_logits.append(torch.einsum("bchw,bnc->bnhw", spatial_features_proj, qf) + self.bias)
         else:
             assert len(query_features) == 1, "skip_blocks is only supported for length 1 query features"
             qf = self.query_features_proj(self.query_features_block(query_features[0]))
-            mask_logits.append(torch.einsum('bchw,bnc->bnhw', spatial_features, qf) + self.bias)
+            mask_logits.append(torch.einsum("bchw,bnc->bnhw", spatial_features, qf) + self.bias)
 
         return mask_logits
 
-    def sparse_forward(self, spatial_features: torch.Tensor, query_features: list[torch.Tensor], image_size: tuple[int, int], skip_blocks: bool=False) -> list[torch.Tensor]:
+    def sparse_forward(
+        self,
+        spatial_features: torch.Tensor,
+        query_features: list[torch.Tensor],
+        image_size: tuple[int, int],
+        skip_blocks: bool = False,
+    ) -> list[torch.Tensor]:
         # spatial features: (B, C, H, W)
         # query features: [(B, N, C)] for each decoder layer
         # output: dict containing the intermediate results
         target_size = (image_size[0] // self.downsample_ratio, image_size[1] // self.downsample_ratio)
-        spatial_features = F.interpolate(spatial_features, size=target_size, mode='bilinear', align_corners=False)
+        spatial_features = F.interpolate(spatial_features, size=target_size, mode="bilinear", align_corners=False)
 
         # num_points = max(spatial_features.shape[-2], spatial_features.shape[-2] * spatial_features.shape[-1] // 16)
 
@@ -122,29 +146,39 @@ class SegmentationHead(nn.Module):
                 spatial_features_proj = self.spatial_features_proj(spatial_features)
                 qf = self.query_features_proj(self.query_features_block(qf))
 
-                output_dicts.append({
-                    "spatial_features": spatial_features_proj,
-                    "query_features": qf,
-                    "bias": self.bias,
-                })
+                output_dicts.append(
+                    {
+                        "spatial_features": spatial_features_proj,
+                        "query_features": qf,
+                        "bias": self.bias,
+                    }
+                )
         else:
             assert len(query_features) == 1, "skip_blocks is only supported for length 1 query features"
 
             qf = self.query_features_proj(self.query_features_block(query_features[0]))
 
-            output_dicts.append({
-                "spatial_features": spatial_features,
-                "query_features": qf,
-                "bias": self.bias,
-            })
+            output_dicts.append(
+                {
+                    "spatial_features": spatial_features,
+                    "query_features": qf,
+                    "bias": self.bias,
+                }
+            )
 
         return output_dicts
 
-    def forward_export(self, spatial_features: torch.Tensor, query_features: list[torch.Tensor], image_size: tuple[int, int], skip_blocks: bool=False) -> list[torch.Tensor]:
+    def forward_export(
+        self,
+        spatial_features: torch.Tensor,
+        query_features: list[torch.Tensor],
+        image_size: tuple[int, int],
+        skip_blocks: bool = False,
+    ) -> list[torch.Tensor]:
         assert len(query_features) == 1, "at export time, segmentation head expects exactly one query feature"
 
         target_size = (image_size[0] // self.downsample_ratio, image_size[1] // self.downsample_ratio)
-        spatial_features = F.interpolate(spatial_features, size=target_size, mode='bilinear', align_corners=False)
+        spatial_features = F.interpolate(spatial_features, size=target_size, mode="bilinear", align_corners=False)
 
         if not skip_blocks:
             for block in self.blocks:
@@ -153,7 +187,7 @@ class SegmentationHead(nn.Module):
         spatial_features_proj = self.spatial_features_proj(spatial_features)
 
         qf = self.query_features_proj(self.query_features_block(query_features[0]))
-        return [torch.einsum('bchw,bnc->bnhw', spatial_features_proj, qf) + self.bias]
+        return [torch.einsum("bchw,bnc->bnhw", spatial_features_proj, qf) + self.bias]
 
 
 def point_sample(input, point_coords, **kwargs):
@@ -176,7 +210,7 @@ def point_sample(input, point_coords, **kwargs):
     if point_coords.dim() == 3:
         add_dim = True
         point_coords = point_coords.unsqueeze(2)
-    output = F.grid_sample(input, 2.0 * point_coords - 1.0, padding_mode='border', **kwargs)
+    output = F.grid_sample(input, 2.0 * point_coords - 1.0, padding_mode="border", **kwargs)
     if add_dim:
         output = output.squeeze(3)
     return output
@@ -224,9 +258,7 @@ def get_uncertain_point_coords_with_randomness(
     idx = torch.topk(point_uncertainties[:, 0, :], k=num_uncertain_points, dim=1)[1]
     shift = num_sampled * torch.arange(num_boxes, dtype=torch.long, device=coarse_logits.device)
     idx += shift[:, None]
-    point_coords = point_coords.view(-1, 2)[idx.view(-1), :].view(
-        num_boxes, num_uncertain_points, 2
-    )
+    point_coords = point_coords.view(-1, 2)[idx.view(-1), :].view(num_boxes, num_uncertain_points, 2)
     if num_random_points > 0:
         point_coords = torch.cat(
             [

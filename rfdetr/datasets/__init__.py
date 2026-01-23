@@ -74,7 +74,7 @@ def build_roboflow(image_set: str, args: Any, resolution: int) -> torch.utils.da
     appropriate builder function.
     """
     root = Path(args.dataset_dir)
-    assert root.exists(), f'provided Roboflow path {root} does not exist'
+    assert root.exists(), f"provided Roboflow path {root} does not exist"
 
     dataset_format = detect_roboflow_format(root)
 
@@ -84,10 +84,10 @@ def build_roboflow(image_set: str, args: Any, resolution: int) -> torch.utils.da
 
 
 def build_dataset(image_set: str, args: Any, resolution: int) -> torch.utils.data.Dataset:
-    if args.dataset_file == 'coco':
+    if args.dataset_file == "coco":
         return build_coco(image_set, args, resolution)
-    if args.dataset_file == 'o365':
+    if args.dataset_file == "o365":
         return build_o365(image_set, args, resolution)
-    if args.dataset_file == 'roboflow':
+    if args.dataset_file == "roboflow":
         return build_roboflow(image_set, args, resolution)
-    raise ValueError(f'dataset {args.dataset_file} not supported')
+    raise ValueError(f"dataset {args.dataset_file} not supported")

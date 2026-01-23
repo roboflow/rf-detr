@@ -26,9 +26,7 @@ BOX_SPACING = 250
 ROW_SPACING = 260
 
 
-def _create_coco_gt(
-    images: list[dict], annotations: list[dict], categories: list[dict]
-) -> COCO:
+def _create_coco_gt(images: list[dict], annotations: list[dict], categories: list[dict]) -> COCO:
     coco_gt = COCO()
     coco_gt.dataset = {
         "images": images,
@@ -39,9 +37,7 @@ def _create_coco_gt(
     return coco_gt
 
 
-def _create_gt_annotation(
-    ann_id: int, image_id: int, category_id: int, bbox: list[float]
-) -> dict:
+def _create_gt_annotation(ann_id: int, image_id: int, category_id: int, bbox: list[float]) -> dict:
     """Create a single GT annotation in COCO format. bbox is [x, y, width, height]."""
     return {
         "id": ann_id,
@@ -53,9 +49,7 @@ def _create_gt_annotation(
     }
 
 
-def _create_prediction(
-    image_id: int, category_id: int, bbox: list[float], score: float
-) -> dict:
+def _create_prediction(image_id: int, category_id: int, bbox: list[float], score: float) -> dict:
     """Create a single prediction in COCO results format. bbox is [x, y, width, height]."""
     return {
         "image_id": image_id,
@@ -365,7 +359,7 @@ def intermediate_scenario_cocoeval():
         The test passes if the precision and recall values are within 0.01 of the
         expected values.
 
-        """
+    """
     image_id = 1
     n_boxes = 10
 
