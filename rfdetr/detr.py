@@ -17,7 +17,6 @@ import torch
 import torchvision.transforms.functional as F
 import yaml
 from PIL import Image
-from supervision.utils.file import read_json_file, read_yaml_file
 
 from rfdetr.datasets.coco import is_valid_coco_dataset
 from rfdetr.datasets.yolo import is_valid_yolo_dataset
