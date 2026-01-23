@@ -224,14 +224,14 @@ class TestCocoLikeAPI:
                 return f"img_{i}.jpg", np.zeros((100, 100, 3), dtype=np.uint8), det
 
         api = CocoLikeAPI(["cat", "dog"], MultiAnnotationMockDataset())
-        
+
         # Verify 3 annotations in total
         assert len(api.dataset["annotations"]) == 3
-        
+
         # Verify annotations per image
         assert len(api.imgToAnns[0]) == 2
         assert len(api.imgToAnns[1]) == 1
-        
+
         # Verify image IDs per category
         assert 0 in api.catToImgs[0]
         assert 1 in api.catToImgs[0]
