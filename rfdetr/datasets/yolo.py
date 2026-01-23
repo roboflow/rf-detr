@@ -269,13 +269,13 @@ class CocoLikeAPI:
                     "iscrowd": 0
                 }
 
-            # Add segmentation if available
-            if detections.mask is not None:
-                # For now, use empty polygon - evaluation will still work for bbox
-                ann["segmentation"] = []
+                # Add segmentation if available
+                if detections.mask is not None:
+                    # For now, use empty polygon - evaluation will still work for bbox
+                    ann["segmentation"] = []
 
-            annotations.append(ann)
-            ann_id += 1
+                annotations.append(ann)
+                ann_id += 1
 
         return {
             "images": images,
@@ -295,12 +295,9 @@ class CocoLikeAPI:
         Returns:
             List of annotation IDs matching the filter conditions
         """
-        if imgIds is None:
-            imgIds = []
-        if catIds is None:
-            catIds = []
-        if areaRng is None:
-            areaRng = []
+        imgIds = imgIds or []
+        catIds = catIds or []
+        areaRng = areaRng or []
 
         imgIds = imgIds if isinstance(imgIds, list) else [imgIds]
         catIds = catIds if isinstance(catIds, list) else [catIds]
@@ -334,12 +331,9 @@ class CocoLikeAPI:
         Returns:
             List of category IDs matching the filter conditions
         """
-        if catNms is None:
-            catNms = []
-        if supNms is None:
-            supNms = []
-        if catIds is None:
-            catIds = []
+        catNms = catNms or []
+        # supNms = supNms or []
+        catIds = catIds or []
 
         cats = self.dataset["categories"]
 
@@ -360,11 +354,8 @@ class CocoLikeAPI:
         Returns:
             List of image IDs matching the filter conditions
         """
-        if imgIds is None:
-            imgIds = []
-        if catIds is None:
-            catIds = []
-
+        imgIds = imgIds or []
+        catIds = catIds or []
         imgIds = set(imgIds) if imgIds else set(self.imgs.keys())
 
         if len(catIds) > 0:

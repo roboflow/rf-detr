@@ -206,3 +206,33 @@ class TestCocoLikeAPI:
         api = CocoLikeAPI(["cat"], EmptyMockDataset())
         assert len(api.dataset["annotations"]) == 0
         assert len(api.getAnnIds()) == 0
+
+    def test_images_with_multiple_annotations(self):
+        """Test handling of images with multiple annotations per image."""
+        class MultiAnnotationMockDataset(_MockSvDataset):
+            def __getitem__(self, i):
+                if i == 0:
+                    det = sv.Detections(
+                        xyxy=np.array([[10, 20, 30, 40], [50, 60, 70, 80]]),
+                        class_id=np.array([0, 1])
+                    )
+                else:
+                    det = sv.Detections(
+                        xyxy=np.array([[15, 25, 35, 45]]),
+                        class_id=np.array([0])
+                    )
+                return f"img_{i}.jpg", np.zeros((100, 100, 3), dtype=np.uint8), det
+
+        api = CocoLikeAPI(["cat", "dog"], MultiAnnotationMockDataset())
+        
+        # Verify 3 annotations in total
+        assert len(api.dataset["annotations"]) == 3
+        
+        # Verify annotations per image
+        assert len(api.imgToAnns[0]) == 2
+        assert len(api.imgToAnns[1]) == 1
+        
+        # Verify image IDs per category
+        assert 0 in api.catToImgs[0]
+        assert 1 in api.catToImgs[0]
+        assert 0 in api.catToImgs[1]
