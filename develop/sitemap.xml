@@ -2,122 +2,122 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://roboflow.github.io/rf-detr/develop/</loc>
-         <lastmod>2026-01-22</lastmod>
+         <lastmod>2026-01-23</lastmod>
     </url>
     <url>
          <loc>https://roboflow.github.io/rf-detr/develop/learn/benchmarks/</loc>
-         <lastmod>2026-01-22</lastmod>
+         <lastmod>2026-01-23</lastmod>
     </url>
     <url>
          <loc>https://roboflow.github.io/rf-detr/develop/learn/deploy/</loc>
-         <lastmod>2026-01-22</lastmod>
+         <lastmod>2026-01-23</lastmod>
     </url>
     <url>
          <loc>https://roboflow.github.io/rf-detr/develop/learn/export/</loc>
-         <lastmod>2026-01-22</lastmod>
+         <lastmod>2026-01-23</lastmod>
     </url>
     <url>
          <loc>https://roboflow.github.io/rf-detr/develop/learn/install/</loc>
-         <lastmod>2026-01-22</lastmod>
+         <lastmod>2026-01-23</lastmod>
     </url>
     <url>
          <loc>https://roboflow.github.io/rf-detr/develop/learn/pretrained/</loc>
-         <lastmod>2026-01-22</lastmod>
+         <lastmod>2026-01-23</lastmod>
     </url>
     <url>
          <loc>https://roboflow.github.io/rf-detr/develop/learn/run/detection/</loc>
-         <lastmod>2026-01-22</lastmod>
+         <lastmod>2026-01-23</lastmod>
     </url>
     <url>
          <loc>https://roboflow.github.io/rf-detr/develop/learn/run/segmentation/</loc>
-         <lastmod>2026-01-22</lastmod>
+         <lastmod>2026-01-23</lastmod>
     </url>
     <url>
          <loc>https://roboflow.github.io/rf-detr/develop/learn/train/</loc>
-         <lastmod>2026-01-22</lastmod>
+         <lastmod>2026-01-23</lastmod>
     </url>
     <url>
          <loc>https://roboflow.github.io/rf-detr/develop/learn/train/advanced/</loc>
-         <lastmod>2026-01-22</lastmod>
+         <lastmod>2026-01-23</lastmod>
     </url>
     <url>
          <loc>https://roboflow.github.io/rf-detr/develop/learn/train/dataset-formats/</loc>
-         <lastmod>2026-01-22</lastmod>
+         <lastmod>2026-01-23</lastmod>
     </url>
     <url>
          <loc>https://roboflow.github.io/rf-detr/develop/learn/train/training-parameters/</loc>
-         <lastmod>2026-01-22</lastmod>
+         <lastmod>2026-01-23</lastmod>
     </url>
     <url>
          <loc>https://roboflow.github.io/rf-detr/develop/reference/2xlarge/</loc>
-         <lastmod>2026-01-22</lastmod>
+         <lastmod>2026-01-23</lastmod>
     </url>
     <url>
          <loc>https://roboflow.github.io/rf-detr/develop/reference/base/</loc>
-         <lastmod>2026-01-22</lastmod>
+         <lastmod>2026-01-23</lastmod>
     </url>
     <url>
          <loc>https://roboflow.github.io/rf-detr/develop/reference/large/</loc>
-         <lastmod>2026-01-22</lastmod>
+         <lastmod>2026-01-23</lastmod>
     </url>
     <url>
          <loc>https://roboflow.github.io/rf-detr/develop/reference/large_deprecated/</loc>
-         <lastmod>2026-01-22</lastmod>
+         <lastmod>2026-01-23</lastmod>
     </url>
     <url>
          <loc>https://roboflow.github.io/rf-detr/develop/reference/medium/</loc>
-         <lastmod>2026-01-22</lastmod>
+         <lastmod>2026-01-23</lastmod>
     </url>
     <url>
          <loc>https://roboflow.github.io/rf-detr/develop/reference/nano/</loc>
-         <lastmod>2026-01-22</lastmod>
+         <lastmod>2026-01-23</lastmod>
     </url>
     <url>
          <loc>https://roboflow.github.io/rf-detr/develop/reference/rfdetr/</loc>
-         <lastmod>2026-01-22</lastmod>
+         <lastmod>2026-01-23</lastmod>
     </url>
     <url>
          <loc>https://roboflow.github.io/rf-detr/develop/reference/seg_2xlarge/</loc>
-         <lastmod>2026-01-22</lastmod>
+         <lastmod>2026-01-23</lastmod>
     </url>
     <url>
          <loc>https://roboflow.github.io/rf-detr/develop/reference/seg_large/</loc>
-         <lastmod>2026-01-22</lastmod>
+         <lastmod>2026-01-23</lastmod>
     </url>
     <url>
          <loc>https://roboflow.github.io/rf-detr/develop/reference/seg_medium/</loc>
-         <lastmod>2026-01-22</lastmod>
+         <lastmod>2026-01-23</lastmod>
     </url>
     <url>
          <loc>https://roboflow.github.io/rf-detr/develop/reference/seg_nano/</loc>
-         <lastmod>2026-01-22</lastmod>
+         <lastmod>2026-01-23</lastmod>
     </url>
     <url>
          <loc>https://roboflow.github.io/rf-detr/develop/reference/seg_preview/</loc>
-         <lastmod>2026-01-22</lastmod>
+         <lastmod>2026-01-23</lastmod>
     </url>
     <url>
          <loc>https://roboflow.github.io/rf-detr/develop/reference/seg_small/</loc>
-         <lastmod>2026-01-22</lastmod>
+         <lastmod>2026-01-23</lastmod>
     </url>
     <url>
          <loc>https://roboflow.github.io/rf-detr/develop/reference/seg_xlarge/</loc>
-         <lastmod>2026-01-22</lastmod>
+         <lastmod>2026-01-23</lastmod>
     </url>
     <url>
          <loc>https://roboflow.github.io/rf-detr/develop/reference/segmentation_train_config/</loc>
-         <lastmod>2026-01-22</lastmod>
+         <lastmod>2026-01-23</lastmod>
     </url>
     <url>
          <loc>https://roboflow.github.io/rf-detr/develop/reference/small/</loc>
-         <lastmod>2026-01-22</lastmod>
+         <lastmod>2026-01-23</lastmod>
     </url>
     <url>
          <loc>https://roboflow.github.io/rf-detr/develop/reference/train_config/</loc>
-         <lastmod>2026-01-22</lastmod>
+         <lastmod>2026-01-23</lastmod>
     </url>
     <url>
          <loc>https://roboflow.github.io/rf-detr/develop/reference/xlarge/</loc>
-         <lastmod>2026-01-22</lastmod>
+         <lastmod>2026-01-23</lastmod>
     </url>
 </urlset>
