@@ -14,9 +14,14 @@ from typing import Dict, List, Optional, Set, Tuple, Union
 import torch
 from torch import nn
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
-
 from transformers.activations import ACT2FN
-from transformers.modeling_outputs import BackboneOutput, BaseModelOutput, BaseModelOutputWithPooling, ImageClassifierOutput
+from transformers.configuration_utils import PretrainedConfig
+from transformers.modeling_outputs import (
+    BackboneOutput,
+    BaseModelOutput,
+    BaseModelOutputWithPooling,
+    ImageClassifierOutput,
+)
 from transformers.modeling_utils import PreTrainedModel
 from transformers.pytorch_utils import find_pruneable_heads_and_indices, prune_linear_layer
 from transformers.utils import (
@@ -27,11 +32,11 @@ from transformers.utils import (
     replace_return_docstrings,
     torch_int,
 )
-from transformers.utils.backbone_utils import BackboneMixin
-
-from transformers.configuration_utils import PretrainedConfig
-from transformers.utils.backbone_utils import BackboneConfigMixin, get_aligned_output_features_output_indices
-
+from transformers.utils.backbone_utils import (
+    BackboneConfigMixin,
+    BackboneMixin,
+    get_aligned_output_features_output_indices,
+)
 
 logger = logging.get_logger(__name__)
 
@@ -312,8 +317,8 @@ class WindowedDinov2WithRegistersEmbeddings(nn.Module):
             num_w_patches_per_window = num_w_patches // self.config.num_windows
             num_h_patches_per_window = num_h_patches // self.config.num_windows
             num_windows = self.config.num_windows
-            windowed_pixel_tokens = pixel_tokens_with_pos_embed.view(batch_size, num_windows, num_h_patches_per_window, num_windows, num_h_patches_per_window, -1)
-            windowed_pixel_tokens = windowed_pixel_tokens.permute(0, 1, 3, 2, 4, 5)
+            windowed_pixel_tokens = pixel_tokens_with_pos_embed.reshape(batch_size * num_windows, num_h_patches_per_window, num_windows, num_h_patches_per_window, -1)
+            windowed_pixel_tokens = windowed_pixel_tokens.permute(0, 2, 1, 3, 4)
             windowed_pixel_tokens = windowed_pixel_tokens.reshape(batch_size * num_windows ** 2, num_h_patches_per_window * num_w_patches_per_window, -1)
             windowed_cls_token_with_pos_embed = cls_token_with_pos_embed.repeat(num_windows ** 2, 1, 1)
             embeddings = torch.cat((windowed_cls_token_with_pos_embed, windowed_pixel_tokens), dim=1)
@@ -670,11 +675,11 @@ class WindowedDinov2WithRegistersEncoder(nn.Module):
         for i, layer_module in enumerate(self.layer):
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
-            
+
             if i > int(self.config.out_features[-1][5:]):
                 # early stop if we have reached the last output feature
                 break
-            
+
             run_full_attention = i not in self.config.window_block_indexes
 
             layer_head_mask = head_mask[i] if head_mask is not None else None
@@ -1092,7 +1097,7 @@ class WindowedDinov2WithRegistersBackbone(WindowedDinov2WithRegistersPreTrainedM
 
                     num_h_patches = height // patch_size
                     num_w_patches = width // patch_size
-                    
+
                     if self.config.num_windows > 1:
                         # undo windowing
                         num_windows_squared = self.config.num_windows ** 2
@@ -1100,12 +1105,12 @@ class WindowedDinov2WithRegistersBackbone(WindowedDinov2WithRegistersPreTrainedM
                         num_h_patches_per_window = num_h_patches // self.config.num_windows
                         num_w_patches_per_window = num_w_patches // self.config.num_windows
                         hidden_state = hidden_state.reshape(B // num_windows_squared, num_windows_squared * HW, C)
-                        hidden_state = hidden_state.view(B // num_windows_squared, self.config.num_windows, self.config.num_windows, num_h_patches_per_window, num_w_patches_per_window, C)
-                        hidden_state = hidden_state.permute(0, 1, 3, 2, 4, 5)
+                        hidden_state = hidden_state.reshape((B // num_windows_squared) * self.config.num_windows, self.config.num_windows, num_h_patches_per_window, num_w_patches_per_window, C)
+                        hidden_state = hidden_state.permute(0, 2, 1, 3, 4)
 
                     hidden_state = hidden_state.reshape(batch_size, num_h_patches, num_w_patches, -1)
                     hidden_state = hidden_state.permute(0, 3, 1, 2).contiguous()
-                
+
                 feature_maps += (hidden_state,)
 
         if not return_dict:

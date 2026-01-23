@@ -14,7 +14,11 @@
 # ------------------------------------------------------------------------
 # Modifed with faster-coco-eval by @MiXaiLL76
 # ------------------------------------------------------------------------
+from typing import List
+
 from faster_coco_eval.utils.pytorch import FasterCocoEvaluator
 
+
 class CocoEvaluator(FasterCocoEvaluator):
-    pass
+    def __init__(self, coco_gt, iou_types: List[str], max_dets: int = 100) -> None:
+        super().__init__(coco_gt, iou_types, max_dets=max_dets)

@@ -14,14 +14,10 @@
 """
 ms_deform_attn_func
 """
-from __future__ import absolute_import
-from __future__ import print_function
-from __future__ import division
+from __future__ import absolute_import, division, print_function
 
 import torch
 import torch.nn.functional as F
-from torch.autograd import Function
-from torch.autograd.function import once_differentiable
 
 
 def ms_deform_attn_core_pytorch(value, value_spatial_shapes, sampling_locations, attention_weights):
