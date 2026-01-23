@@ -30,6 +30,9 @@ from PIL import Image
 import rfdetr.datasets.transforms as T
 
 
+def is_valid_coco_dataset(dataset_dir: str) -> bool:
+    return (Path(dataset_dir) / "train" / "_annotations.coco.json").exists()
+
 def compute_multi_scale_scales(resolution: int, expanded_scales: bool = False, patch_size: int = 16, num_windows: int = 4) -> List[int]:
     # round to the nearest multiple of 4*patch_size to enable both patching and windowing
     base_num_patches_per_window = resolution // (patch_size * num_windows)
@@ -246,6 +249,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
     img_folder, ann_file = PATHS[image_set.split("_")[0]]
 
     square_resize_div_64 = getattr(args, 'square_resize_div_64', False)
+    include_masks = getattr(args, "segmentation_head", False)
 
     if square_resize_div_64:
         dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms_square_div_64(
@@ -256,7 +260,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             skip_random_resize=not args.do_random_resize_via_padding,
             patch_size=args.patch_size,
             num_windows=args.num_windows
-        ))
+        ), include_masks=include_masks)
     else:
         dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms(
             image_set,
@@ -266,7 +270,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             skip_random_resize=not args.do_random_resize_via_padding,
             patch_size=args.patch_size,
             num_windows=args.num_windows
-        ))
+        ), include_masks=include_masks)
     return dataset
 
 def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
