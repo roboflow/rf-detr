@@ -27,8 +27,8 @@ import faster_coco_eval.core.mask as coco_mask
 import torch
 import torch.utils.data
 import torchvision
-from PIL import Image
 from faster_coco_eval.utils.pytorch import FasterCocoDetection
+from PIL import Image
 
 import rfdetr.datasets.transforms as T
 

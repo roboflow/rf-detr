@@ -20,7 +20,6 @@ from typing import Any, Optional
 import torch.utils.data
 from faster_coco_eval.utils.pytorch import FasterCocoDetection
 
-
 from rfdetr.datasets.coco import build_coco, build_roboflow_from_coco
 from rfdetr.datasets.o365 import build_o365
 from rfdetr.datasets.yolo import YoloDetection, build_roboflow_from_yolo

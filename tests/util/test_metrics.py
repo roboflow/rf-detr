@@ -14,7 +14,9 @@ import math
 from pathlib import Path
 
 import pytest
-from faster_coco_eval.core import COCO, COCOeval_faster as COCOeval
+from faster_coco_eval.core import COCO
+from faster_coco_eval.core import COCOeval_faster as COCOeval
+
 from rfdetr.engine import coco_extended_metrics
 from rfdetr.util.visualize import save_gt_predictions_visualization
 
