@@ -14,27 +14,26 @@ reliable measurements of inference latency using ONNX Runtime or TensorRT
 on the device.
 """
 import argparse
-import copy
 import contextlib
+import copy
 import json
 import os
 import os.path as osp
 import random
 import time
-from collections import namedtuple, OrderedDict
-
-from pycocotools.cocoeval import COCOeval
-from pycocotools.coco import COCO
+from collections import OrderedDict, namedtuple
 
 import numpy as np
-from PIL import Image
+import onnxruntime as nxrun
+import pycuda.driver as cuda
+import supervision as sv
+import tensorrt as trt
 import torch
 import torchvision.transforms.functional as F
 import tqdm
-
-import pycuda.driver as cuda
-import onnxruntime as nxrun
-import tensorrt as trt
+from PIL import Image
+from pycocotools.coco import COCO
+from pycocotools.cocoeval import COCOeval
 
 
 def parser_args():
@@ -108,7 +107,7 @@ class CocoEvaluator(object):
                 continue
 
             boxes = prediction["boxes"]
-            boxes = convert_to_xywh(boxes).tolist()
+            boxes = sv.xyxy_to_xywh(boxes.cpu().numpy()).tolist()
             scores = prediction["scores"].tolist()
             labels = prediction["labels"].tolist()
 
@@ -177,9 +176,6 @@ def evaluate(self):
     self._paramsEval = copy.deepcopy(self.params)
     return p.imgIds, evalImgs
 
-def convert_to_xywh(boxes):
-    boxes[:, 2:] -= boxes[:, :2]
-    return boxes
 
 
 def get_image_list(ann_file):

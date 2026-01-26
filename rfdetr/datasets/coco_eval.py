@@ -20,17 +20,16 @@ Mostly copy-paste from https://github.com/pytorch/vision/blob/edfd5a7/references
 The difference is that there is less copy-pasting from pycocotools
 in the end of the file, as python3 can suppress prints with contextlib
 """
-import os
 import contextlib
 import copy
+import os
 from typing import Any, Dict, List, Tuple
 
 import numpy as np
-import torch
-
-from pycocotools.cocoeval import COCOeval
-from pycocotools.coco import COCO
 import pycocotools.mask as mask_util
+import supervision as sv
+from pycocotools.coco import COCO
+from pycocotools.cocoeval import COCOeval
 
 from rfdetr.util.misc import all_gather
 
@@ -101,7 +100,7 @@ class CocoEvaluator(object):
                 continue
 
             boxes = prediction["boxes"]
-            boxes = convert_to_xywh(boxes).tolist()
+            boxes = sv.xyxy_to_xywh(boxes.cpu().numpy()).tolist()
             scores = prediction["scores"].tolist()
             labels = prediction["labels"].tolist()
 
@@ -160,7 +159,7 @@ class CocoEvaluator(object):
                 continue
 
             boxes = prediction["boxes"]
-            boxes = convert_to_xywh(boxes).tolist()
+            boxes = sv.xyxy_to_xywh(boxes.cpu().numpy()).tolist()
             scores = prediction["scores"].tolist()
             labels = prediction["labels"].tolist()
             keypoints = prediction["keypoints"]
@@ -178,11 +177,6 @@ class CocoEvaluator(object):
                 ]
             )
         return coco_results
-
-
-def convert_to_xywh(boxes: torch.Tensor) -> torch.Tensor:
-    xmin, ymin, xmax, ymax = boxes.unbind(1)
-    return torch.stack((xmin, ymin, xmax - xmin, ymax - ymin), dim=1)
 
 
 def merge(img_ids: List[int], eval_imgs: Any) -> Tuple[np.ndarray, np.ndarray]:

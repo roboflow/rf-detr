@@ -1,20 +1,8 @@
 from pathlib import Path
+
 import numpy as np
 import supervision as sv
 from PIL import Image
-
-
-def _xywh_to_xyxy(boxes: list[list[float]]) -> np.ndarray:
-    """Convert list of [x, y, w, h] boxes to numpy array of [x1, y1, x2, y2]."""
-    if not boxes:
-        return np.empty((0, 4))
-    arr = np.array(boxes)
-    xyxy = np.zeros_like(arr)
-    xyxy[:, 0] = arr[:, 0]
-    xyxy[:, 1] = arr[:, 1]
-    xyxy[:, 2] = arr[:, 0] + arr[:, 2]
-    xyxy[:, 3] = arr[:, 1] + arr[:, 3]
-    return xyxy
 
 
 def save_gt_predictions_visualization(
@@ -43,8 +31,8 @@ def save_gt_predictions_visualization(
     gt_boxes_offset = [[x, y + top_padding, w, h] for x, y, w, h in gt_boxes]
     pred_boxes_offset = [[x, y + top_padding, w, h] for x, y, w, h in pred_boxes]
 
-    gt_xyxy = _xywh_to_xyxy(gt_boxes_offset)
-    pred_xyxy = _xywh_to_xyxy(pred_boxes_offset)
+    gt_xyxy = sv.xywh_to_xyxy(np.array(gt_boxes_offset))
+    pred_xyxy = sv.xywh_to_xyxy(np.array(pred_boxes_offset))
 
     gt_detections = None
     pred_detections = None

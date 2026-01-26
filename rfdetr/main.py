@@ -31,7 +31,7 @@ import warnings
 from copy import deepcopy
 from logging import getLogger
 from pathlib import Path
-from typing import DefaultDict, List, Callable
+from typing import Callable, DefaultDict, List
 
 import numpy as np
 import torch
@@ -41,13 +41,13 @@ from torch.utils.data import DataLoader, DistributedSampler
 import rfdetr.util.misc as utils
 from rfdetr.datasets import build_dataset, get_coco_api_from_dataset
 from rfdetr.engine import evaluate, train_one_epoch
-from rfdetr.models import build_model, build_criterion_and_postprocessors, PostProcess
+from rfdetr.models import PostProcess, build_criterion_and_postprocessors, build_model
+from rfdetr.platform.platform_downloads import PLATFORM_MODELS
 from rfdetr.util.benchmark import benchmark
 from rfdetr.util.drop_scheduler import drop_scheduler
 from rfdetr.util.files import download_file
 from rfdetr.util.get_param_dicts import get_param_dict
-from rfdetr.util.utils import ModelEma, BestMetricHolder, clean_state_dict
-from rfdetr.platform.platform_downloads import PLATFORM_MODELS
+from rfdetr.util.utils import BestMetricHolder, ModelEma, clean_state_dict
 
 if str(os.environ.get("USE_FILE_SYSTEM_SHARING", "False")).lower() in ["true", "1"]:
     import torch.multiprocessing
@@ -552,7 +552,7 @@ class Model:
         """Export the trained model to ONNX format"""
         print("Exporting model to ONNX format")
         try:
-            from rfdetr.deploy.export import export_onnx, onnx_simplify, make_infer_image
+            from rfdetr.deploy.export import export_onnx, make_infer_image, onnx_simplify
         except ImportError:
             print("It seems some dependencies for ONNX export are missing. Please run `pip install rfdetr[onnxexport]` and try again.")
             raise

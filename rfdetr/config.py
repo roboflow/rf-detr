@@ -5,10 +5,12 @@
 # ------------------------------------------------------------------------
 
 
-from pydantic import BaseModel, field_validator
-from typing import List, Optional, Literal
-import torch
 import os
+from typing import List, Literal, Optional
+
+import torch
+from pydantic import BaseModel, field_validator
+
 DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 
 class ModelConfig(BaseModel):
@@ -243,6 +245,7 @@ class TrainConfig(BaseModel):
     batch_size: int = 4
     grad_accum_steps: int = 4
     epochs: int = 100
+    resume: Optional[str] = None
     ema_decay: float = 0.993
     ema_tau: int = 100
     lr_drop: int = 100
@@ -254,7 +257,8 @@ class TrainConfig(BaseModel):
     group_detr: int = 13
     ia_bce_loss: bool = True
     cls_loss_coef: float = 1.0
-    dataset_file: Literal["coco", "o365", "roboflow"] = "roboflow"
+    num_select: int = 300
+    dataset_file: Literal["coco", "o365", "roboflow", "yolo"] = "roboflow"
     square_resize_div_64: bool = True
     dataset_dir: str
     output_dir: str = "output"
