@@ -4,17 +4,20 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+import json
+import math
+import os
+import types
+
 import torch
 import torch.nn as nn
-from transformers import AutoBackbone
 import torch.nn.functional as F
-import types
-import math
-import json
-import os
+from transformers import AutoBackbone
 
-from .dinov2_with_windowed_attn import WindowedDinov2WithRegistersConfig, WindowedDinov2WithRegistersBackbone
-
+from rfdetr.models.backbone.dinov2_with_windowed_attn import (
+    WindowedDinov2WithRegistersBackbone,
+    WindowedDinov2WithRegistersConfig,
+)
 
 size_to_width = {
     "tiny": 192,
@@ -46,15 +49,28 @@ def get_config(size, use_registers):
 
 
 class DinoV2(nn.Module):
-    def __init__(self, shape=(640, 640), out_feature_indexes=[2, 4, 5, 9], size="base", use_registers=True, use_windowed_attn=True, gradient_checkpointing=False, load_dinov2_weights=True):
+    def __init__(self,
+            shape=(640, 640),
+            out_feature_indexes=[2, 4, 5, 9],
+            size="base",
+            use_registers=True,
+            use_windowed_attn=True,
+            gradient_checkpointing=False,
+            load_dinov2_weights=True,
+            patch_size=14,
+            num_windows=4,
+            positional_encoding_size=37,
+            ):
         super().__init__()
 
         name = f"facebook/dinov2-with-registers-{size}" if use_registers else f"facebook/dinov2-{size}"
 
         self.shape = shape
-        
+        self.patch_size = patch_size
+        self.num_windows = num_windows
+
         # Create the encoder
-        
+
         if not use_windowed_attn:
             assert not gradient_checkpointing, "Gradient checkpointing is not supported for non-windowed attention"
             assert load_dinov2_weights, "Using non-windowed attention requires loading dinov2 weights from hub"
@@ -73,17 +89,29 @@ class DinoV2(nn.Module):
             dino_config["return_dict"] = False
             dino_config["out_features"] = [f"stage{i}" for i in out_feature_indexes]
 
+            implied_resolution = positional_encoding_size * patch_size
+
+            if implied_resolution != dino_config["image_size"]:
+                print("Using a different number of positional encodings than DINOv2, which means we're not loading DINOv2 backbone weights. This is not a problem if finetuning a pretrained RF-DETR model.")
+                dino_config["image_size"] = implied_resolution
+                load_dinov2_weights = False
+
+            if patch_size != 14:
+                print(f"Using patch size {patch_size} instead of 14, which means we're not loading DINOv2 backbone weights. This is not a problem if finetuning a pretrained RF-DETR model.")
+                dino_config["patch_size"] = patch_size
+                load_dinov2_weights = False
+
             if use_registers:
                 windowed_dino_config = WindowedDinov2WithRegistersConfig(
                     **dino_config,
-                    num_windows=4,
+                    num_windows=num_windows,
                     window_block_indexes=window_block_indexes,
                     gradient_checkpointing=gradient_checkpointing,
                 )
             else:
                 windowed_dino_config = WindowedDinov2WithRegistersConfig(
                     **dino_config,
-                    num_windows=4,
+                    num_windows=num_windows,
                     window_block_indexes=window_block_indexes,
                     num_register_tokens=0,
                     gradient_checkpointing=gradient_checkpointing,
@@ -153,12 +181,13 @@ class DinoV2(nn.Module):
 
         self.encoder.embeddings.position_embeddings = nn.Parameter(new_positions)
         self.encoder.embeddings.interpolate_pos_encoding = types.MethodType(
-            new_interpolate_pos_encoding, 
+            new_interpolate_pos_encoding,
             self.encoder.embeddings
         )
 
     def forward(self, x):
-        assert x.shape[2] % 14 == 0 and x.shape[3] % 14 == 0, f"Dinov2 requires input shape to be divisible by 14, but got {x.shape}"
+        block_size = self.patch_size * self.num_windows
+        assert x.shape[2] % block_size == 0 and x.shape[3] % block_size == 0, f"Backbone requires input shape to be divisible by {block_size}, but got {x.shape}"
         x = self.encoder(x)
         return list(x[0])
 

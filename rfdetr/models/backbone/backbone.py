@@ -16,19 +16,14 @@
 """
 Backbone modules.
 """
-from functools import partial
 import torch
 import torch.nn.functional as F
-from torch import nn
-
-from transformers import AutoModel, AutoProcessor, AutoModelForCausalLM, AutoConfig, AutoBackbone
-from peft import LoraConfig, get_peft_model, PeftModel
-
-from rfdetr.util.misc import NestedTensor, is_main_process
+from peft import PeftModel
 
 from rfdetr.models.backbone.base import BackboneBase
-from rfdetr.models.backbone.projector import MultiScaleProjector
 from rfdetr.models.backbone.dinov2 import DinoV2
+from rfdetr.models.backbone.projector import MultiScaleProjector
+from rfdetr.util.misc import NestedTensor
 
 __all__ = ["Backbone"]
 
@@ -51,6 +46,9 @@ class Backbone(BackboneBase):
                  backbone_lora: bool = False,
                  gradient_checkpointing: bool = False,
                  load_dinov2_weights: bool = True,
+                 patch_size: int = 14,
+                 num_windows: int = 4,
+                 positional_encoding_size: bool = False,
                  ):
         super().__init__()
         # an example name here would be "dinov2_base" or "dinov2_registers_windowed_base"
@@ -60,7 +58,7 @@ class Backbone(BackboneBase):
         # and the start should be dinov2
         name_parts = name.split("_")
         assert name_parts[0] == "dinov2"
-        size = name_parts[-1]
+        # name_parts[-1]
         use_registers = False
         if "registers" in name_parts:
             use_registers = True
@@ -78,6 +76,9 @@ class Backbone(BackboneBase):
             use_windowed_attn=use_windowed_attn,
             gradient_checkpointing=gradient_checkpointing,
             load_dinov2_weights=load_dinov2_weights,
+            patch_size=patch_size,
+            num_windows=num_windows,
+            positional_encoding_size=positional_encoding_size,
         )
         # build encoder + projector as backbone module
         if freeze_encoder:

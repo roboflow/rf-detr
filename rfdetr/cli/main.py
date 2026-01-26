@@ -8,8 +8,14 @@
 # ------------------------------------------------------------------------
 
 import argparse
-from rf100vl import get_rf100vl_projects
+import os
+
 import roboflow
+import torch
+from rf100vl import get_rf100vl_projects
+
+from rfdetr import RFDETRBase
+
 from rfdetr import RFDETRBase
 from rfdetr.config import DEVICE
 import os
@@ -28,7 +34,7 @@ def download_dataset(rf_project: roboflow.Project, dataset_version: int):
         location = version.download(
             model_format="coco", location=location, overwrite=False
         ).location
-    
+
     return location
 
 
@@ -60,7 +66,7 @@ def trainer():
     parser.add_argument("--project_name", type=str, required=False, default=None)
     parser.add_argument("--dataset_version", type=int, required=False, default=None)
     args = parser.parse_args()
-    
+
     if args.coco_dir is not None:
         train_from_coco_dir(args.coco_dir)
         return
