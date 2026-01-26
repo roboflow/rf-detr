@@ -21,12 +21,12 @@ Modules to compute the matching cost and solve the corresponding LSAP.
 """
 import numpy as np
 import torch
+import torch.nn.functional as F
 from scipy.optimize import linear_sum_assignment
 from torch import nn
-import torch.nn.functional as F
 
-from rfdetr.util.box_ops import box_cxcywh_to_xyxy, generalized_box_iou, batch_sigmoid_ce_loss, batch_dice_loss
 from rfdetr.models.segmentation_head import point_sample
+from rfdetr.util.box_ops import batch_dice_loss, batch_sigmoid_ce_loss, box_cxcywh_to_xyxy, generalized_box_iou
 
 
 class HungarianMatcher(nn.Module):

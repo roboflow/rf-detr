@@ -23,9 +23,9 @@ To deploy your model to Roboflow, run:
 === "Image Segmentation"
 
     ```python
-    from rfdetr import RFDETRSegPreview
+    from rfdetr import RFDETRSegMedium
 
-    x = RFDETRSegPreview(pretrain_weights="<path/to/pretrain/weights/dir>")
+    x = RFDETRSegMedium(pretrain_weights="<path/to/pretrain/weights/dir>")
     x.deploy_to_roboflow(
       workspace="<your-workspace>",
       project_id="<your-project-id>",
@@ -45,7 +45,6 @@ You can then run your model with Roboflow Inference:
 === "Object Detection"
 
     ```python
-    import os
     import supervision as sv
     from inference import get_model
     from PIL import Image
@@ -55,7 +54,7 @@ You can then run your model with Roboflow Inference:
     url = "https://media.roboflow.com/dog.jpeg"
     image = Image.open(BytesIO(requests.get(url).content))
 
-    model = get_model("rfdetr-base")  # replace with your Roboflow model ID
+    model = get_model("rfdetr-large")  # replace with your Roboflow model ID
 
     predictions = model.infer(image, confidence=0.5)[0]
 
@@ -73,7 +72,6 @@ You can then run your model with Roboflow Inference:
 === "Image Segmentation"
 
     ```python
-    import os
     import supervision as sv
     from inference import get_model
     from PIL import Image
@@ -83,7 +81,7 @@ You can then run your model with Roboflow Inference:
     url = "https://media.roboflow.com/dog.jpeg"
     image = Image.open(BytesIO(requests.get(url).content))
 
-    model = get_model("rfdetr-seg-preview")  # replace with your Roboflow model ID
+    model = get_model("rfdetr-seg-small")  # replace with your Roboflow model ID
 
     predictions = model.infer(image, confidence=0.5)[0]
 
@@ -98,7 +96,7 @@ You can then run your model with Roboflow Inference:
     sv.plot_image(annotated_image)
     ```
 
-Above, replace `rfdetr-base` with the your Roboflow model ID. You can find this ID from the "Models" list in your Roboflow dashboard:
+Above, replace `rfdetr-large` with the your Roboflow model ID. You can find this ID from the "Models" list in your Roboflow dashboard:
 
 ![](https://media.roboflow.com/rfdetr/models-list.png)
 

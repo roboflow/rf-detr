@@ -1,7 +1,10 @@
-import torch
-import pytest
 import math
+
+import pytest
+import torch
+
 from rfdetr.util.misc import SmoothedValue
+
 
 class TestSmoothedValue:
     @pytest.mark.parametrize("window_size, fmt", [

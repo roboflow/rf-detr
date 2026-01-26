@@ -18,26 +18,28 @@
 Train and eval functions used in main.py
 """
 import math
-import sys
-from typing import Iterable
 import random
+from typing import Iterable
 
 import torch
 import torch.nn.functional as F
 
 import rfdetr.util.misc as utils
-from rfdetr.datasets.coco_eval import CocoEvaluator
 from rfdetr.datasets.coco import compute_multi_scale_scales
+from rfdetr.datasets.coco_eval import CocoEvaluator
 
 try:
-    from torch.amp import autocast, GradScaler
+    from torch.amp import GradScaler, autocast
     DEPRECATED_AMP = False
 except ImportError:
-    from torch.cuda.amp import autocast, GradScaler
+    from torch.cuda.amp import GradScaler, autocast
     DEPRECATED_AMP = True
-from typing import DefaultDict, List, Callable
-from rfdetr.util.misc import NestedTensor
+from typing import Callable, DefaultDict, List
+
 import numpy as np
+
+from rfdetr.util.misc import NestedTensor
+
 
 def get_autocast_args(args):
     if DEPRECATED_AMP:

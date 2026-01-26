@@ -22,10 +22,11 @@ import pickle
 import subprocess
 import time
 from collections import defaultdict, deque
-from typing import Any, Dict, List, Optional, Tuple, Iterable, Generator
+from typing import Any, Dict, Generator, Iterable, List, Optional, Tuple
 
 import torch
 import torch.distributed as dist
+
 # needed due to empty tensor bug in pytorch and torchvision 0.5
 import torchvision
 from torch import Tensor
