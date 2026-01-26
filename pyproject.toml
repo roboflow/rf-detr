@@ -41,7 +41,7 @@ dependencies = [
     "scipy",
     "tqdm",
     "numpy",
-    "transformers",
+    "transformers>4.50.0, <5.0.0",
     "peft",
     "polygraphy",
     "rf100vl",
