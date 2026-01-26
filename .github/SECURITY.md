@@ -2,15 +2,13 @@
 
 ## Project Status
 
-RF-DETR is an **research project** under active development. While we strive for stability, users should be aware that the codebase may contain undiscovered vulnerabilities typical of research-grade software.
+RF-DETR is a **research project** under active development. While we strive for stability, the codebase may contain undiscovered vulnerabilities typical of research-grade software.
 
 ## Supported Versions
 
-Security updates are generally provided for the latest stable release. Given the nature of this project:
+Security fixes are generally provided for the latest stable release.
 
-- Critical vulnerabilities affecting the latest release will be addressed promptly
-- Fixes for older versions are evaluated on a case-by-case basis depending on severity
-- Users are strongly encouraged to use the latest version
+Fixes for older versions may be provided at the maintainers' discretion, depending on severity and feasibility.
 
 | Version        | Support Status     |
 | -------------- | ------------------ |
@@ -19,36 +17,30 @@ Security updates are generally provided for the latest stable release. Given the
 
 ## Reporting a Vulnerability
 
-We take security seriously. If you discover a security vulnerability, please help us by reporting it responsibly.
+Please report security issues privately.
 
-**DO NOT** create a public GitHub issue for security vulnerabilities.
+**Do not** create a public GitHub issue for security vulnerabilities.
 
-Instead, please report to: **security@roboflow.com**
+Report to: **security@roboflow.com**
 
-### What to Include
+Include (if available):
+- A clear description and impact
+- Steps to reproduce / proof-of-concept
+- Affected versions, environment details, and relevant logs
 
-- Clear description of the vulnerability
-- Steps to reproduce the issue
-- Affected versions (if known)
-- Potential impact assessment
-- Any proof-of-concept code (if applicable)
-
-### What to Expect
-
-- Acknowledgment within 72 hours
-- Regular updates on the status of your report
-- Credit in the security advisory (unless you prefer to remain anonymous)
+We will review reports and respond as soon as reasonably possible.
 
 ## Security Considerations for ML Projects
 
 ### Model Weights and Checkpoints
 
-**Critical**: Model checkpoint files (`.pt`, `.pth`, `.onnx`) can contain arbitrary Python code that executes during loading.
+**Critical**: PyTorch checkpoint files (`.pt`, `.pth`) can execute arbitrary code when loaded because they are commonly pickle-based.
 
 - **Only load models from trusted sources**
-- Verify checksums when downloading pre-trained models
-- Be especially cautious with community-contributed checkpoints
-- Consider running untrusted models in sandboxed environments
+- Prefer safer formats (e.g. `safetensors`) when available
+- When possible, use safer loading options (e.g. `torch.load(..., weights_only=True)` where supported)
+
+**Note**: ONNX models (`.onnx`) are not pickle-based, but parsing/optimizer toolchains can still have security vulnerabilities. Treat untrusted files cautiously.
 
 ### Dependency Security
 
@@ -57,7 +49,7 @@ RF-DETR depends on the PyTorch ecosystem and other ML libraries:
 - Keep PyTorch, torchvision, and transformers updated
 - Monitor security advisories for dependencies
 - Use virtual environments to isolate installations
-- Regularly update dependencies: `pip install --upgrade rfdetr`
+- Regularly update dependencies (for users): `pip install --upgrade rfdetr`
 
 ### Data Processing
 
