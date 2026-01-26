@@ -22,20 +22,43 @@ extra:
 
 nav:
   - Home: index.md
-  - Learn:
-     - Run a Pre-Trained Model: learn/pretrained.md
-     - Train an RF-DETR Model: learn/train.md
-     - Deploy a Trained Model: learn/deploy.md
-     - Benchmarks: learn/benchmarks.md
-  - Reference:
+  - How to:
+    - Install: learn/install.md
+    - Run Model:
+      - Detection: learn/run/detection.md
+      - Segmentation: learn/run/segmentation.md
+    - Train Model:
+      - Overview: learn/train/index.md
+      - Dataset Formats: learn/train/dataset-formats.md
+      - Training Parameters: learn/train/training-parameters.md
+      - Advanced Training: learn/train/advanced.md
+    - Export Model: learn/export.md
+    - Deploy Model: learn/deploy.md
+    - Benchmarks: learn/benchmarks.md
+  - API Reference:
       - RF-DETR: reference/rfdetr.md
-      - Models:
+      - Detection Models:
         - RF-DETR Nano: reference/nano.md
         - RF-DETR Small: reference/small.md
-        - RF-DETR Base: reference/base.md
+        - RF-DETR Base (Deprecated): reference/base.md
         - RF-DETR Medium: reference/medium.md
         - RF-DETR Large: reference/large.md
+        - RF-DETR XLarge: reference/xlarge.md
+        - RF-DETR 2XLarge: reference/2xlarge.md
+        - RF-DETR Large (Deprecated): reference/large_deprecated.md
+      - Segmentation Models:
+        - RF-DETR Seg Nano: reference/seg_nano.md
+        - RF-DETR Seg Small: reference/seg_small.md
+        - RF-DETR Seg Medium: reference/seg_medium.md
+        - RF-DETR Seg Large: reference/seg_large.md
+        - RF-DETR Seg XLarge: reference/seg_xlarge.md
+        - RF-DETR Seg 2XLarge: reference/seg_2xlarge.md
+        - RF-DETR Seg Preview (Deprecated): reference/seg_preview.md
+      - Training Configs:
+        - Train Config: reference/train_config.md
+        - Segmentation Train Config: reference/segmentation_train_config.md
   - Changelog: https://github.com/roboflow/rf-detr/releases
+
 
 theme:
   name: 'material'

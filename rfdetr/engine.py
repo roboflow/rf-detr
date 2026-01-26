@@ -18,26 +18,28 @@
 Train and eval functions used in main.py
 """
 import math
-import sys
-from typing import Iterable
 import random
+from typing import Iterable
 
 import torch
 import torch.nn.functional as F
 
 import rfdetr.util.misc as utils
-from rfdetr.datasets.coco_eval import CocoEvaluator
 from rfdetr.datasets.coco import compute_multi_scale_scales
+from rfdetr.datasets.coco_eval import CocoEvaluator
 
 try:
-    from torch.amp import autocast, GradScaler
+    from torch.amp import GradScaler, autocast
     DEPRECATED_AMP = False
 except ImportError:
-    from torch.cuda.amp import autocast, GradScaler
+    from torch.cuda.amp import GradScaler, autocast
     DEPRECATED_AMP = True
-from typing import DefaultDict, List, Callable
-from rfdetr.util.misc import NestedTensor
+from typing import Callable, DefaultDict, List
+
 import numpy as np
+
+from rfdetr.util.misc import NestedTensor
+
 
 def get_autocast_args(args):
     if DEPRECATED_AMP:
@@ -113,7 +115,7 @@ def train_one_epoch(
             scales = compute_multi_scale_scales(args.resolution, args.expanded_scales, args.patch_size, args.num_windows)
             random.seed(it)
             scale = random.choice(scales)
-            with torch.inference_mode():
+            with torch.no_grad():
                 samples.tensors = F.interpolate(samples.tensors, size=scale, mode='bilinear', align_corners=False)
                 samples.mask = F.interpolate(samples.mask.unsqueeze(1).float(), size=scale, mode='nearest').squeeze(1).bool()
 
@@ -134,7 +136,7 @@ def train_one_epoch(
                     for k in loss_dict.keys()
                     if k in weight_dict
                 )
-
+                del outputs
 
             scaler.scale(losses).backward()
 
@@ -178,78 +180,183 @@ def train_one_epoch(
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
 
+def sweep_confidence_thresholds(per_class_data, conf_thresholds, classes_with_gt):
+    """Sweep confidence thresholds and compute precision/recall/F1 at each."""
+    num_classes = len(per_class_data)
+    results = []
+
+    for conf_thresh in conf_thresholds:
+        per_class_precisions = []
+        per_class_recalls = []
+        per_class_f1s = []
+
+        for k in range(num_classes):
+            data = per_class_data[k]
+            scores = data['scores']
+            matches = data['matches']
+            ignore = data['ignore']
+            total_gt = data['total_gt']
+
+            above_thresh = scores >= conf_thresh
+            valid = above_thresh & ~ignore
+
+            valid_matches = matches[valid]
+
+            tp = np.sum(valid_matches != 0)
+            fp = np.sum(valid_matches == 0)
+            fn = total_gt - tp
+
+            precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+            recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+            f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+
+            per_class_precisions.append(precision)
+            per_class_recalls.append(recall)
+            per_class_f1s.append(f1)
+
+        if len(classes_with_gt) > 0:
+            macro_precision = np.mean([per_class_precisions[k] for k in classes_with_gt])
+            macro_recall = np.mean([per_class_recalls[k] for k in classes_with_gt])
+            macro_f1 = np.mean([per_class_f1s[k] for k in classes_with_gt])
+        else:
+            macro_precision = 0.0
+            macro_recall = 0.0
+            macro_f1 = 0.0
+
+        results.append({
+            'confidence_threshold': conf_thresh,
+            'macro_f1': macro_f1,
+            'macro_precision': macro_precision,
+            'macro_recall': macro_recall,
+            'per_class_prec': np.array(per_class_precisions),
+            'per_class_rec': np.array(per_class_recalls),
+        })
+
+    return results
+
+
 def coco_extended_metrics(coco_eval):
     """
-    Safe version: ignores the –1 sentinel entries so precision/F1 never explode.
+    Compute precision/recall by sweeping confidence thresholds to maximize macro-F1.
+    Uses evalImgs directly to compute metrics from raw matching data.
     """
 
-    iou_thrs, rec_thrs = coco_eval.params.iouThrs, coco_eval.params.recThrs
-    iou50_idx, area_idx, maxdet_idx = (
-        int(np.argwhere(np.isclose(iou_thrs, 0.50))), 0, 2)
+    iou50_idx = np.argwhere(np.isclose(coco_eval.params.iouThrs, 0.50)).item()
+    cat_ids = coco_eval.params.catIds
+    num_classes = len(cat_ids)
+    area_idx = 0
+    maxdet_idx = 2
 
-    P = coco_eval.eval["precision"]
-    S = coco_eval.eval["scores"]
+    # Unflatten evalImgs into a nested dict
+    evalImgs_unflat = {}
+    for e in coco_eval.evalImgs:
+        if e is None:
+            continue
+        cat_id = e['category_id']
+        area_rng = tuple(e['aRng'])
+        img_id = e['image_id']
 
-    prec_raw = P[iou50_idx, :, :, area_idx, maxdet_idx]
+        if cat_id not in evalImgs_unflat:
+            evalImgs_unflat[cat_id] = {}
+        if area_rng not in evalImgs_unflat[cat_id]:
+            evalImgs_unflat[cat_id][area_rng] = {}
+        evalImgs_unflat[cat_id][area_rng][img_id] = e
 
-    prec = prec_raw.copy().astype(float)
-    prec[prec < 0] = np.nan
+    area_rng_all = tuple(coco_eval.params.areaRng[area_idx])
 
-    f1_cls   = 2 * prec * rec_thrs[:, None] / (prec + rec_thrs[:, None])
-    f1_macro = np.nanmean(f1_cls, axis=1)
+    per_class_data = []
+    for cid in cat_ids:
+        dt_scores = []
+        dt_matches = []
+        dt_ignore = []
+        total_gt = 0
 
-    best_j   = int(f1_macro.argmax())
+        for img_id in coco_eval.params.imgIds:
+            e = evalImgs_unflat.get(cid, {}).get(area_rng_all, {}).get(img_id)
+            if e is None:
+                continue
 
-    macro_precision = float(np.nanmean(prec[best_j]))
-    macro_recall    = float(rec_thrs[best_j])
-    macro_f1        = float(f1_macro[best_j])
+            num_dt = len(e['dtIds'])
+            # num_gt = len(e['gtIds'])
 
-    score_vec = S[iou50_idx, best_j, :, area_idx, maxdet_idx].astype(float)
-    score_vec[prec_raw[best_j] < 0] = np.nan
-    score_thr = float(np.nanmean(score_vec))
+            gt_ignore = e['gtIgnore']
+            total_gt += sum(1 for ig in gt_ignore if not ig)
+
+            for d in range(num_dt):
+                dt_scores.append(e['dtScores'][d])
+                dt_matches.append(e['dtMatches'][iou50_idx, d])
+                dt_ignore.append(e['dtIgnore'][iou50_idx, d])
+
+        per_class_data.append({
+            'scores': np.array(dt_scores),
+            'matches': np.array(dt_matches),
+            'ignore': np.array(dt_ignore, dtype=bool),
+            'total_gt': total_gt,
+        })
+
+    conf_thresholds = np.linspace(0.0, 1.0, 101)
+    classes_with_gt = [k for k in range(num_classes) if per_class_data[k]['total_gt'] > 0]
+
+    confidence_sweep_metric_dicts = sweep_confidence_thresholds(
+        per_class_data, conf_thresholds, classes_with_gt
+    )
+
+    best = max(confidence_sweep_metric_dicts, key=lambda x: x['macro_f1'])
 
     map_50_95, map_50 = float(coco_eval.stats[0]), float(coco_eval.stats[1])
 
     per_class = []
-    cat_ids = coco_eval.params.catIds
     cat_id_to_name = {c["id"]: c["name"] for c in coco_eval.cocoGt.loadCats(cat_ids)}
     for k, cid in enumerate(cat_ids):
-        p_slice = P[:, :, k, area_idx, maxdet_idx]
-        valid   = p_slice > -1
-        ap_50_95 = float(p_slice[valid].mean()) if valid.any() else float("nan")
-        ap_50    = float(p_slice[iou50_idx][p_slice[iou50_idx] > -1].mean()) if (p_slice[iou50_idx] > -1).any() else float("nan")
 
-        pc = float(prec[best_j, k]) if prec_raw[best_j, k] > -1 else float("nan")
-        rc = macro_recall
+        # [T, R, K, A, M] -> [T, R]
+        p_slice = coco_eval.eval['precision'][:, :, k, area_idx, maxdet_idx]
 
-        #Doing to this to filter out dataset class
-        if np.isnan(ap_50_95) or np.isnan(ap_50) or np.isnan(pc) or np.isnan(rc):
+        # [T, R]
+        p_masked = np.where(p_slice > -1, p_slice, np.nan)
+
+        # We do this as two sequential nanmeans to avoid
+        # underweighting columns with more nans, since each
+        # column corresponds to a different IoU threshold
+        # [T, R] -> [T]
+        ap_per_iou = np.nanmean(p_masked, axis=1)
+
+        # [T] -> [1]
+        ap_50_95 = float(np.nanmean(ap_per_iou))
+        ap_50    = float(np.nanmean(p_masked[iou50_idx]))
+
+        if (
+            np.isnan(ap_50_95)
+            or np.isnan(ap_50)
+            or np.isnan(best['per_class_prec'][k])
+            or np.isnan(best['per_class_rec'][k])
+        ):
             continue
 
         per_class.append({
             "class"      : cat_id_to_name[int(cid)],
             "map@50:95"  : ap_50_95,
             "map@50"     : ap_50,
-            "precision"  : pc,
-            "recall"     : rc,
+            "precision"  : best['per_class_prec'][k],
+            "recall"     : best['per_class_rec'][k],
         })
 
     per_class.append({
         "class"     : "all",
         "map@50:95" : map_50_95,
         "map@50"    : map_50,
-        "precision" : macro_precision,
-        "recall"    : macro_recall,
+        "precision" : best['macro_precision'],
+        "recall"    : best['macro_recall'],
     })
 
     return {
         "class_map": per_class,
         "map"      : map_50,
-        "precision": macro_precision,
-        "recall"   : macro_recall
+        "precision": best['macro_precision'],
+        "recall"   : best['macro_recall'],
     }
 
-def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, args=None):
+def evaluate(model, criterion, postprocess, data_loader, base_ds, device, args=None):
     model.eval()
     if args.fp16_eval:
         model.half()
@@ -261,8 +368,8 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, arg
     )
     header = "Test:"
 
-    iou_types = tuple(k for k in ("segm", "bbox") if k in postprocessors.keys())
-    coco_evaluator = CocoEvaluator(base_ds, iou_types)
+    iou_types = ("bbox",) if not args.segmentation_head else ("bbox", "segm")
+    coco_evaluator = CocoEvaluator(base_ds, iou_types, args.eval_max_dets)
 
     for samples, targets in metric_logger.log_every(data_loader, 10, header):
         samples = samples.to(device)
@@ -310,10 +417,10 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, arg
         metric_logger.update(class_error=loss_dict_reduced["class_error"])
 
         orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
-        results = postprocessors["bbox"](outputs, orig_target_sizes)
+        results_all = postprocess(outputs, orig_target_sizes)
         res = {
             target["image_id"].item(): output
-            for target, output in zip(targets, results)
+            for target, output in zip(targets, results_all)
         }
         if coco_evaluator is not None:
             coco_evaluator.update(res)
@@ -332,9 +439,10 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, arg
     if coco_evaluator is not None:
         results_json = coco_extended_metrics(coco_evaluator.coco_eval["bbox"])
         stats["results_json"] = results_json
-        if "bbox" in postprocessors.keys():
+        if "bbox" in iou_types:
             stats["coco_eval_bbox"] = coco_evaluator.coco_eval["bbox"].stats.tolist()
 
-        if "segm" in postprocessors.keys():
+        if "segm" in iou_types:
+            results_json = coco_extended_metrics(coco_evaluator.coco_eval["segm"])
             stats["coco_eval_masks"] = coco_evaluator.coco_eval["segm"].stats.tolist()
     return stats, coco_evaluator

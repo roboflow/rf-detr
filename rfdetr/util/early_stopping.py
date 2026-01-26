@@ -3,22 +3,31 @@ Early stopping callback for RF-DETR training
 """
 
 from logging import getLogger
+from typing import Any, Dict
 
 logger = getLogger(__name__)
 
 class EarlyStoppingCallback:
     """
-    Early stopping callback that monitors mAP and stops training if no improvement 
+    Early stopping callback that monitors mAP and stops training if no improvement
     over a threshold is observed for a specified number of epochs.
-    
+
     Args:
         patience (int): Number of epochs with no improvement to wait before stopping
         min_delta (float): Minimum change in mAP to qualify as improvement
         use_ema (bool): Whether to use EMA model metrics for early stopping
         verbose (bool): Whether to print early stopping messages
     """
-    
-    def __init__(self, model, patience=5, min_delta=0.001, use_ema=False, verbose=True):
+
+    def __init__(
+        self,
+        model: Any,
+        patience: int = 5,
+        min_delta: float = 0.001,
+        use_ema: bool = False,
+        verbose: bool = True,
+        segmentation_head: bool = False,
+    ) -> None:
         self.patience = patience
         self.min_delta = min_delta
         self.use_ema = use_ema
@@ -26,18 +35,25 @@ class EarlyStoppingCallback:
         self.best_map = 0.0
         self.counter = 0
         self.model = model
-        
-    def update(self, log_stats):
+        self.segmentation_head = segmentation_head
+
+    def update(self, log_stats: Dict[str, Any]) -> None:
         """Update early stopping state based on epoch validation metrics"""
         regular_map = None
         ema_map = None
-        
+
         if 'test_coco_eval_bbox' in log_stats:
-            regular_map = log_stats['test_coco_eval_bbox'][0]
-        
+            if not self.segmentation_head:
+                regular_map = log_stats['test_coco_eval_bbox'][0]
+            else:
+                regular_map = log_stats['test_coco_eval_masks'][0]
+
         if 'ema_test_coco_eval_bbox' in log_stats:
-            ema_map = log_stats['ema_test_coco_eval_bbox'][0]
-        
+            if not self.segmentation_head:
+                ema_map = log_stats['ema_test_coco_eval_bbox'][0]
+            else:
+                ema_map = log_stats['ema_test_coco_eval_masks'][0]
+
         current_map = None
         if regular_map is not None and ema_map is not None:
             if self.use_ema:
@@ -56,10 +72,10 @@ class EarlyStoppingCallback:
             if self.verbose:
                 raise ValueError("No valid mAP metric found!")
             return
-        
+
         if self.verbose:
             print(f"Early stopping: Current mAP ({metric_source}): {current_map:.4f}, Best: {self.best_map:.4f}, Diff: {current_map - self.best_map:.4f}, Min delta: {self.min_delta}")
-        
+
         if current_map > self.best_map + self.min_delta:
             self.best_map = current_map
             self.counter = 0
@@ -68,7 +84,7 @@ class EarlyStoppingCallback:
             self.counter += 1
             if self.verbose:
                 print(f"Early stopping: No improvement in mAP for {self.counter} epochs (best: {self.best_map:.4f}, current: {current_map:.4f})")
-            
+
         if self.counter >= self.patience:
             print(f"Early stopping triggered: No improvement above {self.min_delta} threshold for {self.patience} epochs")
             if self.model:
