@@ -1,194 +1,180 @@
 # Run an RF-DETR Instance Segmentation Model
 
-You can run models trained with the RF-DETR-Seg (Preview) architecture with [Inference](https://github.com/roboflow/inference), an open source computer vision inference server. The base models are trained on the [Microsoft COCO dataset](https://universe.roboflow.com/microsoft/coco).
+RF-DETR is a real-time transformer architecture for instance segmentation, built on a DINOv2 vision transformer backbone. The base models are trained on the Microsoft COCO dataset and achieve strong accuracy and latency trade-offs.
 
-## Run a Model
+## Pre-trained Checkpoints
 
-=== "Run on an Image"
+RF-DETR-Seg offers model sizes from Nano to 2XLarge, allowing trade-offs between accuracy, latency, and parameter count. All latency numbers were measured on an NVIDIA T4 using TensorRT, FP16, and batch size 1.
 
-    To run RF-DETR on an image, use the following code:
+| Size | RF-DETR package class | Inference package alias     | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |
+|:----:|:---------------------:|:----------------------------|:--------------------:|:------------------------:|:------------:|:----------:|:----------:|
+| N    | `RFDETRSegNano`       | `rfdetr-seg-nano`           | 63.0                 | 40.3                     | 3.4          | 33.6       | 312x312    |
+| S    | `RFDETRSegSmall`      | `rfdetr-seg-small`          | 66.2                 | 43.1                     | 4.4          | 33.7       | 384x384    |
+| M    | `RFDETRSegMedium`     | `rfdetr-seg-medium`         | 68.4                 | 45.3                     | 5.9          | 35.7       | 432x432    |
+| L    | `RFDETRSegLarge`      | `rfdetr-seg-large`          | 70.5                 | 47.1                     | 8.8          | 36.2       | 504x504    |
+| XL   | `RFDETRSegXLarge`     | `rfdetr-seg-xlarge`         | 72.2                 | 48.8                     | 13.5         | 38.1       | 624x624    |
+| 2XL  | `RFDETRSeg2XLarge`    | `rfdetr-seg-2xlarge`        | 73.1                 | 49.9                     | 21.8         | 38.6       | 768x768    |
+
+## Run on an Image
+
+Perform inference on an image using either the `rfdetr` package or the `inference` package. To use a different model size, select the corresponding class or alias from the table above.
+
+=== "rfdetr"
 
     ```python
-    import os
-    import supervision as sv
-    from inference import get_model
-    from PIL import Image
-    from io import BytesIO
     import requests
-
-    url = "https://media.roboflow.com/dog.jpeg"
-    image = Image.open(BytesIO(requests.get(url).content))
-
-    model = get_model("rfdetr-seg-preview")
-
-    predictions = model.infer(image, confidence=0.5)[0]
-
-    detections = sv.Detections.from_inference(predictions)
-
-    labels = [prediction.class_name for prediction in predictions.predictions]
-
-    annotated_image = image.copy()
-    annotated_image = sv.MaskAnnotator(color=sv.ColorPalette.ROBOFLOW).annotate(annotated_image, detections)
-    annotated_image = sv.LabelAnnotator(color=sv.ColorPalette.ROBOFLOW).annotate(annotated_image, detections, labels)
-
-    sv.plot_image(annotated_image)
-    ```
-
-    Above, replace the image URL with any image you want to use with the model.
-
-    Here are the results from the code above:
-
-    <figure markdown="span">
-    ![](https://media.roboflow.com/rfdetr-docs/rfdetr_seg.jpg){ width=300 }
-    <figcaption>RF-DETR Base predictions</figcaption>
-    </figure>
-
-
-=== "Run on a Video File"
-
-    To run RF-DETR on a video file, use the following code:
-
-    ```python
     import supervision as sv
-    from rfdetr import RFDETRBase
+    from PIL import Image
+    from rfdetr import RFDETRSegMedium
     from rfdetr.util.coco_classes import COCO_CLASSES
 
-    model = RFDETRBase()
+    model = RFDETRSegMedium()
 
-    def callback(frame, index):
-        detections = model.predict(frame[:, :, ::-1], threshold=0.5)
-            
-        labels = [
-            f"{COCO_CLASSES[class_id]} {confidence:.2f}"
-            for class_id, confidence
-            in zip(detections.class_id, detections.confidence)
-        ]
+    image = Image.open(requests.get('https://media.roboflow.com/dog.jpg', stream=True).raw)
+    detections = model.predict(image, threshold=0.5)
 
-        annotated_frame = frame.copy()
-        annotated_frame = sv.MaskAnnotator().annotate(annotated_frame, detections)
-        annotated_frame = sv.LabelAnnotator().annotate(annotated_frame, detections, labels)
-        return annotated_frame
-
-    sv.process_video(
-        source_path=<SOURCE_VIDEO_PATH>,
-        target_path=<TARGET_VIDEO_PATH>,
-        callback=callback
-    )
-    ```
-
-    Above, set your `SOURCE_VIDEO_PATH` and `TARGET_VIDEO_PATH` to the directories of the video you want to process and where you want to save the results from inference, respectively.
-
-=== "Run on a Webcam Stream"
-
-    To run RF-DETR on a webcam input, use the following code:
-
-    ```python
-    import cv2
-    import supervision as sv
-    from rfdetr import RFDETRBase
-    from rfdetr.util.coco_classes import COCO_CLASSES
-
-    model = RFDETRBase()
-
-    cap = cv2.VideoCapture(0)
-    while True:
-        success, frame = cap.read()
-        if not success:
-            break
-
-        detections = model.predict(frame[:, :, ::-1], threshold=0.5)
-        
-        labels = [
-            f"{COCO_CLASSES[class_id]} {confidence:.2f}"
-            for class_id, confidence
-            in zip(detections.class_id, detections.confidence)
-        ]
-
-        annotated_frame = frame.copy()
-        annotated_frame = sv.MaskAnnotator().annotate(annotated_frame, detections)
-        annotated_frame = sv.LabelAnnotator().annotate(annotated_frame, detections, labels)
-
-        cv2.imshow("Webcam", annotated_frame)
-
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-
-    cap.release()
-    cv2.destroyAllWindows()
-    ```
-
-=== "Run on an RTSP Stream"
-
-    To run RF-DETR on an RTSP stream, use the following code:
-
-    ```python
-    import cv2
-    import supervision as sv
-    from rfdetr import RFDETRBase
-    from rfdetr.util.coco_classes import COCO_CLASSES
-
-    model = RFDETRBase()
-
-    cap = cv2.VideoCapture(<RTSP_STREAM_URL>)
-    while True:
-        success, frame = cap.read()
-        if not success:
-            break
-
-        detections = model.predict(frame[:, :, ::-1], threshold=0.5)
-        
-        labels = [
-            f"{COCO_CLASSES[class_id]} {confidence:.2f}"
-            for class_id, confidence
-            in zip(detections.class_id, detections.confidence)
-        ]
-
-        annotated_frame = frame.copy()
-        annotated_frame = sv.MaskAnnotator().annotate(annotated_frame, detections)
-        annotated_frame = sv.LabelAnnotator().annotate(annotated_frame, detections, labels)
-
-        cv2.imshow("RTSP Stream", annotated_frame)
-
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-
-    cap.release()
-    cv2.destroyAllWindows()
-    ```
-
-## Batch Inference
-
-You can provide `.predict()` with either a single image or a list of images using the `rfdetr` package for use in batch inference applications. When multiple images are supplied, they are processed together in a single forward pass, resulting in a corresponding list of detections.
-
-```python
-import io
-import requests
-import supervision as sv
-from PIL import Image
-from rfdetr import RFDETRSegPreview
-from rfdetr.util.coco_classes import COCO_CLASSES
-
-model = RFDETRSegPreview()
-
-urls = [
-    "https://media.roboflow.com/notebooks/examples/dog-2.jpeg",
-    "https://media.roboflow.com/notebooks/examples/dog-3.jpeg"
-]
-
-images = [Image.open(io.BytesIO(requests.get(url).content)) for url in urls]
-
-detections_list = model.predict(images, threshold=0.5)
-
-for image, detections in zip(images, detections_list):
     labels = [
-        f"{COCO_CLASSES[class_id]} {confidence:.2f}"
-        for class_id, confidence
-        in zip(detections.class_id, detections.confidence)
+        f"{COCO_CLASSES[class_id]}"
+        for class_id
+        in detections.class_id
     ]
 
-    annotated_image = image.copy()
-    annotated_image = sv.MaskAnnotator().annotate(annotated_image, detections)
+    annotated_image = sv.MaskAnnotator().annotate(image, detections)
     annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
+    ```
 
-    sv.plot_image(annotated_image)
-```
+=== "inference"
+
+    ```python
+    import requests
+    import supervision as sv
+    from PIL import Image
+    from inference import get_model
+
+    model = get_model("rfdetr-seg-medium")
+
+    image = Image.open(requests.get('https://media.roboflow.com/dog.jpg', stream=True).raw)
+    predictions = model.infer(image, confidence=0.5)[0]
+    detections = sv.Detections.from_inference(predictions)
+
+    annotated_image = sv.MaskAnnotator().annotate(image, detections)
+    annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections)
+    ```
+
+## Run on video, webcam, or RTSP stream
+
+These examples use OpenCV for decoding and display. Replace `<SOURCE_VIDEO_PATH>`, `<WEBCAM_INDEX>`, and `<RTSP_STREAM_URL>` with your inputs. `<WEBCAM_INDEX>` is usually `0` for the default camera.
+
+=== "video"
+
+    ```python
+    import cv2
+    import supervision as sv
+    from rfdetr import RFDETRSegMedium
+    from rfdetr.util.coco_classes import COCO_CLASSES
+
+    model = RFDETRSegMedium()
+
+    video_capture = cv2.VideoCapture("<SOURCE_VIDEO_PATH>")
+    if not video_capture.isOpened():
+        raise RuntimeError("Failed to open video source: <SOURCE_VIDEO_PATH>")
+
+    while True:
+        success, frame_bgr = video_capture.read()
+        if not success:
+            break
+
+        frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+        detections = model.predict(frame_rgb, threshold=0.5)
+
+        labels = [
+            COCO_CLASSES[class_id]
+            for class_id in detections.class_id
+        ]
+
+        annotated_frame = sv.MaskAnnotator().annotate(frame_bgr, detections)
+        annotated_frame = sv.LabelAnnotator().annotate(annotated_frame, detections, labels)
+
+        cv2.imshow("RF-DETR-Seg Video", annotated_frame)
+        if cv2.waitKey(1) & 0xFF == ord("q"):
+            break
+
+    video_capture.release()
+    cv2.destroyAllWindows()
+    ```
+
+=== "webcam"
+
+    ```python
+    import cv2
+    import supervision as sv
+    from rfdetr import RFDETRSegMedium
+    from rfdetr.util.coco_classes import COCO_CLASSES
+
+    model = RFDETRSegMedium()
+
+    video_capture = cv2.VideoCapture(<WEBCAM_INDEX>)
+    if not video_capture.isOpened():
+        raise RuntimeError("Failed to open webcam: <WEBCAM_INDEX>")
+
+    while True:
+        success, frame_bgr = video_capture.read()
+        if not success:
+            break
+
+        frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+        detections = model.predict(frame_rgb, threshold=0.5)
+
+        labels = [
+            COCO_CLASSES[class_id]
+            for class_id in detections.class_id
+        ]
+
+        annotated_frame = sv.MaskAnnotator().annotate(frame_bgr, detections)
+        annotated_frame = sv.LabelAnnotator().annotate(annotated_frame, detections, labels)
+
+        cv2.imshow("RF-DETR-Seg Webcam", annotated_frame)
+        if cv2.waitKey(1) & 0xFF == ord("q"):
+            break
+
+    video_capture.release()
+    cv2.destroyAllWindows()
+    ```
+
+=== "stream"
+
+    ```python
+    import cv2
+    import supervision as sv
+    from rfdetr import RFDETRSegMedium
+    from rfdetr.util.coco_classes import COCO_CLASSES
+
+    model = RFDETRSegMedium()
+
+    video_capture = cv2.VideoCapture("<RTSP_STREAM_URL>")
+    if not video_capture.isOpened():
+        raise RuntimeError("Failed to open RTSP stream: <RTSP_STREAM_URL>")
+
+    while True:
+        success, frame_bgr = video_capture.read()
+        if not success:
+            break
+
+        frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+        detections = model.predict(frame_rgb, threshold=0.5)
+
+        labels = [
+            COCO_CLASSES[class_id]
+            for class_id in detections.class_id
+        ]
+
+        annotated_frame = sv.MaskAnnotator().annotate(frame_bgr, detections)
+        annotated_frame = sv.LabelAnnotator().annotate(annotated_frame, detections, labels)
+
+        cv2.imshow("RF-DETR-Seg RTSP", annotated_frame)
+        if cv2.waitKey(1) & 0xFF == ord("q"):
+            break
+
+    video_capture.release()
+    cv2.destroyAllWindows()
+    ```

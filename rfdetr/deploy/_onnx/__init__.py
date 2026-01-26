@@ -6,8 +6,6 @@
 """
 onnx optimizer and symbolic registry
 """
-from . import optimizer
-from . import symbolic
-
-from .optimizer import OnnxOptimizer
-from .symbolic import CustomOpSymbolicRegistry
+from rfdetr.deploy._onnx import optimizer, symbolic
+from rfdetr.deploy._onnx.optimizer import OnnxOptimizer
+from rfdetr.deploy._onnx.symbolic import CustomOpSymbolicRegistry

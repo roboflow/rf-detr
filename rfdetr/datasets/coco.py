@@ -19,16 +19,21 @@ COCO dataset which returns image_id for evaluation.
 Mostly copy-paste from https://github.com/pytorch/vision/blob/13b35ff/references/detection/coco_utils.py
 """
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
 
+import pycocotools.mask as coco_mask
 import torch
 import torch.utils.data
 import torchvision
-import pycocotools.mask as coco_mask
+from PIL import Image
 
 import rfdetr.datasets.transforms as T
 
 
-def compute_multi_scale_scales(resolution, expanded_scales=False, patch_size=16, num_windows=4):
+def is_valid_coco_dataset(dataset_dir: str) -> bool:
+    return (Path(dataset_dir) / "train" / "_annotations.coco.json").exists()
+
+def compute_multi_scale_scales(resolution: int, expanded_scales: bool = False, patch_size: int = 16, num_windows: int = 4) -> List[int]:
     # round to the nearest multiple of 4*patch_size to enable both patching and windowing
     base_num_patches_per_window = resolution // (patch_size * num_windows)
     offsets = [-3, -2, -1, 0, 1, 2, 3, 4] if not expanded_scales else [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5]
@@ -38,7 +43,7 @@ def compute_multi_scale_scales(resolution, expanded_scales=False, patch_size=16,
     return proposed_scales
 
 
-def convert_coco_poly_to_mask(segmentations, height, width):
+def convert_coco_poly_to_mask(segmentations: List[Any], height: int, width: int) -> torch.Tensor:
     """Convert polygon segmentation to a binary mask tensor of shape [N, H, W].
     Requires pycocotools.
     """
@@ -64,13 +69,13 @@ def convert_coco_poly_to_mask(segmentations, height, width):
 
 
 class CocoDetection(torchvision.datasets.CocoDetection):
-    def __init__(self, img_folder, ann_file, transforms, include_masks=False):
+    def __init__(self, img_folder: Union[str, Path], ann_file: Union[str, Path], transforms: Optional[Any], include_masks: bool = False) -> None:
         super(CocoDetection, self).__init__(img_folder, ann_file)
         self._transforms = transforms
         self.include_masks = include_masks
         self.prepare = ConvertCoco(include_masks=include_masks)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> Tuple[Any, Any]:
         img, target = super(CocoDetection, self).__getitem__(idx)
         image_id = self.ids[idx]
         target = {'image_id': image_id, 'annotations': target}
@@ -82,10 +87,10 @@ class CocoDetection(torchvision.datasets.CocoDetection):
 
 class ConvertCoco(object):
 
-    def __init__(self, include_masks=False):
+    def __init__(self, include_masks: bool = False) -> None:
         self.include_masks = include_masks
 
-    def __call__(self, image, target):
+    def __call__(self, image: Image.Image, target: Dict[str, Any]) -> Tuple[Image.Image, Dict[str, Any]]:
         w, h = image.size
 
         image_id = target["image_id"]
@@ -140,7 +145,7 @@ class ConvertCoco(object):
         return image, target
 
 
-def make_coco_transforms(image_set, resolution, multi_scale=False, expanded_scales=False, skip_random_resize=False, patch_size=16, num_windows=4):
+def make_coco_transforms(image_set: str, resolution: int, multi_scale: bool = False, expanded_scales: bool = False, skip_random_resize: bool = False, patch_size: int = 16, num_windows: int = 4) -> T.Compose:
 
     normalize = T.Compose([
         T.ToTensor(),
@@ -183,9 +188,7 @@ def make_coco_transforms(image_set, resolution, multi_scale=False, expanded_scal
     raise ValueError(f'unknown {image_set}')
 
 
-def make_coco_transforms_square_div_64(image_set, resolution, multi_scale=False, expanded_scales=False, skip_random_resize=False, patch_size=16, num_windows=4):
-    """
-    """
+def make_coco_transforms_square_div_64(image_set: str, resolution: int, multi_scale: bool = False, expanded_scales: bool = False, skip_random_resize: bool = False, patch_size: int = 16, num_windows: int = 4) -> T.Compose:
 
     normalize = T.Compose([
         T.ToTensor(),
@@ -233,79 +236,21 @@ def make_coco_transforms_square_div_64(image_set, resolution, multi_scale=False,
 
     raise ValueError(f'unknown {image_set}')
 
-def build(image_set, args, resolution):
+def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
     root = Path(args.coco_path)
     assert root.exists(), f'provided COCO path {root} does not exist'
     mode = 'instances'
     PATHS = {
         "train": (root / "train2017", root / "annotations" / f'{mode}_train2017.json'),
         "val": (root /  "val2017", root / "annotations" / f'{mode}_val2017.json'),
-        "test": (root / "test2017", root / "annotations" / f'image_info_test-dev2017.json'),
+        "test": (root / "test2017", root / "annotations" / 'image_info_test-dev2017.json'),
     }
-    
+
     img_folder, ann_file = PATHS[image_set.split("_")[0]]
-    
-    try:
-        square_resize = args.square_resize
-    except:
-        square_resize = False
-    
-    try:
-        square_resize_div_64 = args.square_resize_div_64
-    except:
-        square_resize_div_64 = False
 
-    
-    if square_resize_div_64:
-        dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms_square_div_64(
-            image_set,
-            resolution,
-            multi_scale=args.multi_scale,
-            expanded_scales=args.expanded_scales,
-            skip_random_resize=not args.do_random_resize_via_padding,
-            patch_size=args.patch_size,
-            num_windows=args.num_windows
-        ))
-    else:
-        dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms(
-            image_set,
-            resolution,
-            multi_scale=args.multi_scale,
-            expanded_scales=args.expanded_scales,
-            skip_random_resize=not args.do_random_resize_via_padding,
-            patch_size=args.patch_size,
-            num_windows=args.num_windows
-        ))
-    return dataset
+    square_resize_div_64 = getattr(args, 'square_resize_div_64', False)
+    include_masks = getattr(args, "segmentation_head", False)
 
-def build_roboflow(image_set, args, resolution):
-    root = Path(args.dataset_dir)
-    assert root.exists(), f'provided Roboflow path {root} does not exist'
-    mode = 'instances'
-    PATHS = {
-        "train": (root / "train", root / "train" / "_annotations.coco.json"),
-        "val": (root /  "valid", root / "valid" / "_annotations.coco.json"),
-        "test": (root / "test", root / "test" / "_annotations.coco.json"),
-    }
-    
-    img_folder, ann_file = PATHS[image_set.split("_")[0]]
-    
-    try:
-        square_resize = args.square_resize
-    except:
-        square_resize = False
-    
-    try:
-        square_resize_div_64 = args.square_resize_div_64
-    except:
-        square_resize_div_64 = False
-    
-    try:
-        include_masks = args.segmentation_head
-    except:
-        include_masks = False
-
-    
     if square_resize_div_64:
         dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms_square_div_64(
             image_set,
@@ -325,5 +270,50 @@ def build_roboflow(image_set, args, resolution):
             skip_random_resize=not args.do_random_resize_via_padding,
             patch_size=args.patch_size,
             num_windows=args.num_windows
+        ), include_masks=include_masks)
+    return dataset
+
+def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
+    """Build a Roboflow COCO-format dataset.
+
+    This uses Roboflow's standard directory structure
+    (train/valid/test folders with _annotations.coco.json).
+    """
+    root = Path(args.dataset_dir)
+    assert root.exists(), f'provided Roboflow path {root} does not exist'
+    PATHS = {
+        "train": (root / "train", root / "train" / "_annotations.coco.json"),
+        "val": (root /  "valid", root / "valid" / "_annotations.coco.json"),
+        "test": (root / "test", root / "test" / "_annotations.coco.json"),
+    }
+
+    img_folder, ann_file = PATHS[image_set.split("_")[0]]
+    square_resize_div_64 = getattr(args, "square_resize_div_64", False)
+    include_masks = getattr(args, "segmentation_head", False)
+    multi_scale = getattr(args, "multi_scale", False)
+    expanded_scales = getattr(args, "expanded_scales", False)
+    do_random_resize_via_padding = getattr(args, "do_random_resize_via_padding", False)
+    patch_size = getattr(args, "patch_size", 16)
+    num_windows = getattr(args, "num_windows", 4)
+
+    if square_resize_div_64:
+        dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms_square_div_64(
+            image_set,
+            resolution,
+            multi_scale=multi_scale,
+            expanded_scales=expanded_scales,
+            skip_random_resize=not do_random_resize_via_padding,
+            patch_size=patch_size,
+            num_windows=num_windows
+        ), include_masks=include_masks)
+    else:
+        dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms(
+            image_set,
+            resolution,
+            multi_scale=multi_scale,
+            expanded_scales=expanded_scales,
+            skip_random_resize=not do_random_resize_via_padding,
+            patch_size=patch_size,
+            num_windows=num_windows
         ), include_masks=include_masks)
     return dataset

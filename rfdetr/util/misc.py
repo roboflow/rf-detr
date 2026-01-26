@@ -22,10 +22,11 @@ import pickle
 import subprocess
 import time
 from collections import defaultdict, deque
-from typing import Optional, List
+from typing import Any, Dict, Generator, Iterable, List, Optional, Tuple
 
 import torch
 import torch.distributed as dist
+
 # needed due to empty tensor bug in pytorch and torchvision 0.5
 import torchvision
 from torch import Tensor
@@ -40,7 +41,7 @@ class SmoothedValue(object):
     window or the global series average.
     """
 
-    def __init__(self, window_size=20, fmt=None):
+    def __init__(self, window_size: int = 20, fmt: Optional[str] = None) -> None:
         if fmt is None:
             fmt = "{median:.4f} ({global_avg:.4f})"
         self.deque = deque(maxlen=window_size)
@@ -48,12 +49,12 @@ class SmoothedValue(object):
         self.count = 0
         self.fmt = fmt
 
-    def update(self, value, n=1):
+    def update(self, value: float, n: int = 1) -> None:
         self.deque.append(value)
         self.count += n
         self.total += value * n
 
-    def synchronize_between_processes(self):
+    def synchronize_between_processes(self) -> None:
         """
         Warning: does not synchronize the deque!
         """
@@ -67,28 +68,28 @@ class SmoothedValue(object):
         self.total = t[1]
 
     @property
-    def median(self):
+    def median(self) -> float:
         d = torch.tensor(list(self.deque))
         return d.median().item()
 
     @property
-    def avg(self):
+    def avg(self) -> float:
         d = torch.tensor(list(self.deque), dtype=torch.float32)
         return d.mean().item()
 
     @property
-    def global_avg(self):
+    def global_avg(self) -> float:
         return self.total / self.count
 
     @property
-    def max(self):
+    def max(self) -> float:
         return max(self.deque)
 
     @property
-    def value(self):
+    def value(self) -> float:
         return self.deque[-1]
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.fmt.format(
             median=self.median,
             avg=self.avg,
@@ -97,13 +98,13 @@ class SmoothedValue(object):
             value=self.value)
 
 
-def all_gather(data):
+def all_gather(data: Any) -> List[Any]:
     """
     Run all_gather on arbitrary picklable data (not necessarily tensors)
     Args:
         data: any picklable object
     Returns:
-        list[data]: list of data gathered from each rank
+        list of data gathered from each rank
     """
     world_size = get_world_size()
     if world_size == 1:
@@ -140,7 +141,7 @@ def all_gather(data):
     return data_list
 
 
-def reduce_dict(input_dict, average=True):
+def reduce_dict(input_dict: Dict[str, torch.Tensor], average: bool = True) -> Dict[str, torch.Tensor]:
     """
     Args:
         input_dict (dict): all the values will be reduced
@@ -168,7 +169,7 @@ def reduce_dict(input_dict, average=True):
 
 
 class MetricLogger(object):
-    def __init__(self, delimiter="\t", wandb_logging=False):
+    def __init__(self, delimiter: str = "\t", wandb_logging: bool = False) -> None:
         self.meters = defaultdict(SmoothedValue)
         self.delimiter = delimiter
         if wandb_logging:
@@ -177,14 +178,14 @@ class MetricLogger(object):
         else:
             self.wandb = None
 
-    def update(self, **kwargs):
+    def update(self, **kwargs: Any) -> None:
         for k, v in kwargs.items():
             if isinstance(v, torch.Tensor):
                 v = v.item()
             assert isinstance(v, (float, int))
             self.meters[k].update(v)
 
-    def __getattr__(self, attr):
+    def __getattr__(self, attr: str) -> SmoothedValue:
         if attr in self.meters:
             return self.meters[attr]
         if attr in self.__dict__:
@@ -192,7 +193,7 @@ class MetricLogger(object):
         raise AttributeError("'{}' object has no attribute '{}'".format(
             type(self).__name__, attr))
 
-    def __str__(self):
+    def __str__(self) -> str:
         loss_str = []
         for name, meter in self.meters.items():
             loss_str.append(
@@ -200,14 +201,14 @@ class MetricLogger(object):
             )
         return self.delimiter.join(loss_str)
 
-    def synchronize_between_processes(self):
+    def synchronize_between_processes(self) -> None:
         for meter in self.meters.values():
             meter.synchronize_between_processes()
 
-    def add_meter(self, name, meter):
+    def add_meter(self, name: str, meter: SmoothedValue) -> None:
         self.meters[name] = meter
 
-    def log_every(self, iterable, print_freq, header=None):
+    def log_every(self, iterable: Iterable[Any], print_freq: int, header: Optional[str] = None) -> Generator[Any, None, None]:
         i = 0
         if not header:
             header = ''
@@ -266,7 +267,7 @@ class MetricLogger(object):
             header, total_time_str, total_time / len(iterable)))
 
 
-def get_sha():
+def get_sha() -> str:
     cwd = os.path.dirname(os.path.abspath(__file__))
 
     def _run(command):
@@ -286,14 +287,13 @@ def get_sha():
     return message
 
 
-def collate_fn(batch):
+def collate_fn(batch: List[Tuple[Any, ...]]) -> Tuple[Any, ...]:
     batch = list(zip(*batch))
     batch[0] = nested_tensor_from_tensor_list(batch[0])
     return tuple(batch)
 
 
-def _max_by_axis(the_list):
-    # type: (List[List[int]]) -> List[int]
+def _max_by_axis(the_list: List[List[int]]) -> List[int]:
     maxes = the_list[0]
     for sublist in the_list[1:]:
         for index, item in enumerate(sublist):
@@ -302,12 +302,11 @@ def _max_by_axis(the_list):
 
 
 class NestedTensor(object):
-    def __init__(self, tensors, mask: Optional[Tensor]):
+    def __init__(self, tensors: Tensor, mask: Optional[Tensor]) -> None:
         self.tensors = tensors
         self.mask = mask
 
-    def to(self, device):
-        # type: (Device) -> NestedTensor # noqa
+    def to(self, device: torch.device) -> 'NestedTensor':
         cast_tensor = self.tensors.to(device)
         mask = self.mask
         if mask is not None:
@@ -317,14 +316,14 @@ class NestedTensor(object):
             cast_mask = None
         return NestedTensor(cast_tensor, cast_mask)
 
-    def decompose(self):
+    def decompose(self) -> Tuple[Tensor, Optional[Tensor]]:
         return self.tensors, self.mask
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return str(self.tensors)
 
 
-def nested_tensor_from_tensor_list(tensor_list: List[Tensor]):
+def nested_tensor_from_tensor_list(tensor_list: List[Tensor]) -> NestedTensor:
     # TODO make this more general
     if tensor_list[0].ndim == 3:
         if torchvision._is_tracing():
@@ -380,14 +379,14 @@ def _onnx_nested_tensor_from_tensor_list(tensor_list: List[Tensor]) -> NestedTen
     return NestedTensor(tensor, mask=mask)
 
 
-def setup_for_distributed(is_master):
+def setup_for_distributed(is_master: bool) -> None:
     """
     This function disables printing when not in master process
     """
     import builtins as __builtin__
     builtin_print = __builtin__.print
 
-    def print(*args, **kwargs):
+    def print(*args, **kwargs) -> None:
         force = kwargs.pop('force', False)
         if is_master or force:
             builtin_print(*args, **kwargs)
@@ -426,7 +425,7 @@ def save_on_master(obj, f, *args, **kwargs):
     if is_main_process():
         torch.save(obj, f, *args, **kwargs)
 
-def init_distributed_mode(args):
+def init_distributed_mode(args: Any) -> None:
     if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
         args.rank = int(os.environ["RANK"])
         args.world_size = int(os.environ['WORLD_SIZE'])
@@ -452,7 +451,7 @@ def init_distributed_mode(args):
 
 
 @torch.no_grad()
-def accuracy(output, target, topk=(1,)):
+def accuracy(output: torch.Tensor, target: torch.Tensor, topk: Tuple[int, ...] = (1,)) -> List[torch.Tensor]:
     """Computes the precision@k for the specified values of k"""
     if target.numel() == 0:
         return [torch.zeros([], device=output.device)]
@@ -470,8 +469,13 @@ def accuracy(output, target, topk=(1,)):
     return res
 
 
-def interpolate(input, size=None, scale_factor=None, mode="nearest", align_corners=None):
-    # type: (Tensor, Optional[List[int]], Optional[float], str, Optional[bool]) -> Tensor
+def interpolate(
+    input: Tensor,
+    size: Optional[List[int]] = None,
+    scale_factor: Optional[float] = None,
+    mode: str = "nearest",
+    align_corners: Optional[bool] = None,
+) -> Tensor:
     """
     Equivalent to nn.functional.interpolate, but with support for empty batch sizes.
     This will eventually be supported natively by PyTorch, and this
@@ -490,14 +494,14 @@ def interpolate(input, size=None, scale_factor=None, mode="nearest", align_corne
         return torchvision.ops.misc.interpolate(input, size, scale_factor, mode, align_corners)
 
 
-def inverse_sigmoid(x, eps=1e-5):
+def inverse_sigmoid(x: torch.Tensor, eps: float = 1e-5) -> torch.Tensor:
     x = x.clamp(min=0, max=1)
     x1 = x.clamp(min=eps)
     x2 = (1 - x).clamp(min=eps)
     return torch.log(x1/x2)
 
 
-def strip_checkpoint(checkpoint):
+def strip_checkpoint(checkpoint: str) -> None:
     state_dict = torch.load(checkpoint, map_location="cpu", weights_only=False)
     new_state_dict = {
         'model': state_dict['model'],

@@ -22,19 +22,29 @@ LW-DETR model and criterion classes
 import copy
 import math
 from typing import Callable
+
 import torch
 import torch.nn.functional as F
 from torch import nn
 
-from rfdetr.util import box_ops
-from rfdetr.util.misc import (NestedTensor, nested_tensor_from_tensor_list,
-                       accuracy, get_world_size,
-                       is_dist_avail_and_initialized)
-
 from rfdetr.models.backbone import build_backbone
 from rfdetr.models.matcher import build_matcher
+from rfdetr.models.segmentation_head import (
+    SegmentationHead,
+    calculate_uncertainty,
+    get_uncertain_point_coords_with_randomness,
+    point_sample,
+)
 from rfdetr.models.transformer import build_transformer
-from rfdetr.models.segmentation_head import SegmentationHead, get_uncertain_point_coords_with_randomness, point_sample
+from rfdetr.util import box_ops
+from rfdetr.util.misc import (
+    NestedTensor,
+    accuracy,
+    get_world_size,
+    is_dist_avail_and_initialized,
+    nested_tensor_from_tensor_list,
+)
+
 
 class LWDETR(nn.Module):
     """ This is the Group DETR v3 module that performs object detection """
@@ -67,7 +77,7 @@ class LWDETR(nn.Module):
         self.class_embed = nn.Linear(hidden_dim, num_classes)
         self.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
         self.segmentation_head = segmentation_head
-        
+
         query_dim=4
         self.refpoint_embed = nn.Embedding(num_queries * group_detr, query_dim)
         self.query_feat = nn.Embedding(num_queries * group_detr, hidden_dim)
@@ -112,7 +122,7 @@ class LWDETR(nn.Module):
         self.class_embed.weight.data = self.class_embed.weight.data[:num_classes]
         self.class_embed.bias.data = self.class_embed.bias.data.repeat(num_repeats)
         self.class_embed.bias.data = self.class_embed.bias.data[:num_classes]
-        
+
         if self.two_stage:
             for enc_out_class_embed in self.transformer.enc_out_class_embed:
                 enc_out_class_embed.weight.data = enc_out_class_embed.weight.data.repeat(num_repeats, 1)
@@ -163,6 +173,9 @@ class LWDETR(nn.Module):
             refpoint_embed_weight = self.refpoint_embed.weight[:self.num_queries]
             query_feat_weight = self.query_feat.weight[:self.num_queries]
 
+        if self.segmentation_head is not None:
+            seg_head_fwd = self.segmentation_head.sparse_forward if self.training else self.segmentation_head.forward
+
         hs, ref_unsigmoid, hs_enc, ref_enc = self.transformer(
             srcs, masks, poss, refpoint_embed_weight, query_feat_weight)
 
@@ -180,7 +193,7 @@ class LWDETR(nn.Module):
             outputs_class = self.class_embed(hs)
 
             if self.segmentation_head is not None:
-                outputs_masks = self.segmentation_head(features[0].tensors, hs, samples.tensors.shape[-2:])
+                outputs_masks = seg_head_fwd(features[0].tensors, hs, samples.tensors.shape[-2:])
 
             out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1]}
             if self.segmentation_head is not None:
@@ -199,8 +212,7 @@ class LWDETR(nn.Module):
             cls_enc = torch.cat(cls_enc, dim=1)
 
             if self.segmentation_head is not None:
-                masks_enc = self.segmentation_head(features[0].tensors, [hs_enc,], samples.tensors.shape[-2:], skip_blocks=True)
-                masks_enc = torch.cat(masks_enc, dim=1)
+                masks_enc = seg_head_fwd(features[0].tensors, [hs_enc,], samples.tensors.shape[-2:], skip_blocks=True)[0]
 
             if hs is not None:
                 out['enc_outputs'] = {'pred_logits': cls_enc, 'pred_boxes': ref_enc}
@@ -244,7 +256,10 @@ class LWDETR(nn.Module):
             if self.segmentation_head is not None:
                 outputs_masks = self.segmentation_head(srcs[0], [hs_enc,], tensors.shape[-2:], skip_blocks=True)[0]
 
-        return outputs_coord, outputs_class, outputs_masks
+        if outputs_masks is not None:
+            return outputs_coord, outputs_class, outputs_masks
+        else:
+            return outputs_coord, outputs_class
 
     @torch.jit.unused
     def _set_aux_loss(self, outputs_class, outputs_coord, outputs_masks):
@@ -327,7 +342,7 @@ class SetCriterion(nn.Module):
 
         if self.ia_bce_loss:
             alpha = self.focal_alpha
-            gamma = 2 
+            gamma = 2
             src_boxes = outputs['pred_boxes'][idx]
             target_boxes = torch.cat([t['boxes'][i] for t, (_, i) in zip(targets, indices)], dim=0)
 
@@ -442,17 +457,45 @@ class SetCriterion(nn.Module):
             box_ops.box_cxcywh_to_xyxy(target_boxes)))
         losses['loss_giou'] = loss_giou.sum() / num_boxes
         return losses
-    
+
     def loss_masks(self, outputs, targets, indices, num_boxes):
         """Compute BCE-with-logits and Dice losses for segmentation masks on matched pairs.
         Expects outputs to contain 'pred_masks' of shape [B, Q, H, W] and targets with key 'masks'.
         """
         assert 'pred_masks' in outputs, "pred_masks missing in model outputs"
-        pred_masks = outputs['pred_masks']  # [B, Q, H, W]
-        # gather matched prediction masks
         idx = self._get_src_permutation_idx(indices)
-        src_masks = pred_masks[idx]  # [N, H, W]
-        # handle no matches
+        pred_masks = outputs['pred_masks']  # [B, Q, H, W]
+
+        if isinstance(pred_masks, torch.Tensor):
+            # gather matched prediction masks
+            # handle no matches
+            src_masks = pred_masks[idx]  # [N, H, W]
+        else:
+            spatial_features = outputs["pred_masks"]["spatial_features"]
+            query_features = outputs["pred_masks"]["query_features"]
+            bias = outputs["pred_masks"]["bias"]
+            # If there are no matches, return an empty tensor like the Tensor branch does.
+            if idx[0].numel() == 0:
+                device = spatial_features.device
+                src_masks = torch.tensor([], device=device)
+            else:
+                batched_selected_masks = []
+                per_batch_counts = idx[0].unique(return_counts=True)[1]
+                batch_indices = torch.cat((torch.zeros_like(per_batch_counts[:1]), per_batch_counts), dim=0).cumsum(0)
+
+                for i in range(per_batch_counts.shape[0]):
+                    batch_indicator = idx[0][batch_indices[i]:batch_indices[i+1]]
+                    box_indicator = idx[1][batch_indices[i]:batch_indices[i+1]]
+
+                    this_batch_queries = query_features[(batch_indicator, box_indicator)]
+                    this_batch_spatial_features = spatial_features[idx[0][batch_indices[i+1]-1]]
+
+                    this_batch_masks = torch.einsum("chw,nc->nhw", this_batch_spatial_features, this_batch_queries) + bias
+
+                    batched_selected_masks.append(this_batch_masks)
+
+                src_masks = torch.cat(batched_selected_masks)
+
         if src_masks.numel() == 0:
             return {
                 'loss_mask_ce': src_masks.sum(),
@@ -460,7 +503,7 @@ class SetCriterion(nn.Module):
             }
         # gather matched target masks
         target_masks = torch.cat([t['masks'][j] for t, (_, j) in zip(targets, indices)], dim=0)  # [N, Ht, Wt]
-        
+
         # No need to upsample predictions as we are using normalized coordinates :)
         # N x 1 x H x W
         src_masks = src_masks.unsqueeze(1)
@@ -477,6 +520,16 @@ class SetCriterion(nn.Module):
                 3,
                 0.75,
             )
+
+        point_logits = point_sample(
+            src_masks,
+            point_coords,
+            align_corners=False,
+        ).squeeze(1)
+
+
+
+        with torch.no_grad():
             # get gt labels
             point_labels = point_sample(
                 target_masks,
@@ -484,12 +537,6 @@ class SetCriterion(nn.Module):
                 align_corners=False,
                 mode="nearest",
             ).squeeze(1)
-
-        point_logits = point_sample(
-            src_masks,
-            point_coords,
-            align_corners=False,
-        ).squeeze(1)
 
         losses = {
             "loss_mask_ce": sigmoid_ce_loss_jit(point_logits, point_labels, num_boxes),
@@ -499,8 +546,8 @@ class SetCriterion(nn.Module):
         del src_masks
         del target_masks
         return losses
-    
- 
+
+
     def _get_src_permutation_idx(self, indices):
         # permute predictions following indices
         batch_idx = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])
@@ -572,7 +619,7 @@ class SetCriterion(nn.Module):
                     # Logging is enabled only for the last layer
                     kwargs['log'] = False
                 l_dict = self.get_loss(loss, enc_outputs, targets, indices, num_boxes, **kwargs)
-                l_dict = {k + f'_enc': v for k, v in l_dict.items()}
+                l_dict = {k + '_enc': v for k, v in l_dict.items()}
                 losses.update(l_dict)
 
         return losses
@@ -681,23 +728,6 @@ sigmoid_ce_loss_jit = torch.jit.script(
 )  # type: torch.jit.ScriptModule
 
 
-def calculate_uncertainty(logits):
-    """
-    We estimate uncerainty as L1 distance between 0.0 and the logit prediction in 'logits' for the
-        foreground class in `classes`.
-    Args:
-        logits (Tensor): A tensor of shape (R, 1, ...) for class-specific or
-            class-agnostic, where R is the total number of predicted masks in all images and C is
-            the number of foreground classes. The values are logits.
-    Returns:
-        scores (Tensor): A tensor of shape (R, 1, ...) that contains uncertainty scores with
-            the most uncertain locations having the highest uncertainty score.
-    """
-    assert logits.shape[1] == 1
-    gt_class_logits = logits.clone()
-    return -(torch.abs(gt_class_logits))
-
-
 class PostProcess(nn.Module):
     """ This module converts the model's output into the format expected by the coco api"""
     def __init__(self, num_select=300) -> None:
@@ -774,7 +804,7 @@ def build_model(args):
     # For more details on this, check the following discussion
     # https://github.com/facebookresearch/detr/issues/108#issuecomment-650269223
     num_classes = args.num_classes + 1
-    device = torch.device(args.device)
+    torch.device(args.device)
 
 
     backbone = build_backbone(
@@ -839,20 +869,17 @@ def build_criterion_and_postprocessors(args):
         for i in range(args.dec_layers - 1):
             aux_weight_dict.update({k + f'_{i}': v for k, v in weight_dict.items()})
         if args.two_stage:
-            aux_weight_dict.update({k + f'_enc': v for k, v in weight_dict.items()})
+            aux_weight_dict.update({k + '_enc': v for k, v in weight_dict.items()})
         weight_dict.update(aux_weight_dict)
 
     losses = ['labels', 'boxes', 'cardinality']
     if args.segmentation_head:
         losses.append('masks')
 
-    try:
-        sum_group_losses = args.sum_group_losses
-    except:
-        sum_group_losses = False
+    sum_group_losses = getattr(args, 'sum_group_losses', False)
     if args.segmentation_head:
         criterion = SetCriterion(args.num_classes + 1, matcher=matcher, weight_dict=weight_dict,
-                                focal_alpha=args.focal_alpha, losses=losses, 
+                                focal_alpha=args.focal_alpha, losses=losses,
                                 group_detr=args.group_detr, sum_group_losses=sum_group_losses,
                                 use_varifocal_loss = args.use_varifocal_loss,
                                 use_position_supervised_loss=args.use_position_supervised_loss,
@@ -860,7 +887,7 @@ def build_criterion_and_postprocessors(args):
                                 mask_point_sample_ratio=args.mask_point_sample_ratio)
     else:
         criterion = SetCriterion(args.num_classes + 1, matcher=matcher, weight_dict=weight_dict,
-                                focal_alpha=args.focal_alpha, losses=losses, 
+                                focal_alpha=args.focal_alpha, losses=losses,
                                 group_detr=args.group_detr, sum_group_losses=sum_group_losses,
                                 use_varifocal_loss = args.use_varifocal_loss,
                                 use_position_supervised_loss=args.use_position_supervised_loss,
