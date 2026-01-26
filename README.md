@@ -1,223 +1,260 @@
-# RF-DETR: SOTA Real-Time Object Detection Model
+# RF-DETR: Real-Time SOTA Detection and Segmentation
+
+[![version](https://badge.fury.io/py/rfdetr.svg)](https://badge.fury.io/py/rfdetr)
+[![downloads](https://img.shields.io/pypi/dm/rfdetr)](https://pypistats.org/packages/rfdetr)
+[![arXiv](https://img.shields.io/badge/arXiv-2511.09554-b31b1b.svg)](https://arxiv.org/abs/2511.09554)
+[![python-version](https://img.shields.io/pypi/pyversions/rfdetr)](https://badge.fury.io/py/rfdetr)
+[![license](https://img.shields.io/badge/license-Apache%202.0-blue)](https://github.com/roboflow/rfdetr/blob/main/LICENSE)
 
 [![hf space](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-blue)](https://huggingface.co/spaces/SkalskiP/RF-DETR)
 [![colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/roboflow-ai/notebooks/blob/main/notebooks/how-to-finetune-rf-detr-on-detection-dataset.ipynb)
 [![roboflow](https://raw.githubusercontent.com/roboflow-ai/notebooks/main/assets/badges/roboflow-blogpost.svg)](https://blog.roboflow.com/rf-detr)
 [![discord](https://img.shields.io/discord/1159501506232451173?logo=discord&label=discord&labelColor=fff&color=5865f2&link=https%3A%2F%2Fdiscord.gg%2FGbfgXGJ8Bk)](https://discord.gg/GbfgXGJ8Bk)
-[![version](https://badge.fury.io/py/rfdetr.svg)](https://badge.fury.io/py/rfdetr)
-[![python-version](https://img.shields.io/pypi/pyversions/rfdetr)](https://badge.fury.io/py/rfdetr)
-<!---
-[![license](https://img.shields.io/pypi/l/rfdetr)](https://github.com/roboflow/rfdetr/blob/main/LICENSE)
--->
 
-RF-DETR is a real-time, transformer-based object detection model architecture developed by Roboflow and released under the Apache 2.0 license.
+RF-DETR is a real-time transformer architecture for object detection and instance segmentation developed by Roboflow. Built on a DINOv2 vision transformer backbone, RF-DETR delivers state-of-the-art accuracy and latency trade-offs on [Microsoft COCO](https://cocodataset.org/#home) and [RF100-VL](https://github.com/roboflow/rf100-vl).
 
-RF-DETR is the first real-time model to exceed 60 AP on the [Microsoft COCO benchmark](https://cocodataset.org/#home) alongside competitive performance at base sizes. It also achieves state-of-the-art performance on [RF100-VL](https://github.com/roboflow/rf100-vl), an object detection benchmark that measures model domain adaptability to real world problems. RF-DETR is comparable speed to current real-time objection models.
+RF-DETR uses a DINOv2 vision transformer backbone and supports both detection and instance segmentation in a single, consistent API. All core models and code are released under the Apache 2.0 license.
 
-**RF-DETR is small enough to run on the edge, making it an ideal model for deployments that need both strong accuracy and real-time performance.**
+https://github.com/user-attachments/assets/add23fd1-266f-4538-8809-d7dd5767e8e6
 
-## Results
+## Install
 
-We validated the performance of RF-DETR on both Microsoft COCO and the RF100-VL benchmarks.
-
-![rf-detr-coco-rf100-vl-8](https://media.roboflow.com/rf-detr/charts.png)
-
-| Model            | params<br><sup>(M) | mAP<sup>COCO val<br>@0.50:0.95 | mAP<sup>RF100-VL<br>Average @0.50 | Total Latency<br><sup>T4 bs=1<br>(ms) |
-|------------------|--------------------|--------------------------------|-----------------------------------|---------------------------------------|
-| D-FINE-M         | 19.3               | <ins>55.1</ins>                | N/A                               | 6.3                                   |
-| LW-DETR-M        | 28.2               | 52.5                           | 84.0                              | 6.0                                   |
-| YOLO11m          | 20.0               | 51.5                           | 84.9                              | <ins>5.7</ins>                        |
-| YOLOv8m          | 28.9               | 50.6                           | 85.0                              | 6.3                                   |
-| RF-DETR-B        | 29.0               | 53.3                           | <ins>86.7</ins>                   | 6.0                                   |
-
-
-<details>
-<summary>Benchmark notes</summary>
-
-The "Total Latency" reported here is measured on a T4 GPU using TensorRT10 FP16 (ms/img) and was introduced by LW-DETR. Unlike transformer-based models, YOLO models perform Non-Maximum Suppression (NMS) after generating predictions to refine bounding box candidates. While NMS boosts accuracy, it also slightly reduces speed due to the additional computation required, which varies with the number of objects in an image. Notably, many YOLO benchmarks include NMS in accuracy measurements but exclude it from speed metrics. By contrast, our benchmarking—following LW-DETR’s approach—factors in NMS latency to provide a uniform measure of the total time needed to obtain a final result across all models on the same hardware.
-
-D-FINE’s fine-tuning capability is currently unavailable, making its domain adaptability performance inaccessible. The authors [caution](https://github.com/Peterande/D-FINE) that “if your categories are very simple, it might lead to overfitting and suboptimal performance.” Furthermore, several open issues ([#108](https://github.com/Peterande/D-FINE/issues/108), [#146](https://github.com/Peterande/D-FINE/issues/146), [#169](https://github.com/Peterande/D-FINE/issues/169), [#214](https://github.com/Peterande/D-FINE/issues/214)) currently prevent successful fine-tuning. We have opened an additional issue in hopes of ultimately benchmarking D-FINE with RF100-VL.
-</details>
-
-## News
-
-- `2025/03/20`: We release RF-DETR real-time object detection model. **Code and checkpoint for RF-DETR-large and RF-DETR-base are available.**
-
-## Installation
+To install RF-DETR, install the `rfdetr` package in a [**Python>=3.10**](https://www.python.org/) environment with `pip`.
 
 ```bash
 pip install rfdetr
 ```
 
+<details>
+<summary>Install from source</summary>
+
+<br>
+
+By installing RF-DETR from source, you can explore the most recent features and enhancements that have not yet been officially released. **Please note that these updates are still in development and may not be as stable as the latest published release.**
+
+```bash
+pip install https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip
+```
+
 </details>
 
-## Inference
+## Benchmarks
 
-RF-DETR comes out of the box with checkpoints pre-trained on the Microsoft COCO dataset.
+RF-DETR achieves state-of-the-art results in both object detection and instance segmentation, with benchmarks reported on Microsoft COCO and RF100-VL. The charts and tables below compare RF-DETR against other top real-time models across accuracy and latency for detection and segmentation. All latency numbers were measured on an NVIDIA T4 using TensorRT, FP16, and batch size 1. For full benchmarking methodology and reproducibility details, see [roboflow/sab](https://github.com/roboflow/single_artifact_benchmarking).
+
+### Detection
+
+<img alt="rf_detr_1-4_latency_accuracy_object_detection" src="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png" />
+
+<details>
+<summary>See object detection benchmark numbers</summary>
+
+<br>
+
+| Architecture | COCO AP<sub>50</sub> |  COCO AP<sub>50:95</sub>   |  RF100VL AP<sub>50</sub>   | RF100VL AP<sub>50:95</sub>  |  Latency (ms)   |   Params (M) |   Resolution  |
+|:------------:|:--------------------:|:--------------------------:|:--------------------------:|:---------------------------:|:---------------:|:------------:|:-------------:|
+|  RF-DETR-N   |         67.6         |            48.4            |            85.0            |            57.7             |       2.3       |         30.5 |       384x384 |
+|  RF-DETR-S   |         72.1         |            53.0            |            86.7            |            60.2             |       3.5       |         32.1 |       512x512 |
+|  RF-DETR-M   |         73.6         |            54.7            |            87.4            |            61.2             |       4.4       |         33.7 |       576x576 |
+|  RF-DETR-L   |         75.1         |            56.5            |            88.2            |            62.2             |       6.8       |         33.9 |       704x704 |
+|  RF-DETR-XL  |         77.4         |            58.6            |            88.5            |            62.9             |       11.5      |        126.4 |       700x700 |
+|  RF-DETR-2XL |         78.5         |            60.1            |            89.0            |            63.2             |       17.2      |        126.9 |       880x880 |
+|   YOLO11-N   |         52.0         |            37.4            |            81.4            |            55.3             |       2.5       |          2.6 |       640x640 |
+|   YOLO11-S   |         59.7         |            44.4            |            82.3            |            56.2             |       3.2       |          9.4 |       640x640 |
+|   YOLO11-M   |         64.1         |            48.6            |            82.5            |            56.5             |       5.1       |         20.1 |       640x640 |
+|   YOLO11-L   |         64.9         |            49.9            |            82.2            |            56.5             |       6.5       |         25.3 |       640x640 |
+|   YOLO11-X   |         66.1         |            50.9            |            81.7            |            56.2             |       10.5      |         56.9 |       640x640 |
+|   YOLO26-N   |         55.8         |            40.3            |            76.7            |            52.0             |       1.7       |          2.6 |       640x640 |
+|   YOLO26-S   |         64.3         |            47.7            |            82.7            |            57.0             |       2.6       |          9.4 |       640x640 |
+|   YOLO26-M   |         69.7         |            52.5            |            84.4            |            58.7             |       4.4       |         20.1 |       640x640 |
+|   YOLO26-L   |         71.1         |            54.1            |            85.0            |            59.3             |       5.7       |         25.3 |       640x640 |
+|   YOLO26-X   |         74.0         |            56.9            |            85.6            |            60.0             |       9.6       |         56.9 |       640x640 |
+|  LW-DETR-T   |         60.7         |            42.9            |            84.7            |            57.1             |       1.9       |         12.1 |       640x640 |
+|  LW-DETR-S   |         66.8         |            48.0            |            85.0            |            57.4             |       2.6       |         14.6 |       640x640 |
+|  LW-DETR-M   |         72.0         |            52.6            |            86.8            |            59.8             |       4.4       |         28.2 |       640x640 |
+|  LW-DETR-L   |         74.6         |            56.1            |            87.4            |            61.5             |       6.9       |         46.8 |       640x640 |
+|  LW-DETR-X   |         76.9         |            58.3            |            87.9            |            62.1             |       13.0      |        118.0 |       640x640 |
+|   D-FINE-N   |         60.2         |            42.7            |            84.4            |            58.2             |       2.1       |          3.8 |       640x640 |
+|   D-FINE-S   |         67.6         |            50.6            |            85.3            |            60.3             |       3.5       |         10.2 |       640x640 |
+|   D-FINE-M   |         72.6         |            55.0            |            85.5            |            60.6             |       5.4       |         19.2 |       640x640 |
+|   D-FINE-L   |         74.9         |            57.2            |            86.4            |            61.6             |       7.5       |         31.0 |       640x640 |
+|   D-FINE-X   |         76.8         |            59.3            |            86.9            |            62.2             |       11.5      |         62.0 |       640x640 |
+
+</details>
+
+### Segmentation
+
+<img alt="rf_detr_1-4_latency_accuracy_instance_segmentation" src="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_instance_segmentation.png" />
+
+<details>
+<summary>See instance segmentation benchmark numbers</summary>
+
+<br>
+
+|   Architecture   | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |
+|:----------------:|:--------------------:|:-----------------------:|:------------:|:----------:|:----------:|
+|  RF-DETR-Seg-N   |         63.0         |          40.3           |     3.4      |    33.6    |  312x312   |
+|  RF-DETR-Seg-S   |         66.2         |          43.1           |     4.4      |    33.7    |  384x384   |
+|  RF-DETR-Seg-M   |         68.4         |          45.3           |     5.9      |    35.7    |  432x432   |
+|  RF-DETR-Seg-L   |         70.5         |          47.1           |     8.8      |    36.2    |  504x504   |
+|  RF-DETR-Seg-XL  |         72.2         |          48.8           |     13.5     |    38.1    |  624x624   |
+| RF-DETR-Seg-2XL  |         73.1         |          49.9           |     21.8     |    38.6    |  768x768   |
+|   YOLOv8-N-Seg   |         45.6         |          28.3           |     3.5      |    3.4     |  640x640   |
+|   YOLOv8-S-Seg   |         53.8         |          34.0           |     4.2      |    11.8    |  640x640   |
+|   YOLOv8-M-Seg   |         58.2         |          37.3           |     7.0      |    27.3    |  640x640   |
+|   YOLOv8-L-Seg   |         60.5         |          39.0           |     9.7      |    46.0    |  640x640   |
+|  YOLOv8-XL-Seg   |         61.3         |          39.5           |     14.0     |    71.8    |  640x640   |
+|  YOLOv11-N-Seg   |         47.8         |          30.0           |     3.6      |    2.9     |  640x640   |
+|  YOLOv11-S-Seg   |         55.4         |          35.0           |     4.6      |    10.1    |  640x640   |
+|  YOLOv11-M-Seg   |         60.0         |          38.5           |     6.9      |    22.4    |  640x640   |
+|  YOLOv11-L-Seg   |         61.5         |          39.5           |     8.3      |    27.6    |  640x640   |
+|  YOLOv11-XL-Seg  |         62.4         |          40.1           |     13.7     |    62.1    |  640x640   |
+|   YOLO26-N-Seg   |         54.3         |          34.7           |     2.31     |    2.7     |  640x640   |
+|   YOLO26-S-Seg   |         62.4         |          40.2           |     3.47     |    10.4    |  640x640   |
+|   YOLO26-M-Seg   |         67.8         |          44.0           |     6.32     |    23.6    |  640x640   |
+|   YOLO26-L-Seg   |         69.8         |          45.5           |     7.58     |    28.0    |  640x640   |
+|   YOLO26-X-Seg   |         71.6         |          46.8           |    12.92     |    62.8    |  640x640   |
+
+</details>
+
+## Run Models
+
+### Detection
+
+RF-DETR provides multiple model sizes, ranging from Nano to 2XLarge. To use a different model size, replace the class name in the code snippet below with another class from the table.
 
 ```python
-import io
 import requests
 import supervision as sv
 from PIL import Image
-from rfdetr import RFDETRBase
+from rfdetr import RFDETRMedium
 from rfdetr.util.coco_classes import COCO_CLASSES
 
-model = RFDETRBase()
+model = RFDETRMedium()
 
-url = "https://media.roboflow.com/notebooks/examples/dog-2.jpeg"
-
-image = Image.open(io.BytesIO(requests.get(url).content))
+image = Image.open(requests.get('https://media.roboflow.com/dog.jpg', stream=True).raw)
 detections = model.predict(image, threshold=0.5)
 
 labels = [
-    f"{COCO_CLASSES[class_id]} {confidence:.2f}"
-    for class_id, confidence
-    in zip(detections.class_id, detections.confidence)
+    f"{COCO_CLASSES[class_id]}"
+    for class_id
+    in detections.class_id
 ]
 
-annotated_image = image.copy()
-annotated_image = sv.BoxAnnotator().annotate(annotated_image, detections)
+annotated_image = sv.BoxAnnotator().annotate(image, detections)
 annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
-
-sv.plot_image(annotated_image)
 ```
 
 <details>
-<summary>Video inference</summary>
+<summary>Run RF-DETR with Inference</summary>
+
+<br>
+
+You can also run RF-DETR models using the Inference library. To switch model size, select the appropriate inference package alias from the table below.
 
 ```python
+import requests
 import supervision as sv
-from rfdetr import RFDETRBase
-from rfdetr.util.coco_classes import COCO_CLASSES
+from PIL import Image
+from inference import get_model
 
-model = RFDETRBase()
+model = get_model("rfdetr-medium")
 
-def callback(frame, index):
-    detections = model.predict(frame, threshold=0.5)
-        
-    labels = [
-        f"{COCO_CLASSES[class_id]} {confidence:.2f}"
-        for class_id, confidence
-        in zip(detections.class_id, detections.confidence)
-    ]
+image = Image.open(requests.get('https://media.roboflow.com/dog.jpg', stream=True).raw)
+predictions = model.infer(image, confidence=0.5)[0]
+detections = sv.Detections.from_inference(predictions)
 
-    annotated_frame = frame.copy()
-    annotated_frame = sv.BoxAnnotator().annotate(annotated_frame, detections)
-    annotated_frame = sv.LabelAnnotator().annotate(annotated_frame, detections, labels)
-    return annotated_frame
-
-process_video(
-    source_path=<SOURCE_VIDEO_PATH>,
-    target_path=<TARGET_VIDEO_PATH>,
-    callback=callback
-)
+annotated_image = sv.BoxAnnotator().annotate(image, detections)
+annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections)
 ```
 
 </details>
 
-![rf-detr-coco-results-2](https://media.roboflow.com/rf-detr/example_grid.png)
+| Size | RF-DETR package class | Inference package alias | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub>   | Latency (ms) | Params (M) | Resolution |
+|:----:|:---------------------:|:------------------------|:--------------------:|:-------------------------:|:------------:|:----------:|:----------:|
+| N    | `RFDETRNano`          | `rfdetr-nano`           | 67.6                 |           48.4            | 2.3          | 30.5       | 384x384    |
+| S    | `RFDETRSmall`         | `rfdetr-small`          | 72.1                 |           53.0            | 3.5          | 32.1       | 512x512    |
+| M    | `RFDETRMedium`        | `rfdetr-medium`         | 73.6                 |           54.7            | 4.4          | 33.7       | 576x576    |
+| L    | `RFDETRLarge`         | `rfdetr-large`          | 75.1                 |           56.5            | 6.8          | 33.9       | 704x704    |
+| XL   | `RFDETRXLarge`        | `rfdetr-xlarge`         | 77.4                 |           58.6            | 11.5         | 126.4      | 700x700    |
+| 2XL  | `RFDETR2XLarge`       | `rfdetr-2xlarge`        | 78.5                 |           60.1            | 17.2         | 126.9      | 880x880    |
 
+### Segmentation
 
-### Model Variants
-
-RF-DETR is available in two variants: RF-DETR-B 29M [`RFDETRBase`](https://github.com/roboflow/rf-detr/blob/ed1af5144343ea52d3d26ce466719d064bb92b9c/rfdetr/detr.py#L133) and RF-DETR-L 128M [`RFDETRLarge`](https://github.com/roboflow/rf-detr/blob/ed1af5144343ea52d3d26ce466719d064bb92b9c/rfdetr/detr.py#L140). The corresponding COCO pretrained checkpoints are automatically loaded when you initialize either class.
-
-### Input Resolution
-
-Both model variants support configurable input resolutions. A higher resolution usually improves prediction quality by capturing more detail, though it can slow down inference. You can adjust the resolution by passing the `resolution` argument when initializing the model. `resolution` value must be divisible by `56`.
-
-```python
-model = RFDETRBase(resolution=560)
-```
-
-## Training
-
-### Dataset structure
-
-RF-DETR expects the dataset to be in COCO format. Divide your dataset into three subdirectories: `train`, `valid`, and `test`. Each subdirectory should contain its own `_annotations.coco.json` file that holds the annotations for that particular split, along with the corresponding image files. Below is an example of the directory structure:
-
-```
-dataset/
-├── train/
-│   ├── _annotations.coco.json
-│   ├── image1.jpg
-│   ├── image2.jpg
-│   └── ... (other image files)
-├── valid/
-│   ├── _annotations.coco.json
-│   ├── image1.jpg
-│   ├── image2.jpg
-│   └── ... (other image files)
-└── test/
-    ├── _annotations.coco.json
-    ├── image1.jpg
-    ├── image2.jpg
-    └── ... (other image files)
-```
-
-[Roboflow](https://roboflow.com/annotate) allows you to create object detection datasets from scratch or convert existing datasets from formats like YOLO, and then export them in COCO JSON format for training. You can also explore [Roboflow Universe](https://universe.roboflow.com/) to find pre-labeled datasets for a range of use cases.
-
-### Fine-tuning
-
-You can fine-tune RF-DETR from pre-trained COCO checkpoints. By default, the RF-DETR-B checkpoint will be used. To get started quickly, please refer to our fine-tuning Google Colab [notebook](https://colab.research.google.com/github/roboflow-ai/notebooks/blob/main/notebooks/how-to-finetune-rf-detr-on-detection-dataset.ipynb).
+RF-DETR supports instance segmentation with model sizes from Nano to 2XLarge. To use a different model size, replace the class name in the code snippet below with another class from the table.
 
 ```python
-from rfdetr import RFDETRBase
+import requests
+import supervision as sv
+from PIL import Image
+from rfdetr import RFDETRSegMedium
+from rfdetr.util.coco_classes import COCO_CLASSES
 
-model = RFDETRBase()
+model = RFDETRSegMedium()
 
-model.train(dataset_dir=<DATASET_PATH>, epochs=10, batch_size=4, grad_accum_steps=4, lr=1e-4)
+image = Image.open(requests.get('https://media.roboflow.com/dog.jpg', stream=True).raw)
+detections = model.predict(image, threshold=0.5)
+
+labels = [
+    f"{COCO_CLASSES[class_id]}"
+    for class_id
+    in detections.class_id
+]
+
+annotated_image = sv.MaskAnnotator().annotate(image, detections)
+annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
 ```
 
-### Batch size
+<details>
+<summary>Run RF-DETR-Seg with Inference</summary>
 
-Different GPUs have different amounts of VRAM (video memory), which limits how much data they can handle at once during training. To make training work well on any machine, you can adjust two settings: `batch_size` and `grad_accum_steps`. These control how many samples are processed at a time. The key is to keep their product equal to 16 — that’s our recommended total batch size. For example, on powerful GPUs like the A100, set `batch_size=16` and `grad_accum_steps=1`. On smaller GPUs like the T4, use `batch_size=4` and `grad_accum_steps=4`. We use a method called gradient accumulation, which lets the model simulate training with a larger batch size by gradually collecting updates before adjusting the weights.
+<br>
 
-### Multi-GPU training
-
-You can fine-tune RF-DETR on multiple GPUs using PyTorch’s Distributed Data Parallel (DDP). Create a `main.py` script that initializes your model and calls `.train()` as usual than run it in terminal.
-
-```bash
-python -m torch.distributed.launch \
-    --nproc_per_node=8 \
-    --use_env \
-    main.py
-```
-
-Replace `8` in the `--nproc_per_node argument` with the number of GPUs you want to use. This approach creates one training process per GPU and splits the workload automatically. Note that your effective batch size is multiplied by the number of GPUs, so you may need to adjust your `batch_size` and `grad_accum_steps` to maintain the same overall batch size.
-
-### Result checkpoints
-
-During training, two model checkpoints (the regular weights and an EMA-based set of weights) will be saved in the specified output directory. The EMA (Exponential Moving Average) file is a smoothed version of the model’s weights over time, often yielding better stability and generalization.
-
-### Load and run fine-tuned model
+You can also run RF-DETR-Seg models using the Inference library. To switch model size, select the appropriate inference package alias from the table below.
 
 ```python
-from rfdetr import RFDETRBase
+import requests
+import supervision as sv
+from PIL import Image
+from inference import get_model
 
-model = RFDETRBase(pretrain_weights=<CHECKPOINT_PATH>)
+model = get_model("rfdetr-seg-medium")
 
-detections = model.predict(<IMAGE_PATH>)
+image = Image.open(requests.get('https://media.roboflow.com/dog.jpg', stream=True).raw)
+predictions = model.infer(image, confidence=0.5)[0]
+detections = sv.Detections.from_inference(predictions)
+
+annotated_image = sv.MaskAnnotator().annotate(image, detections)
+annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections)
 ```
 
-## ONNX export
+</details>
 
-RF-DETR supports exporting models to the ONNX format, which enables interoperability with various inference frameworks and can improve deployment efficiency. To export your model, simply initialize it and call the `.export()` method.
+| Size | RF-DETR package class | Inference package alias     | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub>  | Latency (ms) | Params (M) | Resolution |
+|:----:|:---------------------:|:----------------------------|:--------------------:|:------------------------:|:------------:|:----------:|:----------:|
+| N    | `RFDETRSegNano`       | `rfdetr-seg-nano`           | 63.0                 |           40.3           | 3.4          | 33.6       |  312x312   |
+| S    | `RFDETRSegSmall`      | `rfdetr-seg-small`          | 66.2                 |           43.1           | 4.4          | 33.7       |  384x384   |
+| M    | `RFDETRSegMedium`     | `rfdetr-seg-medium`         | 68.4                 |           45.3           | 5.9          | 35.7       |  432x432   |
+| L    | `RFDETRSegLarge`      | `rfdetr-seg-large`          | 70.5                 |           47.1           | 8.8          | 36.2       |  504x504   |
+| XL   | `RFDETRSegXLarge`     | `rfdetr-seg-xlarge`         | 72.2                 |           48.8           | 13.5         | 38.1       |  624x624   |
+| 2XL  | `RFDETRSeg2XLarge`    | `rfdetr-seg-2xlarge`        | 73.1                 |           49.9           | 21.8         | 38.6       |  768x768   |
 
-```python
-from rfdetr import RFDETRBase
+### Train Models
 
-model = RFDETRBase()
+RF-DETR supports training for both object detection and instance segmentation. You can train models in [Google Colab](https://colab.research.google.com/github/roboflow-ai/notebooks/blob/main/notebooks/how-to-finetune-rf-detr-on-detection-dataset.ipynb) or directly on the Roboflow platform. Below you will find a step-by-step video fine-tuning tutorial.
 
-model.export()
-```
+[![rf-detr-tutorial-banner](https://github.com/user-attachments/assets/555a45c3-96e8-4d8a-ad29-f23403c8edfd)](https://youtu.be/-OvpdLAElFA)
 
-This command saves the ONNX model to the `output` directory.
+## Documentation
+
+Visit our [documentation website](https://rfdetr.roboflow.com) to learn more about how to use RF-DETR.
 
 ## License
 
-Both the code and the weights pretrained on the COCO dataset are released under the [Apache 2.0 license](https://github.com/roboflow/r-flow/blob/main/LICENSE).
+All source code and model weights are licensed under the Apache License 2.0.
+See [`LICENSE.core`](LICENSE.core) for details. RF-DETR XLarge and 2XLarge code and checkpoints are licensed under the
+Platform Model License 1.0. See [`LICENSE.platform`](LICENSE.platform) for details.
+These models require a Roboflow account to run and fine-tune.
 
 ## Acknowledgements
 
@@ -228,17 +265,31 @@ Our work is built upon [LW-DETR](https://arxiv.org/pdf/2406.03459), [DINOv2](htt
 If you find our work helpful for your research, please consider citing the following BibTeX entry.
 
 ```bibtex
-@software{rf-detr,
-  author = {Robinson, Isaac and Robicheaux, Peter and Popov, Matvei},
-  license = {Apache-2.0},
-  title = {RF-DETR},
-  howpublished = {\url{https://github.com/roboflow/rf-detr}},
-  year = {2025},
-  note = {SOTA Real-Time Object Detection Model}
+@misc{rf-detr,
+    title={RF-DETR: Neural Architecture Search for Real-Time Detection Transformers},
+    author={Isaac Robinson and Peter Robicheaux and Matvei Popov and Deva Ramanan and Neehar Peri},
+    year={2025},
+    eprint={2511.09554},
+    archivePrefix={arXiv},
+    primaryClass={cs.CV},
+    url={https://arxiv.org/abs/2511.09554},
 }
 ```
 
-
-## Contribution
+## Contribute
 
 We welcome and appreciate all contributions! If you notice any issues or bugs, have questions, or would like to suggest new features, please [open an issue](https://github.com/roboflow/rf-detr/issues/new) or pull request. By sharing your ideas and improvements, you help make RF-DETR better for everyone.
+
+<p align="center">
+    <a href="https://youtube.com/roboflow"><img src="https://media.roboflow.com/notebooks/template/icons/purple/youtube.png?ik-sdk-version=javascript-1.4.3&updatedAt=1672949634652" width="3%"/></a>
+    <img src="https://raw.githubusercontent.com/ultralytics/assets/main/social/logo-transparent.png" width="3%"/>
+    <a href="https://roboflow.com"><img src="https://media.roboflow.com/notebooks/template/icons/purple/roboflow-app.png?ik-sdk-version=javascript-1.4.3&updatedAt=1672949746649" width="3%"/></a>
+    <img src="https://raw.githubusercontent.com/ultralytics/assets/main/social/logo-transparent.png" width="3%"/>
+    <a href="https://www.linkedin.com/company/roboflow-ai/"><img src="https://media.roboflow.com/notebooks/template/icons/purple/linkedin.png?ik-sdk-version=javascript-1.4.3&updatedAt=1672949633691" width="3%"/></a>
+    <img src="https://raw.githubusercontent.com/ultralytics/assets/main/social/logo-transparent.png" width="3%"/>
+    <a href="https://docs.roboflow.com"><img src="https://media.roboflow.com/notebooks/template/icons/purple/knowledge.png?ik-sdk-version=javascript-1.4.3&updatedAt=1672949634511" width="3%"/></a>
+    <img src="https://raw.githubusercontent.com/ultralytics/assets/main/social/logo-transparent.png" width="3%"/>
+    <a href="https://discuss.roboflow.com"><img src="https://media.roboflow.com/notebooks/template/icons/purple/forum.png?ik-sdk-version=javascript-1.4.3&updatedAt=1672949633584" width="3%"/></a>
+    <img src="https://raw.githubusercontent.com/ultralytics/assets/main/social/logo-transparent.png" width="3%"/>
+    <a href="https://blog.roboflow.com"><img src="https://media.roboflow.com/notebooks/template/icons/purple/blog.png?ik-sdk-version=javascript-1.4.3&updatedAt=1672949633605" width="3%"/></a>
+</p>

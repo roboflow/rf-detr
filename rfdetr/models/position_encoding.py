@@ -1,7 +1,10 @@
 # ------------------------------------------------------------------------
-# LW-DETR
-# Copyright (c) 2024 Baidu. All Rights Reserved.
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+# Modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
+# Copyright (c) 2024 Baidu. All Rights Reserved.
 # ------------------------------------------------------------------------
 # Modified from Conditional DETR (https://github.com/Atten4Vis/ConditionalDETR)
 # Copyright (c) 2021 Microsoft. All Rights Reserved.
@@ -14,6 +17,7 @@
 Various positional encodings for the transformer.
 """
 import math
+
 import torch
 from torch import nn
 
@@ -36,7 +40,7 @@ class PositionEmbeddingSine(nn.Module):
             scale = 2 * math.pi
         self.scale = scale
         self._export = False
-    
+
     def export(self):
         self._export = True
         self._forward_origin = self.forward
@@ -68,7 +72,7 @@ class PositionEmbeddingSine(nn.Module):
             pos = torch.cat((pos_y, pos_x), dim=3).permute(0, 3, 1, 2)
             # return: (bs, C, H, W)
         return pos
-    
+
     def forward_export(self, mask:torch.Tensor, align_dim_orders = True):
         assert mask is not None
         not_mask = ~mask
@@ -105,7 +109,7 @@ class PositionEmbeddingLearned(nn.Module):
         self.col_embed = nn.Embedding(50, num_pos_feats)
         self.reset_parameters()
         self._export = False
-    
+
     def export(self):
         raise NotImplementedError
 

@@ -1,12 +1,21 @@
-from typing import Dict, List
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+# Modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
+# Copyright (c) 2024 Baidu. All Rights Reserved.
+# ------------------------------------------------------------------------
+
+from typing import Callable, Dict, List
 
 import torch
 from torch import nn
 
-from rfdetr.util.misc import NestedTensor
-from rfdetr.models.position_encoding import build_position_encoding
 from rfdetr.models.backbone.backbone import *
-from typing import Callable
+from rfdetr.models.position_encoding import build_position_encoding
+from rfdetr.util.misc import NestedTensor
+
 
 class Joiner(nn.Sequential):
     def __init__(self, backbone, position_embedding):
@@ -60,6 +69,11 @@ def build_backbone(
     rms_norm,
     backbone_lora,
     force_no_pretrain,
+    gradient_checkpointing,
+    load_dinov2_weights,
+    patch_size,
+    num_windows,
+    positional_encoding_size,
 ):
     """
     Useful args:
@@ -85,6 +99,11 @@ def build_backbone(
         target_shape=target_shape,
         rms_norm=rms_norm,
         backbone_lora=backbone_lora,
+        gradient_checkpointing=gradient_checkpointing,
+        load_dinov2_weights=load_dinov2_weights,
+        patch_size=patch_size,
+        num_windows=num_windows,
+        positional_encoding_size=positional_encoding_size,
     )
 
     model = Joiner(backbone, position_embedding)

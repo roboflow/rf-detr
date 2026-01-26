@@ -1,7 +1,10 @@
 # ------------------------------------------------------------------------
-# LW-DETR
-# Copyright (c) 2024 Baidu. All Rights Reserved.
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+# Modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
+# Copyright (c) 2024 Baidu. All Rights Reserved.
 # ------------------------------------------------------------------------
 # Modified from Conditional DETR (https://github.com/Atten4Vis/ConditionalDETR)
 # Copyright (c) 2021 Microsoft. All Rights Reserved.
@@ -14,16 +17,20 @@
 Transforms and data augmentation for both image + bbox.
 """
 import random
+from typing import Any, Dict, List, Optional, Tuple, Union
 
-import PIL
 import numpy as np
+import PIL
+
 try:
     from collections.abc import Sequence
 except Exception:
     from collections import Sequence
 from numbers import Number
+
 import torch
 import torchvision.transforms as T
+
 # from detectron2.data import transforms as DT
 import torchvision.transforms.functional as F
 
@@ -31,7 +38,7 @@ from rfdetr.util.box_ops import box_xyxy_to_cxcywh
 from rfdetr.util.misc import interpolate
 
 
-def crop(image, target, region):
+def crop(image: PIL.Image.Image, target: Dict[str, Any], region: Tuple[int, int, int, int]) -> Tuple[PIL.Image.Image, Dict[str, Any]]:
     cropped_image = F.crop(image, *region)
 
     target = target.copy()
@@ -74,7 +81,7 @@ def crop(image, target, region):
     return cropped_image, target
 
 
-def hflip(image, target):
+def hflip(image: PIL.Image.Image, target: Dict[str, Any]) -> Tuple[PIL.Image.Image, Dict[str, Any]]:
     flipped_image = F.hflip(image)
 
     w, h = image.size
@@ -91,10 +98,10 @@ def hflip(image, target):
     return flipped_image, target
 
 
-def resize(image, target, size, max_size=None):
+def resize(image: PIL.Image.Image, target: Optional[Dict[str, Any]], size: Union[int, Tuple[int, int], List[int]], max_size: Optional[int] = None) -> Tuple[PIL.Image.Image, Optional[Dict[str, Any]]]:
     # size can be min_size (scalar) or (w, h) tuple
 
-    def get_size_with_aspect_ratio(image_size, size, max_size=None):
+    def get_size_with_aspect_ratio(image_size: Tuple[int, int], size: int, max_size: Optional[int] = None) -> Tuple[int, int]:
         w, h = image_size
         if max_size is not None:
             min_original_size = float(min((w, h)))
@@ -114,7 +121,7 @@ def resize(image, target, size, max_size=None):
 
         return (oh, ow)
 
-    def get_size(image_size, size, max_size=None):
+    def get_size(image_size: Tuple[int, int], size: Union[int, Tuple[int, int], List[int]], max_size: Optional[int] = None) -> Tuple[int, int]:
         if isinstance(size, (list, tuple)):
             return size[::-1]
         else:
@@ -148,12 +155,12 @@ def resize(image, target, size, max_size=None):
     if "masks" in target:
         target['masks'] = interpolate(
             target['masks'][:, None].float(), size, mode="nearest")[:, 0] > 0.5
-    
+
 
     return rescaled_image, target
 
 
-def pad(image, target, padding):
+def pad(image: PIL.Image.Image, target: Optional[Dict[str, Any]], padding: Tuple[int, int]) -> Tuple[PIL.Image.Image, Optional[Dict[str, Any]]]:
     # assumes that we only pad on the bottom right corners
     padded_image = F.pad(image, (0, 0, padding[0], padding[1]))
     if target is None:
@@ -168,20 +175,20 @@ def pad(image, target, padding):
 
 
 class RandomCrop(object):
-    def __init__(self, size):
+    def __init__(self, size: Union[int, Tuple[int, int]]) -> None:
         self.size = size
 
-    def __call__(self, img, target):
+    def __call__(self, img: PIL.Image.Image, target: Dict[str, Any]) -> Tuple[PIL.Image.Image, Dict[str, Any]]:
         region = T.RandomCrop.get_params(img, self.size)
         return crop(img, target, region)
 
 
 class RandomSizeCrop(object):
-    def __init__(self, min_size: int, max_size: int):
+    def __init__(self, min_size: int, max_size: int) -> None:
         self.min_size = min_size
         self.max_size = max_size
 
-    def __call__(self, img: PIL.Image.Image, target: dict):
+    def __call__(self, img: PIL.Image.Image, target: Dict[str, Any]) -> Tuple[PIL.Image.Image, Dict[str, Any]]:
         w = random.randint(self.min_size, min(img.width, self.max_size))
         h = random.randint(self.min_size, min(img.height, self.max_size))
         region = T.RandomCrop.get_params(img, [h, w])
@@ -189,10 +196,10 @@ class RandomSizeCrop(object):
 
 
 class CenterCrop(object):
-    def __init__(self, size):
+    def __init__(self, size: Tuple[int, int]) -> None:
         self.size = size
 
-    def __call__(self, img, target):
+    def __call__(self, img: PIL.Image.Image, target: Dict[str, Any]) -> Tuple[PIL.Image.Image, Dict[str, Any]]:
         image_width, image_height = img.size
         crop_height, crop_width = self.size
         crop_top = int(round((image_height - crop_height) / 2.))
@@ -201,32 +208,32 @@ class CenterCrop(object):
 
 
 class RandomHorizontalFlip(object):
-    def __init__(self, p=0.5):
+    def __init__(self, p: float = 0.5) -> None:
         self.p = p
 
-    def __call__(self, img, target):
+    def __call__(self, img: PIL.Image.Image, target: Dict[str, Any]) -> Tuple[PIL.Image.Image, Dict[str, Any]]:
         if random.random() < self.p:
             return hflip(img, target)
         return img, target
 
 
 class RandomResize(object):
-    def __init__(self, sizes, max_size=None):
+    def __init__(self, sizes: List[int], max_size: Optional[int] = None) -> None:
         assert isinstance(sizes, (list, tuple))
         self.sizes = sizes
         self.max_size = max_size
 
-    def __call__(self, img, target=None):
+    def __call__(self, img: PIL.Image.Image, target: Optional[Dict[str, Any]] = None) -> Tuple[PIL.Image.Image, Optional[Dict[str, Any]]]:
         size = random.choice(self.sizes)
         return resize(img, target, size, self.max_size)
 
 
 class SquareResize(object):
-    def __init__(self, sizes):
+    def __init__(self, sizes: List[int]) -> None:
         assert isinstance(sizes, (list, tuple))
         self.sizes = sizes
 
-    def __call__(self, img, target=None):
+    def __call__(self, img: PIL.Image.Image, target: Optional[Dict[str, Any]] = None) -> Tuple[PIL.Image.Image, Optional[Dict[str, Any]]]:
         size = random.choice(self.sizes)
         rescaled_img=F.resize(img, (size, size))
         w, h = rescaled_img.size
@@ -250,14 +257,18 @@ class SquareResize(object):
 
         target["size"] = torch.tensor([h, w])
 
+        if "masks" in target:
+            target['masks'] = interpolate(
+                target['masks'][:, None].float(), (h, w), mode="nearest")[:, 0] > 0.5
+
         return rescaled_img, target
 
 
 class RandomPad(object):
-    def __init__(self, max_pad):
+    def __init__(self, max_pad: int) -> None:
         self.max_pad = max_pad
 
-    def __call__(self, img, target):
+    def __call__(self, img: PIL.Image.Image, target: Dict[str, Any]) -> Tuple[PIL.Image.Image, Dict[str, Any]]:
         pad_x = random.randint(0, self.max_pad)
         pad_y = random.randint(0, self.max_pad)
         return pad(img, target, (pad_x, pad_y))
@@ -265,32 +276,32 @@ class RandomPad(object):
 
 class PILtoNdArray(object):
 
-    def __call__(self, img, target):
+    def __call__(self, img: PIL.Image.Image, target: Dict[str, Any]) -> Tuple[np.ndarray, Dict[str, Any]]:
         return np.asarray(img), target
 
 
 class NdArraytoPIL(object):
 
-    def __call__(self, img, target):
+    def __call__(self, img: np.ndarray, target: Dict[str, Any]) -> Tuple[PIL.Image.Image, Dict[str, Any]]:
         return F.to_pil_image(img.astype('uint8')), target
 
 
 class Pad(object):
     def __init__(self,
-                 size=None,
-                 size_divisor=32,
-                 pad_mode=0,
-                 offsets=None,
-                 fill_value=(127.5, 127.5, 127.5)):
+                 size: Optional[Union[int, Tuple[int, int], List[int]]] = None,
+                 size_divisor: int = 32,
+                 pad_mode: int = 0,
+                 offsets: Optional[List[int]] = None,
+                 fill_value: Tuple[float, float, float] = (127.5, 127.5, 127.5)) -> None:
         """
         Pad image to a specified size or multiple of size_divisor.
         Args:
-            size (int, Sequence): image target size, if None, pad to multiple of size_divisor, default None
-            size_divisor (int): size divisor, default 32
-            pad_mode (int): pad mode, currently only supports four modes [-1, 0, 1, 2]. if -1, use specified offsets
+            size: image target size, if None, pad to multiple of size_divisor, default None
+            size_divisor: size divisor, default 32
+            pad_mode: pad mode, currently only supports four modes [-1, 0, 1, 2]. if -1, use specified offsets
                 if 0, only pad to right and bottom. if 1, pad according to center. if 2, only pad left and top
-            offsets (list): [offset_x, offset_y], specify offset while padding, only supported pad_mode=-1
-            fill_value (bool): rgb value of pad area, default (127.5, 127.5, 127.5)
+            offsets: [offset_x, offset_y], specify offset while padding, only supported pad_mode=-1
+            fill_value: rgb value of pad area, default (127.5, 127.5, 127.5)
         """
 
         if not isinstance(size, (int, Sequence)):
@@ -313,10 +324,10 @@ class Pad(object):
         self.fill_value = fill_value
         self.offsets = offsets
 
-    def apply_bbox(self, bbox, offsets):
+    def apply_bbox(self, bbox: np.ndarray, offsets: List[int]) -> np.ndarray:
         return bbox + np.array(offsets * 2, dtype=np.float32)
 
-    def apply_image(self, image, offsets, im_size, size):
+    def apply_image(self, image: np.ndarray, offsets: List[int], im_size: List[int], size: List[int]) -> np.ndarray:
         x, y = offsets
         im_h, im_w = im_size
         h, w = size
@@ -325,7 +336,7 @@ class Pad(object):
         canvas[y:y + im_h, x:x + im_w, :] = image.astype(np.float32)
         return canvas
 
-    def __call__(self, im, target):
+    def __call__(self, im: np.ndarray, target: Dict[str, Any]) -> Tuple[np.ndarray, Dict[str, Any]]:
         im_h, im_w = im.shape[:2]
         if self.size:
             h, w = self.size
@@ -366,12 +377,12 @@ class Pad(object):
 class RandomExpand(object):
     """Random expand the canvas.
     Args:
-        ratio (float): maximum expansion ratio.
-        prob (float): probability to expand.
-        fill_value (list): color value used to fill the canvas. in RGB order.
+        ratio: maximum expansion ratio.
+        prob: probability to expand.
+        fill_value: color value used to fill the canvas. in RGB order.
     """
 
-    def __init__(self, ratio=4., prob=0.5, fill_value=(127.5, 127.5, 127.5)):
+    def __init__(self, ratio: float = 4., prob: float = 0.5, fill_value: Union[float, List[float], Tuple[float, float, float]] = (127.5, 127.5, 127.5)) -> None:
         assert ratio > 1.01, "expand ratio must be larger than 1.01"
         self.ratio = ratio
         self.prob = prob
@@ -383,7 +394,7 @@ class RandomExpand(object):
             fill_value = tuple(fill_value)
         self.fill_value = fill_value
 
-    def __call__(self, img, target):
+    def __call__(self, img: np.ndarray, target: Dict[str, Any]) -> Tuple[np.ndarray, Dict[str, Any]]:
         if np.random.uniform(0., 1.) < self.prob:
             return img, target
 
@@ -397,12 +408,12 @@ class RandomExpand(object):
         x = np.random.randint(0, w - width)
         offsets, size = [x, y], [h, w]
 
-        pad = Pad(size,
+        pad_op = Pad(size,
                   pad_mode=-1,
                   offsets=offsets,
                   fill_value=self.fill_value)
 
-        return pad(img, target)
+        return pad_op(img, target)
 
 
 class RandomSelect(object):
@@ -410,37 +421,37 @@ class RandomSelect(object):
     Randomly selects between transforms1 and transforms2,
     with probability p for transforms1 and (1 - p) for transforms2
     """
-    def __init__(self, transforms1, transforms2, p=0.5):
+    def __init__(self, transforms1: Any, transforms2: Any, p: float = 0.5) -> None:
         self.transforms1 = transforms1
         self.transforms2 = transforms2
         self.p = p
 
-    def __call__(self, img, target):
+    def __call__(self, img: Any, target: Any) -> Tuple[Any, Any]:
         if random.random() < self.p:
             return self.transforms1(img, target)
         return self.transforms2(img, target)
 
 
 class ToTensor(object):
-    def __call__(self, img, target):
+    def __call__(self, img: Union[PIL.Image.Image, np.ndarray], target: Dict[str, Any]) -> Tuple[torch.Tensor, Dict[str, Any]]:
         return F.to_tensor(img), target
 
 
 class RandomErasing(object):
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         self.eraser = T.RandomErasing(*args, **kwargs)
 
-    def __call__(self, img, target):
+    def __call__(self, img: torch.Tensor, target: Dict[str, Any]) -> Tuple[torch.Tensor, Dict[str, Any]]:
         return self.eraser(img), target
 
 
 class Normalize(object):
-    def __init__(self, mean, std):
+    def __init__(self, mean: List[float], std: List[float]) -> None:
         self.mean = mean
         self.std = std
 
-    def __call__(self, image, target=None):
+    def __call__(self, image: torch.Tensor, target: Optional[Dict[str, Any]] = None) -> Tuple[torch.Tensor, Optional[Dict[str, Any]]]:
         image = F.normalize(image, mean=self.mean, std=self.std)
         if target is None:
             return image, None
@@ -455,15 +466,15 @@ class Normalize(object):
 
 
 class Compose(object):
-    def __init__(self, transforms):
+    def __init__(self, transforms: List[Any]) -> None:
         self.transforms = transforms
 
-    def __call__(self, image, target):
+    def __call__(self, image: Any, target: Any) -> Tuple[Any, Any]:
         for t in self.transforms:
             image, target = t(image, target)
         return image, target
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         format_string = self.__class__.__name__ + "("
         for t in self.transforms:
             format_string += "\n"

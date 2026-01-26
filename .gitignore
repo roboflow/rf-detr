@@ -172,3 +172,11 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+.idea/
+
+# model artifacts
+rf-detr*
+output/*
+
+train_test.py

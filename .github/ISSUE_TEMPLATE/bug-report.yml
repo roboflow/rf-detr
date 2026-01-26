@@ -1,0 +1,80 @@
+name: 🐞 Bug Report
+# title: " "
+description: "Problems with RF-DETR"
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for submitting an RF-DETR 🐞 Bug Report!
+
+  - type: checkboxes
+    attributes:
+      label: Search before asking
+      description: >
+        Please search the RF-DETR documentation and [issues](https://github.com/roboflow/rf-detr/issues) to see if a similar bug report already exists.
+      options:
+        - label: >
+            I have searched the RF-DETR issues and found no similar bug report.
+          required: true
+
+  - type: textarea
+    attributes:
+      label: Bug
+      description: >
+        Please provide as much information as possible. Include full console output and error messages (including any traceback). Use Markdown to format text, code, and logs. Screenshots can help clarify visual issues.
+      placeholder: |
+        Include logs, tracebacks, screenshots, or any other relevant info to help us quickly diagnose and solve your problem.
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Environment
+      description: |
+        Try the latest version of RF-DETR (`pip install -U rf-detr`) before reporting a bug. If the issue persists, please provide details about your setup:
+        - RF-DETR version
+        - OS (e.g. Ubuntu 20.04, Windows 10)
+        - Python version
+        - PyTorch version
+        - CUDA/cuDNN version
+        - GPU/CPU hardware
+      placeholder: |
+        Example:
+        - RF-DETR: 0.1.0
+        - OS: Ubuntu 20.04
+        - Python: 3.9.0
+        - PyTorch: 1.13.1
+        - GPU: NVIDIA RTX 4080
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Minimal Reproducible Example
+      description: >
+        Provide code or steps that are as minimal and self-contained as possible to reproduce the issue. This helps us diagnose problems more quickly.
+      placeholder: |
+        ```
+        # Example code to reproduce your issue
+        model = ...
+        ...
+        ```
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Additional
+      description: |
+        Anything else you would like to share? (Optional)
+      placeholder: |
+        Additional context, suggestions, or observations.
+
+  - type: checkboxes
+    attributes:
+      label: Are you willing to submit a PR?
+      description: >
+        (Optional) We encourage you to submit a [Pull Request](https://github.com/roboflow/rf-detr/pulls) (PR) to help improve RF-DETR, especially if you already have a fix or feature in mind.
+      options:
+        - label: Yes, I'd like to help by submitting a PR!

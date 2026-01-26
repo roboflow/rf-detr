@@ -1,7 +1,10 @@
 # ------------------------------------------------------------------------
-# LW-DETR
-# Copyright (c) 2024 Baidu. All Rights Reserved.
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+# Modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
+# Copyright (c) 2024 Baidu. All Rights Reserved.
 # ------------------------------------------------------------------------
 
 """
@@ -13,13 +16,12 @@ from copy import deepcopy
 
 import numpy as np
 import onnx
-import torch
-from onnx import shape_inference
 import onnx_graphsurgeon as gs
-from polygraphy.backend.onnx.loader import fold_constants
+from onnx import shape_inference
 from onnx_graphsurgeon.logger.logger import G_LOGGER
+from polygraphy.backend.onnx.loader import fold_constants
 
-from .symbolic import CustomOpSymbolicRegistry
+from rfdetr.deploy._onnx.symbolic import CustomOpSymbolicRegistry
 
 
 class OnnxOptimizer():
@@ -35,18 +37,18 @@ class OnnxOptimizer():
         self.graph = gs.import_onnx(onnx_graph)
         self.severity = severity
         self.set_severity(severity)
-    
+
     def set_severity(self, severity):
         G_LOGGER.severity = severity
 
     def load_onnx(self, onnx_path:str):
         """Load onnx from file
         """
-        assert os.path.isfile(onnx_path), f"not found onnx file: {onnx_path}" 
+        assert os.path.isfile(onnx_path), f"not found onnx file: {onnx_path}"
         onnx_graph = onnx.load(onnx_path)
         G_LOGGER.info(f"load onnx file: {onnx_path}")
         return onnx_graph
-    
+
     def save_onnx(self, onnx_path:str):
         onnx_graph = gs.export_onnx(self.graph)
         G_LOGGER.info(f"save onnx file: {onnx_path}")
@@ -110,10 +112,10 @@ class OnnxOptimizer():
         for node in self.graph.nodes:
             if node.op == "Resize" and len(node.inputs) == 3:
                 name = node.name + "/"
-                
+
                 add_node = node.o().o().i(1)
                 div_node = node.i()
-                
+
                 shape_hw_out = gs.Variable(name=name + "shape_hw_out", dtype=np.int64, shape=[4])
                 shape_hw = gs.Node(op="Shape", name=name+"shape_hw", inputs=[add_node.outputs[0]], outputs=[shape_hw_out])
 

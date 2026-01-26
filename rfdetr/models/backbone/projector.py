@@ -1,7 +1,10 @@
 # ------------------------------------------------------------------------
-# LW-DETR
-# Copyright (c) 2024 Baidu. All Rights Reserved.
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+# Modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
+# Copyright (c) 2024 Baidu. All Rights Reserved.
 # ------------------------------------------------------------------------
 # Modified from ViTDet (https://github.com/facebookresearch/detectron2/tree/main/projects/ViTDet)
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
@@ -10,8 +13,6 @@
 """
 Projector
 """
-import math
-import random
 import numpy as np
 import torch
 import torch.nn as nn
@@ -38,12 +39,9 @@ class LayerNorm(nn.Module):
         LayerNorm forward
         TODO: this is a hack to avoid overflow when using fp16
         """
-        #if x.dtype == torch.half:
-        #    x = x / (x.max() + self.eps)
-        u = x.mean(1, keepdim=True)
-        s = (x - u).pow(2).mean(1, keepdim=True)
-        x = (x - u) / torch.sqrt(s + self.eps)
-        x = self.weight[:, None, None] * x + self.bias[:, None, None]
+        x = x.permute(0, 2, 3, 1)
+        x = F.layer_norm(x, (x.size(3),), self.weight, self.bias, self.eps)
+        x = x.permute(0, 3, 1, 2)
         return x
 
 
@@ -100,7 +98,7 @@ class ConvX(nn.Module):
 
     def forward(self, x):
         """ forward """
-        out = self.act(self.bn(self.conv(x)))
+        out = self.act(self.bn(self.conv(x.contiguous())))
         return out
 
 
@@ -172,12 +170,10 @@ class MultiScaleProjector(nn.Module):
         stages_sampling = []
         stages = []
         # use_bias = norm == ""
-        use_bias = False
         self.use_extra_pool = False
         for scale in scale_factors:
             stages_sampling.append([])
             for in_dim in in_channels:
-                out_dim = in_dim
                 layers = []
 
                 # if in_dim > 512:
@@ -191,7 +187,7 @@ class MultiScaleProjector(nn.Module):
                         nn.GELU(),
                         nn.ConvTranspose2d(in_dim // 2, in_dim // 4, kernel_size=2, stride=2),
                     ])
-                    out_dim = in_dim // 4
+                    # in_dim // 4
                 elif scale == 2.0:
                     # a hack to reduce the FLOPs and Params when the dimention of output feature is too large
                     # if in_dim > 512:
@@ -204,7 +200,7 @@ class MultiScaleProjector(nn.Module):
                     layers.extend([
                         nn.ConvTranspose2d(in_dim, in_dim // 2, kernel_size=2, stride=2),
                     ])
-                    out_dim = in_dim // 2
+                    # in_dim // 2
                 elif scale == 1.0:
                     pass
                 elif scale == 0.5:
@@ -254,7 +250,7 @@ class MultiScaleProjector(nn.Module):
             for i in range(self.force_drop_last_n_features):
                 # don't do it inplace to ensure the compiler can optimize out the backbone layers
                 x[-(i+1)] = torch.zeros_like(x[-(i+1)])
-                
+
         results = []
         # x list of len(out_features_indexes)
         for i, stage in enumerate(self.stages):
