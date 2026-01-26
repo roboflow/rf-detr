@@ -252,6 +252,9 @@ def intermediate_scenario_cocoeval():
     """
     Build the intermediate scenario: mixed IoU/confidence predictions.
 
+    IMPORTANT: All metric calculations use IoU threshold = 0.5 (single threshold),
+    not COCO's standard 0.5:0.95 range. Predictions with IoU ≥ 0.5 are matches.
+
     Layout (3 rows):
     - Row 0: Class 1 GTs with matching TPs
     - Row 1: Class 2 GTs with matching TPs
@@ -262,6 +265,7 @@ def intermediate_scenario_cocoeval():
           [0.975, 0.925, 0.875, 0.825, 0.775, 0.725, 0.675, 0.625, 0.575, 0.525]
       - True positive confidence levels:
           [0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.0]
+          (Note: confidence=0.0 is an edge case for comprehensive testing)
 
       - No false positives.
 
@@ -277,7 +281,8 @@ def intermediate_scenario_cocoeval():
 
       How to calculate expected metrics
       (Note: These calculations were written out by hand without LLM assistance):
-        For macro-F1 calculations, pinning IoU threshold to 0.5, area=all, max_dets=100 and sweeping over confidence:
+        For macro-F1 calculations, using IoU threshold = 0.5, area=all, max_dets=100,
+        and sweeping over confidence thresholds from 0.0 to 1.0 in 101 steps:
 
           - confidence in (0.95, 1.0]:
             - Class 1: 0 TP, 0 FP, 10 FN. Precision = 0.0, Recall = 0.0, F1 = 0.0
@@ -295,7 +300,7 @@ def intermediate_scenario_cocoeval():
           and recall will continue to improve
           until false positives start showing up in class 2 at a confidence of 0.45.
 
-          At a confidence of 0.46, the last entry before false positives show up, it looks like this:
+          At confidence threshold 0.5, the last value before FPs appear:
 
           - confidence in (0.45, 0.5]:
             - Class 1: 5 TP, 0 FP, 5 FN. Precision = 5/5, Recall = 5/10, F1 = 0.6667
@@ -356,14 +361,14 @@ def intermediate_scenario_cocoeval():
             - Class 2: 10 TP, 10 FP, 0 FN. Precision = 10/20, Recall = 10/10, F1 = 0.6667
             - Mean-Precision = 0.75, Mean-Recall = 1.0, Mean-F1 = 0.8334
 
-        Suprisingly, confidence=0 ties with confidence=0.46 for the best macro-F1.
-        So an algorithm that sweeps confidence from 0 to 1 will probably just choose
-        confidence of 0.0, resulting in a Mean-F1 of 0.8334, a Mean-Precision of 0.75,
-        and a Mean-Recall of 1.0.
+        Surprisingly, confidence=0.0 ties with confidence=0.5 for the best macro-F1.
+        An algorithm that sweeps confidence from 0 to 1 will choose confidence=0.0
+        (the first maximum encountered), resulting in Mean-F1=0.8334,
+        Mean-Precision=0.75, and Mean-Recall=1.0.
 
         I have set these values as the expected metrics for this intermediate scenario.
-        The test passes if the precision and recall values are within 0.01 of the
-        expected values.
+        The test passes if the precision, recall, and F1 values are within 0.01 of
+        the expected values.
 
         """
     image_id = 1
@@ -476,6 +481,13 @@ def test_intermediate_scenario(intermediate_scenario_cocoeval):
     """
     Test intermediate scenario with verifiable expected metrics.
 
+    IMPORTANT: This test uses IoU threshold = 0.5 (not COCO's standard 0.5:0.95 averaging).
+    All predictions with IoU ≥ 0.5 are considered matches.
+
+    This test evaluates metrics at the confidence threshold that maximizes macro-F1,
+    which is 0.0 in this scenario (an edge case where including all predictions yields
+    the best F1 score).
+
     Class 1: 10 GTs, 10 matching preds, 0 FPs
       - IoU levels: [0.975, 0.925, 0.875, 0.825, 0.775, 0.725, 0.675, 0.625, 0.575, 0.525]
       - Confidence levels: [0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.0]
@@ -484,21 +496,30 @@ def test_intermediate_scenario(intermediate_scenario_cocoeval):
       - TP IoU levels: [0.975, 0.925, 0.875, 0.825, 0.775, 0.725, 0.675, 0.625, 0.575, 0.525]
       - TP Confidence levels: [0.95, 0.90, 0.85, 0.80, 0.75, 0.70, 0.65, 0.60, 0.55, 0.50]
       - FP confidences: [0.45, 0.40, 0.35, 0.30, 0.25, 0.20, 0.15, 0.10, 0.05, 0.00]
+        (Note: confidence=0.0 is an edge case included for comprehensive testing)
 
-    Expected (from hand calculations in docstring):
-    - Best macro-F1 = 0.8334 (at confidence 0.0 or 0.46)
+    Expected (from hand calculations in fixture docstring):
+    - Best macro-F1 = 0.8334 (at confidence 0.0 or 0.5)
     - At confidence 0.0: Mean-Precision = 0.75, Mean-Recall = 1.0
+      - Class 1: Precision = 1.0, Recall = 1.0, F1 = 1.0
+      - Class 2: Precision = 0.5, Recall = 1.0, F1 = 0.6667
     """
     results = coco_extended_metrics(intermediate_scenario_cocoeval)
 
+    # Assert macro metrics
     assert results["precision"] == pytest.approx(0.75, abs=0.01)
     assert results["recall"] == pytest.approx(1.0, abs=0.01)
+    assert results["f1_score"] == pytest.approx(0.8334, abs=0.01)
 
     class_map = results["class_map"]
     per_class_metrics = {entry["class"]: entry for entry in class_map if entry["class"] != "all"}
 
+    # Assert Class 1 metrics
     assert per_class_metrics["class_1"]["precision"] == pytest.approx(1.0, abs=0.01)
     assert per_class_metrics["class_1"]["recall"] == pytest.approx(1.0, abs=0.01)
+    assert per_class_metrics["class_1"]["f1_score"] == pytest.approx(1.0, abs=0.01)
 
+    # Assert Class 2 metrics
     assert per_class_metrics["class_2"]["precision"] == pytest.approx(0.5, abs=0.01)
     assert per_class_metrics["class_2"]["recall"] == pytest.approx(1.0, abs=0.01)
+    assert per_class_metrics["class_2"]["f1_score"] == pytest.approx(0.667, abs=0.01)
