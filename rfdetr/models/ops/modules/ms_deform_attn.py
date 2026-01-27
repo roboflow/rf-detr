@@ -15,20 +15,17 @@
 Multi-Scale Deformable Attention Module
 """
 
-from __future__ import absolute_import
-from __future__ import print_function
-from __future__ import division
+from __future__ import absolute_import, division, print_function
 
-import warnings
 import math
-import numpy as np
+import warnings
 
 import torch
-from torch import nn
 import torch.nn.functional as F
-from torch.nn.init import xavier_uniform_, constant_
+from torch import nn
+from torch.nn.init import constant_, xavier_uniform_
 
-from ..functions import ms_deform_attn_core_pytorch
+from rfdetr.models.ops.functions import ms_deform_attn_core_pytorch
 
 
 def _is_power_of_2(n):
@@ -71,7 +68,7 @@ class MSDeformAttn(nn.Module):
         self.output_proj = nn.Linear(d_model, d_model)
 
         self._reset_parameters()
-        
+
         self._export = False
 
     def export(self):
@@ -98,7 +95,7 @@ class MSDeformAttn(nn.Module):
 
     def forward(self, query, reference_points, input_flatten, input_spatial_shapes,
                 input_level_start_index, input_padding_mask=None):
-        """
+        r"""
         :param query                       (N, Length_{query}, C)
         :param reference_points            (N, Length_{query}, n_levels, 2), range in [0, 1], top-left (0,0), bottom-right (1, 1), including padding area
                                         or (N, Length_{query}, n_levels, 4), add additional (w, h) to form reference boxes
