@@ -28,17 +28,16 @@ except Exception:
     from collections import Sequence
 from numbers import Number
 
+import albumentations as A
 import torch
 import torchvision.transforms as T
 
 # from detectron2.data import transforms as DT
 import torchvision.transforms.functional as F
+from PIL import Image
 
 from rfdetr.util.box_ops import box_xyxy_to_cxcywh
 from rfdetr.util.misc import interpolate
-
-import albumentations as A
-from PIL import Image
 
 
 def crop(image: PIL.Image.Image, target: Dict[str, Any], region: Tuple[int, int, int, int]) -> Tuple[PIL.Image.Image, Dict[str, Any]]:
@@ -490,67 +489,67 @@ class AlbumentationsHorizontalFlip:
     def __init__(self, p=0.5):
         self.transform = A.HorizontalFlip(p=p)
         self.bbox_params = A.BboxParams(format='pascal_voc', label_fields=['category_ids'], clip=True)
-    
+
     def __call__(self, image, target):
         image_np = np.array(image)
-        
+
         # Convert boxes to numpy array and ensure proper format
         if isinstance(target['boxes'], torch.Tensor):
             bboxes = target['boxes'].cpu().numpy()
         else:
             bboxes = np.array(target['boxes'])
-        
+
         # Convert labels to list
         if isinstance(target['labels'], torch.Tensor):
             labels = target['labels'].cpu().tolist()
         else:
             labels = list(target['labels'])
-        
+
         # Create transform with bbox_params for this specific call
         transform = A.Compose([self.transform], bbox_params=self.bbox_params)
-        
+
         # Apply transformation
         augmented = transform(image=image_np, bboxes=bboxes, category_ids=labels)
-        
+
         image_out = Image.fromarray(augmented['image'])
         target_out = target.copy()
         target_out['boxes'] = torch.tensor(augmented['bboxes'], dtype=torch.float32)
         target_out['labels'] = torch.tensor(augmented['category_ids'], dtype=torch.long)
-        
+
         return image_out, target_out
 
 class AlbumentationsRotate:
     def __init__(self, limit=15, p=0.5):
         self.transform = A.Rotate(limit=limit, p=p)
         self.bbox_params = A.BboxParams(format='pascal_voc', label_fields=['category_ids'], clip=True)
-    
+
     def __call__(self, image, target):
         image_np = np.array(image)
-        
+
         # Convert boxes to numpy array and ensure proper format
         if isinstance(target['boxes'], torch.Tensor):
             bboxes = target['boxes'].cpu().numpy()
         else:
             bboxes = np.array(target['boxes'])
         # print(bboxes)
-        
+
         # Convert labels to list
         if isinstance(target['labels'], torch.Tensor):
             labels = target['labels'].cpu().tolist()
         else:
             labels = list(target['labels'])
-        
+
         # Create transform with bbox_params for this specific call
         transform = A.Compose([self.transform], bbox_params=self.bbox_params)
-        
+
         # Apply transformation
         augmented = transform(image=image_np, bboxes=bboxes, category_ids=labels)
-        
+
         image_out = Image.fromarray(augmented['image'])
         target_out = target.copy()
         target_out['boxes'] = torch.tensor(augmented['bboxes'], dtype=torch.float32)
         target_out['labels'] = torch.tensor(augmented['category_ids'], dtype=torch.long)
-        
+
         return image_out, target_out
 
 class AlbumentationsRandomBrightnessContrast:
@@ -558,33 +557,33 @@ class AlbumentationsRandomBrightnessContrast:
         self.transform = A.RandomBrightnessContrast(p=p)
         # Note: This transform doesn't affect bboxes, but we keep consistency
         self.bbox_params = A.BboxParams(format='pascal_voc', label_fields=['category_ids'], clip=True)
-    
+
     def __call__(self, image, target):
         image_np = np.array(image)
-        
+
         # Convert boxes to numpy array and ensure proper format
         if isinstance(target['boxes'], torch.Tensor):
             bboxes = target['boxes'].cpu().numpy()
         else:
             bboxes = np.array(target['boxes'])
-        
+
         # Convert labels to list
         if isinstance(target['labels'], torch.Tensor):
             labels = target['labels'].cpu().tolist()
         else:
             labels = list(target['labels'])
-        
+
         # Create transform with bbox_params for this specific call
         transform = A.Compose([self.transform], bbox_params=self.bbox_params)
-        
+
         # Apply transformation
         augmented = transform(image=image_np, bboxes=bboxes, category_ids=labels)
-        
+
         image_out = Image.fromarray(augmented['image'])
         target_out = target.copy()
         target_out['boxes'] = torch.tensor(augmented['bboxes'], dtype=torch.float32)
         target_out['labels'] = torch.tensor(augmented['category_ids'], dtype=torch.long)
-        
+
         return image_out, target_out
 
 class AlbumentationsShiftScaleRotate:
@@ -592,7 +591,7 @@ class AlbumentationsShiftScaleRotate:
         self.transform = A.ShiftScaleRotate(shift_limit=shift_limit, scale_limit=scale_limit,
                                             rotate_limit=rotate_limit, p=p, border_mode=0)
         self.bbox_params = A.BboxParams(format='pascal_voc', label_fields=['category_ids'], clip=True)
-    
+
     def __call__(self, image, target):
         image_np = np.array(image)
         bboxes = target['boxes'].cpu().numpy() if isinstance(target['boxes'], torch.Tensor) else np.array(target['boxes'])
@@ -694,7 +693,7 @@ class AlbumentationsVerticalFlip:
     def __init__(self, p=0.5):
         self.transform = A.VerticalFlip(p=p)
         self.bbox_params = A.BboxParams(format='pascal_voc', label_fields=['category_ids'], clip=True)
-    
+
     def __call__(self, image, target):
         image_np = np.array(image)
         bboxes = target['boxes'].cpu().numpy() if isinstance(target['boxes'], torch.Tensor) else np.array(target['boxes'])
@@ -715,7 +714,7 @@ class AlbumentationsHueSaturationValue:
                                               val_shift_limit=val_shift_limit,
                                               p=p)
         self.bbox_params = A.BboxParams(format='pascal_voc', label_fields=['category_ids'], clip=True)
-    
+
     def __call__(self, image, target):
         image_np = np.array(image)
         bboxes = target['boxes'].cpu().numpy() if isinstance(target['boxes'], torch.Tensor) else np.array(target['boxes'])
@@ -783,7 +782,7 @@ class AlbumentationsAffine:
     def __init__(self, scale=(0.9, 1.1), translate_percent=(0.1, 0.1), rotate=(-15, 15), shear=(-10, 10), p=0.5):
         self.transform = A.Affine(scale=scale, translate_percent=translate_percent, rotate=rotate, shear=shear, p=p)
         self.bbox_params = A.BboxParams(format='pascal_voc', label_fields=['category_ids'], clip=True)
-    
+
     def __call__(self, image, target):
         image_np = np.array(image)
         bboxes = target['boxes'].cpu().numpy() if isinstance(target['boxes'], torch.Tensor) else np.array(target['boxes'])
@@ -805,7 +804,7 @@ class AlbumentationsRandomShadow:
                                           num_flare_circles_upper=num_flare_circles_upper,
                                           p=p)
         self.bbox_params = A.BboxParams(format='pascal_voc', label_fields=['category_ids'], clip=True)
-        
+
     def __call__(self, image, target):
         image_np = np.array(image)
         bboxes = target['boxes'].cpu().numpy() if isinstance(target['boxes'], torch.Tensor) else np.array(target['boxes'])
@@ -850,7 +849,7 @@ def build_albumentations_from_config(config_dict):
 class ComposeAugmentations:
     def __init__(self, transforms):
         self.transforms = transforms
-    
+
     def __call__(self, image, target):
         for t in self.transforms:
             image, target = t(image, target)

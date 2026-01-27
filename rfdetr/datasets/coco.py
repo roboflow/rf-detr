@@ -28,9 +28,8 @@ import torchvision
 from PIL import Image
 
 import rfdetr.datasets.transforms as T
-
-from rfdetr.datasets.transforms import build_albumentations_from_config, ComposeAugmentations
 from rfdetr.augmentation_config import AUG_CONFIG
+from rfdetr.datasets.transforms import ComposeAugmentations, build_albumentations_from_config
 
 
 def is_valid_coco_dataset(dataset_dir: str) -> bool:
@@ -110,10 +109,10 @@ class CocoDetection(torchvision.datasets.CocoDetection):
             #     # ImageNet normalization parameters
             #     mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
             #     std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
-                
+
             #     # Denormalize the tensor
             #     img_denorm = img * std + mean
-                
+
             #     # Clamp values to [0, 1] range
             #     img_denorm = torchvision.transforms.ToPILImage()(img_denorm.clamp(0, 1))
 
@@ -138,7 +137,7 @@ class CocoDetection(torchvision.datasets.CocoDetection):
             #         y_max = cy + h / 2
 
             #         draw.rectangle([x_min, y_min, x_max, y_max], outline='red', width=3)
-                
+
             #     # Save the denormalized image
             #     img_denorm.save(f"{save_dir}/{image_id}_augmented.jpg")
             # ## -------------------------------------------------------------------------------

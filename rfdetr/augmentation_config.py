@@ -12,11 +12,11 @@ AUG_CONFIG = {
     # "AlbumentationsCLAHE": {"clip_limit": 4.0, "tile_grid_size": (8, 8), "p": 0.5},
     # "AlbumentationsChannelShuffle": {"p": 0.5},
     # "AlbumentationsRandomCrop": {"height": 300, "width": 300, "p": 0.5},
-    # "AlbumentationsAffine": {"scale": (0.9, 1.1), "translate_percent": (0.1, 0.1), "rotate": (-15, 15), "shear": (-10, 10), "p": 0.5}, 
+    # "AlbumentationsAffine": {"scale": (0.9, 1.1), "translate_percent": (0.1, 0.1), "rotate": (-15, 15), "shear": (-10, 10), "p": 0.5},
     # "AlbumentationsRandomShadow": {
-    #     "flare_roi": (0, 0.5, 1, 1), 
-    #     "angle_lower": 0.3, "angle_upper": 1.3, 
-    #     "num_flare_circles_lower": 1, "num_flare_circles_upper": 3, 
+    #     "flare_roi": (0, 0.5, 1, 1),
+    #     "angle_lower": 0.3, "angle_upper": 1.3,
+    #     "num_flare_circles_lower": 1, "num_flare_circles_upper": 3,
     #     "p": 0.5
     # }
 }
