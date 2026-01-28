@@ -82,65 +82,8 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         image_id = self.ids[idx]
         target = {'image_id': image_id, 'annotations': target}
         img, target = self.prepare(img, target)
-        # ## -------------------------------------------------------------------------------
-        # import os
-        # save_dir = './saved_images'
-        # os.makedirs(save_dir, exist_ok=True)
-
-        # # Draw bbox
-        # bboxes = target['boxes']
-        # from PIL import Image, ImageDraw
-        # img_copy = img.copy()
-        # draw = ImageDraw.Draw(img_copy)
-
-        # # Draw each bounding box on the copy
-        # for bbox in bboxes:
-        #     x_min, y_min, x_max, y_max = bbox
-        #     # Draw rectangle with red outline and width=2
-        #     draw.rectangle([x_min, y_min, x_max, y_max], outline="green", width=3)
-        # # Save the PIL image
-        # img_copy.save(f"{save_dir}/{image_id}_original.jpg")
-        # ## -------------------------------------------------------------------------------
         if self._transforms is not None:
             img, target = self._transforms(img, target) # [cx, cy, w, h]
-            # ## -------------------------------------------------------------------------------
-            # # Save tensor as image - denormalize ImageNet normalized tensor
-            # if isinstance(img, torch.Tensor):
-            #     # ImageNet normalization parameters
-            #     mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
-            #     std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
-
-            #     # Denormalize the tensor
-            #     img_denorm = img * std + mean
-
-            #     # Clamp values to [0, 1] range
-            #     img_denorm = torchvision.transforms.ToPILImage()(img_denorm.clamp(0, 1))
-
-            #     # Draw bbox
-            #     bboxes = target['boxes']
-
-            #     from PIL import ImageDraw, ImageFont
-            #     draw = ImageDraw.Draw(img_denorm)
-            #     width, height = img_denorm.size  # PIL image size (W, H)
-
-            #     for i, box in enumerate(bboxes):
-            #         # box: [cx, cy, w, h], normalized (0~1)
-
-            #         cx = box[0] * width
-            #         cy = box[1] * height
-            #         w = box[2] * width
-            #         h = box[3] * height
-
-            #         x_min = cx - w / 2
-            #         y_min = cy - h / 2
-            #         x_max = cx + w / 2
-            #         y_max = cy + h / 2
-
-            #         draw.rectangle([x_min, y_min, x_max, y_max], outline='red', width=3)
-
-            #     # Save the denormalized image
-            #     img_denorm.save(f"{save_dir}/{image_id}_augmented.jpg")
-            # ## -------------------------------------------------------------------------------
 
         return img, target
 
