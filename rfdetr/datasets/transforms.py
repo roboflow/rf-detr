@@ -509,7 +509,7 @@ class AlbumentationsWrapper:
     def __call__(self, image, target):
         image_np = np.array(image)
         labels = target['labels'].cpu().tolist() if torch.is_tensor(target['labels']) else list(target['labels'])
-        
+
         if self.bbox_safe and 'boxes' in target:
             boxes = target['boxes']
             boxes_np = boxes.cpu().numpy() if torch.is_tensor(boxes) else boxes
@@ -524,7 +524,7 @@ class AlbumentationsWrapper:
             target_out = target
 
         return image_out, target_out
-    
+
 
 # Build transforms dynamically
 def build_albumentations_from_config(config_dict):
@@ -539,7 +539,7 @@ def build_albumentations_from_config(config_dict):
         geometric = aug_name in ["HorizontalFlip", "VerticalFlip", "Affine", "RandomCrop", "RandomSizedCrop", "Rotate"]
         transforms.append(
             AlbumentationsWrapper(
-                base_aug(**params), 
+                base_aug(**params),
                 bbox_safe=geometric
             )
         )
