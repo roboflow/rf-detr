@@ -116,6 +116,9 @@ class Model:
 
             checkpoint_num_classes = checkpoint['model']['class_embed.bias'].shape[0]
             if checkpoint_num_classes != args.num_classes + 1:
+                logger.warning(
+                    f"Reinitializing detection head with {checkpoint_num_classes} classes"
+                )
                 self.reinitialize_detection_head(checkpoint_num_classes)
             # add support to exclude_keys
             # e.g., when load object365 pretrain, do not load `class_embed.[weight, bias]`
