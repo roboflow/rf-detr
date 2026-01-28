@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import torch.utils.data
-import torchvision
+from faster_coco_eval.utils.pytorch import FasterCocoDetection
 
 from rfdetr.datasets.coco import build_coco, build_roboflow_from_coco
 from rfdetr.datasets.o365 import build_o365
@@ -29,7 +29,7 @@ def get_coco_api_from_dataset(dataset: torch.utils.data.Dataset) -> Optional[Any
     for _ in range(10):
         if isinstance(dataset, torch.utils.data.Subset):
             dataset = dataset.dataset
-    if isinstance(dataset, torchvision.datasets.CocoDetection):
+    if isinstance(dataset, FasterCocoDetection):
         return dataset.coco
     if isinstance(dataset, YoloDetection):
         return dataset.coco

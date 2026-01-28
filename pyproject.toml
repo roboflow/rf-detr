@@ -35,7 +35,8 @@ classifiers = [
 keywords = ["machine-learning", "deep-learning", "vision", "ML", "DL", "AI", "DETR", "RF-DETR", "Roboflow"]
 
 dependencies = [
-    "pycocotools",
+    "cython",
+    "faster-coco-eval>=1.6.7",
     "torch>=1.13.0,<=2.8.0", # TODO: Torch >=2.9.0 is excluded due to known issues. PRs that help lift this restriction are welcome.
     "torchvision>=0.14.0",
     "scipy",

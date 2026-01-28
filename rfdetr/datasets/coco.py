@@ -12,6 +12,8 @@
 # Copied from DETR (https://github.com/facebookresearch/detr)
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 # ------------------------------------------------------------------------
+# Modifed with faster-coco-eval by @MiXaiLL76
+# ------------------------------------------------------------------------
 
 """
 COCO dataset which returns image_id for evaluation.
@@ -21,10 +23,11 @@ Mostly copy-paste from https://github.com/pytorch/vision/blob/13b35ff/references
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-import pycocotools.mask as coco_mask
+import faster_coco_eval.core.mask as coco_mask
 import torch
 import torch.utils.data
 import torchvision
+from faster_coco_eval.utils.pytorch import FasterCocoDetection
 from PIL import Image
 
 import rfdetr.datasets.transforms as T
@@ -45,7 +48,7 @@ def compute_multi_scale_scales(resolution: int, expanded_scales: bool = False, p
 
 def convert_coco_poly_to_mask(segmentations: List[Any], height: int, width: int) -> torch.Tensor:
     """Convert polygon segmentation to a binary mask tensor of shape [N, H, W].
-    Requires pycocotools.
+    Requires faster-coco-eval.
     """
     masks = []
     for polygons in segmentations:
@@ -68,7 +71,7 @@ def convert_coco_poly_to_mask(segmentations: List[Any], height: int, width: int)
     return torch.stack(masks, dim=0)
 
 
-class CocoDetection(torchvision.datasets.CocoDetection):
+class CocoDetection(FasterCocoDetection):
     def __init__(self, img_folder: Union[str, Path], ann_file: Union[str, Path], transforms: Optional[Any], include_masks: bool = False) -> None:
         super(CocoDetection, self).__init__(img_folder, ann_file)
         self._transforms = transforms

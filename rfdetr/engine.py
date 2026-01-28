@@ -230,6 +230,7 @@ def sweep_confidence_thresholds(per_class_data, conf_thresholds, classes_with_gt
             'macro_recall': macro_recall,
             'per_class_prec': np.array(per_class_precisions),
             'per_class_rec': np.array(per_class_recalls),
+            'per_class_f1': np.array(per_class_f1s),
         })
 
     return results
@@ -237,62 +238,33 @@ def sweep_confidence_thresholds(per_class_data, conf_thresholds, classes_with_gt
 
 def coco_extended_metrics(coco_eval):
     """
-    Compute precision/recall by sweeping confidence thresholds to maximize macro-F1.
-    Uses evalImgs directly to compute metrics from raw matching data.
+    Get extended metrics from faster-coco-eval's built-in extended_metrics property.
+    This includes precision, recall, and per-class metrics.
     """
-
-    iou50_idx = np.argwhere(np.isclose(coco_eval.params.iouThrs, 0.50)).item()
-    cat_ids = coco_eval.params.catIds
-    num_classes = len(cat_ids)
-    area_idx = 0
-    maxdet_idx = 2
-
-    # Unflatten evalImgs into a nested dict
-    evalImgs_unflat = {}
-    for e in coco_eval.evalImgs:
-        if e is None:
-            continue
-        cat_id = e['category_id']
-        area_rng = tuple(e['aRng'])
-        img_id = e['image_id']
-
-        if cat_id not in evalImgs_unflat:
-            evalImgs_unflat[cat_id] = {}
-        if area_rng not in evalImgs_unflat[cat_id]:
-            evalImgs_unflat[cat_id][area_rng] = {}
-        evalImgs_unflat[cat_id][area_rng][img_id] = e
-
-    area_rng_all = tuple(coco_eval.params.areaRng[area_idx])
-
-    per_class_data = []
-    for cid in cat_ids:
-        dt_scores = []
-        dt_matches = []
-        dt_ignore = []
-        total_gt = 0
-
-        for img_id in coco_eval.params.imgIds:
-            e = evalImgs_unflat.get(cid, {}).get(area_rng_all, {}).get(img_id)
-            if e is None:
-                continue
-
-            num_dt = len(e['dtIds'])
-            # num_gt = len(e['gtIds'])
-
-            gt_ignore = e['gtIgnore']
-            total_gt += sum(1 for ig in gt_ignore if not ig)
-
-            for d in range(num_dt):
-                dt_scores.append(e['dtScores'][d])
-                dt_matches.append(e['dtMatches'][iou50_idx, d])
-                dt_ignore.append(e['dtIgnore'][iou50_idx, d])
-
-        per_class_data.append({
-            'scores': np.array(dt_scores),
-            'matches': np.array(dt_matches),
-            'ignore': np.array(dt_ignore, dtype=bool),
-            'total_gt': total_gt,
-        })
+    metrics = coco_eval.extended_metrics.copy()  # Make a copy to avoid modifying the original
+    # Add f1_score to the metrics if it's not already included
+    if 'f1_score' not in metrics:
+        if 'precision' in metrics and 'recall' in metrics:
+            try:
+                if (metrics['precision'] + metrics['recall']) > 0:
+                    metrics['f1_score'] = 2 * (metrics['precision'] * metrics['recall']) / (metrics['precision'] + metrics['recall'])
+                else:
+                    metrics['f1_score'] = 0.0
+            except:
+                metrics['f1_score'] = 0.0
+    # Add f1_score to per-class metrics if needed
+    if 'class_map' in metrics:
+        for cls in metrics['class_map']:
+            if 'f1_score' not in cls:
+                if 'precision' in cls and 'recall' in cls:
+                    try:
+                        if (cls['precision'] + cls['recall']) > 0:
+                            cls['f1_score'] = 2 * (cls['precision'] * cls['recall']) / (cls['precision'] + cls['recall'])
+                        else:
+                            cls['f1_score'] = 0.0
+                    except:
+                        cls['f1_score'] = 0.0
+    return metrics
 
     conf_thresholds = np.linspace(0.0, 1.0, 101)
     classes_with_gt = [k for k in range(num_classes) if per_class_data[k]['total_gt'] > 0]
@@ -339,6 +311,7 @@ def coco_extended_metrics(coco_eval):
             "map@50"     : ap_50,
             "precision"  : best['per_class_prec'][k],
             "recall"     : best['per_class_rec'][k],
+            "f1_score"   : best['per_class_f1'][k],
         })
 
     per_class.append({
@@ -347,6 +320,7 @@ def coco_extended_metrics(coco_eval):
         "map@50"    : map_50,
         "precision" : best['macro_precision'],
         "recall"    : best['macro_recall'],
+        "f1_score"  : best['macro_f1'],
     })
 
     return {
@@ -354,6 +328,7 @@ def coco_extended_metrics(coco_eval):
         "map"      : map_50,
         "precision": best['macro_precision'],
         "recall"   : best['macro_recall'],
+        "f1_score" : best['macro_f1'],
     }
 
 def evaluate(model, criterion, postprocess, data_loader, base_ds, device, args=None):
@@ -438,12 +413,13 @@ def evaluate(model, criterion, postprocess, data_loader, base_ds, device, args=N
         coco_evaluator.summarize()
     stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
     if coco_evaluator is not None:
-        results_json = coco_extended_metrics(coco_evaluator.coco_eval["bbox"])
+        results_json = coco_evaluator.coco_eval["bbox"].extended_metrics
+        print("Results JSON:", results_json)
         stats["results_json"] = results_json
         if "bbox" in iou_types:
             stats["coco_eval_bbox"] = coco_evaluator.coco_eval["bbox"].stats.tolist()
 
         if "segm" in iou_types:
-            results_json = coco_extended_metrics(coco_evaluator.coco_eval["segm"])
+            results_json = coco_evaluator.coco_eval["segm"].extended_metrics
             stats["coco_eval_masks"] = coco_evaluator.coco_eval["segm"].stats.tolist()
     return stats, coco_evaluator
