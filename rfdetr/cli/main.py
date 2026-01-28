@@ -18,7 +18,7 @@ from rfdetr import RFDETRBase
 from rfdetr.config import DEVICE
 
 
-def download_dataset(rf_project: roboflow.Project, dataset_version: int):
+def download_dataset(rf_project: roboflow.Project, dataset_version: int) -> str:
     versions = rf_project.versions()
     if dataset_version is not None:
         versions = [v for v in versions if v.version == str(dataset_version)]
@@ -36,7 +36,7 @@ def download_dataset(rf_project: roboflow.Project, dataset_version: int):
     return location
 
 
-def train_from_rf_project(rf_project: roboflow.Project, dataset_version: int):
+def train_from_rf_project(rf_project: roboflow.Project, dataset_version: int) -> None:
     location = download_dataset(rf_project, dataset_version)
     print(location)
     rf_detr = RFDETRBase()
@@ -47,7 +47,7 @@ def train_from_rf_project(rf_project: roboflow.Project, dataset_version: int):
     )
 
 
-def train_from_coco_dir(coco_dir: str):
+def train_from_coco_dir(coco_dir: str) -> None:
     rf_detr = RFDETRBase()
     rf_detr.train(
         dataset_dir=coco_dir,
@@ -56,7 +56,7 @@ def train_from_coco_dir(coco_dir: str):
     )
 
 
-def trainer():
+def trainer() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--coco_dir", type=str, required=False)
     parser.add_argument("--api_key", type=str, required=False)
