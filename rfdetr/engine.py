@@ -230,6 +230,7 @@ def sweep_confidence_thresholds(per_class_data, conf_thresholds, classes_with_gt
             'macro_recall': macro_recall,
             'per_class_prec': np.array(per_class_precisions),
             'per_class_rec': np.array(per_class_recalls),
+            'per_class_f1': np.array(per_class_f1s),
         })
 
     return results
@@ -339,6 +340,7 @@ def coco_extended_metrics(coco_eval):
             "map@50"     : ap_50,
             "precision"  : best['per_class_prec'][k],
             "recall"     : best['per_class_rec'][k],
+            "f1_score"   : best['per_class_f1'][k],
         })
 
     per_class.append({
@@ -347,6 +349,7 @@ def coco_extended_metrics(coco_eval):
         "map@50"    : map_50,
         "precision" : best['macro_precision'],
         "recall"    : best['macro_recall'],
+        "f1_score"  : best['macro_f1'],
     })
 
     return {
@@ -354,6 +357,7 @@ def coco_extended_metrics(coco_eval):
         "map"      : map_50,
         "precision": best['macro_precision'],
         "recall"   : best['macro_recall'],
+        "f1_score" : best['macro_f1'],
     }
 
 def evaluate(model, criterion, postprocess, data_loader, base_ds, device, args=None):
