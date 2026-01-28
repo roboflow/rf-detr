@@ -6,11 +6,11 @@
 import glob
 import json
 import os
+import warnings
 from collections import defaultdict
 from copy import deepcopy
 from logging import getLogger
 from typing import List, Union
-import warnings
 
 import numpy as np
 import supervision as sv
