@@ -71,7 +71,7 @@ def train_one_epoch(
         "class_error", utils.SmoothedValue(window_size=1, fmt="{value:.2f}")
     )
     header = "Epoch: [{}]".format(epoch)
-    print_freq = 10
+    print_freq = args.print_freq if args is not None else 10
     start_steps = epoch * num_training_steps_per_epoch
 
     print("Grad accum steps: ", args.grad_accum_steps)
@@ -230,6 +230,7 @@ def sweep_confidence_thresholds(per_class_data, conf_thresholds, classes_with_gt
             'macro_recall': macro_recall,
             'per_class_prec': np.array(per_class_precisions),
             'per_class_rec': np.array(per_class_recalls),
+            'per_class_f1': np.array(per_class_f1s),
         })
 
     return results
@@ -339,6 +340,7 @@ def coco_extended_metrics(coco_eval):
             "map@50"     : ap_50,
             "precision"  : best['per_class_prec'][k],
             "recall"     : best['per_class_rec'][k],
+            "f1_score"   : best['per_class_f1'][k],
         })
 
     per_class.append({
@@ -347,6 +349,7 @@ def coco_extended_metrics(coco_eval):
         "map@50"    : map_50,
         "precision" : best['macro_precision'],
         "recall"    : best['macro_recall'],
+        "f1_score"  : best['macro_f1'],
     })
 
     return {
@@ -354,6 +357,7 @@ def coco_extended_metrics(coco_eval):
         "map"      : map_50,
         "precision": best['macro_precision'],
         "recall"   : best['macro_recall'],
+        "f1_score" : best['macro_f1'],
     }
 
 def evaluate(model, criterion, postprocess, data_loader, base_ds, device, args=None):
@@ -371,7 +375,8 @@ def evaluate(model, criterion, postprocess, data_loader, base_ds, device, args=N
     iou_types = ("bbox",) if not args.segmentation_head else ("bbox", "segm")
     coco_evaluator = CocoEvaluator(base_ds, iou_types, args.eval_max_dets)
 
-    for samples, targets in metric_logger.log_every(data_loader, 10, header):
+    print_freq = args.print_freq if args is not None else 10
+    for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
         samples = samples.to(device)
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 

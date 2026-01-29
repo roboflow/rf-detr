@@ -179,6 +179,9 @@ class RFDETR:
             raise ValueError(f"Invalid dataset file: {config.dataset_file}")
 
         if self.model_config.num_classes != num_classes:
+            logger.warning(
+                f"Reinitializing your detection head with {num_classes} classes."
+            )
             self.model.reinitialize_detection_head(num_classes)
 
         train_config = config.dict()
