@@ -10,9 +10,6 @@ on:
       - '.github/workflows/build-package.yml'
       - '.github/workflows/publish-release.yml'
 
-permissions:
-  contents: write # Required for uploading assets to release
-
 jobs:
   build-pkg:
     uses: ./.github/workflows/build-package.yml
