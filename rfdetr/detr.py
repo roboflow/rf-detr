@@ -537,7 +537,7 @@ class RFDETRLarge(RFDETR):
     size = "rfdetr-large"
     def __init__(self, **kwargs):
         self.init_error = None
-        self.is_deprecated = False
+        self.is_deprecated = kwargs.pop('is_deprecated', False)
         try:
             super().__init__(**kwargs)
         except Exception as e:
