@@ -1,7 +1,6 @@
 import json
 import os
 import shutil
-import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -9,8 +8,10 @@ import pytest
 import supervision as sv
 
 from rfdetr.datasets.synthetic import (
-    SYNTHETIC_SHAPES,
+    DEFAULT_SPLIT_RATIOS,
     SYNTHETIC_COLORS,
+    SYNTHETIC_SHAPES,
+    DatasetSplitRatios,
     calculate_boundary_overlap,
     draw_synthetic_shape,
     generate_coco_dataset,
@@ -72,52 +73,88 @@ def test_generate_synthetic_sample(img_size, min_objects, max_objects, class_mod
 
 
 @pytest.mark.parametrize(
-    "num_images,img_size,class_mode,split_ratios",
+    "num_images,img_size,class_mode,split_ratios,expected_splits",
     [
+        # Test with dictionary (legacy support)
         pytest.param(
             5, 100, "shape",
             {"train": 0.6, "val": 0.2, "test": 0.2},
-            id="shape_mode_all_splits"
+            ["train", "val", "test"],
+            id="shape_mode_all_splits_dict"
         ),
         pytest.param(
             3, 64, "color",
             {"train": 0.5, "val": 0.5},
-            id="color_mode_two_splits"
+            ["train", "val"],
+            id="color_mode_two_splits_dict"
         ),
         pytest.param(
             2, 128, "shape",
             {"train": 1.0},
-            id="single_split_only"
+            ["train"],
+            id="single_split_only_dict"
+        ),
+        # Test with DatasetSplitRatios dataclass
+        pytest.param(
+            4, 100, "shape",
+            DatasetSplitRatios(train=0.7, val=0.2, test=0.1),
+            ["train", "val", "test"],
+            id="split_ratios_dataclass"
+        ),
+        pytest.param(
+            3, 64, "color",
+            DatasetSplitRatios(train=0.8, val=0.2, test=0.0),
+            ["train", "val"],
+            id="split_ratios_no_test"
+        ),
+        # Test with tuple
+        pytest.param(
+            4, 100, "shape",
+            (0.7, 0.2, 0.1),
+            ["train", "val", "test"],
+            id="split_ratios_tuple_three"
+        ),
+        pytest.param(
+            3, 64, "color",
+            (0.8, 0.2),
+            ["train", "val"],
+            id="split_ratios_tuple_two"
+        ),
+        # Test with default
+        pytest.param(
+            10, 64, "shape",
+            DEFAULT_SPLIT_RATIOS,
+            ["train", "val", "test"],
+            id="split_ratios_default"
         ),
     ]
 )
-def test_generate_coco_dataset(num_images, img_size, class_mode, split_ratios):
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        output_dir = Path(tmp_dir) / "test_dataset"
-        generate_coco_dataset(
-            output_dir=str(output_dir),
-            num_images=num_images,
-            img_size=img_size,
-            class_mode=class_mode,
-            split_ratios=split_ratios
-        )
+def test_generate_coco_dataset(num_images, img_size, class_mode, split_ratios, expected_splits, tmp_path):
+    output_dir = tmp_path / "test_dataset"
+    generate_coco_dataset(
+        output_dir=str(output_dir),
+        num_images=num_images,
+        img_size=img_size,
+        class_mode=class_mode,
+        split_ratios=split_ratios
+    )
 
-        assert output_dir.exists()
+    assert output_dir.exists()
 
-        for split in split_ratios.keys():
-            split_dir = output_dir / split
-            assert split_dir.exists()
-            assert (split_dir / "annotations.json").exists()
+    for split in expected_splits:
+        split_dir = output_dir / split
+        assert split_dir.exists()
+        assert (split_dir / "annotations.json").exists()
 
-            with open(split_dir / "annotations.json", "r") as f:
-                data = json.load(f)
-                assert "images" in data
-                assert "annotations" in data
-                assert "categories" in data
+        with open(split_dir / "annotations.json", "r") as f:
+            data = json.load(f)
+            assert "images" in data
+            assert "annotations" in data
+            assert "categories" in data
 
-                # Check if images exist
-                for img_info in data["images"]:
-                    assert (split_dir / "images" / img_info["file_name"]).exists()
+            # Check if images exist
+            for img_info in data["images"]:
+                assert (split_dir / "images" / img_info["file_name"]).exists()
 
 
 # Additional edge case tests
