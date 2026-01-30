@@ -28,11 +28,13 @@ except Exception:
     from collections import Sequence
 from numbers import Number
 
+import albumentations as A
 import torch
 import torchvision.transforms as T
 
 # from detectron2.data import transforms as DT
 import torchvision.transforms.functional as F
+from PIL import Image
 
 from rfdetr.util.box_ops import box_xyxy_to_cxcywh
 from rfdetr.util.misc import interpolate
@@ -481,3 +483,79 @@ class Compose(object):
             format_string += "    {0}".format(t)
         format_string += "\n)"
         return format_string
+
+# Albumentations wrapper for RF-DETR
+class AlbumentationsWrapper:
+    """
+    Generic wrapper to apply Albumentations transform to (image, target) tuples.
+    Handles boxes only if transform is geometric.
+    """
+    def __init__(self, transform: A.BasicTransform, bbox_safe: bool = True):
+        self.bbox_safe = bbox_safe
+        if bbox_safe:
+            # Always wrap in Compose with bbox_params
+            self.transform = A.Compose(
+                [transform],
+                bbox_params=A.BboxParams(
+                    format='pascal_voc',  # xyxy
+                    label_fields=['category_ids'],
+                    min_visibility=0.0,   # remove boxes if fully outside
+                    clip=True
+                )
+            )
+        else:
+            self.transform = A.Compose([transform])
+
+    def __call__(self, image, target):
+        image_np = np.array(image)
+        labels = target['labels'].cpu().tolist() if torch.is_tensor(target['labels']) else list(target['labels'])
+
+        if self.bbox_safe and 'boxes' in target:
+            boxes = target['boxes']
+            boxes_np = boxes.cpu().numpy() if torch.is_tensor(boxes) else boxes
+            augmented = self.transform(image=image_np, bboxes=boxes_np, category_ids=labels)
+            target_out = target.copy()
+            bboxes_aug = augmented['bboxes']
+            if len(bboxes_aug) == 0:
+                target_out['boxes'] = torch.zeros((0, 4), dtype=torch.float32)
+            else:
+                target_out['boxes'] = torch.as_tensor(bboxes_aug, dtype=torch.float32).reshape(-1, 4)
+            target_out['labels'] = torch.tensor(augmented['category_ids'], dtype=torch.long)
+            image_out = Image.fromarray(augmented['image'])
+        else:
+            augmented = self.transform(image=image_np)
+            image_out = Image.fromarray(augmented['image'])
+            target_out = target
+
+        return image_out, target_out
+
+
+# Build transforms dynamically
+def build_albumentations_from_config(config_dict):
+    transforms = []
+    for aug_name, params in config_dict.items():
+        base_aug = getattr(A, aug_name, None)
+        if base_aug is None:
+            print(f"Warning: Unknown Albumentations transform {aug_name}")
+            continue
+
+        # Determine if transform is geometric (affects boxes)
+        geometric = aug_name in ["HorizontalFlip", "VerticalFlip", "Affine", "RandomCrop", "RandomSizedCrop", "Rotate"]
+        transforms.append(
+            AlbumentationsWrapper(
+                base_aug(**params),
+                bbox_safe=geometric
+            )
+        )
+
+    return transforms
+
+
+class ComposeAugmentations:
+    def __init__(self, transforms):
+        self.transforms = transforms
+
+    def __call__(self, image, target):
+        for t in self.transforms:
+            image, target = t(image, target)
+        return image, target

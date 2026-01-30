@@ -28,6 +28,8 @@ import torchvision
 from PIL import Image
 
 import rfdetr.datasets.transforms as T
+from rfdetr.augmentation_config import AUG_CONFIG
+from rfdetr.datasets.transforms import ComposeAugmentations, build_albumentations_from_config
 
 
 def is_valid_coco_dataset(dataset_dir: str) -> bool:
@@ -81,7 +83,8 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         target = {'image_id': image_id, 'annotations': target}
         img, target = self.prepare(img, target)
         if self._transforms is not None:
-            img, target = self._transforms(img, target)
+            img, target = self._transforms(img, target) # [cx, cy, w, h]
+
         return img, target
 
 
@@ -145,8 +148,7 @@ class ConvertCoco(object):
         return image, target
 
 
-def make_coco_transforms(image_set: str, resolution: int, multi_scale: bool = False, expanded_scales: bool = False, skip_random_resize: bool = False, patch_size: int = 16, num_windows: int = 4) -> T.Compose:
-
+def make_coco_transforms(image_set, resolution, multi_scale=False, expanded_scales=False):
     normalize = T.Compose([
         T.ToTensor(),
         T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
@@ -162,15 +164,16 @@ def make_coco_transforms(image_set: str, resolution: int, multi_scale: bool = Fa
 
     if image_set == 'train':
         return T.Compose([
-            T.RandomHorizontalFlip(),
+            # T.RandomHorizontalFlip(),
             T.RandomSelect(
-                T.RandomResize(scales, max_size=1333),
+                T.SquareResize(scales),
                 T.Compose([
                     T.RandomResize([400, 500, 600]),
                     T.RandomSizeCrop(384, 600),
-                    T.RandomResize(scales, max_size=1333),
-                ])
+                    T.SquareResize(scales),
+                ]),
             ),
+            ComposeAugmentations(build_albumentations_from_config(AUG_CONFIG)),
             normalize,
         ])
 
@@ -188,8 +191,9 @@ def make_coco_transforms(image_set: str, resolution: int, multi_scale: bool = Fa
     raise ValueError(f'unknown {image_set}')
 
 
-def make_coco_transforms_square_div_64(image_set: str, resolution: int, multi_scale: bool = False, expanded_scales: bool = False, skip_random_resize: bool = False, patch_size: int = 16, num_windows: int = 4) -> T.Compose:
-
+def make_coco_transforms_square_div_64(image_set, resolution, multi_scale=False, expanded_scales=False, skip_random_resize=False, patch_size=16, num_windows=4):
+    """
+    """
     normalize = T.Compose([
         T.ToTensor(),
         T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
@@ -206,7 +210,7 @@ def make_coco_transforms_square_div_64(image_set: str, resolution: int, multi_sc
 
     if image_set == 'train':
         return T.Compose([
-            T.RandomHorizontalFlip(),
+            # T.RandomHorizontalFlip(),
             T.RandomSelect(
                 T.SquareResize(scales),
                 T.Compose([
@@ -215,6 +219,7 @@ def make_coco_transforms_square_div_64(image_set: str, resolution: int, multi_sc
                     T.SquareResize(scales),
                 ]),
             ),
+            ComposeAugmentations(build_albumentations_from_config(AUG_CONFIG)),
             normalize,
         ])
 
