@@ -32,6 +32,14 @@ from rfdetr.datasets.synthetic import (
         np.array([110.0, 40.0, 130.0, 60.0]), 1.0,
         id="fully_outside"
     ),
+    pytest.param(
+        np.array([0.0, 0.0, 50.0, 50.0]), 0.0,
+        id="exactly_at_boundary"
+    ),
+    pytest.param(
+        np.array([50.0, 50.0, 100.0, 100.0]), 0.0,
+        id="exactly_at_max_boundary"
+    ),
 ])
 def test_calculate_boundary_overlap(bbox, expected_overlap):
     img_size = 100
@@ -56,6 +64,7 @@ def test_draw_synthetic_shape(shape, color):
         pytest.param(100, 1, 3, "shape", id="small_shape_mode"),
         pytest.param(200, 2, 5, "color", id="medium_color_mode"),
         pytest.param(100, 1, 1, "shape", id="single_object"),
+        pytest.param(100, 0, 0, "shape", id="zero_objects"),
     ]
 )
 def test_generate_synthetic_sample(img_size, min_objects, max_objects, class_mode):
@@ -144,40 +153,14 @@ def test_generate_coco_dataset(num_images, img_size, class_mode, split_ratios, e
     for split in expected_splits:
         split_dir = output_dir / split
         assert split_dir.exists()
-        assert (split_dir / "annotations.json").exists()
+        assert (split_dir / "_annotations.coco.json").exists()
 
-        with open(split_dir / "annotations.json", "r") as f:
+        with open(split_dir / "_annotations.coco.json", "r") as f:
             data = json.load(f)
             assert "images" in data
             assert "annotations" in data
             assert "categories" in data
 
-            # Check if images exist
+            # Check if images exist (they should be in the split directory, not in a subdirectory)
             for img_info in data["images"]:
-                assert (split_dir / "images" / img_info["file_name"]).exists()
-
-
-# Additional edge case tests
-def test_generate_synthetic_sample_zero_objects():
-    """Test that sample generation handles cases where no objects are placed."""
-    img, detections = generate_synthetic_sample(
-        img_size=100,
-        min_objects=0,
-        max_objects=0,
-        class_mode="shape"
-    )
-    assert img.shape == (100, 100, 3)
-    assert len(detections) == 0
-
-
-def test_calculate_boundary_overlap_edge_cases():
-    """Test boundary overlap with edge cases."""
-    img_size = 100
-
-    # Exactly at boundary
-    bbox_at_boundary = np.array([0.0, 0.0, 50.0, 50.0])
-    assert calculate_boundary_overlap(bbox_at_boundary, img_size) == 0.0
-
-    # Exactly at opposite boundary
-    bbox_at_max_boundary = np.array([50.0, 50.0, 100.0, 100.0])
-    assert calculate_boundary_overlap(bbox_at_max_boundary, img_size) == 0.0
+                assert (split_dir / img_info["file_name"]).exists()

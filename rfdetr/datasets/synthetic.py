@@ -166,7 +166,7 @@ def generate_synthetic_sample(
     class_mode: Literal["shape", "color"],
     min_size_ratio: float = 0.1,
     max_size_ratio: float = 0.3,
-    overlap_threshold: float = 0.3,
+    overlap_threshold: float = 0.1,
 ) -> Tuple[np.ndarray, sv.Detections]:
     """Generate a single synthetic image and its detections."""
     img = np.ones((img_size, img_size, 3), dtype=np.uint8) * 128
@@ -268,9 +268,10 @@ def generate_coco_dataset(
         if not split_indices:
             continue
 
-        images_dir = output_path / split / "images"
-        images_dir.mkdir(parents=True, exist_ok=True)
-        annotations_path = output_path / split / "annotations.json"
+        # Images and annotations should be in the same directory for COCO format
+        split_dir = output_path / split
+        split_dir.mkdir(parents=True, exist_ok=True)
+        annotations_path = split_dir / "_annotations.coco.json"
 
         images = {}
         annotations = {}
@@ -280,7 +281,7 @@ def generate_coco_dataset(
             img, detections = generate_synthetic_sample(img_size, 1, 10, class_mode)
 
             file_name = f"{i:06d}.jpg"
-            file_path = str(images_dir / file_name)
+            file_path = str(split_dir / file_name)
             cv2.imwrite(file_path, img)
 
             images[file_path] = img
