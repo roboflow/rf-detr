@@ -79,14 +79,18 @@ def _normalize_split_ratios(split_ratios: SplitRatiosType) -> Dict[str, float]:
         else:
             raise ValueError(f"Split ratios tuple must have 2 or 3 elements, got {len(split_ratios)}")
 
-        # Validate tuple ratios sum to approximately 1.0
+        # Validate tuple ratios are non-negative and sum to approximately 1.0
+        if any(ratio < 0 for ratio in split_ratios):
+            raise ValueError(f"Split ratios must be non-negative, got {split_ratios}")
         total = sum(split_ratios)
         if not 0.99 <= total <= 1.01:
             raise ValueError(f"Split ratios must sum to 1.0, got {total}")
         return result
 
     if isinstance(split_ratios, dict):
-        # Validate that ratios sum to approximately 1.0
+        # Validate that ratios are non-negative and sum to approximately 1.0
+        if any(value < 0 for value in split_ratios.values()):
+            raise ValueError(f"Split ratios must be non-negative, got {split_ratios}")
         total = sum(split_ratios.values())
         if not 0.99 <= total <= 1.01:
             raise ValueError(f"Split ratios must sum to 1.0, got {total}")
@@ -175,6 +179,8 @@ def generate_synthetic_sample(
 
     xyxys = []
     class_ids = []
+    failed_attempts = 0
+    max_failed_attempts = 3  # Allow some failures before reducing target count
 
     for _ in range(num_objects):
         shape = random.choice(SYNTHETIC_SHAPES)
@@ -189,7 +195,8 @@ def generate_synthetic_sample(
         min_size = max(10, int(img_size * min_size_ratio))
         max_size = max(min_size + 1, int(img_size * max_size_ratio))
 
-        for _ in range(100): # max attempts
+        placed = False
+        for _ in range(100): # max attempts per object
             obj_size = random.randint(min_size, max_size)
             cx = random.randint(obj_size // 2, img_size - obj_size // 2)
             cy = random.randint(obj_size // 2, img_size - obj_size // 2)
@@ -213,7 +220,14 @@ def generate_synthetic_sample(
             img = draw_synthetic_shape(img, shape, color, (cx, cy), obj_size)
             xyxys.append(bbox)
             class_ids.append(category_id)
+            placed = True
             break
+
+        # Track failed placements; stop early if too crowded
+        if not placed:
+            failed_attempts += 1
+            if failed_attempts >= max_failed_attempts:
+                break
 
     detections = sv.Detections(
         xyxy=np.array(xyxys) if xyxys else np.empty((0, 4)),

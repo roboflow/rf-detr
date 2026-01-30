@@ -164,3 +164,36 @@ def test_generate_coco_dataset(num_images, img_size, class_mode, split_ratios, e
             # Check if images exist (they should be in the split directory, not in a subdirectory)
             for img_info in data["images"]:
                 assert (split_dir / img_info["file_name"]).exists()
+
+
+@pytest.mark.parametrize(
+    "split_ratios,error_message",
+    [
+        pytest.param(
+            (1.1, -0.1),
+            "Split ratios must be non-negative",
+            id="tuple_negative_ratio"
+        ),
+        pytest.param(
+            {"train": 1.1, "val": -0.1},
+            "Split ratios must be non-negative",
+            id="dict_negative_ratio"
+        ),
+        pytest.param(
+            (0.5, 0.3),
+            "Split ratios must sum to 1.0",
+            id="tuple_invalid_sum"
+        ),
+    ]
+)
+def test_invalid_split_ratios(split_ratios, error_message, tmp_path):
+    """Test that invalid split ratios raise ValueError."""
+    output_dir = tmp_path / "test_dataset"
+    with pytest.raises(ValueError, match=error_message):
+        generate_coco_dataset(
+            output_dir=str(output_dir),
+            num_images=5,
+            img_size=100,
+            class_mode="shape",
+            split_ratios=split_ratios
+        )
