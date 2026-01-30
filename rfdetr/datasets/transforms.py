@@ -515,7 +515,11 @@ class AlbumentationsWrapper:
             boxes_np = boxes.cpu().numpy() if torch.is_tensor(boxes) else boxes
             augmented = self.transform(image=image_np, bboxes=boxes_np, category_ids=labels)
             target_out = target.copy()
-            target_out['boxes'] = torch.tensor(augmented['bboxes'], dtype=torch.float32)
+            bboxes_aug = augmented['bboxes']
+            if len(bboxes_aug) == 0:
+                target_out['boxes'] = torch.zeros((0, 4), dtype=torch.float32)
+            else:
+                target_out['boxes'] = torch.as_tensor(bboxes_aug, dtype=torch.float32).reshape(-1, 4)
             target_out['labels'] = torch.tensor(augmented['category_ids'], dtype=torch.long)
             image_out = Image.fromarray(augmented['image'])
         else:
