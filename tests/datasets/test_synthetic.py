@@ -1,7 +1,4 @@
 import json
-import os
-import shutil
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -9,8 +6,6 @@ import supervision as sv
 
 from rfdetr.datasets.synthetic import (
     DEFAULT_SPLIT_RATIOS,
-    SYNTHETIC_COLORS,
-    SYNTHETIC_SHAPES,
     DatasetSplitRatios,
     calculate_boundary_overlap,
     draw_synthetic_shape,

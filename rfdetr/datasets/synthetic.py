@@ -1,11 +1,10 @@
 """Synthetic dataset generation with COCO formatting."""
 
 import logging
-import os
 import random
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Tuple, Union
+from typing import Dict, Tuple, Union
 
 import cv2
 import numpy as np
