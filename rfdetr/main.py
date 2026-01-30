@@ -3,7 +3,7 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-# Modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
+# Copied and modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
 # Copyright (c) 2024 Baidu. All Rights Reserved.
 # ------------------------------------------------------------------------
 # Modified from Conditional DETR (https://github.com/Atten4Vis/ConditionalDETR)
@@ -116,6 +116,9 @@ class Model:
 
             checkpoint_num_classes = checkpoint['model']['class_embed.bias'].shape[0]
             if checkpoint_num_classes != args.num_classes + 1:
+                logger.warning(
+                    f"Reinitializing detection head with {checkpoint_num_classes} classes"
+                )
                 self.reinitialize_detection_head(checkpoint_num_classes)
             # add support to exclude_keys
             # e.g., when load object365 pretrain, do not load `class_embed.[weight, bias]`
@@ -709,6 +712,8 @@ def get_args_parser():
     parser = argparse.ArgumentParser('Set transformer detector', add_help=False)
     parser.add_argument('--num_classes', default=2, type=int)
     parser.add_argument('--grad_accum_steps', default=1, type=int)
+    parser.add_argument('--print_freq', default=10, type=int,
+                        help='log frequency (in steps) during train/eval')
     parser.add_argument('--amp', default=False, type=bool)
     parser.add_argument('--lr', default=1e-4, type=float)
     parser.add_argument('--lr_encoder', default=1.5e-4, type=float)
@@ -897,6 +902,7 @@ def populate_args(
     # Basic training parameters
     num_classes=2,
     grad_accum_steps=1,
+    print_freq=10,
     amp=False,
     lr=1e-4,
     lr_encoder=1.5e-4,
@@ -1020,6 +1026,7 @@ def populate_args(
     args = argparse.Namespace(
         num_classes=num_classes,
         grad_accum_steps=grad_accum_steps,
+        print_freq=print_freq,
         amp=amp,
         lr=lr,
         lr_encoder=lr_encoder,

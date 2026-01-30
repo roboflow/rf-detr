@@ -9,7 +9,7 @@
 # See the LICENSE.platform file for full terms and conditions.
 # ------------------------------------------------------------------------
 
-from typing import List, Literal
+from typing import Any, Literal
 
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.detr import RFDETR
@@ -24,8 +24,8 @@ class RFDETRXLargeConfig(ModelConfig):
     dec_n_points: int = 4
     num_windows: int = 1
     patch_size: int = 20
-    projector_scale: List[Literal["P4",]] = ["P4"]
-    out_feature_indexes: List[int] = [3, 6, 9, 12]
+    projector_scale: list[Literal["P4",]] = ["P4"]
+    out_feature_indexes: list[int] = [3, 6, 9, 12]
     num_classes: int = 365
     positional_encoding_size: int = 700 // 20
     resolution: int = 700
@@ -42,8 +42,8 @@ class RFDETR2XLargeConfig(ModelConfig):
     dec_n_points: int = 4
     num_windows: int = 2
     patch_size: int = 20
-    projector_scale: List[Literal["P4",]] = ["P4"]
-    out_feature_indexes: List[int] = [3, 6, 9, 12]
+    projector_scale: list[Literal["P4",]] = ["P4"]
+    out_feature_indexes: list[int] = [3, 6, 9, 12]
     num_classes: int = 365
     positional_encoding_size: int = 880 // 20
     resolution: int = 880
@@ -52,9 +52,9 @@ class RFDETR2XLargeConfig(ModelConfig):
 
 
 class RFDETRXLarge(RFDETR):
-    size = "rfdetr-xlarge"
+    size: Literal["rfdetr-xlarge"] = "rfdetr-xlarge"
 
-    def __init__(self, accept_platform_model_license: bool = False, **kwargs):
+    def __init__(self, accept_platform_model_license: bool = False, **kwargs: Any) -> None:
         if accept_platform_model_license is not True:
             raise ValueError(
                 "You must accept the platform model license (LICENSE.platform) to use this model. "
@@ -62,17 +62,17 @@ class RFDETRXLarge(RFDETR):
             )
         super().__init__(**kwargs)
 
-    def get_model_config(self, **kwargs):
+    def get_model_config(self, **kwargs: Any) -> RFDETRXLargeConfig:
         return RFDETRXLargeConfig(**kwargs)
 
-    def get_train_config(self, **kwargs):
+    def get_train_config(self, **kwargs: Any) -> TrainConfig:
         return TrainConfig(**kwargs)
 
 
 class RFDETR2XLarge(RFDETR):
-    size = "rfdetr-2xlarge"
+    size: Literal["rfdetr-2xlarge"] = "rfdetr-2xlarge"
 
-    def __init__(self, accept_platform_model_license: bool = False, **kwargs):
+    def __init__(self, accept_platform_model_license: bool = False, **kwargs: Any) -> None:
         if accept_platform_model_license is not True:
             raise ValueError(
                 "You must accept the platform model license (LICENSE.platform) to use this model. "
@@ -80,8 +80,8 @@ class RFDETR2XLarge(RFDETR):
             )
         super().__init__(**kwargs)
 
-    def get_model_config(self, **kwargs):
+    def get_model_config(self, **kwargs: Any) -> RFDETR2XLargeConfig:
         return RFDETR2XLargeConfig(**kwargs)
 
-    def get_train_config(self, **kwargs):
+    def get_train_config(self, **kwargs: Any) -> TrainConfig:
         return TrainConfig(**kwargs)
