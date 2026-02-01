@@ -499,6 +499,7 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
     do_random_resize_via_padding = getattr(args, "do_random_resize_via_padding", False)
     patch_size = getattr(args, "patch_size", None)
     num_windows = getattr(args, "num_windows", None)
+    horizontal_flip_prob = getattr(args, "horizontal_flip_prob", 0.5)
 
     if square_resize_div_64:
         dataset = YoloDetection(
@@ -512,7 +513,8 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
                 expanded_scales=expanded_scales,
                 skip_random_resize=not do_random_resize_via_padding,
                 patch_size=patch_size,
-                num_windows=num_windows
+                num_windows=num_windows,
+                horizontal_flip_prob=horizontal_flip_prob
             ),
             include_masks=include_masks
         )
@@ -528,7 +530,8 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
                 expanded_scales=expanded_scales,
                 skip_random_resize=not do_random_resize_via_padding,
                 patch_size=patch_size,
-                num_windows=num_windows
+                num_windows=num_windows,
+                horizontal_flip_prob=horizontal_flip_prob
             ),
             include_masks=include_masks
         )

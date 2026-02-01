@@ -145,7 +145,7 @@ class ConvertCoco(object):
         return image, target
 
 
-def make_coco_transforms(image_set: str, resolution: int, multi_scale: bool = False, expanded_scales: bool = False, skip_random_resize: bool = False, patch_size: int = 16, num_windows: int = 4) -> T.Compose:
+def make_coco_transforms(image_set: str, resolution: int, multi_scale: bool = False, expanded_scales: bool = False, skip_random_resize: bool = False, patch_size: int = 16, num_windows: int = 4, horizontal_flip_prob: float = 0.5) -> T.Compose:
 
     normalize = T.Compose([
         T.ToTensor(),
@@ -161,8 +161,8 @@ def make_coco_transforms(image_set: str, resolution: int, multi_scale: bool = Fa
         print(scales)
 
     if image_set == 'train':
-        return T.Compose([
-            T.RandomHorizontalFlip(),
+        print(f"Data augmentation: horizontal_flip_prob={horizontal_flip_prob}")
+        transforms_ = [
             T.RandomSelect(
                 T.RandomResize(scales, max_size=1333),
                 T.Compose([
@@ -172,7 +172,11 @@ def make_coco_transforms(image_set: str, resolution: int, multi_scale: bool = Fa
                 ])
             ),
             normalize,
-        ])
+        ]
+        if transforms_ != 0:
+            transforms_.append(T.RandomHorizontalFlip(p=horizontal_flip_prob))
+
+        return T.Compose(transforms_)
 
     if image_set == 'val':
         return T.Compose([
@@ -188,7 +192,7 @@ def make_coco_transforms(image_set: str, resolution: int, multi_scale: bool = Fa
     raise ValueError(f'unknown {image_set}')
 
 
-def make_coco_transforms_square_div_64(image_set: str, resolution: int, multi_scale: bool = False, expanded_scales: bool = False, skip_random_resize: bool = False, patch_size: int = 16, num_windows: int = 4) -> T.Compose:
+def make_coco_transforms_square_div_64(image_set: str, resolution: int, multi_scale: bool = False, expanded_scales: bool = False, skip_random_resize: bool = False, patch_size: int = 16, num_windows: int = 4, horizontal_flip_prob: float = 0.5) -> T.Compose:
 
     normalize = T.Compose([
         T.ToTensor(),
@@ -206,7 +210,7 @@ def make_coco_transforms_square_div_64(image_set: str, resolution: int, multi_sc
 
     if image_set == 'train':
         return T.Compose([
-            T.RandomHorizontalFlip(),
+            T.RandomHorizontalFlip(p=horizontal_flip_prob),
             T.RandomSelect(
                 T.SquareResize(scales),
                 T.Compose([
@@ -250,6 +254,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
 
     square_resize_div_64 = getattr(args, 'square_resize_div_64', False)
     include_masks = getattr(args, "segmentation_head", False)
+    horizontal_flip_prob = getattr(args, "horizontal_flip_prob", 0.5)
 
     if square_resize_div_64:
         dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms_square_div_64(
@@ -259,7 +264,8 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             expanded_scales=args.expanded_scales,
             skip_random_resize=not args.do_random_resize_via_padding,
             patch_size=args.patch_size,
-            num_windows=args.num_windows
+            num_windows=args.num_windows,
+            horizontal_flip_prob=horizontal_flip_prob
         ), include_masks=include_masks)
     else:
         dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms(
@@ -269,7 +275,8 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             expanded_scales=args.expanded_scales,
             skip_random_resize=not args.do_random_resize_via_padding,
             patch_size=args.patch_size,
-            num_windows=args.num_windows
+            num_windows=args.num_windows,
+            horizontal_flip_prob=horizontal_flip_prob
         ), include_masks=include_masks)
     return dataset
 
@@ -295,6 +302,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
     do_random_resize_via_padding = getattr(args, "do_random_resize_via_padding", False)
     patch_size = getattr(args, "patch_size", 16)
     num_windows = getattr(args, "num_windows", 4)
+    horizontal_flip_prob = getattr(args, "horizontal_flip_prob", 0.5)
 
     if square_resize_div_64:
         dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms_square_div_64(
@@ -304,7 +312,8 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
             expanded_scales=expanded_scales,
             skip_random_resize=not do_random_resize_via_padding,
             patch_size=patch_size,
-            num_windows=num_windows
+            num_windows=num_windows,
+            horizontal_flip_prob=horizontal_flip_prob
         ), include_masks=include_masks)
     else:
         dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms(
@@ -314,6 +323,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
             expanded_scales=expanded_scales,
             skip_random_resize=not do_random_resize_via_padding,
             patch_size=patch_size,
-            num_windows=num_windows
+            num_windows=num_windows,
+            horizontal_flip_prob=horizontal_flip_prob
         ), include_masks=include_masks)
     return dataset

@@ -280,6 +280,8 @@ class TrainConfig(BaseModel):
     run_test: bool = True
     segmentation_head: bool = False
     eval_max_dets: int = 500
+    # Data augmentation parameters
+    horizontal_flip_prob: float = 0.5
 
     @field_validator("dataset_dir", "output_dir", mode="after")
     @classmethod
