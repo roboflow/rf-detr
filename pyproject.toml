@@ -54,7 +54,7 @@ dependencies = [
 
 [project.optional-dependencies]
 onnxexport = [
-    "onnx",
+    "onnx>=1.16.0,<1.20",
     "onnxsim",
     "onnx_graphsurgeon",
     "onnxruntime"
