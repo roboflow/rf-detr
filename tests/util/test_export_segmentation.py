@@ -23,7 +23,7 @@ import torch
 class TestSegmentationModelExport:
     """
     Integration test that actually loads a segmentation model and tests export.
-    
+
     Requires CUDA and ONNX dependencies.
     """
 
@@ -37,7 +37,7 @@ class TestSegmentationModelExport:
     def test_segmentation_model_export_no_crash(self, output_dir):
         """
         Test that exporting a segmentation model does not crash.
-        
+
         This is the actual integration test that exercises the full export path.
         """
         try:
@@ -52,10 +52,10 @@ class TestSegmentationModelExport:
 
         # Create model without pretrained weights (random initialization)
         model = RFDETRSegNano()
-        
+
         # This should not crash with "AttributeError: 'dict' object has no attribute 'shape'"
         model.export(output_dir=output_dir, simplify=False)
-        
+
         # Verify export produced output files
         output_path = Path(output_dir)
         onnx_files = list(output_path.glob("*.onnx"))
