@@ -257,7 +257,12 @@ def main(args):
             dets = outputs['pred_boxes']
             labels = outputs['pred_logits']
             masks = outputs['pred_masks']
-            print(f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}, Masks: {masks.shape}")
+            if isinstance(masks, torch.Tensor):
+                print(f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}, Masks: {masks.shape}")
+            else:
+                # masks is a dict with spatial_features, query_features, bias
+                print(f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}")
+                print(f"  Mask spatial_features: {masks['spatial_features'].shape}, query_features: {masks['query_features'].shape}, bias: {masks['bias'].shape}")
         else:
             outputs = model(input_tensors)
             dets = outputs['pred_boxes']
