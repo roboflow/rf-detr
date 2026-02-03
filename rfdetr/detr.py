@@ -13,12 +13,12 @@ from logging import getLogger
 from typing import List, Union
 
 import numpy as np
+import requests
 import supervision as sv
 import torch
 import torchvision.transforms.functional as F
 import yaml
 from PIL import Image
-import requests
 
 from rfdetr.datasets.coco import is_valid_coco_dataset
 from rfdetr.datasets.yolo import is_valid_yolo_dataset
