@@ -1,3 +1,3 @@
 :::rfdetr.config.TrainConfig
-    options:
-      inherited_members: true
+options:
+inherited_members: true

@@ -40,17 +40,17 @@ This command saves the ONNX model to the `output` directory by default.
 
 The `export()` method accepts several parameters to customize the export process:
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `output_dir` | `"output"` | Directory where the exported ONNX model will be saved. |
-| `infer_dir` | `None` | Path to an image file to use for tracing. If not provided, a random dummy image is generated. |
-| `simplify` | `False` | Whether to simplify the ONNX model using onnxsim for better compatibility and performance. |
-| `backbone_only` | `False` | Export only the backbone feature extractor instead of the full model. |
-| `opset_version` | `17` | ONNX opset version to use for export. Higher versions support more operations. |
-| `verbose` | `True` | Whether to print verbose export information. |
-| `force` | `False` | Force re-export even if simplified model already exists. |
-| `shape` | `None` | Input shape as tuple `(height, width)`. Must be divisible by 14. If not provided, uses the model's default resolution. |
-| `batch_size` | `1` | Batch size for the exported model. |
+| Parameter       | Default    | Description                                                                                                            |
+| --------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `output_dir`    | `"output"` | Directory where the exported ONNX model will be saved.                                                                 |
+| `infer_dir`     | `None`     | Path to an image file to use for tracing. If not provided, a random dummy image is generated.                          |
+| `simplify`      | `False`    | Whether to simplify the ONNX model using onnxsim for better compatibility and performance.                             |
+| `backbone_only` | `False`    | Export only the backbone feature extractor instead of the full model.                                                  |
+| `opset_version` | `17`       | ONNX opset version to use for export. Higher versions support more operations.                                         |
+| `verbose`       | `True`     | Whether to print verbose export information.                                                                           |
+| `force`         | `False`    | Force re-export even if simplified model already exists.                                                               |
+| `shape`         | `None`     | Input shape as tuple `(height, width)`. Must be divisible by 14. If not provided, uses the model's default resolution. |
+| `batch_size`    | `1`        | Batch size for the exported model.                                                                                     |
 
 ## Advanced Export Examples
 

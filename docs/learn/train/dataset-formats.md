@@ -12,6 +12,7 @@ When you call `model.train(dataset_dir=<path>)`, RF-DETR checks the following:
 If neither format is detected, an error is raised with instructions on what's expected.
 
 !!! tip "Roboflow Export"
+
     [Roboflow](https://roboflow.com/annotate) can export datasets in both COCO and YOLO formats. When downloading from Roboflow, select the appropriate format based on your preference.
 
 ---
@@ -77,7 +78,12 @@ Each `_annotations.coco.json` file contains:
       "id": 1,
       "image_id": 1,
       "category_id": 1,
-      "bbox": [100, 150, 200, 180],
+      "bbox": [
+        100,
+        150,
+        200,
+        180
+      ],
       "area": 36000,
       "iscrowd": 0
     }
@@ -87,14 +93,14 @@ Each `_annotations.coco.json` file contains:
 
 #### Key Fields
 
-| Field | Description |
-|-------|-------------|
-| `images` | List of image metadata including `id`, `file_name`, `width`, `height` |
-| `categories` | List of object categories with `id` and `name` |
-| `annotations` | List of object annotations linking images to categories |
-| `bbox` | Bounding box in `[x, y, width, height]` format (top-left corner) |
-| `area` | Area of the bounding box |
-| `iscrowd` | 0 for individual objects, 1 for crowd regions |
+| Field         | Description                                                           |
+| ------------- | --------------------------------------------------------------------- |
+| `images`      | List of image metadata including `id`, `file_name`, `width`, `height` |
+| `categories`  | List of object categories with `id` and `name`                        |
+| `annotations` | List of object annotations linking images to categories               |
+| `bbox`        | Bounding box in `[x, y, width, height]` format (top-left corner)      |
+| `area`        | Area of the bounding box                                              |
+| `iscrowd`     | 0 for individual objects, 1 for crowd regions                         |
 
 ### Segmentation Annotations
 
@@ -105,10 +111,28 @@ For training segmentation models, your COCO annotations must include a `segmenta
   "id": 1,
   "image_id": 1,
   "category_id": 1,
-  "bbox": [100, 150, 200, 180],
+  "bbox": [
+    100,
+    150,
+    200,
+    180
+  ],
   "area": 36000,
   "iscrowd": 0,
-  "segmentation": [[100, 150, 150, 150, 200, 200, 150, 250, 100, 200]]
+  "segmentation": [
+    [
+      100,
+      150,
+      150,
+      150,
+      200,
+      200,
+      150,
+      250,
+      100,
+      200
+    ]
+  ]
 }
 ```
 
@@ -169,20 +193,23 @@ val: valid/images
 test: test/images
 ```
 
-| Field | Description |
-|-------|-------------|
-| `names` | List of class names (0-indexed) |
-| `nc` | Number of classes |
+| Field                  | Description                                        |
+| ---------------------- | -------------------------------------------------- |
+| `names`                | List of class names (0-indexed)                    |
+| `nc`                   | Number of classes                                  |
 | `train`, `val`, `test` | Paths to image directories (relative to data.yaml) |
 
 !!! note "Alternative format"
+
     Some YOLO datasets use a dictionary format for names:
+
     ```yaml
     names:
       0: cat
       1: dog
       2: bird
     ```
+
     Both formats are supported.
 
 ### Label File Format
@@ -194,6 +221,7 @@ Each image has a corresponding `.txt` file in the `labels/` directory with the s
 ```
 
 **Example** (`image1.txt`):
+
 ```
 0 0.5 0.4 0.3 0.2
 1 0.2 0.6 0.15 0.25
@@ -201,13 +229,13 @@ Each image has a corresponding `.txt` file in the `labels/` directory with the s
 
 #### Coordinate Format
 
-| Field | Range | Description |
-|-------|-------|-------------|
+| Field      | Range        | Description                                     |
+| ---------- | ------------ | ----------------------------------------------- |
 | `class_id` | 0, 1, 2, ... | Zero-indexed class ID from `names` in data.yaml |
-| `x_center` | 0.0 - 1.0 | Normalized x-coordinate of bounding box center |
-| `y_center` | 0.0 - 1.0 | Normalized y-coordinate of bounding box center |
-| `width` | 0.0 - 1.0 | Normalized width of bounding box |
-| `height` | 0.0 - 1.0 | Normalized height of bounding box |
+| `x_center` | 0.0 - 1.0    | Normalized x-coordinate of bounding box center  |
+| `y_center` | 0.0 - 1.0    | Normalized y-coordinate of bounding box center  |
+| `width`    | 0.0 - 1.0    | Normalized width of bounding box                |
+| `height`   | 0.0 - 1.0    | Normalized height of bounding box               |
 
 All coordinates are normalized relative to image dimensions. For example, if an image is 640×480 pixels and the bounding box center is at (320, 240):
 
@@ -223,6 +251,7 @@ For segmentation, YOLO format extends the label format with polygon coordinates:
 ```
 
 **Example** (`image1.txt` with segmentation):
+
 ```
 0 0.1 0.2 0.3 0.2 0.4 0.5 0.2 0.6 0.1 0.4
 ```
@@ -244,14 +273,11 @@ import supervision as sv
 dataset = sv.DetectionDataset.from_yolo(
     images_directory_path="path/to/images",
     annotations_directory_path="path/to/labels",
-    data_yaml_path="path/to/data.yaml"
+    data_yaml_path="path/to/data.yaml",
 )
 
 # Save as COCO
-dataset.as_coco(
-    images_directory_path="output/images",
-    annotations_path="output/annotations.json"
-)
+dataset.as_coco(images_directory_path="output/images", annotations_path="output/annotations.json")
 ```
 
 ### COCO to YOLO
@@ -261,15 +287,12 @@ import supervision as sv
 
 # Load COCO dataset
 dataset = sv.DetectionDataset.from_coco(
-    images_directory_path="path/to/images",
-    annotations_path="path/to/annotations.json"
+    images_directory_path="path/to/images", annotations_path="path/to/annotations.json"
 )
 
 # Save as YOLO
 dataset.as_yolo(
-    images_directory_path="output/images",
-    annotations_directory_path="output/labels",
-    data_yaml_path="output/data.yaml"
+    images_directory_path="output/images", annotations_directory_path="output/labels", data_yaml_path="output/data.yaml"
 )
 ```
 
@@ -289,15 +312,16 @@ This is often the easiest way to convert between formats while also having the o
 
 Both formats work equally well with RF-DETR. Choose based on your workflow:
 
-| Consideration | COCO | YOLO |
-|--------------|------|------|
-| **Annotation storage** | Single JSON file per split | One text file per image |
-| **Human readability** | JSON structure, verbose | Simple text, compact |
-| **Other framework compatibility** | DETR family, MMDetection | Ultralytics YOLO |
-| **Segmentation support** | Full polygon support | Full polygon support |
-| **Editing annotations** | Requires JSON parsing | Simple text editing |
+| Consideration                     | COCO                       | YOLO                    |
+| --------------------------------- | -------------------------- | ----------------------- |
+| **Annotation storage**            | Single JSON file per split | One text file per image |
+| **Human readability**             | JSON structure, verbose    | Simple text, compact    |
+| **Other framework compatibility** | DETR family, MMDetection   | Ultralytics YOLO        |
+| **Segmentation support**          | Full polygon support       | Full polygon support    |
+| **Editing annotations**           | Requires JSON parsing      | Simple text editing     |
 
 !!! tip "Recommendation"
+
     If you're exporting from Roboflow or already have a dataset in one format, simply use that format. RF-DETR handles both identically.
 
 ---
@@ -307,6 +331,7 @@ Both formats work equally well with RF-DETR. Choose based on your workflow:
 ### Format Detection Fails
 
 If you see an error like:
+
 ```
 Could not detect dataset format in /path/to/dataset
 ```
@@ -314,10 +339,12 @@ Could not detect dataset format in /path/to/dataset
 Check that:
 
 **For COCO format:**
+
 - `train/_annotations.coco.json` exists
 - The JSON file is valid
 
 **For YOLO format:**
+
 - `data.yaml` or `data.yml` exists at the root
 - `train/images/` directory exists with images
 

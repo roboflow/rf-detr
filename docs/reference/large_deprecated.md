@@ -1,3 +1,3 @@
 :::rfdetr.detr.RFDETRLargeDeprecated
-    options:
-      inherited_members: true
+options:
+inherited_members: true

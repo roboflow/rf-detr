@@ -1,3 +1,3 @@
 :::rfdetr.detr.RFDETRSegMedium
-    options:
-      inherited_members: true
+options:
+inherited_members: true
