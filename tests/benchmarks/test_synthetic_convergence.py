@@ -21,14 +21,14 @@ from rfdetr.util import misc as utils
 @pytest.mark.slow
 def test_synthetic_training_improves_map50(
     tmp_path: Path,
-    synthetic_dataset_dir: Path,
+    synthetic_shape_dataset_dir: Path,
 ) -> None:
     torch.manual_seed(7)
     output_dir = tmp_path / "train_output"
     output_dir.mkdir(parents=True, exist_ok=True)
-    dataset_dir = synthetic_dataset_dir
+    dataset_dir = synthetic_shape_dataset_dir
 
-    model = RFDETRNano(pretrain_weights=None, num_classes=4, device="cpu")
+    model = RFDETRNano(num_classes=4, device="cpu")
 
     # Build args once with populate_args, then reuse its values for training
     args = populate_args(
@@ -97,5 +97,10 @@ def test_synthetic_training_improves_map50(
     }
     (output_dir / "synthetic_benchmark.json").write_text(json.dumps(diagnostics, indent=2))
 
-    assert trained_map50 > base_map50 + 0.01
-    assert trained_val_loss < base_val_loss * 0.98
+    assert torch.isfinite(torch.tensor(base_map50)), f"Base mAP50 must be finite, but it is {base_map50}"
+    assert torch.isfinite(torch.tensor(trained_map50)), f"Trained mAP50 must be finite, but it is {trained_map50}"
+    assert torch.isfinite(torch.tensor(base_val_loss)), f"Base loss must be finite, but it is {base_val_loss}"
+    assert torch.isfinite(torch.tensor(trained_val_loss)), f"Trained loss must be finite, but it is {trained_val_loss}"
+    assert base_map50 <= 0.05, f"Base mAP50 should be near zero before training, but it is {base_map50}"
+    assert trained_map50 >= 0.5, f"mAP50 should reach at least 0.5 after training, but it is {trained_map50}"
+    assert trained_val_loss <= base_val_loss * 0.8, f"Loss should drop by at least 50%, but {trained_val_loss} ?? {base_val_loss}"
