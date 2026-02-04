@@ -35,6 +35,7 @@ repos:
       - id: mdformat
         additional_dependencies:
           - "mdformat-mkdocs[recommended]>=2.1.0"
+          - "mdformat-ruff"
         args: ["--number"]
 
   - repo: https://github.com/codespell-project/codespell

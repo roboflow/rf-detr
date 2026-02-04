@@ -1,3 +1,3 @@
-:::rfdetr.detr.RFDETRSegNano
-options:
-inherited_members: true
+::: rfdetr.detr.RFDETRSegNano
+    options:
+      inherited_members: true

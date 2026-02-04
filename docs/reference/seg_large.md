@@ -1,3 +1,3 @@
-:::rfdetr.detr.RFDETRSegLarge
-options:
-inherited_members: true
+::: rfdetr.detr.RFDETRSegLarge
+    options:
+      inherited_members: true

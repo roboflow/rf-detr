@@ -1,3 +1,3 @@
-:::rfdetr.detr.RFDETRBase
-options:
-inherited_members: true
+::: rfdetr.detr.RFDETRBase
+    options:
+      inherited_members: true
