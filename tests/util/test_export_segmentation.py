@@ -45,15 +45,15 @@ class TestSegmentationModelExport:
     def test_segmentation_model_export_no_crash(self, output_dir):
         """
         Test that exporting a segmentation model does not crash.
-    
+
         This is the actual integration test that exercises the full export path.
         """
         from rfdetr import RFDETRSegNano
         model = RFDETRSegNano()
-    
+
         # This should not crash with "AttributeError: 'dict' object has no attribute 'shape'"
         model.export(output_dir=output_dir, simplify=False)
-    
+
         # Verify export produced output files
         output_path = Path(output_dir)
         onnx_files = list(output_path.glob("*.onnx"))
