@@ -34,28 +34,26 @@ class TestSegmentationModelExport:
         yield tmp_dir
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
+    @pytest.mark.skipif(
+        not pytest.importorskip("onnx", reason="onnx not installed, run: pip install rfdetr[onnxexport]"),
+        reason="onnx not installed, run: pip install rfdetr[onnxexport]"
+    )
+    @pytest.mark.skipif(
+        not pytest.importorskip("rfdetr", reason="rfdetr not installed"),
+        reason="rfdetr not installed"
+    )
     def test_segmentation_model_export_no_crash(self, output_dir):
         """
         Test that exporting a segmentation model does not crash.
-
+    
         This is the actual integration test that exercises the full export path.
         """
-        try:
-            from rfdetr import RFDETRSegNano
-        except ImportError:
-            pytest.skip("rfdetr not installed")
-
-        try:
-            import onnx  # noqa: F401
-        except ImportError:
-            pytest.skip("onnx not installed, run: pip install rfdetr[onnxexport]")
-
-        # Create model without pretrained weights (random initialization)
+        from rfdetr import RFDETRSegNano
         model = RFDETRSegNano()
-
+    
         # This should not crash with "AttributeError: 'dict' object has no attribute 'shape'"
         model.export(output_dir=output_dir, simplify=False)
-
+    
         # Verify export produced output files
         output_path = Path(output_dir)
         onnx_files = list(output_path.glob("*.onnx"))
