@@ -29,6 +29,15 @@ repos:
       #- id: ruff-format
       #  types_or: [ python, pyi, jupyter ]
 
+  - repo: local
+    hooks:
+      - id: check-license-headers
+        name: Check License Headers
+        entry: python .github/scripts/check_license_headers.py
+        language: python
+        files: \.py$
+        types: [python]
+
   #- repo: https://github.com/executablebooks/mdformat
   #  rev: 1.0.0
   #  hooks:
