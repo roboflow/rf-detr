@@ -1,8 +1,8 @@
 import types
 from types import SimpleNamespace
 
-import torch
 import pytest
+import torch
 
 
 def test_window_partition_forward_rectangular_preserves_shapes(monkeypatch):
