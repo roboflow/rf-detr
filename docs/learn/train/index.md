@@ -16,7 +16,12 @@ RF-DETR supports training on datasets in both **COCO** and **YOLO** formats. The
     model = RFDETRMedium()
 
     model.train(
-        dataset_dir="<DATASET_PATH>", epochs=100, batch_size=4, grad_accum_steps=4, lr=1e-4, output_dir="<OUTPUT_PATH>"
+        dataset_dir="<DATASET_PATH>",
+        epochs=100,
+        batch_size=4,
+        grad_accum_steps=4,
+        lr=1e-4,
+        output_dir="<OUTPUT_PATH>",
     )
     ```
 
@@ -28,7 +33,12 @@ RF-DETR supports training on datasets in both **COCO** and **YOLO** formats. The
     model = RFDETRSegMedium()
 
     model.train(
-        dataset_dir="<DATASET_PATH>", epochs=100, batch_size=4, grad_accum_steps=4, lr=1e-4, output_dir="<OUTPUT_PATH>"
+        dataset_dir="<DATASET_PATH>",
+        epochs=100,
+        batch_size=4,
+        grad_accum_steps=4,
+        lr=1e-4,
+        output_dir="<OUTPUT_PATH>",
     )
     ```
 

@@ -151,7 +151,14 @@ You can fine-tune RF-DETR on multiple GPUs using PyTorch's Distributed Data Para
 
     model = RFDETRMedium()
 
-    model.train(dataset_dir="path/to/dataset", epochs=100, batch_size=4, grad_accum_steps=1, lr=1e-4, output_dir="output")
+    model.train(
+        dataset_dir="path/to/dataset",
+        epochs=100,
+        batch_size=4,
+        grad_accum_steps=1,
+        lr=1e-4,
+        output_dir="output",
+    )
     ```
 
 2. Run with `torch.distributed.launch`:
@@ -324,7 +331,12 @@ You can enable both logging systems simultaneously:
 
 ```python
 model.train(
-    dataset_dir="path/to/dataset", epochs=100, tensorboard=True, wandb=True, project="my-project", run="experiment-001"
+    dataset_dir="path/to/dataset",
+    epochs=100,
+    tensorboard=True,
+    wandb=True,
+    project="my-project",
+    run="experiment-001",
 )
 ```
 
