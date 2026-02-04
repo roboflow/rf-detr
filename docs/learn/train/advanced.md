@@ -250,7 +250,7 @@ Then open `http://localhost:6006/` in your browser.
 
 **Google Colab:**
 
-```
+```ipython
 %load_ext tensorboard
 %tensorboard --logdir output
 ```
