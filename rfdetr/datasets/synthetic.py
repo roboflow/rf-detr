@@ -16,7 +16,7 @@ from typing import Dict, Tuple, Union
 import cv2
 import numpy as np
 import supervision as sv
-from tqdm import tqdm
+from tqdm.auto import tqdm
 from typing_extensions import Literal
 
 logger = logging.getLogger(__name__)
@@ -297,7 +297,7 @@ def generate_coco_dataset(
         annotations = {}
 
         print(f"Generating {split} split with {len(split_indices)} images...")
-        for i in tqdm(split_indices):
+        for i in tqdm(split_indices, desc=f"Generating {split} split"):
             img, detections = generate_synthetic_sample(img_size, 1, 10, class_mode)
 
             file_name = f"{i:06d}.jpg"

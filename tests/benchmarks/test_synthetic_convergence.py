@@ -19,28 +19,14 @@ from rfdetr.util import misc as utils
 
 
 @pytest.mark.slow
-def test_synthetic_training_improves_map50(tmp_path: Path) -> None:
+def test_synthetic_training_improves_map50(
+    tmp_path: Path,
+    synthetic_dataset_dir: Path,
+) -> None:
     torch.manual_seed(7)
-    dataset_dir = tmp_path / "synthetic_dataset"
     output_dir = tmp_path / "train_output"
     output_dir.mkdir(parents=True, exist_ok=True)
-    generate_coco_dataset(
-        output_dir=str(dataset_dir),
-        num_images=50,
-        img_size=224,
-        class_mode="shape",
-        split_ratios=DatasetSplitRatios(train=0.7, val=0.3, test=0.0),
-    )
-    val_dir = dataset_dir / "val"
-    valid_dir = dataset_dir / "valid"
-    if val_dir.exists() and not valid_dir.exists():
-        val_dir.rename(valid_dir)
-    test_dir = dataset_dir / "test"
-    if not test_dir.exists():
-        test_dir.mkdir(parents=True, exist_ok=True)
-        (test_dir / "_annotations.coco.json").write_text(
-            (valid_dir / "_annotations.coco.json").read_text()
-        )
+    dataset_dir = synthetic_dataset_dir
 
     model = RFDETRNano(pretrain_weights=None, num_classes=4, device="cpu")
 
