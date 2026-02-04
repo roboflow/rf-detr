@@ -1,5 +1,5 @@
-import sys
 import re
+import sys
 from pathlib import Path
 
 # Apache 2.0 RF-DETR header pattern
@@ -16,7 +16,7 @@ def check_file(path):
     try:
         content = Path(path).read_text()
         header = "\n".join(content.splitlines()[:15])
-        
+
         if APACHE_PATTERN.search(header) or PML_PATTERN.search(header):
             return True
         return False
@@ -27,11 +27,11 @@ def check_file(path):
 def main():
     files = sys.argv[1:]
     failed_files = []
-    
+
     for file in files:
         if not check_file(file):
             failed_files.append(file)
-            
+
     if failed_files:
         print("❌ The following files are missing valid license headers:")
         for file in failed_files:
@@ -50,7 +50,7 @@ def main():
         print("   # ...")
         print("   # ------------------------------------------------------------------------")
         sys.exit(1)
-    
+
     print("✅ All Python files have valid license headers.")
 
 if __name__ == "__main__":
