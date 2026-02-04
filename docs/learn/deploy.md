@@ -12,7 +12,12 @@ To deploy your model to Roboflow, run:
     from rfdetr import RFDETRNano
 
     x = RFDETRNano(pretrain_weights="<path/to/pretrain/weights/dir>")
-    x.deploy_to_roboflow(workspace="<your-workspace>", project_id="<your-project-id>", version=1, api_key="<YOUR_API_KEY>")
+    x.deploy_to_roboflow(
+        workspace="<your-workspace>",
+        project_id="<your-project-id>",
+        version=1,
+        api_key="<YOUR_API_KEY>",
+    )
     ```
 
 === "Image Segmentation"
@@ -21,7 +26,12 @@ To deploy your model to Roboflow, run:
     from rfdetr import RFDETRSegMedium
 
     x = RFDETRSegMedium(pretrain_weights="<path/to/pretrain/weights/dir>")
-    x.deploy_to_roboflow(workspace="<your-workspace>", project_id="<your-project-id>", version=1, api_key="<YOUR_API_KEY>")
+    x.deploy_to_roboflow(
+        workspace="<your-workspace>",
+        project_id="<your-project-id>",
+        version=1,
+        api_key="<YOUR_API_KEY>",
+    )
     ```
 
 Above, set your Roboflow Workspace ID, the ID of the project to which you want to upload your model, and your Roboflow API key.

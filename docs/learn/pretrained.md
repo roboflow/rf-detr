@@ -65,7 +65,11 @@ You can run any of the four supported RF-DETR base models -- Nano, Small, Medium
         return annotated_frame
 
 
-    sv.process_video(source_path="<SOURCE_VIDEO_PATH>", target_path="<TARGET_VIDEO_PATH>", callback=callback)
+    sv.process_video(
+        source_path="<SOURCE_VIDEO_PATH>",
+        target_path="<TARGET_VIDEO_PATH>",
+        callback=callback,
+    )
     ```
 
     Above, set your `SOURCE_VIDEO_PATH` and `TARGET_VIDEO_PATH` to the directories of the video you want to process and where you want to save the results from inference, respectively.
