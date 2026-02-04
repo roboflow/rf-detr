@@ -30,26 +30,32 @@ def test_synthetic_training_improves_map50(
 
     model = RFDETRNano(pretrain_weights=None, num_classes=4, device="cpu")
 
-    base_args = populate_args(
+    # Build args once with populate_args, then reuse its values for training
+    args = populate_args(
         dataset_file="roboflow",
         dataset_dir=str(dataset_dir),
         output_dir=str(output_dir),
-        num_classes=4,
         class_names=["square", "triangle", "circle"],
         batch_size=2,
         grad_accum_steps=1,
-        epochs=1,
         num_workers=0,
+        device="cpu",
         amp=False,
-        use_ema=False,
+        use_ema=True,
         multi_scale=False,
         expanded_scales=False,
         do_random_resize_via_padding=False,
-        print_freq=200,
-        device="cpu",
+        square_resize_div_64=True,
+        print_freq=20,
+        epochs=5,
     )
-
-    args = base_args
+    train_config = {
+        **vars(args),
+        "lr": 1e-4,
+        "dont_save_weights": False,
+        "min_batches": 2,
+        "run_test": False,
+    }
     if not hasattr(args, "segmentation_head"):
         args.segmentation_head = False
     if not hasattr(args, "fp16_eval"):
@@ -76,23 +82,7 @@ def test_synthetic_training_improves_map50(
     base_map50 = base_stats["coco_eval_bbox"][1]
     base_val_loss = base_stats["loss"]
 
-    model.train(
-        dataset_dir=str(dataset_dir),
-        output_dir=str(output_dir),
-        epochs=2,
-        batch_size=2,
-        grad_accum_steps=1,
-        lr=1e-4,
-        num_workers=0,
-        amp=False,
-        use_ema=False,
-        multi_scale=False,
-        expanded_scales=False,
-        do_random_resize_via_padding=False,
-        dont_save_weights=False,
-        min_batches=2,
-        run_test=False,
-    )
+    model.train(**train_config)
 
     with torch.no_grad():
         trained_stats, _ = evaluate(model.model.model, criterion, postprocess, val_loader, base_ds, device, args=args)
