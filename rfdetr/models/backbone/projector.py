@@ -189,7 +189,7 @@ class MultiScaleProjector(nn.Module):
                     ])
                     # in_dim // 4
                 elif scale == 2.0:
-                    # a hack to reduce the FLOPs and Params when the dimention of output feature is too large
+                    # a hack to reduce the FLOPs and Params when the dimension of output feature is too large
                     # if in_dim > 512:
                     #     layers = [
                     #         ConvX(in_dim, in_dim // 2, kernel=1),

@@ -42,5 +42,6 @@ repos:
     rev: v2.4.1
     hooks:
       - id: codespell
+        # args: [--write-changes]
         additional_dependencies:
           - tomli
