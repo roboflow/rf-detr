@@ -1,4 +1,5 @@
 import torch
+
 from rfdetr.models.backbone.dinov2_with_windowed_attn import (
     WindowedDinov2WithRegistersConfig,
     WindowedDinov2WithRegistersEmbeddings,
