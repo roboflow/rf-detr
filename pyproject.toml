@@ -124,3 +124,6 @@ ignore = [
     "E721",  # todo: Use `is` and `is not` for type comparisons, or `isinstance()` for isinstance checks
     "F821",  # todo: Undefined name `...`
 ]
+
+[tool.codespell]
+skip = "*.pth"
