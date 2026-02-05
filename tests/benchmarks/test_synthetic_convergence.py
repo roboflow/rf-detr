@@ -112,10 +112,10 @@ def test_synthetic_training_improves_map50(
     print(f"{diagnostics=}")
     (output_dir / "synthetic_benchmark.json").write_text(json.dumps(diagnostics, indent=2))
 
-    assert torch.isfinite(torch.tensor(base_map50)), f"{base_map50=} Base mAP50 must be finite."
-    assert torch.isfinite(torch.tensor(final_map50)), f"{final_map50=} Final mAP50 must be finite."
-    assert torch.isfinite(torch.tensor(base_loss)), f"{base_loss=} Base train loss must be finite."
-    assert torch.isfinite(torch.tensor(final_loss)), f"{final_loss=} Final train loss must be finite."
-    assert base_map50 <= 0.3, f"{base_map50=} Base mAP50 should be low before training."
-    assert final_map50 >= 0.4, f"{final_map50=} mAP50 should reach at least 0.5 after training."
-    assert final_loss <= base_loss * 0.9, f"{base_loss=} -> {final_loss=} Train loss should drop by at least 10%."
+    assert torch.isfinite(torch.tensor(base_map50)), f"Base mAP50 {base_map50:.3f} must be finite."
+    assert torch.isfinite(torch.tensor(final_map50)), f"Final mAP50 {final_map50:.3f} must be finite."
+    assert torch.isfinite(torch.tensor(base_loss)), f"Base loss {base_loss:.3f} must be finite."
+    assert torch.isfinite(torch.tensor(final_loss)), f"Final loss {final_loss:.3f} must be finite."
+    assert base_map50 <= 0.3, f" Base mAP50 {base_map50:.3f}should be low before training."
+    assert final_map50 >= 0.4, f"Final mAP50 {final_map50:.3f}should reach at least 0.5 after training."
+    assert final_loss <= base_loss * 0.9, f"Loss {base_loss:.3f} -> {final_loss:.3f} should drop by at least 10%."
