@@ -278,7 +278,7 @@ class MetricsClearMLSink:
             if config:
                 self.task.connect(config)
             self.logger = self.task.get_logger()
-            print(f"ClearML logging initialized. To monitor logs, open the ClearML Web UI.")
+            print("ClearML logging initialized. To monitor logs, open the ClearML Web UI.")
         else:
             self.task = None
             self.logger = None

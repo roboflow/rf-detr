@@ -384,9 +384,9 @@ model.train(
 
 ### ClearML Organization
 
-| Parameter | Description                             |
-| --------- | --------------------------------------- |
-| `project` | Groups related experiments together     |
+| Parameter | Description                                         |
+| --------- | --------------------------------------------------- |
+| `project` | Groups related experiments together                 |
 | `run`     | Identifies individual training sessions (task name) |
 
 ### Viewing Results
