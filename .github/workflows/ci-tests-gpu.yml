@@ -14,10 +14,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  build-pkg:
-    uses: ./.github/workflows/build-package.yml
-
-  run-tests:
+  run-gpu-tests:
     name: GPU Pytest Run
     timeout-minutes: 20
     runs-on: Roboflow-GPU-VM-Runner
