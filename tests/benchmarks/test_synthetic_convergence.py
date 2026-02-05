@@ -4,6 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -11,7 +12,6 @@ import torch
 
 from rfdetr import RFDETRNano
 from rfdetr.datasets import build_dataset, get_coco_api_from_dataset
-from rfdetr.datasets.synthetic import DatasetSplitRatios, generate_coco_dataset
 from rfdetr.engine import evaluate
 from rfdetr.main import populate_args
 from rfdetr.models import PostProcess, build_criterion_and_postprocessors
@@ -37,22 +37,22 @@ def test_synthetic_training_improves_map50(
         dataset_dir=str(dataset_dir),
         output_dir=str(output_dir),
         class_names=["square", "triangle", "circle"],
-        batch_size=2,
+        batch_size=6,
         grad_accum_steps=1,
-        num_workers=0,
+        num_workers=os.cpu_count() // 2,
         device=str(device),
         amp=False,
         use_ema=True,
-        multi_scale=False,
-        expanded_scales=False,
-        do_random_resize_via_padding=False,
+        #multi_scale=False,
+        #expanded_scales=False,
+        #do_random_resize_via_padding=False,
         square_resize_div_64=True,
-        print_freq=20,
+        #print_freq=20,
         epochs=10,
     )
     train_config = {
         **vars(args),
-        "lr": 1e-4,
+        "lr": 5e-4,
         "dont_save_weights": False,
         "min_batches": 2,
         "run_test": False,
@@ -93,12 +93,19 @@ def test_synthetic_training_improves_map50(
         model.model.model.eval()
         base_stats_val, _ = evaluate(model.model.model, criterion, postprocess, val_loader, base_ds, device, args=args)
         base_stats_train, _ = evaluate(model.model.model, criterion, postprocess, train_loader, train_ds, device, args=args)
-    base_map50 = base_stats_val["coco_eval_bbox"][1]
-    base_loss = base_stats_train["loss"]
+    Path(output_dir / "base_stats_val.json").write_text(json.dumps(base_stats_val, indent=2))
+    Path(output_dir / "base_stats_train.json").write_text(json.dumps(base_stats_train, indent=2))
+    base_map = base_stats_val["results_json"]["map"]
+    base_f1_score = base_stats_val["results_json"]["f1_score"]
+    base_loss_bbox = base_stats_train["loss_bbox"]
+    base_loss_giou = base_stats_train["loss_giou"]
 
-    assert torch.isfinite(torch.tensor(base_loss)), f"Base loss {base_loss:.3f} must be finite."
-    assert torch.isfinite(torch.tensor(base_map50)), f"Base mAP50 {base_map50:.3f} must be finite."
-    assert base_map50 <= 0.05, f"Base mAP50 {base_map50:.3f} should be low before training."
+    assert torch.isfinite(torch.tensor(base_loss_bbox)), f"Base loss {base_loss_bbox:.3f} must be finite."
+    assert torch.isfinite(torch.tensor(base_loss_giou)), f"Base loss {base_loss_giou:.3f} must be finite."
+    assert torch.isfinite(torch.tensor(base_map)), f"Base mAP50 {base_map:.3f} must be finite."
+    assert torch.isfinite(torch.tensor(base_f1_score)), f"Base F1 {base_f1_score:.3f} must be finite."
+    assert base_map <= 0.05, f"Base mAP50 {base_map:.3f} should be low before training."
+    assert base_f1_score <= 0.05, f"Base F1 {base_f1_score:.3f} should be low before training."
 
     model.train(**train_config)
 
@@ -106,19 +113,21 @@ def test_synthetic_training_improves_map50(
         model.model.model.eval()
         final_stats_val, _ = evaluate(model.model.model, criterion, postprocess, val_loader, base_ds, device, args=args)
         final_stats_train, _ = evaluate(model.model.model, criterion, postprocess, train_loader, train_ds, device, args=args)
-    final_map50 = final_stats_val["coco_eval_bbox"][1]
-    final_loss = final_stats_train["loss"]
+    Path(output_dir / "final_stats_val.json").write_text(json.dumps(final_stats_val, indent=2))
+    Path(output_dir / "final_stats_train.json").write_text(json.dumps(final_stats_train, indent=2))
+    final_map = final_stats_val["results_json"]["map"]
+    final_f1_score = final_stats_val["results_json"]["f1_score"]
+    final_loss_bbox = final_stats_train["loss_bbox"]
+    final_loss_giou = final_stats_train["loss_giou"]
 
-    diagnostics = {
-        "base_map50": float(base_map50),
-        "final_map50": float(final_map50),
-        "base_train_loss": float(base_loss),
-        "final_train_loss": float(final_loss),
-    }
-    print(f"{diagnostics=}")
-    (output_dir / "synthetic_benchmark.json").write_text(json.dumps(diagnostics, indent=2))
-
-    assert torch.isfinite(torch.tensor(final_map50)), f"Final mAP50 {final_map50:.3f} must be finite."
-    assert torch.isfinite(torch.tensor(final_loss)), f"Final loss {final_loss:.3f} must be finite."
-    assert final_map50 >= 0.4, f"Final mAP50 {final_map50:.3f} should reach at least 0.5 after training."
-    assert final_loss <= base_loss * 0.9, f"Loss {base_loss:.3f} -> {final_loss:.3f} should drop by at least 10%."
+    threshold_map = 0.4
+    threshold_f1_score = 0.4
+    threshold_loss = 0.7
+    assert torch.isfinite(torch.tensor(final_loss_bbox)), f"Final loss {final_loss_bbox:.3f} must be finite."
+    assert torch.isfinite(torch.tensor(final_loss_giou)), f"Final loss {final_loss_giou:.3f} must be finite."
+    assert torch.isfinite(torch.tensor(final_map)), f"Final mAP {final_map:.3f} must be finite."
+    assert torch.isfinite(torch.tensor(final_f1_score)), f"Final F1 {final_f1_score:.3f} must be finite."
+    assert final_map >= threshold_map, f"Final mAP {final_map:.3f} should reach at least {threshold_map} after training."
+    assert final_f1_score >= threshold_f1_score, f"Final F1 {final_f1_score:.3f} should reach at least {threshold_f1_score} after training."
+    assert final_loss_bbox <= base_loss_bbox * threshold_loss, f"Loss {base_loss_bbox:.3f} -> {final_loss_bbox:.3f} should drop to at least {threshold_loss * 100}%."
+    assert final_loss_giou <= base_loss_giou * threshold_loss, f"Loss {base_loss_giou:.3f} -> {final_loss_giou:.3f} should drop to at least {threshold_loss * 100}%."

@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 import shutil
 from pathlib import Path
+from typing import Any, Generator
 
 import pytest
 
@@ -12,14 +13,16 @@ from rfdetr.datasets.synthetic import DatasetSplitRatios, generate_coco_dataset
 
 
 @pytest.fixture(scope="session")
-def synthetic_shape_dataset_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
+def synthetic_shape_dataset_dir(tmp_path_factory: pytest.TempPathFactory) -> Generator[Path, Any, None]:
     dataset_dir = tmp_path_factory.mktemp("synthetic_dataset")
     generate_coco_dataset(
         output_dir=str(dataset_dir),
-        num_images=50,
+        num_images=70,
         img_size=224,
         class_mode="shape",
-        split_ratios=DatasetSplitRatios(train=0.7, val=0.3, test=0.0),
+        min_objects=3,
+        max_objects=7,
+        split_ratios=DatasetSplitRatios(train=0.8, val=0.2, test=0.0),
     )
     val_dir = dataset_dir / "val"
     valid_dir = dataset_dir / "valid"
