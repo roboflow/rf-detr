@@ -1,0 +1,15 @@
+name: Check GPU Availability
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+
+jobs:
+  run-on-gpu:
+    name: Check GPU with nvidia-smi
+    runs-on: Roboflow-GPU-VM-Runner
+
+    steps:
+      - name: Print GPU information
+        run: nvidia-smi
