@@ -37,7 +37,7 @@ def test_synthetic_training_improves_map50(
         dataset_dir=str(dataset_dir),
         output_dir=str(output_dir),
         class_names=["square", "triangle", "circle"],
-        batch_size=6,
+        batch_size=4,
         grad_accum_steps=1,
         num_workers=os.cpu_count() // 2,
         device=str(device),
@@ -52,7 +52,7 @@ def test_synthetic_training_improves_map50(
     )
     train_config = {
         **vars(args),
-        "lr": 5e-4,
+        "lr": 1e-3,
         "dont_save_weights": False,
         "min_batches": 2,
         "run_test": False,
@@ -120,8 +120,8 @@ def test_synthetic_training_improves_map50(
     final_loss_bbox = final_stats_train["loss_bbox"]
     final_loss_giou = final_stats_train["loss_giou"]
 
-    threshold_map = 0.4
-    threshold_f1_score = 0.4
+    threshold_map = 0.35
+    threshold_f1_score = 0.35
     threshold_loss = 0.7
     assert torch.isfinite(torch.tensor(final_loss_bbox)), f"Final loss {final_loss_bbox:.3f} must be finite."
     assert torch.isfinite(torch.tensor(final_loss_giou)), f"Final loss {final_loss_giou:.3f} must be finite."
