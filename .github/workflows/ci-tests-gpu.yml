@@ -1,15 +1,53 @@
-name: Check GPU Availability
+name: GPU Pytest/Test Workflow
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [main, develop]
   pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pytest-gpu-test-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  run-on-gpu:
-    name: Check GPU with nvidia-smi
-    runs-on: Roboflow-GPU-VM-Runner
+  build-pkg:
+    uses: ./.github/workflows/build-package.yml
 
+  run-tests:
+    name: GPU Pytest Run
+    timeout-minutes: 20
+    runs-on: Roboflow-GPU-VM-Runner
     steps:
-      - name: Print GPU information
+      - name: 🖥️ Print GPU information
         run: nvidia-smi
+      - name: 📥 Checkout the repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: 🐍 Install uv and set Python version
+        uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
+        with:
+          python-version: "3.12"
+          activate-environment: true
+
+      - name: 🚀 Install Packages
+        run: uv pip install -e . --group tests
+
+      - name: 🧪 Run the Test
+        run: uv run pytest --cov=rfdetr --cov-report=xml
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: "coverage.xml"
+          flags: gpu,${{ runner.os }}
+          env_vars: OS,PYTHON
+          name: codecov-umbrella
+          fail_ci_if_error: false
+
+      - name: Minimize uv cache
+        run: uv cache prune --ci
