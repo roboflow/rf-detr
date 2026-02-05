@@ -90,14 +90,20 @@ def test_synthetic_training_improves_map50(
     base_ds = get_coco_api_from_dataset(val_dataset)
 
     with torch.no_grad():
+        model.model.model.eval()
         base_stats_val, _ = evaluate(model.model.model, criterion, postprocess, val_loader, base_ds, device, args=args)
         base_stats_train, _ = evaluate(model.model.model, criterion, postprocess, train_loader, train_ds, device, args=args)
     base_map50 = base_stats_val["coco_eval_bbox"][1]
     base_loss = base_stats_train["loss"]
 
+    assert torch.isfinite(torch.tensor(base_loss)), f"Base loss {base_loss:.3f} must be finite."
+    assert torch.isfinite(torch.tensor(base_map50)), f"Base mAP50 {base_map50:.3f} must be finite."
+    assert base_map50 <= 0.05, f"Base mAP50 {base_map50:.3f} should be low before training."
+
     model.train(**train_config)
 
     with torch.no_grad():
+        model.model.model.eval()
         final_stats_val, _ = evaluate(model.model.model, criterion, postprocess, val_loader, base_ds, device, args=args)
         final_stats_train, _ = evaluate(model.model.model, criterion, postprocess, train_loader, train_ds, device, args=args)
     final_map50 = final_stats_val["coco_eval_bbox"][1]
@@ -112,10 +118,7 @@ def test_synthetic_training_improves_map50(
     print(f"{diagnostics=}")
     (output_dir / "synthetic_benchmark.json").write_text(json.dumps(diagnostics, indent=2))
 
-    assert torch.isfinite(torch.tensor(base_map50)), f"Base mAP50 {base_map50:.3f} must be finite."
     assert torch.isfinite(torch.tensor(final_map50)), f"Final mAP50 {final_map50:.3f} must be finite."
-    assert torch.isfinite(torch.tensor(base_loss)), f"Base loss {base_loss:.3f} must be finite."
     assert torch.isfinite(torch.tensor(final_loss)), f"Final loss {final_loss:.3f} must be finite."
-    assert base_map50 <= 0.3, f" Base mAP50 {base_map50:.3f}should be low before training."
-    assert final_map50 >= 0.4, f"Final mAP50 {final_map50:.3f}should reach at least 0.5 after training."
+    assert final_map50 >= 0.4, f"Final mAP50 {final_map50:.3f} should reach at least 0.5 after training."
     assert final_loss <= base_loss * 0.9, f"Loss {base_loss:.3f} -> {final_loss:.3f} should drop by at least 10%."
