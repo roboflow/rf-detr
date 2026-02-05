@@ -17,7 +17,7 @@ def synthetic_shape_dataset_dir(tmp_path_factory: pytest.TempPathFactory) -> Gen
     dataset_dir = tmp_path_factory.mktemp("synthetic_dataset")
     generate_coco_dataset(
         output_dir=str(dataset_dir),
-        num_images=70,
+        num_images=100,
         img_size=224,
         class_mode="shape",
         min_objects=3,
