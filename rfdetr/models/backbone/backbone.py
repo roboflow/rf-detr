@@ -70,7 +70,7 @@ class Backbone(BackboneBase):
         size = name_parts[-1]
 
         if family == "dinov2":
-            # Existing semantics: optional "registers" and/or "windowed" tokens. :contentReference[oaicite:7]{index=7}
+            # Existing semantics: optional "registers" and/or "windowed" tokens.
             use_registers = False
             if "registers" in name_parts:
                 use_registers = True
