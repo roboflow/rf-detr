@@ -4,7 +4,7 @@
 # DINOv3 itself is licensed under the DINOv3 License; see https://github.com/facebookresearch/dinov3/tree/main?tab=License-1-ov-file
 # ------------------------------------------------------------------------
 
-from typing import Sequence, Optional, List
+from typing import Sequence, Optional
 import os
 import torch
 import torch.nn as nn
