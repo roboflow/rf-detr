@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+env:
+  PYTHON_VERSION: "3.12"
+  UV_TORCH_BACKEND: "auto"
+
 concurrency:
   group: pytest-gpu-test-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -16,6 +20,7 @@ concurrency:
 jobs:
   run-gpu-tests:
     name: GPU Pytest Run
+    if: github.event_name == 'push' || !github.event.pull_request.draft
     timeout-minutes: 20
     runs-on: Roboflow-GPU-VM-Runner
     steps:
@@ -27,7 +32,7 @@ jobs:
       - name: 🐍 Install uv and set Python version
         uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
         with:
-          python-version: "3.12"
+          python-version: ${{ env.PYTHON_VERSION }}
           activate-environment: true
 
       - name: 🚀 Install Packages
@@ -41,7 +46,7 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: "coverage.xml"
-          flags: gpu,${{ runner.os }}
+          flags: gpu,${{ runner.os }},py${{ env.PYTHON_VERSION }}
           env_vars: OS,PYTHON
           name: codecov-umbrella
           fail_ci_if_error: false
