@@ -4,6 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 import json
+import math
 import os
 from pathlib import Path
 
@@ -95,10 +96,10 @@ def test_synthetic_training_improves_performance(
     base_loss_bbox = base_stats_train["loss_bbox"]
     base_loss_giou = base_stats_train["loss_giou"]
 
-    assert torch.isfinite(torch.tensor(base_loss_bbox)), f"Base loss {base_loss_bbox:.3f} must be finite."
-    assert torch.isfinite(torch.tensor(base_loss_giou)), f"Base loss {base_loss_giou:.3f} must be finite."
-    assert torch.isfinite(torch.tensor(base_map)), f"Base mAP50 {base_map:.3f} must be finite."
-    assert torch.isfinite(torch.tensor(base_f1_score)), f"Base F1 {base_f1_score:.3f} must be finite."
+    assert math.isfinite(base_loss_bbox), f"Base loss {base_loss_bbox:.3f} must be finite."
+    assert math.isfinite(base_loss_giou), f"Base loss {base_loss_giou:.3f} must be finite."
+    assert math.isfinite(base_map), f"Base mAP50 {base_map:.3f} must be finite."
+    assert math.isfinite(base_f1_score), f"Base F1 {base_f1_score:.3f} must be finite."
     assert base_map <= 0.05, f"Base mAP50 {base_map:.3f} should be low before training."
     assert base_f1_score <= 0.05, f"Base F1 {base_f1_score:.3f} should be low before training."
 
@@ -118,10 +119,10 @@ def test_synthetic_training_improves_performance(
     threshold_map = 0.35
     threshold_f1_score = 0.35
     threshold_loss = 0.7
-    assert torch.isfinite(torch.tensor(final_loss_bbox)), f"Final loss {final_loss_bbox:.3f} must be finite."
-    assert torch.isfinite(torch.tensor(final_loss_giou)), f"Final loss {final_loss_giou:.3f} must be finite."
-    assert torch.isfinite(torch.tensor(final_map)), f"Final mAP {final_map:.3f} must be finite."
-    assert torch.isfinite(torch.tensor(final_f1_score)), f"Final F1 {final_f1_score:.3f} must be finite."
+    assert math.isfinite(final_loss_bbox), f"Final loss {final_loss_bbox:.3f} must be finite."
+    assert math.isfinite(final_loss_giou), f"Final loss {final_loss_giou:.3f} must be finite."
+    assert math.isfinite(final_map), f"Final mAP {final_map:.3f} must be finite."
+    assert math.isfinite(final_f1_score), f"Final F1 {final_f1_score:.3f} must be finite."
     assert final_map >= threshold_map, f"Final mAP {final_map:.3f} should reach at least {threshold_map} after training."
     assert final_f1_score >= threshold_f1_score, f"Final F1 {final_f1_score:.3f} should reach at least {threshold_f1_score} after training."
     assert final_loss_bbox <= base_loss_bbox * threshold_loss, f"Loss {base_loss_bbox:.3f} -> {final_loss_bbox:.3f} should drop to at least {threshold_loss * 100}%."
