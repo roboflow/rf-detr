@@ -505,11 +505,13 @@ class Model:
 
         if utils.is_main_process():
             if best_is_ema:
-                shutil.copy2(output_dir / 'checkpoint_best_ema.pth', output_dir / 'checkpoint_best_total.pth')
+                best_checkpoint = output_dir / 'checkpoint_best_ema.pth'
             else:
-                shutil.copy2(output_dir / 'checkpoint_best_regular.pth', output_dir / 'checkpoint_best_total.pth')
+                best_checkpoint = output_dir / 'checkpoint_best_regular.pth'
 
-            utils.strip_checkpoint(output_dir / 'checkpoint_best_total.pth')
+            if best_checkpoint.exists():
+                shutil.copy2(best_checkpoint, output_dir / 'checkpoint_best_total.pth')
+                utils.strip_checkpoint(output_dir / 'checkpoint_best_total.pth')
 
             best_map_5095 = max(best_map_5095, best_map_ema_5095)
             if best_is_ema:

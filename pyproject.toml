@@ -126,5 +126,15 @@ ignore = [
     "F821",  # todo: Undefined name `...`
 ]
 
+[tool.pytest.ini_options]
+addopts = [
+    "-v",                   # verbose output
+    "--color=yes",          # colored output
+#    "--doctest-modules",    # TODO: run doctests from all modules
+]
+markers = [
+    "gpu: tests that require GPU or are slow on CPU",
+]
+
 [tool.codespell]
 skip = "*.pth"
