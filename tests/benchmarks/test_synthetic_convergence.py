@@ -42,11 +42,7 @@ def test_synthetic_training_improves_performance(
         device=str(device),
         amp=False,
         use_ema=True,
-        #multi_scale=False,
-        #expanded_scales=False,
-        #do_random_resize_via_padding=False,
         square_resize_div_64=True,
-        #print_freq=20,
         epochs=10,
     )
     train_config = {
