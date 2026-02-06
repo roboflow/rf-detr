@@ -18,7 +18,7 @@ from rfdetr.models import PostProcess, build_criterion_and_postprocessors
 from rfdetr.util import misc as utils
 
 
-@pytest.mark.slow
+@pytest.mark.gpu
 def test_synthetic_training_improves_map50(
     tmp_path: Path,
     synthetic_shape_dataset_dir: Path,

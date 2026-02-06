@@ -125,5 +125,15 @@ ignore = [
     "F821",  # todo: Undefined name `...`
 ]
 
+[tool.pytest.ini_options]
+addopts = [
+    "-m 'not gpu'",      # skip GPU tests by default (run with: pytest -m gpu)
+    "--color=yes",       # colored output
+    "--doctest-modules", # run doctests from all modules
+]
+markers = [
+    "gpu: tests that require GPU or are slow on CPU",
+]
+
 [tool.codespell]
 skip = "*.pth"
