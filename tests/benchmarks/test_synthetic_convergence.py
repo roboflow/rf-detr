@@ -19,11 +19,10 @@ from rfdetr.util import misc as utils
 
 
 @pytest.mark.gpu
-def test_synthetic_training_improves_map50(
+def test_synthetic_training_improves_performance(
     tmp_path: Path,
     synthetic_shape_dataset_dir: Path,
 ) -> None:
-    torch.manual_seed(7)
     output_dir = tmp_path / "train_output"
     output_dir.mkdir(parents=True, exist_ok=True)
     dataset_dir = synthetic_shape_dataset_dir

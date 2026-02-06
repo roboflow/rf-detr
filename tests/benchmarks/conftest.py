@@ -3,13 +3,32 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
+import random
 import shutil
 from pathlib import Path
 from typing import Any, Generator
 
+import numpy as np
 import pytest
+import torch
 
 from rfdetr.datasets.synthetic import DatasetSplitRatios, generate_coco_dataset
+
+
+@pytest.fixture(autouse=True)
+def seed_everything(request: pytest.FixtureRequest) -> None:
+    """Reset random, numpy, torch, and CUDA seeds before each test.
+
+    Defaults to seed 7. Override per-test via indirect parametrize::
+
+        @pytest.mark.parametrize("seed_everything", [42], indirect=True)
+        def test_foo(seed_everything): ...
+    """
+    seed = request.param if hasattr(request, "param") else 7
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
 
 
 @pytest.fixture(scope="session")
