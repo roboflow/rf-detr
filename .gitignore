@@ -173,6 +173,7 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
+# Jetbrain's IDEs
 .idea/
 
 # model artifacts
@@ -183,3 +184,5 @@ train_test.py
 
 # test artifacts
 test_visualizations/
+
+debugging/

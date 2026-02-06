@@ -9,6 +9,9 @@ on:
 permissions:
   contents: read
 
+env:
+  UV_TORCH_BACKEND: "cpu"
+
 concurrency:
   group: pytest-test-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -54,7 +57,7 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: "coverage.xml"
-          flags: cpu,${{ runner.os }},python${{ matrix.python-version }}
+          flags: cpu,${{ runner.os }},py${{ matrix.python-version }}
           env_vars: OS,PYTHON
           name: codecov-umbrella
           fail_ci_if_error: false

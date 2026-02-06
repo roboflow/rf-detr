@@ -7,6 +7,7 @@ This page covers advanced training topics including resuming training, early sto
 You can resume training from a previously saved checkpoint by passing the path to the `checkpoint.pth` file using the `resume` argument. This is useful when training is interrupted or you want to continue fine-tuning an already partially trained model.
 
 The training loop will automatically load:
+
 - Model weights
 - Optimizer state
 - Learning rate scheduler state
@@ -26,7 +27,7 @@ The training loop will automatically load:
         grad_accum_steps=4,
         lr=1e-4,
         output_dir="output",
-        resume="output/checkpoint.pth"
+        resume="output/checkpoint.pth",
     )
     ```
 
@@ -44,11 +45,12 @@ The training loop will automatically load:
         grad_accum_steps=4,
         lr=1e-4,
         output_dir="output",
-        resume="output/checkpoint.pth"
+        resume="output/checkpoint.pth",
     )
     ```
 
 !!! tip "Resume vs Pretrain Weights"
+
     - Use `resume="checkpoint.pth"` to continue training with optimizer state
     - Use `pretrain_weights="checkpoint_best_total.pth"` when initializing a model to start fresh training from those weights
 
@@ -74,7 +76,7 @@ Early stopping monitors validation mAP and halts training if improvements remain
         grad_accum_steps=4,
         lr=1e-4,
         output_dir="output",
-        early_stopping=True
+        early_stopping=True,
     )
     ```
 
@@ -92,17 +94,17 @@ Early stopping monitors validation mAP and halts training if improvements remain
         grad_accum_steps=4,
         lr=1e-4,
         output_dir="output",
-        early_stopping=True
+        early_stopping=True,
     )
     ```
 
 ### Configuration Options
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `early_stopping_patience` | 10 | Number of epochs without improvement before stopping |
-| `early_stopping_min_delta` | 0.001 | Minimum mAP change to count as improvement |
-| `early_stopping_use_ema` | False | Use EMA model's mAP for comparisons |
+| Parameter                  | Default | Description                                          |
+| -------------------------- | ------- | ---------------------------------------------------- |
+| `early_stopping_patience`  | 10      | Number of epochs without improvement before stopping |
+| `early_stopping_min_delta` | 0.001   | Minimum mAP change to count as improvement           |
+| `early_stopping_use_ema`   | False   | Use EMA model's mAP for comparisons                  |
 
 ### Advanced Example
 
@@ -111,9 +113,9 @@ model.train(
     dataset_dir="path/to/dataset",
     epochs=200,
     early_stopping=True,
-    early_stopping_patience=15,      # Wait 15 epochs before stopping
+    early_stopping_patience=15,  # Wait 15 epochs before stopping
     early_stopping_min_delta=0.005,  # Require 0.5% mAP improvement
-    early_stopping_use_ema=True      # Track EMA model performance
+    early_stopping_use_ema=True,  # Track EMA model performance
 )
 ```
 
@@ -155,7 +157,7 @@ You can fine-tune RF-DETR on multiple GPUs using PyTorch's Distributed Data Para
         batch_size=4,
         grad_accum_steps=1,
         lr=1e-4,
-        output_dir="output"
+        output_dir="output",
     )
     ```
 
@@ -178,13 +180,14 @@ effective_batch_size = batch_size × grad_accum_steps × num_gpus
 **Example configurations for effective batch size of 16:**
 
 | GPUs | `batch_size` | `grad_accum_steps` | Effective |
-|------|--------------|-------------------|-----------|
-| 1 | 4 | 4 | 16 |
-| 2 | 4 | 2 | 16 |
-| 4 | 4 | 1 | 16 |
-| 8 | 2 | 1 | 16 |
+| ---- | ------------ | ------------------ | --------- |
+| 1    | 4            | 4                  | 16        |
+| 2    | 4            | 2                  | 16        |
+| 4    | 4            | 1                  | 16        |
+| 8    | 2            | 1                  | 16        |
 
 !!! warning "Adjust for GPU count"
+
     When switching between single and multi-GPU training, remember to adjust `batch_size` and `grad_accum_steps` to maintain the same effective batch size.
 
 ### Multi-Node Training
@@ -231,7 +234,7 @@ Run this command on each node, changing `--node_rank` accordingly.
         grad_accum_steps=4,
         lr=1e-4,
         output_dir="output",
-        tensorboard=True
+        tensorboard=True,
     )
     ```
 
@@ -247,7 +250,7 @@ Then open `http://localhost:6006/` in your browser.
 
 **Google Colab:**
 
-```python
+```ipython
 %load_ext tensorboard
 %tensorboard --logdir output
 ```
@@ -299,16 +302,16 @@ TensorBoard will track:
         output_dir="output",
         wandb=True,
         project="my-detection-project",
-        run="experiment-001"
+        run="experiment-001",
     )
     ```
 
 ### W&B Organization
 
-| Parameter | Description |
-|-----------|-------------|
-| `project` | Groups related experiments together |
-| `run` | Identifies individual training sessions |
+| Parameter | Description                             |
+| --------- | --------------------------------------- |
+| `project` | Groups related experiments together     |
+| `run`     | Identifies individual training sessions |
 
 If you don't specify a run name, W&B assigns a random one automatically.
 
@@ -333,7 +336,7 @@ model.train(
     tensorboard=True,
     wandb=True,
     project="my-project",
-    run="experiment-001"
+    run="experiment-001",
 )
 ```
 
@@ -357,13 +360,13 @@ This re-computes activations during the backward pass instead of storing them, r
 
 ### Memory-Efficient Configurations
 
-| Memory Level | Configuration |
-|--------------|---------------|
-| Very Low (8GB) | `batch_size=1`, `grad_accum_steps=16`, `gradient_checkpointing=True`, `resolution=560` |
-| Low (12GB) | `batch_size=2`, `grad_accum_steps=8`, `gradient_checkpointing=True` |
-| Medium (16GB) | `batch_size=4`, `grad_accum_steps=4` |
-| High (24GB) | `batch_size=8`, `grad_accum_steps=2` |
-| Very High (40GB+) | `batch_size=16`, `grad_accum_steps=1`, `resolution=784` |
+| Memory Level      | Configuration                                                                          |
+| ----------------- | -------------------------------------------------------------------------------------- |
+| Very Low (8GB)    | `batch_size=1`, `grad_accum_steps=16`, `gradient_checkpointing=True`, `resolution=560` |
+| Low (12GB)        | `batch_size=2`, `grad_accum_steps=8`, `gradient_checkpointing=True`                    |
+| Medium (16GB)     | `batch_size=4`, `grad_accum_steps=4`                                                   |
+| High (24GB)       | `batch_size=8`, `grad_accum_steps=2`                                                   |
+| Very High (40GB+) | `batch_size=16`, `grad_accum_steps=1`, `resolution=784`                                |
 
 ---
 
@@ -372,17 +375,17 @@ This re-computes activations during the backward pass instead of storing them, r
 ### Learning Rate Tuning
 
 - **Fine-tuning from COCO weights (default):** Use default learning rates (`lr=1e-4`, `lr_encoder=1.5e-4`)
-- **Small dataset (<1000 images):** Consider lower `lr` (e.g., `5e-5`) to prevent overfitting
+- **Small dataset (\<1000 images):** Consider lower `lr` (e.g., `5e-5`) to prevent overfitting
 - **Large dataset (>10000 images):** May benefit from higher `lr` (e.g., `2e-4`)
 
 ### Epoch Count
 
-| Dataset Size | Recommended Epochs |
-|--------------|-------------------|
-| < 500 images | 100-200 |
-| 500-2000 images | 50-100 |
-| 2000-10000 images | 30-50 |
-| > 10000 images | 20-30 |
+| Dataset Size      | Recommended Epochs |
+| ----------------- | ------------------ |
+| < 500 images      | 100-200            |
+| 500-2000 images   | 50-100             |
+| 2000-10000 images | 30-50              |
+| > 10000 images    | 20-30              |
 
 Use early stopping to automatically determine the optimal stopping point.
 

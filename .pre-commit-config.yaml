@@ -33,12 +33,11 @@ repos:
     rev: 1.0.0
     hooks:
       - id: mdformat
+        exclude: ^docs/reference/
         additional_dependencies:
           - "mdformat-mkdocs[recommended]>=2.1.0"
+          - "mdformat-ruff"
         args: ["--number"]
-        # NOTE: docs/ is formatted by separate tooling; keep mdformat-mkdocs for
-        # MkDocs-style markdown in root-level files (e.g., README.md).
-        exclude: ^docs/
 
   - repo: https://github.com/codespell-project/codespell
     rev: v2.4.1
