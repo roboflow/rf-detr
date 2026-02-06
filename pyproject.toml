@@ -63,6 +63,7 @@ metrics = [
     "tensorboard>=2.13.0",
     "wandb"
 ]
+plus = ["rfdetr_plus"]
 
 [dependency-groups]
 build = [
