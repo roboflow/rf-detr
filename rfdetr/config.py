@@ -4,7 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-from pydantic import BaseModel, field_validator, model_validator, Field
+from pydantic import BaseModel, field_validator, model_validator
 from pydantic_core.core_schema import ValidationInfo  # for field_validator(info)
 from typing import List, Optional, Literal
 import os, torch
