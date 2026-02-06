@@ -58,4 +58,4 @@ def synthetic_shape_dataset_dir(tmp_path_factory: pytest.TempPathFactory) -> Gen
             if item.is_file() and item.name != "_annotations.coco.json":
                 shutil.copy2(item, test_dir / item.name)
     yield dataset_dir
-    shutil.rmtree(dataset_dir, ignore_errors=True)
+    shutil.rmtree(dataset_dir)
