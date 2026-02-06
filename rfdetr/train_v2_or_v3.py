@@ -1,7 +1,6 @@
 # train_single.py
 import argparse
 import os
-import platform
 
 ENCODER_ALIASES = {
     "dinov2": "dinov2_windowed_small",
