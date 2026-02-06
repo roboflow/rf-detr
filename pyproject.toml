@@ -127,9 +127,9 @@ ignore = [
 
 [tool.pytest.ini_options]
 addopts = [
-    "-m 'not gpu'",      # skip GPU tests by default (run with: pytest -m gpu)
-    "--color=yes",       # colored output
-#    "--doctest-modules", # TODO: run doctests from all modules
+    "-v",                   # verbose output
+    "--color=yes",          # colored output
+#    "--doctest-modules",    # TODO: run doctests from all modules
 ]
 markers = [
     "gpu: tests that require GPU or are slow on CPU",
