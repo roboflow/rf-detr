@@ -53,5 +53,9 @@ def synthetic_shape_dataset_dir(tmp_path_factory: pytest.TempPathFactory) -> Gen
         (test_dir / "_annotations.coco.json").write_text(
             (valid_dir / "_annotations.coco.json").read_text()
         )
+        # Ensure test split has corresponding images referenced by the annotations
+        for item in valid_dir.iterdir():
+            if item.is_file() and item.name != "_annotations.coco.json":
+                shutil.copy2(item, test_dir / item.name)
     yield dataset_dir
     shutil.rmtree(dataset_dir, ignore_errors=True)
