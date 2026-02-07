@@ -26,6 +26,7 @@ from typing import Callable
 import torch
 import torch.nn.functional as F
 from torch import nn
+from torch.cuda.amp import autocast
 
 from rfdetr.models.backbone import build_backbone
 from rfdetr.models.matcher import build_matcher
@@ -729,55 +730,142 @@ sigmoid_ce_loss_jit = torch.jit.script(
 
 
 class PostProcess(nn.Module):
-    """ This module converts the model's output into the format expected by the coco api"""
-    def __init__(self, num_select=300) -> None:
+    def __init__(self, num_select=300, mask_batch_size=5, use_amp=True):
         super().__init__()
         self.num_select = num_select
+        self.mask_batch_size = mask_batch_size
+        self.use_amp = use_amp
 
     @torch.no_grad()
     def forward(self, outputs, target_sizes):
-        """ Perform the computation
-        Parameters:
-            outputs: raw outputs of the model
-            target_sizes: tensor of dimension [batch_size x 2] containing the size of each images of the batch
-                          For evaluation, this must be the original image size (before any data augmentation)
-                          For visualization, this should be the image size after data augment, but before padding
-        """
+        # 1. Extract basic outputs
         out_logits, out_bbox = outputs['pred_logits'], outputs['pred_boxes']
-        out_masks = outputs.get('pred_masks', None)
 
-        assert len(out_logits) == len(target_sizes)
-        assert target_sizes.shape[1] == 2
-
+        # 2. Select top-k predictions
         prob = out_logits.sigmoid()
         topk_values, topk_indexes = torch.topk(prob.view(out_logits.shape[0], -1), self.num_select, dim=1)
-        scores = topk_values
+        scores = topk_values.cpu()  # Move to CPU immediately
         topk_boxes = topk_indexes // out_logits.shape[2]
         labels = topk_indexes % out_logits.shape[2]
-        boxes = box_ops.box_cxcywh_to_xyxy(out_bbox)
-        boxes = torch.gather(boxes, 1, topk_boxes.unsqueeze(-1).repeat(1,1,4))
 
-        # and from relative [0, 1] to absolute [0, height] coordinates
+        # 3. Process boxes (compute on GPU, move result to CPU)
+        boxes = box_ops.box_cxcywh_to_xyxy(out_bbox)
+        boxes = torch.gather(boxes, 1, topk_boxes.unsqueeze(-1).repeat(1, 1, 4))
         img_h, img_w = target_sizes.unbind(1)
         scale_fct = torch.stack([img_w, img_h, img_w, img_h], dim=1)
-        boxes = boxes * scale_fct[:, None, :]
+        boxes = (boxes * scale_fct[:, None, :]).cpu()
 
-        # Optionally gather masks corresponding to the same top-K queries and resize to original size
+        # 4. Clean up intermediate GPU variables
+        del prob, topk_values, topk_indexes, scale_fct
+        torch.cuda.empty_cache()
+
+        # 5. Process masks
         results = []
-        if out_masks is not None:
-            for i in range(out_masks.shape[0]):
-                res_i = {'scores': scores[i], 'labels': labels[i], 'boxes': boxes[i]}
-                k_idx = topk_boxes[i]
-                masks_i = torch.gather(out_masks[i], 0, k_idx.unsqueeze(-1).unsqueeze(-1).repeat(1, out_masks.shape[-2], out_masks.shape[-1]))  # [K, Hm, Wm]
-                h, w = target_sizes[i].tolist()
-                masks_i = F.interpolate(masks_i.unsqueeze(1), size=(int(h), int(w)), mode='bilinear', align_corners=False)  # [K,1,H,W]
-                res_i['masks'] = masks_i > 0.0
-                results.append(res_i)
-        else:
-            results = [{'scores': s, 'labels': l, 'boxes': b} for s, l, b in zip(scores, labels, boxes)]
 
+        if "pred_masks" in outputs:
+            if isinstance(outputs["pred_masks"], torch.Tensor):
+                # Standard forward() output
+                out_masks = outputs["pred_masks"]
+
+                for i in range(out_masks.shape[0]):
+                    self._process_standard_masks(i, out_masks, topk_boxes, target_sizes,
+                                                 scores, labels, boxes, results)
+            else:
+                # Sparse forward() output
+                sparse_dict = outputs["pred_masks"]
+                spatial_features = sparse_dict["spatial_features"]
+                query_features = sparse_dict["query_features"]
+                bias = sparse_dict["bias"]
+
+                for i in range(len(out_logits)):
+                    self._process_sparse_masks(i, spatial_features, query_features, bias,
+                                               topk_boxes, target_sizes,
+                                               scores, labels, boxes, results)
+        else:
+            # No masks case
+            for i in range(len(out_logits)):
+                results.append({
+                    'scores': scores[i],
+                    'labels': labels[i],
+                    'boxes': boxes[i]
+                })
+
+        # Final cleanup
+        torch.cuda.empty_cache()
         return results
 
+    def _process_standard_masks(self, i, out_masks, topk_boxes, target_sizes,
+                                scores, labels, boxes, results):
+        """Process masks from standard forward() output"""
+        res_i = {
+            'scores': scores[i],
+            'labels': labels[i],
+            'boxes': boxes[i]
+        }
+
+        k_idx = topk_boxes[i]
+        masks_i = torch.gather(out_masks[i], 0,
+                               k_idx.unsqueeze(-1).unsqueeze(-1).repeat(1, out_masks.shape[-2], out_masks.shape[-1]))
+
+        h, w = target_sizes[i].tolist()
+        masks_i = F.interpolate(masks_i.unsqueeze(1), size=(int(h), int(w)),
+                                mode='bilinear', align_corners=False)
+
+        # Critical: process boolean conversion in batches
+        masks_bool = []
+        for k in range(0, masks_i.shape[0], self.mask_batch_size):
+            batch = masks_i[k:k + self.mask_batch_size]
+            batch_bool = (batch > 0.0).cpu()  # Move to CPU immediately
+            masks_bool.append(batch_bool)
+
+            # Clean up
+            del batch
+            torch.cuda.empty_cache()
+
+        if masks_bool:
+            res_i['masks'] = torch.cat(masks_bool, dim=0)
+
+        results.append(res_i)
+        del masks_i
+        torch.cuda.empty_cache()
+
+    def _process_sparse_masks(self, i, spatial_features, query_features, bias,
+                              topk_boxes, target_sizes, scores, labels, boxes, results):
+        """Process masks from sparse forward() output"""
+        res_i = {
+            'scores': scores[i],
+            'labels': labels[i],
+            'boxes': boxes[i]
+        }
+
+        k_idx = topk_boxes[i]
+        target_h, target_w = target_sizes[i].tolist()
+
+        # Use automatic mixed precision to reduce memory usage
+        with autocast(enabled=self.use_amp):
+            masks_bool = []
+            for k in k_idx:
+                # Process single query
+                q = query_features[i, k]
+
+                # Compute mask
+                mask = torch.einsum('chw,c->hw', spatial_features[i], q) + bias
+                mask = mask.unsqueeze(0).unsqueeze(0)
+                mask = F.interpolate(mask, size=(target_h, target_w),
+                                     mode='bilinear', align_corners=False)
+
+                # Convert to boolean and move to CPU immediately
+                mask_bool = (mask.squeeze() > 0.0).cpu()
+                masks_bool.append(mask_bool)
+
+                # Clean up
+                del mask
+                torch.cuda.empty_cache()
+
+        if masks_bool:
+            res_i['masks'] = torch.stack(masks_bool, dim=0)
+
+        results.append(res_i)
 
 class MLP(nn.Module):
     """ Very simple multi-layer perceptron (also called FFN)"""
