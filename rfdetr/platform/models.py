@@ -5,11 +5,11 @@ try:
         RFDETRXLarge,
         RFDETRXLargeConfig,
     )
-except ImportError:
+except ModuleNotFoundError:
 
     _INSTALL_MSG = (
         "The {name} model requires the 'rfdetr_plus' package. "
-        "Install it with: pip install rfdetr[plus]"
+        "Install it with `pip install rfdetr_plus`"
     )
 
     class RFDETRXLargeConfig:  # type: ignore[no-redef]
