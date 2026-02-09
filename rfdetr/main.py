@@ -76,19 +76,21 @@ OPEN_SOURCE_MODELS = {
     "rf-detr-seg-xxlarge.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-2xl-ft.pth",
 }
 
-
-HOSTED_MODELS = {**OPEN_SOURCE_MODELS, **PLATFORM_MODELS}
-
 def download_pretrain_weights(pretrain_weights: str, redownload=False):
-    if pretrain_weights in HOSTED_MODELS:
-        if redownload or not os.path.exists(pretrain_weights):
-            logger.info(
-                f"Downloading pretrained weights for {pretrain_weights}"
-            )
-            download_file(
-                HOSTED_MODELS[pretrain_weights],
-                pretrain_weights,
-            )
+    from rfdetr.platform.platform_downloads import PLATFORM_MODELS
+
+    HOSTED_MODELS = {**OPEN_SOURCE_MODELS, **PLATFORM_MODELS}
+    if pretrain_weights not in HOSTED_MODELS:
+        return
+    if redownload or os.path.exists(pretrain_weights):
+        return
+    logger.info(
+        f"Downloading pretrained weights for {pretrain_weights}"
+    )
+    download_file(
+        HOSTED_MODELS[pretrain_weights],
+        pretrain_weights,
+    )
 
 class Model:
     def __init__(self, **kwargs):
