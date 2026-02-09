@@ -25,7 +25,30 @@ from rfdetr.detr import (
     RFDETRSegXLarge,
     RFDETRSmall,
 )
-from rfdetr.platform.models import (
-    RFDETR2XLarge,
-    RFDETRXLarge,
-)
+
+__all__ = [
+    "RFDETRNano",
+    "RFDETRSmall",
+    "RFDETRSmall",
+    "RFDETRLarge",
+    "RFDETRSegNano",
+    "RFDETRSegSmall",
+    "RFDETRSegMedium",
+    "RFDETRSegLarge",
+    "RFDETRSegXLarge",
+    "RFDETRSeg2XLarge",
+]
+
+try:
+    from rfdetr.platform.models import (
+        RFDETR2XLarge,
+        RFDETRXLarge,
+    )
+
+    __all__ += [
+        "RFDETR2XLarge",
+        "RFDETRXLarge",
+    ]
+except ModuleNotFoundError as ex:
+    if ex.name not in ("rfdetr_plus", "rfdetr_plus.models"):
+        raise

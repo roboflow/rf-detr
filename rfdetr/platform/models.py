@@ -1,4 +1,11 @@
-__all__ = []
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+
+__all__: list[str] = []
+
 
 try:
     from rfdetr_plus.models import (
@@ -10,30 +17,18 @@ try:
 
     __all__ += [
         "RFDETR2XLarge",
-        "RFDETR2XLargeConfig",
         "RFDETRXLarge",
-        "RFDETRXLargeConfig",
     ]
 except ModuleNotFoundError as ex:
     if ex.name not in ("rfdetr_plus", "rfdetr_plus.models"):
         raise
 
-    __all__: list[str] = []
+    import warnings
 
-    from rfdetr.platform import INSTALL_MSG as _INSTALL_MSG
+    from rfdetr.platform import _INSTALL_MSG
 
-    class RFDETRXLargeConfig:  # type: ignore[no-redef]
-        def __init__(self, *args, **kwargs):
-            raise ImportError(_INSTALL_MSG.format(name=type(self).__name__))
-
-    class RFDETR2XLargeConfig:  # type: ignore[no-redef]
-        def __init__(self, *args, **kwargs):
-            raise ImportError(_INSTALL_MSG.format(name=type(self).__name__))
-
-    class RFDETRXLarge:  # type: ignore[no-redef]
-        def __init__(self, *args, **kwargs):
-            raise ImportError(_INSTALL_MSG.format(name=type(self).__name__))
-
-    class RFDETR2XLarge:  # type: ignore[no-redef]
-        def __init__(self, *args, **kwargs):
-            raise ImportError(_INSTALL_MSG.format(name=type(self).__name__))
+    warnings.warn(
+        _INSTALL_MSG.format(name="platform model downloads"),
+        ImportWarning,
+        stacklevel=2,
+    )
