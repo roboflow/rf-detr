@@ -46,7 +46,7 @@ jobs:
           activate-environment: true
 
       - name: 🚀 Install Packages
-        run: uv pip install -e . --group tests --prerelease=allow
+        run: uv pip install -e . --group tests
 
       - name: 🧪 Run the Test
         run: uv run pytest -m "not gpu" --cov=rfdetr --cov-report=xml
