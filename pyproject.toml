@@ -8,7 +8,7 @@ version = "1.4.1"
 description = "RF-DETR"
 readme = "README.md"
 authors = [
-    {name = "Roboflow, Inc", email = "peter@roboflow.com"}
+    {name = "Roboflow, Inc", email = "develop@roboflow.com"}
 ]
 license = {text = "Apache License 2.0"}
 requires-python = ">=3.10"
@@ -124,3 +124,16 @@ ignore = [
     "E721",  # todo: Use `is` and `is not` for type comparisons, or `isinstance()` for isinstance checks
     "F821",  # todo: Undefined name `...`
 ]
+
+[tool.pytest.ini_options]
+addopts = [
+    "-v",                   # verbose output
+    "--color=yes",          # colored output
+#    "--doctest-modules",    # TODO: run doctests from all modules
+]
+markers = [
+    "gpu: tests that require GPU or are slow on CPU",
+]
+
+[tool.codespell]
+skip = "*.pth"
