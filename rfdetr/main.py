@@ -42,7 +42,6 @@ import rfdetr.util.misc as utils
 from rfdetr.datasets import build_dataset, get_coco_api_from_dataset
 from rfdetr.engine import evaluate, train_one_epoch
 from rfdetr.models import PostProcess, build_criterion_and_postprocessors, build_model
-from rfdetr.platform.platform_downloads import PLATFORM_MODELS
 from rfdetr.util.benchmark import benchmark
 from rfdetr.util.drop_scheduler import drop_scheduler
 from rfdetr.util.files import download_file
