@@ -41,7 +41,7 @@ jobs:
       - name: 🔎 Verify plus re-exports import
         run: |
           from rfdetr import RFDETR2XLarge, RFDETRXLarge
-          print("imports:", RFDETR2XLarge, RFDETRXLarge, RFDETR2XLargePlatform, RFDETRXLargePlatform)
+          print("imports:", RFDETR2XLarge, RFDETRXLarge)
 
           import rfdetr_plus
           print("rfdetr_plus:", rfdetr_plus.__version__)
