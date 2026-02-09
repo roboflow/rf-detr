@@ -1,3 +1,5 @@
+__all__ = []
+
 try:
     from rfdetr_plus.models import (
         RFDETR2XLarge,
@@ -6,7 +8,7 @@ try:
         RFDETRXLargeConfig,
     )
 
-    __all__ = [
+    __all__ += [
         "RFDETR2XLarge",
         "RFDETR2XLargeConfig",
         "RFDETRXLarge",
@@ -16,10 +18,7 @@ except ModuleNotFoundError:
 
     __all__: list[str] = []
 
-    _INSTALL_MSG = (
-        "The {name} model requires the 'rfdetr_plus' package. "
-        "Install it with `pip install rfdetr_plus`"
-    )
+    from rfdetr.platform import INSTALL_MSG as _INSTALL_MSG
 
     class RFDETRXLargeConfig:  # type: ignore[no-redef]
         def __init__(self, *args, **kwargs):
