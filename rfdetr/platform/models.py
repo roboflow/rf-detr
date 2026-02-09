@@ -14,7 +14,9 @@ try:
         "RFDETRXLarge",
         "RFDETRXLargeConfig",
     ]
-except ModuleNotFoundError:
+except ModuleNotFoundError as ex:
+    if ex.name not in ("rfdetr_plus", "rfdetr_plus.models"):
+        raise
 
     __all__: list[str] = []
 

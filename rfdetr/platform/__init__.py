@@ -5,6 +5,6 @@
 # ------------------------------------------------------------------------
 
 INSTALL_MSG = (
-    "The {name} requires the 'rfdetr_plus' package. "
-    "Install it with `pip install rfdetr_plus`"
+    "The {name} requires the 'plus' extras for the 'rfdetr' package. "
+    "Install it with `pip install rfdetr[plus]` (or `pip install rfdetr_plus` if supported)."
 )

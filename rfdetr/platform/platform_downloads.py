@@ -1,5 +1,5 @@
 try:
-    from rfdetr_plus.platform_downloads import PLATFORM_MODELS
+    from rfdetr_plus.platform_downloads import _PLATFORM_MODELS as PLATFORM_MODELS
 except ModuleNotFoundError as ex:
     if ex.name in ("rfdetr_plus", "rfdetr_plus.platform_downloads"):
         import warnings
