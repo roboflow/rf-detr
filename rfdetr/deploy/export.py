@@ -23,7 +23,6 @@ import torch.nn as nn
 from PIL import Image
 
 import rfdetr.datasets.transforms as T
-import rfdetr.util.misc as utils
 from rfdetr.deploy._onnx import OnnxOptimizer
 from rfdetr.models import build_model
 from rfdetr.util.logger import get_logger
@@ -35,9 +34,7 @@ logger = get_logger()
 
 def run_command_shell(command, dry_run:bool = False) -> int:
     if dry_run:
-        logger.info("")
-        logger.info(f"CUDA_VISIBLE_DEVICES={os.environ['CUDA_VISIBLE_DEVICES']} {command}")
-        logger.info("")
+        logger.info(f"\nCUDA_VISIBLE_DEVICES={os.environ['CUDA_VISIBLE_DEVICES']} {command}\n")
     try:
         result = subprocess.run(command, shell=True, capture_output=True, text=True)
         return result

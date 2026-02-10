@@ -628,6 +628,281 @@ class Model:
         logger.info("ONNX export completed successfully")
         self.model = self.model.to(device)
 
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser('LWDETR training and evaluation script', parents=[get_args_parser()])
+    args = parser.parse_args()
+
+    if args.output_dir:
+        Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+
+    config = vars(args)  # Convert Namespace to dictionary
+
+    if args.subcommand == 'distill':
+        distill(**config)
+    elif args.subcommand is None:
+        main(**config)
+    elif args.subcommand == 'export_model':
+        filter_keys = [
+            "num_classes",
+            "grad_accum_steps",
+            "lr",
+            "lr_encoder",
+            "weight_decay",
+            "epochs",
+            "lr_drop",
+            "clip_max_norm",
+            "lr_vit_layer_decay",
+            "lr_component_decay",
+            "dropout",
+            "drop_path",
+            "drop_mode",
+            "drop_schedule",
+            "cutoff_epoch",
+            "pretrained_encoder",
+            "pretrain_weights",
+            "pretrain_exclude_keys",
+            "pretrain_keys_modify_to_load",
+            "freeze_florence",
+            "freeze_aimv2",
+            "decoder_norm",
+            "set_cost_class",
+            "set_cost_bbox",
+            "set_cost_giou",
+            "cls_loss_coef",
+            "bbox_loss_coef",
+            "giou_loss_coef",
+            "focal_alpha",
+            "aux_loss",
+            "sum_group_losses",
+            "use_varifocal_loss",
+            "use_position_supervised_loss",
+            "ia_bce_loss",
+            "dataset_file",
+            "coco_path",
+            "dataset_dir",
+            "square_resize_div_64",
+            "output_dir",
+            "checkpoint_interval",
+            "seed",
+            "resume",
+            "start_epoch",
+            "eval",
+            "use_ema",
+            "ema_decay",
+            "ema_tau",
+            "num_workers",
+            "device",
+            "world_size",
+            "dist_url",
+            "sync_bn",
+            "fp16_eval",
+            "infer_dir",
+            "verbose",
+            "opset_version",
+            "dry_run",
+            "shape",
+        ]
+        for key in filter_keys:
+            config.pop(key, None)  # Use pop with None to avoid KeyError
+
+        from deploy.export import main as export_main
+        if args.batch_size != 1:
+            config['batch_size'] = 1
+            print(f"Only batch_size 1 is supported for onnx export, \
+                 but got batchsize = {args.batch_size}. batch_size is forcibly set to 1.")
+        export_main(**config)
+
+def get_args_parser():
+    parser = argparse.ArgumentParser('Set transformer detector', add_help=False)
+    parser.add_argument('--num_classes', default=2, type=int)
+    parser.add_argument('--grad_accum_steps', default=1, type=int)
+    parser.add_argument('--print_freq', default=10, type=int,
+                        help='log frequency (in steps) during train/eval')
+    parser.add_argument('--amp', default=False, type=bool)
+    parser.add_argument('--lr', default=1e-4, type=float)
+    parser.add_argument('--lr_encoder', default=1.5e-4, type=float)
+    parser.add_argument('--batch_size', default=2, type=int)
+    parser.add_argument('--weight_decay', default=1e-4, type=float)
+    parser.add_argument('--epochs', default=12, type=int)
+    parser.add_argument('--lr_drop', default=11, type=int)
+    parser.add_argument('--clip_max_norm', default=0.1, type=float,
+                        help='gradient clipping max norm')
+    parser.add_argument('--lr_vit_layer_decay', default=0.8, type=float)
+    parser.add_argument('--lr_component_decay', default=1.0, type=float)
+    parser.add_argument('--do_benchmark', action='store_true', help='benchmark the model')
+
+    # drop args
+    # dropout and stochastic depth drop rate; set at most one to non-zero
+    parser.add_argument('--dropout', type=float, default=0,
+                        help='Drop path rate (default: 0.0)')
+    parser.add_argument('--drop_path', type=float, default=0,
+                        help='Drop path rate (default: 0.0)')
+
+    # early / late dropout and stochastic depth settings
+    parser.add_argument('--drop_mode', type=str, default='standard',
+                        choices=['standard', 'early', 'late'], help='drop mode')
+    parser.add_argument('--drop_schedule', type=str, default='constant',
+                        choices=['constant', 'linear'],
+                        help='drop schedule for early dropout / s.d. only')
+    parser.add_argument('--cutoff_epoch', type=int, default=0,
+                        help='if drop_mode is early / late, this is the epoch where dropout ends / starts')
+
+    # Model parameters
+    parser.add_argument('--pretrained_encoder', type=str, default=None,
+                        help="Path to the pretrained encoder.")
+    parser.add_argument('--pretrain_weights', type=str, default=None,
+                        help="Path to the pretrained model.")
+    parser.add_argument('--pretrain_exclude_keys', type=str, default=None, nargs='+',
+                        help="Keys you do not want to load.")
+    parser.add_argument('--pretrain_keys_modify_to_load', type=str, default=None, nargs='+',
+                        help="Keys you want to modify to load. Only used when loading objects365 pre-trained weights.")
+
+    # * Backbone
+    parser.add_argument('--encoder', default='vit_tiny', type=str,
+                        help="Name of the transformer or convolutional encoder to use")
+    parser.add_argument('--vit_encoder_num_layers', default=12, type=int,
+                        help="Number of layers used in ViT encoder")
+    parser.add_argument('--window_block_indexes', default=None, type=int, nargs='+')
+    parser.add_argument('--position_embedding', default='sine', type=str,
+                        choices=('sine', 'learned'),
+                        help="Type of positional embedding to use on top of the image features")
+    parser.add_argument('--out_feature_indexes', default=[-1], type=int, nargs='+', help='only for vit now')
+    parser.add_argument("--freeze_encoder", action="store_true", dest="freeze_encoder")
+    parser.add_argument("--layer_norm", action="store_true", dest="layer_norm")
+    parser.add_argument("--rms_norm", action="store_true", dest="rms_norm")
+    parser.add_argument("--backbone_lora", action="store_true", dest="backbone_lora")
+    parser.add_argument("--force_no_pretrain", action="store_true", dest="force_no_pretrain")
+
+    # * Transformer
+    parser.add_argument('--dec_layers', default=3, type=int,
+                        help="Number of decoding layers in the transformer")
+    parser.add_argument('--dim_feedforward', default=2048, type=int,
+                        help="Intermediate size of the feedforward layers in the transformer blocks")
+    parser.add_argument('--hidden_dim', default=256, type=int,
+                        help="Size of the embeddings (dimension of the transformer)")
+    parser.add_argument('--sa_nheads', default=8, type=int,
+                        help="Number of attention heads inside the transformer's self-attentions")
+    parser.add_argument('--ca_nheads', default=8, type=int,
+                        help="Number of attention heads inside the transformer's cross-attentions")
+    parser.add_argument('--num_queries', default=300, type=int,
+                        help="Number of query slots")
+    parser.add_argument('--group_detr', default=13, type=int,
+                        help="Number of groups to speed up detr training")
+    parser.add_argument('--two_stage', action='store_true')
+    parser.add_argument('--projector_scale', default='P4', type=str, nargs='+', choices=('P3', 'P4', 'P5', 'P6'))
+    parser.add_argument('--lite_refpoint_refine', action='store_true', help='lite refpoint refine mode for speed-up')
+    parser.add_argument('--num_select', default=100, type=int,
+                        help='the number of predictions selected for evaluation')
+    parser.add_argument('--dec_n_points', default=4, type=int,
+                        help='the number of sampling points')
+    parser.add_argument('--decoder_norm', default='LN', type=str)
+    parser.add_argument('--bbox_reparam', action='store_true')
+    parser.add_argument('--freeze_batch_norm', action='store_true')
+    # * Matcher
+    parser.add_argument('--set_cost_class', default=2, type=float,
+                        help="Class coefficient in the matching cost")
+    parser.add_argument('--set_cost_bbox', default=5, type=float,
+                        help="L1 box coefficient in the matching cost")
+    parser.add_argument('--set_cost_giou', default=2, type=float,
+                        help="giou box coefficient in the matching cost")
+
+    # * Loss coefficients
+    parser.add_argument('--cls_loss_coef', default=2, type=float)
+    parser.add_argument('--bbox_loss_coef', default=5, type=float)
+    parser.add_argument('--giou_loss_coef', default=2, type=float)
+    parser.add_argument('--focal_alpha', default=0.25, type=float)
+
+    # Loss
+    parser.add_argument('--no_aux_loss', dest='aux_loss', action='store_false',
+                        help="Disables auxiliary decoding losses (loss at each layer)")
+    parser.add_argument('--sum_group_losses', action='store_true',
+                        help="To sum losses across groups or mean losses.")
+    parser.add_argument('--use_varifocal_loss', action='store_true')
+    parser.add_argument('--use_position_supervised_loss', action='store_true')
+    parser.add_argument('--ia_bce_loss', action='store_true')
+
+    # dataset parameters
+    parser.add_argument('--dataset_file', default="coco")
+    parser.add_argument('--coco_path', type=str)
+    parser.add_argument('--dataset_dir', type=str)
+    parser.add_argument('--square_resize_div_64', action='store_true')
+
+    parser.add_argument('--output_dir', default='output',
+                        help='path where to save, empty for no saving')
+    parser.add_argument('--dont_save_weights', action='store_true')
+    parser.add_argument('--checkpoint_interval', default=10, type=int,
+                        help='epoch interval to save checkpoint')
+    parser.add_argument('--seed', default=42, type=int)
+    parser.add_argument('--resume', default='', help='resume from checkpoint')
+    parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
+                        help='start epoch')
+    parser.add_argument('--eval', action='store_true')
+    parser.add_argument('--use_ema', action='store_true')
+    parser.add_argument('--ema_decay', default=0.9997, type=float)
+    parser.add_argument('--ema_tau', default=0, type=float)
+
+    parser.add_argument('--num_workers', default=2, type=int)
+
+    # distributed training parameters
+    parser.add_argument('--device', default='cuda',
+                        help='device to use for training / testing')
+    parser.add_argument('--world_size', default=1, type=int,
+                        help='number of distributed processes')
+    parser.add_argument('--dist_url', default='env://',
+                        help='url used to set up distributed training')
+    parser.add_argument('--sync_bn', default=True, type=bool,
+                        help='setup synchronized BatchNorm for distributed training')
+
+    # fp16
+    parser.add_argument('--fp16_eval', default=False, action='store_true',
+                        help='evaluate in fp16 precision.')
+
+    # custom args
+    parser.add_argument('--encoder_only', action='store_true', help='Export and benchmark encoder only')
+    parser.add_argument('--backbone_only', action='store_true', help='Export and benchmark backbone only')
+    parser.add_argument('--resolution', type=int, default=640, help="input resolution")
+    parser.add_argument('--use_cls_token', action='store_true', help='use cls token')
+    parser.add_argument('--multi_scale', action='store_true', help='use multi scale')
+    parser.add_argument('--expanded_scales', action='store_true', help='use expanded scales')
+    parser.add_argument('--do_random_resize_via_padding', action='store_true', help='use random resize via padding')
+    parser.add_argument('--warmup_epochs', default=1, type=float,
+        help='Number of warmup epochs for linear warmup before cosine annealing')
+    # Add scheduler type argument: 'step' or 'cosine'
+    parser.add_argument(
+        '--lr_scheduler',
+        default='step',
+        choices=['step', 'cosine'],
+        help="Type of learning rate scheduler to use: 'step' (default) or 'cosine'"
+    )
+    parser.add_argument('--lr_min_factor', default=0.0, type=float,
+        help='Minimum learning rate factor (as a fraction of initial lr) at the end of cosine annealing')
+    # Early stopping parameters
+    parser.add_argument('--early_stopping', action='store_true',
+                        help='Enable early stopping based on mAP improvement')
+    parser.add_argument('--early_stopping_patience', default=10, type=int,
+                        help='Number of epochs with no improvement after which training will be stopped')
+    parser.add_argument('--early_stopping_min_delta', default=0.001, type=float,
+                        help='Minimum change in mAP to qualify as an improvement')
+    parser.add_argument('--early_stopping_use_ema', action='store_true',
+                        help='Use EMA model metrics for early stopping')
+    # subparsers
+    subparsers = parser.add_subparsers(title='sub-commands', dest='subcommand',
+        description='valid subcommands', help='additional help')
+
+    # subparser for export model
+    parser_export = subparsers.add_parser('export_model', help='LWDETR model export')
+    parser_export.add_argument('--infer_dir', type=str, default=None)
+    parser_export.add_argument('--verbose', type=ast.literal_eval, default=False, nargs="?", const=True)
+    parser_export.add_argument('--opset_version', type=int, default=17)
+    parser_export.add_argument('--simplify', action='store_true', help="Simplify onnx model")
+    parser_export.add_argument('--tensorrt', '--trtexec', '--trt', action='store_true',
+                               help="build tensorrt engine")
+    parser_export.add_argument('--dry-run', '--test', '-t', action='store_true', help="just print command")
+    parser_export.add_argument('--profile', action='store_true', help='Run nsys profiling during TensorRT export')
+    parser_export.add_argument('--shape', type=int, nargs=2, default=(640, 640), help="input shape (width, height)")
+    return parser
+
 def populate_args(
     # Basic training parameters
     num_classes=2,

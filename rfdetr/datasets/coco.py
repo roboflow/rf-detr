@@ -241,49 +241,45 @@ def make_coco_transforms_square_div_64(image_set: str, resolution: int, multi_sc
 
 def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
     root = Path(args.coco_path)
-    try:
-        if not root.exists():
-            logger.error(f"COCO path {root} does not exist")
-            raise FileNotFoundError(f"COCO path {root} does not exist")
+    if not root.exists():
+        logger.error(f"COCO path {root} does not exist")
+        raise FileNotFoundError(f"COCO path {root} does not exist")
 
-        mode = 'instances'
-        PATHS = {
-            "train": (root / "train2017", root / "annotations" / f'{mode}_train2017.json'),
-            "val": (root /  "val2017", root / "annotations" / f'{mode}_val2017.json'),
-            "test": (root / "test2017", root / "annotations" / 'image_info_test-dev2017.json'),
-        }
+    mode = 'instances'
+    PATHS = {
+        "train": (root / "train2017", root / "annotations" / f'{mode}_train2017.json'),
+        "val": (root /  "val2017", root / "annotations" / f'{mode}_val2017.json'),
+        "test": (root / "test2017", root / "annotations" / 'image_info_test-dev2017.json'),
+    }
 
-        img_folder, ann_file = PATHS[image_set.split("_")[0]]
+    img_folder, ann_file = PATHS[image_set.split("_")[0]]
 
-        square_resize_div_64 = getattr(args, 'square_resize_div_64', False)
-        include_masks = getattr(args, "segmentation_head", False)
+    square_resize_div_64 = getattr(args, 'square_resize_div_64', False)
+    include_masks = getattr(args, "segmentation_head", False)
 
-        if square_resize_div_64:
-            logger.info(f"Building COCO {image_set} dataset with square resize at resolution {resolution}")
-            dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms_square_div_64(
-                image_set,
-                resolution,
-                multi_scale=args.multi_scale,
-                expanded_scales=args.expanded_scales,
-                skip_random_resize=not args.do_random_resize_via_padding,
-                patch_size=args.patch_size,
-                num_windows=args.num_windows
-            ), include_masks=include_masks)
-        else:
-            logger.info(f"Building COCO {image_set} dataset at resolution {resolution}")
-            dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms(
-                image_set,
-                resolution,
-                multi_scale=args.multi_scale,
-                expanded_scales=args.expanded_scales,
-                skip_random_resize=not args.do_random_resize_via_padding,
-                patch_size=args.patch_size,
-                num_windows=args.num_windows
-            ), include_masks=include_masks)
-        return dataset
-    except Exception as e:
-        logger.error(f"Failed to build COCO dataset: {e}")
-        raise
+    if square_resize_div_64:
+        logger.info(f"Building COCO {image_set} dataset with square resize at resolution {resolution}")
+        dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms_square_div_64(
+            image_set,
+            resolution,
+            multi_scale=args.multi_scale,
+            expanded_scales=args.expanded_scales,
+            skip_random_resize=not args.do_random_resize_via_padding,
+            patch_size=args.patch_size,
+            num_windows=args.num_windows
+        ), include_masks=include_masks)
+    else:
+        logger.info(f"Building COCO {image_set} dataset at resolution {resolution}")
+        dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms(
+            image_set,
+            resolution,
+            multi_scale=args.multi_scale,
+            expanded_scales=args.expanded_scales,
+            skip_random_resize=not args.do_random_resize_via_padding,
+            patch_size=args.patch_size,
+            num_windows=args.num_windows
+        ), include_masks=include_masks)
+    return dataset
 
 def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
     """Build a Roboflow COCO-format dataset.
@@ -292,49 +288,45 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
     (train/valid/test folders with _annotations.coco.json).
     """
     root = Path(args.dataset_dir)
-    try:
-        if not root.exists():
-            logger.error(f"Roboflow dataset path {root} does not exist")
-            raise FileNotFoundError(f"Roboflow dataset path {root} does not exist")
+    if not root.exists():
+        logger.error(f"Roboflow dataset path {root} does not exist")
+        raise FileNotFoundError(f"Roboflow dataset path {root} does not exist")
 
-        PATHS = {
-            "train": (root / "train", root / "train" / "_annotations.coco.json"),
-            "val": (root /  "valid", root / "valid" / "_annotations.coco.json"),
-            "test": (root / "test", root / "test" / "_annotations.coco.json"),
-        }
+    PATHS = {
+        "train": (root / "train", root / "train" / "_annotations.coco.json"),
+        "val": (root /  "valid", root / "valid" / "_annotations.coco.json"),
+        "test": (root / "test", root / "test" / "_annotations.coco.json"),
+    }
 
-        img_folder, ann_file = PATHS[image_set.split("_")[0]]
-        square_resize_div_64 = getattr(args, "square_resize_div_64", False)
-        include_masks = getattr(args, "segmentation_head", False)
-        multi_scale = getattr(args, "multi_scale", False)
-        expanded_scales = getattr(args, "expanded_scales", False)
-        do_random_resize_via_padding = getattr(args, "do_random_resize_via_padding", False)
-        patch_size = getattr(args, "patch_size", 16)
-        num_windows = getattr(args, "num_windows", 4)
+    img_folder, ann_file = PATHS[image_set.split("_")[0]]
+    square_resize_div_64 = getattr(args, "square_resize_div_64", False)
+    include_masks = getattr(args, "segmentation_head", False)
+    multi_scale = getattr(args, "multi_scale", False)
+    expanded_scales = getattr(args, "expanded_scales", False)
+    do_random_resize_via_padding = getattr(args, "do_random_resize_via_padding", False)
+    patch_size = getattr(args, "patch_size", 16)
+    num_windows = getattr(args, "num_windows", 4)
 
-        if square_resize_div_64:
-            logger.info(f"Building Roboflow {image_set} dataset with square resize at resolution {resolution}")
-            dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms_square_div_64(
-                image_set,
-                resolution,
-                multi_scale=multi_scale,
-                expanded_scales=expanded_scales,
-                skip_random_resize=not do_random_resize_via_padding,
-                patch_size=patch_size,
-                num_windows=num_windows
-            ), include_masks=include_masks)
-        else:
-            logger.info(f"Building Roboflow {image_set} dataset at resolution {resolution}")
-            dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms(
-                image_set,
-                resolution,
-                multi_scale=multi_scale,
-                expanded_scales=expanded_scales,
-                skip_random_resize=not do_random_resize_via_padding,
-                patch_size=patch_size,
-                num_windows=num_windows
-            ), include_masks=include_masks)
-        return dataset
-    except Exception as e:
-        logger.error(f"Failed to build Roboflow dataset: {e}")
-        raise
+    if square_resize_div_64:
+        logger.info(f"Building Roboflow {image_set} dataset with square resize at resolution {resolution}")
+        dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms_square_div_64(
+            image_set,
+            resolution,
+            multi_scale=multi_scale,
+            expanded_scales=expanded_scales,
+            skip_random_resize=not do_random_resize_via_padding,
+            patch_size=patch_size,
+            num_windows=num_windows
+        ), include_masks=include_masks)
+    else:
+        logger.info(f"Building Roboflow {image_set} dataset at resolution {resolution}")
+        dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms(
+            image_set,
+            resolution,
+            multi_scale=multi_scale,
+            expanded_scales=expanded_scales,
+            skip_random_resize=not do_random_resize_via_padding,
+            patch_size=patch_size,
+            num_windows=num_windows
+        ), include_masks=include_masks)
+    return dataset
