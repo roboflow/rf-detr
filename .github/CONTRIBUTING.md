@@ -78,3 +78,15 @@ Bug reports are vital for continued improvement. When reporting an issue, please
 By contributing to RF-DETR, you agree that your contributions will be licensed under the Apache 2.0 License as specified in our [LICENSE](/LICENSE) file.
 
 Thank you for your commitment to making RF-DETR better. We look forward to your pull requests and continued collaboration. Happy coding!
+
+### License Headers
+
+All Python files must start with the following header:
+
+```python
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+```
