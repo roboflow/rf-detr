@@ -5,14 +5,49 @@
 # ------------------------------------------------------------------------
 import random
 import shutil
+import zipfile
 from pathlib import Path
 from typing import Any, Generator
+from urllib.request import urlretrieve
 
 import numpy as np
 import pytest
 import torch
 
 from rfdetr.datasets.synthetic import DatasetSplitRatios, generate_coco_dataset
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DATA_DIR = PROJECT_ROOT / "data"
+
+_COCO_URLS = {
+    "val2017": "http://images.cocodataset.org/zips/val2017.zip",
+    "annotations": "http://images.cocodataset.org/annotations/annotations_trainval2017.zip",
+}
+
+
+def _download_and_extract(url: str, dest_dir: Path) -> None:
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    zip_path = dest_dir / url.rsplit("/", 1)[-1]
+    print(f"Downloading {url} ...")
+    urlretrieve(url, str(zip_path))
+    print(f"Extracting {zip_path} ...")
+    with zipfile.ZipFile(str(zip_path), "r") as zf:
+        zf.extractall(str(dest_dir))
+    zip_path.unlink()
+
+
+@pytest.fixture(scope="session")
+def download_coco_val() -> tuple[Path, Path]:
+    """Download COCO val2017 images and annotations if not already present."""
+    images_root = DATA_DIR / "val2017"
+    annotations_path = DATA_DIR / "annotations" / "instances_val2017.json"
+
+    if not images_root.exists():
+        _download_and_extract(_COCO_URLS["val2017"], DATA_DIR)
+    if not annotations_path.exists():
+        _download_and_extract(_COCO_URLS["annotations"], DATA_DIR)
+
+    return images_root, annotations_path
 
 
 @pytest.fixture(autouse=True)

@@ -4,32 +4,21 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 import os
-import zipfile
 from pathlib import Path
-from urllib.request import urlretrieve
 
 import pytest
 import torch
 from torchvision.datasets import CocoDetection
 
-from rfdetr.config import RFDETRNanoConfig
+from rfdetr import RFDETRNano
 from rfdetr.datasets import get_coco_api_from_dataset
 from rfdetr.datasets.coco import ConvertCoco, make_coco_transforms
 from rfdetr.engine import evaluate
-from rfdetr.main import Model
 from rfdetr.models import build_criterion_and_postprocessors
 from rfdetr.util import misc as utils
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DATA_DIR = PROJECT_ROOT / "data"
-
-_COCO_URLS = {
-    "val2017": "http://images.cocodataset.org/zips/val2017.zip",
-    "annotations": "http://images.cocodataset.org/annotations/annotations_trainval2017.zip",
-}
-
-_MODEL_CONFIGS = {
-    "nano": RFDETRNanoConfig,
+_MODEL_CLASSES = {
+    "nano": RFDETRNano,
 }
 
 
@@ -49,31 +38,6 @@ class CocoDetectionWithTargets(CocoDetection):
         return img, target
 
 
-def _download_and_extract(url: str, dest_dir: Path) -> None:
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    zip_path = dest_dir / url.rsplit("/", 1)[-1]
-    print(f"Downloading {url} ...")
-    urlretrieve(url, str(zip_path))
-    print(f"Extracting {zip_path} ...")
-    with zipfile.ZipFile(str(zip_path), "r") as zf:
-        zf.extractall(str(dest_dir))
-    zip_path.unlink()
-
-
-@pytest.fixture(scope="session")
-def download_coco_val() -> tuple[Path, Path]:
-    """Download COCO val2017 images and annotations if not already present."""
-    images_root = DATA_DIR / "val2017"
-    annotations_path = DATA_DIR / "annotations" / "instances_val2017.json"
-
-    if not images_root.exists():
-        _download_and_extract(_COCO_URLS["val2017"], DATA_DIR)
-    if not annotations_path.exists():
-        _download_and_extract(_COCO_URLS["annotations"], DATA_DIR)
-
-    return images_root, annotations_path
-
-
 @pytest.mark.gpu
 def test_coco_inference_benchmark(
     download_coco_val: tuple[Path, Path],
@@ -82,13 +46,13 @@ def test_coco_inference_benchmark(
     threshold_map50: float = 0.45,
     threshold_f1: float = 0.30,
 ) -> None:
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     images_root, annotations_path = download_coco_val
 
-    config_cls = _MODEL_CONFIGS[model_size]
-    config = config_cls(device=device.type)
-    model_wrapper = Model(**config.dict())
-    args = model_wrapper.args
+    model_cls = _MODEL_CLASSES[model_size]
+    rfdetr = model_cls(device=device)
+    config = rfdetr.model_config
+    args = rfdetr.model.args
 
     transforms = make_coco_transforms(
         image_set="val",
@@ -108,11 +72,11 @@ def test_coco_inference_benchmark(
     base_ds = get_coco_api_from_dataset(val_dataset)
     criterion, postprocess = build_criterion_and_postprocessors(args)
 
-    model_wrapper.model.eval()
+    rfdetr.model.model.eval()
     with torch.no_grad():
         stats, _ = evaluate(
-            model_wrapper.model, criterion, postprocess,
-            data_loader, base_ds, device, args=args,
+            rfdetr.model.model, criterion, postprocess,
+            data_loader, base_ds, torch.device(device), args=args,
         )
 
     results = stats["results_json"]
