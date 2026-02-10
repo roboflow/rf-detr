@@ -218,7 +218,8 @@ class Model:
 
         dataset_train = build_dataset(image_set='train', args=args, resolution=args.resolution)
         dataset_val = build_dataset(image_set='val', args=args, resolution=args.resolution)
-        if args.run_test:
+        run_test = getattr(args, "run_test", True)
+        if run_test:
             dataset_test = build_dataset(image_set='test' if args.dataset_file == "roboflow" else "val", args=args, resolution=args.resolution)
 
         # for cosine annealing, calculate total training steps and warmup steps
