@@ -32,15 +32,15 @@ from rfdetr.util.package import get_version
 logger = get_logger()
 
 
-def run_command_shell(command, dry_run:bool = False) -> int:
+def run_command_shell(command, dry_run: bool = False) -> subprocess.CompletedProcess:
     if dry_run:
         logger.info(f"\nCUDA_VISIBLE_DEVICES={os.environ['CUDA_VISIBLE_DEVICES']} {command}\n")
     try:
-        result = subprocess.run(command, shell=True, capture_output=True, text=True)
+        result = subprocess.run(command, shell=True, capture_output=True, text=True, check=True)
         return result
     except subprocess.CalledProcessError as e:
         logger.error(f"Command failed with exit code {e.returncode}")
-        logger.error(f"Error output:\n{e.stderr.decode('utf-8')}")
+        logger.error(f"Error output:\n{e.stderr}")
         raise
 
 
@@ -201,9 +201,8 @@ def no_batch_norm(model):
 
 def main(args):
     git_info = get_sha()
-    if git_info:
-        logger.info(
-            f"Running from git repository: {git_info['sha']} ({git_info['branch']}, {git_info['status']})")
+    if git_info != "unknown":
+        logger.info(f"Running from git repository: {git_info}")
     else:
         version = get_version()
         logger.info(f"Running RF-DETR version: {version or 'unknown'}")
@@ -230,7 +229,6 @@ def main(args):
 
     model, criterion, postprocessors = build_model(args)
     n_parameters = sum(p.numel() for p in model.parameters())
-    logger.info(f"number of parameters: {n_parameters}")
     logger.info(f"number of parameters: {n_parameters}")
     n_backbone_parameters = sum(p.numel() for p in model.backbone.parameters())
     logger.info(f"number of backbone parameters: {n_backbone_parameters}")
