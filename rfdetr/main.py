@@ -45,7 +45,7 @@ from rfdetr.util.drop_scheduler import drop_scheduler
 from rfdetr.util.files import download_file
 from rfdetr.util.get_param_dicts import get_param_dict
 from rfdetr.util.logger import get_logger
-from rfdetr.util.misc import get_rank, get_world_size
+from rfdetr.util.misc import get_rank, get_world_size, save_on_master
 from rfdetr.util.package import get_version
 from rfdetr.util.utils import BestMetricHolder, ModelEma, clean_state_dict
 
@@ -344,9 +344,9 @@ class Model:
                 model, criterion, postprocess, data_loader_val, base_ds, device, args)
             if args.output_dir:
                 if not args.segmentation_head:
-                    utils.save_on_master(coco_evaluator.coco_eval["bbox"].eval, output_dir / "eval.pth")
+                    save_on_master(coco_evaluator.coco_eval["bbox"].eval, output_dir / "eval.pth")
                 else:
-                    utils.save_on_master(coco_evaluator.coco_eval["segm"].eval, output_dir / "eval.pth")
+                    save_on_master(coco_evaluator.coco_eval["segm"].eval, output_dir / "eval.pth")
             return
 
         # for drop
@@ -407,7 +407,7 @@ class Model:
                         # create checkpoint dir
                         checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
 
-                        utils.save_on_master(weights, checkpoint_path)
+                        save_on_master(weights, checkpoint_path)
 
             with torch.no_grad():
                 test_stats, coco_evaluator = evaluate(
