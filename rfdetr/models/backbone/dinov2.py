@@ -14,14 +14,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 from transformers import AutoBackbone
 
-from rfdetr.util.logger import get_logger
-
-logger = get_logger()
-
 from rfdetr.models.backbone.dinov2_with_windowed_attn import (
     WindowedDinov2WithRegistersBackbone,
     WindowedDinov2WithRegistersConfig,
 )
+from rfdetr.util.logger import get_logger
+
+logger = get_logger()
 
 size_to_width = {
     "tiny": 192,

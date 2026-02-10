@@ -10,15 +10,14 @@
 import argparse
 import os
 
-from rfdetr.util.logger import get_logger
-
-logger = get_logger()
-
 import roboflow
 from rf100vl import get_rf100vl_projects
 
 from rfdetr import RFDETRBase
 from rfdetr.config import DEVICE
+from rfdetr.util.logger import get_logger
+
+logger = get_logger()
 
 
 def download_dataset(rf_project: roboflow.Project, dataset_version: int) -> str:
