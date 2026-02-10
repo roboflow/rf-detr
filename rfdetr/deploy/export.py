@@ -32,7 +32,7 @@ from rfdetr.util.package import get_version
 logger = get_logger()
 
 
-def run_command_shell(command, dry_run:bool = False) -> subprocess.CompletedProcess:
+def run_command_shell(command, dry_run: bool = False) -> subprocess.CompletedProcess:
     if dry_run:
         logger.info(f"\nCUDA_VISIBLE_DEVICES={os.environ['CUDA_VISIBLE_DEVICES']} {command}\n")
     try:
