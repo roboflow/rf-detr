@@ -12,7 +12,7 @@ from torchvision.datasets import CocoDetection
 
 from rfdetr import RFDETRNano
 from rfdetr.datasets import get_coco_api_from_dataset
-from rfdetr.datasets.coco import ConvertCoco, make_coco_transforms
+from rfdetr.datasets.coco import ConvertCoco, make_coco_transforms_square_div_64
 from rfdetr.engine import evaluate
 from rfdetr.models import build_criterion_and_postprocessors
 from rfdetr.util import misc as utils
@@ -42,9 +42,8 @@ class CocoDetectionWithTargets(CocoDetection):
 def test_coco_inference_benchmark(
     download_coco_val: tuple[Path, Path],
     model_size: str = "nano",
-    threshold_map: float = 0.30,
-    threshold_map50: float = 0.45,
-    threshold_f1: float = 0.30,
+    threshold_map: float = 0.65,
+    threshold_f1: float = 0.65,
 ) -> None:
     device = "cuda" if torch.cuda.is_available() else "cpu"
     images_root, annotations_path = download_coco_val
@@ -53,8 +52,10 @@ def test_coco_inference_benchmark(
     rfdetr = model_cls(device=device)
     config = rfdetr.model_config
     args = rfdetr.model.args
+    if not hasattr(args, "eval_max_dets"):
+        args.eval_max_dets = 500
 
-    transforms = make_coco_transforms(
+    transforms = make_coco_transforms_square_div_64(
         image_set="val",
         resolution=config.resolution,
         patch_size=config.patch_size,
@@ -81,11 +82,9 @@ def test_coco_inference_benchmark(
 
     results = stats["results_json"]
     map_val = results["map"]
-    map50_val = results["map50"]
     f1_val = results["f1_score"]
 
-    assert map_val >= threshold_map, f"mAP {map_val:.4f} < {threshold_map}"
-    assert map50_val >= threshold_map50, f"mAP50 {map50_val:.4f} < {threshold_map50}"
-    assert f1_val >= threshold_f1, f"F1 {f1_val:.4f} < {threshold_f1}"
+    print(f"COCO val2017 [{model_size}]: mAP@50={map_val:.4f}, F1={f1_val:.4f}")
 
-    print(f"COCO val2017 [{model_size}]: mAP={map_val:.4f}, mAP50={map50_val:.4f}, F1={f1_val:.4f}")
+    assert map_val >= threshold_map, f"mAP@50 {map_val:.4f} < {threshold_map}"
+    assert f1_val >= threshold_f1, f"F1 {f1_val:.4f} < {threshold_f1}"
