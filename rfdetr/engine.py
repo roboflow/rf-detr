@@ -28,6 +28,7 @@ import rfdetr.util.misc as utils
 from rfdetr.datasets.coco import compute_multi_scale_scales
 from rfdetr.datasets.coco_eval import CocoEvaluator
 from rfdetr.util.logger import get_logger
+from rfdetr.util.misc import get_world_size
 
 try:
     from torch.amp import GradScaler, autocast
@@ -91,7 +92,7 @@ def train_one_epoch(
         raise ValueError(f"Batch size ({batch_size}) must be divisible by gradient accumulation steps ({args.grad_accum_steps})")
 
     logger.info(f"Training config: grad_accum_steps={args.grad_accum_steps}, "
-                f"total_batch_size={batch_size * utils.get_world_size()}, "
+                f"total_batch_size={batch_size * get_world_size()}, "
                 f"dataloader_length={len(data_loader)}")
 
     sub_batch_size = batch_size // args.grad_accum_steps
