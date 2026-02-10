@@ -80,7 +80,7 @@ def download_pretrain_weights(pretrain_weights: str, redownload=False):
     HOSTED_MODELS = {**OPEN_SOURCE_MODELS, **PLATFORM_MODELS}
     if pretrain_weights not in HOSTED_MODELS:
         return
-    if redownload or os.path.exists(pretrain_weights):
+    if os.path.exists(pretrain_weights) and not redownload:
         return
     logger.info(
         f"Downloading pretrained weights for {pretrain_weights}"

@@ -54,7 +54,7 @@ jobs:
               echo "  - $file"
             done
             echo ""
-            echo "Each Python file must start with the following headers:"
+            echo "Each Python file must start with the following header:"
             echo ""
             echo "Apache 2.0 (RF-DETR):"
             echo "   # ------------------------------------------------------------------------"
