@@ -16,7 +16,7 @@ from typing import Dict, Tuple, Union
 import cv2
 import numpy as np
 import supervision as sv
-from tqdm import tqdm
+from tqdm.auto import tqdm
 from typing_extensions import Literal
 
 logger = logging.getLogger(__name__)
@@ -247,6 +247,8 @@ def generate_coco_dataset(
     num_images: int,
     img_size: int = 640,
     class_mode: Literal["shape", "color"] = "shape",
+    min_objects: int = 1,
+    max_objects: int = 10,
     split_ratios: SplitRatiosType = DEFAULT_SPLIT_RATIOS,
 ):
     """Generate a full synthetic dataset in COCO format.
@@ -254,8 +256,10 @@ def generate_coco_dataset(
     Args:
         output_dir: Directory where the dataset will be saved.
         num_images: Total number of images to generate.
-        img_size: Size of the square images (default: 640).
+        img_size: Size of the square images.
         class_mode: Classification mode - "shape" or "color" (default: "shape").
+        min_objects: Minimum objects per image.
+        max_objects: Maximum objects per image.
         split_ratios: Dataset split ratios. Can be:
             - SplitRatios dataclass instance (default: 70/20/10 split)
             - Tuple of 2 floats for train/val (e.g., (0.8, 0.2))
@@ -297,8 +301,13 @@ def generate_coco_dataset(
         annotations = {}
 
         print(f"Generating {split} split with {len(split_indices)} images...")
-        for i in tqdm(split_indices):
-            img, detections = generate_synthetic_sample(img_size, 1, 10, class_mode)
+        for i in tqdm(split_indices, desc=f"Generating {split} split"):
+            img, detections = generate_synthetic_sample(
+                img_size,
+                min_objects,
+                max_objects,
+                class_mode,
+            )
 
             file_name = f"{i:06d}.jpg"
             file_path = str(split_dir / file_name)

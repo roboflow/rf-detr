@@ -9,6 +9,7 @@ RF-DETR supports several installation methods. Choose the option which best fits
 !!! example "Installation"
 
     === "pip (recommended)"
+
         The easiest way to install RF-DETR is using `pip`. This method is recommended for most users.
 
         ```bash
@@ -16,6 +17,7 @@ RF-DETR supports several installation methods. Choose the option which best fits
         ```
 
     === "uv"
+
         If you are using `uv`, you can install RF-DETR using the following command:
 
         ```bash
@@ -29,6 +31,7 @@ RF-DETR supports several installation methods. Choose the option which best fits
         ```
 
     === "Source Archive"
+
         To install the latest development version of RF-DETR from source without cloning the full repository, run the command below.
 
         ```bash
@@ -42,6 +45,7 @@ If you plan to contribute to RF-DETR or modify the codebase locally, set up a lo
 !!! example "Development Setup"
 
     === "virtualenv"
+
         ```bash
         # Clone the repository and navigate to the root directory
         git clone --depth 1 -b develop https://github.com/roboflow/rf-detr.git
@@ -61,6 +65,7 @@ If you plan to contribute to RF-DETR or modify the codebase locally, set up a lo
         ```
 
     === "uv"
+
         ```bash
         # Clone the repository and navigate to the root directory
         git clone --depth 1 -b develop https://github.com/roboflow/rf-detr.git

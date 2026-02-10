@@ -1,15 +1,22 @@
 # ------------------------------------------------------------------------
-# Platform Model License 1.0 (PML-1.0)
-# Copyright (c) 2026 Roboflow, Inc. All Rights Reserved.
-#
-# Licensed under the Platform Model License 1.0.
-# Use, modification, and distribution of code and checkpoints require
-# an active Roboflow platform plan or agreement.
-#
-# See the LICENSE.platform file for full terms and conditions.
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-PLATFORM_MODELS = {
-    "rf-detr-xlarge.pth": "https://storage.googleapis.com/rfdetr/platform-licensed/rf-detr-xlarge.pth",
-    "rf-detr-xxlarge.pth": "https://storage.googleapis.com/rfdetr/platform-licensed/rf-detr-xxlarge.pth",
-}
+try:
+    from rfdetr_plus.models.downloads import _PLATFORM_MODELS as PLATFORM_MODELS
+except ModuleNotFoundError as ex:
+    if ex.name in ("rfdetr_plus", "rfdetr_plus.models", "rfdetr_plus.models.downloads"):
+        import warnings
+
+        from rfdetr.platform import _INSTALL_MSG
+
+        warnings.warn(
+            _INSTALL_MSG.format(name="platform model downloads"),
+            ImportWarning,
+            stacklevel=2,
+        )
+        PLATFORM_MODELS = {}
+    else:
+        raise

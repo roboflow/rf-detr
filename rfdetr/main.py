@@ -42,7 +42,6 @@ import rfdetr.util.misc as utils
 from rfdetr.datasets import build_dataset, get_coco_api_from_dataset
 from rfdetr.engine import evaluate, train_one_epoch
 from rfdetr.models import PostProcess, build_criterion_and_postprocessors, build_model
-from rfdetr.platform.platform_downloads import PLATFORM_MODELS
 from rfdetr.util.benchmark import benchmark
 from rfdetr.util.drop_scheduler import drop_scheduler
 from rfdetr.util.files import download_file
@@ -67,8 +66,6 @@ OPEN_SOURCE_MODELS = {
     "rf-detr-medium.pth": "https://storage.googleapis.com/rfdetr/medium_coco/checkpoint_best_regular.pth",
     "rf-detr-seg-preview.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-preview.pt",
     "rf-detr-large-2026.pth": "https://storage.googleapis.com/rfdetr/rf-detr-large-2026.pth",
-    "rf-detr-xlarge.pth": "https://storage.googleapis.com/rfdetr/rf-detr-xl-ft.pth",
-    "rf-detr-xxlarge.pth": "https://storage.googleapis.com/rfdetr/rf-detr-2xl-ft.pth",
     "rf-detr-seg-nano.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-n-ft.pth",
     "rf-detr-seg-small.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-s-ft.pth",
     "rf-detr-seg-medium.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-m-ft.pth",
@@ -77,19 +74,21 @@ OPEN_SOURCE_MODELS = {
     "rf-detr-seg-xxlarge.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-2xl-ft.pth",
 }
 
-
-HOSTED_MODELS = {**OPEN_SOURCE_MODELS, **PLATFORM_MODELS}
-
 def download_pretrain_weights(pretrain_weights: str, redownload=False):
-    if pretrain_weights in HOSTED_MODELS:
-        if redownload or not os.path.exists(pretrain_weights):
-            logger.info(
-                f"Downloading pretrained weights for {pretrain_weights}"
-            )
-            download_file(
-                HOSTED_MODELS[pretrain_weights],
-                pretrain_weights,
-            )
+    from rfdetr.platform.platform_downloads import PLATFORM_MODELS
+
+    HOSTED_MODELS = {**OPEN_SOURCE_MODELS, **PLATFORM_MODELS}
+    if pretrain_weights not in HOSTED_MODELS:
+        return
+    if os.path.exists(pretrain_weights) and not redownload:
+        return
+    logger.info(
+        f"Downloading pretrained weights for {pretrain_weights}"
+    )
+    download_file(
+        HOSTED_MODELS[pretrain_weights],
+        pretrain_weights,
+    )
 
 class Model:
     def __init__(self, **kwargs):
@@ -219,7 +218,9 @@ class Model:
 
         dataset_train = build_dataset(image_set='train', args=args, resolution=args.resolution)
         dataset_val = build_dataset(image_set='val', args=args, resolution=args.resolution)
-        dataset_test = build_dataset(image_set='test' if args.dataset_file == "roboflow" else "val", args=args, resolution=args.resolution)
+        run_test = getattr(args, "run_test", True)
+        if run_test:
+            dataset_test = build_dataset(image_set='test' if args.dataset_file == "roboflow" else "val", args=args, resolution=args.resolution)
 
         # for cosine annealing, calculate total training steps and warmup steps
         total_batch_size_for_lr = args.batch_size * utils.get_world_size() * args.grad_accum_steps
@@ -245,11 +246,13 @@ class Model:
         if args.distributed:
             sampler_train = DistributedSampler(dataset_train)
             sampler_val = DistributedSampler(dataset_val, shuffle=False)
-            sampler_test = DistributedSampler(dataset_test, shuffle=False)
+            if args.run_test:
+                sampler_test = DistributedSampler(dataset_test, shuffle=False)
         else:
             sampler_train = torch.utils.data.RandomSampler(dataset_train)
             sampler_val = torch.utils.data.SequentialSampler(dataset_val)
-            sampler_test = torch.utils.data.SequentialSampler(dataset_test)
+            if args.run_test:
+                sampler_test = torch.utils.data.SequentialSampler(dataset_test)
 
         effective_batch_size = args.batch_size * args.grad_accum_steps
         min_batches = kwargs.get('min_batches', 5)
@@ -298,12 +301,12 @@ class Model:
         data_loader_val = DataLoader(dataset_val, args.batch_size, sampler=sampler_val,
                                     drop_last=False, collate_fn=utils.collate_fn,
                                     num_workers=num_workers)
-        data_loader_test = DataLoader(dataset_test, args.batch_size, sampler=sampler_test,
-                                    drop_last=False, collate_fn=utils.collate_fn,
-                                    num_workers=num_workers)
-
         base_ds = get_coco_api_from_dataset(dataset_val)
-        base_ds_test = get_coco_api_from_dataset(dataset_test)
+        if args.run_test:
+            data_loader_test = DataLoader(dataset_test, args.batch_size, sampler=sampler_test,
+                                        drop_last=False, collate_fn=utils.collate_fn,
+                                        num_workers=num_workers)
+            base_ds_test = get_coco_api_from_dataset(dataset_test)
         if args.use_ema:
             self.ema_m = ModelEma(model_without_ddp, decay=args.ema_decay, tau=args.ema_tau)
         else:
@@ -505,11 +508,13 @@ class Model:
 
         if utils.is_main_process():
             if best_is_ema:
-                shutil.copy2(output_dir / 'checkpoint_best_ema.pth', output_dir / 'checkpoint_best_total.pth')
+                best_checkpoint = output_dir / 'checkpoint_best_ema.pth'
             else:
-                shutil.copy2(output_dir / 'checkpoint_best_regular.pth', output_dir / 'checkpoint_best_total.pth')
+                best_checkpoint = output_dir / 'checkpoint_best_regular.pth'
 
-            utils.strip_checkpoint(output_dir / 'checkpoint_best_total.pth')
+            if best_checkpoint.exists():
+                shutil.copy2(best_checkpoint, output_dir / 'checkpoint_best_total.pth')
+                utils.strip_checkpoint(output_dir / 'checkpoint_best_total.pth')
 
             best_map_5095 = max(best_map_5095, best_map_ema_5095)
             if best_is_ema:
