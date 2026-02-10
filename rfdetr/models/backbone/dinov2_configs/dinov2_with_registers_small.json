@@ -1,7 +1,7 @@
 {
     "apply_layernorm": true,
     "architectures": [
-      "Dinov2WithRegistersModel"
+        "Dinov2WithRegistersModel"
     ],
     "attention_probs_dropout_prob": 0.0,
     "drop_path_rate": 0.0,
@@ -21,28 +21,28 @@
     "num_hidden_layers": 12,
     "num_register_tokens": 4,
     "out_features": [
-      "stage12"
+        "stage12"
     ],
     "out_indices": [
-      12
+        12
     ],
     "patch_size": 14,
     "qkv_bias": true,
     "reshape_hidden_states": true,
     "stage_names": [
-      "stem",
-      "stage1",
-      "stage2",
-      "stage3",
-      "stage4",
-      "stage5",
-      "stage6",
-      "stage7",
-      "stage8",
-      "stage9",
-      "stage10",
-      "stage11",
-      "stage12"
+        "stem",
+        "stage1",
+        "stage2",
+        "stage3",
+        "stage4",
+        "stage5",
+        "stage6",
+        "stage7",
+        "stage8",
+        "stage9",
+        "stage10",
+        "stage11",
+        "stage12"
     ],
     "torch_dtype": "float32",
     "transformers_version": "4.48.0.dev0",

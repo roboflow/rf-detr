@@ -3,12 +3,10 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-# Modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
+# Copied and modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
 # Copyright (c) 2024 Baidu. All Rights Reserved.
 # ------------------------------------------------------------------------
 
-import torch
-import torch.nn.functional as F
 from torch import nn
 
 

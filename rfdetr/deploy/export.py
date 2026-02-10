@@ -3,7 +3,7 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-# Modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
+# Copied and modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
 # Copyright (c) 2024 Baidu. All Rights Reserved.
 # ------------------------------------------------------------------------
 
@@ -12,6 +12,7 @@ export ONNX model and TensorRT engine for deployment
 """
 import os
 import random
+import re
 import subprocess
 
 import numpy as np
@@ -22,8 +23,8 @@ import torch.nn as nn
 from PIL import Image
 
 import rfdetr.datasets.transforms as T
+import rfdetr.util.misc as utils
 from rfdetr.deploy._onnx import OnnxOptimizer
-import re
 from rfdetr.models import build_model
 from rfdetr.util.logger import get_logger
 from rfdetr.util.misc import get_sha, get_rank
@@ -68,11 +69,11 @@ def make_infer_image(infer_dir, shape, batch_size, device="cuda"):
 def export_onnx(output_dir, model, input_names, input_tensors, output_names, dynamic_axes, backbone_only=False, verbose=True, opset_version=17):
     export_name = "backbone_model" if backbone_only else "inference_model"
     output_file = os.path.join(output_dir, f"{export_name}.onnx")
-    
+
     # Prepare model for export
     if hasattr(model, "export"):
         model.export()
-    
+
     torch.onnx.export(
         model,
         input_tensors,
@@ -94,10 +95,10 @@ def onnx_simplify(onnx_dir:str, input_names, input_tensors, force=False):
     sim_onnx_dir = onnx_dir.replace(".onnx", ".sim.onnx")
     if os.path.isfile(sim_onnx_dir) and not force:
         return sim_onnx_dir
-    
+
     if isinstance(input_tensors, torch.Tensor):
         input_tensors = [input_tensors]
-    
+
     logger.info(f'start simplify ONNX model: {onnx_dir}')
     opt = OnnxOptimizer(onnx_dir)
     opt.info('Model: original')
@@ -119,19 +120,19 @@ def onnx_simplify(onnx_dir:str, input_names, input_tensors, force=False):
 
 
 def trtexec(onnx_dir:str, args) -> None:
-    engine_dir = onnx_dir.replace(".onnx", f".engine")
-    
+    engine_dir = onnx_dir.replace(".onnx", ".engine")
+
     # Base trtexec command
     trt_command = " ".join([
         "trtexec",
             f"--onnx={onnx_dir}",
             f"--saveEngine={engine_dir}",
-            f"--memPoolSize=workspace:4096 --fp16",
-            f"--useCudaGraph --useSpinWait --warmUp=500 --avgRuns=1000 --duration=10",
+            "--memPoolSize=workspace:4096 --fp16",
+            "--useCudaGraph --useSpinWait --warmUp=500 --avgRuns=1000 --duration=10",
             f"{'--verbose' if args.verbose else ''}"])
-    
+
     if args.profile:
-        profile_dir = onnx_dir.replace(".onnx", f".nsys-rep")
+        profile_dir = onnx_dir.replace(".onnx", ".nsys-rep")
         # Wrap with nsys profile command
         command = " ".join([
             "nsys profile",
@@ -145,7 +146,7 @@ def trtexec(onnx_dir:str, args) -> None:
         command = trt_command
 
     output = run_command_shell(command, args.dry_run)
-    stats = parse_trtexec_output(output.stdout)
+    parse_trtexec_output(output.stdout)
 
 def parse_trtexec_output(output_text):
     logger.info(output_text)
@@ -155,9 +156,9 @@ def parse_trtexec_output(output_text):
     d2h_pattern = r"Device to Host Transfer Time: min = (\d+\.\d+) ms, max = (\d+\.\d+) ms, mean = (\d+\.\d+) ms"
     latency_pattern = r"Latency: min = (\d+\.\d+) ms, max = (\d+\.\d+) ms, mean = (\d+\.\d+) ms"
     throughput_pattern = r"Throughput: (\d+\.\d+) qps"
-    
+
     stats = {}
-    
+
     # Extract compute times
     if match := re.search(gpu_compute_pattern, output_text):
         stats.update({
@@ -166,7 +167,7 @@ def parse_trtexec_output(output_text):
             'compute_mean_ms': float(match.group(3)),
             'compute_median_ms': float(match.group(4))
         })
-    
+
     # Extract H2D times
     if match := re.search(h2d_pattern, output_text):
         stats.update({
@@ -174,7 +175,7 @@ def parse_trtexec_output(output_text):
             'h2d_max_ms': float(match.group(2)),
             'h2d_mean_ms': float(match.group(3))
         })
-    
+
     # Extract D2H times
     if match := re.search(d2h_pattern, output_text):
         stats.update({
@@ -189,11 +190,11 @@ def parse_trtexec_output(output_text):
             'latency_max_ms': float(match.group(2)),
             'latency_mean_ms': float(match.group(3))
         })
-    
+
     # Extract throughput
     if match := re.search(throughput_pattern, output_text):
         stats['throughput_qps'] = float(match.group(1))
-    
+
     return stats
 
 def no_batch_norm(model):
@@ -263,6 +264,12 @@ def main(args):
         if args.backbone_only:
             features = model(input_tensors)
             logger.info(f"PyTorch inference output shape: {features.shape}")
+        elif args.segmentation_head:
+            outputs = model(input_tensors)
+            dets = outputs['pred_boxes']
+            labels = outputs['pred_logits']
+            masks = outputs['pred_masks']
+            logger.info(f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}, Masks: {masks.shape}")
         else:
             outputs = model(input_tensors)
             dets = outputs['pred_boxes']
@@ -273,7 +280,7 @@ def main(args):
 
 
     output_file = export_onnx(model, args, input_names, input_tensors, output_names, dynamic_axes)
-    
+
     if args.simplify:
         output_file = onnx_simplify(output_file, input_names, input_tensors, args)
 

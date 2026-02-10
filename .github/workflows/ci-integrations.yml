@@ -1,0 +1,51 @@
+name: Integration Tests
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+env:
+  UV_TORCH_BACKEND: "cpu"
+
+concurrency:
+  group: plus-integration-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  run-plus-integration:
+    name: Plus Re-export Import Check
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ["ubuntu-latest", "macos-latest", "windows-latest"]
+        python-version: ["3.10", "3.13"]
+    steps:
+      - name: 📥 Checkout the repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: 🐍 Install uv and set Python version ${{ matrix.python-version }}
+        uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          activate-environment: true
+
+      - name: 🚀 Install Packages (plus extras)
+        run: uv pip install -e ".[plus]" --group tests
+
+      - name: 🔎 Verify plus re-exports import
+        run: |
+          from rfdetr import RFDETR2XLarge, RFDETRXLarge
+          print("imports:", RFDETR2XLarge, RFDETRXLarge)
+
+          import rfdetr_plus
+          print("rfdetr_plus:", rfdetr_plus.__version__)
+        shell: python
+
+      - name: Minimize uv cache
+        run: uv cache prune --ci

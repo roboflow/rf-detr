@@ -3,21 +3,24 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-# Modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
+# Copied and modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
 # Copyright (c) 2024 Baidu. All Rights Reserved.
 # ------------------------------------------------------------------------
 
 import argparse
-from rf100vl import get_rf100vl_projects
-import roboflow
-from rfdetr import RFDETRBase
-import torch
 import os
 from rfdetr.util.logger import get_logger
 
 logger = get_logger()
 
-def download_dataset(rf_project: roboflow.Project, dataset_version: int):
+import roboflow
+from rf100vl import get_rf100vl_projects
+
+from rfdetr import RFDETRBase
+from rfdetr.config import DEVICE
+
+
+def download_dataset(rf_project: roboflow.Project, dataset_version: int) -> str:
     versions = rf_project.versions()
     if dataset_version is not None:
         versions = [v for v in versions if v.version == str(dataset_version)]
@@ -31,33 +34,32 @@ def download_dataset(rf_project: roboflow.Project, dataset_version: int):
         location = version.download(
             model_format="coco", location=location, overwrite=False
         ).location
-    
+
     return location
 
 
-def train_from_rf_project(rf_project: roboflow.Project, dataset_version: int):
+def train_from_rf_project(rf_project: roboflow.Project, dataset_version: int) -> None:
     location = download_dataset(rf_project, dataset_version)
     logger.info(f"Using dataset from location: {location}")
     rf_detr = RFDETRBase()
-    device_supports_cuda = torch.cuda.is_available()
     rf_detr.train(
         dataset_dir=location,
         epochs=1,
-        device="cuda" if device_supports_cuda else "cpu",
+        device=DEVICE,
     )
 
 
-def train_from_coco_dir(coco_dir: str):
+def train_from_coco_dir(coco_dir: str) -> None:
     rf_detr = RFDETRBase()
     device_supports_cuda = torch.cuda.is_available()
     rf_detr.train(
         dataset_dir=coco_dir,
         epochs=1,
-        device="cuda" if device_supports_cuda else "cpu",
+        device=DEVICE,
     )
 
 
-def trainer():
+def trainer() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--coco_dir", type=str, required=False)
     parser.add_argument("--api_key", type=str, required=False)
@@ -65,7 +67,7 @@ def trainer():
     parser.add_argument("--project_name", type=str, required=False, default=None)
     parser.add_argument("--dataset_version", type=int, required=False, default=None)
     args = parser.parse_args()
-    
+
     if args.coco_dir is not None:
         logger.info(f"Training from COCO directory: {args.coco_dir}")
         train_from_coco_dir(args.coco_dir)
