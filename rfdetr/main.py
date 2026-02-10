@@ -191,7 +191,7 @@ class Model:
         device = torch.device(args.device)
 
         # fix the seed for reproducibility
-        seed = args.seed + utils.get_rank()
+        seed = args.seed + get_rank()
         torch.manual_seed(seed)
         np.random.seed(seed)
         random.seed(seed)
@@ -225,7 +225,7 @@ class Model:
         logger.info(f"Dataset loaded: {len(dataset_train)} training samples, {len(dataset_val)} validation samples")
 
         # for cosine annealing, calculate total training steps and warmup steps
-        total_batch_size_for_lr = args.batch_size * utils.get_world_size() * args.grad_accum_steps
+        total_batch_size_for_lr = args.batch_size * get_world_size() * args.grad_accum_steps
         num_training_steps_per_epoch_lr = (len(dataset_train) + total_batch_size_for_lr - 1) // total_batch_size_for_lr
         total_training_steps_lr = num_training_steps_per_epoch_lr * args.epochs
         warmup_steps_lr = num_training_steps_per_epoch_lr * args.warmup_epochs
@@ -427,7 +427,7 @@ class Model:
                 best_map_50 = max(best_map_50, map50)
                 checkpoint_path = output_dir / 'checkpoint_best_regular.pth'
                 if not args.dont_save_weights:
-                    utils.save_on_master({
+                    save_on_master({
                         'model': model_without_ddp.state_dict(),
                         'optimizer': optimizer.state_dict(),
                         'lr_scheduler': lr_scheduler.state_dict(),
@@ -480,7 +480,7 @@ class Model:
             epoch_time = time.time() - epoch_start_time
             epoch_time_str = str(datetime.timedelta(seconds=int(epoch_time)))
             log_stats['epoch_time'] = epoch_time_str
-            if args.output_dir and utils.is_main_process():
+            if args.output_dir and is_main_process():
                 with (output_dir / "log.txt").open("a") as f:
                     f.write(json.dumps(log_stats) + "\n")
 
