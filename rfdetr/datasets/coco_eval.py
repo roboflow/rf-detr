@@ -31,8 +31,8 @@ import supervision as sv
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 
-from rfdetr.util.misc import all_gather
 from rfdetr.util.logger import get_logger
+from rfdetr.util.misc import all_gather
 
 logger = get_logger()
 
