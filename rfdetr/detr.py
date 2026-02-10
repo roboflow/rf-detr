@@ -10,7 +10,6 @@ import warnings
 from collections import defaultdict
 from copy import deepcopy
 from typing import List, Union
-from rfdetr.util.logger import get_logger
 
 import numpy as np
 import supervision as sv
@@ -21,6 +20,7 @@ from PIL import Image
 
 from rfdetr.datasets.coco import is_valid_coco_dataset
 from rfdetr.datasets.yolo import is_valid_yolo_dataset
+from rfdetr.util.logger import get_logger
 
 try:
     torch.set_float32_matmul_precision('high')

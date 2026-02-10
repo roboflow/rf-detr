@@ -5,26 +5,26 @@
 # ------------------------------------------------------------------------
 
 import logging
-import sys
 import os
+import sys
 from typing import Optional
 
 
 def get_logger(name: str = "rf-detr", level: Optional[int] = None) -> logging.Logger:
     """Creates and configures a logger with stdout and stderr handlers.
-    
+
     This function creates a logger that sends INFO and DEBUG level logs to stdout,
     and WARNING, ERROR, and CRITICAL level logs to stderr. If the logger already
     has handlers, it returns the existing logger without adding new handlers.
-    
+
     The log level can be specified directly or through the LOG_LEVEL environment
     variable.
-    
+
     Args:
         name: The name of the logger. Defaults to "rf-detr".
         level: The logging level to set. If None, uses the LOG_LEVEL environment
             variable, defaulting to INFO if not set.
-    
+
     Returns:
         A configured logging.Logger instance.
     """

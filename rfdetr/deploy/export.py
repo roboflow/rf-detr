@@ -27,7 +27,7 @@ import rfdetr.util.misc as utils
 from rfdetr.deploy._onnx import OnnxOptimizer
 from rfdetr.models import build_model
 from rfdetr.util.logger import get_logger
-from rfdetr.util.misc import get_sha, get_rank
+from rfdetr.util.misc import get_rank, get_sha
 from rfdetr.util.package import get_version
 
 logger = get_logger()
