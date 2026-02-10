@@ -22,25 +22,38 @@ repos:
       - id: mixed-line-ending
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.14.14
+    rev: v0.15.0
     hooks:
       - id: ruff-check
         args: [--fix]
       #- id: ruff-format
       #  types_or: [ python, pyi, jupyter ]
 
-  #- repo: https://github.com/executablebooks/mdformat
-  #  rev: 1.0.0
-  #  hooks:
-  #    - id: mdformat
-  #      additional_dependencies:
-  #        - "mdformat-mkdocs[recommended]>=2.1.0"
-  #      args: ["--number"]
-  #      exclude: ^docs/
+  - repo: https://github.com/executablebooks/mdformat
+    rev: 1.0.0
+    hooks:
+      - id: mdformat
+        exclude: ^docs/reference/
+        additional_dependencies:
+          - "mdformat-mkdocs[recommended]>=2.1.0"
+          - "mdformat-ruff"
+        args: ["--number"]
 
-  #- repo: https://github.com/codespell-project/codespell
-  #  rev: v2.4.1
-  #  hooks:
-  #    - id: codespell
-  #      additional_dependencies:
-  #        - tomli
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.4.1
+    hooks:
+      - id: codespell
+        # args: [--write-changes]
+        additional_dependencies:
+          - tomli
+
+  - repo: https://github.com/Lucas-C/pre-commit-hooks
+    rev: v1.5.5
+    hooks:
+      - id: insert-license
+        files: \.py$
+        args:
+          - --license-filepath
+          - .github/LICENSE_HEADER.txt
+          - --comment-style
+          - "#"
