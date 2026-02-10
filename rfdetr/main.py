@@ -42,7 +42,6 @@ import rfdetr.util.misc as utils
 from rfdetr.datasets import build_dataset, get_coco_api_from_dataset
 from rfdetr.engine import evaluate, train_one_epoch
 from rfdetr.models import PostProcess, build_criterion_and_postprocessors, build_model
-from rfdetr.platform.platform_downloads import PLATFORM_MODELS
 from rfdetr.util.benchmark import benchmark
 from rfdetr.util.drop_scheduler import drop_scheduler
 from rfdetr.util.files import download_file
@@ -67,8 +66,6 @@ OPEN_SOURCE_MODELS = {
     "rf-detr-medium.pth": "https://storage.googleapis.com/rfdetr/medium_coco/checkpoint_best_regular.pth",
     "rf-detr-seg-preview.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-preview.pt",
     "rf-detr-large-2026.pth": "https://storage.googleapis.com/rfdetr/rf-detr-large-2026.pth",
-    "rf-detr-xlarge.pth": "https://storage.googleapis.com/rfdetr/rf-detr-xl-ft.pth",
-    "rf-detr-xxlarge.pth": "https://storage.googleapis.com/rfdetr/rf-detr-2xl-ft.pth",
     "rf-detr-seg-nano.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-n-ft.pth",
     "rf-detr-seg-small.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-s-ft.pth",
     "rf-detr-seg-medium.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-m-ft.pth",
@@ -77,19 +74,21 @@ OPEN_SOURCE_MODELS = {
     "rf-detr-seg-xxlarge.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-2xl-ft.pth",
 }
 
-
-HOSTED_MODELS = {**OPEN_SOURCE_MODELS, **PLATFORM_MODELS}
-
 def download_pretrain_weights(pretrain_weights: str, redownload=False):
-    if pretrain_weights in HOSTED_MODELS:
-        if redownload or not os.path.exists(pretrain_weights):
-            logger.info(
-                f"Downloading pretrained weights for {pretrain_weights}"
-            )
-            download_file(
-                HOSTED_MODELS[pretrain_weights],
-                pretrain_weights,
-            )
+    from rfdetr.platform.platform_downloads import PLATFORM_MODELS
+
+    HOSTED_MODELS = {**OPEN_SOURCE_MODELS, **PLATFORM_MODELS}
+    if pretrain_weights not in HOSTED_MODELS:
+        return
+    if os.path.exists(pretrain_weights) and not redownload:
+        return
+    logger.info(
+        f"Downloading pretrained weights for {pretrain_weights}"
+    )
+    download_file(
+        HOSTED_MODELS[pretrain_weights],
+        pretrain_weights,
+    )
 
 class Model:
     def __init__(self, **kwargs):

@@ -185,4 +185,7 @@ train_test.py
 # test artifacts
 test_visualizations/
 
+# datasets
+data/
+
 debugging/

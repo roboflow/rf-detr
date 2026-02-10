@@ -32,10 +32,6 @@ jobs:
           # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
           # ------------------------------------------------------------------------"
 
-          # Platform Model License 1.0 header pattern (first 2 identifying lines)
-          PML_LINE1="# Platform Model License 1.0 (PML-1.0)"
-          PML_LINE2="# Copyright (c) 2026 Roboflow, Inc. All Rights Reserved."
-
           while IFS= read -r -d '' file; do
             # Read first 15 lines of the file
             HEADER=$(head -n 15 "$file")
@@ -44,12 +40,6 @@ jobs:
             if echo "$HEADER" | grep -q "# RF-DETR" && \
                echo "$HEADER" | grep -q "# Copyright (c) 2025 Roboflow. All Rights Reserved." && \
                echo "$HEADER" | grep -q "# Licensed under the Apache License, Version 2.0"; then
-              continue
-            fi
-
-            # Check for Platform Model License 1.0 header
-            if echo "$HEADER" | grep -q "$PML_LINE1" && \
-               echo "$HEADER" | grep -q "$PML_LINE2"; then
               continue
             fi
 
@@ -64,21 +54,15 @@ jobs:
               echo "  - $file"
             done
             echo ""
-            echo "Each Python file must start with one of the following headers:"
+            echo "Each Python file must start with the following header:"
             echo ""
-            echo "1. Apache 2.0 (RF-DETR):"
+            echo "Apache 2.0 (RF-DETR):"
             echo "   # ------------------------------------------------------------------------"
             echo "   # RF-DETR"
             echo "   # Copyright (c) 2025 Roboflow. All Rights Reserved."
             echo "   # Licensed under the Apache License, Version 2.0 [see LICENSE for details]"
             echo "   # ------------------------------------------------------------------------"
             echo ""
-            echo "2. Platform Model License 1.0:"
-            echo "   # ------------------------------------------------------------------------"
-            echo "   # Platform Model License 1.0 (PML-1.0)"
-            echo "   # Copyright (c) 2026 Roboflow, Inc. All Rights Reserved."
-            echo "   # ..."
-            echo "   # ------------------------------------------------------------------------"
             exit 1
           fi
 

@@ -49,6 +49,8 @@ def test_synthetic_training_improves_performance(
     train_config = {
         **vars(args),
         "lr": 1e-3,
+        "warmup_epochs": 1.0,
+        "multi_scale": False,
         "dont_save_weights": False,
         "min_batches": 2,
         "run_test": False,
