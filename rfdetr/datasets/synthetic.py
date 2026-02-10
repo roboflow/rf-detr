@@ -300,7 +300,7 @@ def generate_coco_dataset(
         images = {}
         annotations = {}
 
-        print(f"Generating {split} split with {len(split_indices)} images...")
+        logger.info(f"Generating {split} split with {len(split_indices)} images...")
         for i in tqdm(split_indices, desc=f"Generating {split} split"):
             img, detections = generate_synthetic_sample(
                 img_size,

@@ -20,6 +20,10 @@ import torch
 import torch.nn.functional as F
 from peft import PeftModel
 
+from rfdetr.util.logger import get_logger
+
+logger = get_logger()
+
 from rfdetr.models.backbone.base import BackboneBase
 from rfdetr.models.backbone.dinov2 import DinoV2
 from rfdetr.models.backbone.projector import MultiScaleProjector
@@ -110,7 +114,7 @@ class Backbone(BackboneBase):
         self.forward = self.forward_export
 
         if isinstance(self.encoder, PeftModel):
-            print("Merging and unloading LoRA weights")
+            logger.info("Merging and unloading LoRA weights")
             self.encoder.merge_and_unload()
 
     def forward(self, tensor_list: NestedTensor):

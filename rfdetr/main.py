@@ -545,7 +545,7 @@ class Model:
             test_stats, _ = evaluate(
                 model, criterion, postprocess, data_loader_test, base_ds_test, device, args=args
             )
-            print(f"Test results: {test_stats}")
+            logger.info(f"Test results: {test_stats}")
             with open(output_dir / "results.json", "r") as f:
                 results = json.load(f)
             test_metrics = test_stats["results_json"]["class_map"]
@@ -709,7 +709,7 @@ if __name__ == '__main__':
         from deploy.export import main as export_main
         if args.batch_size != 1:
             config['batch_size'] = 1
-            print(f"Only batch_size 1 is supported for onnx export, \
+            logger.info(f"Only batch_size 1 is supported for onnx export, \
                  but got batchsize = {args.batch_size}. batch_size is forcibly set to 1.")
         export_main(**config)
 
