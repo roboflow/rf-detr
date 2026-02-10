@@ -54,6 +54,6 @@ repos:
         files: \.py$
         args:
           - --license-filepath
-          - src/LICENSE_HEADER.txt
+          - .github/LICENSE_HEADER.txt
           - --comment-style
           - "#"
