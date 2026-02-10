@@ -84,18 +84,18 @@ def train_one_epoch(
         scaler = GradScaler('cuda', enabled=args.amp)
 
     optimizer.zero_grad()
-    
+
     # Check if batch size is divisible by gradient accumulation steps
     if batch_size % args.grad_accum_steps != 0:
         logger.error(f"Batch size ({batch_size}) must be divisible by gradient accumulation steps ({args.grad_accum_steps})")
         raise ValueError(f"Batch size ({batch_size}) must be divisible by gradient accumulation steps ({args.grad_accum_steps})")
-    
+
     logger.info(f"Training config: grad_accum_steps={args.grad_accum_steps}, "
                 f"total_batch_size={batch_size * utils.get_world_size()}, "
                 f"dataloader_length={len(data_loader)}")
 
     sub_batch_size = batch_size // args.grad_accum_steps
-    
+
     for data_iter_step, (samples, targets) in enumerate(
         metric_logger.log_every(data_loader, print_freq, header)
     ):

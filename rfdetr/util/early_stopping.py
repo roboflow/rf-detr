@@ -9,6 +9,7 @@ Early stopping callback for RF-DETR training
 """
 
 from typing import Any, Dict
+
 from rfdetr.util.logger import get_logger
 
 logger = get_logger()

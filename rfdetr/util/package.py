@@ -1,5 +1,5 @@
+from importlib.metadata import PackageNotFoundError, version
 from typing import Optional
-from importlib.metadata import version, PackageNotFoundError
 
 
 def get_version(package_name: str = 'rfdetr') -> Optional[str]:

@@ -8,6 +8,7 @@
 # ------------------------------------------------------------------------
 """Functions to get params dict"""
 from typing import Any, Dict, List
+
 import torch.nn as nn
 
 from rfdetr.models.backbone import Joiner
