@@ -31,8 +31,22 @@ def _download_and_extract(url: str, dest_dir: Path) -> None:
     print(f"Downloading {url} ...")
     urlretrieve(url, str(zip_path))
     print(f"Extracting {zip_path} ...")
+    dest_dir_resolved = dest_dir.resolve()
     with zipfile.ZipFile(str(zip_path), "r") as zf:
-        zf.extractall(str(dest_dir))
+        for member in zf.infolist():
+            if not member.filename:
+                continue
+            target_path = (dest_dir_resolved / member.filename).resolve()
+            if not target_path.is_relative_to(dest_dir_resolved):
+                raise RuntimeError(
+                    f"Unsafe path detected in ZIP file: {member.filename!r}"
+                )
+            if member.is_dir():
+                target_path.mkdir(parents=True, exist_ok=True)
+            else:
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                with zf.open(member, "r") as src, open(target_path, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
     zip_path.unlink()
 
 

@@ -5,14 +5,14 @@
 # ------------------------------------------------------------------------
 import os
 from pathlib import Path
+from typing import Optional
 
 import pytest
 import torch
-from torchvision.datasets import CocoDetection
 
 from rfdetr import RFDETRNano
 from rfdetr.datasets import get_coco_api_from_dataset
-from rfdetr.datasets.coco import ConvertCoco, make_coco_transforms_square_div_64
+from rfdetr.datasets.coco import CocoDetection, make_coco_transforms_square_div_64
 from rfdetr.engine import evaluate
 from rfdetr.models import build_criterion_and_postprocessors
 from rfdetr.util import misc as utils
@@ -22,28 +22,13 @@ _MODEL_CLASSES = {
 }
 
 
-class CocoDetectionWithTargets(CocoDetection):
-    def __init__(self, img_folder: Path, ann_file: Path, transforms) -> None:
-        super().__init__(root=str(img_folder), annFile=str(ann_file))
-        self._transforms = transforms
-        self.prepare = ConvertCoco(include_masks=False)
-
-    def __getitem__(self, idx: int):
-        img, target = super().__getitem__(idx)
-        image_id = self.ids[idx]
-        target = {"image_id": image_id, "annotations": target}
-        img, target = self.prepare(img, target)
-        if self._transforms is not None:
-            img, target = self._transforms(img, target)
-        return img, target
-
-
 @pytest.mark.gpu
 def test_coco_inference_benchmark(
     download_coco_val: tuple[Path, Path],
     model_size: str = "nano",
     threshold_map: float = 0.65,
     threshold_f1: float = 0.65,
+    num_samples: Optional[int] = None,
 ) -> None:
     device = "cuda" if torch.cuda.is_available() else "cpu"
     images_root, annotations_path = download_coco_val
@@ -61,7 +46,9 @@ def test_coco_inference_benchmark(
         patch_size=config.patch_size,
         num_windows=config.num_windows,
     )
-    val_dataset = CocoDetectionWithTargets(images_root, annotations_path, transforms=transforms)
+    val_dataset = CocoDetection(images_root, annotations_path, transforms=transforms)
+    if num_samples is not None:
+        val_dataset = torch.utils.data.Subset(val_dataset, list(range(min(num_samples, len(val_dataset)))))
     data_loader = torch.utils.data.DataLoader(
         val_dataset,
         batch_size=4,
