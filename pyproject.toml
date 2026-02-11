@@ -35,6 +35,7 @@ classifiers = [
 keywords = ["machine-learning", "deep-learning", "vision", "ML", "DL", "AI", "DETR", "RF-DETR", "Roboflow"]
 
 dependencies = [
+    "requests",
     "pycocotools",
     "torch>=1.13.0,<=2.8.0", # TODO: Torch >=2.9.0 is excluded due to known issues. PRs that help lift this restriction are welcome.
     "torchvision>=0.14.0",
@@ -75,6 +76,7 @@ build = [
 tests = [
   "pytest>=7.2.2,<9",
   "pytest-cov>=4,<8",
+  "pytest-xdist>=3.6.1,<4",
 ]
 
 docs = [
