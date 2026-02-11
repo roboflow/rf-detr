@@ -14,11 +14,13 @@ can be either a tensor or a dictionary depending on the model configuration.
 
 import importlib.util
 from pathlib import Path
-from rfdetr import RFDETRSegNano
 
 import pytest
 import torch
 
+from rfdetr import RFDETRSegNano
+
+@pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for export test")
 @pytest.mark.skipif(
     importlib.util.find_spec("onnx") is None,
