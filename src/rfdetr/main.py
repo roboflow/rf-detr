@@ -29,7 +29,7 @@ import time
 import warnings
 from copy import deepcopy
 from pathlib import Path
-from typing import Callable, DefaultDict, List
+from typing import Any, Callable, DefaultDict, Dict, List
 
 import numpy as np
 import torch
@@ -74,6 +74,26 @@ OPEN_SOURCE_MODELS = {
     "rf-detr-seg-xlarge.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-xl-ft.pth",
     "rf-detr-seg-xxlarge.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-2xl-ft.pth",
 }
+
+
+def _extract_per_class_map50(results_json: Dict[str, Any]) -> Dict[str, float]:
+    per_class_map50: Dict[str, float] = {}
+    class_map_entries = results_json.get("class_map", [])
+    for class_entry in class_map_entries:
+        class_name = class_entry.get("class")
+        class_map50 = class_entry.get("map@50")
+        if class_name in [None, "all"] or class_map50 is None:
+            continue
+        per_class_map50[str(class_name)] = float(class_map50)
+    return per_class_map50
+
+
+def _extract_overall_map50_95(results_json: Dict[str, Any]) -> float:
+    class_map_entries = results_json.get("class_map", [])
+    for class_entry in class_map_entries:
+        if class_entry.get("class") == "all":
+            return float(class_entry.get("map@50:95", 0.0))
+    return 0.0
 
 def download_pretrain_weights(pretrain_weights: str, redownload=False):
     HOSTED_MODELS = {**OPEN_SOURCE_MODELS}
@@ -352,6 +372,76 @@ class Model:
                 else:
                     save_on_master(coco_evaluator.coco_eval["segm"].eval, output_dir / "eval.pth")
             return
+
+        val_interval_steps = int(getattr(args, "val_interval_steps", 0) or 0)
+        if val_interval_steps < 0:
+            raise ValueError(f"val_interval_steps must be >= 0, got {val_interval_steps}")
+
+        if val_interval_steps > 0:
+            step_val_metrics_path = output_dir / "step_val_metrics.jsonl"
+            last_step_validation = -1
+
+            def _step_validation_callback(callback_dict):
+                nonlocal last_step_validation
+                step = int(callback_dict["step"])
+                epoch = int(callback_dict["epoch"])
+
+                if step <= 0:
+                    return
+                if step == last_step_validation:
+                    return
+                if step % val_interval_steps != 0:
+                    return
+
+                logger.info(f"Running validation callback at step={step}, epoch={epoch}")
+                try:
+                    with torch.no_grad():
+                        step_test_stats, _ = evaluate(
+                            callback_dict["model"],
+                            criterion,
+                            postprocess,
+                            data_loader_val,
+                            base_ds,
+                            device,
+                            args=args,
+                        )
+
+                    if args.segmentation_head:
+                        results_json = step_test_stats.get("results_json_masks", step_test_stats["results_json"])
+                    else:
+                        results_json = step_test_stats.get("results_json_bbox", step_test_stats["results_json"])
+
+                    map50 = float(results_json.get("map", 0.0))
+                    map50_95 = _extract_overall_map50_95(results_json)
+                    per_class_map50 = _extract_per_class_map50(results_json)
+                    step_validation_metrics = {
+                        "step": step,
+                        "epoch": epoch,
+                        "metric_type": "segm" if args.segmentation_head else "bbox",
+                        "map50": map50,
+                        "map50_95": map50_95,
+                        "per_class_map50": per_class_map50,
+                    }
+
+                    if is_main_process():
+                        step_val_metrics_path.parent.mkdir(parents=True, exist_ok=True)
+                        with step_val_metrics_path.open("a") as f:
+                            f.write(json.dumps(step_validation_metrics) + "\n")
+
+                    logger.info(
+                        f"Step validation summary: step={step}, map50={map50:.4f}, "
+                        f"map50_95={map50_95:.4f}, classes={len(per_class_map50)}"
+                    )
+                    last_step_validation = step
+                finally:
+                    callback_dict["model"].train()
+                    criterion.train()
+
+            logger.info(
+                f"Step validation callback enabled with val_interval_steps={val_interval_steps}. "
+                f"Metrics will be logged to {step_val_metrics_path}"
+            )
+            callbacks["on_train_batch_start"].append(_step_validation_callback)
 
         # for drop
         total_batch_size = effective_batch_size * get_world_size()
@@ -706,6 +796,7 @@ if __name__ == '__main__':
             "square_resize_div_64",
             "output_dir",
             "checkpoint_interval",
+            "val_interval_steps",
             "seed",
             "resume",
             "start_epoch",
@@ -855,6 +946,12 @@ def get_args_parser():
     parser.add_argument('--dont_save_weights', action='store_true')
     parser.add_argument('--checkpoint_interval', default=10, type=int,
                         help='epoch interval to save checkpoint')
+    parser.add_argument(
+        '--val_interval_steps',
+        default=0,
+        type=int,
+        help='run full validation every N global training steps (0 disables step validation)',
+    )
     parser.add_argument('--seed', default=42, type=int)
     parser.add_argument('--resume', default='', help='resume from checkpoint')
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
@@ -1011,6 +1108,7 @@ def populate_args(
     output_dir='output',
     dont_save_weights=False,
     checkpoint_interval=10,
+    val_interval_steps=0,
     seed=42,
     resume='',
     start_epoch=0,
@@ -1119,6 +1217,7 @@ def populate_args(
         output_dir=output_dir,
         dont_save_weights=dont_save_weights,
         checkpoint_interval=checkpoint_interval,
+        val_interval_steps=val_interval_steps,
         seed=seed,
         resume=resume,
         start_epoch=start_epoch,
