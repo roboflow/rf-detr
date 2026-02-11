@@ -3,14 +3,13 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
+import importlib.util
 import os
 from pathlib import Path
 from typing import Optional
 
 import pytest
 import torch
-
-import importlib.util
 
 from rfdetr import RFDETRLarge, RFDETRMedium, RFDETRNano, RFDETRSmall
 from rfdetr.datasets import get_coco_api_from_dataset
