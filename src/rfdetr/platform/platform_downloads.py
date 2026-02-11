@@ -6,8 +6,9 @@
 
 try:
     from rfdetr_plus.models.downloads import _PLATFORM_MODELS as PLATFORM_MODELS
-except ModuleNotFoundError as ex:
-    if ex.name in ("rfdetr_plus", "rfdetr_plus.models", "rfdetr_plus.models.downloads"):
+except ImportError as ex:
+    missing_name = getattr(ex, "name", "")
+    if missing_name.startswith("rfdetr_plus") or "rfdetr_plus" in str(ex):
         import warnings
 
         from rfdetr.platform import _INSTALL_MSG

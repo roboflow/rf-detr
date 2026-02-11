@@ -76,9 +76,12 @@ OPEN_SOURCE_MODELS = {
 }
 
 def download_pretrain_weights(pretrain_weights: str, redownload=False):
-    from rfdetr.platform.platform_downloads import PLATFORM_MODELS
+    HOSTED_MODELS = {**OPEN_SOURCE_MODELS}
+    if pretrain_weights not in HOSTED_MODELS:
+        from rfdetr.platform.platform_downloads import PLATFORM_MODELS
 
-    HOSTED_MODELS = {**OPEN_SOURCE_MODELS, **PLATFORM_MODELS}
+        HOSTED_MODELS.update(PLATFORM_MODELS)
+
     if pretrain_weights not in HOSTED_MODELS:
         return
     if os.path.exists(pretrain_weights) and not redownload:
