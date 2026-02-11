@@ -1,4 +1,4 @@
-name: CPU/tests Workflow
+name: CPU tests Workflow
 
 on:
   push:

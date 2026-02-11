@@ -1,4 +1,4 @@
-name: GPU/tests Workflow
+name: GPU tests Workflow
 
 on:
   push:
