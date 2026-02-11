@@ -45,7 +45,7 @@ from rfdetr.util.drop_scheduler import drop_scheduler
 from rfdetr.util.files import download_file
 from rfdetr.util.get_param_dicts import get_param_dict
 from rfdetr.util.logger import get_logger
-from rfdetr.util.misc import get_rank, get_world_size, save_on_master
+from rfdetr.util.misc import get_rank, get_world_size, is_main_process, save_on_master
 from rfdetr.util.package import get_version
 from rfdetr.util.utils import BestMetricHolder, ModelEma, clean_state_dict
 
@@ -317,7 +317,7 @@ class Model:
 
         output_dir = Path(args.output_dir)
 
-        if utils.is_main_process():
+        if is_main_process():
             logger.info("Get benchmark")
             if args.do_benchmark:
                 benchmark_model = copy.deepcopy(model_without_ddp)
@@ -509,7 +509,7 @@ class Model:
 
         best_is_ema = best_map_ema_5095 > best_map_5095
 
-        if utils.is_main_process():
+        if is_main_process():
             if best_is_ema:
                 best_checkpoint = output_dir / 'checkpoint_best_ema.pth'
             else:
