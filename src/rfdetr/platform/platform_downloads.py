@@ -5,7 +5,12 @@
 # ------------------------------------------------------------------------
 
 try:
-    from rfdetr_plus.models.downloads import _PLATFORM_MODELS as PLATFORM_MODELS
+    from rfdetr_plus.models import downloads as _downloads
+
+    try:
+        PLATFORM_MODELS = _downloads._PLATFORM_MODELS
+    except AttributeError:
+        PLATFORM_MODELS = _downloads.PLATFORM_MODELS
 except ImportError:
     try:
         from rfdetr_plus.models.downloads import PLATFORM_MODELS
