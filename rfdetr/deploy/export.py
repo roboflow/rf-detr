@@ -14,7 +14,6 @@ import os
 import random
 import re
 import subprocess
-from logging import getLogger
 
 import numpy as np
 import onnx
