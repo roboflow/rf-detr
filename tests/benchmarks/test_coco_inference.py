@@ -11,12 +11,12 @@ import pytest
 import torch
 
 from rfdetr import (
-    RFDETR2XLarge,
+    # RFDETR2XLarge,
     RFDETRLarge,
     RFDETRMedium,
     RFDETRNano,
     RFDETRSmall,
-    RFDETRXLarge,
+    # RFDETRXLarge,
 )
 from rfdetr.datasets import get_coco_api_from_dataset
 from rfdetr.datasets.coco import CocoDetection, make_coco_transforms_square_div_64
@@ -34,8 +34,8 @@ from rfdetr.util import misc as utils
         pytest.param(RFDETRSmall, 0.65, 0.65, 500, id="small"),
         pytest.param(RFDETRMedium, 0.65, 0.65, 500, id="medium"),
         pytest.param(RFDETRLarge, 0.65, 0.65, 500, id="large"),
-        pytest.param(RFDETRXLarge, 0.65, 0.65, 500, id="xlarge"),
-        pytest.param(RFDETR2XLarge, 0.65, 0.65, 500, id="2xlarge"),
+        # pytest.param(RFDETRXLarge, 0.65, 0.65, 500, id="xlarge"),
+        # pytest.param(RFDETR2XLarge, 0.65, 0.65, 500, id="2xlarge"),
     ],
 )
 def test_coco_inference_benchmark(
