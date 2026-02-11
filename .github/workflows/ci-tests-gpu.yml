@@ -40,7 +40,7 @@ jobs:
         run: uv pip install -e . --group tests
 
       - name: 🧪 Run the Test
-        run: uv run pytest -m gpu --cov=rfdetr --cov-report=xml
+        run: uv run pytest -n 2 -m gpu --cov=rfdetr --cov-report=xml
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
