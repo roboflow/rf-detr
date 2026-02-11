@@ -3,9 +3,7 @@ name: PR Conflict Labeler
 on:
   # So that PRs touching the same files as the push are updated
   push:
-    branches:
-      - main
-      - develop
+    branches: [ main, develop ]
   # So that the `dirtyLabel` is removed if conflicts are resolved
   # We recommend `pull_request_target` so that github secrets are available.
   # In `pull_request` we wouldn't be able to change labels of fork PRs
@@ -15,6 +13,7 @@ on:
 permissions:
   pull-requests: write
   issues: write
+
 jobs:
   main:
     runs-on: ubuntu-latest
@@ -23,5 +22,4 @@ jobs:
         uses: eps1lon/actions-label-merge-conflict@v3
         with:
           dirtyLabel: "has conflicts"
-
           repoToken: "${{ secrets.GITHUB_TOKEN }}"

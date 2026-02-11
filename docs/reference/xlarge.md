@@ -1,5 +1,5 @@
 !!! warning "License Notice"
-    This model is licensed under the Platform Model License (PML-1.0). See [`LICENSE.platform`](https://github.com/roboflow/rf-detr/blob/main/LICENSE.platform) for details.
+    This model is licensed under the Platform Model License (PML-1.0) and requires `pip install rfdetr[plus]`. See the [rfdetr_plus repository](https://github.com/roboflow/rf-detr-plus) for license details.
 
 :::rfdetr.platform.models.RFDETRXLarge
     options:
