@@ -8,9 +8,8 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-import torch
-
 import supervision as sv
+import torch
 
 from rfdetr.detr import RFDETR
 
