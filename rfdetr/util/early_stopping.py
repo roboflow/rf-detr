@@ -8,10 +8,11 @@
 Early stopping callback for RF-DETR training
 """
 
-from logging import getLogger
 from typing import Any, Dict
 
-logger = getLogger(__name__)
+from rfdetr.util.logger import get_logger
+
+logger = get_logger()
 
 class EarlyStoppingCallback:
     """
@@ -80,8 +81,7 @@ class EarlyStoppingCallback:
             return
 
         if self.verbose:
-            print(f"Early stopping: Current mAP ({metric_source}): {current_map:.4f}, Best: {self.best_map:.4f}, Diff: {current_map - self.best_map:.4f}, Min delta: {self.min_delta}")
-
+            logger.info(f"Early stopping: Current mAP ({metric_source}): {current_map:.4f}, Best: {self.best_map:.4f}, Diff: {current_map - self.best_map:.4f}, Min delta: {self.min_delta}")
         if current_map > self.best_map + self.min_delta:
             self.best_map = current_map
             self.counter = 0
@@ -89,9 +89,8 @@ class EarlyStoppingCallback:
         else:
             self.counter += 1
             if self.verbose:
-                print(f"Early stopping: No improvement in mAP for {self.counter} epochs (best: {self.best_map:.4f}, current: {current_map:.4f})")
-
+                logger.info(f"Early stopping: No improvement in mAP for {self.counter} epochs (best: {self.best_map:.4f}, current: {current_map:.4f})")
         if self.counter >= self.patience:
-            print(f"Early stopping triggered: No improvement above {self.min_delta} threshold for {self.patience} epochs")
+            logger.info(f"Early stopping triggered: No improvement above {self.min_delta} threshold for {self.patience} epochs")
             if self.model:
                 self.model.request_early_stop()

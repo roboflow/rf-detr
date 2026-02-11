@@ -15,6 +15,9 @@ from rf100vl import get_rf100vl_projects
 
 from rfdetr import RFDETRBase
 from rfdetr.config import DEVICE
+from rfdetr.util.logger import get_logger
+
+logger = get_logger()
 
 
 def download_dataset(rf_project: roboflow.Project, dataset_version: int) -> str:
@@ -37,7 +40,7 @@ def download_dataset(rf_project: roboflow.Project, dataset_version: int) -> str:
 
 def train_from_rf_project(rf_project: roboflow.Project, dataset_version: int) -> None:
     location = download_dataset(rf_project, dataset_version)
-    print(location)
+    logger.info(f"Using dataset from location: {location}")
     rf_detr = RFDETRBase()
     rf_detr.train(
         dataset_dir=location,
@@ -65,6 +68,7 @@ def trainer() -> None:
     args = parser.parse_args()
 
     if args.coco_dir is not None:
+        logger.info(f"Training from COCO directory: {args.coco_dir}")
         train_from_coco_dir(args.coco_dir)
         return
 
@@ -76,9 +80,11 @@ def trainer() -> None:
         )
 
     if args.workspace is not None:
+        logger.info(f"Using Roboflow project: {args.workspace}/{args.project_name}")
         rf = roboflow.Roboflow(api_key=args.api_key)
         project = rf.workspace(args.workspace).project(args.project_name)
     else:
+        logger.info("No project specified, using first project from RF100VL")
         projects = get_rf100vl_projects(api_key=args.api_key)
         project = projects[0].rf_project
 

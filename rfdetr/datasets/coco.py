@@ -28,6 +28,9 @@ import torchvision
 from PIL import Image
 
 import rfdetr.datasets.transforms as T
+from rfdetr.util.logger import get_logger
+
+logger = get_logger()
 
 
 def is_valid_coco_dataset(dataset_dir: str) -> bool:
@@ -158,7 +161,7 @@ def make_coco_transforms(image_set: str, resolution: int, multi_scale: bool = Fa
         scales = compute_multi_scale_scales(resolution, expanded_scales, patch_size, num_windows)
         if skip_random_resize:
             scales = [scales[-1]]
-        print(scales)
+        logger.info(f"Using multi-scale training with scales: {scales}")
 
     if image_set == 'train':
         return T.Compose([
@@ -202,7 +205,7 @@ def make_coco_transforms_square_div_64(image_set: str, resolution: int, multi_sc
         scales = compute_multi_scale_scales(resolution, expanded_scales, patch_size, num_windows)
         if skip_random_resize:
             scales = [scales[-1]]
-        print(scales)
+        logger.info(f"Using multi-scale training with square resize and scales: {scales}")
 
     if image_set == 'train':
         return T.Compose([
@@ -238,7 +241,10 @@ def make_coco_transforms_square_div_64(image_set: str, resolution: int, multi_sc
 
 def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
     root = Path(args.coco_path)
-    assert root.exists(), f'provided COCO path {root} does not exist'
+    if not root.exists():
+        logger.error(f"COCO path {root} does not exist")
+        raise FileNotFoundError(f"COCO path {root} does not exist")
+
     mode = 'instances'
     PATHS = {
         "train": (root / "train2017", root / "annotations" / f'{mode}_train2017.json'),
@@ -252,6 +258,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
     include_masks = getattr(args, "segmentation_head", False)
 
     if square_resize_div_64:
+        logger.info(f"Building COCO {image_set} dataset with square resize at resolution {resolution}")
         dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms_square_div_64(
             image_set,
             resolution,
@@ -262,6 +269,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             num_windows=args.num_windows
         ), include_masks=include_masks)
     else:
+        logger.info(f"Building COCO {image_set} dataset at resolution {resolution}")
         dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms(
             image_set,
             resolution,
@@ -280,7 +288,10 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
     (train/valid/test folders with _annotations.coco.json).
     """
     root = Path(args.dataset_dir)
-    assert root.exists(), f'provided Roboflow path {root} does not exist'
+    if not root.exists():
+        logger.error(f"Roboflow dataset path {root} does not exist")
+        raise FileNotFoundError(f"Roboflow dataset path {root} does not exist")
+
     PATHS = {
         "train": (root / "train", root / "train" / "_annotations.coco.json"),
         "val": (root /  "valid", root / "valid" / "_annotations.coco.json"),
@@ -297,6 +308,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
     num_windows = getattr(args, "num_windows", 4)
 
     if square_resize_div_64:
+        logger.info(f"Building Roboflow {image_set} dataset with square resize at resolution {resolution}")
         dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms_square_div_64(
             image_set,
             resolution,
@@ -307,6 +319,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
             num_windows=num_windows
         ), include_masks=include_masks)
     else:
+        logger.info(f"Building Roboflow {image_set} dataset at resolution {resolution}")
         dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms(
             image_set,
             resolution,

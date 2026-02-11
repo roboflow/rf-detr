@@ -31,7 +31,10 @@ import supervision as sv
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 
+from rfdetr.util.logger import get_logger
 from rfdetr.util.misc import all_gather
+
+logger = get_logger()
 
 
 class CocoEvaluator(object):
@@ -80,7 +83,7 @@ class CocoEvaluator(object):
 
     def summarize(self) -> None:
         for iou_type, coco_eval in self.coco_eval.items():
-            print("IoU metric: {}".format(iou_type))
+            logger.info("IoU metric: {}".format(iou_type))
             patched_pycocotools_summarize(coco_eval)
 
     def prepare(self, predictions: Dict[int, Any], iou_type: str) -> List[Dict[str, Any]]:
@@ -254,7 +257,7 @@ def evaluate(self: COCOeval) -> Tuple[List[int], np.ndarray]:
     # add backward compatibility if useSegm is specified in params
     if p.useSegm is not None:
         p.iouType = 'segm' if p.useSegm == 1 else 'bbox'
-        print('useSegm (deprecated) is not None. Running {} evaluation'.format(p.iouType))
+        logger.warning('useSegm (deprecated) is not None. Running {} evaluation'.format(p.iouType))
     # print('Evaluate annotation type *{}*'.format(p.iouType))
     p.imgIds = list(np.unique(p.imgIds))
     if p.useCats:
@@ -335,7 +338,7 @@ def patched_pycocotools_summarize(self):
             mean_s = -1
         else:
             mean_s = np.mean(s[s>-1])
-        print(iStr.format(titleStr, typeStr, iouStr, areaRng, maxDets, mean_s))
+        logger.info(iStr.format(titleStr, typeStr, iouStr, areaRng, maxDets, mean_s))
         return mean_s
     def _summarizeDets():
         stats = np.zeros((12,))

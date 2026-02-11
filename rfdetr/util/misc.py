@@ -35,6 +35,10 @@ import torch.distributed as dist
 import torchvision
 from torch import Tensor
 
+from rfdetr.util.logger import get_logger
+
+logger = get_logger()
+
 if float(torchvision.__version__.split(".")[1]) < 7.0:
     from torchvision.ops import _new_empty_tensor
     from torchvision.ops.misc import _output_size
@@ -253,13 +257,13 @@ class MetricLogger(object):
                         log_dict = {k: v.value for k, v in self.meters.items()}
                         self.wandb.log(log_dict)
                 if torch.cuda.is_available():
-                    print(log_msg.format(
+                    logger.info(log_msg.format(
                         i, len(iterable), eta=eta_string,
                         meters=str(self),
                         time=str(iter_time), data=str(data_time),
                         memory=torch.cuda.max_memory_allocated() / MB))
                 else:
-                    print(log_msg.format(
+                    logger.info(log_msg.format(
                         i, len(iterable), eta=eta_string,
                         meters=str(self),
                         time=str(iter_time), data=str(data_time)))
@@ -267,28 +271,25 @@ class MetricLogger(object):
             end = time.time()
         total_time = time.time() - start_time
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-        print('{} Total time: {} ({:.4f} s / it)'.format(
+        logger.info('{} Total time: {} ({:.4f} s / it)'.format(
             header, total_time_str, total_time / len(iterable)))
 
 
 def get_sha() -> str:
+    """Return a short status string for the current git repo, or 'unknown' if unavailable."""
     cwd = os.path.dirname(os.path.abspath(__file__))
 
-    def _run(command):
+    def _run(command: List[str]) -> str:
         return subprocess.check_output(command, cwd=cwd).decode('ascii').strip()
-    sha = 'N/A'
-    diff = "clean"
-    branch = 'N/A'
+
     try:
         sha = _run(['git', 'rev-parse', 'HEAD'])
-        subprocess.check_output(['git', 'diff'], cwd=cwd)
-        diff = _run(['git', 'diff-index', 'HEAD'])
-        diff = "has uncommitted changes" if diff else "clean"
+        has_diff = bool(_run(['git', 'diff-index', 'HEAD']))
+        status = "has uncommitted changes" if has_diff else "clean"
         branch = _run(['git', 'rev-parse', '--abbrev-ref', 'HEAD'])
-    except Exception:
-        pass
-    message = f"sha: {sha}, status: {diff}, branch: {branch}"
-    return message
+        return f"sha: {sha}, status: {status}, branch: {branch}"
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return "unknown"
 
 
 def collate_fn(batch: List[Tuple[Any, ...]]) -> Tuple[Any, ...]:
@@ -388,6 +389,7 @@ def setup_for_distributed(is_master: bool) -> None:
     This function disables printing when not in master process
     """
     import builtins as __builtin__
+    import logging
     builtin_print = __builtin__.print
 
     def print(*args, **kwargs) -> None:
@@ -396,6 +398,9 @@ def setup_for_distributed(is_master: bool) -> None:
             builtin_print(*args, **kwargs)
 
     __builtin__.print = print
+
+    if not is_master:
+        logging.getLogger("rf-detr").setLevel(logging.ERROR)
 
 
 def is_dist_avail_and_initialized():
@@ -438,7 +443,7 @@ def init_distributed_mode(args: Any) -> None:
         args.rank = int(os.environ['SLURM_PROCID'])
         args.gpu = args.rank % torch.cuda.device_count()
     else:
-        print('Not using distributed mode')
+        logger.info('Not using distributed mode')
         args.distributed = False
         return
 
@@ -446,8 +451,8 @@ def init_distributed_mode(args: Any) -> None:
 
     torch.cuda.set_device(args.gpu)
     args.dist_backend = 'nccl'
-    print('| distributed init (rank {}): {}'.format(
-        args.rank, args.dist_url), flush=True)
+    logger.info('| distributed init (rank {}): {}'.format(
+        args.rank, args.dist_url))
     torch.distributed.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
                                          world_size=args.world_size, rank=args.rank)
     torch.distributed.barrier()

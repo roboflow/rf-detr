@@ -18,6 +18,9 @@ from rfdetr.models.backbone.dinov2_with_windowed_attn import (
     WindowedDinov2WithRegistersBackbone,
     WindowedDinov2WithRegistersConfig,
 )
+from rfdetr.util.logger import get_logger
+
+logger = get_logger()
 
 size_to_width = {
     "tiny": 192,
@@ -92,12 +95,12 @@ class DinoV2(nn.Module):
             implied_resolution = positional_encoding_size * patch_size
 
             if implied_resolution != dino_config["image_size"]:
-                print("Using a different number of positional encodings than DINOv2, which means we're not loading DINOv2 backbone weights. This is not a problem if finetuning a pretrained RF-DETR model.")
+                logger.warning("Using a different number of positional encodings than DINOv2, which means we're not loading DINOv2 backbone weights. This is not a problem if finetuning a pretrained RF-DETR model.")
                 dino_config["image_size"] = implied_resolution
                 load_dinov2_weights = False
 
             if patch_size != 14:
-                print(f"Using patch size {patch_size} instead of 14, which means we're not loading DINOv2 backbone weights. This is not a problem if finetuning a pretrained RF-DETR model.")
+                logger.warning(f"Using patch size {patch_size} instead of 14, which means we're not loading DINOv2 backbone weights. This is not a problem if finetuning a pretrained RF-DETR model.")
                 dino_config["patch_size"] = patch_size
                 load_dinov2_weights = False
 
@@ -195,6 +198,6 @@ if __name__ == "__main__":
     model = DinoV2()
     model.export()
     x = torch.randn(1, 3, 640, 640)
-    print(model(x))
+    logger.info(model(x))
     for j in model(x):
-        print(j.shape)
+        logger.info(j.shape)

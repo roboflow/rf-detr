@@ -30,8 +30,6 @@ from numbers import Number
 
 import torch
 import torchvision.transforms as T
-
-# from detectron2.data import transforms as DT
 import torchvision.transforms.functional as F
 
 from rfdetr.util.box_ops import box_xyxy_to_cxcywh
