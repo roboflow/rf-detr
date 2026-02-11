@@ -23,7 +23,7 @@ concurrency:
 
 jobs:
   run-gpu-tests:
-    name: GPU Pytest Run
+    name: Testing
     if: github.event_name == 'push' || !github.event.pull_request.draft
     timeout-minutes: 20
     runs-on: Roboflow-GPU-VM-Runner
