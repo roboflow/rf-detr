@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 import importlib.util
 import os
+from functools import partial
 from pathlib import Path
 from typing import Optional
 
@@ -23,27 +24,33 @@ _PLUS_AVAILABLE = importlib.util.find_spec("rfdetr_plus") is not None
 if _PLUS_AVAILABLE:
     try:
         from rfdetr import RFDETR2XLarge, RFDETRXLarge
+
+        RFDETRXLarge_accepted_PML = partial(RFDETRXLarge, accept_platform_model_license=True)
+        RFDETR2XLarge_accepted_PML = partial(RFDETR2XLarge, accept_platform_model_license=True)
     except ImportError:
         raise
 else:
-    RFDETRXLarge = None
-    RFDETR2XLarge = None
+    RFDETRXLarge_accepted_PML = None
+    RFDETR2XLarge_accepted_PML = None
 
 _PLUS_SKIP = pytest.mark.skipif(not _PLUS_AVAILABLE, reason="requires rfdetr_plus models")
 
-_BASE_PARAMS = [
-    pytest.param(RFDETRNano, 0.65, 0.65, None, id="nano"),
-    pytest.param(RFDETRSmall, 0.65, 0.65, 500, id="small"),
-    pytest.param(RFDETRMedium, 0.65, 0.65, 500, id="medium"),
-    pytest.param(RFDETRLarge, 0.65, 0.65, 500, id="large"),
-    pytest.param(RFDETRXLarge, 0.65, 0.65, 500, id="xlarge", marks=_PLUS_SKIP),
-    pytest.param(RFDETR2XLarge, 0.65, 0.65, 500, id="2xlarge", marks=_PLUS_SKIP),
-]
 
 @pytest.mark.gpu
 @pytest.mark.parametrize(
     ("model_cls", "threshold_map", "threshold_f1", "num_samples"),
-    _BASE_PARAMS,
+    [
+        pytest.param(RFDETRNano, 0.65, 0.65, None, id="nano"),
+        pytest.param(RFDETRSmall, 0.65, 0.65, 500, id="small"),
+        pytest.param(RFDETRMedium, 0.65, 0.65, 500, id="medium"),
+        pytest.param(RFDETRLarge, 0.65, 0.65, 500, id="large"),
+        pytest.param(
+            RFDETRXLarge_accepted_PML, 0.65, 0.65, 500, id="xlarge", marks=_PLUS_SKIP,
+        ),
+        pytest.param(
+            RFDETR2XLarge_accepted_PML, 0.65, 0.65, 500, id="2xlarge", marks=_PLUS_SKIP,
+        ),
+    ],
 )
 def test_coco_inference_benchmark(
     download_coco_val: tuple[Path, Path],
