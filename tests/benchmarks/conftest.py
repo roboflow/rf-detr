@@ -3,8 +3,11 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
+import os
 import shutil
+import time
 import zipfile
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any, Generator
 from urllib.request import urlretrieve
@@ -45,7 +48,28 @@ def _download_and_extract(url: str, dest_dir: Path) -> None:
                 target_path.parent.mkdir(parents=True, exist_ok=True)
                 with zf.open(member, "r") as src, open(target_path, "wb") as dst:
                     shutil.copyfileobj(src, dst)
-    zip_path.unlink()
+    with suppress(FileNotFoundError):
+        zip_path.unlink()
+
+
+@contextmanager
+def _download_lock(lock_path: Path, timeout_s: float = 600.0, poll_s: float = 0.5) -> Generator[None, Any, None]:
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    start = time.time()
+    while True:
+        try:
+            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.close(fd)
+            break
+        except FileExistsError:
+            if time.time() - start > timeout_s:
+                raise TimeoutError(f"Timed out waiting for lock: {lock_path}")
+            time.sleep(poll_s)
+    try:
+        yield
+    finally:
+        with suppress(FileNotFoundError):
+            os.unlink(lock_path)
 
 
 @pytest.fixture(scope="session")
@@ -54,10 +78,12 @@ def download_coco_val() -> tuple[Path, Path]:
     images_root = DATA_DIR / "val2017"
     annotations_path = DATA_DIR / "annotations" / "instances_val2017.json"
 
-    if not images_root.exists():
-        _download_and_extract(_COCO_URLS["val2017"], DATA_DIR)
-    if not annotations_path.exists():
-        _download_and_extract(_COCO_URLS["annotations"], DATA_DIR)
+    lock_path = DATA_DIR / ".coco_download.lock"
+    with _download_lock(lock_path):
+        if not images_root.exists():
+            _download_and_extract(_COCO_URLS["val2017"], DATA_DIR)
+        if not annotations_path.exists():
+            _download_and_extract(_COCO_URLS["annotations"], DATA_DIR)
 
     return images_root, annotations_path
 

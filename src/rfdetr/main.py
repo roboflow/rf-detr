@@ -90,8 +90,8 @@ def download_pretrain_weights(pretrain_weights: str, redownload=False):
         f"Downloading pretrained weights for {pretrain_weights}"
     )
     download_file(
-        HOSTED_MODELS[pretrain_weights],
-        pretrain_weights,
+        url=HOSTED_MODELS[pretrain_weights],
+        filename=pretrain_weights,
     )
 
 class Model:
@@ -120,7 +120,8 @@ class Model:
             checkpoint_num_classes = checkpoint['model']['class_embed.bias'].shape[0]
             if checkpoint_num_classes != args.num_classes + 1:
                 logger.warning(
-                    f"Reinitializing detection head with {checkpoint_num_classes - 1} classes based on pretrained weights, configured for {args.num_classes}."
+                    f"Reinitializing detection head with {checkpoint_num_classes - 1} classes based on pretrained weights,"
+                    f" configured for {args.num_classes}."
                 )
                 self.reinitialize_detection_head(checkpoint_num_classes)
             # add support to exclude_keys
