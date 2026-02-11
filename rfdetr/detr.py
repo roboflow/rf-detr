@@ -9,7 +9,6 @@ import os
 import warnings
 from collections import defaultdict
 from copy import deepcopy
-from logging import getLogger
 from typing import List, Union
 
 import numpy as np
@@ -21,6 +20,7 @@ from PIL import Image
 
 from rfdetr.datasets.coco import is_valid_coco_dataset
 from rfdetr.datasets.yolo import is_valid_yolo_dataset
+from rfdetr.util.logger import get_logger
 
 try:
     torch.set_float32_matmul_precision('high')
@@ -49,7 +49,8 @@ from rfdetr.main import Model, download_pretrain_weights
 from rfdetr.util.coco_classes import COCO_CLASSES
 from rfdetr.util.metrics import MetricsPlotSink, MetricsTensorBoardSink, MetricsWandBSink
 
-logger = getLogger(__name__)
+logger = get_logger()
+
 class RFDETR:
     """
     The base RF-DETR class implements the core methods for training RF-DETR models,

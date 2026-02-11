@@ -5,15 +5,16 @@
 # ------------------------------------------------------------------------
 # Copied and modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
 # Copyright (c) 2024 Baidu. All Rights Reserved.
-# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Functions to get params dict"""
 from typing import Any, Dict, List
 
 import torch.nn as nn
 
 from rfdetr.models.backbone import Joiner
+from rfdetr.util.logger import get_logger
+
+logger = get_logger()
 
 
 def get_vit_lr_decay_rate(name: str, lr_decay_rate: float = 1.0, num_layers: int = 12) -> float:
@@ -33,7 +34,7 @@ def get_vit_lr_decay_rate(name: str, lr_decay_rate: float = 1.0, num_layers: int
             layer_id = 0
         elif ".blocks." in name and ".residual." not in name:
             layer_id = int(name[name.find(".blocks.") :].split(".")[2]) + 1
-    print("name: {}, lr_decay: {}".format(name, lr_decay_rate ** (num_layers + 1 - layer_id)))
+    logger.debug("name: {}, lr_decay: {}".format(name, lr_decay_rate ** (num_layers + 1 - layer_id)))
     return lr_decay_rate ** (num_layers + 1 - layer_id)
 
 
@@ -49,7 +50,7 @@ def get_vit_weight_decay_rate(name: str, weight_decay_rate: float = 1.0) -> floa
     """
     if ('gamma' in name) or ('pos_embed' in name) or ('rel_pos' in name) or ('bias' in name) or ('norm' in name):
         weight_decay_rate = 0.
-    print("name: {}, weight_decay rate: {}".format(name, weight_decay_rate))
+    logger.debug("name: {}, weight_decay rate: {}".format(name, weight_decay_rate))
     return weight_decay_rate
 
 

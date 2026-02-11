@@ -16,12 +16,12 @@ RF-DETR supports training on datasets in both **COCO** and **YOLO** formats. The
     model = RFDETRMedium()
 
     model.train(
-        dataset_dir=<DATASET_PATH>,
+        dataset_dir="<DATASET_PATH>",
         epochs=100,
         batch_size=4,
         grad_accum_steps=4,
         lr=1e-4,
-        output_dir=<OUTPUT_PATH>
+        output_dir="<OUTPUT_PATH>",
     )
     ```
 
@@ -33,12 +33,12 @@ RF-DETR supports training on datasets in both **COCO** and **YOLO** formats. The
     model = RFDETRSegMedium()
 
     model.train(
-        dataset_dir=<DATASET_PATH>,
+        dataset_dir="<DATASET_PATH>",
         epochs=100,
         batch_size=4,
         grad_accum_steps=4,
         lr=1e-4,
-        output_dir=<OUTPUT_PATH>
+        output_dir="<OUTPUT_PATH>",
     )
     ```
 
@@ -50,10 +50,10 @@ For object detection, the RF-DETR-B checkpoint is used by default. To get starte
 
 RF-DETR **automatically detects** whether your dataset is in COCO or YOLO format. Simply pass your dataset directory to the `train()` method and the appropriate data loader will be used.
 
-| Format | Detection Method | Learn More |
-|--------|------------------|------------|
+| Format   | Detection Method                         | Learn More                                          |
+| -------- | ---------------------------------------- | --------------------------------------------------- |
 | **COCO** | Looks for `train/_annotations.coco.json` | [COCO Format Guide](dataset-formats.md#coco-format) |
-| **YOLO** | Looks for `data.yaml` + `train/images/` | [YOLO Format Guide](dataset-formats.md#yolo-format) |
+| **YOLO** | Looks for `data.yaml` + `train/images/`  | [YOLO Format Guide](dataset-formats.md#yolo-format) |
 
 [Roboflow](https://roboflow.com/annotate) allows you to create object detection datasets from scratch and export them in either COCO JSON or YOLO format for training. You can also explore [Roboflow Universe](https://universe.roboflow.com/) to find pre-labeled datasets for a range of use cases.
 
@@ -106,9 +106,9 @@ During training, multiple model checkpoints are saved to the output directory:
     ```python
     from rfdetr import RFDETRMedium
 
-    model = RFDETRMedium(pretrain_weights=<CHECKPOINT_PATH>)
+    model = RFDETRMedium(pretrain_weights="<CHECKPOINT_PATH>")
 
-    detections = model.predict(<IMAGE_PATH>)
+    detections = model.predict("<IMAGE_PATH>")
     ```
 
 === "Image Segmentation"
@@ -116,9 +116,9 @@ During training, multiple model checkpoints are saved to the output directory:
     ```python
     from rfdetr import RFDETRSegMedium
 
-    model = RFDETRSegMedium(pretrain_weights=<CHECKPOINT_PATH>)
+    model = RFDETRSegMedium(pretrain_weights="<CHECKPOINT_PATH>")
 
-    detections = model.predict(<IMAGE_PATH>)
+    detections = model.predict("<IMAGE_PATH>")
     ```
 
 ## Next Steps

@@ -503,13 +503,13 @@ def flop_count(
     if customized_ops:
         flop_count_ops.update(customized_ops)
 
-    # If whitelist is None, count flops for all suported operations.
+    # If whitelist is None, count flops for all supported operations.
     if whitelist is None:
         whitelist_set = set(flop_count_ops.keys())
     else:
         whitelist_set = set(whitelist)
 
-    # Torch script does not support parallell torch models.
+    # Torch script does not support parallel torch models.
     if isinstance(
         model,
         (nn.parallel.distributed.DistributedDataParallel, nn.DataParallel),
@@ -589,7 +589,8 @@ def fmt_res(data: np.ndarray) -> Dict[str, float]:
 
 
 def benchmark(model: torch.nn.Module, dataset: Sequence[Any], output_dir: Any) -> Dict[str, Any]:
-    print("Get model size, FLOPs, and FPS")
+    logger = logging.getLogger("rf-detr")
+    logger.info("Get model size, FLOPs, and FPS")
     # import pdb; pdb.set_trace()
     _outputs = {}
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)

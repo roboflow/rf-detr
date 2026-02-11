@@ -35,6 +35,11 @@ from PIL import Image
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 
+from rfdetr.util.box_ops import box_xyxy_to_cxcywh
+from rfdetr.util.logger import get_logger
+
+logger = get_logger()
+
 
 def parser_args():
     parser = argparse.ArgumentParser('performance benchmark tool for onnx/trt model')
@@ -91,7 +96,7 @@ class CocoEvaluator(object):
 
     def summarize(self):
         for iou_type, coco_eval in self.coco_eval.items():
-            print("IoU metric: {}".format(iou_type))
+            logger.info("IoU metric: {}".format(iou_type))
             coco_eval.summarize()
 
     def prepare(self, predictions, iou_type):
@@ -142,7 +147,7 @@ def evaluate(self):
     # add backward compatibility if useSegm is specified in params
     if p.useSegm is not None:
         p.iouType = 'segm' if p.useSegm == 1 else 'bbox'
-        print('useSegm (deprecated) is not None. Running {} evaluation'.format(p.iouType))
+        logger.warning('useSegm (deprecated) is not None. Running {} evaluation'.format(p.iouType))
     # print('Evaluate annotation type *{}*'.format(p.iouType))
     p.imgIds = list(np.unique(p.imgIds))
     if p.useCats:
@@ -329,7 +334,7 @@ def infer_onnx(sess, coco_evaluator, time_profile, prefix, img_list, device, rep
         if coco_evaluator is not None:
             coco_evaluator.update(res)
 
-    print("Model latency with ONNX Runtime: {}ms".format(1000 * sum(time_list) / len(img_list)))
+    logger.info("Model latency with ONNX Runtime: {}ms".format(1000 * sum(time_list) / len(img_list)))
 
     # accumulate predictions from all images
     stats = {}
@@ -338,7 +343,7 @@ def infer_onnx(sess, coco_evaluator, time_profile, prefix, img_list, device, rep
         coco_evaluator.accumulate()
         coco_evaluator.summarize()
         stats['coco_eval_bbox'] = coco_evaluator.coco_eval['bbox'].stats.tolist()
-        print(stats)
+        logger.info(stats)
 
 
 def infer_engine(model, coco_evaluator, time_profile, prefix, img_list, device, repeats=1):
@@ -366,7 +371,7 @@ def infer_engine(model, coco_evaluator, time_profile, prefix, img_list, device, 
             res = {img_dict['id']: results[0]}
             coco_evaluator.update(res)
 
-    print("Model latency with TensorRT: {}ms".format(1000 * sum(time_list) / len(img_list)))
+    logger.info("Model latency with TensorRT: {}ms".format(1000 * sum(time_list) / len(img_list)))
 
     # accumulate predictions from all images
     stats = {}
@@ -375,7 +380,7 @@ def infer_engine(model, coco_evaluator, time_profile, prefix, img_list, device, 
         coco_evaluator.accumulate()
         coco_evaluator.summarize()
         stats['coco_eval_bbox'] = coco_evaluator.coco_eval['bbox'].stats.tolist()
-        print(stats)
+        logger.info(stats)
 
 
 class TRTInference(object):
@@ -409,7 +414,7 @@ class TRTInference(object):
         blob = {}
         for name, binding in self.bindings.items():
             if self.engine.get_tensor_mode(name) == trt.TensorIOMode.INPUT:
-                print(f"make dummy input {name} with shape {binding.shape}")
+                logger.info(f"make dummy input {name} with shape {binding.shape}")
                 blob[name] = torch.rand(batch_size, *binding.shape[1:]).float().to('cuda:0')
         return blob
 
@@ -512,9 +517,9 @@ class TRTInference(object):
 
             with open(onnx_file_path, 'rb') as model:
                 if not parser.parse(model.read()):
-                    print('ERROR: Failed to parse the ONNX file.')
+                    logger.error('ERROR: Failed to parse the ONNX file.')
                     for error in range(parser.num_errors):
-                        print(parser.get_error(error))
+                        logger.error(parser.get_error(error))
                     return None
 
             serialized_engine = builder.build_serialized_network(network, config)
@@ -545,15 +550,15 @@ class TimeProfiler(contextlib.ContextDecorator):
 
 
 def main(args):
-    print(args)
+    logger.info(args)
 
     coco_gt = osp.join(args.coco_path, 'annotations/instances_val2017.json')
     img_list = get_image_list(coco_gt)
     prefix = osp.join(args.coco_path, 'val2017')
     if args.run_benchmark:
         repeats = 10
-        print('Inference for each image will be repeated 10 times to obtain '
-              'a reliable measurement of inference latency.')
+        logger.info('Inference for each image will be repeated 10 times to obtain '
+                    'a reliable measurement of inference latency.')
     else:
         repeats = 1
 
