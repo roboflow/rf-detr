@@ -9,6 +9,9 @@ on:
 
 permissions:
   contents: read
+defaults:
+  run:
+    shell: bash
 
 env:
   PYTHON_VERSION: "3.12"
@@ -27,6 +30,10 @@ jobs:
     steps:
       - name: 🖥️ Print GPU information
         run: nvidia-smi
+      - name: 🧰 Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake
       - name: 📥 Checkout the repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
@@ -37,10 +44,10 @@ jobs:
           activate-environment: true
 
       - name: 🚀 Install Packages
-        run: uv pip install -e . --group tests
+        run: uv sync --group tests --extra onnxexport --frozen
 
       - name: 🧪 Run the Test
-        run: uv run pytest -n 2 -m gpu --cov=rfdetr --cov-report=xml
+        run: uv run --no-sync pytest -n 2 -m gpu --cov=rfdetr --cov-report=xml
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
