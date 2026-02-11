@@ -47,16 +47,16 @@ def test_segmentation_model_export_no_crash(tmp_path: Path) -> None:
 
 def test_eval_on_deepcopy_does_not_affect_original() -> None:
     """Use case: export should set eval() on the deepcopy used for export."""
-    mock_model = MagicMock()
-    mock_model.training = True
+    base_model = torch.nn.Identity()
+    base_model.train()
 
-    model_copy = deepcopy(mock_model)
-    model_copy.training = True
+    model_copy = deepcopy(base_model)
+    model_copy.train()
 
     model_copy.eval()
 
     assert model_copy.training is False
-    assert mock_model.training is True
+    assert base_model.training is True
 
 
 @pytest.mark.gpu
