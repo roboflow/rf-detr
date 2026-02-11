@@ -20,6 +20,7 @@ import torch
 
 from rfdetr import RFDETRSegNano
 
+
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for export test")
 @pytest.mark.skipif(

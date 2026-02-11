@@ -12,6 +12,7 @@ from copy import deepcopy
 from typing import List, Union
 
 import numpy as np
+import requests
 import supervision as sv
 import torch
 import torchvision.transforms.functional as F
@@ -274,7 +275,7 @@ class RFDETR:
         predictions.
 
         This method accepts a single image or a list of images in various formats
-        (file path, PIL Image, NumPy array, or torch.Tensor). The images should be in
+        (file path, image url, PIL Image, NumPy array, or torch.Tensor). The images should be in
         RGB channel order. If a torch.Tensor is provided, it must already be normalized
         to values in the [0, 1] range and have the shape (C, H, W).
 
@@ -311,6 +312,8 @@ class RFDETR:
         for img in images:
 
             if isinstance(img, str):
+                if img.startswith("http"):
+                    img = requests.get(img, stream=True).raw
                 img = Image.open(img)
 
             if not isinstance(img, torch.Tensor):
