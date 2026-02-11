@@ -1,4 +1,4 @@
-name: Pytest/Test Workflow
+name: CPU/tests Workflow
 
 on:
   push:
