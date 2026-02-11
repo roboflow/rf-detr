@@ -44,7 +44,7 @@ jobs:
           activate-environment: true
 
       - name: 🚀 Install Packages
-        run: uv sync --group tests --extra onnxexport --frozen
+        run: uv sync --group tests --extra onnxexport
 
       - name: 🧪 Run the Test
         run: uv run --no-sync pytest -n 2 -m gpu --cov=rfdetr --cov-report=xml

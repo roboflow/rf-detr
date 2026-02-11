@@ -49,7 +49,7 @@ jobs:
           activate-environment: true
 
       - name: 🚀 Install Packages
-        run: uv sync --group tests --frozen
+        run: uv sync --group tests
 
       - name: 🧪 Run the Test
         run: uv run --no-sync pytest -n 2 -m "not gpu" --cov=rfdetr --cov-report=xml
