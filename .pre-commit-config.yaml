@@ -22,7 +22,7 @@ repos:
       - id: mixed-line-ending
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.14.14
+    rev: v0.15.0
     hooks:
       - id: ruff-check
         args: [--fix]
@@ -46,3 +46,14 @@ repos:
         # args: [--write-changes]
         additional_dependencies:
           - tomli
+
+  - repo: https://github.com/Lucas-C/pre-commit-hooks
+    rev: v1.5.5
+    hooks:
+      - id: insert-license
+        files: \.py$
+        args:
+          - --license-filepath
+          - .github/LICENSE_HEADER.txt
+          - --comment-style
+          - "#"
