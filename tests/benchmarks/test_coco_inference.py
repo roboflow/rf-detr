@@ -11,16 +11,16 @@ import pytest
 import torch
 
 from rfdetr import (
+    RFDETR2XLarge,
     RFDETRLarge,
     RFDETRMedium,
     RFDETRNano,
     RFDETRSmall,
     RFDETRXLarge,
-    RFDETR2XLarge,
 )
-from rfdetr.detr import RFDETR
 from rfdetr.datasets import get_coco_api_from_dataset
 from rfdetr.datasets.coco import CocoDetection, make_coco_transforms_square_div_64
+from rfdetr.detr import RFDETR
 from rfdetr.engine import evaluate
 from rfdetr.models import build_criterion_and_postprocessors
 from rfdetr.util import misc as utils
