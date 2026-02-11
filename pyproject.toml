@@ -41,16 +41,13 @@ dependencies = [
     "torchvision>=0.14.0",
     "scipy",
     "tqdm",
-    "numpy",
     "transformers>4.0.0, <5.0.0",
     "peft",
-    "polygraphy",
     "rf100vl",
     "pydantic",
     "supervision",
     "matplotlib",
     "roboflow",
-    "pillow-avif-plugin<1.5.3" # TODO: # Temporary pin. pillow-avif-plugin 1.5.3 fails to install in CI due to a broken wheel. Remove once the upstream issue is fixed.
 ]
 
 [project.optional-dependencies]
@@ -58,13 +55,14 @@ onnxexport = [
     "onnx>=1.16.0,<1.20",
     "onnxsim",
     "onnx_graphsurgeon",
-    "onnxruntime"
+    "onnxruntime",
+    "polygraphy"
 ]
 metrics = [
     "tensorboard>=2.13.0",
     "wandb"
 ]
-plus = ["rfdetr_plus"]
+plus = ["rfdetr_plus>=1.0.0"]
 
 [dependency-groups]
 build = [

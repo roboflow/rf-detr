@@ -30,10 +30,10 @@ import supervision as sv
 import tensorrt as trt
 import torch
 import torchvision.transforms.functional as F
-import tqdm
 from PIL import Image
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
+from tqdm.auto import tqdm
 
 from rfdetr.util.box_ops import box_xyxy_to_cxcywh
 from rfdetr.util.logger import get_logger
@@ -311,7 +311,7 @@ def post_process(outputs, target_sizes):
 
 def infer_onnx(sess, coco_evaluator, time_profile, prefix, img_list, device, repeats=1):
     time_list = []
-    for img_dict in tqdm.tqdm(img_list):
+    for img_dict in tqdm(img_list):
         image = load_image(os.path.join(prefix, img_dict['file_name']))
         width, height = image.size
         orig_target_sizes = torch.Tensor([height, width])
@@ -348,7 +348,7 @@ def infer_onnx(sess, coco_evaluator, time_profile, prefix, img_list, device, rep
 
 def infer_engine(model, coco_evaluator, time_profile, prefix, img_list, device, repeats=1):
     time_list = []
-    for img_dict in tqdm.tqdm(img_list):
+    for img_dict in tqdm(img_list):
         image = load_image(os.path.join(prefix, img_dict['file_name']))
         width, height = image.size
         orig_target_sizes = torch.Tensor([height, width])

@@ -6,7 +6,6 @@
 
 from typing import Any, Dict, List, Optional, Sequence, TypeVar
 
-import matplotlib.pyplot as plt
 import numpy as np
 
 from rfdetr.util.logger import get_logger
@@ -20,8 +19,6 @@ try:
     import wandb
 except ModuleNotFoundError:
     wandb = None
-
-plt.ioff()
 
 logger = get_logger()
 PLOT_FILE_NAME = "metrics_plot.png"
@@ -49,10 +46,13 @@ class MetricsPlotSink:
         self.history.append(values)
 
     def save(self) -> None:
+        import matplotlib.pyplot as plt
+
         if not self.history:
             logger.warning("No metrics data available to generate plot. Skipping plot generation.")
             return
 
+        plt.ioff()
         def get_array(key: str) -> np.ndarray:
             return np.array([h[key] for h in self.history if key in h])
 
