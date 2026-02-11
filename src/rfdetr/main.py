@@ -587,8 +587,7 @@ class Model:
         input_names = ['input']
         output_names = ['features'] if backbone_only else ['dets', 'labels']
         dynamic_axes = None
-
-        model.eval()
+        self.model.eval()
         with torch.no_grad():
             if backbone_only:
                 features = model(input_tensors)
