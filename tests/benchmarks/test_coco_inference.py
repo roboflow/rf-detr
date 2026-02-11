@@ -10,6 +10,8 @@ from typing import Optional
 import pytest
 import torch
 
+import importlib.util
+
 from rfdetr import RFDETRLarge, RFDETRMedium, RFDETRNano, RFDETRSmall
 from rfdetr.datasets import get_coco_api_from_dataset
 from rfdetr.datasets.coco import CocoDetection, make_coco_transforms_square_div_64
@@ -18,14 +20,15 @@ from rfdetr.engine import evaluate
 from rfdetr.models import build_criterion_and_postprocessors
 from rfdetr.util import misc as utils
 
-try:
-    from rfdetr import RFDETR2XLarge, RFDETRXLarge
-except ImportError:
+_PLUS_AVAILABLE = importlib.util.find_spec("rfdetr_plus") is not None
+if _PLUS_AVAILABLE:
+    try:
+        from rfdetr import RFDETR2XLarge, RFDETRXLarge
+    except ImportError:
+        raise
+else:
     RFDETRXLarge = None
     RFDETR2XLarge = None
-    _PLUS_AVAILABLE = False
-else:
-    _PLUS_AVAILABLE = True
 
 _PLUS_SKIP = pytest.mark.skipif(not _PLUS_AVAILABLE, reason="requires rfdetr_plus models")
 
