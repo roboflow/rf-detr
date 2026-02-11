@@ -8,6 +8,9 @@ on:
 
 permissions:
   contents: read
+defaults:
+  run:
+    shell: bash
 
 env:
   UV_TORCH_BACKEND: "cpu"
@@ -46,10 +49,10 @@ jobs:
           activate-environment: true
 
       - name: 🚀 Install Packages
-        run: uv pip install -e . --group tests
+        run: uv sync --group tests
 
       - name: 🧪 Run the Test
-        run: uv run pytest -n 2 -m "not gpu" --cov=rfdetr --cov-report=xml
+        run: uv run --no-sync pytest -n 2 -m "not gpu" --cov=rfdetr --cov-report=xml
 
 
       - name: Upload coverage to Codecov
