@@ -19,18 +19,17 @@ from rfdetr.util import misc as utils
 
 @pytest.mark.gpu
 @pytest.mark.parametrize(
-    ("model_cls", "model_size", "threshold_map", "threshold_f1", "num_samples"),
+    ("model_cls", "threshold_map", "threshold_f1", "num_samples"),
     [
-        pytest.param(RFDETRNano, "nano", 0.65, 0.65, None, id="nano"),
-        pytest.param(RFDETRSmall, "small", 0.65, 0.65, 500, id="small"),
-        pytest.param(RFDETRMedium, "medium", 0.65, 0.65, 500, id="medium"),
-        pytest.param(RFDETRLarge, "large", 0.65, 0.65, 500, id="large"),
+        pytest.param(RFDETRNano, 0.65, 0.65, None, id="nano"),
+        pytest.param(RFDETRSmall, 0.65, 0.65, 500, id="small"),
+        pytest.param(RFDETRMedium, 0.65, 0.65, 500, id="medium"),
+        pytest.param(RFDETRLarge, 0.65, 0.65, 500, id="large"),
     ],
 )
 def test_coco_inference_benchmark(
     download_coco_val: tuple[Path, Path],
     model_cls: type,
-    model_size: str,
     threshold_map: float,
     threshold_f1: float,
     num_samples: Optional[int],
@@ -75,7 +74,8 @@ def test_coco_inference_benchmark(
     map_val = results["map"]
     f1_val = results["f1_score"]
 
-    print(f"COCO val2017 [{model_size}]: mAP@50={map_val:.4f}, F1={f1_val:.4f}")
+    model_label = model_cls.__class__.__name__
+    print(f"COCO val2017 [{model_label}]: mAP@50={map_val:.4f}, F1={f1_val:.4f}")
 
     assert map_val >= threshold_map, f"mAP@50 {map_val:.4f} < {threshold_map}"
     assert f1_val >= threshold_f1, f"F1 {f1_val:.4f} < {threshold_f1}"
