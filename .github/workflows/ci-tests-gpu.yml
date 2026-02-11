@@ -27,6 +27,10 @@ jobs:
     steps:
       - name: 🖥️ Print GPU information
         run: nvidia-smi
+      - name: 🧰 Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake
       - name: 📥 Checkout the repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
