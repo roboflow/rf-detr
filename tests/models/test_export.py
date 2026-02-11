@@ -136,6 +136,7 @@ class TestPR578EvalOnDeepcopyFix:
         assert model_copy.training is False, "Deepcopy should be in eval mode"
         assert mock_model.training is True, "Original model state doesn't matter for export"
 
+    @pytest.mark.gpu
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
     def test_output_format_differs_by_mode(self) -> None:
         """
