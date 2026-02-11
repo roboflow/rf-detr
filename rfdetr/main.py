@@ -581,23 +581,35 @@ class Model:
         with torch.no_grad():
             if backbone_only:
                 features = model(input_tensors)
-                print(f"PyTorch inference output shape: {features.shape}")
+                logger.debug(f"PyTorch inference output shape: {features.shape}")
             elif self.args.segmentation_head:
                 outputs = model(input_tensors)
                 dets = outputs['pred_boxes']
                 labels = outputs['pred_logits']
                 masks = outputs['pred_masks']
                 if isinstance(masks, torch.Tensor):
-                    print(f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}, Masks: {masks.shape}")
+                    logger.debug(
+                        f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}, "
+                        f"Masks: {masks.shape}"
+                    )
                 else:
                     # masks is a dict with spatial_features, query_features, bias
-                    print(f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}")
-                    print(f"  Mask spatial_features: {masks['spatial_features'].shape}, query_features: {masks['query_features'].shape}, bias: {masks['bias'].shape}")
+                    logger.debug(
+                        f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}"
+                    )
+                    logger.debug(
+                        "Mask spatial_features: "
+                        f"{masks['spatial_features'].shape}, "
+                        f"query_features: {masks['query_features'].shape}, "
+                        f"bias: {masks['bias'].shape}"
+                    )
             else:
                 outputs = model(input_tensors)
                 dets = outputs['pred_boxes']
                 labels = outputs['pred_logits']
-                print(f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}")
+                logger.debug(
+                    f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}"
+                )
         model.cpu()
         input_tensors = input_tensors.cpu()
 
