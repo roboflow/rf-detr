@@ -10,14 +10,7 @@ from typing import Optional
 import pytest
 import torch
 
-from rfdetr import (
-    # RFDETR2XLarge,
-    RFDETRLarge,
-    RFDETRMedium,
-    RFDETRNano,
-    RFDETRSmall,
-    # RFDETRXLarge,
-)
+from rfdetr import RFDETRLarge, RFDETRMedium, RFDETRNano, RFDETRSmall
 from rfdetr.datasets import get_coco_api_from_dataset
 from rfdetr.datasets.coco import CocoDetection, make_coco_transforms_square_div_64
 from rfdetr.detr import RFDETR
@@ -26,17 +19,30 @@ from rfdetr.models import build_criterion_and_postprocessors
 from rfdetr.util import misc as utils
 
 
+try:
+    from rfdetr import RFDETR2XLarge, RFDETRXLarge
+except ImportError:
+    RFDETRXLarge = None
+    RFDETR2XLarge = None
+    _PLUS_AVAILABLE = False
+else:
+    _PLUS_AVAILABLE = True
+
+_PLUS_SKIP = pytest.mark.skipif(not _PLUS_AVAILABLE, reason="requires rfdetr_plus models")
+
+_BASE_PARAMS = [
+    pytest.param(RFDETRNano, 0.65, 0.65, None, id="nano"),
+    pytest.param(RFDETRSmall, 0.65, 0.65, 500, id="small"),
+    pytest.param(RFDETRMedium, 0.65, 0.65, 500, id="medium"),
+    pytest.param(RFDETRLarge, 0.65, 0.65, 500, id="large"),
+    pytest.param(RFDETRXLarge, 0.65, 0.65, 500, id="xlarge", marks=_PLUS_SKIP),
+    pytest.param(RFDETR2XLarge, 0.65, 0.65, 500, id="2xlarge", marks=_PLUS_SKIP),
+]
+
 @pytest.mark.gpu
 @pytest.mark.parametrize(
     ("model_cls", "threshold_map", "threshold_f1", "num_samples"),
-    [
-        pytest.param(RFDETRNano, 0.65, 0.65, None, id="nano"),
-        pytest.param(RFDETRSmall, 0.65, 0.65, 500, id="small"),
-        pytest.param(RFDETRMedium, 0.65, 0.65, 500, id="medium"),
-        pytest.param(RFDETRLarge, 0.65, 0.65, 500, id="large"),
-        # pytest.param(RFDETRXLarge, 0.65, 0.65, 500, id="xlarge"),
-        # pytest.param(RFDETR2XLarge, 0.65, 0.65, 500, id="2xlarge"),
-    ],
+    _BASE_PARAMS,
 )
 def test_coco_inference_benchmark(
     download_coco_val: tuple[Path, Path],
