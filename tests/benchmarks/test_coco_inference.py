@@ -18,7 +18,6 @@ from rfdetr.engine import evaluate
 from rfdetr.models import build_criterion_and_postprocessors
 from rfdetr.util import misc as utils
 
-
 try:
     from rfdetr import RFDETR2XLarge, RFDETRXLarge
 except ImportError:
