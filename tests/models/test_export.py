@@ -65,16 +65,16 @@ def test_segmentation_outputs_present_in_train_and_eval() -> None:
     """Use case: segmentation outputs are present in both train and eval modes."""
     model = RFDETRSegNano()
 
-    model.model = model.model.to("cuda")
+    torch_model = model.model.model.to("cuda")
     dummy_input = torch.randn(1, 3, 224, 224, device="cuda")
 
-    model.model.train()
+    torch_model.train()
     with torch.no_grad():
-        train_output = model.model(dummy_input)
+        train_output = torch_model(dummy_input)
 
-    model.model.eval()
+    torch_model.eval()
     with torch.no_grad():
-        eval_output = model.model(dummy_input)
+        eval_output = torch_model(dummy_input)
 
     for output in (train_output, eval_output):
         assert "pred_boxes" in output
