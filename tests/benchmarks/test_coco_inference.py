@@ -10,7 +10,15 @@ from typing import Optional
 import pytest
 import torch
 
-from rfdetr import RFDETRLarge, RFDETRMedium, RFDETRNano, RFDETRSmall
+from rfdetr import (
+    RFDETRLarge,
+    RFDETRMedium,
+    RFDETRNano,
+    RFDETRSmall,
+    RFDETRXLarge,
+    RFDETR2XLarge,
+)
+from rfdetr.detr import RFDETR
 from rfdetr.datasets import get_coco_api_from_dataset
 from rfdetr.datasets.coco import CocoDetection, make_coco_transforms_square_div_64
 from rfdetr.engine import evaluate
@@ -26,11 +34,13 @@ from rfdetr.util import misc as utils
         pytest.param(RFDETRSmall, 0.65, 0.65, 500, id="small"),
         pytest.param(RFDETRMedium, 0.65, 0.65, 500, id="medium"),
         pytest.param(RFDETRLarge, 0.65, 0.65, 500, id="large"),
+        pytest.param(RFDETRXLarge, 0.65, 0.65, 500, id="xlarge"),
+        pytest.param(RFDETR2XLarge, 0.65, 0.65, 500, id="2xlarge"),
     ],
 )
 def test_coco_inference_benchmark(
     download_coco_val: tuple[Path, Path],
-    model_cls: type,
+    model_cls: type[RFDETR],
     threshold_map: float,
     threshold_f1: float,
     num_samples: Optional[int],
