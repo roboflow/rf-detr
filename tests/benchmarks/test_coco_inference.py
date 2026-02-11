@@ -28,7 +28,9 @@ if _PLUS_AVAILABLE:
         RFDETRXLarge_accepted_PML = partial(RFDETRXLarge, accept_platform_model_license=True)
         RFDETR2XLarge_accepted_PML = partial(RFDETR2XLarge, accept_platform_model_license=True)
     except ImportError:
-        raise
+        _PLUS_AVAILABLE = False
+        RFDETRXLarge_accepted_PML = None
+        RFDETR2XLarge_accepted_PML = None
 else:
     RFDETRXLarge_accepted_PML = None
     RFDETR2XLarge_accepted_PML = None
