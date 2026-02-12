@@ -447,7 +447,7 @@ If you don't specify names, MLflow will use default experiment and generate rand
 Start the MLflow UI to visualize your experiments:
 
 ```bash
-mlflow ui
+mlflow ui --backend-store-uri <OUTPUT_PATH>
 ```
 
 Then open `http://localhost:5000/` in your browser. MLflow provides:
