@@ -4,6 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, TypeVar
 
@@ -297,8 +298,12 @@ class MetricsMLFlowSink:
             return
 
         if not mlflow.is_tracking_uri_set():
-            output_dir = Path(output_dir).absolute().as_uri()
-            mlflow.set_tracking_uri(output_dir)
+            tracking_uri = os.getenv("MLFLOW_URL") or os.getenv("MLFLOW_TRACKING_URI")
+            if tracking_uri:
+                mlflow.set_tracking_uri(tracking_uri)
+            else:
+                output_dir = Path(output_dir).absolute().as_uri()
+                mlflow.set_tracking_uri(output_dir)
 
         tracking_uri = mlflow.get_tracking_uri()
 
@@ -323,7 +328,13 @@ class MetricsMLFlowSink:
         try:
             self.run = mlflow.start_run(experiment_id=experiment_id, run_name=run_name)
             if track_system_metrics:
-                mlflow.enable_system_metrics_logging()
+                if hasattr(mlflow, "enable_system_metrics_logging"):
+                    mlflow.enable_system_metrics_logging()
+                else:
+                    logger.warning(
+                        "MLflow system metrics logging is not available in this version. "
+                        "Upgrade mlflow to enable it."
+                    )
 
             logger.info(
                 "MLFlow logging initialized. Run ID: %s",
