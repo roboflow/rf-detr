@@ -401,6 +401,76 @@ Access your experiments in the ClearML Web UI. ClearML provides:
 
 ---
 
+## Logging with MLflow
+
+[MLflow](https://mlflow.org/) is an open-source platform for the machine learning lifecycle that helps you track experiments, package code into reproducible runs, and share and deploy models. To enable logging, simply pass `mlflow=True` when training the model.
+
+<details>
+<summary>Using MLflow with RF-DETR</summary>
+
+<br>
+
+- MLflow logging requires additional packages. Install them with:
+
+    ```bash
+    pip install "rfdetr[metrics]"
+    ```
+
+- To activate logging, pass the extra parameter `mlflow=True` to `.train()`:
+
+    ```python
+    from rfdetr import RFDETRBase
+
+    model = RFDETRBase()
+
+    model.train(
+        dataset_dir="<DATASET_PATH>",
+        epochs=10,
+        batch_size=4,
+        grad_accum_steps=4,
+        lr=1e-4,
+        output_dir="<OUTPUT_PATH>",
+        mlflow=True,
+        project="<EXPERIMENT_NAME>",
+        run="<RUN_NAME>",
+    )
+    ```
+
+- The `project` parameter sets the experiment name in MLflow, while `run` sets the run name. If you don't specify these, MLflow will use default values.
+
+- To use a custom MLflow tracking server, set the `MLFLOW_TRACKING_URI` environment variable:
+
+    ```python
+    import os
+
+    # Set MLflow tracking URI
+    os.environ["MLFLOW_TRACKING_URI"] = "https://your-mlflow-server.com"
+
+    # For authentication with tracking servers that require it
+    os.environ["MLFLOW_TRACKING_TOKEN"] = "your-auth-token"
+
+    # Then initialize and train your model
+    model = RFDETRBase()
+    model.train(..., mlflow=True)
+    ```
+
+- For teams using a hosted MLflow service (like Databricks), you'll typically need to set:
+
+    - `MLFLOW_TRACKING_URI`: The URL of your MLflow tracking server
+    - `MLFLOW_TRACKING_TOKEN`: Authentication token for your MLflow server
+
+- To view your logs after training, start the MLflow UI:
+
+    ```bash
+    mlflow ui --backend-store-uri <OUTPUT_PATH>
+    ```
+
+    Then open `http://localhost:5000` in your browser to access the MLflow dashboard.
+
+</details>
+
+---
+
 ## Custom Augmentations
 
 RF-DETR supports advanced data augmentations using the [Albumentations](https://albumentations.ai/) library, providing access to over 70 different image transformations optimized for object detection.

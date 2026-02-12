@@ -4,6 +4,8 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+import os
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, TypeVar
 
 import numpy as np
@@ -21,9 +23,15 @@ except ModuleNotFoundError:
     wandb = None
 
 try:
+    import mlflow
+except ModuleNotFoundError:
+    mlflow = None
+
+try:
     from clearml import Task
 except ModuleNotFoundError:
     Task = None
+
 
 logger = get_logger()
 PLOT_FILE_NAME = "metrics_plot.png"
@@ -254,9 +262,139 @@ class MetricsWandBSink:
     def close(self):
         if not wandb or not self.run:
             return
-
         self.run.finish()
 
+class MetricsMLFlowSink:
+    """
+    Training metrics via MLFlow.
+
+    Args:
+        output_dir (str): Directory where MLFlow logs will be written locally.
+        experiment_name (str, optional): Associate this training run with an MLFlow experiment.
+                                        If None, MLFlow will use the default experiment.
+        run_name (str, optional): MLFlow run name. If None, MLFlow will generate a random name.
+        config (dict, optional): Input parameters, like hyperparameters or data preprocessing settings
+                                for the run for later comparison.
+        track_system_metrics (bool, optional): Whether to track system metrics like CPU, memory, GPU usage.
+                                              Default is True.
+
+    """
+
+    def __init__(
+        self,
+        output_dir: str,
+        experiment_name: Optional[str] = None,
+        run_name: Optional[str] = None,
+        config: Optional[dict] = None,
+        track_system_metrics: bool = True,
+    ):
+        if not mlflow:
+            self.run = None
+            logger.warning(
+                "Unable to initialize MLFlow. Logging is turned off for this session. Run 'pip install mlflow' to enable logging."
+                "\nAfter installing, you can start the MLflow UI with: 'mlflow ui'"
+                "\nThen access the MLflow dashboard at http://localhost:5000"
+            )
+            return
+
+        if not mlflow.is_tracking_uri_set():
+            tracking_uri = os.getenv("MLFLOW_URL") or os.getenv("MLFLOW_TRACKING_URI")
+            if tracking_uri:
+                mlflow.set_tracking_uri(tracking_uri)
+            else:
+                output_dir = Path(output_dir).absolute().as_uri()
+                mlflow.set_tracking_uri(output_dir)
+
+        tracking_uri = mlflow.get_tracking_uri()
+
+        logger.info(
+            "To start the MLflow UI, run: 'mlflow ui --backend-store-uri %s'"
+            "\nThen access the MLflow dashboard at http://localhost:5000",
+            tracking_uri,
+        )
+
+        experiment_id = None
+
+        if experiment_name:
+            try:
+                experiment = mlflow.get_experiment_by_name(experiment_name)
+                if experiment:
+                    experiment_id = experiment.experiment_id
+                else:
+                    experiment_id = mlflow.create_experiment(experiment_name)
+            except Exception as e:
+                logger.warning("Error setting up MLFlow experiment: %s", e)
+
+        try:
+            self.run = mlflow.start_run(experiment_id=experiment_id, run_name=run_name)
+            if track_system_metrics:
+                if hasattr(mlflow, "enable_system_metrics_logging"):
+                    mlflow.enable_system_metrics_logging()
+                else:
+                    logger.warning(
+                        "MLflow system metrics logging is not available in this version. "
+                        "Upgrade mlflow to enable it."
+                    )
+
+            logger.info(
+                "MLFlow logging initialized. Run ID: %s",
+                mlflow.active_run().info.run_id,
+            )
+
+            if config:
+                for key, value in config.items():
+                    try:
+                        mlflow.log_param(key, value)
+                    except Exception as e:
+                        logger.warning("Error logging MLFlow parameter %s: %s", key, e)
+
+        except Exception as e:
+            logger.warning("Error starting MLFlow run: %s", e)
+            self.run = None
+
+    def update(self, values: dict):
+        if not mlflow or not self.run:
+            return
+
+        epoch = values["epoch"]
+        metrics_dict = {}
+
+        if "train_loss" in values:
+            metrics_dict["Loss/Train"] = values["train_loss"]
+        if "test_loss" in values:
+            metrics_dict["Loss/Test"] = values["test_loss"]
+
+        if "test_coco_eval_bbox" in values:
+            coco_eval = values["test_coco_eval_bbox"]
+            ap50_90 = safe_index(coco_eval, 0)
+            ap50 = safe_index(coco_eval, 1)
+            ar50_90 = safe_index(coco_eval, 6)
+            if ap50_90 is not None:
+                metrics_dict["Metrics/Base/AP50_90"] = ap50_90
+            if ap50 is not None:
+                metrics_dict["Metrics/Base/AP50"] = ap50
+            if ar50_90 is not None:
+                metrics_dict["Metrics/Base/AR50_90"] = ar50_90
+
+        if "ema_test_coco_eval_bbox" in values:
+            ema_coco_eval = values["ema_test_coco_eval_bbox"]
+            ema_ap50_90 = safe_index(ema_coco_eval, 0)
+            ema_ap50 = safe_index(ema_coco_eval, 1)
+            ema_ar50_90 = safe_index(ema_coco_eval, 6)
+            if ema_ap50_90 is not None:
+                metrics_dict["Metrics/EMA/AP50_90"] = ema_ap50_90
+            if ema_ap50 is not None:
+                metrics_dict["Metrics/EMA/AP50"] = ema_ap50
+            if ema_ar50_90 is not None:
+                metrics_dict["Metrics/EMA/AR50_90"] = ema_ar50_90
+
+        mlflow.log_metrics(metrics_dict, step=epoch)
+
+    def close(self):
+        if not mlflow or not self.run:
+            return
+
+        mlflow.end_run()
 
 class MetricsClearMLSink:
     """
@@ -280,11 +418,14 @@ class MetricsClearMLSink:
             if config:
                 self.task.connect(config)
             self.logger = self.task.get_logger()
-            print("ClearML logging initialized. To monitor logs, open the ClearML Web UI.")
+            logger.info("ClearML logging initialized. To monitor logs, open the ClearML Web UI.")
         else:
             self.task = None
             self.logger = None
-            print("Unable to initialize ClearML. Logging is turned off for this session. Run 'pip install clearml' to enable logging.")
+            logger.warning(
+                "Unable to initialize ClearML. Logging is turned off for this session. "
+                "Run 'pip install clearml' to enable logging."
+            )
 
     def update(self, values: dict):
         if not self.task or not self.logger:
