@@ -276,7 +276,7 @@ class MetricsMLFlowSink:
                                 for the run for later comparison.
         track_system_metrics (bool, optional): Whether to track system metrics like CPU, memory, GPU usage.
                                               Default is True.
-        system_metrics_interval (int, optional): Interval in seconds for system metrics logging. Default is 10.
+
     """
 
     def __init__(
@@ -291,7 +291,7 @@ class MetricsMLFlowSink:
             self.run = None
             logger.warning(
                 "Unable to initialize MLFlow. Logging is turned off for this session. Run 'pip install mlflow' to enable logging."
-                "\nAfter installing, you can start the MLflow UI with: 'mlflow ui"
+                "\nAfter installing, you can start the MLflow UI with: 'mlflow ui'"
                 "\nThen access the MLflow dashboard at http://localhost:5000"
             )
             return
@@ -300,9 +300,12 @@ class MetricsMLFlowSink:
             output_dir = Path(output_dir).absolute().as_uri()
             mlflow.set_tracking_uri(output_dir)
 
+        tracking_uri = mlflow.get_tracking_uri()
+
         logger.info(
-            "To start the MLflow UI, run: 'mlflow ui'"
-            "\nThen access the MLflow dashboard at http://localhost:5000"
+            "To start the MLflow UI, run: 'mlflow ui --backend-store-uri %s'"
+            "\nThen access the MLflow dashboard at http://localhost:5000",
+            tracking_uri,
         )
 
         experiment_id = None
