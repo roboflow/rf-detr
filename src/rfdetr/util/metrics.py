@@ -31,7 +31,6 @@ try:
 except ModuleNotFoundError:
     Task = None
 
-import matplotlib.pyplot as plt
 
 logger = get_logger()
 PLOT_FILE_NAME = "metrics_plot.png"
