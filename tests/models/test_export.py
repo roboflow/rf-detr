@@ -70,12 +70,15 @@ def test_export_calls_eval_on_deepcopy_not_original(tmp_path: Path) -> None:
         
         # Only track eval calls on torch.nn.Module objects
         if isinstance(copied, torch.nn.Module):
+            # Save reference to original eval before replacing it
             original_eval = copied.eval
             
             def tracked_eval(*args, **kwargs):
+                """Wrapper that tracks calls while delegating to the original eval"""
                 eval_mock()
                 return original_eval(*args, **kwargs)
             
+            # Replace eval with tracked version
             copied.eval = tracked_eval
         
         return copied
@@ -103,7 +106,7 @@ def test_eval_on_deepcopy_does_not_affect_original() -> None:
     This demonstrates the fundamental behavior that Model.export() relies on:
     calling eval() on a deepcopy doesn't affect the original model's training state.
     """
-    # Simulate the pattern used in Model.export()
+    # Create a simple model with arbitrary dimensions (sufficient for testing the pattern)
     original_model = torch.nn.Linear(10, 10)
     original_model.train()  # Start in training mode
     
