@@ -23,8 +23,10 @@ class BaseConfig(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def catch_typo_kwargs(cls, values: Mapping[str, Any]) -> Mapping[str, Any]:
-        allowed_params = set(cls.model_json_schema().get('properties').keys())
+    def catch_typo_kwargs(cls, values: Any) -> Any:
+        if not isinstance(values, Mapping):
+            return values
+        allowed_params = set(cls.model_fields.keys())
         provided_params = set(values)
         unknown_params = provided_params - allowed_params
         if unknown_params:
