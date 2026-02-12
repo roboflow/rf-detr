@@ -45,6 +45,8 @@ def test_segmentation_model_export_no_crash(tmp_path: Path) -> None:
     assert len(onnx_files) > 0, "Export should produce ONNX file(s)"
 
 
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for export test")
 @pytest.mark.skipif(
     importlib.util.find_spec("onnx") is None,
     reason="onnx not installed, run: pip install rfdetr[onnxexport]",
@@ -57,6 +59,11 @@ def test_export_calls_eval_on_deepcopy_not_original(tmp_path: Path) -> None:
     model during export, ensuring the fix in PR #578 is working correctly.
     """
     model = RFDETRSegNano()
+
+    # Access the underlying torch module and set it to training mode
+    torch_model = model.model.model.to("cuda")
+    torch_model.train()
+    assert torch_model.training is True, "Precondition: original model should start in training mode"
 
     # Store the original deepcopy function
     original_deepcopy = deepcopy
@@ -98,25 +105,37 @@ def test_export_calls_eval_on_deepcopy_not_original(tmp_path: Path) -> None:
         "This ensures the exported model is in eval mode without affecting the original."
     )
 
+    # Verify the original model's training state was not changed
+    assert torch_model.training is True, "export() should not change the original model's training state"
 
-def test_eval_on_deepcopy_does_not_affect_original() -> None:
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for export test")
+@pytest.mark.skipif(
+    importlib.util.find_spec("onnx") is None,
+    reason="onnx not installed, run: pip install rfdetr[onnxexport]",
+)
+def test_export_does_not_change_original_training_state(tmp_path: Path) -> None:
     """
-    Verify the pattern: deepcopy allows independent train/eval state.
+    Verify that calling export() does not change the original model's train/eval state.
 
-    This demonstrates the fundamental behavior that Model.export() relies on:
-    calling eval() on a deepcopy doesn't affect the original model's training state.
+    This ensures that export() puts a deepcopy of the model in eval mode without
+    mutating the underlying training model used by RF-DETR.
     """
-    # Create a simple model with arbitrary dimensions (sufficient for testing the pattern)
-    original_model = torch.nn.Linear(10, 10)
-    original_model.train()  # Start in training mode
+    model = RFDETRSegNano()
 
-    # This is what happens in Model.export(): deepcopy then eval on the copy
-    model_copy = deepcopy(original_model)
-    model_copy.eval()
+    # Access the underlying torch module (model.model.model), as in other tests
+    torch_model = model.model.model.to("cuda")
 
-    # Verify the copy is in eval mode but original is still in training mode
-    assert model_copy.training is False, "Deepcopy should be in eval mode"
-    assert original_model.training is True, "Original should still be in training mode"
+    # Ensure the original model is in training mode
+    torch_model.train()
+    assert torch_model.training is True, "Precondition: original model should start in training mode"
+
+    # Call export() on the high-level model; this should not change the original model's mode
+    model.export(output_dir=str(tmp_path), simplify=False)
+
+    # After export, the original underlying model should still be in training mode
+    assert torch_model.training is True, "export() should not change the original model's training state"
 
 
 @pytest.mark.gpu
