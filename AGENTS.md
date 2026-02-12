@@ -3,6 +3,7 @@
 This file provides detailed technical context for AI coding agents working with RF-DETR.
 
 **Canonical Sources:**
+
 - **Contribution Guidelines:** [CONTRIBUTING.md](.github/CONTRIBUTING.md) - The authoritative source for all contribution practices
 - **Human Documentation:** [README.md](README.md) - Project overview and usage
 - **Copilot Instructions:** [.github/copilot-instructions.md](.github/copilot-instructions.md) - GitHub Copilot-specific guidance
@@ -14,29 +15,34 @@ This document supplements the contribution guidelines with detailed technical in
 As an AI agent contributing to RF-DETR, you are responsible for:
 
 1. **Following test-driven development practices**
-   - Write failing tests first for bug fixes
-   - Write comprehensive tests for new features
-   - Ensure final PR commit has all tests passing
+
+    - Write failing tests first for bug fixes
+    - Write comprehensive tests for new features
+    - Ensure final PR commit has all tests passing
 
 2. **Adhering to code quality standards**
-   - Run `pre-commit run --all-files` before every commit
-   - Follow type hint and docstring requirements
-   - Use direct imports (not `import ... as` pattern)
+
+    - Run `pre-commit run --all-files` before every commit
+    - Follow type hint and docstring requirements
+    - Use direct imports (not `import ... as` pattern)
 
 3. **Maintaining agentic documentation**
-   - Update `AGENTS.md` when architecture patterns or technical conventions change
-   - Update `.github/copilot-instructions.md` when high-level guidance changes
-   - Update `.github/CONTRIBUTING.md` when human workflow is affected
-   - Apply updates after receiving major feedback in PR reviews
+
+    - Update `AGENTS.md` when architecture patterns or technical conventions change
+    - Update `.github/copilot-instructions.md` when high-level guidance changes
+    - Update `.github/CONTRIBUTING.md` when human workflow is affected
+    - Apply updates after receiving major feedback in PR reviews
 
 4. **Consulting maintainers before major changes**
-   - Open an issue before adding new models or significant features
-   - Wait for approval on approach before implementing
+
+    - Open an issue before adding new models or significant features
+    - Wait for approval on approach before implementing
 
 5. **Writing secure, minimal code**
-   - Avoid over-engineering and unnecessary abstractions
-   - Write secure code (prevent injection vulnerabilities)
-   - Follow existing patterns in the codebase
+
+    - Avoid over-engineering and unnecessary abstractions
+    - Write secure code (prevent injection vulnerabilities)
+    - Follow existing patterns in the codebase
 
 > [!NOTE]
 > Keeping documentation current ensures consistency across agent contributions and reduces repeated feedback on the same issues.
@@ -67,8 +73,9 @@ See `pyproject.toml` for complete dependency specifications:
 - **Development:** `tests`, `docs`, `build` groups
 
 **Important version constraints:**
-- PyTorch: >=1.13.0, <=2.8.0 (2.9.0+ excluded due to known issues)
-- Transformers: >4.0.0, <5.0.0
+
+- PyTorch: >=1.13.0, \<=2.8.0 (2.9.0+ excluded due to known issues)
+- Transformers: >4.0.0, \<5.0.0
 
 ## Testing
 
@@ -94,15 +101,18 @@ pre-commit run --all-files
 
 > [!IMPORTANT]
 > **Testing Requirements:**
+>
 > - ⚠️ **During development:** Tests may fail as you work through TDD cycle
 > - ✅ **Before opening PR:** Final commit MUST have all tests passing
 > - ✅ **Before each commit:** Run `pre-commit run --all-files`
 
 **Test-Driven Development:**
+
 1. **Bug fixes:** Write failing test → Fix code → Verify all tests pass
 2. **New features:** Write comprehensive tests → Implement feature → Refactor
 
 **Test Organization:**
+
 - Group related tests in classes
 - Use `@pytest.mark.parametrize` with `pytest.param(..., id="name")`
 - Mark GPU/heavy tests with `@pytest.mark.gpu`
@@ -126,6 +136,7 @@ pre-commit run --all-files
 > Pre-commit hooks will auto-format many issues. Review changes and re-stage files.
 
 **Configuration Files:**
+
 - `.pre-commit-config.yaml` - Pre-commit hooks (ruff, mdformat, prettier, codespell, license headers)
 - `pyproject.toml` - Ruff linting rules (`[tool.ruff]` section)
 
@@ -155,6 +166,7 @@ mkdocs build
 ```
 
 **Documentation Structure:**
+
 - **Source:** `docs/` directory (Markdown)
 - **Config:** `mkdocs.yaml` (uses custom YAML tags: `!!python/name`)
 - **Deployment:** GitHub Actions publishes to GitHub Pages
@@ -175,6 +187,7 @@ uv run twine check --strict dist/*
 ```
 
 **Build outputs:**
+
 - Source distribution: `dist/rfdetr-*.tar.gz`
 - Wheel: `dist/rfdetr-*.whl`
 
@@ -192,11 +205,13 @@ uv run twine check --strict dist/*
 ### Key Patterns
 
 **Model Architecture:**
+
 - RFDETR wrappers: `self.model` is `rfdetr.main.Model` instance
 - Underlying PyTorch module: `self.model.model`
 - Segmentation models return `pred_masks` as `torch.Tensor` or dict with keys `['spatial_features', 'query_features', 'bias']`
 
 **Imports:**
+
 ```python
 # Always use direct imports (NOT import ... as pattern)
 from rfdetr.util.misc import get_rank, get_world_size, is_main_process, save_on_master
@@ -210,28 +225,32 @@ from tqdm.auto import tqdm  # NOT: from tqdm import tqdm
 ```
 
 **Plus Models (XLarge, 2XLarge):**
+
 - Requires separate `rfdetr_plus` package (PML 1.0 license)
 - Import handled lazily via `__getattr__` in `src/rfdetr/platform/models.py`
 - Raises `ImportError` if package not installed
 
 **Subprocess Usage:**
+
 ```python
 import subprocess
 
 result = subprocess.run(
     ["command", "arg1", "arg2"],
-    check=True,        # Raise CalledProcessError on failure
-    text=True,         # Return stdout/stderr as strings
-    capture_output=True
+    check=True,  # Raise CalledProcessError on failure
+    text=True,  # Return stdout/stderr as strings
+    capture_output=True,
 )
 # Note: stderr is already a string, don't decode
 ```
 
 **Logging:**
+
 - Use `logger.debug()` for detailed tensor/shape information (not `logger.info()`)
 - Use `logger.info()` for high-level progress/status
 
 **Checkpoint Handling:**
+
 - Always check file existence before operations
 - Prevents errors when training is interrupted
 
@@ -241,6 +260,7 @@ result = subprocess.run(
 > **Canonical Reference:** See [Google-Style Docstrings and Mandatory Type Hints](.github/CONTRIBUTING.md#google-style-docstrings-and-mandatory-type-hints) in CONTRIBUTING.md for complete requirements and examples.
 
 **Requirements:**
+
 - MANDATORY type hints for all function parameters and return types
 - MANDATORY Google-style docstrings for all functions and classes
 - **Do not duplicate types in docstrings** - types are in the function signature
@@ -253,13 +273,13 @@ result = subprocess.run(
 1. **Setup:** `uv sync --all-groups`
 2. **Before changes:** Run tests to establish baseline
 3. **Development:**
-   - Make minimal, focused changes
-   - Follow existing patterns and conventions
-   - Add type hints and docstrings
+    - Make minimal, focused changes
+    - Follow existing patterns and conventions
+    - Add type hints and docstrings
 4. **Testing:**
-   - Bug fixes: Write test first, then fix
-   - Features: Test all major use cases
-   - Run: `uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu"`
+    - Bug fixes: Write test first, then fix
+    - Features: Test all major use cases
+    - Run: `uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu"`
 5. **Quality checks:** `pre-commit run --all-files`
 6. **Build (if needed):** `uv build`
 7. **Commit:** Pre-commit hooks run automatically

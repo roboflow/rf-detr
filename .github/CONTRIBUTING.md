@@ -71,27 +71,32 @@ rf-detr/
 **Key Directories:**
 
 - **`src/rfdetr/`** - All source code for the RF-DETR package
-  - Contains models, datasets, training logic, deployment utilities, and more
-  - Internal organization may change as the project evolves
+
+    - Contains models, datasets, training logic, deployment utilities, and more
+    - Internal organization may change as the project evolves
 
 - **`tests/`** - Comprehensive test suite
-  - Unit tests, integration tests, and end-to-end tests
-  - Use `@pytest.mark.gpu` for GPU-dependent tests
+
+    - Unit tests, integration tests, and end-to-end tests
+    - Use `@pytest.mark.gpu` for GPU-dependent tests
 
 - **`docs/`** - Documentation source files
-  - Written in Markdown, built with MkDocs
-  - Published to https://rfdetr.roboflow.com
+
+    - Written in Markdown, built with MkDocs
+    - Published to https://rfdetr.roboflow.com
 
 - **`.github/`** - GitHub-specific configuration
-  - CI/CD workflows define automated testing and deployment
-  - Contributing guidelines and issue templates
+
+    - CI/CD workflows define automated testing and deployment
+    - Contributing guidelines and issue templates
 
 **Important Configuration Files:**
 
 - **`pyproject.toml`** - Single source of truth for:
-  - Project metadata and dependencies
-  - Tool configurations (ruff, pytest, coverage, etc.)
-  - Build system configuration
+
+    - Project metadata and dependencies
+    - Tool configurations (ruff, pytest, coverage, etc.)
+    - Build system configuration
 
 - **`.pre-commit-config.yaml`** - Defines pre-commit hooks for code quality
 
@@ -99,6 +104,7 @@ rf-detr/
 
 > [!TIP]
 > When contributing, focus on the relevant directory for your change:
+>
 > - Bug fixes/features → `src/rfdetr/` and `tests/`
 > - Documentation → `docs/`
 > - CI/build issues → `.github/workflows/` or config files
@@ -144,6 +150,7 @@ uv run --no-sync pytest src/ tests/ -n 2 -m gpu
 ```
 
 **Development vs. PR Requirements:**
+
 - **During development:** Tests may fail as you work through TDD cycle (write failing test → implement → fix)
 - **Before opening PR:** Your final commit MUST have all tests passing
 - **Before each commit:** Run `pre-commit run --all-files` to ensure code quality
@@ -185,6 +192,7 @@ We follow test-driven development practices to ensure code quality and prevent r
 ```python
 import pytest
 
+
 class TestModelInference:
     def test_single_image_inference(self):
         # Test code
@@ -200,11 +208,15 @@ class TestModelInference:
 ```python
 import pytest
 
-@pytest.mark.parametrize("model_variant", [
-    pytest.param("nano", id="nano"),
-    pytest.param("small", id="small"),
-    pytest.param("medium", id="medium"),
-])
+
+@pytest.mark.parametrize(
+    "model_variant",
+    [
+        pytest.param("nano", id="nano"),
+        pytest.param("small", id="small"),
+        pytest.param("medium", id="medium"),
+    ],
+)
 def test_model_loading(model_variant):
     # Test code that runs for each model variant
     pass
@@ -214,6 +226,7 @@ def test_model_loading(model_variant):
 
 ```python
 import pytest
+
 
 @pytest.mark.gpu  # Use this marker for GPU-dependent or heavy tests (e.g., training)
 def test_model_training():
@@ -229,6 +242,7 @@ Tests marked with `@pytest.mark.gpu` are excluded from CPU CI workflows and run 
 > **CI Workflows (Source of Truth):** See `.github/workflows/ci-tests-cpu.yml` and `.github/workflows/ci-tests-gpu.yml` for exact commands.
 
 Our continuous integration tests run on:
+
 - **Operating Systems:** Ubuntu, Windows, macOS
 - **Python Versions:** 3.10, 3.11, 3.12, 3.13
 - **CPU Workflow:** `pytest -m "not gpu"` - Runs on all OS/Python combinations
@@ -325,9 +339,9 @@ Bug reports are vital for continued improvement. When reporting an issue, please
 1. **Open an issue** describing the proposed model and approach
 2. **Wait for maintainer feedback** on architecture and integration approach
 3. **Follow test-driven development:**
-   - Write comprehensive tests for the new model
-   - Implement the model following approved approach
-   - Ensure all tests pass
+    - Write comprehensive tests for the new model
+    - Implement the model following approved approach
+    - Ensure all tests pass
 4. **Add documentation** as directed by maintainers
 5. **Submit PR** with reference to the discussion issue
 

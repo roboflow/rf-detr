@@ -12,6 +12,7 @@ RF-DETR is a real-time transformer architecture for object detection and instanc
 **License:** Apache 2.0 (Plus models under PML 1.0)
 
 > [!TIP]
+>
 > - **Configuration:** See `pyproject.toml` for dependencies, build settings, and tool configurations.
 > - **Contributing:** See `.github/CONTRIBUTING.md` for contribution guidelines, CLA, and coding standards.
 
@@ -49,6 +50,7 @@ pre-commit run --all-files
 > Internal package organization (`src/rfdetr/`) is subject to change as this is an active research project. Explore the codebase to understand current module organization.
 
 **Imports:**
+
 - Always use direct imports: `from rfdetr.util.misc import get_rank, is_main_process`
 - Logger: `from rfdetr.util.logger import get_logger` (reads `LOG_LEVEL` env var)
 - TQDM: `from tqdm.auto import tqdm` (NOT `from tqdm import tqdm`)
@@ -58,12 +60,14 @@ pre-commit run --all-files
 **Test-Driven Development:** Follow TDD practices - write tests first for bugs, comprehensive tests for features. See **[Test-Driven Development](CONTRIBUTING.md#test-driven-development)** in CONTRIBUTING.md for detailed guidelines.
 
 **Quick reference:**
+
 - Bug fixes: Write failing test → Fix → Verify all pass
 - Features: Write comprehensive tests → Implement → Refactor
 - Use test classes and `@pytest.mark.parametrize` for organization
 - Mark GPU/heavy tests with `@pytest.mark.gpu`
 
 **Testing Requirements:**
+
 - ⚠️ During development: Tests may fail (TDD cycle is fine)
 - ✅ Before PR: Final commit MUST have all tests passing
 - ✅ Before commit: Run `pre-commit run --all-files`
@@ -118,10 +122,12 @@ Before submitting changes:
 ## Maintaining Agentic Documentation
 
 **If your contribution:**
+
 - Changes project structure or introduces new patterns
 - Receives major feedback in PR review about conventions/patterns
 
 **Then update the relevant documents:**
+
 - This file (copilot-instructions.md) for high-level guidance
 - AGENTS.md for detailed technical patterns
 - CONTRIBUTING.md if it affects human contribution workflow
