@@ -5,6 +5,7 @@
 RF-DETR is a real-time transformer architecture for object detection and instance segmentation developed by Roboflow. It's built on a DINOv2 vision transformer backbone and delivers state-of-the-art accuracy and latency trade-offs on Microsoft COCO and RF100-VL datasets.
 
 **Key Characteristics:**
+
 - **Type:** Python library for computer vision (PyTorch-based)
 - **Size:** ~1.6MB (excluding dependencies)
 - **Primary Language:** Python (requires >=3.10)
@@ -21,6 +22,7 @@ RF-DETR is a real-time transformer architecture for object detection and instanc
 **Required:** Python >=3.10. The project uses `uv` (the Python package installer) for dependency management.
 
 **Install uv (if not already installed):**
+
 ```bash
 pip install uv
 ```
@@ -28,6 +30,7 @@ pip install uv
 ### Bootstrap and Installation
 
 **From source (development):**
+
 ```bash
 # Clone and install dependencies
 uv sync --group tests
@@ -59,12 +62,14 @@ uv run twine check --strict dist/*
 ### Testing
 
 **Run CPU tests (default):**
+
 ```bash
 # Run tests excluding GPU-dependent tests
 uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --cov=rfdetr --cov-report=xml
 ```
 
 **Run GPU tests:**
+
 ```bash
 uv run --no-sync pytest src/ tests/ -n 2 -m gpu
 ```
@@ -72,6 +77,7 @@ uv run --no-sync pytest src/ tests/ -n 2 -m gpu
 **Expected time:** ~1-2 minutes for CPU tests
 
 **Test markers:**
+
 - `gpu`: Tests that require GPU or are slow on CPU
 - Use `-n 2` for parallel execution with pytest-xdist
 
@@ -80,6 +86,7 @@ uv run --no-sync pytest src/ tests/ -n 2 -m gpu
 ### Linting and Code Quality
 
 **Pre-commit hooks:**
+
 ```bash
 # Install pre-commit hooks
 pip install pre-commit
@@ -90,6 +97,7 @@ pre-commit run --all-files
 ```
 
 **Key linters and formatters:**
+
 - **ruff**: Python linting (select: E, W, F, I; see pyproject.toml for ignored rules)
 - **mdformat**: Markdown formatting
 - **prettier**: YAML/TOML formatting
@@ -97,6 +105,7 @@ pre-commit run --all-files
 - **license header check**: All Python files must start with Apache 2.0 license header
 
 **Run ruff manually:**
+
 ```bash
 ruff check --fix .
 ```
@@ -106,6 +115,7 @@ ruff check --fix .
 ### Documentation
 
 **Build documentation locally:**
+
 ```bash
 # Install docs dependencies
 uv sync --group docs
@@ -120,6 +130,7 @@ mkdocs build
 **Expected time:** ~5-10 seconds to build
 
 **Documentation structure:**
+
 - `docs/`: Documentation source (Markdown)
 - `mkdocs.yaml`: MkDocs configuration (uses custom YAML tags, excluded from check-yaml hook)
 - Documentation is built with mkdocs-material and published via GitHub Actions
@@ -157,23 +168,28 @@ mkdocs build
 ### Key Source Files
 
 **Main Entry Points:**
+
 - `src/rfdetr/main.py`: Core training and evaluation logic, CLI entry point
 - `src/rfdetr/detr.py`: Model wrappers (RFDETR wrappers set `self.model` to a `rfdetr.main.Model` instance; the underlying torch module is `self.model.model`)
 - `src/rfdetr/__init__.py`: Exports main classes (RFDETRNano, RFDETRSmall, etc.)
 
 **Configuration:**
+
 - `src/rfdetr/config.py`: Configuration dataclasses (TrainConfig with run_test: bool = True)
 
 **Models:**
+
 - `src/rfdetr/models/`: Model architectures
-  - `backbone/`: DINOv2 backbone implementations
-  - `lwdetr.py`: LW-DETR transformer architecture
-  - `segmentation_head.py`: Instance segmentation head
+    - `backbone/`: DINOv2 backbone implementations
+    - `lwdetr.py`: LW-DETR transformer architecture
+    - `segmentation_head.py`: Instance segmentation head
 
 **Platform Integration:**
+
 - `src/rfdetr/platform/models.py`: Plus-only models (RFDETRXLarge/RFDETR2XLarge) are imported from rfdetr_plus; missing package is handled by catching ModuleNotFoundError for rfdetr_plus and raising ImportError on access via `__getattr__`
 
 **Utilities:**
+
 - `src/rfdetr/util/misc.py`: Distributed training helpers (`import rfdetr.util.misc as utils` and call functions with `utils.` prefix: get_rank(), get_world_size(), is_main_process(), save_on_master()). The get_sha() function returns a formatted string or "unknown", not a dict.
 - `src/rfdetr/util/logger.py`: Logger configuration (`rfdetr.util.logger.get_logger()` with default name "rf-detr", reads LOG_LEVEL env var)
 
@@ -189,30 +205,37 @@ mkdocs build
 ### GitHub Actions Workflows
 
 **Main CI Workflows:**
+
 1. **ci-tests-cpu.yml**: Runs CPU tests on Ubuntu, Windows, macOS with Python 3.10-3.13
-   - Command: `uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --cov=rfdetr --cov-report=xml`
-   - Timeout: 10 minutes
-   - Uploads coverage to Codecov
+
+    - Command: `uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --cov=rfdetr --cov-report=xml`
+    - Timeout: 10 minutes
+    - Uploads coverage to Codecov
 
 2. **ci-tests-gpu.yml**: Runs GPU tests
-   - Command: `pytest -m gpu`
-   - Timeout: 30 minutes
+
+    - Command: `pytest -m gpu`
+    - Timeout: 30 minutes
 
 3. **build-package.yml**: Builds source and wheel distributions
-   - Commands: `uv pip install -r pyproject.toml --group build`, `uv build`, `uv run twine check --strict dist/*`
+
+    - Commands: `uv pip install -r pyproject.toml --group build`, `uv build`, `uv run twine check --strict dist/*`
 
 4. **ci-build-docs.yml**: Builds documentation
-   - Command: `mkdocs build`
+
+    - Command: `mkdocs build`
 
 5. **publish-docs.yml**: Publishes documentation to GitHub Pages
 
 **On Push/PR:**
+
 - Tests run on both `main` and `develop` branches
 - Concurrency: `group: pytest-test-${{ github.ref }}`, cancels in-progress for PRs
 
 ### Pre-commit Hooks
 
 Automatically run on commit (when installed with `pre-commit install`):
+
 - trailing-whitespace, end-of-file-fixer, mixed-line-ending
 - check-yaml (excludes mkdocs.yaml), check-toml, check-case-conflict
 - check-executables-have-shebangs, detect-private-key
@@ -222,6 +245,7 @@ Automatically run on commit (when installed with `pre-commit install`):
 - insert-license for Python files (Apache 2.0 header)
 
 **All Python files must start with:**
+
 ```python
 # ------------------------------------------------------------------------
 # RF-DETR
@@ -235,15 +259,18 @@ Automatically run on commit (when installed with `pre-commit install`):
 ### Python Style
 
 **Type Hints:**
+
 - **MANDATORY** for all function definitions (parameters and return types)
 - Use `Optional[type]` instead of `type | None` for compatibility (or add `from __future__ import annotations`)
 - Project requires Python >=3.10 (target-version py310)
 
 **Docstrings:**
+
 - **MANDATORY** Google-style docstrings for all new functions and classes
 - Must include: brief description, Args, Returns, Examples (when applicable)
 
 **Example:**
+
 ```python
 def sample_function(param1: int, param2: int = 10) -> bool:
     """
@@ -266,28 +293,36 @@ def sample_function(param1: int, param2: int = 10) -> bool:
 ### Import Conventions
 
 **Standard patterns:**
+
 - `from tqdm.auto import tqdm` (not `from tqdm import tqdm`) for broader environment compatibility
 - `import rfdetr.util.misc as utils` and call functions as `utils.get_rank()`, `utils.is_main_process()`, etc.
 
 **Subprocess usage:**
+
 - When using `subprocess.run` with `text=True`, stderr is already a string and should not be decoded
 - Use `check=True` to raise CalledProcessError on failure
 
 ### Testing Conventions
 
 **Parameterized tests:**
+
 - Use `pytest.mark.parametrize` with `pytest.param(..., id="name")` for parameterized benchmark tests across model variants
 
 **Test markers:**
+
 - `@pytest.mark.gpu`: For tests that require GPU or are slow on CPU
 - CI splits pytest runs: CPU workflow runs `pytest -m "not gpu"`, GPU workflow runs `pytest -m gpu`
 
 **Example:**
+
 ```python
-@pytest.mark.parametrize("model_name", [
-    pytest.param("nano", id="nano"),
-    pytest.param("small", id="small"),
-])
+@pytest.mark.parametrize(
+    "model_name",
+    [
+        pytest.param("nano", id="nano"),
+        pytest.param("small", id="small"),
+    ],
+)
 def test_model_inference(model_name):
     # Test code
     pass
@@ -296,14 +331,17 @@ def test_model_inference(model_name):
 ### Model Architecture Conventions
 
 **Segmentation models:**
+
 - Return pred_masks as either a torch.Tensor or dict with keys 'spatial_features', 'query_features', 'bias'
 
 **Logging:**
+
 - Use `logger.debug()` for detailed shape/tensor information during export and inference (not `logger.info()`)
 
 ### File Operations
 
 **Checkpoint handling:**
+
 - Always check if checkpoint files exist before attempting file operations to prevent errors when training is interrupted or weights are not saved
 
 ## Dependencies and Requirements
@@ -311,9 +349,10 @@ def test_model_inference(model_name):
 ### Core Dependencies
 
 **Required (from pyproject.toml):**
-- torch>=1.13.0,<=2.8.0 (Note: Torch >=2.9.0 is excluded due to known issues)
+
+- torch>=1.13.0,\<=2.8.0 (Note: Torch >=2.9.0 is excluded due to known issues)
 - torchvision>=0.14.0
-- transformers>4.0.0, <5.0.0
+- transformers>4.0.0, \<5.0.0
 - pycocotools
 - scipy
 - tqdm
@@ -326,11 +365,13 @@ def test_model_inference(model_name):
 - rf100vl
 
 **Optional Dependencies:**
+
 - `[plus]`: rfdetr_plus>=1.0.0 (for XLarge and 2XLarge models, PML 1.0 license)
 - `[onnxexport]`: onnx, onnxsim, onnx_graphsurgeon, onnxruntime, polygraphy
 - `[metrics]`: tensorboard, wandb
 
 **Development Dependencies:**
+
 - `tests`: pytest, pytest-cov, pytest-xdist
 - `docs`: mkdocs-material, mkdocstrings, mkdocstrings-python, mike, mkdocs-jupyter
 - `build`: twine, wheel, build
@@ -340,23 +381,27 @@ def test_model_inference(model_name):
 ### Making Code Changes
 
 1. **Before making changes:**
-   - Run existing tests: `uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu"`
-   - Understand any existing failures (unrelated issues are not your responsibility)
+
+    - Run existing tests: `uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu"`
+    - Understand any existing failures (unrelated issues are not your responsibility)
 
 2. **During development:**
-   - Make minimal, surgical changes
-   - Follow coding standards (type hints, docstrings, license headers)
-   - Use existing libraries and patterns
+
+    - Make minimal, surgical changes
+    - Follow coding standards (type hints, docstrings, license headers)
+    - Use existing libraries and patterns
 
 3. **After making changes:**
-   - Run tests: `uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu"`
-   - Run linters: `pre-commit run --all-files` or `ruff check --fix .`
-   - Build if needed: `uv build`
+
+    - Run tests: `uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu"`
+    - Run linters: `pre-commit run --all-files` or `ruff check --fix .`
+    - Build if needed: `uv build`
 
 4. **Before committing:**
-   - Ensure all tests pass
-   - Ensure pre-commit hooks pass
-   - Review changes for minimal scope
+
+    - Ensure all tests pass
+    - Ensure pre-commit hooks pass
+    - Review changes for minimal scope
 
 ### Adding New Models
 
@@ -407,11 +452,13 @@ Before submitting changes:
 ## Instructions for Copilot
 
 **Trust these instructions.** Only search for additional information if:
+
 - The instructions are incomplete for your specific task
 - You find information in the instructions is incorrect or outdated
 - You need specific implementation details not covered here
 
 **When in doubt:**
+
 - Refer to existing code patterns in the repository
 - Check `.github/CONTRIBUTING.md` for contribution guidelines
 - Look at test files for examples of testing patterns
