@@ -401,170 +401,27 @@ Access your experiments in the ClearML Web UI. ClearML provides:
 
 ---
 
-## Custom Augmentations with Albumentations
+## Custom Augmentations
 
-RF-DETR supports custom data augmentations using the [Albumentations](https://albumentations.ai/) library, providing access to over 70 different image transformations optimized for object detection tasks.
+RF-DETR supports advanced data augmentations using the [Albumentations](https://albumentations.ai/) library, providing access to over 70 different image transformations optimized for object detection.
 
-### Why Albumentations?
+### Quick Start
 
-- **Bounding Box Support:** All geometric transforms automatically update bounding box coordinates
-- **Performance:** Highly optimized, faster than torchvision transforms
-- **Flexibility:** Mix and match over 70 different augmentations
-- **Battle-Tested:** Used in winning solutions of many Kaggle competitions
-
-### Setup
-
-Albumentations is installed automatically with RF-DETR:
-
-```bash
-pip install rfdetr
-```
-
-### Basic Usage
-
-Augmentations are configured via the `AUG_CONFIG` dictionary in `src/rfdetr/augmentation_config.py`:
-
-```python
-AUG_CONFIG = {
-    "HorizontalFlip": {"p": 0.5},
-    "VerticalFlip": {"p": 0.5},
-    "Rotate": {"limit": (90, 90), "p": 0.5},
-}
-```
-
-Simply enable the augmentations you want by uncommenting them or adding new ones. The probability `p` controls how often each transform is applied.
-
-### Available Augmentations
-
-**Geometric Transforms** (automatically update bounding boxes):
-
-- `HorizontalFlip` - Flip image horizontally
-- `VerticalFlip` - Flip image vertically
-- `Rotate` - Rotate image by random angle
-- `Affine` - Apply affine transformations (scale, translate, rotate, shear)
-- `RandomCrop` - Crop random region
-- `ShiftScaleRotate` - Combination of shifting, scaling, and rotating
-
-**Pixel-Level Transforms** (preserve bounding boxes):
-
-- `ColorJitter` - Randomly change brightness, contrast, saturation
-- `GaussianBlur` - Apply Gaussian blur
-- `GaussNoise` - Add Gaussian noise
-- `CLAHE` - Contrast Limited Adaptive Histogram Equalization
-- `RandomBrightnessContrast` - Adjust brightness and contrast
-
-### Configuration Examples
-
-**Conservative augmentations (recommended for small datasets):**
-
-```python
-AUG_CONFIG = {
-    "HorizontalFlip": {"p": 0.5},
-    "RandomBrightnessContrast": {"brightness_limit": 0.1, "contrast_limit": 0.1, "p": 0.3},
-}
-```
-
-**Aggressive augmentations (for larger datasets):**
+Augmentations are configured in `src/rfdetr/augmentation_config.py`:
 
 ```python
 AUG_CONFIG = {
     "HorizontalFlip": {"p": 0.5},
     "VerticalFlip": {"p": 0.5},
     "Rotate": {"limit": 45, "p": 0.5},
-    "Affine": {"scale": (0.8, 1.2), "translate_percent": (0.1, 0.1), "rotate": (-15, 15), "shear": (-5, 5), "p": 0.5},
-    "ColorJitter": {"brightness": 0.2, "contrast": 0.2, "saturation": 0.2, "hue": 0.1, "p": 0.5},
 }
 ```
 
-**Aerial imagery / satellite datasets:**
+No code changes needed - just edit the config file and augmentations are automatically applied during training.
 
-```python
-AUG_CONFIG = {
-    "HorizontalFlip": {"p": 0.5},
-    "VerticalFlip": {"p": 0.5},  # Important for overhead views
-    "Rotate": {"limit": (90, 90), "p": 0.5},  # 90° rotations common
-    "RandomBrightnessContrast": {"brightness_limit": 0.15, "contrast_limit": 0.15, "p": 0.4},
-}
-```
+### Learn More
 
-### How It Works
-
-Augmentations are automatically applied during training:
-
-1. The `AUG_CONFIG` is read when building the dataset
-2. Transforms are composed into a pipeline
-3. Each training sample is augmented on-the-fly
-4. Bounding boxes are automatically transformed for geometric augmentations
-
-No code changes needed in your training script - just modify `augmentation_config.py`.
-
-### Programmatic Configuration
-
-You can also build augmentations programmatically:
-
-```python
-from rfdetr.datasets.transforms import build_albumentations_from_config, ComposeAugmentations
-
-# Custom config
-custom_config = {
-    "HorizontalFlip": {"p": 0.7},
-    "Blur": {"blur_limit": 3, "p": 0.2},
-}
-
-# Build and compose transforms
-transforms = build_albumentations_from_config(custom_config)
-augmentation_pipeline = ComposeAugmentations(transforms)
-
-# Apply to image and target
-augmented_image, augmented_target = augmentation_pipeline(image, target)
-```
-
-### Best Practices
-
-> [!TIP]
-> **Start Conservative:** Begin with simple augmentations (horizontal flip, small brightness changes) and gradually add more as needed.
-
-> [!WARNING]
-> **Geometric Transforms:** Be careful with aggressive rotations and crops on datasets where object orientation matters (e.g., text detection, oriented objects).
-
-**Recommendations by dataset size:**
-
-| Dataset Size | Recommended Augmentations                                        |
-| ------------ | ---------------------------------------------------------------- |
-| < 500 images | Horizontal flip, small brightness/contrast adjustments           |
-| 500-2000     | Add vertical flip (if applicable), color jitter, blur            |
-| 2000+        | Add rotations, affine transforms, aggressive color augmentations |
-
-**Performance Tips:**
-
-- Augmentations run on CPU during data loading
-- More augmentations = slower data loading (but better model)
-- Use `num_workers` in data loader to parallelize augmentations
-- Monitor GPU utilization - if it's not saturated, you can add more augmentations
-
-### Troubleshooting
-
-**Problem:** Training is very slow
-
-- Reduce number of augmentations
-- Reduce augmentation complexity (e.g., smaller rotation angles)
-- Increase `num_workers` in data loader
-
-**Problem:** Validation mAP is much higher than training mAP
-
-- This is expected with strong augmentations
-- Validation uses original images without augmentation
-- Training mAP is artificially lower due to augmented data
-
-**Problem:** Some boxes disappear after augmentation
-
-- This is normal for aggressive transforms (e.g., large rotations, crops)
-- Albumentations removes boxes that fall outside image boundaries
-- Reduce `min_visibility` in `AlbumentationsWrapper` if needed (advanced)
-
-### Reference
-
-For complete list of available transforms and parameters, see the [Albumentations documentation](https://albumentations.ai/docs/api_reference/augmentations/).
+→ **[Complete Augmentation Guide](augmentations.md)** - Configuration examples, best practices, troubleshooting, and advanced topics.
 
 ---
 
