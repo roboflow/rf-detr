@@ -212,20 +212,20 @@ mkdocs build
     - Timeout: 10 minutes
     - Uploads coverage to Codecov
 
-1. **ci-tests-gpu.yml**: Runs GPU tests
+2. **ci-tests-gpu.yml**: Runs GPU tests
 
     - Command: `pytest -m gpu`
     - Timeout: 30 minutes
 
-1. **build-package.yml**: Builds source and wheel distributions
+3. **build-package.yml**: Builds source and wheel distributions
 
     - Commands: `uv pip install -r pyproject.toml --group build`, `uv build`, `uv run twine check --strict dist/*`
 
-1. **ci-build-docs.yml**: Builds documentation
+4. **ci-build-docs.yml**: Builds documentation
 
     - Command: `mkdocs build`
 
-1. **publish-docs.yml**: Publishes documentation to GitHub Pages
+5. **publish-docs.yml**: Publishes documentation to GitHub Pages
 
 **On Push/PR:**
 
@@ -385,19 +385,19 @@ def test_model_inference(model_name):
     - Run existing tests: `uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu"`
     - Understand any existing failures (unrelated issues are not your responsibility)
 
-1. **During development:**
+2. **During development:**
 
     - Make minimal, surgical changes
     - Follow coding standards (type hints, docstrings, license headers)
     - Use existing libraries and patterns
 
-1. **After making changes:**
+3. **After making changes:**
 
     - Run tests: `uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu"`
     - Run linters: `pre-commit run --all-files` or `ruff check --fix .`
     - Build if needed: `uv build`
 
-1. **Before committing:**
+4. **Before committing:**
 
     - Ensure all tests pass
     - Ensure pre-commit hooks pass
@@ -416,29 +416,29 @@ See `.github/CONTRIBUTING.md` section "Adding a New Model" for detailed guidance
 ## Key Facts to Remember
 
 1. **Always use `uv` for package management**, not plain pip
-1. **Test with `uv run --no-sync pytest`** to avoid re-syncing dependencies
-1. **Use `-n 2` for parallel test execution** (pytest-xdist)
-1. **Mark GPU tests with `@pytest.mark.gpu`** to exclude from CPU CI
-1. **All Python files need Apache 2.0 license header** (enforced by pre-commit)
-1. **Type hints and Google-style docstrings are mandatory** for new code
-1. **Import tqdm from tqdm.auto**, not tqdm directly
-1. **Use `import rfdetr.util.misc as utils`** for distributed helpers
-1. **RFDETR wrappers set `self.model` to rfdetr.main.Model**; underlying torch module is `self.model.model`
-1. **mkdocs.yaml uses custom YAML tags** (!!python/name) and is excluded from check-yaml hook
-1. **Check checkpoint files exist** before file operations
-1. **Use `logger.debug()` for detailed tensor/shape info**, not logger.info()
+2. **Test with `uv run --no-sync pytest`** to avoid re-syncing dependencies
+3. **Use `-n 2` for parallel test execution** (pytest-xdist)
+4. **Mark GPU tests with `@pytest.mark.gpu`** to exclude from CPU CI
+5. **All Python files need Apache 2.0 license header** (enforced by pre-commit)
+6. **Type hints and Google-style docstrings are mandatory** for new code
+7. **Import tqdm from tqdm.auto**, not tqdm directly
+8. **Use `import rfdetr.util.misc as utils`** for distributed helpers
+9. **RFDETR wrappers set `self.model` to rfdetr.main.Model**; underlying torch module is `self.model.model`
+10. **mkdocs.yaml uses custom YAML tags** (!!python/name) and is excluded from check-yaml hook
+11. **Check checkpoint files exist** before file operations
+12. **Use `logger.debug()` for detailed tensor/shape info**, not logger.info()
 
 ## Validation Steps
 
 Before submitting changes:
 
 1. ✅ Run tests: `uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu"`
-1. ✅ Run linters: `pre-commit run --all-files`
-1. ✅ Build package (if source changes): `uv build`
-1. ✅ Build docs (if doc changes): `mkdocs build`
-1. ✅ Review changes for minimal scope and correctness
-1. ✅ Ensure all new functions have type hints and docstrings
-1. ✅ Ensure license headers are present in all Python files
+2. ✅ Run linters: `pre-commit run --all-files`
+3. ✅ Build package (if source changes): `uv build`
+4. ✅ Build docs (if doc changes): `mkdocs build`
+5. ✅ Review changes for minimal scope and correctness
+6. ✅ Ensure all new functions have type hints and docstrings
+7. ✅ Ensure license headers are present in all Python files
 
 ## Additional Resources
 
