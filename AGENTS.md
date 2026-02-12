@@ -11,37 +11,49 @@ This document supplements the contribution guidelines with detailed technical in
 
 ## Agent Responsibilities
 
-**Maintaining Agentic Documentation:**
+As an AI agent contributing to RF-DETR, you are responsible for:
 
-When contributing as an AI agent, if your contribution:
-- **Changes project structure or architecture patterns**
-- **Introduces new conventions or patterns**
-- **Receives major feedback from maintainers in PR review** about structure, patterns, or conventions
+1. **Following test-driven development practices**
+   - Write failing tests first for bug fixes
+   - Write comprehensive tests for new features
+   - Ensure final PR commit has all tests passing
 
-**You should update the relevant agentic documents:**
-- Update `AGENTS.md` for detailed technical patterns and architecture changes
-- Update `.github/copilot-instructions.md` for high-level guidance changes
-- Update `.github/CONTRIBUTING.md` if the change affects human contribution workflow
+2. **Adhering to code quality standards**
+   - Run `pre-commit run --all-files` before every commit
+   - Follow type hint and docstring requirements
+   - Use direct imports (not `import ... as` pattern)
 
-**Rationale:** These documents guide future agent contributions. Keeping them current ensures consistency and reduces repeated feedback on the same issues.
+3. **Maintaining agentic documentation**
+   - Update `AGENTS.md` when architecture patterns or technical conventions change
+   - Update `.github/copilot-instructions.md` when high-level guidance changes
+   - Update `.github/CONTRIBUTING.md` when human workflow is affected
+   - Apply updates after receiving major feedback in PR reviews
+
+4. **Consulting maintainers before major changes**
+   - Open an issue before adding new models or significant features
+   - Wait for approval on approach before implementing
+
+5. **Writing secure, minimal code**
+   - Avoid over-engineering and unnecessary abstractions
+   - Write secure code (prevent injection vulnerabilities)
+   - Follow existing patterns in the codebase
+
+> [!NOTE]
+> Keeping documentation current ensures consistency across agent contributions and reduces repeated feedback on the same issues.
 
 ## Build & Development Environment
 
+> [!NOTE]
 > **Canonical Reference:** See [Development Environment Setup](.github/CONTRIBUTING.md#development-environment-setup) in CONTRIBUTING.md for complete setup instructions.
 
-### Quick Setup
+### Setup
 
 ```bash
-# Install uv
+# Install uv (if not already installed)
 pip install uv
 
-# Full development environment
+# Full development environment (always use this)
 uv sync --all-groups
-
-# Specific dependency groups
-uv sync --group tests      # Testing only
-uv sync --group docs       # Documentation only
-uv sync --group build      # Build tools only
 ```
 
 **Prerequisites:** Python >=3.10 (tested on 3.10-3.13)
@@ -60,11 +72,12 @@ See `pyproject.toml` for complete dependency specifications:
 
 ## Testing
 
+> [!NOTE]
 > **Canonical Reference:** See [Test-Driven Development](.github/CONTRIBUTING.md#test-driven-development) in CONTRIBUTING.md for complete guidelines.
 >
 > **CI Workflows (Source of Truth):** See `.github/workflows/ci-tests-cpu.yml` and `.github/workflows/ci-tests-gpu.yml` for exact test commands used in CI.
 
-### Quick Commands
+### Commands
 
 ```bash
 # CPU tests (default for local development) - matches CI
@@ -73,48 +86,44 @@ uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --cov=rfdetr --cov-report=
 # GPU tests (requires GPU)
 uv run --no-sync pytest src/ tests/ -n 2 -m gpu
 
-# Specific test file or test
-uv run --no-sync pytest tests/test_model.py::test_specific_function
-
 # Pre-commit checks (ALWAYS run before committing)
 pre-commit run --all-files
 ```
 
-### Key Testing Principles
+### Testing Principles
+
+> [!IMPORTANT]
+> **Testing Requirements:**
+> - ⚠️ **During development:** Tests may fail as you work through TDD cycle
+> - ✅ **Before opening PR:** Final commit MUST have all tests passing
+> - ✅ **Before each commit:** Run `pre-commit run --all-files`
 
 **Test-Driven Development:**
-1. **Bug fixes:** Write failing test → (optional: commit with "WIP") → Fix code → Verify all tests pass → Commit fix
+1. **Bug fixes:** Write failing test → Fix code → Verify all tests pass
 2. **New features:** Write comprehensive tests → Implement feature → Refactor
-
-**Testing Requirements:**
-- ⚠️ **During development:** Tests may fail as you work through TDD cycle
-- ✅ **Before opening PR:** Final commit MUST have all tests passing
-- ✅ **Before each commit:** Run `pre-commit run --all-files`
 
 **Test Organization:**
 - Group related tests in classes
 - Use `@pytest.mark.parametrize` with `pytest.param(..., id="name")`
 - Mark GPU/heavy tests with `@pytest.mark.gpu`
 
-**CI Testing:**
-- Runs on Ubuntu, Windows, macOS with Python 3.10-3.13
-- CPU workflow: `pytest -m "not gpu"`
-- GPU workflow: `pytest -m gpu`
+**CI Information:**
+See [CI Testing](.github/CONTRIBUTING.md#ci-testing) in CONTRIBUTING.md for details on OS/Python version matrix and workflow configurations.
 
 ## Code Quality & Linting
 
+> [!NOTE]
 > **Canonical Reference:** See [Code Quality and Linting](.github/CONTRIBUTING.md#code-quality-and-linting) in CONTRIBUTING.md for setup and details.
 
-### Quick Commands
+### Command
 
 ```bash
-# Run all pre-commit hooks
+# Always run full pre-commit (not individual tools)
 pre-commit run --all-files
-
-# Run ruff only
-ruff check --fix .
-ruff format .
 ```
+
+> [!TIP]
+> Pre-commit hooks will auto-format many issues. Review changes and re-stage files.
 
 **Configuration Files:**
 - `.pre-commit-config.yaml` - Pre-commit hooks (ruff, mdformat, prettier, codespell, license headers)
@@ -169,30 +178,16 @@ uv run twine check --strict dist/*
 - Source distribution: `dist/rfdetr-*.tar.gz`
 - Wheel: `dist/rfdetr-*.whl`
 
+## Project Structure
+
+> [!NOTE]
+> **Canonical Reference:** See [Project Structure](.github/CONTRIBUTING.md#project-structure) in CONTRIBUTING.md for complete project organization, directory descriptions, and configuration files.
+>
+> **Quick summary:** `src/rfdetr/` (source code), `tests/` (test suite), `docs/` (documentation), `.github/` (CI/CD), `pyproject.toml` (dependencies and config).
+>
+> Internal package organization within `src/rfdetr/` is subject to change as this is an active research and development project.
+
 ## Architecture & Conventions
-
-### Code Organization
-
-```
-src/rfdetr/
-├── main.py              # Core training/eval logic, CLI entry
-├── detr.py              # Model wrappers (RFDETR classes)
-├── config.py            # Configuration dataclasses
-├── engine.py            # Training engine functions
-├── cli/                 # Command-line interface
-├── datasets/            # Dataset implementations (COCO, custom)
-├── deploy/              # Export utilities (ONNX, TensorRT)
-├── models/
-│   ├── backbone/        # DINOv2 backbone implementations
-│   ├── lwdetr.py        # LW-DETR transformer
-│   └── segmentation_head.py  # Instance segmentation head
-├── platform/
-│   └── models.py        # Plus model integration (XLarge, 2XLarge)
-└── util/
-    ├── logger.py        # Logger configuration
-    ├── misc.py          # Distributed training utilities
-    └── coco_classes.py  # COCO dataset classes
-```
 
 ### Key Patterns
 
@@ -203,15 +198,11 @@ src/rfdetr/
 
 **Imports:**
 ```python
-# Distributed training utilities
-import rfdetr.util.misc as utils
-utils.get_rank()
-utils.get_world_size()
-utils.is_main_process()
-utils.save_on_master()
-
-# Logger
+# Always use direct imports (NOT import ... as pattern)
+from rfdetr.util.misc import get_rank, get_world_size, is_main_process, save_on_master
 from rfdetr.util.logger import get_logger
+
+# Logger usage
 logger = get_logger()  # Default name: "rf-detr", reads LOG_LEVEL env var
 
 # TQDM (environment compatibility)
@@ -246,11 +237,13 @@ result = subprocess.run(
 
 ### Type Hints & Docstrings
 
+> [!IMPORTANT]
 > **Canonical Reference:** See [Google-Style Docstrings and Mandatory Type Hints](.github/CONTRIBUTING.md#google-style-docstrings-and-mandatory-type-hints) in CONTRIBUTING.md for complete requirements and examples.
 
 **Requirements:**
 - MANDATORY type hints for all function parameters and return types
 - MANDATORY Google-style docstrings for all functions and classes
+- **Do not duplicate types in docstrings** - types are in the function signature
 - Target Python version: 3.10+
 
 ## Common Workflows
@@ -273,7 +266,10 @@ result = subprocess.run(
 
 ### Adding New Model Variants
 
+> [!IMPORTANT]
 > **Canonical Reference:** See [Adding a New Model](.github/CONTRIBUTING.md#adding-a-new-model) in CONTRIBUTING.md for detailed guidance.
+>
+> Always consult maintainers before implementing new models.
 
 ### Security Considerations
 

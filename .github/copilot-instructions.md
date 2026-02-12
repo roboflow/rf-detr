@@ -1,6 +1,7 @@
 # RF-DETR Copilot Instructions
 
-> **Note:** This document is GitHub Copilot-specific guidance. For canonical contribution guidelines (test-driven development, code quality, docstrings, etc.), see [CONTRIBUTING.md](CONTRIBUTING.md). For detailed agent-specific context, see [AGENTS.md](../AGENTS.md).
+> [!NOTE]
+> This document is GitHub Copilot-specific guidance. For canonical contribution guidelines (test-driven development, code quality, docstrings, etc.), see [CONTRIBUTING.md](CONTRIBUTING.md). For detailed agent-specific context, see [AGENTS.md](../AGENTS.md).
 
 ## Repository Overview
 
@@ -10,8 +11,9 @@ RF-DETR is a real-time transformer architecture for object detection and instanc
 **Python:** >=3.10 (3.10, 3.11, 3.12, 3.13)
 **License:** Apache 2.0 (Plus models under PML 1.0)
 
-> **Configuration:** See `pyproject.toml` for dependencies, build settings, and tool configurations.
-> **Contributing:** See `.github/CONTRIBUTING.md` for contribution guidelines, CLA, and coding standards.
+> [!TIP]
+> - **Configuration:** See `pyproject.toml` for dependencies, build settings, and tool configurations.
+> - **Contributing:** See `.github/CONTRIBUTING.md` for contribution guidelines, CLA, and coding standards.
 
 ## Quick Start
 
@@ -28,7 +30,8 @@ uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --cov=rfdetr --cov-report=
 uv build
 ```
 
-**IMPORTANT:** Run `uv sync` after pulling changes to update dependencies.
+> [!IMPORTANT]
+> Run `uv sync` after pulling changes to update dependencies.
 
 ## Code Quality
 
@@ -40,27 +43,15 @@ pre-commit run --all-files
 
 > **Configuration:** `.pre-commit-config.yaml` (hooks) and `[tool.ruff]` in `pyproject.toml` (Python linting)
 
-## Project Structure
+## Key Conventions
 
-```
-src/rfdetr/
-├── main.py           # Core training/evaluation logic, CLI entry point
-├── detr.py           # Model wrappers (RFDETR wrappers)
-├── config.py         # Configuration dataclasses (TrainConfig)
-├── cli/              # Command-line interface
-├── datasets/         # Dataset implementations
-├── deploy/           # Export utilities (ONNX, TensorRT)
-├── models/           # Model architectures (backbone, transformer, heads)
-├── platform/         # Platform integration (Roboflow API, Plus models)
-└── util/             # Utilities (logger, distributed training)
-```
+> [!NOTE]
+> Internal package organization (`src/rfdetr/`) is subject to change as this is an active research project. Explore the codebase to understand current module organization.
 
-**Key Conventions:**
-
-- RFDETR wrappers: `self.model` → `rfdetr.main.Model` instance, `self.model.model` → underlying torch module
-- Distributed utils: `import rfdetr.util.misc as utils`, call as `utils.get_rank()`, `utils.is_main_process()`
-- Logger: `rfdetr.util.logger.get_logger()` (reads `LOG_LEVEL` env var)
-- Plus models (XLarge/2XLarge): Imported from `rfdetr_plus` with lazy error handling via `__getattr__`
+**Imports:**
+- Always use direct imports: `from rfdetr.util.misc import get_rank, is_main_process`
+- Logger: `from rfdetr.util.logger import get_logger` (reads `LOG_LEVEL` env var)
+- TQDM: `from tqdm.auto import tqdm` (NOT `from tqdm import tqdm`)
 
 ## Testing & Development Workflow
 
@@ -86,9 +77,9 @@ src/rfdetr/
 **Import Conventions:**
 
 ```python
-# Distributed training utilities
-import rfdetr.util.misc as utils
-utils.get_rank(), utils.is_main_process()
+# Always use direct imports (NOT import ... as pattern)
+from rfdetr.util.misc import get_rank, is_main_process, save_on_master
+from rfdetr.util.logger import get_logger
 
 # TQDM (for environment compatibility)
 from tqdm.auto import tqdm  # NOT from tqdm import tqdm

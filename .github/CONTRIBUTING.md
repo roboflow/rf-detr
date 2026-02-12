@@ -5,14 +5,15 @@ Thank you for helping to advance RF-DETR! Your participation is invaluable in ev
 ## Table of Contents
 
 1. [How to Contribute](#how-to-contribute)
-2. [Development Environment Setup](#development-environment-setup)
-3. [Test-Driven Development](#test-driven-development)
-4. [Code Quality and Linting](#code-quality-and-linting)
-5. [CLA Signing](#cla-signing)
-6. [Google-Style Docstrings and Mandatory Type Hints](#google-style-docstrings-and-mandatory-type-hints)
-7. [Reporting Bugs](#reporting-bugs)
-8. [Adding a New Model](#adding-a-new-model)
-9. [License](#license)
+2. [Project Structure](#project-structure)
+3. [Development Environment Setup](#development-environment-setup)
+4. [Test-Driven Development](#test-driven-development)
+5. [Code Quality and Linting](#code-quality-and-linting)
+6. [CLA Signing](#cla-signing)
+7. [Google-Style Docstrings and Mandatory Type Hints](#google-style-docstrings-and-mandatory-type-hints)
+8. [Reporting Bugs](#reporting-bugs)
+9. [Adding a New Model](#adding-a-new-model)
+10. [License](#license)
 
 ## How to Contribute
 
@@ -20,10 +21,14 @@ Your contributions can be in many forms—whether it’s enhancing existing feat
 
 1. [Fork the Repository](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/working-with-forks/fork-a-repo): Click the “Fork” button on our GitHub page to create your own copy.
 2. [Clone Locally](https://docs.github.com/en/enterprise-server@3.11/repositories/creating-and-managing-repositories/cloning-a-repository): Download your fork to your local development environment.
-3. [Create a Branch](https://docs.github.com/en/desktop/making-changes-in-a-branch/managing-branches-in-github-desktop): Use a descriptive name to create a new branch (e.g., `feature/your-descriptive-name`):
+3. [Create a Branch](https://docs.github.com/en/desktop/making-changes-in-a-branch/managing-branches-in-github-desktop): Use a descriptive name with appropriate prefix:
     ```bash
-    git checkout -b feature/your-descriptive-name
+    # Branch naming convention: {type}/{issue_number}-name_or_description
+    git checkout -b fix/123-authentication_bug
+    git checkout -b feat/678-add_export_support
+    git checkout -b docs/update_readme
     ```
+    **Prefixes:** `fix/` (bug fixes), `feat/` (new features), `docs/` (documentation), `refactor/`, `test/`, `chore/`
 4. Develop Your Changes: Make your updates, ensuring your commit messages clearly describe your modifications.
 5. [Commit and Push](https://docs.github.com/en/desktop/making-changes-in-a-branch/committing-and-reviewing-changes-to-your-project-in-github-desktop): Run:
     ```bash
@@ -34,6 +39,69 @@ Your contributions can be in many forms—whether it’s enhancing existing feat
 6. [Open a Pull Request](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/creating-a-pull-request): Submit your pull request against the main development branch. Please detail your changes and link any related issues.
 
 Before merging, check that all tests pass and that your changes adhere to our development and documentation standards.
+
+## Project Structure
+
+Understanding the project structure will help you navigate the codebase and make contributions effectively.
+
+```
+rf-detr/
+├── .github/              # GitHub configuration
+│   ├── workflows/        # CI/CD pipelines (tests, builds, docs deployment)
+│   ├── CONTRIBUTING.md   # This file - contribution guidelines
+│   ├── copilot-instructions.md  # GitHub Copilot-specific guidance
+│   └── ISSUE_TEMPLATE/   # Issue templates
+├── docs/                 # Documentation source (MkDocs)
+│   ├── *.md              # Documentation pages
+│   └── assets/           # Images and other assets
+├── src/rfdetr/           # Main package source code
+│   ├── __init__.py       # Package entry point
+│   └── ...               # Other modules (models, datasets, utils, etc.)
+├── tests/                # Test suite
+│   ├── test_*.py         # Test files
+│   └── conftest.py       # Pytest configuration and fixtures
+├── pyproject.toml        # Project metadata, dependencies, tool configurations
+├── mkdocs.yml            # Documentation configuration
+├── .pre-commit-config.yaml  # Pre-commit hooks configuration
+├── README.md             # Project overview and quick start
+├── LICENSE               # Apache 2.0 license
+└── AGENTS.md             # AI agent-specific technical documentation
+```
+
+**Key Directories:**
+
+- **`src/rfdetr/`** - All source code for the RF-DETR package
+  - Contains models, datasets, training logic, deployment utilities, and more
+  - Internal organization may change as the project evolves
+
+- **`tests/`** - Comprehensive test suite
+  - Unit tests, integration tests, and end-to-end tests
+  - Use `@pytest.mark.gpu` for GPU-dependent tests
+
+- **`docs/`** - Documentation source files
+  - Written in Markdown, built with MkDocs
+  - Published to https://rfdetr.roboflow.com
+
+- **`.github/`** - GitHub-specific configuration
+  - CI/CD workflows define automated testing and deployment
+  - Contributing guidelines and issue templates
+
+**Important Configuration Files:**
+
+- **`pyproject.toml`** - Single source of truth for:
+  - Project metadata and dependencies
+  - Tool configurations (ruff, pytest, coverage, etc.)
+  - Build system configuration
+
+- **`.pre-commit-config.yaml`** - Defines pre-commit hooks for code quality
+
+- **`mkdocs.yml`** - Documentation site configuration
+
+> [!TIP]
+> When contributing, focus on the relevant directory for your change:
+> - Bug fixes/features → `src/rfdetr/` and `tests/`
+> - Documentation → `docs/`
+> - CI/build issues → `.github/workflows/` or config files
 
 ## Development Environment Setup
 
@@ -155,6 +223,19 @@ def test_model_training():
 
 Tests marked with `@pytest.mark.gpu` are excluded from CPU CI workflows and run separately on GPU infrastructure.
 
+### CI Testing
+
+> [!NOTE]
+> **CI Workflows (Source of Truth):** See `.github/workflows/ci-tests-cpu.yml` and `.github/workflows/ci-tests-gpu.yml` for exact commands.
+
+Our continuous integration tests run on:
+- **Operating Systems:** Ubuntu, Windows, macOS
+- **Python Versions:** 3.10, 3.11, 3.12, 3.13
+- **CPU Workflow:** `pytest -m "not gpu"` - Runs on all OS/Python combinations
+- **GPU Workflow:** `pytest -m gpu` - Runs separately on GPU infrastructure
+
+This ensures your changes work across all supported platforms and Python versions.
+
 ### Running Tests
 
 ```bash
@@ -172,6 +253,9 @@ uv run --no-sync pytest tests/test_model.py::test_model_loading
 
 All code must pass linting and formatting checks before being merged. We use **pre-commit hooks** to automate this process.
 
+> [!TIP]
+> Pre-commit hooks will auto-format many issues. If pre-commit fails, review the changes it made and re-stage the files.
+
 ### Setting Up Pre-commit
 
 ```bash
@@ -185,27 +269,7 @@ pre-commit install
 pre-commit run --all-files
 ```
 
-### What Gets Checked
-
-Pre-commit hooks (configured in `.pre-commit-config.yaml`) include:
-
-- **ruff**: Python linting and formatting (configuration in `pyproject.toml`)
-- **mdformat**: Markdown formatting
-- **prettier**: YAML/TOML formatting
-- **codespell**: Spell checking
-- **License headers**: Ensures all Python files have Apache 2.0 header
-
-### Manual Linting
-
-```bash
-# Run ruff linter with auto-fix
-ruff check --fix .
-
-# Format code with ruff
-ruff format .
-```
-
-**Note:** Pre-commit hooks will auto-format many issues. If pre-commit fails, review the changes it made and re-stage the files.
+**Configuration:** See `.pre-commit-config.yaml` for all hooks and `pyproject.toml` for tool-specific settings (e.g., `[tool.ruff]`).
 
 ## CLA Signing
 
@@ -219,7 +283,10 @@ This step is essential before any merge can occur.
 
 ## Google-Style Docstrings and Mandatory Type Hints
 
-For clarity and maintainability, any new functions or classes must include [Google-style docstrings](https://google.github.io/styleguide/pyguide.html) and use Python type hints. Type hints are mandatory in all function definitions, ensuring explicit parameter and return type declarations. These docstrings should clearly explain parameters, return types, and provide usage examples when applicable.
+For clarity and maintainability, any new functions or classes must include [Google-style docstrings](https://google.github.io/styleguide/pyguide.html) and use Python type hints. Type hints are mandatory in all function definitions, ensuring explicit parameter and return type declarations.
+
+> [!IMPORTANT]
+> Type hints are in the function signature. **Do not duplicate types in docstrings** - describe the parameter's purpose instead.
 
 For example:
 
@@ -229,11 +296,11 @@ def sample_function(param1: int, param2: int = 10) -> bool:
     Provides a brief description of function behavior.
 
     Args:
-        param1 (int): Explanation of the first parameter.
-        param2 (int): Explanation of the second parameter, defaulting to 10.
+        param1: Explanation of the first parameter's purpose.
+        param2: Explanation of the second parameter, defaulting to 10.
 
     Returns:
-        bool: True if the operation succeeds, otherwise False.
+        True if the operation succeeds, otherwise False.
 
     Examples:
         >>> sample_function(5, 10)
@@ -250,20 +317,21 @@ Bug reports are vital for continued improvement. When reporting an issue, please
 
 ## Adding a New Model
 
-When adding a new model variant to RF-DETR:
+> [!IMPORTANT]
+> Before implementing a new model, **discuss with maintainers first**. Project structure and patterns are subject to change.
 
-1. **Define the model architecture** in `src/rfdetr/models/`
-2. **Add model configuration** to `src/rfdetr/config.py`
-3. **Create model wrapper** in `src/rfdetr/detr.py` or relevant module
-4. **Write comprehensive tests** covering:
-   - Model instantiation
-   - Forward pass with various input shapes
-   - Training compatibility
-   - Export functionality (ONNX, TensorRT if applicable)
-5. **Add documentation** to `docs/` directory
-6. **Update README.md** with model benchmarks and usage examples
+**General workflow:**
 
-Follow the existing patterns in the codebase for consistency. See existing model implementations (e.g., RFDETRNano, RFDETRSmall) as examples.
+1. **Open an issue** describing the proposed model and approach
+2. **Wait for maintainer feedback** on architecture and integration approach
+3. **Follow test-driven development:**
+   - Write comprehensive tests for the new model
+   - Implement the model following approved approach
+   - Ensure all tests pass
+4. **Add documentation** as directed by maintainers
+5. **Submit PR** with reference to the discussion issue
+
+Maintainers will guide you on specific files to modify and patterns to follow based on current project architecture.
 
 ## License
 
