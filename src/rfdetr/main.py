@@ -540,7 +540,7 @@ class Model:
             logger.info('Results saved to %s', output_dir / "results.json")
         if best_is_ema:
             self.model = self.ema_m.module
-        self.model.eval()
+        model.eval()
 
         if args.run_test:
             best_state_dict = torch.load(output_dir / 'checkpoint_best_total.pth', map_location='cpu', weights_only=False)['model']
@@ -587,7 +587,7 @@ class Model:
         input_names = ['input']
         output_names = ['features'] if backbone_only else ['dets', 'labels']
         dynamic_axes = None
-        self.model.eval()
+        model.eval()
         with torch.no_grad():
             if backbone_only:
                 features = model(input_tensors)
