@@ -350,9 +350,9 @@ def test_model_inference(model_name):
 
 **Required (from pyproject.toml):**
 
-- torch>=1.13.0,\<=2.8.0 (Note: Torch >=2.9.0 is excluded due to known issues)
+- torch>=1.13.0,<=2.8.0 (Note: Torch >=2.9.0 is excluded due to known issues)
 - torchvision>=0.14.0
-- transformers>4.0.0, \<5.0.0
+- transformers>4.0.0, <5.0.0
 - pycocotools
 - scipy
 - tqdm
