@@ -31,6 +31,7 @@ try:
 except ModuleNotFoundError:
     Task = None
 
+
 import matplotlib.pyplot as plt
 plt.ioff()
 
@@ -289,20 +290,20 @@ class MetricsMLFlowSink:
         config: Optional[dict] = None,
         track_system_metrics: bool = True,
     ):
-        if not mlflow.is_tracking_uri_set():
-            output_dir = Path(output_dir).absolute().as_uri()
-            mlflow.set_tracking_uri(output_dir)
-
         if not mlflow:
             self.run = None
-            print(
+            logger.warning(
                 "Unable to initialize MLFlow. Logging is turned off for this session. Run 'pip install mlflow' to enable logging."
                 "\nAfter installing, you can start the MLflow UI with: 'mlflow ui"
                 "\nThen access the MLflow dashboard at http://localhost:5000"
             )
             return
 
-        print(
+        if not mlflow.is_tracking_uri_set():
+            output_dir = Path(output_dir).absolute().as_uri()
+            mlflow.set_tracking_uri(output_dir)
+
+        logger.info(
             "To start the MLflow UI, run: 'mlflow ui'"
             "\nThen access the MLflow dashboard at http://localhost:5000"
         )
@@ -317,15 +318,16 @@ class MetricsMLFlowSink:
                 else:
                     experiment_id = mlflow.create_experiment(experiment_name)
             except Exception as e:
-                print(f"Error setting up MLFlow experiment: {e}")
+                logger.warning("Error setting up MLFlow experiment: %s", e)
 
         try:
             self.run = mlflow.start_run(experiment_id=experiment_id, run_name=run_name)
             if track_system_metrics:
                 mlflow.enable_system_metrics_logging()
 
-            print(
-                f"MLFlow logging initialized. Run ID: {mlflow.active_run().info.run_id}"
+            logger.info(
+                "MLFlow logging initialized. Run ID: %s",
+                mlflow.active_run().info.run_id,
             )
 
             if config:
@@ -333,10 +335,10 @@ class MetricsMLFlowSink:
                     try:
                         mlflow.log_param(key, value)
                     except Exception as e:
-                        print(f"Error logging parameter {key}: {e}")
+                        logger.warning("Error logging MLFlow parameter %s: %s", key, e)
 
         except Exception as e:
-            print(f"Error starting MLFlow run: {e}")
+            logger.warning("Error starting MLFlow run: %s", e)
             self.run = None
 
     def update(self, values: dict):
@@ -405,11 +407,14 @@ class MetricsClearMLSink:
             if config:
                 self.task.connect(config)
             self.logger = self.task.get_logger()
-            print("ClearML logging initialized. To monitor logs, open the ClearML Web UI.")
+            logger.info("ClearML logging initialized. To monitor logs, open the ClearML Web UI.")
         else:
             self.task = None
             self.logger = None
-            print("Unable to initialize ClearML. Logging is turned off for this session. Run 'pip install clearml' to enable logging.")
+            logger.warning(
+                "Unable to initialize ClearML. Logging is turned off for this session. "
+                "Run 'pip install clearml' to enable logging."
+            )
 
     def update(self, values: dict):
         if not self.task or not self.logger:
@@ -450,3 +455,4 @@ class MetricsClearMLSink:
         if not self.task:
             return
         self.task.close()
+
