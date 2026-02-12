@@ -461,7 +461,7 @@ Access your experiments in the ClearML Web UI. ClearML provides:
 - To view your logs after training, start the MLflow UI:
 
     ```bash
-    mlflow ui
+    mlflow ui --backend-store-uri <OUTPUT_PATH>
     ```
 
     Then open `http://localhost:5000` in your browser to access the MLflow dashboard.
