@@ -87,7 +87,6 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         img, target = self.prepare(img, target)
         if self._transforms is not None:
             img, target = self._transforms(img, target) # [cx, cy, w, h]
-
         return img, target
 
 
@@ -151,7 +150,7 @@ class ConvertCoco(object):
         return image, target
 
 
-def make_coco_transforms(image_set: str, resolution: int, multi_scale: bool = False, expanded_scales: bool = False) -> T.Compose:
+def make_coco_transforms(image_set: str, resolution: int, multi_scale: bool = False, expanded_scales: bool = False, skip_random_resize: bool = False, patch_size: int = 16, num_windows: int = 4) -> T.Compose:
     normalize = T.Compose([
         T.ToTensor(),
         T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
@@ -194,7 +193,7 @@ def make_coco_transforms(image_set: str, resolution: int, multi_scale: bool = Fa
     raise ValueError(f'unknown {image_set}')
 
 
-def make_coco_transforms_square_div_64(image_set, resolution, multi_scale=False, expanded_scales=False, skip_random_resize=False, patch_size=16, num_windows=4):
+def make_coco_transforms_square_div_64(image_set: str, resolution: int, multi_scale: bool = False, expanded_scales: bool = False, skip_random_resize: bool = False, patch_size: int = 16, num_windows: int = 4) -> T.Compose:
     """
     Create COCO transforms with square resizing where the output size is divisible by 64.
 

@@ -7,11 +7,11 @@
 """Tests for Albumentations augmentation wrappers."""
 
 import albumentations as A
-import numpy as np
 import pytest
 import torch
 from PIL import Image
 
+from rfdetr.augmentation_config import AUG_CONFIG
 from rfdetr.datasets.transforms import (
     AlbumentationsWrapper,
     ComposeAugmentations,
@@ -410,8 +410,6 @@ class TestIntegration:
 
     def test_realistic_augmentation_config(self):
         """Test with realistic augmentation configuration."""
-        from rfdetr.augmentation_config import AUG_CONFIG
-
         transforms = build_albumentations_from_config(AUG_CONFIG)
         composed = ComposeAugmentations(transforms)
 
