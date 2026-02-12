@@ -27,15 +27,15 @@ if _PLUS_AVAILABLE:
     try:
         from rfdetr import RFDETR2XLarge, RFDETRXLarge
 
-        RFDETRXLarge_accepted_PML = partial(RFDETRXLarge, accept_platform_model_license=True)
-        RFDETR2XLarge_accepted_PML = partial(RFDETR2XLarge, accept_platform_model_license=True)
+        RFDETRXLarge_PML = partial(RFDETRXLarge, accept_platform_model_license=True)
+        RFDETR2XLarge_PML = partial(RFDETR2XLarge, accept_platform_model_license=True)
     except ImportError:
         _PLUS_AVAILABLE = False
-        RFDETRXLarge_accepted_PML = None
-        RFDETR2XLarge_accepted_PML = None
+        RFDETRXLarge_PML = None
+        RFDETR2XLarge_PML = None
 else:
-    RFDETRXLarge_accepted_PML = None
-    RFDETR2XLarge_accepted_PML = None
+    RFDETRXLarge_PML = None
+    RFDETR2XLarge_PML = None
 
 _PLUS_SKIP = pytest.mark.skipif(not _PLUS_AVAILABLE, reason="requires rfdetr_plus models")
 
@@ -49,10 +49,10 @@ _PLUS_SKIP = pytest.mark.skipif(not _PLUS_AVAILABLE, reason="requires rfdetr_plu
         pytest.param(RFDETRMedium, 0.73, 0.71, 500, id="medium"),
         pytest.param(RFDETRLarge, 0.74, 0.72, 500, id="large"),
         pytest.param(
-            RFDETRXLarge_accepted_PML, 0.65, 0.65, 500, id="xlarge", marks=_PLUS_SKIP,
+            RFDETRXLarge_PML, 0.65, 0.65, 500, id="xlarge", marks=_PLUS_SKIP,
         ),
         pytest.param(
-            RFDETR2XLarge_accepted_PML, 0.65, 0.65, 500, id="2xlarge", marks=_PLUS_SKIP,
+            RFDETR2XLarge_PML, 0.65, 0.65, 500, id="2xlarge", marks=_PLUS_SKIP,
         ),
     ],
 )
