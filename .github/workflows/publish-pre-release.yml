@@ -1,4 +1,4 @@
-name: Publish RF-DETR Pre-Releases to PyPI
+name: Publish Pre-Releases to PyPI
 
 on:
   push:
