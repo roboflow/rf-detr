@@ -1,4 +1,4 @@
-name: Pytest/Test Workflow
+name: CPU tests Workflow
 
 on:
   push:
@@ -24,7 +24,7 @@ jobs:
     uses: ./.github/workflows/build-package.yml
 
   run-tests:
-    name: Pytest Run
+    name: Testing
     # needs: build  # todo: consider using this build package for testing
     timeout-minutes: 10
     strategy:
@@ -66,7 +66,6 @@ jobs:
 
       - name: Minimize uv cache
         run: uv cache prune --ci
-
 
   testing-guardian:
     runs-on: ubuntu-latest

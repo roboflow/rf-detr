@@ -3,27 +3,39 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
+import importlib.util
 import os
+from functools import partial
 from pathlib import Path
 from typing import Optional
 
 import pytest
 import torch
 
-from rfdetr import (
-    # RFDETR2XLarge,
-    RFDETRLarge,
-    RFDETRMedium,
-    RFDETRNano,
-    RFDETRSmall,
-    # RFDETRXLarge,
-)
+from rfdetr import RFDETRLarge, RFDETRMedium, RFDETRNano, RFDETRSmall
 from rfdetr.datasets import get_coco_api_from_dataset
 from rfdetr.datasets.coco import CocoDetection, make_coco_transforms_square_div_64
 from rfdetr.detr import RFDETR
 from rfdetr.engine import evaluate
 from rfdetr.models import build_criterion_and_postprocessors
 from rfdetr.util import misc as utils
+
+_PLUS_AVAILABLE = importlib.util.find_spec("rfdetr_plus") is not None
+if _PLUS_AVAILABLE:
+    try:
+        from rfdetr import RFDETR2XLarge, RFDETRXLarge
+
+        RFDETRXLarge_accepted_PML = partial(RFDETRXLarge, accept_platform_model_license=True)
+        RFDETR2XLarge_accepted_PML = partial(RFDETR2XLarge, accept_platform_model_license=True)
+    except ImportError:
+        _PLUS_AVAILABLE = False
+        RFDETRXLarge_accepted_PML = None
+        RFDETR2XLarge_accepted_PML = None
+else:
+    RFDETRXLarge_accepted_PML = None
+    RFDETR2XLarge_accepted_PML = None
+
+_PLUS_SKIP = pytest.mark.skipif(not _PLUS_AVAILABLE, reason="requires rfdetr_plus models")
 
 
 @pytest.mark.gpu
@@ -34,8 +46,12 @@ from rfdetr.util import misc as utils
         pytest.param(RFDETRSmall, 0.65, 0.65, 500, id="small"),
         pytest.param(RFDETRMedium, 0.65, 0.65, 500, id="medium"),
         pytest.param(RFDETRLarge, 0.65, 0.65, 500, id="large"),
-        # pytest.param(RFDETRXLarge, 0.65, 0.65, 500, id="xlarge"),
-        # pytest.param(RFDETR2XLarge, 0.65, 0.65, 500, id="2xlarge"),
+        pytest.param(
+            RFDETRXLarge_accepted_PML, 0.65, 0.65, 500, id="xlarge", marks=_PLUS_SKIP,
+        ),
+        pytest.param(
+            RFDETR2XLarge_accepted_PML, 0.65, 0.65, 500, id="2xlarge", marks=_PLUS_SKIP,
+        ),
     ],
 )
 def test_coco_inference_benchmark(

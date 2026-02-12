@@ -1,4 +1,4 @@
-name: GPU Pytest/Test Workflow
+name: GPU tests Workflow
 
 on:
   push:
@@ -23,7 +23,7 @@ concurrency:
 
 jobs:
   run-gpu-tests:
-    name: GPU Pytest Run
+    name: Testing
     if: github.event_name == 'push' || !github.event.pull_request.draft
     timeout-minutes: 20
     runs-on: Roboflow-GPU-VM-Runner
@@ -44,7 +44,7 @@ jobs:
           activate-environment: true
 
       - name: 🚀 Install Packages
-        run: uv sync --group tests --extra onnxexport # --extra plus
+        run: uv sync --group tests --extra onnxexport --extra plus
 
       - name: 🧪 Run the Test
         run: uv run --no-sync pytest tests/ -n 3 -m gpu --cov=rfdetr --cov-report=xml
