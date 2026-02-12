@@ -17,7 +17,7 @@ repos:
       - id: check-added-large-files
       - id: detect-private-key
       - id: pretty-format-json
-        args: ['--autofix', '--no-sort-keys', '--indent=4']
+        args: ["--autofix", "--no-sort-keys", "--indent=4"]
       - id: end-of-file-fixer
       - id: mixed-line-ending
 
