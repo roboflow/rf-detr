@@ -52,37 +52,37 @@ def test_segmentation_model_export_no_crash(tmp_path: Path) -> None:
 def test_export_calls_eval_on_deepcopy_not_original(tmp_path: Path) -> None:
     """
     Verify that Model.export() calls eval() on the deepcopy, not the original model.
-    
+
     This test patches deepcopy to track whether eval() is called on the copied
     model during export, ensuring the fix in PR #578 is working correctly.
     """
     model = RFDETRSegNano()
-    
+
     # Store the original deepcopy function
     original_deepcopy = deepcopy
-    
+
     # Mock to track eval() calls
     eval_mock = Mock()
-    
+
     def tracking_deepcopy(obj):
         """Deepcopy wrapper that tracks eval() calls on the copy"""
         copied = original_deepcopy(obj)
-        
+
         # Only track eval calls on torch.nn.Module objects
         if isinstance(copied, torch.nn.Module):
             # Save reference to original eval before replacing it
             original_eval = copied.eval
-            
+
             def tracked_eval(*args, **kwargs):
                 """Wrapper that tracks calls while delegating to the original eval"""
                 eval_mock()
                 return original_eval(*args, **kwargs)
-            
+
             # Replace eval with tracked version
             copied.eval = tracked_eval
-        
+
         return copied
-    
+
     # Patch deepcopy in the main module where export is defined
     with patch('rfdetr.main.deepcopy', side_effect=tracking_deepcopy):
         try:
@@ -91,7 +91,7 @@ def test_export_calls_eval_on_deepcopy_not_original(tmp_path: Path) -> None:
             # Expected failures: missing dependencies, network issues, CUDA errors
             # These are acceptable as we're testing the deepcopy/eval pattern, not the full export
             pass
-    
+
     # Verify that eval() was called on the deepcopy during export
     assert eval_mock.call_count > 0, (
         "export() should call eval() on the deepcopy. "
@@ -102,18 +102,18 @@ def test_export_calls_eval_on_deepcopy_not_original(tmp_path: Path) -> None:
 def test_eval_on_deepcopy_does_not_affect_original() -> None:
     """
     Verify the pattern: deepcopy allows independent train/eval state.
-    
+
     This demonstrates the fundamental behavior that Model.export() relies on:
     calling eval() on a deepcopy doesn't affect the original model's training state.
     """
     # Create a simple model with arbitrary dimensions (sufficient for testing the pattern)
     original_model = torch.nn.Linear(10, 10)
     original_model.train()  # Start in training mode
-    
+
     # This is what happens in Model.export(): deepcopy then eval on the copy
     model_copy = deepcopy(original_model)
     model_copy.eval()
-    
+
     # Verify the copy is in eval mode but original is still in training mode
     assert model_copy.training is False, "Deepcopy should be in eval mode"
     assert original_model.training is True, "Original should still be in training mode"
@@ -127,7 +127,7 @@ def test_segmentation_outputs_present_in_train_and_eval() -> None:
 
     # Access the underlying torch module (model.model.model)
     torch_model = model.model.model.to("cuda")
-    
+
     # Use resolution compatible with model's patch size (312 for seg-nano)
     resolution = model.model.resolution
     dummy_input = torch.randn(1, 3, resolution, resolution, device="cuda")
