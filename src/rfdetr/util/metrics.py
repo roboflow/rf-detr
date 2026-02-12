@@ -33,8 +33,6 @@ except ModuleNotFoundError:
 
 import matplotlib.pyplot as plt
 
-plt.ioff()
-
 logger = get_logger()
 PLOT_FILE_NAME = "metrics_plot.png"
 
