@@ -403,75 +403,70 @@ Access your experiments in the ClearML Web UI. ClearML provides:
 
 ## Logging with MLflow
 
-[MLflow](https://mlflow.org) is an open-source platform for experiment tracking, model registry, and ML lifecycle management.
+[MLflow](https://mlflow.org/) is an open-source platform for the machine learning lifecycle that helps you track experiments, package code into reproducible runs, and share and deploy models. To enable logging, simply pass `mlflow=True` when training the model.
 
-### Setup
+<details>
+<summary>Using MLflow with RF-DETR</summary>
 
-1. Install the required packages:
+<br>
+
+- MLflow logging requires additional packages. Install them with:
 
     ```bash
     pip install "rfdetr[metrics]"
     ```
 
-2. Enable MLflow logging in your training:
+- To activate logging, pass the extra parameter `mlflow=True` to `.train()`:
 
     ```python
-    from rfdetr import RFDETRMedium
+    from rfdetr import RFDETRBase
 
-    model = RFDETRMedium()
+    model = RFDETRBase()
 
     model.train(
-        dataset_dir="path/to/dataset",
-        epochs=100,
+        dataset_dir="<DATASET_PATH>",
+        epochs=10,
         batch_size=4,
         grad_accum_steps=4,
         lr=1e-4,
-        output_dir="output",
+        output_dir="<OUTPUT_PATH>",
         mlflow=True,
-        project="my-detection-project",
-        run="experiment-001",
+        project="<EXPERIMENT_NAME>",
+        run="<RUN_NAME>"
     )
     ```
 
-### MLflow Organization
+- The `project` parameter sets the experiment name in MLflow, while `run` sets the run name. If you don't specify these, MLflow will use default values.
 
-| Parameter | Description                                       |
-| --------- | ------------------------------------------------- |
-| `project` | MLflow experiment name (groups related runs)      |
-| `run`     | MLflow run name (identifies individual trainings) |
+- To use a custom MLflow tracking server, set the `MLFLOW_TRACKING_URI` environment variable:
 
-If you don't specify names, MLflow will use default experiment and generate random run names.
+    ```python
+    import os
 
-### Viewing Results
+    # Set MLflow tracking URI
+    os.environ["MLFLOW_TRACKING_URI"] = "https://your-mlflow-server.com"
 
-Start the MLflow UI to visualize your experiments:
+    # For authentication with tracking servers that require it
+    os.environ["MLFLOW_TRACKING_TOKEN"] = "your-auth-token"
 
-```bash
-mlflow ui
-```
+    # Then initialize and train your model
+    model = RFDETRBase()
+    model.train(..., mlflow=True)
+    ```
 
-Then open `http://localhost:5000/` in your browser. MLflow provides:
+- For teams using a hosted MLflow service (like Databricks), you'll typically need to set:
+  - `MLFLOW_TRACKING_URI`: The URL of your MLflow tracking server
+  - `MLFLOW_TRACKING_TOKEN`: Authentication token for your MLflow server
 
-- Real-time metric visualization
-- Experiment comparison
-- Hyperparameter tracking
-- System metrics (CPU, GPU, memory)
-- Model registry and versioning
+- To view your logs after training, start the MLflow UI:
 
-### Using Multiple Loggers
+    ```bash
+    mlflow ui
+    ```
 
-You can enable MLflow alongside other logging systems:
+    Then open `http://localhost:5000` in your browser to access the MLflow dashboard.
 
-```python
-model.train(
-    dataset_dir="path/to/dataset",
-    epochs=100,
-    tensorboard=True,
-    wandb=True,
-    mlflow=True,
-    project="my-project",
-)
-```
+</details>
 
 ---
 
