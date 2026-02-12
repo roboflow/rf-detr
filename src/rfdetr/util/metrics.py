@@ -32,9 +32,6 @@ except ModuleNotFoundError:
     Task = None
 
 
-import matplotlib.pyplot as plt
-plt.ioff()
-
 logger = get_logger()
 PLOT_FILE_NAME = "metrics_plot.png"
 
@@ -455,4 +452,3 @@ class MetricsClearMLSink:
         if not self.task:
             return
         self.task.close()
-
