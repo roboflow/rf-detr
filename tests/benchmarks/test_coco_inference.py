@@ -44,10 +44,10 @@ _PLUS_SKIP = pytest.mark.skipif(not _PLUS_AVAILABLE, reason="requires rfdetr_plu
 @pytest.mark.parametrize(
     ("model_cls", "threshold_map", "threshold_f1", "num_samples"),
     [
-        pytest.param(RFDETRNano, 0.65, 0.65, None, id="nano"),
-        pytest.param(RFDETRSmall, 0.65, 0.65, 500, id="small"),
-        pytest.param(RFDETRMedium, 0.65, 0.65, 500, id="medium"),
-        pytest.param(RFDETRLarge, 0.65, 0.65, 500, id="large"),
+        pytest.param(RFDETRNano, 0.67, 0.67, None, id="nano"),
+        pytest.param(RFDETRSmall, 0.72, 0.70, 500, id="small"),
+        pytest.param(RFDETRMedium, 0.73, 0.71, 500, id="medium"),
+        pytest.param(RFDETRLarge, 0.74, 0.72, 500, id="large"),
         pytest.param(
             RFDETRXLarge_accepted_PML, 0.65, 0.65, 500, id="xlarge", marks=_PLUS_SKIP,
         ),
@@ -65,7 +65,6 @@ def test_coco_inference_benchmark(
 ) -> None:
     device = "cuda" if torch.cuda.is_available() else "cpu"
     images_root, annotations_path = download_coco_val
-    model_label = model_cls.__class__.__name__
 
     rfdetr = model_cls(device=device)
     config = rfdetr.model_config
@@ -103,7 +102,7 @@ def test_coco_inference_benchmark(
     # Dump results JSON for debugging
     # Use env var COCO_BENCHMARK_DEBUG_DIR to specify a permanent folder, otherwise use temp
     debug_dir = os.environ.get("COCO_BENCHMARK_DEBUG_DIR", tempfile.gettempdir())
-    debug_path = Path(debug_dir) / f"coco_inference_stats_{model_label}.json"
+    debug_path = Path(debug_dir) / f"coco_inference_stats_{model_cls.size}_nb-spl-{num_samples or 'all'}.json"
     with open(debug_path, "w") as f:
         json.dump(stats, f, indent=2)
     print(f"Dumped stats to {debug_path}")
@@ -112,7 +111,7 @@ def test_coco_inference_benchmark(
     map_val = results["map"]
     f1_val = results["f1_score"]
 
-    print(f"COCO val2017 [{model_label}]: mAP@50={map_val:.4f}, F1={f1_val:.4f}")
+    print(f"COCO val2017 [{model_cls.size}]: mAP@50={map_val:.4f}, F1={f1_val:.4f}")
 
     assert map_val >= threshold_map, f"mAP@50 {map_val:.4f} < {threshold_map}"
     assert f1_val >= threshold_f1, f"F1 {f1_val:.4f} < {threshold_f1}"
