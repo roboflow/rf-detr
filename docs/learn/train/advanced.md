@@ -342,6 +342,65 @@ model.train(
 
 ---
 
+## Logging with ClearML
+
+[ClearML](https://clear.ml) is an open-source platform that helps you manage, track, and automate your machine learning experiments. With ClearML, you can monitor performance, compare experiments, and optimize model training using its comprehensive suite of tools.
+
+### Setup
+
+1. Install the required packages:
+
+    ```bash
+    pip install "rfdetr[metrics]"
+    ```
+
+2. Initialize ClearML:
+
+    ```bash
+    clearml-init
+    ```
+
+    Follow the instructions to connect to your ClearML server (hosted or self-hosted).
+
+3. Enable ClearML logging in your training:
+
+    ```python
+    from rfdetr import RFDETRMedium
+
+    model = RFDETRMedium()
+
+    model.train(
+        dataset_dir="path/to/dataset",
+        epochs=100,
+        batch_size=4,
+        grad_accum_steps=4,
+        lr=1e-4,
+        output_dir="output",
+        clearml=True,
+        project="my-detection-project",
+        run="experiment-001",
+    )
+    ```
+
+### ClearML Organization
+
+| Parameter | Description                                         |
+| --------- | --------------------------------------------------- |
+| `project` | Groups related experiments together                 |
+| `run`     | Identifies individual training sessions (task name) |
+
+### Viewing Results
+
+Access your experiments in the ClearML Web UI. ClearML provides:
+
+- Real-time metric visualization
+- Experiment comparison
+- Hyperparameter tracking
+- Artifact storage
+- Model versioning
+
+---
+
 ## Memory Optimization
 
 ### Gradient Checkpointing

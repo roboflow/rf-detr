@@ -60,7 +60,8 @@ onnxexport = [
 ]
 metrics = [
     "tensorboard>=2.13.0",
-    "wandb"
+    "wandb",
+    "clearml"
 ]
 plus = ["rfdetr_plus>=1.0.0"]
 
