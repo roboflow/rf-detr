@@ -31,6 +31,7 @@ try:
 except ModuleNotFoundError:
     Task = None
 
+import matplotlib.pyplot as plt
 plt.ioff()
 
 logger = get_logger()
