@@ -15,7 +15,7 @@ Use cases covered:
 import importlib.util
 from copy import deepcopy
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 import torch
@@ -56,8 +56,6 @@ def test_export_calls_eval_on_deepcopy_not_original(tmp_path: Path) -> None:
     This test patches deepcopy to track whether eval() is called on the copied
     model during export, ensuring the fix in PR #578 is working correctly.
     """
-    from unittest.mock import Mock, call
-    
     model = RFDETRSegNano()
     
     # Store the original deepcopy function
@@ -74,9 +72,9 @@ def test_export_calls_eval_on_deepcopy_not_original(tmp_path: Path) -> None:
         if isinstance(copied, torch.nn.Module):
             original_eval = copied.eval
             
-            def tracked_eval():
+            def tracked_eval(*args, **kwargs):
                 eval_mock()
-                return original_eval()
+                return original_eval(*args, **kwargs)
             
             copied.eval = tracked_eval
         
@@ -86,7 +84,7 @@ def test_export_calls_eval_on_deepcopy_not_original(tmp_path: Path) -> None:
     with patch('rfdetr.main.deepcopy', side_effect=tracking_deepcopy):
         try:
             model.export(output_dir=str(tmp_path), simplify=False)
-        except (ImportError, OSError, RuntimeError) as e:
+        except (ImportError, OSError, RuntimeError):
             # Expected failures: missing dependencies, network issues, CUDA errors
             # These are acceptable as we're testing the deepcopy/eval pattern, not the full export
             pass
