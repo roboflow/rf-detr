@@ -6,7 +6,7 @@
 
 
 import os
-from typing import List, Literal, Optional
+from typing import Any, ClassVar, List, Literal, Mapping, Optional
 
 import torch
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
@@ -19,10 +19,11 @@ class BaseConfig(BaseModel):
     Base configuration class that validates input parameters against the defined model schema.
     If any unknown fields are provided, a ValueError is raised listing the unknown and available parameters.
     """
-    model_config = ConfigDict(extra='ignore')
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", validate_assignment=True)
 
     @model_validator(mode="before")
-    def catch_typo_kwargs(cls, values):
+    @classmethod
+    def catch_typo_kwargs(cls, values: Mapping[str, Any]) -> Mapping[str, Any]:
         allowed_params = set(cls.model_json_schema().get('properties').keys())
         provided_params = set(values)
         unknown_params = provided_params - allowed_params
