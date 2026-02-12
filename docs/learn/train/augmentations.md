@@ -65,7 +65,7 @@ These transforms preserve bounding boxes:
 
 ### Conservative Augmentations
 
-Recommended for small datasets (< 500 images):
+Recommended for small datasets (under 500 images):
 
 ```python
 AUG_CONFIG = {
@@ -73,7 +73,7 @@ AUG_CONFIG = {
     "RandomBrightnessContrast": {
         "brightness_limit": 0.1,
         "contrast_limit": 0.1,
-        "p": 0.3
+        "p": 0.3,
     },
 }
 ```
@@ -92,14 +92,14 @@ AUG_CONFIG = {
         "translate_percent": (0.1, 0.1),
         "rotate": (-15, 15),
         "shear": (-5, 5),
-        "p": 0.5
+        "p": 0.5,
     },
     "ColorJitter": {
         "brightness": 0.2,
         "contrast": 0.2,
         "saturation": 0.2,
         "hue": 0.1,
-        "p": 0.5
+        "p": 0.5,
     },
 }
 ```
@@ -114,7 +114,7 @@ AUG_CONFIG = {
     "RandomBrightnessContrast": {
         "brightness_limit": 0.15,
         "contrast_limit": 0.15,
-        "p": 0.4
+        "p": 0.4,
     },
 }
 ```
@@ -127,7 +127,7 @@ AUG_CONFIG = {
     "RandomBrightnessContrast": {
         "brightness_limit": 0.2,
         "contrast_limit": 0.2,
-        "p": 0.5
+        "p": 0.5,
     },
     "GaussianBlur": {"blur_limit": 3, "p": 0.3},  # Camera focus variations
     "GaussNoise": {"std_range": (0.01, 0.05), "p": 0.3},  # Sensor noise
@@ -169,18 +169,20 @@ augmented_image, augmented_target = augmentation_pipeline(image, target)
 ## Best Practices
 
 !!! tip "Start Conservative"
+
     Begin with simple augmentations (horizontal flip, small brightness changes) and gradually add more as needed.
 
 !!! warning "Geometric Transforms"
+
     Be careful with aggressive rotations and crops on datasets where object orientation matters (e.g., text detection, oriented objects).
 
 ### Recommendations by Dataset Size
 
-| Dataset Size | Recommended Augmentations |
-|--------------|---------------------------|
-| Under 500 images | Horizontal flip, small brightness/contrast adjustments |
-| 500-2000 images | Add vertical flip (if applicable), color jitter, blur |
-| 2000+ images | Add rotations, affine transforms, aggressive color augmentations |
+| Dataset Size     | Recommended Augmentations                                        |
+| ---------------- | ---------------------------------------------------------------- |
+| Under 500 images | Horizontal flip, small brightness/contrast adjustments           |
+| 500-2000 images  | Add vertical flip (if applicable), color jitter, blur            |
+| 2000+ images     | Add rotations, affine transforms, aggressive color augmentations |
 
 ### Performance Tips
 
@@ -198,7 +200,7 @@ dataloader = DataLoader(
     dataset,
     batch_size=16,
     num_workers=4,  # Parallelize augmentations across 4 workers
-    pin_memory=True
+    pin_memory=True,
 )
 ```
 
@@ -221,7 +223,7 @@ augmentation_pipeline = ComposeAugmentations(transforms)
 dataset = CocoDetection(
     img_folder="path/to/images",
     ann_file="path/to/annotations.json",
-    transforms=augmentation_pipeline
+    transforms=augmentation_pipeline,
 )
 
 # Visualize
@@ -233,6 +235,7 @@ plt.show()
 ### Expected Training Behavior
 
 !!! note
+
     With augmentations enabled, it's normal to see:
 
     - **Training mAP lower than validation mAP** - Training uses augmented (harder) images
@@ -244,6 +247,7 @@ plt.show()
 ### Problem: Training is very slow
 
 **Solutions:**
+
 - Reduce number of augmentations
 - Reduce augmentation complexity (e.g., smaller rotation angles)
 - Increase `num_workers` in data loader
@@ -252,6 +256,7 @@ plt.show()
 ### Problem: Validation mAP is much higher than training mAP
 
 **This is expected** with strong augmentations:
+
 - Validation uses original images (no augmentation)
 - Training mAP is artificially lower due to augmented data
 - This gap is normal and indicates augmentations are working
@@ -259,17 +264,21 @@ plt.show()
 ### Problem: Some boxes disappear after augmentation
 
 **This is normal behavior:**
+
 - Aggressive transforms (large rotations, crops) can move boxes outside boundaries
 - Albumentations removes boxes that fall outside image
-- Solutions:
-  - Reduce augmentation intensity
-  - Use smaller rotation angles
-  - Avoid aggressive crops
-  - Advanced: Reduce `min_visibility` in `AlbumentationsWrapper` (requires code changes)
+
+**Solutions:**
+
+- Reduce augmentation intensity
+- Use smaller rotation angles
+- Avoid aggressive crops
+- Advanced: Reduce `min_visibility` in `AlbumentationsWrapper` (requires code changes)
 
 ### Problem: Model not improving
 
 **Check if augmentations are too aggressive:**
+
 - Try reducing augmentation probabilities
 - Remove geometric transforms temporarily
 - Start with only color augmentations
@@ -283,18 +292,18 @@ To add a custom Albumentations transform not in the default config:
 
 1. Import the transform in your config:
 
-```python
-# augmentation_config.py
-AUG_CONFIG = {
-    "HorizontalFlip": {"p": 0.5},
-    "RandomShadow": {  # Custom shadow augmentation
-        "shadow_roi": (0, 0, 1, 1),
-        "num_shadows_limit": (1, 1),
-        "shadow_dimension": 3,
-        "p": 0.3
-    },
-}
-```
+    ```python
+    # augmentation_config.py
+    AUG_CONFIG = {
+        "HorizontalFlip": {"p": 0.5},
+        "RandomShadow": {  # Custom shadow augmentation
+            "shadow_roi": (0, 0, 1, 1),
+            "num_shadows_limit": (1, 1),
+            "shadow_dimension": 3,
+            "p": 0.3,
+        },
+    }
+    ```
 
 2. The transform will be automatically loaded if it exists in Albumentations
 
@@ -322,6 +331,7 @@ To see augmentation warnings and statistics:
 
 ```python
 import logging
+
 logging.basicConfig(level=logging.INFO)
 
 # Now you'll see messages like:
