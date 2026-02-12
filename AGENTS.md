@@ -1,18 +1,40 @@
 # RF-DETR - Agent Instructions
 
-This file provides detailed context for AI coding agents working with RF-DETR. For human-readable documentation, see [README.md](README.md). For contribution guidelines, see [CONTRIBUTING.md](.github/CONTRIBUTING.md).
+This file provides detailed technical context for AI coding agents working with RF-DETR.
+
+**Canonical Sources:**
+- **Contribution Guidelines:** [CONTRIBUTING.md](.github/CONTRIBUTING.md) - The authoritative source for all contribution practices
+- **Human Documentation:** [README.md](README.md) - Project overview and usage
+- **Copilot Instructions:** [.github/copilot-instructions.md](.github/copilot-instructions.md) - GitHub Copilot-specific guidance
+
+This document supplements the contribution guidelines with detailed technical information for automated tooling.
+
+## Agent Responsibilities
+
+**Maintaining Agentic Documentation:**
+
+When contributing as an AI agent, if your contribution:
+- **Changes project structure or architecture patterns**
+- **Introduces new conventions or patterns**
+- **Receives major feedback from maintainers in PR review** about structure, patterns, or conventions
+
+**You should update the relevant agentic documents:**
+- Update `AGENTS.md` for detailed technical patterns and architecture changes
+- Update `.github/copilot-instructions.md` for high-level guidance changes
+- Update `.github/CONTRIBUTING.md` if the change affects human contribution workflow
+
+**Rationale:** These documents guide future agent contributions. Keeping them current ensures consistency and reduces repeated feedback on the same issues.
 
 ## Build & Development Environment
 
-### Prerequisites
+> **Canonical Reference:** See [Development Environment Setup](.github/CONTRIBUTING.md#development-environment-setup) in CONTRIBUTING.md for complete setup instructions.
 
-- **Python:** >=3.10 (tested on 3.10, 3.11, 3.12, 3.13)
-- **Package Manager:** `uv` (install via `pip install uv`)
-- **GPU:** Optional (CPU testing supported, GPU required for training)
-
-### Development Setup
+### Quick Setup
 
 ```bash
+# Install uv
+pip install uv
+
 # Full development environment
 uv sync --all-groups
 
@@ -22,9 +44,9 @@ uv sync --group docs       # Documentation only
 uv sync --group build      # Build tools only
 ```
 
-**Post-pull workflow:** Always run `uv sync` after pulling changes to ensure dependencies are synchronized.
+**Prerequisites:** Python >=3.10 (tested on 3.10-3.13)
 
-### Dependency Groups
+### Dependency Information
 
 See `pyproject.toml` for complete dependency specifications:
 
@@ -38,74 +60,65 @@ See `pyproject.toml` for complete dependency specifications:
 
 ## Testing
 
-### Running Tests
+> **Canonical Reference:** See [Test-Driven Development](.github/CONTRIBUTING.md#test-driven-development) in CONTRIBUTING.md for complete guidelines.
+>
+> **CI Workflows (Source of Truth):** See `.github/workflows/ci-tests-cpu.yml` and `.github/workflows/ci-tests-gpu.yml` for exact test commands used in CI.
+
+### Quick Commands
 
 ```bash
-# CPU tests (default for local development)
+# CPU tests (default for local development) - matches CI
 uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --cov=rfdetr --cov-report=xml
 
 # GPU tests (requires GPU)
 uv run --no-sync pytest src/ tests/ -n 2 -m gpu
 
-# All tests
-uv run --no-sync pytest src/ tests/ -n 2
-```
+# Specific test file or test
+uv run --no-sync pytest tests/test_model.py::test_specific_function
 
-### Test Organization & Conventions
-
-**Structure:**
-- Group related tests in classes
-- Use `@pytest.mark.parametrize` with `pytest.param(..., id="name")` for parameterized tests
-- Mark GPU-dependent tests with `@pytest.mark.gpu`
-
-**Example:**
-
-```python
-import pytest
-
-@pytest.mark.gpu  # Marks test as GPU-dependent
-@pytest.mark.parametrize("model_variant", [
-    pytest.param("nano", id="nano"),
-    pytest.param("small", id="small"),
-])
-class TestModelInference:
-    def test_forward_pass(self, model_variant):
-        # Test implementation
-        pass
-```
-
-**Development Workflow:**
-
-1. **Bug fixes:** Write test that replicates the issue first, then implement fix
-2. **New features:** Write comprehensive tests covering all major use cases
-3. **Before commit:** Run full test suite to ensure no regressions
-
-**CI Testing:**
-- Runs on Ubuntu, Windows, macOS
-- Python versions: 3.10, 3.11, 3.12, 3.13
-- CPU tests: `pytest -m "not gpu"`
-- GPU tests: `pytest -m gpu` (separate workflow)
-
-## Code Quality & Linting
-
-### Pre-commit Hooks
-
-Configuration: `.pre-commit-config.yaml`
-
-```bash
-# Setup
-pre-commit install
-
-# Run manually
+# Pre-commit checks (ALWAYS run before committing)
 pre-commit run --all-files
 ```
 
-**Hooks include:**
-- **ruff:** Python linting and formatting (config in `pyproject.toml`)
-- **mdformat:** Markdown formatting
-- **prettier:** YAML/TOML formatting
-- **codespell:** Spell checking
-- **license headers:** Apache 2.0 header enforcement
+### Key Testing Principles
+
+**Test-Driven Development:**
+1. **Bug fixes:** Write failing test → (optional: commit with "WIP") → Fix code → Verify all tests pass → Commit fix
+2. **New features:** Write comprehensive tests → Implement feature → Refactor
+
+**Testing Requirements:**
+- ⚠️ **During development:** Tests may fail as you work through TDD cycle
+- ✅ **Before opening PR:** Final commit MUST have all tests passing
+- ✅ **Before each commit:** Run `pre-commit run --all-files`
+
+**Test Organization:**
+- Group related tests in classes
+- Use `@pytest.mark.parametrize` with `pytest.param(..., id="name")`
+- Mark GPU/heavy tests with `@pytest.mark.gpu`
+
+**CI Testing:**
+- Runs on Ubuntu, Windows, macOS with Python 3.10-3.13
+- CPU workflow: `pytest -m "not gpu"`
+- GPU workflow: `pytest -m gpu`
+
+## Code Quality & Linting
+
+> **Canonical Reference:** See [Code Quality and Linting](.github/CONTRIBUTING.md#code-quality-and-linting) in CONTRIBUTING.md for setup and details.
+
+### Quick Commands
+
+```bash
+# Run all pre-commit hooks
+pre-commit run --all-files
+
+# Run ruff only
+ruff check --fix .
+ruff format .
+```
+
+**Configuration Files:**
+- `.pre-commit-config.yaml` - Pre-commit hooks (ruff, mdformat, prettier, codespell, license headers)
+- `pyproject.toml` - Ruff linting rules (`[tool.ruff]` section)
 
 **License Header (required for all Python files):**
 
@@ -115,16 +128,6 @@ pre-commit run --all-files
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-```
-
-### Manual Linting
-
-```bash
-# Run ruff
-ruff check --fix .
-
-# Format code
-ruff format .
 ```
 
 ## Documentation
@@ -243,42 +246,12 @@ result = subprocess.run(
 
 ### Type Hints & Docstrings
 
-**Mandatory Requirements:**
-- Type hints for all function parameters and return types
-- Google-style docstrings for all functions and classes
+> **Canonical Reference:** See [Google-Style Docstrings and Mandatory Type Hints](.github/CONTRIBUTING.md#google-style-docstrings-and-mandatory-type-hints) in CONTRIBUTING.md for complete requirements and examples.
 
-**Example:**
-
-```python
-from typing import Optional
-
-def train_model(
-    config: TrainConfig,
-    checkpoint_path: Optional[str] = None
-) -> dict[str, float]:
-    """
-    Train RF-DETR model with given configuration.
-
-    Args:
-        config (TrainConfig): Training configuration with hyperparameters.
-        checkpoint_path (Optional[str]): Path to resume from checkpoint.
-
-    Returns:
-        dict[str, float]: Training metrics (loss, mAP, etc.).
-
-    Examples:
-        >>> config = TrainConfig(epochs=10, batch_size=16)
-        >>> metrics = train_model(config)
-        >>> print(metrics["mAP"])
-        0.452
-    """
-    # Implementation
-    pass
-```
-
-**Type Hint Compatibility:**
-- Use `Optional[type]` or `from __future__ import annotations` for compatibility
-- Target Python version: 3.10
+**Requirements:**
+- MANDATORY type hints for all function parameters and return types
+- MANDATORY Google-style docstrings for all functions and classes
+- Target Python version: 3.10+
 
 ## Common Workflows
 
@@ -300,7 +273,7 @@ def train_model(
 
 ### Adding New Model Variants
 
-See `.github/CONTRIBUTING.md` for detailed guidance on adding new model architectures.
+> **Canonical Reference:** See [Adding a New Model](.github/CONTRIBUTING.md#adding-a-new-model) in CONTRIBUTING.md for detailed guidance.
 
 ### Security Considerations
 

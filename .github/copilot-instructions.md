@@ -1,5 +1,7 @@
 # RF-DETR Copilot Instructions
 
+> **Note:** This document is GitHub Copilot-specific guidance. For canonical contribution guidelines (test-driven development, code quality, docstrings, etc.), see [CONTRIBUTING.md](CONTRIBUTING.md). For detailed agent-specific context, see [AGENTS.md](../AGENTS.md).
+
 ## Repository Overview
 
 RF-DETR is a real-time transformer architecture for object detection and instance segmentation. Built on DINOv2 vision transformer backbone with PyTorch.
@@ -30,16 +32,13 @@ uv build
 
 ## Code Quality
 
-**Linting & Formatting:** Configured via `.pre-commit-config.yaml` - enforces ruff, mdformat, prettier, codespell, and license headers.
+**Linting & Formatting:** All code must pass pre-commit checks. See **[Code Quality and Linting](CONTRIBUTING.md#code-quality-and-linting)** in CONTRIBUTING.md for setup and details.
 
 ```bash
-# Install and run pre-commit
-pre-commit install
 pre-commit run --all-files
 ```
 
-> **Configuration:** See `.pre-commit-config.yaml` for all linting rules and formatters.
-> **Ruff settings:** See `[tool.ruff]` in `pyproject.toml` for specific rules and exclusions.
+> **Configuration:** `.pre-commit-config.yaml` (hooks) and `[tool.ruff]` in `pyproject.toml` (Python linting)
 
 ## Project Structure
 
@@ -63,42 +62,26 @@ src/rfdetr/
 - Logger: `rfdetr.util.logger.get_logger()` (reads `LOG_LEVEL` env var)
 - Plus models (XLarge/2XLarge): Imported from `rfdetr_plus` with lazy error handling via `__getattr__`
 
-## Testing Strategy
+## Testing & Development Workflow
 
-**Test Organization:**
+**Test-Driven Development:** Follow TDD practices - write tests first for bugs, comprehensive tests for features. See **[Test-Driven Development](CONTRIBUTING.md#test-driven-development)** in CONTRIBUTING.md for detailed guidelines.
 
-- Group related tests in classes
-- Use `@pytest.mark.parametrize` to extend test cases
-- Mark GPU-required or computationally heavy tests (e.g., training) with `@pytest.mark.gpu`
+**Quick reference:**
+- Bug fixes: Write failing test → Fix → Verify all pass
+- Features: Write comprehensive tests → Implement → Refactor
+- Use test classes and `@pytest.mark.parametrize` for organization
+- Mark GPU/heavy tests with `@pytest.mark.gpu`
 
-**Development Workflow:**
+**Testing Requirements:**
+- ⚠️ During development: Tests may fail (TDD cycle is fine)
+- ✅ Before PR: Final commit MUST have all tests passing
+- ✅ Before commit: Run `pre-commit run --all-files`
 
-1. **For bug fixes:** Start by writing a test that replicates the issue, then fix the code
-2. **For features:** Write tests covering all major use cases
-3. Run tests with `-n 2` for parallel execution (pytest-xdist)
-
-```python
-# Example: Parameterized test with GPU marker
-@pytest.mark.gpu
-@pytest.mark.parametrize("model_name", [
-    pytest.param("nano", id="nano"),
-    pytest.param("small", id="small"),
-])
-class TestModelTraining:
-    def test_train_convergence(self, model_name):
-        # Test implementation
-        pass
-```
-
-**CI/CD:** Tests run on Python 3.10-3.13 across Ubuntu, Windows, macOS. See `.github/workflows/` for workflow configurations.
+**CI/CD:** See `.github/workflows/` for source of truth. Tests run on Python 3.10-3.13 across Ubuntu, Windows, macOS.
 
 ## Coding Standards
 
-**Type Hints & Docstrings:**
-
-- **MANDATORY** type hints for all function parameters and returns
-- **MANDATORY** Google-style docstrings for all new functions/classes
-- See `.github/CONTRIBUTING.md` for examples and detailed requirements
+**Type Hints & Docstrings:** MANDATORY for all functions/classes. See **[Google-Style Docstrings and Mandatory Type Hints](CONTRIBUTING.md#google-style-docstrings-and-mandatory-type-hints)** in CONTRIBUTING.md for examples.
 
 **Import Conventions:**
 
@@ -140,6 +123,19 @@ Before submitting changes:
 - **Contributing:** `.github/CONTRIBUTING.md`
 - **Config:** `pyproject.toml`, `.pre-commit-config.yaml`
 - **Issues:** https://github.com/roboflow/rf-detr/issues
+
+## Maintaining Agentic Documentation
+
+**If your contribution:**
+- Changes project structure or introduces new patterns
+- Receives major feedback in PR review about conventions/patterns
+
+**Then update the relevant documents:**
+- This file (copilot-instructions.md) for high-level guidance
+- AGENTS.md for detailed technical patterns
+- CONTRIBUTING.md if it affects human contribution workflow
+
+This ensures future contributions stay consistent and reduces repeated feedback.
 
 ---
 
