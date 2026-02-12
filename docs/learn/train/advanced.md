@@ -432,7 +432,7 @@ Access your experiments in the ClearML Web UI. ClearML provides:
         output_dir="<OUTPUT_PATH>",
         mlflow=True,
         project="<EXPERIMENT_NAME>",
-        run="<RUN_NAME>"
+        run="<RUN_NAME>",
     )
     ```
 
@@ -455,8 +455,9 @@ Access your experiments in the ClearML Web UI. ClearML provides:
     ```
 
 - For teams using a hosted MLflow service (like Databricks), you'll typically need to set:
-  - `MLFLOW_TRACKING_URI`: The URL of your MLflow tracking server
-  - `MLFLOW_TRACKING_TOKEN`: Authentication token for your MLflow server
+
+    - `MLFLOW_TRACKING_URI`: The URL of your MLflow tracking server
+    - `MLFLOW_TRACKING_TOKEN`: Authentication token for your MLflow server
 
 - To view your logs after training, start the MLflow UI:
 
