@@ -76,9 +76,12 @@ OPEN_SOURCE_MODELS = {
 }
 
 def download_pretrain_weights(pretrain_weights: str, redownload=False):
-    from rfdetr.platform.platform_downloads import PLATFORM_MODELS
+    HOSTED_MODELS = {**OPEN_SOURCE_MODELS}
+    if pretrain_weights not in HOSTED_MODELS:
+        from rfdetr.platform.platform_downloads import PLATFORM_MODELS
 
-    HOSTED_MODELS = {**OPEN_SOURCE_MODELS, **PLATFORM_MODELS}
+        HOSTED_MODELS.update(PLATFORM_MODELS)
+
     if pretrain_weights not in HOSTED_MODELS:
         return
     if os.path.exists(pretrain_weights) and not redownload:
@@ -87,8 +90,8 @@ def download_pretrain_weights(pretrain_weights: str, redownload=False):
         f"Downloading pretrained weights for {pretrain_weights}"
     )
     download_file(
-        HOSTED_MODELS[pretrain_weights],
-        pretrain_weights,
+        url=HOSTED_MODELS[pretrain_weights],
+        filename=pretrain_weights,
     )
 
 class Model:
@@ -117,7 +120,8 @@ class Model:
             checkpoint_num_classes = checkpoint['model']['class_embed.bias'].shape[0]
             if checkpoint_num_classes != args.num_classes + 1:
                 logger.warning(
-                    f"Reinitializing detection head with {checkpoint_num_classes - 1} classes based on pretrained weights, configured for {args.num_classes}."
+                    f"Reinitializing detection head with {checkpoint_num_classes - 1} classes based on pretrained weights,"
+                    f" configured for {args.num_classes}."
                 )
                 self.reinitialize_detection_head(checkpoint_num_classes)
             # add support to exclude_keys
