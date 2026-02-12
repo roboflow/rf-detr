@@ -38,6 +38,12 @@ class BaseConfig(BaseModel):
             )
         return values
 
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name.startswith("_") or name in type(self).model_fields:
+            super().__setattr__(name, value)
+            return
+        raise ValueError(f"Unknown attribute: '{name}'.")
+
 class ModelConfig(BaseConfig):
     encoder: Literal["dinov2_windowed_small", "dinov2_windowed_base"]
     out_feature_indexes: List[int]

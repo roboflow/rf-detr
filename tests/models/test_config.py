@@ -38,5 +38,5 @@ class TestModelConfigValidation:
     def test_rejects_unknown_attribute_assignment(self, sample_model_config) -> None:
         config = ModelConfig(**sample_model_config)
 
-        with pytest.raises(ValidationError, match=r"Object has no attribute 'unknown'"):
+        with pytest.raises(ValueError, match=r"Unknown attribute: 'unknown'\."):
             setattr(config, "unknown", "value")
