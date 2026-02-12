@@ -83,11 +83,11 @@ def test_coco_inference_benchmark(
         val_dataset = torch.utils.data.Subset(val_dataset, list(range(min(num_samples, len(val_dataset)))))
     data_loader = torch.utils.data.DataLoader(
         val_dataset,
-        batch_size=4,
+        batch_size=6,
         sampler=torch.utils.data.SequentialSampler(val_dataset),
         drop_last=False,
         collate_fn=utils.collate_fn,
-        num_workers=max(1, (os.cpu_count() or 1) // 2),
+        num_workers=max(1, os.cpu_count()),
     )
     base_ds = get_coco_api_from_dataset(val_dataset)
     criterion, postprocess = build_criterion_and_postprocessors(args)
