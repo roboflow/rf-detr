@@ -56,13 +56,15 @@ def test_export_calls_eval_on_deepcopy_not_original(tmp_path: Path) -> None:
     This test patches deepcopy to track whether eval() is called on the copied
     model during export, ensuring the fix in PR #578 is working correctly.
     """
-    model = RFDETRSegNano()
+    from unittest.mock import Mock, call
     
-    # Track calls to eval() on the deepcopy
-    deepcopy_eval_called = []
+    model = RFDETRSegNano()
     
     # Store the original deepcopy function
     original_deepcopy = deepcopy
+    
+    # Mock to track eval() calls
+    eval_mock = Mock()
     
     def tracking_deepcopy(obj):
         """Deepcopy wrapper that tracks eval() calls on the copy"""
@@ -73,7 +75,7 @@ def test_export_calls_eval_on_deepcopy_not_original(tmp_path: Path) -> None:
             original_eval = copied.eval
             
             def tracked_eval():
-                deepcopy_eval_called.append(True)
+                eval_mock()
                 return original_eval()
             
             copied.eval = tracked_eval
@@ -84,13 +86,13 @@ def test_export_calls_eval_on_deepcopy_not_original(tmp_path: Path) -> None:
     with patch('rfdetr.main.deepcopy', side_effect=tracking_deepcopy):
         try:
             model.export(output_dir=str(tmp_path), simplify=False)
-        except Exception:
-            # Export might fail for various reasons (network, dependencies, etc.)
-            # but we can still verify the deepcopy and eval behavior
+        except (ImportError, OSError, RuntimeError) as e:
+            # Expected failures: missing dependencies, network issues, CUDA errors
+            # These are acceptable as we're testing the deepcopy/eval pattern, not the full export
             pass
     
     # Verify that eval() was called on the deepcopy during export
-    assert len(deepcopy_eval_called) > 0, (
+    assert eval_mock.call_count > 0, (
         "export() should call eval() on the deepcopy. "
         "This ensures the exported model is in eval mode without affecting the original."
     )
