@@ -401,6 +401,80 @@ Access your experiments in the ClearML Web UI. ClearML provides:
 
 ---
 
+## Logging with MLflow
+
+[MLflow](https://mlflow.org) is an open-source platform for experiment tracking, model registry, and ML lifecycle management.
+
+### Setup
+
+1. Install the required packages:
+
+    ```bash
+    pip install "rfdetr[metrics]"
+    ```
+
+2. Enable MLflow logging in your training:
+
+    ```python
+    from rfdetr import RFDETRMedium
+
+    model = RFDETRMedium()
+
+    model.train(
+        dataset_dir="path/to/dataset",
+        epochs=100,
+        batch_size=4,
+        grad_accum_steps=4,
+        lr=1e-4,
+        output_dir="output",
+        mlflow=True,
+        project="my-detection-project",
+        run="experiment-001",
+    )
+    ```
+
+### MLflow Organization
+
+| Parameter | Description                                        |
+| --------- | -------------------------------------------------- |
+| `project` | MLflow experiment name (groups related runs)       |
+| `run`     | MLflow run name (identifies individual trainings)  |
+
+If you don't specify names, MLflow will use default experiment and generate random run names.
+
+### Viewing Results
+
+Start the MLflow UI to visualize your experiments:
+
+```bash
+mlflow ui
+```
+
+Then open `http://localhost:5000/` in your browser. MLflow provides:
+
+- Real-time metric visualization
+- Experiment comparison
+- Hyperparameter tracking
+- System metrics (CPU, GPU, memory)
+- Model registry and versioning
+
+### Using Multiple Loggers
+
+You can enable MLflow alongside other logging systems:
+
+```python
+model.train(
+    dataset_dir="path/to/dataset",
+    epochs=100,
+    tensorboard=True,
+    wandb=True,
+    mlflow=True,
+    project="my-project",
+)
+```
+
+---
+
 ## Memory Optimization
 
 ### Gradient Checkpointing

@@ -72,6 +72,7 @@ RF-DETR provides many configuration options to customize your training run. See 
 - [Multi-GPU training](advanced.md#multi-gpu-training) with PyTorch DDP
 - [Logging with TensorBoard](advanced.md#logging-with-tensorboard)
 - [Logging with Weights and Biases](advanced.md#logging-with-weights-and-biases)
+- [Logging with MLflow](advanced.md#logging-with-mlflow)
 - [Logging with ClearML](advanced.md#logging-with-clearml)
 
 → **[Learn more about advanced training](advanced.md)**
