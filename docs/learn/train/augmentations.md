@@ -168,19 +168,19 @@ augmented_image, augmented_target = augmentation_pipeline(image, target)
 
 ## Best Practices
 
-> [!TIP]
-> **Start Conservative:** Begin with simple augmentations (horizontal flip, small brightness changes) and gradually add more as needed.
+!!! tip "Start Conservative"
+    Begin with simple augmentations (horizontal flip, small brightness changes) and gradually add more as needed.
 
-> [!WARNING]
-> **Geometric Transforms:** Be careful with aggressive rotations and crops on datasets where object orientation matters (e.g., text detection, oriented objects).
+!!! warning "Geometric Transforms"
+    Be careful with aggressive rotations and crops on datasets where object orientation matters (e.g., text detection, oriented objects).
 
 ### Recommendations by Dataset Size
 
 | Dataset Size | Recommended Augmentations |
 |--------------|---------------------------|
-| < 500 images | Horizontal flip, small brightness/contrast adjustments |
-| 500-2000 | Add vertical flip (if applicable), color jitter, blur |
-| 2000+ | Add rotations, affine transforms, aggressive color augmentations |
+| Under 500 images | Horizontal flip, small brightness/contrast adjustments |
+| 500-2000 images | Add vertical flip (if applicable), color jitter, blur |
+| 2000+ images | Add rotations, affine transforms, aggressive color augmentations |
 
 ### Performance Tips
 
@@ -232,11 +232,12 @@ plt.show()
 
 ### Expected Training Behavior
 
-> [!NOTE]
-> With augmentations enabled, it's normal to see:
-> - **Training mAP lower than validation mAP** - Training uses augmented (harder) images
-> - **Slower data loading** - CPU preprocessing time increases
-> - **Better generalization** - Model learns from more diverse data
+!!! note
+    With augmentations enabled, it's normal to see:
+
+    - **Training mAP lower than validation mAP** - Training uses augmented (harder) images
+    - **Slower data loading** - CPU preprocessing time increases
+    - **Better generalization** - Model learns from more diverse data
 
 ## Troubleshooting
 
