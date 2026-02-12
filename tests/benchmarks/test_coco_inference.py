@@ -4,7 +4,9 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 import importlib.util
+import json
 import os
+import tempfile
 from functools import partial
 from pathlib import Path
 from typing import Optional
@@ -63,6 +65,7 @@ def test_coco_inference_benchmark(
 ) -> None:
     device = "cuda" if torch.cuda.is_available() else "cpu"
     images_root, annotations_path = download_coco_val
+    model_label = model_cls.__class__.__name__
 
     rfdetr = model_cls(device=device)
     config = rfdetr.model_config
@@ -97,11 +100,18 @@ def test_coco_inference_benchmark(
             data_loader, base_ds, torch.device(device), args=args,
         )
 
+    # Dump results JSON for debugging
+    # Use env var COCO_BENCHMARK_DEBUG_DIR to specify a permanent folder, otherwise use temp
+    debug_dir = os.environ.get("COCO_BENCHMARK_DEBUG_DIR", tempfile.gettempdir())
+    debug_path = Path(debug_dir) / f"coco_inference_stats_{model_label}.json"
+    with open(debug_path, "w") as f:
+        json.dump(stats, f, indent=2)
+    print(f"Dumped stats to {debug_path}")
+
     results = stats["results_json"]
     map_val = results["map"]
     f1_val = results["f1_score"]
 
-    model_label = model_cls.__class__.__name__
     print(f"COCO val2017 [{model_label}]: mAP@50={map_val:.4f}, F1={f1_val:.4f}")
 
     assert map_val >= threshold_map, f"mAP@50 {map_val:.4f} < {threshold_map}"
