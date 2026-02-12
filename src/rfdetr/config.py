@@ -9,11 +9,33 @@ import os
 from typing import List, Literal, Optional
 
 import torch
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 
-class ModelConfig(BaseModel):
+
+class BaseConfig(BaseModel):
+    """
+    Base configuration class that validates input parameters against the defined model schema.
+    If any unknown fields are provided, a ValueError is raised listing the unknown and available parameters.
+    """
+    model_config = ConfigDict(extra='ignore')
+
+    @model_validator(mode="before")
+    def catch_typo_kwargs(cls, values):
+        allowed_params = set(cls.model_json_schema().get('properties').keys())
+        provided_params = set(values)
+        unknown_params = provided_params - allowed_params
+        if unknown_params:
+            unknown_params_list = ", ".join(f"'{param}'" for param in sorted(unknown_params))
+            allowed_params_list = ", ".join(sorted(allowed_params))
+            raise ValueError(
+                f"Unknown parameter(s): {unknown_params_list}. "
+                f"Available parameter(s): {allowed_params_list}."
+            )
+        return values
+
+class ModelConfig(BaseConfig):
     encoder: Literal["dinov2_windowed_small", "dinov2_windowed_base"]
     out_feature_indexes: List[int]
     dec_layers: int
