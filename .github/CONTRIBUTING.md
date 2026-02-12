@@ -61,7 +61,7 @@ rf-detr/
 │   ├── test_*.py         # Test files
 │   └── conftest.py       # Pytest configuration and fixtures
 ├── pyproject.toml        # Project metadata, dependencies, tool configurations
-├── mkdocs.yml            # Documentation configuration
+├── mkdocs.yaml           # Documentation configuration
 ├── .pre-commit-config.yaml  # Pre-commit hooks configuration
 ├── README.md             # Project overview and quick start
 ├── LICENSE               # Apache 2.0 license
