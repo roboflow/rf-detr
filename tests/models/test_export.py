@@ -38,7 +38,7 @@ def test_segmentation_model_export_no_crash(tmp_path: Path) -> None:
     model = RFDETRSegNano()
 
     # This should not crash with "AttributeError: 'dict' object has no attribute 'shape'"
-    model.export(output_dir=str(tmp_path), simplify=False)
+    model.export(output_dir=str(tmp_path), simplify=False, verbose=False)
 
     # Verify export produced output files
     onnx_files = list(tmp_path.glob("*.onnx"))
