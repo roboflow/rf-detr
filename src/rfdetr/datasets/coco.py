@@ -151,7 +151,7 @@ class ConvertCoco(object):
         return image, target
 
 
-def make_coco_transforms(image_set, resolution, multi_scale=False, expanded_scales=False):
+def make_coco_transforms(image_set: str, resolution: int, multi_scale: bool = False, expanded_scales: bool = False) -> T.Compose:
     normalize = T.Compose([
         T.ToTensor(),
         T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
@@ -196,6 +196,34 @@ def make_coco_transforms(image_set, resolution, multi_scale=False, expanded_scal
 
 def make_coco_transforms_square_div_64(image_set, resolution, multi_scale=False, expanded_scales=False, skip_random_resize=False, patch_size=16, num_windows=4):
     """
+    Create COCO transforms with square resizing where the output size is divisible by 64.
+
+    This function builds a torchvision-style transform pipeline for COCO images that
+    resizes them to square shapes suitable for models that require spatial dimensions
+    divisible by 64. It supports multi-scale training and optional random resizing and
+    cropping for the training split.
+
+    Args:
+        image_set: Dataset split identifier. Expected values are "train", "val",
+            "test", or "val_speed". Each split uses a slightly different transform
+            pipeline suited for training or evaluation.
+        resolution: Base square resolution (in pixels) to which images are resized.
+        multi_scale: If True, enable multi-scale training by sampling from a set of
+            square resolutions instead of a single fixed size.
+        expanded_scales: If True, expand the range of scales used during
+            multi-scale training. Passed through to ``compute_multi_scale_scales``.
+        skip_random_resize: If True and ``multi_scale`` is enabled, use only the
+            largest scale returned by ``compute_multi_scale_scales`` and skip random
+            selection among multiple scales.
+        patch_size: Patch size used by ``compute_multi_scale_scales`` when
+            determining valid square resolutions (typically related to the model's
+            patch embedding or stride).
+        num_windows: Number of windows used by ``compute_multi_scale_scales`` to
+            derive the list of candidate square resolutions.
+
+    Returns:
+        A ``T.Compose`` object containing the composed image transforms appropriate
+        for the specified ``image_set``.
     """
     normalize = T.Compose([
         T.ToTensor(),
