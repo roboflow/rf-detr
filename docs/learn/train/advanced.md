@@ -435,10 +435,10 @@ Access your experiments in the ClearML Web UI. ClearML provides:
 
 ### MLflow Organization
 
-| Parameter | Description                                        |
-| --------- | -------------------------------------------------- |
-| `project` | MLflow experiment name (groups related runs)       |
-| `run`     | MLflow run name (identifies individual trainings)  |
+| Parameter | Description                                       |
+| --------- | ------------------------------------------------- |
+| `project` | MLflow experiment name (groups related runs)      |
+| `run`     | MLflow run name (identifies individual trainings) |
 
 If you don't specify names, MLflow will use default experiment and generate random run names.
 
