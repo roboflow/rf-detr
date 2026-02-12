@@ -63,7 +63,6 @@ class MetricsPlotSink:
             logger.warning("No metrics data available to generate plot. Skipping plot generation.")
             return
 
-        import matplotlib.pyplot as plt
         plt.ioff()
         def get_array(key: str) -> np.ndarray:
             return np.array([h[key] for h in self.history if key in h])
