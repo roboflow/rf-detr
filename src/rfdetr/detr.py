@@ -28,6 +28,7 @@ try:
 except:
     pass
 
+from rfdetr.assets.model_weights import download_pretrain_weights
 from rfdetr.config import (
     ModelConfig,
     RFDETRBaseConfig,
@@ -47,7 +48,6 @@ from rfdetr.config import (
     TrainConfig,
 )
 from rfdetr.main import Model
-from rfdetr.assets.model_weights import download_pretrain_weights
 from rfdetr.util.coco_classes import COCO_CLASSES
 from rfdetr.util.metrics import (
     MetricsClearMLSink,

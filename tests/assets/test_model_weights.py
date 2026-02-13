@@ -4,7 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-from rfdetr.assets import ModelWeightsBase, ModelWeightAsset, ModelWeights
+from rfdetr.assets import ModelWeightAsset, ModelWeights, ModelWeightsBase
 
 
 def test_from_filename_found():
