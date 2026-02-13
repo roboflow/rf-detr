@@ -493,7 +493,24 @@ def test_intermediate_scenario(intermediate_scenario_cocoeval):
     All predictions with IoU ≥ 0.5 are considered matches.
 
     This test evaluates metrics at the confidence threshold that maximizes macro-F1,
-    which for faster-coco-eval is the optimal confidence level rather than 0.0.
+    which is 0.0 in this scenario (an edge case where including all predictions yields
+    the best F1 score).
+
+    Class 1: 10 GTs, 10 matching preds, 0 FPs
+      - IoU levels: [0.975, 0.925, 0.875, 0.825, 0.775, 0.725, 0.675, 0.625, 0.575, 0.525]
+      - Confidence levels: [0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.0]
+
+    Class 2: 10 GTs, 10 matching preds, 10 FPs
+      - TP IoU levels: [0.975, 0.925, 0.875, 0.825, 0.775, 0.725, 0.675, 0.625, 0.575, 0.525]
+      - TP Confidence levels: [0.95, 0.90, 0.85, 0.80, 0.75, 0.70, 0.65, 0.60, 0.55, 0.50]
+      - FP confidences: [0.45, 0.40, 0.35, 0.30, 0.25, 0.20, 0.15, 0.10, 0.05, 0.00]
+        (Note: confidence=0.0 is an edge case included for comprehensive testing)
+
+    Expected (from hand calculations in fixture docstring):
+    - Best macro-F1 = 0.8334 (at confidence 0.0 or 0.5)
+    - At confidence 0.0: Mean-Precision = 0.75, Mean-Recall = 1.0
+      - Class 1: Precision = 1.0, Recall = 1.0, F1 = 1.0
+      - Class 2: Precision = 0.5, Recall = 1.0, F1 = 0.6667
     """
     results = coco_extended_metrics(intermediate_scenario_cocoeval)
 
