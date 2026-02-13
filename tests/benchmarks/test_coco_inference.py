@@ -4,7 +4,9 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 import importlib.util
+import json
 import os
+import tempfile
 from functools import partial
 from pathlib import Path
 from typing import Optional
@@ -25,15 +27,15 @@ if _PLUS_AVAILABLE:
     try:
         from rfdetr import RFDETR2XLarge, RFDETRXLarge
 
-        RFDETRXLarge_accepted_PML = partial(RFDETRXLarge, accept_platform_model_license=True)
-        RFDETR2XLarge_accepted_PML = partial(RFDETR2XLarge, accept_platform_model_license=True)
+        RFDETRXLarge_PML = partial(RFDETRXLarge, accept_platform_model_license=True)
+        RFDETR2XLarge_PML = partial(RFDETR2XLarge, accept_platform_model_license=True)
     except ImportError:
         _PLUS_AVAILABLE = False
-        RFDETRXLarge_accepted_PML = None
-        RFDETR2XLarge_accepted_PML = None
+        RFDETRXLarge_PML = None
+        RFDETR2XLarge_PML = None
 else:
-    RFDETRXLarge_accepted_PML = None
-    RFDETR2XLarge_accepted_PML = None
+    RFDETRXLarge_PML = None
+    RFDETR2XLarge_PML = None
 
 _PLUS_SKIP = pytest.mark.skipif(not _PLUS_AVAILABLE, reason="requires rfdetr_plus models")
 
@@ -42,19 +44,20 @@ _PLUS_SKIP = pytest.mark.skipif(not _PLUS_AVAILABLE, reason="requires rfdetr_plu
 @pytest.mark.parametrize(
     ("model_cls", "threshold_map", "threshold_f1", "num_samples"),
     [
-        pytest.param(RFDETRNano, 0.65, 0.65, None, id="nano"),
-        pytest.param(RFDETRSmall, 0.65, 0.65, 500, id="small"),
-        pytest.param(RFDETRMedium, 0.65, 0.65, 500, id="medium"),
-        pytest.param(RFDETRLarge, 0.65, 0.65, 500, id="large"),
+        pytest.param(RFDETRNano, 0.67, 0.67, None, id="nano"),
+        pytest.param(RFDETRSmall, 0.72, 0.70, 500, id="small"),
+        pytest.param(RFDETRMedium, 0.73, 0.71, 500, id="medium"),
+        pytest.param(RFDETRLarge, 0.74, 0.72, 500, id="large"),
         pytest.param(
-            RFDETRXLarge_accepted_PML, 0.65, 0.65, 500, id="xlarge", marks=_PLUS_SKIP,
+            RFDETRXLarge_PML, 0.77, 0.74, 500, id="xlarge", marks=_PLUS_SKIP,
         ),
         pytest.param(
-            RFDETR2XLarge_accepted_PML, 0.65, 0.65, 500, id="2xlarge", marks=_PLUS_SKIP,
+            RFDETR2XLarge_PML, 0.78, 0.74, 500, id="2xlarge", marks=_PLUS_SKIP,
         ),
     ],
 )
 def test_coco_inference_benchmark(
+    request: pytest.FixtureRequest,
     download_coco_val: tuple[Path, Path],
     model_cls: type[RFDETR],
     threshold_map: float,
@@ -81,11 +84,11 @@ def test_coco_inference_benchmark(
         val_dataset = torch.utils.data.Subset(val_dataset, list(range(min(num_samples, len(val_dataset)))))
     data_loader = torch.utils.data.DataLoader(
         val_dataset,
-        batch_size=4,
+        batch_size=6,
         sampler=torch.utils.data.SequentialSampler(val_dataset),
         drop_last=False,
         collate_fn=utils.collate_fn,
-        num_workers=max(1, (os.cpu_count() or 1) // 2),
+        num_workers=os.cpu_count() or 1,
     )
     base_ds = get_coco_api_from_dataset(val_dataset)
     criterion, postprocess = build_criterion_and_postprocessors(args)
@@ -97,12 +100,20 @@ def test_coco_inference_benchmark(
             data_loader, base_ds, torch.device(device), args=args,
         )
 
+    # Dump results JSON for debugging
+    # Use env var COCO_BENCHMARK_DEBUG_DIR to specify a permanent folder, otherwise use temp
+    test_id = request.node.callspec.id
+    debug_dir = os.environ.get("COCO_BENCHMARK_DEBUG_DIR", tempfile.gettempdir())
+    debug_path = Path(debug_dir) / f"coco_inference_stats_detection_{test_id}_nb-spl-{num_samples or 'all'}.json"
+    Path(debug_dir).mkdir(parents=True, exist_ok=True)
+    with open(debug_path, "w") as f:
+        json.dump(stats, f, indent=2)
+    print(f"Dumped stats to {debug_path}")
+
     results = stats["results_json"]
     map_val = results["map"]
     f1_val = results["f1_score"]
 
-    model_label = model_cls.__class__.__name__
-    print(f"COCO val2017 [{model_label}]: mAP@50={map_val:.4f}, F1={f1_val:.4f}")
-
+    print(f"COCO val2017 [{test_id}]: mAP@50={map_val:.4f}, F1={f1_val:.4f}")
     assert map_val >= threshold_map, f"mAP@50 {map_val:.4f} < {threshold_map}"
     assert f1_val >= threshold_f1, f"F1 {f1_val:.4f} < {threshold_f1}"
