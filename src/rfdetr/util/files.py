@@ -100,4 +100,3 @@ def _download_file(url: str, filename: str, expected_md5: Optional[str] = None) 
 
     # Move temp file to final location
     os.rename(temp_filename, filename)
-

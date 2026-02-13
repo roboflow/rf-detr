@@ -37,10 +37,10 @@ from peft import LoraConfig, get_peft_model
 from torch.utils.data import DataLoader, DistributedSampler
 
 import rfdetr.util.misc as utils
+from rfdetr.assets.model_weights import ModelWeights, download_pretrain_weights
 from rfdetr.datasets import build_dataset, get_coco_api_from_dataset
 from rfdetr.engine import evaluate, train_one_epoch
 from rfdetr.models import PostProcess, build_criterion_and_postprocessors, build_model
-from rfdetr.assets.model_weights import ModelWeights, download_pretrain_weights
 from rfdetr.util.benchmark import benchmark
 from rfdetr.util.drop_scheduler import drop_scheduler
 from rfdetr.util.files import _validate_file_md5
