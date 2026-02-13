@@ -105,6 +105,7 @@ def test_coco_inference_benchmark(
     test_id = request.node.callspec.id
     debug_dir = os.environ.get("COCO_BENCHMARK_DEBUG_DIR", tempfile.gettempdir())
     debug_path = Path(debug_dir) / f"coco_inference_stats_detection_{test_id}_nb-spl-{num_samples or 'all'}.json"
+    Path(debug_dir).mkdir(parents=True, exist_ok=True)
     with open(debug_path, "w") as f:
         json.dump(stats, f, indent=2)
     print(f"Dumped stats to {debug_path}")
