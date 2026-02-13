@@ -28,7 +28,7 @@ Include (if available):
 - Steps to reproduce / proof-of-concept
 - Affected versions, environment details, and relevant logs
 
-We will review reports and respond as soon as reasonably possible.
+We aim to acknowledge reports within a few days and will work with you on appropriate disclosure timelines. Response times may vary depending on severity and complexity.
 
 ## Security Considerations for ML Projects
 
@@ -41,6 +41,10 @@ We will review reports and respond as soon as reasonably possible.
 - When possible, use safer loading options (e.g. `torch.load(..., weights_only=True)` where supported)
 
 **Note**: ONNX models (`.onnx`) are not pickle-based, but parsing/optimizer toolchains can still have security vulnerabilities. Treat untrusted files cautiously.
+
+**Resources**:
+- [PyTorch Security Best Practices](https://pytorch.org/docs/stable/security.html)
+- [PyTorch CVE Database](https://github.com/pytorch/pytorch/security/advisories)
 
 ### Dependency Security
 
@@ -84,5 +88,7 @@ Security patches will be announced via:
 - GitHub Security Advisories
 - Release notes
 - Project README
+
+If a vulnerability is deemed significant, we may request a CVE identifier to ensure proper tracking across the ecosystem.
 
 Subscribe to repository notifications to stay informed.
