@@ -91,7 +91,7 @@ def main():
         print("\n⚠️  Some models failed")
         sys.exit(1)
     else:
-        print("\n✓ All models validated successfully")
+        print("\n✅ All models validated successfully")
         sys.exit(0)
 
 
