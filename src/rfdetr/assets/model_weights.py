@@ -354,3 +354,48 @@ def download_pretrain_weights(
         filename=pretrain_weights,
         expected_md5=expected_md5,
     )
+
+
+def validate_pretrain_weights(pretrain_weights: str, strict: bool = False) -> bool:
+    """
+    Validate MD5 hash of pretrained weights file.
+
+    Args:
+        pretrain_weights: Path to the pretrained weights file
+        strict: If True, raise error on validation failure. If False, just warn.
+
+    Returns:
+        True if validation passes or no hash is available, False otherwise
+
+    Raises:
+        ValueError: If strict=True and validation fails
+        FileNotFoundError: If strict=True and file doesn't exist
+    """
+    if not os.path.exists(pretrain_weights):
+        if strict:
+            raise FileNotFoundError(f"Pretrained weights file not found: {pretrain_weights}")
+        return False
+
+    # Check if we have a hash for this model
+    model_name = os.path.basename(pretrain_weights)
+    asset = ModelWeights.from_filename(model_name)
+
+    if asset is None or asset.md5_hash is None:
+        # No hash available for validation
+        logger.debug(f"No MD5 hash available for {model_name}, skipping validation")
+        return True
+
+    if not _validate_file_md5(pretrain_weights, asset.md5_hash):
+        error_msg = (
+            f"MD5 hash validation failed for {pretrain_weights}. "
+            f"The file may be corrupted or tampered with. "
+            f"Consider re-downloading with download_pretrain_weights('{model_name}', redownload=True)"
+        )
+        if strict:
+            raise ValueError(error_msg)
+        else:
+            logger.warning(error_msg)
+        return False
+
+    logger.debug(f"MD5 validation passed for {pretrain_weights}")
+    return True

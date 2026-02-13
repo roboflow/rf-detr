@@ -37,13 +37,16 @@ from peft import LoraConfig, get_peft_model
 from torch.utils.data import DataLoader, DistributedSampler
 
 import rfdetr.util.misc as utils
-from rfdetr.assets.model_weights import ModelWeights, download_pretrain_weights
+from rfdetr.assets.model_weights import (
+    ModelWeights,
+    validate_pretrain_weights,
+    download_pretrain_weights,
+)
 from rfdetr.datasets import build_dataset, get_coco_api_from_dataset
 from rfdetr.engine import evaluate, train_one_epoch
 from rfdetr.models import PostProcess, build_criterion_and_postprocessors, build_model
 from rfdetr.util.benchmark import benchmark
 from rfdetr.util.drop_scheduler import drop_scheduler
-from rfdetr.util.files import _validate_file_md5
 from rfdetr.util.get_param_dicts import get_param_dict
 from rfdetr.util.logger import get_logger
 from rfdetr.util.misc import get_rank, get_world_size, is_main_process, save_on_master
@@ -60,49 +63,6 @@ logger = get_logger()
 # Legacy dictionary for backward compatibility
 OPEN_SOURCE_MODELS = {asset.filename: asset.url for asset in ModelWeights}
 
-def _validate_pretrain_weights(pretrain_weights: str, strict: bool = False) -> bool:
-    """
-    Validate MD5 hash of pretrained weights file.
-
-    Args:
-        pretrain_weights: Path to the pretrained weights file
-        strict: If True, raise error on validation failure. If False, just warn.
-
-    Returns:
-        True if validation passes or no hash is available, False otherwise
-
-    Raises:
-        ValueError: If strict=True and validation fails
-    """
-    if not os.path.exists(pretrain_weights):
-        if strict:
-            raise FileNotFoundError(f"Pretrained weights file not found: {pretrain_weights}")
-        return False
-
-    # Check if we have a hash for this model
-    model_name = os.path.basename(pretrain_weights)
-    asset = ModelWeights.from_filename(model_name)
-
-    if asset is None or asset.md5_hash is None:
-        # No hash available for validation
-        logger.debug(f"No MD5 hash available for {model_name}, skipping validation")
-        return True
-
-    if not _validate_file_md5(pretrain_weights, asset.md5_hash):
-        error_msg = (
-            f"MD5 hash validation failed for {pretrain_weights}. "
-            f"The file may be corrupted or tampered with. "
-            f"Consider re-downloading with download_pretrain_weights('{model_name}', redownload=True)"
-        )
-        if strict:
-            raise ValueError(error_msg)
-        else:
-            logger.warning(error_msg)
-        return False
-
-    logger.info(f"MD5 validation passed for {pretrain_weights}")
-    return True
-
 
 class Model:
     def __init__(self, **kwargs):
@@ -115,7 +75,7 @@ class Model:
             logger.info("Loading pretrain weights")
 
             # Validate MD5 hash before loading (non-strict, just warns)
-            _validate_pretrain_weights(args.pretrain_weights, strict=False)
+            validate_pretrain_weights(args.pretrain_weights, strict=False)
 
             try:
                 checkpoint = torch.load(args.pretrain_weights, map_location='cpu', weights_only=False)
