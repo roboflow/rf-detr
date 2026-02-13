@@ -1,3 +1,8 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
 
 import numpy as np
 import pytest
@@ -27,6 +32,7 @@ class TestCocoLikeAPI:
 
     def test_dataset_structure(self, coco_api):
         """Test the structure of the COCO dataset."""
+        assert "info" in coco_api.dataset
         assert "images" in coco_api.dataset
         assert "annotations" in coco_api.dataset
         assert "categories" in coco_api.dataset

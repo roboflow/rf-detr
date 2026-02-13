@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rfdetr"
-version = "1.4.0.post0"
+version = "1.4.2"
 description = "RF-DETR"
 readme = "README.md"
 authors = [
-    {name = "Roboflow, Inc", email = "peter@roboflow.com"}
+    {name = "Roboflow, Inc", email = "develop@roboflow.com"}
 ]
 license = {text = "Apache License 2.0"}
 requires-python = ">=3.10"
@@ -35,35 +35,36 @@ classifiers = [
 keywords = ["machine-learning", "deep-learning", "vision", "ML", "DL", "AI", "DETR", "RF-DETR", "Roboflow"]
 
 dependencies = [
-    "cython",
+    "requests",
     "faster-coco-eval>=1.6.7",
     "torch>=1.13.0,<=2.8.0", # TODO: Torch >=2.9.0 is excluded due to known issues. PRs that help lift this restriction are welcome.
     "torchvision>=0.14.0",
     "scipy",
     "tqdm",
-    "numpy",
     "transformers>4.0.0, <5.0.0",
     "peft",
-    "polygraphy",
     "rf100vl",
     "pydantic",
     "supervision",
     "matplotlib",
     "roboflow",
-    "pillow-avif-plugin<1.5.3" # TODO: # Temporary pin. pillow-avif-plugin 1.5.3 fails to install in CI due to a broken wheel. Remove once the upstream issue is fixed.
 ]
 
 [project.optional-dependencies]
 onnxexport = [
-    "onnx",
+    "onnx>=1.16.0,<1.20",
     "onnxsim",
     "onnx_graphsurgeon",
-    "onnxruntime"
+    "onnxruntime",
+    "polygraphy"
 ]
 metrics = [
     "tensorboard>=2.13.0",
-    "wandb"
+    "wandb",
+    "mlflow",
+    "clearml"
 ]
+plus = ["rfdetr_plus>=1.0.0"]
 
 [dependency-groups]
 build = [
@@ -75,6 +76,7 @@ build = [
 tests = [
   "pytest>=7.2.2,<9",
   "pytest-cov>=4,<8",
+  "pytest-xdist>=3.6.1,<4",
 ]
 
 docs = [
@@ -83,7 +85,7 @@ docs = [
     "mkdocstrings-python>=1.10.9",
     "mike>=2.0.0",
     "mkdocs-jupyter>=0.24.3",
-    "mkdocs-git-committers-plugin-2>=2.4.1; python_version >= '3.8' and python_version < '4'",
+    "mkdocs-git-committers-plugin-2>=2.4.1",
     "mkdocs-git-revision-date-localized-plugin>=1.2.4"
 ]
 
@@ -94,6 +96,7 @@ Homepage = "https://github.com/roboflow/rf-detr"
 rfdetr = "rfdetr.cli.main:trainer"
 
 [tool.setuptools.packages.find]
+where = ["src"]
 include = ["rfdetr*"]
 
 [tool.setuptools]
@@ -125,3 +128,17 @@ ignore = [
     "E721",  # todo: Use `is` and `is not` for type comparisons, or `isinstance()` for isinstance checks
     "F821",  # todo: Undefined name `...`
 ]
+
+[tool.pytest.ini_options]
+addopts = [
+    "-v",                   # verbose output
+    "--color=yes",          # colored output
+#    "--doctest-modules",    # TODO: run doctests from all modules
+]
+pythonpath = ["src"]
+markers = [
+    "gpu: tests that require GPU or are slow on CPU",
+]
+
+[tool.codespell]
+skip = "*.pth"
