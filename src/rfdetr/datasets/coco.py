@@ -12,8 +12,6 @@
 # Copied from DETR (https://github.com/facebookresearch/detr)
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 # ------------------------------------------------------------------------
-# Modifed with faster-coco-eval by @MiXaiLL76
-# ------------------------------------------------------------------------
 
 """
 COCO dataset which returns image_id for evaluation.
@@ -26,7 +24,6 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import faster_coco_eval.core.mask as coco_mask
 import torch
 import torch.utils.data
-import torchvision
 from faster_coco_eval.utils.pytorch import FasterCocoDetection
 from PIL import Image
 

@@ -26,21 +26,17 @@ from collections import OrderedDict, namedtuple
 import numpy as np
 import onnxruntime as nxrun
 import pycuda.driver as cuda
-import supervision as sv
 import tensorrt as trt
 import torch
 import torchvision.transforms.functional as F
 from PIL import Image
-from pycocotools.coco import COCO
-from pycocotools.cocoeval import COCOeval
 from tqdm.auto import tqdm
 
+from rfdetr.datasets.coco_eval import CocoEvaluator
 from rfdetr.util.box_ops import box_xyxy_to_cxcywh
 from rfdetr.util.logger import get_logger
 
 logger = get_logger()
-
-from rfdetr.datasets.coco_eval import CocoEvaluator
 
 
 def parser_args():
@@ -152,13 +148,6 @@ def box_cxcywh_to_xyxy(x):
     x_c, y_c, w, h = x.unbind(-1)
     b = [(x_c - 0.5 * w.clamp(min=0.0)), (y_c - 0.5 * h.clamp(min=0.0)),
          (x_c + 0.5 * w.clamp(min=0.0)), (y_c + 0.5 * h.clamp(min=0.0))]
-    return torch.stack(b, dim=-1)
-
-
-def box_xyxy_to_cxcywh(x):
-    x0, y0, x1, y1 = x.unbind(-1)
-    b = [(x0 + x1) / 2, (y0 + y1) / 2,
-         (x1 - x0), (y1 - y0)]
     return torch.stack(b, dim=-1)
 
 
