@@ -37,12 +37,13 @@ from peft import LoraConfig, get_peft_model
 from torch.utils.data import DataLoader, DistributedSampler
 
 import rfdetr.util.misc as utils
+from rfdetr.assets import ModelAssets
 from rfdetr.datasets import build_dataset, get_coco_api_from_dataset
 from rfdetr.engine import evaluate, train_one_epoch
 from rfdetr.models import PostProcess, build_criterion_and_postprocessors, build_model
 from rfdetr.util.benchmark import benchmark
 from rfdetr.util.drop_scheduler import drop_scheduler
-from rfdetr.util.files import download_file
+from rfdetr.util.files import _download_file, _validate_file_md5
 from rfdetr.util.get_param_dicts import get_param_dict
 from rfdetr.util.logger import get_logger
 from rfdetr.util.misc import get_rank, get_world_size, is_main_process, save_on_master
@@ -55,43 +56,102 @@ if str(os.environ.get("USE_FILE_SYSTEM_SHARING", "False")).lower() in ["true", "
 
 logger = get_logger()
 
-# THE FOLLOWING OPEN_SOURCE_MODELS ARE COVERED BY THE APACHE 2.0 LICENSE
-OPEN_SOURCE_MODELS = {
-    "rf-detr-base.pth": "https://storage.googleapis.com/rfdetr/rf-detr-base-coco.pth",
-    "rf-detr-base-o365.pth": "https://storage.googleapis.com/rfdetr/top-secret-1234/lwdetr_dinov2_small_o365_checkpoint.pth",
-    # below is a less converged model that may be better for finetuning but worse for inference
-    "rf-detr-base-2.pth": "https://storage.googleapis.com/rfdetr/rf-detr-base-2.pth",
-    "rf-detr-large.pth": "https://storage.googleapis.com/rfdetr/rf-detr-large.pth",
-    "rf-detr-nano.pth": "https://storage.googleapis.com/rfdetr/nano_coco/checkpoint_best_regular.pth",
-    "rf-detr-small.pth": "https://storage.googleapis.com/rfdetr/small_coco/checkpoint_best_regular.pth",
-    "rf-detr-medium.pth": "https://storage.googleapis.com/rfdetr/medium_coco/checkpoint_best_regular.pth",
-    "rf-detr-seg-preview.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-preview.pt",
-    "rf-detr-large-2026.pth": "https://storage.googleapis.com/rfdetr/rf-detr-large-2026.pth",
-    "rf-detr-seg-nano.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-n-ft.pth",
-    "rf-detr-seg-small.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-s-ft.pth",
-    "rf-detr-seg-medium.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-m-ft.pth",
-    "rf-detr-seg-large.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-l-ft.pth",
-    "rf-detr-seg-xlarge.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-xl-ft.pth",
-    "rf-detr-seg-xxlarge.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-2xl-ft.pth",
-}
+# THE FOLLOWING MODEL ASSETS ARE COVERED BY THE APACHE 2.0 LICENSE
+# Legacy dictionary for backward compatibility
+OPEN_SOURCE_MODELS = {asset.filename: asset.url for asset in ModelAssets}
 
-def download_pretrain_weights(pretrain_weights: str, redownload=False):
-    HOSTED_MODELS = {**OPEN_SOURCE_MODELS}
-    if pretrain_weights not in HOSTED_MODELS:
-        from rfdetr.platform.platform_downloads import PLATFORM_MODELS
 
-        HOSTED_MODELS.update(PLATFORM_MODELS)
+def _validate_pretrain_weights(pretrain_weights: str, strict: bool = False) -> bool:
+    """
+    Validate MD5 hash of pretrained weights file.
 
-    if pretrain_weights not in HOSTED_MODELS:
-        return
+    Args:
+        pretrain_weights: Path to the pretrained weights file
+        strict: If True, raise error on validation failure. If False, just warn.
+
+    Returns:
+        True if validation passes or no hash is available, False otherwise
+
+    Raises:
+        ValueError: If strict=True and validation fails
+    """
+    if not os.path.exists(pretrain_weights):
+        if strict:
+            raise FileNotFoundError(f"Pretrained weights file not found: {pretrain_weights}")
+        return False
+
+    # Check if we have a hash for this model
+    model_name = os.path.basename(pretrain_weights)
+    asset = ModelAssets.from_filename(model_name)
+
+    if asset is None or asset.md5_hash is None:
+        # No hash available for validation
+        logger.debug(f"No MD5 hash available for {model_name}, skipping validation")
+        return True
+
+    if not _validate_file_md5(pretrain_weights, asset.md5_hash):
+        error_msg = (
+            f"MD5 hash validation failed for {pretrain_weights}. "
+            f"The file may be corrupted or tampered with. "
+            f"Consider re-downloading with download_pretrain_weights('{model_name}', redownload=True)"
+        )
+        if strict:
+            raise ValueError(error_msg)
+        else:
+            logger.warning(error_msg)
+        return False
+
+    logger.info(f"MD5 validation passed for {pretrain_weights}")
+    return True
+
+
+def download_pretrain_weights(pretrain_weights: str, redownload: bool = False, validate_md5: bool = True):
+    """
+    Download pretrained weights with optional MD5 validation.
+
+    Args:
+        pretrain_weights: Name of the pretrained weights file
+        redownload: Force re-download even if file exists
+        validate_md5: Whether to validate MD5 hash of downloaded file
+    """
+    # Check if it's a known asset
+    asset = ModelAssets.from_filename(pretrain_weights)
+
+    # If not found in ModelAssets, try platform models
+    if asset is None:
+        try:
+            from rfdetr.platform.platform_downloads import PLATFORM_MODELS
+
+            if pretrain_weights not in PLATFORM_MODELS:
+                return
+
+            url = PLATFORM_MODELS[pretrain_weights]
+            expected_md5 = None  # Platform models don't have MD5 hashes yet
+        except (ImportError, KeyError):
+            return
+    else:
+        url = asset.url
+        expected_md5 = asset.md5_hash if validate_md5 else None
+
+    # Check if file exists with correct hash
     if os.path.exists(pretrain_weights) and not redownload:
-        return
-    logger.info(
-        f"Downloading pretrained weights for {pretrain_weights}"
-    )
-    download_file(
-        url=HOSTED_MODELS[pretrain_weights],
+        if expected_md5 and validate_md5:
+            if not _validate_file_md5(pretrain_weights, expected_md5):
+                logger.warning(
+                    f"Existing file {pretrain_weights} has incorrect MD5 hash. "
+                    "Re-downloading..."
+                )
+            else:
+                logger.info(f"File {pretrain_weights} already exists with correct MD5 hash.")
+                return
+        else:
+            return
+
+    logger.info(f"Downloading pretrained weights for {pretrain_weights}")
+    _download_file(
+        url=url,
         filename=pretrain_weights,
+        expected_md5=expected_md5,
     )
 
 class Model:
@@ -103,6 +163,10 @@ class Model:
         self.device = torch.device(args.device)
         if args.pretrain_weights is not None:
             logger.info("Loading pretrain weights")
+
+            # Validate MD5 hash before loading (non-strict, just warns)
+            _validate_pretrain_weights(args.pretrain_weights, strict=False)
+
             try:
                 checkpoint = torch.load(args.pretrain_weights, map_location='cpu', weights_only=False)
             except Exception as e:
