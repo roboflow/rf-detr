@@ -37,17 +37,16 @@ from peft import LoraConfig, get_peft_model
 from torch.utils.data import DataLoader, DistributedSampler
 
 import rfdetr.util.misc as utils
-from rfdetr.assets import ModelAssets
 from rfdetr.datasets import build_dataset, get_coco_api_from_dataset
 from rfdetr.engine import evaluate, train_one_epoch
 from rfdetr.models import PostProcess, build_criterion_and_postprocessors, build_model
+from rfdetr.assets.model_weights import ModelWeights, download_pretrain_weights
 from rfdetr.util.benchmark import benchmark
 from rfdetr.util.drop_scheduler import drop_scheduler
-from rfdetr.util.files import _download_file, _validate_file_md5
+from rfdetr.util.files import _validate_file_md5
 from rfdetr.util.get_param_dicts import get_param_dict
 from rfdetr.util.logger import get_logger
 from rfdetr.util.misc import get_rank, get_world_size, is_main_process, save_on_master
-from rfdetr.util.package import get_version
 from rfdetr.util.utils import BestMetricHolder, ModelEma, clean_state_dict
 
 if str(os.environ.get("USE_FILE_SYSTEM_SHARING", "False")).lower() in ["true", "1"]:
@@ -56,10 +55,10 @@ if str(os.environ.get("USE_FILE_SYSTEM_SHARING", "False")).lower() in ["true", "
 
 logger = get_logger()
 
+
 # THE FOLLOWING MODEL ASSETS ARE COVERED BY THE APACHE 2.0 LICENSE
 # Legacy dictionary for backward compatibility
-OPEN_SOURCE_MODELS = {asset.filename: asset.url for asset in ModelAssets}
-
+OPEN_SOURCE_MODELS = {asset.filename: asset.url for asset in ModelWeights}
 
 def _validate_pretrain_weights(pretrain_weights: str, strict: bool = False) -> bool:
     """
@@ -82,7 +81,7 @@ def _validate_pretrain_weights(pretrain_weights: str, strict: bool = False) -> b
 
     # Check if we have a hash for this model
     model_name = os.path.basename(pretrain_weights)
-    asset = ModelAssets.from_filename(model_name)
+    asset = ModelWeights.from_filename(model_name)
 
     if asset is None or asset.md5_hash is None:
         # No hash available for validation
@@ -104,55 +103,6 @@ def _validate_pretrain_weights(pretrain_weights: str, strict: bool = False) -> b
     logger.info(f"MD5 validation passed for {pretrain_weights}")
     return True
 
-
-def download_pretrain_weights(pretrain_weights: str, redownload: bool = False, validate_md5: bool = True):
-    """
-    Download pretrained weights with optional MD5 validation.
-
-    Args:
-        pretrain_weights: Name of the pretrained weights file
-        redownload: Force re-download even if file exists
-        validate_md5: Whether to validate MD5 hash of downloaded file
-    """
-    # Check if it's a known asset
-    asset = ModelAssets.from_filename(pretrain_weights)
-
-    # If not found in ModelAssets, try platform models
-    if asset is None:
-        try:
-            from rfdetr.platform.platform_downloads import PLATFORM_MODELS
-
-            if pretrain_weights not in PLATFORM_MODELS:
-                return
-
-            url = PLATFORM_MODELS[pretrain_weights]
-            expected_md5 = None  # Platform models don't have MD5 hashes yet
-        except (ImportError, KeyError):
-            return
-    else:
-        url = asset.url
-        expected_md5 = asset.md5_hash if validate_md5 else None
-
-    # Check if file exists with correct hash
-    if os.path.exists(pretrain_weights) and not redownload:
-        if expected_md5 and validate_md5:
-            if not _validate_file_md5(pretrain_weights, expected_md5):
-                logger.warning(
-                    f"Existing file {pretrain_weights} has incorrect MD5 hash. "
-                    "Re-downloading..."
-                )
-            else:
-                logger.info(f"File {pretrain_weights} already exists with correct MD5 hash.")
-                return
-        else:
-            return
-
-    logger.info(f"Downloading pretrained weights for {pretrain_weights}")
-    _download_file(
-        url=url,
-        filename=pretrain_weights,
-        expected_md5=expected_md5,
-    )
 
 class Model:
     def __init__(self, **kwargs):

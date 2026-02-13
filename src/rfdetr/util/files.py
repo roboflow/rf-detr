@@ -101,16 +101,3 @@ def _download_file(url: str, filename: str, expected_md5: Optional[str] = None) 
     # Move temp file to final location
     os.rename(temp_filename, filename)
 
-
-# Public API for external use (e.g., scripts)
-def compute_file_md5(filepath: str) -> str:
-    """
-    Public wrapper for MD5 computation.
-
-    Args:
-        filepath: Path to the file
-
-    Returns:
-        MD5 hash as hexadecimal string
-    """
-    return _compute_file_md5(filepath)
