@@ -16,6 +16,7 @@ Usage:
 """
 
 import sys
+
 from tqdm.auto import tqdm
 
 from rfdetr import (
@@ -32,7 +33,6 @@ from rfdetr import (
     RFDETRSegXLarge,
     RFDETRSmall,
 )
-
 
 # Explicitly list all models to validate
 MODELS_TO_TEST = [
@@ -79,13 +79,13 @@ def main():
     pbar.close()
 
     # Summary
-    print(f"\nResults:")
+    print("\nResults:")
     print(f"  Total:     {len(MODELS_TO_TEST)}")
     print(f"  Succeeded: {len(MODELS_TO_TEST) - len(failed_models)}")
     print(f"  Failed:    {len(failed_models)}")
 
     if failed_models:
-        print(f"\nFailed models:")
+        print("\nFailed models:")
         for model_name, error in failed_models:
             print(f"  {model_name}: {error}")
         print("\n⚠️  Some models failed")
