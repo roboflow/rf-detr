@@ -12,7 +12,7 @@ Tests detection and segmentation model classes from rf-detr by importing and ins
 Validates: imports, download, MD5 hash, and model instantiation.
 
 Usage:
-    python tests/try_download_all_models.py
+    python tests/try_instantiate_all_models.py
 """
 
 import sys

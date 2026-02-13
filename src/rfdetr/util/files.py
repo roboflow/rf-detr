@@ -9,7 +9,7 @@ import os
 from typing import Optional
 
 import requests
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 from rfdetr.util.logger import get_logger
 
@@ -90,11 +90,12 @@ def _download_file(url: str, filename: str, expected_md5: Optional[str] = None) 
 
     # Validate MD5 if expected hash is provided
     if expected_md5:
-        if not _validate_file_md5(temp_filename, expected_md5):
+        actual_md5 = _compute_file_md5(temp_filename)
+        if actual_md5.lower() != expected_md5.lower():
             os.remove(temp_filename)
             raise ValueError(
                 f"MD5 hash validation failed for {filename}. "
-                f"Expected: {expected_md5}, got: {_compute_file_md5(temp_filename)}"
+                f"Expected: {expected_md5}, got: {actual_md5}"
             )
         logger.info(f"MD5 validation successful for {filename}")
 

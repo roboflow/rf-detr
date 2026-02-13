@@ -34,7 +34,7 @@ def mock_file_operations():
         }
 
 
-class TestDownloadPretainWeights:
+class TestDownloadPretrainWeights:
     """Test download_pretrain_weights function with mocking for offline testing."""
 
     def test_download_from_local_model_weights(self, mock_file_operations):
