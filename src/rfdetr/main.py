@@ -39,8 +39,8 @@ from torch.utils.data import DataLoader, DistributedSampler
 import rfdetr.util.misc as utils
 from rfdetr.assets.model_weights import (
     ModelWeights,
-    validate_pretrain_weights,
     download_pretrain_weights,
+    validate_pretrain_weights,
 )
 from rfdetr.datasets import build_dataset, get_coco_api_from_dataset
 from rfdetr.engine import evaluate, train_one_epoch
