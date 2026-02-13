@@ -53,7 +53,7 @@ MODELS_TO_TEST = [
 ]
 
 
-def main():
+def main() -> None:
     """Download, validate, and instantiate all models."""
     print("Model Instantiation & Download Validation\n")
 
@@ -88,10 +88,10 @@ def main():
         print("\nFailed models:")
         for model_name, error in failed_models:
             print(f"  {model_name}: {error}")
-        print("\n⚠️  Some models failed")
+        print("\n[WARN] Some models failed")
         sys.exit(1)
     else:
-        print("\n✅ All models validated successfully")
+        print("\n[OK] All models validated successfully")
         sys.exit(0)
 
 
