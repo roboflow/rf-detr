@@ -24,6 +24,7 @@ Please report security issues privately.
 Report to: **security@roboflow.com**
 
 Include (if available):
+
 - A clear description and impact
 - Steps to reproduce / proof-of-concept
 - Affected versions, environment details, and relevant logs
@@ -43,6 +44,7 @@ We aim to acknowledge reports within a few days and will work with you on approp
 **Note**: ONNX models (`.onnx`) are not pickle-based, but parsing/optimizer toolchains can still have security vulnerabilities. Treat untrusted files cautiously.
 
 **Resources**:
+
 - [PyTorch Security Best Practices](https://pytorch.org/docs/stable/security.html)
 - [PyTorch CVE Database](https://github.com/pytorch/pytorch/security/advisories)
 
@@ -85,6 +87,7 @@ RF-DETR depends on the PyTorch ecosystem and other ML libraries:
 ## Security Updates
 
 Security patches will be announced via:
+
 - GitHub Security Advisories
 - Release notes
 - Project README
