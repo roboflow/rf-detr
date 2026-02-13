@@ -20,6 +20,7 @@ import sys
 from tqdm.auto import tqdm
 
 from rfdetr import (
+    RFDETR2XLarge,
     RFDETRBase,
     RFDETRLarge,
     RFDETRMedium,
@@ -32,6 +33,7 @@ from rfdetr import (
     RFDETRSegSmall,
     RFDETRSegXLarge,
     RFDETRSmall,
+    RFDETRXLarge,
 )
 
 # Explicitly list all models to validate
@@ -42,6 +44,8 @@ MODELS_TO_TEST = [
     RFDETRMedium,
     RFDETRBase,
     RFDETRLarge,
+    RFDETRXLarge,
+    RFDETR2XLarge,
     # Segmentation Models
     RFDETRSegPreview,
     RFDETRSegNano,
