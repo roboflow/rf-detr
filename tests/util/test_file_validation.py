@@ -7,7 +7,6 @@
 import os
 import tempfile
 
-
 from rfdetr.util.files import _compute_file_md5, _validate_file_md5
 
 
