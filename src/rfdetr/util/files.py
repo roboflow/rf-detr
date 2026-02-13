@@ -73,20 +73,30 @@ def _download_file(url: str, filename: str, expected_md5: Optional[str] = None) 
             os.remove(filename)
 
     response = requests.get(url, stream=True)
-    total_size = int(response.headers['content-length'])
+    response.raise_for_status()
+    total_size_header = response.headers.get("content-length")
+    try:
+        total_size = int(total_size_header) if total_size_header is not None else None
+    except (TypeError, ValueError):
+        total_size = None
 
     # Download to temporary file first
     temp_filename = f"{filename}.tmp"
-    with open(temp_filename, "wb") as f, tqdm(
-        desc=filename,
-        total=total_size,
-        unit='iB',
-        unit_scale=True,
-        unit_divisor=1024,
-    ) as pbar:
-        for data in response.iter_content(chunk_size=1024):
-            size = f.write(data)
-            pbar.update(size)
+    try:
+        with open(temp_filename, "wb") as f, tqdm(
+            desc=filename,
+            total=total_size,
+            unit="iB",
+            unit_scale=True,
+            unit_divisor=1024,
+        ) as pbar:
+            for data in response.iter_content(chunk_size=1024):
+                size = f.write(data)
+                pbar.update(size)
+    except Exception:
+        if os.path.exists(temp_filename):
+            os.remove(temp_filename)
+        raise
 
     # Validate MD5 if expected hash is provided
     if expected_md5:
