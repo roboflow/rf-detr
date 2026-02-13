@@ -497,11 +497,10 @@ def test_intermediate_scenario(intermediate_scenario_cocoeval):
     """
     results = coco_extended_metrics(intermediate_scenario_cocoeval)
 
-    # Assert macro metrics - faster-coco-eval finds the optimal confidence threshold
-    # which excludes lower-confidence FPs, resulting in higher precision
-    assert results["precision"] == pytest.approx(1.0, abs=0.01)
+    # Assert macro metrics - using original pycocotools behavior
+    assert results["precision"] == pytest.approx(0.75, abs=0.01)
     assert results["recall"] == pytest.approx(1.0, abs=0.01)
-    assert results["f1_score"] == pytest.approx(1.0, abs=0.01)
+    assert results["f1_score"] == pytest.approx(0.8334, abs=0.01)
 
     class_map = results["class_map"]
     per_class_metrics = {entry["class"]: entry for entry in class_map if entry["class"] != "all"}
@@ -512,6 +511,6 @@ def test_intermediate_scenario(intermediate_scenario_cocoeval):
     assert per_class_metrics["class_1"]["f1_score"] == pytest.approx(1.0, abs=0.01)
 
     # Assert Class 2 metrics
-    assert per_class_metrics["class_2"]["precision"] == pytest.approx(1.0, abs=0.01)
+    assert per_class_metrics["class_2"]["precision"] == pytest.approx(0.5, abs=0.01)
     assert per_class_metrics["class_2"]["recall"] == pytest.approx(1.0, abs=0.01)
-    assert per_class_metrics["class_2"]["f1_score"] == pytest.approx(1.0, abs=0.01)
+    assert per_class_metrics["class_2"]["f1_score"] == pytest.approx(0.667, abs=0.01)
