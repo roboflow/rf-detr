@@ -16,6 +16,7 @@ Usage:
 """
 
 import sys
+from functools import partial
 
 from tqdm.auto import tqdm
 
@@ -44,8 +45,8 @@ MODELS_TO_TEST = [
     RFDETRMedium,
     RFDETRBase,
     RFDETRLarge,
-    RFDETRXLarge,
-    RFDETR2XLarge,
+    partial(RFDETRXLarge, accept_platform_model_license=True),
+    partial(RFDETR2XLarge, accept_platform_model_license=True),
     # Segmentation Models
     RFDETRSegPreview,
     RFDETRSegNano,
@@ -66,7 +67,8 @@ def main() -> None:
     # Progress bar for all models
     pbar = tqdm(MODELS_TO_TEST, desc="Testing models", unit="model")
     for model_class in pbar:
-        model_name = model_class.__name__
+        # Handle partial-wrapped classes
+        model_name = model_class.func.size if isinstance(model_class, partial) else model_class.size
         pbar.set_description(f"Testing {model_name}")
 
         try:
