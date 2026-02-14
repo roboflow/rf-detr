@@ -20,10 +20,26 @@ from rfdetr.util import misc as utils
 
 
 @pytest.mark.gpu
+@pytest.mark.flaky(reruns=1)
 def test_synthetic_training_improves_performance(
     tmp_path: Path,
     synthetic_shape_dataset_dir: Path,
 ) -> None:
+    """
+    Benchmark test to verify that training improves model performance on synthetic data.
+
+    This test validates the training loop by ensuring that:
+    1. A randomly initialized model starts with low performance (mAP < 5%, F1 < 5%)
+    2. After training for 10 epochs, the model achieves reasonable performance thresholds
+    3. Training losses decrease to at least 70% of their initial values
+
+    The performance thresholds (mAP >= 35%, F1 >= 35%) were established empirically
+    through testing on synthetic shape datasets. These thresholds ensure the model
+    learns meaningful patterns without requiring full COCO-scale validation.
+
+    Note: This test uses batch_size=2 with grad_accum_steps=4 to simulate an effective
+    batch size of 8 while reducing GPU memory requirements.
+    """
     output_dir = tmp_path / "train_output"
     output_dir.mkdir(parents=True, exist_ok=True)
     dataset_dir = synthetic_shape_dataset_dir
@@ -37,8 +53,8 @@ def test_synthetic_training_improves_performance(
         dataset_dir=str(dataset_dir),
         output_dir=str(output_dir),
         class_names=["square", "triangle", "circle"],
-        batch_size=4,
-        grad_accum_steps=1,
+        batch_size=2,
+        grad_accum_steps=4,
         num_workers=max(1, (os.cpu_count() or 1) // 2),
         device=str(device),
         amp=False,

@@ -75,6 +75,23 @@ def test_coco_detection_inference_benchmark(
     threshold_f1: float,
     num_samples: Optional[int],
 ) -> None:
+    """
+    Benchmark test for object detection model inference on COCO validation set.
+
+    This test validates that pretrained detection models maintain their expected
+    performance levels on the COCO val2017 dataset. It ensures that:
+    1. Models load correctly with pretrained weights
+    2. Inference produces valid predictions
+    3. Performance metrics (mAP@50 and F1 score) meet minimum thresholds
+
+    The performance thresholds (mAP@50 and F1 score) were established by running
+    inference on the complete COCO val2017 dataset with each model variant. These
+    thresholds represent the expected baseline performance and help detect regressions
+    in model quality or inference pipeline changes.
+
+    Note: To reduce test time, some model variants use a subset of the validation
+    set (500 samples). The nano model runs on the full dataset as a comprehensive check.
+    """
     device = "cuda" if torch.cuda.is_available() else "cpu"
     images_root, annotations_path = download_coco_val
 
@@ -150,6 +167,24 @@ def test_coco_segmentation_inference_benchmark(
     threshold_segm_f1: float,
     num_samples: Optional[int],
 ) -> None:
+    """
+    Benchmark test for instance segmentation model inference on COCO validation set.
+
+    This test validates that pretrained segmentation models maintain their expected
+    performance levels on the COCO val2017 dataset. It ensures that:
+    1. Segmentation models load correctly with pretrained weights
+    2. Inference produces valid predictions for both bounding boxes and masks
+    3. Segmentation performance metrics (mask mAP@50 and F1 score) meet minimum thresholds
+
+    The performance thresholds (mask mAP@50 and F1 score) were established by running
+    inference on the complete COCO val2017 dataset with each model variant. These
+    thresholds represent the expected baseline segmentation performance and help detect
+    regressions in model quality or the segmentation inference pipeline.
+
+    Note: To reduce test time, model variants use subsets of the validation set
+    (100-500 samples depending on model size). The nano model uses 500 samples
+    for a more comprehensive check.
+    """
     device = "cuda" if torch.cuda.is_available() else "cpu"
     images_root, annotations_path = download_coco_val
 
