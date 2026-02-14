@@ -561,37 +561,83 @@ class AlbumentationsWrapper:
         # Validate target structure
         if not isinstance(target, dict):
             raise TypeError(f"target must be a dictionary, got {type(target)}")
-        if 'labels' not in target:
+        if "labels" not in target:
             raise KeyError("target must contain 'labels' key")
 
         image_np = np.array(image)
-        labels = target['labels'].cpu().tolist() if torch.is_tensor(target['labels']) else list(target['labels'])
+        labels = target["labels"].cpu().tolist() if torch.is_tensor(target["labels"]) else list(target["labels"])
 
-        if self.bbox_safe and 'boxes' in target:
-            boxes = target['boxes']
+        if self.bbox_safe and "boxes" in target:
+            boxes = target["boxes"]
             boxes_np = boxes.cpu().numpy() if torch.is_tensor(boxes) else np.array(boxes)
 
             # Validate boxes shape
             if len(boxes_np.shape) != 2 or boxes_np.shape[1] != 4:
                 raise ValueError(f"boxes must have shape (N, 4), got {boxes_np.shape}")
 
-            augmented = self.transform(image=image_np, bboxes=boxes_np, category_ids=labels)
-            target_out = target.copy()
-            bboxes_aug = augmented['bboxes']
+            num_boxes = boxes_np.shape[0]
+
+            # Track original indices so we can keep all per-instance fields in sync
+            idxs = list(range(num_boxes))
+            if hasattr(self.transform, "bbox_params") and self.transform.bbox_params is not None:
+                # Ensure our index field is treated as a label_field so it is filtered
+                label_fields = list(getattr(self.transform.bbox_params, "label_fields", []))
+                if "idxs" not in label_fields:
+                    label_fields.append("idxs")
+                    self.transform.bbox_params.label_fields = label_fields
+
+            augmented = self.transform(
+                image=image_np,
+                bboxes=boxes_np,
+                category_ids=labels,
+                idxs=idxs,
+            )
+            target_out: Dict[str, Any] = target.copy()
+            bboxes_aug = augmented["bboxes"]
+            kept_idxs = augmented.get("idxs", idxs)
 
             if len(bboxes_aug) == 0:
-                target_out['boxes'] = torch.zeros((0, 4), dtype=torch.float32)
-                target_out['labels'] = torch.zeros((0,), dtype=torch.long)
+                # No boxes left after augmentation
+                target_out["boxes"] = torch.zeros((0, 4), dtype=torch.float32)
+                target_out["labels"] = torch.zeros((0,), dtype=torch.long)
+                # Also clear all other per-instance fields that depend on boxes
+                for key, value in target.items():
+                    if key in {"boxes", "labels"}:
+                        continue
+                    if torch.is_tensor(value):
+                        if value.ndim >= 1 and value.shape[0] == num_boxes:
+                            target_out[key] = value.new_empty((0, *value.shape[1:]))
+                    elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+                        if len(value) == num_boxes:
+                            target_out[key] = []  # type: ignore[assignment]
             else:
-                target_out['boxes'] = torch.as_tensor(bboxes_aug, dtype=torch.float32).reshape(-1, 4)
-                target_out['labels'] = torch.tensor(augmented['category_ids'], dtype=torch.long)
+                # Update boxes and labels
+                target_out["boxes"] = torch.as_tensor(bboxes_aug, dtype=torch.float32).reshape(-1, 4)
+                target_out["labels"] = torch.tensor(augmented["category_ids"], dtype=torch.long)
 
-            image_out = Image.fromarray(augmented['image'])
+                # Use kept indices to filter all other per-instance fields
+                kept_idxs_tensor = torch.as_tensor(kept_idxs, dtype=torch.long)
+                for key, value in target.items():
+                    if key in {"boxes", "labels"}:
+                        continue
+                    if torch.is_tensor(value):
+                        if value.ndim >= 1 and value.shape[0] == num_boxes:
+                            target_out[key] = value[kept_idxs_tensor]
+                    elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+                        if len(value) == num_boxes:
+                            target_out[key] = [value[i] for i in kept_idxs]  # type: ignore[assignment]
+
+            image_out = Image.fromarray(augmented["image"])
         else:
             augmented = self.transform(image=image_np)
-            image_out = Image.fromarray(augmented['image'])
+            image_out = Image.fromarray(augmented["image"])
             target_out = target
 
+        # Ensure 'size' (if present) matches the transformed image size (h, w)
+        if isinstance(target_out, dict) and "size" in target_out:
+            # PIL.Image.size is (width, height); many detectors expect (height, width)
+            width, height = image_out.size
+            target_out["size"] = torch.as_tensor([height, width], dtype=torch.int64)
         return image_out, target_out
 
 
