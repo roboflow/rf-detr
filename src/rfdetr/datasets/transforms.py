@@ -533,7 +533,7 @@ class AlbumentationsWrapper:
                 bbox_params=A.BboxParams(
                     format='pascal_voc',  # xyxy format
                     label_fields=['category_ids'],
-                    min_visibility=0.0,   # remove boxes if fully outside
+                    min_visibility=0.0,   # disable visibility-based filtering; boxes are not removed here
                     clip=True
                 )
             )
