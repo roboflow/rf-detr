@@ -95,7 +95,7 @@ def test_coco_detection_inference_benchmark(
         val_dataset = torch.utils.data.Subset(val_dataset, list(range(min(num_samples, len(val_dataset)))))
     data_loader = torch.utils.data.DataLoader(
         val_dataset,
-        batch_size=6,
+        batch_size=4,
         sampler=torch.utils.data.SequentialSampler(val_dataset),
         drop_last=False,
         collate_fn=utils.collate_fn,
@@ -184,7 +184,7 @@ def test_coco_segmentation_inference_benchmark(
         val_dataset = torch.utils.data.Subset(val_dataset, list(range(min(num_samples, len(val_dataset)))))
     data_loader = torch.utils.data.DataLoader(
         val_dataset,
-        batch_size=6,
+        batch_size=4,
         sampler=torch.utils.data.SequentialSampler(val_dataset),
         drop_last=False,
         collate_fn=utils.collate_fn,
