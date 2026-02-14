@@ -55,7 +55,7 @@ def test_synthetic_training_improves_performance(
         output_dir=str(output_dir),
         class_names=["square", "triangle", "circle"],
         batch_size=2,
-        grad_accum_steps=4,
+        grad_accum_steps=2,
         num_workers=max(1, (os.cpu_count() or 1) // 2),
         device=str(device),
         amp=False,
