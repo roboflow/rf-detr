@@ -211,6 +211,9 @@ class TestBuildAlbumentationsFromConfig:
 
         assert len(transforms) == 2
         assert all(isinstance(t, AlbumentationsWrapper) for t in transforms)
+        # Validate transform names match config in correct order
+        transform_names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
+        assert transform_names == list(config.keys())
 
     def test_build_from_empty_config(self):
         """Test building from empty config returns empty list."""
@@ -231,6 +234,8 @@ class TestBuildAlbumentationsFromConfig:
 
         # Only valid transform should be included
         assert len(transforms) == 1
+        transform_names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
+        assert transform_names == ["HorizontalFlip"]
 
     def test_invalid_params_skipped(self):
         """Test that transforms with invalid parameters are skipped."""
@@ -243,6 +248,8 @@ class TestBuildAlbumentationsFromConfig:
 
         # At least HorizontalFlip should succeed
         assert len(transforms) >= 1
+        transform_names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
+        assert transform_names[0] == "HorizontalFlip"
 
     def test_invalid_config_type(self):
         """Test that invalid config type raises TypeError."""
@@ -259,6 +266,10 @@ class TestBuildAlbumentationsFromConfig:
         transforms = build_albumentations_from_config(config)
 
         assert len(transforms) == 2
+        # Validate transform names match config in correct order
+        transform_names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
+        assert transform_names == list(config.keys())
+        # Validate bbox_safe flags
         assert transforms[0].bbox_safe is True   # HorizontalFlip
         assert transforms[1].bbox_safe is False  # GaussianBlur
 
@@ -276,6 +287,9 @@ class TestBuildAlbumentationsFromConfig:
         transforms = build_albumentations_from_config(config)
 
         assert len(transforms) == 2
+        # Validate transform names match config in correct order
+        transform_names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
+        assert transform_names == list(config.keys())
 
     def test_non_dict_params_skipped(self):
         """Test that transforms with non-dict params are skipped."""
@@ -287,6 +301,8 @@ class TestBuildAlbumentationsFromConfig:
         transforms = build_albumentations_from_config(config)
 
         assert len(transforms) == 1
+        transform_names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
+        assert transform_names == ["HorizontalFlip"]
 
 
 class TestComposeAugmentations:
@@ -303,6 +319,9 @@ class TestComposeAugmentations:
 
         assert composed.transforms == transforms
         assert len(composed.transforms) == 2
+        # Validate transform names in correct order
+        transform_names = [t.transform.transforms[0].__class__.__name__ for t in composed.transforms]
+        assert transform_names == ["HorizontalFlip", "VerticalFlip"]
 
     def test_compose_applies_all_transforms(self):
         """Test that all transforms are applied sequentially."""
@@ -377,6 +396,11 @@ class TestIntegration:
         # Build transforms from config
         transforms = build_albumentations_from_config(config)
 
+        # Validate transform names match config in correct order
+        assert len(transforms) == 2
+        transform_names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
+        assert transform_names == list(config.keys())
+
         # Compose them
         composed = ComposeAugmentations(transforms)
 
@@ -400,6 +424,12 @@ class TestIntegration:
         }
 
         transforms = build_albumentations_from_config(config)
+
+        # Validate transform names match config
+        assert len(transforms) == 1
+        transform_names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
+        assert transform_names == list(config.keys())
+
         composed = ComposeAugmentations(transforms)
 
         image = Image.new('RGB', (100, 100))
@@ -413,6 +443,12 @@ class TestIntegration:
     def test_realistic_augmentation_config(self):
         """Test with realistic augmentation configuration."""
         transforms = build_albumentations_from_config(AUG_CONFIG)
+
+        # Validate transform names match AUG_CONFIG in correct order
+        assert len(transforms) == 3
+        transform_names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
+        assert transform_names == list(AUG_CONFIG.keys())
+
         composed = ComposeAugmentations(transforms)
 
         image = Image.new('RGB', (640, 480))
