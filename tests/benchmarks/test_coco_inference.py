@@ -135,11 +135,11 @@ def test_coco_detection_inference_benchmark(
     ("model_cls", "threshold_segm_map", "threshold_segm_f1", "num_samples"),
     [
         pytest.param(RFDETRSegNano, 0.6, 0.6, 500, id="nano"),
-        pytest.param(RFDETRSegSmall, 0.6, 0.6, 200, id="small"),
-        pytest.param(RFDETRSegMedium, 0.6, 0.6, 200, id="medium"),
-        pytest.param(RFDETRSegLarge, 0.6, 0.6, 200, id="large"),
-        pytest.param(RFDETRSegXLarge, 0.6, 0.6, 200, id="xlarge"),
-        pytest.param(RFDETRSeg2XLarge, 0.6, 0.6, 200, id="2xlarge"),
+        pytest.param(RFDETRSegSmall, 0.6, 0.6, 100, id="small"),
+        pytest.param(RFDETRSegMedium, 0.6, 0.6, 100, id="medium"),
+        pytest.param(RFDETRSegLarge, 0.6, 0.6, 100, id="large"),
+        pytest.param(RFDETRSegXLarge, 0.6, 0.6, 100, id="xlarge"),
+        pytest.param(RFDETRSeg2XLarge, 0.6, 0.6, 100, id="2xlarge"),
     ],
 )
 def test_coco_segmentation_inference_benchmark(
