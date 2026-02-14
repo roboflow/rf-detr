@@ -132,22 +132,22 @@ def test_coco_detection_inference_benchmark(
 
 @pytest.mark.gpu
 @pytest.mark.parametrize(
-    ("model_cls", "threshold_bbox_map", "threshold_segm_map", "num_samples"),
+    ("model_cls", "threshold_segm_map", "threshold_segm_f1", "num_samples"),
     [
-        pytest.param(RFDETRSegNano, 0.1, 0.1, None, id="nano"),
-        pytest.param(RFDETRSegSmall, 0.1, 0.1, 500, id="small"),
-        pytest.param(RFDETRSegMedium, 0.1, 0.1, 500, id="medium"),
-        pytest.param(RFDETRSegLarge, 0.1, 0.1, 500, id="large"),
-        pytest.param(RFDETRSegXLarge, 0.1, 0.1, 500, id="xlarge"),
-        pytest.param(RFDETRSeg2XLarge, 0.1, 0.1, 500, id="2xlarge"),
+        pytest.param(RFDETRSegNano, 0.62, 0.63, None, id="nano"),
+        pytest.param(RFDETRSegSmall, 0.65, 0.66, 500, id="small"),
+        pytest.param(RFDETRSegMedium, 0.67, 0.68, 500, id="medium"),
+        pytest.param(RFDETRSegLarge, 0.68, 0.69, 500, id="large"),
+        pytest.param(RFDETRSegXLarge, 0.70, 0.71, 500, id="xlarge"),
+        pytest.param(RFDETRSeg2XLarge, 0.71, 0.72, 500, id="2xlarge"),
     ],
 )
 def test_coco_segmentation_inference_benchmark(
     request: pytest.FixtureRequest,
     download_coco_val: tuple[Path, Path],
     model_cls: type[RFDETR],
-    threshold_bbox_map: float,
     threshold_segm_map: float,
+    threshold_segm_f1: float,
     num_samples: Optional[int],
 ) -> None:
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -216,15 +216,14 @@ def test_coco_segmentation_inference_benchmark(
     bbox_f1_val = results_bbox["f1_score"]
 
     # Check segmentation results
-    results_segm = stats.get("results_json_masks", {})
-    segm_map_val = results_segm.get("map", 0.0)
-    segm_f1_val = results_segm.get("f1_score", 0.0)
+    results_segm = stats["results_json_masks"]
+    segm_map_val = results_segm["map"]
+    segm_f1_val = results_segm["f1_score"]
 
     print(f"COCO val2017 Segmentation [{test_id}]:")
-    print(f"  BBox: mAP@50={bbox_map_val:.4f}, F1={bbox_f1_val:.4f}")
-    print(f"  Segm: mAP@50={segm_map_val:.4f}, F1={segm_f1_val:.4f}")
+    print(f"  BBox mAP@50={bbox_map_val:.4f}, F1={bbox_f1_val:.4f}")
+    print(f"  Segm mAP@50={segm_map_val:.4f}, F1={segm_f1_val:.4f}")
 
-    # Assert bbox metrics
-    assert bbox_map_val >= threshold_bbox_map, f"BBox mAP@50 {bbox_map_val:.4f} < {threshold_bbox_map}"
     # Assert segmentation metrics
     assert segm_map_val >= threshold_segm_map, f"Segm mAP@50 {segm_map_val:.4f} < {threshold_segm_map}"
+    assert segm_f1_val >= threshold_segm_f1, f"Segm F1 {segm_f1_val:.4f} < {threshold_segm_f1}"
