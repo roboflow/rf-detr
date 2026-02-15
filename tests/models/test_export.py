@@ -154,6 +154,42 @@ def test_export_does_not_change_original_training_state(tmp_path: Path) -> None:
 
 
 @pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for export test")
+@pytest.mark.skipif(
+    importlib.util.find_spec("onnx") is None,
+    reason="onnx not installed, run: pip install rfdetr[onnxexport]",
+)
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+def test_export_does_not_change_original_device_placement(tmp_path: Path, device: str) -> None:
+    """
+    Verify that calling export() does not change the original model's device placement.
+
+    This ensures that export() operates on a deepcopy without moving the original
+    model between devices (e.g., from CUDA to CPU or vice versa).
+    """
+    model = RFDETRSegNano()
+
+    # Access the underlying torch module (model.model.model), as in other tests
+    torch_model = model.model.model.to(device)
+
+    # Get the device of a parameter from the original model
+    original_device = next(torch_model.parameters()).device
+    assert original_device.type == device, f"Precondition: original model should be on {device}"
+
+    # Call export() on the high-level model; this should not change the original model's device placement
+    with ignore_tracer_warnings():
+        model.export(output_dir=str(tmp_path), simplify=False)
+
+    # After export, verify the original model is still on the same device
+    current_device = next(torch_model.parameters()).device
+    assert current_device == original_device, (
+        f"export() should not change the original model's device. "
+        f"Expected {original_device}, but got {current_device}"
+    )
+    assert current_device.type == device, f"Original model should still be on {device} after export"
+
+
+@pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
 def test_segmentation_outputs_present_in_train_and_eval() -> None:
     """Use case: segmentation outputs are present in both train and eval modes."""
