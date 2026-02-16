@@ -488,18 +488,42 @@ class Compose(object):
 # Albumentations wrapper for RF-DETR
 
 # Geometric transforms that affect bounding boxes
+# These transforms modify spatial coordinates, so bounding boxes must be transformed accordingly.
+# For custom geometric transforms, add the class name to this set.
 GEOMETRIC_TRANSFORMS = {
+    # Flips
     "HorizontalFlip",
     "VerticalFlip",
+    "Flip",
+    # Rotations and affine transforms
+    "Rotate",
     "Affine",
+    "ShiftScaleRotate",
+    "SafeRotate",
+    # Crops
     "RandomCrop",
     "RandomSizedCrop",
-    "Rotate",
-    "ShiftScaleRotate",
+    "CenterCrop",
+    "Crop",
+    "CropNonEmptyMaskIfExists",
+    "RandomCropNearBBox",
+    "RandomSizedBBoxSafeCrop",
+    "BBoxSafeRandomCrop",
+    "RandomResizedCrop",
+    # Perspective and distortions
     "Perspective",
     "ElasticTransform",
     "GridDistortion",
     "OpticalDistortion",
+    "PiecewiseAffine",
+    # Resize operations
+    "Resize",
+    "SmallestMaxSize",
+    "LongestMaxSize",
+    "RandomScale",
+    # Padding
+    "PadIfNeeded",
+    "Pad",
 }
 
 
