@@ -37,11 +37,8 @@ jobs:
           activate-environment: true
 
       - name: 🚀 Install Packages (plus extras)
-        run: |
-          # Install PyTorch CPU-only first (UV_TORCH_BACKEND=cpu works with 'uv pip')
-          uv pip install torch torchvision
-          # Then sync remaining dependencies and install project
-          uv sync --extra plus
+        # Install PyTorch CPU-only first (UV_TORCH_BACKEND=cpu works with 'uv pip')
+        run: uv pip install -e .[plus]
 
       - name: 🔎 Validate model instantiation and downloads
         run: python tests/try_instantiate_all_models.py

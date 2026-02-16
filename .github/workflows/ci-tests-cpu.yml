@@ -51,11 +51,8 @@ jobs:
           activate-environment: true
 
       - name: 🚀 Install Packages
-        run: |
-          # Install PyTorch CPU-only first (UV_TORCH_BACKEND=cpu works with 'uv pip')
-          uv pip install torch torchvision
-          # Then sync remaining dependencies and install project
-          uv sync --group tests
+        # Install PyTorch CPU-only first (UV_TORCH_BACKEND=cpu works with 'uv pip')
+        run: uv pip install -e . --group tests
 
       - name: 🧪 Run the Test
         run: uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --cov=rfdetr --cov-report=xml
