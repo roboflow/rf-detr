@@ -4,6 +4,12 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+"""Default Albumentations augmentation configuration for RF-DETR training.
+
+Edit AUG_CONFIG to enable or customize augmentation transforms used by the
+Albumentations wrapper in the dataset pipeline.
+"""
+
 AUG_CONFIG = {
     "HorizontalFlip": {"p": 0.5},
     "VerticalFlip": {"p": 0.5},

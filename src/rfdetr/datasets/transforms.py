@@ -562,6 +562,27 @@ class AlbumentationsWrapper:
             # Simpler composition since boxes don't need transformation
             self.transform = A.Compose([transform])
 
+    def __repr__(self) -> str:
+        """Return a readable string representation of the wrapper.
+
+        Returns:
+            str: Representation including the wrapped transform and type.
+        """
+        transform = None
+        if isinstance(self.transform, A.Compose):
+            for candidate in self.transform.transforms:
+                if isinstance(candidate, A.BasicTransform):
+                    transform = candidate
+                    break
+        elif isinstance(self.transform, A.BasicTransform):
+            transform = self.transform
+
+        if transform is None:
+            return object.__repr__(self)
+
+        transform_type = "geometric" if self._is_geometric else "pixel-level"
+        return f"{self.__class__.__name__}(transform={transform}, type={transform_type})"
+
     @staticmethod
     def _boxes_to_numpy(boxes: Union[torch.Tensor, np.ndarray]) -> np.ndarray:
         """Convert boxes to numpy array and validate shape.
@@ -640,12 +661,14 @@ class AlbumentationsWrapper:
         - Validates box shapes and coordinates
         - Handles boxes that may be removed by the transform (e.g., cropped out)
         - Ensures labels stay synchronized with their corresponding boxes
+        - Transforms masks when present to stay aligned with the image
 
         Args:
             image: Input PIL Image in RGB format.
             target: Target dictionary containing:
                 - 'labels': PyTorch tensor of shape (N,) with class labels
                 - 'boxes' (optional): PyTorch tensor of shape (N, 4) in (x1, y1, x2, y2) format
+                - 'masks' (optional): PyTorch tensor of shape (N, H, W) with instance masks
 
         Returns:
             Tuple of (transformed_image, transformed_target):
@@ -683,8 +706,23 @@ class AlbumentationsWrapper:
             num_boxes = boxes_np.shape[0]
             # Track indices to keep per-instance fields synchronized
             idxs = list(range(num_boxes))
+            masks_list = None
+            if "masks" in target:
+                masks = target["masks"]
+                masks_np = masks.cpu().numpy() if torch.is_tensor(masks) else np.array(masks)
+                if masks_np.ndim != 3:
+                    raise ValueError(f"masks must have shape (N, H, W), got {masks_np.shape}")
+                masks_list = [mask for mask in masks_np]
             # Apply transform
-            augmented = self.transform(image=image_np, bboxes=boxes_np, category_ids=labels, idxs=idxs)
+            transform_kwargs = {
+                "image": image_np,
+                "bboxes": boxes_np,
+                "category_ids": labels,
+                "idxs": idxs,
+            }
+            if masks_list is not None:
+                transform_kwargs["masks"] = masks_list
+            augmented = self.transform(**transform_kwargs)
             target_out: Dict[str, Any] = target.copy()
             bboxes_aug = augmented["bboxes"]
             kept_idxs = augmented.get("idxs", idxs)
@@ -698,6 +736,13 @@ class AlbumentationsWrapper:
                 target_out["labels"] = torch.tensor(augmented["category_ids"], dtype=torch.long)
                 target_out.update(self._filter_per_instance_fields(target, num_boxes, kept_idxs))
             image_out = Image.fromarray(augmented["image"])
+            if masks_list is not None and "masks" in augmented:
+                height, width = augmented["image"].shape[:2]
+                filtered_masks = [augmented["masks"][i] for i in kept_idxs]
+                if len(filtered_masks) == 0:
+                    target_out["masks"] = torch.zeros((0, height, width), dtype=torch.bool)
+                else:
+                    target_out["masks"] = torch.as_tensor(np.stack(filtered_masks), dtype=torch.bool)
         else:
             # Non-geometric path: transform image only
             augmented = self.transform(image=image_np)
