@@ -4,7 +4,7 @@ RF-DETR supports custom data augmentations using the [Albumentations](https://al
 
 ## Why Albumentations?
 
-- **Bounding Box Support:** All geometric transforms automatically update bounding box coordinates
+- **Detection & Segmentation Support:** Geometric transforms automatically update bounding boxes and segmentation masks
 - **Performance:** Highly optimized, faster than torchvision transforms
 - **Flexibility:** Mix and match over 70 different augmentations
 - **Battle-Tested:** Used in winning solutions of many Kaggle competitions
@@ -35,7 +35,7 @@ Simply enable the augmentations you want by uncommenting them or adding new ones
 
 ### Geometric Transforms
 
-These transforms automatically update bounding boxes:
+These transforms automatically update bounding boxes and segmentation masks:
 
 - `HorizontalFlip` - Flip image horizontally
 - `VerticalFlip` - Flip image vertically
@@ -50,7 +50,7 @@ These transforms automatically update bounding boxes:
 
 ### Pixel-Level Transforms
 
-These transforms preserve bounding boxes:
+These transforms preserve bounding boxes and masks (no coordinate changes):
 
 - `ColorJitter` - Randomly change brightness, contrast, saturation
 - `GaussianBlur` - Apply Gaussian blur
@@ -141,7 +141,7 @@ Augmentations are automatically applied during training:
 1. The `AUG_CONFIG` is read when building the dataset
 2. Transforms are composed into a pipeline
 3. Each training sample is augmented on-the-fly
-4. Bounding boxes are automatically transformed for geometric augmentations
+4. Bounding boxes and masks are automatically transformed for geometric augmentations
 
 No code changes needed in your training script - just modify `augmentation_config.py`.
 
@@ -155,6 +155,7 @@ from rfdetr.datasets.transforms import AlbumentationsWrapper, ComposeAugmentatio
 # Custom config
 custom_config = {
     "HorizontalFlip": {"p": 0.7},
+    "Rotate": {"limit": 15, "p": 0.5},
     "Blur": {"blur_limit": 3, "p": 0.2},
 }
 
@@ -162,7 +163,9 @@ custom_config = {
 transforms = AlbumentationsWrapper.from_config(custom_config)
 augmentation_pipeline = ComposeAugmentations(transforms)
 
-# Apply to image and target
+# Apply to image and target (works with both detection and segmentation)
+# For detection: target contains "boxes" and "labels"
+# For segmentation: target contains "boxes", "labels", and "masks"
 augmented_image, augmented_target = augmentation_pipeline(image, target)
 ```
 
@@ -261,12 +264,12 @@ plt.show()
 - Training mAP is artificially lower due to augmented data
 - This gap is normal and indicates augmentations are working
 
-### Problem: Some boxes disappear after augmentation
+### Problem: Some boxes or masks disappear after augmentation
 
 **This is normal behavior:**
 
 - Aggressive transforms (large rotations, crops) can move boxes outside boundaries
-- Albumentations removes boxes that fall outside image
+- Albumentations removes boxes and their corresponding masks that fall outside image
 
 **Solutions:**
 
