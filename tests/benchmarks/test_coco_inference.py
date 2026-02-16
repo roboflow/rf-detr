@@ -98,7 +98,7 @@ def test_coco_detection_inference_benchmark(
         batch_size=4,
         sampler=torch.utils.data.SequentialSampler(val_dataset),
         drop_last=False,
-        collate_fn=utils.collate_fn,
+        collate_fn=collate_fn,
         num_workers=os.cpu_count() or 1,
     )
     base_ds = get_coco_api_from_dataset(val_dataset)
