@@ -735,6 +735,11 @@ class AlbumentationsWrapper:
             if len(bboxes_aug) == 0:
                 target_out["boxes"] = torch.zeros((0, 4), dtype=torch.float32)
                 target_out["labels"] = torch.zeros((0,), dtype=torch.long)
+                # Explicitly clear masks when all boxes are removed; _clear_per_instance_fields
+                # will also clear per-instance fields (including masks) based on num_boxes.
+                if "masks" in target:
+                    img_height, img_width = image_np.shape[:2]
+                    target_out["masks"] = torch.zeros((0, img_height, img_width), dtype=torch.bool)
                 target_out.update(self._clear_per_instance_fields(target, num_boxes))
             else:
                 target_out["boxes"] = torch.as_tensor(bboxes_aug, dtype=torch.float32).reshape(-1, 4)
