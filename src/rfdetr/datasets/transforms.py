@@ -705,7 +705,7 @@ class AlbumentationsWrapper:
             target_out = target.copy()
 
         # Ensure 'size' (if present) matches the transformed image size (h, w)
-        if isinstance(target_out, dict) and "size" in target_out:
+        if "size" in target_out:
             # PIL.Image.size is (width, height); many detectors expect (height, width)
             width, height = image_out.size
             target_out["size"] = torch.as_tensor([height, width], dtype=torch.int64)
