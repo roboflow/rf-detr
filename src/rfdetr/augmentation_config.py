@@ -13,7 +13,7 @@ Albumentations wrapper in the dataset pipeline.
 AUG_CONFIG = {
     "HorizontalFlip": {"p": 0.5},
     "VerticalFlip": {"p": 0.5},
-    "Rotate": {"limit": (90, 90), "p": 0.5},  # Better keep small angles
+    "Rotate": {"limit": 15, "p": 0.5},  # Better keep small angles
     # "ColorJitter": {
     #     "brightness": 0.1,
     #     "contrast": 0.1,
