@@ -222,9 +222,9 @@ model.train(
 
 ### Configuration
 
-| Parameter | Description                                 |
-| --------- | ------------------------------------------- |
-| `project` | Sets the experiment name in MLflow          |
+| Parameter | Description                                         |
+| --------- | --------------------------------------------------- |
+| `project` | Sets the experiment name in MLflow                  |
 | `run`     | Sets the run name (auto-generated if not specified) |
 
 ### Custom Tracking Server
