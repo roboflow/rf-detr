@@ -7,15 +7,20 @@
 """Tests for Albumentations augmentation wrappers."""
 
 import albumentations as A
+import numpy as np
 import pytest
 import torch
 from PIL import Image
+from torch.utils.data import DataLoader
 
 from rfdetr.augmentation_config import AUG_CONFIG
 from rfdetr.datasets.transforms import (
     AlbumentationsWrapper,
     ComposeAugmentations,
+    Compose,
 )
+from rfdetr.util.misc import collate_fn
+from tests.helpers import _SimpleDataset
 
 
 class TestAlbumentationsWrapper:
@@ -830,3 +835,92 @@ class TestIntegration:
         assert aug_target['boxes'].shape[0] <= num_instances  # May be filtered
         assert aug_target['masks'].shape[0] == aug_target['boxes'].shape[0]
         assert aug_target['labels'].shape[0] == aug_target['boxes'].shape[0]
+
+
+class TestTrainingLoop:
+    """Test augmentations work correctly in training loop scenario."""
+
+    def test_augmentation_in_dataloader(self):
+        """Test that augmentations work correctly when used with DataLoader.
+
+        This is a critical integration test that simulates actual training conditions
+        where multiple samples with different numbers of boxes are batched together.
+        It specifically tests that orig_size remains consistent across the batch.
+        """
+        # Create augmentations
+        aug_transforms = [
+            AlbumentationsWrapper(A.HorizontalFlip(p=0.5)),
+            AlbumentationsWrapper(A.Rotate(limit=10, p=0.5)),
+        ]
+        transforms = Compose(aug_transforms)
+
+        # Create dataset and dataloader
+        dataset = _SimpleDataset(num_samples=12, transforms=transforms)
+        dataloader = DataLoader(
+            dataset,
+            batch_size=4,
+            shuffle=True,
+            collate_fn=collate_fn,
+            num_workers=0
+        )
+
+        # Run through batches
+        for batch_idx, (images, targets) in enumerate(dataloader):
+            # Check orig_size consistency
+            orig_sizes = [t["orig_size"] for t in targets]
+
+            # Verify all orig_sizes have shape [2]
+            for i, orig_size in enumerate(orig_sizes):
+                assert orig_size.shape == torch.Size([2]), \
+                    f"Batch {batch_idx}, target {i}: orig_size has shape {orig_size.shape}, expected [2]"
+
+            # Critical test: This is what fails in training if orig_size is corrupted
+            orig_target_sizes = torch.stack(orig_sizes, dim=0)
+            assert orig_target_sizes.shape == torch.Size([len(targets), 2]), \
+                f"Batch {batch_idx}: stacked orig_sizes has shape {orig_target_sizes.shape}"
+
+            # Verify images and targets are valid
+            assert images.tensors.shape[0] == len(targets)
+            num_boxes = [len(t["boxes"]) for t in targets]
+            assert all(n > 0 for n in num_boxes), "All targets should have at least one box"
+
+            # Only test a few batches for speed
+            if batch_idx >= 1:
+                break
+
+    def test_augmentation_with_varying_box_counts(self):
+        """Test that samples with 1, 2, and 3 boxes all work correctly in same batch.
+
+        This specifically tests the edge case where some samples have 2 boxes
+        (which matches orig_size shape [2]), ensuring they don't get mixed up.
+        """
+        aug_transforms = [AlbumentationsWrapper(A.HorizontalFlip(p=0.5))]
+        transforms = Compose(aug_transforms)
+
+        # Create dataset with samples that have different numbers of boxes
+        dataset = _SimpleDataset(num_samples=9, transforms=transforms)  # Will cycle through 1,2,3 boxes
+        dataloader = DataLoader(
+            dataset,
+            batch_size=6,  # Batch will contain mix of 1,2,3 box samples
+            shuffle=False,
+            collate_fn=collate_fn,
+            num_workers=0
+        )
+
+        # Get one batch
+        images, targets = next(iter(dataloader))
+
+        # Verify we have samples with different numbers of boxes
+        num_boxes_list = [len(t["boxes"]) for t in targets]
+        assert 1 in num_boxes_list, "Should have samples with 1 box"
+        assert 2 in num_boxes_list, "Should have samples with 2 boxes (critical edge case)"
+        assert 3 in num_boxes_list, "Should have samples with 3 boxes"
+
+        # Verify all orig_sizes are consistent
+        for i, target in enumerate(targets):
+            assert target["orig_size"].shape == torch.Size([2]), \
+                f"Target {i} (with {num_boxes_list[i]} boxes): orig_size shape is {target['orig_size'].shape}"
+
+        # Verify they can be stacked
+        orig_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
+        assert orig_sizes.shape == torch.Size([len(targets), 2])
