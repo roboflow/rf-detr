@@ -138,7 +138,7 @@ def test_coco_detection_inference_benchmark(
         pytest.param(RFDETRSegSmall, 0.66, 0.67, 100, id="small"),
         pytest.param(RFDETRSegMedium, 0.68, 0.68, 100, id="medium"),
         pytest.param(RFDETRSegLarge, 0.70, 0.69, 100, id="large"),
-        pytest.param(RFDETRSegXLarge, 0.72, 0.7, 100, id="xlarge"),
+        pytest.param(RFDETRSegXLarge, 0.72, 0.70, 100, id="xlarge"),
         pytest.param(RFDETRSeg2XLarge, 0.73, 0.71, 100, id="2xlarge"),
     ],
 )
