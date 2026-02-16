@@ -20,8 +20,6 @@ from rfdetr.util import misc as utils
 
 
 @pytest.mark.gpu
-# Groups this test to run early on a dedicated worker (requires --dist=loadgroup)
-@pytest.mark.xdist_group(name="training")
 @pytest.mark.flaky(reruns=1, only_rerun="AssertionError")
 def test_synthetic_training_improves_performance(
     tmp_path: Path,

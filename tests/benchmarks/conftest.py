@@ -129,6 +129,27 @@ def seed_everything(request: pytest.FixtureRequest) -> None:
     seed_all(seed)
 
 
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Reorder tests to prioritize long-running training test before xdist distribution.
+
+    This hook runs after collection but before xdist distributes tests to workers.
+    By moving the training test to the front, we ensure it gets scheduled early,
+    maximizing parallel resource utilization.
+    """
+    training_tests = []
+    other_tests = []
+
+    for item in items:
+        # Prioritize the synthetic training convergence test
+        if "training" in item.nodeid:
+            training_tests.append(item)
+        else:
+            other_tests.append(item)
+
+    # Reorder: training tests first, then everything else
+    items[:] = training_tests + other_tests
+
+
 @pytest.fixture(scope="session")
 def synthetic_shape_dataset_dir(tmp_path_factory: pytest.TempPathFactory) -> Generator[Path, Any, None]:
     """Build a synthetic COCO-style dataset on disk and clean it up after tests.
