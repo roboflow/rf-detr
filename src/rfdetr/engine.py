@@ -254,12 +254,9 @@ def coco_extended_metrics(coco_eval):
     # Extract detection-GT matching data from faster-coco-eval
     matched = coco_eval.eval.get('matched', {})  # {f'{dt_id}_{gt_id}': iou}
 
-    # Get all detections with their scores
-    all_dts = {ann['id']: {
-        'category_id': ann['category_id'],
-        'score': ann.get('score', 1.0)
-    } for img_id in coco_eval.params.imgIds
-       for ann in coco_eval.cocoDt.loadAnns(coco_eval.cocoDt.getAnnIds(imgIds=[img_id]))}
+    # Get all detections with all their fields preserved
+    all_dts = {ann['id']: ann for img_id in coco_eval.params.imgIds
+               for ann in coco_eval.cocoDt.loadAnns(coco_eval.cocoDt.getAnnIds(imgIds=[img_id]))}
 
     # Count non-ignored GTs per category
     gt_counts = {}
