@@ -57,7 +57,6 @@ TensorBoard tracks:
 
 - Training and validation loss (total)
 - Validation mAP
-- Learning rate schedule
 - EMA model metrics (when enabled)
 
 ---
