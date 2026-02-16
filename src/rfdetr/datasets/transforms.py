@@ -590,7 +590,7 @@ class AlbumentationsWrapper:
         """Return a readable string representation of the wrapper.
 
         Returns:
-            str: Representation including the wrapped transform and type.
+            Representation including the wrapped transform and type.
         """
         transform = None
         if isinstance(self.transform, A.Compose):
@@ -898,6 +898,6 @@ class ComposeAugmentations:
         """Return a readable representation of the composed augmentations."""
         format_string = f"{self.__class__.__name__}(\n"
         for t in self.transforms:
-            format_string += f"    {t!r}\n"
+            format_string += f"\t{t!r}\n"
         format_string += ")"
         return format_string
