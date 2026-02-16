@@ -20,6 +20,7 @@ from rfdetr.util import misc as utils
 
 
 @pytest.mark.gpu
+@pytest.mark.order(1)
 @pytest.mark.flaky(reruns=1, only_rerun="AssertionError")
 def test_synthetic_training_improves_performance(
     tmp_path: Path,

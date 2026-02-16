@@ -78,6 +78,7 @@ tests = [
   "pytest-cov>=4,<8",
   "pytest-xdist>=3.6.1,<4",
   "pytest-rerunfailures>=10,<15",
+  "pytest-ordering>=0.6",
 ]
 
 docs = [
