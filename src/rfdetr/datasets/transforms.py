@@ -491,12 +491,15 @@ class Compose(object):
 # These transforms modify spatial coordinates, so bounding boxes must be transformed accordingly.
 # For custom geometric transforms, add the class name to this set.
 GEOMETRIC_TRANSFORMS = {
-    # Flips
+    # Flips and transpositions
     "HorizontalFlip",
     "VerticalFlip",
     "Flip",
+    "Transpose",
+    "D4",
     # Rotations and affine transforms
     "Rotate",
+    "RandomRotate90",
     "Affine",
     "ShiftScaleRotate",
     "SafeRotate",
@@ -507,23 +510,31 @@ GEOMETRIC_TRANSFORMS = {
     "Crop",
     "CropNonEmptyMaskIfExists",
     "RandomCropNearBBox",
+    "RandomCropFromBorders",
     "RandomSizedBBoxSafeCrop",
     "BBoxSafeRandomCrop",
+    "AtLeastOneBBoxRandomCrop",
     "RandomResizedCrop",
+    "CropAndPad",
     # Perspective and distortions
     "Perspective",
     "ElasticTransform",
     "GridDistortion",
+    "GridElasticDeform",
     "OpticalDistortion",
     "PiecewiseAffine",
+    "ThinPlateSpline",
+    "RandomGridShuffle",
     # Resize operations
     "Resize",
     "SmallestMaxSize",
     "LongestMaxSize",
     "RandomScale",
-    # Padding
+    "Downscale",
+    # Padding and symmetry
     "PadIfNeeded",
     "Pad",
+    "SquareSymmetry",
 }
 
 
