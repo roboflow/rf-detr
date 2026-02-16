@@ -63,7 +63,11 @@ logger = get_logger()
 # THE FOLLOWING MODEL ASSETS ARE COVERED BY THE APACHE 2.0 LICENSE
 # Legacy dictionary for backward compatibility - DEPRECATED
 # Use ModelWeights enum from rfdetr.assets.model_weights instead
-OPEN_SOURCE_MODELS = _DeprecatedDict({asset.filename: asset.url for asset in ModelWeights})
+OPEN_SOURCE_MODELS = _DeprecatedDict(
+    {asset.filename: asset.url for asset in ModelWeights},
+    deprecated_name="OPEN_SOURCE_MODELS",
+    replacement="`ModelWeights` enum from `rfdetr.assets.model_weights`"
+)
 
 
 class Model:

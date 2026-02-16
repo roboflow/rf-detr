@@ -10,17 +10,27 @@ import warnings
 
 
 class _DeprecatedDict(dict):
-    """Dictionary wrapper that emits deprecation warnings when accessing values."""
+    """Dictionary wrapper that emits deprecation warnings when accessing values.
 
-    def __init__(self, *args, **kwargs):
+    Args:
+        *args: Positional arguments passed to dict constructor
+        deprecated_name: Name of the deprecated object (e.g., "OPEN_SOURCE_MODELS")
+        replacement: What to use instead (e.g., "ModelWeights enum from 'rfdetr.assets.model_weights'")
+        **kwargs: Keyword arguments passed to dict constructor
+    """
+
+    def __init__(self, *args, deprecated_name: str = "this dictionary",
+                 replacement: str = "the new API", **kwargs):
         super().__init__(*args, **kwargs)
         self._warning_shown = False
+        self._deprecated_name = deprecated_name
+        self._replacement = replacement
 
     def _show_warning(self):
         if not self._warning_shown:
             warnings.warn(
-                "OPEN_SOURCE_MODELS is deprecated and will be removed in a future version. "
-                "Use 'ModelWeights' enum from 'rfdetr.assets.model_weights' instead.",
+                f"{self._deprecated_name} is deprecated and will be removed in a future version."
+                f" Use {self._replacement} instead.",
                 DeprecationWarning,
                 stacklevel=3
             )
