@@ -55,7 +55,7 @@ Then open `http://localhost:6006/` in your browser.
 
 TensorBoard tracks:
 
-- Training loss (total and per-component)
+- Training and validation loss (total)
 - Validation mAP
 - Learning rate schedule
 - EMA model metrics (when enabled)
