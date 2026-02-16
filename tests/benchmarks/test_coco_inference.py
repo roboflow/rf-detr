@@ -31,7 +31,7 @@ from rfdetr.datasets.coco import CocoDetection, make_coco_transforms_square_div_
 from rfdetr.detr import RFDETR
 from rfdetr.engine import evaluate
 from rfdetr.models import build_criterion_and_postprocessors
-from rfdetr.util import misc as utils
+from rfdetr.util.misc import collate_fn
 
 _PLUS_AVAILABLE = importlib.util.find_spec("rfdetr_plus") is not None
 if _PLUS_AVAILABLE:
@@ -118,7 +118,7 @@ def test_coco_detection_inference_benchmark(
         batch_size=batch_size,
         sampler=torch.utils.data.SequentialSampler(val_dataset),
         drop_last=False,
-        collate_fn=utils.collate_fn,
+        collate_fn=collate_fn,
         num_workers=os.cpu_count() or 1,
     )
     base_ds = get_coco_api_from_dataset(val_dataset)
@@ -154,12 +154,12 @@ def test_coco_detection_inference_benchmark(
 @pytest.mark.parametrize(
     ("model_cls", "threshold_segm_map", "threshold_segm_f1", "num_samples", "batch_size"),
     [
-        pytest.param(RFDETRSegNano, 0.6, 0.6, 500, 6, id="nano"),
-        pytest.param(RFDETRSegSmall, 0.6, 0.6, 100, 6, id="small"),
-        pytest.param(RFDETRSegMedium, 0.6, 0.6, 100, 4, id="medium"),
-        pytest.param(RFDETRSegLarge, 0.6, 0.6, 100, 2, id="large"),
-        pytest.param(RFDETRSegXLarge, 0.6, 0.6, 100, 2, id="xlarge"),
-        pytest.param(RFDETRSeg2XLarge, 0.6, 0.6, 100, 2, id="2xlarge"),
+        pytest.param(RFDETRSegNano, 0.63, 0.64, 500, 6, id="nano"),
+        pytest.param(RFDETRSegSmall, 0.66, 0.67, 100, 6, id="small"),
+        pytest.param(RFDETRSegMedium, 0.68, 0.68, 100, 4, id="medium"),
+        pytest.param(RFDETRSegLarge, 0.70, 0.69, 100, 2, id="large"),
+        pytest.param(RFDETRSegXLarge, 0.72, 0.70, 100, 2, id="xlarge"),
+        pytest.param(RFDETRSeg2XLarge, 0.73, 0.71, 100, 2, id="2xlarge"),
     ],
 )
 def test_coco_segmentation_inference_benchmark(
@@ -228,7 +228,7 @@ def test_coco_segmentation_inference_benchmark(
         batch_size=batch_size,
         sampler=torch.utils.data.SequentialSampler(val_dataset),
         drop_last=False,
-        collate_fn=utils.collate_fn,
+        collate_fn=collate_fn,
         num_workers=os.cpu_count() or 1,
     )
     base_ds = get_coco_api_from_dataset(val_dataset)
