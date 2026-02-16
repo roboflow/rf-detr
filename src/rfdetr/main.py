@@ -517,20 +517,23 @@ class Model:
         model.eval()
 
         if args.run_test:
-            best_state_dict = torch.load(output_dir / 'checkpoint_best_total.pth', map_location='cpu', weights_only=False)['model']
-            model.load_state_dict(best_state_dict)
-            model.eval()
+            if len(data_loader_test) == 0:
+                logger.warning("Test dataloader is empty, skipping test evaluation")
+            else:
+                best_state_dict = torch.load(output_dir / 'checkpoint_best_total.pth', map_location='cpu', weights_only=False)['model']
+                model.load_state_dict(best_state_dict)
+                model.eval()
 
-            test_stats, _ = evaluate(
-                model, criterion, postprocess, data_loader_test, base_ds_test, device, args=args
-            )
-            logger.info(f"Test results: {test_stats}")
-            with open(output_dir / "results.json", "r") as f:
-                results = json.load(f)
-            test_metrics = test_stats["results_json"]["class_map"]
-            results["class_map"]["test"] = test_metrics
-            with open(output_dir / "results.json", "w") as f:
-                json.dump(results, f)
+                test_stats, _ = evaluate(
+                    model, criterion, postprocess, data_loader_test, base_ds_test, device, args=args
+                )
+                logger.info(f"Test results: {test_stats}")
+                with open(output_dir / "results.json", "r") as f:
+                    results = json.load(f)
+                test_metrics = test_stats["results_json"]["class_map"]
+                results["class_map"]["test"] = test_metrics
+                with open(output_dir / "results.json", "w") as f:
+                    json.dump(results, f)
 
         for callback in callbacks["on_train_end"]:
             callback()

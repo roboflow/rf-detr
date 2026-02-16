@@ -271,8 +271,9 @@ class MetricLogger(object):
             end = time.time()
         total_time = time.time() - start_time
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))
+        n = len(iterable)
         logger.info('{} Total time: {} ({:.4f} s / it)'.format(
-            header, total_time_str, total_time / len(iterable)))
+            header, total_time_str, total_time / n if n > 0 else 0.0))
 
 
 def get_sha() -> str:
