@@ -71,12 +71,20 @@ RF-DETR provides many configuration options to customize your training run. See 
 - [Early stopping](advanced.md#early-stopping) to prevent overfitting
 - [Multi-GPU training](advanced.md#multi-gpu-training) with PyTorch DDP
 - [Custom augmentations with Albumentations](augmentations.md) - Dedicated guide
-- [Logging with TensorBoard](advanced.md#logging-with-tensorboard)
-- [Logging with Weights and Biases](advanced.md#logging-with-weights-and-biases)
-- [Logging with MLflow](advanced.md#logging-with-mlflow)
-- [Logging with ClearML](advanced.md#logging-with-clearml)
+- [Memory optimization](advanced.md#memory-optimization) with gradient checkpointing
 
 → **[Learn more about advanced training](advanced.md)**
+
+## Training Loggers
+
+Track your experiments with popular logging platforms:
+
+- [TensorBoard](loggers.md#tensorboard) for local visualization
+- [Weights and Biases](loggers.md#weights-and-biases) for cloud-based tracking
+- [ClearML](loggers.md#clearml) for MLOps automation
+- [MLflow](loggers.md#mlflow) for experiment lifecycle management
+
+→ **[Learn more about training loggers](loggers.md)**
 
 ## Result Checkpoints
 

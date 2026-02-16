@@ -37,16 +37,19 @@ from peft import LoraConfig, get_peft_model
 from torch.utils.data import DataLoader, DistributedSampler
 
 import rfdetr.util.misc as utils
+from rfdetr.assets.model_weights import (
+    ModelWeights,
+    download_pretrain_weights,
+    validate_pretrain_weights,
+)
 from rfdetr.datasets import build_dataset, get_coco_api_from_dataset
 from rfdetr.engine import evaluate, train_one_epoch
 from rfdetr.models import PostProcess, build_criterion_and_postprocessors, build_model
 from rfdetr.util.benchmark import benchmark
 from rfdetr.util.drop_scheduler import drop_scheduler
-from rfdetr.util.files import download_file
 from rfdetr.util.get_param_dicts import get_param_dict
 from rfdetr.util.logger import get_logger
 from rfdetr.util.misc import get_rank, get_world_size, is_main_process, save_on_master
-from rfdetr.util.package import get_version
 from rfdetr.util.utils import BestMetricHolder, ModelEma, clean_state_dict
 
 if str(os.environ.get("USE_FILE_SYSTEM_SHARING", "False")).lower() in ["true", "1"]:
@@ -55,44 +58,11 @@ if str(os.environ.get("USE_FILE_SYSTEM_SHARING", "False")).lower() in ["true", "
 
 logger = get_logger()
 
-# THE FOLLOWING OPEN_SOURCE_MODELS ARE COVERED BY THE APACHE 2.0 LICENSE
-OPEN_SOURCE_MODELS = {
-    "rf-detr-base.pth": "https://storage.googleapis.com/rfdetr/rf-detr-base-coco.pth",
-    "rf-detr-base-o365.pth": "https://storage.googleapis.com/rfdetr/top-secret-1234/lwdetr_dinov2_small_o365_checkpoint.pth",
-    # below is a less converged model that may be better for finetuning but worse for inference
-    "rf-detr-base-2.pth": "https://storage.googleapis.com/rfdetr/rf-detr-base-2.pth",
-    "rf-detr-large.pth": "https://storage.googleapis.com/rfdetr/rf-detr-large.pth",
-    "rf-detr-nano.pth": "https://storage.googleapis.com/rfdetr/nano_coco/checkpoint_best_regular.pth",
-    "rf-detr-small.pth": "https://storage.googleapis.com/rfdetr/small_coco/checkpoint_best_regular.pth",
-    "rf-detr-medium.pth": "https://storage.googleapis.com/rfdetr/medium_coco/checkpoint_best_regular.pth",
-    "rf-detr-seg-preview.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-preview.pt",
-    "rf-detr-large-2026.pth": "https://storage.googleapis.com/rfdetr/rf-detr-large-2026.pth",
-    "rf-detr-seg-nano.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-n-ft.pth",
-    "rf-detr-seg-small.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-s-ft.pth",
-    "rf-detr-seg-medium.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-m-ft.pth",
-    "rf-detr-seg-large.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-l-ft.pth",
-    "rf-detr-seg-xlarge.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-xl-ft.pth",
-    "rf-detr-seg-xxlarge.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-2xl-ft.pth",
-}
 
-def download_pretrain_weights(pretrain_weights: str, redownload=False):
-    HOSTED_MODELS = {**OPEN_SOURCE_MODELS}
-    if pretrain_weights not in HOSTED_MODELS:
-        from rfdetr.platform.platform_downloads import PLATFORM_MODELS
+# THE FOLLOWING MODEL ASSETS ARE COVERED BY THE APACHE 2.0 LICENSE
+# Legacy dictionary for backward compatibility
+OPEN_SOURCE_MODELS = {asset.filename: asset.url for asset in ModelWeights}
 
-        HOSTED_MODELS.update(PLATFORM_MODELS)
-
-    if pretrain_weights not in HOSTED_MODELS:
-        return
-    if os.path.exists(pretrain_weights) and not redownload:
-        return
-    logger.info(
-        f"Downloading pretrained weights for {pretrain_weights}"
-    )
-    download_file(
-        url=HOSTED_MODELS[pretrain_weights],
-        filename=pretrain_weights,
-    )
 
 class Model:
     def __init__(self, **kwargs):
@@ -103,6 +73,10 @@ class Model:
         self.device = torch.device(args.device)
         if args.pretrain_weights is not None:
             logger.info("Loading pretrain weights")
+
+            # Validate MD5 hash before loading (non-strict, just warns)
+            validate_pretrain_weights(args.pretrain_weights, strict=False)
+
             try:
                 checkpoint = torch.load(args.pretrain_weights, map_location='cpu', weights_only=False)
             except Exception as e:

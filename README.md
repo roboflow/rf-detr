@@ -245,14 +245,7 @@ Visit our [documentation website](https://rfdetr.roboflow.com) to learn more abo
 
 ## License
 
-All source code and model weights in this repository are licensed under the
-Apache License 2.0. See [`LICENSE`](LICENSE) for details.
-
-The XLarge and 2XLarge models (marked with △ in the tables above) are provided
-by the separate [`rfdetr_plus`](https://github.com/roboflow/rf-detr-plus)
-extension package, licensed under the Platform Model License 1.0. Install with
-`pip install rfdetr[plus]`. These models require a Roboflow account to run and
-fine-tune.
+All source code and model weights in this repository are licensed under the Apache License 2.0. See [`LICENSE`](LICENSE) for details.
 
 ## Acknowledgements
 

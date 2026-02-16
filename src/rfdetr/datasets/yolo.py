@@ -278,6 +278,7 @@ class CocoLikeAPI:
                 ann_id += 1
 
         return {
+            "info": {"description": "RF-DETR YOLO dataset"},
             "images": images,
             "annotations": annotations,
             "categories": categories

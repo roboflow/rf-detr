@@ -13,14 +13,26 @@ Use cases covered:
 """
 
 import importlib.util
+import warnings
+from collections.abc import Iterator
+from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from torch.jit import TracerWarning
 
 from rfdetr import RFDETRSegNano
+
+
+@contextmanager
+def ignore_tracer_warnings() -> Iterator[None]:
+    """Suppress torch.jit.TracerWarning during export tests to reduce log spam."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=TracerWarning)
+        yield
 
 
 @pytest.mark.gpu
@@ -38,7 +50,8 @@ def test_segmentation_model_export_no_crash(tmp_path: Path) -> None:
     model = RFDETRSegNano()
 
     # This should not crash with "AttributeError: 'dict' object has no attribute 'shape'"
-    model.export(output_dir=str(tmp_path), simplify=False, verbose=False)
+    with ignore_tracer_warnings():
+        model.export(output_dir=str(tmp_path), simplify=False, verbose=False)
 
     # Verify export produced output files
     onnx_files = list(tmp_path.glob("*.onnx"))
@@ -93,7 +106,8 @@ def test_export_calls_eval_on_deepcopy_not_original(tmp_path: Path) -> None:
     # Patch deepcopy in the main module where export is defined
     with patch('rfdetr.main.deepcopy', side_effect=tracking_deepcopy):
         try:
-            model.export(output_dir=str(tmp_path), simplify=False)
+            with ignore_tracer_warnings():
+                model.export(output_dir=str(tmp_path), simplify=False)
         except (ImportError, OSError, RuntimeError):
             # Expected failures: missing dependencies, network issues, CUDA errors
             # These are acceptable as we're testing the deepcopy/eval pattern, not the full export
@@ -132,7 +146,8 @@ def test_export_does_not_change_original_training_state(tmp_path: Path) -> None:
     assert torch_model.training is True, "Precondition: original model should start in training mode"
 
     # Call export() on the high-level model; this should not change the original model's mode
-    model.export(output_dir=str(tmp_path), simplify=False)
+    with ignore_tracer_warnings():
+        model.export(output_dir=str(tmp_path), simplify=False)
 
     # After export, the original underlying model should still be in training mode
     assert torch_model.training is True, "export() should not change the original model's training state"

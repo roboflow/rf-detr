@@ -32,6 +32,7 @@ class TestCocoLikeAPI:
 
     def test_dataset_structure(self, coco_api):
         """Test the structure of the COCO dataset."""
+        assert "info" in coco_api.dataset
         assert "images" in coco_api.dataset
         assert "annotations" in coco_api.dataset
         assert "categories" in coco_api.dataset

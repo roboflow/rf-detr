@@ -28,6 +28,7 @@ try:
 except:
     pass
 
+from rfdetr.assets.model_weights import download_pretrain_weights
 from rfdetr.config import (
     ModelConfig,
     RFDETRBaseConfig,
@@ -46,7 +47,7 @@ from rfdetr.config import (
     SegmentationTrainConfig,
     TrainConfig,
 )
-from rfdetr.main import Model, download_pretrain_weights
+from rfdetr.main import Model
 from rfdetr.util.coco_classes import COCO_CLASSES
 from rfdetr.util.metrics import (
     MetricsClearMLSink,
@@ -321,8 +322,7 @@ class RFDETR:
         """
         if not self._is_optimized_for_inference and not self._has_warned_about_not_being_optimized_for_inference:
             logger.warning(
-                "Model is not optimized for inference. "
-                "Latency may be higher than expected. "
+                "Model is not optimized for inference. Latency may be higher than expected. "
                 "You can optimize the model for inference by calling model.optimize_for_inference()."
             )
             self._has_warned_about_not_being_optimized_for_inference = True
