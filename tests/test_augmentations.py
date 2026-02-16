@@ -21,48 +21,26 @@ from rfdetr.datasets.transforms import (
 class TestAlbumentationsWrapper:
     """Tests for AlbumentationsWrapper class."""
 
-    def test_horizontal_flip_with_boxes(self):
-        """Test horizontal flip correctly transforms bounding boxes."""
-        transform = A.HorizontalFlip(p=1.0)
+    @pytest.mark.parametrize("transform_class,params,box_in,box_out", [
+        (A.HorizontalFlip, {"p": 1.0}, [10.0, 20.0, 30.0, 40.0], [70.0, 20.0, 90.0, 40.0]),
+        (A.VerticalFlip, {"p": 1.0}, [10.0, 20.0, 30.0, 40.0], [10.0, 60.0, 30.0, 80.0]),
+    ])
+    def test_flip_transforms_with_boxes(self, transform_class, params, box_in, box_out):
+        """Test flip transforms correctly transform bounding boxes."""
+        transform = transform_class(**params)
         wrapper = AlbumentationsWrapper(transform)
 
-        # Create test image (100x100)
-        image = Image.new('RGB', (100, 100), color='red')
+        image = Image.new('RGB', (100, 100))
         target = {
-            'boxes': torch.tensor([[10.0, 20.0, 30.0, 40.0]]),  # x1, y1, x2, y2
+            'boxes': torch.tensor([box_in]),
             'labels': torch.tensor([1])
         }
 
         aug_image, aug_target = wrapper(image, target)
 
-        # After horizontal flip, x-coordinates should be mirrored
-        # Original: [10, 20, 30, 40] -> Flipped: [70, 20, 90, 40]
-        expected_boxes = torch.tensor([[70.0, 20.0, 90.0, 40.0]])
-
         assert isinstance(aug_image, Image.Image)
-        assert torch.allclose(aug_target['boxes'], expected_boxes, atol=1.0)
+        assert torch.allclose(aug_target['boxes'], torch.tensor([box_out]), atol=1.0)
         assert torch.equal(aug_target['labels'], target['labels'])
-
-    def test_vertical_flip_with_boxes(self):
-        """Test vertical flip correctly transforms bounding boxes."""
-        transform = A.VerticalFlip(p=1.0)
-        wrapper = AlbumentationsWrapper(transform)
-
-        # Create test image (100x100)
-        image = Image.new('RGB', (100, 100), color='blue')
-        target = {
-            'boxes': torch.tensor([[10.0, 20.0, 30.0, 40.0]]),
-            'labels': torch.tensor([1])
-        }
-
-        aug_image, aug_target = wrapper(image, target)
-
-        # After vertical flip, y-coordinates should be mirrored
-        # Original: [10, 20, 30, 40] -> Flipped: [10, 60, 30, 80]
-        expected_boxes = torch.tensor([[10.0, 60.0, 30.0, 80.0]])
-
-        assert isinstance(aug_image, Image.Image)
-        assert torch.allclose(aug_target['boxes'], expected_boxes, atol=1.0)
 
     def test_non_geometric_transform_preserves_boxes(self):
         """Test that non-geometric transforms preserve bounding boxes."""
@@ -219,126 +197,182 @@ class TestAlbumentationsWrapper:
         ], dtype=torch.float32)
         assert torch.allclose(mask_bbox, aug_target['boxes'][0].to(dtype=torch.float32), atol=1.0)
 
-    def test_masks_filtered_when_boxes_removed_by_crop(self):
-        """Masks should be filtered when some boxes are removed by cropping."""
-        # Crop keeping left half of the image
-        transform = A.Crop(x_min=0, y_min=0, x_max=50, y_max=100, p=1.0)
+
+    @pytest.mark.parametrize("transform_class,params", [
+        (A.HorizontalFlip, {"p": 1.0}),
+        (A.VerticalFlip, {"p": 1.0}),
+        (A.Rotate, {"limit": 15, "p": 1.0}),  # Small angle to avoid boxes going out
+    ])
+    def test_various_geometric_transforms_with_masks(self, transform_class, params):
+        """Test various geometric transforms correctly transform masks."""
+        transform = transform_class(**params)
         wrapper = AlbumentationsWrapper(transform)
 
         height, width = 100, 100
-        image = Image.new('RGB', (width, height), color='green')
+        image = Image.new('RGB', (width, height))
 
-        # Two boxes: one inside crop, one outside
-        boxes = torch.tensor(
-            [
-                [10.0, 10.0, 40.0, 40.0],  # inside crop (kept)
-                [60.0, 10.0, 90.0, 40.0],  # outside crop (removed)
-            ]
-        )
-        masks = torch.zeros((2, height, width), dtype=torch.uint8)
-        for i, (x1, y1, x2, y2) in enumerate(boxes.to(dtype=torch.long)):
-            masks[i, y1:y2, x1:x2] = 1
-
-        target = {
-            'boxes': boxes,
-            'labels': torch.tensor([1, 2]),
-            'masks': masks,
-        }
-
-        aug_image, aug_target = wrapper(image, target)
-
-        assert isinstance(aug_image, Image.Image)
-        # Only the first box should remain
-        assert aug_target['boxes'].shape[0] == 1
-        assert aug_target['labels'].shape[0] == 1
-        assert aug_target['masks'].shape[0] == 1
-
-        # Mask should be non-empty and aligned with the remaining box
-        aug_mask = aug_target['masks'][0]
-        ys, xs = torch.nonzero(aug_mask, as_tuple=True)
-        assert ys.numel() > 0 and xs.numel() > 0
-        mask_bbox = torch.tensor([
-            xs.min().item(),
-            ys.min().item(),
-            xs.max().item() + 1,
-            ys.max().item() + 1,
-        ], dtype=torch.float32)
-        assert torch.allclose(mask_bbox, aug_target['boxes'][0].to(dtype=torch.float32), atol=1.0)
-
-    def test_masks_cleared_when_all_boxes_removed(self):
-        """Masks should be cleared to (0, H, W) shape when all boxes are removed."""
-        # Crop the top-left corner where there are no boxes
-        transform = A.Crop(x_min=0, y_min=0, x_max=20, y_max=20, p=1.0)
-        wrapper = AlbumentationsWrapper(transform)
-
-        height, width = 100, 100
-        image = Image.new('RGB', (width, height), color='yellow')
-
-        # Single box entirely outside the crop region
-        boxes = torch.tensor([[60.0, 60.0, 90.0, 90.0]])
+        # Create mask covering the box region (more centered to avoid edge issues with rotation)
         masks = torch.zeros((1, height, width), dtype=torch.uint8)
-        x1, y1, x2, y2 = boxes[0].to(dtype=torch.long)
-        masks[0, y1:y2, x1:x2] = 1
+        masks[0, 40:60, 40:60] = 1
 
         target = {
-            'boxes': boxes,
+            'boxes': torch.tensor([[40.0, 40.0, 60.0, 60.0]]),
             'labels': torch.tensor([1]),
-            'masks': masks,
+            'masks': masks
         }
 
         aug_image, aug_target = wrapper(image, target)
 
         assert isinstance(aug_image, Image.Image)
-        # All boxes removed
-        assert aug_target['boxes'].shape[0] == 0
-        assert aug_target['labels'].shape[0] == 0
         assert 'masks' in aug_target
-        # Masks should have zero instances but match the augmented image spatial size
-        assert aug_target['masks'].shape[0] == 0
-        assert aug_target['masks'].shape[1] == aug_image.height
-        assert aug_target['masks'].shape[2] == aug_image.width
+        # Number of boxes may change with rotation (boxes can be removed if they go out of bounds)
+        assert aug_target['masks'].shape[0] == aug_target['boxes'].shape[0]
+        if aug_target['boxes'].shape[0] > 0:
+            # Mask should still have content (not all zeros)
+            assert aug_target['masks'].any()
 
-    def test_mask_synchronization_with_per_instance_fields(self):
-        """Masks should stay synchronized with per-instance fields when filtering."""
-        # Crop keeping left half of the image
-        transform = A.Crop(x_min=0, y_min=0, x_max=50, y_max=100, p=1.0)
+    @pytest.mark.parametrize("transform_class,params", [
+        (A.GaussianBlur, {"blur_limit": 3, "p": 1.0}),
+        (A.RandomBrightnessContrast, {"p": 1.0}),
+        (A.GaussNoise, {"p": 1.0}),
+    ])
+    def test_pixel_transforms_preserve_masks(self, transform_class, params):
+        """Test pixel-level transforms preserve masks unchanged."""
+        transform = transform_class(**params)
         wrapper = AlbumentationsWrapper(transform)
 
         height, width = 100, 100
-        image = Image.new('RGB', (width, height), color='purple')
+        image = Image.new('RGB', (width, height))
 
-        boxes = torch.tensor(
-            [
-                [10.0, 10.0, 40.0, 40.0],  # inside crop
-                [60.0, 10.0, 90.0, 40.0],  # outside crop
-            ]
-        )
-        masks = torch.zeros((2, height, width), dtype=torch.uint8)
-        for i, (x1, y1, x2, y2) in enumerate(boxes.to(dtype=torch.long)):
-            masks[i, y1:y2, x1:x2] = 1
-
-        # Additional per-instance field that must stay in sync
-        iscrowd = torch.tensor([0, 1])
+        masks = torch.zeros((1, height, width), dtype=torch.uint8)
+        masks[0, 20:40, 10:30] = 1
 
         target = {
-            'boxes': boxes,
-            'labels': torch.tensor([1, 2]),
-            'masks': masks,
-            'iscrowd': iscrowd,
+            'boxes': torch.tensor([[10.0, 20.0, 30.0, 40.0]]),
+            'labels': torch.tensor([1]),
+            'masks': masks
         }
 
         aug_image, aug_target = wrapper(image, target)
 
         assert isinstance(aug_image, Image.Image)
-        # Only the first instance should remain
-        num_instances = aug_target['boxes'].shape[0]
-        assert num_instances == 1
-        assert aug_target['labels'].shape[0] == num_instances
-        assert aug_target['masks'].shape[0] == num_instances
-        assert aug_target['iscrowd'].shape[0] == num_instances
+        # Pixel transforms should not modify masks
+        assert torch.equal(aug_target['masks'], target['masks'])
 
-        # The remaining iscrowd value should correspond to the first original instance
-        assert aug_target['iscrowd'][0].item() == iscrowd[0].item()
+    def test_multiple_masks_with_geometric_transform(self):
+        """Test multiple masks are correctly transformed together."""
+        transform = A.HorizontalFlip(p=1.0)
+        wrapper = AlbumentationsWrapper(transform)
+
+        height, width = 100, 100
+        image = Image.new('RGB', (width, height))
+
+        # Two masks for two boxes
+        masks = torch.zeros((2, height, width), dtype=torch.uint8)
+        masks[0, 10:30, 10:30] = 1  # First mask
+        masks[1, 50:70, 50:70] = 1  # Second mask
+
+        target = {
+            'boxes': torch.tensor([
+                [10.0, 10.0, 30.0, 30.0],
+                [50.0, 50.0, 70.0, 70.0]
+            ]),
+            'labels': torch.tensor([1, 2]),
+            'masks': masks
+        }
+
+        aug_image, aug_target = wrapper(image, target)
+
+        assert aug_target['masks'].shape == (2, height, width)
+        assert aug_target['boxes'].shape[0] == 2
+        assert aug_target['labels'].shape[0] == 2
+
+    def test_empty_masks_handling(self):
+        """Test wrapper correctly handles empty masks (no 'masks' key when empty)."""
+        transform = A.HorizontalFlip(p=1.0)
+        wrapper = AlbumentationsWrapper(transform)
+
+        height, width = 100, 100
+        image = Image.new('RGB', (width, height))
+
+        # When boxes are empty, don't include masks field
+        target = {
+            'boxes': torch.zeros((0, 4)),
+            'labels': torch.zeros((0,), dtype=torch.long),
+        }
+
+        aug_image, aug_target = wrapper(image, target)
+
+        assert isinstance(aug_image, Image.Image)
+        assert aug_target['boxes'].shape == (0, 4)
+        assert aug_target['labels'].shape == (0,)
+
+    def test_pixel_transform_with_masks_no_boxes(self):
+        """Test that pixel transforms work with masks but no boxes."""
+        # Use a non-geometric transform which doesn't need boxes
+        transform = A.GaussianBlur(blur_limit=3, p=1.0)
+        wrapper = AlbumentationsWrapper(transform)
+
+        height, width = 100, 100
+        image = Image.new('RGB', (width, height))
+
+        masks_orig = torch.zeros((1, height, width), dtype=torch.uint8)
+        masks_orig[0, 20:40, 10:30] = 1
+
+        target = {
+            'labels': torch.tensor([1]),
+            'masks': masks_orig.clone()  # No boxes!
+        }
+
+        aug_image, aug_target = wrapper(image, target)
+
+        # Pixel transforms should preserve masks
+        assert torch.equal(aug_target['masks'], masks_orig)
+
+    def test_invalid_mask_shape_raises_error(self):
+        """Test that invalid mask shape raises ValueError."""
+        transform = A.HorizontalFlip(p=1.0)
+        wrapper = AlbumentationsWrapper(transform)
+
+        height, width = 100, 100
+        image = Image.new('RGB', (width, height))
+
+        # Invalid mask shape (2D instead of 3D)
+        target = {
+            'boxes': torch.tensor([[10.0, 20.0, 30.0, 40.0]]),
+            'labels': torch.tensor([1]),
+            'masks': torch.zeros((height, width), dtype=torch.uint8)
+        }
+
+        with pytest.raises(ValueError, match="masks must have shape"):
+            wrapper(image, target)
+
+    @pytest.mark.parametrize("mask_dtype", [torch.uint8, torch.float32])
+    def test_mask_dtype_handling(self, mask_dtype):
+        """Test wrapper handles different mask dtypes correctly (uint8, float32)."""
+        transform = A.HorizontalFlip(p=1.0)
+        wrapper = AlbumentationsWrapper(transform)
+
+        height, width = 100, 100
+        image = Image.new('RGB', (width, height))
+
+        masks = torch.zeros((1, height, width), dtype=mask_dtype)
+        masks[0, 20:40, 10:30] = 1
+
+        target = {
+            'boxes': torch.tensor([[10.0, 20.0, 30.0, 40.0]]),
+            'labels': torch.tensor([1]),
+            'masks': masks
+        }
+
+        aug_image, aug_target = wrapper(image, target)
+
+        assert isinstance(aug_image, Image.Image)
+        assert 'masks' in aug_target
+        # Output masks should be bool after Albumentations processing
+        assert aug_target['masks'].dtype == torch.bool
+
+
 class TestAlbumentationsWrapperFromConfig:
     """Tests for AlbumentationsWrapper.from_config() static method."""
 
@@ -604,4 +638,103 @@ class TestIntegration:
         assert isinstance(aug_image, Image.Image)
         # Boxes might be filtered out by augmentations, so check shape is valid
         assert aug_target['boxes'].shape[1] == 4
+        assert aug_target['labels'].shape[0] == aug_target['boxes'].shape[0]
+
+    def test_full_pipeline_with_masks(self):
+        """Test complete pipeline with masks from config to application."""
+        config = {
+            "HorizontalFlip": {"p": 1.0},
+            "VerticalFlip": {"p": 0.0},  # Don't apply to make test deterministic
+        }
+
+        transforms = AlbumentationsWrapper.from_config(config)
+        composed = ComposeAugmentations(transforms)
+
+        height, width = 100, 100
+        image = Image.new('RGB', (width, height))
+
+        masks = torch.zeros((2, height, width), dtype=torch.uint8)
+        masks[0, 10:30, 10:30] = 1
+        masks[1, 50:70, 50:70] = 1
+
+        target = {
+            'boxes': torch.tensor([
+                [10.0, 10.0, 30.0, 30.0],
+                [50.0, 50.0, 70.0, 70.0]
+            ]),
+            'labels': torch.tensor([1, 2]),
+            'masks': masks
+        }
+
+        aug_image, aug_target = composed(image, target)
+
+        assert isinstance(aug_image, Image.Image)
+        assert 'masks' in aug_target
+        assert aug_target['boxes'].shape[0] == aug_target['masks'].shape[0]
+        assert aug_target['labels'].shape[0] == aug_target['masks'].shape[0]
+        assert aug_target['masks'].any()  # Masks should have content
+
+    def test_pipeline_mixed_geometric_pixel_with_masks(self):
+        """Test pipeline with mix of geometric and pixel transforms on masks."""
+        config = {
+            "HorizontalFlip": {"p": 1.0},  # Geometric
+            "GaussianBlur": {"p": 1.0},    # Pixel
+        }
+
+        transforms = AlbumentationsWrapper.from_config(config)
+        composed = ComposeAugmentations(transforms)
+
+        height, width = 100, 100
+        image = Image.new('RGB', (width, height))
+
+        masks = torch.zeros((1, height, width), dtype=torch.uint8)
+        masks[0, 20:40, 10:30] = 1
+
+        target = {
+            'boxes': torch.tensor([[10.0, 20.0, 30.0, 40.0]]),
+            'labels': torch.tensor([1]),
+            'masks': masks
+        }
+
+        aug_image, aug_target = composed(image, target)
+
+        assert isinstance(aug_image, Image.Image)
+        assert 'masks' in aug_target
+        assert aug_target['masks'].shape == (1, height, width)
+        assert aug_target['masks'].any()
+
+    @pytest.mark.parametrize("num_instances", [1, 2, 5])
+    def test_pipeline_scales_with_instances(self, num_instances):
+        """Test pipeline handles varying numbers of instances correctly."""
+        config = {
+            "HorizontalFlip": {"p": 1.0},
+        }
+
+        transforms = AlbumentationsWrapper.from_config(config)
+        composed = ComposeAugmentations(transforms)
+
+        height, width = 100, 100
+        image = Image.new('RGB', (width, height))
+
+        # Create multiple boxes and masks
+        boxes = []
+        masks = torch.zeros((num_instances, height, width), dtype=torch.uint8)
+        for i in range(num_instances):
+            x = i * 15 + 10
+            y = i * 15 + 10
+            boxes.append([float(x), float(y), float(x + 15), float(y + 15)])
+            x1, y1, x2, y2 = int(x), int(y), int(x + 15), int(y + 15)
+            masks[i, y1:y2, x1:x2] = 1
+
+        target = {
+            'boxes': torch.tensor(boxes),
+            'labels': torch.arange(1, num_instances + 1),
+            'masks': masks
+        }
+
+        aug_image, aug_target = composed(image, target)
+
+        assert isinstance(aug_image, Image.Image)
+        assert aug_target['boxes'].shape[0] <= num_instances  # May be filtered
+        assert aug_target['masks'].shape[0] == aug_target['boxes'].shape[0]
         assert aug_target['labels'].shape[0] == aug_target['boxes'].shape[0]

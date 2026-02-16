@@ -531,14 +531,14 @@ class AlbumentationsWrapper:
     """Wrapper to apply Albumentations transforms to (image, target) tuples.
 
     This wrapper integrates Albumentations transforms with RF-DETR's data pipeline,
-    automatically handling bounding box transformations for geometric augmentations
-    while preserving the (image, target) tuple format.
+    automatically handling bounding box and segmentation mask transformations for
+    geometric augmentations while preserving the (image, target) tuple format.
 
     The wrapper automatically detects transform types:
-    - **Geometric transforms** (flips, rotations, crops): Bounding boxes are transformed
-      along with the image to maintain correct object localization.
-    - **Pixel-level transforms** (blur, color adjustments, noise): Bounding boxes remain
-      unchanged as only pixel values are modified.
+    - **Geometric transforms** (flips, rotations, crops): Bounding boxes and instance
+      masks are transformed along with the image to maintain correct object localization.
+    - **Pixel-level transforms** (blur, color adjustments, noise): Bounding boxes and
+      masks remain unchanged as only pixel values are modified.
 
     Detection is based on the transform's class name matching the GEOMETRIC_TRANSFORMS set.
     For geometric transforms, bbox_params are automatically configured to handle coordinate
@@ -692,7 +692,9 @@ class AlbumentationsWrapper:
             target: Target dictionary containing:
                 - 'labels': PyTorch tensor of shape (N,) with class labels
                 - 'boxes' (optional): PyTorch tensor of shape (N, 4) in (x1, y1, x2, y2) format
-                - 'masks' (optional): PyTorch tensor of shape (N, H, W) with instance masks
+                - 'masks' (optional): PyTorch tensor of shape (N, H, W) with instance segmentation masks.
+                  For geometric transforms, masks are transformed alongside boxes to maintain alignment.
+                  Requires 'boxes' to be present; a warning is logged if masks exist without boxes.
 
         Returns:
             Tuple of (transformed_image, transformed_target):
