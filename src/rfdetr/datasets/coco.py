@@ -29,7 +29,7 @@ from PIL import Image
 
 import rfdetr.datasets.transforms as T
 from rfdetr.augmentation_config import AUG_CONFIG
-from rfdetr.datasets.transforms import ComposeAugmentations, build_albumentations_from_config
+from rfdetr.datasets.transforms import AlbumentationsWrapper, ComposeAugmentations
 from rfdetr.util.logger import get_logger
 
 logger = get_logger()
@@ -175,7 +175,7 @@ def make_coco_transforms(image_set: str, resolution: int, multi_scale: bool = Fa
                     T.SquareResize(scales),
                 ]),
             ),
-            ComposeAugmentations(build_albumentations_from_config(AUG_CONFIG)),
+            ComposeAugmentations(AlbumentationsWrapper.from_config(AUG_CONFIG)),
             normalize,
         ])
 
@@ -249,7 +249,7 @@ def make_coco_transforms_square_div_64(image_set: str, resolution: int, multi_sc
                     T.SquareResize(scales),
                 ]),
             ),
-            ComposeAugmentations(build_albumentations_from_config(AUG_CONFIG)),
+            ComposeAugmentations(AlbumentationsWrapper.from_config(AUG_CONFIG)),
             normalize,
         ])
 

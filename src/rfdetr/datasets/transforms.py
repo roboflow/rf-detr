@@ -506,38 +506,67 @@ GEOMETRIC_TRANSFORMS = {
 class AlbumentationsWrapper:
     """Wrapper to apply Albumentations transforms to (image, target) tuples.
 
-    This wrapper integrates Albumentations library transforms with RF-DETR's data pipeline,
-    handling bounding box transformations for geometric augmentations while preserving
-    the (image, target) tuple format expected by the training pipeline.
+    This wrapper integrates Albumentations transforms with RF-DETR's data pipeline,
+    automatically handling bounding box transformations for geometric augmentations
+    while preserving the (image, target) tuple format.
+
+    The wrapper automatically detects transform types:
+    - **Geometric transforms** (flips, rotations, crops): Bounding boxes are transformed
+      along with the image to maintain correct object localization.
+    - **Pixel-level transforms** (blur, color adjustments, noise): Bounding boxes remain
+      unchanged as only pixel values are modified.
+
+    Detection is based on the transform's class name matching the GEOMETRIC_TRANSFORMS set.
+    For geometric transforms, bbox_params are automatically configured to handle coordinate
+    transformations, clip boxes to image boundaries, and remove invalid boxes.
 
     Args:
-        transform: Albumentations transform to apply.
-        bbox_safe: Whether the transform affects bounding boxes geometrically.
-            If True, bounding box coordinates will be transformed along with the image.
+        transform: Albumentations transform to apply (e.g., A.HorizontalFlip, A.GaussianBlur).
+
+    Attributes:
+        transform: The wrapped Albumentations Compose object.
 
     Examples:
         >>> import albumentations as A
-        >>> transform = A.HorizontalFlip(p=1.0)
-        >>> wrapper = AlbumentationsWrapper(transform, bbox_safe=True)
+        >>> # Geometric transform - automatically transforms boxes
+        >>> wrapper = AlbumentationsWrapper(A.HorizontalFlip(p=1.0))
         >>> image = Image.open("image.jpg")
         >>> target = {"boxes": torch.tensor([[10, 20, 100, 200]]), "labels": torch.tensor([1])}
         >>> aug_image, aug_target = wrapper(image, target)
+
+        >>> # Pixel-level transform - automatically preserves boxes
+        >>> wrapper = AlbumentationsWrapper(A.GaussianBlur(p=1.0))
+        >>> aug_image, aug_target = wrapper(image, target)
+
+    Note:
+        For custom geometric transforms, add the transform class name to the
+        GEOMETRIC_TRANSFORMS set at module level.
     """
 
-    def __init__(self, transform: A.BasicTransform, bbox_safe: bool = True) -> None:
-        self.bbox_safe = bbox_safe
-        if bbox_safe:
-            # Always wrap in Compose with bbox_params for geometric transforms
+    def __init__(self, transform: A.BasicTransform) -> None:
+        # Auto-detect if transform is geometric based on its class name
+        transform_name = transform.__class__.__name__
+        self._is_geometric = transform_name in GEOMETRIC_TRANSFORMS
+
+        if self._is_geometric:
+            # Wrap geometric transform with bbox handling capabilities
+            # bbox_params configure how Albumentations should transform bounding boxes:
+            # - format='pascal_voc': Boxes are in (x1, y1, x2, y2) format
+            # - label_fields: Tells Albumentations which field contains class labels
+            # - min_visibility=0.0: Remove boxes that become fully occluded/out of bounds
+            # - clip=True: Clip box coordinates to image boundaries after transformation
             self.transform = A.Compose(
                 [transform],
                 bbox_params=A.BboxParams(
-                    format='pascal_voc',  # xyxy format
+                    format='pascal_voc',
                     label_fields=['category_ids'],
-                    min_visibility=0.0,   # remove boxes if fully outside
+                    min_visibility=0.0,
                     clip=True
                 )
             )
         else:
+            # Wrap non-geometric transform without bbox handling
+            # Simpler composition since boxes don't need transformation
             self.transform = A.Compose([transform])
 
     def __call__(
@@ -545,109 +574,156 @@ class AlbumentationsWrapper:
     ) -> Tuple[PIL.Image.Image, Dict[str, Any]]:
         """Apply the Albumentations transform to image and target.
 
+        This method handles the data format conversion between RF-DETR and Albumentations:
+        1. Converts PIL Image to numpy array (required by Albumentations)
+        2. Converts PyTorch tensors to numpy/lists (required by Albumentations)
+        3. Applies the transform
+        4. Converts results back to PIL Image and PyTorch tensors
+
+        For geometric transforms with bounding boxes, this method also:
+        - Validates box shapes and coordinates
+        - Handles boxes that may be removed by the transform (e.g., cropped out)
+        - Ensures labels stay synchronized with their corresponding boxes
+
         Args:
-            image: Input PIL Image.
-            target: Target dictionary containing 'labels' and optionally 'boxes'.
+            image: Input PIL Image in RGB format.
+            target: Target dictionary containing:
+                - 'labels': PyTorch tensor of shape (N,) with class labels
+                - 'boxes' (optional): PyTorch tensor of shape (N, 4) in (x1, y1, x2, y2) format
 
         Returns:
-            Tuple of transformed image and target dictionary.
+            Tuple of (transformed_image, transformed_target):
+                - transformed_image: PIL Image after augmentation
+                - transformed_target: Dictionary with augmented boxes and labels
+
+        Raises:
+            TypeError: If target is not a dictionary.
+            KeyError: If target doesn't contain 'labels' key.
+            ValueError: If boxes don't have shape (N, 4).
 
         Examples:
-            >>> wrapper = AlbumentationsWrapper(A.HorizontalFlip(p=1.0), bbox_safe=True)
+            >>> wrapper = AlbumentationsWrapper(A.HorizontalFlip(p=1.0))
             >>> image = Image.new('RGB', (100, 100))
             >>> target = {"boxes": torch.tensor([[10, 20, 90, 80]]), "labels": torch.tensor([1])}
             >>> aug_image, aug_target = wrapper(image, target)
         """
-        # Validate target structure
+        # === Input Validation ===
         if not isinstance(target, dict):
             raise TypeError(f"target must be a dictionary, got {type(target)}")
         if 'labels' not in target:
             raise KeyError("target must contain 'labels' key")
 
+        # === Format Conversion: PyTorch/PIL → Albumentations ===
+        # Convert PIL Image to numpy array (HWC format expected by Albumentations)
         image_np = np.array(image)
+
+        # Convert labels tensor to Python list (required by Albumentations category_ids)
         labels = target['labels'].cpu().tolist() if torch.is_tensor(target['labels']) else list(target['labels'])
 
-        if self.bbox_safe and 'boxes' in target:
+        # === Apply Transform ===
+        if self._is_geometric and 'boxes' in target:
+            # Path 1: Geometric transform with bounding boxes
+            # Albumentations will transform both image and boxes together
+
             boxes = target['boxes']
+            # Convert boxes tensor to numpy array
             boxes_np = boxes.cpu().numpy() if torch.is_tensor(boxes) else np.array(boxes)
 
-            # Validate boxes shape
+            # Validate box dimensions: must be (N, 4) for N boxes
             if len(boxes_np.shape) != 2 or boxes_np.shape[1] != 4:
                 raise ValueError(f"boxes must have shape (N, 4), got {boxes_np.shape}")
 
+            # Apply transform to image and boxes simultaneously
+            # Albumentations will handle box coordinate transformation and filtering
             augmented = self.transform(image=image_np, bboxes=boxes_np, category_ids=labels)
+
             target_out = target.copy()
             bboxes_aug = augmented['bboxes']
 
+            # Handle case where transform removed all boxes (e.g., aggressive crop)
+            # Important: Keep labels and boxes synchronized - if no boxes remain, clear labels too
             if len(bboxes_aug) == 0:
                 target_out['boxes'] = torch.zeros((0, 4), dtype=torch.float32)
                 target_out['labels'] = torch.zeros((0,), dtype=torch.long)
             else:
+                # Convert augmented boxes and labels back to PyTorch tensors
+                # Reshape ensures correct (N, 4) format even for single box
                 target_out['boxes'] = torch.as_tensor(bboxes_aug, dtype=torch.float32).reshape(-1, 4)
                 target_out['labels'] = torch.tensor(augmented['category_ids'], dtype=torch.long)
 
+            # Convert augmented image back to PIL format
             image_out = Image.fromarray(augmented['image'])
         else:
+            # Path 2: Non-geometric transform OR no boxes present
+            # Only transform the image; boxes remain unchanged
             augmented = self.transform(image=image_np)
             image_out = Image.fromarray(augmented['image'])
-            target_out = target
+            target_out = target  # Target unchanged for non-geometric transforms
 
         return image_out, target_out
 
+    @staticmethod
+    def from_config(config_dict: Dict[str, Dict[str, Any]]) -> List['AlbumentationsWrapper']:
+        """Build list of AlbumentationsWrapper instances from configuration dictionary.
 
-def build_albumentations_from_config(config_dict: Dict[str, Dict[str, Any]]) -> List[AlbumentationsWrapper]:
-    """Build list of Albumentations transforms from configuration dictionary.
+        Convenient way to create multiple augmentation wrappers from a config dictionary.
+        Each transform is automatically wrapped with appropriate bbox handling based on
+        whether it's geometric or pixel-level.
 
-    Args:
-        config_dict: Dictionary mapping transform names to their parameters.
-            Keys are Albumentations transform class names (e.g., "HorizontalFlip").
-            Values are dictionaries of parameters to pass to the transform.
+        Args:
+            config_dict: Dictionary mapping transform names to parameters.
+                Keys: Albumentations transform class names (e.g., "HorizontalFlip").
+                Values: Parameter dictionaries to pass to the transform.
 
-    Returns:
-        List of AlbumentationsWrapper instances ready to use in training pipeline.
+        Returns:
+            List of AlbumentationsWrapper instances in the same order as config dict.
 
-    Examples:
-        >>> config = {
-        ...     "HorizontalFlip": {"p": 0.5},
-        ...     "Rotate": {"limit": 45, "p": 0.3}
-        ... }
-        >>> transforms = build_albumentations_from_config(config)
-        >>> len(transforms)
-        2
-    """
-    if not isinstance(config_dict, dict):
-        raise TypeError(f"config_dict must be a dictionary, got {type(config_dict)}")
+        Raises:
+            TypeError: If config_dict is not a dictionary.
 
-    if not config_dict:
-        logger.warning("Empty augmentation config provided, no transforms will be applied")
-        return []
+        Examples:
+            >>> config = {
+            ...     "HorizontalFlip": {"p": 0.5},
+            ...     "Rotate": {"limit": 45, "p": 0.3},
+            ...     "GaussianBlur": {"p": 0.2}
+            ... }
+            >>> transforms = AlbumentationsWrapper.from_config(config)
+            >>> [t.transform.transforms[0].__class__.__name__ for t in transforms]
+            ['HorizontalFlip', 'Rotate', 'GaussianBlur']
 
-    transforms = []
-    for aug_name, params in config_dict.items():
-        if not isinstance(params, dict):
-            logger.warning(f"Skipping {aug_name}: parameters must be a dictionary, got {type(params)}")
-            continue
+        Note:
+            Invalid transforms or invalid parameters are logged and skipped gracefully.
+        """
+        if not isinstance(config_dict, dict):
+            raise TypeError(f"config_dict must be a dictionary, got {type(config_dict)}")
 
-        base_aug = getattr(A, aug_name, None)
-        if base_aug is None:
-            logger.warning(f"Unknown Albumentations transform: {aug_name}. Skipping.")
-            continue
+        if not config_dict:
+            logger.warning("Empty augmentation config provided, no transforms will be applied")
+            return []
 
-        try:
-            # Determine if transform is geometric (affects boxes)
-            geometric = aug_name in GEOMETRIC_TRANSFORMS
-            transforms.append(
-                AlbumentationsWrapper(
-                    base_aug(**params),
-                    bbox_safe=geometric
+        transforms = []
+        for aug_name, params in config_dict.items():
+            if not isinstance(params, dict):
+                logger.warning(f"Skipping {aug_name}: parameters must be a dictionary, got {type(params)}")
+                continue
+
+            base_aug = getattr(A, aug_name, None)
+            if base_aug is None:
+                logger.warning(f"Unknown Albumentations transform: {aug_name}. Skipping.")
+                continue
+
+            try:
+                # AlbumentationsWrapper will auto-detect if transform is geometric
+                # based on the transform class name matching GEOMETRIC_TRANSFORMS
+                transforms.append(
+                    AlbumentationsWrapper(base_aug(**params))
                 )
-            )
-        except Exception as e:
-            logger.warning(f"Failed to initialize {aug_name} with params {params}: {e}. Skipping.")
-            continue
+            except Exception as e:
+                logger.warning(f"Failed to initialize {aug_name} with params {params}: {e}. Skipping.")
+                continue
 
-    logger.info(f"Built {len(transforms)} Albumentations transforms from config")
-    return transforms
+        logger.info(f"Built {len(transforms)} Albumentations transforms from config")
+        return transforms
 
 
 class ComposeAugmentations:
@@ -662,7 +738,7 @@ class ComposeAugmentations:
 
     Examples:
         >>> from rfdetr.augmentation_config import AUG_CONFIG
-        >>> aug_transforms = build_albumentations_from_config(AUG_CONFIG)
+        >>> aug_transforms = AlbumentationsWrapper.from_config(AUG_CONFIG)
         >>> composed = ComposeAugmentations(aug_transforms)
         >>> image, target = composed(image, target)
     """

@@ -150,7 +150,7 @@ No code changes needed in your training script - just modify `augmentation_confi
 You can also build augmentations programmatically for advanced use cases:
 
 ```python
-from rfdetr.datasets.transforms import build_albumentations_from_config, ComposeAugmentations
+from rfdetr.datasets.transforms import AlbumentationsWrapper, ComposeAugmentations
 
 # Custom config
 custom_config = {
@@ -158,8 +158,8 @@ custom_config = {
     "Blur": {"blur_limit": 3, "p": 0.2},
 }
 
-# Build and compose transforms
-transforms = build_albumentations_from_config(custom_config)
+# Build and compose transforms using the static method
+transforms = AlbumentationsWrapper.from_config(custom_config)
 augmentation_pipeline = ComposeAugmentations(transforms)
 
 # Apply to image and target
@@ -214,10 +214,10 @@ To verify your augmentations are working as expected:
 import matplotlib.pyplot as plt
 from rfdetr.datasets.coco import CocoDetection
 from rfdetr.augmentation_config import AUG_CONFIG
-from rfdetr.datasets.transforms import build_albumentations_from_config, ComposeAugmentations
+from rfdetr.datasets.transforms import AlbumentationsWrapper, ComposeAugmentations
 
 # Build dataset with augmentations
-transforms = build_albumentations_from_config(AUG_CONFIG)
+transforms = AlbumentationsWrapper.from_config(AUG_CONFIG)
 augmentation_pipeline = ComposeAugmentations(transforms)
 
 dataset = CocoDetection(

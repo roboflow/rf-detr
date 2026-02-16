@@ -15,33 +15,16 @@ from rfdetr.augmentation_config import AUG_CONFIG
 from rfdetr.datasets.transforms import (
     AlbumentationsWrapper,
     ComposeAugmentations,
-    build_albumentations_from_config,
 )
 
 
 class TestAlbumentationsWrapper:
     """Tests for AlbumentationsWrapper class."""
 
-    def test_wrapper_initialization_bbox_safe(self):
-        """Test wrapper initialization with bbox_safe=True."""
-        transform = A.HorizontalFlip(p=1.0)
-        wrapper = AlbumentationsWrapper(transform, bbox_safe=True)
-
-        assert wrapper.bbox_safe is True
-        assert wrapper.transform is not None
-
-    def test_wrapper_initialization_not_bbox_safe(self):
-        """Test wrapper initialization with bbox_safe=False."""
-        transform = A.GaussianBlur(p=1.0)
-        wrapper = AlbumentationsWrapper(transform, bbox_safe=False)
-
-        assert wrapper.bbox_safe is False
-        assert wrapper.transform is not None
-
     def test_horizontal_flip_with_boxes(self):
         """Test horizontal flip correctly transforms bounding boxes."""
         transform = A.HorizontalFlip(p=1.0)
-        wrapper = AlbumentationsWrapper(transform, bbox_safe=True)
+        wrapper = AlbumentationsWrapper(transform)
 
         # Create test image (100x100)
         image = Image.new('RGB', (100, 100), color='red')
@@ -63,7 +46,7 @@ class TestAlbumentationsWrapper:
     def test_vertical_flip_with_boxes(self):
         """Test vertical flip correctly transforms bounding boxes."""
         transform = A.VerticalFlip(p=1.0)
-        wrapper = AlbumentationsWrapper(transform, bbox_safe=True)
+        wrapper = AlbumentationsWrapper(transform)
 
         # Create test image (100x100)
         image = Image.new('RGB', (100, 100), color='blue')
@@ -84,7 +67,7 @@ class TestAlbumentationsWrapper:
     def test_non_geometric_transform_preserves_boxes(self):
         """Test that non-geometric transforms preserve bounding boxes."""
         transform = A.GaussianBlur(blur_limit=3, p=1.0)
-        wrapper = AlbumentationsWrapper(transform, bbox_safe=False)
+        wrapper = AlbumentationsWrapper(transform)
 
         image = Image.new('RGB', (100, 100))
         target = {
@@ -102,7 +85,7 @@ class TestAlbumentationsWrapper:
     def test_empty_boxes_handling(self):
         """Test wrapper handles empty boxes correctly."""
         transform = A.HorizontalFlip(p=1.0)
-        wrapper = AlbumentationsWrapper(transform, bbox_safe=True)
+        wrapper = AlbumentationsWrapper(transform)
 
         image = Image.new('RGB', (100, 100))
         target = {
@@ -119,7 +102,7 @@ class TestAlbumentationsWrapper:
     def test_multiple_boxes(self):
         """Test wrapper handles multiple bounding boxes."""
         transform = A.HorizontalFlip(p=1.0)
-        wrapper = AlbumentationsWrapper(transform, bbox_safe=True)
+        wrapper = AlbumentationsWrapper(transform)
 
         image = Image.new('RGB', (100, 100))
         target = {
@@ -140,7 +123,7 @@ class TestAlbumentationsWrapper:
     def test_invalid_target_type(self):
         """Test wrapper raises error for invalid target type."""
         transform = A.HorizontalFlip(p=1.0)
-        wrapper = AlbumentationsWrapper(transform, bbox_safe=True)
+        wrapper = AlbumentationsWrapper(transform)
 
         image = Image.new('RGB', (100, 100))
 
@@ -150,7 +133,7 @@ class TestAlbumentationsWrapper:
     def test_missing_labels_key(self):
         """Test wrapper raises error when labels key is missing."""
         transform = A.HorizontalFlip(p=1.0)
-        wrapper = AlbumentationsWrapper(transform, bbox_safe=True)
+        wrapper = AlbumentationsWrapper(transform)
 
         image = Image.new('RGB', (100, 100))
         target = {'boxes': torch.tensor([[10.0, 20.0, 30.0, 40.0]])}
@@ -161,7 +144,7 @@ class TestAlbumentationsWrapper:
     def test_invalid_boxes_shape(self):
         """Test wrapper raises error for invalid boxes shape."""
         transform = A.HorizontalFlip(p=1.0)
-        wrapper = AlbumentationsWrapper(transform, bbox_safe=True)
+        wrapper = AlbumentationsWrapper(transform)
 
         image = Image.new('RGB', (100, 100))
         target = {
@@ -180,7 +163,7 @@ class TestAlbumentationsWrapper:
     def test_various_geometric_transforms(self, transform_class, params):
         """Test various geometric transforms work correctly."""
         transform = transform_class(**params)
-        wrapper = AlbumentationsWrapper(transform, bbox_safe=True)
+        wrapper = AlbumentationsWrapper(transform)
 
         image = Image.new('RGB', (100, 100))
         target = {
@@ -197,8 +180,8 @@ class TestAlbumentationsWrapper:
         assert aug_target['labels'].numel() >= 1
 
 
-class TestBuildAlbumentationsFromConfig:
-    """Tests for build_albumentations_from_config function."""
+class TestAlbumentationsWrapperFromConfig:
+    """Tests for AlbumentationsWrapper.from_config() static method."""
 
     def test_build_from_valid_config(self):
         """Test building transforms from valid configuration."""
@@ -207,7 +190,7 @@ class TestBuildAlbumentationsFromConfig:
             "VerticalFlip": {"p": 0.3},
         }
 
-        transforms = build_albumentations_from_config(config)
+        transforms = AlbumentationsWrapper.from_config(config)
 
         assert len(transforms) == 2
         assert all(isinstance(t, AlbumentationsWrapper) for t in transforms)
@@ -219,7 +202,7 @@ class TestBuildAlbumentationsFromConfig:
         """Test building from empty config returns empty list."""
         config = {}
 
-        transforms = build_albumentations_from_config(config)
+        transforms = AlbumentationsWrapper.from_config(config)
 
         assert len(transforms) == 0
 
@@ -230,7 +213,7 @@ class TestBuildAlbumentationsFromConfig:
             "NonExistentTransform": {"p": 0.5},
         }
 
-        transforms = build_albumentations_from_config(config)
+        transforms = AlbumentationsWrapper.from_config(config)
 
         # Only valid transform should be included
         assert len(transforms) == 1
@@ -244,7 +227,7 @@ class TestBuildAlbumentationsFromConfig:
             "Rotate": {"invalid_param": "value"},  # Will fail initialization
         }
 
-        transforms = build_albumentations_from_config(config)
+        transforms = AlbumentationsWrapper.from_config(config)
 
         # At least HorizontalFlip should succeed
         assert len(transforms) >= 1
@@ -254,24 +237,21 @@ class TestBuildAlbumentationsFromConfig:
     def test_invalid_config_type(self):
         """Test that invalid config type raises TypeError."""
         with pytest.raises(TypeError, match="config_dict must be a dictionary"):
-            build_albumentations_from_config("invalid")
+            AlbumentationsWrapper.from_config("invalid")
 
-    def test_geometric_transform_detection(self):
-        """Test that geometric transforms are correctly identified."""
+    def test_mixed_geometric_and_pixel_transforms(self):
+        """Test building mix of geometric and pixel-level transforms."""
         config = {
             "HorizontalFlip": {"p": 1.0},  # Geometric
-            "GaussianBlur": {"p": 1.0},     # Non-geometric
+            "GaussianBlur": {"p": 1.0},     # Pixel-level
         }
 
-        transforms = build_albumentations_from_config(config)
+        transforms = AlbumentationsWrapper.from_config(config)
 
         assert len(transforms) == 2
         # Validate transform names match config in correct order
         transform_names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
         assert transform_names == list(config.keys())
-        # Validate bbox_safe flags
-        assert transforms[0].bbox_safe is True   # HorizontalFlip
-        assert transforms[1].bbox_safe is False  # GaussianBlur
 
     def test_config_with_complex_params(self):
         """Test building transforms with complex parameter structures."""
@@ -284,7 +264,7 @@ class TestBuildAlbumentationsFromConfig:
             }
         }
 
-        transforms = build_albumentations_from_config(config)
+        transforms = AlbumentationsWrapper.from_config(config)
 
         assert len(transforms) == 2
         # Validate transform names match config in correct order
@@ -298,7 +278,7 @@ class TestBuildAlbumentationsFromConfig:
             "InvalidTransform": "not_a_dict",
         }
 
-        transforms = build_albumentations_from_config(config)
+        transforms = AlbumentationsWrapper.from_config(config)
 
         assert len(transforms) == 1
         transform_names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
@@ -311,8 +291,8 @@ class TestComposeAugmentations:
     def test_compose_initialization(self):
         """Test ComposeAugmentations initialization."""
         transforms = [
-            AlbumentationsWrapper(A.HorizontalFlip(p=1.0), bbox_safe=True),
-            AlbumentationsWrapper(A.VerticalFlip(p=1.0), bbox_safe=True),
+            AlbumentationsWrapper(A.HorizontalFlip(p=1.0)),
+            AlbumentationsWrapper(A.VerticalFlip(p=1.0)),
         ]
 
         composed = ComposeAugmentations(transforms)
@@ -326,8 +306,8 @@ class TestComposeAugmentations:
     def test_compose_applies_all_transforms(self):
         """Test that all transforms are applied sequentially."""
         transforms = [
-            AlbumentationsWrapper(A.HorizontalFlip(p=1.0), bbox_safe=True),
-            AlbumentationsWrapper(A.VerticalFlip(p=1.0), bbox_safe=True),
+            AlbumentationsWrapper(A.HorizontalFlip(p=1.0)),
+            AlbumentationsWrapper(A.VerticalFlip(p=1.0)),
         ]
         composed = ComposeAugmentations(transforms)
 
@@ -367,7 +347,7 @@ class TestComposeAugmentations:
     def test_compose_single_transform(self):
         """Test composing with single transform."""
         transforms = [
-            AlbumentationsWrapper(A.HorizontalFlip(p=1.0), bbox_safe=True)
+            AlbumentationsWrapper(A.HorizontalFlip(p=1.0))
         ]
         composed = ComposeAugmentations(transforms)
 
@@ -394,7 +374,7 @@ class TestIntegration:
         }
 
         # Build transforms from config
-        transforms = build_albumentations_from_config(config)
+        transforms = AlbumentationsWrapper.from_config(config)
 
         # Validate transform names match config in correct order
         assert len(transforms) == 2
@@ -423,7 +403,7 @@ class TestIntegration:
             "GaussianBlur": {"p": 1.0},
         }
 
-        transforms = build_albumentations_from_config(config)
+        transforms = AlbumentationsWrapper.from_config(config)
 
         # Validate transform names match config
         assert len(transforms) == 1
@@ -442,7 +422,7 @@ class TestIntegration:
 
     def test_realistic_augmentation_config(self):
         """Test with realistic augmentation configuration."""
-        transforms = build_albumentations_from_config(AUG_CONFIG)
+        transforms = AlbumentationsWrapper.from_config(AUG_CONFIG)
 
         # Validate transform names match AUG_CONFIG in correct order
         assert len(transforms) == 3
