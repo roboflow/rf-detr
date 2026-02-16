@@ -179,7 +179,166 @@ class TestAlbumentationsWrapper:
         assert aug_target['labels'].shape[0] == aug_target['boxes'].shape[0]
         assert aug_target['labels'].numel() >= 1
 
+    def test_masks_transform_with_horizontal_flip(self):
+        """Masks should be transformed consistently with boxes for geometric transforms."""
+        transform = A.HorizontalFlip(p=1.0)
+        wrapper = AlbumentationsWrapper(transform)
 
+        # Create test image (100x100)
+        height, width = 100, 100
+        image = Image.new('RGB', (width, height), color='red')
+
+        # Single box and corresponding mask
+        box = torch.tensor([[10.0, 20.0, 30.0, 40.0]])  # x1, y1, x2, y2
+        masks = torch.zeros((1, height, width), dtype=torch.uint8)
+        # Fill the mask inside the box region
+        x1, y1, x2, y2 = box[0].to(dtype=torch.long)
+        masks[0, y1:y2, x1:x2] = 1
+
+        target = {
+            'boxes': box,
+            'labels': torch.tensor([1]),
+            'masks': masks,
+        }
+
+        aug_image, aug_target = wrapper(image, target)
+
+        assert isinstance(aug_image, Image.Image)
+        assert 'masks' in aug_target
+        assert aug_target['masks'].shape[0] == aug_target['boxes'].shape[0]
+
+        # Check that the transformed mask's bounding box matches the transformed box
+        aug_mask = aug_target['masks'][0]
+        ys, xs = torch.nonzero(aug_mask, as_tuple=True)
+        assert ys.numel() > 0 and xs.numel() > 0
+        mask_bbox = torch.tensor([
+            xs.min().item(),
+            ys.min().item(),
+            xs.max().item() + 1,
+            ys.max().item() + 1,
+        ], dtype=torch.float32)
+        assert torch.allclose(mask_bbox, aug_target['boxes'][0].to(dtype=torch.float32), atol=1.0)
+
+    def test_masks_filtered_when_boxes_removed_by_crop(self):
+        """Masks should be filtered when some boxes are removed by cropping."""
+        # Crop keeping left half of the image
+        transform = A.Crop(x_min=0, y_min=0, x_max=50, y_max=100, p=1.0)
+        wrapper = AlbumentationsWrapper(transform)
+
+        height, width = 100, 100
+        image = Image.new('RGB', (width, height), color='green')
+
+        # Two boxes: one inside crop, one outside
+        boxes = torch.tensor(
+            [
+                [10.0, 10.0, 40.0, 40.0],  # inside crop (kept)
+                [60.0, 10.0, 90.0, 40.0],  # outside crop (removed)
+            ]
+        )
+        masks = torch.zeros((2, height, width), dtype=torch.uint8)
+        for i, (x1, y1, x2, y2) in enumerate(boxes.to(dtype=torch.long)):
+            masks[i, y1:y2, x1:x2] = 1
+
+        target = {
+            'boxes': boxes,
+            'labels': torch.tensor([1, 2]),
+            'masks': masks,
+        }
+
+        aug_image, aug_target = wrapper(image, target)
+
+        assert isinstance(aug_image, Image.Image)
+        # Only the first box should remain
+        assert aug_target['boxes'].shape[0] == 1
+        assert aug_target['labels'].shape[0] == 1
+        assert aug_target['masks'].shape[0] == 1
+
+        # Mask should be non-empty and aligned with the remaining box
+        aug_mask = aug_target['masks'][0]
+        ys, xs = torch.nonzero(aug_mask, as_tuple=True)
+        assert ys.numel() > 0 and xs.numel() > 0
+        mask_bbox = torch.tensor([
+            xs.min().item(),
+            ys.min().item(),
+            xs.max().item() + 1,
+            ys.max().item() + 1,
+        ], dtype=torch.float32)
+        assert torch.allclose(mask_bbox, aug_target['boxes'][0].to(dtype=torch.float32), atol=1.0)
+
+    def test_masks_cleared_when_all_boxes_removed(self):
+        """Masks should be cleared to (0, H, W) shape when all boxes are removed."""
+        # Crop the top-left corner where there are no boxes
+        transform = A.Crop(x_min=0, y_min=0, x_max=20, y_max=20, p=1.0)
+        wrapper = AlbumentationsWrapper(transform)
+
+        height, width = 100, 100
+        image = Image.new('RGB', (width, height), color='yellow')
+
+        # Single box entirely outside the crop region
+        boxes = torch.tensor([[60.0, 60.0, 90.0, 90.0]])
+        masks = torch.zeros((1, height, width), dtype=torch.uint8)
+        x1, y1, x2, y2 = boxes[0].to(dtype=torch.long)
+        masks[0, y1:y2, x1:x2] = 1
+
+        target = {
+            'boxes': boxes,
+            'labels': torch.tensor([1]),
+            'masks': masks,
+        }
+
+        aug_image, aug_target = wrapper(image, target)
+
+        assert isinstance(aug_image, Image.Image)
+        # All boxes removed
+        assert aug_target['boxes'].shape[0] == 0
+        assert aug_target['labels'].shape[0] == 0
+        assert 'masks' in aug_target
+        # Masks should have zero instances but match the augmented image spatial size
+        assert aug_target['masks'].shape[0] == 0
+        assert aug_target['masks'].shape[1] == aug_image.height
+        assert aug_target['masks'].shape[2] == aug_image.width
+
+    def test_mask_synchronization_with_per_instance_fields(self):
+        """Masks should stay synchronized with per-instance fields when filtering."""
+        # Crop keeping left half of the image
+        transform = A.Crop(x_min=0, y_min=0, x_max=50, y_max=100, p=1.0)
+        wrapper = AlbumentationsWrapper(transform)
+
+        height, width = 100, 100
+        image = Image.new('RGB', (width, height), color='purple')
+
+        boxes = torch.tensor(
+            [
+                [10.0, 10.0, 40.0, 40.0],  # inside crop
+                [60.0, 10.0, 90.0, 40.0],  # outside crop
+            ]
+        )
+        masks = torch.zeros((2, height, width), dtype=torch.uint8)
+        for i, (x1, y1, x2, y2) in enumerate(boxes.to(dtype=torch.long)):
+            masks[i, y1:y2, x1:x2] = 1
+
+        # Additional per-instance field that must stay in sync
+        iscrowd = torch.tensor([0, 1])
+
+        target = {
+            'boxes': boxes,
+            'labels': torch.tensor([1, 2]),
+            'masks': masks,
+            'iscrowd': iscrowd,
+        }
+
+        aug_image, aug_target = wrapper(image, target)
+
+        assert isinstance(aug_image, Image.Image)
+        # Only the first instance should remain
+        num_instances = aug_target['boxes'].shape[0]
+        assert num_instances == 1
+        assert aug_target['labels'].shape[0] == num_instances
+        assert aug_target['masks'].shape[0] == num_instances
+        assert aug_target['iscrowd'].shape[0] == num_instances
+
+        # The remaining iscrowd value should correspond to the first original instance
+        assert aug_target['iscrowd'][0].item() == iscrowd[0].item()
 class TestAlbumentationsWrapperFromConfig:
     """Tests for AlbumentationsWrapper.from_config() static method."""
 
