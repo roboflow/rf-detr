@@ -3,61 +3,26 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
+from __future__ import annotations
+
 import glob
 import json
 import os
 import warnings
 from collections import defaultdict
 from copy import deepcopy
-from typing import List, Union
+from typing import TYPE_CHECKING, List, Union
 
-import numpy as np
-import requests
-import supervision as sv
-import torch
-import torchvision.transforms.functional as F
-import yaml
-from PIL import Image
-
-from rfdetr.datasets.coco import is_valid_coco_dataset
-from rfdetr.datasets.yolo import is_valid_yolo_dataset
 from rfdetr.util.logger import get_logger
 
-try:
-    torch.set_float32_matmul_precision('high')
-except:
-    pass
-
-from rfdetr.assets.model_weights import download_pretrain_weights
-from rfdetr.config import (
-    ModelConfig,
-    RFDETRBaseConfig,
-    RFDETRLargeConfig,
-    RFDETRLargeDeprecatedConfig,
-    RFDETRMediumConfig,
-    RFDETRNanoConfig,
-    RFDETRSeg2XLargeConfig,
-    RFDETRSegLargeConfig,
-    RFDETRSegMediumConfig,
-    RFDETRSegNanoConfig,
-    RFDETRSegPreviewConfig,
-    RFDETRSegSmallConfig,
-    RFDETRSegXLargeConfig,
-    RFDETRSmallConfig,
-    SegmentationTrainConfig,
-    TrainConfig,
-)
-from rfdetr.main import Model
-from rfdetr.util.coco_classes import COCO_CLASSES
-from rfdetr.util.metrics import (
-    MetricsClearMLSink,
-    MetricsMLFlowSink,
-    MetricsPlotSink,
-    MetricsTensorBoardSink,
-    MetricsWandBSink,
-)
+if TYPE_CHECKING:
+    import numpy as np
+    import supervision as sv
+    import torch
+    from PIL import Image
 
 logger = get_logger()
+
 
 class RFDETR:
     """
@@ -65,11 +30,19 @@ class RFDETR:
     running inference on the models, optimising models, and uploading trained
     models for deployment.
     """
+
     means = [0.485, 0.456, 0.406]
     stds = [0.229, 0.224, 0.225]
     size = None
 
     def __init__(self, **kwargs):
+        import torch
+
+        try:
+            torch.set_float32_matmul_precision("high")
+        except Exception:
+            pass
+
         self.model_config = self.get_model_config(**kwargs)
         self.maybe_download_pretrain_weights()
         self.model = self.get_model(self.model_config)
@@ -87,12 +60,16 @@ class RFDETR:
         """
         Download pre-trained weights if they are not already downloaded.
         """
+        from rfdetr.assets.model_weights import download_pretrain_weights
+
         download_pretrain_weights(self.model_config.pretrain_weights)
 
     def get_model_config(self, **kwargs):
         """
         Retrieve the configuration parameters used by the model.
         """
+        from rfdetr.config import ModelConfig
+
         return ModelConfig(**kwargs)
 
     def train(self, **kwargs):
@@ -102,7 +79,12 @@ class RFDETR:
         config = self.get_train_config(**kwargs)
         self.train_from_config(config, **kwargs)
 
-    def optimize_for_inference(self, compile=True, batch_size=1, dtype=torch.float32):
+    def optimize_for_inference(self, compile=True, batch_size=1, dtype=None):
+        import torch
+
+        if dtype is None:
+            dtype = torch.float32
+
         self.remove_optimized_model()
 
         self.model.inference_model = deepcopy(self.model.model)
@@ -119,10 +101,8 @@ class RFDETR:
             self.model.inference_model = torch.jit.trace(
                 self.model.inference_model,
                 torch.randn(
-                    batch_size, 3, self.model.resolution, self.model.resolution,
-                    device=self.model.device,
-                    dtype=dtype
-                )
+                    batch_size, 3, self.model.resolution, self.model.resolution, device=self.model.device, dtype=dtype
+                ),
             )
             self._optimized_has_been_compiled = True
             self._optimized_batch_size = batch_size
@@ -146,6 +126,11 @@ class RFDETR:
     @staticmethod
     def _load_classes(dataset_dir) -> List[str]:
         """Load class names from a COCO or YOLO dataset directory."""
+        import yaml
+
+        from rfdetr.datasets.coco import is_valid_coco_dataset
+        from rfdetr.datasets.yolo import is_valid_yolo_dataset
+
         if is_valid_coco_dataset(dataset_dir):
             coco_path = os.path.join(dataset_dir, "train", "_annotations.coco.json")
             with open(coco_path, "r") as f:
@@ -173,7 +158,16 @@ class RFDETR:
             "Checked for COCO (train/_annotations.coco.json) and YOLO (data.yaml, data.yml) styles."
         )
 
-    def train_from_config(self, config: TrainConfig, **kwargs):
+    def train_from_config(self, config, **kwargs):
+        from rfdetr.util.coco_classes import COCO_CLASSES
+        from rfdetr.util.metrics import (
+            MetricsClearMLSink,
+            MetricsMLFlowSink,
+            MetricsPlotSink,
+            MetricsTensorBoardSink,
+            MetricsWandBSink,
+        )
+
         if config.dataset_file == "roboflow":
             class_names = self._load_classes(config.dataset_dir)
             num_classes = len(class_names) + 1
@@ -189,9 +183,7 @@ class RFDETR:
             raise ValueError(f"Invalid dataset file: {config.dataset_file}")
 
         if self.model_config.num_classes != num_classes:
-            logger.warning(
-                f"Reinitializing your detection head with {num_classes} classes."
-            )
+            logger.warning(f"Reinitializing your detection head with {num_classes} classes.")
             self.model.reinitialize_detection_head(num_classes)
 
         train_config = config.dict()
@@ -222,10 +214,7 @@ class RFDETR:
 
         if config.wandb:
             metrics_wandb_sink = MetricsWandBSink(
-                output_dir=config.output_dir,
-                project=config.project,
-                run=config.run,
-                config=config.model_dump()
+                output_dir=config.output_dir, project=config.project, run=config.run, config=config.model_dump()
             )
             self.callbacks["on_fit_epoch_end"].append(metrics_wandb_sink.update)
             self.callbacks["on_train_end"].append(metrics_wandb_sink.close)
@@ -242,22 +231,20 @@ class RFDETR:
 
         if config.clearml:
             metrics_clearml_sink = MetricsClearMLSink(
-                output_dir=config.output_dir,
-                project=config.project,
-                run=config.run,
-                config=config.model_dump()
+                output_dir=config.output_dir, project=config.project, run=config.run, config=config.model_dump()
             )
             self.callbacks["on_fit_epoch_end"].append(metrics_clearml_sink.update)
             self.callbacks["on_train_end"].append(metrics_clearml_sink.close)
 
         if config.early_stopping:
             from rfdetr.util.early_stopping import EarlyStoppingCallback
+
             early_stopping_callback = EarlyStoppingCallback(
                 model=self.model,
                 patience=config.early_stopping_patience,
                 min_delta=config.early_stopping_min_delta,
                 use_ema=config.early_stopping_use_ema,
-                segmentation_head=config.segmentation_head
+                segmentation_head=config.segmentation_head,
             )
             self.callbacks["on_fit_epoch_end"].append(early_stopping_callback.update)
 
@@ -270,12 +257,16 @@ class RFDETR:
         """
         Retrieve the configuration parameters that will be used for training.
         """
+        from rfdetr.config import TrainConfig
+
         return TrainConfig(**kwargs)
 
-    def get_model(self, config: ModelConfig):
+    def get_model(self, config):
         """
         Retrieve a model instance based on the provided configuration.
         """
+        from rfdetr.main import Model
+
         return Model(**config.dict())
 
     # Get class_names from the model
@@ -287,14 +278,18 @@ class RFDETR:
         Returns:
             dict: A dictionary mapping class IDs to class names. The keys are integers starting from
         """
-        if hasattr(self.model, 'class_names') and self.model.class_names:
-            return {i+1: name for i, name in enumerate(self.model.class_names)}
+        if hasattr(self.model, "class_names") and self.model.class_names:
+            return {i + 1: name for i, name in enumerate(self.model.class_names)}
+
+        from rfdetr.util.coco_classes import COCO_CLASSES
 
         return COCO_CLASSES
 
     def predict(
         self,
-        images: Union[str, Image.Image, np.ndarray, torch.Tensor, List[Union[str, np.ndarray, Image.Image, torch.Tensor]]],
+        images: Union[
+            str, Image.Image, np.ndarray, torch.Tensor, List[Union[str, np.ndarray, Image.Image, torch.Tensor]]
+        ],
         threshold: float = 0.5,
         **kwargs,
     ) -> Union[sv.Detections, List[sv.Detections]]:
@@ -320,6 +315,12 @@ class RFDETR:
                 objects, each containing bounding box coordinates, confidence scores,
                 and class IDs.
         """
+        import requests
+        import supervision as sv
+        import torch
+        import torchvision.transforms.functional as F
+        from PIL import Image
+
         if not self._is_optimized_for_inference and not self._has_warned_about_not_being_optimized_for_inference:
             logger.warning(
                 "Model is not optimized for inference. Latency may be higher than expected. "
@@ -336,7 +337,6 @@ class RFDETR:
         processed_images = []
 
         for img in images:
-
             if isinstance(img, str):
                 if img.startswith("http"):
                     img = requests.get(img, stream=True).raw
@@ -347,14 +347,10 @@ class RFDETR:
 
             if (img > 1).any():
                 raise ValueError(
-                    "Image has pixel values above 1. Please ensure the image is "
-                    "normalized (scaled to [0, 1])."
+                    "Image has pixel values above 1. Please ensure the image is normalized (scaled to [0, 1])."
                 )
             if img.shape[0] != 3:
-                raise ValueError(
-                    f"Invalid image shape. Expected 3 channels (RGB), but got "
-                    f"{img.shape[0]} channels."
-                )
+                raise ValueError(f"Invalid image shape. Expected 3 channels (RGB), but got {img.shape[0]} channels.")
             img_tensor = img
 
             h, w = img_tensor.shape[1:]
@@ -371,18 +367,22 @@ class RFDETR:
         if self._is_optimized_for_inference:
             if self._optimized_resolution != batch_tensor.shape[2]:
                 # this could happen if someone manually changes self.model.resolution after optimizing the model
-                raise ValueError(f"Resolution mismatch. "
-                                 f"Model was optimized for resolution {self._optimized_resolution}, "
-                                 f"but got {batch_tensor.shape[2]}. "
-                                 "You can explicitly remove the optimized model by calling model.remove_optimized_model().")
+                raise ValueError(
+                    f"Resolution mismatch. "
+                    f"Model was optimized for resolution {self._optimized_resolution}, "
+                    f"but got {batch_tensor.shape[2]}. "
+                    "You can explicitly remove the optimized model by calling model.remove_optimized_model()."
+                )
             if self._optimized_has_been_compiled:
                 if self._optimized_batch_size != batch_tensor.shape[0]:
-                    raise ValueError(f"Batch size mismatch. "
-                                     f"Optimized model was compiled for batch size {self._optimized_batch_size}, "
-                                     f"but got {batch_tensor.shape[0]}. "
-                                     "You can explicitly remove the optimized model by calling model.remove_optimized_model(). "
-                                     "Alternatively, you can recompile the optimized model for a different batch size "
-                                     "by calling model.optimize_for_inference(batch_size=<new_batch_size>).")
+                    raise ValueError(
+                        f"Batch size mismatch. "
+                        f"Optimized model was compiled for batch size {self._optimized_batch_size}, "
+                        f"but got {batch_tensor.shape[0]}. "
+                        "You can explicitly remove the optimized model by calling model.remove_optimized_model(). "
+                        "Alternatively, you can recompile the optimized model for a different batch size "
+                        "by calling model.optimize_for_inference(batch_size=<new_batch_size>)."
+                    )
 
         with torch.no_grad():
             if self._is_optimized_for_inference:
@@ -455,12 +455,13 @@ class RFDETR:
         """
         import shutil
 
+        import torch
         from roboflow import Roboflow
+
         if api_key is None:
             api_key = os.getenv("ROBOFLOW_API_KEY")
             if api_key is None:
                 raise ValueError("Set api_key=<KEY> in deploy_to_roboflow or export ROBOFLOW_API_KEY=<KEY>")
-
 
         rf = Roboflow(api_key=api_key)
         workspace = rf.workspace(workspace)
@@ -472,32 +473,28 @@ class RFDETR:
         tmp_out_dir = ".roboflow_temp_upload"
         os.makedirs(tmp_out_dir, exist_ok=True)
         outpath = os.path.join(tmp_out_dir, "weights.pt")
-        torch.save(
-            {
-                "model": self.model.model.state_dict(),
-                "args": self.model.args
-            }, outpath
-        )
+        torch.save({"model": self.model.model.state_dict(), "args": self.model.args}, outpath)
         project = workspace.project(project_id)
         version = project.version(version)
-        version.deploy(
-            model_type=size,
-            model_path=tmp_out_dir,
-            filename="weights.pt"
-        )
+        version.deploy(model_type=size, model_path=tmp_out_dir, filename="weights.pt")
         shutil.rmtree(tmp_out_dir)
-
 
 
 class RFDETRBase(RFDETR):
     """
     Train an RF-DETR Base model (29M parameters).
     """
+
     size = "rfdetr-base"
+
     def get_model_config(self, **kwargs):
+        from rfdetr.config import RFDETRBaseConfig
+
         return RFDETRBaseConfig(**kwargs)
 
     def get_train_config(self, **kwargs):
+        from rfdetr.config import TrainConfig
+
         return TrainConfig(**kwargs)
 
 
@@ -505,66 +502,100 @@ class RFDETRNano(RFDETR):
     """
     Train an RF-DETR Nano model.
     """
+
     size = "rfdetr-nano"
+
     def get_model_config(self, **kwargs):
+        from rfdetr.config import RFDETRNanoConfig
+
         return RFDETRNanoConfig(**kwargs)
 
     def get_train_config(self, **kwargs):
+        from rfdetr.config import TrainConfig
+
         return TrainConfig(**kwargs)
+
 
 class RFDETRSmall(RFDETR):
     """
     Train an RF-DETR Small model.
     """
+
     size = "rfdetr-small"
+
     def get_model_config(self, **kwargs):
+        from rfdetr.config import RFDETRSmallConfig
+
         return RFDETRSmallConfig(**kwargs)
 
     def get_train_config(self, **kwargs):
+        from rfdetr.config import TrainConfig
+
         return TrainConfig(**kwargs)
+
 
 class RFDETRMedium(RFDETR):
     """
     Train an RF-DETR Medium model.
     """
+
     size = "rfdetr-medium"
+
     def get_model_config(self, **kwargs):
+        from rfdetr.config import RFDETRMediumConfig
+
         return RFDETRMediumConfig(**kwargs)
 
     def get_train_config(self, **kwargs):
+        from rfdetr.config import TrainConfig
+
         return TrainConfig(**kwargs)
 
 
 class RFDETRLargeNew(RFDETR):
     size = "rfdetr-large"
+
     def get_model_config(self, **kwargs):
+        from rfdetr.config import RFDETRLargeConfig
+
         return RFDETRLargeConfig(**kwargs)
 
     def get_train_config(self, **kwargs):
+        from rfdetr.config import TrainConfig
+
         return TrainConfig(**kwargs)
+
 
 class RFDETRLargeDeprecated(RFDETR):
     """
     Train an RF-DETR Large model.
     """
+
     size = "rfdetr-large"
+
     def __init__(self, **kwargs):
         warnings.warn(
-    "RFDETRLargeDeprecated is deprecated and will be removed in a future version. "
-    "Please use RFDETRLarge instead.",
-    category=DeprecationWarning,
-    stacklevel=2
-)
+            "RFDETRLargeDeprecated is deprecated and will be removed in a future version. "
+            "Please use RFDETRLarge instead.",
+            category=DeprecationWarning,
+            stacklevel=2,
+        )
         super().__init__(**kwargs)
 
     def get_model_config(self, **kwargs):
+        from rfdetr.config import RFDETRLargeDeprecatedConfig
+
         return RFDETRLargeDeprecatedConfig(**kwargs)
 
     def get_train_config(self, **kwargs):
+        from rfdetr.config import TrainConfig
+
         return TrainConfig(**kwargs)
+
 
 class RFDETRLarge(RFDETR):
     size = "rfdetr-large"
+
     def __init__(self, **kwargs):
         self.init_error = None
         self.is_deprecated = False
@@ -577,77 +608,122 @@ class RFDETRLarge(RFDETR):
                 super().__init__(**kwargs)
                 logger.warning(
                     "\n"
-                    "="*100 + "\n"
+                    "=" * 100 + "\n"
                     "WARNING: Automatically switched to deprecated model configuration, due to using deprecated weights. "
                     "This will be removed in a future version.\n"
                     "Please retrain your model with the new weights and configuration.\n"
-                    "="*100 + "\n"
+                    "=" * 100 + "\n"
                 )
             except Exception:
                 raise self.init_error
 
     def get_model_config(self, **kwargs):
+        from rfdetr.config import RFDETRLargeConfig, RFDETRLargeDeprecatedConfig
+
         if not self.is_deprecated:
             return RFDETRLargeConfig(**kwargs)
         else:
             return RFDETRLargeDeprecatedConfig(**kwargs)
 
     def get_train_config(self, **kwargs):
+        from rfdetr.config import TrainConfig
+
         return TrainConfig(**kwargs)
 
 
 class RFDETRSegPreview(RFDETR):
     size = "rfdetr-seg-preview"
+
     def get_model_config(self, **kwargs):
+        from rfdetr.config import RFDETRSegPreviewConfig
+
         return RFDETRSegPreviewConfig(**kwargs)
 
     def get_train_config(self, **kwargs):
+        from rfdetr.config import SegmentationTrainConfig
+
         return SegmentationTrainConfig(**kwargs)
+
 
 class RFDETRSegNano(RFDETR):
     size = "rfdetr-seg-nano"
+
     def get_model_config(self, **kwargs):
+        from rfdetr.config import RFDETRSegNanoConfig
+
         return RFDETRSegNanoConfig(**kwargs)
 
     def get_train_config(self, **kwargs):
+        from rfdetr.config import SegmentationTrainConfig
+
         return SegmentationTrainConfig(**kwargs)
+
 
 class RFDETRSegSmall(RFDETR):
     size = "rfdetr-seg-small"
+
     def get_model_config(self, **kwargs):
+        from rfdetr.config import RFDETRSegSmallConfig
+
         return RFDETRSegSmallConfig(**kwargs)
 
     def get_train_config(self, **kwargs):
+        from rfdetr.config import SegmentationTrainConfig
+
         return SegmentationTrainConfig(**kwargs)
+
 
 class RFDETRSegMedium(RFDETR):
     size = "rfdetr-seg-medium"
+
     def get_model_config(self, **kwargs):
+        from rfdetr.config import RFDETRSegMediumConfig
+
         return RFDETRSegMediumConfig(**kwargs)
 
     def get_train_config(self, **kwargs):
+        from rfdetr.config import SegmentationTrainConfig
+
         return SegmentationTrainConfig(**kwargs)
+
 
 class RFDETRSegLarge(RFDETR):
     size = "rfdetr-seg-large"
+
     def get_model_config(self, **kwargs):
+        from rfdetr.config import RFDETRSegLargeConfig
+
         return RFDETRSegLargeConfig(**kwargs)
 
     def get_train_config(self, **kwargs):
+        from rfdetr.config import SegmentationTrainConfig
+
         return SegmentationTrainConfig(**kwargs)
+
 
 class RFDETRSegXLarge(RFDETR):
     size = "rfdetr-seg-xlarge"
+
     def get_model_config(self, **kwargs):
+        from rfdetr.config import RFDETRSegXLargeConfig
+
         return RFDETRSegXLargeConfig(**kwargs)
 
     def get_train_config(self, **kwargs):
+        from rfdetr.config import SegmentationTrainConfig
+
         return SegmentationTrainConfig(**kwargs)
+
 
 class RFDETRSeg2XLarge(RFDETR):
     size = "rfdetr-seg-2xlarge"
+
     def get_model_config(self, **kwargs):
+        from rfdetr.config import RFDETRSeg2XLargeConfig
+
         return RFDETRSeg2XLargeConfig(**kwargs)
 
     def get_train_config(self, **kwargs):
+        from rfdetr.config import SegmentationTrainConfig
+
         return SegmentationTrainConfig(**kwargs)
