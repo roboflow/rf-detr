@@ -47,7 +47,10 @@ jobs:
         run: uv sync --group tests --extra onnxexport --extra plus
 
       - name: 🧪 Run the Test
-        run: uv run --no-sync pytest tests/ -n 4 -m gpu --cov=rfdetr --cov-report=xml --reruns 1 --reruns-delay 20 --only-rerun "out of memory|OutOfMemoryError|CUDA out of memory"
+        run: |
+          uv run --no-sync pytest tests/ \
+          -n 4 -m gpu \
+          --cov=rfdetr --cov-report=xml
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
