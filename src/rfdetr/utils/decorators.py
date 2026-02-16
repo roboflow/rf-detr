@@ -94,7 +94,7 @@ class _DeprecatedDict(dict):
         self._show_warning()
         return super().__contains__(key)
 
-    def __iter__(self) -> Iterator:
+    def __iter__(self) -> Iterator[Any]:
         """Return iterator over dictionary keys and emit deprecation warning."""
         self._show_warning()
         return super().__iter__()
