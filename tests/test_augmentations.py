@@ -133,6 +133,98 @@ class TestAlbumentationsWrapper:
         with pytest.raises(ValueError, match="boxes must have shape"):
             wrapper(image, target)
 
+    def test_orig_size_preserved_with_two_boxes(self):
+        """Test that orig_size is not treated as per-instance field when num_boxes=2.
+
+        Regression test for bug where orig_size (shape [2] for [h, w]) was incorrectly
+        treated as a per-instance field when there were exactly 2 boxes, causing
+        orig_size to be filtered/indexed incorrectly and leading to inconsistent
+        tensor shapes in batches.
+        """
+        transform = A.HorizontalFlip(p=1.0)
+        wrapper = AlbumentationsWrapper(transform)
+
+        image = Image.new('RGB', (640, 480))
+        target = {
+            'boxes': torch.tensor([[10.0, 20.0, 100.0, 200.0],
+                                   [300.0, 100.0, 500.0, 400.0]], dtype=torch.float32),
+            'labels': torch.tensor([1, 2]),
+            'orig_size': torch.tensor([480, 640]),  # shape [2], same as num_boxes!
+            'size': torch.tensor([480, 640]),
+            'image_id': torch.tensor([123]),
+            'area': torch.tensor([100.0, 200.0]),
+            'iscrowd': torch.tensor([0, 0])
+        }
+
+        aug_image, aug_target = wrapper(image, target)
+
+        # Verify orig_size is still [2] elements (h, w), not filtered as per-instance
+        assert aug_target['orig_size'].shape == torch.Size([2]), \
+            f"orig_size should have shape [2], got {aug_target['orig_size'].shape}"
+        assert torch.equal(aug_target['orig_size'], target['orig_size']), \
+            "orig_size should be unchanged"
+
+        # Verify other global fields are also preserved
+        assert aug_target['size'].shape == torch.Size([2])
+        assert aug_target['image_id'].shape == torch.Size([1])
+        assert torch.equal(aug_target['image_id'], target['image_id'])
+
+    def test_orig_size_preserved_with_two_boxes_and_masks(self):
+        """Test that orig_size and masks are handled correctly when num_boxes=2.
+
+        Critical regression test: With 2 boxes, both orig_size and masks have
+        first dimension = 2, but they must be treated differently:
+        - orig_size (shape [2]): global field, should NOT be filtered
+        - masks (shape [2, H, W]): per-instance field, SHOULD be transformed
+        """
+        transform = A.HorizontalFlip(p=1.0)
+        wrapper = AlbumentationsWrapper(transform)
+
+        image = Image.new('RGB', (640, 480))
+        # Create masks for 2 boxes (use uint8 for Albumentations compatibility)
+        masks = torch.zeros((2, 480, 640), dtype=torch.uint8)
+        masks[0, 50:150, 50:150] = 1  # Mask for first box
+        masks[1, 200:300, 300:500] = 1  # Mask for second box
+
+        target = {
+            'boxes': torch.tensor([[10.0, 20.0, 100.0, 200.0],
+                                   [300.0, 100.0, 500.0, 400.0]], dtype=torch.float32),
+            'labels': torch.tensor([1, 2]),
+            'masks': masks,  # shape [2, 480, 640], same first dim as orig_size!
+            'orig_size': torch.tensor([480, 640]),  # shape [2]
+            'size': torch.tensor([480, 640]),
+            'image_id': torch.tensor([123]),
+            'area': torch.tensor([100.0, 200.0]),
+            'iscrowd': torch.tensor([0, 0])
+        }
+
+        aug_image, aug_target = wrapper(image, target)
+
+        # Verify orig_size is preserved (global field)
+        assert aug_target['orig_size'].shape == torch.Size([2]), \
+            f"orig_size should have shape [2], got {aug_target['orig_size'].shape}"
+        assert torch.equal(aug_target['orig_size'], target['orig_size']), \
+            "orig_size should be unchanged"
+
+        # Verify masks are transformed (per-instance field)
+        assert aug_target['masks'].shape == torch.Size([2, 480, 640]), \
+            f"masks should have shape [2, 480, 640], got {aug_target['masks'].shape}"
+        assert aug_target['masks'].dtype == torch.bool, \
+            "masks should be converted to bool after transform"
+        # Masks should be flipped - verify they're different
+        assert not torch.equal(aug_target['masks'], target['masks'].bool()), \
+            "masks should be transformed (flipped) for geometric transform"
+
+        # Verify we still have 2 boxes and 2 masks
+        assert len(aug_target['boxes']) == 2, "Should have 2 boxes after transform"
+        assert len(aug_target['labels']) == 2, "Should have 2 labels after transform"
+        assert aug_target['masks'].shape[0] == 2, "Should have 2 masks after transform"
+
+        # Verify other global fields are preserved
+        assert aug_target['size'].shape == torch.Size([2])
+        assert aug_target['image_id'].shape == torch.Size([1])
+        assert torch.equal(aug_target['image_id'], target['image_id'])
+
     @pytest.mark.parametrize("transform_class,params", [
         (A.HorizontalFlip, {"p": 1.0}),
         (A.VerticalFlip, {"p": 1.0}),

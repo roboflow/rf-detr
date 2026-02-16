@@ -642,9 +642,12 @@ class AlbumentationsWrapper:
         >>> cleared["area"].shape
         torch.Size([0])
         """
+        # Fields that are global properties, not per-instance
+        global_fields = {"boxes", "labels", "orig_size", "size", "image_id"}
+
         result = {}
         for key, value in target.items():
-            if key in {"boxes", "labels"}:
+            if key in global_fields:
                 continue
             if torch.is_tensor(value):
                 if value.ndim >= 1 and value.shape[0] == num_boxes:
@@ -668,10 +671,13 @@ class AlbumentationsWrapper:
         >>> filtered["area"].tolist()
         [100, 300]
         """
+        # Fields that are global properties, not per-instance
+        global_fields = {"boxes", "labels", "orig_size", "size", "image_id"}
+
         result = {}
         kept_idxs_tensor = torch.as_tensor(kept_idxs, dtype=torch.long)
         for key, value in target.items():
-            if key in {"boxes", "labels"}:
+            if key in global_fields:
                 continue
             if torch.is_tensor(value):
                 if value.ndim >= 1 and value.shape[0] == num_boxes:
