@@ -700,6 +700,11 @@ class AlbumentationsWrapper:
         labels = target["labels"].cpu().tolist() if torch.is_tensor(target["labels"]) else list(target["labels"])
 
         # === Apply Transform ===
+        if self._is_geometric and "masks" in target and "boxes" not in target:
+            logger.warning(
+                "AlbumentationsWrapper: geometric transform requested with 'masks' but without 'boxes'. "
+                "Masks will not be geometrically transformed because bounding boxes are missing."
+            )
         if self._is_geometric and "boxes" in target:
             # Geometric path: transform image and boxes together
             boxes_np = self._boxes_to_numpy(target["boxes"])
