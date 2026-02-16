@@ -31,7 +31,7 @@ from rfdetr.datasets.coco import CocoDetection, make_coco_transforms_square_div_
 from rfdetr.detr import RFDETR
 from rfdetr.engine import evaluate
 from rfdetr.models import build_criterion_and_postprocessors
-from rfdetr.util import misc as utils
+from rfdetr.util.misc import collate_fn
 
 _PLUS_AVAILABLE = importlib.util.find_spec("rfdetr_plus") is not None
 if _PLUS_AVAILABLE:
@@ -187,7 +187,7 @@ def test_coco_segmentation_inference_benchmark(
         batch_size=4,
         sampler=torch.utils.data.SequentialSampler(val_dataset),
         drop_last=False,
-        collate_fn=utils.collate_fn,
+        collate_fn=collate_fn,
         num_workers=os.cpu_count() or 1,
     )
     base_ds = get_coco_api_from_dataset(val_dataset)
