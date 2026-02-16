@@ -50,8 +50,8 @@ jobs:
 
       - name: 🧪 Run the Test
         run: |
-          uv run --no-sync pytest tests/ \
-          -n 3 -m gpu \
+          uv run --no-sync pytest tests/ -m gpu \
+          -n 3 --dist=loadgroup \
           --cov=rfdetr --cov-report=xml
 
       - name: Upload coverage to Codecov
