@@ -523,9 +523,6 @@ class AlbumentationsWrapper:
     Args:
         transform: Albumentations transform to apply (e.g., A.HorizontalFlip, A.GaussianBlur).
 
-    Attributes:
-        transform: The wrapped Albumentations Compose object.
-
     Examples:
         >>> import albumentations as A
         >>> # Geometric transform - automatically transforms boxes
@@ -551,23 +548,82 @@ class AlbumentationsWrapper:
         if self._is_geometric:
             # Wrap geometric transform with bbox handling capabilities
             # bbox_params configure how Albumentations should transform bounding boxes:
-            # - format='pascal_voc': Boxes are in (x1, y1, x2, y2) format
-            # - label_fields: Tells Albumentations which field contains class labels
-            # - min_visibility=0.0: Remove boxes that become fully occluded/out of bounds
-            # - clip=True: Clip box coordinates to image boundaries after transformation
             self.transform = A.Compose(
                 [transform],
                 bbox_params=A.BboxParams(
-                    format='pascal_voc',
-                    label_fields=['category_ids'],
-                    min_visibility=0.0,   # disable visibility-based filtering; boxes are not removed here
-                    clip=True
+                    format='pascal_voc',  # Boxes are in (x1, y1, x2, y2) format
+                    label_fields=['category_ids', 'idxs'],  # Track labels and indices for per-instance field sync
+                    min_visibility=0.0,   # Remove boxes with zero visibility/area after transformation
+                    clip=True,  # Clip box coordinates to image boundaries after transformation
                 )
             )
         else:
             # Wrap non-geometric transform without bbox handling
             # Simpler composition since boxes don't need transformation
             self.transform = A.Compose([transform])
+
+    @staticmethod
+    def _boxes_to_numpy(boxes: Union[torch.Tensor, np.ndarray]) -> np.ndarray:
+        """Convert boxes to numpy array and validate shape.
+
+        >>> import torch
+        >>> boxes = torch.tensor([[10.0, 20.0, 30.0, 40.0]])
+        >>> AlbumentationsWrapper._boxes_to_numpy(boxes).shape
+        (1, 4)
+        """
+        boxes_np = boxes.cpu().numpy() if torch.is_tensor(boxes) else np.array(boxes)
+        if len(boxes_np.shape) != 2 or boxes_np.shape[1] != 4:
+            raise ValueError(f"boxes must have shape (N, 4), got {boxes_np.shape}")
+        return boxes_np
+
+    @staticmethod
+    def _clear_per_instance_fields(target: Dict[str, Any], num_boxes: int) -> Dict[str, Any]:
+        """Clear all per-instance fields when no boxes remain.
+
+        >>> import torch
+        >>> target = {"area": torch.tensor([100, 200]), "iscrowd": torch.tensor([0, 1])}
+        >>> cleared = AlbumentationsWrapper._clear_per_instance_fields(target, 2)
+        >>> cleared["area"].shape
+        torch.Size([0])
+        """
+        result = {}
+        for key, value in target.items():
+            if key in {"boxes", "labels"}:
+                continue
+            if torch.is_tensor(value):
+                if value.ndim >= 1 and value.shape[0] == num_boxes:
+                    result[key] = value.new_empty((0, *value.shape[1:]))
+            elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+                if len(value) == num_boxes:
+                    result[key] = []
+        return result
+
+    @staticmethod
+    def _filter_per_instance_fields(
+        target: Dict[str, Any],
+        num_boxes: int,
+        kept_idxs: List[int]
+    ) -> Dict[str, Any]:
+        """Filter per-instance fields to match kept box indices.
+
+        >>> import torch
+        >>> target = {"area": torch.tensor([100, 200, 300]), "iscrowd": torch.tensor([0, 0, 1])}
+        >>> filtered = AlbumentationsWrapper._filter_per_instance_fields(target, 3, [0, 2])
+        >>> filtered["area"].tolist()
+        [100, 300]
+        """
+        result = {}
+        kept_idxs_tensor = torch.as_tensor(kept_idxs, dtype=torch.long)
+        for key, value in target.items():
+            if key in {"boxes", "labels"}:
+                continue
+            if torch.is_tensor(value):
+                if value.ndim >= 1 and value.shape[0] == num_boxes:
+                    result[key] = value[kept_idxs_tensor]
+            elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+                if len(value) == num_boxes:
+                    result[key] = [value[i] for i in kept_idxs]
+        return result
 
     def __call__(
         self, image: PIL.Image.Image, target: Dict[str, Any]
@@ -622,84 +678,31 @@ class AlbumentationsWrapper:
 
         # === Apply Transform ===
         if self._is_geometric and "boxes" in target:
-            # Path 1: Geometric transform with bounding boxes
-            # Albumentations will transform both image and boxes together
-
-            boxes = target["boxes"]
-            # Convert boxes tensor to numpy array
-            boxes_np = boxes.cpu().numpy() if torch.is_tensor(boxes) else np.array(boxes)
-
-            # Validate box dimensions: must be (N, 4) for N boxes
-            if len(boxes_np.shape) != 2 or boxes_np.shape[1] != 4:
-                raise ValueError(f"boxes must have shape (N, 4), got {boxes_np.shape}")
-
+            # Geometric path: transform image and boxes together
+            boxes_np = self._boxes_to_numpy(target["boxes"])
             num_boxes = boxes_np.shape[0]
-
-            # Track original indices so we can keep all per-instance fields in sync
-            # When Albumentations filters boxes (e.g., crop removes some), we need to filter
-            # other per-instance fields (area, iscrowd, keypoints, etc.) the same way
+            # Track indices to keep per-instance fields synchronized
             idxs = list(range(num_boxes))
-            if hasattr(self.transform, "bbox_params") and self.transform.bbox_params is not None:
-                # Ensure our index field is treated as a label_field so it is filtered
-                label_fields = list(getattr(self.transform.bbox_params, "label_fields", []))
-                if "idxs" not in label_fields:
-                    label_fields.append("idxs")
-                    self.transform.bbox_params.label_fields = label_fields
-
-            # Apply transform to image and boxes simultaneously
-            # Albumentations will handle box coordinate transformation and filtering
-            augmented = self.transform(
-                image=image_np,
-                bboxes=boxes_np,
-                category_ids=labels,
-                idxs=idxs,
-            )
+            # Apply transform
+            augmented = self.transform(image=image_np, bboxes=boxes_np, category_ids=labels, idxs=idxs)
             target_out: Dict[str, Any] = target.copy()
             bboxes_aug = augmented["bboxes"]
             kept_idxs = augmented.get("idxs", idxs)
-
-            # Handle case where transform removed all boxes (e.g., aggressive crop)
-            # Important: Keep labels and boxes synchronized - if no boxes remain, clear labels too
+            # Update target with transformed boxes and labels
             if len(bboxes_aug) == 0:
-                # No boxes left after augmentation
                 target_out["boxes"] = torch.zeros((0, 4), dtype=torch.float32)
                 target_out["labels"] = torch.zeros((0,), dtype=torch.long)
-                # Also clear all other per-instance fields that depend on boxes
-                for key, value in target.items():
-                    if key in {"boxes", "labels"}:
-                        continue
-                    if torch.is_tensor(value):
-                        if value.ndim >= 1 and value.shape[0] == num_boxes:
-                            target_out[key] = value.new_empty((0, *value.shape[1:]))
-                    elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
-                        if len(value) == num_boxes:
-                            target_out[key] = []  # type: ignore[assignment]
+                target_out.update(self._clear_per_instance_fields(target, num_boxes))
             else:
-                # Update boxes and labels
                 target_out["boxes"] = torch.as_tensor(bboxes_aug, dtype=torch.float32).reshape(-1, 4)
                 target_out["labels"] = torch.tensor(augmented["category_ids"], dtype=torch.long)
-
-                # Use kept indices to filter all other per-instance fields
-                # This ensures fields like 'area', 'iscrowd', 'keypoints' stay synchronized
-                kept_idxs_tensor = torch.as_tensor(kept_idxs, dtype=torch.long)
-                for key, value in target.items():
-                    if key in {"boxes", "labels"}:
-                        continue
-                    if torch.is_tensor(value):
-                        if value.ndim >= 1 and value.shape[0] == num_boxes:
-                            target_out[key] = value[kept_idxs_tensor]
-                    elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
-                        if len(value) == num_boxes:
-                            target_out[key] = [value[i] for i in kept_idxs]  # type: ignore[assignment]
-
-            # Convert augmented image back to PIL format
+                target_out.update(self._filter_per_instance_fields(target, num_boxes, kept_idxs))
             image_out = Image.fromarray(augmented["image"])
         else:
-            # Path 2: Non-geometric transform OR no boxes present
-            # Only transform the image; boxes remain unchanged
+            # Non-geometric path: transform image only
             augmented = self.transform(image=image_np)
             image_out = Image.fromarray(augmented["image"])
-            target_out = target  # Target unchanged for non-geometric transforms
+            target_out = target.copy()
 
         # Ensure 'size' (if present) matches the transformed image size (h, w)
         if isinstance(target_out, dict) and "size" in target_out:
