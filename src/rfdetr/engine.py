@@ -437,6 +437,7 @@ def evaluate(model, criterion, postprocess, data_loader, base_ds, device, args=N
             stats["coco_eval_bbox"] = coco_evaluator.coco_eval["bbox"].stats.tolist()
 
         if "segm" in iou_types:
-            results_json = coco_evaluator.coco_eval["segm"].extended_metrics
+            results_json_masks = coco_evaluator.coco_eval["segm"].extended_metrics
+            stats["results_json_masks"] = results_json_masks
             stats["coco_eval_masks"] = coco_evaluator.coco_eval["segm"].stats.tolist()
     return stats, coco_evaluator
