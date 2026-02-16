@@ -681,6 +681,79 @@ class AlbumentationsWrapper:
                     result[key] = [value[i] for i in kept_idxs]
         return result
 
+    def _apply_geometric_transform(
+        self,
+        image_np: np.ndarray,
+        target: Dict[str, Any],
+        labels: List[int]
+    ) -> Tuple[Image.Image, Dict[str, Any]]:
+        """Apply geometric transform to image with boxes and optionally masks.
+
+        Converts data to Albumentations format, applies the transform, and converts
+        back to RF-DETR format. Handles box removal and per-instance field filtering.
+
+        Args:
+            image_np: Numpy array of image in HWC format.
+            target: Target dictionary with 'boxes' and optionally 'masks'.
+            labels: List of category labels.
+
+        Returns:
+            Tuple of (transformed PIL Image, transformed target dict).
+
+        >>> import albumentations as A
+        >>> import torch
+        >>> wrapper = AlbumentationsWrapper(A.HorizontalFlip(p=1.0))
+        >>> img = np.ones((100, 100, 3), dtype=np.uint8)
+        >>> tgt = {"boxes": torch.tensor([[10, 20, 30, 40]]), "labels": torch.tensor([1])}
+        >>> img_out, tgt_out = wrapper._apply_geometric_transform(img, tgt, [1])
+        >>> tgt_out["boxes"].shape
+        torch.Size([1, 4])
+        """
+        boxes_np = self._boxes_to_numpy(target["boxes"])
+        num_boxes = boxes_np.shape[0]
+        # Track indices to keep per-instance fields synchronized
+        idxs = list(range(num_boxes))
+        masks_list = None
+        if "masks" in target:
+            masks = target["masks"]
+            masks_np = masks.cpu().numpy() if torch.is_tensor(masks) else np.array(masks)
+            if masks_np.ndim != 3:
+                raise ValueError(f"masks must have shape (N, H, W), got {masks_np.shape}")
+            masks_list = [mask for mask in masks_np]
+        # Apply transform
+        transform_kwargs = {
+            "image": image_np, "bboxes": boxes_np, "category_ids": labels, "idxs": idxs
+        }
+        if masks_list is not None:
+            transform_kwargs["masks"] = masks_list
+        augmented = self.transform(**transform_kwargs)
+        target_out: Dict[str, Any] = target.copy()
+        bboxes_aug = augmented["bboxes"]
+        kept_idxs = augmented.get("idxs", idxs)
+        # Update target with transformed boxes and labels
+        if len(bboxes_aug) == 0:
+            target_out["boxes"] = torch.zeros((0, 4), dtype=torch.float32)
+            target_out["labels"] = torch.zeros((0,), dtype=torch.long)
+            # Explicitly clear masks when all boxes are removed; _clear_per_instance_fields
+            # will also clear per-instance fields (including masks) based on num_boxes.
+            if "masks" in target:
+                img_height, img_width = image_np.shape[:2]
+                target_out["masks"] = torch.zeros((0, img_height, img_width), dtype=torch.bool)
+            target_out.update(self._clear_per_instance_fields(target, num_boxes))
+        else:
+            target_out["boxes"] = torch.as_tensor(bboxes_aug, dtype=torch.float32).reshape(-1, 4)
+            target_out["labels"] = torch.tensor(augmented["category_ids"], dtype=torch.long)
+            target_out.update(self._filter_per_instance_fields(target, num_boxes, kept_idxs))
+        image_out = Image.fromarray(augmented["image"])
+        if masks_list is not None and "masks" in augmented:
+            height, width = augmented["image"].shape[:2]
+            masks_aug = augmented["masks"]
+            if len(masks_aug) == 0:
+                target_out["masks"] = torch.zeros((0, height, width), dtype=torch.bool)
+            else:
+                target_out["masks"] = torch.as_tensor(np.stack(masks_aug), dtype=torch.bool)
+        return image_out, target_out
+
     def __call__(
         self, image: PIL.Image.Image, target: Dict[str, Any]
     ) -> Tuple[PIL.Image.Image, Dict[str, Any]]:
@@ -744,52 +817,7 @@ class AlbumentationsWrapper:
             )
         if self._is_geometric and "boxes" in target:
             # Geometric path: transform image and boxes together
-            boxes_np = self._boxes_to_numpy(target["boxes"])
-            num_boxes = boxes_np.shape[0]
-            # Track indices to keep per-instance fields synchronized
-            idxs = list(range(num_boxes))
-            masks_list = None
-            if "masks" in target:
-                masks = target["masks"]
-                masks_np = masks.cpu().numpy() if torch.is_tensor(masks) else np.array(masks)
-                if masks_np.ndim != 3:
-                    raise ValueError(f"masks must have shape (N, H, W), got {masks_np.shape}")
-                masks_list = [mask for mask in masks_np]
-            # Apply transform
-            transform_kwargs = {
-                "image": image_np,
-                "bboxes": boxes_np,
-                "category_ids": labels,
-                "idxs": idxs,
-            }
-            if masks_list is not None:
-                transform_kwargs["masks"] = masks_list
-            augmented = self.transform(**transform_kwargs)
-            target_out: Dict[str, Any] = target.copy()
-            bboxes_aug = augmented["bboxes"]
-            kept_idxs = augmented.get("idxs", idxs)
-            # Update target with transformed boxes and labels
-            if len(bboxes_aug) == 0:
-                target_out["boxes"] = torch.zeros((0, 4), dtype=torch.float32)
-                target_out["labels"] = torch.zeros((0,), dtype=torch.long)
-                # Explicitly clear masks when all boxes are removed; _clear_per_instance_fields
-                # will also clear per-instance fields (including masks) based on num_boxes.
-                if "masks" in target:
-                    img_height, img_width = image_np.shape[:2]
-                    target_out["masks"] = torch.zeros((0, img_height, img_width), dtype=torch.bool)
-                target_out.update(self._clear_per_instance_fields(target, num_boxes))
-            else:
-                target_out["boxes"] = torch.as_tensor(bboxes_aug, dtype=torch.float32).reshape(-1, 4)
-                target_out["labels"] = torch.tensor(augmented["category_ids"], dtype=torch.long)
-                target_out.update(self._filter_per_instance_fields(target, num_boxes, kept_idxs))
-            image_out = Image.fromarray(augmented["image"])
-            if masks_list is not None and "masks" in augmented:
-                height, width = augmented["image"].shape[:2]
-                masks_aug = augmented["masks"]
-                if len(masks_aug) == 0:
-                    target_out["masks"] = torch.zeros((0, height, width), dtype=torch.bool)
-                else:
-                    target_out["masks"] = torch.as_tensor(np.stack(masks_aug), dtype=torch.bool)
+            image_out, target_out = self._apply_geometric_transform(image_np, target, labels)
         else:
             # Non-geometric path: transform image only
             augmented = self.transform(image=image_np)
