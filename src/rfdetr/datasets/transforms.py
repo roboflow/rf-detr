@@ -738,11 +738,11 @@ class AlbumentationsWrapper:
             image_out = Image.fromarray(augmented["image"])
             if masks_list is not None and "masks" in augmented:
                 height, width = augmented["image"].shape[:2]
-                filtered_masks = [augmented["masks"][i] for i in kept_idxs]
-                if len(filtered_masks) == 0:
+                masks_aug = augmented["masks"]
+                if len(masks_aug) == 0:
                     target_out["masks"] = torch.zeros((0, height, width), dtype=torch.bool)
                 else:
-                    target_out["masks"] = torch.as_tensor(np.stack(filtered_masks), dtype=torch.bool)
+                    target_out["masks"] = torch.as_tensor(np.stack(masks_aug), dtype=torch.bool)
         else:
             # Non-geometric path: transform image only
             augmented = self.transform(image=image_np)
