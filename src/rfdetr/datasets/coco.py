@@ -240,7 +240,7 @@ def make_coco_transforms_square_div_64(image_set: str, resolution: int, multi_sc
 
     if image_set == 'train':
         return T.Compose([
-            # T.RandomHorizontalFlip(),
+            # T.RandomHorizontalFlip(),  # Intentionally disabled: horizontal flipping is handled via Albumentations HorizontalFlip in AUG_CONFIG.
             T.RandomSelect(
                 T.SquareResize(scales),
                 T.Compose([
