@@ -812,3 +812,11 @@ class ComposeAugmentations:
         for t in self.transforms:
             image, target = t(image, target)
         return image, target
+
+    def __repr__(self) -> str:
+        """Return a readable representation of the composed augmentations."""
+        format_string = f"{self.__class__.__name__}(\n"
+        for t in self.transforms:
+            format_string += f"    {t!r}\n"
+        format_string += ")"
+        return format_string
