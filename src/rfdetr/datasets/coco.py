@@ -72,11 +72,12 @@ def convert_coco_poly_to_mask(segmentations: List[Any], height: int, width: int)
 
 
 class CocoDetection(torchvision.datasets.CocoDetection):
-    def __init__(self, img_folder: Union[str, Path], ann_file: Union[str, Path], transforms: Optional[Any], include_masks: bool = False) -> None:
+    def __init__(self, img_folder: Union[str, Path], ann_file: Union[str, Path], transforms: Optional[Any], include_masks: bool = False, include_depth: bool = False) -> None:
         super(CocoDetection, self).__init__(img_folder, ann_file)
         self._transforms = transforms
         self.include_masks = include_masks
-        self.prepare = ConvertCoco(include_masks=include_masks)
+        self.include_depth = include_depth
+        self.prepare = ConvertCoco(include_masks=include_masks, include_depth=include_depth)
 
     def __getitem__(self, idx: int) -> Tuple[Any, Any]:
         img, target = super(CocoDetection, self).__getitem__(idx)
@@ -90,8 +91,9 @@ class CocoDetection(torchvision.datasets.CocoDetection):
 
 class ConvertCoco(object):
 
-    def __init__(self, include_masks: bool = False) -> None:
+    def __init__(self, include_masks: bool = False, include_depth: bool = False) -> None:
         self.include_masks = include_masks
+        self.include_depth = include_depth
 
     def __call__(self, image: Image.Image, target: Dict[str, Any]) -> Tuple[Image.Image, Dict[str, Any]]:
         w, h = image.size
@@ -141,6 +143,17 @@ class ConvertCoco(object):
                 target["masks"] = torch.zeros((0, h, w), dtype=torch.uint8)
 
             target["masks"] = target["masks"].bool()
+
+        if self.include_depth:
+            if len(anno) > 0 and 'depth' in anno[0]:
+                depths = torch.tensor(
+                    [obj.get('depth', 0.0) for obj in anno], dtype=torch.float32
+                )
+                target['depth'] = depths[keep].unsqueeze(-1)
+            else:
+                target['depth'] = torch.zeros(
+                    (len(target['labels']), 1), dtype=torch.float32
+                )
 
         target["orig_size"] = torch.as_tensor([int(h), int(w)])
         target["size"] = torch.as_tensor([int(h), int(w)])
@@ -256,6 +269,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
 
     square_resize_div_64 = getattr(args, 'square_resize_div_64', False)
     include_masks = getattr(args, "segmentation_head", False)
+    include_depth = getattr(args, "depth_head", False)
 
     if square_resize_div_64:
         logger.info(f"Building COCO {image_set} dataset with square resize at resolution {resolution}")
@@ -267,7 +281,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             skip_random_resize=not args.do_random_resize_via_padding,
             patch_size=args.patch_size,
             num_windows=args.num_windows
-        ), include_masks=include_masks)
+        ), include_masks=include_masks, include_depth=include_depth)
     else:
         logger.info(f"Building COCO {image_set} dataset at resolution {resolution}")
         dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms(
@@ -278,7 +292,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             skip_random_resize=not args.do_random_resize_via_padding,
             patch_size=args.patch_size,
             num_windows=args.num_windows
-        ), include_masks=include_masks)
+        ), include_masks=include_masks, include_depth=include_depth)
     return dataset
 
 def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
@@ -301,6 +315,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
     img_folder, ann_file = PATHS[image_set.split("_")[0]]
     square_resize_div_64 = getattr(args, "square_resize_div_64", False)
     include_masks = getattr(args, "segmentation_head", False)
+    include_depth = getattr(args, "depth_head", False)
     multi_scale = getattr(args, "multi_scale", False)
     expanded_scales = getattr(args, "expanded_scales", False)
     do_random_resize_via_padding = getattr(args, "do_random_resize_via_padding", False)
@@ -317,7 +332,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
             skip_random_resize=not do_random_resize_via_padding,
             patch_size=patch_size,
             num_windows=num_windows
-        ), include_masks=include_masks)
+        ), include_masks=include_masks, include_depth=include_depth)
     else:
         logger.info(f"Building Roboflow {image_set} dataset at resolution {resolution}")
         dataset = CocoDetection(img_folder, ann_file, transforms=make_coco_transforms(
@@ -328,5 +343,5 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
             skip_random_resize=not do_random_resize_via_padding,
             patch_size=patch_size,
             num_windows=num_windows
-        ), include_masks=include_masks)
+        ), include_masks=include_masks, include_depth=include_depth)
     return dataset
