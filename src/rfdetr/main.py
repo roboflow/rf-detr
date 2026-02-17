@@ -51,6 +51,7 @@ from rfdetr.util.get_param_dicts import get_param_dict
 from rfdetr.util.logger import get_logger
 from rfdetr.util.misc import get_rank, get_world_size, is_main_process, save_on_master
 from rfdetr.util.utils import BestMetricHolder, ModelEma, clean_state_dict
+from rfdetr.utils.decorators import _DeprecatedDict
 
 if str(os.environ.get("USE_FILE_SYSTEM_SHARING", "False")).lower() in ["true", "1"]:
     import torch.multiprocessing
@@ -60,8 +61,13 @@ logger = get_logger()
 
 
 # THE FOLLOWING MODEL ASSETS ARE COVERED BY THE APACHE 2.0 LICENSE
-# Legacy dictionary for backward compatibility
-OPEN_SOURCE_MODELS = {asset.filename: asset.url for asset in ModelWeights}
+# Legacy dictionary for backward compatibility - DEPRECATED
+# Use ModelWeights enum from rfdetr.assets.model_weights instead
+OPEN_SOURCE_MODELS = _DeprecatedDict(
+    {asset.filename: asset.url for asset in ModelWeights},
+    deprecated_name="OPEN_SOURCE_MODELS",
+    replacement="`ModelWeights` enum from `rfdetr.assets.model_weights`"
+)
 
 
 class Model:
