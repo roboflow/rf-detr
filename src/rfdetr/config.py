@@ -6,7 +6,7 @@
 
 
 import os
-from typing import Any, ClassVar, List, Literal, Mapping, Optional
+from typing import Any, ClassVar, List, Literal, Mapping, Optional, Union
 
 import torch
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
@@ -71,6 +71,8 @@ class ModelConfig(BaseConfig):
     cls_loss_coef: float = 1.0
     segmentation_head: bool = False
     mask_downsample_ratio: int = 4
+    depth_head: bool = False
+    z_max: float = 120.0
     license: str = "Apache-2.0"
 
     @field_validator("pretrain_weights", mode="after")
@@ -332,3 +334,14 @@ class SegmentationTrainConfig(TrainConfig):
     mask_dice_loss_coef: float = 5.0
     cls_loss_coef: float = 5.0
     segmentation_head: bool = True
+
+
+class DepthTrainConfig(TrainConfig):
+    depth_head: bool = True
+    depth_loss_coef: float = 5.0
+    pinhole_loss_coef: float = 1.0
+    focal_length_px: Optional[float] = None
+    ball_diameter_m: float = 0.22
+    ball_class_ids: List[int] = []
+    curriculum_phase1_epochs: int = 10
+    curriculum_phase2_epochs: int = 40

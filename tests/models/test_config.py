@@ -7,7 +7,7 @@
 import pytest
 from pydantic import ValidationError
 
-from rfdetr.config import ModelConfig
+from rfdetr.config import ModelConfig, RFDETRBaseConfig, RFDETRNanoConfig
 
 
 @pytest.fixture
@@ -40,3 +40,21 @@ class TestModelConfigValidation:
 
         with pytest.raises(ValueError, match=r"Unknown attribute: 'unknown'\."):
             setattr(config, "unknown", "value")
+
+
+class TestDepthConfig:
+    def test_depth_head_default_false(self) -> None:
+        """depth_head should default to False on all model configs."""
+        base = RFDETRBaseConfig()
+        assert base.depth_head is False
+        assert base.z_max == 120.0
+        nano = RFDETRNanoConfig()
+        assert nano.depth_head is False
+
+    def test_depth_train_config(self) -> None:
+        """DepthTrainConfig should have depth-specific loss coefficients."""
+        from rfdetr.config import DepthTrainConfig
+        cfg = DepthTrainConfig(dataset_dir="/tmp/test")
+        assert cfg.depth_head is True
+        assert cfg.depth_loss_coef == 5.0
+        assert cfg.pinhole_loss_coef == 1.0
