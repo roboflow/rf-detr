@@ -58,7 +58,9 @@ class LWDETR(nn.Module):
                  group_detr=1,
                  two_stage=False,
                  lite_refpoint_refine=False,
-                 bbox_reparam=False):
+                 bbox_reparam=False,
+                 depth_head=False,
+                 z_max=120.0):
         """ Initializes the model.
         Parameters:
             backbone: torch module of the backbone to be used. See backbone.py
@@ -104,6 +106,14 @@ class LWDETR(nn.Module):
         # init bbox_mebed
         nn.init.constant_(self.bbox_embed.layers[-1].weight.data, 0)
         nn.init.constant_(self.bbox_embed.layers[-1].bias.data, 0)
+
+        # depth head
+        self.depth_head_enabled = depth_head
+        self.z_max = z_max
+        if self.depth_head_enabled:
+            self.depth_embed = MLP(hidden_dim, hidden_dim, 1, 3)
+            nn.init.constant_(self.depth_embed.layers[-1].weight.data, 0)
+            nn.init.constant_(self.depth_embed.layers[-1].bias.data, 0)
 
         # two_stage
         self.two_stage = two_stage
@@ -192,14 +202,23 @@ class LWDETR(nn.Module):
 
             outputs_class = self.class_embed(hs)
 
+            outputs_depth = None
+            if self.depth_head_enabled:
+                outputs_depth = self.depth_embed(hs).sigmoid() * self.z_max
+
             if self.segmentation_head is not None:
                 outputs_masks = seg_head_fwd(features[0].tensors, hs, samples.tensors.shape[-2:])
 
             out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1]}
             if self.segmentation_head is not None:
                 out['pred_masks'] = outputs_masks[-1]
+            if self.depth_head_enabled:
+                out['pred_depth'] = outputs_depth[-1]
             if self.aux_loss:
-                out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord, outputs_masks if self.segmentation_head is not None else None)
+                out['aux_outputs'] = self._set_aux_loss(
+                    outputs_class, outputs_coord,
+                    outputs_masks if self.segmentation_head is not None else None,
+                    outputs_depth)
 
         if self.two_stage:
             group_detr = self.group_detr if self.training else 1
@@ -235,6 +254,7 @@ class LWDETR(nn.Module):
             srcs, None, poss, refpoint_embed_weight, query_feat_weight)
 
         outputs_masks = None
+        outputs_depth_val = None
 
         if hs is not None:
             if self.bbox_reparam:
@@ -247,31 +267,41 @@ class LWDETR(nn.Module):
             else:
                 outputs_coord = (self.bbox_embed(hs) + ref_unsigmoid).sigmoid()
             outputs_class = self.class_embed(hs)
+            if self.depth_head_enabled:
+                outputs_depth_val = self.depth_embed(hs).sigmoid() * self.z_max
             if self.segmentation_head is not None:
                 outputs_masks = self.segmentation_head(srcs[0], [hs,], tensors.shape[-2:])[0]
         else:
             assert self.two_stage, "if not using decoder, two_stage must be True"
             outputs_class = self.transformer.enc_out_class_embed[0](hs_enc)
             outputs_coord = ref_enc
+            if self.depth_head_enabled:
+                outputs_depth_val = self.depth_embed(hs_enc).sigmoid() * self.z_max
             if self.segmentation_head is not None:
                 outputs_masks = self.segmentation_head(srcs[0], [hs_enc,], tensors.shape[-2:], skip_blocks=True)[0]
 
         if outputs_masks is not None:
             return outputs_coord, outputs_class, outputs_masks
+        elif outputs_depth_val is not None:
+            return outputs_coord, outputs_class, outputs_depth_val
         else:
             return outputs_coord, outputs_class
 
     @torch.jit.unused
-    def _set_aux_loss(self, outputs_class, outputs_coord, outputs_masks):
+    def _set_aux_loss(self, outputs_class, outputs_coord, outputs_masks, outputs_depth=None):
         # this is a workaround to make torchscript happy, as torchscript
         # doesn't support dictionary with non-homogeneous values, such
         # as a dict having both a Tensor and a list.
         if outputs_masks is not None:
-            return [{'pred_logits': a, 'pred_boxes': b, 'pred_masks': c}
+            result = [{'pred_logits': a, 'pred_boxes': b, 'pred_masks': c}
                     for a, b, c in zip(outputs_class[:-1], outputs_coord[:-1], outputs_masks[:-1])]
         else:
-            return [{'pred_logits': a, 'pred_boxes': b}
+            result = [{'pred_logits': a, 'pred_boxes': b}
                     for a, b in zip(outputs_class[:-1], outputs_coord[:-1])]
+        if outputs_depth is not None:
+            for i, d in enumerate(outputs_depth[:-1]):
+                result[i]['pred_depth'] = d
+        return result
 
     def update_drop_path(self, drop_path_rate, vit_encoder_num_layers):
         """ """
@@ -852,6 +882,8 @@ def build_model(args):
         two_stage=args.two_stage,
         lite_refpoint_refine=args.lite_refpoint_refine,
         bbox_reparam=args.bbox_reparam,
+        depth_head=getattr(args, 'depth_head', False),
+        z_max=getattr(args, 'z_max', 120.0),
     )
     return model
 
