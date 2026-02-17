@@ -337,7 +337,11 @@ class SetCriterion(nn.Module):
                 use_varifocal_loss=False,
                 use_position_supervised_loss=False,
                 ia_bce_loss=False,
-                mask_point_sample_ratio: int = 16,):
+                mask_point_sample_ratio: int = 16,
+                focal_length_px=None,
+                ball_diameter_m=0.22,
+                ball_class_ids=None,
+                resolution=640,):
         """ Create the criterion.
         Parameters:
             num_classes: number of object categories, omitting the special no-object category
@@ -359,6 +363,10 @@ class SetCriterion(nn.Module):
         self.use_position_supervised_loss = use_position_supervised_loss
         self.ia_bce_loss = ia_bce_loss
         self.mask_point_sample_ratio = mask_point_sample_ratio
+        self.focal_length_px = focal_length_px
+        self.ball_diameter_m = ball_diameter_m
+        self.ball_class_ids = ball_class_ids or []
+        self.resolution = resolution
 
     def loss_labels(self, outputs, targets, indices, num_boxes, log=True):
         """Classification loss (Binary focal loss)
@@ -488,6 +496,37 @@ class SetCriterion(nn.Module):
         losses['loss_giou'] = loss_giou.sum() / num_boxes
         return losses
 
+    def loss_depth_distill(self, outputs, targets, indices, num_boxes, **kwargs):
+        """Depth distillation loss: SmoothL1 between predicted and teacher depth."""
+        assert 'pred_depth' in outputs
+        idx = self._get_src_permutation_idx(indices)
+        src_depth = outputs['pred_depth'][idx]
+        target_depth = torch.cat([t['depth'][i] for t, (_, i) in zip(targets, indices)], dim=0)
+        loss_depth = F.smooth_l1_loss(src_depth, target_depth, reduction='none')
+        return {'loss_depth': loss_depth.sum() / num_boxes}
+
+    def loss_pinhole(self, outputs, targets, indices, num_boxes, **kwargs):
+        """Pinhole camera consistency: |Z_pred - f * ball_diam / w_pixel| for ball class."""
+        device = outputs['pred_depth'].device
+        if self.focal_length_px is None:
+            return {'loss_pinhole': torch.tensor(0.0, device=device)}
+        idx = self._get_src_permutation_idx(indices)
+        src_depth = outputs['pred_depth'][idx]
+        src_boxes = outputs['pred_boxes'][idx]
+        target_labels = torch.cat([t['labels'][i] for t, (_, i) in zip(targets, indices)])
+
+        ball_mask = torch.zeros_like(target_labels, dtype=torch.bool)
+        for cid in self.ball_class_ids:
+            ball_mask |= (target_labels == cid)
+        if ball_mask.sum() == 0:
+            return {'loss_pinhole': torch.tensor(0.0, device=device)}
+
+        w_pixel = src_boxes[ball_mask, 2:3] * self.resolution
+        z_pinhole = self.focal_length_px * self.ball_diameter_m / (w_pixel + 1e-6)
+        z_pred = src_depth[ball_mask]
+        loss = F.smooth_l1_loss(z_pred, z_pinhole.detach(), reduction='none')
+        return {'loss_pinhole': loss.sum() / max(ball_mask.sum().item(), 1)}
+
     def loss_masks(self, outputs, targets, indices, num_boxes):
         """Compute BCE-with-logits and Dice losses for segmentation masks on matched pairs.
         Expects outputs to contain 'pred_masks' of shape [B, Q, H, W] and targets with key 'masks'.
@@ -596,6 +635,8 @@ class SetCriterion(nn.Module):
             'cardinality': self.loss_cardinality,
             'boxes': self.loss_boxes,
             'masks': self.loss_masks,
+            'depth': self.loss_depth_distill,
+            'pinhole': self.loss_pinhole,
         }
         assert loss in loss_map, f'do you really want to compute {loss} loss?'
         return loss_map[loss](outputs, targets, indices, num_boxes, **kwargs)
@@ -895,6 +936,9 @@ def build_criterion_and_postprocessors(args):
     if args.segmentation_head:
         weight_dict['loss_mask_ce'] = args.mask_ce_loss_coef
         weight_dict['loss_mask_dice'] = args.mask_dice_loss_coef
+    if getattr(args, 'depth_head', False):
+        weight_dict['loss_depth'] = getattr(args, 'depth_loss_coef', 5.0)
+        weight_dict['loss_pinhole'] = getattr(args, 'pinhole_loss_coef', 1.0)
     # TODO this is a hack
     if args.aux_loss:
         aux_weight_dict = {}
@@ -907,8 +951,18 @@ def build_criterion_and_postprocessors(args):
     losses = ['labels', 'boxes', 'cardinality']
     if args.segmentation_head:
         losses.append('masks')
+    if getattr(args, 'depth_head', False):
+        losses.append('depth')
+        if getattr(args, 'focal_length_px', None) is not None:
+            losses.append('pinhole')
 
     sum_group_losses = getattr(args, 'sum_group_losses', False)
+    depth_kwargs = dict(
+        focal_length_px=getattr(args, 'focal_length_px', None),
+        ball_diameter_m=getattr(args, 'ball_diameter_m', 0.22),
+        ball_class_ids=getattr(args, 'ball_class_ids', []),
+        resolution=getattr(args, 'resolution', 640),
+    )
     if args.segmentation_head:
         criterion = SetCriterion(args.num_classes + 1, matcher=matcher, weight_dict=weight_dict,
                                 focal_alpha=args.focal_alpha, losses=losses,
@@ -916,14 +970,16 @@ def build_criterion_and_postprocessors(args):
                                 use_varifocal_loss = args.use_varifocal_loss,
                                 use_position_supervised_loss=args.use_position_supervised_loss,
                                 ia_bce_loss=args.ia_bce_loss,
-                                mask_point_sample_ratio=args.mask_point_sample_ratio)
+                                mask_point_sample_ratio=args.mask_point_sample_ratio,
+                                **depth_kwargs)
     else:
         criterion = SetCriterion(args.num_classes + 1, matcher=matcher, weight_dict=weight_dict,
                                 focal_alpha=args.focal_alpha, losses=losses,
                                 group_detr=args.group_detr, sum_group_losses=sum_group_losses,
                                 use_varifocal_loss = args.use_varifocal_loss,
                                 use_position_supervised_loss=args.use_position_supervised_loss,
-                                ia_bce_loss=args.ia_bce_loss)
+                                ia_bce_loss=args.ia_bce_loss,
+                                **depth_kwargs)
     criterion.to(device)
     postprocess = PostProcess(num_select=args.num_select)
 
