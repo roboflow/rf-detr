@@ -80,6 +80,29 @@ class TestPostProcessDepth:
         assert "depth" not in results[0]
 
 
+class TestPopulateArgsDepth:
+    def test_populate_args_includes_depth_params(self):
+        """populate_args should include depth-related parameters."""
+        from rfdetr.main import populate_args
+
+        args = populate_args(depth_head=True, z_max=80.0, ball_class_ids=[0, 1])
+        assert args.depth_head is True
+        assert args.z_max == 80.0
+        assert args.depth_loss_coef == 5.0
+        assert args.pinhole_loss_coef == 1.0
+        assert args.ball_class_ids == [0, 1]
+        assert args.curriculum_phase1_epochs == 10
+
+    def test_populate_args_depth_defaults(self):
+        """populate_args should default depth_head to False."""
+        from rfdetr.main import populate_args
+
+        args = populate_args()
+        assert args.depth_head is False
+        assert args.z_max == 120.0
+        assert args.ball_class_ids == []
+
+
 class _MockBackbone(nn.Module):
     def __init__(self, dim):
         super().__init__()

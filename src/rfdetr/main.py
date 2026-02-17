@@ -363,6 +363,15 @@ class Model:
 
             model.train()
             criterion.train()
+
+            # Depth curriculum: phase 1 = distillation only, phase 2 = add pinhole
+            if getattr(args, 'depth_head', False):
+                phase1_end = args.curriculum_phase1_epochs
+                if epoch < phase1_end:
+                    criterion.weight_dict['loss_pinhole'] = 0.0
+                else:
+                    criterion.weight_dict['loss_pinhole'] = args.pinhole_loss_coef
+
             train_stats = train_one_epoch(
                 model, criterion, lr_scheduler, data_loader_train, optimizer, device, epoch,
                 effective_batch_size, args.clip_max_norm, ema_m=self.ema_m, schedules=schedules,
@@ -1027,6 +1036,16 @@ def populate_args(
     early_stopping_min_delta=0.001,
     early_stopping_use_ema=False,
     gradient_checkpointing=False,
+    # Depth head parameters
+    depth_head=False,
+    z_max=120.0,
+    depth_loss_coef=5.0,
+    pinhole_loss_coef=1.0,
+    focal_length_px=None,
+    ball_diameter_m=0.22,
+    ball_class_ids=None,
+    curriculum_phase1_epochs=10,
+    curriculum_phase2_epochs=40,
     # Additional
     subcommand=None,
     **extra_kwargs  # To handle any unexpected arguments
@@ -1128,6 +1147,15 @@ def populate_args(
         early_stopping_min_delta=early_stopping_min_delta,
         early_stopping_use_ema=early_stopping_use_ema,
         gradient_checkpointing=gradient_checkpointing,
+        depth_head=depth_head,
+        z_max=z_max,
+        depth_loss_coef=depth_loss_coef,
+        pinhole_loss_coef=pinhole_loss_coef,
+        focal_length_px=focal_length_px,
+        ball_diameter_m=ball_diameter_m,
+        ball_class_ids=ball_class_ids if ball_class_ids is not None else [],
+        curriculum_phase1_epochs=curriculum_phase1_epochs,
+        curriculum_phase2_epochs=curriculum_phase2_epochs,
         **extra_kwargs
     )
     return args
