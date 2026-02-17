@@ -439,6 +439,8 @@ def infer_engine_batched(model, coco_evaluator, time_profile, prefix, img_list,
                 'labels': outputs['labels'][:actual_batch_size],
                 'dets': outputs['dets'][:actual_batch_size]
             }
+            if 'depth' in outputs:
+                batch_outputs['depth'] = outputs['depth'][:actual_batch_size]
             results = post_process(batch_outputs, orig_target_sizes)
             for i, img_id in enumerate(batch_ids):
                 coco_evaluator.update({img_id: results[i]})

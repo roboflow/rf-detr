@@ -574,7 +574,12 @@ class Model:
 
         input_tensors = make_infer_image(infer_dir, shape, batch_size, device).to(device)
         input_names = ['input']
-        output_names = ['features'] if backbone_only else ['dets', 'labels']
+        if backbone_only:
+            output_names = ['features']
+        elif getattr(self.args, 'depth_head', False):
+            output_names = ['dets', 'labels', 'depth']
+        else:
+            output_names = ['dets', 'labels']
         dynamic_axes = None
         model.eval()
         with torch.no_grad():
@@ -602,6 +607,15 @@ class Model:
                         f"query_features: {masks['query_features'].shape}, "
                         f"bias: {masks['bias'].shape}"
                     )
+            elif getattr(self.args, 'depth_head', False):
+                outputs = model(input_tensors)
+                dets = outputs['pred_boxes']
+                labels = outputs['pred_logits']
+                depth = outputs['pred_depth']
+                logger.debug(
+                    f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}, "
+                    f"Depth: {depth.shape}"
+                )
             else:
                 outputs = model(input_tensors)
                 dets = outputs['pred_boxes']
