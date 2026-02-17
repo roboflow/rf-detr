@@ -119,12 +119,14 @@ def onnx_simplify(onnx_dir:str, input_names, input_tensors, force=False):
 def trtexec(onnx_dir:str, args) -> None:
     engine_dir = onnx_dir.replace(".onnx", ".engine")
 
-    # Base trtexec command
+    # Base trtexec command with FP32 precision for numerically sensitive layers
     trt_command = " ".join([
         "trtexec",
             f"--onnx={onnx_dir}",
             f"--saveEngine={engine_dir}",
             "--memPoolSize=workspace:4096 --fp16",
+            '--layerPrecisions="*LayerNorm*:fp32,*Softmax*:fp32"',
+            "--precisionConstraints=obey",
             "--useCudaGraph --useSpinWait --warmUp=500 --avgRuns=1000 --duration=10",
             f"{'--verbose' if args.verbose else ''}"])
 
