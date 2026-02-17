@@ -189,3 +189,6 @@ test_visualizations/
 data/
 
 debugging/
+
+# Git worktrees
+.worktrees/
