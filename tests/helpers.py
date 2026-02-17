@@ -14,19 +14,19 @@ from torch.utils.data import Dataset
 
 class _SimpleDataset(Dataset):
     """Simple synthetic dataset for testing augmentations and training loops.
-    
+
     Creates synthetic images with varying numbers of bounding boxes to test
     edge cases in augmentation pipelines, particularly the case where
     num_boxes=2 (which matches orig_size shape [2]).
-    
+
     Args:
         num_samples: Number of samples in the dataset.
         transforms: Optional transforms to apply (e.g., Compose of AlbumentationsWrapper).
-        
+
     Examples:
         >>> from rfdetr.datasets.transforms import AlbumentationsWrapper, Compose
         >>> import albumentations as A
-        >>> 
+        >>>
         >>> transforms = Compose([
         ...     AlbumentationsWrapper(A.HorizontalFlip(p=0.5)),
         ... ])
