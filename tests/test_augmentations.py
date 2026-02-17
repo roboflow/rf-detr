@@ -11,16 +11,16 @@ import numpy as np
 import pytest
 import torch
 from PIL import Image
+from tests.helpers import _SimpleDataset
 from torch.utils.data import DataLoader
 
 from rfdetr.augmentation_config import AUG_CONFIG
 from rfdetr.datasets.transforms import (
     AlbumentationsWrapper,
-    ComposeAugmentations,
     Compose,
+    ComposeAugmentations,
 )
 from rfdetr.util.misc import collate_fn
-from tests.helpers import _SimpleDataset
 
 
 class TestAlbumentationsWrapper:
