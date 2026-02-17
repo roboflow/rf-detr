@@ -80,6 +80,56 @@ class TestPostProcessDepth:
         assert "depth" not in results[0]
 
 
+class TestPredictDepthTupleUnpacking:
+    def test_depth_tuple_unpacking(self):
+        """When forward_export returns 3-tuple with depth_head=True, pred_depth should be set."""
+        from types import SimpleNamespace
+
+        config = SimpleNamespace(depth_head=True)
+        predictions = (
+            torch.rand(1, 10, 4),   # pred_boxes
+            torch.randn(1, 10, 80), # pred_logits
+            torch.rand(1, 10, 1) * 100,  # pred_depth
+        )
+        # Simulate the tuple unpacking logic from detr.py
+        return_predictions = {
+            "pred_logits": predictions[1],
+            "pred_boxes": predictions[0],
+        }
+        if len(predictions) == 3:
+            if getattr(config, 'depth_head', False):
+                return_predictions["pred_depth"] = predictions[2]
+            else:
+                return_predictions["pred_masks"] = predictions[2]
+
+        assert "pred_depth" in return_predictions
+        assert "pred_masks" not in return_predictions
+        assert return_predictions["pred_depth"].shape == (1, 10, 1)
+
+    def test_no_depth_tuple_unpacking_when_disabled(self):
+        """When depth_head=False, 3-tuple should set pred_masks not pred_depth."""
+        from types import SimpleNamespace
+
+        config = SimpleNamespace(depth_head=False)
+        predictions = (
+            torch.rand(1, 10, 4),
+            torch.randn(1, 10, 80),
+            torch.rand(1, 10, 1),  # this would be masks
+        )
+        return_predictions = {
+            "pred_logits": predictions[1],
+            "pred_boxes": predictions[0],
+        }
+        if len(predictions) == 3:
+            if getattr(config, 'depth_head', False):
+                return_predictions["pred_depth"] = predictions[2]
+            else:
+                return_predictions["pred_masks"] = predictions[2]
+
+        assert "pred_masks" in return_predictions
+        assert "pred_depth" not in return_predictions
+
+
 class TestPopulateArgsDepth:
     def test_populate_args_includes_depth_params(self):
         """populate_args should include depth-related parameters."""

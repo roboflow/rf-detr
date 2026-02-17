@@ -395,7 +395,10 @@ class RFDETR:
                     "pred_boxes": predictions[0],
                 }
                 if len(predictions) == 3:
-                    return_predictions["pred_masks"] = predictions[2]
+                    if getattr(self.model_config, 'depth_head', False):
+                        return_predictions["pred_depth"] = predictions[2]
+                    else:
+                        return_predictions["pred_masks"] = predictions[2]
                 predictions = return_predictions
             target_sizes = torch.tensor(orig_sizes, device=self.model.device)
             results = self.model.postprocess(predictions, target_sizes=target_sizes)
@@ -420,6 +423,14 @@ class RFDETR:
                     confidence=scores.float().cpu().numpy(),
                     class_id=labels.cpu().numpy(),
                     mask=masks.squeeze(1).cpu().numpy(),
+                )
+            elif "depth" in result:
+                depth_values = result["depth"][keep]
+                detections = sv.Detections(
+                    xyxy=boxes.float().cpu().numpy(),
+                    confidence=scores.float().cpu().numpy(),
+                    class_id=labels.cpu().numpy(),
+                    data={"depth_m": depth_values.squeeze(-1).float().cpu().numpy()},
                 )
             else:
                 detections = sv.Detections(
