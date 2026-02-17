@@ -3,6 +3,7 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## NEVER RUN INSTALLATION COMMANDS
+
 - NEVER run pip install, conda install, apt install, or any package installation commands
 - Always provide the command to the user and let them run it
 - This applies to ALL installation and system modification commands
@@ -14,6 +15,7 @@ RF-DETR is a real-time, transformer-based object detection and instance segmenta
 ## Common Commands
 
 ### Running Inference
+
 ```python
 from rfdetr import RFDETRBase, RFDETRLarge, RFDETRNano, RFDETRSmall, RFDETRMedium, RFDETRSegPreview
 
@@ -23,30 +25,29 @@ detections = model.predict(image, threshold=0.5)
 ```
 
 ### Training
+
 ```python
 from rfdetr import RFDETRBase
 
 model = RFDETRBase()
-model.train(
-    dataset_dir="path/to/dataset",
-    epochs=100,
-    batch_size=4,
-    output_dir="output"
-)
+model.train(dataset_dir="path/to/dataset", epochs=100, batch_size=4, output_dir="output")
 ```
 
 ### CLI Training
+
 ```bash
 rfdetr --workspace <workspace> --project_name <project> --api_key <key>
 rfdetr --coco_dir path/to/coco/dataset
 ```
 
 ### ONNX Export
+
 ```python
 model.export(output_dir="output", simplify=True)
 ```
 
 ### Documentation Server
+
 ```bash
 mkdocs serve  # requires pip install rfdetr[docs]
 ```
@@ -74,16 +75,19 @@ rfdetr/
 ### Model Hierarchy
 
 1. **User-facing API** (`rfdetr/detr.py`):
-   - `RFDETR` base class with `predict()`, `train()`, `export()`, `optimize_for_inference()`
-   - Subclasses: `RFDETRNano`, `RFDETRSmall`, `RFDETRMedium`, `RFDETRBase`, `RFDETRLarge`, `RFDETRSegPreview`
+
+    - `RFDETR` base class with `predict()`, `train()`, `export()`, `optimize_for_inference()`
+    - Subclasses: `RFDETRNano`, `RFDETRSmall`, `RFDETRMedium`, `RFDETRBase`, `RFDETRLarge`, `RFDETRSegPreview`
 
 2. **Internal Model** (`rfdetr/main.py`):
-   - `Model` class wraps the actual PyTorch model
-   - Handles weight loading, training orchestration, ONNX export
+
+    - `Model` class wraps the actual PyTorch model
+    - Handles weight loading, training orchestration, ONNX export
 
 3. **Neural Network** (`rfdetr/models/lwdetr.py`):
-   - `LWDETR(nn.Module)` - the actual detection transformer
-   - Contains backbone, transformer, class_embed, bbox_embed
+
+    - `LWDETR(nn.Module)` - the actual detection transformer
+    - Contains backbone, transformer, class_embed, bbox_embed
 
 ### Configuration System
 
@@ -100,14 +104,14 @@ rfdetr/
 
 ## Model Variants and Resolutions
 
-| Model | Resolution | Patch Size | Windows | Dec Layers |
-|-------|------------|------------|---------|------------|
-| Nano | 384 | 16 | 2 | 2 |
-| Small | 512 | 16 | 2 | 3 |
-| Medium | 576 | 16 | 2 | 4 |
-| Base | 560 | 14 | 4 | 3 |
-| Large | 560 | 14 | 4 | 3 |
-| Seg-Preview | 432 | 12 | 2 | 4 |
+| Model       | Resolution | Patch Size | Windows | Dec Layers |
+| ----------- | ---------- | ---------- | ------- | ---------- |
+| Nano        | 384        | 16         | 2       | 2          |
+| Small       | 512        | 16         | 2       | 3          |
+| Medium      | 576        | 16         | 2       | 4          |
+| Base        | 560        | 14         | 4       | 3          |
+| Large       | 560        | 14         | 4       | 3          |
+| Seg-Preview | 432        | 12         | 2       | 4          |
 
 ## Code Conventions
 
