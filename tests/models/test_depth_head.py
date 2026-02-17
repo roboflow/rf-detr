@@ -48,6 +48,38 @@ class TestLWDETRDepthHead:
         )
 
 
+class TestPostProcessDepth:
+    def test_postprocess_includes_depth(self):
+        """PostProcess should gather depth values for top-K queries."""
+        from rfdetr.models.lwdetr import PostProcess
+
+        pp = PostProcess(num_select=5)
+        B, Q, C = 2, 10, 3
+        outputs = {
+            "pred_logits": torch.randn(B, Q, C),
+            "pred_boxes": torch.rand(B, Q, 4),
+            "pred_depth": torch.rand(B, Q, 1) * 100,
+        }
+        target_sizes = torch.tensor([[640, 640], [640, 640]])
+        results = pp(outputs, target_sizes)
+        assert "depth" in results[0]
+        assert results[0]["depth"].shape == (5, 1)
+
+    def test_postprocess_no_depth_when_absent(self):
+        """PostProcess should work normally without pred_depth."""
+        from rfdetr.models.lwdetr import PostProcess
+
+        pp = PostProcess(num_select=5)
+        B, Q, C = 2, 10, 3
+        outputs = {
+            "pred_logits": torch.randn(B, Q, C),
+            "pred_boxes": torch.rand(B, Q, 4),
+        }
+        target_sizes = torch.tensor([[640, 640], [640, 640]])
+        results = pp(outputs, target_sizes)
+        assert "depth" not in results[0]
+
+
 class _MockBackbone(nn.Module):
     def __init__(self, dim):
         super().__init__()

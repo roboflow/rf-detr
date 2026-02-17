@@ -816,6 +816,7 @@ class PostProcess(nn.Module):
         """
         out_logits, out_bbox = outputs['pred_logits'], outputs['pred_boxes']
         out_masks = outputs.get('pred_masks', None)
+        out_depth = outputs.get('pred_depth', None)
 
         assert len(out_logits) == len(target_sizes)
         assert target_sizes.shape[1] == 2
@@ -843,9 +844,15 @@ class PostProcess(nn.Module):
                 h, w = target_sizes[i].tolist()
                 masks_i = F.interpolate(masks_i.unsqueeze(1), size=(int(h), int(w)), mode='bilinear', align_corners=False)  # [K,1,H,W]
                 res_i['masks'] = masks_i > 0.0
+                if out_depth is not None:
+                    res_i['depth'] = torch.gather(out_depth[i], 0, k_idx.unsqueeze(-1))
                 results.append(res_i)
         else:
-            results = [{'scores': s, 'labels': l, 'boxes': b} for s, l, b in zip(scores, labels, boxes)]
+            for i in range(out_logits.shape[0]):
+                res_i = {'scores': scores[i], 'labels': labels[i], 'boxes': boxes[i]}
+                if out_depth is not None:
+                    res_i['depth'] = torch.gather(out_depth[i], 0, topk_boxes[i].unsqueeze(-1))
+                results.append(res_i)
 
         return results
 
