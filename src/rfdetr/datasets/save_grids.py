@@ -5,17 +5,21 @@
 # ------------------------------------------------------------------------
 
 from pathlib import Path
+from typing import Any
 
-import cv2
 import matplotlib.pyplot as plt
 import numpy as np
+import supervision as sv
+import torch
 import torchvision.transforms as T
+from matplotlib.axes import Axes
 from torch.utils.data import DataLoader
 
 from rfdetr.util.box_ops import box_cxcywh_to_xyxy
 from rfdetr.util.logger import get_logger
 
 logger = get_logger()
+
 
 class DatasetGridSaver:
     """Utility for saving 3x3 image grids to visualize augmentation effects.
@@ -26,12 +30,12 @@ class DatasetGridSaver:
         max_batches: Number of batches to draw samples from.
         dataset_type: Dataset split label, e.g. ``'train'`` or ``'val'``.
     """
-    def __init__(self, data_loader : DataLoader, output_dir: Path, max_batches : int = 3, dataset_type : str = 'train'):
+
+    def __init__(self, data_loader: DataLoader, output_dir: Path, max_batches: int = 3, dataset_type: str = "train"):
         self.data_loader = data_loader
         self.output_dir = output_dir
         self.max_batches = max_batches
         self.dataset_type = dataset_type
-        # Create the output_dir if it doesn't exist
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
     def save_grid(self) -> None:
@@ -40,61 +44,75 @@ class DatasetGridSaver:
         Each grid is a 3x3 JPEG containing up to 9 images from a single batch,
         with bounding boxes and class labels drawn on top.
         """
-        # Define the inverse transform to de-normalize images
         inv_normalize = T.Normalize(
-            mean=[-0.485/0.229, -0.456/0.224, -0.406/0.225],
-            std=[1/0.229, 1/0.224, 1/0.225]
-            )
+            mean=[-0.485 / 0.229, -0.456 / 0.224, -0.406 / 0.225],
+            std=[1 / 0.229, 1 / 0.224, 1 / 0.225],
+        )
+        box_annotator = sv.BoxAnnotator(thickness=2)
+        label_annotator = sv.LabelAnnotator(
+            text_color=sv.Color.BLACK,
+            text_scale=0.5,
+            text_padding=3,
+        )
+
         for batch_idx, (sample, target) in enumerate(self.data_loader):
             if batch_idx >= self.max_batches:
                 break
 
-            # Create a 3x3 grid for displaying images
             fig, axes = plt.subplots(3, 3, figsize=(12, 12))
-            fig.suptitle(f'{self.dataset_type} dataset, batch {batch_idx}')
+            fig.suptitle(f"{self.dataset_type} dataset, batch {batch_idx}")
             axes = axes.flatten()
 
-            # Iterate through each image in the batch
+            sample_index = 0
             for sample_index, (single_image, single_target) in enumerate(zip(sample.tensors, target)):
-                if sample_index >= 9:  # We only want to display the first 9 images in each batch
+                if sample_index >= 9:
                     break
+                self._annotate_and_plot(single_image, single_target, axes[sample_index], inv_normalize, box_annotator, label_annotator)
 
-                resized_size = single_target['size']
-                # Convert image tensor to numpy array for processing
-                de_normalized_img = inv_normalize(single_image)
-                img_numpy = (np.array(de_normalized_img).transpose(1, 2, 0)).copy()
-
-                # Draw bounding boxes and labels on the image
-                for (box, label) in zip(single_target['boxes'], single_target['labels']):
-                    int_label = int(label)
-                    # Convert bounding box from cx,cy,wh format to xyxy
-                    b = box_cxcywh_to_xyxy(box)
-                    # Scale bounding box coordinates to match the resized image
-                    x_min, y_min, x_max, y_max = int(b[0] * resized_size[1]), int(b[1] * resized_size[0]),\
-                                                int(b[2] * resized_size[1]), int(b[3] * resized_size[0])
-                    # Draw the bounding box on the image
-                    cv2.rectangle(img_numpy, (x_min, y_min), (x_max, y_max), (0, 255, 0), 2)
-                    # Add label text near the bounding box
-                    text_size = cv2.getTextSize(str(int_label), cv2.FONT_HERSHEY_SIMPLEX, 1, 2)[0]
-                    text_x, text_y = x_min, y_min - 10
-                    cv2.rectangle(img_numpy, (text_x, text_y - text_size[1] - 5),
-                                (text_x + text_size[0] + 5, text_y + 5), (0, 255, 0), -1)
-                    cv2.putText(img_numpy, str(int_label), (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
-
-                # Plot image in the grid
-                ax = axes[sample_index]
-                # Normalize image between 0.0 and 1.0 to show on matplotlib
-                image = np.clip(img_numpy, 0.0, 1.0)
-                ax.imshow(image)
-                ax.axis('off')  # Hide axis
-            # "Delete" empty axis
             for i in range(sample_index, 9):
-              ax = axes[i]
-              ax.axis('off')  # Hide axis
-            # Adjust layout and save the figure
+                axes[i].axis("off")
+
             fig.tight_layout()
-            grid_path = self.output_dir / f"{self.dataset_type}_batch{batch_idx}_grid.jpg"
-            plt.savefig(grid_path, dpi=200)
+            plt.savefig(self.output_dir / f"{self.dataset_type}_batch{batch_idx}_grid.jpg", dpi=200)
             plt.close()
 
         logger.info(f"Saved {self.dataset_type} grids with augmented images to: {self.output_dir.resolve()}")
+
+    @staticmethod
+    def _annotate_and_plot(
+        single_image: torch.Tensor,
+        single_target: dict[str, Any],
+        ax: Axes,
+        inv_normalize: T.Normalize,
+        box_annotator: sv.BoxAnnotator,
+        label_annotator: sv.LabelAnnotator,
+    ) -> None:
+        """De-normalize a single image tensor, annotate it with boxes and labels, and plot it on ``ax``.
+
+        Args:
+            single_image: Normalized image tensor of shape ``(C, H, W)``.
+            single_target: Target dict with keys ``'size'``, ``'boxes'`` (cx,cy,wh normalized), and ``'labels'``.
+            ax: Matplotlib axis to plot the annotated image on.
+            inv_normalize: Inverse normalization transform to convert the tensor back to pixel values.
+            box_annotator: ``sv.BoxAnnotator`` instance for drawing bounding boxes.
+            label_annotator: ``sv.LabelAnnotator`` instance for drawing class labels.
+        """
+        resized_size = single_target["size"]
+        h, w = int(resized_size[0]), int(resized_size[1])
+
+        de_normalized_img = inv_normalize(single_image)
+        img_uint8 = (np.clip(np.array(de_normalized_img).transpose(1, 2, 0), 0.0, 1.0) * 255).astype(np.uint8)
+
+        if len(single_target["boxes"]) > 0:
+            class_ids = single_target["labels"].numpy().astype(int)
+            xyxy = np.array(
+                [[b[0] * w, b[1] * h, b[2] * w, b[3] * h] for box in single_target["boxes"] for b in [box_cxcywh_to_xyxy(box)]],
+                dtype=np.float32,
+            )
+            detections = sv.Detections(xyxy=xyxy, class_id=class_ids)
+            labels = [str(c) for c in class_ids]
+            img_uint8 = box_annotator.annotate(scene=img_uint8, detections=detections)
+            img_uint8 = label_annotator.annotate(scene=img_uint8, detections=detections, labels=labels)
+
+        ax.imshow(img_uint8)
+        ax.axis("off")
