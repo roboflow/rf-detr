@@ -168,11 +168,11 @@ def make_coco_transforms(image_set: str, resolution: int, multi_scale: bool = Fa
         return T.Compose([
             # T.RandomHorizontalFlip(),
             T.RandomSelect(
-                T.SquareResize(scales),
+                T.RandomResize(scales, max_size=1333),
                 T.Compose([
                     T.RandomResize([400, 500, 600]),
                     T.RandomSizeCrop(384, 600),
-                    T.SquareResize(scales),
+                    T.RandomResize(scales, max_size=1333),
                 ]),
             ),
             # TODO(next PR): AUG_CONFIG should be propagated and exposed as a user-facing parameter
@@ -245,11 +245,11 @@ def make_coco_transforms_square_div_64(image_set: str, resolution: int, multi_sc
         return T.Compose([
             # T.RandomHorizontalFlip(),  # Intentionally disabled: horizontal flipping is handled via Albumentations HorizontalFlip in AUG_CONFIG.
             T.RandomSelect(
-                T.SquareResize(scales),
+                T.RandomResize(scales, max_size=1333),
                 T.Compose([
                     T.RandomResize([400, 500, 600]),
                     T.RandomSizeCrop(384, 600),
-                    T.SquareResize(scales),
+                    T.RandomResize(scales, max_size=1333),
                 ]),
             ),
             # TODO(next PR): AUG_CONFIG should be propagated and exposed as a user-facing parameter
