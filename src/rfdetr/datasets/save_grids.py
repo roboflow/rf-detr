@@ -96,5 +96,5 @@ class DatasetGridSaver:
             grid_path = self.output_dir / f"{self.dataset_type}_batch{batch_idx}_grid.jpg"
             plt.savefig(grid_path, dpi=200)
             plt.close()
-            
+
         logger.info(f"Saved {self.dataset_type} grids with augmented images to: {self.output_dir.resolve()}")
