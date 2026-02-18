@@ -28,6 +28,8 @@ import torchvision
 from PIL import Image
 
 import rfdetr.datasets.transforms as T
+from rfdetr.datasets.aug_config import AUG_CONFIG
+from rfdetr.datasets.transforms import AlbumentationsWrapper, ComposeAugmentations
 from rfdetr.util.logger import get_logger
 
 logger = get_logger()
@@ -84,7 +86,7 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         target = {'image_id': image_id, 'annotations': target}
         img, target = self.prepare(img, target)
         if self._transforms is not None:
-            img, target = self._transforms(img, target)
+            img, target = self._transforms(img, target)  # boxes are absolute [x_min, y_min, x_max, y_max]; conversion to normalized [cx, cy, w, h] occurs inside T.Normalize
         return img, target
 
 
@@ -165,7 +167,6 @@ def make_coco_transforms(image_set: str, resolution: int, multi_scale: bool = Fa
 
     if image_set == 'train':
         return T.Compose([
-            T.RandomHorizontalFlip(),
             T.RandomSelect(
                 T.RandomResize(scales, max_size=1333),
                 T.Compose([
@@ -174,6 +175,10 @@ def make_coco_transforms(image_set: str, resolution: int, multi_scale: bool = Fa
                     T.RandomResize(scales, max_size=1333),
                 ])
             ),
+            # TODO(next PR): AUG_CONFIG should be propagated and exposed as a user-facing parameter
+            #   (e.g. via training args) so callers can override the default augmentation pipeline
+            #   without editing aug_config.py directly.
+            ComposeAugmentations(AlbumentationsWrapper.from_config(AUG_CONFIG)),
             normalize,
         ])
 
@@ -192,7 +197,36 @@ def make_coco_transforms(image_set: str, resolution: int, multi_scale: bool = Fa
 
 
 def make_coco_transforms_square_div_64(image_set: str, resolution: int, multi_scale: bool = False, expanded_scales: bool = False, skip_random_resize: bool = False, patch_size: int = 16, num_windows: int = 4) -> T.Compose:
+    """
+    Create COCO transforms with square resizing where the output size is divisible by 64.
 
+    This function builds a torchvision-style transform pipeline for COCO images that
+    resizes them to square shapes suitable for models that require spatial dimensions
+    divisible by 64. It supports multi-scale training and optional random resizing and
+    cropping for the training split.
+
+    Args:
+        image_set: Dataset split identifier. Expected values are "train", "val",
+            "test", or "val_speed". Each split uses a slightly different transform
+            pipeline suited for training or evaluation.
+        resolution: Base square resolution (in pixels) to which images are resized.
+        multi_scale: If True, enable multi-scale training by sampling from a set of
+            square resolutions instead of a single fixed size.
+        expanded_scales: If True, expand the range of scales used during
+            multi-scale training. Passed through to ``compute_multi_scale_scales``.
+        skip_random_resize: If True and ``multi_scale`` is enabled, use only the
+            largest scale returned by ``compute_multi_scale_scales`` and skip random
+            selection among multiple scales.
+        patch_size: Patch size used by ``compute_multi_scale_scales`` when
+            determining valid square resolutions (typically related to the model's
+            patch embedding or stride).
+        num_windows: Number of windows used by ``compute_multi_scale_scales`` to
+            derive the list of candidate square resolutions.
+
+    Returns:
+        A ``T.Compose`` object containing the composed image transforms appropriate
+        for the specified ``image_set``.
+    """
     normalize = T.Compose([
         T.ToTensor(),
         T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
@@ -209,7 +243,6 @@ def make_coco_transforms_square_div_64(image_set: str, resolution: int, multi_sc
 
     if image_set == 'train':
         return T.Compose([
-            T.RandomHorizontalFlip(),
             T.RandomSelect(
                 T.SquareResize(scales),
                 T.Compose([
@@ -218,6 +251,10 @@ def make_coco_transforms_square_div_64(image_set: str, resolution: int, multi_sc
                     T.SquareResize(scales),
                 ]),
             ),
+            # TODO(next PR): AUG_CONFIG should be propagated and exposed as a user-facing parameter
+            #   (e.g. via training args) so callers can override the default augmentation pipeline
+            #   without editing aug_config.py directly.
+            ComposeAugmentations(AlbumentationsWrapper.from_config(AUG_CONFIG)),
             normalize,
         ])
 

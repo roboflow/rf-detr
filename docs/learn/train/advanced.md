@@ -208,6 +208,30 @@ Run this command on each node, changing `--node_rank` accordingly.
 
 ---
 
+## Custom Augmentations
+
+RF-DETR supports advanced data augmentations using the [Albumentations](https://albumentations.ai/) library, providing access to over 70 different image transformations optimized for object detection.
+
+### Quick Start
+
+Augmentations are configured in `src/rfdetr/augmentation_config.py`:
+
+```python
+AUG_CONFIG = {
+    "HorizontalFlip": {"p": 0.5},
+    "VerticalFlip": {"p": 0.5},
+    "Rotate": {"limit": 45, "p": 0.5},
+}
+```
+
+No code changes needed - just edit the config file and augmentations are automatically applied during training.
+
+### Learn More
+
+→ **[Complete Augmentation Guide](augmentations.md)** - Configuration examples, best practices, troubleshooting, and advanced topics.
+
+---
+
 ## Memory Optimization
 
 ### Gradient Checkpointing
