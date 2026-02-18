@@ -15,6 +15,7 @@ Use cases covered:
 import importlib.util
 import warnings
 from collections.abc import Iterator
+from typing import Literal
 from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
@@ -156,7 +157,7 @@ def test_export_does_not_change_original_training_state(tmp_path: Path) -> None:
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
 @pytest.mark.parametrize("mode", ["train", "eval"], ids=["train_mode", "eval_mode"])
-def test_segmentation_outputs_present_in_train_and_eval(mode) -> None:
+def test_segmentation_outputs_present_in_train_and_eval(mode: Literal["train", "eval"]) -> None:
     """Use case: segmentation outputs are present in both train and eval modes."""
     model = RFDETRSegNano()
 

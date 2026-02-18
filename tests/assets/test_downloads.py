@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from rfdetr.assets import ModelWeightAsset
+from rfdetr.assets import ModelWeightAsset, ModelWeights
 from rfdetr.assets.model_weights import download_pretrain_weights
 
 
@@ -173,7 +173,7 @@ class TestDownloadIntegration:
     """Integration tests for the complete download flow."""
 
     @pytest.mark.parametrize("model", list(ModelWeights), ids=[m.filename for m in ModelWeights])
-    def test_all_models_have_valid_md5_format(self, model):
+    def test_all_models_have_valid_md5_format(self, model: ModelWeightAsset) -> None:
         """Test that MD5 hashes are valid when present (prevent typos)."""
         # MD5 should be None or valid 32-char hex string
         if model.md5_hash is not None:

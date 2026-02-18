@@ -7,7 +7,7 @@
 import os
 import tempfile
 from pathlib import Path
-from typing import Iterable, Iterator, Optional
+from typing import Iterable, Iterator, Literal, Optional
 from unittest.mock import Mock, patch
 
 import pytest
@@ -131,7 +131,7 @@ class TestFileMD5Validation:
             os.unlink(temp_file)
 
     @pytest.mark.parametrize("hash_case", ["lower", "upper"], ids=["lowercase", "uppercase"])
-    def test_validate_file_md5_case_insensitive(self, hash_case):
+    def test_validate_file_md5_case_insensitive(self, hash_case: Literal["lower", "upper"]) -> None:
         """Test that MD5 validation is case-insensitive."""
         with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
             f.write("Test content")
