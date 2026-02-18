@@ -142,7 +142,7 @@ class TestFileMD5Validation:
             hash_lower = _compute_file_md5(temp_file)
             test_hash = hash_lower.upper() if hash_case == "upper" else hash_lower
 
-            # Both should validate successfully
+            # Each case variant (lower/upper) should validate successfully
             assert _validate_file_md5(temp_file, test_hash) is True
         finally:
             os.unlink(temp_file)

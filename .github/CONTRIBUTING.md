@@ -230,18 +230,21 @@ Do not write tests that loop through multiple cases internally. Instead, use `@p
 import pytest
 from rfdetr.assets.model_weights import ModelWeights
 
+
 # BAD: Multiple cases in one test - all assertions must pass for test to pass
 def test_all_models_have_valid_urls():
     for model in ModelWeights:
-        assert model.url.startswith('http')  # Hard to identify which model failed
+        assert model.url.startswith("http")  # Hard to identify which model failed
+
 
 # GOOD: Parametrized - each model is a separate test case
 @pytest.mark.parametrize("model", list(ModelWeights), ids=[m.filename for m in ModelWeights])
 def test_all_models_have_valid_urls(model):
-    assert model.url.startswith('http')  # Clear which model failed
+    assert model.url.startswith("http")  # Clear which model failed
 ```
 
 Benefits of parametrization:
+
 - Each case runs as an independent test (failures are isolated)
 - Test IDs clearly identify which case failed
 - Easier to debug and maintain
