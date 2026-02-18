@@ -15,7 +15,7 @@ You can run any of the four supported RF-DETR base models -- Nano, Small, Medium
     url = "https://media.roboflow.com/dog.jpeg"
     image = Image.open(BytesIO(requests.get(url).content))
 
-    model = get_model("rfdetr-base")
+    model = get_model("rfdetr-large")
 
     predictions = model.infer(image, confidence=0.5)[0]
 
@@ -24,8 +24,8 @@ You can run any of the four supported RF-DETR base models -- Nano, Small, Medium
     labels = [prediction.class_name for prediction in predictions.predictions]
 
     annotated_image = image.copy()
-    annotated_image = sv.BoxAnnotator(color=sv.ColorPalette.ROBOFLOW).annotate(annotated_image, detections)
-    annotated_image = sv.LabelAnnotator(color=sv.ColorPalette.ROBOFLOW).annotate(annotated_image, detections, labels)
+    annotated_image = sv.BoxAnnotator().annotate(annotated_image, detections)
+    annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
 
     sv.plot_image(annotated_image)
     ```
@@ -39,25 +39,24 @@ You can run any of the four supported RF-DETR base models -- Nano, Small, Medium
     <figcaption>RF-DETR Base predictions</figcaption>
     </figure>
 
-
 === "Run on a Video File"
 
     To run RF-DETR on a video file, use the following code:
 
     ```python
     import supervision as sv
-    from rfdetr import RFDETRBase
+    from rfdetr import RFDETRMedium
     from rfdetr.util.coco_classes import COCO_CLASSES
 
-    model = RFDETRBase()
+    model = RFDETRMedium()
+
 
     def callback(frame, index):
         detections = model.predict(frame[:, :, ::-1], threshold=0.5)
-            
+
         labels = [
             f"{COCO_CLASSES[class_id]} {confidence:.2f}"
-            for class_id, confidence
-            in zip(detections.class_id, detections.confidence)
+            for class_id, confidence in zip(detections.class_id, detections.confidence)
         ]
 
         annotated_frame = frame.copy()
@@ -65,10 +64,11 @@ You can run any of the four supported RF-DETR base models -- Nano, Small, Medium
         annotated_frame = sv.LabelAnnotator().annotate(annotated_frame, detections, labels)
         return annotated_frame
 
+
     sv.process_video(
-        source_path=<SOURCE_VIDEO_PATH>,
-        target_path=<TARGET_VIDEO_PATH>,
-        callback=callback
+        source_path="<SOURCE_VIDEO_PATH>",
+        target_path="<TARGET_VIDEO_PATH>",
+        callback=callback,
     )
     ```
 
@@ -81,10 +81,10 @@ You can run any of the four supported RF-DETR base models -- Nano, Small, Medium
     ```python
     import cv2
     import supervision as sv
-    from rfdetr import RFDETRBase
+    from rfdetr import RFDETRMedium
     from rfdetr.util.coco_classes import COCO_CLASSES
 
-    model = RFDETRBase()
+    model = RFDETRMedium()
 
     cap = cv2.VideoCapture(0)
     while True:
@@ -93,11 +93,10 @@ You can run any of the four supported RF-DETR base models -- Nano, Small, Medium
             break
 
         detections = model.predict(frame[:, :, ::-1], threshold=0.5)
-        
+
         labels = [
             f"{COCO_CLASSES[class_id]} {confidence:.2f}"
-            for class_id, confidence
-            in zip(detections.class_id, detections.confidence)
+            for class_id, confidence in zip(detections.class_id, detections.confidence)
         ]
 
         annotated_frame = frame.copy()
@@ -106,7 +105,7 @@ You can run any of the four supported RF-DETR base models -- Nano, Small, Medium
 
         cv2.imshow("Webcam", annotated_frame)
 
-        if cv2.waitKey(1) & 0xFF == ord('q'):
+        if cv2.waitKey(1) & 0xFF == ord("q"):
             break
 
     cap.release()
@@ -115,28 +114,27 @@ You can run any of the four supported RF-DETR base models -- Nano, Small, Medium
 
 === "Run on an RTSP Stream"
 
-    To run RF-DETR on an RTSP stream, use the following code:
+    To run RF-DETR on an RTSP (Real Time Streaming Protocol) stream, use the following code:
 
     ```python
     import cv2
     import supervision as sv
-    from rfdetr import RFDETRBase
+    from rfdetr import RFDETRMedium
     from rfdetr.util.coco_classes import COCO_CLASSES
 
-    model = RFDETRBase()
+    model = RFDETRMedium()
 
-    cap = cv2.VideoCapture(<RTSP_STREAM_URL>)
+    cap = cv2.VideoCapture("<RTSP_STREAM_URL>")
     while True:
         success, frame = cap.read()
         if not success:
             break
 
         detections = model.predict(frame[:, :, ::-1], threshold=0.5)
-        
+
         labels = [
             f"{COCO_CLASSES[class_id]} {confidence:.2f}"
-            for class_id, confidence
-            in zip(detections.class_id, detections.confidence)
+            for class_id, confidence in zip(detections.class_id, detections.confidence)
         ]
 
         annotated_frame = frame.copy()
@@ -145,7 +143,7 @@ You can run any of the four supported RF-DETR base models -- Nano, Small, Medium
 
         cv2.imshow("RTSP Stream", annotated_frame)
 
-        if cv2.waitKey(1) & 0xFF == ord('q'):
+        if cv2.waitKey(1) & 0xFF == ord("q"):
             break
 
     cap.release()
@@ -168,14 +166,14 @@ import io
 import requests
 import supervision as sv
 from PIL import Image
-from rfdetr import RFDETRBase
+from rfdetr import RFDETRMedium
 from rfdetr.util.coco_classes import COCO_CLASSES
 
-model = RFDETRBase()
+model = RFDETRMedium()
 
 urls = [
     "https://media.roboflow.com/notebooks/examples/dog-2.jpeg",
-    "https://media.roboflow.com/notebooks/examples/dog-3.jpeg"
+    "https://media.roboflow.com/notebooks/examples/dog-3.jpeg",
 ]
 
 images = [Image.open(io.BytesIO(requests.get(url).content)) for url in urls]
@@ -185,8 +183,7 @@ detections_list = model.predict(images, threshold=0.5)
 for image, detections in zip(images, detections_list):
     labels = [
         f"{COCO_CLASSES[class_id]} {confidence:.2f}"
-        for class_id, confidence
-        in zip(detections.class_id, detections.confidence)
+        for class_id, confidence in zip(detections.class_id, detections.confidence)
     ]
 
     annotated_image = image.copy()
