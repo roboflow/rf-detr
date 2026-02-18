@@ -28,7 +28,7 @@ import torchvision
 from PIL import Image
 
 import rfdetr.datasets.transforms as T
-from rfdetr.augmentation_config import AUG_CONFIG
+from rfdetr.datasets.aug_config import AUG_CONFIG
 from rfdetr.datasets.transforms import AlbumentationsWrapper, ComposeAugmentations
 from rfdetr.util.logger import get_logger
 
@@ -175,6 +175,9 @@ def make_coco_transforms(image_set: str, resolution: int, multi_scale: bool = Fa
                     T.SquareResize(scales),
                 ]),
             ),
+            # TODO(next PR): AUG_CONFIG should be propagated and exposed as a user-facing parameter
+            #   (e.g. via training args) so callers can override the default augmentation pipeline
+            #   without editing aug_config.py directly.
             ComposeAugmentations(AlbumentationsWrapper.from_config(AUG_CONFIG)),
             normalize,
         ])
@@ -249,6 +252,9 @@ def make_coco_transforms_square_div_64(image_set: str, resolution: int, multi_sc
                     T.SquareResize(scales),
                 ]),
             ),
+            # TODO(next PR): AUG_CONFIG should be propagated and exposed as a user-facing parameter
+            #   (e.g. via training args) so callers can override the default augmentation pipeline
+            #   without editing aug_config.py directly.
             ComposeAugmentations(AlbumentationsWrapper.from_config(AUG_CONFIG)),
             normalize,
         ])

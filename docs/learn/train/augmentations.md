@@ -216,7 +216,7 @@ To verify your augmentations are working as expected:
 ```python
 import matplotlib.pyplot as plt
 from rfdetr.datasets.coco import CocoDetection
-from rfdetr.augmentation_config import AUG_CONFIG
+from rfdetr.datasets.aug_config import AUG_CONFIG
 from rfdetr.datasets.transforms import AlbumentationsWrapper, ComposeAugmentations
 
 # Build dataset with augmentations
@@ -224,9 +224,9 @@ transforms = AlbumentationsWrapper.from_config(AUG_CONFIG)
 augmentation_pipeline = ComposeAugmentations(transforms)
 
 dataset = CocoDetection(
-    img_folder="path/to/images",
-    ann_file="path/to/annotations.json",
-    transforms=augmentation_pipeline,
+   img_folder="path/to/images",
+   ann_file="path/to/annotations.json",
+   transforms=augmentation_pipeline,
 )
 
 # Visualize
@@ -296,7 +296,7 @@ To add a custom Albumentations transform not in the default config:
 1. Import the transform in your config:
 
     ```python
-    # augmentation_config.py
+    # aug_config.py
     AUG_CONFIG = {
         "HorizontalFlip": {"p": 0.5},
         "RandomShadow": {  # Custom shadow augmentation
