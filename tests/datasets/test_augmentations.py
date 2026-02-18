@@ -13,6 +13,7 @@ from PIL import Image
 from torch.utils.data import DataLoader
 
 from rfdetr.datasets.aug_config import AUG_CONFIG
+from rfdetr.datasets.coco import make_coco_transforms, make_coco_transforms_square_div_64
 from rfdetr.datasets.transforms import (
     AlbumentationsWrapper,
     Compose,
@@ -928,3 +929,57 @@ class TestTrainingLoop:
         # Verify they can be stacked
         orig_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
         assert orig_sizes.shape == torch.Size([len(targets), 2])
+
+
+class TestMakeCocoTransformsAugConfig:
+    """Tests for aug_config propagation in make_coco_transforms / make_coco_transforms_square_div_64."""
+
+    @pytest.mark.parametrize("make_transforms", [
+        make_coco_transforms,
+        make_coco_transforms_square_div_64,
+    ])
+    def test_default_none_uses_aug_config(self, make_transforms):
+        """Omitting aug_config uses the module-level AUG_CONFIG default (HorizontalFlip)."""
+        pipeline = make_transforms("train", 640)
+        aug_step = next(t for t in pipeline.transforms if isinstance(t, ComposeAugmentations))
+
+        expected_names = list(AUG_CONFIG.keys())
+        actual_names = [
+            w.transform.transforms[0].__class__.__name__ for w in aug_step.transforms
+        ]
+        assert actual_names == expected_names
+
+    @pytest.mark.parametrize("make_transforms", [
+        make_coco_transforms,
+        make_coco_transforms_square_div_64,
+    ])
+    def test_empty_dict_disables_augmentations(self, make_transforms):
+        """aug_config={} produces a ComposeAugmentations with no transforms."""
+        pipeline = make_transforms("train", 640, aug_config={})
+        aug_step = next(t for t in pipeline.transforms if isinstance(t, ComposeAugmentations))
+
+        assert aug_step.transforms == []
+
+    @pytest.mark.parametrize("make_transforms", [
+        make_coco_transforms,
+        make_coco_transforms_square_div_64,
+    ])
+    def test_custom_dict_is_used(self, make_transforms):
+        """aug_config with a custom dict wires up exactly those transforms."""
+        custom = {"HorizontalFlip": {"p": 1.0}}
+        pipeline = make_transforms("train", 640, aug_config=custom)
+        aug_step = next(t for t in pipeline.transforms if isinstance(t, ComposeAugmentations))
+
+        assert len(aug_step.transforms) == 1
+        assert aug_step.transforms[0].transform.transforms[0].__class__.__name__ == "HorizontalFlip"
+
+    @pytest.mark.parametrize("make_transforms", [
+        make_coco_transforms,
+        make_coco_transforms_square_div_64,
+    ])
+    def test_aug_config_not_applied_on_val(self, make_transforms):
+        """aug_config is ignored for val splits — no ComposeAugmentations in the pipeline."""
+        pipeline = make_transforms("val", 640, aug_config={"HorizontalFlip": {"p": 1.0}})
+        aug_steps = [t for t in pipeline.transforms if isinstance(t, ComposeAugmentations)]
+
+        assert aug_steps == []
