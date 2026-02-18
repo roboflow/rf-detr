@@ -15,6 +15,8 @@ defaults:
 
 env:
   PYTHON_VERSION: "3.12"
+  # UV_TORCH_BACKEND only works with 'uv pip' commands, not 'uv sync'.
+  # Set to "auto" for GPU workflow (auto-detects CUDA version).
   UV_TORCH_BACKEND: "auto"
 
 concurrency:
@@ -47,7 +49,11 @@ jobs:
         run: uv sync --group tests --extra onnxexport --extra plus
 
       - name: 🧪 Run the Test
-        run: uv run --no-sync pytest tests/ -n 3 -m gpu --cov=rfdetr --cov-report=xml
+        run: |
+          uv run --no-sync pytest tests/ \
+          -m gpu \
+          -n 3 \
+          --cov=rfdetr --cov-report=xml
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5

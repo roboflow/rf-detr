@@ -18,6 +18,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
+from typing import Literal
 from unittest.mock import Mock, patch
 
 import pytest
@@ -155,7 +156,8 @@ def test_export_does_not_change_original_training_state(tmp_path: Path) -> None:
 
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
-def test_segmentation_outputs_present_in_train_and_eval() -> None:
+@pytest.mark.parametrize("mode", ["train", "eval"], ids=["train_mode", "eval_mode"])
+def test_segmentation_outputs_present_in_train_and_eval(mode: Literal["train", "eval"]) -> None:
     """Use case: segmentation outputs are present in both train and eval modes."""
     model = RFDETRSegNano()
 
@@ -166,15 +168,14 @@ def test_segmentation_outputs_present_in_train_and_eval() -> None:
     resolution = model.model.resolution
     dummy_input = torch.randn(1, 3, resolution, resolution, device="cuda")
 
-    torch_model.train()
-    with torch.no_grad():
-        train_output = torch_model(dummy_input)
+    if mode == "train":
+        torch_model.train()
+    else:
+        torch_model.eval()
 
-    torch_model.eval()
     with torch.no_grad():
-        eval_output = torch_model(dummy_input)
+        output = torch_model(dummy_input)
 
-    for output in (train_output, eval_output):
-        assert "pred_boxes" in output
-        assert "pred_logits" in output
-        assert "pred_masks" in output
+    assert "pred_boxes" in output
+    assert "pred_logits" in output
+    assert "pred_masks" in output

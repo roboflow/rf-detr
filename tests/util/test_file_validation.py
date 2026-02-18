@@ -7,7 +7,7 @@
 import os
 import tempfile
 from pathlib import Path
-from typing import Iterable, Iterator, Optional
+from typing import Iterable, Iterator, Literal, Optional
 from unittest.mock import Mock, patch
 
 import pytest
@@ -130,7 +130,8 @@ class TestFileMD5Validation:
         finally:
             os.unlink(temp_file)
 
-    def test_validate_file_md5_case_insensitive(self):
+    @pytest.mark.parametrize("hash_case", ["lower", "upper"], ids=["lowercase", "uppercase"])
+    def test_validate_file_md5_case_insensitive(self, hash_case: Literal["lower", "upper"]) -> None:
         """Test that MD5 validation is case-insensitive."""
         with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
             f.write("Test content")
@@ -139,11 +140,10 @@ class TestFileMD5Validation:
         try:
             # Get hash in lowercase
             hash_lower = _compute_file_md5(temp_file)
-            hash_upper = hash_lower.upper()
+            test_hash = hash_lower.upper() if hash_case == "upper" else hash_lower
 
-            # Both should validate successfully
-            assert _validate_file_md5(temp_file, hash_lower) is True
-            assert _validate_file_md5(temp_file, hash_upper) is True
+            # Each case variant (lower/upper) should validate successfully
+            assert _validate_file_md5(temp_file, test_hash) is True
         finally:
             os.unlink(temp_file)
 

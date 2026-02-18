@@ -116,6 +116,7 @@ pre-commit run --all-files
 - Group related tests in classes
 - Use `@pytest.mark.parametrize` with `pytest.param(..., id="name")`
 - Mark GPU/heavy tests with `@pytest.mark.gpu`
+- Avoid multiple validation cases in a single test - see [CONTRIBUTING.md](.github/CONTRIBUTING.md#avoid-multiple-validation-cases-in-a-single-test) for details
 
 **CI Information:**
 See [CI Testing](.github/CONTRIBUTING.md#ci-testing) in CONTRIBUTING.md for details on OS/Python version matrix and workflow configurations.

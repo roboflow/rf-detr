@@ -39,7 +39,8 @@ jobs:
           activate-environment: true
 
       - name: 🏗️ Install dependencies
-        run: uv sync --group docs --extra plus
+        # Install PyTorch CPU-only first (UV_TORCH_BACKEND=cpu works with 'uv pip')
+        run: uv pip install -e ".[plus]" --group docs
 
       - name: ⚙️ Configure git for github-actions
         run: |

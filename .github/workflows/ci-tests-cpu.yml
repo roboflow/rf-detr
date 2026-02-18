@@ -13,6 +13,8 @@ defaults:
     shell: bash
 
 env:
+  # UV_TORCH_BACKEND only works with 'uv pip' commands, not 'uv sync'.
+  # Used by 'uv pip install torch torchvision' step to install CPU-only PyTorch.
   UV_TORCH_BACKEND: "cpu"
 
 concurrency:
@@ -49,7 +51,8 @@ jobs:
           activate-environment: true
 
       - name: 🚀 Install Packages
-        run: uv sync --group tests
+        # Install PyTorch CPU-only first (UV_TORCH_BACKEND=cpu works with 'uv pip')
+        run: uv pip install -e . --group tests
 
       - name: 🧪 Run the Test
         run: uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --cov=rfdetr --cov-report=xml
