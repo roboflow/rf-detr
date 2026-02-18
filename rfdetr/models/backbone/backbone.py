@@ -53,7 +53,7 @@ class Backbone(BackboneBase):
                  load_dinov2_weights: bool = True,
                  patch_size: int = 14,
                  num_windows: int = 4,
-                 positional_encoding_size: int = 37,
+                 positional_encoding_size: int = 0,
                  ):
         super().__init__()
         # an example name here would be "dinov2_base" or "dinov2_registers_windowed_base"
