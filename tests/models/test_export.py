@@ -11,6 +11,9 @@ Use cases covered:
 - Export should use eval() on the deepcopy (not the original model).
 - Segmentation outputs must be present in both train/eval modes to avoid export crashes.
 - Segmentation model exports must include 'masks' in output_names (PR #402).
+- CLI export path (deploy.export.main) must include 'masks' in output_names for
+  segmentation models, call make_infer_image with the correct individual args, and
+  call export_onnx with args.output_dir as the first argument.
 """
 
 import importlib.util
@@ -29,6 +32,26 @@ import torch
 from torch.jit import TracerWarning
 
 from rfdetr import RFDETRSegNano
+
+# Temporarily inject stubs for optional onnx packages so deploy.export can be
+# imported at module level without them being installed.  The stubs are removed
+# immediately after so that importlib.util.find_spec() used in the
+# @pytest.mark.skipif decorators below still returns None for missing packages.
+_stub_deploy_onnx = types.ModuleType("rfdetr.deploy._onnx")
+_stub_deploy_onnx.OnnxOptimizer = MagicMock()
+_onnx_injected = "onnx" not in sys.modules
+_onnxsim_injected = "onnxsim" not in sys.modules
+sys.modules.setdefault("onnx", types.ModuleType("onnx"))
+sys.modules.setdefault("onnxsim", types.ModuleType("onnxsim"))
+sys.modules.setdefault("rfdetr.deploy._onnx", _stub_deploy_onnx)
+
+from rfdetr.deploy import export as _cli_export_module  # noqa: E402
+
+if _onnx_injected:
+    del sys.modules["onnx"]
+if _onnxsim_injected:
+    del sys.modules["onnxsim"]
+
 
 
 @contextmanager
@@ -302,3 +325,210 @@ def test_export_output_names(
         "Before PR #402, segmentation models produced ['dets', 'labels'] "
         "instead of ['dets', 'labels', 'masks']."
     )
+
+
+# --------------------------------------------------------------------------
+# Tests for the CLI export path: rfdetr.deploy.export.main()
+# --------------------------------------------------------------------------
+
+class TestCliExportMain:
+    """
+    Unit tests for deploy.export.main() (CLI export path).
+
+    Three bugs were present before the fix:
+    1. output_names omitted 'masks' for segmentation models.
+    2. make_infer_image received the whole args Namespace instead of individual fields.
+    3. export_onnx received model/args in the wrong positions (output_dir was missing).
+    """
+
+    @pytest.fixture
+    def output_dir(self, tmp_path: Path) -> str:
+        return str(tmp_path)
+
+    @staticmethod
+    def _make_args(
+        *,
+        backbone_only: bool = False,
+        segmentation_head: bool = False,
+        output_dir: str,
+        infer_dir: str | None = None,
+        shape: tuple[int, int] = (640, 640),
+        batch_size: int = 1,
+        verbose: bool = False,
+        opset_version: int = 17,
+        simplify: bool = False,
+        tensorrt: bool = False,
+    ) -> types.SimpleNamespace:
+        return types.SimpleNamespace(
+            device="cpu",
+            seed=42,
+            layer_norm=False,
+            resume=None,
+            backbone_only=backbone_only,
+            segmentation_head=segmentation_head,
+            output_dir=output_dir,
+            infer_dir=infer_dir,
+            shape=shape,
+            batch_size=batch_size,
+            verbose=verbose,
+            opset_version=opset_version,
+            simplify=simplify,
+            tensorrt=tensorrt,
+        )
+
+    @staticmethod
+    def _run(args: types.SimpleNamespace) -> tuple[dict, dict]:
+        """
+        Run deploy.export.main(args) with all heavy dependencies mocked.
+
+        Stubs out build_model, make_infer_image, and export_onnx, and injects
+        mock onnx/onnxsim modules so the export module can be imported even when
+        those optional packages are not installed.
+
+        Returns (make_infer_image_captured, export_onnx_captured).
+        """
+        make_infer_image_captured: dict = {}
+        export_onnx_captured: dict = {}
+
+        mock_model = MagicMock()
+        # parameters() must return an iterable of real objects so sum(p.numel()) works
+        mock_model.parameters.return_value = []
+        mock_model.backbone.parameters.return_value = []
+        mock_model.backbone.__getitem__.return_value.projector.parameters.return_value = []
+        mock_model.backbone.__getitem__.return_value.encoder.parameters.return_value = []
+        mock_model.transformer.parameters.return_value = []
+        mock_model.to.return_value = mock_model
+        mock_model.cpu.return_value = mock_model
+        mock_model.eval.return_value = mock_model
+
+        if args.backbone_only:
+            mock_model.return_value = torch.zeros(1, 512, 20, 20)
+        elif args.segmentation_head:
+            mock_model.return_value = {
+                "pred_boxes": torch.zeros(1, 100, 4),
+                "pred_logits": torch.zeros(1, 100, 90),
+                "pred_masks": torch.zeros(1, 100, 27, 27),
+            }
+        else:
+            mock_model.return_value = {
+                "pred_boxes": torch.zeros(1, 300, 4),
+                "pred_logits": torch.zeros(1, 300, 90),
+            }
+
+        mock_tensor = MagicMock()
+        mock_tensor.to.return_value = mock_tensor
+        mock_tensor.cpu.return_value = mock_tensor
+
+        def fake_make_infer_image(*pos_args, **kw_args):
+            make_infer_image_captured["positional"] = pos_args
+            make_infer_image_captured["keyword"] = kw_args
+            return mock_tensor
+
+        def fake_export_onnx(output_dir, model, input_names, input_tensors, output_names, dynamic_axes, **kwargs):
+            export_onnx_captured["output_dir"] = output_dir
+            export_onnx_captured["model"] = model
+            export_onnx_captured["output_names"] = output_names
+            export_onnx_captured["kwargs"] = kwargs
+            return str(args.output_dir) + "/inference_model.onnx"
+
+        with (
+            patch.object(_cli_export_module, "build_model", return_value=(mock_model, MagicMock(), MagicMock())),
+            patch.object(_cli_export_module, "make_infer_image", side_effect=fake_make_infer_image),
+            patch.object(_cli_export_module, "export_onnx", side_effect=fake_export_onnx),
+            patch.object(_cli_export_module, "get_rank", return_value=0),
+        ):
+            _cli_export_module.main(args)
+
+        return make_infer_image_captured, export_onnx_captured
+
+    @pytest.mark.parametrize(
+        "segmentation_head, backbone_only, expected_output_names",
+        [
+            pytest.param(True,  False, ["dets", "labels", "masks"], id="segmentation"),
+            pytest.param(False, False, ["dets", "labels"],          id="detection"),
+            pytest.param(False, True,  ["features"],                id="backbone_only"),
+        ],
+    )
+    def test_output_names(
+        self,
+        output_dir: str,
+        segmentation_head: bool,
+        backbone_only: bool,
+        expected_output_names: list[str],
+    ) -> None:
+        """
+        export_onnx must receive the correct output_names for every model type.
+
+        Before the fix, deploy/export.py line 253 used:
+
+            output_names = ['features'] if args.backbone_only else ['dets', 'labels']
+
+        which always omitted 'masks' for segmentation models.
+        """
+        args = self._make_args(
+            backbone_only=backbone_only,
+            segmentation_head=segmentation_head,
+            output_dir=output_dir,
+        )
+        _, export_onnx_captured = self._run(args)
+
+        actual = export_onnx_captured.get("output_names")
+        assert actual == expected_output_names, (
+            f"expected output_names={expected_output_names}, got {actual!r}"
+        )
+
+    def test_make_infer_image_receives_individual_fields(self, output_dir: str) -> None:
+        """
+        make_infer_image must be called with (infer_dir, shape, batch_size, device),
+        not with the whole args Namespace.
+
+        Before the fix, deploy/export.py line 251 used:
+
+            input_tensors = make_infer_image(args, device)
+        """
+        shape = (640, 640)
+        batch_size = 2
+        infer_dir = None
+        args = self._make_args(
+            output_dir=output_dir,
+            infer_dir=infer_dir,
+            shape=shape,
+            batch_size=batch_size,
+        )
+        make_infer_image_captured, _ = self._run(args)
+
+        pos = make_infer_image_captured.get("positional", ())
+        assert pos[:3] == (infer_dir, shape, batch_size), (
+            f"expected (infer_dir, shape, batch_size), got {pos[:3]!r}"
+        )
+
+    def test_export_onnx_receives_output_dir_and_kwargs(self, output_dir: str) -> None:
+        """
+        export_onnx must be called as export_onnx(output_dir, model, ...) with
+        backbone_only, verbose, and opset_version forwarded as keyword args.
+
+        Before the fix, deploy/export.py line 294 used:
+
+            export_onnx(model, args, input_names, input_tensors, output_names, dynamic_axes)
+
+        which swapped output_dir/model and dropped all keyword args.
+        """
+        args = self._make_args(
+            output_dir=output_dir,
+            verbose=True,
+            opset_version=11,
+        )
+        _, export_onnx_captured = self._run(args)
+
+        assert "output_dir" in export_onnx_captured, "export_onnx was not called"
+        assert export_onnx_captured["output_dir"] == output_dir, (
+            f"expected output_dir={output_dir!r}, got {export_onnx_captured['output_dir']!r}"
+        )
+        kwargs = export_onnx_captured.get("kwargs", {})
+        assert kwargs.get("verbose") == args.verbose, (
+            f"expected verbose={args.verbose!r}, got {kwargs.get('verbose')!r}"
+        )
+        assert kwargs.get("opset_version") == args.opset_version, (
+            f"expected opset_version={args.opset_version!r}, got {kwargs.get('opset_version')!r}"
+        )
+        assert "backbone_only" in kwargs, "backbone_only kwarg missing from export_onnx call"
