@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from rfdetr.assets import ModelWeightAsset
+from rfdetr.assets import ModelWeightAsset, ModelWeights
 from rfdetr.assets.model_weights import download_pretrain_weights
 
 
@@ -172,17 +172,15 @@ class TestDownloadPretrainWeights:
 class TestDownloadIntegration:
     """Integration tests for the complete download flow."""
 
-    def test_all_models_have_valid_md5_format(self):
+    @pytest.mark.parametrize("model", list(ModelWeights), ids=[m.filename for m in ModelWeights])
+    def test_all_models_have_valid_md5_format(self, model: ModelWeightAsset) -> None:
         """Test that MD5 hashes are valid when present (prevent typos)."""
-        from rfdetr.assets.model_weights import ModelWeights
-
-        for model in ModelWeights:
-            # MD5 should be None or valid 32-char hex string
-            if model.md5_hash is not None:
-                assert len(model.md5_hash) == 32, \
-                    f"{model.filename} has invalid MD5 length: {len(model.md5_hash)}"
-                assert all(c in '0123456789abcdef' for c in model.md5_hash.lower()), \
-                    f"{model.filename} has invalid MD5 characters"
+        # MD5 should be None or valid 32-char hex string
+        if model.md5_hash is not None:
+            assert len(model.md5_hash) == 32, \
+                f"{model.filename} has invalid MD5 length: {len(model.md5_hash)}"
+            assert all(c in '0123456789abcdef' for c in model.md5_hash.lower()), \
+                f"{model.filename} has invalid MD5 characters"
 
     def test_from_filename_bidirectional_lookup(self):
         """Test that from_filename correctly maps back to enum values."""

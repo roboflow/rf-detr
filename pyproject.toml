@@ -48,6 +48,7 @@ dependencies = [
     "supervision",
     "matplotlib",
     "roboflow",
+    "albumentations>=1.0.0,<2.0.0"
 ]
 
 [project.optional-dependencies]

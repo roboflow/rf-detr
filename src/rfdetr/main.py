@@ -349,6 +349,11 @@ class Model:
                 args.cutoff_epoch, args.drop_mode, args.drop_schedule)
             logger.info("Min DP = %.7f, Max DP = %.7f", min(schedules['dp']), max(schedules['dp']))
 
+        if args.output_dir and is_main_process() and getattr(args, "save_dataset_grids", False):
+            from rfdetr.datasets.save_grids import DatasetGridSaver
+
+            DatasetGridSaver(data_loader_train, output_dir, max_batches=3, dataset_type='train').save_grid()
+            DatasetGridSaver(data_loader_val, output_dir, max_batches=3, dataset_type='val').save_grid()
         logger.info("Start training")
         start_time = time.time()
         best_map_holder = BestMetricHolder(use_ema=args.use_ema)
@@ -356,6 +361,7 @@ class Model:
         best_map_50 = 0
         best_map_ema_5095 = 0
         best_map_ema_50 = 0
+
         for epoch in range(args.start_epoch, args.epochs):
             epoch_start_time = time.time()
             if args.distributed:
