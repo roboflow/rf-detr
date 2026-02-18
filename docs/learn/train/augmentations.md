@@ -224,9 +224,9 @@ transforms = AlbumentationsWrapper.from_config(AUG_CONFIG)
 augmentation_pipeline = ComposeAugmentations(transforms)
 
 dataset = CocoDetection(
-   img_folder="path/to/images",
-   ann_file="path/to/annotations.json",
-   transforms=augmentation_pipeline,
+    img_folder="path/to/images",
+    ann_file="path/to/annotations.json",
+    transforms=augmentation_pipeline,
 )
 
 # Visualize
