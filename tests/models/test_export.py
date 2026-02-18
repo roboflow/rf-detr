@@ -15,10 +15,10 @@ Use cases covered:
 import importlib.util
 import warnings
 from collections.abc import Iterator
-from typing import Literal
 from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
+from typing import Literal
 from unittest.mock import Mock, patch
 
 import pytest
