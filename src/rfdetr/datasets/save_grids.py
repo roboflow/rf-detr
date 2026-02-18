@@ -14,20 +14,17 @@ from torch.utils.data import DataLoader
 
 from rfdetr.util.box_ops import box_cxcywh_to_xyxy
 from rfdetr.util.logger import get_logger
-import torchvision.transforms as T
 
 logger = get_logger()
 
 class DatasetGridSaver:
-    """
-    Utility class for saving images in grid. Allows visualization of the effects
-    of augmentation on training and validation datasets on 3x3 grid of images
+    """Utility for saving 3x3 image grids to visualize augmentation effects.
 
     Args:
-        data_loader (DataLoader) : Dataloader of the dataset to display samples
-        output_dir (Path) : Directory in which the images will be saved
-        max_batches (int) : Number of batches to get the samples from
-        dataset_type (str) : Type of dataset. 'train', 'val'
+        data_loader: Dataloader of the dataset to sample images from.
+        output_dir: Directory where grid images will be saved.
+        max_batches: Number of batches to draw samples from.
+        dataset_type: Dataset split label, e.g. ``'train'`` or ``'val'``.
     """
     def __init__(self, data_loader : DataLoader, output_dir: Path, max_batches : int = 3, dataset_type : str = 'train'):
         self.data_loader = data_loader
@@ -37,9 +34,11 @@ class DatasetGridSaver:
         # Create the output_dir if it doesn't exist
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-    def save_grid(self):
-        """
-        Create and save the grid(s) inside output_dir
+    def save_grid(self) -> None:
+        """Create and save image grids to ``output_dir``.
+
+        Each grid is a 3x3 JPEG containing up to 9 images from a single batch,
+        with bounding boxes and class labels drawn on top.
         """
         # Define the inverse transform to de-normalize images
         inv_normalize = T.Normalize(
@@ -61,7 +60,6 @@ class DatasetGridSaver:
                     break
 
                 resized_size = single_target['size']
-
                 # Convert image tensor to numpy array for processing
                 de_normalized_img = inv_normalize(single_image)
                 img_numpy = (np.array(de_normalized_img).transpose(1, 2, 0)).copy()
@@ -69,17 +67,13 @@ class DatasetGridSaver:
                 # Draw bounding boxes and labels on the image
                 for (box, label) in zip(single_target['boxes'], single_target['labels']):
                     int_label = int(label)
-
                     # Convert bounding box from cx,cy,wh format to xyxy
                     b = box_cxcywh_to_xyxy(box)
-
                     # Scale bounding box coordinates to match the resized image
                     x_min, y_min, x_max, y_max = int(b[0] * resized_size[1]), int(b[1] * resized_size[0]),\
                                                 int(b[2] * resized_size[1]), int(b[3] * resized_size[0])
-
                     # Draw the bounding box on the image
                     cv2.rectangle(img_numpy, (x_min, y_min), (x_max, y_max), (0, 255, 0), 2)
-
                     # Add label text near the bounding box
                     text_size = cv2.getTextSize(str(int_label), cv2.FONT_HERSHEY_SIMPLEX, 1, 2)[0]
                     text_x, text_y = x_min, y_min - 10
