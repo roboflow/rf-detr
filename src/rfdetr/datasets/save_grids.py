@@ -14,7 +14,6 @@ from torch.utils.data import DataLoader
 
 from rfdetr.util.box_ops import box_cxcywh_to_xyxy
 from rfdetr.util.logger import get_logger
-import torchvision.transforms as T
 
 logger = get_logger()
 
@@ -102,5 +101,5 @@ class DatasetGridSaver:
             grid_path = self.output_dir / f"{self.dataset_type}_batch{batch_idx}_grid.jpg"
             plt.savefig(grid_path, dpi=200)
             plt.close()
-            
+
         logger.info(f"Saved {self.dataset_type} grids with augmented images to: {self.output_dir.resolve()}")
