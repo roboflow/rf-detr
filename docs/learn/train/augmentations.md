@@ -32,12 +32,12 @@ To disable augmentations: `aug_config={}`. Omitting it uses the default (horizon
 
 ## Built-in Presets
 
-| Preset         | Best for                            |
-| -------------- | ----------------------------------- |
-| `AUG_CONSERVATIVE` | Small datasets (under 500 images)   |
-| `AUG_AGGRESSIVE`   | Large datasets (2000+ images)       |
-| `AUG_AERIAL`       | Satellite / overhead imagery        |
-| `AUG_INDUSTRIAL`   | Manufacturing / inspection data     |
+| Preset             | Best for                          |
+| ------------------ | --------------------------------- |
+| `AUG_CONSERVATIVE` | Small datasets (under 500 images) |
+| `AUG_AGGRESSIVE`   | Large datasets (2000+ images)     |
+| `AUG_AERIAL`       | Satellite / overhead imagery      |
+| `AUG_INDUSTRIAL`   | Manufacturing / inspection data   |
 
 All presets are plain dicts — inspect or extend them before passing:
 
@@ -50,8 +50,8 @@ model.train(dataset_dir="...", aug_config=my_config)
 
 ### Recommendations by Dataset Size
 
-| Dataset Size     | Recommended preset                                          |
-| ---------------- | ----------------------------------------------------------- |
+| Dataset Size     | Recommended preset                                              |
+| ---------------- | --------------------------------------------------------------- |
 | Under 500 images | `AUG_CONSERVATIVE` — flip + mild brightness/contrast            |
 | 500–2000 images  | Default or `AUG_CONSERVATIVE` with a few extra transforms added |
 | 2000+ images     | `AUG_AGGRESSIVE` — rotations, affine, color jitter              |
