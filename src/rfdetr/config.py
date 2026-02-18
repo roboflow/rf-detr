@@ -329,7 +329,7 @@ class TrainConfig(BaseModel):
 
 
 class SegmentationTrainConfig(TrainConfig):
-    num_select: int = 200
+    num_select: Optional[int] = None
     mask_point_sample_ratio: int = 16
     mask_ce_loss_coef: float = 5.0
     mask_dice_loss_coef: float = 5.0
