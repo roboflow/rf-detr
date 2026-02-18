@@ -19,6 +19,7 @@ Running this file will create and save visualizations of each scenario in a loca
 import math
 from pathlib import Path
 
+import numpy as np
 import pytest
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
@@ -529,3 +530,53 @@ def test_intermediate_scenario(intermediate_scenario_cocoeval):
     assert per_class_metrics["class_2"]["precision"] == pytest.approx(0.5, abs=0.01)
     assert per_class_metrics["class_2"]["recall"] == pytest.approx(1.0, abs=0.01)
     assert per_class_metrics["class_2"]["f1_score"] == pytest.approx(0.667, abs=0.01)
+
+
+@pytest.fixture
+def minimal_coco_gt_and_dt():
+    """Build a minimal single-class COCO ground-truth and detections pair."""
+    image_id = 1
+    images = [{"id": image_id, "width": 5 * BOX_SPACING, "height": ROW_SPACING}]
+    categories = [{"id": 1, "name": "class_1"}]
+
+    annotations = []
+    predictions = []
+    ann_id = 1
+
+    for i in range(5):
+        gt_box = [float(i * BOX_SPACING), 0.0, float(BOX_SIZE), float(BOX_SIZE)]
+        pred_box = _make_contained_pred_box(gt_box, target_iou=0.96)
+        annotations.append(_create_gt_annotation(ann_id, image_id, 1, gt_box))
+        predictions.append(_create_prediction(image_id, 1, pred_box, score=1.0))
+        ann_id += 1
+
+    coco_gt = _create_coco_gt(images, annotations, categories)
+    coco_dt = coco_gt.loadRes(predictions)
+    return coco_gt, coco_dt
+
+
+def test_coco_extended_metrics_does_not_crash_without_iou50_threshold(
+    minimal_coco_gt_and_dt,
+):
+    """
+    Regression test for the buggy use of np.argwhere in coco_extended_metrics.
+
+    np.argwhere(condition) returns a 2D array of shape (N, 1). Calling .item()
+    on it raises ValueError when N != 1. When params.iouThrs does not include
+    0.50, np.argwhere returns an empty (0, 1) array and the subsequent .item()
+    call raises:
+
+        ValueError: can only convert an array of size 1 to a Python scalar
+    """
+    coco_gt, coco_dt = minimal_coco_gt_and_dt
+    coco_eval = COCOeval(coco_gt, coco_dt, iouType="bbox")
+
+    # Use a threshold range that does NOT include 0.50 to trigger the crash.
+    coco_eval.params.iouThrs = np.array([0.55, 0.65, 0.75, 0.85, 0.95])
+
+    coco_eval.evaluate()
+    coco_eval.accumulate()
+    coco_eval.summarize()
+
+    results = coco_extended_metrics(coco_eval)
+    assert results is not None

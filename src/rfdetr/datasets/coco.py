@@ -38,7 +38,9 @@ logger = get_logger()
 def is_valid_coco_dataset(dataset_dir: str) -> bool:
     return (Path(dataset_dir) / "train" / "_annotations.coco.json").exists()
 
-def compute_multi_scale_scales(resolution: int, expanded_scales: bool = False, patch_size: int = 16, num_windows: int = 4) -> List[int]:
+def compute_multi_scale_scales(
+        resolution: int, expanded_scales: bool = False, patch_size: int = 16, num_windows: int = 4,
+) -> List[int]:
     # round to the nearest multiple of 4*patch_size to enable both patching and windowing
     base_num_patches_per_window = resolution // (patch_size * num_windows)
     offsets = [-3, -2, -1, 0, 1, 2, 3, 4] if not expanded_scales else [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5]
@@ -74,7 +76,13 @@ def convert_coco_poly_to_mask(segmentations: List[Any], height: int, width: int)
 
 
 class CocoDetection(torchvision.datasets.CocoDetection):
-    def __init__(self, img_folder: Union[str, Path], ann_file: Union[str, Path], transforms: Optional[Any], include_masks: bool = False) -> None:
+    def __init__(
+            self,
+            img_folder: Union[str, Path],
+            ann_file: Union[str, Path],
+            transforms: Optional[Any],
+            include_masks: bool = False,
+    ) -> None:
         super(CocoDetection, self).__init__(img_folder, ann_file)
         self._transforms = transforms
         self.include_masks = include_masks
@@ -150,7 +158,16 @@ class ConvertCoco(object):
         return image, target
 
 
-def make_coco_transforms(image_set: str, resolution: int, multi_scale: bool = False, expanded_scales: bool = False, skip_random_resize: bool = False, patch_size: int = 16, num_windows: int = 4) -> T.Compose:
+def make_coco_transforms(
+        image_set: str,
+        resolution: int,
+        multi_scale: bool = False,
+        expanded_scales: bool = False,
+        skip_random_resize: bool = False,
+        patch_size: int = 16,
+        num_windows: int = 4,
+        aug_config: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> T.Compose:
 
     normalize = T.Compose([
         T.ToTensor(),
@@ -166,6 +183,7 @@ def make_coco_transforms(image_set: str, resolution: int, multi_scale: bool = Fa
         logger.info(f"Using multi-scale training with scales: {scales}")
 
     if image_set == 'train':
+        resolved_aug_config = aug_config if aug_config is not None else AUG_CONFIG
         return T.Compose([
             T.RandomSelect(
                 T.RandomResize(scales, max_size=1333),
@@ -175,10 +193,7 @@ def make_coco_transforms(image_set: str, resolution: int, multi_scale: bool = Fa
                     T.RandomResize(scales, max_size=1333),
                 ])
             ),
-            # TODO(next PR): AUG_CONFIG should be propagated and exposed as a user-facing parameter
-            #   (e.g. via training args) so callers can override the default augmentation pipeline
-            #   without editing aug_config.py directly.
-            ComposeAugmentations(AlbumentationsWrapper.from_config(AUG_CONFIG)),
+            ComposeAugmentations(AlbumentationsWrapper.from_config(resolved_aug_config)),
             normalize,
         ])
 
@@ -196,7 +211,16 @@ def make_coco_transforms(image_set: str, resolution: int, multi_scale: bool = Fa
     raise ValueError(f'unknown {image_set}')
 
 
-def make_coco_transforms_square_div_64(image_set: str, resolution: int, multi_scale: bool = False, expanded_scales: bool = False, skip_random_resize: bool = False, patch_size: int = 16, num_windows: int = 4) -> T.Compose:
+def make_coco_transforms_square_div_64(
+        image_set: str,
+        resolution: int,
+        multi_scale: bool = False,
+        expanded_scales: bool = False,
+        skip_random_resize: bool = False,
+        patch_size: int = 16,
+        num_windows: int = 4,
+        aug_config=None,
+) -> T.Compose:
     """
     Create COCO transforms with square resizing where the output size is divisible by 64.
 
@@ -222,6 +246,9 @@ def make_coco_transforms_square_div_64(image_set: str, resolution: int, multi_sc
             patch embedding or stride).
         num_windows: Number of windows used by ``compute_multi_scale_scales`` to
             derive the list of candidate square resolutions.
+        aug_config: Augmentation configuration dictionary compatible with
+            :class:`~rfdetr.datasets.transforms.AlbumentationsWrapper`. If ``None``,
+            the default :data:`~rfdetr.datasets.aug_config.AUG_CONFIG` is used.
 
     Returns:
         A ``T.Compose`` object containing the composed image transforms appropriate
@@ -242,6 +269,7 @@ def make_coco_transforms_square_div_64(image_set: str, resolution: int, multi_sc
         logger.info(f"Using multi-scale training with square resize and scales: {scales}")
 
     if image_set == 'train':
+        resolved_aug_config = aug_config if aug_config is not None else AUG_CONFIG
         return T.Compose([
             T.RandomSelect(
                 T.SquareResize(scales),
@@ -251,10 +279,7 @@ def make_coco_transforms_square_div_64(image_set: str, resolution: int, multi_sc
                     T.SquareResize(scales),
                 ]),
             ),
-            # TODO(next PR): AUG_CONFIG should be propagated and exposed as a user-facing parameter
-            #   (e.g. via training args) so callers can override the default augmentation pipeline
-            #   without editing aug_config.py directly.
-            ComposeAugmentations(AlbumentationsWrapper.from_config(AUG_CONFIG)),
+            ComposeAugmentations(AlbumentationsWrapper.from_config(resolved_aug_config)),
             normalize,
         ])
 
@@ -293,6 +318,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
 
     square_resize_div_64 = getattr(args, 'square_resize_div_64', False)
     include_masks = getattr(args, "segmentation_head", False)
+    aug_config = getattr(args, 'aug_config', None)
 
     if square_resize_div_64:
         logger.info(f"Building COCO {image_set} dataset with square resize at resolution {resolution}")
@@ -303,7 +329,8 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             expanded_scales=args.expanded_scales,
             skip_random_resize=not args.do_random_resize_via_padding,
             patch_size=args.patch_size,
-            num_windows=args.num_windows
+            num_windows=args.num_windows,
+            aug_config=aug_config,
         ), include_masks=include_masks)
     else:
         logger.info(f"Building COCO {image_set} dataset at resolution {resolution}")
@@ -314,7 +341,8 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             expanded_scales=args.expanded_scales,
             skip_random_resize=not args.do_random_resize_via_padding,
             patch_size=args.patch_size,
-            num_windows=args.num_windows
+            num_windows=args.num_windows,
+            aug_config=aug_config,
         ), include_masks=include_masks)
     return dataset
 
@@ -343,6 +371,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
     do_random_resize_via_padding = getattr(args, "do_random_resize_via_padding", False)
     patch_size = getattr(args, "patch_size", 16)
     num_windows = getattr(args, "num_windows", 4)
+    aug_config = getattr(args, "aug_config", None)
 
     if square_resize_div_64:
         logger.info(f"Building Roboflow {image_set} dataset with square resize at resolution {resolution}")
@@ -353,7 +382,8 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
             expanded_scales=expanded_scales,
             skip_random_resize=not do_random_resize_via_padding,
             patch_size=patch_size,
-            num_windows=num_windows
+            num_windows=num_windows,
+            aug_config=aug_config,
         ), include_masks=include_masks)
     else:
         logger.info(f"Building Roboflow {image_set} dataset at resolution {resolution}")
@@ -364,6 +394,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
             expanded_scales=expanded_scales,
             skip_random_resize=not do_random_resize_via_padding,
             patch_size=patch_size,
-            num_windows=num_windows
+            num_windows=num_windows,
+            aug_config=aug_config,
         ), include_masks=include_masks)
     return dataset
