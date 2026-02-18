@@ -43,6 +43,7 @@ from rfdetr.assets.model_weights import (
     validate_pretrain_weights,
 )
 from rfdetr.datasets import build_dataset, get_coco_api_from_dataset
+from rfdetr.datasets.save_grids import DatasetGridSaver
 from rfdetr.engine import evaluate, train_one_epoch
 from rfdetr.models import PostProcess, build_criterion_and_postprocessors, build_model
 from rfdetr.util.benchmark import benchmark
@@ -50,9 +51,8 @@ from rfdetr.util.drop_scheduler import drop_scheduler
 from rfdetr.util.get_param_dicts import get_param_dict
 from rfdetr.util.logger import get_logger
 from rfdetr.util.misc import get_rank, get_world_size, is_main_process, save_on_master
+from rfdetr.util.utils import BestMetricHolder, ModelEma, clean_state_dict
 from rfdetr.utils.decorators import _DeprecatedDict
-from rfdetr.util.utils import ModelEma, BestMetricHolder, clean_state_dict
-from rfdetr.datasets.save_grids import DatasetGridSaver
 
 if str(os.environ.get("USE_FILE_SYSTEM_SHARING", "False")).lower() in ["true", "1"]:
     import torch.multiprocessing
