@@ -1,173 +1,64 @@
-# Custom Augmentations with Albumentations
+# Augmentations
 
-RF-DETR supports custom data augmentations using the [Albumentations](https://albumentations.ai/) library, providing access to over 70 different image transformations optimized for object detection tasks.
+RF-DETR supports custom data augmentations via [Albumentations](https://albumentations.ai/), with automatic bounding box and mask handling for geometric transforms.
 
-## Why Albumentations?
+## Quick Start
 
-- **Detection & Segmentation Support:** Geometric transforms automatically update bounding boxes and segmentation masks
-- **Performance:** Highly optimized, faster than torchvision transforms
-- **Flexibility:** Mix and match over 70 different augmentations
-- **Battle-Tested:** Used in winning solutions of many Kaggle competitions
-
-## Setup
-
-Albumentations is installed automatically with RF-DETR:
-
-```bash
-pip install rfdetr
-```
-
-## Basic Usage
-
-Augmentations are configured via the `AUG_CONFIG` dictionary in `src/rfdetr/augmentation_config.py`:
+Pass `aug_config` to your training call. Import one of the built-in presets:
 
 ```python
-AUG_CONFIG = {
-    "HorizontalFlip": {"p": 0.5},
-    "VerticalFlip": {"p": 0.5},
-    "Rotate": {"limit": (90, 90), "p": 0.5},
-}
+from rfdetr import RFDETRBase
+from rfdetr.datasets.aug_config import AUG_CONSERVATIVE, AUG_AGGRESSIVE, AUG_AERIAL, AUG_INDUSTRIAL
+
+model = RFDETRBase()
+model.train(dataset_dir="path/to/dataset", epochs=100, aug_config=AUG_CONSERVATIVE)
 ```
 
-Simply enable the augmentations you want by uncommenting them or adding new ones. The probability `p` controls how often each transform is applied.
-
-## Available Augmentations
-
-### Geometric Transforms
-
-These transforms automatically update bounding boxes and segmentation masks:
-
-- `HorizontalFlip` - Flip image horizontally
-- `VerticalFlip` - Flip image vertically
-- `Rotate` - Rotate image by random angle
-- `Affine` - Apply affine transformations (scale, translate, rotate, shear)
-- `RandomCrop` - Crop random region
-- `ShiftScaleRotate` - Combination of shifting, scaling, and rotating
-- `Perspective` - Apply perspective transformation
-- `ElasticTransform` - Apply elastic deformation
-- `GridDistortion` - Apply grid distortion
-- `OpticalDistortion` - Apply optical distortion
-
-### Pixel-Level Transforms
-
-These transforms preserve bounding boxes and masks (no coordinate changes):
-
-- `ColorJitter` - Randomly change brightness, contrast, saturation
-- `GaussianBlur` - Apply Gaussian blur
-- `GaussNoise` - Add Gaussian noise
-- `CLAHE` - Contrast Limited Adaptive Histogram Equalization
-- `RandomBrightnessContrast` - Adjust brightness and contrast
-- `HueSaturationValue` - Randomly change hue, saturation, and value
-- `ChannelShuffle` - Randomly shuffle image channels
-- `CoarseDropout` - Apply coarse dropout (cutout)
-
-## Configuration Examples
-
-### Conservative Augmentations
-
-Recommended for small datasets (under 500 images):
+Or pass a custom dict directly — keys are Albumentations transform names:
 
 ```python
-AUG_CONFIG = {
-    "HorizontalFlip": {"p": 0.5},
-    "RandomBrightnessContrast": {
-        "brightness_limit": 0.1,
-        "contrast_limit": 0.1,
-        "p": 0.3,
+model.train(
+    dataset_dir="path/to/dataset",
+    epochs=100,
+    aug_config={
+        "HorizontalFlip": {"p": 0.5},
+        "Rotate": {"limit": 15, "p": 0.3},
+        "GaussianBlur": {"p": 0.2},
     },
-}
+)
 ```
 
-### Aggressive Augmentations
+To disable augmentations: `aug_config={}`. Omitting it uses the default (horizontal flip at 50%).
 
-For larger datasets (2000+ images):
+## Built-in Presets
+
+| Preset             | Best for                          |
+| ------------------ | --------------------------------- |
+| `AUG_CONSERVATIVE` | Small datasets (under 500 images) |
+| `AUG_AGGRESSIVE`   | Large datasets (2000+ images)     |
+| `AUG_AERIAL`       | Satellite / overhead imagery      |
+| `AUG_INDUSTRIAL`   | Manufacturing / inspection data   |
+
+All presets are plain dicts — inspect or extend them before passing:
 
 ```python
-AUG_CONFIG = {
-    "HorizontalFlip": {"p": 0.5},
-    "VerticalFlip": {"p": 0.5},
-    "Rotate": {"limit": 45, "p": 0.5},
-    "Affine": {
-        "scale": (0.8, 1.2),
-        "translate_percent": (0.1, 0.1),
-        "rotate": (-15, 15),
-        "shear": (-5, 5),
-        "p": 0.5,
-    },
-    "ColorJitter": {
-        "brightness": 0.2,
-        "contrast": 0.2,
-        "saturation": 0.2,
-        "hue": 0.1,
-        "p": 0.5,
-    },
-}
+from rfdetr.datasets.aug_config import AUG_AGGRESSIVE
+
+my_config = {**AUG_AGGRESSIVE, "VerticalFlip": {"p": 0.1}}
+model.train(dataset_dir="...", aug_config=my_config)
 ```
 
-### Aerial Imagery / Satellite Datasets
+### Recommendations by Dataset Size
 
-```python
-AUG_CONFIG = {
-    "HorizontalFlip": {"p": 0.5},
-    "VerticalFlip": {"p": 0.5},  # Important for overhead views
-    "Rotate": {"limit": (90, 90), "p": 0.5},  # 90° rotations common
-    "RandomBrightnessContrast": {
-        "brightness_limit": 0.15,
-        "contrast_limit": 0.15,
-        "p": 0.4,
-    },
-}
-```
+| Dataset Size     | Recommended preset                                              |
+| ---------------- | --------------------------------------------------------------- |
+| Under 500 images | `AUG_CONSERVATIVE` — flip + mild brightness/contrast            |
+| 500–2000 images  | Default or `AUG_CONSERVATIVE` with a few extra transforms added |
+| 2000+ images     | `AUG_AGGRESSIVE` — rotations, affine, color jitter              |
 
-### Industrial / Manufacturing
+## Geometric vs. Pixel-Level Transforms
 
-```python
-AUG_CONFIG = {
-    "HorizontalFlip": {"p": 0.3},  # Less common in manufacturing
-    "RandomBrightnessContrast": {
-        "brightness_limit": 0.2,
-        "contrast_limit": 0.2,
-        "p": 0.5,
-    },
-    "GaussianBlur": {"blur_limit": 3, "p": 0.3},  # Camera focus variations
-    "GaussNoise": {"std_range": (0.01, 0.05), "p": 0.3},  # Sensor noise
-}
-```
-
-## How It Works
-
-Augmentations are automatically applied during training:
-
-1. The `AUG_CONFIG` is read when building the dataset
-2. Transforms are composed into a pipeline
-3. Each training sample is augmented on-the-fly
-4. Bounding boxes and masks are automatically transformed for geometric augmentations
-
-No code changes needed in your training script - just modify `augmentation_config.py`.
-
-## Programmatic Configuration
-
-You can also build augmentations programmatically for advanced use cases:
-
-```python
-from rfdetr.datasets.transforms import AlbumentationsWrapper, ComposeAugmentations
-
-# Custom config
-custom_config = {
-    "HorizontalFlip": {"p": 0.7},
-    "Rotate": {"limit": 15, "p": 0.5},
-    "Blur": {"blur_limit": 3, "p": 0.2},
-}
-
-# Build and compose transforms using the static method
-transforms = AlbumentationsWrapper.from_config(custom_config)
-augmentation_pipeline = ComposeAugmentations(transforms)
-
-# Apply to image and target (works with both detection and segmentation)
-# For detection: target contains "boxes" and "labels"
-# For segmentation: target contains "boxes", "labels", and "masks"
-augmented_image, augmented_target = augmentation_pipeline(image, target)
-```
+RF-DETR automatically handles bounding boxes for **geometric transforms** (flips, rotations, crops, affine, perspective). **Pixel-level transforms** (blur, noise, color) preserve coordinates unchanged. You don't need to handle this distinction — it's automatic based on the transform name.
 
 ## Best Practices
 
@@ -179,179 +70,50 @@ augmented_image, augmented_target = augmentation_pipeline(image, target)
 
     Be careful with aggressive rotations and crops on datasets where object orientation matters (e.g., text detection, oriented objects).
 
-### Recommendations by Dataset Size
-
-| Dataset Size     | Recommended Augmentations                                        |
-| ---------------- | ---------------------------------------------------------------- |
-| Under 500 images | Horizontal flip, small brightness/contrast adjustments           |
-| 500-2000 images  | Add vertical flip (if applicable), color jitter, blur            |
-| 2000+ images     | Add rotations, affine transforms, aggressive color augmentations |
-
-### Performance Tips
-
-- **CPU-bound:** Augmentations run on CPU during data loading
-- **More augmentations = slower loading** (but better model generalization)
-- **Use `num_workers`:** Parallelize augmentation with data loader workers
-- **Monitor GPU utilization:** If GPU isn't saturated, you can add more augmentations
-
-Example data loader configuration:
-
-```python
-from torch.utils.data import DataLoader
-
-dataloader = DataLoader(
-    dataset,
-    batch_size=16,
-    num_workers=4,  # Parallelize augmentations across 4 workers
-    pin_memory=True,
-)
-```
-
-## Monitoring Augmentations
-
-### Visualize Augmented Images
-
-To verify your augmentations are working as expected:
-
-```python
-import matplotlib.pyplot as plt
-from rfdetr.datasets.coco import CocoDetection
-from rfdetr.datasets.aug_config import AUG_CONFIG
-from rfdetr.datasets.transforms import AlbumentationsWrapper, ComposeAugmentations
-
-# Build dataset with augmentations
-transforms = AlbumentationsWrapper.from_config(AUG_CONFIG)
-augmentation_pipeline = ComposeAugmentations(transforms)
-
-dataset = CocoDetection(
-    img_folder="path/to/images",
-    ann_file="path/to/annotations.json",
-    transforms=augmentation_pipeline,
-)
-
-# Visualize
-image, target = dataset[0]
-plt.imshow(image)
-plt.show()
-```
-
-### Expected Training Behavior
-
-!!! note
-
-    With augmentations enabled, it's normal to see:
-
-    - **Training mAP lower than validation mAP** - Training uses augmented (harder) images
-    - **Slower data loading** - CPU preprocessing time increases
-    - **Better generalization** - Model learns from more diverse data
+- **CPU-bound:** Augmentations run on CPU during data loading — more transforms means slower loading
+- **Use `num_workers`:** Parallelize augmentation across data loader workers
+- **Monitor training mAP vs validation mAP:** With strong augmentations it's normal for training mAP to be lower — validation uses original images while training uses augmented (harder) ones
 
 ## Troubleshooting
 
-### Problem: Training is very slow
+**Training is slow** — reduce the number of transforms or increase `num_workers`.
 
-**Solutions:**
+**Boxes disappear after augmentation** — aggressive rotations or crops can push boxes outside the image boundary. Reduce rotation angles or avoid large crops.
 
-- Reduce number of augmentations
-- Reduce augmentation complexity (e.g., smaller rotation angles)
-- Increase `num_workers` in data loader
-- Profile to identify slow transforms
+**Model not improving** — augmentations may be too aggressive. Start with `AUG_CONSERVATIVE` and add transforms gradually. Try removing geometric transforms first to isolate the cause.
 
-### Problem: Validation mAP is much higher than training mAP
+**Validation mAP is much higher than training mAP** — this is expected with strong augmentations and not a bug. See the monitoring tip above.
 
-**This is expected** with strong augmentations:
+## Advanced: Custom Transforms
 
-- Validation uses original images (no augmentation)
-- Training mAP is artificially lower due to augmented data
-- This gap is normal and indicates augmentations are working
-
-### Problem: Some boxes or masks disappear after augmentation
-
-**This is normal behavior:**
-
-- Aggressive transforms (large rotations, crops) can move boxes outside boundaries
-- Albumentations removes boxes and their corresponding masks that fall outside image
-
-**Solutions:**
-
-- Reduce augmentation intensity
-- Use smaller rotation angles
-- Avoid aggressive crops
-- Advanced: Reduce `min_visibility` in `AlbumentationsWrapper` (requires code changes)
-
-### Problem: Model not improving
-
-**Check if augmentations are too aggressive:**
-
-- Try reducing augmentation probabilities
-- Remove geometric transforms temporarily
-- Start with only color augmentations
-- Gradually add back geometric transforms
-
-## Advanced Topics
-
-### Custom Transform Integration
-
-To add a custom Albumentations transform not in the default config:
-
-1. Import the transform in your config:
-
-    ```python
-    # aug_config.py
-    AUG_CONFIG = {
-        "HorizontalFlip": {"p": 0.5},
-        "RandomShadow": {  # Custom shadow augmentation
-            "shadow_roi": (0, 0, 1, 1),
-            "num_shadows_limit": (1, 1),
-            "shadow_dimension": 3,
-            "p": 0.3,
-        },
-    }
-    ```
-
-2. The transform will be automatically loaded if it exists in Albumentations
-
-### Conditional Augmentations
-
-Use different augmentations for different scenarios:
+Any Albumentations transform works by name. If your custom transform is geometric, register it in `rfdetr/datasets/transforms.py` so boxes are updated automatically:
 
 ```python
-# For training
-TRAIN_AUG_CONFIG = {
-    "HorizontalFlip": {"p": 0.5},
-    "Rotate": {"limit": 45, "p": 0.5},
-}
-
-# For fine-tuning (lighter augmentations)
-FINETUNE_AUG_CONFIG = {
-    "HorizontalFlip": {"p": 0.3},
-    "RandomBrightnessContrast": {"brightness_limit": 0.1, "contrast_limit": 0.1, "p": 0.2},
+GEOMETRIC_TRANSFORMS = {
+    ...
+    "YourCustomTransform",
 }
 ```
 
-### Debug Mode
-
-To see augmentation warnings and statistics:
+Then use it like any other transform:
 
 ```python
-import logging
-
-logging.basicConfig(level=logging.INFO)
-
-# Now you'll see messages like:
-# INFO - Built 3 Albumentations transforms from config
-# WARNING - Unknown Albumentations transform: CustomTransform. Skipping.
+model.train(
+    dataset_dir="...",
+    aug_config={
+        "HorizontalFlip": {"p": 0.5},
+        "YourCustomTransform": {"param": 1, "p": 0.3},
+    },
+)
 ```
 
 ## Reference
 
-- **Albumentations Documentation:** [https://albumentations.ai/docs/](https://albumentations.ai/docs/)
-- **Available Transforms:** [https://albumentations.ai/docs/api_reference/augmentations/](https://albumentations.ai/docs/api_reference/augmentations/)
-- **Examples Gallery:** [https://albumentations.ai/docs/examples/](https://albumentations.ai/docs/examples/)
+- [Albumentations docs](https://albumentations.ai/docs/)
+- [All available transforms](https://albumentations.ai/docs/api_reference/augmentations/)
 
 ## Next Steps
 
-After configuring augmentations:
-
-- [Monitor training with TensorBoard](advanced.md#logging-with-tensorboard)
+- [Monitor training with TensorBoard](loggers.md#logging-with-tensorboard)
 - [Use early stopping](advanced.md#early-stopping) to prevent overfitting
 - [Export your trained model](../export.md) for deployment
