@@ -711,12 +711,17 @@ class TestIntegration:
 
     def test_realistic_augmentation_config(self):
         """Test with realistic augmentation configuration."""
-        transforms = AlbumentationsWrapper.from_config(AUG_CONFIG)
+        aug_config = {
+            "HorizontalFlip": {"p": 0.5},
+            "VerticalFlip": {"p": 0.5},
+            "Rotate": {"limit": 15, "p": 0.5},  # Better keep small angles
+        }
+        transforms = AlbumentationsWrapper.from_config(aug_config)
 
-        # Validate transform names match AUG_CONFIG in correct order
+        # Validate transform names match in correct order
         assert len(transforms) == 3
         transform_names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
-        assert transform_names == list(AUG_CONFIG.keys())
+        assert transform_names == list(aug_config.keys())
 
         composed = ComposeAugmentations(transforms)
 
