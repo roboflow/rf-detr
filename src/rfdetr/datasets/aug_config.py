@@ -58,6 +58,6 @@ GEOMETRIC_TRANSFORMS = {
 
 AUG_CONFIG = {
     "HorizontalFlip": {"p": 0.5},
-    "VerticalFlip": {"p": 0.5},
-    "Rotate": {"limit": 15, "p": 0.5},  # Better keep small angles
+    # "VerticalFlip": {"p": 0.5},
+    # "Rotate": {"limit": 15, "p": 0.5},  # Better keep small angles
 }

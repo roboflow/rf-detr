@@ -151,6 +151,7 @@ class ConvertCoco(object):
 
 
 def make_coco_transforms(image_set: str, resolution: int, multi_scale: bool = False, expanded_scales: bool = False, skip_random_resize: bool = False, patch_size: int = 16, num_windows: int = 4) -> T.Compose:
+
     normalize = T.Compose([
         T.ToTensor(),
         T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
@@ -166,14 +167,13 @@ def make_coco_transforms(image_set: str, resolution: int, multi_scale: bool = Fa
 
     if image_set == 'train':
         return T.Compose([
-            # T.RandomHorizontalFlip(),
             T.RandomSelect(
                 T.RandomResize(scales, max_size=1333),
                 T.Compose([
                     T.RandomResize([400, 500, 600]),
                     T.RandomSizeCrop(384, 600),
                     T.RandomResize(scales, max_size=1333),
-                ]),
+                ])
             ),
             # TODO(next PR): AUG_CONFIG should be propagated and exposed as a user-facing parameter
             #   (e.g. via training args) so callers can override the default augmentation pipeline
@@ -243,13 +243,12 @@ def make_coco_transforms_square_div_64(image_set: str, resolution: int, multi_sc
 
     if image_set == 'train':
         return T.Compose([
-            # T.RandomHorizontalFlip(),  # Intentionally disabled: horizontal flipping is handled via Albumentations HorizontalFlip in AUG_CONFIG.
             T.RandomSelect(
-                T.RandomResize(scales, max_size=1333),
+                T.SquareResize(scales),
                 T.Compose([
                     T.RandomResize([400, 500, 600]),
                     T.RandomSizeCrop(384, 600),
-                    T.RandomResize(scales, max_size=1333),
+                    T.SquareResize(scales),
                 ]),
             ),
             # TODO(next PR): AUG_CONFIG should be propagated and exposed as a user-facing parameter
