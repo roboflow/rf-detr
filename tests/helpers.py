@@ -6,6 +6,8 @@
 
 """Test helper utilities and classes."""
 
+from typing import Any, Optional, Tuple
+
 import numpy as np
 import torch
 from PIL import Image
@@ -34,14 +36,14 @@ class _SimpleDataset(Dataset):
         >>> image, target = dataset[0]
     """
 
-    def __init__(self, num_samples=10, transforms=None):
+    def __init__(self, num_samples: int = 10, transforms: Optional[Any] = None) -> None:
         self.num_samples = num_samples
         self.transforms = transforms
 
-    def __len__(self):
+    def __len__(self) -> int:
         return self.num_samples
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, dict]:
         # Create synthetic image
         image = Image.new('RGB', (640, 480))
 
