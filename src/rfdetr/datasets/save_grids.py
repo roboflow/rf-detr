@@ -31,7 +31,7 @@ class DatasetGridSaver:
         dataset_type: Dataset split label, e.g. ``'train'`` or ``'val'``.
     """
 
-    def __init__(self, data_loader: DataLoader, output_dir: Path, max_batches: int = 3, dataset_type: str = "train"):
+    def __init__(self, data_loader: DataLoader, output_dir: Path, max_batches: int = 3, dataset_type: str = "train") -> None:
         self.data_loader = data_loader
         self.output_dir = output_dir
         self.max_batches = max_batches
@@ -122,12 +122,7 @@ class DatasetGridSaver:
 
             xyxy = np.asarray(
                 [
-                    [
-                        b[0] * w,
-                        b[1] * h,
-                        b[2] * w,
-                        b[3] * h,
-                    ]
+                    [b[0] * w, b[1] * h, b[2] * w, b[3] * h]
                     for box in boxes_iter
                     for b in [box_cxcywh_to_xyxy(box)]
                 ],

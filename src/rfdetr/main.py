@@ -43,7 +43,6 @@ from rfdetr.assets.model_weights import (
     validate_pretrain_weights,
 )
 from rfdetr.datasets import build_dataset, get_coco_api_from_dataset
-from rfdetr.datasets.save_grids import DatasetGridSaver
 from rfdetr.engine import evaluate, train_one_epoch
 from rfdetr.models import PostProcess, build_criterion_and_postprocessors, build_model
 from rfdetr.util.benchmark import benchmark
@@ -351,6 +350,8 @@ class Model:
             logger.info("Min DP = %.7f, Max DP = %.7f", min(schedules['dp']), max(schedules['dp']))
 
         if args.output_dir and is_main_process() and getattr(args, "save_dataset_grids", False):
+            from rfdetr.datasets.save_grids import DatasetGridSaver
+
             DatasetGridSaver(data_loader_train, output_dir, max_batches=3, dataset_type='train').save_grid()
             DatasetGridSaver(data_loader_val, output_dir, max_batches=3, dataset_type='val').save_grid()
         logger.info("Start training")
