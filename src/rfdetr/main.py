@@ -350,11 +350,8 @@ class Model:
                 args.cutoff_epoch, args.drop_mode, args.drop_schedule)
             logger.info("Min DP = %.7f, Max DP = %.7f", min(schedules['dp']), max(schedules['dp']))
 
-        grid_saver = DatasetGridSaver(data_loader_train, output_dir, max_batches=3, dataset_type='train')
-        grid_saver.save_grid()
-
-        grid_saver = DatasetGridSaver(data_loader_val, output_dir, max_batches=3, dataset_type='val')
-        grid_saver.save_grid()
+        DatasetGridSaver(data_loader_train, output_dir, max_batches=3, dataset_type='train').save_grid()
+        DatasetGridSaver(data_loader_val, output_dir, max_batches=3, dataset_type='val').save_grid()
         logger.info("Start training")
         start_time = time.time()
         best_map_holder = BestMetricHolder(use_ema=args.use_ema)
