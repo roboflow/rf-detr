@@ -4,7 +4,10 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 from torch.utils.data import DataLoader
 from rfdetr.util.box_ops import box_cxcywh_to_xyxy
+from rfdetr.util.logger import get_logger
 import torchvision.transforms as T
+
+logger = get_logger()
 
 class DatasetGridSaver:
     """
@@ -91,4 +94,4 @@ class DatasetGridSaver:
             plt.savefig(grid_path, dpi=200)
             plt.close()
             
-        print(f"✅ Saved {self.dataset_type} grids with augmented images to: {self.output_dir.resolve()}")
+        logger.info(f"Saved {self.dataset_type} grids with augmented images to: {self.output_dir.resolve()}")
