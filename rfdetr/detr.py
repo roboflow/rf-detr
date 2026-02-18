@@ -144,7 +144,6 @@ class RFDETR:
         if "class_names" in model_config:
             model_config.pop("class_names")
         
-        #if "class_names" in train_config and train_config["class_names"] is None:
         train_config["class_names"] = class_names
 
         for k, v in train_config.items():
