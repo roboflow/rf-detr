@@ -166,7 +166,7 @@ def make_coco_transforms(
         skip_random_resize: bool = False,
         patch_size: int = 16,
         num_windows: int = 4,
-        aug_config=None,
+        aug_config: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> T.Compose:
 
     normalize = T.Compose([
@@ -246,10 +246,9 @@ def make_coco_transforms_square_div_64(
             patch embedding or stride).
         num_windows: Number of windows used by ``compute_multi_scale_scales`` to
             derive the list of candidate square resolutions.
-        aug_config: Augmentation configuration.  Accepts a preset name
-            (``"conservative"``, ``"aggressive"``, ``"aerial"``,
-            ``"industrial"``, ``"disabled"``), a custom config dict, or
-            ``None`` to use the default :data:`~rfdetr.datasets.aug_config.AUG_CONFIG`.
+        aug_config: Augmentation configuration dictionary compatible with
+            :class:`~rfdetr.datasets.transforms.AlbumentationsWrapper`. If ``None``,
+            the default :data:`~rfdetr.datasets.aug_config.AUG_CONFIG` is used.
 
     Returns:
         A ``T.Compose`` object containing the composed image transforms appropriate
