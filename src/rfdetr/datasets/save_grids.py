@@ -98,15 +98,39 @@ class DatasetGridSaver:
             label_annotator: ``sv.LabelAnnotator`` instance for drawing class labels.
         """
         resized_size = single_target["size"]
+        if isinstance(resized_size, torch.Tensor):
+            resized_size = resized_size.detach().cpu()
         h, w = int(resized_size[0]), int(resized_size[1])
 
         de_normalized_img = inv_normalize(single_image)
-        img_uint8 = (np.clip(np.array(de_normalized_img).transpose(1, 2, 0), 0.0, 1.0) * 255).astype(np.uint8)
+        if isinstance(de_normalized_img, torch.Tensor):
+            de_normalized_img = de_normalized_img.detach().cpu().numpy()
+        img_uint8 = (np.clip(de_normalized_img.transpose(1, 2, 0), 0.0, 1.0) * 255).astype(np.uint8)
 
         if len(single_target["boxes"]) > 0:
-            class_ids = single_target["labels"].numpy().astype(int)
-            xyxy = np.array(
-                [[b[0] * w, b[1] * h, b[2] * w, b[3] * h] for box in single_target["boxes"] for b in [box_cxcywh_to_xyxy(box)]],
+            labels_tensor = single_target["labels"]
+            if isinstance(labels_tensor, torch.Tensor):
+                class_ids = labels_tensor.detach().cpu().numpy().astype(int)
+            else:
+                class_ids = np.asarray(labels_tensor, dtype=int)
+
+            boxes = single_target["boxes"]
+            if isinstance(boxes, torch.Tensor):
+                boxes_iter = boxes.detach().cpu()
+            else:
+                boxes_iter = boxes
+
+            xyxy = np.asarray(
+                [
+                    [
+                        b[0] * w,
+                        b[1] * h,
+                        b[2] * w,
+                        b[3] * h,
+                    ]
+                    for box in boxes_iter
+                    for b in [box_cxcywh_to_xyxy(box)]
+                ],
                 dtype=np.float32,
             )
             detections = sv.Detections(xyxy=xyxy, class_id=class_ids)
