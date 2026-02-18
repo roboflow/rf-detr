@@ -4,24 +4,31 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-"""Default Albumentations augmentation configuration for RF-DETR training.
+"""Augmentation presets and default configuration for RF-DETR training.
 
-This configuration defines the augmentation pipeline used during training.
-The AlbumentationsWrapper automatically handles bounding box transformations
-for geometric transforms (flips, rotations, crops) while preserving boxes
-for pixel-level transforms (blur, color adjustments).
-
-## Usage
-
-Edit AUG_CONFIG to enable or customize augmentations:
+Import a preset and pass it as ``aug_config`` to your training call:
 
 ```python
-AUG_CONFIG = {
-    "HorizontalFlip": {"p": 0.5},  # 50% probability
-    "Rotate": {"limit": 45, "p": 0.3},  # Rotate up to ±45°
-    "GaussianBlur": {"p": 0.2},  # Pixel-level transform
-}
+from rfdetr.datasets.aug_config import AUG_CONSERVATIVE, AUG_AGGRESSIVE, AUG_AERIAL, AUG_INDUSTRIAL
+
+model.train(dataset_dir="...", aug_config=AUG_CONSERVATIVE)
+model.train(dataset_dir="...", aug_config=AUG_AGGRESSIVE)
+
+# Disable all augmentations
+model.train(dataset_dir="...", aug_config={})
+
+# Fully custom
+model.train(dataset_dir="...", aug_config={"HorizontalFlip": {"p": 0.5}})
 ```
+
+## Available presets
+
+| Preset         | Best for                                         |
+| -------------- | ------------------------------------------------ |
+| ``AUG_CONSERVATIVE``  | Small datasets (under 500 images)             |
+| ``AUG_AGGRESSIVE``    | Large datasets (2000+ images)                 |
+| ``AUG_AERIAL``        | Satellite / overhead imagery                  |
+| ``AUG_INDUSTRIAL``    | Manufacturing / inspection data               |
 
 ## Transform Categories
 
@@ -56,8 +63,71 @@ GEOMETRIC_TRANSFORMS = {
 ```
 """
 
+# ---------------------------------------------------------------------------
+# Default configuration (backward-compatible baseline)
+# ---------------------------------------------------------------------------
+
 AUG_CONFIG = {
     "HorizontalFlip": {"p": 0.5},
     # "VerticalFlip": {"p": 0.5},
     # "Rotate": {"limit": 15, "p": 0.5},  # Better keep small angles
+}
+
+# ---------------------------------------------------------------------------
+# Named presets — import and pass directly as aug_config=<preset>
+# ---------------------------------------------------------------------------
+
+#: Minimal augmentations — safe for small datasets (under 500 images).
+AUG_CONSERVATIVE = {
+    "HorizontalFlip": {"p": 0.5},
+    "RandomBrightnessContrast": {
+        "brightness_limit": 0.1,
+        "contrast_limit": 0.1,
+        "p": 0.3,
+    },
+}
+
+#: Aggressive augmentations — for larger datasets (2000+ images).
+AUG_AGGRESSIVE = {
+    "HorizontalFlip": {"p": 0.5},
+    "VerticalFlip": {"p": 0.5},
+    "Rotate": {"limit": 45, "p": 0.5},
+    "Affine": {
+        "scale": (0.8, 1.2),
+        "translate_percent": (0.1, 0.1),
+        "rotate": (-15, 15),
+        "shear": (-5, 5),
+        "p": 0.5,
+    },
+    "ColorJitter": {
+        "brightness": 0.2,
+        "contrast": 0.2,
+        "saturation": 0.2,
+        "hue": 0.1,
+        "p": 0.5,
+    },
+}
+
+#: Optimised for aerial / satellite imagery (overhead views, 90° rotations).
+AUG_AERIAL = {
+    "HorizontalFlip": {"p": 0.5},
+    "VerticalFlip": {"p": 0.5},
+    "Rotate": {"limit": (90, 90), "p": 0.5},
+    "RandomBrightnessContrast": {
+        "brightness_limit": 0.15,
+        "contrast_limit": 0.15,
+        "p": 0.4,
+    },
+}
+
+#: Optimised for industrial / manufacturing data (lighting & sensor noise).
+AUG_INDUSTRIAL = {
+    "HorizontalFlip": {"p": 0.3},
+    "RandomBrightnessContrast": {
+        "brightness_limit": 0.2,
+        "contrast_limit": 0.2,
+        "p": 0.5,
+    },
+    "GaussianBlur": {"blur_limit": 3, "p": 0.3},
+    "GaussNoise": {"std_range": (0.01, 0.05), "p": 0.3},
 }

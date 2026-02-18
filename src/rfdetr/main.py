@@ -992,6 +992,7 @@ def populate_args(
     coco_path=None,
     dataset_dir=None,
     square_resize_div_64=False,
+    aug_config=None,
 
     # Output parameters
     output_dir='output',
@@ -1102,6 +1103,7 @@ def populate_args(
         coco_path=coco_path,
         dataset_dir=dataset_dir,
         square_resize_div_64=square_resize_div_64,
+        aug_config=aug_config,
         output_dir=output_dir,
         dont_save_weights=dont_save_weights,
         checkpoint_interval=checkpoint_interval,
