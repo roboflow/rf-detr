@@ -10,6 +10,7 @@
 """
 export ONNX model and TensorRT engine for deployment
 """
+import inspect
 import os
 import random
 import re
@@ -71,6 +72,12 @@ def export_onnx(output_dir, model, input_names, input_tensors, output_names, dyn
     if hasattr(model, "export"):
         model.export()
 
+    export_kwargs = {}
+    if "dynamo" in inspect.signature(torch.onnx.export).parameters:
+        # Torch 2.10+ may default to the dynamo exporter which requires extra deps
+        # (e.g. onnxscript). Use the legacy path for compatibility.
+        export_kwargs["dynamo"] = False
+
     torch.onnx.export(
         model,
         input_tensors,
@@ -82,7 +89,9 @@ def export_onnx(output_dir, model, input_names, input_tensors, output_names, dyn
         do_constant_folding=True,
         verbose=verbose,
         opset_version=opset_version,
-        dynamic_axes=dynamic_axes)
+        dynamic_axes=dynamic_axes,
+        **export_kwargs,
+    )
 
     logger.info(f'\nSuccessfully exported ONNX model: {output_file}')
     return output_file

@@ -45,11 +45,25 @@ from rfdetr.util.misc import NestedTensor
 logger = get_logger()
 
 
+def _get_cuda_autocast_dtype() -> torch.dtype:
+    """Return the autocast dtype that is supported on the current CUDA device."""
+    if not torch.cuda.is_available():
+        return torch.bfloat16
+
+    is_bf16_supported = getattr(torch.cuda, "is_bf16_supported", None)
+    if callable(is_bf16_supported):
+        return torch.bfloat16 if is_bf16_supported() else torch.float16
+
+    major, _ = torch.cuda.get_device_capability()
+    return torch.bfloat16 if major >= 8 else torch.float16
+
+
 def get_autocast_args(args):
+    autocast_dtype = _get_cuda_autocast_dtype()
     if DEPRECATED_AMP:
-        return {'enabled': args.amp, 'dtype': torch.bfloat16}
+        return {'enabled': args.amp, 'dtype': autocast_dtype}
     else:
-        return {'device_type': 'cuda', 'enabled': args.amp, 'dtype': torch.bfloat16}
+        return {'device_type': 'cuda', 'enabled': args.amp, 'dtype': autocast_dtype}
 
 
 def train_one_epoch(
