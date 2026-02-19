@@ -342,6 +342,15 @@ class Model:
                 lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
                 args.start_epoch = checkpoint["epoch"] + 1
 
+        if args.start_epoch >= args.epochs:
+            logger.info(
+                "Checkpoint epoch (%d) has already reached or exceeded the target epochs (%d). "
+                "Training is already complete.",
+                args.start_epoch - 1,
+                args.epochs,
+            )
+            return
+
         if args.eval:
             test_stats, coco_evaluator = evaluate(model, criterion, postprocess, data_loader_val, base_ds, device, args)
             if args.output_dir:
