@@ -190,172 +190,103 @@ def train_one_epoch(
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
 
-def sweep_confidence_thresholds(per_class_data, conf_thresholds, classes_with_gt):
-    """Sweep confidence thresholds and compute precision/recall/F1 at each."""
-    num_classes = len(per_class_data)
-    results = []
-
-    for conf_thresh in conf_thresholds:
-        per_class_precisions = []
-        per_class_recalls = []
-        per_class_f1s = []
-
-        for k in range(num_classes):
-            data = per_class_data[k]
-            scores = data['scores']
-            matches = data['matches']
-            ignore = data['ignore']
-            total_gt = data['total_gt']
-
-            above_thresh = scores >= conf_thresh
-            valid = above_thresh & ~ignore
-
-            valid_matches = matches[valid]
-
-            tp = np.sum(valid_matches != 0)
-            fp = np.sum(valid_matches == 0)
-            fn = total_gt - tp
-
-            precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-            recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-            f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
-
-            per_class_precisions.append(precision)
-            per_class_recalls.append(recall)
-            per_class_f1s.append(f1)
-
-        if len(classes_with_gt) > 0:
-            macro_precision = np.mean([per_class_precisions[k] for k in classes_with_gt])
-            macro_recall = np.mean([per_class_recalls[k] for k in classes_with_gt])
-            macro_f1 = np.mean([per_class_f1s[k] for k in classes_with_gt])
-        else:
-            macro_precision = 0.0
-            macro_recall = 0.0
-            macro_f1 = 0.0
-
-        results.append({
-            'confidence_threshold': conf_thresh,
-            'macro_f1': macro_f1,
-            'macro_precision': macro_precision,
-            'macro_recall': macro_recall,
-            'per_class_prec': np.array(per_class_precisions),
-            'per_class_rec': np.array(per_class_recalls),
-            'per_class_f1': np.array(per_class_f1s),
-        })
-
-    return results
-
-
 def coco_extended_metrics(coco_eval):
     """
-    Compute precision/recall by sweeping confidence thresholds to maximize macro-F1.
-    Maintains exact same metrics as original implementation.
+    Compute precision/recall/F1 using COCO precision arrays.
+
+    Uses eval["precision"] and eval["scores"] arrays from the COCO evaluator,
+    which are always populated regardless of faster-coco-eval's extra_calc setting.
+    Finds the recall threshold that maximises macro-F1 and reports metrics there.
     """
-    # Extract detection-GT matching data from faster-coco-eval
-    # Format: {f'{dt_id}_{gt_id}': iou} - maps detection-GT pairs to their IoU
-    matched = coco_eval.eval.get('matched', {})
-    if not matched:
-        logger.warning("No matches found in coco_eval.eval['matched'], metrics may be incorrect")
+    iou_thrs = coco_eval.params.iouThrs
+    rec_thrs = coco_eval.params.recThrs
 
-    # Get all detections with all their fields preserved
-    all_dts = {ann['id']: ann for img_id in coco_eval.params.imgIds
-               for ann in coco_eval.cocoDt.loadAnns(coco_eval.cocoDt.getAnnIds(imgIds=[img_id]))}
+    # Safely locate the IoU=0.50 slice index
+    iou50_indices = np.where(np.isclose(iou_thrs, 0.50))[0]
+    iou50_idx = int(iou50_indices[0]) if len(iou50_indices) > 0 else None
 
-    # Count non-ignored GTs per category
-    gt_counts = {}
-    all_gts = {}
-    for img_id in coco_eval.params.imgIds:
-        for gt in coco_eval.cocoGt.loadAnns(coco_eval.cocoGt.getAnnIds(imgIds=[img_id])):
-            all_gts[gt['id']] = gt
-            cat_id = gt['category_id']
-            if not gt.get('ignore', 0) and not gt.get('iscrowd', 0):
-                gt_counts[cat_id] = gt_counts.get(cat_id, 0) + 1
+    area_idx = 0
+    maxdet_idx = -1  # last maxDet entry
 
-    # Pre-build a lookup dictionary for detection matches for O(1) access.
-    # This maps detection_id -> (gt_id, iou) for the first match with IoU >= 0.5.
-    # In COCO evaluation, a detection can match at most one GT per image, so we
-    # only keep the first match >= 0.5 IoU threshold (the break is intentional).
-    dt_to_match = {}
-    for key, iou in matched.items():
-        if '_' in key and iou >= 0.5:
-            m_dt, m_gt = map(int, key.split('_'))
-            if m_dt not in dt_to_match:
-                dt_to_match[m_dt] = (m_gt, iou)
+    P = coco_eval.eval["precision"]  # [T, R, K, A, M]
 
-    # Build per-class detection data
-    per_class_data = []
-    for cid in coco_eval.params.catIds:
-        # Get detections for this category sorted by confidence
-        dts = sorted([(dt_id, dt) for dt_id, dt in all_dts.items() if dt['category_id'] == cid],
-                    key=lambda x: -x[1]['score'])
+    # Precision at IoU=0.50 across all recall thresholds and classes: [R, K]
+    if iou50_idx is not None:
+        prec_raw = P[iou50_idx, :, :, area_idx, maxdet_idx]
+    else:
+        prec_raw = np.full((P.shape[1], P.shape[2]), -1.0)
 
-        scores, matches, ignores = [], [], []
-        for dt_id, dt in dts:
-            scores.append(dt['score'])
+    prec = prec_raw.copy().astype(float)
+    prec[prec < 0] = np.nan  # -1 sentinels → NaN
 
-            # Check if detection matched any GT at IoU >= 0.5 using pre-built lookup
-            is_match, is_ignore = False, False
-            if dt_id in dt_to_match:
-                is_match = True
-                m_gt, _ = dt_to_match[dt_id]
-                if m_gt in all_gts and (all_gts[m_gt].get('ignore') or all_gts[m_gt].get('iscrowd')):
-                    is_ignore = True
+    # F1 at each recall threshold for each class; guard 0/0 with np.where
+    denom = prec + rec_thrs[:, None]
+    f1_cls = np.where(denom > 0, 2 * prec * rec_thrs[:, None] / denom, 0.0)
+    f1_macro = np.nanmean(f1_cls, axis=1)  # [R] macro-F1 per recall threshold
 
-            matches.append(1 if is_match else 0)
-            ignores.append(is_ignore)
+    # Best recall threshold (robust to all-NaN / all-zero degenerate cases)
+    if np.all(np.isnan(f1_macro)) or float(np.nanmax(f1_macro)) == 0.0:
+        macro_precision = 0.0
+        macro_recall = 0.0
+        macro_f1 = 0.0
+        best_j = 0
+    else:
+        best_j = int(np.nanargmax(f1_macro))
+        prec_at_best = prec[best_j]
+        macro_precision = float(np.nanmean(prec_at_best)) if not np.all(np.isnan(prec_at_best)) else 0.0
+        macro_recall = float(rec_thrs[best_j])
+        macro_f1 = float(f1_macro[best_j])
 
-        per_class_data.append({
-            'scores': np.array(scores),
-            'matches': np.array(matches),
-            'ignore': np.array(ignores, dtype=bool),
-            'total_gt': gt_counts.get(cid, 0)
+    map_50_95 = float(coco_eval.stats[0])
+    map_50 = float(coco_eval.stats[1])
+
+    per_class = []
+    cat_ids = coco_eval.params.catIds
+    cat_id_to_name = {c["id"]: c["name"] for c in coco_eval.cocoGt.loadCats(cat_ids)}
+
+    for k, cid in enumerate(cat_ids):
+        p_slice = P[:, :, k, area_idx, maxdet_idx]  # [T, R]
+        p_masked = np.where(p_slice > -1, p_slice, np.nan)
+
+        # Two-pass nanmean to weight each IoU threshold equally (standard COCO AP)
+        ap_50_95 = float(np.nanmean(np.nanmean(p_masked, axis=1)))
+
+        if iou50_idx is not None and (p_slice[iou50_idx] > -1).any():
+            ap_50 = float(np.nanmean(p_masked[iou50_idx]))
+        else:
+            ap_50 = float("nan")
+
+        pc = float(prec[best_j, k]) if not np.isnan(prec[best_j, k]) else float("nan")
+        rc = macro_recall
+        f1c = float(f1_cls[best_j, k])
+
+        if np.isnan(ap_50_95) or np.isnan(ap_50) or np.isnan(pc):
+            continue
+
+        per_class.append({
+            "class"     : cat_id_to_name[int(cid)],
+            "map@50:95" : ap_50_95,
+            "map@50"    : ap_50,
+            "precision" : pc,
+            "recall"    : rc,
+            "f1_score"  : f1c,
         })
 
-    # Sweep confidence thresholds to find best macro-F1
-    thresholds = np.linspace(0.0, 1.0, 101)
-    classes_with_gt = [k for k, d in enumerate(per_class_data) if d['total_gt'] > 0]
-    sweep_results = sweep_confidence_thresholds(per_class_data, thresholds, classes_with_gt)
-    best = max(sweep_results, key=lambda x: x['macro_f1'])
-
-    # Build output with per-class metrics
-    # Use np.where to safely find IoU 0.50 threshold index
-    iou50_indices = np.where(np.isclose(coco_eval.params.iouThrs, 0.50))[0]
-    iou50_idx = iou50_indices[0] if len(iou50_indices) > 0 else None
-    per_class = []
-    cat_names = {c["id"]: c["name"] for c in coco_eval.cocoGt.loadCats(coco_eval.params.catIds)}
-
-    for k, cid in enumerate(coco_eval.params.catIds):
-        # Extract mAP from precision array
-        p_slice = coco_eval.eval['precision'][:, :, k, 0, 2]  # [IoU, recall, cat, area, maxDet]
-        p_masked = np.where(p_slice > -1, p_slice, np.nan)
-        ap_50_95 = float(np.nanmean(np.nanmean(p_masked, axis=1)))
-        ap_50 = float(np.nanmean(p_masked[iou50_idx])) if iou50_idx is not None else float('nan')
-
-        if not any(np.isnan([ap_50_95, ap_50, best['per_class_prec'][k], best['per_class_rec'][k]])):
-            per_class.append({
-                "class": cat_names[cid],
-                "map@50:95": ap_50_95,
-                "map@50": ap_50,
-                "precision": best['per_class_prec'][k],
-                "recall": best['per_class_rec'][k],
-                "f1_score": best['per_class_f1'][k],
-            })
-
     per_class.append({
-        "class": "all",
-        "map@50:95": float(coco_eval.stats[0]),
-        "map@50": float(coco_eval.stats[1]),
-        "precision": best['macro_precision'],
-        "recall": best['macro_recall'],
-        "f1_score": best['macro_f1'],
+        "class"     : "all",
+        "map@50:95" : map_50_95,
+        "map@50"    : map_50,
+        "precision" : macro_precision,
+        "recall"    : macro_recall,
+        "f1_score"  : macro_f1,
     })
 
     return {
         "class_map": per_class,
-        "map": float(coco_eval.stats[1]),
-        "precision": best['macro_precision'],
-        "recall": best['macro_recall'],
-        "f1_score": best['macro_f1'],
+        "map"      : map_50,
+        "precision": macro_precision,
+        "recall"   : macro_recall,
+        "f1_score" : macro_f1,
     }
 
 def evaluate(model, criterion, postprocess, data_loader, base_ds, device, args=None):
