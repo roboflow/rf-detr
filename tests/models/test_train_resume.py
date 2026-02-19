@@ -5,54 +5,19 @@
 # ------------------------------------------------------------------------
 """Tests for resuming training from checkpoint."""
 
-import shutil
 from pathlib import Path
 
 import pytest
 
 from rfdetr import RFDETRNano
-from rfdetr.datasets.synthetic import DatasetSplitRatios, generate_coco_dataset
-
-
-@pytest.fixture(scope="module")
-def tiny_coco_dataset(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """Create a tiny COCO-format dataset for testing.
-
-    Args:
-        tmp_path_factory: Pytest factory for temporary directories.
-
-    Returns:
-        Path to the generated dataset directory.
-    """
-    dataset_dir = tmp_path_factory.mktemp("tiny_coco")
-    generate_coco_dataset(
-        output_dir=str(dataset_dir),
-        num_images=4,
-        img_size=64,
-        class_mode="shape",
-        min_objects=1,
-        max_objects=2,
-        split_ratios=DatasetSplitRatios(train=0.5, val=0.5, test=0.0),
-    )
-    val_dir = dataset_dir / "val"
-    valid_dir = dataset_dir / "valid"
-    if val_dir.exists() and not valid_dir.exists():
-        val_dir.rename(valid_dir)
-    test_dir = dataset_dir / "test"
-    if not test_dir.exists():
-        test_dir.mkdir(parents=True, exist_ok=True)
-        (test_dir / "_annotations.coco.json").write_text((valid_dir / "_annotations.coco.json").read_text())
-        for item in valid_dir.iterdir():
-            if item.is_file() and item.name != "_annotations.coco.json":
-                shutil.copy2(item, test_dir / item.name)
-    yield dataset_dir
-    shutil.rmtree(dataset_dir)
 
 
 class TestResumeTrainingFromCompletedCheckpoint:
     """Tests for correct behavior when resuming from an already-completed checkpoint."""
 
-    def test_resume_with_completed_epochs_returns_early(self, tiny_coco_dataset: Path, tmp_path: Path) -> None:
+    def test_resume_with_completed_epochs_returns_early(
+        self, synthetic_shape_dataset_dir: Path, tmp_path: Path
+    ) -> None:
         """Resuming training when start_epoch >= epochs must not raise UnboundLocalError.
 
         This is a regression test for a bug where resuming from a checkpoint whose
@@ -64,7 +29,7 @@ class TestResumeTrainingFromCompletedCheckpoint:
         with ``checkpoint['epoch'] = epochs - 1`` and ``resume`` set.
 
         Args:
-            tiny_coco_dataset: Path to a minimal COCO-style dataset.
+            synthetic_shape_dataset_dir: Path to a synthetic COCO-style dataset.
             tmp_path: Pytest temporary directory.
         """
         output_dir = tmp_path / "train_output"
@@ -76,7 +41,7 @@ class TestResumeTrainingFromCompletedCheckpoint:
         # (checkpoint['epoch'] + 1 == epochs), so the training loop range(2, 2) is empty.
         # In the old code this raised UnboundLocalError on test_stats["results_json"].
         model.train(
-            dataset_dir=str(tiny_coco_dataset),
+            dataset_dir=str(synthetic_shape_dataset_dir),
             epochs=2,
             start_epoch=2,
             batch_size=1,
