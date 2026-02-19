@@ -7,6 +7,7 @@
 """Tests for Albumentations augmentation wrappers."""
 
 import albumentations as A
+import numpy as np
 import pytest
 import torch
 from PIL import Image
@@ -916,6 +917,47 @@ class TestTrainingLoop:
         # Verify they can be stacked
         orig_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
         assert orig_sizes.shape == torch.Size([len(targets), 2])
+
+    @pytest.mark.parametrize("include_masks", [False, True], ids=["detection", "segmentation"])
+    def test_horizontal_flip_dataloader_compatibility(self, include_masks):
+        """Test horizontal flip works in a training-like DataLoader for detection and segmentation."""
+
+        class _TinyTrainDataset:
+            def __len__(self):
+                return 2
+
+            def __getitem__(self, idx):
+                height, width = 64, 64
+                image = Image.new("RGB", (width, height))
+                target = {
+                    "boxes": torch.tensor([[8.0, 12.0, 24.0, 28.0]], dtype=torch.float32),
+                    "labels": torch.tensor([1], dtype=torch.int64),
+                    "orig_size": torch.tensor([height, width]),
+                    "size": torch.tensor([height, width]),
+                    "image_id": torch.tensor([idx]),
+                    "area": torch.tensor([256.0]),
+                    "iscrowd": torch.tensor([0]),
+                }
+                if include_masks:
+                    masks = torch.zeros((1, height, width), dtype=torch.bool)
+                    masks[0, 12:28, 8:24] = True
+                    target["masks"] = masks
+
+                image, target = transforms(image, target)
+                image = torch.from_numpy(np.array(image)).permute(2, 0, 1).float() / 255.0
+                return image, target
+
+        transforms = Compose([AlbumentationsWrapper(A.HorizontalFlip(p=1.0))])
+        dataloader = DataLoader(_TinyTrainDataset(), batch_size=2, collate_fn=collate_fn, num_workers=0)
+        images, targets = next(iter(dataloader))
+
+        assert images.tensors.shape[0] == 2
+        for target in targets:
+            assert target["boxes"].shape == (1, 4)
+            assert target["labels"].shape == (1,)
+            if include_masks:
+                assert target["masks"].shape == (1, 64, 64)
+                assert target["masks"].dtype == torch.bool
 
 
 class TestMakeCocoTransformsAugConfig:
