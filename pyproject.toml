@@ -36,7 +36,7 @@ keywords = ["machine-learning", "deep-learning", "vision", "ML", "DL", "AI", "DE
 
 dependencies = [
     "requests",
-    "faster-coco-eval>=1.6.7",
+    "faster-coco-eval>=1.6.7,<1.7.0",
     "torch>=1.13.0,<=2.8.0", # TODO: Torch >=2.9.0 is excluded due to known issues. PRs that help lift this restriction are welcome.
     "torchvision>=0.14.0",
     "scipy",

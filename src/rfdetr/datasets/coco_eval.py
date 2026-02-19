@@ -4,13 +4,19 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 import inspect
+import warnings
 from typing import List
 
 from faster_coco_eval.utils.pytorch import FasterCocoEvaluator
 
 
 class CocoEvaluator(FasterCocoEvaluator):
-    """Compatibility wrapper for FasterCocoEvaluator across versions."""
+    """Compatibility wrapper for FasterCocoEvaluator across versions.
+
+    This wrapper handles version differences in faster-coco-eval API,
+    particularly the max_dets parameter which may be named differently
+    across versions (max_dets vs max_detections).
+    """
 
     def __init__(self, coco_gt, iou_types: List[str], max_dets: int = 100) -> None:
         """
@@ -28,5 +34,9 @@ class CocoEvaluator(FasterCocoEvaluator):
             super().__init__(coco_gt, iou_types, max_detections=max_dets)
         else:
             super().__init__(coco_gt, iou_types)
-            if hasattr(self, "max_dets"):
-                self.max_dets = max_dets
+            warnings.warn(
+                "max_dets parameter not supported by this version of faster-coco-eval. "
+                "The max_dets setting will not be applied.",
+                UserWarning,
+                stacklevel=2,
+            )

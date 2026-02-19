@@ -252,7 +252,10 @@ def coco_extended_metrics(coco_eval):
     Maintains exact same metrics as original implementation.
     """
     # Extract detection-GT matching data from faster-coco-eval
-    matched = coco_eval.eval.get('matched', {})  # {f'{dt_id}_{gt_id}': iou}
+    # Format: {f'{dt_id}_{gt_id}': iou} - maps detection-GT pairs to their IoU
+    matched = coco_eval.eval.get('matched', {})
+    if not matched:
+        logger.warning("No matches found in coco_eval.eval['matched'], metrics may be incorrect")
 
     # Get all detections with all their fields preserved
     all_dts = {ann['id']: ann for img_id in coco_eval.params.imgIds
@@ -268,6 +271,17 @@ def coco_extended_metrics(coco_eval):
             if not gt.get('ignore', 0) and not gt.get('iscrowd', 0):
                 gt_counts[cat_id] = gt_counts.get(cat_id, 0) + 1
 
+    # Pre-build a lookup dictionary for detection matches for O(1) access.
+    # This maps detection_id -> (gt_id, iou) for the first match with IoU >= 0.5.
+    # In COCO evaluation, a detection can match at most one GT per image, so we
+    # only keep the first match >= 0.5 IoU threshold (the break is intentional).
+    dt_to_match = {}
+    for key, iou in matched.items():
+        if '_' in key and iou >= 0.5:
+            m_dt, m_gt = map(int, key.split('_'))
+            if m_dt not in dt_to_match:
+                dt_to_match[m_dt] = (m_gt, iou)
+
     # Build per-class detection data
     per_class_data = []
     for cid in coco_eval.params.catIds:
@@ -279,16 +293,13 @@ def coco_extended_metrics(coco_eval):
         for dt_id, dt in dts:
             scores.append(dt['score'])
 
-            # Check if detection matched any GT at IoU >= 0.5
+            # Check if detection matched any GT at IoU >= 0.5 using pre-built lookup
             is_match, is_ignore = False, False
-            for key, iou in matched.items():
-                if '_' in key:
-                    m_dt, m_gt = map(int, key.split('_'))
-                    if m_dt == dt_id and iou >= 0.5:
-                        is_match = True
-                        if m_gt in all_gts and (all_gts[m_gt].get('ignore') or all_gts[m_gt].get('iscrowd')):
-                            is_ignore = True
-                        break
+            if dt_id in dt_to_match:
+                is_match = True
+                m_gt, _ = dt_to_match[dt_id]
+                if m_gt in all_gts and (all_gts[m_gt].get('ignore') or all_gts[m_gt].get('iscrowd')):
+                    is_ignore = True
 
             matches.append(1 if is_match else 0)
             ignores.append(is_ignore)
@@ -307,7 +318,9 @@ def coco_extended_metrics(coco_eval):
     best = max(sweep_results, key=lambda x: x['macro_f1'])
 
     # Build output with per-class metrics
-    iou50_idx = np.argmax(np.isclose(coco_eval.params.iouThrs, 0.50)).item()
+    # Use np.where to safely find IoU 0.50 threshold index
+    iou50_indices = np.where(np.isclose(coco_eval.params.iouThrs, 0.50))[0]
+    iou50_idx = iou50_indices[0] if len(iou50_indices) > 0 else None
     per_class = []
     cat_names = {c["id"]: c["name"] for c in coco_eval.cocoGt.loadCats(coco_eval.params.catIds)}
 
@@ -316,7 +329,7 @@ def coco_extended_metrics(coco_eval):
         p_slice = coco_eval.eval['precision'][:, :, k, 0, 2]  # [IoU, recall, cat, area, maxDet]
         p_masked = np.where(p_slice > -1, p_slice, np.nan)
         ap_50_95 = float(np.nanmean(np.nanmean(p_masked, axis=1)))
-        ap_50 = float(np.nanmean(p_masked[iou50_idx]))
+        ap_50 = float(np.nanmean(p_masked[iou50_idx])) if iou50_idx is not None else float('nan')
 
         if not any(np.isnan([ap_50_95, ap_50, best['per_class_prec'][k], best['per_class_rec'][k]])):
             per_class.append({
@@ -427,14 +440,13 @@ def evaluate(model, criterion, postprocess, data_loader, base_ds, device, args=N
         coco_evaluator.summarize()
     stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
     if coco_evaluator is not None:
-        results_json = coco_evaluator.coco_eval["bbox"].extended_metrics
-        print("Results JSON:", results_json)
+        results_json = coco_extended_metrics(coco_evaluator.coco_eval["bbox"])
         stats["results_json"] = results_json
         if "bbox" in iou_types:
             stats["coco_eval_bbox"] = coco_evaluator.coco_eval["bbox"].stats.tolist()
 
         if "segm" in iou_types:
-            results_json_masks = coco_evaluator.coco_eval["segm"].extended_metrics
+            results_json_masks = coco_extended_metrics(coco_evaluator.coco_eval["segm"])
             stats["results_json_masks"] = results_json_masks
             stats["coco_eval_masks"] = coco_evaluator.coco_eval["segm"].stats.tolist()
     return stats, coco_evaluator
