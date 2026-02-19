@@ -51,6 +51,7 @@ from rfdetr.util.get_param_dicts import get_param_dict
 from rfdetr.util.logger import get_logger
 from rfdetr.util.misc import get_rank, get_world_size, is_main_process, save_on_master
 from rfdetr.util.utils import BestMetricHolder, ModelEma, clean_state_dict
+from rfdetr.utils.decorators import _DeprecatedDict
 
 if str(os.environ.get("USE_FILE_SYSTEM_SHARING", "False")).lower() in ["true", "1"]:
     import torch.multiprocessing
@@ -60,8 +61,13 @@ logger = get_logger()
 
 
 # THE FOLLOWING MODEL ASSETS ARE COVERED BY THE APACHE 2.0 LICENSE
-# Legacy dictionary for backward compatibility
-OPEN_SOURCE_MODELS = {asset.filename: asset.url for asset in ModelWeights}
+# Legacy dictionary for backward compatibility - DEPRECATED
+# Use ModelWeights enum from rfdetr.assets.model_weights instead
+OPEN_SOURCE_MODELS = _DeprecatedDict(
+    {asset.filename: asset.url for asset in ModelWeights},
+    deprecated_name="OPEN_SOURCE_MODELS",
+    replacement="`ModelWeights` enum from `rfdetr.assets.model_weights`"
+)
 
 
 class Model:
@@ -343,6 +349,11 @@ class Model:
                 args.cutoff_epoch, args.drop_mode, args.drop_schedule)
             logger.info("Min DP = %.7f, Max DP = %.7f", min(schedules['dp']), max(schedules['dp']))
 
+        if args.output_dir and is_main_process() and getattr(args, "save_dataset_grids", False):
+            from rfdetr.datasets.save_grids import DatasetGridSaver
+
+            DatasetGridSaver(data_loader_train, output_dir, max_batches=3, dataset_type='train').save_grid()
+            DatasetGridSaver(data_loader_val, output_dir, max_batches=3, dataset_type='val').save_grid()
         logger.info("Start training")
         start_time = time.time()
         best_map_holder = BestMetricHolder(use_ema=args.use_ema)
@@ -350,6 +361,7 @@ class Model:
         best_map_50 = 0
         best_map_ema_5095 = 0
         best_map_ema_50 = 0
+
         for epoch in range(args.start_epoch, args.epochs):
             epoch_start_time = time.time()
             if args.distributed:
@@ -559,7 +571,13 @@ class Model:
 
         input_tensors = make_infer_image(infer_dir, shape, batch_size, device).to(device)
         input_names = ['input']
-        output_names = ['features'] if backbone_only else ['dets', 'labels']
+        if backbone_only:
+            output_names = ['features']
+        elif self.args.segmentation_head:
+            output_names = ['dets', 'labels', 'masks']
+        else:
+            output_names = ['dets', 'labels']
+
         dynamic_axes = None
         model.eval()
         with torch.no_grad():
@@ -980,6 +998,7 @@ def populate_args(
     coco_path=None,
     dataset_dir=None,
     square_resize_div_64=False,
+    aug_config=None,
 
     # Output parameters
     output_dir='output',
@@ -1090,6 +1109,7 @@ def populate_args(
         coco_path=coco_path,
         dataset_dir=dataset_dir,
         square_resize_div_64=square_resize_div_64,
+        aug_config=aug_config,
         output_dir=output_dir,
         dont_save_weights=dont_save_weights,
         checkpoint_interval=checkpoint_interval,

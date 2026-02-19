@@ -384,6 +384,7 @@ class SetCriterion(nn.Module):
 
             pos_ind=[id for id in idx]
             pos_ind.append(target_classes_o)
+            pos_ious_func = pos_ious_func.to(cls_iou_func_targets.dtype)
             cls_iou_func_targets[pos_ind] = pos_ious_func
             norm_cls_iou_func_targets = cls_iou_func_targets \
                 / (cls_iou_func_targets.view(cls_iou_func_targets.shape[0], -1, 1).amax(1, True) + 1e-8)

@@ -48,6 +48,7 @@ dependencies = [
     "supervision",
     "matplotlib",
     "roboflow",
+    "albumentations>=1.0.0,<2.0.0"
 ]
 
 [project.optional-dependencies]
@@ -77,6 +78,7 @@ tests = [
   "pytest>=7.2.2,<9",
   "pytest-cov>=4,<8",
   "pytest-xdist>=3.6.1,<4",
+  "pytest-rerunfailures>=10,<15",
 ]
 
 docs = [

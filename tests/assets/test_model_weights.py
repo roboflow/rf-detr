@@ -4,6 +4,8 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+import pytest
+
 from rfdetr.assets import ModelWeightAsset, ModelWeights, ModelWeightsBase
 
 
@@ -66,18 +68,18 @@ def test_list_models():
     assert all(isinstance(m, str) for m in models)
 
 
-def test_all_assets_have_valid_urls():
+@pytest.mark.parametrize("asset", list(ModelWeights), ids=[a.filename for a in ModelWeights])
+def test_all_assets_have_valid_urls(asset: ModelWeightAsset) -> None:
     """Test that all assets have valid URLs."""
-    for asset in ModelWeights:
-        assert asset.url.startswith('http')
-        assert len(asset.url) > 20  # Reasonable minimum URL length
+    assert asset.url.startswith('http')
+    assert len(asset.url) > 20  # Reasonable minimum URL length
 
 
-def test_all_assets_have_valid_filenames():
+@pytest.mark.parametrize("asset", list(ModelWeights), ids=[a.filename for a in ModelWeights])
+def test_all_assets_have_valid_filenames(asset: ModelWeightAsset) -> None:
     """Test that all assets have valid filenames."""
-    for asset in ModelWeights:
-        assert len(asset.filename) > 0
-        assert asset.filename.endswith(('.pth', '.pt'))
+    assert len(asset.filename) > 0
+    assert asset.filename.endswith(('.pth', '.pt'))
 
 
 def test_filenames_are_unique():

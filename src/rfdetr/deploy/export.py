@@ -227,7 +227,8 @@ def main(args):
     np.random.seed(seed)
     random.seed(seed)
 
-    model, criterion, postprocessors = build_model(args)
+    result = build_model(args)
+    model = result[0] if isinstance(result, tuple) else result
     n_parameters = sum(p.numel() for p in model.parameters())
     logger.info(f"number of parameters: {n_parameters}")
     n_backbone_parameters = sum(p.numel() for p in model.backbone.parameters())
@@ -248,9 +249,14 @@ def main(args):
 
     model.to(device)
 
-    input_tensors = make_infer_image(args, device)
+    input_tensors = make_infer_image(args.infer_dir, args.shape, args.batch_size, device)
     input_names = ['input']
-    output_names = ['features'] if args.backbone_only else ['dets', 'labels']
+    if args.backbone_only:
+        output_names = ['features']
+    elif args.segmentation_head:
+        output_names = ['dets', 'labels', 'masks']
+    else:
+        output_names = ['dets', 'labels']
     dynamic_axes = None
     # Run model inference in pytorch mode
     model.eval().to("cuda")
@@ -291,7 +297,7 @@ def main(args):
     input_tensors = input_tensors.cpu()
 
 
-    output_file = export_onnx(model, args, input_names, input_tensors, output_names, dynamic_axes)
+    output_file = export_onnx(args.output_dir, model, input_names, input_tensors, output_names, dynamic_axes, backbone_only=args.backbone_only, verbose=args.verbose, opset_version=args.opset_version)
 
     if args.simplify:
         output_file = onnx_simplify(output_file, input_names, input_tensors, args)

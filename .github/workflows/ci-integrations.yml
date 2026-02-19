@@ -10,6 +10,8 @@ permissions:
   contents: read
 
 env:
+  # UV_TORCH_BACKEND only works with 'uv pip' commands, not 'uv sync'.
+  # Used by 'uv pip install torch torchvision' step to install CPU-only PyTorch.
   UV_TORCH_BACKEND: "cpu"
 
 concurrency:
@@ -35,7 +37,8 @@ jobs:
           activate-environment: true
 
       - name: 🚀 Install Packages (plus extras)
-        run: uv sync --extra plus
+        # Install PyTorch CPU-only first (UV_TORCH_BACKEND=cpu works with 'uv pip')
+        run: uv pip install -e .[plus]
 
       - name: 🔎 Validate model instantiation and downloads
         run: python tests/try_instantiate_all_models.py

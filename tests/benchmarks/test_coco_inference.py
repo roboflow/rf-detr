@@ -53,17 +53,17 @@ _PLUS_SKIP = pytest.mark.skipif(not _PLUS_AVAILABLE, reason="requires rfdetr_plu
 
 @pytest.mark.gpu
 @pytest.mark.parametrize(
-    ("model_cls", "threshold_map", "threshold_f1", "num_samples"),
+    ("model_cls", "threshold_map", "threshold_f1", "num_samples", "batch_size"),
     [
-        pytest.param(RFDETRNano, 0.67, 0.67, None, id="nano"),
-        pytest.param(RFDETRSmall, 0.72, 0.70, 500, id="small"),
-        pytest.param(RFDETRMedium, 0.73, 0.71, 500, id="medium"),
-        pytest.param(RFDETRLarge, 0.74, 0.72, 500, id="large"),
+        pytest.param(RFDETRNano, 0.67, 0.67, None, 6, id="nano"),
+        pytest.param(RFDETRSmall, 0.72, 0.70, 500, 6, id="small"),
+        pytest.param(RFDETRMedium, 0.73, 0.71, 500, 4, id="medium"),
+        pytest.param(RFDETRLarge, 0.74, 0.72, 500, 2, id="large"),
         pytest.param(
-            RFDETRXLarge_PML, 0.77, 0.74, 500, id="xlarge", marks=_PLUS_SKIP,
+            RFDETRXLarge_PML, 0.77, 0.74, 500, 2, id="xlarge", marks=_PLUS_SKIP,
         ),
         pytest.param(
-            RFDETR2XLarge_PML, 0.78, 0.74, 500, id="2xlarge", marks=_PLUS_SKIP,
+            RFDETR2XLarge_PML, 0.78, 0.74, 500, 2, id="2xlarge", marks=_PLUS_SKIP,
         ),
     ],
 )
@@ -74,7 +74,27 @@ def test_coco_detection_inference_benchmark(
     threshold_map: float,
     threshold_f1: float,
     num_samples: Optional[int],
+    batch_size: int,
 ) -> None:
+    """
+    Benchmark test for object detection model inference on COCO validation set.
+
+    This test validates that pretrained detection models maintain their expected
+    performance levels on the COCO val2017 dataset. It ensures that:
+    1. Models load correctly with pretrained weights
+    2. Inference produces valid predictions
+    3. Performance metrics (mAP@50 and F1 score) meet minimum thresholds
+
+    The performance thresholds (mAP@50 and F1 score) were established by running
+    inference on the complete COCO val2017 dataset with each model variant. These
+    thresholds represent the expected baseline performance and help detect regressions
+    in model quality or inference pipeline changes.
+
+    Note: To reduce test time, some model variants use a subset of the validation
+    set (500 samples). The nano model runs on the full dataset as a comprehensive check.
+    Batch sizes are adjusted per model size to avoid GPU OOM: large models use batch_size=2,
+    medium models use batch_size=4, and small models use batch_size=6.
+    """
     device = "cuda" if torch.cuda.is_available() else "cpu"
     images_root, annotations_path = download_coco_val
 
@@ -95,7 +115,7 @@ def test_coco_detection_inference_benchmark(
         val_dataset = torch.utils.data.Subset(val_dataset, list(range(min(num_samples, len(val_dataset)))))
     data_loader = torch.utils.data.DataLoader(
         val_dataset,
-        batch_size=4,
+        batch_size=batch_size,
         sampler=torch.utils.data.SequentialSampler(val_dataset),
         drop_last=False,
         collate_fn=collate_fn,
@@ -132,14 +152,14 @@ def test_coco_detection_inference_benchmark(
 
 @pytest.mark.gpu
 @pytest.mark.parametrize(
-    ("model_cls", "threshold_segm_map", "threshold_segm_f1", "num_samples"),
+    ("model_cls", "threshold_segm_map", "threshold_segm_f1", "num_samples", "batch_size"),
     [
-        pytest.param(RFDETRSegNano, 0.63, 0.64, 500, id="nano"),
-        pytest.param(RFDETRSegSmall, 0.66, 0.67, 100, id="small"),
-        pytest.param(RFDETRSegMedium, 0.68, 0.68, 100, id="medium"),
-        pytest.param(RFDETRSegLarge, 0.70, 0.69, 100, id="large"),
-        pytest.param(RFDETRSegXLarge, 0.72, 0.70, 100, id="xlarge"),
-        pytest.param(RFDETRSeg2XLarge, 0.73, 0.71, 100, id="2xlarge"),
+        pytest.param(RFDETRSegNano, 0.63, 0.64, 500, 6, id="nano"),
+        pytest.param(RFDETRSegSmall, 0.66, 0.67, 100, 6, id="small"),
+        pytest.param(RFDETRSegMedium, 0.68, 0.68, 100, 4, id="medium"),
+        pytest.param(RFDETRSegLarge, 0.70, 0.69, 100, 2, id="large"),
+        pytest.param(RFDETRSegXLarge, 0.72, 0.70, 100, 2, id="xlarge"),
+        pytest.param(RFDETRSeg2XLarge, 0.73, 0.71, 100, 2, id="2xlarge"),
     ],
 )
 def test_coco_segmentation_inference_benchmark(
@@ -149,7 +169,28 @@ def test_coco_segmentation_inference_benchmark(
     threshold_segm_map: float,
     threshold_segm_f1: float,
     num_samples: Optional[int],
+    batch_size: int,
 ) -> None:
+    """
+    Benchmark test for instance segmentation model inference on COCO validation set.
+
+    This test validates that pretrained segmentation models maintain their expected
+    performance levels on the COCO val2017 dataset. It ensures that:
+    1. Segmentation models load correctly with pretrained weights
+    2. Inference produces valid predictions for both bounding boxes and masks
+    3. Segmentation performance metrics (mask mAP@50 and F1 score) meet minimum thresholds
+
+    The performance thresholds (mask mAP@50 and F1 score) were established by running
+    inference on the complete COCO val2017 dataset with each model variant. These
+    thresholds represent the expected baseline segmentation performance and help detect
+    regressions in model quality or the segmentation inference pipeline.
+
+    Note: To reduce test time, model variants use subsets of the validation set
+    (100-500 samples depending on model size). The nano model uses 500 samples
+    for a more comprehensive check. Batch sizes are adjusted per model size to avoid
+    GPU OOM: large models use batch_size=2, medium models use batch_size=4, and small
+    models use batch_size=6.
+    """
     device = "cuda" if torch.cuda.is_available() else "cpu"
     images_root, annotations_path = download_coco_val
 
@@ -184,7 +225,7 @@ def test_coco_segmentation_inference_benchmark(
         val_dataset = torch.utils.data.Subset(val_dataset, list(range(min(num_samples, len(val_dataset)))))
     data_loader = torch.utils.data.DataLoader(
         val_dataset,
-        batch_size=4,
+        batch_size=batch_size,
         sampler=torch.utils.data.SequentialSampler(val_dataset),
         drop_last=False,
         collate_fn=collate_fn,
