@@ -204,12 +204,15 @@ class RFDETR:
             train_config["class_names"] = class_names
 
         for k, v in train_config.items():
-            if k in model_config:
+            if k in model_config and v is not None:
                 model_config.pop(k)
             if k in kwargs:
                 kwargs.pop(k)
 
-        all_kwargs = {**model_config, **train_config, **kwargs, "num_classes": num_classes}
+        # Keys still present in model_config are those whose train_config value was None
+        # (i.e. not explicitly set by the user).  Prefer the model's value for those.
+        train_config_effective = {k: v for k, v in train_config.items() if k not in model_config}
+        all_kwargs = {**model_config, **train_config_effective, **kwargs, "num_classes": num_classes}
 
         metrics_plot_sink = MetricsPlotSink(output_dir=config.output_dir)
         self.callbacks["on_fit_epoch_end"].append(metrics_plot_sink.update)

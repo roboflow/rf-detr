@@ -274,6 +274,7 @@ class TrainConfig(BaseModel):
     lr: float = 1e-4
     lr_encoder: float = 1.5e-4
     batch_size: int = 4
+    device: Literal["auto", "cpu", "cuda", "mps"] = DEVICE
     grad_accum_steps: int = 4
     epochs: int = 100
     resume: Optional[str] = None
@@ -328,6 +329,7 @@ class TrainConfig(BaseModel):
 
 
 class SegmentationTrainConfig(TrainConfig):
+    num_select: Optional[int] = None
     mask_point_sample_ratio: int = 16
     mask_ce_loss_coef: float = 5.0
     mask_dice_loss_coef: float = 5.0

@@ -252,7 +252,7 @@ def coco_extended_metrics(coco_eval):
     Uses evalImgs directly to compute metrics from raw matching data.
     """
 
-    iou50_idx = np.argwhere(np.isclose(coco_eval.params.iouThrs, 0.50)).item()
+    iou50_idx = np.argmax(np.isclose(coco_eval.params.iouThrs, 0.50)).item()
     cat_ids = coco_eval.params.catIds
     num_classes = len(cat_ids)
     area_idx = 0
