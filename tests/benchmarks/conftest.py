@@ -14,11 +14,11 @@ from rfdetr.datasets._develop import (
     _download_and_extract,
     _download_lock,
 )
+from rfdetr.datasets.synthetic import DatasetSplitRatios, generate_coco_dataset
+from rfdetr.util.utils import seed_all
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _DATA_DIR = _PROJECT_ROOT / "data"
-from rfdetr.datasets.synthetic import DatasetSplitRatios, generate_coco_dataset
-from rfdetr.util.utils import seed_all
 
 
 @pytest.fixture(scope="session")

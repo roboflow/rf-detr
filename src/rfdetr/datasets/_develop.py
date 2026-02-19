@@ -10,6 +10,8 @@ These utilities are intended for internal use by developers and test suites.
 They are not part of the public API and may change without notice.
 """
 
+from __future__ import annotations
+
 import os
 import shutil
 import time
@@ -19,10 +21,9 @@ from pathlib import Path
 from typing import Any, Generator, Optional, Tuple
 from urllib.request import urlretrieve
 
-import numpy as np
-import torch
-from PIL import Image
-from torch.utils.data import Dataset
+from rfdetr.util.logger import get_logger
+
+logger = get_logger()
 
 _COCO_URLS = {
     "val2017": "http://images.cocodataset.org/zips/val2017.zip",
@@ -30,12 +31,17 @@ _COCO_URLS = {
 }
 
 
-class _SimpleDataset(Dataset):
+class _SimpleDataset:
     """Simple synthetic dataset for testing augmentations and training loops.
 
     Creates synthetic images with varying numbers of bounding boxes to test
     edge cases in augmentation pipelines, particularly the case where
     num_boxes=2 (which matches orig_size shape [2]).
+
+    Implements the ``__len__`` / ``__getitem__`` protocol expected by
+    ``torch.utils.data.DataLoader`` without inheriting from
+    ``torch.utils.data.Dataset``, so importing this class does not pull in
+    torch at module load time.
 
     Args:
         num_samples: Number of samples in the dataset.
@@ -60,6 +66,10 @@ class _SimpleDataset(Dataset):
         return self.num_samples
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, dict]:
+        import numpy as np
+        import torch
+        from PIL import Image
+
         # Create synthetic image
         image = Image.new('RGB', (640, 480))
 
@@ -106,9 +116,9 @@ def _download_and_extract(url: str, dest_dir: Path) -> None:
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
     zip_path = dest_dir / url.rsplit("/", 1)[-1]
-    print(f"Downloading {url} ...")
+    logger.info("Downloading %s ...", url)
     urlretrieve(url, str(zip_path))
-    print(f"Extracting {zip_path} ...")
+    logger.info("Extracting %s ...", zip_path)
     dest_dir_resolved = dest_dir.resolve()
     with zipfile.ZipFile(str(zip_path), "r") as zf:
         for member in zf.infolist():

@@ -5,7 +5,3 @@
 # ------------------------------------------------------------------------
 
 """Test helper utilities and classes."""
-
-from rfdetr.datasets._develop import _SimpleDataset
-
-__all__ = ["_SimpleDataset"]

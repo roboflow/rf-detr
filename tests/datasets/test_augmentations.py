@@ -12,6 +12,7 @@ import torch
 from PIL import Image
 from torch.utils.data import DataLoader
 
+from rfdetr.datasets._develop import _SimpleDataset
 from rfdetr.datasets.aug_config import AUG_CONFIG
 from rfdetr.datasets.coco import make_coco_transforms, make_coco_transforms_square_div_64
 from rfdetr.datasets.transforms import (
@@ -20,7 +21,6 @@ from rfdetr.datasets.transforms import (
     ComposeAugmentations,
 )
 from rfdetr.util.misc import collate_fn
-from tests.helpers import _SimpleDataset
 
 
 class TestAlbumentationsWrapper:
