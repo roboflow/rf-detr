@@ -37,7 +37,7 @@ keywords = ["machine-learning", "deep-learning", "vision", "ML", "DL", "AI", "DE
 dependencies = [
     "requests",
     "pycocotools",
-    "torch>=1.13.0",
+    "torch>=2.0.0",
     "torchvision>=0.14.0",
     "scipy",
     "tqdm",
