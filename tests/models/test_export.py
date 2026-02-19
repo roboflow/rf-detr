@@ -17,6 +17,7 @@ Use cases covered:
 """
 
 import importlib.util
+import inspect
 import sys
 import types
 import warnings
@@ -60,6 +61,37 @@ def ignore_tracer_warnings() -> Iterator[None]:
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=TracerWarning)
         yield
+
+
+def test_export_onnx_uses_legacy_exporter_when_dynamo_flag_exists(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`export_onnx` should pass `dynamo=False` when supported by torch.onnx.export."""
+    captured_kwargs: dict = {}
+
+    class _ToyModel(torch.nn.Module):
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            return x
+
+    def _fake_onnx_export(*args, **kwargs) -> None:
+        captured_kwargs.update(kwargs)
+
+    monkeypatch.setattr(_cli_export_module.torch.onnx, "export", _fake_onnx_export)
+
+    _cli_export_module.export_onnx(
+        output_dir=str(tmp_path),
+        model=_ToyModel(),
+        input_names=["images"],
+        input_tensors=torch.randn(1, 3, 8, 8),
+        output_names=["dets"],
+        dynamic_axes={},
+        verbose=False,
+    )
+
+    has_dynamo_arg = "dynamo" in inspect.signature(torch.onnx.export).parameters
+    assert ("dynamo" in captured_kwargs) == has_dynamo_arg
+    if has_dynamo_arg:
+        assert captured_kwargs["dynamo"] is False
 
 
 @pytest.mark.gpu

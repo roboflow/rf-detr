@@ -358,11 +358,11 @@ class SetCriterion(nn.Module):
             pos_ind=[id for id in idx]
             pos_ind.append(target_classes_o)
 
-            t = prob[pos_ind].pow(alpha) * pos_ious.pow(1 - alpha)
+            t = prob[tuple(pos_ind)].pow(alpha) * pos_ious.pow(1 - alpha)
             t = torch.clamp(t, 0.01).detach()
 
-            pos_weights[pos_ind] = t.to(pos_weights.dtype)
-            neg_weights[pos_ind] = 1 - t.to(neg_weights.dtype)
+            pos_weights[tuple(pos_ind)] = t.to(pos_weights.dtype)
+            neg_weights[tuple(pos_ind)] = 1 - t.to(neg_weights.dtype)
             # a reformulation of the standard loss_ce = - pos_weights * prob.log() - neg_weights * (1 - prob).log()
             # with a focus on statistical stability by using fused logsigmoid
             loss_ce = neg_weights * src_logits - F.logsigmoid(src_logits) * (pos_weights + neg_weights)
@@ -385,7 +385,7 @@ class SetCriterion(nn.Module):
             pos_ind=[id for id in idx]
             pos_ind.append(target_classes_o)
             pos_ious_func = pos_ious_func.to(cls_iou_func_targets.dtype)
-            cls_iou_func_targets[pos_ind] = pos_ious_func
+            cls_iou_func_targets[tuple(pos_ind)] = pos_ious_func
             norm_cls_iou_func_targets = cls_iou_func_targets \
                 / (cls_iou_func_targets.view(cls_iou_func_targets.shape[0], -1, 1).amax(1, True) + 1e-8)
             loss_ce = position_supervised_loss(src_logits, norm_cls_iou_func_targets, num_boxes, alpha=self.focal_alpha, gamma=2) * src_logits.shape[1]
@@ -404,7 +404,7 @@ class SetCriterion(nn.Module):
 
             pos_ind=[id for id in idx]
             pos_ind.append(target_classes_o)
-            cls_iou_targets[pos_ind] = pos_ious
+            cls_iou_targets[tuple(pos_ind)] = pos_ious
             loss_ce = sigmoid_varifocal_loss(src_logits, cls_iou_targets, num_boxes, alpha=self.focal_alpha, gamma=2) * src_logits.shape[1]
         else:
             target_classes = torch.full(src_logits.shape[:2], self.num_classes,

@@ -37,7 +37,7 @@ keywords = ["machine-learning", "deep-learning", "vision", "ML", "DL", "AI", "DE
 dependencies = [
     "requests",
     "pycocotools",
-    "torch>=1.13.0,<=2.8.0", # TODO: Torch >=2.9.0 is excluded due to known issues. PRs that help lift this restriction are welcome.
+    "torch>=2.0.0",
     "torchvision>=0.14.0",
     "scipy",
     "tqdm",
