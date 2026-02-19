@@ -1008,7 +1008,7 @@ class TestTrainingLoop:
             batch_size=1,
             grad_accum_steps=1,
             num_workers=0,
-            resolution=128,
+            resolution=64,
             amp=False,
             use_ema=False,
             run_test=False,
