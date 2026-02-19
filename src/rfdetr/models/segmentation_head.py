@@ -24,9 +24,21 @@ class DepthwiseConvBlock(nn.Module):
         self.gamma = nn.Parameter(layer_scale_init_value * torch.ones((dim)),
                                     requires_grad=True) if layer_scale_init_value > 0 else None
 
+    def _depthwise_conv(self, x: torch.Tensor) -> torch.Tensor:
+        try:
+            return self.dwconv(x)
+        except RuntimeError as error:
+            message = str(error)
+            # PyTorch/cuDNN can fail kernel selection for some depthwise conv cases
+            # on specific GPUs (e.g. T4). Retry once with cuDNN disabled.
+            if "GET was unable to find an engine to execute this computation" in message:
+                with torch.backends.cudnn.flags(enabled=False):
+                    return self.dwconv(x)
+            raise
+
     def forward(self, x):
         input = x
-        x = self.dwconv(x)
+        x = self._depthwise_conv(x)
         x = x.permute(0, 2, 3, 1) # (N, C, H, W) -> (N, H, W, C)
         x = self.norm(x)
         x = self.pwconv1(x)
