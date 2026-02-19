@@ -81,8 +81,22 @@ def test_generate_synthetic_sample(img_size, min_objects, max_objects, class_mod
             ["train", "val", "test"],
             id="shape_mode_all_splits_dict",
         ),
-        pytest.param(3, 64, "color", {"train": 0.5, "val": 0.5}, ["train", "val"], id="color_mode_two_splits_dict",),
-        pytest.param(2, 128, "shape", {"train": 1.0}, ["train"], id="single_split_only_dict",),
+        pytest.param(
+            3,
+            64,
+            "color",
+            {"train": 0.5, "val": 0.5},
+            ["train", "val"],
+            id="color_mode_two_splits_dict",
+        ),
+        pytest.param(
+            2,
+            128,
+            "shape",
+            {"train": 1.0},
+            ["train"],
+            id="single_split_only_dict",
+        ),
         # Test with DatasetSplitRatios dataclass
         pytest.param(
             4,
@@ -101,10 +115,31 @@ def test_generate_synthetic_sample(img_size, min_objects, max_objects, class_mod
             id="split_ratios_no_test",
         ),
         # Test with tuple
-        pytest.param(4, 100, "shape", (0.7, 0.2, 0.1), ["train", "val", "test"], id="split_ratios_tuple_three",),
-        pytest.param(3, 64, "color", (0.8, 0.2), ["train", "val"], id="split_ratios_tuple_two",),
+        pytest.param(
+            4,
+            100,
+            "shape",
+            (0.7, 0.2, 0.1),
+            ["train", "val", "test"],
+            id="split_ratios_tuple_three",
+        ),
+        pytest.param(
+            3,
+            64,
+            "color",
+            (0.8, 0.2),
+            ["train", "val"],
+            id="split_ratios_tuple_two",
+        ),
         # Test with default
-        pytest.param(10, 64, "shape", DEFAULT_SPLIT_RATIOS, ["train", "val", "test"], id="split_ratios_default",),
+        pytest.param(
+            10,
+            64,
+            "shape",
+            DEFAULT_SPLIT_RATIOS,
+            ["train", "val", "test"],
+            id="split_ratios_default",
+        ),
     ],
 )
 def test_generate_coco_dataset(num_images, img_size, class_mode, split_ratios, expected_splits, tmp_path):
@@ -138,9 +173,21 @@ def test_generate_coco_dataset(num_images, img_size, class_mode, split_ratios, e
 @pytest.mark.parametrize(
     "split_ratios,error_message",
     [
-        pytest.param((1.1, -0.1), "Split ratios must be non-negative", id="tuple_negative_ratio",),
-        pytest.param({"train": 1.1, "val": -0.1}, "Split ratios must be non-negative", id="dict_negative_ratio",),
-        pytest.param((0.5, 0.3), "Split ratios must sum to 1.0", id="tuple_invalid_sum",),
+        pytest.param(
+            (1.1, -0.1),
+            "Split ratios must be non-negative",
+            id="tuple_negative_ratio",
+        ),
+        pytest.param(
+            {"train": 1.1, "val": -0.1},
+            "Split ratios must be non-negative",
+            id="dict_negative_ratio",
+        ),
+        pytest.param(
+            (0.5, 0.3),
+            "Split ratios must sum to 1.0",
+            id="tuple_invalid_sum",
+        ),
     ],
 )
 def test_invalid_split_ratios(split_ratios, error_message, tmp_path):
@@ -148,5 +195,9 @@ def test_invalid_split_ratios(split_ratios, error_message, tmp_path):
     output_dir = tmp_path / "test_dataset"
     with pytest.raises(ValueError, match=error_message):
         generate_coco_dataset(
-            output_dir=str(output_dir), num_images=5, img_size=100, class_mode="shape", split_ratios=split_ratios,
+            output_dir=str(output_dir),
+            num_images=5,
+            img_size=100,
+            class_mode="shape",
+            split_ratios=split_ratios,
         )

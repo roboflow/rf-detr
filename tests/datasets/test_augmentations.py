@@ -83,7 +83,12 @@ class TestAlbumentationsWrapper:
 
         image = Image.new("RGB", (100, 100))
         target = {
-            "boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0], [50.0, 60.0, 70.0, 80.0],]),
+            "boxes": torch.tensor(
+                [
+                    [10.0, 20.0, 30.0, 40.0],
+                    [50.0, 60.0, 70.0, 80.0],
+                ]
+            ),
             "labels": torch.tensor([1, 2]),
         }
 
@@ -307,7 +312,11 @@ class TestAlbumentationsWrapper:
         masks = torch.zeros((1, height, width), dtype=torch.uint8)
         masks[0, 40:60, 40:60] = 1
 
-        target = {"boxes": torch.tensor([[40.0, 40.0, 60.0, 60.0]]), "labels": torch.tensor([1]), "masks": masks,}
+        target = {
+            "boxes": torch.tensor([[40.0, 40.0, 60.0, 60.0]]),
+            "labels": torch.tensor([1]),
+            "masks": masks,
+        }
 
         aug_image, aug_target = wrapper(image, target)
 
@@ -338,7 +347,11 @@ class TestAlbumentationsWrapper:
         masks = torch.zeros((1, height, width), dtype=torch.uint8)
         masks[0, 20:40, 10:30] = 1
 
-        target = {"boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0]]), "labels": torch.tensor([1]), "masks": masks,}
+        target = {
+            "boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0]]),
+            "labels": torch.tensor([1]),
+            "masks": masks,
+        }
 
         aug_image, aug_target = wrapper(image, target)
 
@@ -360,7 +373,12 @@ class TestAlbumentationsWrapper:
         masks[1, 50:70, 50:70] = 1  # Second mask
 
         target = {
-            "boxes": torch.tensor([[10.0, 10.0, 30.0, 30.0], [50.0, 50.0, 70.0, 70.0],]),
+            "boxes": torch.tensor(
+                [
+                    [10.0, 10.0, 30.0, 30.0],
+                    [50.0, 50.0, 70.0, 70.0],
+                ]
+            ),
             "labels": torch.tensor([1, 2]),
             "masks": masks,
         }
@@ -443,7 +461,11 @@ class TestAlbumentationsWrapper:
         masks = torch.zeros((1, height, width), dtype=mask_dtype)
         masks[0, 20:40, 10:30] = 1
 
-        target = {"boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0]]), "labels": torch.tensor([1]), "masks": masks,}
+        target = {
+            "boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0]]),
+            "labels": torch.tensor([1]),
+            "masks": masks,
+        }
 
         aug_image, aug_target = wrapper(image, target)
 
@@ -581,7 +603,10 @@ class TestComposeAugmentations:
         composed = ComposeAugmentations(transforms)
 
         image = Image.new("RGB", (100, 100))
-        target = {"boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0]]), "labels": torch.tensor([1]),}
+        target = {
+            "boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0]]),
+            "labels": torch.tensor([1]),
+        }
 
         aug_image, aug_target = composed(image, target)
 
@@ -594,7 +619,10 @@ class TestComposeAugmentations:
         composed = ComposeAugmentations([])
 
         image = Image.new("RGB", (100, 100))
-        target = {"boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0]]), "labels": torch.tensor([1]),}
+        target = {
+            "boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0]]),
+            "labels": torch.tensor([1]),
+        }
 
         aug_image, aug_target = composed(image, target)
 
@@ -644,7 +672,10 @@ class TestIntegration:
 
         # Apply to data
         image = Image.new("RGB", (100, 100))
-        target = {"boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0]]), "labels": torch.tensor([1]),}
+        target = {
+            "boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0]]),
+            "labels": torch.tensor([1]),
+        }
 
         aug_image, aug_target = composed(image, target)
 
@@ -751,7 +782,11 @@ class TestIntegration:
         masks = torch.zeros((1, height, width), dtype=torch.uint8)
         masks[0, 20:40, 10:30] = 1
 
-        target = {"boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0]]), "labels": torch.tensor([1]), "masks": masks,}
+        target = {
+            "boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0]]),
+            "labels": torch.tensor([1]),
+            "masks": masks,
+        }
 
         aug_image, aug_target = composed(image, target)
 
@@ -783,7 +818,11 @@ class TestIntegration:
             x1, y1, x2, y2 = int(x), int(y), int(x + 15), int(y + 15)
             masks[i, y1:y2, x1:x2] = 1
 
-        target = {"boxes": torch.tensor(boxes), "labels": torch.arange(1, num_instances + 1), "masks": masks,}
+        target = {
+            "boxes": torch.tensor(boxes),
+            "labels": torch.arange(1, num_instances + 1),
+            "masks": masks,
+        }
 
         aug_image, aug_target = composed(image, target)
 
