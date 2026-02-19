@@ -921,9 +921,18 @@ class TestTrainingLoop:
         orig_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
         assert orig_sizes.shape == torch.Size([len(targets), 2])
 
+    @pytest.mark.parametrize(
+        "transform_class,transform_kwargs",
+        [
+            (A.HorizontalFlip, {"p": 1.0}),
+            (A.VerticalFlip, {"p": 1.0}),
+            (A.RandomRotate90, {"p": 1.0}),
+        ],
+        ids=["horizontal_flip", "vertical_flip", "random_rotate_90"],
+    )
     @pytest.mark.parametrize("include_masks", [False, True], ids=["detection", "segmentation"])
-    def test_horizontal_flip_dataloader_compatibility(self, include_masks):
-        """Test horizontal flip works in a training-like DataLoader for detection and segmentation."""
+    def test_geometric_dataloader_compatibility(self, include_masks, transform_class, transform_kwargs):
+        """Test geometric Albumentations transforms work in DataLoader for detection and segmentation."""
 
         class _TinyTrainDataset:
             def __len__(self):
@@ -950,7 +959,7 @@ class TestTrainingLoop:
                 image = torch.from_numpy(np.array(image)).permute(2, 0, 1).float() / 255.0
                 return image, target
 
-        transforms = Compose([AlbumentationsWrapper(A.HorizontalFlip(p=1.0))])
+        transforms = Compose([AlbumentationsWrapper(transform_class(**transform_kwargs))])
         dataloader = DataLoader(_TinyTrainDataset(), batch_size=2, collate_fn=collate_fn, num_workers=0)
         images, targets = next(iter(dataloader))
 
@@ -1007,6 +1016,7 @@ class TestTrainingLoop:
             epochs=1,
             batch_size=1,
             grad_accum_steps=1,
+            device="cpu",
             num_workers=0,
             resolution=64,
             amp=False,
