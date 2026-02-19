@@ -307,7 +307,7 @@ def coco_extended_metrics(coco_eval):
     best = max(sweep_results, key=lambda x: x['macro_f1'])
 
     # Build output with per-class metrics
-    iou50_idx = np.argwhere(np.isclose(coco_eval.params.iouThrs, 0.50)).item()
+    iou50_idx = np.argmax(np.isclose(coco_eval.params.iouThrs, 0.50)).item()
     per_class = []
     cat_names = {c["id"]: c["name"] for c in coco_eval.cocoGt.loadCats(coco_eval.params.catIds)}
 
