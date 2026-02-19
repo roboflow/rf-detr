@@ -36,8 +36,7 @@ def get_logger(name: str = "rf-detr", level: Optional[int] = None) -> logging.Lo
 
     if not logger.handlers:
         formatter = logging.Formatter(
-            "[%(asctime)s] [%(levelname)s] %(name)s - %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S"
+            "[%(asctime)s] [%(levelname)s] %(name)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
         )
 
         stdout_handler = logging.StreamHandler(sys.stdout)

@@ -76,9 +76,7 @@ class TestSegmentationTrainConfigNumSelect:
             (RFDETRSeg2XLargeConfig, 300),
         ],
     )
-    def test_model_config_has_variant_specific_num_select(
-        self, config_class, expected_num_select
-    ) -> None:
+    def test_model_config_has_variant_specific_num_select(self, config_class, expected_num_select) -> None:
         assert config_class().num_select == expected_num_select
 
 
@@ -115,9 +113,7 @@ class TestSegmentationNumSelectMerge:
             (RFDETRSegXLargeConfig, 300),
         ],
     )
-    def test_none_num_select_preserves_model_value(
-        self, model_config_cls, expected_num_select, tmp_path
-    ) -> None:
+    def test_none_num_select_preserves_model_value(self, model_config_cls, expected_num_select, tmp_path) -> None:
         """num_select should come from the model config when not set in the train config."""
         stub = _make_rfdetr_stub(model_config_cls())
         train_config = SegmentationTrainConfig(

@@ -38,12 +38,10 @@ __all__ = [
     "RFDETRSeg2XLarge",
 ]
 
+
 def __getattr__(name: str):
     """Resolve plus-only exports lazily, raising only on explicit access."""
-    _PLUS_EXPORTS = {
-        "RFDETR2XLarge",
-        "RFDETRXLarge"
-    }
+    _PLUS_EXPORTS = {"RFDETR2XLarge", "RFDETRXLarge"}
     if name in _PLUS_EXPORTS:
         from rfdetr.platform import _INSTALL_MSG
         from rfdetr.platform import models as _platform_models

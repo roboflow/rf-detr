@@ -26,89 +26,80 @@ from rfdetr.util.misc import collate_fn
 class TestAlbumentationsWrapper:
     """Tests for AlbumentationsWrapper class."""
 
-    @pytest.mark.parametrize("transform_class,params,box_in,box_out", [
-        (A.HorizontalFlip, {"p": 1.0}, [10.0, 20.0, 30.0, 40.0], [70.0, 20.0, 90.0, 40.0]),
-        (A.VerticalFlip, {"p": 1.0}, [10.0, 20.0, 30.0, 40.0], [10.0, 60.0, 30.0, 80.0]),
-    ])
+    @pytest.mark.parametrize(
+        "transform_class,params,box_in,box_out",
+        [
+            (A.HorizontalFlip, {"p": 1.0}, [10.0, 20.0, 30.0, 40.0], [70.0, 20.0, 90.0, 40.0]),
+            (A.VerticalFlip, {"p": 1.0}, [10.0, 20.0, 30.0, 40.0], [10.0, 60.0, 30.0, 80.0]),
+        ],
+    )
     def test_flip_transforms_with_boxes(self, transform_class, params, box_in, box_out):
         """Test flip transforms correctly transform bounding boxes."""
         transform = transform_class(**params)
         wrapper = AlbumentationsWrapper(transform)
 
-        image = Image.new('RGB', (100, 100))
-        target = {
-            'boxes': torch.tensor([box_in]),
-            'labels': torch.tensor([1])
-        }
+        image = Image.new("RGB", (100, 100))
+        target = {"boxes": torch.tensor([box_in]), "labels": torch.tensor([1])}
 
         aug_image, aug_target = wrapper(image, target)
 
         assert isinstance(aug_image, Image.Image)
-        assert torch.allclose(aug_target['boxes'], torch.tensor([box_out]), atol=1.0)
-        assert torch.equal(aug_target['labels'], target['labels'])
+        assert torch.allclose(aug_target["boxes"], torch.tensor([box_out]), atol=1.0)
+        assert torch.equal(aug_target["labels"], target["labels"])
 
     def test_non_geometric_transform_preserves_boxes(self):
         """Test that non-geometric transforms preserve bounding boxes."""
         transform = A.GaussianBlur(blur_limit=3, p=1.0)
         wrapper = AlbumentationsWrapper(transform)
 
-        image = Image.new('RGB', (100, 100))
-        target = {
-            'boxes': torch.tensor([[10.0, 20.0, 30.0, 40.0]]),
-            'labels': torch.tensor([1])
-        }
+        image = Image.new("RGB", (100, 100))
+        target = {"boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0]]), "labels": torch.tensor([1])}
 
         aug_image, aug_target = wrapper(image, target)
 
         assert isinstance(aug_image, Image.Image)
         # Boxes should be unchanged
-        assert torch.equal(aug_target['boxes'], target['boxes'])
-        assert torch.equal(aug_target['labels'], target['labels'])
+        assert torch.equal(aug_target["boxes"], target["boxes"])
+        assert torch.equal(aug_target["labels"], target["labels"])
 
     def test_empty_boxes_handling(self):
         """Test wrapper handles empty boxes correctly."""
         transform = A.HorizontalFlip(p=1.0)
         wrapper = AlbumentationsWrapper(transform)
 
-        image = Image.new('RGB', (100, 100))
-        target = {
-            'boxes': torch.zeros((0, 4)),
-            'labels': torch.zeros((0,), dtype=torch.long)
-        }
+        image = Image.new("RGB", (100, 100))
+        target = {"boxes": torch.zeros((0, 4)), "labels": torch.zeros((0,), dtype=torch.long)}
 
         aug_image, aug_target = wrapper(image, target)
 
         assert isinstance(aug_image, Image.Image)
-        assert aug_target['boxes'].shape == (0, 4)
-        assert aug_target['labels'].shape == (0,)
+        assert aug_target["boxes"].shape == (0, 4)
+        assert aug_target["labels"].shape == (0,)
 
     def test_multiple_boxes(self):
         """Test wrapper handles multiple bounding boxes."""
         transform = A.HorizontalFlip(p=1.0)
         wrapper = AlbumentationsWrapper(transform)
 
-        image = Image.new('RGB', (100, 100))
+        image = Image.new("RGB", (100, 100))
         target = {
-            'boxes': torch.tensor([
-                [10.0, 20.0, 30.0, 40.0],
-                [50.0, 60.0, 70.0, 80.0]
-            ]),
-            'labels': torch.tensor([1, 2])
+            "boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0], [50.0, 60.0, 70.0, 80.0]]),
+            "labels": torch.tensor([1, 2]),
         }
 
         aug_image, aug_target = wrapper(image, target)
 
         assert isinstance(aug_image, Image.Image)
-        assert aug_target['boxes'].shape == (2, 4)
-        assert aug_target['labels'].shape == (2,)
-        assert torch.equal(aug_target['labels'], target['labels'])
+        assert aug_target["boxes"].shape == (2, 4)
+        assert aug_target["labels"].shape == (2,)
+        assert torch.equal(aug_target["labels"], target["labels"])
 
     def test_invalid_target_type(self):
         """Test wrapper raises error for invalid target type."""
         transform = A.HorizontalFlip(p=1.0)
         wrapper = AlbumentationsWrapper(transform)
 
-        image = Image.new('RGB', (100, 100))
+        image = Image.new("RGB", (100, 100))
 
         with pytest.raises(TypeError, match="target must be a dictionary"):
             wrapper(image, "invalid_target")
@@ -118,8 +109,8 @@ class TestAlbumentationsWrapper:
         transform = A.HorizontalFlip(p=1.0)
         wrapper = AlbumentationsWrapper(transform)
 
-        image = Image.new('RGB', (100, 100))
-        target = {'boxes': torch.tensor([[10.0, 20.0, 30.0, 40.0]])}
+        image = Image.new("RGB", (100, 100))
+        target = {"boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0]])}
 
         with pytest.raises(KeyError, match="target must contain 'labels' key"):
             wrapper(image, target)
@@ -129,10 +120,10 @@ class TestAlbumentationsWrapper:
         transform = A.HorizontalFlip(p=1.0)
         wrapper = AlbumentationsWrapper(transform)
 
-        image = Image.new('RGB', (100, 100))
+        image = Image.new("RGB", (100, 100))
         target = {
-            'boxes': torch.tensor([10.0, 20.0, 30.0]),  # Invalid shape
-            'labels': torch.tensor([1])
+            "boxes": torch.tensor([10.0, 20.0, 30.0]),  # Invalid shape
+            "labels": torch.tensor([1]),
         }
 
         with pytest.raises(ValueError, match="boxes must have shape"):
@@ -149,30 +140,29 @@ class TestAlbumentationsWrapper:
         transform = A.HorizontalFlip(p=1.0)
         wrapper = AlbumentationsWrapper(transform)
 
-        image = Image.new('RGB', (640, 480))
+        image = Image.new("RGB", (640, 480))
         target = {
-            'boxes': torch.tensor([[10.0, 20.0, 100.0, 200.0],
-                                   [300.0, 100.0, 500.0, 400.0]], dtype=torch.float32),
-            'labels': torch.tensor([1, 2]),
-            'orig_size': torch.tensor([480, 640]),  # shape [2], same as num_boxes!
-            'size': torch.tensor([480, 640]),
-            'image_id': torch.tensor([123]),
-            'area': torch.tensor([100.0, 200.0]),
-            'iscrowd': torch.tensor([0, 0])
+            "boxes": torch.tensor([[10.0, 20.0, 100.0, 200.0], [300.0, 100.0, 500.0, 400.0]], dtype=torch.float32),
+            "labels": torch.tensor([1, 2]),
+            "orig_size": torch.tensor([480, 640]),  # shape [2], same as num_boxes!
+            "size": torch.tensor([480, 640]),
+            "image_id": torch.tensor([123]),
+            "area": torch.tensor([100.0, 200.0]),
+            "iscrowd": torch.tensor([0, 0]),
         }
 
         aug_image, aug_target = wrapper(image, target)
 
         # Verify orig_size is still [2] elements (h, w), not filtered as per-instance
-        assert aug_target['orig_size'].shape == torch.Size([2]), \
+        assert aug_target["orig_size"].shape == torch.Size([2]), (
             f"orig_size should have shape [2], got {aug_target['orig_size'].shape}"
-        assert torch.equal(aug_target['orig_size'], target['orig_size']), \
-            "orig_size should be unchanged"
+        )
+        assert torch.equal(aug_target["orig_size"], target["orig_size"]), "orig_size should be unchanged"
 
         # Verify other global fields are also preserved
-        assert aug_target['size'].shape == torch.Size([2])
-        assert aug_target['image_id'].shape == torch.Size([1])
-        assert torch.equal(aug_target['image_id'], target['image_id'])
+        assert aug_target["size"].shape == torch.Size([2])
+        assert aug_target["image_id"].shape == torch.Size([1])
+        assert torch.equal(aug_target["image_id"], target["image_id"])
 
     def test_orig_size_preserved_with_two_boxes_and_masks(self):
         """Test that orig_size and masks are handled correctly when num_boxes=2.
@@ -185,74 +175,74 @@ class TestAlbumentationsWrapper:
         transform = A.HorizontalFlip(p=1.0)
         wrapper = AlbumentationsWrapper(transform)
 
-        image = Image.new('RGB', (640, 480))
+        image = Image.new("RGB", (640, 480))
         # Create masks for 2 boxes (use uint8 for Albumentations compatibility)
         masks = torch.zeros((2, 480, 640), dtype=torch.uint8)
         masks[0, 50:150, 50:150] = 1  # Mask for first box
         masks[1, 200:300, 300:500] = 1  # Mask for second box
 
         target = {
-            'boxes': torch.tensor([[10.0, 20.0, 100.0, 200.0],
-                                   [300.0, 100.0, 500.0, 400.0]], dtype=torch.float32),
-            'labels': torch.tensor([1, 2]),
-            'masks': masks,  # shape [2, 480, 640], same first dim as orig_size!
-            'orig_size': torch.tensor([480, 640]),  # shape [2]
-            'size': torch.tensor([480, 640]),
-            'image_id': torch.tensor([123]),
-            'area': torch.tensor([100.0, 200.0]),
-            'iscrowd': torch.tensor([0, 0])
+            "boxes": torch.tensor([[10.0, 20.0, 100.0, 200.0], [300.0, 100.0, 500.0, 400.0]], dtype=torch.float32),
+            "labels": torch.tensor([1, 2]),
+            "masks": masks,  # shape [2, 480, 640], same first dim as orig_size!
+            "orig_size": torch.tensor([480, 640]),  # shape [2]
+            "size": torch.tensor([480, 640]),
+            "image_id": torch.tensor([123]),
+            "area": torch.tensor([100.0, 200.0]),
+            "iscrowd": torch.tensor([0, 0]),
         }
 
         aug_image, aug_target = wrapper(image, target)
 
         # Verify orig_size is preserved (global field)
-        assert aug_target['orig_size'].shape == torch.Size([2]), \
+        assert aug_target["orig_size"].shape == torch.Size([2]), (
             f"orig_size should have shape [2], got {aug_target['orig_size'].shape}"
-        assert torch.equal(aug_target['orig_size'], target['orig_size']), \
-            "orig_size should be unchanged"
+        )
+        assert torch.equal(aug_target["orig_size"], target["orig_size"]), "orig_size should be unchanged"
 
         # Verify masks are transformed (per-instance field)
-        assert aug_target['masks'].shape == torch.Size([2, 480, 640]), \
+        assert aug_target["masks"].shape == torch.Size([2, 480, 640]), (
             f"masks should have shape [2, 480, 640], got {aug_target['masks'].shape}"
-        assert aug_target['masks'].dtype == torch.bool, \
-            "masks should be converted to bool after transform"
+        )
+        assert aug_target["masks"].dtype == torch.bool, "masks should be converted to bool after transform"
         # Masks should be flipped - verify they're different
-        assert not torch.equal(aug_target['masks'], target['masks'].bool()), \
+        assert not torch.equal(aug_target["masks"], target["masks"].bool()), (
             "masks should be transformed (flipped) for geometric transform"
+        )
 
         # Verify we still have 2 boxes and 2 masks
-        assert len(aug_target['boxes']) == 2, "Should have 2 boxes after transform"
-        assert len(aug_target['labels']) == 2, "Should have 2 labels after transform"
-        assert aug_target['masks'].shape[0] == 2, "Should have 2 masks after transform"
+        assert len(aug_target["boxes"]) == 2, "Should have 2 boxes after transform"
+        assert len(aug_target["labels"]) == 2, "Should have 2 labels after transform"
+        assert aug_target["masks"].shape[0] == 2, "Should have 2 masks after transform"
 
         # Verify other global fields are preserved
-        assert aug_target['size'].shape == torch.Size([2])
-        assert aug_target['image_id'].shape == torch.Size([1])
-        assert torch.equal(aug_target['image_id'], target['image_id'])
+        assert aug_target["size"].shape == torch.Size([2])
+        assert aug_target["image_id"].shape == torch.Size([1])
+        assert torch.equal(aug_target["image_id"], target["image_id"])
 
-    @pytest.mark.parametrize("transform_class,params", [
-        (A.HorizontalFlip, {"p": 1.0}),
-        (A.VerticalFlip, {"p": 1.0}),
-        (A.Rotate, {"limit": 45, "p": 1.0}),
-    ])
+    @pytest.mark.parametrize(
+        "transform_class,params",
+        [
+            (A.HorizontalFlip, {"p": 1.0}),
+            (A.VerticalFlip, {"p": 1.0}),
+            (A.Rotate, {"limit": 45, "p": 1.0}),
+        ],
+    )
     def test_various_geometric_transforms(self, transform_class, params):
         """Test various geometric transforms work correctly."""
         transform = transform_class(**params)
         wrapper = AlbumentationsWrapper(transform)
 
-        image = Image.new('RGB', (100, 100))
-        target = {
-            'boxes': torch.tensor([[10.0, 20.0, 30.0, 40.0]]),
-            'labels': torch.tensor([1])
-        }
+        image = Image.new("RGB", (100, 100))
+        target = {"boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0]]), "labels": torch.tensor([1])}
 
         aug_image, aug_target = wrapper(image, target)
 
         assert isinstance(aug_image, Image.Image)
         # Albumentations can return multiple boxes for a single input box on some Python versions.
-        assert aug_target['boxes'].shape[1] == 4
-        assert aug_target['labels'].shape[0] == aug_target['boxes'].shape[0]
-        assert aug_target['labels'].numel() >= 1
+        assert aug_target["boxes"].shape[1] == 4
+        assert aug_target["labels"].shape[0] == aug_target["boxes"].shape[0]
+        assert aug_target["labels"].numel() >= 1
 
     def test_masks_transform_with_horizontal_flip(self):
         """Masks should be transformed consistently with boxes for geometric transforms."""
@@ -261,7 +251,7 @@ class TestAlbumentationsWrapper:
 
         # Create test image (100x100)
         height, width = 100, 100
-        image = Image.new('RGB', (width, height), color='red')
+        image = Image.new("RGB", (width, height), color="red")
 
         # Single box and corresponding mask
         box = torch.tensor([[10.0, 20.0, 30.0, 40.0]])  # x1, y1, x2, y2
@@ -271,90 +261,90 @@ class TestAlbumentationsWrapper:
         masks[0, y1:y2, x1:x2] = 1
 
         target = {
-            'boxes': box,
-            'labels': torch.tensor([1]),
-            'masks': masks,
+            "boxes": box,
+            "labels": torch.tensor([1]),
+            "masks": masks,
         }
 
         aug_image, aug_target = wrapper(image, target)
 
         assert isinstance(aug_image, Image.Image)
-        assert 'masks' in aug_target
-        assert aug_target['masks'].shape[0] == aug_target['boxes'].shape[0]
+        assert "masks" in aug_target
+        assert aug_target["masks"].shape[0] == aug_target["boxes"].shape[0]
 
         # Check that the transformed mask's bounding box matches the transformed box
-        aug_mask = aug_target['masks'][0]
+        aug_mask = aug_target["masks"][0]
         ys, xs = torch.nonzero(aug_mask, as_tuple=True)
         assert ys.numel() > 0 and xs.numel() > 0
-        mask_bbox = torch.tensor([
-            xs.min().item(),
-            ys.min().item(),
-            xs.max().item() + 1,
-            ys.max().item() + 1,
-        ], dtype=torch.float32)
-        assert torch.allclose(mask_bbox, aug_target['boxes'][0].to(dtype=torch.float32), atol=1.0)
+        mask_bbox = torch.tensor(
+            [
+                xs.min().item(),
+                ys.min().item(),
+                xs.max().item() + 1,
+                ys.max().item() + 1,
+            ],
+            dtype=torch.float32,
+        )
+        assert torch.allclose(mask_bbox, aug_target["boxes"][0].to(dtype=torch.float32), atol=1.0)
 
-
-    @pytest.mark.parametrize("transform_class,params", [
-        (A.HorizontalFlip, {"p": 1.0}),
-        (A.VerticalFlip, {"p": 1.0}),
-        (A.Rotate, {"limit": 15, "p": 1.0}),  # Small angle to avoid boxes going out
-    ])
+    @pytest.mark.parametrize(
+        "transform_class,params",
+        [
+            (A.HorizontalFlip, {"p": 1.0}),
+            (A.VerticalFlip, {"p": 1.0}),
+            (A.Rotate, {"limit": 15, "p": 1.0}),  # Small angle to avoid boxes going out
+        ],
+    )
     def test_various_geometric_transforms_with_masks(self, transform_class, params):
         """Test various geometric transforms correctly transform masks."""
         transform = transform_class(**params)
         wrapper = AlbumentationsWrapper(transform)
 
         height, width = 100, 100
-        image = Image.new('RGB', (width, height))
+        image = Image.new("RGB", (width, height))
 
         # Create mask covering the box region (more centered to avoid edge issues with rotation)
         masks = torch.zeros((1, height, width), dtype=torch.uint8)
         masks[0, 40:60, 40:60] = 1
 
-        target = {
-            'boxes': torch.tensor([[40.0, 40.0, 60.0, 60.0]]),
-            'labels': torch.tensor([1]),
-            'masks': masks
-        }
+        target = {"boxes": torch.tensor([[40.0, 40.0, 60.0, 60.0]]), "labels": torch.tensor([1]), "masks": masks}
 
         aug_image, aug_target = wrapper(image, target)
 
         assert isinstance(aug_image, Image.Image)
-        assert 'masks' in aug_target
+        assert "masks" in aug_target
         # Number of boxes may change with rotation (boxes can be removed if they go out of bounds)
-        assert aug_target['masks'].shape[0] == aug_target['boxes'].shape[0]
-        if aug_target['boxes'].shape[0] > 0:
+        assert aug_target["masks"].shape[0] == aug_target["boxes"].shape[0]
+        if aug_target["boxes"].shape[0] > 0:
             # Mask should still have content (not all zeros)
-            assert aug_target['masks'].any()
+            assert aug_target["masks"].any()
 
-    @pytest.mark.parametrize("transform_class,params", [
-        (A.GaussianBlur, {"blur_limit": 3, "p": 1.0}),
-        (A.RandomBrightnessContrast, {"p": 1.0}),
-        (A.GaussNoise, {"p": 1.0}),
-    ])
+    @pytest.mark.parametrize(
+        "transform_class,params",
+        [
+            (A.GaussianBlur, {"blur_limit": 3, "p": 1.0}),
+            (A.RandomBrightnessContrast, {"p": 1.0}),
+            (A.GaussNoise, {"p": 1.0}),
+        ],
+    )
     def test_pixel_transforms_preserve_masks(self, transform_class, params):
         """Test pixel-level transforms preserve masks unchanged."""
         transform = transform_class(**params)
         wrapper = AlbumentationsWrapper(transform)
 
         height, width = 100, 100
-        image = Image.new('RGB', (width, height))
+        image = Image.new("RGB", (width, height))
 
         masks = torch.zeros((1, height, width), dtype=torch.uint8)
         masks[0, 20:40, 10:30] = 1
 
-        target = {
-            'boxes': torch.tensor([[10.0, 20.0, 30.0, 40.0]]),
-            'labels': torch.tensor([1]),
-            'masks': masks
-        }
+        target = {"boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0]]), "labels": torch.tensor([1]), "masks": masks}
 
         aug_image, aug_target = wrapper(image, target)
 
         assert isinstance(aug_image, Image.Image)
         # Pixel transforms should not modify masks
-        assert torch.equal(aug_target['masks'], target['masks'])
+        assert torch.equal(aug_target["masks"], target["masks"])
 
     def test_multiple_masks_with_geometric_transform(self):
         """Test multiple masks are correctly transformed together."""
@@ -362,7 +352,7 @@ class TestAlbumentationsWrapper:
         wrapper = AlbumentationsWrapper(transform)
 
         height, width = 100, 100
-        image = Image.new('RGB', (width, height))
+        image = Image.new("RGB", (width, height))
 
         # Two masks for two boxes
         masks = torch.zeros((2, height, width), dtype=torch.uint8)
@@ -370,19 +360,16 @@ class TestAlbumentationsWrapper:
         masks[1, 50:70, 50:70] = 1  # Second mask
 
         target = {
-            'boxes': torch.tensor([
-                [10.0, 10.0, 30.0, 30.0],
-                [50.0, 50.0, 70.0, 70.0]
-            ]),
-            'labels': torch.tensor([1, 2]),
-            'masks': masks
+            "boxes": torch.tensor([[10.0, 10.0, 30.0, 30.0], [50.0, 50.0, 70.0, 70.0]]),
+            "labels": torch.tensor([1, 2]),
+            "masks": masks,
         }
 
         aug_image, aug_target = wrapper(image, target)
 
-        assert aug_target['masks'].shape == (2, height, width)
-        assert aug_target['boxes'].shape[0] == 2
-        assert aug_target['labels'].shape[0] == 2
+        assert aug_target["masks"].shape == (2, height, width)
+        assert aug_target["boxes"].shape[0] == 2
+        assert aug_target["labels"].shape[0] == 2
 
     def test_empty_masks_handling(self):
         """Test wrapper correctly handles empty masks (no 'masks' key when empty)."""
@@ -390,19 +377,19 @@ class TestAlbumentationsWrapper:
         wrapper = AlbumentationsWrapper(transform)
 
         height, width = 100, 100
-        image = Image.new('RGB', (width, height))
+        image = Image.new("RGB", (width, height))
 
         # When boxes are empty, don't include masks field
         target = {
-            'boxes': torch.zeros((0, 4)),
-            'labels': torch.zeros((0,), dtype=torch.long),
+            "boxes": torch.zeros((0, 4)),
+            "labels": torch.zeros((0,), dtype=torch.long),
         }
 
         aug_image, aug_target = wrapper(image, target)
 
         assert isinstance(aug_image, Image.Image)
-        assert aug_target['boxes'].shape == (0, 4)
-        assert aug_target['labels'].shape == (0,)
+        assert aug_target["boxes"].shape == (0, 4)
+        assert aug_target["labels"].shape == (0,)
 
     def test_pixel_transform_with_masks_no_boxes(self):
         """Test that pixel transforms work with masks but no boxes."""
@@ -411,20 +398,20 @@ class TestAlbumentationsWrapper:
         wrapper = AlbumentationsWrapper(transform)
 
         height, width = 100, 100
-        image = Image.new('RGB', (width, height))
+        image = Image.new("RGB", (width, height))
 
         masks_orig = torch.zeros((1, height, width), dtype=torch.uint8)
         masks_orig[0, 20:40, 10:30] = 1
 
         target = {
-            'labels': torch.tensor([1]),
-            'masks': masks_orig.clone()  # No boxes!
+            "labels": torch.tensor([1]),
+            "masks": masks_orig.clone(),  # No boxes!
         }
 
         aug_image, aug_target = wrapper(image, target)
 
         # Pixel transforms should preserve masks
-        assert torch.equal(aug_target['masks'], masks_orig)
+        assert torch.equal(aug_target["masks"], masks_orig)
 
     def test_invalid_mask_shape_raises_error(self):
         """Test that invalid mask shape raises ValueError."""
@@ -432,13 +419,13 @@ class TestAlbumentationsWrapper:
         wrapper = AlbumentationsWrapper(transform)
 
         height, width = 100, 100
-        image = Image.new('RGB', (width, height))
+        image = Image.new("RGB", (width, height))
 
         # Invalid mask shape (2D instead of 3D)
         target = {
-            'boxes': torch.tensor([[10.0, 20.0, 30.0, 40.0]]),
-            'labels': torch.tensor([1]),
-            'masks': torch.zeros((height, width), dtype=torch.uint8)
+            "boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0]]),
+            "labels": torch.tensor([1]),
+            "masks": torch.zeros((height, width), dtype=torch.uint8),
         }
 
         with pytest.raises(ValueError, match="masks must have shape"):
@@ -451,23 +438,19 @@ class TestAlbumentationsWrapper:
         wrapper = AlbumentationsWrapper(transform)
 
         height, width = 100, 100
-        image = Image.new('RGB', (width, height))
+        image = Image.new("RGB", (width, height))
 
         masks = torch.zeros((1, height, width), dtype=mask_dtype)
         masks[0, 20:40, 10:30] = 1
 
-        target = {
-            'boxes': torch.tensor([[10.0, 20.0, 30.0, 40.0]]),
-            'labels': torch.tensor([1]),
-            'masks': masks
-        }
+        target = {"boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0]]), "labels": torch.tensor([1]), "masks": masks}
 
         aug_image, aug_target = wrapper(image, target)
 
         assert isinstance(aug_image, Image.Image)
-        assert 'masks' in aug_target
+        assert "masks" in aug_target
         # Output masks should be bool after Albumentations processing
-        assert aug_target['masks'].dtype == torch.bool
+        assert aug_target["masks"].dtype == torch.bool
 
 
 class TestAlbumentationsWrapperFromConfig:
@@ -533,7 +516,7 @@ class TestAlbumentationsWrapperFromConfig:
         """Test building mix of geometric and pixel-level transforms."""
         config = {
             "HorizontalFlip": {"p": 1.0},  # Geometric
-            "GaussianBlur": {"p": 1.0},     # Pixel-level
+            "GaussianBlur": {"p": 1.0},  # Pixel-level
         }
 
         transforms = AlbumentationsWrapper.from_config(config)
@@ -547,11 +530,7 @@ class TestAlbumentationsWrapperFromConfig:
         """Test building transforms with complex parameter structures."""
         config = {
             "Rotate": {"limit": (90, 90), "p": 0.5},
-            "Affine": {
-                "scale": (0.9, 1.1),
-                "translate_percent": (0.1, 0.1),
-                "p": 0.3
-            }
+            "Affine": {"scale": (0.9, 1.1), "translate_percent": (0.1, 0.1), "p": 0.3},
         }
 
         transforms = AlbumentationsWrapper.from_config(config)
@@ -601,33 +580,27 @@ class TestComposeAugmentations:
         ]
         composed = ComposeAugmentations(transforms)
 
-        image = Image.new('RGB', (100, 100))
-        target = {
-            'boxes': torch.tensor([[10.0, 20.0, 30.0, 40.0]]),
-            'labels': torch.tensor([1])
-        }
+        image = Image.new("RGB", (100, 100))
+        target = {"boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0]]), "labels": torch.tensor([1])}
 
         aug_image, aug_target = composed(image, target)
 
         assert isinstance(aug_image, Image.Image)
         # After both flips, both coordinates should be mirrored
-        assert aug_target['boxes'].shape == (1, 4)
+        assert aug_target["boxes"].shape == (1, 4)
 
     def test_compose_empty_transforms(self):
         """Test composing with empty transforms list."""
         composed = ComposeAugmentations([])
 
-        image = Image.new('RGB', (100, 100))
-        target = {
-            'boxes': torch.tensor([[10.0, 20.0, 30.0, 40.0]]),
-            'labels': torch.tensor([1])
-        }
+        image = Image.new("RGB", (100, 100))
+        target = {"boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0]]), "labels": torch.tensor([1])}
 
         aug_image, aug_target = composed(image, target)
 
         # Should return unchanged
         assert aug_image == image
-        assert torch.equal(aug_target['boxes'], target['boxes'])
+        assert torch.equal(aug_target["boxes"], target["boxes"])
 
     def test_compose_invalid_transforms_type(self):
         """Test that invalid transforms type raises TypeError."""
@@ -636,21 +609,16 @@ class TestComposeAugmentations:
 
     def test_compose_single_transform(self):
         """Test composing with single transform."""
-        transforms = [
-            AlbumentationsWrapper(A.HorizontalFlip(p=1.0))
-        ]
+        transforms = [AlbumentationsWrapper(A.HorizontalFlip(p=1.0))]
         composed = ComposeAugmentations(transforms)
 
-        image = Image.new('RGB', (100, 100))
-        target = {
-            'boxes': torch.tensor([[10.0, 20.0, 30.0, 40.0]]),
-            'labels': torch.tensor([1])
-        }
+        image = Image.new("RGB", (100, 100))
+        target = {"boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0]]), "labels": torch.tensor([1])}
 
         aug_image, aug_target = composed(image, target)
 
         assert isinstance(aug_image, Image.Image)
-        assert aug_target['boxes'].shape == (1, 4)
+        assert aug_target["boxes"].shape == (1, 4)
 
 
 class TestIntegration:
@@ -675,17 +643,14 @@ class TestIntegration:
         composed = ComposeAugmentations(transforms)
 
         # Apply to data
-        image = Image.new('RGB', (100, 100))
-        target = {
-            'boxes': torch.tensor([[10.0, 20.0, 30.0, 40.0]]),
-            'labels': torch.tensor([1])
-        }
+        image = Image.new("RGB", (100, 100))
+        target = {"boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0]]), "labels": torch.tensor([1])}
 
         aug_image, aug_target = composed(image, target)
 
         assert isinstance(aug_image, Image.Image)
-        assert aug_target['boxes'].shape == (1, 4)
-        assert aug_target['labels'].shape == (1,)
+        assert aug_target["boxes"].shape == (1, 4)
+        assert aug_target["labels"].shape == (1,)
 
     def test_pipeline_with_no_boxes(self):
         """Test pipeline works when target has no boxes."""
@@ -702,13 +667,13 @@ class TestIntegration:
 
         composed = ComposeAugmentations(transforms)
 
-        image = Image.new('RGB', (100, 100))
-        target = {'labels': torch.tensor([1])}
+        image = Image.new("RGB", (100, 100))
+        target = {"labels": torch.tensor([1])}
 
         aug_image, aug_target = composed(image, target)
 
         assert isinstance(aug_image, Image.Image)
-        assert 'labels' in aug_target
+        assert "labels" in aug_target
 
     def test_realistic_augmentation_config(self):
         """Test with realistic augmentation configuration."""
@@ -726,21 +691,18 @@ class TestIntegration:
 
         composed = ComposeAugmentations(transforms)
 
-        image = Image.new('RGB', (640, 480))
+        image = Image.new("RGB", (640, 480))
         target = {
-            'boxes': torch.tensor([
-                [50.0, 60.0, 200.0, 300.0],
-                [300.0, 100.0, 500.0, 400.0]
-            ]),
-            'labels': torch.tensor([1, 2])
+            "boxes": torch.tensor([[50.0, 60.0, 200.0, 300.0], [300.0, 100.0, 500.0, 400.0]]),
+            "labels": torch.tensor([1, 2]),
         }
 
         aug_image, aug_target = composed(image, target)
 
         assert isinstance(aug_image, Image.Image)
         # Boxes might be filtered out by augmentations, so check shape is valid
-        assert aug_target['boxes'].shape[1] == 4
-        assert aug_target['labels'].shape[0] == aug_target['boxes'].shape[0]
+        assert aug_target["boxes"].shape[1] == 4
+        assert aug_target["labels"].shape[0] == aug_target["boxes"].shape[0]
 
     def test_full_pipeline_with_masks(self):
         """Test complete pipeline with masks from config to application."""
@@ -753,57 +715,50 @@ class TestIntegration:
         composed = ComposeAugmentations(transforms)
 
         height, width = 100, 100
-        image = Image.new('RGB', (width, height))
+        image = Image.new("RGB", (width, height))
 
         masks = torch.zeros((2, height, width), dtype=torch.uint8)
         masks[0, 10:30, 10:30] = 1
         masks[1, 50:70, 50:70] = 1
 
         target = {
-            'boxes': torch.tensor([
-                [10.0, 10.0, 30.0, 30.0],
-                [50.0, 50.0, 70.0, 70.0]
-            ]),
-            'labels': torch.tensor([1, 2]),
-            'masks': masks
+            "boxes": torch.tensor([[10.0, 10.0, 30.0, 30.0], [50.0, 50.0, 70.0, 70.0]]),
+            "labels": torch.tensor([1, 2]),
+            "masks": masks,
         }
 
         aug_image, aug_target = composed(image, target)
 
         assert isinstance(aug_image, Image.Image)
-        assert 'masks' in aug_target
-        assert aug_target['boxes'].shape[0] == aug_target['masks'].shape[0]
-        assert aug_target['labels'].shape[0] == aug_target['masks'].shape[0]
-        assert aug_target['masks'].any()  # Masks should have content
+        assert "masks" in aug_target
+        assert aug_target["boxes"].shape[0] == aug_target["masks"].shape[0]
+        assert aug_target["labels"].shape[0] == aug_target["masks"].shape[0]
+        assert aug_target["masks"].any()  # Masks should have content
 
     def test_pipeline_mixed_geometric_pixel_with_masks(self):
         """Test pipeline with mix of geometric and pixel transforms on masks."""
         config = {
             "HorizontalFlip": {"p": 1.0},  # Geometric
-            "GaussianBlur": {"p": 1.0},    # Pixel
+            "GaussianBlur": {"p": 1.0},  # Pixel
         }
 
         transforms = AlbumentationsWrapper.from_config(config)
         composed = ComposeAugmentations(transforms)
 
         height, width = 100, 100
-        image = Image.new('RGB', (width, height))
+        image = Image.new("RGB", (width, height))
 
         masks = torch.zeros((1, height, width), dtype=torch.uint8)
         masks[0, 20:40, 10:30] = 1
 
-        target = {
-            'boxes': torch.tensor([[10.0, 20.0, 30.0, 40.0]]),
-            'labels': torch.tensor([1]),
-            'masks': masks
-        }
+        target = {"boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0]]), "labels": torch.tensor([1]), "masks": masks}
 
         aug_image, aug_target = composed(image, target)
 
         assert isinstance(aug_image, Image.Image)
-        assert 'masks' in aug_target
-        assert aug_target['masks'].shape == (1, height, width)
-        assert aug_target['masks'].any()
+        assert "masks" in aug_target
+        assert aug_target["masks"].shape == (1, height, width)
+        assert aug_target["masks"].any()
 
     @pytest.mark.parametrize("num_instances", [1, 2, 5])
     def test_pipeline_scales_with_instances(self, num_instances):
@@ -816,7 +771,7 @@ class TestIntegration:
         composed = ComposeAugmentations(transforms)
 
         height, width = 100, 100
-        image = Image.new('RGB', (width, height))
+        image = Image.new("RGB", (width, height))
 
         # Create multiple boxes and masks
         boxes = []
@@ -828,18 +783,14 @@ class TestIntegration:
             x1, y1, x2, y2 = int(x), int(y), int(x + 15), int(y + 15)
             masks[i, y1:y2, x1:x2] = 1
 
-        target = {
-            'boxes': torch.tensor(boxes),
-            'labels': torch.arange(1, num_instances + 1),
-            'masks': masks
-        }
+        target = {"boxes": torch.tensor(boxes), "labels": torch.arange(1, num_instances + 1), "masks": masks}
 
         aug_image, aug_target = composed(image, target)
 
         assert isinstance(aug_image, Image.Image)
-        assert aug_target['boxes'].shape[0] <= num_instances  # May be filtered
-        assert aug_target['masks'].shape[0] == aug_target['boxes'].shape[0]
-        assert aug_target['labels'].shape[0] == aug_target['boxes'].shape[0]
+        assert aug_target["boxes"].shape[0] <= num_instances  # May be filtered
+        assert aug_target["masks"].shape[0] == aug_target["boxes"].shape[0]
+        assert aug_target["labels"].shape[0] == aug_target["boxes"].shape[0]
 
 
 class TestTrainingLoop:
@@ -861,13 +812,7 @@ class TestTrainingLoop:
 
         # Create dataset and dataloader
         dataset = _SimpleDataset(num_samples=12, transforms=transforms)
-        dataloader = DataLoader(
-            dataset,
-            batch_size=4,
-            shuffle=True,
-            collate_fn=collate_fn,
-            num_workers=0
-        )
+        dataloader = DataLoader(dataset, batch_size=4, shuffle=True, collate_fn=collate_fn, num_workers=0)
 
         # Run through batches
         for batch_idx, (images, targets) in enumerate(dataloader):
@@ -876,13 +821,15 @@ class TestTrainingLoop:
 
             # Verify all orig_sizes have shape [2]
             for i, orig_size in enumerate(orig_sizes):
-                assert orig_size.shape == torch.Size([2]), \
+                assert orig_size.shape == torch.Size([2]), (
                     f"Batch {batch_idx}, target {i}: orig_size has shape {orig_size.shape}, expected [2]"
+                )
 
             # Critical test: This is what fails in training if orig_size is corrupted
             orig_target_sizes = torch.stack(orig_sizes, dim=0)
-            assert orig_target_sizes.shape == torch.Size([len(targets), 2]), \
+            assert orig_target_sizes.shape == torch.Size([len(targets), 2]), (
                 f"Batch {batch_idx}: stacked orig_sizes has shape {orig_target_sizes.shape}"
+            )
 
             # Verify images and targets are valid
             assert images.tensors.shape[0] == len(targets)
@@ -909,7 +856,7 @@ class TestTrainingLoop:
             batch_size=6,  # Batch will contain mix of 1,2,3 box samples
             shuffle=False,
             collate_fn=collate_fn,
-            num_workers=0
+            num_workers=0,
         )
 
         # Get one batch
@@ -923,8 +870,9 @@ class TestTrainingLoop:
 
         # Verify all orig_sizes are consistent
         for i, target in enumerate(targets):
-            assert target["orig_size"].shape == torch.Size([2]), \
+            assert target["orig_size"].shape == torch.Size([2]), (
                 f"Target {i} (with {num_boxes_list[i]} boxes): orig_size shape is {target['orig_size'].shape}"
+            )
 
         # Verify they can be stacked
         orig_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
@@ -934,25 +882,29 @@ class TestTrainingLoop:
 class TestMakeCocoTransformsAugConfig:
     """Tests for aug_config propagation in make_coco_transforms / make_coco_transforms_square_div_64."""
 
-    @pytest.mark.parametrize("make_transforms", [
-        make_coco_transforms,
-        make_coco_transforms_square_div_64,
-    ])
+    @pytest.mark.parametrize(
+        "make_transforms",
+        [
+            make_coco_transforms,
+            make_coco_transforms_square_div_64,
+        ],
+    )
     def test_default_none_uses_aug_config(self, make_transforms):
         """Omitting aug_config uses the module-level AUG_CONFIG default (HorizontalFlip)."""
         pipeline = make_transforms("train", 640)
         aug_step = next(t for t in pipeline.transforms if isinstance(t, ComposeAugmentations))
 
         expected_names = list(AUG_CONFIG.keys())
-        actual_names = [
-            w.transform.transforms[0].__class__.__name__ for w in aug_step.transforms
-        ]
+        actual_names = [w.transform.transforms[0].__class__.__name__ for w in aug_step.transforms]
         assert actual_names == expected_names
 
-    @pytest.mark.parametrize("make_transforms", [
-        make_coco_transforms,
-        make_coco_transforms_square_div_64,
-    ])
+    @pytest.mark.parametrize(
+        "make_transforms",
+        [
+            make_coco_transforms,
+            make_coco_transforms_square_div_64,
+        ],
+    )
     def test_empty_dict_disables_augmentations(self, make_transforms):
         """aug_config={} produces a ComposeAugmentations with no transforms."""
         pipeline = make_transforms("train", 640, aug_config={})
@@ -960,10 +912,13 @@ class TestMakeCocoTransformsAugConfig:
 
         assert aug_step.transforms == []
 
-    @pytest.mark.parametrize("make_transforms", [
-        make_coco_transforms,
-        make_coco_transforms_square_div_64,
-    ])
+    @pytest.mark.parametrize(
+        "make_transforms",
+        [
+            make_coco_transforms,
+            make_coco_transforms_square_div_64,
+        ],
+    )
     def test_custom_dict_is_used(self, make_transforms):
         """aug_config with a custom dict wires up exactly those transforms."""
         custom = {"HorizontalFlip": {"p": 1.0}}
@@ -973,10 +928,13 @@ class TestMakeCocoTransformsAugConfig:
         assert len(aug_step.transforms) == 1
         assert aug_step.transforms[0].transform.transforms[0].__class__.__name__ == "HorizontalFlip"
 
-    @pytest.mark.parametrize("make_transforms", [
-        make_coco_transforms,
-        make_coco_transforms_square_div_64,
-    ])
+    @pytest.mark.parametrize(
+        "make_transforms",
+        [
+            make_coco_transforms,
+            make_coco_transforms_square_div_64,
+        ],
+    )
     def test_aug_config_not_applied_on_val(self, make_transforms):
         """aug_config is ignored for val splits — no ComposeAugmentations in the pipeline."""
         pipeline = make_transforms("val", 640, aug_config={"HorizontalFlip": {"p": 1.0}})

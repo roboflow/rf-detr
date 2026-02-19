@@ -46,6 +46,7 @@ def is_valid_yolo_dataset(dataset_dir: str) -> bool:
     )
     return contains_required_data_yaml and contains_required_split_dirs and contains_required_data_subdirs
 
+
 class ConvertYolo:
     """
     Converts supervision Detections to the target dict format expected by RF-DETR.
@@ -143,12 +144,17 @@ class ConvertYolo:
 
 class _MockSvDataset:
     """Mock supervision dataset for testing CocoLikeAPI."""
+
     classes = ["cat", "dog"]
-    def __len__(self): return 2
+
+    def __len__(self):
+        return 2
+
     def __getitem__(self, i):
         import numpy as np
         import supervision as sv
-        det = sv.Detections(xyxy=np.array([[10*i, 20, 30, 40]]), class_id=np.array([i]))
+
+        det = sv.Detections(xyxy=np.array([[10 * i, 20, 30, 40]]), class_id=np.array([i]))
         return f"img_{i}.jpg", np.zeros((100, 100, 3), dtype=np.uint8), det
 
 
@@ -237,28 +243,19 @@ class CocoLikeAPI:
 
         # Build categories (0-indexed class IDs in YOLO)
         for idx, class_name in enumerate(self.classes):
-            categories.append({
-                "id": idx,
-                "name": class_name,
-                "supercategory": "none"
-            })
+            categories.append({"id": idx, "name": class_name, "supercategory": "none"})
 
         ann_id = 0
         for img_id in range(len(self.sv_dataset)):
             image_path, cv2_image, detections = self.sv_dataset[img_id]
             h, w = cv2_image.shape[:2]
 
-            images.append({
-                "id": img_id,
-                "file_name": str(image_path),
-                "height": h,
-                "width": w
-            })
+            images.append({"id": img_id, "file_name": str(image_path), "height": h, "width": w})
 
             if len(detections) == 0:
                 continue
             for i in range(len(detections)):
-                bbox_x, bbox_y, bbox_w, bbox_h = sv.xyxy_to_xywh(detections.xyxy[i:i+1])[0]
+                bbox_x, bbox_y, bbox_w, bbox_h = sv.xyxy_to_xywh(detections.xyxy[i : i + 1])[0]
 
                 ann = {
                     "id": ann_id,
@@ -266,7 +263,7 @@ class CocoLikeAPI:
                     "category_id": int(detections.class_id[i]),
                     "bbox": [float(bbox_x), float(bbox_y), float(bbox_w), float(bbox_h)],
                     "area": float(bbox_w * bbox_h),
-                    "iscrowd": 0
+                    "iscrowd": 0,
                 }
 
                 # Add segmentation if available
@@ -281,7 +278,7 @@ class CocoLikeAPI:
             "info": {"description": "RF-DETR YOLO dataset"},
             "images": images,
             "annotations": annotations,
-            "categories": categories
+            "categories": categories,
         }
 
     def getAnnIds(self, imgIds=None, catIds=None, areaRng=None, iscrowd=None):
@@ -466,7 +463,7 @@ class YoloDetection(VisionDataset):
         rgb_image = cv2_image[:, :, ::-1]
         img = Image.fromarray(rgb_image)
 
-        target = {'image_id': image_id, 'detections': detections}
+        target = {"image_id": image_id, "detections": detections}
         img, target = self.prepare(img, target)
 
         if self._transforms is not None:
@@ -482,7 +479,7 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
     (train/valid/test folders with images/ and labels/ subdirectories).
     """
     root = Path(args.dataset_dir)
-    assert root.exists(), f'provided Roboflow path {root} does not exist'
+    assert root.exists(), f"provided Roboflow path {root} does not exist"
 
     # YOLO format uses images/ and labels/ subdirectories
     PATHS = {
@@ -513,9 +510,9 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
                 expanded_scales=expanded_scales,
                 skip_random_resize=not do_random_resize_via_padding,
                 patch_size=patch_size,
-                num_windows=num_windows
+                num_windows=num_windows,
             ),
-            include_masks=include_masks
+            include_masks=include_masks,
         )
     else:
         dataset = YoloDetection(
@@ -529,8 +526,8 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
                 expanded_scales=expanded_scales,
                 skip_random_resize=not do_random_resize_via_padding,
                 patch_size=patch_size,
-                num_windows=num_windows
+                num_windows=num_windows,
             ),
-            include_masks=include_masks
+            include_masks=include_masks,
         )
     return dataset

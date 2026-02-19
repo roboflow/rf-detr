@@ -16,8 +16,8 @@ def test_from_filename_found():
     assert asset is not None
     assert isinstance(asset, ModelWeightAsset)
     assert asset.filename == "rf-detr-base.pth"
-    assert asset.url.startswith('http')
-    assert 'rf-detr-base-coco.pth' in asset.url
+    assert asset.url.startswith("http")
+    assert "rf-detr-base-coco.pth" in asset.url
 
 
 def test_from_filename_not_found():
@@ -32,8 +32,8 @@ def test_get_url():
 
     assert url is not None
     assert isinstance(url, str)
-    assert url.startswith('http')
-    assert 'rf-detr-base-coco.pth' in url
+    assert url.startswith("http")
+    assert "rf-detr-base-coco.pth" in url
 
 
 def test_get_url_not_found():
@@ -52,7 +52,7 @@ def test_get_md5():
     # If MD5 exists, verify format
     if md5 is not None:
         assert len(md5) == 32
-        assert all(c in '0123456789abcdef' for c in md5.lower())
+        assert all(c in "0123456789abcdef" for c in md5.lower())
 
 
 def test_list_models():
@@ -71,7 +71,7 @@ def test_list_models():
 @pytest.mark.parametrize("asset", list(ModelWeights), ids=[a.filename for a in ModelWeights])
 def test_all_assets_have_valid_urls(asset: ModelWeightAsset) -> None:
     """Test that all assets have valid URLs."""
-    assert asset.url.startswith('http')
+    assert asset.url.startswith("http")
     assert len(asset.url) > 20  # Reasonable minimum URL length
 
 
@@ -79,7 +79,7 @@ def test_all_assets_have_valid_urls(asset: ModelWeightAsset) -> None:
 def test_all_assets_have_valid_filenames(asset: ModelWeightAsset) -> None:
     """Test that all assets have valid filenames."""
     assert len(asset.filename) > 0
-    assert asset.filename.endswith(('.pth', '.pt'))
+    assert asset.filename.endswith((".pth", ".pt"))
 
 
 def test_filenames_are_unique():
@@ -90,15 +90,13 @@ def test_filenames_are_unique():
 
 def test_model_weight_asset_optional_md5():
     """Test that MD5 hash is optional (important for new models)."""
-    asset = ModelWeightAsset(
-        filename="test-model.pth",
-        url="https://example.com/test-model.pth"
-    )
+    asset = ModelWeightAsset(filename="test-model.pth", url="https://example.com/test-model.pth")
 
     assert asset.md5_hash is None, "MD5 hash should be optional"
 
 
 def test_model_weights_inherits_from_base():
     """Test inheritance for compile-time safety contract."""
-    assert issubclass(ModelWeights, ModelWeightsBase), \
+    assert issubclass(ModelWeights, ModelWeightsBase), (
         "ModelWeights must inherit from ModelWeightsBase for compatibility"
+    )

@@ -85,41 +85,25 @@ class TestDeprecatedDict:
     @pytest.mark.parametrize(
         "access_method,args,expected_result",
         [
-            pytest.param(
-                lambda d: d["key1"], (), "value1", id="getitem"
-            ),
-            pytest.param(
-                lambda d: d.get("key1"), (), "value1", id="get"
-            ),
-            pytest.param(
-                lambda d: d.get("missing", "default"), (), "default", id="get_default"
-            ),
-            pytest.param(
-                lambda d: "key1" in d, (), True, id="contains"
-            ),
-            pytest.param(
-                lambda d: set(d.keys()), (), {"key1", "key2"}, id="keys"
-            ),
-            pytest.param(
-                lambda d: set(d.values()), (), {"value1", "value2"}, id="values"
-            ),
+            pytest.param(lambda d: d["key1"], (), "value1", id="getitem"),
+            pytest.param(lambda d: d.get("key1"), (), "value1", id="get"),
+            pytest.param(lambda d: d.get("missing", "default"), (), "default", id="get_default"),
+            pytest.param(lambda d: "key1" in d, (), True, id="contains"),
+            pytest.param(lambda d: set(d.keys()), (), {"key1", "key2"}, id="keys"),
+            pytest.param(lambda d: set(d.values()), (), {"value1", "value2"}, id="values"),
             pytest.param(
                 lambda d: set(d.items()),
                 (),
                 {("key1", "value1"), ("key2", "value2")},
                 id="items",
             ),
-            pytest.param(
-                lambda d: [k for k in d], (), ["key1", "key2"], id="iter"
-            ),
+            pytest.param(lambda d: [k for k in d], (), ["key1", "key2"], id="iter"),
         ],
     )
     def test_dictionary_functionality(self, access_method, args, expected_result):
         """Test that dictionary operations work correctly."""
         data = {"key1": "value1", "key2": "value2"}
-        deprecated_dict = _DeprecatedDict(
-            data, deprecated_name="TEST_DICT", replacement="`NewAPI`"
-        )
+        deprecated_dict = _DeprecatedDict(data, deprecated_name="TEST_DICT", replacement="`NewAPI`")
 
         # Suppress warnings for this test
         with warnings.catch_warnings():

@@ -77,7 +77,7 @@ def main() -> None:
 
             # Verify model was created
             assert model_instance is not None, "Model instance is None"
-            assert hasattr(model_instance, 'model'), "Model missing 'model' attribute"
+            assert hasattr(model_instance, "model"), "Model missing 'model' attribute"
 
         except Exception as e:
             failed_models.append((model_name, str(e)))

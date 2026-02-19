@@ -31,9 +31,7 @@ def download_dataset(rf_project: roboflow.Project, dataset_version: int) -> str:
         version = max(versions, key=lambda v: v.id)
     location = os.path.join("datasets/", rf_project.name + "_v" + version.version)
     if not os.path.exists(location):
-        location = version.download(
-            model_format="coco", location=location, overwrite=False
-        ).location
+        location = version.download(model_format="coco", location=location, overwrite=False).location
 
     return location
 
@@ -75,9 +73,7 @@ def trainer() -> None:
     if (args.workspace is None and args.project_name is not None) or (
         args.workspace is not None and args.project_name is None
     ):
-        raise ValueError(
-            "Either both workspace and project_name must be provided or none of them"
-        )
+        raise ValueError("Either both workspace and project_name must be provided or none of them")
 
     if args.workspace is not None:
         logger.info(f"Using Roboflow project: {args.workspace}/{args.project_name}")

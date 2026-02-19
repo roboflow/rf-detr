@@ -83,13 +83,16 @@ def _download_file(url: str, filename: str, expected_md5: Optional[str] = None) 
     # Download to temporary file first
     temp_filename = f"{filename}.tmp"
     try:
-        with open(temp_filename, "wb") as f, tqdm(
-            desc=filename,
-            total=total_size,
-            unit="iB",
-            unit_scale=True,
-            unit_divisor=1024,
-        ) as pbar:
+        with (
+            open(temp_filename, "wb") as f,
+            tqdm(
+                desc=filename,
+                total=total_size,
+                unit="iB",
+                unit_scale=True,
+                unit_divisor=1024,
+            ) as pbar,
+        ):
             for data in response.iter_content(chunk_size=1024):
                 size = f.write(data)
                 pbar.update(size)
@@ -103,10 +106,7 @@ def _download_file(url: str, filename: str, expected_md5: Optional[str] = None) 
         actual_md5 = _compute_file_md5(temp_filename)
         if actual_md5.lower() != expected_md5.lower():
             os.remove(temp_filename)
-            raise ValueError(
-                f"MD5 hash validation failed for {filename}. "
-                f"Expected: {expected_md5}, got: {actual_md5}"
-            )
+            raise ValueError(f"MD5 hash validation failed for {filename}. Expected: {expected_md5}, got: {actual_md5}")
         logger.info(f"MD5 validation successful for {filename}")
 
     # Move temp file to final location

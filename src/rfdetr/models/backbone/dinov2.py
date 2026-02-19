@@ -41,6 +41,7 @@ size_to_config_with_registers = {
     "large": "dinov2_with_registers_large.json",
 }
 
+
 def get_config(size, use_registers):
     config_dict = size_to_config_with_registers if use_registers else size_to_config
     current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -52,18 +53,19 @@ def get_config(size, use_registers):
 
 
 class DinoV2(nn.Module):
-    def __init__(self,
-            shape=(640, 640),
-            out_feature_indexes=[2, 4, 5, 9],
-            size="base",
-            use_registers=True,
-            use_windowed_attn=True,
-            gradient_checkpointing=False,
-            load_dinov2_weights=True,
-            patch_size=14,
-            num_windows=4,
-            positional_encoding_size=37,
-            ):
+    def __init__(
+        self,
+        shape=(640, 640),
+        out_feature_indexes=[2, 4, 5, 9],
+        size="base",
+        use_registers=True,
+        use_windowed_attn=True,
+        gradient_checkpointing=False,
+        load_dinov2_weights=True,
+        patch_size=14,
+        num_windows=4,
+        positional_encoding_size=37,
+    ):
         super().__init__()
 
         name = f"facebook/dinov2-with-registers-{size}" if use_registers else f"facebook/dinov2-{size}"
@@ -95,12 +97,16 @@ class DinoV2(nn.Module):
             implied_resolution = positional_encoding_size * patch_size
 
             if implied_resolution != dino_config["image_size"]:
-                logger.warning("Using a different number of positional encodings than DINOv2, which means we're not loading DINOv2 backbone weights. This is not a problem if finetuning a pretrained RF-DETR model.")
+                logger.warning(
+                    "Using a different number of positional encodings than DINOv2, which means we're not loading DINOv2 backbone weights. This is not a problem if finetuning a pretrained RF-DETR model."
+                )
                 dino_config["image_size"] = implied_resolution
                 load_dinov2_weights = False
 
             if patch_size != 14:
-                logger.warning(f"Using patch size {patch_size} instead of 14, which means we're not loading DINOv2 backbone weights. This is not a problem if finetuning a pretrained RF-DETR model.")
+                logger.warning(
+                    f"Using patch size {patch_size} instead of 14, which means we're not loading DINOv2 backbone weights. This is not a problem if finetuning a pretrained RF-DETR model."
+                )
                 dino_config["patch_size"] = patch_size
                 load_dinov2_weights = False
 
@@ -119,11 +125,14 @@ class DinoV2(nn.Module):
                     num_register_tokens=0,
                     gradient_checkpointing=gradient_checkpointing,
                 )
-            self.encoder = WindowedDinov2WithRegistersBackbone.from_pretrained(
-                name,
-                config=windowed_dino_config,
-            ) if load_dinov2_weights else WindowedDinov2WithRegistersBackbone(windowed_dino_config)
-
+            self.encoder = (
+                WindowedDinov2WithRegistersBackbone.from_pretrained(
+                    name,
+                    config=windowed_dino_config,
+                )
+                if load_dinov2_weights
+                else WindowedDinov2WithRegistersBackbone(windowed_dino_config)
+            )
 
         self._out_feature_channels = [size_to_width[size]] * len(out_feature_indexes)
         self._export = False
@@ -133,9 +142,8 @@ class DinoV2(nn.Module):
             return
         self._export = True
         shape = self.shape
-        def make_new_interpolated_pos_encoding(
-            position_embeddings, patch_size, height, width
-        ):
+
+        def make_new_interpolated_pos_encoding(position_embeddings, patch_size, height, width):
 
             num_positions = position_embeddings.shape[1] - 1
             dim = position_embeddings.shape[-1]
@@ -175,6 +183,7 @@ class DinoV2(nn.Module):
             )
         # Create a new Parameter with the new size
         old_interpolate_pos_encoding = self.encoder.embeddings.interpolate_pos_encoding
+
         def new_interpolate_pos_encoding(self_mod, embeddings, height, width):
             num_patches = embeddings.shape[1] - 1
             num_positions = self_mod.position_embeddings.shape[1] - 1
@@ -184,15 +193,17 @@ class DinoV2(nn.Module):
 
         self.encoder.embeddings.position_embeddings = nn.Parameter(new_positions)
         self.encoder.embeddings.interpolate_pos_encoding = types.MethodType(
-            new_interpolate_pos_encoding,
-            self.encoder.embeddings
+            new_interpolate_pos_encoding, self.encoder.embeddings
         )
 
     def forward(self, x):
         block_size = self.patch_size * self.num_windows
-        assert x.shape[2] % block_size == 0 and x.shape[3] % block_size == 0, f"Backbone requires input shape to be divisible by {block_size}, but got {x.shape}"
+        assert x.shape[2] % block_size == 0 and x.shape[3] % block_size == 0, (
+            f"Backbone requires input shape to be divisible by {block_size}, but got {x.shape}"
+        )
         x = self.encoder(x)
         return list(x[0])
+
 
 if __name__ == "__main__":
     model = DinoV2()

@@ -106,9 +106,7 @@ def synthetic_shape_dataset_dir(tmp_path_factory: pytest.TempPathFactory) -> Gen
     test_dir = dataset_dir / "test"
     if not test_dir.exists():
         test_dir.mkdir(parents=True, exist_ok=True)
-        (test_dir / "_annotations.coco.json").write_text(
-            (valid_dir / "_annotations.coco.json").read_text()
-        )
+        (test_dir / "_annotations.coco.json").write_text((valid_dir / "_annotations.coco.json").read_text())
         # Ensure test split has corresponding images referenced by the annotations
         for item in valid_dir.iterdir():
             if item.is_file() and item.name != "_annotations.coco.json":

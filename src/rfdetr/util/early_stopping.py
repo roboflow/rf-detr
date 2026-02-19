@@ -14,6 +14,7 @@ from rfdetr.util.logger import get_logger
 
 logger = get_logger()
 
+
 class EarlyStoppingCallback:
     """
     Early stopping callback that monitors mAP and stops training if no improvement
@@ -49,17 +50,17 @@ class EarlyStoppingCallback:
         regular_map = None
         ema_map = None
 
-        if 'test_coco_eval_bbox' in log_stats:
+        if "test_coco_eval_bbox" in log_stats:
             if not self.segmentation_head:
-                regular_map = log_stats['test_coco_eval_bbox'][0]
+                regular_map = log_stats["test_coco_eval_bbox"][0]
             else:
-                regular_map = log_stats['test_coco_eval_masks'][0]
+                regular_map = log_stats["test_coco_eval_masks"][0]
 
-        if 'ema_test_coco_eval_bbox' in log_stats:
+        if "ema_test_coco_eval_bbox" in log_stats:
             if not self.segmentation_head:
-                ema_map = log_stats['ema_test_coco_eval_bbox'][0]
+                ema_map = log_stats["ema_test_coco_eval_bbox"][0]
             else:
-                ema_map = log_stats['ema_test_coco_eval_masks'][0]
+                ema_map = log_stats["ema_test_coco_eval_masks"][0]
 
         current_map = None
         if regular_map is not None and ema_map is not None:
@@ -81,7 +82,9 @@ class EarlyStoppingCallback:
             return
 
         if self.verbose:
-            logger.info(f"Early stopping: Current mAP ({metric_source}): {current_map:.4f}, Best: {self.best_map:.4f}, Diff: {current_map - self.best_map:.4f}, Min delta: {self.min_delta}")
+            logger.info(
+                f"Early stopping: Current mAP ({metric_source}): {current_map:.4f}, Best: {self.best_map:.4f}, Diff: {current_map - self.best_map:.4f}, Min delta: {self.min_delta}"
+            )
         if current_map > self.best_map + self.min_delta:
             self.best_map = current_map
             self.counter = 0
@@ -89,8 +92,12 @@ class EarlyStoppingCallback:
         else:
             self.counter += 1
             if self.verbose:
-                logger.info(f"Early stopping: No improvement in mAP for {self.counter} epochs (best: {self.best_map:.4f}, current: {current_map:.4f})")
+                logger.info(
+                    f"Early stopping: No improvement in mAP for {self.counter} epochs (best: {self.best_map:.4f}, current: {current_map:.4f})"
+                )
         if self.counter >= self.patience:
-            logger.info(f"Early stopping triggered: No improvement above {self.min_delta} threshold for {self.patience} epochs")
+            logger.info(
+                f"Early stopping triggered: No improvement above {self.min_delta} threshold for {self.patience} epochs"
+            )
             if self.model:
                 self.model.request_early_stop()

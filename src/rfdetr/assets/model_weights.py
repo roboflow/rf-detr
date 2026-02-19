@@ -55,6 +55,7 @@ class ModelWeightAsset:
         ...     md5_hash='b4d3ce46099eaed50626ede388caf979'
         ... )
     """
+
     filename: str
     url: str
     md5_hash: Optional[str] = None
@@ -339,9 +340,7 @@ def download_pretrain_weights(
     if os.path.exists(pretrain_weights) and not redownload:
         if expected_md5 and validate_md5:
             if not _validate_file_md5(pretrain_weights, expected_md5):
-                logger.warning(
-                    f"Existing file {pretrain_weights} has incorrect MD5 hash. Re-downloading..."
-                )
+                logger.warning(f"Existing file {pretrain_weights} has incorrect MD5 hash. Re-downloading...")
             else:
                 logger.info(f"File {pretrain_weights} already exists with correct MD5 hash.")
                 return

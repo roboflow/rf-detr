@@ -54,7 +54,6 @@ if _onnxsim_injected:
     del sys.modules["onnxsim"]
 
 
-
 @contextmanager
 def ignore_tracer_warnings() -> Iterator[None]:
     """Suppress torch.jit.TracerWarning during export tests to reduce log spam."""
@@ -163,7 +162,7 @@ def test_export_calls_eval_on_deepcopy_not_original(tmp_path: Path) -> None:
         return copied
 
     # Patch deepcopy in the main module where export is defined
-    with patch('rfdetr.main.deepcopy', side_effect=tracking_deepcopy):
+    with patch("rfdetr.main.deepcopy", side_effect=tracking_deepcopy):
         try:
             with ignore_tracer_warnings():
                 model.export(output_dir=str(tmp_path), simplify=False)
@@ -239,9 +238,7 @@ def test_segmentation_outputs_present_in_train_and_eval(mode: Literal["train", "
     assert "pred_masks" in output
 
 
-def _make_export_mocks(
-    tmp_path: Path, segmentation_head: bool, backbone_only: bool = False
-) -> tuple:
+def _make_export_mocks(tmp_path: Path, segmentation_head: bool, backbone_only: bool = False) -> tuple:
     """
     Build the mock objects needed to unit-test Model.export() without ONNX or a GPU.
 
@@ -294,9 +291,9 @@ def _make_export_mocks(
 @pytest.mark.parametrize(
     "segmentation_head, backbone_only, expected_output_names",
     [
-        pytest.param(True,  False, ["dets", "labels", "masks"], id="segmentation_model"),
-        pytest.param(False, False, ["dets", "labels"],          id="detection_model"),
-        pytest.param(False, True,  ["features"],                id="backbone_only"),
+        pytest.param(True, False, ["dets", "labels", "masks"], id="segmentation_model"),
+        pytest.param(False, False, ["dets", "labels"], id="detection_model"),
+        pytest.param(False, True, ["features"], id="backbone_only"),
     ],
 )
 def test_export_output_names(
@@ -321,8 +318,8 @@ def test_export_output_names(
         elif self.args.segmentation_head:
             output_names = ['dets', 'labels', 'masks']
     """
-    mock_export_module, mock_model, mock_model_wrapper, captured_kwargs = (
-        _make_export_mocks(tmp_path, segmentation_head, backbone_only)
+    mock_export_module, mock_model, mock_model_wrapper, captured_kwargs = _make_export_mocks(
+        tmp_path, segmentation_head, backbone_only
     )
 
     with (
@@ -346,9 +343,7 @@ def test_export_output_names(
             verbose=False,
         )
 
-    assert "output_names" in captured_kwargs, (
-        "export_onnx was not called — check that the mock wiring is correct"
-    )
+    assert "output_names" in captured_kwargs, "export_onnx was not called — check that the mock wiring is correct"
     actual = captured_kwargs["output_names"]
     assert actual == expected_output_names, (
         f"output_names mismatch.\n"
@@ -362,6 +357,7 @@ def test_export_output_names(
 # --------------------------------------------------------------------------
 # Tests for the CLI export path: rfdetr.deploy.export.main()
 # --------------------------------------------------------------------------
+
 
 class TestCliExportMain:
     """
@@ -476,9 +472,9 @@ class TestCliExportMain:
     @pytest.mark.parametrize(
         "segmentation_head, backbone_only, expected_output_names",
         [
-            pytest.param(True,  False, ["dets", "labels", "masks"], id="segmentation"),
-            pytest.param(False, False, ["dets", "labels"],          id="detection"),
-            pytest.param(False, True,  ["features"],                id="backbone_only"),
+            pytest.param(True, False, ["dets", "labels", "masks"], id="segmentation"),
+            pytest.param(False, False, ["dets", "labels"], id="detection"),
+            pytest.param(False, True, ["features"], id="backbone_only"),
         ],
     )
     def test_output_names(
@@ -505,9 +501,7 @@ class TestCliExportMain:
         _, export_onnx_captured = self._run(args)
 
         actual = export_onnx_captured.get("output_names")
-        assert actual == expected_output_names, (
-            f"expected output_names={expected_output_names}, got {actual!r}"
-        )
+        assert actual == expected_output_names, f"expected output_names={expected_output_names}, got {actual!r}"
 
     def test_make_infer_image_receives_individual_fields(self, output_dir: str) -> None:
         """
@@ -530,9 +524,7 @@ class TestCliExportMain:
         make_infer_image_captured, _ = self._run(args)
 
         pos = make_infer_image_captured.get("positional", ())
-        assert pos[:3] == (infer_dir, shape, batch_size), (
-            f"expected (infer_dir, shape, batch_size), got {pos[:3]!r}"
-        )
+        assert pos[:3] == (infer_dir, shape, batch_size), f"expected (infer_dir, shape, batch_size), got {pos[:3]!r}"
 
     def test_export_onnx_receives_output_dir_and_kwargs(self, output_dir: str) -> None:
         """

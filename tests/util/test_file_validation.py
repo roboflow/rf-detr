@@ -23,6 +23,7 @@ class _DummyTqdm:
     This avoids real progress bars while preserving the context manager and
     `update` calls used by the downloader.
     """
+
     def __init__(self, **kwargs: object) -> None:
         """
         Store initialization kwargs for optional inspection.
@@ -55,6 +56,7 @@ class _FakeResponse:
     Provides headers, iterable content chunks, and optional HTTP error behavior
     via `raise_for_status`.
     """
+
     def __init__(
         self,
         content_chunks: Iterable[bytes],
@@ -88,7 +90,7 @@ class TestFileMD5Validation:
 
     def test_compute_file_md5(self):
         """Test MD5 hash computation for a simple file."""
-        with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
             f.write("Hello, World!")
             temp_file = f.name
 
@@ -102,7 +104,7 @@ class TestFileMD5Validation:
 
     def test_validate_file_md5_success(self):
         """Test successful MD5 validation."""
-        with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
             f.write("Test content")
             temp_file = f.name
 
@@ -117,7 +119,7 @@ class TestFileMD5Validation:
 
     def test_validate_file_md5_failure(self):
         """Test MD5 validation failure with wrong hash."""
-        with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
             f.write("Test content")
             temp_file = f.name
 
@@ -133,7 +135,7 @@ class TestFileMD5Validation:
     @pytest.mark.parametrize("hash_case", ["lower", "upper"], ids=["lowercase", "uppercase"])
     def test_validate_file_md5_case_insensitive(self, hash_case: Literal["lower", "upper"]) -> None:
         """Test that MD5 validation is case-insensitive."""
-        with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
             f.write("Test content")
             temp_file = f.name
 
@@ -154,7 +156,7 @@ class TestFileMD5Validation:
 
     def test_compute_file_md5_empty_file(self):
         """Test MD5 hash computation for empty file."""
-        with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
             # Create empty file
             temp_file = f.name
 
@@ -168,9 +170,9 @@ class TestFileMD5Validation:
 
     def test_compute_file_md5_large_file(self):
         """Test MD5 computation for larger file (tests chunking)."""
-        with tempfile.NamedTemporaryFile(mode='wb', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="wb", delete=False) as f:
             # Write 1MB of data
-            data = b'A' * (1024 * 1024)
+            data = b"A" * (1024 * 1024)
             f.write(data)
             temp_file = f.name
 
@@ -180,7 +182,7 @@ class TestFileMD5Validation:
 
             # Verify it's a valid MD5 hash format
             assert len(hash_value) == 32
-            assert all(c in '0123456789abcdef' for c in hash_value)
+            assert all(c in "0123456789abcdef" for c in hash_value)
         finally:
             os.unlink(temp_file)
 
@@ -217,9 +219,7 @@ class TestDownloadFile:
 
     @patch("rfdetr.util.files.tqdm", _DummyTqdm)
     @patch("rfdetr.util.files.requests.get")
-    def test_download_file_stream_error_cleans_temp(
-        self, mock_get: Mock, tmp_path: Path
-    ):
+    def test_download_file_stream_error_cleans_temp(self, mock_get: Mock, tmp_path: Path):
         """Streaming errors clean up temp files."""
         target_path = tmp_path / "weights.bin"
 
@@ -239,9 +239,7 @@ class TestDownloadFile:
 
     @patch("rfdetr.util.files.tqdm", _DummyTqdm)
     @patch("rfdetr.util.files.requests.get")
-    def test_download_file_md5_failure_cleans_temp(
-        self, mock_get: Mock, tmp_path: Path
-    ):
+    def test_download_file_md5_failure_cleans_temp(self, mock_get: Mock, tmp_path: Path):
         """MD5 failure removes temp file and target is not created."""
         target_path = tmp_path / "weights.bin"
         response = _FakeResponse([b"data"], headers={"content-length": "4"})

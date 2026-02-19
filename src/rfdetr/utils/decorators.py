@@ -42,11 +42,7 @@ class _DeprecatedDict(dict):
     """
 
     def __init__(
-        self,
-        *args: Any,
-        deprecated_name: str = "this dictionary",
-        replacement: str = "the new API",
-        **kwargs: Any
+        self, *args: Any, deprecated_name: str = "this dictionary", replacement: str = "the new API", **kwargs: Any
     ) -> None:
         super().__init__(*args, **kwargs)
         self._warning_shown = False
@@ -60,7 +56,7 @@ class _DeprecatedDict(dict):
                 f"{self._deprecated_name} is deprecated and will be removed in a future version."
                 f" Use {self._replacement} instead.",
                 DeprecationWarning,
-                stacklevel=3
+                stacklevel=3,
             )
             self._warning_shown = True
 

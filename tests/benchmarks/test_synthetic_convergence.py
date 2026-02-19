@@ -107,7 +107,9 @@ def test_synthetic_training_improves_performance(
     with torch.no_grad():
         model.model.model.eval()
         base_stats_val, _ = evaluate(model.model.model, criterion, postprocess, val_loader, base_ds, device, args=args)
-        base_stats_train, _ = evaluate(model.model.model, criterion, postprocess, train_loader, train_ds, device, args=args)
+        base_stats_train, _ = evaluate(
+            model.model.model, criterion, postprocess, train_loader, train_ds, device, args=args
+        )
     Path(output_dir / "base_stats_val.json").write_text(json.dumps(base_stats_val, indent=2))
     Path(output_dir / "base_stats_train.json").write_text(json.dumps(base_stats_train, indent=2))
     base_map = base_stats_val["results_json"]["map"]
@@ -127,7 +129,9 @@ def test_synthetic_training_improves_performance(
     with torch.no_grad():
         model.model.model.eval()
         final_stats_val, _ = evaluate(model.model.model, criterion, postprocess, val_loader, base_ds, device, args=args)
-        final_stats_train, _ = evaluate(model.model.model, criterion, postprocess, train_loader, train_ds, device, args=args)
+        final_stats_train, _ = evaluate(
+            model.model.model, criterion, postprocess, train_loader, train_ds, device, args=args
+        )
     Path(output_dir / "final_stats_val.json").write_text(json.dumps(final_stats_val, indent=2))
     Path(output_dir / "final_stats_train.json").write_text(json.dumps(final_stats_train, indent=2))
     final_map = final_stats_val["results_json"]["map"]
@@ -142,7 +146,15 @@ def test_synthetic_training_improves_performance(
     assert math.isfinite(final_loss_giou), f"Final loss {final_loss_giou:.3f} must be finite."
     assert math.isfinite(final_map), f"Final mAP {final_map:.3f} must be finite."
     assert math.isfinite(final_f1_score), f"Final F1 {final_f1_score:.3f} must be finite."
-    assert final_map >= threshold_map, f"Final mAP {final_map:.3f} should reach at least {threshold_map} after training."
-    assert final_f1_score >= threshold_f1_score, f"Final F1 {final_f1_score:.3f} should reach at least {threshold_f1_score} after training."
-    assert final_loss_bbox <= base_loss_bbox * threshold_loss, f"Loss {base_loss_bbox:.3f} -> {final_loss_bbox:.3f} should drop to at least {threshold_loss * 100}%."
-    assert final_loss_giou <= base_loss_giou * threshold_loss, f"Loss {base_loss_giou:.3f} -> {final_loss_giou:.3f} should drop to at least {threshold_loss * 100}%."
+    assert final_map >= threshold_map, (
+        f"Final mAP {final_map:.3f} should reach at least {threshold_map} after training."
+    )
+    assert final_f1_score >= threshold_f1_score, (
+        f"Final F1 {final_f1_score:.3f} should reach at least {threshold_f1_score} after training."
+    )
+    assert final_loss_bbox <= base_loss_bbox * threshold_loss, (
+        f"Loss {base_loss_bbox:.3f} -> {final_loss_bbox:.3f} should drop to at least {threshold_loss * 100}%."
+    )
+    assert final_loss_giou <= base_loss_giou * threshold_loss, (
+        f"Loss {base_loss_giou:.3f} -> {final_loss_giou:.3f} should drop to at least {threshold_loss * 100}%."
+    )

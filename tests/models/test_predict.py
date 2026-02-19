@@ -32,9 +32,7 @@ class _DummyModel:
         self.resolution = 32
         self.model = torch.nn.Identity()
 
-    def postprocess(
-        self, predictions: Any, target_sizes: torch.Tensor
-    ) -> list[dict[str, torch.Tensor]]:
+    def postprocess(self, predictions: Any, target_sizes: torch.Tensor) -> list[dict[str, torch.Tensor]]:
         batch = target_sizes.shape[0]
         results = []
         for _ in range(batch):

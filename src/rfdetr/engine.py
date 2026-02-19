@@ -17,6 +17,7 @@
 """
 Train and eval functions used in main.py
 """
+
 import math
 import random
 from typing import Iterable
@@ -32,9 +33,11 @@ from rfdetr.util.misc import get_world_size
 
 try:
     from torch.amp import GradScaler, autocast
+
     DEPRECATED_AMP = False
 except ImportError:
     from torch.cuda.amp import GradScaler, autocast
+
     DEPRECATED_AMP = True
 from typing import Callable, DefaultDict, List
 
@@ -61,9 +64,9 @@ def _get_cuda_autocast_dtype() -> torch.dtype:
 def get_autocast_args(args):
     autocast_dtype = _get_cuda_autocast_dtype()
     if DEPRECATED_AMP:
-        return {'enabled': args.amp, 'dtype': autocast_dtype}
+        return {"enabled": args.amp, "dtype": autocast_dtype}
     else:
-        return {'device_type': 'cuda', 'enabled': args.amp, 'dtype': autocast_dtype}
+        return {"device_type": "cuda", "enabled": args.amp, "dtype": autocast_dtype}
 
 
 def train_one_epoch(
@@ -85,9 +88,7 @@ def train_one_epoch(
 ):
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter("lr", utils.SmoothedValue(window_size=1, fmt="{value:.6f}"))
-    metric_logger.add_meter(
-        "class_error", utils.SmoothedValue(window_size=1, fmt="{value:.2f}")
-    )
+    metric_logger.add_meter("class_error", utils.SmoothedValue(window_size=1, fmt="{value:.2f}"))
     header = "Epoch: [{}]".format(epoch)
     print_freq = args.print_freq if args is not None else 10
     start_steps = epoch * num_training_steps_per_epoch
@@ -96,24 +97,28 @@ def train_one_epoch(
     if DEPRECATED_AMP:
         scaler = GradScaler(enabled=args.amp)
     else:
-        scaler = GradScaler('cuda', enabled=args.amp)
+        scaler = GradScaler("cuda", enabled=args.amp)
 
     optimizer.zero_grad()
 
     # Check if batch size is divisible by gradient accumulation steps
     if batch_size % args.grad_accum_steps != 0:
-        logger.error(f"Batch size ({batch_size}) must be divisible by gradient accumulation steps ({args.grad_accum_steps})")
-        raise ValueError(f"Batch size ({batch_size}) must be divisible by gradient accumulation steps ({args.grad_accum_steps})")
+        logger.error(
+            f"Batch size ({batch_size}) must be divisible by gradient accumulation steps ({args.grad_accum_steps})"
+        )
+        raise ValueError(
+            f"Batch size ({batch_size}) must be divisible by gradient accumulation steps ({args.grad_accum_steps})"
+        )
 
-    logger.info(f"Training config: grad_accum_steps={args.grad_accum_steps}, "
-                f"total_batch_size={batch_size * get_world_size()}, "
-                f"dataloader_length={len(data_loader)}")
+    logger.info(
+        f"Training config: grad_accum_steps={args.grad_accum_steps}, "
+        f"total_batch_size={batch_size * get_world_size()}, "
+        f"dataloader_length={len(data_loader)}"
+    )
 
     sub_batch_size = batch_size // args.grad_accum_steps
 
-    for data_iter_step, (samples, targets) in enumerate(
-        metric_logger.log_every(data_loader, print_freq, header)
-    ):
+    for data_iter_step, (samples, targets) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
         it = start_steps + data_iter_step
         callback_dict = {
             "step": it,
@@ -124,9 +129,7 @@ def train_one_epoch(
             callback(callback_dict)
         if "dp" in schedules:
             if args.distributed:
-                model.module.update_drop_path(
-                    schedules["dp"][it], vit_encoder_num_layers
-                )
+                model.module.update_drop_path(schedules["dp"][it], vit_encoder_num_layers)
             else:
                 model.update_drop_path(schedules["dp"][it], vit_encoder_num_layers)
         if "do" in schedules:
@@ -136,12 +139,16 @@ def train_one_epoch(
                 model.update_dropout(schedules["do"][it])
 
         if args.multi_scale and not args.do_random_resize_via_padding:
-            scales = compute_multi_scale_scales(args.resolution, args.expanded_scales, args.patch_size, args.num_windows)
+            scales = compute_multi_scale_scales(
+                args.resolution, args.expanded_scales, args.patch_size, args.num_windows
+            )
             random.seed(it)
             scale = random.choice(scales)
             with torch.no_grad():
-                samples.tensors = F.interpolate(samples.tensors, size=scale, mode='bilinear', align_corners=False)
-                samples.mask = F.interpolate(samples.mask.unsqueeze(1).float(), size=scale, mode='nearest').squeeze(1).bool()
+                samples.tensors = F.interpolate(samples.tensors, size=scale, mode="bilinear", align_corners=False)
+                samples.mask = (
+                    F.interpolate(samples.mask.unsqueeze(1).float(), size=scale, mode="nearest").squeeze(1).bool()
+                )
 
         for i in range(args.grad_accum_steps):
             start_idx = i * sub_batch_size
@@ -166,14 +173,8 @@ def train_one_epoch(
 
         # reduce losses over all GPUs for logging purposes
         loss_dict_reduced = utils.reduce_dict(loss_dict)
-        loss_dict_reduced_unscaled = {
-            f"{k}_unscaled": v for k, v in loss_dict_reduced.items()
-        }
-        loss_dict_reduced_scaled = {
-            k:  v * weight_dict[k]
-            for k, v in loss_dict_reduced.items()
-            if k in weight_dict
-        }
+        loss_dict_reduced_unscaled = {f"{k}_unscaled": v for k, v in loss_dict_reduced.items()}
+        loss_dict_reduced_scaled = {k: v * weight_dict[k] for k, v in loss_dict_reduced.items() if k in weight_dict}
         losses_reduced_scaled = sum(loss_dict_reduced_scaled.values())
 
         loss_value = losses_reduced_scaled.item()
@@ -193,9 +194,7 @@ def train_one_epoch(
         if ema_m is not None:
             if epoch >= 0:
                 ema_m.update(model)
-        metric_logger.update(
-            loss=loss_value, **loss_dict_reduced_scaled, **loss_dict_reduced_unscaled
-        )
+        metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled, **loss_dict_reduced_unscaled)
         metric_logger.update(class_error=loss_dict_reduced["class_error"])
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
     # gather the stats from all processes
@@ -216,10 +215,10 @@ def sweep_confidence_thresholds(per_class_data, conf_thresholds, classes_with_gt
 
         for k in range(num_classes):
             data = per_class_data[k]
-            scores = data['scores']
-            matches = data['matches']
-            ignore = data['ignore']
-            total_gt = data['total_gt']
+            scores = data["scores"]
+            matches = data["matches"]
+            ignore = data["ignore"]
+            total_gt = data["total_gt"]
 
             above_thresh = scores >= conf_thresh
             valid = above_thresh & ~ignore
@@ -247,15 +246,17 @@ def sweep_confidence_thresholds(per_class_data, conf_thresholds, classes_with_gt
             macro_recall = 0.0
             macro_f1 = 0.0
 
-        results.append({
-            'confidence_threshold': conf_thresh,
-            'macro_f1': macro_f1,
-            'macro_precision': macro_precision,
-            'macro_recall': macro_recall,
-            'per_class_prec': np.array(per_class_precisions),
-            'per_class_rec': np.array(per_class_recalls),
-            'per_class_f1': np.array(per_class_f1s),
-        })
+        results.append(
+            {
+                "confidence_threshold": conf_thresh,
+                "macro_f1": macro_f1,
+                "macro_precision": macro_precision,
+                "macro_recall": macro_recall,
+                "per_class_prec": np.array(per_class_precisions),
+                "per_class_rec": np.array(per_class_recalls),
+                "per_class_f1": np.array(per_class_f1s),
+            }
+        )
 
     return results
 
@@ -277,9 +278,9 @@ def coco_extended_metrics(coco_eval):
     for e in coco_eval.evalImgs:
         if e is None:
             continue
-        cat_id = e['category_id']
-        area_rng = tuple(e['aRng'])
-        img_id = e['image_id']
+        cat_id = e["category_id"]
+        area_rng = tuple(e["aRng"])
+        img_id = e["image_id"]
 
         if cat_id not in evalImgs_unflat:
             evalImgs_unflat[cat_id] = {}
@@ -301,41 +302,40 @@ def coco_extended_metrics(coco_eval):
             if e is None:
                 continue
 
-            num_dt = len(e['dtIds'])
+            num_dt = len(e["dtIds"])
             # num_gt = len(e['gtIds'])
 
-            gt_ignore = e['gtIgnore']
+            gt_ignore = e["gtIgnore"]
             total_gt += sum(1 for ig in gt_ignore if not ig)
 
             for d in range(num_dt):
-                dt_scores.append(e['dtScores'][d])
-                dt_matches.append(e['dtMatches'][iou50_idx, d])
-                dt_ignore.append(e['dtIgnore'][iou50_idx, d])
+                dt_scores.append(e["dtScores"][d])
+                dt_matches.append(e["dtMatches"][iou50_idx, d])
+                dt_ignore.append(e["dtIgnore"][iou50_idx, d])
 
-        per_class_data.append({
-            'scores': np.array(dt_scores),
-            'matches': np.array(dt_matches),
-            'ignore': np.array(dt_ignore, dtype=bool),
-            'total_gt': total_gt,
-        })
+        per_class_data.append(
+            {
+                "scores": np.array(dt_scores),
+                "matches": np.array(dt_matches),
+                "ignore": np.array(dt_ignore, dtype=bool),
+                "total_gt": total_gt,
+            }
+        )
 
     conf_thresholds = np.linspace(0.0, 1.0, 101)
-    classes_with_gt = [k for k in range(num_classes) if per_class_data[k]['total_gt'] > 0]
+    classes_with_gt = [k for k in range(num_classes) if per_class_data[k]["total_gt"] > 0]
 
-    confidence_sweep_metric_dicts = sweep_confidence_thresholds(
-        per_class_data, conf_thresholds, classes_with_gt
-    )
+    confidence_sweep_metric_dicts = sweep_confidence_thresholds(per_class_data, conf_thresholds, classes_with_gt)
 
-    best = max(confidence_sweep_metric_dicts, key=lambda x: x['macro_f1'])
+    best = max(confidence_sweep_metric_dicts, key=lambda x: x["macro_f1"])
 
     map_50_95, map_50 = float(coco_eval.stats[0]), float(coco_eval.stats[1])
 
     per_class = []
     cat_id_to_name = {c["id"]: c["name"] for c in coco_eval.cocoGt.loadCats(cat_ids)}
     for k, cid in enumerate(cat_ids):
-
         # [T, R, K, A, M] -> [T, R]
-        p_slice = coco_eval.eval['precision'][:, :, k, area_idx, maxdet_idx]
+        p_slice = coco_eval.eval["precision"][:, :, k, area_idx, maxdet_idx]
 
         # [T, R]
         p_masked = np.where(p_slice > -1, p_slice, np.nan)
@@ -348,41 +348,46 @@ def coco_extended_metrics(coco_eval):
 
         # [T] -> [1]
         ap_50_95 = float(np.nanmean(ap_per_iou))
-        ap_50    = float(np.nanmean(p_masked[iou50_idx]))
+        ap_50 = float(np.nanmean(p_masked[iou50_idx]))
 
         if (
             np.isnan(ap_50_95)
             or np.isnan(ap_50)
-            or np.isnan(best['per_class_prec'][k])
-            or np.isnan(best['per_class_rec'][k])
+            or np.isnan(best["per_class_prec"][k])
+            or np.isnan(best["per_class_rec"][k])
         ):
             continue
 
-        per_class.append({
-            "class"      : cat_id_to_name[int(cid)],
-            "map@50:95"  : ap_50_95,
-            "map@50"     : ap_50,
-            "precision"  : best['per_class_prec'][k],
-            "recall"     : best['per_class_rec'][k],
-            "f1_score"   : best['per_class_f1'][k],
-        })
+        per_class.append(
+            {
+                "class": cat_id_to_name[int(cid)],
+                "map@50:95": ap_50_95,
+                "map@50": ap_50,
+                "precision": best["per_class_prec"][k],
+                "recall": best["per_class_rec"][k],
+                "f1_score": best["per_class_f1"][k],
+            }
+        )
 
-    per_class.append({
-        "class"     : "all",
-        "map@50:95" : map_50_95,
-        "map@50"    : map_50,
-        "precision" : best['macro_precision'],
-        "recall"    : best['macro_recall'],
-        "f1_score"  : best['macro_f1'],
-    })
+    per_class.append(
+        {
+            "class": "all",
+            "map@50:95": map_50_95,
+            "map@50": map_50,
+            "precision": best["macro_precision"],
+            "recall": best["macro_recall"],
+            "f1_score": best["macro_f1"],
+        }
+    )
 
     return {
         "class_map": per_class,
-        "map"      : map_50,
-        "precision": best['macro_precision'],
-        "recall"   : best['macro_recall'],
-        "f1_score" : best['macro_f1'],
+        "map": map_50,
+        "precision": best["macro_precision"],
+        "recall": best["macro_recall"],
+        "f1_score": best["macro_f1"],
     }
+
 
 def evaluate(model, criterion, postprocess, data_loader, base_ds, device, args=None):
     model.eval()
@@ -391,9 +396,7 @@ def evaluate(model, criterion, postprocess, data_loader, base_ds, device, args=N
     criterion.eval()
 
     metric_logger = utils.MetricLogger(delimiter="  ")
-    metric_logger.add_meter(
-        "class_error", utils.SmoothedValue(window_size=1, fmt="{value:.2f}")
-    )
+    metric_logger.add_meter("class_error", utils.SmoothedValue(window_size=1, fmt="{value:.2f}"))
     header = "Test:"
 
     iou_types = ("bbox",) if not args.segmentation_head else ("bbox", "segm")
@@ -419,9 +422,7 @@ def evaluate(model, criterion, postprocess, data_loader, base_ds, device, args=N
                 elif key == "aux_outputs":
                     for idx in range(len(outputs[key])):
                         for sub_key in outputs[key][idx].keys():
-                            outputs[key][idx][sub_key] = outputs[key][idx][
-                                sub_key
-                            ].float()
+                            outputs[key][idx][sub_key] = outputs[key][idx][sub_key].float()
                 else:
                     outputs[key] = outputs[key].float()
 
@@ -430,14 +431,8 @@ def evaluate(model, criterion, postprocess, data_loader, base_ds, device, args=N
 
         # reduce losses over all GPUs for logging purposes
         loss_dict_reduced = utils.reduce_dict(loss_dict)
-        loss_dict_reduced_scaled = {
-            k: v * weight_dict[k]
-            for k, v in loss_dict_reduced.items()
-            if k in weight_dict
-        }
-        loss_dict_reduced_unscaled = {
-            f"{k}_unscaled": v for k, v in loss_dict_reduced.items()
-        }
+        loss_dict_reduced_scaled = {k: v * weight_dict[k] for k, v in loss_dict_reduced.items() if k in weight_dict}
+        loss_dict_reduced_unscaled = {f"{k}_unscaled": v for k, v in loss_dict_reduced.items()}
         metric_logger.update(
             loss=sum(loss_dict_reduced_scaled.values()),
             **loss_dict_reduced_scaled,
@@ -447,10 +442,7 @@ def evaluate(model, criterion, postprocess, data_loader, base_ds, device, args=N
 
         orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
         results_all = postprocess(outputs, orig_target_sizes)
-        res = {
-            target["image_id"].item(): output
-            for target, output in zip(targets, results_all)
-        }
+        res = {target["image_id"].item(): output for target, output in zip(targets, results_all)}
         if coco_evaluator is not None:
             coco_evaluator.update(res)
 

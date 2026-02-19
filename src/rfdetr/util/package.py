@@ -8,7 +8,7 @@ from importlib.metadata import PackageNotFoundError, version
 from typing import Optional
 
 
-def get_version(package_name: str = 'rfdetr') -> Optional[str]:
+def get_version(package_name: str = "rfdetr") -> Optional[str]:
     """Get the current version of the specified package.
 
     Args:
