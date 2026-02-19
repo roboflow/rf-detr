@@ -37,53 +37,53 @@ class TestCocoLikeAPI:
         assert "annotations" in coco_api.dataset
         assert "categories" in coco_api.dataset
 
-    @pytest.mark.parametrize("dataset_part, expected_count", [("images", 2), ("categories", 2), ("annotations", 2)])
+    @pytest.mark.parametrize("dataset_part, expected_count", [("images", 2), ("categories", 2), ("annotations", 2),])
     def test_dataset_counts(self, coco_api, dataset_part, expected_count):
         """Test the number of images, categories, and annotations in the dataset."""
         assert len(coco_api.dataset[dataset_part]) == expected_count
 
-    @pytest.mark.parametrize("img_ids, expected_ids", [(None, [0, 1]), ([0], [0]), ([1], [1]), ([0, 1], [0, 1])])
+    @pytest.mark.parametrize("img_ids, expected_ids", [(None, [0, 1]), ([0], [0]), ([1], [1]), ([0, 1], [0, 1]),])
     def test_get_img_ids_by_img_ids(self, coco_api, img_ids, expected_ids):
         """Test getImgIds method with various image ID filters."""
         result = coco_api.getImgIds(imgIds=img_ids)
         assert sorted(result) == sorted(expected_ids)
 
-    @pytest.mark.parametrize("cat_ids, expected_img_ids", [(None, [0, 1]), ([0], [0]), ([1], [1]), ([0, 1], [0, 1])])
+    @pytest.mark.parametrize("cat_ids, expected_img_ids", [(None, [0, 1]), ([0], [0]), ([1], [1]), ([0, 1], [0, 1]),])
     def test_get_img_ids_by_cat_ids(self, coco_api, cat_ids, expected_img_ids):
         """Test getImgIds method with various category ID filters."""
         result = coco_api.getImgIds(catIds=cat_ids)
         assert sorted(result) == sorted(expected_img_ids)
 
     @pytest.mark.parametrize(
-        "cat_names, expected_ids", [(None, [0, 1]), (["cat"], [0]), (["dog"], [1]), (["cat", "dog"], [0, 1])]
+        "cat_names, expected_ids", [(None, [0, 1]), (["cat"], [0]), (["dog"], [1]), (["cat", "dog"], [0, 1]),]
     )
     def test_get_cat_ids_by_names(self, coco_api, cat_names, expected_ids):
         """Test getCatIds method with various category name filters."""
         result = coco_api.getCatIds(catNms=cat_names)
         assert sorted(result) == sorted(expected_ids)
 
-    @pytest.mark.parametrize("cat_ids, expected_ids", [(None, [0, 1]), ([0], [0]), ([1], [1]), ([0, 1], [0, 1])])
+    @pytest.mark.parametrize("cat_ids, expected_ids", [(None, [0, 1]), ([0], [0]), ([1], [1]), ([0, 1], [0, 1]),])
     def test_get_cat_ids_by_ids(self, coco_api, cat_ids, expected_ids):
         """Test getCatIds method with various category ID filters."""
         result = coco_api.getCatIds(catIds=cat_ids)
         assert sorted(result) == sorted(expected_ids)
 
     @pytest.mark.parametrize(
-        "img_ids, cat_ids, expected_ids", [(None, None, [0, 1]), ([0], None, [0]), (None, [1], [1]), ([0], [0], [0])]
+        "img_ids, cat_ids, expected_ids", [(None, None, [0, 1]), ([0], None, [0]), (None, [1], [1]), ([0], [0], [0]),]
     )
     def test_get_ann_ids(self, coco_api, img_ids, cat_ids, expected_ids):
         """Test getAnnIds method with various filter conditions."""
         result = coco_api.getAnnIds(imgIds=img_ids, catIds=cat_ids)
         assert sorted(result) == sorted(expected_ids)
 
-    @pytest.mark.parametrize("ann_ids, expected_length", [([0], 1), ([1], 1), ([0, 1], 2)])
+    @pytest.mark.parametrize("ann_ids, expected_length", [([0], 1), ([1], 1), ([0, 1], 2),])
     def test_load_anns(self, coco_api, ann_ids, expected_length):
         """Test loadAnns method with various annotation IDs."""
         result = coco_api.loadAnns(ann_ids)
         assert len(result) == expected_length
         assert all(ann["id"] in ann_ids for ann in result)
 
-    @pytest.mark.parametrize("cat_ids, expected_length", [([0], 1), ([1], 1), ([0, 1], 2), (None, 2)])
+    @pytest.mark.parametrize("cat_ids, expected_length", [([0], 1), ([1], 1), ([0, 1], 2), (None, 2),])
     def test_load_cats(self, coco_api, cat_ids, expected_length):
         """Test loadCats method with various category IDs."""
         result = coco_api.loadCats(cat_ids)
@@ -91,7 +91,7 @@ class TestCocoLikeAPI:
         if cat_ids is not None:
             assert all(cat["id"] in cat_ids for cat in result)
 
-    @pytest.mark.parametrize("img_ids, expected_length", [([0], 1), ([1], 1), ([0, 1], 2)])
+    @pytest.mark.parametrize("img_ids, expected_length", [([0], 1), ([1], 1), ([0, 1], 2),])
     def test_load_imgs(self, coco_api, img_ids, expected_length):
         """Test loadImgs method with various image IDs."""
         result = coco_api.loadImgs(img_ids)

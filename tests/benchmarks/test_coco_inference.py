@@ -66,7 +66,7 @@ _PLUS_SKIP = pytest.mark.skipif(not _PLUS_AVAILABLE, reason="requires rfdetr_plu
             500,
             2,
             id="xlarge",
-            marks=_PLUS_SKIP,
+            marks=_PLUS_SKIP
         ),
         pytest.param(
             RFDETR2XLarge_PML,
@@ -75,7 +75,7 @@ _PLUS_SKIP = pytest.mark.skipif(not _PLUS_AVAILABLE, reason="requires rfdetr_plu
             500,
             2,
             id="2xlarge",
-            marks=_PLUS_SKIP,
+            marks=_PLUS_SKIP
         ),
     ],
 )
