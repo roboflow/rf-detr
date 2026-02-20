@@ -518,7 +518,8 @@ def strip_checkpoint(checkpoint: str) -> None:
         "model": state_dict["model"],
         "args": state_dict["args"],
     }
-    with tempfile.NamedTemporaryFile(dir=os.path.dirname(os.fspath(checkpoint)), delete=False) as tmp_file:
+    checkpoint_dir = os.path.dirname(os.path.abspath(os.fspath(checkpoint)))
+    with tempfile.NamedTemporaryFile(dir=checkpoint_dir, delete=False) as tmp_file:
         tmp_path = tmp_file.name
     try:
         torch.save(new_state_dict, tmp_path)

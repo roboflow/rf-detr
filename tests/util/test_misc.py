@@ -165,8 +165,6 @@ class TestStripCheckpoint:
 
         def failing_torch_save(obj, destination, *args, **kwargs):
             if str(destination) != str(checkpoint_path):
-                with open(destination, "wb") as f:
-                    f.write(b"corrupt")
                 raise RuntimeError("simulated save failure")
             return original_torch_save(obj, destination, *args, **kwargs)
 
