@@ -9,9 +9,9 @@ from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 import torch
-import numpy as np
 from torch import nn
 
 from rfdetr import engine
