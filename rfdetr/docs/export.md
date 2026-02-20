@@ -6,15 +6,15 @@ Exporting to TensorRT typically reduces inference latency and model size.
 ## ONNX export
 
 > [!IMPORTANT]
-> Starting with RF-DETR 1.2.0, you'll have to run `pip install rfdetr[onnxexport]` before exporting model weights to ONNX format.  
+> Starting with RF-DETR 1.2.0, you'll have to run `pip install rfdetr[onnxexport]` before exporting model weights to ONNX format.
 
-To export your model, simply initialize it and call the `.export()` method. There are several optional arguments that you can pass to the `.export()` method. 
+To export your model, simply initialize it and call the `.export()` method. There are several optional arguments that you can pass to the `.export()` method.
 
-*   `output_dir`: The directory where the ONNX model should be saved.
-*   `infer_dir`: A directory where a single sample image exists.
-*   `simplify`: A boolean indicating whether you want to simplify the ONNX model. This improves inference speed and reduces model complexity and size.
-*   `backbone_only`: A boolean indicating whether you want to export the backbone only. Setting this boolean to true renders the model unable to perform object detection.
-*   `resolution`: The resolution on which the model was trained on.
+- `output_dir`: The directory where the ONNX model should be saved.
+- `infer_dir`: A directory where a single sample image exists.
+- `simplify`: A boolean indicating whether you want to simplify the ONNX model. This improves inference speed and reduces model complexity and size.
+- `backbone_only`: A boolean indicating whether you want to export the backbone only. Setting this boolean to true renders the model unable to perform object detection.
+- `resolution`: The resolution on which the model was trained on.
 
 ```python
 from rfdetr import RFDETRBase
@@ -27,7 +27,7 @@ model.export(output_dir="onnx-models", infer_dir=None, simplify=True,  backbone_
 ## TensorRT conversion
 
 > [!IMPORTANT]
-> TensorRT conversion must be done on the same device where you want to run inference. 
+> TensorRT conversion must be done on the same device where you want to run inference.
 
 The ONNX model can be exported to TensorRT for faster inference and reduced model size.
 First download and install TensorRT>=8.6.1 from [TensorRT](https://developer.nvidia.com/tensorrt/download), make sure that the TensorRT is compatible with your OS (`lsb_release -a`) and CUDA (`nvcc --version`) version.
@@ -48,11 +48,12 @@ args = argparse.Namespace()
 args.verbose = True
 args.profile = False
 args.dry_run = False
-args.wandb = False # This is required for rf-detr 1.0.0 and 1.1.0! (Will be dropped from 1.2.0 onwards)
+args.wandb = False  # This is required for rf-detr 1.0.0 and 1.1.0! (Will be dropped from 1.2.0 onwards)
 onnx_model_path = "your_onnx_model.onnx"
 
 trtexec(onnx_model_path, args)
 ```
+
 This script will create a file named `your_onnx_model.engine`.
 
 ## Deploying on Jetson Orin Nano (8 GB developer kit)
@@ -76,12 +77,14 @@ from PIL import Image
 
 import rfdetr.datasets.transforms as T
 
-transforms = T.Compose([
-    # Note: adjust the line below based on the `resolution` RF-DETR was trained.
-    T.SquareResize([1120]),
-    T.ToTensor(),
-    T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-])
+transforms = T.Compose(
+    [
+        # Note: adjust the line below based on the `resolution` RF-DETR was trained.
+        T.SquareResize([1120]),
+        T.ToTensor(),
+        T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+    ]
+)
 
 TRT_LOGGER = trt.Logger(trt.Logger.INFO)
 
@@ -134,19 +137,24 @@ def run_sync(context: trt.IExecutionContext, engine: trt.ICudaEngine, input_data
     """
     bindings = {}
     bindings_addr = {}
-    input_names = [engine.get_tensor_name(i) for i in range(engine.num_io_tensors)
-                   if engine.get_tensor_mode(engine.get_tensor_name(i)) == trt.TensorIOMode.INPUT]
+    input_names = [
+        engine.get_tensor_name(i)
+        for i in range(engine.num_io_tensors)
+        if engine.get_tensor_mode(engine.get_tensor_name(i)) == trt.TensorIOMode.INPUT
+    ]
     for name in input_names:
         shape = context.get_tensor_shape(name)
         size = trt.volume(shape) * np.dtype(np.float32).itemsize
         device_input = cuda.mem_alloc(size)
-        cuda.memcpy_htod(
-            device_input, np.ascontiguousarray(input_data).ravel())
+        cuda.memcpy_htod(device_input, np.ascontiguousarray(input_data).ravel())
         bindings[name] = device_input
         bindings_addr[name] = int(device_input)
 
-    output_names = [engine.get_tensor_name(i) for i in range(engine.num_io_tensors)
-                    if engine.get_tensor_mode(engine.get_tensor_name(i)) == trt.TensorIOMode.OUTPUT]
+    output_names = [
+        engine.get_tensor_name(i)
+        for i in range(engine.num_io_tensors)
+        if engine.get_tensor_mode(engine.get_tensor_name(i)) == trt.TensorIOMode.OUTPUT
+    ]
     for name in output_names:
         shape = context.get_tensor_shape(name)
         size = trt.volume(shape) * np.dtype(np.float32).itemsize
@@ -159,8 +167,7 @@ def run_sync(context: trt.IExecutionContext, engine: trt.ICudaEngine, input_data
     outputs = {}
     for name in output_names:
         shape = context.get_tensor_shape(name)
-        host_output = cuda.pagelocked_empty(
-            trt.volume(shape), dtype=np.float16)
+        host_output = cuda.pagelocked_empty(trt.volume(shape), dtype=np.float16)
         cuda.memcpy_dtoh(host_output, bindings[name])
         outputs[name] = host_output.reshape(shape)
 
@@ -183,8 +190,8 @@ def detect_items(frame: np.ndarray) -> tuple[list, list]:
     input_np = img_transformed.numpy().astype(np.float32)
 
     output_tensors = run_sync(context, engine, input_np)
-    pred_boxes = output_tensors['dets']
-    logits = output_tensors['labels']
+    pred_boxes = output_tensors["dets"]
+    logits = output_tensors["labels"]
 
     scores = torch.sigmoid(torch.from_numpy(logits))
     max_scores, pred_labels = scores.max(-1)
@@ -192,13 +199,11 @@ def detect_items(frame: np.ndarray) -> tuple[list, list]:
     filtered_scores = max_scores.squeeze(0)[confidence_mask]
     top_indices = filtered_scores.argsort(descending=True)[:5]
     top_5_scores = filtered_scores[top_indices].tolist()
-    top_5_labels = pred_labels.squeeze(
-        0)[confidence_mask][top_indices].tolist()
+    top_5_labels = pred_labels.squeeze(0)[confidence_mask][top_indices].tolist()
 
     print(f"Top 5 predictions (class ids and scores):")
     for i, (label_id, score) in enumerate(zip(top_5_labels, top_5_scores)):
-        print(
-            f"Prediction {i+1}: class id: {label_id}, confidence score: {score}")
+        print(f"Prediction {i + 1}: class id: {label_id}, confidence score: {score}")
 
     return top_5_labels, top_5_scores
 
