@@ -46,7 +46,7 @@ class CocoEvaluator(object):
         self.max_dets = max_dets
         # label2cat maps contiguous model label indices back to original COCO category_ids.
         # Set by CocoDetection when cat2label remapping is active; None otherwise.
-        self.label2cat: Dict[int, int] = getattr(coco_gt, "label2cat", None)
+        self.label2cat: Dict[int, int] | None = getattr(coco_gt, "label2cat", None)
 
         self.iou_types = iou_types
         self.coco_eval = {}

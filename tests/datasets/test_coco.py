@@ -12,11 +12,12 @@ the model has only 80 classes.  ConvertCoco must remap them to contiguous
 0-indexed labels via the ``cat2label`` mapping built from the annotation file.
 """
 
+from typing import Dict, List
+
 import pytest
 import torch
 from PIL import Image
 from pycocotools.coco import COCO
-from typing import Dict, List
 
 from rfdetr.datasets.coco import ConvertCoco
 from rfdetr.datasets.coco_eval import CocoEvaluator
