@@ -300,16 +300,29 @@ class LWDETR(nn.Module):
         else:
             return [{"pred_logits": a, "pred_boxes": b} for a, b in zip(outputs_class[:-1], outputs_coord[:-1])]
 
+    def _get_backbone_encoder_layers(self):
+        """Resolve the list of transformer blocks/layers from backbone[0].encoder.
+        Supports: encoder.blocks, encoder.trunk.blocks (aimv2), and encoder.encoder.layer
+        (HuggingFace DinoV2 / WindowedDinov2WithRegistersBackbone). Returns None if not found.
+        """
+        enc = self.backbone[0].encoder
+        if hasattr(enc, "blocks"):
+            return enc.blocks
+        if hasattr(enc, "trunk") and hasattr(enc.trunk, "blocks"):
+            return enc.trunk.blocks
+        if hasattr(enc, "encoder") and hasattr(enc.encoder, "layer"):
+            return enc.encoder.layer
+        return None
+
     def update_drop_path(self, drop_path_rate, vit_encoder_num_layers):
         """ """
+        layers = self._get_backbone_encoder_layers()
+        if layers is None:
+            return
         dp_rates = [x.item() for x in torch.linspace(0, drop_path_rate, vit_encoder_num_layers)]
-        for i in range(vit_encoder_num_layers):
-            if hasattr(self.backbone[0].encoder, "blocks"):  # Not aimv2
-                if hasattr(self.backbone[0].encoder.blocks[i].drop_path, "drop_prob"):
-                    self.backbone[0].encoder.blocks[i].drop_path.drop_prob = dp_rates[i]
-            else:  # aimv2
-                if hasattr(self.backbone[0].encoder.trunk.blocks[i].drop_path, "drop_prob"):
-                    self.backbone[0].encoder.trunk.blocks[i].drop_path.drop_prob = dp_rates[i]
+        for i in range(min(vit_encoder_num_layers, len(layers))):
+            if hasattr(layers[i], "drop_path") and hasattr(layers[i].drop_path, "drop_prob"):
+                layers[i].drop_path.drop_prob = dp_rates[i]
 
     def update_dropout(self, drop_rate):
         for module in self.transformer.modules():
