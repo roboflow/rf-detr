@@ -25,6 +25,7 @@ import datetime
 import os
 import pickle
 import subprocess
+import tempfile
 import time
 from collections import defaultdict, deque
 from typing import Any, Dict, Generator, Iterable, List, Optional, Tuple
@@ -517,4 +518,11 @@ def strip_checkpoint(checkpoint: str) -> None:
         "model": state_dict["model"],
         "args": state_dict["args"],
     }
-    torch.save(new_state_dict, checkpoint)
+    with tempfile.NamedTemporaryFile(dir=os.path.dirname(os.fspath(checkpoint)), delete=False) as tmp_file:
+        tmp_path = tmp_file.name
+    try:
+        torch.save(new_state_dict, tmp_path)
+        os.replace(tmp_path, checkpoint)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
