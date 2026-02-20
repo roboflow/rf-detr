@@ -147,7 +147,11 @@ class TestStripCheckpoint:
     def test_strip_checkpoint_keeps_only_model_and_args(self, tmp_path):
         checkpoint_path = tmp_path / "checkpoint_best_total.pth"
         torch.save(
-            {"model": {"weight": torch.tensor([1.0])}, "args": SimpleNamespace(class_names=["a"]), "optimizer": {"lr": 1e-4}},
+            {
+                "model": {"weight": torch.tensor([1.0])},
+                "args": SimpleNamespace(class_names=["a"]),
+                "optimizer": {"lr": 1e-4},
+            },
             checkpoint_path,
         )
 
