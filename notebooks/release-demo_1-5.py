@@ -7,7 +7,7 @@
 # %% [markdown]
 # # RF-DETR 1.5.0 — Custom Augmentations
 #
-# [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/roboflow/rf-detr/blob/develop/notebooks/release-demo_1-5.py)
+# [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/roboflow/rf-detr/blob/develop/notebooks/release-demo_1-5.ipynb)
 #
 # This notebook showcases the major new features in RF-DETR 1.5.0.
 # The headline addition is **custom training augmentations via Albumentations** —
