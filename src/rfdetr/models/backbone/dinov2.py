@@ -65,6 +65,7 @@ class DinoV2(nn.Module):
         patch_size=14,
         num_windows=4,
         positional_encoding_size=37,
+        drop_path_rate=0.0,
     ):
         super().__init__()
 
@@ -93,6 +94,7 @@ class DinoV2(nn.Module):
 
             dino_config["return_dict"] = False
             dino_config["out_features"] = [f"stage{i}" for i in out_feature_indexes]
+            dino_config["drop_path_rate"] = drop_path_rate
 
             implied_resolution = positional_encoding_size * patch_size
 

@@ -87,6 +87,7 @@ class Backbone(BackboneBase):
             patch_size=patch_size,
             num_windows=num_windows,
             positional_encoding_size=positional_encoding_size,
+            drop_path_rate=drop_path,
         )
         # build encoder + projector as backbone module
         if freeze_encoder:
