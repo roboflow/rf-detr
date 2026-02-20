@@ -98,6 +98,8 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         # Reverse mapping from contiguous label indices back to COCO category_id
         self.label2cat = {label: cat_id for cat_id, label in self.cat2label.items()}
         self.prepare = ConvertCoco(include_masks=include_masks, cat2label=self.cat2label)
+        # Expose label-to-category mapping on the underlying COCO API object for evaluators
+        setattr(self.coco, "label2cat", self.label2cat)
 
     def __getitem__(self, idx: int) -> Tuple[Any, Any]:
         img, target = super(CocoDetection, self).__getitem__(idx)
