@@ -59,6 +59,7 @@ nav:
       - Training Configs:
           - Train Config: reference/train_config.md
           - Segmentation Train Config: reference/segmentation_train_config.md
+  - Tutorials: tutorials/index.md
   - Changelog: https://github.com/roboflow/rf-detr/releases
 
 theme:
