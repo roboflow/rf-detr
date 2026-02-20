@@ -223,7 +223,7 @@ def train_one_epoch(
             )
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
-    logger.info(f"Epoch {epoch} stats: {metric_logger}")
+    logger.info(f"Epoch {epoch + 1} stats: {metric_logger}")
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
 
