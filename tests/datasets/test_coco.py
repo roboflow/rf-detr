@@ -13,9 +13,12 @@ the model has only 80 classes.  ConvertCoco must remap them to contiguous
 """
 
 import torch
+import pytest
 from PIL import Image
+from pycocotools.coco import COCO
 
 from rfdetr.datasets.coco import ConvertCoco
+from rfdetr.datasets.coco_eval import CocoEvaluator
 
 # Minimal image shared across all tests
 _IMAGE = Image.new("RGB", (100, 100))
@@ -35,6 +38,30 @@ _CAT2LABEL = {cat_id: i for i, cat_id in enumerate(sorted(_SPARSE_CAT_IDS))}
 
 def _make_target(annotations=_ANNOTATIONS):
     return {"image_id": 1, "annotations": annotations}
+
+
+@pytest.fixture
+def coco_gt() -> COCO:
+    coco = COCO()
+    coco.dataset = {
+        "images": [{"id": 1, "width": 10, "height": 10}],
+        "annotations": [],
+        "categories": [
+            {"id": 1, "name": "cat_1"},
+            {"id": 3, "name": "cat_3"},
+        ],
+    }
+    coco.createIndex()
+    setattr(coco, "label2cat", {0: 1, 1: 3})
+    return coco
+
+
+@pytest.fixture
+def base_prediction() -> dict[str, torch.Tensor]:
+    return {
+        "boxes": torch.tensor([[0.0, 0.0, 1.0, 1.0], [1.0, 1.0, 2.0, 2.0]], dtype=torch.float32),
+        "scores": torch.tensor([0.9, 0.8], dtype=torch.float32),
+    }
 
 
 class TestConvertCocoWithoutMapping:
@@ -87,3 +114,29 @@ class TestConvertCocoWithMapping:
         converter = ConvertCoco(cat2label=_CAT2LABEL)
         _, target = converter(_IMAGE, _make_target())
         assert target["labels"].dtype == torch.int64
+
+
+class TestCocoEvaluatorCategoryResolution:
+    @pytest.mark.parametrize(
+        ("labels", "expected_category_ids"),
+        [
+            pytest.param([0, 1], [1, 3], id="contiguous-labels"),
+            pytest.param([1, 3], [1, 3], id="raw-coco-category-ids"),
+        ],
+    )
+    def test_prepare_detection_resolves_category_ids(
+        self,
+        coco_gt: COCO,
+        base_prediction: dict[str, torch.Tensor],
+        labels: list[int],
+        expected_category_ids: list[int],
+    ) -> None:
+        evaluator = CocoEvaluator(coco_gt, ["bbox"])
+        predictions = {
+            1: {
+                **base_prediction,
+                "labels": torch.tensor(labels, dtype=torch.int64),
+            }
+        }
+        results = evaluator.prepare_for_coco_detection(predictions)
+        assert [result["category_id"] for result in results] == expected_category_ids
