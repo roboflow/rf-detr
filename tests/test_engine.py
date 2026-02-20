@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 
 import pytest
 import torch
+import numpy as np
 from torch import nn
 
 from rfdetr import engine
@@ -160,7 +161,7 @@ def test_evaluate_progress_bar_creation_and_metrics(monkeypatch) -> None:
         return bar
 
     coco_eval = MagicMock()
-    coco_eval.stats = [0.0] * 12
+    coco_eval.stats = np.zeros(12, dtype=float)
     coco_evaluator = MagicMock()
     coco_evaluator.coco_eval = {"bbox": coco_eval}
 
