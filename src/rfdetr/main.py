@@ -493,7 +493,14 @@ class Model:
             }
             if args.use_ema:
                 ema_test_stats, _ = evaluate(
-                    self.ema_m.module, criterion, postprocess, data_loader_val, base_ds, device, args=args, header="Test-ema"
+                    self.ema_m.module,
+                    criterion,
+                    postprocess,
+                    data_loader_val,
+                    base_ds,
+                    device,
+                    args=args,
+                    header="Test-ema",
                 )
                 log_stats.update({f"ema_test_{k}": v for k, v in ema_test_stats.items()})
                 if not args.segmentation_head:
