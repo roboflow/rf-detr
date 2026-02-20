@@ -93,8 +93,11 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         super(CocoDetection, self).__init__(img_folder, ann_file)
         self._transforms = transforms
         self.include_masks = include_masks
-        cat2label = {cat_id: i for i, cat_id in enumerate(sorted(self.coco.cats.keys()))}
-        self.prepare = ConvertCoco(include_masks=include_masks, cat2label=cat2label)
+        # Mapping from original COCO category_id to contiguous label indices
+        self.cat2label = {cat_id: i for i, cat_id in enumerate(sorted(self.coco.cats.keys()))}
+        # Reverse mapping from contiguous label indices back to COCO category_id
+        self.label2cat = {label: cat_id for cat_id, label in self.cat2label.items()}
+        self.prepare = ConvertCoco(include_masks=include_masks, cat2label=self.cat2label)
 
     def __getitem__(self, idx: int) -> Tuple[Any, Any]:
         img, target = super(CocoDetection, self).__getitem__(idx)
@@ -130,7 +133,18 @@ class ConvertCoco(object):
         boxes[:, 0::2].clamp_(min=0, max=w)
         boxes[:, 1::2].clamp_(min=0, max=h)
 
-        classes = [self.cat2label.get(obj["category_id"], obj["category_id"]) for obj in anno]
+        classes: List[int] = []
+        for obj in anno:
+            category_id = obj["category_id"]
+            if getattr(self, "cat2label", None) is not None:
+                if category_id not in self.cat2label:
+                    raise KeyError(
+                        f"Unknown category_id {category_id} for image_id {target.get('image_id')} "
+                        "encountered in annotations. Check that your category mapping matches the dataset."
+                    )
+                classes.append(self.cat2label[category_id])
+            else:
+                classes.append(category_id)
         classes = torch.tensor(classes, dtype=torch.int64)
 
         keep = (boxes[:, 3] > boxes[:, 1]) & (boxes[:, 2] > boxes[:, 0])
