@@ -523,6 +523,7 @@ def strip_checkpoint(checkpoint: str) -> None:
         tmp_path = tmp_file.name
     try:
         torch.save(new_state_dict, tmp_path)
+        # Atomic replace avoids leaving a partially written checkpoint on save failures/interruption.
         os.replace(tmp_path, checkpoint)
     finally:
         if os.path.exists(tmp_path):
