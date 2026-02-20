@@ -2,9 +2,9 @@ name: Docs/Test WorkFlow
 
 on:
   pull_request:
-    branches: [main, develop]
+    branches: ["main", "release/*", "develop"]
   push:
-    branches: [main, develop]
+    branches: ["main", "release/*", "develop"]
   workflow_dispatch: {}
 
 # Restrict permissions by default

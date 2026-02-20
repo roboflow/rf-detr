@@ -25,6 +25,7 @@ import datetime
 import os
 import pickle
 import subprocess
+import tempfile
 import time
 from collections import defaultdict, deque
 from typing import Any, Dict, Generator, Iterable, List, Optional, Tuple
@@ -511,10 +512,20 @@ def inverse_sigmoid(x: torch.Tensor, eps: float = 1e-5) -> torch.Tensor:
     return torch.log(x1 / x2)
 
 
-def strip_checkpoint(checkpoint: str) -> None:
+def strip_checkpoint(checkpoint: str | os.PathLike[str]) -> None:
     state_dict = torch.load(checkpoint, map_location="cpu", weights_only=False)
     new_state_dict = {
         "model": state_dict["model"],
         "args": state_dict["args"],
     }
-    torch.save(new_state_dict, checkpoint)
+    # Create the temp file in the destination directory so os.replace stays on the same filesystem (atomic).
+    checkpoint_dir = os.path.dirname(os.path.abspath(os.fspath(checkpoint)))
+    with tempfile.NamedTemporaryFile(dir=checkpoint_dir, delete=False) as tmp_file:
+        tmp_path = tmp_file.name
+    try:
+        torch.save(new_state_dict, tmp_path)
+        # Atomic replace avoids leaving a partially written checkpoint on save failures/interruption.
+        os.replace(tmp_path, checkpoint)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)

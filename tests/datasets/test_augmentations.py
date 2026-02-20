@@ -6,12 +6,16 @@
 
 """Tests for Albumentations augmentation wrappers."""
 
+import json
+
 import albumentations as A
+import numpy as np
 import pytest
 import torch
 from PIL import Image
 from torch.utils.data import DataLoader
 
+from rfdetr import RFDETRSegNano
 from rfdetr.datasets._develop import _SimpleDataset
 from rfdetr.datasets.aug_config import AUG_CONFIG
 from rfdetr.datasets.coco import make_coco_transforms, make_coco_transforms_square_div_64
@@ -916,6 +920,116 @@ class TestTrainingLoop:
         # Verify they can be stacked
         orig_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
         assert orig_sizes.shape == torch.Size([len(targets), 2])
+
+    @pytest.mark.parametrize(
+        "transform_class,transform_kwargs",
+        [
+            (A.HorizontalFlip, {"p": 1.0}),
+            (A.VerticalFlip, {"p": 1.0}),
+            (A.RandomRotate90, {"p": 1.0}),
+        ],
+        ids=["horizontal_flip", "vertical_flip", "random_rotate_90"],
+    )
+    @pytest.mark.parametrize("include_masks", [False, True], ids=["detection", "segmentation"])
+    def test_geometric_dataloader_compatibility(self, include_masks, transform_class, transform_kwargs):
+        """Test geometric Albumentations transforms work in DataLoader for detection and segmentation."""
+
+        class _TinyTrainDataset:
+            def __init__(self, transforms):
+                self._transforms = transforms
+
+            def __len__(self):
+                return 2
+
+            def __getitem__(self, idx):
+                height, width = 64, 64
+                image = Image.new("RGB", (width, height))
+                target = {
+                    "boxes": torch.tensor([[8.0, 12.0, 24.0, 28.0]], dtype=torch.float32),
+                    "labels": torch.tensor([1], dtype=torch.int64),
+                    "orig_size": torch.tensor([height, width]),
+                    "size": torch.tensor([height, width]),
+                    "image_id": torch.tensor([idx]),
+                    "area": torch.tensor([256.0]),
+                    "iscrowd": torch.tensor([0]),
+                }
+                if include_masks:
+                    masks = torch.zeros((1, height, width), dtype=torch.bool)
+                    masks[0, 12:28, 8:24] = True
+                    target["masks"] = masks
+
+                image, target = self._transforms(image, target)
+                image = torch.from_numpy(np.array(image)).permute(2, 0, 1).float() / 255.0
+                return image, target
+
+        transforms = Compose([AlbumentationsWrapper(transform_class(**transform_kwargs))])
+        dataloader = DataLoader(_TinyTrainDataset(transforms), batch_size=2, collate_fn=collate_fn, num_workers=0)
+        images, targets = next(iter(dataloader))
+
+        assert images.tensors.shape[0] == 2
+        for target in targets:
+            assert target["boxes"].shape == (1, 4)
+            assert target["labels"].shape == (1,)
+            if include_masks:
+                assert target["masks"].shape == (1, 64, 64)
+                assert target["masks"].dtype == torch.bool
+
+    def test_segmentation_nano_training_with_tiny_mock_coco_dataset(self, tmp_path, monkeypatch):
+        """Integration test: run a minimal segmentation training step on a mocked COCO dataset."""
+
+        def _write_split(split_name: str) -> None:
+            split_dir = tmp_path / "tiny_seg_dataset" / split_name
+            split_dir.mkdir(parents=True, exist_ok=True)
+            image_path = split_dir / "sample.jpg"
+            Image.new("RGB", (64, 64), color="white").save(image_path)
+
+            annotations = {
+                "images": [{"id": 1, "width": 64, "height": 64, "file_name": "sample.jpg"}],
+                "categories": [{"id": 1, "name": "object", "supercategory": "object"}],
+                "annotations": [
+                    {
+                        "id": 1,
+                        "image_id": 1,
+                        "category_id": 1,
+                        "bbox": [8.0, 8.0, 16.0, 16.0],
+                        "area": 256.0,
+                        "iscrowd": 0,
+                        "segmentation": [[8.0, 8.0, 24.0, 8.0, 24.0, 24.0, 8.0, 24.0]],
+                    }
+                ],
+            }
+            (split_dir / "_annotations.coco.json").write_text(json.dumps(annotations))
+
+        for split in ("train", "valid"):
+            _write_split(split)
+
+        def _fake_evaluate(*args, **kwargs):
+            return {
+                "coco_eval_masks": [0.0, 0.0],
+                "results_json": {"map": 0.0, "f1_score": 0.0, "class_map": {}},
+            }, None
+
+        monkeypatch.setattr("rfdetr.main.evaluate", _fake_evaluate)
+
+        output_dir = tmp_path / "output"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        model = RFDETRSegNano(pretrain_weights=None, device="cpu")
+        model.train(
+            dataset_dir=str(tmp_path / "tiny_seg_dataset"),
+            epochs=1,
+            batch_size=1,
+            grad_accum_steps=1,
+            device="cpu",
+            num_workers=0,
+            resolution=64,
+            amp=False,
+            use_ema=False,
+            run_test=False,
+            tensorboard=False,
+            dont_save_weights=True,
+            min_batches=1,
+            output_dir=str(output_dir),
+        )
 
 
 class TestMakeCocoTransformsAugConfig:
