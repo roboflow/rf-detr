@@ -107,6 +107,36 @@ After running the export, you will find the following files in your output direc
 - `inference_model.onnx` - The exported ONNX model (or `backbone_model.onnx` if `backbone_only=True`)
 - `inference_model.sim.onnx` - The simplified ONNX model (if `simplify=True`)
 
+## Optional: Convert ONNX to TensorRT
+
+If you want lower latency on NVIDIA GPUs, you can convert the exported ONNX model to a TensorRT engine.
+
+> [!IMPORTANT]
+> Run TensorRT conversion on the same machine and GPU family where you plan to deploy inference.
+
+### Prerequisites
+
+- Install TensorRT (`trtexec` must be available in your `PATH`)
+- Export an ONNX model first (for example: `output/inference_model.onnx`)
+
+### Python API Conversion
+
+```python
+from argparse import Namespace
+
+from rfdetr.deploy.export import trtexec
+
+args = Namespace(
+    verbose=True,
+    profile=False,
+    dry_run=False,
+)
+
+trtexec("output/inference_model.onnx", args)
+```
+
+This produces `output/inference_model.engine`. If `profile=True`, it also writes an Nsight Systems report (`.nsys-rep`).
+
 ## Using the Exported Model
 
 Once exported, you can use the ONNX model with various inference frameworks:
