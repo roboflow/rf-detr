@@ -16,6 +16,7 @@ import pytest
 import torch
 from PIL import Image
 from pycocotools.coco import COCO
+from typing import Dict, List
 
 from rfdetr.datasets.coco import ConvertCoco
 from rfdetr.datasets.coco_eval import CocoEvaluator
@@ -57,7 +58,7 @@ def coco_gt() -> COCO:
 
 
 @pytest.fixture
-def base_prediction() -> dict[str, torch.Tensor]:
+def base_prediction() -> Dict[str, torch.Tensor]:
     return {
         "boxes": torch.tensor([[0.0, 0.0, 1.0, 1.0], [1.0, 1.0, 2.0, 2.0]], dtype=torch.float32),
         "scores": torch.tensor([0.9, 0.8], dtype=torch.float32),
@@ -127,9 +128,9 @@ class TestCocoEvaluatorCategoryResolution:
     def test_prepare_detection_resolves_category_ids(
         self,
         coco_gt: COCO,
-        base_prediction: dict[str, torch.Tensor],
-        labels: list[int],
-        expected_category_ids: list[int],
+        base_prediction: Dict[str, torch.Tensor],
+        labels: List[int],
+        expected_category_ids: List[int],
     ) -> None:
         evaluator = CocoEvaluator(coco_gt, ["bbox"])
         predictions = {

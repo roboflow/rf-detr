@@ -24,7 +24,7 @@ in the end of the file, as python3 can suppress prints with contextlib
 import contextlib
 import copy
 import os
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pycocotools.mask as mask_util
@@ -59,7 +59,7 @@ class CocoEvaluator(object):
         self.cat_ids = set(coco_gt.cats.keys())
         self._prefer_raw_category_ids = False
 
-    def _resolve_category_id(self, label: int, use_raw_category_ids: bool) -> int | None:
+    def _resolve_category_id(self, label: int, use_raw_category_ids: bool) -> Optional[int]:
         """Resolve a predicted label to a COCO category_id.
 
         Supports both:
