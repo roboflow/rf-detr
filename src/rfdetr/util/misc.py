@@ -512,7 +512,7 @@ def inverse_sigmoid(x: torch.Tensor, eps: float = 1e-5) -> torch.Tensor:
     return torch.log(x1 / x2)
 
 
-def strip_checkpoint(checkpoint: str) -> None:
+def strip_checkpoint(checkpoint: str | os.PathLike[str]) -> None:
     state_dict = torch.load(checkpoint, map_location="cpu", weights_only=False)
     new_state_dict = {
         "model": state_dict["model"],

@@ -162,7 +162,11 @@ class TestStripCheckpoint:
 
     def test_strip_checkpoint_is_atomic_when_save_fails(self, tmp_path, monkeypatch):
         checkpoint_path = tmp_path / "checkpoint_best_total.pth"
-        original_checkpoint = {"model": {"weight": torch.tensor([1.0])}, "args": SimpleNamespace(class_names=["a"])}
+        original_checkpoint = {
+            "model": {"weight": torch.tensor([1.0])},
+            "args": SimpleNamespace(class_names=["a"]),
+            "optimizer": {"lr": 1e-4},
+        }
         torch.save(original_checkpoint, checkpoint_path)
 
         original_torch_save = torch.save
@@ -178,4 +182,6 @@ class TestStripCheckpoint:
             strip_checkpoint(str(checkpoint_path))
 
         recovered = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        assert set(recovered.keys()) == set(original_checkpoint.keys())
         assert recovered["model"]["weight"].equal(original_checkpoint["model"]["weight"])
+        assert recovered["optimizer"] == original_checkpoint["optimizer"]
