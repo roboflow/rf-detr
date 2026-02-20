@@ -7,6 +7,7 @@
 #
 """Synthetic dataset generation with COCO formatting."""
 
+import json
 import logging
 import random
 from dataclasses import dataclass
@@ -318,6 +319,19 @@ def generate_coco_dataset(
         dataset = sv.DetectionDataset(classes=classes, images=images, annotations=annotations)
 
         dataset.as_coco(annotations_path=str(annotations_path))
+
+        # supervision writes 0-indexed sequential category IDs; remap to sparse
+        # 1-based IDs (id * 2 + 1 → 1, 3, 5, …) so synthetic data exercises the
+        # same cat2label remapping path that real COCO datasets require.
+        with open(annotations_path) as read_handle:
+            coco_json = json.load(read_handle)
+        sparse_id = {cat["id"]: cat["id"] * 2 + 1 for cat in coco_json["categories"]}
+        for cat in coco_json["categories"]:
+            cat["id"] = sparse_id[cat["id"]]
+        for ann in coco_json["annotations"]:
+            ann["category_id"] = sparse_id[ann["category_id"]]
+        with open(annotations_path, "w") as write_handle:
+            json.dump(coco_json, write_handle)
 
 
 if __name__ == "__main__":
