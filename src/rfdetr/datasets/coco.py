@@ -93,7 +93,8 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         super(CocoDetection, self).__init__(img_folder, ann_file)
         self._transforms = transforms
         self.include_masks = include_masks
-        self.prepare = ConvertCoco(include_masks=include_masks)
+        cat2label = {cat_id: i for i, cat_id in enumerate(sorted(self.coco.cats.keys()))}
+        self.prepare = ConvertCoco(include_masks=include_masks, cat2label=cat2label)
 
     def __getitem__(self, idx: int) -> Tuple[Any, Any]:
         img, target = super(CocoDetection, self).__getitem__(idx)
@@ -108,8 +109,9 @@ class CocoDetection(torchvision.datasets.CocoDetection):
 
 
 class ConvertCoco(object):
-    def __init__(self, include_masks: bool = False) -> None:
+    def __init__(self, include_masks: bool = False, cat2label: Optional[Dict[int, int]] = None) -> None:
         self.include_masks = include_masks
+        self.cat2label = cat2label or {}
 
     def __call__(self, image: Image.Image, target: Dict[str, Any]) -> Tuple[Image.Image, Dict[str, Any]]:
         w, h = image.size
@@ -128,7 +130,7 @@ class ConvertCoco(object):
         boxes[:, 0::2].clamp_(min=0, max=w)
         boxes[:, 1::2].clamp_(min=0, max=h)
 
-        classes = [obj["category_id"] for obj in anno]
+        classes = [self.cat2label.get(obj["category_id"], obj["category_id"]) for obj in anno]
         classes = torch.tensor(classes, dtype=torch.int64)
 
         keep = (boxes[:, 3] > boxes[:, 1]) & (boxes[:, 2] > boxes[:, 0])
