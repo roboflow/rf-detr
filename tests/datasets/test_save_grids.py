@@ -10,7 +10,7 @@ without OpenCV layout errors across all supported OpenCV versions."""
 from pathlib import Path
 
 import numpy as np
-import pytest
+
 import torch
 from PIL import Image
 from torch.utils.data import DataLoader
@@ -58,6 +58,7 @@ def test_save_grid_writes_files(tmp_path: Path) -> None:
     grids = list(tmp_path.glob("train_batch*_grid.jpg"))
     assert len(grids) == 2, f"Expected 2 grid files, got {len(grids)}"
     for grid_path in grids:
-        img = np.array(Image.open(grid_path))
+        with Image.open(grid_path) as pil_img:
+            img = np.array(pil_img)
         assert img.ndim == 3
         assert img.shape[2] == 3
