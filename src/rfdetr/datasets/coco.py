@@ -114,7 +114,7 @@ class CocoDetection(torchvision.datasets.CocoDetection):
 class ConvertCoco(object):
     def __init__(self, include_masks: bool = False, cat2label: Optional[Dict[int, int]] = None) -> None:
         self.include_masks = include_masks
-        self.cat2label = cat2label or {}
+        self.cat2label = cat2label
 
     def __call__(self, image: Image.Image, target: Dict[str, Any]) -> Tuple[Image.Image, Dict[str, Any]]:
         w, h = image.size
