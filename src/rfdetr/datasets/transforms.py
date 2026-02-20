@@ -731,6 +731,7 @@ class AlbumentationsWrapper:
             masks_np = masks.cpu().numpy() if torch.is_tensor(masks) else np.array(masks)
             if masks_np.ndim != 3:
                 raise ValueError(f"masks must have shape (N, H, W), got {masks_np.shape}")
+            masks_np = masks_np.astype(np.uint8, copy=False)
             masks_list = [mask for mask in masks_np]
         # Apply transform
         transform_kwargs = {"image": image_np, "bboxes": boxes_np, "category_ids": labels, "idxs": idxs}
