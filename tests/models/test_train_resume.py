@@ -42,3 +42,32 @@ def test_resume_with_completed_epochs_returns_early(synthetic_shape_dataset_dir:
         output_dir=str(output_dir),
         device="cpu",
     )
+
+
+def test_resume_with_completed_epochs_calls_on_train_end_callback(
+    synthetic_shape_dataset_dir: Path, tmp_path: Path
+) -> None:
+    """Resuming with completed epochs should still execute on_train_end callbacks."""
+    output_dir = tmp_path / "train_output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    callback_calls = 0
+
+    def _callback() -> None:
+        nonlocal callback_calls
+        callback_calls += 1
+
+    model = RFDETRNano(pretrain_weights=None, num_classes=3, device="cpu")
+    model.callbacks["on_train_end"].append(_callback)
+
+    model.train(
+        dataset_dir=str(synthetic_shape_dataset_dir),
+        epochs=2,
+        start_epoch=2,
+        batch_size=1,
+        grad_accum_steps=1,
+        output_dir=str(output_dir),
+        device="cpu",
+    )
+
+    assert callback_calls == 1
