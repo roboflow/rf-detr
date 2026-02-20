@@ -518,6 +518,7 @@ def strip_checkpoint(checkpoint: str) -> None:
         "model": state_dict["model"],
         "args": state_dict["args"],
     }
+    # Create the temp file in the destination directory so os.replace stays on the same filesystem (atomic).
     checkpoint_dir = os.path.dirname(os.path.abspath(os.fspath(checkpoint)))
     with tempfile.NamedTemporaryFile(dir=checkpoint_dir, delete=False) as tmp_file:
         tmp_path = tmp_file.name
