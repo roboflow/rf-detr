@@ -42,14 +42,14 @@ class TestConvertCocoWithoutMapping:
     """Without cat2label, sparse IDs pass through unchanged — demonstrating the bug."""
 
     def test_labels_are_raw_category_ids(self):
-        converter = ConvertCoco(cat2label={})
+        converter = ConvertCoco(cat2label=None)
         _, target = converter(_IMAGE, _make_target())
         # Raw COCO IDs — NOT safe to use as indices into an 80-class tensor
         assert target["labels"].tolist() == [1, 7]
 
     def test_raw_ids_would_exceed_num_classes(self):
         """Illustrates why raw IDs cause CUDA out-of-bounds with num_classes=80."""
-        converter = ConvertCoco(cat2label={})
+        converter = ConvertCoco(cat2label=None)
         _, target = converter(_IMAGE, _make_target())
         num_classes = len(_SPARSE_CAT_IDS)  # 5 — same as model would see
         assert any(lbl >= num_classes for lbl in target["labels"].tolist()), (
