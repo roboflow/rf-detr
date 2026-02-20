@@ -44,6 +44,9 @@ class CocoEvaluator(object):
         coco_gt = copy.deepcopy(coco_gt)
         self.coco_gt = coco_gt
         self.max_dets = max_dets
+        # label2cat maps contiguous model label indices back to original COCO category_ids.
+        # Set by CocoDetection when cat2label remapping is active; None otherwise.
+        self.label2cat: Dict[int, int] = getattr(coco_gt, "label2cat", None)
 
         self.iou_types = iou_types
         self.coco_eval = {}
@@ -112,11 +115,12 @@ class CocoEvaluator(object):
                 [
                     {
                         "image_id": original_id,
-                        "category_id": labels[k],
+                        "category_id": self.label2cat[labels[k]] if self.label2cat is not None else labels[k],
                         "bbox": box,
                         "score": scores[k],
                     }
                     for k, box in enumerate(boxes)
+                    if self.label2cat is None or labels[k] in self.label2cat
                 ]
             )
         return coco_results
@@ -147,11 +151,12 @@ class CocoEvaluator(object):
                 [
                     {
                         "image_id": original_id,
-                        "category_id": labels[k],
+                        "category_id": self.label2cat[labels[k]] if self.label2cat is not None else labels[k],
                         "segmentation": rle,
                         "score": scores[k],
                     }
                     for k, rle in enumerate(rles)
+                    if self.label2cat is None or labels[k] in self.label2cat
                 ]
             )
         return coco_results
@@ -173,11 +178,12 @@ class CocoEvaluator(object):
                 [
                     {
                         "image_id": original_id,
-                        "category_id": labels[k],
+                        "category_id": self.label2cat[labels[k]] if self.label2cat is not None else labels[k],
                         "keypoints": keypoint,
                         "score": scores[k],
                     }
                     for k, keypoint in enumerate(keypoints)
+                    if self.label2cat is None or labels[k] in self.label2cat
                 ]
             )
         return coco_results
