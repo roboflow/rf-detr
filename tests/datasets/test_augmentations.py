@@ -935,6 +935,9 @@ class TestTrainingLoop:
         """Test geometric Albumentations transforms work in DataLoader for detection and segmentation."""
 
         class _TinyTrainDataset:
+            def __init__(self, transforms):
+                self._transforms = transforms
+
             def __len__(self):
                 return 2
 
@@ -955,12 +958,12 @@ class TestTrainingLoop:
                     masks[0, 12:28, 8:24] = True
                     target["masks"] = masks
 
-                image, target = transforms(image, target)
+                image, target = self._transforms(image, target)
                 image = torch.from_numpy(np.array(image)).permute(2, 0, 1).float() / 255.0
                 return image, target
 
         transforms = Compose([AlbumentationsWrapper(transform_class(**transform_kwargs))])
-        dataloader = DataLoader(_TinyTrainDataset(), batch_size=2, collate_fn=collate_fn, num_workers=0)
+        dataloader = DataLoader(_TinyTrainDataset(transforms), batch_size=2, collate_fn=collate_fn, num_workers=0)
         images, targets = next(iter(dataloader))
 
         assert images.tensors.shape[0] == 2
