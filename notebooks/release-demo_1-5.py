@@ -243,7 +243,7 @@ sv.plot_image(annotated)
 # %% [markdown]
 # ## Next steps
 #
-# - [Augmentation docs](https://roboflow.github.io/rf-detr/learn/train/augmentations/)
-# - [Advanced training options](https://roboflow.github.io/rf-detr/learn/train/advanced/)
-# - [Logger integrations (ClearML, MLflow, W&B)](https://roboflow.github.io/rf-detr/learn/train/loggers/)
-# - [Export your model](https://roboflow.github.io/rf-detr/learn/export/)
+# - [Augmentation docs](https://rfdetr.roboflow.com/learn/train/augmentations/)
+# - [Advanced training options](https://rfdetr.roboflow.com/learn/train/advanced/)
+# - [Logger integrations (ClearML, MLflow, W&B)](https://rfdetr.roboflow.com/learn/train/loggers/)
+# - [Export your model](https://rfdetr.roboflow.com/learn/export/)
