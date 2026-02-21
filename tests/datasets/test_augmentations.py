@@ -478,7 +478,6 @@ class TestAlbumentationsWrapper:
         # Output masks should be bool after Albumentations processing
         assert aug_target["masks"].dtype == torch.bool
 
-
     def test_masks_transform_with_dropped_boxes(self):
         """Test wrapper filters masks appropriately when boxes are dropped by transform."""
         # Use a crop transform to ensure a box is dropped
