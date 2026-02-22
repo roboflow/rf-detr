@@ -21,9 +21,9 @@ from pathlib import Path
 from typing import Any, Generator, Optional, Tuple
 from urllib.request import urlretrieve
 
-from rfdetr.util.logger import get_logger
-
 import torch
+
+from rfdetr.util.logger import get_logger
 
 logger = get_logger()
 
