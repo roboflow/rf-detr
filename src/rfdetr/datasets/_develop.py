@@ -23,6 +23,8 @@ from urllib.request import urlretrieve
 
 from rfdetr.util.logger import get_logger
 
+import torch
+
 logger = get_logger()
 
 _COCO_URLS = {
