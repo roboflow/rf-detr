@@ -11,10 +11,10 @@ import torch
 from rfdetr.models.segmentation_head import DepthwiseConvBlock
 
 
-def test_depthwise_conv_disables_cudnn(monkeypatch) -> None:
+def test_depthwise_conv_block_always_disables_cudnn(monkeypatch) -> None:
     """Depthwise conv should execute with cuDNN disabled for compatibility."""
     block = DepthwiseConvBlock(dim=8)
-    active_enabled: bool | None = None
+    cudnn_enabled = True
 
     class _MockDepthwiseConv(torch.nn.Module):
         def __init__(self) -> None:
@@ -23,33 +23,35 @@ def test_depthwise_conv_disables_cudnn(monkeypatch) -> None:
 
         def forward(self, x: torch.Tensor) -> torch.Tensor:
             self.calls += 1
-            assert active_enabled is False
+            assert not cudnn_enabled
             return x
 
     fallback_dwconv = _MockDepthwiseConv()
     block.dwconv = fallback_dwconv
 
     fallback_context_calls = 0
-    enabled_value: bool | None = None
+    enabled_calls: list[bool] = []
 
     @contextmanager
     def _fake_cudnn_flags(*, enabled: bool):
-        nonlocal active_enabled, enabled_value, fallback_context_calls
-        previous = active_enabled
-        active_enabled = enabled
-        enabled_value = enabled
+        nonlocal cudnn_enabled, fallback_context_calls
+        previous = cudnn_enabled
+        cudnn_enabled = enabled
+        enabled_calls.append(enabled)
         fallback_context_calls += 1
         try:
             yield
         finally:
-            active_enabled = previous
+            cudnn_enabled = previous
 
     monkeypatch.setattr(torch.backends.cudnn, "flags", _fake_cudnn_flags)
 
+    assert cudnn_enabled
     x = torch.randn(1, 8, 4, 4)
     y = block(x)
+    assert cudnn_enabled
 
     assert y.shape == x.shape
     assert fallback_dwconv.calls == 1
     assert fallback_context_calls == 1
-    assert enabled_value is False
+    assert enabled_calls == [False]
