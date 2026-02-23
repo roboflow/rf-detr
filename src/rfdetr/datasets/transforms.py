@@ -735,7 +735,7 @@ class AlbumentationsWrapper:
             masks_list = [mask for mask in masks_np]
         # Apply transform
         transform_kwargs = {"image": image_np, "bboxes": boxes_np, "category_ids": labels, "idxs": idxs}
-        if masks_list is not None:
+        if masks_list is not None and len(masks_list) > 0:
             transform_kwargs["masks"] = masks_list
         augmented = self.transform(**transform_kwargs)
         target_out: Dict[str, Any] = target.copy()
@@ -745,12 +745,11 @@ class AlbumentationsWrapper:
         if len(bboxes_aug) == 0:
             target_out["boxes"] = torch.zeros((0, 4), dtype=torch.float32)
             target_out["labels"] = torch.zeros((0,), dtype=torch.long)
-            # Explicitly clear masks when all boxes are removed; _clear_per_instance_fields
-            # will also clear per-instance fields (including masks) based on num_boxes.
+            target_out.update(self._clear_per_instance_fields(target, num_boxes))
+            # Override masks after _clear_per_instance_fields to ensure bool dtype.
             if "masks" in target:
                 img_height, img_width = image_np.shape[:2]
                 target_out["masks"] = torch.zeros((0, img_height, img_width), dtype=torch.bool)
-            target_out.update(self._clear_per_instance_fields(target, num_boxes))
         else:
             target_out["boxes"] = torch.as_tensor(bboxes_aug, dtype=torch.float32).reshape(-1, 4)
             target_out["labels"] = torch.tensor(augmented["category_ids"], dtype=torch.long)

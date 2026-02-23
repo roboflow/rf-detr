@@ -413,6 +413,37 @@ class TestAlbumentationsWrapper:
         assert aug_target["boxes"].shape == (0, 4)
         assert aug_target["labels"].shape == (0,)
 
+    def test_geometric_transform_with_empty_masks_tensor(self):
+        """Test that a geometric transform does not crash when masks tensor is empty (0 instances).
+
+        Regression test for: when a prior crop removes all annotations, target["masks"]
+        has shape (0, H, W). Passing an empty list to albumentations raises
+        ValueError: masks cannot be empty.
+        """
+        transform = A.HorizontalFlip(p=1.0)
+        wrapper = AlbumentationsWrapper(transform)
+
+        height, width = 100, 100
+        image = Image.new("RGB", (width, height))
+
+        # Simulate what happens after RandomSizeCrop removes all annotations:
+        # target["masks"] has shape (0, H, W)
+        target = {
+            "boxes": torch.zeros((0, 4), dtype=torch.float32),
+            "labels": torch.zeros((0,), dtype=torch.long),
+            "masks": torch.zeros((0, height, width), dtype=torch.uint8),
+        }
+
+        # Should not raise ValueError: masks cannot be empty
+        aug_image, aug_target = wrapper(image, target)
+
+        assert isinstance(aug_image, Image.Image)
+        assert aug_target["boxes"].shape == (0, 4)
+        assert aug_target["labels"].shape == (0,)
+        assert "masks" in aug_target
+        assert aug_target["masks"].shape[0] == 0
+        assert aug_target["masks"].dtype == torch.bool
+
     def test_pixel_transform_with_masks_no_boxes(self):
         """Test that pixel transforms work with masks but no boxes."""
         # Use a non-geometric transform which doesn't need boxes
