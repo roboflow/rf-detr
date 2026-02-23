@@ -759,6 +759,7 @@ class AlbumentationsWrapper:
         if masks_list is not None and "masks" in augmented:
             height, width = augmented["image"].shape[:2]
             masks_aug = augmented["masks"]
+            masks_aug = [masks_aug[int(i)] for i in kept_idxs]
             if len(masks_aug) == 0:
                 target_out["masks"] = torch.zeros((0, height, width), dtype=torch.bool)
             else:
