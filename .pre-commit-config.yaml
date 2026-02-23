@@ -12,12 +12,14 @@ repos:
       - id: check-yaml
         exclude: mkdocs.yaml
       - id: check-executables-have-shebangs
+      - id: check-json
       - id: check-toml
       - id: check-case-conflict
       - id: check-added-large-files
       - id: detect-private-key
       - id: pretty-format-json
         args: ["--autofix", "--no-sort-keys", "--indent=4"]
+        exclude: \.ipynb$
       - id: end-of-file-fixer
       - id: mixed-line-ending
 
@@ -34,7 +36,9 @@ repos:
     hooks:
       - id: ruff-check
         args: [--fix]
+        exclude: ^notebooks/.*\.py$
       - id: ruff-format
+        exclude: ^notebooks/.*\.py$
 
   - repo: https://github.com/executablebooks/mdformat
     rev: 1.0.0
