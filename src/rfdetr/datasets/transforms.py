@@ -735,7 +735,7 @@ class AlbumentationsWrapper:
             masks_list = [mask for mask in masks_np]
         # Apply transform
         transform_kwargs = {"image": image_np, "bboxes": boxes_np, "category_ids": labels, "idxs": idxs}
-        if masks_list is not None:
+        if masks_list is not None and len(masks_list) > 0:
             transform_kwargs["masks"] = masks_list
         augmented = self.transform(**transform_kwargs)
         target_out: Dict[str, Any] = target.copy()
