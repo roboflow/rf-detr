@@ -478,6 +478,37 @@ class TestAlbumentationsWrapper:
         # Output masks should be bool after Albumentations processing
         assert aug_target["masks"].dtype == torch.bool
 
+    def test_masks_transform_with_dropped_boxes(self):
+        """Test wrapper filters masks appropriately when boxes are dropped by transform."""
+        # Use a crop transform to ensure a box is dropped
+        # Original image 100x100
+        # Box 1: [10, 10, 20, 20] (will be kept if we crop top-left)
+        # Box 2: [80, 80, 90, 90] (will be dropped if we crop top-left to 50x50)
+        transform = A.Crop(x_min=0, y_min=0, x_max=50, y_max=50, p=1.0)
+        wrapper = AlbumentationsWrapper(transform)
+
+        height, width = 100, 100
+        image = Image.new("RGB", (width, height))
+
+        masks = torch.zeros((2, height, width), dtype=torch.uint8)
+        masks[0, 10:20, 10:20] = 1
+        masks[1, 80:90, 80:90] = 1
+
+        target = {
+            "boxes": torch.tensor([[10.0, 10.0, 20.0, 20.0], [80.0, 80.0, 90.0, 90.0]]),
+            "labels": torch.tensor([1, 2]),
+            "masks": masks,
+        }
+
+        aug_image, aug_target = wrapper(image, target)
+
+        assert isinstance(aug_image, Image.Image)
+        assert len(aug_target["boxes"]) == 1
+        assert len(aug_target["labels"]) == 1
+        assert "masks" in aug_target
+        assert len(aug_target["masks"]) == 1
+        assert aug_target["masks"].shape == (1, 50, 50)
+
 
 class TestAlbumentationsWrapperFromConfig:
     """Tests for AlbumentationsWrapper.from_config() static method."""

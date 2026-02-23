@@ -9,11 +9,12 @@ Thank you for helping to advance RF-DETR! Your participation is invaluable in ev
 3. [Development Environment Setup](#development-environment-setup)
 4. [Test-Driven Development](#test-driven-development)
 5. [Code Quality and Linting](#code-quality-and-linting)
-6. [CLA Signing](#cla-signing)
-7. [Google-Style Docstrings and Mandatory Type Hints](#google-style-docstrings-and-mandatory-type-hints)
-8. [Reporting Bugs](#reporting-bugs)
-9. [Adding a New Model](#adding-a-new-model)
-10. [License](#license)
+6. [Building Documentation](#building-documentation)
+7. [CLA Signing](#cla-signing)
+8. [Google-Style Docstrings and Mandatory Type Hints](#google-style-docstrings-and-mandatory-type-hints)
+9. [Reporting Bugs](#reporting-bugs)
+10. [Adding a New Model](#adding-a-new-model)
+11. [License](#license)
 
 ## How to Contribute
 
@@ -312,6 +313,56 @@ pre-commit run --all-files
 ```
 
 **Configuration:** See `.pre-commit-config.yaml` for all hooks and `pyproject.toml` for tool-specific settings (e.g., `[tool.ruff]`).
+
+## Building Documentation
+
+RF-DETR's documentation is built with [MkDocs](https://www.mkdocs.org/) and the [Material for MkDocs](https://squidfunk.github.io/mkdocs-material/) theme. API reference pages are auto-generated from docstrings using [mkdocstrings](https://mkdocstrings.github.io/).
+
+> [!NOTE]
+> Building the full documentation locally requires the `plus` extra (`rfdetr[plus]`), which provides the XLarge and 2XLarge model pages. Without it, the build will fail on those reference pages.
+
+### Install Documentation Dependencies
+
+```bash
+# Full docs build (matches CI — required for XLarge/2XLarge model pages)
+uv pip install -e ".[plus]" --group docs
+
+# Minimal install (skip plus models — XLarge/2XLarge pages will error)
+uv sync --group docs
+```
+
+### Serve Locally with Live Reload
+
+```bash
+uv run mkdocs serve
+```
+
+Open [http://localhost:8000](http://localhost:8000) in your browser. The server watches for file changes and reloads automatically — no restart needed as you edit documentation.
+
+### Build Static Site
+
+```bash
+# Build static documentation site to the site/ directory
+uv run mkdocs build
+```
+
+### Documentation Structure
+
+```
+docs/
+├── index.md              # Home page
+├── learn/                # How-to guides and tutorials
+│   ├── install.md
+│   ├── run/              # Detection and segmentation guides
+│   └── train/            # Training guides (parameters, augmentations, loggers, etc.)
+├── reference/            # Auto-generated API reference (from docstrings)
+├── tutorials/
+└── theme/                # Custom theme overrides
+mkdocs.yaml               # MkDocs configuration and navigation
+```
+
+> [!TIP]
+> When adding a new documentation page, add it to the `nav` section in `mkdocs.yaml` so it appears in the site navigation. Pages that exist in `docs/` but are not listed in `nav` will not be included in the site.
 
 ## CLA Signing
 

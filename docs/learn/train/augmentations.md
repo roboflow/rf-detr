@@ -114,6 +114,6 @@ model.train(
 
 ## Next Steps
 
-- [Monitor training with TensorBoard](loggers.md#logging-with-tensorboard)
+- [Monitor training with TensorBoard](loggers.md#tensorboard)
 - [Use early stopping](advanced.md#early-stopping) to prevent overfitting
 - [Export your trained model](../export.md) for deployment
