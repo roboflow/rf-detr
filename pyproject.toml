@@ -65,7 +65,7 @@ metrics = [
     "mlflow",
     "clearml"
 ]
-plus = ["rfdetr_plus>=1.0.0"]
+plus = ["rfdetr_plus>=1.0.1, <2.0.0"]
 
 [dependency-groups]
 build = [

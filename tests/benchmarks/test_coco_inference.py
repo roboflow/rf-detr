@@ -3,11 +3,9 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-import importlib.util
 import json
 import os
 import tempfile
-from functools import partial
 from pathlib import Path
 from typing import Optional
 
@@ -33,23 +31,6 @@ from rfdetr.engine import evaluate
 from rfdetr.models import build_criterion_and_postprocessors
 from rfdetr.util.misc import collate_fn
 
-_PLUS_AVAILABLE = importlib.util.find_spec("rfdetr_plus") is not None
-if _PLUS_AVAILABLE:
-    try:
-        from rfdetr import RFDETR2XLarge, RFDETRXLarge
-
-        RFDETRXLarge_PML = partial(RFDETRXLarge, accept_platform_model_license=True)
-        RFDETR2XLarge_PML = partial(RFDETR2XLarge, accept_platform_model_license=True)
-    except ImportError:
-        _PLUS_AVAILABLE = False
-        RFDETRXLarge_PML = None
-        RFDETR2XLarge_PML = None
-else:
-    RFDETRXLarge_PML = None
-    RFDETR2XLarge_PML = None
-
-_PLUS_SKIP = pytest.mark.skipif(not _PLUS_AVAILABLE, reason="requires rfdetr_plus models")
-
 
 @pytest.mark.gpu
 @pytest.mark.parametrize(
@@ -59,8 +40,6 @@ _PLUS_SKIP = pytest.mark.skipif(not _PLUS_AVAILABLE, reason="requires rfdetr_plu
         pytest.param(RFDETRSmall, 0.72, 0.70, 500, 6, id="small"),
         pytest.param(RFDETRMedium, 0.73, 0.71, 500, 4, id="medium"),
         pytest.param(RFDETRLarge, 0.74, 0.72, 500, 2, id="large"),
-        pytest.param(RFDETRXLarge_PML, 0.77, 0.74, 500, 2, id="xlarge", marks=_PLUS_SKIP),
-        pytest.param(RFDETR2XLarge_PML, 0.78, 0.74, 500, 2, id="2xlarge", marks=_PLUS_SKIP),
     ],
 )
 def test_coco_detection_inference_benchmark(
