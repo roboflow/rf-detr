@@ -156,14 +156,14 @@ pre-commit run --all-files
 ### Building Docs
 
 ```bash
-# Install docs dependencies
-uv sync --group docs
+# Full install (matches CI — required for XLarge/2XLarge model pages)
+uv pip install -e ".[plus]" --group docs
 
 # Serve locally (live reload)
-mkdocs serve
+uv run mkdocs serve
 
 # Build static site
-mkdocs build
+uv run mkdocs build
 ```
 
 **Documentation Structure:**

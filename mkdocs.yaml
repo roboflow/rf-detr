@@ -27,6 +27,7 @@ nav:
       - Run Model:
           - Detection: learn/run/detection.md
           - Segmentation: learn/run/segmentation.md
+          - Pretrained Models: learn/pretrained.md
       - Train Model:
           - Overview: learn/train/index.md
           - Dataset Formats: learn/train/dataset-formats.md
