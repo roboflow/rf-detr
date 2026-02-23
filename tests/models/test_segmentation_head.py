@@ -11,22 +11,20 @@ import torch
 from rfdetr.models.segmentation_head import DepthwiseConvBlock
 
 
-class _FailingThenPassingDepthwise(torch.nn.Module):
+class _EchoDepthwise(torch.nn.Module):
     def __init__(self) -> None:
         super().__init__()
         self.calls = 0
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         self.calls += 1
-        if self.calls == 1:
-            raise RuntimeError("GET was unable to find an engine to execute this computation")
         return x
 
 
-def test_depthwise_conv_retries_with_cudnn_disabled_on_get_engine_error(monkeypatch) -> None:
-    """Retry depthwise conv with cuDNN disabled when engine selection fails."""
+def test_depthwise_conv_runs_with_cudnn_disabled(monkeypatch) -> None:
+    """Depthwise conv should execute with cuDNN disabled for compatibility."""
     block = DepthwiseConvBlock(dim=8)
-    fallback_dwconv = _FailingThenPassingDepthwise()
+    fallback_dwconv = _EchoDepthwise()
     block.dwconv = fallback_dwconv
 
     fallback_context_calls = 0
@@ -44,5 +42,5 @@ def test_depthwise_conv_retries_with_cudnn_disabled_on_get_engine_error(monkeypa
     y = block(x)
 
     assert y.shape == x.shape
-    assert fallback_dwconv.calls == 2
+    assert fallback_dwconv.calls == 1
     assert fallback_context_calls == 1
