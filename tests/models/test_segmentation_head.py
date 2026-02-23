@@ -16,7 +16,17 @@ from rfdetr.models.segmentation_head import DepthwiseConvBlock
     "device",
     [
         pytest.param("cpu", id="cpu"),
-        pytest.param("cuda", id="gpu", marks=pytest.mark.gpu),
+        pytest.param(
+            "cuda",
+            id="gpu",
+            marks=[
+                pytest.mark.gpu,
+                pytest.mark.skipif(
+                    not torch.cuda.is_available(),
+                    reason="CUDA is not available",
+                ),
+            ],
+        ),
     ],
 )
 def test_depthwise_conv_block_forward(device: str) -> None:
