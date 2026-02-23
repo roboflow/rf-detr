@@ -6,9 +6,25 @@
 
 from contextlib import contextmanager
 
+import pytest
 import torch
 
 from rfdetr.models.segmentation_head import DepthwiseConvBlock
+
+
+@pytest.mark.parametrize(
+    "device",
+    [
+        pytest.param("cpu", id="cpu"),
+        pytest.param("cuda", id="gpu", marks=pytest.mark.gpu),
+    ],
+)
+def test_depthwise_conv_block_forward(device: str) -> None:
+    """DepthwiseConvBlock forward pass produces correct output shape without error."""
+    block = DepthwiseConvBlock(dim=8).to(device)
+    x = torch.randn(1, 8, 4, 4, device=device)
+    y = block(x)
+    assert y.shape == x.shape
 
 
 def test_depthwise_conv_block_always_disables_cudnn(monkeypatch) -> None:
