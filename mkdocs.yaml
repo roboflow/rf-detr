@@ -1,5 +1,5 @@
 site_name: RF-DETR
-site_url: https://roboflow.github.io/rf-detr/
+site_url: https://rfdetr.roboflow.com/
 site_author: Roboflow
 site_description: "SOTA Real-Time Object Detection Model"
 repo_name: roboflow/rf-detr
