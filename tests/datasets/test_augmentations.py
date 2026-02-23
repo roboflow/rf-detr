@@ -442,6 +442,7 @@ class TestAlbumentationsWrapper:
         assert aug_target["labels"].shape == (0,)
         assert "masks" in aug_target
         assert aug_target["masks"].shape[0] == 0
+        assert aug_target["masks"].dtype == torch.bool
 
     def test_pixel_transform_with_masks_no_boxes(self):
         """Test that pixel transforms work with masks but no boxes."""
