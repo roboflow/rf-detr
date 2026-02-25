@@ -626,7 +626,7 @@ def build_transformer(args):
 
     try:
         two_stage = args.two_stage
-    except:
+    except Exception:
         two_stage = False
 
     return Transformer(

@@ -69,7 +69,7 @@ def convert_coco_poly_to_mask(segmentations: List[Any], height: int, width: int)
             continue
         try:
             rles = coco_mask.frPyObjects(polygons, height, width)
-        except:
+        except Exception:
             rles = polygons
         mask = coco_mask.decode(rles)
         if mask.ndim < 3:

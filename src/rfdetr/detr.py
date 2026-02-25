@@ -25,7 +25,7 @@ from rfdetr.util.logger import get_logger
 
 try:
     torch.set_float32_matmul_precision("high")
-except:
+except Exception:
     pass
 
 from rfdetr.assets.model_weights import download_pretrain_weights

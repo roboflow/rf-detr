@@ -127,7 +127,7 @@ class Model:
                         checkpoint["model"][modify_key_to_load] = get_coco_pretrain_from_obj365(
                             model_without_ddp.state_dict()[modify_key_to_load], checkpoint["model"][modify_key_to_load]
                         )
-                    except:
+                    except Exception:
                         logger.error(f"Failed to load {modify_key_to_load}, deleting from checkpoint")
                         checkpoint["model"].pop(modify_key_to_load)
 
@@ -534,7 +534,7 @@ class Model:
             log_stats.update(ep_paras)
             try:
                 log_stats.update({"now_time": str(datetime.datetime.now())})
-            except:
+            except Exception:
                 pass
             log_stats["train_epoch_time"] = train_epoch_time_str
             epoch_time = time.time() - epoch_start_time
