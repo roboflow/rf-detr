@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rfdetr"
-version = "1.5.0.rc0"
+version = "1.5.0"
 description = "RF-DETR"
 readme = "README.md"
 authors = [
@@ -65,7 +65,7 @@ metrics = [
     "mlflow",
     "clearml"
 ]
-plus = ["rfdetr_plus>=1.0.0"]
+plus = ["rfdetr_plus>=1.0.1, <2.0.0"]
 
 [dependency-groups]
 build = [

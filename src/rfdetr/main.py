@@ -459,7 +459,7 @@ class Model:
 
             with torch.no_grad():
                 test_stats, coco_evaluator = evaluate(
-                    model, criterion, postprocess, data_loader_val, base_ds, device, args=args
+                    model, criterion, postprocess, data_loader_val, base_ds, device, args=args, header="Test"
                 )
             if not args.segmentation_head:
                 map_regular = test_stats["coco_eval_bbox"][0]
@@ -493,7 +493,14 @@ class Model:
             }
             if args.use_ema:
                 ema_test_stats, _ = evaluate(
-                    self.ema_m.module, criterion, postprocess, data_loader_val, base_ds, device, args=args
+                    self.ema_m.module,
+                    criterion,
+                    postprocess,
+                    data_loader_val,
+                    base_ds,
+                    device,
+                    args=args,
+                    header="Test-ema",
                 )
                 log_stats.update({f"ema_test_{k}": v for k, v in ema_test_stats.items()})
                 if not args.segmentation_head:

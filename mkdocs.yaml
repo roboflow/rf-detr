@@ -1,5 +1,5 @@
 site_name: RF-DETR
-site_url: https://roboflow.github.io/rf-detr/
+site_url: https://rfdetr.roboflow.com/
 site_author: Roboflow
 site_description: "SOTA Real-Time Object Detection Model"
 repo_name: roboflow/rf-detr
@@ -27,6 +27,7 @@ nav:
       - Run Model:
           - Detection: learn/run/detection.md
           - Segmentation: learn/run/segmentation.md
+          - Pretrained Models: learn/pretrained.md
       - Train Model:
           - Overview: learn/train/index.md
           - Dataset Formats: learn/train/dataset-formats.md
@@ -59,6 +60,7 @@ nav:
       - Training Configs:
           - Train Config: reference/train_config.md
           - Segmentation Train Config: reference/segmentation_train_config.md
+  - Tutorials: tutorials/index.md
   - Changelog: https://github.com/roboflow/rf-detr/releases
 
 theme:

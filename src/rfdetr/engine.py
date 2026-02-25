@@ -24,6 +24,7 @@ from typing import Iterable
 
 import torch
 import torch.nn.functional as F
+from tqdm.auto import tqdm
 
 import rfdetr.util.misc as utils
 from rfdetr.datasets.coco import compute_multi_scale_scales
@@ -89,7 +90,6 @@ def train_one_epoch(
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter("lr", utils.SmoothedValue(window_size=1, fmt="{value:.6f}"))
     metric_logger.add_meter("class_error", utils.SmoothedValue(window_size=1, fmt="{value:.2f}"))
-    header = "Epoch: [{}]".format(epoch)
     print_freq = args.print_freq if args is not None else 10
     start_steps = epoch * num_training_steps_per_epoch
 
@@ -118,7 +118,20 @@ def train_one_epoch(
 
     sub_batch_size = batch_size // args.grad_accum_steps
 
-    for data_iter_step, (samples, targets) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
+    header = f"Epoch: [{epoch + 1}/{args.epochs}]"
+    use_progress_bar = bool(getattr(args, "progress_bar", False))
+    if use_progress_bar:
+        progress_iter = tqdm(
+            enumerate(data_loader),
+            total=len(data_loader),
+            desc=header,
+            colour="green",
+            disable=not utils.is_main_process(),
+        )
+    else:
+        progress_iter = enumerate(metric_logger.log_every(data_loader, print_freq, header))
+
+    for data_iter_step, (samples, targets) in progress_iter:
         it = start_steps + data_iter_step
         callback_dict = {
             "step": it,
@@ -197,9 +210,20 @@ def train_one_epoch(
         metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled, **loss_dict_reduced_unscaled)
         metric_logger.update(class_error=loss_dict_reduced["class_error"])
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
+
+        if use_progress_bar:
+            log_dict = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+            progress_iter.set_postfix(
+                {
+                    "lr": f"{log_dict['lr']:.6f}",
+                    "class_loss": f"{log_dict['class_error']:.2f}",
+                    "box_loss": f"{log_dict['loss_bbox']:.2f}",
+                    "loss": f"{log_dict['loss']:.2f}",
+                }
+            )
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
-    logger.info(f"Epoch {epoch} stats: {metric_logger}")
+    logger.info(f"Epoch {epoch + 1} stats: {metric_logger}")
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
 
@@ -389,7 +413,7 @@ def coco_extended_metrics(coco_eval):
     }
 
 
-def evaluate(model, criterion, postprocess, data_loader, base_ds, device, args=None):
+def evaluate(model, criterion, postprocess, data_loader, base_ds, device, args=None, header="Eval"):
     model.eval()
     if args.fp16_eval:
         model.half()
@@ -397,13 +421,23 @@ def evaluate(model, criterion, postprocess, data_loader, base_ds, device, args=N
 
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter("class_error", utils.SmoothedValue(window_size=1, fmt="{value:.2f}"))
-    header = "Test:"
-
     iou_types = ("bbox",) if not args.segmentation_head else ("bbox", "segm")
     coco_evaluator = CocoEvaluator(base_ds, iou_types, args.eval_max_dets)
 
     print_freq = args.print_freq if args is not None else 10
-    for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
+    use_progress_bar = bool(getattr(args, "progress_bar", False))
+    if use_progress_bar:
+        progress_iter = tqdm(
+            data_loader,
+            total=len(data_loader),
+            desc=header,
+            colour="green",
+            disable=not utils.is_main_process(),
+        )
+    else:
+        progress_iter = metric_logger.log_every(data_loader, print_freq, header)
+
+    for samples, targets in progress_iter:
         samples = samples.to(device)
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 
@@ -445,6 +479,16 @@ def evaluate(model, criterion, postprocess, data_loader, base_ds, device, args=N
         res = {target["image_id"].item(): output for target, output in zip(targets, results_all)}
         if coco_evaluator is not None:
             coco_evaluator.update(res)
+
+        if use_progress_bar:
+            log_dict = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+            progress_iter.set_postfix(
+                {
+                    "class_loss": f"{log_dict['class_error']:.2f}",
+                    "box_loss": f"{log_dict['loss_bbox']:.2f}",
+                    "loss": f"{log_dict['loss']:.2f}",
+                }
+            )
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()

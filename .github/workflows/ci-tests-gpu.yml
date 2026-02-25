@@ -37,10 +37,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake
       - name: 📥 Checkout the repository
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        uses: actions/checkout@v6.0.1
 
       - name: 🐍 Install uv and set Python version
-        uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
+        uses: astral-sh/setup-uv@v7.2.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           activate-environment: true
