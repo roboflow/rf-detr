@@ -590,7 +590,9 @@ class ComposeAugmentations:
         Returns:
             Tuple of transformed image and target.
         """
-        return Compose.__call__(self, image, target)
+        for t in self.transforms:
+            image, target = t(image, target)
+        return image, target
 
     def __repr__(self) -> str:
         """Return a readable representation of the composed augmentations."""
