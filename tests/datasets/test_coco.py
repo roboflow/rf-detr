@@ -182,13 +182,18 @@ class TestLoadClassesHierarchy:
         result = RFDETR._load_classes(str(tmp_path))
         assert result == ["dog", "cat"]
 
-    def test_standard_coco_keeps_all(self, tmp_path: Path) -> None:
-        """Standard COCO datasets with real supercategories keep all classes."""
+    def test_mixed_supercategories_keeps_all(self, tmp_path: Path) -> None:
+        """Mix of 'none' and non-'none' supercategories that are not category names.
+
+        A simpler ``any(supercategory != 'none')`` detection would incorrectly
+        set has_hierarchy=True here, then filter out 'dog' (supercategory 'none').
+        The set-based check avoids this: 'animal' is not a category name, so no
+        hierarchy is detected and all categories are returned.
+        """
         categories = [
-            {"id": 1, "name": "dog", "supercategory": "animal"},
+            {"id": 1, "name": "dog", "supercategory": "none"},
             {"id": 2, "name": "cat", "supercategory": "animal"},
-            {"id": 3, "name": "car", "supercategory": "vehicle"},
         ]
         _write_coco_json(tmp_path / "train" / "_annotations.coco.json", categories)
         result = RFDETR._load_classes(str(tmp_path))
-        assert result == ["dog", "cat", "car"]
+        assert result == ["dog", "cat"]
