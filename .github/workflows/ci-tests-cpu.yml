@@ -52,7 +52,7 @@ jobs:
 
       - name: 🚀 Install Packages
         # Install PyTorch CPU-only first (UV_TORCH_BACKEND=cpu works with 'uv pip')
-        run: uv pip install -e . --group tests
+        run: uv pip install -e . --group tests --extra onnxexport
 
       - name: 🧪 Run the Test
         run: |
