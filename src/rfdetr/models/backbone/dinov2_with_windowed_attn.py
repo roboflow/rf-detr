@@ -25,12 +25,11 @@ from transformers.modeling_outputs import (
 from transformers.modeling_utils import PreTrainedModel
 from transformers.pytorch_utils import find_pruneable_heads_and_indices, prune_linear_layer
 from transformers.utils import (
-    add_code_sample_docstrings,
     add_start_docstrings,
     add_start_docstrings_to_model_forward,
     logging,
     replace_return_docstrings,
-    torch_int,
+    torch_int, add_code_sample_docstrings,
 )
 from transformers.utils.backbone_utils import (
     BackboneConfigMixin,
@@ -112,7 +111,6 @@ class WindowedDinov2WithRegistersConfig(BackboneConfigMixin, PretrainedConfig):
 
     Example:
 
-    ```python
     >>> from transformers import Dinov2WithRegistersConfig, Dinov2WithRegistersModel
 
     >>> # Initializing a Dinov2WithRegisters base style configuration
@@ -123,7 +121,8 @@ class WindowedDinov2WithRegistersConfig(BackboneConfigMixin, PretrainedConfig):
 
     >>> # Accessing the model configuration
     >>> configuration = model.config
-    ```"""
+
+    """
 
     model_type = "dinov2_with_registers"
 
@@ -1057,15 +1056,10 @@ class WindowedDinov2WithRegistersBackbone(WindowedDinov2WithRegistersPreTrainedM
         Returns:
 
         Examples:
-        Returns:
 
-        Examples:
-
-
-        ```python
         >>> from transformers import AutoImageProcessor, AutoBackbone
         >>> import torch
-        >>> from PIL import Image
+        >>> from PIL import Imag
         >>> import requests
 
         >>> url = "http://images.cocodataset.org/val2017/000000039769.jpg"
@@ -1076,13 +1070,14 @@ class WindowedDinov2WithRegistersBackbone(WindowedDinov2WithRegistersPreTrainedM
         ...     "facebook/dinov2-with-registers-base", out_features=["stage2", "stage5", "stage8", "stage11"]
         ... )
 
-        >>> inputs = processor(image, return_tensors="pt")
+        >>> inputs = processor(image, return_tensors="pt")  # doctest: +SKIP
 
         >>> outputs = model(**inputs)
         >>> feature_maps = outputs.feature_maps
         >>> list(feature_maps[-1].shape)
         [1, 768, 16, 16]
-        ```"""
+
+        """
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
