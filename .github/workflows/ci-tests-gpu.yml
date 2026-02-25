@@ -46,6 +46,7 @@ jobs:
           activate-environment: true
 
       - name: 🚀 Install Packages
+        timeout-minutes: 5
         run: uv sync --group tests --extra onnxexport --extra plus
 
       - name: 🧪 Run the Test
