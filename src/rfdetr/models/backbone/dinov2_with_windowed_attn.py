@@ -25,6 +25,7 @@ from transformers.modeling_outputs import (
 from transformers.modeling_utils import PreTrainedModel
 from transformers.pytorch_utils import find_pruneable_heads_and_indices, prune_linear_layer
 from transformers.utils import (
+    add_code_sample_docstrings,
     add_start_docstrings,
     add_start_docstrings_to_model_forward,
     logging,
@@ -38,6 +39,9 @@ from transformers.utils.backbone_utils import (
 )
 
 logger = logging.get_logger(__name__)
+
+# Base docstring
+_CHECKPOINT_FOR_DOC = "facebook/dinov2_with_registers-base"
 
 # General docstring
 _CONFIG_FOR_DOC = "WindowedDinov2WithRegistersConfig"
@@ -762,6 +766,9 @@ class WindowedDinov2WithRegistersPreTrainedModel(PreTrainedModel):
             ).to(module.cls_token.dtype)
 
 
+_EXPECTED_OUTPUT_SHAPE = [1, 257, 768]
+
+
 DINOV2_WITH_REGISTERS_START_DOCSTRING = r"""
     This model is a PyTorch [torch.nn.Module](https://pytorch.org/docs/stable/nn.html#torch.nn.Module) subclass. Use it
     as a regular PyTorch Module and refer to the PyTorch documentation for all matter related to general usage and
@@ -829,7 +836,13 @@ class WindowedDinov2WithRegistersModel(WindowedDinov2WithRegistersPreTrainedMode
             self.encoder.layer[layer].attention.prune_heads(heads)
 
     @add_start_docstrings_to_model_forward(DINOV2_WITH_REGISTERS_BASE_INPUTS_DOCSTRING)
-    @replace_return_docstrings(output_type=BaseModelOutputWithPooling, config_class=_CONFIG_FOR_DOC)
+    @add_code_sample_docstrings(
+        checkpoint=_CHECKPOINT_FOR_DOC,
+        output_type=BaseModelOutputWithPooling,
+        config_class=_CONFIG_FOR_DOC,
+        modality="vision",
+        expected_output=_EXPECTED_OUTPUT_SHAPE,
+    )
     def forward(
         self,
         pixel_values: Optional[torch.Tensor] = None,
@@ -839,30 +852,6 @@ class WindowedDinov2WithRegistersModel(WindowedDinov2WithRegistersPreTrainedMode
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, BaseModelOutputWithPooling]:
-        """
-        Returns:
-
-        Examples:
-
-        >>> import torch
-        >>> from rfdetr.models.backbone.dinov2_with_windowed_attn import (
-        ...     WindowedDinov2WithRegistersConfig,
-        ...     WindowedDinov2WithRegistersModel,
-        ... )
-        >>> config = WindowedDinov2WithRegistersConfig(
-        ...     image_size=32,
-        ...     patch_size=16,
-        ...     hidden_size=32,
-        ...     num_hidden_layers=2,
-        ...     num_attention_heads=4,
-        ...     num_register_tokens=2,
-        ... )
-        >>> model = WindowedDinov2WithRegistersModel(config)
-        >>> pixel_values = torch.randn(1, 3, 32, 32)
-        >>> outputs = model(pixel_values)
-        >>> list(outputs.last_hidden_state.shape)
-        [1, 7, 32]
-        """
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -903,6 +892,10 @@ class WindowedDinov2WithRegistersModel(WindowedDinov2WithRegistersPreTrainedMode
             attentions=encoder_outputs.attentions,
         )
 
+
+# Image classification docstring
+_IMAGE_CLASS_CHECKPOINT = "facebook/dinov2_with_registers-small-imagenet1k-1-layer"
+_IMAGE_CLASS_EXPECTED_OUTPUT = "tabby, tabby cat"
 
 DINOV2_WITH_REGISTERS_INPUTS_DOCSTRING = r"""
     Args:
@@ -950,9 +943,11 @@ class WindowedDinov2WithRegistersForImageClassification(WindowedDinov2WithRegist
         self.post_init()
 
     @add_start_docstrings_to_model_forward(DINOV2_WITH_REGISTERS_INPUTS_DOCSTRING)
-    @replace_return_docstrings(
+    @add_code_sample_docstrings(
+        checkpoint=_IMAGE_CLASS_CHECKPOINT,
         output_type=ImageClassifierOutput,
         config_class=_CONFIG_FOR_DOC,
+        expected_output=_IMAGE_CLASS_EXPECTED_OUTPUT,
     )
     def forward(
         self,
@@ -968,30 +963,6 @@ class WindowedDinov2WithRegistersForImageClassification(WindowedDinov2WithRegist
             Labels for computing the image classification/regression loss. Indices should be in `[0, ...,
             config.num_labels - 1]`. If `config.num_labels == 1` a regression loss is computed (Mean-Square loss), If
             `config.num_labels > 1` a classification loss is computed (Cross-Entropy).
-
-        Returns:
-
-        Example:
-
-        >>> import torch
-        >>> from rfdetr.models.backbone.dinov2_with_windowed_attn import (
-        ...     WindowedDinov2WithRegistersConfig,
-        ...     WindowedDinov2WithRegistersForImageClassification,
-        ... )
-        >>> config = WindowedDinov2WithRegistersConfig(
-        ...     image_size=32,
-        ...     patch_size=16,
-        ...     hidden_size=32,
-        ...     num_hidden_layers=2,
-        ...     num_attention_heads=4,
-        ...     num_register_tokens=2,
-        ...     num_labels=3,
-        ... )
-        >>> model = WindowedDinov2WithRegistersForImageClassification(config)
-        >>> pixel_values = torch.randn(1, 3, 32, 32)
-        >>> outputs = model(pixel_values)
-        >>> list(outputs.logits.shape)
-        [1, 3]
         """
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
