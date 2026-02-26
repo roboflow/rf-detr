@@ -895,7 +895,6 @@ class TestAlbumentationsWrapperNestedConfig:
         assert inner.p == pytest.approx(0.5)
 
 
-
 class TestIntegration:
     """Integration tests for full augmentation pipeline."""
 
