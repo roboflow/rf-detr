@@ -56,21 +56,30 @@ class RandomResize(object):
         self.sizes = sizes
         self.max_size = max_size
 
+    @staticmethod
+    def _get_constrained_short_side(
+        image_size: Tuple[int, int], short_side: int, max_size: Optional[int]
+    ) -> int:
+        """Compute short side size while respecting max long-side constraint."""
+        if max_size is None:
+            return short_side
+        width, height = image_size
+        min_original_size = float(min(width, height))
+        max_original_size = float(max(width, height))
+        if max_original_size / min_original_size * short_side > max_size:
+            return int(round(max_size * min_original_size / max_original_size))
+        return short_side
+
     def __call__(
         self, img: PIL.Image.Image, target: Optional[Dict[str, Any]] = None
     ) -> Tuple[PIL.Image.Image, Optional[Dict[str, Any]]]:
         size = random.choice(self.sizes)
+        size = self._get_constrained_short_side(img.size, size, self.max_size)
         if target is None:
             image_np = np.array(img)
-            pipeline = [A.SmallestMaxSize(max_size=size, p=1.0)]
-            if self.max_size:
-                pipeline.append(A.LongestMaxSize(max_size=self.max_size, p=1.0))
-            resized = A.Compose(pipeline)(image=image_np)
+            resized = A.SmallestMaxSize(max_size=size, p=1.0)(image=image_np)
             return Image.fromarray(resized["image"]), None
-        img, target = AlbumentationsWrapper(A.SmallestMaxSize(max_size=size, p=1.0))(img, target)
-        if self.max_size:
-            img, target = AlbumentationsWrapper(A.LongestMaxSize(max_size=self.max_size, p=1.0))(img, target)
-        return img, target
+        return AlbumentationsWrapper(A.SmallestMaxSize(max_size=size, p=1.0))(img, target)
 
 
 class SquareResize(object):

@@ -217,6 +217,12 @@ class RFDETR:
         # (i.e. not explicitly set by the user).  Prefer the model's value for those.
         train_config_effective = {k: v for k, v in train_config.items() if k not in model_config}
         all_kwargs = {**model_config, **train_config_effective, **kwargs, "num_classes": num_classes}
+        if all_kwargs.get("segmentation_head") and not all_kwargs.get("square_resize_div_64", False):
+            logger.warning(
+                "Segmentation training requires consistent mask shapes across a batch; "
+                "overriding `square_resize_div_64=False` to `True`."
+            )
+            all_kwargs["square_resize_div_64"] = True
 
         metrics_plot_sink = MetricsPlotSink(output_dir=config.output_dir)
         self.callbacks["on_fit_epoch_end"].append(metrics_plot_sink.update)
