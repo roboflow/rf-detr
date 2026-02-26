@@ -100,6 +100,18 @@ class TestAlbumentationsWrapper:
         assert aug_target["labels"].shape == (2,)
         assert torch.equal(aug_target["labels"], target["labels"])
 
+    def test_none_target_inference_mode(self):
+        """Test wrapper accepts None target for inference (no ground-truth annotations)."""
+        transform = A.Resize(height=64, width=64)
+        wrapper = AlbumentationsWrapper(transform)
+
+        image = Image.new("RGB", (100, 100))
+        aug_image, aug_target = wrapper(image, None)
+
+        assert isinstance(aug_image, Image.Image)
+        assert aug_image.size == (64, 64)
+        assert aug_target is None
+
     def test_invalid_target_type(self):
         """Test wrapper raises error for invalid target type."""
         transform = A.HorizontalFlip(p=1.0)

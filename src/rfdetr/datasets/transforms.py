@@ -461,7 +461,9 @@ class AlbumentationsWrapper:
                 target_out["masks"] = torch.as_tensor(np.stack(masks_aug), dtype=torch.bool)
         return image_out, target_out
 
-    def __call__(self, image: PIL.Image.Image, target: Dict[str, Any]) -> Tuple[PIL.Image.Image, Dict[str, Any]]:
+    def __call__(
+        self, image: PIL.Image.Image, target: Optional[Dict[str, Any]]
+    ) -> Tuple[PIL.Image.Image, Optional[Dict[str, Any]]]:
         """Apply the Albumentations transform to image and target.
 
         This method handles the data format conversion between RF-DETR and Albumentations:
@@ -484,14 +486,16 @@ class AlbumentationsWrapper:
                 - 'masks' (optional): PyTorch tensor of shape (N, H, W) with instance segmentation masks.
                   For geometric transforms, masks are transformed alongside boxes to maintain alignment.
                   Requires 'boxes' to be present; a warning is logged if masks exist without boxes.
+                Pass ``None`` for inference scenarios where no ground-truth annotations are available.
 
         Returns:
             Tuple of (transformed_image, transformed_target):
                 - transformed_image: PIL Image after augmentation
-                - transformed_target: Dictionary with augmented boxes and labels
+                - transformed_target: Dictionary with augmented boxes and labels, or ``None`` if
+                  ``target`` was ``None``.
 
         Raises:
-            TypeError: If target is not a dictionary.
+            TypeError: If target is not a dictionary (and not None).
             KeyError: If target doesn't contain 'labels' key.
             ValueError: If boxes don't have shape (N, 4).
 
@@ -501,6 +505,16 @@ class AlbumentationsWrapper:
             >>> target = {"boxes": torch.tensor([[10, 20, 90, 80]]), "labels": torch.tensor([1])}
             >>> aug_image, aug_target = wrapper(image, target)
         """
+        # === Inference mode: no ground-truth annotations ===
+        if target is None:
+            image_np = np.array(image)
+            if self._is_geometric:
+                # Geometric A.Compose requires label_fields even when there are no boxes
+                augmented = self.transform(image=image_np, bboxes=[], category_ids=[], idxs=[])
+            else:
+                augmented = self.transform(image=image_np)
+            return Image.fromarray(augmented["image"]), None
+
         # === Input Validation ===
         if not isinstance(target, dict):
             raise TypeError(f"target must be a dictionary, got {type(target)}")
