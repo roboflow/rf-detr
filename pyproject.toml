@@ -83,6 +83,10 @@ visual = [
 ]
 cli = ["jsonargparse[signatures]>=4.27.7"]
 plus = ["rfdetr_plus>=1.0.1, <2.0.0"]
+mlx = [
+    "mlx>=0.22.0",
+    "safetensors>=0.4.0",
+]
 
 [dependency-groups]
 build = [
@@ -153,6 +157,7 @@ addopts = [
 pythonpath = ["src"]
 markers = [
     "gpu: tests that require GPU or are slow on CPU",
+    "mlx: tests that require MLX (macOS Apple Silicon only)",
     "flaky: tests that may fail due to nondeterminism"
 ]
 filterwarnings = [
