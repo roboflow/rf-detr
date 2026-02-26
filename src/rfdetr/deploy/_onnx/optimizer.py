@@ -16,17 +16,37 @@ from collections import OrderedDict
 from copy import deepcopy
 
 import numpy as np
-import onnx
-import onnx_graphsurgeon as gs
-from onnx import shape_inference
-from onnx_graphsurgeon.logger.logger import G_LOGGER
-from polygraphy.backend.onnx.loader import fold_constants
+
+try:
+    import onnx
+    from onnx import shape_inference
+except ImportError:
+    onnx = None  # type: ignore[assignment]
+    shape_inference = None  # type: ignore[assignment]
+
+try:
+    import onnx_graphsurgeon as gs
+    from onnx_graphsurgeon.logger.logger import G_LOGGER
+except ImportError:
+    gs = None  # type: ignore[assignment]
+    G_LOGGER = None  # type: ignore[assignment]
+
+try:
+    from polygraphy.backend.onnx.loader import fold_constants
+except ImportError:
+    fold_constants = None  # type: ignore[assignment]
 
 from rfdetr.deploy._onnx.symbolic import CustomOpSymbolicRegistry
 
 
 class OnnxOptimizer:
-    def __init__(self, input, severity=G_LOGGER.INFO):
+    def __init__(self, input, severity=None):
+        if gs is None:
+            raise ImportError(
+                "ONNX export dependencies are missing. Install with: pip install rfdetr[onnxexport]"
+            )
+        if severity is None:
+            severity = G_LOGGER.INFO
         if isinstance(input, str):
             onnx_graph = self.load_onnx(input)
         else:

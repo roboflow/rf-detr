@@ -33,25 +33,7 @@ import torch
 from torch.jit import TracerWarning
 
 from rfdetr import RFDETRSegNano
-
-# Temporarily inject stubs for optional onnx packages so deploy.export can be
-# imported at module level without them being installed.  The stubs are removed
-# immediately after so that importlib.util.find_spec() used in the
-# @pytest.mark.skipif decorators below still returns None for missing packages.
-_stub_deploy_onnx = types.ModuleType("rfdetr.deploy._onnx")
-_stub_deploy_onnx.OnnxOptimizer = MagicMock()
-_onnx_injected = "onnx" not in sys.modules
-_onnxsim_injected = "onnxsim" not in sys.modules
-sys.modules.setdefault("onnx", types.ModuleType("onnx"))
-sys.modules.setdefault("onnxsim", types.ModuleType("onnxsim"))
-sys.modules.setdefault("rfdetr.deploy._onnx", _stub_deploy_onnx)
-
-from rfdetr.deploy import export as _cli_export_module  # noqa: E402
-
-if _onnx_injected:
-    del sys.modules["onnx"]
-if _onnxsim_injected:
-    del sys.modules["onnxsim"]
+from rfdetr.deploy import export as _cli_export_module
 
 _IS_ONNX_INSTALLED = importlib.util.find_spec("onnx") is not None
 

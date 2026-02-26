@@ -18,14 +18,11 @@ import re
 import subprocess
 
 import numpy as np
-import onnx
-import onnxsim
 import torch
 import torch.nn as nn
 from PIL import Image
 
 import rfdetr.datasets.transforms as T
-from rfdetr.deploy._onnx import OnnxOptimizer
 from rfdetr.models import build_model
 from rfdetr.util.logger import get_logger
 from rfdetr.util.misc import get_rank, get_sha
@@ -108,6 +105,11 @@ def export_onnx(
 
 
 def onnx_simplify(onnx_dir: str, input_names, input_tensors, force=False):
+    import onnx
+    import onnxsim
+
+    from rfdetr.deploy._onnx import OnnxOptimizer
+
     sim_onnx_dir = onnx_dir.replace(".onnx", ".sim.onnx")
     if os.path.isfile(sim_onnx_dir) and not force:
         return sim_onnx_dir
