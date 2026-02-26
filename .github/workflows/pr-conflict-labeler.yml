@@ -15,7 +15,8 @@ permissions:
   issues: write
 
 jobs:
-  main:
+  labeling:
+    timeout-minutes: 5
     runs-on: ubuntu-latest
     steps:
       - name: check if prs are dirty
