@@ -990,6 +990,8 @@ class TestAlbumentationsWrapperNestedConfig:
 
         # Invalid total probability should result in no transforms being created
         assert len(transforms) == 0
+
+
 class TestComposeAugmentations:
     """Tests for ComposeAugmentations class."""
 
