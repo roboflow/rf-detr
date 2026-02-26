@@ -21,8 +21,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 from PIL import Image
+from torchvision.transforms.v2 import Compose, ToDtype, ToImage
 
-from torchvision.transforms.v2 import ToDtype, ToImage, Compose
 from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize
 from rfdetr.models import build_model
 from rfdetr.util.logger import get_logger

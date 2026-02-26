@@ -197,8 +197,8 @@ def load_image(file_path):
 
 
 def infer_transforms():
-    from torchvision.transforms.v2 import ToDtype, ToImage
-    from torchvision.transforms.v2 import Compose
+    from torchvision.transforms.v2 import Compose, ToDtype, ToImage
+
     from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize
 
     return Compose(
