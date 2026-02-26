@@ -108,16 +108,20 @@ class WindowedDinov2WithRegistersConfig(BackboneConfigMixin, PretrainedConfig):
 
     Example:
 
-    >>> from transformers import Dinov2WithRegistersConfig, Dinov2WithRegistersModel
+    >>> from rfdetr.models.backbone.dinov2_with_windowed_attn import WindowedDinov2WithRegistersConfig
 
-    >>> # Initializing a Dinov2WithRegisters base style configuration
-    >>> configuration = Dinov2WithRegistersConfig()
+    >>> # Initializing a tiny configuration suitable for doctests
+    >>> configuration = WindowedDinov2WithRegistersConfig(
+    ...     image_size=32,
+    ...     patch_size=16,
+    ...     hidden_size=32,
+    ...     num_hidden_layers=2,
+    ...     num_attention_heads=4,
+    ...     num_register_tokens=2,
+    ... )
 
-    >>> # Initializing a model (with random weights) from the base style configuration
-    >>> model = Dinov2WithRegistersModel(configuration)
-
-    >>> # Accessing the model configuration
-    >>> configuration = model.config
+    >>> configuration.hidden_size
+    32
 
     """
 

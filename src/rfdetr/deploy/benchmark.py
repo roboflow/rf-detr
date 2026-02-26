@@ -412,6 +412,7 @@ class TRTInference(object):
 
         self.input_names = self.get_input_names()
         self.output_names = self.get_output_names()
+        self.stream = None
 
         if not self.sync_mode:
             if not cuda:
@@ -497,10 +498,15 @@ class TRTInference(object):
     def synchronize(
         self,
     ):
-        if not self.sync_mode and torch.cuda.is_available():
-            torch.cuda.synchronize()
-        elif self.sync_mode:
+        if self.sync_mode:
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            return
+
+        if self.stream is not None:
             self.stream.synchronize()
+        elif torch.cuda.is_available():
+            torch.cuda.synchronize()
 
     def speed(self, blob, n):
         self.time_profile.reset()
