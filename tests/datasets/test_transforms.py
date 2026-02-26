@@ -4,6 +4,8 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+from typing import Optional
+
 import pytest
 import torch
 from PIL import Image
@@ -139,7 +141,7 @@ def test_random_size_crop_updates_target_size() -> None:
     ],
 )
 def test_get_constrained_short_side(
-    image_size: tuple[int, int], short_side: int, max_size: int | None, expected: int
+    image_size: tuple[int, int], short_side: int, max_size: Optional[int], expected: int
 ) -> None:
     """_get_constrained_short_side should clamp to max_size constraint when needed."""
     result = RandomResize._get_constrained_short_side(image_size, short_side, max_size)
