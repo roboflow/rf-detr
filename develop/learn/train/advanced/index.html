@@ -2748,7 +2748,7 @@
 <h2 id="custom-augmentations">Custom Augmentations<a class="headerlink" href="#custom-augmentations" title="Permanent link">&para;</a></h2>
 <p>RF-DETR supports advanced data augmentations using the <a href="https://albumentations.ai/">Albumentations</a> library, providing access to over 70 different image transformations optimized for object detection.</p>
 <h3 id="quick-start">Quick Start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h3>
-<p>Augmentations are configured in <code>src/rfdetr/augmentation_config.py</code>:</p>
+<p>Augmentations are configured in <code>src/rfdetr/datasets/aug_config.py</code>:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">AUG_CONFIG</span> <span class="o">=</span> <span class="p">{</span>
 </span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>    <span class="s2">&quot;HorizontalFlip&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;p&quot;</span><span class="p">:</span> <span class="mf">0.5</span><span class="p">},</span>
 </span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>    <span class="s2">&quot;VerticalFlip&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;p&quot;</span><span class="p">:</span> <span class="mf">0.5</span><span class="p">},</span>
