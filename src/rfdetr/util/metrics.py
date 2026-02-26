@@ -374,7 +374,7 @@ class MetricsMLFlowSink:
             coco_eval = values["test_coco_eval_bbox"]
             ap50_90 = safe_index(coco_eval, 0)
             ap50 = safe_index(coco_eval, 1)
-            ar50_90 = safe_index(coco_eval, 6)
+            ar50_90 = safe_index(coco_eval, 8)
             if ap50_90 is not None:
                 metrics_dict["Metrics/Base/AP50_90"] = ap50_90
             if ap50 is not None:
@@ -386,7 +386,7 @@ class MetricsMLFlowSink:
             ema_coco_eval = values["ema_test_coco_eval_bbox"]
             ema_ap50_90 = safe_index(ema_coco_eval, 0)
             ema_ap50 = safe_index(ema_coco_eval, 1)
-            ema_ar50_90 = safe_index(ema_coco_eval, 6)
+            ema_ar50_90 = safe_index(ema_coco_eval, 8)
             if ema_ap50_90 is not None:
                 metrics_dict["Metrics/EMA/AP50_90"] = ema_ap50_90
             if ema_ap50 is not None:
