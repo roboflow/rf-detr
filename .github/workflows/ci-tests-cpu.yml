@@ -53,7 +53,7 @@ jobs:
       - name: 🚀 Install Packages
         timeout-minutes: 5
         # Install PyTorch CPU-only first (UV_TORCH_BACKEND=cpu works with 'uv pip')
-        run: uv pip install -e ".[onnxexport]" --group tests
+        run: uv pip install -e . --group tests
 
       - name: 🧪 Run the Test
         run: |

@@ -53,6 +53,8 @@ if _onnx_injected:
 if _onnxsim_injected:
     del sys.modules["onnxsim"]
 
+_IS_ONNX_INSTALLED = importlib.util.find_spec("onnx") is not None
+
 
 @contextmanager
 def ignore_tracer_warnings() -> Iterator[None]:
@@ -95,10 +97,7 @@ def test_export_onnx_uses_legacy_exporter_when_dynamo_flag_exists(
 
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for export test")
-@pytest.mark.skipif(
-    importlib.util.find_spec("onnx") is None,
-    reason="onnx not installed, run: pip install rfdetr[onnxexport]",
-)
+@pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed, run: pip install rfdetr[onnxexport]")
 def test_segmentation_model_export_no_crash(tmp_path: Path) -> None:
     """
     Integration test: exporting a segmentation model should not crash.
@@ -118,10 +117,7 @@ def test_segmentation_model_export_no_crash(tmp_path: Path) -> None:
 
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for export test")
-@pytest.mark.skipif(
-    importlib.util.find_spec("onnx") is None,
-    reason="onnx not installed, run: pip install rfdetr[onnxexport]",
-)
+@pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed, run: pip install rfdetr[onnxexport]")
 def test_export_calls_eval_on_deepcopy_not_original(tmp_path: Path) -> None:
     """
     Verify that Model.export() calls eval() on the deepcopy, not the original model.
@@ -183,10 +179,7 @@ def test_export_calls_eval_on_deepcopy_not_original(tmp_path: Path) -> None:
 
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for export test")
-@pytest.mark.skipif(
-    importlib.util.find_spec("onnx") is None,
-    reason="onnx not installed, run: pip install rfdetr[onnxexport]",
-)
+@pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed, run: pip install rfdetr[onnxexport]")
 def test_export_does_not_change_original_training_state(tmp_path: Path) -> None:
     """
     Verify that calling export() does not change the original model's train/eval state.
