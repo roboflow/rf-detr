@@ -5,8 +5,8 @@
 # ------------------------------------------------------------------------
 
 import pytest
-from PIL import Image
 import torch
+from PIL import Image
 
 from rfdetr.datasets.transforms import RandomResize, RandomSizeCrop, SquareResize
 
@@ -138,9 +138,7 @@ def test_random_size_crop_updates_target_size() -> None:
         pytest.param((1280, 480), 800, 1333, 500, id="constraint_clamps_short_side"),
     ],
 )
-def test_get_constrained_short_side(
-    image_size: tuple, short_side: int, max_size: int | None, expected: int
-) -> None:
+def test_get_constrained_short_side(image_size: tuple, short_side: int, max_size: int | None, expected: int) -> None:
     """_get_constrained_short_side should clamp to max_size constraint when needed."""
     result = RandomResize._get_constrained_short_side(image_size, short_side, max_size)
     assert result == expected
