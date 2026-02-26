@@ -146,19 +146,26 @@ def _build_albu_transform(name: str, params: Dict[str, Any]) -> A.BasicTransform
     recursively building the nested ``transforms`` list.  Leaf transforms are
     instantiated directly from the ``albumentations`` namespace.
 
-    For ``OneOf`` and ``SomeOf``, an optional ``probs`` key accepts a list of
-    floats (one per option, summing to 1) that sets the relative selection
-    weight of each option.  This is clearer than specifying ``p`` on the
-    container, which controls whether the whole block runs — not which option
-    is picked.
+    An optional ``probs`` key is supported for container transforms:
+
+    * For ``OneOf`` and ``SomeOf``, ``probs`` must be a list of floats (one per
+      option, typically summing to 1) that set the relative selection weight of
+      each option.  This is clearer than specifying ``p`` on the container,
+      which controls whether the whole block runs — not which option is picked.
+    * For ``Sequential``, ``probs`` must also be a list whose length matches the
+      number of nested transforms.  The values are propagated to each child
+      transform's ``p`` parameter, controlling the per-transform application
+      probability inside the sequence (i.e. they are not used as selection
+      weights, since all transforms in a ``Sequential`` are considered in order).
 
     Args:
         name: Transform name (e.g. ``"HorizontalFlip"``, ``"OneOf"``).
         params: Parameter dictionary for the transform.  For container transforms
             the dict must contain a ``"transforms"`` key whose value is a list of
-            single-key dicts ``{name: params}``.  ``OneOf``/``SomeOf`` containers
-            also accept a ``"probs"`` key: a list of floats that sum to 1,
-            one per option.
+            single-key dicts ``{name: params}``.  Container transforms also
+            accept an optional ``"probs"`` key: a list of floats whose length
+            matches the number of nested transforms and which is interpreted as
+            described above for ``OneOf``, ``SomeOf``, and ``Sequential``.
 
     Returns:
         Instantiated Albumentations transform.
@@ -218,7 +225,7 @@ def _build_albu_transform(name: str, params: Dict[str, Any]) -> A.BasicTransform
             for transform, prob in zip(nested_transforms, probs):
                 transform.p = prob
             # Container itself always runs when per-option probs are given
-            other_params.setdefault("p", 1.0)
+            other_params["p"] = 1.0
 
         container_cls = getattr(A, name, None)
         if container_cls is None:

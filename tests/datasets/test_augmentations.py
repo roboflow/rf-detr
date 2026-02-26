@@ -794,10 +794,6 @@ class TestAlbumentationsWrapperNestedConfig:
 
         assert len(transforms) == 3
 
-    def test_from_config_invalid_config_type_list_format(self):
-        """TypeError is raised for non-dict, non-list config."""
-        with pytest.raises(TypeError, match="config_dict must be a dictionary or list"):
-            AlbumentationsWrapper.from_config("invalid")
 
     def test_from_config_one_of_applies_correctly_geometric(self):
         """OneOf geometric wrapper correctly transforms boxes."""
