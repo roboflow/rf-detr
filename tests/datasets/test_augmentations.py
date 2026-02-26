@@ -939,6 +939,58 @@ class TestAlbumentationsWrapperNestedConfig:
         assert isinstance(inner, A.SomeOf)
         assert inner.p == pytest.approx(0.5)
 
+    def test_sequential_probs_sets_child_weights(self):
+        """probs on Sequential sets per-transform probabilities."""
+        config = {
+            "Sequential": {
+                "transforms": [
+                    {"HorizontalFlip": {}},
+                    {"VerticalFlip": {}},
+                ],
+                "probs": [0.7, 0.3],
+            }
+        }
+        transforms = AlbumentationsWrapper.from_config(config)
+        inner = transforms[0].transform.transforms[0]
+
+        assert isinstance(inner, A.Sequential)
+        assert inner.transforms[0].p == pytest.approx(0.7)
+        assert inner.transforms[1].p == pytest.approx(0.3)
+        # Block probability should be 1.0 when using per-transform probs
+        assert inner.p == pytest.approx(1.0)
+
+    def test_sequential_probs_wrong_length_skipped(self):
+        """Sequential probs length must match number of transforms."""
+        config = {
+            "Sequential": {
+                "transforms": [
+                    {"HorizontalFlip": {}},
+                    {"VerticalFlip": {}},
+                ],
+                "probs": [1.0],
+            }
+        }
+        transforms = AlbumentationsWrapper.from_config(config)
+
+        # Invalid config should be skipped entirely
+        assert len(transforms) == 0
+
+    def test_sequential_probs_not_summing_to_one_skipped(self):
+        """Sequential probs that don't sum to 1 cause the transform to be skipped."""
+        config = {
+            "Sequential": {
+                "transforms": [
+                    {"HorizontalFlip": {}},
+                    {"VerticalFlip": {}},
+                ],
+                "probs": [0.3, 0.3],
+            }
+        }
+        transforms = AlbumentationsWrapper.from_config(config)
+
+        # Invalid total probability should result in no transforms being created
+        assert len(transforms) == 0
+
 
 class TestComposeAugmentations:
     """Tests for ComposeAugmentations class."""
