@@ -21,9 +21,9 @@ import numpy as np
 import torch
 import torch.nn as nn
 from PIL import Image
-from torchvision.transforms.v2 import Compose, ToDtype, ToImage
+from torchvision.transforms.v2 import Compose, Resize, ToDtype, ToImage
 
-from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize
+from rfdetr.datasets.transforms import Normalize
 from rfdetr.models import build_model
 from rfdetr.util.logger import get_logger
 from rfdetr.util.misc import get_rank, get_sha
@@ -53,7 +53,7 @@ def make_infer_image(infer_dir, shape, batch_size, device="cuda"):
 
     transforms = Compose(
         [
-            *AlbumentationsWrapper.from_config([{"Resize": {"height": shape[0], "width": shape[0]}}]),
+            Resize((shape[0], shape[0])),
             ToImage(),
             ToDtype(torch.float32, scale=True),
             Normalize(),

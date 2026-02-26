@@ -284,12 +284,9 @@ def _build_train_resize_config(
         A single-element list containing a ``OneOf`` config entry.
     """
     if square:
-        n = len(scales)
-        scale_probs = [1.0 / n] * n
         option_a: Dict[str, Any] = {
             "OneOf": {
                 "transforms": [{"Resize": {"height": s, "width": s}} for s in scales],
-                "probs": scale_probs,
             }
         }
         option_b: Dict[str, Any] = {
@@ -302,7 +299,6 @@ def _build_train_resize_config(
                                 {"RandomSizedCrop": {"min_max_height": [384, 600], "height": s, "width": s}}
                                 for s in scales
                             ],
-                            "probs": scale_probs,
                         }
                     },
                 ]
@@ -331,7 +327,7 @@ def _build_train_resize_config(
             }
         }
 
-    return [{"OneOf": {"transforms": [option_a, option_b], "probs": [0.5, 0.5], "p": 1.0}}]
+    return [{"OneOf": {"transforms": [option_a, option_b]}}]
 
 
 def make_coco_transforms(

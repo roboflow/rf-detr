@@ -37,13 +37,11 @@ class TestBuildTrainResizeConfigStructure:
             pytest.param([480, 640], False, id="nonsquare-multi"),
         ],
     )
-    def test_top_level_is_oneof_with_equal_branch_probs(self, scales, square):
+    def test_top_level_is_oneof_with_two_branches(self, scales, square):
         result = _build_train_resize_config(scales, square=square)
         entry = result[0]
         assert "OneOf" in entry
         oneof = entry["OneOf"]
-        assert oneof["probs"] == [0.5, 0.5]
-        assert oneof["p"] == 1.0
         assert len(oneof["transforms"]) == 2
 
 
@@ -56,7 +54,6 @@ class TestBuildTrainResizeConfigSquareSingleScale:
         assert option_a == {
             "OneOf": {
                 "transforms": [{"Resize": {"height": 640, "width": 640}}],
-                "probs": [1.0],
             }
         }
 
@@ -72,7 +69,6 @@ class TestBuildTrainResizeConfigSquareSingleScale:
                             "transforms": [
                                 {"RandomSizedCrop": {"min_max_height": [384, 600], "height": 640, "width": 640}},
                             ],
-                            "probs": [1.0],
                         }
                     },
                 ]
@@ -85,7 +81,6 @@ class TestBuildTrainResizeConfigSquareSingleScale:
         assert option_a == {
             "OneOf": {
                 "transforms": [{"Resize": {"height": 480, "width": 480}}],
-                "probs": [1.0],
             }
         }
 
@@ -102,7 +97,6 @@ class TestBuildTrainResizeConfigSquareMultiScale:
                     {"Resize": {"height": 480, "width": 480}},
                     {"Resize": {"height": 640, "width": 640}},
                 ],
-                "probs": [0.5, 0.5],
             }
         }
 
@@ -119,17 +113,16 @@ class TestBuildTrainResizeConfigSquareMultiScale:
                                 {"RandomSizedCrop": {"min_max_height": [384, 600], "height": 480, "width": 480}},
                                 {"RandomSizedCrop": {"min_max_height": [384, 600], "height": 640, "width": 640}},
                             ],
-                            "probs": [0.5, 0.5],
                         }
                     },
                 ]
             }
         }
 
-    def test_equal_probs_for_three_scales(self):
+    def test_three_scales_produce_three_resize_options(self):
         result = _build_train_resize_config([384, 512, 640], square=True)
         option_a = result[0]["OneOf"]["transforms"][0]
-        assert option_a["OneOf"]["probs"] == pytest.approx([1 / 3, 1 / 3, 1 / 3])
+        assert len(option_a["OneOf"]["transforms"]) == 3
 
 
 class TestBuildTrainResizeConfigNonSquareSingleScale:

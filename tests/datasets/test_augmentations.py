@@ -20,7 +20,7 @@ from rfdetr import RFDETRSegNano
 from rfdetr.datasets._develop import _SimpleDataset
 from rfdetr.datasets.aug_config import AUG_CONFIG
 from rfdetr.datasets.coco import make_coco_transforms, make_coco_transforms_square_div_64
-from rfdetr.datasets.transforms import AlbumentationsWrapper
+from rfdetr.datasets.transforms import AlbumentationsWrapper, _build_albu_transform
 from rfdetr.util.misc import collate_fn
 
 
@@ -670,14 +670,13 @@ class TestAlbumentationsWrapperNestedConfig:
         assert wrapper._is_geometric is True
 
     def test_from_config_nested_one_of(self):
-        """from_config builds a OneOf wrapper from nested config."""
+        """from_config builds a OneOf wrapper from nested config; p is ignored."""
         config = {
             "OneOf": {
                 "transforms": [
                     {"HorizontalFlip": {"p": 1.0}},
                     {"VerticalFlip": {"p": 1.0}},
                 ],
-                "p": 0.5,
             }
         }
         transforms = AlbumentationsWrapper.from_config(config)
@@ -699,7 +698,6 @@ class TestAlbumentationsWrapperNestedConfig:
                     {"GaussianBlur": {"p": 1.0}},
                     {"Blur": {"p": 1.0}},
                 ],
-                "p": 0.5,
             }
         }
         transforms = AlbumentationsWrapper.from_config(config)
@@ -718,7 +716,6 @@ class TestAlbumentationsWrapperNestedConfig:
                                 {"HorizontalFlip": {"p": 1.0}},
                                 {"VerticalFlip": {"p": 1.0}},
                             ],
-                            "p": 1.0,
                         }
                     },
                     {"GaussianBlur": {"p": 1.0}},
@@ -805,14 +802,13 @@ class TestAlbumentationsWrapperNestedConfig:
         assert len(transforms) == 3
 
     def test_from_config_one_of_applies_correctly_geometric(self):
-        """OneOf geometric wrapper correctly transforms boxes."""
+        """OneOf geometric wrapper correctly transforms boxes (always fires)."""
         config = {
             "OneOf": {
                 "transforms": [
                     {"HorizontalFlip": {"p": 1.0}},
-                    {"VerticalFlip": {"p": 1.0}},
+                    {"VerticalFlip": {"p": 0.0}},
                 ],
-                "probs": [1.0, 0.0],
             }
         }
         transforms = AlbumentationsWrapper.from_config(config)
@@ -837,7 +833,6 @@ class TestAlbumentationsWrapperNestedConfig:
                     {"GaussianBlur": {"blur_limit": 3, "p": 1.0}},
                     {"Blur": {"blur_limit": 3, "p": 1.0}},
                 ],
-                "p": 1.0,
             }
         }
         transforms = AlbumentationsWrapper.from_config(config)
@@ -854,77 +849,23 @@ class TestAlbumentationsWrapperNestedConfig:
         assert isinstance(aug_image, Image.Image)
         torch.testing.assert_close(aug_target["boxes"], original_boxes)
 
-    def test_one_of_probs_sets_child_weights(self):
-        """probs list sets per-option selection weights on OneOf children."""
+    def test_one_of_p_in_config_is_ignored(self):
+        """Any p supplied for OneOf in config is ignored; container always fires."""
         config = {
             "OneOf": {
-                "transforms": [
-                    {"HorizontalFlip": {}},
-                    {"VerticalFlip": {}},
-                    {"GaussianBlur": {}},
-                ],
-                "probs": [0.2, 0.5, 0.3],
+                "transforms": [{"HorizontalFlip": {"p": 1.0}}],
+                "p": 0.0,  # would suppress the container if respected
             }
         }
         transforms = AlbumentationsWrapper.from_config(config)
         inner = transforms[0].transform.transforms[0]
-
         assert isinstance(inner, A.OneOf)
-        assert inner.transforms[0].p == pytest.approx(0.2)
-        assert inner.transforms[1].p == pytest.approx(0.5)
-        assert inner.transforms[2].p == pytest.approx(0.3)
-        # Container always runs when probs given
         assert inner.p == pytest.approx(1.0)
 
-    def test_one_of_probs_wrong_length_skipped(self):
-        """probs with wrong length causes the transform to be skipped."""
-        config = {
-            "OneOf": {
-                "transforms": [
-                    {"HorizontalFlip": {}},
-                    {"VerticalFlip": {}},
-                ],
-                "probs": [0.3, 0.3, 0.4],
-            }
-        }
-        transforms = AlbumentationsWrapper.from_config(config)
-        assert len(transforms) == 0
-
-    def test_one_of_probs_not_summing_to_one_skipped(self):
-        """probs that don't sum to 1 cause the transform to be skipped."""
-        config = {
-            "OneOf": {
-                "transforms": [
-                    {"HorizontalFlip": {}},
-                    {"VerticalFlip": {}},
-                ],
-                "probs": [0.3, 0.3],
-            }
-        }
-        transforms = AlbumentationsWrapper.from_config(config)
-        assert len(transforms) == 0
-
-    def test_some_of_probs_sets_child_weights(self):
-        """probs on SomeOf sets per-option selection weights."""
-        config = {
-            "SomeOf": {
-                "transforms": [
-                    {"HorizontalFlip": {}},
-                    {"VerticalFlip": {}},
-                    {"GaussianBlur": {}},
-                ],
-                "n": 2,
-                "probs": [0.5, 0.3, 0.2],
-            }
-        }
-        transforms = AlbumentationsWrapper.from_config(config)
-        inner = transforms[0].transform.transforms[0]
-
-        assert isinstance(inner, A.SomeOf)
-        assert inner.transforms[0].p == pytest.approx(0.5)
-        assert inner.transforms[1].p == pytest.approx(0.3)
-        assert inner.transforms[2].p == pytest.approx(0.2)
-        assert inner.p == pytest.approx(1.0)
+    def test_one_of_empty_transforms_raises(self):
+        """OneOf with no transforms raises ValueError."""
+        with pytest.raises(ValueError, match="at least one"):
+            _build_albu_transform("OneOf", {"transforms": []})
 
     def test_some_of_single_p_still_works(self):
         """SomeOf with a plain p (block probability) still works without probs."""
@@ -944,57 +885,6 @@ class TestAlbumentationsWrapperNestedConfig:
         assert isinstance(inner, A.SomeOf)
         assert inner.p == pytest.approx(0.5)
 
-    def test_sequential_probs_sets_child_weights(self):
-        """probs on Sequential sets per-transform probabilities."""
-        config = {
-            "Sequential": {
-                "transforms": [
-                    {"HorizontalFlip": {}},
-                    {"VerticalFlip": {}},
-                ],
-                "probs": [0.7, 0.3],
-            }
-        }
-        transforms = AlbumentationsWrapper.from_config(config)
-        inner = transforms[0].transform.transforms[0]
-
-        assert isinstance(inner, A.Sequential)
-        assert inner.transforms[0].p == pytest.approx(0.7)
-        assert inner.transforms[1].p == pytest.approx(0.3)
-        # Block probability should be 1.0 when using per-transform probs
-        assert inner.p == pytest.approx(1.0)
-
-    def test_sequential_probs_wrong_length_skipped(self):
-        """Sequential probs length must match number of transforms."""
-        config = {
-            "Sequential": {
-                "transforms": [
-                    {"HorizontalFlip": {}},
-                    {"VerticalFlip": {}},
-                ],
-                "probs": [1.0],
-            }
-        }
-        transforms = AlbumentationsWrapper.from_config(config)
-
-        # Invalid config should be skipped entirely
-        assert len(transforms) == 0
-
-    def test_sequential_probs_not_summing_to_one_skipped(self):
-        """Sequential probs that don't sum to 1 cause the transform to be skipped."""
-        config = {
-            "Sequential": {
-                "transforms": [
-                    {"HorizontalFlip": {}},
-                    {"VerticalFlip": {}},
-                ],
-                "probs": [0.3, 0.3],
-            }
-        }
-        transforms = AlbumentationsWrapper.from_config(config)
-
-        # Invalid total probability should result in no transforms being created
-        assert len(transforms) == 0
 
 
 class TestIntegration:

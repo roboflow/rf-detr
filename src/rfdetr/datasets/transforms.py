@@ -150,33 +150,22 @@ def _build_albu_transform(name: str, params: Dict[str, Any]) -> A.BasicTransform
     recursively building the nested ``transforms`` list.  Leaf transforms are
     instantiated directly from the ``albumentations`` namespace.
 
-    An optional ``probs`` key is supported for container transforms:
-
-    * For ``OneOf`` and ``SomeOf``, ``probs`` must be a list of floats (one per
-      option, typically summing to 1) that set the relative selection weight of
-      each option.  This is clearer than specifying ``p`` on the container,
-      which controls whether the whole block runs — not which option is picked.
-    * For ``Sequential``, ``probs`` must also be a list whose length matches the
-      number of nested transforms.  The values are propagated to each child
-      transform's ``p`` parameter, controlling the per-transform application
-      probability inside the sequence (i.e. they are not used as selection
-      weights, since all transforms in a ``Sequential`` are considered in order).
+    For ``OneOf``: the container always fires (``p=1.0`` is forced regardless
+    of any user-supplied ``p``); selection among children is controlled by each
+    child's ``p`` value.  At least one nested transform is required.
+    ``Sequential`` runs all its transforms unconditionally in order.
 
     Args:
         name: Transform name (e.g. ``"HorizontalFlip"``, ``"OneOf"``).
         params: Parameter dictionary for the transform.  For container transforms
             the dict must contain a ``"transforms"`` key whose value is a list of
-            single-key dicts ``{name: params}``.  Container transforms also
-            accept an optional ``"probs"`` key: a list of floats whose length
-            matches the number of nested transforms and which is interpreted as
-            described above for ``OneOf``, ``SomeOf``, and ``Sequential``.
+            single-key dicts ``{name: params}``.
 
     Returns:
         Instantiated Albumentations transform.
 
     Raises:
-        ValueError: If ``name`` is unknown, ``params`` is malformed, or
-            ``probs`` length does not match the number of transforms.
+        ValueError: If ``name`` is unknown or ``params`` is malformed.
 
     Examples:
         >>> import albumentations as A
@@ -185,15 +174,9 @@ def _build_albu_transform(name: str, params: Dict[str, Any]) -> A.BasicTransform
         True
         >>> container = _build_albu_transform(
         ...     "OneOf",
-        ...     {"transforms": [{"HorizontalFlip": {"p": 1.0}}, {"VerticalFlip": {"p": 1.0}}], "p": 0.5},
+        ...     {"transforms": [{"HorizontalFlip": {"p": 1.0}}, {"VerticalFlip": {"p": 1.0}}]},
         ... )
         >>> isinstance(container, A.OneOf)
-        True
-        >>> weighted = _build_albu_transform(
-        ...     "OneOf",
-        ...     {"transforms": [{"HorizontalFlip": {}}, {"VerticalFlip": {}}], "probs": [0.3, 0.7]},
-        ... )
-        >>> isinstance(weighted, A.OneOf)
         True
     """
     if name in ALBUMENTATIONS_CONTAINERS:
@@ -212,25 +195,13 @@ def _build_albu_transform(name: str, params: Dict[str, Any]) -> A.BasicTransform
                 )
             nested_transforms.append(_build_albu_transform(nested_name, nested_params))
 
-        other_params = {k: v for k, v in params.items() if k not in ("transforms", "probs")}
-
-        probs = params.get("probs", None)
-        if probs is not None:
-            if not isinstance(probs, list):
-                raise ValueError(f"'probs' must be a list of floats, got {type(probs).__name__}")
-            if len(probs) != len(nested_transforms):
-                raise ValueError(
-                    f"'probs' length ({len(probs)}) must match number of transforms ({len(nested_transforms)})"
-                )
-            total = sum(probs)
-            if abs(total - 1.0) > 1e-6:
-                raise ValueError(f"'probs' must sum to 1.0, got {total:.4f}")
-            # For OneOf/SomeOf this is selection weight; for Sequential this is
-            # per-transform execution probability inside the sequence.
-            for transform, prob in zip(nested_transforms, probs):
-                transform.p = prob
-            # Container itself always runs when per-option probs are given
-            other_params["p"] = 1.0
+        if name == "OneOf":
+            if not nested_transforms:
+                raise ValueError("'OneOf' requires at least one transform")
+            other_params = {k: v for k, v in params.items() if k not in ("transforms", "p")}
+            other_params["p"] = 1.0  # OneOf always fires; selection is via per-child p
+        else:
+            other_params = {k: v for k, v in params.items() if k != "transforms"}
 
         container_cls = getattr(A, name, None)
         if container_cls is None:
