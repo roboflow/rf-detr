@@ -434,9 +434,7 @@ def make_coco_transforms(
         )
         return Compose([*resize_wrappers, to_tensor, normalize])
     if image_set == "val_speed":
-        resize_wrappers = AlbumentationsWrapper.from_config(
-            [{"Resize": {"height": resolution, "width": resolution}}]
-        )
+        resize_wrappers = AlbumentationsWrapper.from_config([{"Resize": {"height": resolution, "width": resolution}}])
         return Compose([*resize_wrappers, to_tensor, normalize])
 
     raise ValueError(f"unknown {image_set}")
@@ -503,9 +501,7 @@ def make_coco_transforms_square_div_64(
         return Compose([*resize_wrappers, *aug_wrappers, to_tensor, normalize])
 
     if image_set in ("val", "test", "val_speed"):
-        resize_wrappers = AlbumentationsWrapper.from_config(
-            [{"Resize": {"height": resolution, "width": resolution}}]
-        )
+        resize_wrappers = AlbumentationsWrapper.from_config([{"Resize": {"height": resolution, "width": resolution}}])
         return Compose([*resize_wrappers, to_tensor, normalize])
 
     raise ValueError(f"unknown {image_set}")

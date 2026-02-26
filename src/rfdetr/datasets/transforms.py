@@ -731,5 +731,3 @@ class AlbumentationsWrapper:
 
         logger.info("Built %d Albumentations transforms from config", len(transforms))
         return transforms
-
-
