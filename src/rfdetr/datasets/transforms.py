@@ -57,9 +57,7 @@ class RandomResize(object):
         self.max_size = max_size
 
     @staticmethod
-    def _get_constrained_short_side(
-        image_size: Tuple[int, int], short_side: int, max_size: Optional[int]
-    ) -> int:
+    def _get_constrained_short_side(image_size: Tuple[int, int], short_side: int, max_size: Optional[int]) -> int:
         """Compute short side size while respecting max long-side constraint."""
         if max_size is None:
             return short_side
