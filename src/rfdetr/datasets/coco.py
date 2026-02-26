@@ -28,9 +28,18 @@ import torch.utils.data
 import torchvision
 from PIL import Image
 
-import rfdetr.datasets.transforms as T
 from rfdetr.datasets.aug_config import AUG_CONFIG
-from rfdetr.datasets.transforms import AlbumentationsWrapper, ComposeAugmentations
+from rfdetr.datasets.transforms import (
+    AlbumentationsWrapper,
+    Compose,
+    ComposeAugmentations,
+    Normalize,
+    RandomResize,
+    RandomSelect,
+    RandomSizeCrop,
+    SquareResize,
+    ToTensor,
+)
 from rfdetr.util.logger import get_logger
 
 logger = get_logger()
@@ -151,7 +160,7 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         if self._transforms is not None:
             img, target = self._transforms(
                 img, target
-            )  # boxes are absolute [x_min, y_min, x_max, y_max]; conversion to normalized [cx, cy, w, h] occurs inside T.Normalize
+            )  # boxes are absolute [x_min, y_min, x_max, y_max]; conversion to normalized [cx, cy, w, h] occurs inside Normalize
         return img, target
 
 
@@ -263,7 +272,7 @@ def make_coco_transforms(
     patch_size: int = 16,
     num_windows: int = 4,
     aug_config: Optional[Dict[str, Dict[str, Any]]] = None,
-) -> T.Compose:
+) -> Compose:
     """Build the standard COCO transform pipeline for a given dataset split.
 
     Returns a composed transform that resizes images to the target ``resolution``
@@ -303,7 +312,7 @@ def make_coco_transforms(
     Raises:
         ValueError: If ``image_set`` is not one of the recognised split names.
     """
-    normalize = T.Compose([T.ToTensor(), T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
+    normalize = Compose([ToTensor(), Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
 
     scales = [resolution]
     if multi_scale:
@@ -315,15 +324,15 @@ def make_coco_transforms(
 
     if image_set == "train":
         resolved_aug_config = aug_config if aug_config is not None else AUG_CONFIG
-        return T.Compose(
+        return Compose(
             [
-                T.RandomSelect(
-                    T.RandomResize(scales, max_size=1333),
-                    T.Compose(
+                RandomSelect(
+                    RandomResize(scales, max_size=1333),
+                    Compose(
                         [
-                            T.RandomResize([400, 500, 600]),
-                            T.RandomSizeCrop(384, 600),
-                            T.RandomResize(scales, max_size=1333),
+                            RandomResize([400, 500, 600]),
+                            RandomSizeCrop(384, 600),
+                            RandomResize(scales, max_size=1333),
                         ]
                     ),
                 ),
@@ -333,16 +342,16 @@ def make_coco_transforms(
         )
 
     if image_set == "val":
-        return T.Compose(
+        return Compose(
             [
-                T.RandomResize([resolution], max_size=1333),
+                RandomResize([resolution], max_size=1333),
                 normalize,
             ]
         )
     if image_set == "val_speed":
-        return T.Compose(
+        return Compose(
             [
-                T.SquareResize([resolution]),
+                SquareResize([resolution]),
                 normalize,
             ]
         )
@@ -358,8 +367,8 @@ def make_coco_transforms_square_div_64(
     skip_random_resize: bool = False,
     patch_size: int = 16,
     num_windows: int = 4,
-    aug_config=None,
-) -> T.Compose:
+    aug_config: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> Compose:
     """
     Create COCO transforms with square resizing where the output size is divisible by 64.
 
@@ -390,10 +399,10 @@ def make_coco_transforms_square_div_64(
             the default :data:`~rfdetr.datasets.aug_config.AUG_CONFIG` is used.
 
     Returns:
-        A ``T.Compose`` object containing the composed image transforms appropriate
+        A ``Compose`` object containing the composed image transforms appropriate
         for the specified ``image_set``.
     """
-    normalize = T.Compose([T.ToTensor(), T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
+    normalize = Compose([ToTensor(), Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
 
     scales = [resolution]
     if multi_scale:
@@ -405,15 +414,15 @@ def make_coco_transforms_square_div_64(
 
     if image_set == "train":
         resolved_aug_config = aug_config if aug_config is not None else AUG_CONFIG
-        return T.Compose(
+        return Compose(
             [
-                T.RandomSelect(
-                    T.SquareResize(scales),
-                    T.Compose(
+                RandomSelect(
+                    SquareResize(scales),
+                    Compose(
                         [
-                            T.RandomResize([400, 500, 600]),
-                            T.RandomSizeCrop(384, 600),
-                            T.SquareResize(scales),
+                            RandomResize([400, 500, 600]),
+                            RandomSizeCrop(384, 600),
+                            SquareResize(scales),
                         ]
                     ),
                 ),
@@ -423,23 +432,23 @@ def make_coco_transforms_square_div_64(
         )
 
     if image_set == "val":
-        return T.Compose(
+        return Compose(
             [
-                T.SquareResize([resolution]),
+                SquareResize([resolution]),
                 normalize,
             ]
         )
     if image_set == "test":
-        return T.Compose(
+        return Compose(
             [
-                T.SquareResize([resolution]),
+                SquareResize([resolution]),
                 normalize,
             ]
         )
     if image_set == "val_speed":
-        return T.Compose(
+        return Compose(
             [
-                T.SquareResize([resolution]),
+                SquareResize([resolution]),
                 normalize,
             ]
         )
