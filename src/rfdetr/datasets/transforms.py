@@ -114,8 +114,10 @@ class ToTensor(object):
         self._to_tensor = _TVToTensor()
 
     def __call__(
-        self, img: Union[PIL.Image.Image, np.ndarray], target: Dict[str, Any]
-    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
+        self,
+        img: Union[PIL.Image.Image, np.ndarray],
+        target: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[torch.Tensor, Optional[Dict[str, Any]]]:
         return self._to_tensor(img), target
 
 
