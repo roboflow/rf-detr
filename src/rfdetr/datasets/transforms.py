@@ -318,7 +318,7 @@ def _build_albu_transform(name: str, params: Dict[str, Any]) -> A.BasicTransform
                     f"'probs' length ({len(probs)}) must match number of transforms ({len(nested_transforms)})"
                 )
             total = sum(probs)
-            if abs(total - 1.0) > 1e-3:
+            if abs(total - 1.0) > 1e-6:
                 raise ValueError(f"'probs' must sum to 1.0, got {total:.4f}")
             # Albumentations OneOf/SomeOf use each child's p as selection weight
             for transform, prob in zip(nested_transforms, probs):
