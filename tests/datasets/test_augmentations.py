@@ -794,7 +794,6 @@ class TestAlbumentationsWrapperNestedConfig:
 
         assert len(transforms) == 3
 
-
     def test_from_config_one_of_applies_correctly_geometric(self):
         """OneOf geometric wrapper correctly transforms boxes."""
         config = {
