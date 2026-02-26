@@ -211,6 +211,131 @@ GEOMETRIC_TRANSFORMS = {
     "SquareSymmetry",
 }
 
+# Albumentations container/meta transforms that hold nested transforms
+ALBUMENTATIONS_CONTAINERS = frozenset({"OneOf", "SomeOf", "Sequential"})
+
+
+def _is_geometric_transform(transform: A.BasicTransform) -> bool:
+    """Return True if transform (or any nested transform) affects spatial coordinates.
+
+    For container transforms such as ``A.OneOf`` or ``A.Sequential``, returns
+    ``True`` when *any* nested transform is geometric so that bounding-box
+    handling is enabled for the whole container.
+
+    Args:
+        transform: Albumentations transform to inspect.
+
+    Returns:
+        ``True`` if the transform modifies spatial layout; ``False`` otherwise.
+
+    Examples:
+        >>> import albumentations as A
+        >>> _is_geometric_transform(A.HorizontalFlip())
+        True
+        >>> _is_geometric_transform(A.GaussianBlur())
+        False
+        >>> _is_geometric_transform(A.OneOf([A.HorizontalFlip(), A.GaussianBlur()]))
+        True
+    """
+    if type(transform).__name__ in GEOMETRIC_TRANSFORMS:
+        return True
+    # Recursively check nested transforms in container transforms
+    if hasattr(transform, "transforms"):
+        return any(_is_geometric_transform(t) for t in transform.transforms)
+    return False
+
+
+def _build_albu_transform(name: str, params: Dict[str, Any]) -> A.BasicTransform:
+    """Build a single Albumentations transform from its name and parameter dict.
+
+    Handles container transforms (``OneOf``, ``SomeOf``, ``Sequential``) by
+    recursively building the nested ``transforms`` list.  Leaf transforms are
+    instantiated directly from the ``albumentations`` namespace.
+
+    For ``OneOf`` and ``SomeOf``, an optional ``probs`` key accepts a list of
+    floats (one per option, summing to 1) that sets the relative selection
+    weight of each option.  This is clearer than specifying ``p`` on the
+    container, which controls whether the whole block runs — not which option
+    is picked.
+
+    Args:
+        name: Transform name (e.g. ``"HorizontalFlip"``, ``"OneOf"``).
+        params: Parameter dictionary for the transform.  For container transforms
+            the dict must contain a ``"transforms"`` key whose value is a list of
+            single-key dicts ``{name: params}``.  ``OneOf``/``SomeOf`` containers
+            also accept a ``"probs"`` key: a list of floats that sum to 1,
+            one per option.
+
+    Returns:
+        Instantiated Albumentations transform.
+
+    Raises:
+        ValueError: If ``name`` is unknown, ``params`` is malformed, or
+            ``probs`` length does not match the number of transforms.
+
+    Examples:
+        >>> import albumentations as A
+        >>> t = _build_albu_transform("HorizontalFlip", {"p": 0.5})
+        >>> isinstance(t, A.HorizontalFlip)
+        True
+        >>> container = _build_albu_transform(
+        ...     "OneOf",
+        ...     {"transforms": [{"HorizontalFlip": {"p": 1.0}}, {"VerticalFlip": {"p": 1.0}}], "p": 0.5},
+        ... )
+        >>> isinstance(container, A.OneOf)
+        True
+        >>> weighted = _build_albu_transform(
+        ...     "OneOf",
+        ...     {"transforms": [{"HorizontalFlip": {}}, {"VerticalFlip": {}}], "probs": [0.3, 0.7]},
+        ... )
+        >>> isinstance(weighted, A.OneOf)
+        True
+    """
+    if name in ALBUMENTATIONS_CONTAINERS:
+        raw_nested = params.get("transforms", [])
+        if not isinstance(raw_nested, list):
+            raise ValueError(f"'{name}.transforms' must be a list, got {type(raw_nested).__name__}")
+        nested_transforms: List[A.BasicTransform] = []
+        for entry in raw_nested:
+            if not isinstance(entry, dict) or len(entry) != 1:
+                raise ValueError(f"Each nested transform entry must be a single-key dict, got {entry!r}")
+            nested_name, nested_params = next(iter(entry.items()))
+            if not isinstance(nested_params, dict):
+                raise ValueError(
+                    f"Parameters for nested transform '{nested_name}' must be a dict, "
+                    f"got {type(nested_params).__name__}"
+                )
+            nested_transforms.append(_build_albu_transform(nested_name, nested_params))
+
+        other_params = {k: v for k, v in params.items() if k not in ("transforms", "probs")}
+
+        probs = params.get("probs", None)
+        if probs is not None:
+            if not isinstance(probs, list):
+                raise ValueError(f"'probs' must be a list of floats, got {type(probs).__name__}")
+            if len(probs) != len(nested_transforms):
+                raise ValueError(
+                    f"'probs' length ({len(probs)}) must match number of transforms ({len(nested_transforms)})"
+                )
+            total = sum(probs)
+            if abs(total - 1.0) > 1e-3:
+                raise ValueError(f"'probs' must sum to 1.0, got {total:.4f}")
+            # Albumentations OneOf/SomeOf use each child's p as selection weight
+            for transform, prob in zip(nested_transforms, probs):
+                transform.p = prob
+            # Container itself always runs when per-option probs are given
+            other_params.setdefault("p", 1.0)
+
+        container_cls = getattr(A, name, None)
+        if container_cls is None:
+            raise ValueError(f"Unknown Albumentations container: {name!r}")
+        return container_cls(transforms=nested_transforms, **other_params)
+
+    aug_cls = getattr(A, name, None)
+    if aug_cls is None:
+        raise ValueError(f"Unknown Albumentations transform: {name!r}")
+    return aug_cls(**params)
+
 
 class AlbumentationsWrapper:
     """Wrapper to apply Albumentations transforms to (image, target) tuples.
@@ -250,9 +375,8 @@ class AlbumentationsWrapper:
     """
 
     def __init__(self, transform: A.BasicTransform) -> None:
-        # Auto-detect if transform is geometric based on its class name
-        transform_name = transform.__class__.__name__
-        self._is_geometric = transform_name in GEOMETRIC_TRANSFORMS
+        # Auto-detect if transform is geometric (recursively for containers)
+        self._is_geometric = _is_geometric_transform(transform)
 
         if self._is_geometric:
             # Wrap geometric transform with bbox handling capabilities
@@ -507,23 +631,62 @@ class AlbumentationsWrapper:
         return image_out, target_out
 
     @staticmethod
-    def from_config(config_dict: Dict[str, Dict[str, Any]]) -> List["AlbumentationsWrapper"]:
-        """Build list of AlbumentationsWrapper instances from configuration dictionary.
+    def from_config(
+        config_dict: Union[Dict[str, Any], List[Dict[str, Any]]],
+    ) -> List["AlbumentationsWrapper"]:
+        """Build a list of :class:`AlbumentationsWrapper` instances from a config.
 
-        Convenient way to create multiple augmentation wrappers from a config dictionary.
-        Each transform is automatically wrapped with appropriate bbox handling based on
-        whether it's geometric or pixel-level.
+        Supports both a flat dictionary format (backward-compatible) and a list
+        format that allows duplicate transform names and explicit ordering.
+        Container transforms (``OneOf``, ``SomeOf``, ``Sequential``) may be
+        nested arbitrarily deep.
+
+        **Dict format** (existing, backward-compatible)::
+
+            config = {
+                "HorizontalFlip": {"p": 0.5},
+                "Rotate": {"limit": 45, "p": 0.3},
+                "OneOf": {
+                    "transforms": [
+                        {"HorizontalFlip": {"p": 1.0}},
+                        {"VerticalFlip": {"p": 1.0}},
+                    ],
+                    "p": 0.5,
+                },
+            }
+
+        **List format** (new; useful when you need two entries with the same name
+        or when explicit order matters)::
+
+            config = [
+                {"HorizontalFlip": {"p": 0.5}},
+                {"OneOf": {
+                    "transforms": [
+                        {"Rotate": {"limit": 45, "p": 1.0}},
+                        {"ShiftScaleRotate": {"p": 1.0}},
+                    ],
+                    "p": 0.3,
+                }},
+            ]
+
+        **Shorthand for container ``transforms`` list** -- when a container key's
+        value is a *list* rather than a dict, it is interpreted as the
+        ``transforms`` parameter with default container arguments::
+
+            {"OneOf": [{"HorizontalFlip": {"p": 1.0}}, {"VerticalFlip": {"p": 1.0}}]}
+            # equivalent to
+            {"OneOf": {"transforms": [{"HorizontalFlip": {"p": 1.0}}, ...], "p": 0.5}}
 
         Args:
-            config_dict: Dictionary mapping transform names to parameters.
-                Keys: Albumentations transform class names (e.g., "HorizontalFlip").
-                Values: Parameter dictionaries to pass to the transform.
+            config_dict: Augmentation configuration -- either a ``dict`` mapping
+                transform names to parameter dicts, or a ``list`` of single-key
+                dicts ``{name: params}``.
 
         Returns:
-            List of AlbumentationsWrapper instances in the same order as config dict.
+            List of :class:`AlbumentationsWrapper` instances in config order.
 
         Raises:
-            TypeError: If config_dict is not a dictionary.
+            TypeError: If *config_dict* is neither a ``dict`` nor a ``list``.
 
         Examples:
             >>> config = {
@@ -538,33 +701,52 @@ class AlbumentationsWrapper:
         Note:
             Invalid transforms or invalid parameters are logged and skipped gracefully.
         """
-        if not isinstance(config_dict, dict):
-            raise TypeError(f"config_dict must be a dictionary, got {type(config_dict)}")
+        if isinstance(config_dict, list):
+            entries = config_dict
+        elif isinstance(config_dict, dict):
+            entries = [{k: v} for k, v in config_dict.items()]
+        else:
+            raise TypeError(f"config_dict must be a dictionary or list, got {type(config_dict)}")
 
-        if not config_dict:
+        if not entries:
             logger.warning("Empty augmentation config provided, no transforms will be applied")
             return []
 
         transforms = []
-        for aug_name, params in config_dict.items():
-            if not isinstance(params, dict):
-                logger.warning(f"Skipping {aug_name}: parameters must be a dictionary, got {type(params)}")
+        for entry in entries:
+            if not isinstance(entry, dict) or len(entry) != 1:
+                logger.warning(
+                    "Skipping invalid config entry (must be a single-key dict): %r",
+                    entry,
+                )
                 continue
+            aug_name, params = next(iter(entry.items()))
 
-            base_aug = getattr(A, aug_name, None)
-            if base_aug is None:
-                logger.warning(f"Unknown Albumentations transform: {aug_name}. Skipping.")
+            # Shorthand: container value is a list -> treat as {"transforms": [...]}
+            if isinstance(params, list) and aug_name in ALBUMENTATIONS_CONTAINERS:
+                params = {"transforms": params}
+
+            if not isinstance(params, dict):
+                logger.warning(
+                    "Skipping %s: parameters must be a dictionary, got %s",
+                    aug_name,
+                    type(params).__name__,
+                )
                 continue
 
             try:
-                # AlbumentationsWrapper will auto-detect if transform is geometric
-                # based on the transform class name matching GEOMETRIC_TRANSFORMS
-                transforms.append(AlbumentationsWrapper(base_aug(**params)))
+                transform = _build_albu_transform(aug_name, params)
+                transforms.append(AlbumentationsWrapper(transform))
             except Exception as e:
-                logger.warning(f"Failed to initialize {aug_name} with params {params}: {e}. Skipping.")
+                logger.warning(
+                    "Failed to initialize %s with params %r: %s. Skipping.",
+                    aug_name,
+                    params,
+                    e,
+                )
                 continue
 
-        logger.info(f"Built {len(transforms)} Albumentations transforms from config")
+        logger.info("Built %d Albumentations transforms from config", len(transforms))
         return transforms
 
 

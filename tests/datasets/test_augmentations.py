@@ -597,7 +597,7 @@ class TestAlbumentationsWrapperFromConfig:
 
     def test_invalid_config_type(self):
         """Test that invalid config type raises TypeError."""
-        with pytest.raises(TypeError, match="config_dict must be a dictionary"):
+        with pytest.raises(TypeError, match="config_dict must be a dictionary or list"):
             AlbumentationsWrapper.from_config("invalid")
 
     def test_mixed_geometric_and_pixel_transforms(self):
@@ -640,6 +640,304 @@ class TestAlbumentationsWrapperFromConfig:
         assert len(transforms) == 1
         transform_names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
         assert transform_names == ["HorizontalFlip"]
+
+
+class TestAlbumentationsWrapperNestedConfig:
+    """Tests for nested container (OneOf, SomeOf, Sequential) support in from_config."""
+
+    def test_one_of_geometric_detection(self):
+        """OneOf containing a geometric transform is treated as geometric."""
+        wrapper = AlbumentationsWrapper(A.OneOf([A.HorizontalFlip(p=1.0), A.GaussianBlur(p=1.0)]))
+        assert wrapper._is_geometric is True
+
+    def test_one_of_pixel_detection(self):
+        """OneOf containing only pixel transforms is treated as pixel-level."""
+        wrapper = AlbumentationsWrapper(A.OneOf([A.GaussianBlur(p=1.0), A.Blur(p=1.0)]))
+        assert wrapper._is_geometric is False
+
+    def test_sequential_geometric_detection(self):
+        """Sequential containing a geometric transform is treated as geometric."""
+        wrapper = AlbumentationsWrapper(A.Sequential([A.Rotate(limit=45, p=1.0), A.GaussianBlur(p=1.0)]))
+        assert wrapper._is_geometric is True
+
+    def test_from_config_nested_one_of(self):
+        """from_config builds a OneOf wrapper from nested config."""
+        config = {
+            "OneOf": {
+                "transforms": [
+                    {"HorizontalFlip": {"p": 1.0}},
+                    {"VerticalFlip": {"p": 1.0}},
+                ],
+                "p": 0.5,
+            }
+        }
+        transforms = AlbumentationsWrapper.from_config(config)
+
+        assert len(transforms) == 1
+        wrapper = transforms[0]
+        assert isinstance(wrapper, AlbumentationsWrapper)
+        assert wrapper._is_geometric is True
+        # The inner Albumentations transform should be OneOf
+        inner = wrapper.transform.transforms[0]
+        assert isinstance(inner, A.OneOf)
+        assert len(inner.transforms) == 2
+
+    def test_from_config_nested_one_of_pixel_only(self):
+        """from_config OneOf with only pixel transforms is non-geometric."""
+        config = {
+            "OneOf": {
+                "transforms": [
+                    {"GaussianBlur": {"p": 1.0}},
+                    {"Blur": {"p": 1.0}},
+                ],
+                "p": 0.5,
+            }
+        }
+        transforms = AlbumentationsWrapper.from_config(config)
+
+        assert len(transforms) == 1
+        assert transforms[0]._is_geometric is False
+
+    def test_from_config_deeply_nested(self):
+        """from_config handles nested containers (OneOf inside Sequential)."""
+        config = {
+            "Sequential": {
+                "transforms": [
+                    {
+                        "OneOf": {
+                            "transforms": [
+                                {"HorizontalFlip": {"p": 1.0}},
+                                {"VerticalFlip": {"p": 1.0}},
+                            ],
+                            "p": 1.0,
+                        }
+                    },
+                    {"GaussianBlur": {"p": 1.0}},
+                ],
+                "p": 1.0,
+            }
+        }
+        transforms = AlbumentationsWrapper.from_config(config)
+
+        assert len(transforms) == 1
+        assert transforms[0]._is_geometric is True
+        inner = transforms[0].transform.transforms[0]
+        assert isinstance(inner, A.Sequential)
+        assert isinstance(inner.transforms[0], A.OneOf)
+
+    def test_from_config_shorthand_list(self):
+        """from_config supports shorthand {OneOf: [...]} without explicit transforms key."""
+        config = {
+            "OneOf": [
+                {"HorizontalFlip": {"p": 1.0}},
+                {"VerticalFlip": {"p": 1.0}},
+            ]
+        }
+        transforms = AlbumentationsWrapper.from_config(config)
+
+        assert len(transforms) == 1
+        inner = transforms[0].transform.transforms[0]
+        assert isinstance(inner, A.OneOf)
+        assert len(inner.transforms) == 2
+
+    def test_from_config_nested_sequential(self):
+        """from_config builds a Sequential wrapper from nested config."""
+        config = {
+            "Sequential": {
+                "transforms": [
+                    {"Rotate": {"limit": 45, "p": 1.0}},
+                    {"GaussianBlur": {"p": 1.0}},
+                ],
+                "p": 1.0,
+            }
+        }
+        transforms = AlbumentationsWrapper.from_config(config)
+
+        assert len(transforms) == 1
+        inner = transforms[0].transform.transforms[0]
+        assert isinstance(inner, A.Sequential)
+        assert len(inner.transforms) == 2
+
+    def test_from_config_list_format(self):
+        """from_config accepts list-of-single-key-dicts format."""
+        config = [
+            {"HorizontalFlip": {"p": 0.5}},
+            {
+                "OneOf": {
+                    "transforms": [
+                        {"VerticalFlip": {"p": 1.0}},
+                        {"Rotate": {"limit": 45, "p": 1.0}},
+                    ],
+                    "p": 0.3,
+                }
+            },
+        ]
+        transforms = AlbumentationsWrapper.from_config(config)
+
+        assert len(transforms) == 2
+        assert isinstance(transforms[0], AlbumentationsWrapper)
+        assert isinstance(transforms[1].transform.transforms[0], A.OneOf)
+
+    def test_from_config_mixed_flat_and_nested(self):
+        """from_config handles mix of flat and nested transforms."""
+        config = {
+            "HorizontalFlip": {"p": 0.5},
+            "OneOf": {
+                "transforms": [
+                    {"GaussianBlur": {"p": 1.0}},
+                    {"Blur": {"p": 1.0}},
+                ],
+                "p": 0.3,
+            },
+            "Rotate": {"limit": 15, "p": 0.3},
+        }
+        transforms = AlbumentationsWrapper.from_config(config)
+
+        assert len(transforms) == 3
+
+    def test_from_config_invalid_config_type_list_format(self):
+        """TypeError is raised for non-dict, non-list config."""
+        with pytest.raises(TypeError, match="config_dict must be a dictionary or list"):
+            AlbumentationsWrapper.from_config("invalid")
+
+    def test_from_config_one_of_applies_correctly_geometric(self):
+        """OneOf geometric wrapper correctly transforms boxes."""
+        config = {
+            "OneOf": {
+                "transforms": [
+                    {"HorizontalFlip": {"p": 1.0}},
+                    {"VerticalFlip": {"p": 1.0}},
+                ],
+                "p": 1.0,
+            }
+        }
+        transforms = AlbumentationsWrapper.from_config(config)
+        wrapper = transforms[0]
+
+        image = Image.new("RGB", (100, 80))
+        target = {
+            "boxes": torch.tensor([[10.0, 20.0, 50.0, 60.0]]),
+            "labels": torch.tensor([1]),
+        }
+        aug_image, aug_target = wrapper(image, target)
+
+        assert isinstance(aug_image, Image.Image)
+        assert aug_target["boxes"].shape == (1, 4)
+
+    def test_from_config_one_of_applies_correctly_pixel(self):
+        """OneOf pixel-level wrapper preserves boxes unchanged."""
+        config = {
+            "OneOf": {
+                "transforms": [
+                    {"GaussianBlur": {"blur_limit": 3, "p": 1.0}},
+                    {"Blur": {"blur_limit": 3, "p": 1.0}},
+                ],
+                "p": 1.0,
+            }
+        }
+        transforms = AlbumentationsWrapper.from_config(config)
+        wrapper = transforms[0]
+
+        image = Image.new("RGB", (100, 80))
+        original_boxes = torch.tensor([[10.0, 20.0, 50.0, 60.0]])
+        target = {
+            "boxes": original_boxes.clone(),
+            "labels": torch.tensor([1]),
+        }
+        aug_image, aug_target = wrapper(image, target)
+
+        assert isinstance(aug_image, Image.Image)
+        torch.testing.assert_close(aug_target["boxes"], original_boxes)
+
+    def test_one_of_probs_sets_child_weights(self):
+        """probs list sets per-option selection weights on OneOf children."""
+        config = {
+            "OneOf": {
+                "transforms": [
+                    {"HorizontalFlip": {}},
+                    {"VerticalFlip": {}},
+                    {"GaussianBlur": {}},
+                ],
+                "probs": [0.2, 0.5, 0.3],
+            }
+        }
+        transforms = AlbumentationsWrapper.from_config(config)
+        inner = transforms[0].transform.transforms[0]
+
+        assert isinstance(inner, A.OneOf)
+        assert inner.transforms[0].p == pytest.approx(0.2)
+        assert inner.transforms[1].p == pytest.approx(0.5)
+        assert inner.transforms[2].p == pytest.approx(0.3)
+        # Container always runs when probs given
+        assert inner.p == pytest.approx(1.0)
+
+    def test_one_of_probs_wrong_length_skipped(self):
+        """probs with wrong length causes the transform to be skipped."""
+        config = {
+            "OneOf": {
+                "transforms": [
+                    {"HorizontalFlip": {}},
+                    {"VerticalFlip": {}},
+                ],
+                "probs": [0.3, 0.3, 0.4],
+            }
+        }
+        transforms = AlbumentationsWrapper.from_config(config)
+        assert len(transforms) == 0
+
+    def test_one_of_probs_not_summing_to_one_skipped(self):
+        """probs that don't sum to 1 cause the transform to be skipped."""
+        config = {
+            "OneOf": {
+                "transforms": [
+                    {"HorizontalFlip": {}},
+                    {"VerticalFlip": {}},
+                ],
+                "probs": [0.3, 0.3],
+            }
+        }
+        transforms = AlbumentationsWrapper.from_config(config)
+        assert len(transforms) == 0
+
+    def test_some_of_probs_sets_child_weights(self):
+        """probs on SomeOf sets per-option selection weights."""
+        config = {
+            "SomeOf": {
+                "transforms": [
+                    {"HorizontalFlip": {}},
+                    {"VerticalFlip": {}},
+                    {"GaussianBlur": {}},
+                ],
+                "n": 2,
+                "probs": [0.5, 0.3, 0.2],
+            }
+        }
+        transforms = AlbumentationsWrapper.from_config(config)
+        inner = transforms[0].transform.transforms[0]
+
+        assert isinstance(inner, A.SomeOf)
+        assert inner.transforms[0].p == pytest.approx(0.5)
+        assert inner.transforms[1].p == pytest.approx(0.3)
+        assert inner.transforms[2].p == pytest.approx(0.2)
+        assert inner.p == pytest.approx(1.0)
+
+    def test_some_of_single_p_still_works(self):
+        """SomeOf with a plain p (block probability) still works without probs."""
+        config = {
+            "SomeOf": {
+                "transforms": [
+                    {"HorizontalFlip": {}},
+                    {"VerticalFlip": {}},
+                ],
+                "n": 1,
+                "p": 0.5,
+            }
+        }
+        transforms = AlbumentationsWrapper.from_config(config)
+        inner = transforms[0].transform.transforms[0]
+
+        assert isinstance(inner, A.SomeOf)
+        assert inner.p == pytest.approx(0.5)
 
 
 class TestComposeAugmentations:
