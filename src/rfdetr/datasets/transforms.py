@@ -34,7 +34,11 @@ logger = get_logger()
 
 
 class Normalize(object):
-    def __init__(self, mean: List[float], std: List[float]) -> None:
+    def __init__(
+        self,
+        mean: Tuple[float, ...] = (0.485, 0.456, 0.406),
+        std: Tuple[float, ...] = (0.229, 0.224, 0.225),
+    ) -> None:
         self._normalize = _TVNormalize(mean, std)
 
     def __call__(
@@ -221,7 +225,8 @@ def _build_albu_transform(name: str, params: Dict[str, Any]) -> A.BasicTransform
             total = sum(probs)
             if abs(total - 1.0) > 1e-6:
                 raise ValueError(f"'probs' must sum to 1.0, got {total:.4f}")
-            # Albumentations OneOf/SomeOf use each child's p as selection weight
+            # For OneOf/SomeOf this is selection weight; for Sequential this is
+            # per-transform execution probability inside the sequence.
             for transform, prob in zip(nested_transforms, probs):
                 transform.p = prob
             # Container itself always runs when per-option probs are given

@@ -14,15 +14,13 @@ import pytest
 import torch
 from PIL import Image
 from torch.utils.data import DataLoader
+from torchvision.transforms.v2 import Compose
 
 from rfdetr import RFDETRSegNano
 from rfdetr.datasets._develop import _SimpleDataset
 from rfdetr.datasets.aug_config import AUG_CONFIG
 from rfdetr.datasets.coco import make_coco_transforms, make_coco_transforms_square_div_64
-from rfdetr.datasets.transforms import (
-    AlbumentationsWrapper,
-    Compose,
-)
+from rfdetr.datasets.transforms import AlbumentationsWrapper
 from rfdetr.util.misc import collate_fn
 
 
@@ -802,7 +800,7 @@ class TestAlbumentationsWrapperNestedConfig:
                     {"HorizontalFlip": {"p": 1.0}},
                     {"VerticalFlip": {"p": 1.0}},
                 ],
-                "p": 1.0,
+                "probs": [1.0, 0.0],
             }
         }
         transforms = AlbumentationsWrapper.from_config(config)
@@ -816,7 +814,8 @@ class TestAlbumentationsWrapperNestedConfig:
         aug_image, aug_target = wrapper(image, target)
 
         assert isinstance(aug_image, Image.Image)
-        assert aug_target["boxes"].shape == (1, 4)
+        expected_boxes = torch.tensor([[50.0, 20.0, 90.0, 60.0]])
+        torch.testing.assert_close(aug_target["boxes"], expected_boxes)
 
     def test_from_config_one_of_applies_correctly_pixel(self):
         """OneOf pixel-level wrapper preserves boxes unchanged."""

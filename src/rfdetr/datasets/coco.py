@@ -404,7 +404,7 @@ def make_coco_transforms(
     """
     to_image = ToImage()
     to_float = ToDtype(torch.float32, scale=True)
-    normalize = Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    normalize = Normalize()
 
     scales = [resolution]
     if multi_scale:
@@ -482,7 +482,7 @@ def make_coco_transforms_square_div_64(
     """
     to_image = ToImage()
     to_float = ToDtype(torch.float32, scale=True)
-    normalize = Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    normalize = Normalize()
 
     scales = [resolution]
     if multi_scale:

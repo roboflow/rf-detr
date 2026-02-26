@@ -56,7 +56,7 @@ def make_infer_image(infer_dir, shape, batch_size, device="cuda"):
             *AlbumentationsWrapper.from_config([{"Resize": {"height": shape[0], "width": shape[0]}}]),
             ToImage(),
             ToDtype(torch.float32, scale=True),
-            Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+            Normalize(),
         ]
     )
 

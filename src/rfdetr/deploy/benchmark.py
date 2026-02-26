@@ -206,7 +206,7 @@ def infer_transforms():
             *AlbumentationsWrapper.from_config([{"Resize": {"height": 640, "width": 640}}]),
             ToImage(),
             ToDtype(torch.float32, scale=True),
-            Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+            Normalize(),
         ]
     )
 
