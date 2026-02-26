@@ -24,7 +24,7 @@ import torch
 import torch.nn as nn
 from PIL import Image
 
-import rfdetr.datasets.transforms as T
+from rfdetr.datasets.transforms import Compose, Normalize, SquareResize, ToTensor
 from rfdetr.deploy._onnx import OnnxOptimizer
 from rfdetr.models import build_model
 from rfdetr.util.logger import get_logger
@@ -53,8 +53,8 @@ def make_infer_image(infer_dir, shape, batch_size, device="cuda"):
     else:
         image = Image.open(infer_dir).convert("RGB")
 
-    transforms = T.Compose(
-        [T.SquareResize([shape[0]]), T.ToTensor(), T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])]
+    transforms = Compose(
+        [SquareResize([shape[0]]), ToTensor(), Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])]
     )
 
     inps, _ = transforms(image, None)

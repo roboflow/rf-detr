@@ -149,8 +149,8 @@ class TestSegmentationNumSelectMerge:
         call_kwargs = stub.model.train.call_args.kwargs
         assert call_kwargs["num_select"] == 42
 
-    def test_segmentation_forces_square_resize_when_disabled(self, tmp_path) -> None:
-        """Segmentation training should force square resizing to avoid mixed mask shapes in batch."""
+    def test_segmentation_raises_when_square_resize_disabled(self, tmp_path) -> None:
+        """Segmentation training must not silently override square_resize_div_64=False; it must raise ValueError."""
         stub = _make_rfdetr_stub(RFDETRSegNanoConfig())
         train_config = SegmentationTrainConfig(
             dataset_dir=str(tmp_path),
@@ -160,7 +160,5 @@ class TestSegmentationNumSelectMerge:
             square_resize_div_64=False,
         )
 
-        stub.train_from_config(train_config)
-
-        call_kwargs = stub.model.train.call_args.kwargs
-        assert call_kwargs["square_resize_div_64"] is True
+        with pytest.raises(ValueError, match="square_resize_div_64"):
+            stub.train_from_config(train_config)

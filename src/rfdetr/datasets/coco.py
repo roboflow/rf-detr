@@ -367,7 +367,7 @@ def make_coco_transforms_square_div_64(
     skip_random_resize: bool = False,
     patch_size: int = 16,
     num_windows: int = 4,
-    aug_config=None,
+    aug_config: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Compose:
     """
     Create COCO transforms with square resizing where the output size is divisible by 64.

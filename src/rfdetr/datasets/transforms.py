@@ -18,20 +18,16 @@ Transforms and data augmentation for both image + bbox.
 """
 
 import random
+from collections.abc import Sequence
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+import albumentations as A
 import numpy as np
 import PIL
-
-try:
-    from collections.abc import Sequence
-except Exception:
-    from collections import Sequence
-
-import albumentations as A
 import torch
-import torchvision.transforms as T
 from PIL import Image
+from torchvision.transforms import Normalize as _TVNormalize
+from torchvision.transforms import ToTensor as _TVToTensor
 
 from rfdetr.util.box_ops import box_xyxy_to_cxcywh
 from rfdetr.util.logger import get_logger
@@ -115,7 +111,7 @@ class RandomSelect(object):
 
 class ToTensor(object):
     def __init__(self) -> None:
-        self._to_tensor = T.ToTensor()
+        self._to_tensor = _TVToTensor()
 
     def __call__(
         self, img: Union[PIL.Image.Image, np.ndarray], target: Dict[str, Any]
@@ -125,7 +121,7 @@ class ToTensor(object):
 
 class Normalize(object):
     def __init__(self, mean: List[float], std: List[float]) -> None:
-        self._normalize = T.Normalize(mean, std)
+        self._normalize = _TVNormalize(mean, std)
 
     def __call__(
         self, image: torch.Tensor, target: Optional[Dict[str, Any]] = None
@@ -417,6 +413,11 @@ class AlbumentationsWrapper:
             target_out["boxes"] = torch.as_tensor(bboxes_aug, dtype=torch.float32).reshape(-1, 4)
             target_out["labels"] = torch.tensor(augmented["category_ids"], dtype=torch.long)
             target_out.update(self._filter_per_instance_fields(target, num_boxes, kept_idxs))
+            # Recompute area from the transformed box coordinates so it stays consistent with
+            # the new image scale (e.g. after resize the original COCO area values are stale).
+            if "area" in target_out:
+                boxes = target_out["boxes"]
+                target_out["area"] = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
         image_out = Image.fromarray(augmented["image"])
         if masks_list is not None and "masks" in augmented:
             height, width = augmented["image"].shape[:2]
