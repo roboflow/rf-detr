@@ -42,9 +42,7 @@ from rfdetr.deploy._onnx.symbolic import CustomOpSymbolicRegistry
 class OnnxOptimizer:
     def __init__(self, input, severity=None):
         if gs is None:
-            raise ImportError(
-                "ONNX export dependencies are missing. Install with: pip install rfdetr[onnxexport]"
-            )
+            raise ImportError("ONNX export dependencies are missing. Install with: pip install rfdetr[onnxexport]")
         if severity is None:
             severity = G_LOGGER.INFO
         if isinstance(input, str):
