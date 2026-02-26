@@ -411,8 +411,8 @@ class AlbumentationsWrapper:
             target_out.update(self._clear_per_instance_fields(target, num_boxes))
             # Override masks after _clear_per_instance_fields to ensure bool dtype.
             if "masks" in target:
-                img_height, img_width = image_np.shape[:2]
-                target_out["masks"] = torch.zeros((0, img_height, img_width), dtype=torch.bool)
+                aug_height, aug_width = augmented["image"].shape[:2]
+                target_out["masks"] = torch.zeros((0, aug_height, aug_width), dtype=torch.bool)
         else:
             target_out["boxes"] = torch.as_tensor(bboxes_aug, dtype=torch.float32).reshape(-1, 4)
             target_out["labels"] = torch.tensor(augmented["category_ids"], dtype=torch.long)
