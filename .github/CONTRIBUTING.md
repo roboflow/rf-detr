@@ -416,13 +416,18 @@ Bug reports are vital for continued improvement. When reporting an issue, please
 **General workflow:**
 
 1. **Open an issue** describing the proposed model and approach
-2. **Wait for maintainer feedback** on architecture and integration approach
-3. **Follow test-driven development:**
+    - You may ask maintainers to confirm the expected evaluation protocol (dataset, metrics) before running full benchmarks
+2. **Demonstrate improvement** versus reference models on a standard public dataset (e.g., COCO val2017)
+    - If the change is for an existing RF-DETR model, show a case where the new approach is Pareto optimal (e.g., better accuracy at similar or lower latency/model size) over the existing model
+    - If the change is adding a new functionality, show a case where the new approach is Pareto optimal over comparable third-party models (see the [README model table](../README.md) for reference baselines)
+    - Provide a script for us to reproduce your results
+3. **Wait for maintainer feedback** on architecture and integration approach
+4. **Follow test-driven development:**
     - Write comprehensive tests for the new model
     - Implement the model following approved approach
     - Ensure all tests pass
-4. **Add documentation** as directed by maintainers
-5. **Submit PR** with reference to the discussion issue
+5. **Add documentation** as directed by maintainers
+6. **Submit PR** with reference to the discussion issue
 
 Maintainers will guide you on specific files to modify and patterns to follow based on current project architecture.
 
