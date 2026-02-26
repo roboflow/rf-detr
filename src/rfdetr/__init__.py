@@ -28,7 +28,7 @@ from rfdetr.detr import (
 __all__ = [
     "RFDETRNano",
     "RFDETRSmall",
-    "RFDETRSmall",
+    "RFDETRMedium",
     "RFDETRLarge",
     "RFDETRSegNano",
     "RFDETRSegSmall",
