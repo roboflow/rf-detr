@@ -54,7 +54,7 @@ dependencies = [
 [project.optional-dependencies]
 onnxexport = [
     "onnx>=1.16.0,<1.20",
-    "onnxsim",
+    "onnxsim<0.6.0",  # TODO: onnxsim 0.6.0+ hangs on install
     "onnx_graphsurgeon",
     "onnxruntime",
     "polygraphy"
