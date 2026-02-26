@@ -1172,6 +1172,8 @@ class WindowedDinov2WithRegistersBackbone(WindowedDinov2WithRegistersPreTrainedM
             hidden_states=outputs.hidden_states if output_hidden_states else None,
             attentions=outputs.attentions if output_attentions else None,
         )
+
+
 __all__ = [
     "WindowedDinov2WithRegistersPreTrainedModel",
     "WindowedDinov2WithRegistersModel",
