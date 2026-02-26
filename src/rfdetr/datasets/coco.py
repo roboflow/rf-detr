@@ -33,8 +33,6 @@ from rfdetr.datasets.transforms import (
     AlbumentationsWrapper,
     Compose,
     Normalize,
-    RandomResize,
-    SquareResize,
     ToTensor,
 )
 from rfdetr.util.logger import get_logger
@@ -408,7 +406,8 @@ def make_coco_transforms(
     Raises:
         ValueError: If ``image_set`` is not one of the recognised split names.
     """
-    normalize = Compose([ToTensor(), Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
+    to_tensor = ToTensor()
+    normalize = Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 
     scales = [resolution]
     if multi_scale:
@@ -424,22 +423,21 @@ def make_coco_transforms(
             _build_train_resize_config(scales, square=False, max_size=1333)
         )
         aug_wrappers = AlbumentationsWrapper.from_config(resolved_aug_config)
-        return Compose([*resize_wrappers, *aug_wrappers, normalize])
+        return Compose([*resize_wrappers, *aug_wrappers, to_tensor, normalize])
 
     if image_set == "val":
-        return Compose(
+        resize_wrappers = AlbumentationsWrapper.from_config(
             [
-                RandomResize([resolution], max_size=1333),
-                normalize,
+                {"SmallestMaxSize": {"max_size": resolution}},
+                {"LongestMaxSize": {"max_size": 1333}},
             ]
         )
+        return Compose([*resize_wrappers, to_tensor, normalize])
     if image_set == "val_speed":
-        return Compose(
-            [
-                SquareResize([resolution]),
-                normalize,
-            ]
+        resize_wrappers = AlbumentationsWrapper.from_config(
+            [{"Resize": {"height": resolution, "width": resolution}}]
         )
+        return Compose([*resize_wrappers, to_tensor, normalize])
 
     raise ValueError(f"unknown {image_set}")
 
@@ -487,7 +485,8 @@ def make_coco_transforms_square_div_64(
         A ``Compose`` object containing the composed image transforms appropriate
         for the specified ``image_set``.
     """
-    normalize = Compose([ToTensor(), Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
+    to_tensor = ToTensor()
+    normalize = Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 
     scales = [resolution]
     if multi_scale:
@@ -501,29 +500,13 @@ def make_coco_transforms_square_div_64(
         resolved_aug_config = aug_config if aug_config is not None else AUG_CONFIG
         resize_wrappers = AlbumentationsWrapper.from_config(_build_train_resize_config(scales, square=True))
         aug_wrappers = AlbumentationsWrapper.from_config(resolved_aug_config)
-        return Compose([*resize_wrappers, *aug_wrappers, normalize])
+        return Compose([*resize_wrappers, *aug_wrappers, to_tensor, normalize])
 
-    if image_set == "val":
-        return Compose(
-            [
-                SquareResize([resolution]),
-                normalize,
-            ]
+    if image_set in ("val", "test", "val_speed"):
+        resize_wrappers = AlbumentationsWrapper.from_config(
+            [{"Resize": {"height": resolution, "width": resolution}}]
         )
-    if image_set == "test":
-        return Compose(
-            [
-                SquareResize([resolution]),
-                normalize,
-            ]
-        )
-    if image_set == "val_speed":
-        return Compose(
-            [
-                SquareResize([resolution]),
-                normalize,
-            ]
-        )
+        return Compose([*resize_wrappers, to_tensor, normalize])
 
     raise ValueError(f"unknown {image_set}")
 

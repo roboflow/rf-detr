@@ -22,7 +22,6 @@ from rfdetr.datasets.coco import make_coco_transforms, make_coco_transforms_squa
 from rfdetr.datasets.transforms import (
     AlbumentationsWrapper,
     Compose,
-    ComposeAugmentations,
 )
 from rfdetr.util.misc import collate_fn
 
@@ -992,79 +991,6 @@ class TestAlbumentationsWrapperNestedConfig:
         assert len(transforms) == 0
 
 
-class TestComposeAugmentations:
-    """Tests for ComposeAugmentations class."""
-
-    def test_compose_initialization(self):
-        """Test ComposeAugmentations initialization."""
-        transforms = [
-            AlbumentationsWrapper(A.HorizontalFlip(p=1.0)),
-            AlbumentationsWrapper(A.VerticalFlip(p=1.0)),
-        ]
-
-        composed = ComposeAugmentations(transforms)
-
-        assert composed.transforms == transforms
-        assert len(composed.transforms) == 2
-        # Validate transform names in correct order
-        transform_names = [t.transform.transforms[0].__class__.__name__ for t in composed.transforms]
-        assert transform_names == ["HorizontalFlip", "VerticalFlip"]
-
-    def test_compose_applies_all_transforms(self):
-        """Test that all transforms are applied sequentially."""
-        transforms = [
-            AlbumentationsWrapper(A.HorizontalFlip(p=1.0)),
-            AlbumentationsWrapper(A.VerticalFlip(p=1.0)),
-        ]
-        composed = ComposeAugmentations(transforms)
-
-        image = Image.new("RGB", (100, 100))
-        target = {
-            "boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0]]),
-            "labels": torch.tensor([1]),
-        }
-
-        aug_image, aug_target = composed(image, target)
-
-        assert isinstance(aug_image, Image.Image)
-        # After both flips, both coordinates should be mirrored
-        assert aug_target["boxes"].shape == (1, 4)
-
-    def test_compose_empty_transforms(self):
-        """Test composing with empty transforms list."""
-        composed = ComposeAugmentations([])
-
-        image = Image.new("RGB", (100, 100))
-        target = {
-            "boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0]]),
-            "labels": torch.tensor([1]),
-        }
-
-        aug_image, aug_target = composed(image, target)
-
-        # Should return unchanged
-        assert aug_image == image
-        assert torch.equal(aug_target["boxes"], target["boxes"])
-
-    def test_compose_invalid_transforms_type(self):
-        """Test that invalid transforms type raises TypeError."""
-        with pytest.raises(TypeError, match="transforms must be a list"):
-            ComposeAugmentations("invalid")
-
-    def test_compose_single_transform(self):
-        """Test composing with single transform."""
-        transforms = [AlbumentationsWrapper(A.HorizontalFlip(p=1.0))]
-        composed = ComposeAugmentations(transforms)
-
-        image = Image.new("RGB", (100, 100))
-        target = {"boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0]]), "labels": torch.tensor([1])}
-
-        aug_image, aug_target = composed(image, target)
-
-        assert isinstance(aug_image, Image.Image)
-        assert aug_target["boxes"].shape == (1, 4)
-
-
 class TestIntegration:
     """Integration tests for full augmentation pipeline."""
 
@@ -1084,7 +1010,7 @@ class TestIntegration:
         assert transform_names == list(config.keys())
 
         # Compose them
-        composed = ComposeAugmentations(transforms)
+        composed = Compose(transforms)
 
         # Apply to data
         image = Image.new("RGB", (100, 100))
@@ -1112,7 +1038,7 @@ class TestIntegration:
         transform_names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
         assert transform_names == list(config.keys())
 
-        composed = ComposeAugmentations(transforms)
+        composed = Compose(transforms)
 
         image = Image.new("RGB", (100, 100))
         target = {"labels": torch.tensor([1])}
@@ -1136,7 +1062,7 @@ class TestIntegration:
         transform_names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
         assert transform_names == list(aug_config.keys())
 
-        composed = ComposeAugmentations(transforms)
+        composed = Compose(transforms)
 
         image = Image.new("RGB", (640, 480))
         target = {
@@ -1159,7 +1085,7 @@ class TestIntegration:
         }
 
         transforms = AlbumentationsWrapper.from_config(config)
-        composed = ComposeAugmentations(transforms)
+        composed = Compose(transforms)
 
         height, width = 100, 100
         image = Image.new("RGB", (width, height))
@@ -1190,7 +1116,7 @@ class TestIntegration:
         }
 
         transforms = AlbumentationsWrapper.from_config(config)
-        composed = ComposeAugmentations(transforms)
+        composed = Compose(transforms)
 
         height, width = 100, 100
         image = Image.new("RGB", (width, height))
@@ -1219,7 +1145,7 @@ class TestIntegration:
         }
 
         transforms = AlbumentationsWrapper.from_config(config)
-        composed = ComposeAugmentations(transforms)
+        composed = Compose(transforms)
 
         height, width = 100, 100
         image = Image.new("RGB", (width, height))
@@ -1499,15 +1425,38 @@ class TestMakeCocoTransformsAugConfig:
         assert aug_wrappers[0].transform.transforms[0].__class__.__name__ == "HorizontalFlip"
 
     @pytest.mark.parametrize(
+        "make_transforms,expected_resize_wrappers",
+        [
+            # make_coco_transforms val: SmallestMaxSize + LongestMaxSize = 2 wrappers
+            pytest.param(make_coco_transforms, 2, id="make_coco_transforms"),
+            # make_coco_transforms_square_div_64 val: Resize = 1 wrapper
+            pytest.param(make_coco_transforms_square_div_64, 1, id="make_coco_transforms_square_div_64"),
+        ],
+    )
+    def test_aug_config_not_applied_on_val(self, make_transforms, expected_resize_wrappers):
+        """aug_config is ignored for val splits — only resize wrappers are present."""
+        pipeline = make_transforms("val", 640, aug_config={"HorizontalFlip": {"p": 1.0}})
+        wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
+
+        assert len(wrappers) == expected_resize_wrappers
+
+    @pytest.mark.parametrize(
         "make_transforms",
         [
             make_coco_transforms,
             make_coco_transforms_square_div_64,
         ],
     )
-    def test_aug_config_not_applied_on_val(self, make_transforms):
-        """aug_config is ignored for val splits — no AlbumentationsWrapper in the pipeline."""
-        pipeline = make_transforms("val", 640, aug_config={"HorizontalFlip": {"p": 1.0}})
+    def test_aug_config_not_applied_on_val_speed(self, make_transforms):
+        """aug_config is ignored for val_speed splits — only the resize wrapper is present."""
+        pipeline = make_transforms("val_speed", 640, aug_config={"HorizontalFlip": {"p": 1.0}})
         wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
 
-        assert wrappers == []
+        assert len(wrappers) == 1
+
+    def test_aug_config_not_applied_on_test(self):
+        """aug_config is ignored for the test split in make_coco_transforms_square_div_64."""
+        pipeline = make_coco_transforms_square_div_64("test", 640, aug_config={"HorizontalFlip": {"p": 1.0}})
+        wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
+
+        assert len(wrappers) == 1

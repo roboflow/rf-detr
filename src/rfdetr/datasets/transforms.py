@@ -28,6 +28,7 @@ import torch
 from PIL import Image
 from torchvision.transforms import Normalize as _TVNormalize
 from torchvision.transforms import ToTensor as _TVToTensor
+from torchvision.transforms.v2 import Compose
 
 from rfdetr.util.box_ops import box_xyxy_to_cxcywh
 from rfdetr.util.logger import get_logger
@@ -139,24 +140,6 @@ class Normalize(object):
             boxes = boxes / torch.tensor([w, h, w, h], dtype=torch.float32)
             target["boxes"] = boxes
         return image, target
-
-
-class Compose(object):
-    def __init__(self, transforms: List[Any]) -> None:
-        self.transforms = transforms
-
-    def __call__(self, image: Any, target: Any) -> Tuple[Any, Any]:
-        for t in self.transforms:
-            image, target = t(image, target)
-        return image, target
-
-    def __repr__(self) -> str:
-        format_string = self.__class__.__name__ + "("
-        for t in self.transforms:
-            format_string += "\n"
-            format_string += "    {0}".format(t)
-        format_string += "\n)"
-        return format_string
 
 
 # Albumentations wrapper for RF-DETR
@@ -750,48 +733,3 @@ class AlbumentationsWrapper:
         return transforms
 
 
-class ComposeAugmentations:
-    """Compose multiple augmentation transforms into a single callable.
-
-    This class sequentially applies a list of transforms to an (image, target) pair,
-    following the same interface as torchvision.transforms.Compose but supporting
-    the RF-DETR target dictionary format.
-
-    Args:
-        transforms: List of transforms to apply sequentially.
-
-    Examples:
-        >>> from rfdetr.datasets.aug_config import AUG_CONFIG
-        >>> aug_transforms = AlbumentationsWrapper.from_config(AUG_CONFIG)
-        >>> composed = ComposeAugmentations(aug_transforms)
-        >>> image = Image.new("RGB", (100, 100))
-        >>> target = {"boxes": torch.zeros((0, 4)), "labels": torch.zeros(0, dtype=torch.long)}
-        >>> image, target = composed(image, target)
-    """
-
-    def __init__(self, transforms: List[Any]) -> None:
-        if not isinstance(transforms, list):
-            raise TypeError(f"transforms must be a list, got {type(transforms)}")
-        self.transforms = transforms
-
-    def __call__(self, image: PIL.Image.Image, target: Dict[str, Any]) -> Tuple[PIL.Image.Image, Dict[str, Any]]:
-        """Apply all transforms sequentially.
-
-        Args:
-            image: Input PIL Image.
-            target: Target dictionary with labels and optionally boxes.
-
-        Returns:
-            Tuple of transformed image and target.
-        """
-        for t in self.transforms:
-            image, target = t(image, target)
-        return image, target
-
-    def __repr__(self) -> str:
-        """Return a readable representation of the composed augmentations."""
-        format_string = f"{self.__class__.__name__}(\n"
-        for t in self.transforms:
-            format_string += f"\t{t!r}\n"
-        format_string += ")"
-        return format_string
