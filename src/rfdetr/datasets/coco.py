@@ -32,11 +32,8 @@ from rfdetr.datasets.aug_config import AUG_CONFIG
 from rfdetr.datasets.transforms import (
     AlbumentationsWrapper,
     Compose,
-    ComposeAugmentations,
     Normalize,
     RandomResize,
-    RandomSelect,
-    RandomSizeCrop,
     SquareResize,
     ToTensor,
 )
@@ -263,6 +260,104 @@ class ConvertCoco(object):
         return image, target
 
 
+def _build_train_resize_config(
+    scales: List[int],
+    *,
+    square: bool,
+    max_size: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    """Build the training resize pipeline as an Albumentations config list.
+
+    Expresses the ``RandomSelect(resize_a, Compose([resize_b1, crop, resize_b2]))``
+    pattern as a config-driven ``OneOf``/``Sequential`` for use with
+    :meth:`AlbumentationsWrapper.from_config`.
+
+    Two branches are selected with equal probability:
+
+    - **Option A** – direct resize to the target scale(s).
+    - **Option B** – resize to an intermediate scale (400/500/600 px), crop,
+      then resize to the target scale.
+
+    Args:
+        scales: Target resize scales in pixels.
+        square: If ``True``, produce square output using ``A.Resize``
+            (one random scale from *scales*).  If ``False``, preserve aspect
+            ratio using ``A.SmallestMaxSize`` with an optional long-side cap.
+        max_size: Maximum long-side size for non-square resizes.  Defaults to
+            ``1333`` when *square* is ``False``.
+
+    Returns:
+        A single-element list containing a ``OneOf`` config entry.
+    """
+    if square:
+        if len(scales) == 1:
+            s = scales[0]
+            option_a: Dict[str, Any] = {"Resize": {"height": s, "width": s}}
+            option_b: Dict[str, Any] = {
+                "Sequential": {
+                    "transforms": [
+                        {"SmallestMaxSize": {"max_size": [400, 500, 600]}},
+                        {"RandomSizedCrop": {"min_max_height": [384, 600], "height": s, "width": s}},
+                    ]
+                }
+            }
+        else:
+            n = len(scales)
+            equal_probs = [1.0 / n] * n
+            option_a = {
+                "OneOf": {
+                    "transforms": [{"Resize": {"height": s, "width": s}} for s in scales],
+                    "probs": equal_probs,
+                }
+            }
+            option_b = {
+                "Sequential": {
+                    "transforms": [
+                        {"SmallestMaxSize": {"max_size": [400, 500, 600]}},
+                        {
+                            "OneOf": {
+                                "transforms": [
+                                    {
+                                        "RandomSizedCrop": {
+                                            "min_max_height": [384, 600],
+                                            "height": s,
+                                            "width": s,
+                                        }
+                                    }
+                                    for s in scales
+                                ],
+                                "probs": equal_probs,
+                            }
+                        },
+                    ]
+                }
+            }
+    else:
+        cap = max_size or 1333
+        # SmallestMaxSize accepts a list and picks randomly — no OneOf needed
+        size_param: Any = scales[0] if len(scales) == 1 else scales
+        option_a = {
+            "Sequential": {
+                "transforms": [
+                    {"SmallestMaxSize": {"max_size": size_param}},
+                    {"LongestMaxSize": {"max_size": cap}},
+                ]
+            }
+        }
+        option_b = {
+            "Sequential": {
+                "transforms": [
+                    {"SmallestMaxSize": {"max_size": [400, 500, 600]}},
+                    {"RandomCrop": {"height": 384, "width": 384}},
+                    {"SmallestMaxSize": {"max_size": size_param}},
+                    {"LongestMaxSize": {"max_size": cap}},
+                ]
+            }
+        }
+
+    return [{"OneOf": {"transforms": [option_a, option_b], "probs": [0.5, 0.5], "p": 1.0}}]
+
+
 def make_coco_transforms(
     image_set: str,
     resolution: int,
@@ -279,10 +374,11 @@ def make_coco_transforms(
     (with optional multi-scale jitter), applies Albumentations-based augmentations
     during training, and normalises pixel values with ImageNet statistics.
 
-    For the ``"train"`` split the pipeline uses a two-branch random select between
-    a simple random resize and a resize → random-crop → resize sequence, followed
-    by the augmentation stack and normalisation.  For ``"val"`` and ``"val_speed"``
-    only resize and normalisation are applied.
+    For the ``"train"`` split the pipeline uses a two-branch ``OneOf`` between a
+    direct resize and a resize → random-crop → resize sequence (built via
+    :func:`_build_train_resize_config`), followed by the augmentation stack and
+    normalisation.  For ``"val"`` and ``"val_speed"`` only resize and
+    normalisation are applied.
 
     Args:
         image_set: Dataset split identifier — ``"train"``, ``"val"``, or
@@ -324,22 +420,11 @@ def make_coco_transforms(
 
     if image_set == "train":
         resolved_aug_config = aug_config if aug_config is not None else AUG_CONFIG
-        return Compose(
-            [
-                RandomSelect(
-                    RandomResize(scales, max_size=1333),
-                    Compose(
-                        [
-                            RandomResize([400, 500, 600]),
-                            RandomSizeCrop(384, 600),
-                            RandomResize(scales, max_size=1333),
-                        ]
-                    ),
-                ),
-                ComposeAugmentations(AlbumentationsWrapper.from_config(resolved_aug_config)),
-                normalize,
-            ]
+        resize_wrappers = AlbumentationsWrapper.from_config(
+            _build_train_resize_config(scales, square=False, max_size=1333)
         )
+        aug_wrappers = AlbumentationsWrapper.from_config(resolved_aug_config)
+        return Compose([*resize_wrappers, *aug_wrappers, normalize])
 
     if image_set == "val":
         return Compose(
@@ -414,22 +499,9 @@ def make_coco_transforms_square_div_64(
 
     if image_set == "train":
         resolved_aug_config = aug_config if aug_config is not None else AUG_CONFIG
-        return Compose(
-            [
-                RandomSelect(
-                    SquareResize(scales),
-                    Compose(
-                        [
-                            RandomResize([400, 500, 600]),
-                            RandomSizeCrop(384, 600),
-                            SquareResize(scales),
-                        ]
-                    ),
-                ),
-                ComposeAugmentations(AlbumentationsWrapper.from_config(resolved_aug_config)),
-                normalize,
-            ]
-        )
+        resize_wrappers = AlbumentationsWrapper.from_config(_build_train_resize_config(scales, square=True))
+        aug_wrappers = AlbumentationsWrapper.from_config(resolved_aug_config)
+        return Compose([*resize_wrappers, *aug_wrappers, normalize])
 
     if image_set == "val":
         return Compose(

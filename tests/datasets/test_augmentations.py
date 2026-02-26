@@ -1405,10 +1405,13 @@ class TestMakeCocoTransformsAugConfig:
     def test_default_none_uses_aug_config(self, make_transforms):
         """Omitting aug_config uses the module-level AUG_CONFIG default (HorizontalFlip)."""
         pipeline = make_transforms("train", 640)
-        aug_step = next(t for t in pipeline.transforms if isinstance(t, ComposeAugmentations))
+        # Train pipeline: [resize_wrapper, *aug_wrappers, normalize]
+        # First AlbumentationsWrapper is the resize OneOf; remaining are from aug_config.
+        wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
+        aug_wrappers = wrappers[1:]
 
         expected_names = list(AUG_CONFIG.keys())
-        actual_names = [w.transform.transforms[0].__class__.__name__ for w in aug_step.transforms]
+        actual_names = [w.transform.transforms[0].__class__.__name__ for w in aug_wrappers]
         assert actual_names == expected_names
 
     @pytest.mark.parametrize(
@@ -1419,11 +1422,12 @@ class TestMakeCocoTransformsAugConfig:
         ],
     )
     def test_empty_dict_disables_augmentations(self, make_transforms):
-        """aug_config={} produces a ComposeAugmentations with no transforms."""
+        """aug_config={} means no aug wrappers beyond the resize wrapper."""
         pipeline = make_transforms("train", 640, aug_config={})
-        aug_step = next(t for t in pipeline.transforms if isinstance(t, ComposeAugmentations))
+        wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
+        aug_wrappers = wrappers[1:]  # skip resize wrapper
 
-        assert aug_step.transforms == []
+        assert aug_wrappers == []
 
     @pytest.mark.parametrize(
         "make_transforms",
@@ -1436,10 +1440,11 @@ class TestMakeCocoTransformsAugConfig:
         """aug_config with a custom dict wires up exactly those transforms."""
         custom = {"HorizontalFlip": {"p": 1.0}}
         pipeline = make_transforms("train", 640, aug_config=custom)
-        aug_step = next(t for t in pipeline.transforms if isinstance(t, ComposeAugmentations))
+        wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
+        aug_wrappers = wrappers[1:]  # skip resize wrapper
 
-        assert len(aug_step.transforms) == 1
-        assert aug_step.transforms[0].transform.transforms[0].__class__.__name__ == "HorizontalFlip"
+        assert len(aug_wrappers) == 1
+        assert aug_wrappers[0].transform.transforms[0].__class__.__name__ == "HorizontalFlip"
 
     @pytest.mark.parametrize(
         "make_transforms",
@@ -1449,8 +1454,8 @@ class TestMakeCocoTransformsAugConfig:
         ],
     )
     def test_aug_config_not_applied_on_val(self, make_transforms):
-        """aug_config is ignored for val splits — no ComposeAugmentations in the pipeline."""
+        """aug_config is ignored for val splits — no AlbumentationsWrapper in the pipeline."""
         pipeline = make_transforms("val", 640, aug_config={"HorizontalFlip": {"p": 1.0}})
-        aug_steps = [t for t in pipeline.transforms if isinstance(t, ComposeAugmentations)]
+        wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
 
-        assert aug_steps == []
+        assert wrappers == []
