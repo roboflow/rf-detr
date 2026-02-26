@@ -284,48 +284,30 @@ def _build_train_resize_config(
         A single-element list containing a ``OneOf`` config entry.
     """
     if square:
-        if len(scales) == 1:
-            s = scales[0]
-            option_a: Dict[str, Any] = {"Resize": {"height": s, "width": s}}
-            option_b: Dict[str, Any] = {
-                "Sequential": {
-                    "transforms": [
-                        {"SmallestMaxSize": {"max_size": [400, 500, 600]}},
-                        {"RandomSizedCrop": {"min_max_height": [384, 600], "height": s, "width": s}},
-                    ]
-                }
+        n = len(scales)
+        scale_probs = [1.0 / n] * n
+        option_a: Dict[str, Any] = {
+            "OneOf": {
+                "transforms": [{"Resize": {"height": s, "width": s}} for s in scales],
+                "probs": scale_probs,
             }
-        else:
-            n = len(scales)
-            equal_probs = [1.0 / n] * n
-            option_a = {
-                "OneOf": {
-                    "transforms": [{"Resize": {"height": s, "width": s}} for s in scales],
-                    "probs": equal_probs,
-                }
+        }
+        option_b: Dict[str, Any] = {
+            "Sequential": {
+                "transforms": [
+                    {"SmallestMaxSize": {"max_size": [400, 500, 600]}},
+                    {
+                        "OneOf": {
+                            "transforms": [
+                                {"RandomSizedCrop": {"min_max_height": [384, 600], "height": s, "width": s}}
+                                for s in scales
+                            ],
+                            "probs": scale_probs,
+                        }
+                    },
+                ]
             }
-            option_b = {
-                "Sequential": {
-                    "transforms": [
-                        {"SmallestMaxSize": {"max_size": [400, 500, 600]}},
-                        {
-                            "OneOf": {
-                                "transforms": [
-                                    {
-                                        "RandomSizedCrop": {
-                                            "min_max_height": [384, 600],
-                                            "height": s,
-                                            "width": s,
-                                        }
-                                    }
-                                    for s in scales
-                                ],
-                                "probs": equal_probs,
-                            }
-                        },
-                    ]
-                }
-            }
+        }
     else:
         cap = max_size or 1333
         # SmallestMaxSize accepts a list and picks randomly — no OneOf needed
