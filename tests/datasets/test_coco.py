@@ -4,14 +4,15 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-"""Regression tests for sparse COCO category ID remapping in ConvertCoco.
+"""Regression tests for COCO dataset handling.
 
-COCO category IDs are sparse (1–90 with gaps). Without remapping they are used
-directly as tensor indices, causing out-of-bounds errors during training when
-the model has only 80 classes.  ConvertCoco must remap them to contiguous
-0-indexed labels via the ``cat2label`` mapping built from the annotation file.
+Tests cover:
+- Sparse COCO category ID remapping in ``ConvertCoco``
+- ``_load_classes`` hierarchy detection (GitHub #609)
 """
 
+import json
+from pathlib import Path
 from typing import Dict, List
 
 import pytest
@@ -21,6 +22,7 @@ from pycocotools.coco import COCO
 
 from rfdetr.datasets.coco import ConvertCoco
 from rfdetr.datasets.coco_eval import CocoEvaluator
+from rfdetr.detr import RFDETR
 
 # Minimal image shared across all tests
 _IMAGE = Image.new("RGB", (100, 100))
@@ -142,3 +144,56 @@ class TestCocoEvaluatorCategoryResolution:
         }
         results = evaluator.prepare_for_coco_detection(predictions)
         assert [result["category_id"] for result in results] == expected_category_ids
+
+
+def _write_coco_json(path: Path, categories: List[Dict]) -> None:
+    """Write a minimal valid COCO annotation file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = {"images": [], "annotations": [], "categories": categories}
+    path.write_text(json.dumps(data))
+
+
+class TestLoadClassesHierarchy:
+    """Regression tests for ``_load_classes`` supercategory filtering (#609).
+
+    When all categories have ``supercategory: "none"`` (flat COCO datasets),
+    ``_load_classes`` previously returned an empty list. It should only filter
+    when a Roboflow hierarchical export is detected.
+    """
+
+    def test_roboflow_hierarchy_filters_parent(self, tmp_path: Path) -> None:
+        """Roboflow exports include a parent node — only leaf categories kept."""
+        categories = [
+            {"id": 0, "name": "annotations", "supercategory": "none"},
+            {"id": 1, "name": "dog", "supercategory": "annotations"},
+            {"id": 2, "name": "cat", "supercategory": "annotations"},
+        ]
+        _write_coco_json(tmp_path / "train" / "_annotations.coco.json", categories)
+        result = RFDETR._load_classes(str(tmp_path))
+        assert result == ["dog", "cat"]
+
+    def test_flat_none_supercategory_keeps_all(self, tmp_path: Path) -> None:
+        """Flat datasets where every category has supercategory 'none' (#609)."""
+        categories = [
+            {"id": 1, "name": "dog", "supercategory": "none"},
+            {"id": 2, "name": "cat", "supercategory": "none"},
+        ]
+        _write_coco_json(tmp_path / "train" / "_annotations.coco.json", categories)
+        result = RFDETR._load_classes(str(tmp_path))
+        assert result == ["dog", "cat"]
+
+    def test_mixed_supercategories_keeps_all(self, tmp_path: Path) -> None:
+        """Mix of 'none' and non-'none' supercategories that are not category names.
+
+        A simpler ``any(supercategory != 'none')`` detection would incorrectly
+        set has_hierarchy=True here, then filter out 'dog' (supercategory 'none').
+        The set-based check avoids this: 'animal' is not a category name, so no
+        hierarchy is detected and all categories are returned.
+        """
+        categories = [
+            {"id": 1, "name": "dog", "supercategory": "none"},
+            {"id": 2, "name": "cat", "supercategory": "animal"},
+        ]
+        _write_coco_json(tmp_path / "train" / "_annotations.coco.json", categories)
+        result = RFDETR._load_classes(str(tmp_path))
+        assert result == ["dog", "cat"]
