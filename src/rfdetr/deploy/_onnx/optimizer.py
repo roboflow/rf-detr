@@ -41,8 +41,21 @@ from rfdetr.deploy._onnx.symbolic import CustomOpSymbolicRegistry
 
 class OnnxOptimizer:
     def __init__(self, input, severity=None):
-        if gs is None:
-            raise ImportError("ONNX export dependencies are missing. Install with: pip install rfdetr[onnxexport]")
+        missing_deps = []
+        if onnx is None:
+            missing_deps.append("onnx")
+        if shape_inference is None:
+            missing_deps.append("onnx.shape_inference")
+        if gs is None or G_LOGGER is None:
+            missing_deps.append("onnx_graphsurgeon")
+        if fold_constants is None:
+            missing_deps.append("polygraphy.backend.onnx.loader.fold_constants")
+        if missing_deps:
+            missing_str = ", ".join(missing_deps)
+            raise ImportError(
+                f"ONNX export dependencies are missing ({missing_str}). "
+                "Install with: pip install rfdetr[onnxexport]"
+            )
         if severity is None:
             severity = G_LOGGER.INFO
         if isinstance(input, str):
