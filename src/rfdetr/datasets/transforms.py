@@ -17,7 +17,6 @@
 Transforms and data augmentation for both image + bbox.
 """
 
-import random
 from collections.abc import Sequence
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -27,99 +26,11 @@ import PIL
 import torch
 from PIL import Image
 from torchvision.transforms import Normalize as _TVNormalize
-from torchvision.transforms import ToTensor as _TVToTensor
-from torchvision.transforms.v2 import Compose
 
 from rfdetr.util.box_ops import box_xyxy_to_cxcywh
 from rfdetr.util.logger import get_logger
 
 logger = get_logger()
-
-
-class RandomSizeCrop(object):
-    def __init__(self, min_size: int, max_size: int) -> None:
-        self.min_size = min_size
-        self.max_size = max_size
-
-    def __call__(self, img: PIL.Image.Image, target: Dict[str, Any]) -> Tuple[PIL.Image.Image, Dict[str, Any]]:
-        w = random.randint(self.min_size, min(img.width, self.max_size))
-        h = random.randint(self.min_size, min(img.height, self.max_size))
-        return AlbumentationsWrapper(A.RandomCrop(height=h, width=w, p=1.0))(img, target)
-
-
-class RandomResize(object):
-    def __init__(self, sizes: List[int], max_size: Optional[int] = None) -> None:
-        assert isinstance(sizes, (list, tuple))
-        self.sizes = sizes
-        self.max_size = max_size
-
-    @staticmethod
-    def _get_constrained_short_side(image_size: Tuple[int, int], short_side: int, max_size: Optional[int]) -> int:
-        """Compute short side size while respecting max long-side constraint."""
-        if max_size is None:
-            return short_side
-        width, height = image_size
-        min_original_size = float(min(width, height))
-        max_original_size = float(max(width, height))
-        if max_original_size / min_original_size * short_side > max_size:
-            return int(round(max_size * min_original_size / max_original_size))
-        return short_side
-
-    def __call__(
-        self, img: PIL.Image.Image, target: Optional[Dict[str, Any]] = None
-    ) -> Tuple[PIL.Image.Image, Optional[Dict[str, Any]]]:
-        size = random.choice(self.sizes)
-        size = self._get_constrained_short_side(img.size, size, self.max_size)
-        if target is None:
-            image_np = np.array(img)
-            resized = A.SmallestMaxSize(max_size=size, p=1.0)(image=image_np)
-            return Image.fromarray(resized["image"]), None
-        return AlbumentationsWrapper(A.SmallestMaxSize(max_size=size, p=1.0))(img, target)
-
-
-class SquareResize(object):
-    def __init__(self, sizes: List[int]) -> None:
-        assert isinstance(sizes, (list, tuple))
-        self.sizes = sizes
-
-    def __call__(
-        self, img: PIL.Image.Image, target: Optional[Dict[str, Any]] = None
-    ) -> Tuple[PIL.Image.Image, Optional[Dict[str, Any]]]:
-        size = random.choice(self.sizes)
-        if target is None:
-            image_np = np.array(img)
-            resized = A.Resize(height=size, width=size, p=1.0)(image=image_np)
-            return Image.fromarray(resized["image"]), None
-        return AlbumentationsWrapper(A.Resize(height=size, width=size, p=1.0))(img, target)
-
-
-class RandomSelect(object):
-    """
-    Randomly selects between transforms1 and transforms2,
-    with probability p for transforms1 and (1 - p) for transforms2
-    """
-
-    def __init__(self, transforms1: Any, transforms2: Any, p: float = 0.5) -> None:
-        self.transforms1 = transforms1
-        self.transforms2 = transforms2
-        self.p = p
-
-    def __call__(self, img: Any, target: Any) -> Tuple[Any, Any]:
-        if random.random() < self.p:
-            return self.transforms1(img, target)
-        return self.transforms2(img, target)
-
-
-class ToTensor(object):
-    def __init__(self) -> None:
-        self._to_tensor = _TVToTensor()
-
-    def __call__(
-        self,
-        img: Union[PIL.Image.Image, np.ndarray],
-        target: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[torch.Tensor, Optional[Dict[str, Any]]]:
-        return self._to_tensor(img), target
 
 
 class Normalize(object):

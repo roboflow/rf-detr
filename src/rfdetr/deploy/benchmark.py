@@ -196,14 +196,16 @@ def load_image(file_path):
     return Image.open(file_path).convert("RGB")
 
 
-from rfdetr.datasets.transforms import AlbumentationsWrapper, Compose, Normalize, ToTensor
-
-
 def infer_transforms():
+    from torchvision.transforms.v2 import ToDtype, ToImage
+    from torchvision.transforms.v2 import Compose
+    from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize
+
     return Compose(
         [
             *AlbumentationsWrapper.from_config([{"Resize": {"height": 640, "width": 640}}]),
-            ToTensor(),
+            ToImage(),
+            ToDtype(torch.float32, scale=True),
             Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
         ]
     )

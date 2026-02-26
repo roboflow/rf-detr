@@ -29,12 +29,8 @@ import torchvision
 from PIL import Image
 
 from rfdetr.datasets.aug_config import AUG_CONFIG
-from rfdetr.datasets.transforms import (
-    AlbumentationsWrapper,
-    Compose,
-    Normalize,
-    ToTensor,
-)
+from torchvision.transforms.v2 import ToDtype, ToImage, Compose
+from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize
 from rfdetr.util.logger import get_logger
 
 logger = get_logger()
@@ -406,7 +402,8 @@ def make_coco_transforms(
     Raises:
         ValueError: If ``image_set`` is not one of the recognised split names.
     """
-    to_tensor = ToTensor()
+    to_image = ToImage()
+    to_float = ToDtype(torch.float32, scale=True)
     normalize = Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 
     scales = [resolution]
@@ -423,7 +420,7 @@ def make_coco_transforms(
             _build_train_resize_config(scales, square=False, max_size=1333)
         )
         aug_wrappers = AlbumentationsWrapper.from_config(resolved_aug_config)
-        return Compose([*resize_wrappers, *aug_wrappers, to_tensor, normalize])
+        return Compose([*resize_wrappers, *aug_wrappers, to_image, to_float, normalize])
 
     if image_set == "val":
         resize_wrappers = AlbumentationsWrapper.from_config(
@@ -432,10 +429,10 @@ def make_coco_transforms(
                 {"LongestMaxSize": {"max_size": 1333}},
             ]
         )
-        return Compose([*resize_wrappers, to_tensor, normalize])
+        return Compose([*resize_wrappers, to_image, to_float, normalize])
     if image_set == "val_speed":
         resize_wrappers = AlbumentationsWrapper.from_config([{"Resize": {"height": resolution, "width": resolution}}])
-        return Compose([*resize_wrappers, to_tensor, normalize])
+        return Compose([*resize_wrappers, to_image, to_float, normalize])
 
     raise ValueError(f"unknown {image_set}")
 
@@ -483,7 +480,8 @@ def make_coco_transforms_square_div_64(
         A ``Compose`` object containing the composed image transforms appropriate
         for the specified ``image_set``.
     """
-    to_tensor = ToTensor()
+    to_image = ToImage()
+    to_float = ToDtype(torch.float32, scale=True)
     normalize = Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 
     scales = [resolution]
@@ -498,11 +496,11 @@ def make_coco_transforms_square_div_64(
         resolved_aug_config = aug_config if aug_config is not None else AUG_CONFIG
         resize_wrappers = AlbumentationsWrapper.from_config(_build_train_resize_config(scales, square=True))
         aug_wrappers = AlbumentationsWrapper.from_config(resolved_aug_config)
-        return Compose([*resize_wrappers, *aug_wrappers, to_tensor, normalize])
+        return Compose([*resize_wrappers, *aug_wrappers, to_image, to_float, normalize])
 
     if image_set in ("val", "test", "val_speed"):
         resize_wrappers = AlbumentationsWrapper.from_config([{"Resize": {"height": resolution, "width": resolution}}])
-        return Compose([*resize_wrappers, to_tensor, normalize])
+        return Compose([*resize_wrappers, to_image, to_float, normalize])
 
     raise ValueError(f"unknown {image_set}")
 
