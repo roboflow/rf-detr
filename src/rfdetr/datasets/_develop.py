@@ -18,14 +18,15 @@ import time
 import zipfile
 from contextlib import contextmanager, suppress
 from pathlib import Path
-from typing import Any, Generator, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Generator, Optional, Tuple
 from urllib.request import urlretrieve
-
-import torch
 
 from rfdetr.util.logger import get_logger
 
 logger = get_logger()
+
+if TYPE_CHECKING:
+    import torch
 
 _COCO_URLS = {
     "val2017": "http://images.cocodataset.org/zips/val2017.zip",

@@ -378,7 +378,7 @@ def make_coco_transforms(
             ``None``.
 
     Returns:
-        A :class:`~rfdetr.datasets.transforms.Compose` pipeline ready to be passed
+        A :class:`torchvision.transforms.v2.Compose` pipeline ready to be passed
         to :class:`CocoDetection`.
 
     Raises:

@@ -6,7 +6,10 @@
 
 from unittest.mock import Mock
 
-from rfdetr.deploy.benchmark import TRTInference
+import torch
+from PIL import Image
+
+from rfdetr.deploy.benchmark import TRTInference, infer_transforms
 
 
 class TestTRTInference:
@@ -38,3 +41,14 @@ class TestTRTInference:
 
         inference.stream.synchronize.assert_called_once()
         mock_cuda_sync.assert_not_called()
+
+    def test_infer_transforms_accepts_none_target(self) -> None:
+        """Benchmark inference preprocessing should support image-only input."""
+        image = Image.new("RGB", (320, 240))
+
+        image_tensor, target = infer_transforms()(image, None)
+
+        assert isinstance(image_tensor, torch.Tensor)
+        assert image_tensor.shape == (3, 640, 640)
+        assert image_tensor.dtype == torch.float32
+        assert target is None

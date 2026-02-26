@@ -256,9 +256,11 @@ class AlbumentationsWrapper:
     - **Pixel-level transforms** (blur, color adjustments, noise): Bounding boxes and
       masks remain unchanged as only pixel values are modified.
 
-    Detection is based on the transform's class name matching the GEOMETRIC_TRANSFORMS set.
-    For geometric transforms, bbox_params are automatically configured to handle coordinate
-    transformations, clip boxes to image boundaries, and remove invalid boxes.
+    Detection checks the transform class name against ``GEOMETRIC_TRANSFORMS`` and
+    recursively inspects nested container transforms (for example ``OneOf`` and
+    ``Sequential``). For geometric transforms, bbox_params are automatically configured
+    to handle coordinate transformations, clip boxes to image boundaries, and remove
+    invalid boxes.
 
     Args:
         transform: Albumentations transform to apply (e.g., A.HorizontalFlip, A.GaussianBlur).
