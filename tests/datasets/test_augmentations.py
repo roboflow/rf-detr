@@ -720,7 +720,6 @@ class TestAlbumentationsWrapperNestedConfig:
                     },
                     {"GaussianBlur": {"p": 1.0}},
                 ],
-                "p": 1.0,
             }
         }
         transforms = AlbumentationsWrapper.from_config(config)
@@ -754,7 +753,6 @@ class TestAlbumentationsWrapperNestedConfig:
                     {"Rotate": {"limit": 45, "p": 1.0}},
                     {"GaussianBlur": {"p": 1.0}},
                 ],
-                "p": 1.0,
             }
         }
         transforms = AlbumentationsWrapper.from_config(config)
@@ -774,7 +772,6 @@ class TestAlbumentationsWrapperNestedConfig:
                         {"VerticalFlip": {"p": 1.0}},
                         {"Rotate": {"limit": 45, "p": 1.0}},
                     ],
-                    "p": 0.3,
                 }
             },
         ]
@@ -793,7 +790,6 @@ class TestAlbumentationsWrapperNestedConfig:
                     {"GaussianBlur": {"p": 1.0}},
                     {"Blur": {"p": 1.0}},
                 ],
-                "p": 0.3,
             },
             "Rotate": {"limit": 15, "p": 0.3},
         }
@@ -866,6 +862,19 @@ class TestAlbumentationsWrapperNestedConfig:
         """OneOf with no transforms raises ValueError."""
         with pytest.raises(ValueError, match="at least one"):
             _build_albu_transform("OneOf", {"transforms": []})
+
+    def test_sequential_p_in_config_is_ignored(self):
+        """Any p supplied for Sequential in config is ignored; container always fires."""
+        config = {
+            "Sequential": {
+                "transforms": [{"HorizontalFlip": {"p": 1.0}}],
+                "p": 0.0,  # would suppress the container if respected
+            }
+        }
+        transforms = AlbumentationsWrapper.from_config(config)
+        inner = transforms[0].transform.transforms[0]
+        assert isinstance(inner, A.Sequential)
+        assert inner.p == pytest.approx(1.0)
 
     def test_some_of_single_p_still_works(self):
         """SomeOf with a plain p (block probability) still works without probs."""

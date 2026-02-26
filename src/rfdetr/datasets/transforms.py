@@ -150,10 +150,10 @@ def _build_albu_transform(name: str, params: Dict[str, Any]) -> A.BasicTransform
     recursively building the nested ``transforms`` list.  Leaf transforms are
     instantiated directly from the ``albumentations`` namespace.
 
-    For ``OneOf``: the container always fires (``p=1.0`` is forced regardless
-    of any user-supplied ``p``); selection among children is controlled by each
-    child's ``p`` value.  At least one nested transform is required.
-    ``Sequential`` runs all its transforms unconditionally in order.
+    Both ``OneOf`` and ``Sequential`` always fire (``p=1.0`` is forced,
+    ignoring any user-supplied ``p``).  For ``OneOf``, which child is applied
+    is determined by the children's own ``p`` values; at least one nested
+    transform is required.  ``Sequential`` runs all transforms in order.
 
     Args:
         name: Transform name (e.g. ``"HorizontalFlip"``, ``"OneOf"``).
@@ -200,6 +200,9 @@ def _build_albu_transform(name: str, params: Dict[str, Any]) -> A.BasicTransform
                 raise ValueError("'OneOf' requires at least one transform")
             other_params = {k: v for k, v in params.items() if k not in ("transforms", "p")}
             other_params["p"] = 1.0  # OneOf always fires; selection is via per-child p
+        elif name == "Sequential":
+            other_params = {k: v for k, v in params.items() if k not in ("transforms", "p")}
+            other_params["p"] = 1.0  # Sequential always runs all transforms
         else:
             other_params = {k: v for k, v in params.items() if k != "transforms"}
 
@@ -544,7 +547,6 @@ class AlbumentationsWrapper:
                         {"HorizontalFlip": {"p": 1.0}},
                         {"VerticalFlip": {"p": 1.0}},
                     ],
-                    "p": 0.5,
                 },
             }
 
@@ -558,17 +560,14 @@ class AlbumentationsWrapper:
                         {"Rotate": {"limit": 45, "p": 1.0}},
                         {"ShiftScaleRotate": {"p": 1.0}},
                     ],
-                    "p": 0.3,
                 }},
             ]
 
         **Shorthand for container ``transforms`` list** -- when a container key's
         value is a *list* rather than a dict, it is interpreted as the
-        ``transforms`` parameter with default container arguments::
+        ``transforms`` parameter::
 
             {"OneOf": [{"HorizontalFlip": {"p": 1.0}}, {"VerticalFlip": {"p": 1.0}}]}
-            # equivalent to
-            {"OneOf": {"transforms": [{"HorizontalFlip": {"p": 1.0}}, ...], "p": 0.5}}
 
         Args:
             config_dict: Augmentation configuration -- either a ``dict`` mapping
