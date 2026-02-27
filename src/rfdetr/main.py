@@ -382,17 +382,6 @@ class Model:
             )
             logger.info("Min DO = %.7f, Max DO = %.7f", min(schedules["do"]), max(schedules["do"]))
 
-        if args.drop_path > 0:
-            schedules["dp"] = drop_scheduler(
-                args.drop_path,
-                args.epochs,
-                num_training_steps_per_epoch,
-                args.cutoff_epoch,
-                args.drop_mode,
-                args.drop_schedule,
-            )
-            logger.info("Min DP = %.7f, Max DP = %.7f", min(schedules["dp"]), max(schedules["dp"]))
-
         if args.output_dir and is_main_process() and getattr(args, "save_dataset_grids", False):
             from rfdetr.datasets.save_grids import DatasetGridSaver
 
@@ -744,7 +733,6 @@ if __name__ == "__main__":
             "lr_vit_layer_decay",
             "lr_component_decay",
             "dropout",
-            "drop_path",
             "drop_mode",
             "drop_schedule",
             "cutoff_epoch",
@@ -824,9 +812,7 @@ def get_args_parser():
     parser.add_argument("--do_benchmark", action="store_true", help="benchmark the model")
 
     # drop args
-    # dropout and stochastic depth drop rate; set at most one to non-zero
-    parser.add_argument("--dropout", type=float, default=0, help="Drop path rate (default: 0.0)")
-    parser.add_argument("--drop_path", type=float, default=0, help="Drop path rate (default: 0.0)")
+    parser.add_argument("--dropout", type=float, default=0, help="Drop out rate (default: 0.0)")
 
     # early / late dropout and stochastic depth settings
     parser.add_argument(
@@ -1040,7 +1026,6 @@ def populate_args(
     do_benchmark=False,
     # Drop parameters
     dropout=0,
-    drop_path=0,
     drop_mode="standard",
     drop_schedule="constant",
     cutoff_epoch=0,
@@ -1153,7 +1138,6 @@ def populate_args(
         lr_component_decay=lr_component_decay,
         do_benchmark=do_benchmark,
         dropout=dropout,
-        drop_path=drop_path,
         drop_mode=drop_mode,
         drop_schedule=drop_schedule,
         cutoff_epoch=cutoff_epoch,

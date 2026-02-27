@@ -18,6 +18,7 @@ from rfdetr.config import (
     RFDETRSegSmallConfig,
     RFDETRSegXLargeConfig,
     SegmentationTrainConfig,
+    TrainConfig,
 )
 from rfdetr.detr import RFDETR
 
@@ -38,6 +39,14 @@ def sample_model_config() -> dict[str, object]:
         "resolution": 384,
         "positional_encoding_size": 256,
     }
+
+
+class TestTrainConfigDropPath:
+    """Regression tests for #750: drop_path was removed from TrainConfig."""
+
+    def test_drop_path_not_a_field(self) -> None:
+        """TrainConfig must not expose drop_path (it crashes training with DinoV2 backbones)."""
+        assert "drop_path" not in TrainConfig.model_fields
 
 
 class TestModelConfigValidation:

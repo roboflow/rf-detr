@@ -300,17 +300,6 @@ class LWDETR(nn.Module):
         else:
             return [{"pred_logits": a, "pred_boxes": b} for a, b in zip(outputs_class[:-1], outputs_coord[:-1])]
 
-    def update_drop_path(self, drop_path_rate, vit_encoder_num_layers):
-        """ """
-        dp_rates = [x.item() for x in torch.linspace(0, drop_path_rate, vit_encoder_num_layers)]
-        for i in range(vit_encoder_num_layers):
-            if hasattr(self.backbone[0].encoder, "blocks"):  # Not aimv2
-                if hasattr(self.backbone[0].encoder.blocks[i].drop_path, "drop_prob"):
-                    self.backbone[0].encoder.blocks[i].drop_path.drop_prob = dp_rates[i]
-            else:  # aimv2
-                if hasattr(self.backbone[0].encoder.trunk.blocks[i].drop_path, "drop_prob"):
-                    self.backbone[0].encoder.trunk.blocks[i].drop_path.drop_prob = dp_rates[i]
-
     def update_dropout(self, drop_rate):
         for module in self.transformer.modules():
             if isinstance(module, nn.Dropout):
@@ -873,7 +862,6 @@ def build_model(args):
         vit_encoder_num_layers=args.vit_encoder_num_layers,
         pretrained_encoder=args.pretrained_encoder,
         window_block_indexes=args.window_block_indexes,
-        drop_path=args.drop_path,
         out_channels=args.hidden_dim,
         out_feature_indexes=args.out_feature_indexes,
         projector_scale=args.projector_scale,

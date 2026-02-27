@@ -40,7 +40,6 @@ class Backbone(BackboneBase):
         name: str,
         pretrained_encoder: str = None,
         window_block_indexes: list = None,
-        drop_path=0.0,
         out_channels=256,
         out_feature_indexes: list = None,
         projector_scale: list = None,

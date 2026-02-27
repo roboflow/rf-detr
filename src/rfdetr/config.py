@@ -295,7 +295,6 @@ class TrainConfig(BaseModel):
     warmup_epochs: float = 0.0
     lr_vit_layer_decay: float = 0.8
     lr_component_decay: float = 0.7
-    drop_path: float = 0.0
     group_detr: int = 13
     ia_bce_loss: bool = True
     cls_loss_coef: float = 1.0

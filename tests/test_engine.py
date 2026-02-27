@@ -43,9 +43,6 @@ class _DummyTrainModel(nn.Module):
     def forward(self, samples, _targets):
         return {"pred": self.weight * samples.tensors.mean()}
 
-    def update_drop_path(self, _value, _layers):
-        return None
-
     def update_dropout(self, _value):
         return None
 

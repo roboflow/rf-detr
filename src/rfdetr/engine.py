@@ -140,11 +140,6 @@ def train_one_epoch(
         }
         for callback in callbacks["on_train_batch_start"]:
             callback(callback_dict)
-        if "dp" in schedules:
-            if args.distributed:
-                model.module.update_drop_path(schedules["dp"][it], vit_encoder_num_layers)
-            else:
-                model.update_drop_path(schedules["dp"][it], vit_encoder_num_layers)
         if "do" in schedules:
             if args.distributed:
                 model.module.update_dropout(schedules["do"][it])
