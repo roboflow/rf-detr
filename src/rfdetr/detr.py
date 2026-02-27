@@ -151,13 +151,35 @@ class RFDETR:
             with open(coco_path, "r") as f:
                 anns = json.load(f)
             categories = anns["categories"]
-            supercategory_names = {c["name"] for c in categories}
-            has_hierarchy = any(c.get("supercategory", "none") in supercategory_names for c in categories)
-            if has_hierarchy:
-                class_names = [c["name"] for c in categories if c.get("supercategory", "none") != "none"]
-            else:
-                class_names = [c["name"] for c in categories]
-            return class_names
+
+            # Catch possible placeholders for no supercategory
+            placeholders = {"", "none", "null", None}
+
+            # If no meaningful supercategory exists anywhere, treat as flat dataset
+            has_any_sc = any(c.get("supercategory", "none") not in placeholders for c in categories)
+            if not has_any_sc:
+                return [c["name"] for c in categories]
+
+            # Mixed/Hierarchical:
+            # - leaves: categories that have a parent and are not themselves parents
+            # - standalone top-level: categories that have no parent and are not themselves parents
+            parents = {c.get("supercategory") for c in categories if c.get("supercategory", "none") not in placeholders}
+            has_children = {c["name"] for c in categories if c["name"] in parents}
+
+            leaves = [
+                c["name"]
+                for c in categories
+                if c.get("supercategory", "none") not in placeholders and c["name"] not in has_children
+            ]
+            standalone_toplevel = [
+                c["name"]
+                for c in categories
+                if c.get("supercategory", "none") in placeholders and c["name"] not in has_children
+            ]
+
+            class_names = leaves + standalone_toplevel
+            # Safety fallback for pathological inputs
+            return class_names or [c["name"] for c in categories]
 
         # list all YAML files in the folder
         if is_valid_yolo_dataset(dataset_dir):
@@ -173,7 +195,6 @@ class RFDETR:
                 return data["names"]
             else:
                 raise ValueError(f"Found {yaml_path} but it does not contain 'names' field.")
-
         raise FileNotFoundError(
             f"Could not find class names in {dataset_dir}. "
             "Checked for COCO (train/_annotations.coco.json) and YOLO (data.yaml, data.yml) styles."
