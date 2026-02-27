@@ -9,11 +9,12 @@ Thank you for helping to advance RF-DETR! Your participation is invaluable in ev
 3. [Development Environment Setup](#development-environment-setup)
 4. [Test-Driven Development](#test-driven-development)
 5. [Code Quality and Linting](#code-quality-and-linting)
-6. [CLA Signing](#cla-signing)
-7. [Google-Style Docstrings and Mandatory Type Hints](#google-style-docstrings-and-mandatory-type-hints)
-8. [Reporting Bugs](#reporting-bugs)
-9. [Adding a New Model](#adding-a-new-model)
-10. [License](#license)
+6. [Building Documentation](#building-documentation)
+7. [CLA Signing](#cla-signing)
+8. [Google-Style Docstrings and Mandatory Type Hints](#google-style-docstrings-and-mandatory-type-hints)
+9. [Reporting Bugs](#reporting-bugs)
+10. [Adding a New Model](#adding-a-new-model)
+11. [License](#license)
 
 ## How to Contribute
 
@@ -313,6 +314,56 @@ pre-commit run --all-files
 
 **Configuration:** See `.pre-commit-config.yaml` for all hooks and `pyproject.toml` for tool-specific settings (e.g., `[tool.ruff]`).
 
+## Building Documentation
+
+RF-DETR's documentation is built with [MkDocs](https://www.mkdocs.org/) and the [Material for MkDocs](https://squidfunk.github.io/mkdocs-material/) theme. API reference pages are auto-generated from docstrings using [mkdocstrings](https://mkdocstrings.github.io/).
+
+> [!NOTE]
+> Building the full documentation locally requires the `plus` extra (`rfdetr[plus]`), which provides the XLarge and 2XLarge model pages. Without it, the build will fail on those reference pages.
+
+### Install Documentation Dependencies
+
+```bash
+# Full docs build (matches CI — required for XLarge/2XLarge model pages)
+uv pip install -e ".[plus]" --group docs
+
+# Minimal install (skip plus models — XLarge/2XLarge pages will error)
+uv sync --group docs
+```
+
+### Serve Locally with Live Reload
+
+```bash
+uv run mkdocs serve
+```
+
+Open [http://localhost:8000](http://localhost:8000) in your browser. The server watches for file changes and reloads automatically — no restart needed as you edit documentation.
+
+### Build Static Site
+
+```bash
+# Build static documentation site to the site/ directory
+uv run mkdocs build
+```
+
+### Documentation Structure
+
+```
+docs/
+├── index.md              # Home page
+├── learn/                # How-to guides and tutorials
+│   ├── install.md
+│   ├── run/              # Detection and segmentation guides
+│   └── train/            # Training guides (parameters, augmentations, loggers, etc.)
+├── reference/            # Auto-generated API reference (from docstrings)
+├── tutorials/
+└── theme/                # Custom theme overrides
+mkdocs.yaml               # MkDocs configuration and navigation
+```
+
+> [!TIP]
+> When adding a new documentation page, add it to the `nav` section in `mkdocs.yaml` so it appears in the site navigation. Pages that exist in `docs/` but are not listed in `nav` will not be included in the site.
+
 ## CLA Signing
 
 In order to maintain the integrity of our project, every pull request must include a signed Contributor License Agreement (CLA). This confirms that your contributions are properly licensed under our Apache 2.0 License. After opening your pull request, simply add a comment stating:
@@ -365,13 +416,18 @@ Bug reports are vital for continued improvement. When reporting an issue, please
 **General workflow:**
 
 1. **Open an issue** describing the proposed model and approach
-2. **Wait for maintainer feedback** on architecture and integration approach
-3. **Follow test-driven development:**
+    - You may ask maintainers to confirm the expected evaluation protocol (dataset, metrics) before running full benchmarks
+2. **Demonstrate improvement** versus reference models on a standard public dataset (e.g., COCO val2017)
+    - If the change is for an existing RF-DETR model, show a case where the new approach is Pareto optimal (e.g., better accuracy at similar or lower latency/model size) over the existing model
+    - If the change is adding a new functionality, show a case where the new approach is Pareto optimal over comparable third-party models (see the [README model table](../README.md) for reference baselines)
+    - Provide a script for us to reproduce your results
+3. **Wait for maintainer feedback** on architecture and integration approach
+4. **Follow test-driven development:**
     - Write comprehensive tests for the new model
     - Implement the model following approved approach
     - Ensure all tests pass
-4. **Add documentation** as directed by maintainers
-5. **Submit PR** with reference to the discussion issue
+5. **Add documentation** as directed by maintainers
+6. **Submit PR** with reference to the discussion issue
 
 Maintainers will guide you on specific files to modify and patterns to follow based on current project architecture.
 

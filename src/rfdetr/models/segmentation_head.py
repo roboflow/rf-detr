@@ -28,16 +28,10 @@ class DepthwiseConvBlock(nn.Module):
         )
 
     def _depthwise_conv(self, x: torch.Tensor) -> torch.Tensor:
-        try:
+        # Always run this depthwise conv with cuDNN disabled to avoid
+        # backend engine selection failures on some CUDA stacks (e.g. T4/Colab).
+        with torch.backends.cudnn.flags(enabled=False):
             return self.dwconv(x)
-        except RuntimeError as error:
-            message = str(error)
-            # PyTorch/cuDNN can fail kernel selection for some depthwise conv cases
-            # on specific GPUs (e.g. T4). Retry once with cuDNN disabled.
-            if "GET was unable to find an engine to execute this computation" in message:
-                with torch.backends.cudnn.flags(enabled=False):
-                    return self.dwconv(x)
-            raise
 
     def forward(self, x):
         input = x

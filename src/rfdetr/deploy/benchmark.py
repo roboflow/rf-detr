@@ -25,16 +25,23 @@ import time
 from collections import OrderedDict, namedtuple
 
 import numpy as np
-import onnxruntime as nxrun
-import pycuda.driver as cuda
 import supervision as sv
-import tensorrt as trt
 import torch
 import torchvision.transforms.functional as F
 from PIL import Image
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 from tqdm.auto import tqdm
+
+try:
+    import tensorrt as trt
+except ImportError:
+    trt = None
+
+try:
+    import pycuda.driver as cuda
+except ImportError:
+    cuda = None
 
 from rfdetr.util.box_ops import box_xyxy_to_cxcywh
 from rfdetr.util.logger import get_logger
@@ -189,84 +196,17 @@ def load_image(file_path):
     return Image.open(file_path).convert("RGB")
 
 
-class Compose(object):
-    def __init__(self, transforms):
-        self.transforms = transforms
-
-    def __call__(self, image, target):
-        for t in self.transforms:
-            image, target = t(image, target)
-        return image, target
-
-    def __repr__(self):
-        format_string = self.__class__.__name__ + "("
-        for t in self.transforms:
-            format_string += "\n"
-            format_string += "    {0}".format(t)
-        format_string += "\n)"
-        return format_string
-
-
-class ToTensor(object):
-    def __call__(self, img, target):
-        return F.to_tensor(img), target
-
-
-class Normalize(object):
-    def __init__(self, mean, std):
-        self.mean = mean
-        self.std = std
-
-    def __call__(self, image, target=None):
-        image = F.normalize(image, mean=self.mean, std=self.std)
-        if target is None:
-            return image, None
-        target = target.copy()
-        h, w = image.shape[-2:]
-        if "boxes" in target:
-            boxes = target["boxes"]
-            boxes = box_xyxy_to_cxcywh(boxes)
-            boxes = boxes / torch.tensor([w, h, w, h], dtype=torch.float32)
-            target["boxes"] = boxes
-        return image, target
-
-
-class SquareResize(object):
-    def __init__(self, sizes):
-        assert isinstance(sizes, (list, tuple))
-        self.sizes = sizes
-
-    def __call__(self, img, target=None):
-        size = random.choice(self.sizes)
-        rescaled_img = F.resize(img, (size, size))
-        w, h = rescaled_img.size
-        if target is None:
-            return rescaled_img, None
-        ratios = tuple(float(s) / float(s_orig) for s, s_orig in zip(rescaled_img.size, img.size))
-        ratio_width, ratio_height = ratios
-
-        target = target.copy()
-        if "boxes" in target:
-            boxes = target["boxes"]
-            scaled_boxes = boxes * torch.as_tensor([ratio_width, ratio_height, ratio_width, ratio_height])
-            target["boxes"] = scaled_boxes
-
-        if "area" in target:
-            area = target["area"]
-            scaled_area = area * (ratio_width * ratio_height)
-            target["area"] = scaled_area
-
-        target["size"] = torch.tensor([h, w])
-
-        return rescaled_img, target
-
-
 def infer_transforms():
-    normalize = Compose([ToTensor(), Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
+    from torchvision.transforms.v2 import Compose, Resize, ToDtype, ToImage
+
+    from rfdetr.datasets.transforms import Normalize
+
     return Compose(
         [
-            SquareResize([640]),
-            normalize,
+            Resize((640, 640)),
+            ToImage(),
+            ToDtype(torch.float32, scale=True),
+            Normalize(),
         ]
     )
 
@@ -386,6 +326,9 @@ class TRTInference(object):
     def __init__(
         self, engine_path="dino.engine", device="cuda:0", sync_mode: bool = False, max_batch_size=32, verbose=False
     ):
+        if not trt:
+            raise ImportError("TensorRT is not installed. Please install TensorRT to use TRTInference.")
+
         self.engine_path = engine_path
         self.device = device
         self.sync_mode = sync_mode
@@ -402,8 +345,14 @@ class TRTInference(object):
 
         self.input_names = self.get_input_names()
         self.output_names = self.get_output_names()
+        self.stream = None
 
         if not self.sync_mode:
+            if not cuda:
+                raise ImportError(
+                    "pycuda is not installed. Please install `pycuda` to use TRTInference with async mode."
+                )
+
             self.stream = cuda.Stream()
 
         # self.time_profile = TimeProfiler()
@@ -453,16 +402,6 @@ class TRTInference(object):
             if shape[0] == -1:
                 raise NotImplementedError
 
-            if False:
-                if engine.get_tensor_mode(name) == trt.TensorIOMode.INPUT:
-                    data = np.random.randn(*shape).astype(dtype)
-                    ptr = cuda.mem_alloc(data.nbytes)
-                    bindings[name] = Binding(name, dtype, shape, data, ptr)
-                else:
-                    data = cuda.pagelocked_empty(trt.volume(shape), dtype)
-                    ptr = cuda.mem_alloc(data.nbytes)
-                    bindings[name] = Binding(name, dtype, shape, data, ptr)
-
             else:
                 data = torch.from_numpy(np.empty(shape, dtype=dtype)).to(device)
                 bindings[name] = Binding(name, dtype, shape, data, data.data_ptr())
@@ -492,10 +431,15 @@ class TRTInference(object):
     def synchronize(
         self,
     ):
-        if not self.sync_mode and torch.cuda.is_available():
-            torch.cuda.synchronize()
-        elif self.sync_mode:
+        if self.sync_mode:
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            return
+
+        if self.stream is not None:
             self.stream.synchronize()
+        elif torch.cuda.is_available():
+            torch.cuda.synchronize()
 
     def speed(self, blob, n):
         self.time_profile.reset()
@@ -582,6 +526,8 @@ def main(args):
     time_profile = TimeProfiler()
 
     if args.path.endswith(".onnx"):
+        import onnxruntime as nxrun
+
         sess = nxrun.InferenceSession(args.path, providers=["CUDAExecutionProvider"])
         infer_onnx(sess, coco_evaluator, time_profile, prefix, img_list, device=f"cuda:{args.device}", repeats=repeats)
     elif args.path.endswith(".engine"):
