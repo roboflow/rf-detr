@@ -14,16 +14,13 @@ import pytest
 import torch
 from PIL import Image
 from torch.utils.data import DataLoader
+from torchvision.transforms.v2 import Compose
 
 from rfdetr import RFDETRSegNano
 from rfdetr.datasets._develop import _SimpleDataset
 from rfdetr.datasets.aug_config import AUG_CONFIG
 from rfdetr.datasets.coco import make_coco_transforms, make_coco_transforms_square_div_64
-from rfdetr.datasets.transforms import (
-    AlbumentationsWrapper,
-    Compose,
-    ComposeAugmentations,
-)
+from rfdetr.datasets.transforms import AlbumentationsWrapper, _build_albu_transform
 from rfdetr.util.misc import collate_fn
 
 
@@ -102,6 +99,18 @@ class TestAlbumentationsWrapper:
         assert aug_target["boxes"].shape == (2, 4)
         assert aug_target["labels"].shape == (2,)
         assert torch.equal(aug_target["labels"], target["labels"])
+
+    def test_none_target_inference_mode(self):
+        """Test wrapper accepts None target for inference (no ground-truth annotations)."""
+        transform = A.Resize(height=64, width=64)
+        wrapper = AlbumentationsWrapper(transform)
+
+        image = Image.new("RGB", (100, 100))
+        aug_image, aug_target = wrapper(image, None)
+
+        assert isinstance(aug_image, Image.Image)
+        assert aug_image.size == (64, 64)
+        assert aug_target is None
 
     def test_invalid_target_type(self):
         """Test wrapper raises error for invalid target type."""
@@ -597,7 +606,7 @@ class TestAlbumentationsWrapperFromConfig:
 
     def test_invalid_config_type(self):
         """Test that invalid config type raises TypeError."""
-        with pytest.raises(TypeError, match="config_dict must be a dictionary"):
+        with pytest.raises(TypeError, match="config_dict must be a dictionary or list"):
             AlbumentationsWrapper.from_config("invalid")
 
     def test_mixed_geometric_and_pixel_transforms(self):
@@ -642,77 +651,248 @@ class TestAlbumentationsWrapperFromConfig:
         assert transform_names == ["HorizontalFlip"]
 
 
-class TestComposeAugmentations:
-    """Tests for ComposeAugmentations class."""
+class TestAlbumentationsWrapperNestedConfig:
+    """Tests for nested container (OneOf, SomeOf, Sequential) support in from_config."""
 
-    def test_compose_initialization(self):
-        """Test ComposeAugmentations initialization."""
-        transforms = [
-            AlbumentationsWrapper(A.HorizontalFlip(p=1.0)),
-            AlbumentationsWrapper(A.VerticalFlip(p=1.0)),
+    def test_one_of_geometric_detection(self):
+        """OneOf containing a geometric transform is treated as geometric."""
+        wrapper = AlbumentationsWrapper(A.OneOf([A.HorizontalFlip(p=1.0), A.GaussianBlur(p=1.0)]))
+        assert wrapper._is_geometric is True
+
+    def test_one_of_pixel_detection(self):
+        """OneOf containing only pixel transforms is treated as pixel-level."""
+        wrapper = AlbumentationsWrapper(A.OneOf([A.GaussianBlur(p=1.0), A.Blur(p=1.0)]))
+        assert wrapper._is_geometric is False
+
+    def test_sequential_geometric_detection(self):
+        """Sequential containing a geometric transform is treated as geometric."""
+        wrapper = AlbumentationsWrapper(A.Sequential([A.Rotate(limit=45, p=1.0), A.GaussianBlur(p=1.0)]))
+        assert wrapper._is_geometric is True
+
+    def test_from_config_nested_one_of(self):
+        """from_config builds a OneOf wrapper from nested config; p is ignored."""
+        config = {
+            "OneOf": {
+                "transforms": [
+                    {"HorizontalFlip": {"p": 1.0}},
+                    {"VerticalFlip": {"p": 1.0}},
+                ],
+            }
+        }
+        transforms = AlbumentationsWrapper.from_config(config)
+
+        assert len(transforms) == 1
+        wrapper = transforms[0]
+        assert isinstance(wrapper, AlbumentationsWrapper)
+        assert wrapper._is_geometric is True
+        # The inner Albumentations transform should be OneOf
+        inner = wrapper.transform.transforms[0]
+        assert isinstance(inner, A.OneOf)
+        assert len(inner.transforms) == 2
+
+    def test_from_config_nested_one_of_pixel_only(self):
+        """from_config OneOf with only pixel transforms is non-geometric."""
+        config = {
+            "OneOf": {
+                "transforms": [
+                    {"GaussianBlur": {"p": 1.0}},
+                    {"Blur": {"p": 1.0}},
+                ],
+            }
+        }
+        transforms = AlbumentationsWrapper.from_config(config)
+
+        assert len(transforms) == 1
+        assert transforms[0]._is_geometric is False
+
+    def test_from_config_deeply_nested(self):
+        """from_config handles nested containers (OneOf inside Sequential)."""
+        config = {
+            "Sequential": {
+                "transforms": [
+                    {
+                        "OneOf": {
+                            "transforms": [
+                                {"HorizontalFlip": {"p": 1.0}},
+                                {"VerticalFlip": {"p": 1.0}},
+                            ],
+                        }
+                    },
+                    {"GaussianBlur": {"p": 1.0}},
+                ],
+            }
+        }
+        transforms = AlbumentationsWrapper.from_config(config)
+
+        assert len(transforms) == 1
+        assert transforms[0]._is_geometric is True
+        inner = transforms[0].transform.transforms[0]
+        assert isinstance(inner, A.Sequential)
+        assert isinstance(inner.transforms[0], A.OneOf)
+
+    def test_from_config_shorthand_list(self):
+        """from_config supports shorthand {OneOf: [...]} without explicit transforms key."""
+        config = {
+            "OneOf": [
+                {"HorizontalFlip": {"p": 1.0}},
+                {"VerticalFlip": {"p": 1.0}},
+            ]
+        }
+        transforms = AlbumentationsWrapper.from_config(config)
+
+        assert len(transforms) == 1
+        inner = transforms[0].transform.transforms[0]
+        assert isinstance(inner, A.OneOf)
+        assert len(inner.transforms) == 2
+
+    def test_from_config_nested_sequential(self):
+        """from_config builds a Sequential wrapper from nested config."""
+        config = {
+            "Sequential": {
+                "transforms": [
+                    {"Rotate": {"limit": 45, "p": 1.0}},
+                    {"GaussianBlur": {"p": 1.0}},
+                ],
+            }
+        }
+        transforms = AlbumentationsWrapper.from_config(config)
+
+        assert len(transforms) == 1
+        inner = transforms[0].transform.transforms[0]
+        assert isinstance(inner, A.Sequential)
+        assert len(inner.transforms) == 2
+
+    def test_from_config_list_format(self):
+        """from_config accepts list-of-single-key-dicts format."""
+        config = [
+            {"HorizontalFlip": {"p": 0.5}},
+            {
+                "OneOf": {
+                    "transforms": [
+                        {"VerticalFlip": {"p": 1.0}},
+                        {"Rotate": {"limit": 45, "p": 1.0}},
+                    ],
+                }
+            },
         ]
+        transforms = AlbumentationsWrapper.from_config(config)
 
-        composed = ComposeAugmentations(transforms)
+        assert len(transforms) == 2
+        assert isinstance(transforms[0], AlbumentationsWrapper)
+        assert isinstance(transforms[1].transform.transforms[0], A.OneOf)
 
-        assert composed.transforms == transforms
-        assert len(composed.transforms) == 2
-        # Validate transform names in correct order
-        transform_names = [t.transform.transforms[0].__class__.__name__ for t in composed.transforms]
-        assert transform_names == ["HorizontalFlip", "VerticalFlip"]
+    def test_from_config_mixed_flat_and_nested(self):
+        """from_config handles mix of flat and nested transforms."""
+        config = {
+            "HorizontalFlip": {"p": 0.5},
+            "OneOf": {
+                "transforms": [
+                    {"GaussianBlur": {"p": 1.0}},
+                    {"Blur": {"p": 1.0}},
+                ],
+            },
+            "Rotate": {"limit": 15, "p": 0.3},
+        }
+        transforms = AlbumentationsWrapper.from_config(config)
 
-    def test_compose_applies_all_transforms(self):
-        """Test that all transforms are applied sequentially."""
-        transforms = [
-            AlbumentationsWrapper(A.HorizontalFlip(p=1.0)),
-            AlbumentationsWrapper(A.VerticalFlip(p=1.0)),
-        ]
-        composed = ComposeAugmentations(transforms)
+        assert len(transforms) == 3
 
-        image = Image.new("RGB", (100, 100))
+    def test_from_config_one_of_applies_correctly_geometric(self):
+        """OneOf geometric wrapper correctly transforms boxes (always fires)."""
+        config = {
+            "OneOf": {
+                "transforms": [
+                    {"HorizontalFlip": {"p": 1.0}},
+                    {"VerticalFlip": {"p": 0.0}},
+                ],
+            }
+        }
+        transforms = AlbumentationsWrapper.from_config(config)
+        wrapper = transforms[0]
+
+        image = Image.new("RGB", (100, 80))
         target = {
-            "boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0]]),
+            "boxes": torch.tensor([[10.0, 20.0, 50.0, 60.0]]),
             "labels": torch.tensor([1]),
         }
-
-        aug_image, aug_target = composed(image, target)
+        aug_image, aug_target = wrapper(image, target)
 
         assert isinstance(aug_image, Image.Image)
-        # After both flips, both coordinates should be mirrored
-        assert aug_target["boxes"].shape == (1, 4)
+        expected_boxes = torch.tensor([[50.0, 20.0, 90.0, 60.0]])
+        torch.testing.assert_close(aug_target["boxes"], expected_boxes)
 
-    def test_compose_empty_transforms(self):
-        """Test composing with empty transforms list."""
-        composed = ComposeAugmentations([])
+    def test_from_config_one_of_applies_correctly_pixel(self):
+        """OneOf pixel-level wrapper preserves boxes unchanged."""
+        config = {
+            "OneOf": {
+                "transforms": [
+                    {"GaussianBlur": {"blur_limit": 3, "p": 1.0}},
+                    {"Blur": {"blur_limit": 3, "p": 1.0}},
+                ],
+            }
+        }
+        transforms = AlbumentationsWrapper.from_config(config)
+        wrapper = transforms[0]
 
-        image = Image.new("RGB", (100, 100))
+        image = Image.new("RGB", (100, 80))
+        original_boxes = torch.tensor([[10.0, 20.0, 50.0, 60.0]])
         target = {
-            "boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0]]),
+            "boxes": original_boxes.clone(),
             "labels": torch.tensor([1]),
         }
-
-        aug_image, aug_target = composed(image, target)
-
-        # Should return unchanged
-        assert aug_image == image
-        assert torch.equal(aug_target["boxes"], target["boxes"])
-
-    def test_compose_invalid_transforms_type(self):
-        """Test that invalid transforms type raises TypeError."""
-        with pytest.raises(TypeError, match="transforms must be a list"):
-            ComposeAugmentations("invalid")
-
-    def test_compose_single_transform(self):
-        """Test composing with single transform."""
-        transforms = [AlbumentationsWrapper(A.HorizontalFlip(p=1.0))]
-        composed = ComposeAugmentations(transforms)
-
-        image = Image.new("RGB", (100, 100))
-        target = {"boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0]]), "labels": torch.tensor([1])}
-
-        aug_image, aug_target = composed(image, target)
+        aug_image, aug_target = wrapper(image, target)
 
         assert isinstance(aug_image, Image.Image)
-        assert aug_target["boxes"].shape == (1, 4)
+        torch.testing.assert_close(aug_target["boxes"], original_boxes)
+
+    def test_one_of_p_in_config_is_ignored(self):
+        """Any p supplied for OneOf in config is ignored; container always fires."""
+        config = {
+            "OneOf": {
+                "transforms": [{"HorizontalFlip": {"p": 1.0}}],
+                "p": 0.0,  # would suppress the container if respected
+            }
+        }
+        transforms = AlbumentationsWrapper.from_config(config)
+        inner = transforms[0].transform.transforms[0]
+        assert isinstance(inner, A.OneOf)
+        assert inner.p == pytest.approx(1.0)
+
+    def test_one_of_empty_transforms_raises(self):
+        """OneOf with no transforms raises ValueError."""
+        with pytest.raises(ValueError, match="at least one"):
+            _build_albu_transform("OneOf", {"transforms": []})
+
+    def test_sequential_p_in_config_is_ignored(self):
+        """Any p supplied for Sequential in config is ignored; container always fires."""
+        config = {
+            "Sequential": {
+                "transforms": [{"HorizontalFlip": {"p": 1.0}}],
+                "p": 0.0,  # would suppress the container if respected
+            }
+        }
+        transforms = AlbumentationsWrapper.from_config(config)
+        inner = transforms[0].transform.transforms[0]
+        assert isinstance(inner, A.Sequential)
+        assert inner.p == pytest.approx(1.0)
+
+    def test_some_of_single_p_still_works(self):
+        """SomeOf with a plain p (block probability) still works without probs."""
+        config = {
+            "SomeOf": {
+                "transforms": [
+                    {"HorizontalFlip": {}},
+                    {"VerticalFlip": {}},
+                ],
+                "n": 1,
+                "p": 0.5,
+            }
+        }
+        transforms = AlbumentationsWrapper.from_config(config)
+        inner = transforms[0].transform.transforms[0]
+
+        assert isinstance(inner, A.SomeOf)
+        assert inner.p == pytest.approx(0.5)
 
 
 class TestIntegration:
@@ -734,7 +914,7 @@ class TestIntegration:
         assert transform_names == list(config.keys())
 
         # Compose them
-        composed = ComposeAugmentations(transforms)
+        composed = Compose(transforms)
 
         # Apply to data
         image = Image.new("RGB", (100, 100))
@@ -762,7 +942,7 @@ class TestIntegration:
         transform_names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
         assert transform_names == list(config.keys())
 
-        composed = ComposeAugmentations(transforms)
+        composed = Compose(transforms)
 
         image = Image.new("RGB", (100, 100))
         target = {"labels": torch.tensor([1])}
@@ -786,7 +966,7 @@ class TestIntegration:
         transform_names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
         assert transform_names == list(aug_config.keys())
 
-        composed = ComposeAugmentations(transforms)
+        composed = Compose(transforms)
 
         image = Image.new("RGB", (640, 480))
         target = {
@@ -809,7 +989,7 @@ class TestIntegration:
         }
 
         transforms = AlbumentationsWrapper.from_config(config)
-        composed = ComposeAugmentations(transforms)
+        composed = Compose(transforms)
 
         height, width = 100, 100
         image = Image.new("RGB", (width, height))
@@ -840,7 +1020,7 @@ class TestIntegration:
         }
 
         transforms = AlbumentationsWrapper.from_config(config)
-        composed = ComposeAugmentations(transforms)
+        composed = Compose(transforms)
 
         height, width = 100, 100
         image = Image.new("RGB", (width, height))
@@ -869,7 +1049,7 @@ class TestIntegration:
         }
 
         transforms = AlbumentationsWrapper.from_config(config)
-        composed = ComposeAugmentations(transforms)
+        composed = Compose(transforms)
 
         height, width = 100, 100
         image = Image.new("RGB", (width, height))
@@ -1107,10 +1287,13 @@ class TestMakeCocoTransformsAugConfig:
     def test_default_none_uses_aug_config(self, make_transforms):
         """Omitting aug_config uses the module-level AUG_CONFIG default (HorizontalFlip)."""
         pipeline = make_transforms("train", 640)
-        aug_step = next(t for t in pipeline.transforms if isinstance(t, ComposeAugmentations))
+        # Train pipeline: [resize_wrapper, *aug_wrappers, normalize]
+        # First AlbumentationsWrapper is the resize OneOf; remaining are from aug_config.
+        wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
+        aug_wrappers = wrappers[1:]
 
         expected_names = list(AUG_CONFIG.keys())
-        actual_names = [w.transform.transforms[0].__class__.__name__ for w in aug_step.transforms]
+        actual_names = [w.transform.transforms[0].__class__.__name__ for w in aug_wrappers]
         assert actual_names == expected_names
 
     @pytest.mark.parametrize(
@@ -1121,11 +1304,12 @@ class TestMakeCocoTransformsAugConfig:
         ],
     )
     def test_empty_dict_disables_augmentations(self, make_transforms):
-        """aug_config={} produces a ComposeAugmentations with no transforms."""
+        """aug_config={} means no aug wrappers beyond the resize wrapper."""
         pipeline = make_transforms("train", 640, aug_config={})
-        aug_step = next(t for t in pipeline.transforms if isinstance(t, ComposeAugmentations))
+        wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
+        aug_wrappers = wrappers[1:]  # skip resize wrapper
 
-        assert aug_step.transforms == []
+        assert aug_wrappers == []
 
     @pytest.mark.parametrize(
         "make_transforms",
@@ -1138,10 +1322,27 @@ class TestMakeCocoTransformsAugConfig:
         """aug_config with a custom dict wires up exactly those transforms."""
         custom = {"HorizontalFlip": {"p": 1.0}}
         pipeline = make_transforms("train", 640, aug_config=custom)
-        aug_step = next(t for t in pipeline.transforms if isinstance(t, ComposeAugmentations))
+        wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
+        aug_wrappers = wrappers[1:]  # skip resize wrapper
 
-        assert len(aug_step.transforms) == 1
-        assert aug_step.transforms[0].transform.transforms[0].__class__.__name__ == "HorizontalFlip"
+        assert len(aug_wrappers) == 1
+        assert aug_wrappers[0].transform.transforms[0].__class__.__name__ == "HorizontalFlip"
+
+    @pytest.mark.parametrize(
+        "make_transforms,expected_resize_wrappers",
+        [
+            # make_coco_transforms val: SmallestMaxSize + LongestMaxSize = 2 wrappers
+            pytest.param(make_coco_transforms, 2, id="make_coco_transforms"),
+            # make_coco_transforms_square_div_64 val: Resize = 1 wrapper
+            pytest.param(make_coco_transforms_square_div_64, 1, id="make_coco_transforms_square_div_64"),
+        ],
+    )
+    def test_aug_config_not_applied_on_val(self, make_transforms, expected_resize_wrappers):
+        """aug_config is ignored for val splits — only resize wrappers are present."""
+        pipeline = make_transforms("val", 640, aug_config={"HorizontalFlip": {"p": 1.0}})
+        wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
+
+        assert len(wrappers) == expected_resize_wrappers
 
     @pytest.mark.parametrize(
         "make_transforms",
@@ -1150,9 +1351,16 @@ class TestMakeCocoTransformsAugConfig:
             make_coco_transforms_square_div_64,
         ],
     )
-    def test_aug_config_not_applied_on_val(self, make_transforms):
-        """aug_config is ignored for val splits — no ComposeAugmentations in the pipeline."""
-        pipeline = make_transforms("val", 640, aug_config={"HorizontalFlip": {"p": 1.0}})
-        aug_steps = [t for t in pipeline.transforms if isinstance(t, ComposeAugmentations)]
+    def test_aug_config_not_applied_on_val_speed(self, make_transforms):
+        """aug_config is ignored for val_speed splits — only the resize wrapper is present."""
+        pipeline = make_transforms("val_speed", 640, aug_config={"HorizontalFlip": {"p": 1.0}})
+        wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
 
-        assert aug_steps == []
+        assert len(wrappers) == 1
+
+    def test_aug_config_not_applied_on_test(self):
+        """aug_config is ignored for the test split in make_coco_transforms_square_div_64."""
+        pipeline = make_coco_transforms_square_div_64("test", 640, aug_config={"HorizontalFlip": {"p": 1.0}})
+        wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
+
+        assert len(wrappers) == 1

@@ -17,7 +17,6 @@
 Transforms and data augmentation for both image + bbox.
 """
 
-import random
 from collections.abc import Sequence
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -27,7 +26,6 @@ import PIL
 import torch
 from PIL import Image
 from torchvision.transforms import Normalize as _TVNormalize
-from torchvision.transforms import ToTensor as _TVToTensor
 
 from rfdetr.util.box_ops import box_xyxy_to_cxcywh
 from rfdetr.util.logger import get_logger
@@ -35,94 +33,12 @@ from rfdetr.util.logger import get_logger
 logger = get_logger()
 
 
-class RandomSizeCrop(object):
-    def __init__(self, min_size: int, max_size: int) -> None:
-        self.min_size = min_size
-        self.max_size = max_size
-
-    def __call__(self, img: PIL.Image.Image, target: Dict[str, Any]) -> Tuple[PIL.Image.Image, Dict[str, Any]]:
-        w = random.randint(self.min_size, min(img.width, self.max_size))
-        h = random.randint(self.min_size, min(img.height, self.max_size))
-        return AlbumentationsWrapper(A.RandomCrop(height=h, width=w, p=1.0))(img, target)
-
-
-class RandomResize(object):
-    def __init__(self, sizes: List[int], max_size: Optional[int] = None) -> None:
-        assert isinstance(sizes, (list, tuple))
-        self.sizes = sizes
-        self.max_size = max_size
-
-    @staticmethod
-    def _get_constrained_short_side(image_size: Tuple[int, int], short_side: int, max_size: Optional[int]) -> int:
-        """Compute short side size while respecting max long-side constraint."""
-        if max_size is None:
-            return short_side
-        width, height = image_size
-        min_original_size = float(min(width, height))
-        max_original_size = float(max(width, height))
-        if max_original_size / min_original_size * short_side > max_size:
-            return int(round(max_size * min_original_size / max_original_size))
-        return short_side
-
-    def __call__(
-        self, img: PIL.Image.Image, target: Optional[Dict[str, Any]] = None
-    ) -> Tuple[PIL.Image.Image, Optional[Dict[str, Any]]]:
-        size = random.choice(self.sizes)
-        size = self._get_constrained_short_side(img.size, size, self.max_size)
-        if target is None:
-            image_np = np.array(img)
-            resized = A.SmallestMaxSize(max_size=size, p=1.0)(image=image_np)
-            return Image.fromarray(resized["image"]), None
-        return AlbumentationsWrapper(A.SmallestMaxSize(max_size=size, p=1.0))(img, target)
-
-
-class SquareResize(object):
-    def __init__(self, sizes: List[int]) -> None:
-        assert isinstance(sizes, (list, tuple))
-        self.sizes = sizes
-
-    def __call__(
-        self, img: PIL.Image.Image, target: Optional[Dict[str, Any]] = None
-    ) -> Tuple[PIL.Image.Image, Optional[Dict[str, Any]]]:
-        size = random.choice(self.sizes)
-        if target is None:
-            image_np = np.array(img)
-            resized = A.Resize(height=size, width=size, p=1.0)(image=image_np)
-            return Image.fromarray(resized["image"]), None
-        return AlbumentationsWrapper(A.Resize(height=size, width=size, p=1.0))(img, target)
-
-
-class RandomSelect(object):
-    """
-    Randomly selects between transforms1 and transforms2,
-    with probability p for transforms1 and (1 - p) for transforms2
-    """
-
-    def __init__(self, transforms1: Any, transforms2: Any, p: float = 0.5) -> None:
-        self.transforms1 = transforms1
-        self.transforms2 = transforms2
-        self.p = p
-
-    def __call__(self, img: Any, target: Any) -> Tuple[Any, Any]:
-        if random.random() < self.p:
-            return self.transforms1(img, target)
-        return self.transforms2(img, target)
-
-
-class ToTensor(object):
-    def __init__(self) -> None:
-        self._to_tensor = _TVToTensor()
-
-    def __call__(
-        self,
-        img: Union[PIL.Image.Image, np.ndarray],
-        target: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[torch.Tensor, Optional[Dict[str, Any]]]:
-        return self._to_tensor(img), target
-
-
 class Normalize(object):
-    def __init__(self, mean: List[float], std: List[float]) -> None:
+    def __init__(
+        self,
+        mean: Tuple[float, ...] = (0.485, 0.456, 0.406),
+        std: Tuple[float, ...] = (0.229, 0.224, 0.225),
+    ) -> None:
         self._normalize = _TVNormalize(mean, std)
 
     def __call__(
@@ -139,24 +55,6 @@ class Normalize(object):
             boxes = boxes / torch.tensor([w, h, w, h], dtype=torch.float32)
             target["boxes"] = boxes
         return image, target
-
-
-class Compose(object):
-    def __init__(self, transforms: List[Any]) -> None:
-        self.transforms = transforms
-
-    def __call__(self, image: Any, target: Any) -> Tuple[Any, Any]:
-        for t in self.transforms:
-            image, target = t(image, target)
-        return image, target
-
-    def __repr__(self) -> str:
-        format_string = self.__class__.__name__ + "("
-        for t in self.transforms:
-            format_string += "\n"
-            format_string += "    {0}".format(t)
-        format_string += "\n)"
-        return format_string
 
 
 # Albumentations wrapper for RF-DETR
@@ -211,6 +109,113 @@ GEOMETRIC_TRANSFORMS = {
     "SquareSymmetry",
 }
 
+# Albumentations container/meta transforms that hold nested transforms
+ALBUMENTATIONS_CONTAINERS = frozenset({"OneOf", "SomeOf", "Sequential"})
+
+
+def _is_geometric_transform(transform: A.BasicTransform) -> bool:
+    """Return True if transform (or any nested transform) affects spatial coordinates.
+
+    For container transforms such as ``A.OneOf`` or ``A.Sequential``, returns
+    ``True`` when *any* nested transform is geometric so that bounding-box
+    handling is enabled for the whole container.
+
+    Args:
+        transform: Albumentations transform to inspect.
+
+    Returns:
+        ``True`` if the transform modifies spatial layout; ``False`` otherwise.
+
+    Examples:
+        >>> import albumentations as A
+        >>> _is_geometric_transform(A.HorizontalFlip())
+        True
+        >>> _is_geometric_transform(A.GaussianBlur())
+        False
+        >>> _is_geometric_transform(A.OneOf([A.HorizontalFlip(), A.GaussianBlur()]))
+        True
+    """
+    if type(transform).__name__ in GEOMETRIC_TRANSFORMS:
+        return True
+    # Recursively check nested transforms in container transforms
+    if hasattr(transform, "transforms"):
+        return any(_is_geometric_transform(t) for t in transform.transforms)
+    return False
+
+
+def _build_albu_transform(name: str, params: Dict[str, Any]) -> A.BasicTransform:
+    """Build a single Albumentations transform from its name and parameter dict.
+
+    Handles container transforms (``OneOf``, ``SomeOf``, ``Sequential``) by
+    recursively building the nested ``transforms`` list.  Leaf transforms are
+    instantiated directly from the ``albumentations`` namespace.
+
+    Both ``OneOf`` and ``Sequential`` always fire (``p=1.0`` is forced,
+    ignoring any user-supplied ``p``).  For ``OneOf``, which child is applied
+    is determined by the children's own ``p`` values; at least one nested
+    transform is required.  ``Sequential`` runs all transforms in order.
+
+    Args:
+        name: Transform name (e.g. ``"HorizontalFlip"``, ``"OneOf"``).
+        params: Parameter dictionary for the transform.  For container transforms
+            the dict must contain a ``"transforms"`` key whose value is a list of
+            single-key dicts ``{name: params}``.
+
+    Returns:
+        Instantiated Albumentations transform.
+
+    Raises:
+        ValueError: If ``name`` is unknown or ``params`` is malformed.
+
+    Examples:
+        >>> import albumentations as A
+        >>> t = _build_albu_transform("HorizontalFlip", {"p": 0.5})
+        >>> isinstance(t, A.HorizontalFlip)
+        True
+        >>> container = _build_albu_transform(
+        ...     "OneOf",
+        ...     {"transforms": [{"HorizontalFlip": {"p": 1.0}}, {"VerticalFlip": {"p": 1.0}}]},
+        ... )
+        >>> isinstance(container, A.OneOf)
+        True
+    """
+    if name in ALBUMENTATIONS_CONTAINERS:
+        raw_nested = params.get("transforms", [])
+        if not isinstance(raw_nested, list):
+            raise ValueError(f"'{name}.transforms' must be a list, got {type(raw_nested).__name__}")
+        nested_transforms: List[A.BasicTransform] = []
+        for entry in raw_nested:
+            if not isinstance(entry, dict) or len(entry) != 1:
+                raise ValueError(f"Each nested transform entry must be a single-key dict, got {entry!r}")
+            nested_name, nested_params = next(iter(entry.items()))
+            if not isinstance(nested_params, dict):
+                raise ValueError(
+                    f"Parameters for nested transform '{nested_name}' must be a dict, "
+                    f"got {type(nested_params).__name__}"
+                )
+            nested_transforms.append(_build_albu_transform(nested_name, nested_params))
+
+        if name == "OneOf":
+            if not nested_transforms:
+                raise ValueError("'OneOf' requires at least one transform")
+            other_params = {k: v for k, v in params.items() if k not in ("transforms", "p")}
+            other_params["p"] = 1.0  # OneOf always fires; selection is via per-child p
+        elif name == "Sequential":
+            other_params = {k: v for k, v in params.items() if k not in ("transforms", "p")}
+            other_params["p"] = 1.0  # Sequential always runs all transforms
+        else:
+            other_params = {k: v for k, v in params.items() if k != "transforms"}
+
+        container_cls = getattr(A, name, None)
+        if container_cls is None:
+            raise ValueError(f"Unknown Albumentations container: {name!r}")
+        return container_cls(transforms=nested_transforms, **other_params)
+
+    aug_cls = getattr(A, name, None)
+    if aug_cls is None:
+        raise ValueError(f"Unknown Albumentations transform: {name!r}")
+    return aug_cls(**params)
+
 
 class AlbumentationsWrapper:
     """Wrapper to apply Albumentations transforms to (image, target) tuples.
@@ -225,9 +230,11 @@ class AlbumentationsWrapper:
     - **Pixel-level transforms** (blur, color adjustments, noise): Bounding boxes and
       masks remain unchanged as only pixel values are modified.
 
-    Detection is based on the transform's class name matching the GEOMETRIC_TRANSFORMS set.
-    For geometric transforms, bbox_params are automatically configured to handle coordinate
-    transformations, clip boxes to image boundaries, and remove invalid boxes.
+    Detection checks the transform class name against ``GEOMETRIC_TRANSFORMS`` and
+    recursively inspects nested container transforms (for example ``OneOf`` and
+    ``Sequential``). For geometric transforms, bbox_params are automatically configured
+    to handle coordinate transformations, clip boxes to image boundaries, and remove
+    invalid boxes.
 
     Args:
         transform: Albumentations transform to apply (e.g., A.HorizontalFlip, A.GaussianBlur).
@@ -250,9 +257,8 @@ class AlbumentationsWrapper:
     """
 
     def __init__(self, transform: A.BasicTransform) -> None:
-        # Auto-detect if transform is geometric based on its class name
-        transform_name = transform.__class__.__name__
-        self._is_geometric = transform_name in GEOMETRIC_TRANSFORMS
+        # Auto-detect if transform is geometric (recursively for containers)
+        self._is_geometric = _is_geometric_transform(transform)
 
         if self._is_geometric:
             # Wrap geometric transform with bbox handling capabilities
@@ -431,7 +437,9 @@ class AlbumentationsWrapper:
                 target_out["masks"] = torch.as_tensor(np.stack(masks_aug), dtype=torch.bool)
         return image_out, target_out
 
-    def __call__(self, image: PIL.Image.Image, target: Dict[str, Any]) -> Tuple[PIL.Image.Image, Dict[str, Any]]:
+    def __call__(
+        self, image: PIL.Image.Image, target: Optional[Dict[str, Any]]
+    ) -> Tuple[PIL.Image.Image, Optional[Dict[str, Any]]]:
         """Apply the Albumentations transform to image and target.
 
         This method handles the data format conversion between RF-DETR and Albumentations:
@@ -454,14 +462,16 @@ class AlbumentationsWrapper:
                 - 'masks' (optional): PyTorch tensor of shape (N, H, W) with instance segmentation masks.
                   For geometric transforms, masks are transformed alongside boxes to maintain alignment.
                   Requires 'boxes' to be present; a warning is logged if masks exist without boxes.
+                Pass ``None`` for inference scenarios where no ground-truth annotations are available.
 
         Returns:
             Tuple of (transformed_image, transformed_target):
                 - transformed_image: PIL Image after augmentation
-                - transformed_target: Dictionary with augmented boxes and labels
+                - transformed_target: Dictionary with augmented boxes and labels, or ``None`` if
+                  ``target`` was ``None``.
 
         Raises:
-            TypeError: If target is not a dictionary.
+            TypeError: If target is not a dictionary (and not None).
             KeyError: If target doesn't contain 'labels' key.
             ValueError: If boxes don't have shape (N, 4).
 
@@ -471,6 +481,16 @@ class AlbumentationsWrapper:
             >>> target = {"boxes": torch.tensor([[10, 20, 90, 80]]), "labels": torch.tensor([1])}
             >>> aug_image, aug_target = wrapper(image, target)
         """
+        # === Inference mode: no ground-truth annotations ===
+        if target is None:
+            image_np = np.array(image)
+            if self._is_geometric:
+                # Geometric A.Compose requires label_fields even when there are no boxes
+                augmented = self.transform(image=image_np, bboxes=[], category_ids=[], idxs=[])
+            else:
+                augmented = self.transform(image=image_np)
+            return Image.fromarray(augmented["image"]), None
+
         # === Input Validation ===
         if not isinstance(target, dict):
             raise TypeError(f"target must be a dictionary, got {type(target)}")
@@ -507,23 +527,58 @@ class AlbumentationsWrapper:
         return image_out, target_out
 
     @staticmethod
-    def from_config(config_dict: Dict[str, Dict[str, Any]]) -> List["AlbumentationsWrapper"]:
-        """Build list of AlbumentationsWrapper instances from configuration dictionary.
+    def from_config(
+        config_dict: Union[Dict[str, Any], List[Dict[str, Any]]],
+    ) -> List["AlbumentationsWrapper"]:
+        """Build a list of :class:`AlbumentationsWrapper` instances from a config.
 
-        Convenient way to create multiple augmentation wrappers from a config dictionary.
-        Each transform is automatically wrapped with appropriate bbox handling based on
-        whether it's geometric or pixel-level.
+        Supports both a flat dictionary format (backward-compatible) and a list
+        format that allows duplicate transform names and explicit ordering.
+        Container transforms (``OneOf``, ``SomeOf``, ``Sequential``) may be
+        nested arbitrarily deep.
+
+        **Dict format** (existing, backward-compatible)::
+
+            config = {
+                "HorizontalFlip": {"p": 0.5},
+                "Rotate": {"limit": 45, "p": 0.3},
+                "OneOf": {
+                    "transforms": [
+                        {"HorizontalFlip": {"p": 1.0}},
+                        {"VerticalFlip": {"p": 1.0}},
+                    ],
+                },
+            }
+
+        **List format** (new; useful when you need two entries with the same name
+        or when explicit order matters)::
+
+            config = [
+                {"HorizontalFlip": {"p": 0.5}},
+                {"OneOf": {
+                    "transforms": [
+                        {"Rotate": {"limit": 45, "p": 1.0}},
+                        {"ShiftScaleRotate": {"p": 1.0}},
+                    ],
+                }},
+            ]
+
+        **Shorthand for container ``transforms`` list** -- when a container key's
+        value is a *list* rather than a dict, it is interpreted as the
+        ``transforms`` parameter::
+
+            {"OneOf": [{"HorizontalFlip": {"p": 1.0}}, {"VerticalFlip": {"p": 1.0}}]}
 
         Args:
-            config_dict: Dictionary mapping transform names to parameters.
-                Keys: Albumentations transform class names (e.g., "HorizontalFlip").
-                Values: Parameter dictionaries to pass to the transform.
+            config_dict: Augmentation configuration -- either a ``dict`` mapping
+                transform names to parameter dicts, or a ``list`` of single-key
+                dicts ``{name: params}``.
 
         Returns:
-            List of AlbumentationsWrapper instances in the same order as config dict.
+            List of :class:`AlbumentationsWrapper` instances in config order.
 
         Raises:
-            TypeError: If config_dict is not a dictionary.
+            TypeError: If *config_dict* is neither a ``dict`` nor a ``list``.
 
         Examples:
             >>> config = {
@@ -538,78 +593,50 @@ class AlbumentationsWrapper:
         Note:
             Invalid transforms or invalid parameters are logged and skipped gracefully.
         """
-        if not isinstance(config_dict, dict):
-            raise TypeError(f"config_dict must be a dictionary, got {type(config_dict)}")
+        if isinstance(config_dict, list):
+            entries = config_dict
+        elif isinstance(config_dict, dict):
+            entries = [{k: v} for k, v in config_dict.items()]
+        else:
+            raise TypeError(f"config_dict must be a dictionary or list, got {type(config_dict)}")
 
-        if not config_dict:
+        if not entries:
             logger.warning("Empty augmentation config provided, no transforms will be applied")
             return []
 
         transforms = []
-        for aug_name, params in config_dict.items():
-            if not isinstance(params, dict):
-                logger.warning(f"Skipping {aug_name}: parameters must be a dictionary, got {type(params)}")
+        for entry in entries:
+            if not isinstance(entry, dict) or len(entry) != 1:
+                logger.warning(
+                    "Skipping invalid config entry (must be a single-key dict): %r",
+                    entry,
+                )
                 continue
+            aug_name, params = next(iter(entry.items()))
 
-            base_aug = getattr(A, aug_name, None)
-            if base_aug is None:
-                logger.warning(f"Unknown Albumentations transform: {aug_name}. Skipping.")
+            # Shorthand: container value is a list -> treat as {"transforms": [...]}
+            if isinstance(params, list) and aug_name in ALBUMENTATIONS_CONTAINERS:
+                params = {"transforms": params}
+
+            if not isinstance(params, dict):
+                logger.warning(
+                    "Skipping %s: parameters must be a dictionary, got %s",
+                    aug_name,
+                    type(params).__name__,
+                )
                 continue
 
             try:
-                # AlbumentationsWrapper will auto-detect if transform is geometric
-                # based on the transform class name matching GEOMETRIC_TRANSFORMS
-                transforms.append(AlbumentationsWrapper(base_aug(**params)))
+                transform = _build_albu_transform(aug_name, params)
+                transforms.append(AlbumentationsWrapper(transform))
             except Exception as e:
-                logger.warning(f"Failed to initialize {aug_name} with params {params}: {e}. Skipping.")
+                logger.warning(
+                    "Failed to initialize %s with params %r: %s. Skipping.",
+                    aug_name,
+                    params,
+                    e,
+                )
                 continue
 
-        logger.info(f"Built {len(transforms)} Albumentations transforms from config")
+        logger.info("Built %d Albumentations transforms from config", len(transforms))
         return transforms
-
-
-class ComposeAugmentations:
-    """Compose multiple augmentation transforms into a single callable.
-
-    This class sequentially applies a list of transforms to an (image, target) pair,
-    following the same interface as torchvision.transforms.Compose but supporting
-    the RF-DETR target dictionary format.
-
-    Args:
-        transforms: List of transforms to apply sequentially.
-
-    Examples:
-        >>> from rfdetr.datasets.aug_config import AUG_CONFIG
-        >>> aug_transforms = AlbumentationsWrapper.from_config(AUG_CONFIG)
-        >>> composed = ComposeAugmentations(aug_transforms)
-        >>> image = Image.new("RGB", (100, 100))
-        >>> target = {"boxes": torch.zeros((0, 4)), "labels": torch.zeros(0, dtype=torch.long)}
-        >>> image, target = composed(image, target)
-    """
-
-    def __init__(self, transforms: List[Any]) -> None:
-        if not isinstance(transforms, list):
-            raise TypeError(f"transforms must be a list, got {type(transforms)}")
-        self.transforms = transforms
-
-    def __call__(self, image: PIL.Image.Image, target: Dict[str, Any]) -> Tuple[PIL.Image.Image, Dict[str, Any]]:
-        """Apply all transforms sequentially.
-
-        Args:
-            image: Input PIL Image.
-            target: Target dictionary with labels and optionally boxes.
-
-        Returns:
-            Tuple of transformed image and target.
-        """
-        for t in self.transforms:
-            image, target = t(image, target)
-        return image, target
-
-    def __repr__(self) -> str:
-        """Return a readable representation of the composed augmentations."""
-        format_string = f"{self.__class__.__name__}(\n"
-        for t in self.transforms:
-            format_string += f"\t{t!r}\n"
-        format_string += ")"
-        return format_string

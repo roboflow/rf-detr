@@ -196,84 +196,17 @@ def load_image(file_path):
     return Image.open(file_path).convert("RGB")
 
 
-class Compose(object):
-    def __init__(self, transforms):
-        self.transforms = transforms
-
-    def __call__(self, image, target):
-        for t in self.transforms:
-            image, target = t(image, target)
-        return image, target
-
-    def __repr__(self):
-        format_string = self.__class__.__name__ + "("
-        for t in self.transforms:
-            format_string += "\n"
-            format_string += "    {0}".format(t)
-        format_string += "\n)"
-        return format_string
-
-
-class ToTensor(object):
-    def __call__(self, img, target):
-        return F.to_tensor(img), target
-
-
-class Normalize(object):
-    def __init__(self, mean, std):
-        self.mean = mean
-        self.std = std
-
-    def __call__(self, image, target=None):
-        image = F.normalize(image, mean=self.mean, std=self.std)
-        if target is None:
-            return image, None
-        target = target.copy()
-        h, w = image.shape[-2:]
-        if "boxes" in target:
-            boxes = target["boxes"]
-            boxes = box_xyxy_to_cxcywh(boxes)
-            boxes = boxes / torch.tensor([w, h, w, h], dtype=torch.float32)
-            target["boxes"] = boxes
-        return image, target
-
-
-class SquareResize(object):
-    def __init__(self, sizes):
-        assert isinstance(sizes, (list, tuple))
-        self.sizes = sizes
-
-    def __call__(self, img, target=None):
-        size = random.choice(self.sizes)
-        rescaled_img = F.resize(img, (size, size))
-        w, h = rescaled_img.size
-        if target is None:
-            return rescaled_img, None
-        ratios = tuple(float(s) / float(s_orig) for s, s_orig in zip(rescaled_img.size, img.size))
-        ratio_width, ratio_height = ratios
-
-        target = target.copy()
-        if "boxes" in target:
-            boxes = target["boxes"]
-            scaled_boxes = boxes * torch.as_tensor([ratio_width, ratio_height, ratio_width, ratio_height])
-            target["boxes"] = scaled_boxes
-
-        if "area" in target:
-            area = target["area"]
-            scaled_area = area * (ratio_width * ratio_height)
-            target["area"] = scaled_area
-
-        target["size"] = torch.tensor([h, w])
-
-        return rescaled_img, target
-
-
 def infer_transforms():
-    normalize = Compose([ToTensor(), Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
+    from torchvision.transforms.v2 import Compose, Resize, ToDtype, ToImage
+
+    from rfdetr.datasets.transforms import Normalize
+
     return Compose(
         [
-            SquareResize([640]),
-            normalize,
+            Resize((640, 640)),
+            ToImage(),
+            ToDtype(torch.float32, scale=True),
+            Normalize(),
         ]
     )
 
