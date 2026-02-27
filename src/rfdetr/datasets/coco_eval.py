@@ -89,9 +89,9 @@ class CocoEvaluator(object):
         if self._prefer_raw_category_ids:
             return True
 
-        # If any label is a COCO category ID but not a valid contiguous index,
-        # treat the whole run as raw-ID output to avoid corrupting eval categories.
-        uses_raw_ids = any((label in self.cat_ids) and (label not in self.label2cat) for label in labels)
+        # The labels and categories differ when categories are not contiguous starting from 0.
+        # If labels and categories are same in label2cat, we can simply use raw-ID.
+        uses_raw_ids = list(self.label2cat.keys()) == list(self.label2cat.values())
         if uses_raw_ids:
             self._prefer_raw_category_ids = True
             return True
