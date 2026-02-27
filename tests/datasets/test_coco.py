@@ -204,8 +204,8 @@ class TestLoadClassesHierarchy:
         """
         categories = [
             {"id": 1, "name": "none", "supercategory": "none"},
-            {"id": 2, "name": "dog",  "supercategory": "none"},
-            {"id": 3, "name": "cat",  "supercategory": "none"},
+            {"id": 2, "name": "dog", "supercategory": "none"},
+            {"id": 3, "name": "cat", "supercategory": "none"},
         ]
         _write_coco_json(tmp_path / "train" / "_annotations.coco.json", categories)
         result = RFDETR._load_classes(str(tmp_path))
@@ -216,38 +216,44 @@ class TestLoadClassesHierarchy:
         should be forwarded. Parent/grouping nodes are dropped.
         """
         categories = [
-            {"id": 1,  "name": "animals",    "supercategory": "none"},
-            {"id": 2,  "name": "mammal",     "supercategory": "animals"},
-            {"id": 3,  "name": "dog",        "supercategory": "mammal"},
-            {"id": 4,  "name": "cat",        "supercategory": "mammal"},
-            {"id": 5,  "name": "bird",       "supercategory": "animals"},
-            {"id": 6,  "name": "eagle",      "supercategory": "bird"},
-            {"id": 7,  "name": "pigeon",     "supercategory": "bird"},
-            {"id": 8,  "name": "objects",    "supercategory": "none"},
-            {"id": 9,  "name": "vehicle",    "supercategory": "objects"},
-            {"id": 10, "name": "car",        "supercategory": "vehicle"},
-            {"id": 11, "name": "truck",      "supercategory": "vehicle"},
-            {"id": 12, "name": "appliance",  "supercategory": "objects"},
-            {"id": 13, "name": "toaster",    "supercategory": "appliance"},
-            {"id": 14, "name": "microwave",  "supercategory": "appliance"},
-            {"id": 15, "name": "person",     "supercategory": "none"},
+            {"id": 1, "name": "animals", "supercategory": "none"},
+            {"id": 2, "name": "mammal", "supercategory": "animals"},
+            {"id": 3, "name": "dog", "supercategory": "mammal"},
+            {"id": 4, "name": "cat", "supercategory": "mammal"},
+            {"id": 5, "name": "bird", "supercategory": "animals"},
+            {"id": 6, "name": "eagle", "supercategory": "bird"},
+            {"id": 7, "name": "pigeon", "supercategory": "bird"},
+            {"id": 8, "name": "objects", "supercategory": "none"},
+            {"id": 9, "name": "vehicle", "supercategory": "objects"},
+            {"id": 10, "name": "car", "supercategory": "vehicle"},
+            {"id": 11, "name": "truck", "supercategory": "vehicle"},
+            {"id": 12, "name": "appliance", "supercategory": "objects"},
+            {"id": 13, "name": "toaster", "supercategory": "appliance"},
+            {"id": 14, "name": "microwave", "supercategory": "appliance"},
+            {"id": 15, "name": "person", "supercategory": "none"},
         ]
         _write_coco_json(tmp_path / "train" / "_annotations.coco.json", categories)
         result = RFDETR._load_classes(str(tmp_path))
         expected = [
-            "dog", "cat", "eagle", "pigeon",
-            "car", "truck", "toaster", "microwave",
+            "dog",
+            "cat",
+            "eagle",
+            "pigeon",
+            "car",
+            "truck",
+            "toaster",
+            "microwave",
             "person",
         ]
         assert set(result) == set(expected)
 
     def test_placeholder_values_treated_as_no_parent(self, tmp_path: Path) -> None:
-        """Placeholders like None, '', and 'null' should be treated the same 
+        """Placeholders like None, '', and 'null' should be treated the same
         as 'none'.
         """
         categories = [
             {"id": 1, "name": "dog", "supercategory": None},
-            {"id": 2, "name": "cat",  "supercategory": ""},
+            {"id": 2, "name": "cat", "supercategory": ""},
             {"id": 3, "name": "elephant", "supercategory": "null"},
         ]
         _write_coco_json(tmp_path / "train" / "_annotations.coco.json", categories)
