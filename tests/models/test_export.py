@@ -33,25 +33,9 @@ import torch
 from torch.jit import TracerWarning
 
 from rfdetr import RFDETRSegNano
+from rfdetr.deploy import export as _cli_export_module
 
-# Temporarily inject stubs for optional onnx packages so deploy.export can be
-# imported at module level without them being installed.  The stubs are removed
-# immediately after so that importlib.util.find_spec() used in the
-# @pytest.mark.skipif decorators below still returns None for missing packages.
-_stub_deploy_onnx = types.ModuleType("rfdetr.deploy._onnx")
-_stub_deploy_onnx.OnnxOptimizer = MagicMock()
-_onnx_injected = "onnx" not in sys.modules
-_onnxsim_injected = "onnxsim" not in sys.modules
-sys.modules.setdefault("onnx", types.ModuleType("onnx"))
-sys.modules.setdefault("onnxsim", types.ModuleType("onnxsim"))
-sys.modules.setdefault("rfdetr.deploy._onnx", _stub_deploy_onnx)
-
-from rfdetr.deploy import export as _cli_export_module  # noqa: E402
-
-if _onnx_injected:
-    del sys.modules["onnx"]
-if _onnxsim_injected:
-    del sys.modules["onnxsim"]
+_IS_ONNX_INSTALLED = importlib.util.find_spec("onnx") is not None
 
 
 @contextmanager
@@ -95,10 +79,7 @@ def test_export_onnx_uses_legacy_exporter_when_dynamo_flag_exists(
 
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for export test")
-@pytest.mark.skipif(
-    importlib.util.find_spec("onnx") is None,
-    reason="onnx not installed, run: pip install rfdetr[onnxexport]",
-)
+@pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed, run: pip install rfdetr[onnxexport]")
 def test_segmentation_model_export_no_crash(tmp_path: Path) -> None:
     """
     Integration test: exporting a segmentation model should not crash.
@@ -118,10 +99,7 @@ def test_segmentation_model_export_no_crash(tmp_path: Path) -> None:
 
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for export test")
-@pytest.mark.skipif(
-    importlib.util.find_spec("onnx") is None,
-    reason="onnx not installed, run: pip install rfdetr[onnxexport]",
-)
+@pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed, run: pip install rfdetr[onnxexport]")
 def test_export_calls_eval_on_deepcopy_not_original(tmp_path: Path) -> None:
     """
     Verify that Model.export() calls eval() on the deepcopy, not the original model.
@@ -183,10 +161,7 @@ def test_export_calls_eval_on_deepcopy_not_original(tmp_path: Path) -> None:
 
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for export test")
-@pytest.mark.skipif(
-    importlib.util.find_spec("onnx") is None,
-    reason="onnx not installed, run: pip install rfdetr[onnxexport]",
-)
+@pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed, run: pip install rfdetr[onnxexport]")
 def test_export_does_not_change_original_training_state(tmp_path: Path) -> None:
     """
     Verify that calling export() does not change the original model's train/eval state.

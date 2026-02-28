@@ -18,12 +18,15 @@ import time
 import zipfile
 from contextlib import contextmanager, suppress
 from pathlib import Path
-from typing import Any, Generator, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Generator, Optional, Tuple
 from urllib.request import urlretrieve
 
 from rfdetr.util.logger import get_logger
 
 logger = get_logger()
+
+if TYPE_CHECKING:
+    import torch
 
 _COCO_URLS = {
     "val2017": "http://images.cocodataset.org/zips/val2017.zip",
@@ -48,8 +51,9 @@ class _SimpleDataset:
         transforms: Optional transforms to apply (e.g., Compose of AlbumentationsWrapper).
 
     Examples:
-        >>> from rfdetr.datasets.transforms import AlbumentationsWrapper, Compose
         >>> import albumentations as A
+        >>> from torchvision.transforms.v2 import Compose
+        >>> from rfdetr.datasets.transforms import AlbumentationsWrapper
         >>>
         >>> transforms = Compose([
         ...     AlbumentationsWrapper(A.HorizontalFlip(p=0.5)),

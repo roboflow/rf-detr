@@ -167,7 +167,7 @@ class CocoLikeAPI:
 
     Examples:
         >>> mock = _MockSvDataset()
-        >>> coco = YoloCoco(mock.classes, mock)
+        >>> coco = CocoLikeAPI(mock.classes, mock)
         >>> # dataset structure
         >>> len(coco.dataset["images"]), len(coco.dataset["categories"]), len(coco.dataset["annotations"])
         (2, 2, 2)

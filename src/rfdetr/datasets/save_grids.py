@@ -101,6 +101,8 @@ class DatasetGridSaver:
             box_annotator: ``sv.BoxAnnotator`` instance for drawing bounding boxes.
             label_annotator: ``sv.LabelAnnotator`` instance for drawing class labels.
         """
+        from PIL import Image as PILImage
+
         resized_size = single_target["size"]
         if isinstance(resized_size, torch.Tensor):
             resized_size = resized_size.detach().cpu()
@@ -109,7 +111,7 @@ class DatasetGridSaver:
         de_normalized_img = inv_normalize(single_image)
         if isinstance(de_normalized_img, torch.Tensor):
             de_normalized_img = de_normalized_img.detach().cpu().numpy()
-        img_uint8 = (np.clip(de_normalized_img.transpose(1, 2, 0), 0.0, 1.0) * 255).astype(np.uint8)
+        scene = PILImage.fromarray((np.clip(de_normalized_img.transpose(1, 2, 0), 0.0, 1.0) * 255).astype(np.uint8))
 
         if len(single_target["boxes"]) > 0:
             labels_tensor = single_target["labels"]
@@ -130,8 +132,8 @@ class DatasetGridSaver:
             )
             detections = sv.Detections(xyxy=xyxy, class_id=class_ids)
             labels = [str(c) for c in class_ids]
-            img_uint8 = box_annotator.annotate(scene=img_uint8, detections=detections)
-            img_uint8 = label_annotator.annotate(scene=img_uint8, detections=detections, labels=labels)
+            scene = box_annotator.annotate(scene=scene, detections=detections)
+            scene = label_annotator.annotate(scene=scene, detections=detections, labels=labels)
 
-        ax.imshow(img_uint8)
+        ax.imshow(scene)
         ax.axis("off")

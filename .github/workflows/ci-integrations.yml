@@ -2,9 +2,9 @@ name: Integration Tests
 
 on:
   push:
-    branches: [main, develop]
+    branches: ["main", "release/*", "develop"]
   pull_request:
-    branches: [main, develop]
+    branches: ["main", "release/*", "develop"]
 
 permissions:
   contents: read
@@ -26,17 +26,19 @@ jobs:
       matrix:
         os: ["ubuntu-latest", "macos-latest", "windows-latest"]
         python-version: ["3.10", "3.13"]
+    timeout-minutes: 15
     steps:
       - name: 📥 Checkout the repository
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        uses: actions/checkout@v6.0.1
 
       - name: 🐍 Install uv and set Python version ${{ matrix.python-version }}
-        uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
+        uses: astral-sh/setup-uv@v7.2.0
         with:
           python-version: ${{ matrix.python-version }}
           activate-environment: true
 
       - name: 🚀 Install Packages (plus extras)
+        timeout-minutes: 5
         # Install PyTorch CPU-only first (UV_TORCH_BACKEND=cpu works with 'uv pip')
         run: uv pip install -e .[plus]
 

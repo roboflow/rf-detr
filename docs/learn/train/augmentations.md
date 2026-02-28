@@ -7,10 +7,10 @@ RF-DETR supports custom data augmentations via [Albumentations](https://albument
 Pass `aug_config` to your training call. Import one of the built-in presets:
 
 ```python
-from rfdetr import RFDETRBase
+from rfdetr import RFDETRSmall
 from rfdetr.datasets.aug_config import AUG_CONSERVATIVE, AUG_AGGRESSIVE, AUG_AERIAL, AUG_INDUSTRIAL
 
-model = RFDETRBase()
+model = RFDETRSmall()
 model.train(dataset_dir="path/to/dataset", epochs=100, aug_config=AUG_CONSERVATIVE)
 ```
 
@@ -55,6 +55,37 @@ model.train(dataset_dir="...", aug_config=my_config)
 | Under 500 images | `AUG_CONSERVATIVE` — flip + mild brightness/contrast            |
 | 500–2000 images  | Default or `AUG_CONSERVATIVE` with a few extra transforms added |
 | 2000+ images     | `AUG_AGGRESSIVE` — rotations, affine, color jitter              |
+
+## Nested Transforms
+
+RF-DETR supports `OneOf`, `SomeOf`, and `Sequential` container transforms from Albumentations. The most common pattern is `OneOf`, which randomly picks one transform from a group:
+
+```python
+aug_config = {
+    "HorizontalFlip": {"p": 0.5},
+    "OneOf": {
+        "transforms": [
+            {"Rotate": {"limit": 45, "p": 1.0}},
+            {"Affine": {"scale": (0.8, 1.2), "p": 1.0}},
+        ],
+    },
+    "GaussianBlur": {"p": 0.2},
+}
+```
+
+Each child's `p` controls its relative selection weight. The container itself always fires.
+
+If you need the same transform twice, or want explicit ordering, pass a list instead of a dict:
+
+```python
+aug_config = [
+    {"HorizontalFlip": {"p": 0.5}},
+    {"Rotate": {"limit": 45, "p": 0.3}},
+    {"Rotate": {"limit": 5, "p": 0.5}},  # second Rotate — only possible with list format
+]
+```
+
+Bounding boxes are updated automatically when a container holds any geometric transform — no extra configuration needed.
 
 ## Geometric vs. Pixel-Level Transforms
 
@@ -114,6 +145,6 @@ model.train(
 
 ## Next Steps
 
-- [Monitor training with TensorBoard](loggers.md#logging-with-tensorboard)
+- [Monitor training with TensorBoard](loggers.md#tensorboard)
 - [Use early stopping](advanced.md#early-stopping) to prevent overfitting
 - [Export your trained model](../export.md) for deployment
