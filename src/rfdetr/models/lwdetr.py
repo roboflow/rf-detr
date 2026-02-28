@@ -22,7 +22,7 @@ LW-DETR model and criterion classes
 
 import copy
 import math
-from typing import Callable
+from typing import Callable, Optional
 
 import torch
 import torch.nn.functional as F
@@ -205,7 +205,9 @@ class LWDETR(nn.Module):
                 out["pred_masks"] = outputs_masks[-1]
             if self.aux_loss:
                 out["aux_outputs"] = self._set_aux_loss(
-                    outputs_class, outputs_coord, outputs_masks if self.segmentation_head is not None else None
+                    outputs_class,
+                    outputs_coord,
+                    outputs_masks if self.segmentation_head is not None else None,
                 )
 
         if self.two_stage:
@@ -300,22 +302,36 @@ class LWDETR(nn.Module):
         else:
             return [{"pred_logits": a, "pred_boxes": b} for a, b in zip(outputs_class[:-1], outputs_coord[:-1])]
 
-    def _get_backbone_encoder_layers(self):
+    def _get_backbone_encoder_layers(self) -> Optional[nn.ModuleList]:
         """Resolve the list of transformer blocks/layers from backbone[0].encoder.
-        Supports: encoder.blocks, encoder.trunk.blocks (aimv2), and encoder.encoder.layer
-        (HuggingFace DinoV2 / WindowedDinov2WithRegistersBackbone). Returns None if not found.
+
+        Supports multiple backbone architectures:
+        - encoder.blocks (standard ViT)
+        - encoder.trunk.blocks (aimv2)
+        - encoder.encoder.encoder.layer (HuggingFace DinoV2)
+
+        Returns:
+            List of transformer layers, or None if not found.
         """
         enc = self.backbone[0].encoder
         if hasattr(enc, "blocks"):
             return enc.blocks
         if hasattr(enc, "trunk") and hasattr(enc.trunk, "blocks"):
             return enc.trunk.blocks
-        if hasattr(enc, "encoder") and hasattr(enc.encoder, "layer"):
-            return enc.encoder.layer
+        if hasattr(enc, "encoder") and hasattr(enc.encoder, "encoder") and hasattr(enc.encoder.encoder, "layer"):
+            return enc.encoder.encoder.layer
         return None
 
-    def update_drop_path(self, drop_path_rate, vit_encoder_num_layers):
-        """ """
+    def update_drop_path(self, drop_path_rate: float, vit_encoder_num_layers: int) -> None:
+        """Update drop_path rates for backbone encoder layers with linear schedule.
+
+        Applies a linear schedule where the first layer has drop_path_rate=0 and the last
+        layer has drop_path_rate=drop_path_rate. Intermediate layers are interpolated linearly.
+
+        Args:
+            drop_path_rate: Maximum drop path rate (applied to last layer).
+            vit_encoder_num_layers: Number of encoder layers to update.
+        """
         layers = self._get_backbone_encoder_layers()
         if layers is None:
             return
@@ -391,7 +407,8 @@ class SetCriterion(nn.Module):
 
             iou_targets = torch.diag(
                 box_ops.box_iou(
-                    box_ops.box_cxcywh_to_xyxy(src_boxes.detach()), box_ops.box_cxcywh_to_xyxy(target_boxes)
+                    box_ops.box_cxcywh_to_xyxy(src_boxes.detach()),
+                    box_ops.box_cxcywh_to_xyxy(target_boxes),
                 )[0]
             )
             pos_ious = iou_targets.clone().detach()
@@ -419,7 +436,8 @@ class SetCriterion(nn.Module):
 
             iou_targets = torch.diag(
                 box_ops.box_iou(
-                    box_ops.box_cxcywh_to_xyxy(src_boxes.detach()), box_ops.box_cxcywh_to_xyxy(target_boxes)
+                    box_ops.box_cxcywh_to_xyxy(src_boxes.detach()),
+                    box_ops.box_cxcywh_to_xyxy(target_boxes),
                 )[0]
             )
             pos_ious = iou_targets.clone().detach()
@@ -441,7 +459,11 @@ class SetCriterion(nn.Module):
             )
             loss_ce = (
                 position_supervised_loss(
-                    src_logits, norm_cls_iou_func_targets, num_boxes, alpha=self.focal_alpha, gamma=2
+                    src_logits,
+                    norm_cls_iou_func_targets,
+                    num_boxes,
+                    alpha=self.focal_alpha,
+                    gamma=2,
                 )
                 * src_logits.shape[1]
             )
@@ -452,7 +474,8 @@ class SetCriterion(nn.Module):
 
             iou_targets = torch.diag(
                 box_ops.box_iou(
-                    box_ops.box_cxcywh_to_xyxy(src_boxes.detach()), box_ops.box_cxcywh_to_xyxy(target_boxes)
+                    box_ops.box_cxcywh_to_xyxy(src_boxes.detach()),
+                    box_ops.box_cxcywh_to_xyxy(target_boxes),
                 )[0]
             )
             pos_ious = iou_targets.clone().detach()
@@ -467,12 +490,21 @@ class SetCriterion(nn.Module):
             pos_ind.append(target_classes_o)
             cls_iou_targets[tuple(pos_ind)] = pos_ious
             loss_ce = (
-                sigmoid_varifocal_loss(src_logits, cls_iou_targets, num_boxes, alpha=self.focal_alpha, gamma=2)
+                sigmoid_varifocal_loss(
+                    src_logits,
+                    cls_iou_targets,
+                    num_boxes,
+                    alpha=self.focal_alpha,
+                    gamma=2,
+                )
                 * src_logits.shape[1]
             )
         else:
             target_classes = torch.full(
-                src_logits.shape[:2], self.num_classes, dtype=torch.int64, device=src_logits.device
+                src_logits.shape[:2],
+                self.num_classes,
+                dtype=torch.int64,
+                device=src_logits.device,
             )
             target_classes[idx] = target_classes_o
 
@@ -486,7 +518,13 @@ class SetCriterion(nn.Module):
 
             target_classes_onehot = target_classes_onehot[:, :, :-1]
             loss_ce = (
-                sigmoid_focal_loss(src_logits, target_classes_onehot, num_boxes, alpha=self.focal_alpha, gamma=2)
+                sigmoid_focal_loss(
+                    src_logits,
+                    target_classes_onehot,
+                    num_boxes,
+                    alpha=self.focal_alpha,
+                    gamma=2,
+                )
                 * src_logits.shape[1]
             )
         losses = {"loss_ce": loss_ce}
@@ -526,7 +564,10 @@ class SetCriterion(nn.Module):
         losses["loss_bbox"] = loss_bbox.sum() / num_boxes
 
         loss_giou = 1 - torch.diag(
-            box_ops.generalized_box_iou(box_ops.box_cxcywh_to_xyxy(src_boxes), box_ops.box_cxcywh_to_xyxy(target_boxes))
+            box_ops.generalized_box_iou(
+                box_ops.box_cxcywh_to_xyxy(src_boxes),
+                box_ops.box_cxcywh_to_xyxy(target_boxes),
+            )
         )
         losses["loss_giou"] = loss_giou.sum() / num_boxes
         return losses
@@ -564,7 +605,12 @@ class SetCriterion(nn.Module):
                     this_batch_spatial_features = spatial_features[idx[0][batch_indices[i + 1] - 1]]
 
                     this_batch_masks = (
-                        torch.einsum("chw,nc->nhw", this_batch_spatial_features, this_batch_queries) + bias
+                        torch.einsum(
+                            "chw,nc->nhw",
+                            this_batch_spatial_features,
+                            this_batch_queries,
+                        )
+                        + bias
                     )
 
                     batched_selected_masks.append(this_batch_masks)
@@ -584,7 +630,10 @@ class SetCriterion(nn.Module):
         src_masks = src_masks.unsqueeze(1)
         target_masks = target_masks.unsqueeze(1).float()
 
-        num_points = max(src_masks.shape[-2], src_masks.shape[-2] * src_masks.shape[-1] // self.mask_point_sample_ratio)
+        num_points = max(
+            src_masks.shape[-2],
+            src_masks.shape[-2] * src_masks.shape[-1] // self.mask_point_sample_ratio,
+        )
 
         with torch.no_grad():
             # sample point_coords
@@ -844,7 +893,10 @@ class PostProcess(nn.Module):
                 )  # [K, Hm, Wm]
                 h, w = target_sizes[i].tolist()
                 masks_i = F.interpolate(
-                    masks_i.unsqueeze(1), size=(int(h), int(w)), mode="bilinear", align_corners=False
+                    masks_i.unsqueeze(1),
+                    size=(int(h), int(w)),
+                    mode="bilinear",
+                    align_corners=False,
                 )  # [K,1,H,W]
                 res_i["masks"] = masks_i > 0.0
                 results.append(res_i)
@@ -895,11 +947,11 @@ def build_model(args):
         position_embedding=args.position_embedding,
         freeze_encoder=args.freeze_encoder,
         layer_norm=args.layer_norm,
-        target_shape=args.shape
-        if hasattr(args, "shape")
-        else (args.resolution, args.resolution)
-        if hasattr(args, "resolution")
-        else (640, 640),
+        target_shape=(
+            args.shape
+            if hasattr(args, "shape")
+            else ((args.resolution, args.resolution) if hasattr(args, "resolution") else (640, 640))
+        ),
         rms_norm=args.rms_norm,
         backbone_lora=args.backbone_lora,
         force_no_pretrain=args.force_no_pretrain,
@@ -918,7 +970,11 @@ def build_model(args):
     transformer = build_transformer(args)
 
     segmentation_head = (
-        SegmentationHead(args.hidden_dim, args.dec_layers, downsample_ratio=args.mask_downsample_ratio)
+        SegmentationHead(
+            args.hidden_dim,
+            args.dec_layers,
+            downsample_ratio=args.mask_downsample_ratio,
+        )
         if args.segmentation_head
         else None
     )
