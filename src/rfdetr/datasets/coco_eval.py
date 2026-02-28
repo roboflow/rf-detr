@@ -89,8 +89,8 @@ class CocoEvaluator(object):
         if self._prefer_raw_category_ids:
             return True
 
-        # The labels and categories differ when categories are not contiguous starting from 0.
-        # If labels and categories are same in label2cat, we can simply use raw-ID.
+        # When categories are contiguous starting from 0, label2cat is an identity mapping
+        # (keys == values), and we can safely treat labels as raw COCO category IDs.
         uses_raw_ids = list(self.label2cat.keys()) == list(self.label2cat.values())
         if uses_raw_ids:
             self._prefer_raw_category_ids = True
