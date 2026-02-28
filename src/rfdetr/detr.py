@@ -166,18 +166,16 @@ class RFDETR:
             parents = {c.get("supercategory") for c in categories if c.get("supercategory", "none") not in placeholders}
             has_children = {c["name"] for c in categories if c["name"] in parents}
 
-            leaves = [
+            # Preserve original category order while selecting only leaf and standalone top-level classes.
+            class_names = [
                 c["name"]
                 for c in categories
-                if c.get("supercategory", "none") not in placeholders and c["name"] not in has_children
+                if c["name"] not in has_children
+                and (
+                    c.get("supercategory", "none") not in placeholders
+                    or c.get("supercategory", "none") in placeholders
+                )
             ]
-            standalone_toplevel = [
-                c["name"]
-                for c in categories
-                if c.get("supercategory", "none") in placeholders and c["name"] not in has_children
-            ]
-
-            class_names = leaves + standalone_toplevel
             # Safety fallback for pathological inputs
             return class_names or [c["name"] for c in categories]
 
