@@ -65,15 +65,9 @@ def test_get_backbone_encoder_layers_dinov2(model_with_drop_path: Model) -> None
 
     enc = model.backbone[0].encoder
     assert hasattr(enc, "encoder"), "DinoV2 encoder should have encoder attribute"
-    assert hasattr(
-        enc.encoder, "encoder"
-    ), "DinoV2 encoder.encoder should have encoder attribute"
-    assert hasattr(
-        enc.encoder.encoder, "layer"
-    ), "DinoV2 encoder.encoder.encoder should have layer attribute"
-    assert (
-        layers is enc.encoder.encoder.layer
-    ), "Should return encoder.encoder.encoder.layer"
+    assert hasattr(enc.encoder, "encoder"), "DinoV2 encoder.encoder should have encoder attribute"
+    assert hasattr(enc.encoder.encoder, "layer"), "DinoV2 encoder.encoder.encoder should have layer attribute"
+    assert layers is enc.encoder.encoder.layer, "Should return encoder.encoder.encoder.layer"
 
     assert len(layers) > 0, "Should have at least one layer"
     for layer in layers:
@@ -106,27 +100,21 @@ def test_update_drop_path_dinov2(model_with_drop_path: Model) -> None:
         if hasattr(layer, "drop_path") and hasattr(layer.drop_path, "drop_prob"):
             actual_prob = layer.drop_path.drop_prob
             expected_prob = expected_rates[i]
-            assert (
-                abs(actual_prob - expected_prob) < 1e-6
-            ), f"Layer {i} drop_prob should be {expected_prob}, got {actual_prob}"
+            assert abs(actual_prob - expected_prob) < 1e-6, (
+                f"Layer {i} drop_prob should be {expected_prob}, got {actual_prob}"
+            )
 
     first_layer = layers[0]
     last_layer = layers[-1]
-    if hasattr(first_layer, "drop_path") and hasattr(
-        first_layer.drop_path, "drop_prob"
-    ):
-        assert (
-            abs(first_layer.drop_path.drop_prob - 0.0) < 1e-6
-        ), "First layer should have drop_prob = 0"
+    if hasattr(first_layer, "drop_path") and hasattr(first_layer.drop_path, "drop_prob"):
+        assert abs(first_layer.drop_path.drop_prob - 0.0) < 1e-6, "First layer should have drop_prob = 0"
     if hasattr(last_layer, "drop_path") and hasattr(last_layer.drop_path, "drop_prob"):
-        assert (
-            abs(last_layer.drop_path.drop_prob - drop_path_rate) < 1e-6
-        ), f"Last layer should have drop_prob = {drop_path_rate}"
+        assert abs(last_layer.drop_path.drop_prob - drop_path_rate) < 1e-6, (
+            f"Last layer should have drop_prob = {drop_path_rate}"
+        )
 
 
-def test_drop_path_initialization(
-    model_with_drop_path: Model, model_without_drop_path: Model
-) -> None:
+def test_drop_path_initialization(model_with_drop_path: Model, model_without_drop_path: Model) -> None:
     """Verify drop_path initialization: DropPath vs Identity based on rate."""
     model_with_dp: LWDETR = model_with_drop_path.model
     model_without_dp: LWDETR = model_without_drop_path.model
@@ -142,9 +130,7 @@ def test_drop_path_initialization(
         drop_path_module = layer.drop_path
         # When drop_path_rate > 0, it should be Dinov2WithRegistersDropPath (not Identity)
         if hasattr(drop_path_module, "drop_prob"):
-            assert isinstance(
-                drop_path_module, Dinov2WithRegistersDropPath
-            ) or isinstance(
+            assert isinstance(drop_path_module, Dinov2WithRegistersDropPath) or isinstance(
                 drop_path_module, torch.nn.Identity
             ), "drop_path should be Dinov2WithRegistersDropPath or Identity"
 
@@ -155,9 +141,7 @@ def test_drop_path_initialization(
         if isinstance(drop_path_module, torch.nn.Identity):
             pass
         elif hasattr(drop_path_module, "drop_prob"):
-            assert (
-                drop_path_module.drop_prob == 0.0
-            ), "drop_prob should be 0 when drop_path_rate = 0"
+            assert drop_path_module.drop_prob == 0.0, "drop_prob should be 0 when drop_path_rate = 0"
 
 
 def test_update_drop_path_handles_missing_layers(model_with_drop_path: Model) -> None:
