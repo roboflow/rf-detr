@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, TypeVar
 
 import numpy as np
+import math
 
 from rfdetr.util.logger import get_logger
 
@@ -159,6 +160,27 @@ class MetricsTensorBoardSink:
                 "Unable to initialize TensorBoard. Logging is turned off for this session. Run 'pip install tensorboard' to enable logging."
             )
 
+    @staticmethod
+    def _slug(s: str) -> str:
+        """
+        Make class names safe for TensorBoard tags by removing/normalizing characters
+        that TB treats as separators or that look noisy.
+        """
+        return (
+            s.replace(" ", "_")
+            .replace("/", "_")
+            .replace("\\", "_")
+            .replace("(", "")
+            .replace(")", "")
+            .replace(":", "")
+            .replace(",", "")
+        )
+
+    @staticmethod
+    def _is_number(x: Any) -> bool:
+        """True for finite ints/floats; False for NaN/None/others."""
+        return isinstance(x, (int, float)) and not (isinstance(x, float) and math.isnan(x))
+
     def update(self, values: Dict[str, Any]) -> None:
         if not self.writer:
             return
@@ -194,7 +216,39 @@ class MetricsTensorBoardSink:
             if ema_ar50_90 is not None:
                 self.writer.add_scalar("Metrics/EMA/AR50_90", ema_ar50_90, epoch)
 
+        if "test_results_json" in values:
+            self._log_class_metrics(values["test_results_json"], epoch, variant="Base")
+        if "ema_test_results_json" in values:
+            self._log_class_metrics(values["ema_test_results_json"], epoch, variant="EMA")
+
         self.writer.flush()
+
+    def _log_class_metrics(self, results: Dict[str, Any], epoch: int, variant: str) -> None:
+        """
+        Log per-class metrics:
+        <ClassName>/<MetricName>/<Variant>
+
+        - Logs all numeric fields in each class entry.
+        - Uses a small rename map for readability. Others are sanitized via _slug().
+        - Safely no-ops if the expected structure is missing.
+        """
+        class_map = results.get("class_map", [])
+        if not isinstance(class_map, list) or not class_map:
+            return
+
+        rename = {
+            "map@50:95": "mAP50_95",
+            "map@50": "mAP50",
+            "f1_score": "F1",
+        }
+
+        for entry in class_map:
+            cname = self._slug(entry.get("class", "unknown"))
+            for key, value in entry.items():
+                if key == "class" or not self._is_number(value):
+                    continue
+                metric_name = rename.get(key, self._slug(str(key)))
+                self.writer.add_scalar(f"{cname}/{metric_name}/{variant}", value, epoch)
 
     def close(self):
         if not self.writer:
