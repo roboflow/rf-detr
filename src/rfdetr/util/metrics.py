@@ -4,12 +4,12 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+import math
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, TypeVar
 
 import numpy as np
-import math
 
 from rfdetr.util.logger import get_logger
 

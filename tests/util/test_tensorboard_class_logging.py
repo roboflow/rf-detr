@@ -1,3 +1,9 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+
 import pytest
 
 from rfdetr.util.metrics import MetricsTensorBoardSink
@@ -5,8 +11,9 @@ from rfdetr.util.metrics import MetricsTensorBoardSink
 
 class DummyWriter:
     """Minimal stand-in for torch.utils.tensorboard.SummaryWriter (no real I/O)."""
+
     def __init__(self):
-        self.scalars = []   # list[(tag, value, step)]
+        self.scalars = []  # list[(tag, value, step)]
         self.flushed = False
         self.closed = False
 
@@ -56,8 +63,8 @@ def test_class_first_layout_renames_and_filtering(sink):
                     "precision": 0.80,
                     "recall": 0.60,
                     "f1_score": 0.685,
-                    "notes": "ignore-me",            # non-numeric => ignored
-                    "nan_field": float("nan"),       # NaN => ignored
+                    "notes": "ignore-me",  # non-numeric => ignored
+                    "nan_field": float("nan"),  # NaN => ignored
                 },
                 {
                     "class": "cats",
