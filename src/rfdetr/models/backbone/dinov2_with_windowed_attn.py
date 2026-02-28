@@ -37,8 +37,8 @@ logger = logging.get_logger(__name__)
 
 
 def find_pruneable_heads_and_indices(
-    heads: set, n_heads: int, head_size: int, already_pruned_heads: set
-) -> tuple[set, torch.LongTensor]:
+    heads: Set[int], n_heads: int, head_size: int, already_pruned_heads: Set[int]
+) -> Tuple[Set[int], torch.LongTensor]:
     mask = torch.ones(n_heads, head_size)
     heads = set(heads) - already_pruned_heads
     for head in heads:
@@ -412,7 +412,7 @@ class Dinov2WithRegistersSelfAttention(nn.Module):
         return x.permute(0, 2, 1, 3)
 
     def forward(
-        self, hidden_states, output_attentions: bool = False
+        self, hidden_states: torch.Tensor, output_attentions: bool = False
     ) -> Union[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor]]:
         mixed_query_layer = self.query(hidden_states)
 
