@@ -18,14 +18,12 @@ import re
 import subprocess
 
 import numpy as np
-import onnx
-import onnxsim
 import torch
 import torch.nn as nn
 from PIL import Image
+from torchvision.transforms.v2 import Compose, Resize, ToDtype, ToImage
 
-import rfdetr.datasets.transforms as T
-from rfdetr.deploy._onnx import OnnxOptimizer
+from rfdetr.datasets.transforms import Normalize
 from rfdetr.models import build_model
 from rfdetr.util.logger import get_logger
 from rfdetr.util.misc import get_rank, get_sha
@@ -53,8 +51,13 @@ def make_infer_image(infer_dir, shape, batch_size, device="cuda"):
     else:
         image = Image.open(infer_dir).convert("RGB")
 
-    transforms = T.Compose(
-        [T.SquareResize([shape[0]]), T.ToTensor(), T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])]
+    transforms = Compose(
+        [
+            Resize((shape[0], shape[0])),
+            ToImage(),
+            ToDtype(torch.float32, scale=True),
+            Normalize(),
+        ]
     )
 
     inps, _ = transforms(image, None)
@@ -108,6 +111,11 @@ def export_onnx(
 
 
 def onnx_simplify(onnx_dir: str, input_names, input_tensors, force=False):
+    import onnx
+    import onnxsim
+
+    from rfdetr.deploy._onnx import OnnxOptimizer
+
     sim_onnx_dir = onnx_dir.replace(".onnx", ".sim.onnx")
     if os.path.isfile(sim_onnx_dir) and not force:
         return sim_onnx_dir

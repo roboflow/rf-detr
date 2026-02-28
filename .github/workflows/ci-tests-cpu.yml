@@ -51,11 +51,16 @@ jobs:
           activate-environment: true
 
       - name: 🚀 Install Packages
+        timeout-minutes: 5
         # Install PyTorch CPU-only first (UV_TORCH_BACKEND=cpu works with 'uv pip')
         run: uv pip install -e . --group tests
 
       - name: 🧪 Run the Test
-        run: uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --cov=rfdetr --cov-report=xml
+        run: |
+          uv run --no-sync pytest src/ tests/ \
+            -n 2 -m "not gpu" \
+            --ignore=tests/try_instantiate_all_models.py \
+            --cov=rfdetr --cov-report=xml
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5

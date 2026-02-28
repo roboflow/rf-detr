@@ -25,7 +25,6 @@ from transformers.modeling_outputs import (
 from transformers.modeling_utils import PreTrainedModel
 from transformers.pytorch_utils import find_pruneable_heads_and_indices, prune_linear_layer
 from transformers.utils import (
-    add_code_sample_docstrings,
     add_start_docstrings,
     add_start_docstrings_to_model_forward,
     logging,
@@ -39,9 +38,6 @@ from transformers.utils.backbone_utils import (
 )
 
 logger = logging.get_logger(__name__)
-
-# Base docstring
-_CHECKPOINT_FOR_DOC = "facebook/dinov2_with_registers-base"
 
 # General docstring
 _CONFIG_FOR_DOC = "WindowedDinov2WithRegistersConfig"
@@ -112,18 +108,22 @@ class WindowedDinov2WithRegistersConfig(BackboneConfigMixin, PretrainedConfig):
 
     Example:
 
-    ```python
-    >>> from transformers import Dinov2WithRegistersConfig, Dinov2WithRegistersModel
+    >>> from rfdetr.models.backbone.dinov2_with_windowed_attn import WindowedDinov2WithRegistersConfig
 
-    >>> # Initializing a Dinov2WithRegisters base style configuration
-    >>> configuration = Dinov2WithRegistersConfig()
+    >>> # Initializing a tiny configuration suitable for doctests
+    >>> configuration = WindowedDinov2WithRegistersConfig(
+    ...     image_size=32,
+    ...     patch_size=16,
+    ...     hidden_size=32,
+    ...     num_hidden_layers=2,
+    ...     num_attention_heads=4,
+    ...     num_register_tokens=2,
+    ... )
 
-    >>> # Initializing a model (with random weights) from the base style configuration
-    >>> model = Dinov2WithRegistersModel(configuration)
+    >>> configuration.hidden_size
+    32
 
-    >>> # Accessing the model configuration
-    >>> configuration = model.config
-    ```"""
+    """
 
     model_type = "dinov2_with_registers"
 
@@ -766,9 +766,6 @@ class WindowedDinov2WithRegistersPreTrainedModel(PreTrainedModel):
             ).to(module.cls_token.dtype)
 
 
-_EXPECTED_OUTPUT_SHAPE = [1, 257, 768]
-
-
 DINOV2_WITH_REGISTERS_START_DOCSTRING = r"""
     This model is a PyTorch [torch.nn.Module](https://pytorch.org/docs/stable/nn.html#torch.nn.Module) subclass. Use it
     as a regular PyTorch Module and refer to the PyTorch documentation for all matter related to general usage and
@@ -836,13 +833,7 @@ class WindowedDinov2WithRegistersModel(WindowedDinov2WithRegistersPreTrainedMode
             self.encoder.layer[layer].attention.prune_heads(heads)
 
     @add_start_docstrings_to_model_forward(DINOV2_WITH_REGISTERS_BASE_INPUTS_DOCSTRING)
-    @add_code_sample_docstrings(
-        checkpoint=_CHECKPOINT_FOR_DOC,
-        output_type=BaseModelOutputWithPooling,
-        config_class=_CONFIG_FOR_DOC,
-        modality="vision",
-        expected_output=_EXPECTED_OUTPUT_SHAPE,
-    )
+    @replace_return_docstrings(output_type=BaseModelOutputWithPooling, config_class=_CONFIG_FOR_DOC)
     def forward(
         self,
         pixel_values: Optional[torch.Tensor] = None,
@@ -852,6 +843,30 @@ class WindowedDinov2WithRegistersModel(WindowedDinov2WithRegistersPreTrainedMode
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, BaseModelOutputWithPooling]:
+        """
+        Returns:
+
+        Examples:
+
+        >>> import torch
+        >>> from rfdetr.models.backbone.dinov2_with_windowed_attn import (
+        ...     WindowedDinov2WithRegistersConfig,
+        ...     WindowedDinov2WithRegistersModel,
+        ... )
+        >>> config = WindowedDinov2WithRegistersConfig(
+        ...     image_size=32,
+        ...     patch_size=16,
+        ...     hidden_size=32,
+        ...     num_hidden_layers=2,
+        ...     num_attention_heads=4,
+        ...     num_register_tokens=2,
+        ... )
+        >>> model = WindowedDinov2WithRegistersModel(config)
+        >>> pixel_values = torch.randn(1, 3, 32, 32)
+        >>> outputs = model(pixel_values)
+        >>> list(outputs.last_hidden_state.shape)
+        [1, 7, 32]
+        """
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -892,10 +907,6 @@ class WindowedDinov2WithRegistersModel(WindowedDinov2WithRegistersPreTrainedMode
             attentions=encoder_outputs.attentions,
         )
 
-
-# Image classification docstring
-_IMAGE_CLASS_CHECKPOINT = "facebook/dinov2_with_registers-small-imagenet1k-1-layer"
-_IMAGE_CLASS_EXPECTED_OUTPUT = "tabby, tabby cat"
 
 DINOV2_WITH_REGISTERS_INPUTS_DOCSTRING = r"""
     Args:
@@ -943,11 +954,9 @@ class WindowedDinov2WithRegistersForImageClassification(WindowedDinov2WithRegist
         self.post_init()
 
     @add_start_docstrings_to_model_forward(DINOV2_WITH_REGISTERS_INPUTS_DOCSTRING)
-    @add_code_sample_docstrings(
-        checkpoint=_IMAGE_CLASS_CHECKPOINT,
+    @replace_return_docstrings(
         output_type=ImageClassifierOutput,
         config_class=_CONFIG_FOR_DOC,
-        expected_output=_IMAGE_CLASS_EXPECTED_OUTPUT,
     )
     def forward(
         self,
@@ -963,6 +972,30 @@ class WindowedDinov2WithRegistersForImageClassification(WindowedDinov2WithRegist
             Labels for computing the image classification/regression loss. Indices should be in `[0, ...,
             config.num_labels - 1]`. If `config.num_labels == 1` a regression loss is computed (Mean-Square loss), If
             `config.num_labels > 1` a classification loss is computed (Cross-Entropy).
+
+        Returns:
+
+        Example:
+
+        >>> import torch
+        >>> from rfdetr.models.backbone.dinov2_with_windowed_attn import (
+        ...     WindowedDinov2WithRegistersConfig,
+        ...     WindowedDinov2WithRegistersForImageClassification,
+        ... )
+        >>> config = WindowedDinov2WithRegistersConfig(
+        ...     image_size=32,
+        ...     patch_size=16,
+        ...     hidden_size=32,
+        ...     num_hidden_layers=2,
+        ...     num_attention_heads=4,
+        ...     num_register_tokens=2,
+        ...     num_labels=3,
+        ... )
+        >>> model = WindowedDinov2WithRegistersForImageClassification(config)
+        >>> pixel_values = torch.randn(1, 3, 32, 32)
+        >>> outputs = model(pixel_values)
+        >>> list(outputs.logits.shape)
+        [1, 3]
         """
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
@@ -1057,32 +1090,30 @@ class WindowedDinov2WithRegistersBackbone(WindowedDinov2WithRegistersPreTrainedM
         Returns:
 
         Examples:
-        Returns:
 
-        Examples:
-
-
-        ```python
-        >>> from transformers import AutoImageProcessor, AutoBackbone
         >>> import torch
-        >>> from PIL import Image
-        >>> import requests
-
-        >>> url = "http://images.cocodataset.org/val2017/000000039769.jpg"
-        >>> image = Image.open(requests.get(url, stream=True).raw)
-
-        >>> processor = AutoImageProcessor.from_pretrained("facebook/dinov2-with-registers-base")
-        >>> model = AutoBackbone.from_pretrained(
-        ...     "facebook/dinov2-with-registers-base", out_features=["stage2", "stage5", "stage8", "stage11"]
+        >>> from rfdetr.models.backbone.dinov2_with_windowed_attn import (
+        ...     WindowedDinov2WithRegistersBackbone,
+        ...     WindowedDinov2WithRegistersConfig,
         ... )
+        >>> config = WindowedDinov2WithRegistersConfig(
+        ...     image_size=32,
+        ...     patch_size=16,
+        ...     hidden_size=32,
+        ...     num_hidden_layers=2,
+        ...     num_attention_heads=4,
+        ...     num_register_tokens=2,
+        ...     out_indices=[2],
+        ... )
+        >>> model = WindowedDinov2WithRegistersBackbone(config)
+        >>> pixel_values = torch.randn(1, 3, 32, 32)
+        >>> outputs = model(pixel_values)
+        >>> len(outputs.feature_maps)
+        1
+        >>> list(outputs.feature_maps[0].shape)
+        [1, 32, 2, 2]
 
-        >>> inputs = processor(image, return_tensors="pt")
-
-        >>> outputs = model(**inputs)
-        >>> feature_maps = outputs.feature_maps
-        >>> list(feature_maps[-1].shape)
-        [1, 768, 16, 16]
-        ```"""
+        """
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states

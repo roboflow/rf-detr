@@ -214,7 +214,7 @@ RF-DETR supports advanced data augmentations using the [Albumentations](https://
 
 ### Quick Start
 
-Augmentations are configured in `src/rfdetr/augmentation_config.py`:
+Augmentations are configured in `src/rfdetr/datasets/aug_config.py`:
 
 ```python
 AUG_CONFIG = {
