@@ -172,8 +172,7 @@ class RFDETR:
                 for c in categories
                 if c["name"] not in has_children
                 and (
-                    c.get("supercategory", "none") not in placeholders
-                    or c.get("supercategory", "none") in placeholders
+                    c.get("supercategory", "none") not in placeholders or c.get("supercategory", "none") in placeholders
                 )
             ]
             # Safety fallback for pathological inputs
