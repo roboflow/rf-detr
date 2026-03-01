@@ -53,10 +53,11 @@ def coco_gt() -> COCO:
         "categories": [
             {"id": 1, "name": "cat_1"},
             {"id": 3, "name": "cat_3"},
+            {"id": 5, "name": "cat_5"},
         ],
     }
     coco.createIndex()
-    setattr(coco, "label2cat", {0: 1, 1: 3})
+    setattr(coco, "label2cat", {0: 1, 1: 3, 2: 5})
     return coco
 
 
@@ -120,12 +121,45 @@ class TestConvertCocoWithMapping:
         assert target["labels"].dtype == torch.int64
 
 
-class TestCocoEvaluatorCategoryResolution:
+class TestCocoEvaluatorCategoryResolutionWithMapping:
+    """Tests CocoEvaluator for CocoDetection constructed with remap_category_ids = True."""
+
+    def test_category_resolution_after_first_batch_of_labels_had_max_value(
+        self,
+        coco_gt: COCO,
+        base_prediction: Dict[str, torch.Tensor],
+    ) -> None:
+        evaluator = CocoEvaluator(coco_gt, ["bbox"])
+
+        # Head-reinitialization adds an extra background class
+        # The first batch of labels has at least one label = num_classes + 1
+        labels = [0, 3]
+        predictions = {
+            1: {
+                **base_prediction,
+                "labels": torch.tensor(labels, dtype=torch.int64),
+            }
+        }
+        results = evaluator.prepare_for_coco_detection(predictions)
+
+        # Second batch of labels.
+        labels = [0, 1]
+        expected_category_ids = [1, 3]
+        predictions = {
+            1: {
+                **base_prediction,
+                "labels": torch.tensor(labels, dtype=torch.int64),
+            }
+        }
+        results = evaluator.prepare_for_coco_detection(predictions)
+        assert [result["category_id"] for result in results] == expected_category_ids
+
     @pytest.mark.parametrize(
         ("labels", "expected_category_ids"),
         [
-            pytest.param([0, 1], [1, 3], id="contiguous-labels"),
-            pytest.param([1, 3], [1, 3], id="raw-coco-category-ids"),
+            pytest.param([0, 1], [1, 3], id="contiguous-labels-0-1"),
+            # Expected to fallback for mixed/legacy behavior where labels may already be COCO IDs
+            pytest.param([3, 3], [3, 3], id="contiguous-labels-3-3"),
         ],
     )
     def test_prepare_detection_resolves_category_ids(
@@ -135,6 +169,61 @@ class TestCocoEvaluatorCategoryResolution:
         labels: List[int],
         expected_category_ids: List[int],
     ) -> None:
+        evaluator = CocoEvaluator(coco_gt, ["bbox"])
+        predictions = {
+            1: {
+                **base_prediction,
+                "labels": torch.tensor(labels, dtype=torch.int64),
+            }
+        }
+        results = evaluator.prepare_for_coco_detection(predictions)
+        assert [result["category_id"] for result in results] == expected_category_ids
+
+
+class TestCocoEvaluatorCategoryResolutionWithoutMapping:
+    """Tests CocoEvaluator for CocoDetection constructed with remap_category_ids = False."""
+
+    def test_prepare_detection_fails_to_resolve_category_ids_with_label2cat_available(
+        self,
+        coco_gt: COCO,
+        base_prediction: Dict[str, torch.Tensor],
+    ) -> None:
+        """
+        Demonstrates why keeping label2cat in coco_gt during this test results into a bug.
+        When a CocoDetection object is created with remap_category_ids = False, label2cat is
+        never added to the coco_gt. But the fixture coco_gt has one.
+        """
+        evaluator = CocoEvaluator(coco_gt, ["bbox"])
+        assert hasattr(coco_gt, "label2cat")
+
+        labels = [1, 1]
+        expected_incorrectly_resolved_category_ids = [3, 3]
+        predictions = {
+            1: {
+                **base_prediction,
+                "labels": torch.tensor(labels, dtype=torch.int64),
+            }
+        }
+        results = evaluator.prepare_for_coco_detection(predictions)
+        assert [result["category_id"] for result in results] == expected_incorrectly_resolved_category_ids
+
+    @pytest.mark.parametrize(
+        ("labels", "expected_category_ids"),
+        [
+            pytest.param([0, 0], [], id="raw-coco-category-ids-0-0"),
+            pytest.param([1, 3], [1, 3], id="raw-coco-category-ids-1-3"),
+        ],
+    )
+    def test_prepare_detection_resolves_category_ids(
+        self,
+        coco_gt: COCO,
+        base_prediction: Dict[str, torch.Tensor],
+        labels: List[int],
+        expected_category_ids: List[int],
+    ) -> None:
+        # If mapping is disabled, label2cat attribute is not set in COCO
+        delattr(coco_gt, "label2cat")
+
         evaluator = CocoEvaluator(coco_gt, ["bbox"])
         predictions = {
             1: {
