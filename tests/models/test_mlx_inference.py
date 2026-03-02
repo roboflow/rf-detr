@@ -57,9 +57,7 @@ class TestConvertWeights:
         from rfdetr.mlx.convert_weights import _remap_backbone_key
 
         # Patch embedding
-        result = _remap_backbone_key(
-            "backbone.0.encoder.encoder.embeddings.patch_embeddings.projection.weight"
-        )
+        result = _remap_backbone_key("backbone.0.encoder.encoder.embeddings.patch_embeddings.projection.weight")
         assert result == "backbone.patch_embed.proj.weight"
 
         # CLS token
@@ -67,15 +65,11 @@ class TestConvertWeights:
         assert result == "backbone.cls_token"
 
         # Position embeddings
-        result = _remap_backbone_key(
-            "backbone.0.encoder.encoder.embeddings.position_embeddings"
-        )
+        result = _remap_backbone_key("backbone.0.encoder.encoder.embeddings.position_embeddings")
         assert result == "backbone.pos_embed"
 
         # Layer norm
-        result = _remap_backbone_key(
-            "backbone.0.encoder.encoder.layernorm.weight"
-        )
+        result = _remap_backbone_key("backbone.0.encoder.encoder.layernorm.weight")
         assert result == "backbone.norm.weight"
 
     @requires_mlx
@@ -84,21 +78,15 @@ class TestConvertWeights:
         from rfdetr.mlx.convert_weights import _remap_backbone_key
 
         # Attention query weight
-        result = _remap_backbone_key(
-            "backbone.0.encoder.encoder.encoder.layer.0.attention.attention.query.weight"
-        )
+        result = _remap_backbone_key("backbone.0.encoder.encoder.encoder.layer.0.attention.attention.query.weight")
         assert result == "backbone.blocks.0.attn.q.weight"
 
         # Layer scale
-        result = _remap_backbone_key(
-            "backbone.0.encoder.encoder.encoder.layer.5.layer_scale1.lambda1"
-        )
+        result = _remap_backbone_key("backbone.0.encoder.encoder.encoder.layer.5.layer_scale1.lambda1")
         assert result == "backbone.blocks.5.ls1.gamma"
 
         # MLP
-        result = _remap_backbone_key(
-            "backbone.0.encoder.encoder.encoder.layer.11.mlp.fc2.bias"
-        )
+        result = _remap_backbone_key("backbone.0.encoder.encoder.encoder.layer.11.mlp.fc2.bias")
         assert result == "backbone.blocks.11.mlp.fc2.bias"
 
     @requires_mlx
@@ -129,12 +117,8 @@ class TestConvertWeights:
         # Create minimal state dict with in_proj_weight
         d_model = 256
         state_dict = {
-            "decoder.decoder.layers.0.self_attn.in_proj_weight": torch.randn(
-                3 * d_model, d_model
-            ),
-            "decoder.decoder.layers.0.self_attn.in_proj_bias": torch.randn(
-                3 * d_model
-            ),
+            "decoder.decoder.layers.0.self_attn.in_proj_weight": torch.randn(3 * d_model, d_model),
+            "decoder.decoder.layers.0.self_attn.in_proj_bias": torch.randn(3 * d_model),
         }
         _, decoder_weights = convert_state_dict(state_dict)
 
@@ -155,8 +139,12 @@ class TestBackbone:
         from rfdetr.mlx.backbone import DINOv2Backbone
 
         backbone = DINOv2Backbone(
-            img_size=384, patch_size=16, embed_dim=384,
-            num_heads=6, num_windows=2, feature_indices=[2, 5, 8, 11],
+            img_size=384,
+            patch_size=16,
+            embed_dim=384,
+            num_heads=6,
+            num_windows=2,
+            feature_indices=[2, 5, 8, 11],
         )
         x = mx.zeros((1, 384, 384, 3))
         features = backbone(x)
@@ -174,8 +162,12 @@ class TestBackbone:
         from rfdetr.mlx.backbone import DINOv2Backbone
 
         backbone = DINOv2Backbone(
-            img_size=560, patch_size=14, embed_dim=384,
-            num_heads=6, num_windows=4, feature_indices=[1, 4, 7, 10],
+            img_size=560,
+            patch_size=14,
+            embed_dim=384,
+            num_heads=6,
+            num_windows=4,
+            feature_indices=[1, 4, 7, 10],
         )
         x = mx.zeros((1, 560, 560, 3))
         features = backbone(x)
@@ -197,8 +189,14 @@ class TestDecoder:
         from rfdetr.mlx.decoder import RFDETRDecoder
 
         decoder = RFDETRDecoder(
-            d_model=256, sa_nhead=8, ca_nhead=16, ca_npoints=2,
-            num_layers=2, num_queries=300, num_classes=91, embed_dim=384,
+            d_model=256,
+            sa_nhead=8,
+            ca_nhead=16,
+            ca_npoints=2,
+            num_layers=2,
+            num_queries=300,
+            num_classes=91,
+            embed_dim=384,
         )
 
         # Simulate 4 backbone features at 24x24

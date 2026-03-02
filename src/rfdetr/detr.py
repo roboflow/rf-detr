@@ -338,9 +338,14 @@ class RFDETR:
         self.remove_optimized_model()
 
         if backend == "mlx":
-            from rfdetr.mlx import build_mlx_inference
+            if getattr(self.model_config, "segmentation_head", False):
+                from rfdetr.mlx import build_mlx_seg_inference
 
-            self._mlx_model = build_mlx_inference(self.model_config, self.model)
+                self._mlx_model = build_mlx_seg_inference(self.model_config, self.model)
+            else:
+                from rfdetr.mlx import build_mlx_inference
+
+                self._mlx_model = build_mlx_inference(self.model_config, self.model)
             self._is_optimized_for_inference = True
             self._inference_backend = "mlx"
             self._optimized_resolution = self.model.resolution
@@ -780,10 +785,15 @@ class RFDETR:
             labels = labels[keep]
             boxes = boxes[keep]
 
+            mask = None
+            if "masks" in result:
+                mask = (result["masks"][keep] > 0.5).astype(bool)
+
             detections = sv.Detections(
                 xyxy=boxes.astype(np.float32),
                 confidence=scores.astype(np.float32),
                 class_id=labels.astype(np.intp),
+                mask=mask,
             )
             detections_list.append(detections)
 

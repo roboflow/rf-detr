@@ -209,9 +209,7 @@ class DINOv2Backbone(nn.Module):
         self.cls_token = mx.zeros((1, 1, embed_dim))
         self.pos_embed = mx.zeros((1, 1 + num_patches, embed_dim))
 
-        self.blocks = [
-            Block(embed_dim, num_heads, num_windows, mlp_ratio) for _ in range(depth)
-        ]
+        self.blocks = [Block(embed_dim, num_heads, num_windows, mlp_ratio) for _ in range(depth)]
         self.norm = nn.LayerNorm(embed_dim)
 
     def _window_partition(self, patches: mx.array, H: int, W: int, N: int) -> mx.array:

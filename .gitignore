@@ -178,9 +178,18 @@ cython_debug/
 
 # model artifacts
 rf-detr*
+*.pth
 output/*
 
 train_test.py
+run_demo.py
+demo_live.py
+
+# macOS
+.DS_Store
+
+# demo/scratch outputs
+results/
 
 # test artifacts
 test_visualizations/

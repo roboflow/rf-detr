@@ -84,8 +84,7 @@ visual = [
 cli = ["jsonargparse[signatures]>=4.27.7"]
 plus = ["rfdetr_plus>=1.0.1, <2.0.0"]
 mlx = [
-    "mlx>=0.22.0",
-    "safetensors>=0.4.0",
+    "mlx>=0.22.0; sys_platform == 'darwin'",
 ]
 
 [dependency-groups]

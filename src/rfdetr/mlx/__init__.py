@@ -21,7 +21,7 @@ Usage::
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from rfdetr.mlx.inference import MLXInferenceModel
+    from rfdetr.mlx.inference import MLXInferenceModel, MLXSegInferenceModel
 
 
 def is_mlx_available() -> bool:
@@ -31,8 +31,9 @@ def is_mlx_available() -> bool:
         True if running on macOS with MLX installed, False otherwise.
     """
     try:
-        import mlx.core  # noqa: F401
         import platform
+
+        import mlx.core  # noqa: F401
 
         return platform.system() == "Darwin"
     except ImportError:
@@ -60,10 +61,39 @@ def build_mlx_inference(
     """
     if not is_mlx_available():
         raise RuntimeError(
-            "MLX is not available. MLX requires macOS on Apple Silicon. "
-            "Install with: pip install 'rfdetr[mlx]'"
+            "MLX is not available. MLX requires macOS on Apple Silicon. Install with: pip install 'rfdetr[mlx]'"
         )
 
     from rfdetr.mlx.inference import MLXInferenceModel
 
     return MLXInferenceModel.from_pytorch(model_config, pytorch_model)
+
+
+def build_mlx_seg_inference(
+    model_config: object,
+    pytorch_model: object,
+) -> "MLXSegInferenceModel":
+    """Build a compiled MLX segmentation inference model from a PyTorch RF-DETR seg model.
+
+    Converts PyTorch weights (backbone, decoder, and segmentation head) to MLX
+    format, builds the MLX model graph, casts to FP16, and compiles the full
+    forward pass for Metal execution.
+
+    Args:
+        model_config: RF-DETR segmentation model configuration (e.g., RFDETRSegNanoConfig).
+        pytorch_model: The rfdetr.main.Model instance with loaded weights.
+
+    Returns:
+        Compiled MLX segmentation inference model ready for predict() calls.
+
+    Raises:
+        RuntimeError: If MLX is not available on this system.
+    """
+    if not is_mlx_available():
+        raise RuntimeError(
+            "MLX is not available. MLX requires macOS on Apple Silicon. Install with: pip install 'rfdetr[mlx]'"
+        )
+
+    from rfdetr.mlx.inference import MLXSegInferenceModel
+
+    return MLXSegInferenceModel.from_pytorch(model_config, pytorch_model)

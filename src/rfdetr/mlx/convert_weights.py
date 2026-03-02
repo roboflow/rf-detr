@@ -239,3 +239,56 @@ def convert_state_dict(
                 decoder_weights[mlx_key] = arr[i * d : (i + 1) * d]
 
     return backbone_weights, decoder_weights
+
+
+# ============================================================
+# Segmentation head weight conversion
+# ============================================================
+
+
+def _remap_seg_head_key(bare_key: str) -> str:
+    """Remap a PyTorch segmentation head subkey to its MLX subkey.
+
+    Args:
+        bare_key: Key with the ``segmentation_head.`` prefix already stripped.
+
+    Returns:
+        Remapped key for loading into the MLX ``SegHead`` module.
+    """
+    bare_key = re.sub(r"^(blocks\.\d+\.)pwconv1\.", r"\1pwconv.", bare_key)
+    bare_key = re.sub(r"^query_features_block\.layers\.0\.", "query_features_block.fc1.", bare_key)
+    bare_key = re.sub(r"^query_features_block\.layers\.2\.", "query_features_block.fc2.", bare_key)
+    return bare_key
+
+
+def convert_seg_weights(
+    state_dict: Dict[str, "torch.Tensor"],
+) -> Tuple[Dict[str, np.ndarray], int]:
+    """Extract and convert segmentation head weights from a PyTorch state dict.
+
+    Scans for all ``segmentation_head.*`` keys, transposes any conv weights,
+    and remaps PyTorch naming to MLX naming.
+
+    Args:
+        state_dict: PyTorch model state dict (from ``model.model.state_dict()``).
+
+    Returns:
+        Tuple of (seg_weights dict with bare MLX keys as numpy arrays, num_blocks).
+    """
+    seg_weights: Dict[str, np.ndarray] = {}
+    block_indices: set = set()
+
+    for key, tensor in state_dict.items():
+        if not key.startswith("segmentation_head."):
+            continue
+        arr = tensor.detach().cpu().float().numpy()
+        bare = key[len("segmentation_head.") :]
+        if "blocks." in bare:
+            block_indices.add(int(bare.split("blocks.")[1].split(".")[0]))
+        mlx_bare = _remap_seg_head_key(bare)
+        if arr.ndim == 4:
+            arr = _transpose_conv_weight(arr)
+        seg_weights[mlx_bare] = arr
+
+    num_blocks = max(block_indices) + 1 if block_indices else 4
+    return seg_weights, num_blocks

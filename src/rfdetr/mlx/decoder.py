@@ -16,11 +16,10 @@ hidden_dim, num_heads, num_points, num_layers, num_queries, and num_classes.
 from __future__ import annotations
 
 import math
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 import mlx.core as mx
 import mlx.nn as nn
-
 
 # ============================================================
 # Metal bilinear sampling kernel
@@ -421,7 +420,8 @@ class _TransformerDecoder(nn.Module):
         query_pos: mx.array,
         reference_points: mx.array,
         spatial_shape: Tuple[int, int],
-    ) -> mx.array:
+        return_intermediate: bool = False,
+    ) -> Union[mx.array, Tuple[mx.array, List[mx.array]]]:
         """Forward pass through all decoder layers.
 
         Args:
@@ -430,14 +430,23 @@ class _TransformerDecoder(nn.Module):
             query_pos: (N, nQ, d_model) query position embedding.
             reference_points: (N, nQ, 1, 4) reference points.
             spatial_shape: (H, W) spatial dimensions.
+            return_intermediate: If True, also return per-layer hidden states.
 
         Returns:
-            (N, nQ, d_model) decoded features.
+            If ``return_intermediate`` is False: (N, nQ, d_model) decoded features.
+            If ``return_intermediate`` is True: tuple of (normed_output, intermediates)
+            where ``intermediates`` is a list of (N, nQ, d_model) arrays, one per layer.
         """
         output = tgt
+        intermediates: List[mx.array] = []
         for layer in self.layers:
             output = layer(output, memory, query_pos, reference_points, spatial_shape)
-        return self.norm(output)
+            if return_intermediate:
+                intermediates.append(output)
+        normed = self.norm(output)
+        if return_intermediate:
+            return normed, intermediates
+        return normed
 
 
 # ============================================================
@@ -490,9 +499,7 @@ class RFDETRDecoder(nn.Module):
         self.enc_output = [nn.Linear(d_model, d_model)]
         self.enc_output_norm = [nn.LayerNorm(d_model)]
         self.enc_out_class_embed = [nn.Linear(d_model, num_classes)]
-        self.enc_out_bbox_embed = [
-            [nn.Linear(d_model, d_model), nn.Linear(d_model, d_model), nn.Linear(d_model, 4)]
-        ]
+        self.enc_out_bbox_embed = [[nn.Linear(d_model, d_model), nn.Linear(d_model, d_model), nn.Linear(d_model, 4)]]
 
         # Learned queries (full group_detr size, sliced at inference)
         self.query_feat = mx.zeros((num_queries * group_detr, d_model))
@@ -517,17 +524,27 @@ class RFDETRDecoder(nn.Module):
                 x = nn.relu(x)
         return x
 
-    def __call__(self, features: List[mx.array]) -> Dict[str, mx.array]:
+    def __call__(
+        self,
+        features: List[mx.array],
+        return_intermediate: bool = False,
+    ) -> Dict[str, mx.array]:
         """Forward pass.
 
         Args:
             features: List of backbone feature maps, each (N, H, W, embed_dim).
+            return_intermediate: If True, add ``"spatial_features"`` and
+                ``"hs_list"`` to the returned dict for segmentation head use.
 
         Returns:
-            Dict with "pred_logits" (N, num_queries, num_classes) and
-            "pred_boxes" (N, num_queries, 4) in cxcywh format.
+            Dict with ``"pred_logits"`` (N, num_queries, num_classes) and
+            ``"pred_boxes"`` (N, num_queries, 4) in cxcywh format.
+            When ``return_intermediate`` is True, also includes
+            ``"spatial_features"`` (N, H, W, d_model) and
+            ``"hs_list"`` (list of per-layer (N, nQ, d_model) arrays).
         """
         projected = self.projector(features)
+        spatial_features = projected  # (N, H, W, d_model) — before flatten
         N, H, W, _ = projected.shape
 
         memory = projected.reshape(N, H * W, self.d_model)
@@ -552,7 +569,10 @@ class RFDETRDecoder(nn.Module):
 
         refpoints_input = refpoints[:, :, None, :]
 
-        hs = self.decoder(query_feat, memory, query_pos, refpoints_input, (H, W))
+        if return_intermediate:
+            hs, hs_list = self.decoder(query_feat, memory, query_pos, refpoints_input, (H, W), return_intermediate=True)
+        else:
+            hs = self.decoder(query_feat, memory, query_pos, refpoints_input, (H, W))
 
         delta = self._bbox_embed(hs)
         pred_cxcy = delta[..., :2] * refpoints[..., 2:] + refpoints[..., :2]
@@ -561,11 +581,13 @@ class RFDETRDecoder(nn.Module):
 
         pred_logits = self.class_embed(hs)
 
-        return {"pred_logits": pred_logits, "pred_boxes": pred_boxes}
+        result: Dict[str, mx.array] = {"pred_logits": pred_logits, "pred_boxes": pred_boxes}
+        if return_intermediate:
+            result["spatial_features"] = spatial_features
+            result["hs_list"] = hs_list
+        return result
 
-    def _two_stage_encode(
-        self, memory: mx.array, H: int, W: int, N: int
-    ) -> Tuple[mx.array, mx.array]:
+    def _two_stage_encode(self, memory: mx.array, H: int, W: int, N: int) -> Tuple[mx.array, mx.array]:
         """Generate proposals, score them, select top-K.
 
         Args:
