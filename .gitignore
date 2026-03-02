@@ -184,6 +184,7 @@ output/*
 train_test.py
 run_demo.py
 demo_live.py
+examples/
 
 # macOS
 .DS_Store

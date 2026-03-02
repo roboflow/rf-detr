@@ -363,3 +363,67 @@ class TestDetrMLXIntegration:
 
         assert isinstance(detections, sv.Detections)
         assert detections.xyxy.shape[1] == 4
+
+    @requires_mlx
+    def test_optimize_for_inference_routes_seg_to_mlx_seg_model(self) -> None:
+        """Test that segmentation models route to MLXSegInferenceModel, not MLXInferenceModel."""
+        from unittest.mock import patch
+
+        from rfdetr.detr import RFDETR
+
+        class _MockSegRFDETR(RFDETR):
+            def maybe_download_pretrain_weights(self) -> None:
+                return None
+
+            def get_model_config(self, **kwargs) -> SimpleNamespace:
+                return SimpleNamespace(segmentation_head=True)
+
+            def get_model(self, config: SimpleNamespace) -> Any:
+                mock = MagicMock()
+                mock.inference_model = None
+                mock.resolution = 312
+                return mock
+
+        model = _MockSegRFDETR()
+
+        with (
+            patch("rfdetr.mlx.build_mlx_seg_inference") as mock_seg,
+            patch("rfdetr.mlx.build_mlx_inference") as mock_det,
+        ):
+            mock_seg.return_value = MagicMock()
+            model.optimize_for_inference(backend="mlx")
+
+        mock_seg.assert_called_once()
+        mock_det.assert_not_called()
+
+    @requires_mlx
+    def test_optimize_for_inference_routes_det_to_mlx_inference_model(self) -> None:
+        """Test that detection models route to MLXInferenceModel, not MLXSegInferenceModel."""
+        from unittest.mock import patch
+
+        from rfdetr.detr import RFDETR
+
+        class _MockDetRFDETR(RFDETR):
+            def maybe_download_pretrain_weights(self) -> None:
+                return None
+
+            def get_model_config(self, **kwargs) -> SimpleNamespace:
+                return SimpleNamespace(segmentation_head=False)
+
+            def get_model(self, config: SimpleNamespace) -> Any:
+                mock = MagicMock()
+                mock.inference_model = None
+                mock.resolution = 384
+                return mock
+
+        model = _MockDetRFDETR()
+
+        with (
+            patch("rfdetr.mlx.build_mlx_inference") as mock_det,
+            patch("rfdetr.mlx.build_mlx_seg_inference") as mock_seg,
+        ):
+            mock_det.return_value = MagicMock()
+            model.optimize_for_inference(backend="mlx")
+
+        mock_det.assert_called_once()
+        mock_seg.assert_not_called()

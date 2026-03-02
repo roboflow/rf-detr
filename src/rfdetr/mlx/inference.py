@@ -202,7 +202,7 @@ class MLXInferenceModel:
         Returns:
             List of dicts with "scores", "labels", "boxes" as numpy arrays.
         """
-        logits = np.array(outputs["pred_logits"], dtype=np.float32)
+        logits = np.clip(np.array(outputs["pred_logits"], dtype=np.float32), -88.0, 88.0)
         boxes = np.array(outputs["pred_boxes"], dtype=np.float32)
 
         prob = 1.0 / (1.0 + np.exp(-logits))
@@ -462,7 +462,7 @@ class MLXSegInferenceModel:
         import cv2
 
         pred_logits, pred_boxes, mask_logits = outputs
-        logits = np.array(pred_logits, dtype=np.float32)
+        logits = np.clip(np.array(pred_logits, dtype=np.float32), -88.0, 88.0)
         boxes = np.array(pred_boxes, dtype=np.float32)
         masks_np = np.array(mask_logits, dtype=np.float32)
 
@@ -505,6 +505,7 @@ class MLXSegInferenceModel:
 
             # Select and resize masks
             sel_masks_logits = masks_i[topk_boxes_idx]  # (num_select, H_mask, W_mask)
+            sel_masks_logits = np.clip(sel_masks_logits, -88.0, 88.0)
             sel_masks_prob = 1.0 / (1.0 + np.exp(-sel_masks_logits))  # sigmoid
 
             resized_masks = np.zeros((num_select, orig_h, orig_w), dtype=np.float32)

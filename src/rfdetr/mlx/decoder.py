@@ -9,8 +9,11 @@
 Includes the C2f projector, two-stage encoder, and transformer decoder
 with deformable cross-attention via a fused Metal bilinear sampling kernel.
 
-Supports all RF-DETR detection model variants through parameterization of
-hidden_dim, num_heads, num_points, num_layers, num_queries, and num_classes.
+Supports both detection and segmentation model variants through
+parameterization of hidden_dim, num_heads, num_points, num_layers,
+num_queries, and num_classes. The decoder can optionally return
+intermediate layer outputs for use by a segmentation head via the
+``return_intermediate`` parameter on ``RFDETRDecoder.__call__``.
 """
 
 from __future__ import annotations
