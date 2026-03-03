@@ -372,9 +372,10 @@ class TestWindowedDinov2WithRegistersBackbone:
 
 
 class TestSdpaFallbackWithOutputAttentions:
-    """Guards the eager-attention fallback in Dinov2WithRegistersSdpaSelfAttention."""
+    """Guards the output_attentions behaviour in windowed attention."""
 
-    def test_output_attentions_true_returns_attention_weights(self):
+    def test_output_attentions_true_raises(self):
+        """Windowed attention explicitly does not support output_attentions=True."""
         from rfdetr.models.backbone.dinov2_with_windowed_attn import (
             WindowedDinov2WithRegistersModel,
         )
@@ -384,8 +385,5 @@ class TestSdpaFallbackWithOutputAttentions:
         model.eval()
         pixel_values = torch.randn(1, 3, 64, 64)
         with torch.no_grad():
-            output = model(pixel_values, output_attentions=True)
-        assert output.attentions is not None
-        assert len(output.attentions) == config.num_hidden_layers
-        # Each attention tensor: (batch, heads, seq, seq)
-        assert output.attentions[0].ndim == 4
+            with pytest.raises(AssertionError, match="output_attentions is not supported for windowed attention"):
+                model(pixel_values, output_attentions=True)
