@@ -307,8 +307,6 @@ class TestBuildRoboflowFromYoloAugConfig:
             patch("rfdetr.datasets.yolo.YoloDetection") as mock_dataset,
         ):
             mock_path.return_value.exists.return_value = True
-            mock_path.return_value.__truediv__ = lambda self, other: self
-            mock_path.return_value.__str__ = lambda self: "/fake/dataset"
             mock_transform.return_value = MagicMock()
             mock_dataset.return_value = MagicMock()
 
