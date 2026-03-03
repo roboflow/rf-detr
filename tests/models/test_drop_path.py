@@ -4,10 +4,17 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+import logging
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
 import pytest
 import torch
+import torch.nn as nn
 
+import rfdetr.models.backbone.dinov2 as dinov2_module
 from rfdetr.main import Model
+from rfdetr.models.backbone.dinov2 import DinoV2
 from rfdetr.models.backbone.dinov2_with_windowed_attn import Dinov2WithRegistersDropPath
 from rfdetr.models.lwdetr import LWDETR
 
@@ -137,3 +144,66 @@ def test_update_drop_path_handles_missing_layers(model_with_drop_path: Model, mo
 
     # Should not raise an error, just return early
     model.update_drop_path(0.1, 12)
+
+
+def test_update_drop_path_partial_layers(model_with_drop_path: Model) -> None:
+    """Verify min() guard prevents IndexError when vit_encoder_num_layers > len(layers)."""
+    model: LWDETR = model_with_drop_path.model
+
+    layers = model._get_backbone_encoder_layers()
+    assert layers is not None
+    actual_num_layers = len(layers)
+
+    # Request more layers than exist in the backbone
+    requested_num_layers = actual_num_layers + 4
+    drop_path_rate = 0.2
+
+    # Should not raise IndexError
+    model.update_drop_path(drop_path_rate, requested_num_layers)
+
+    # Actual layers updated with the rates from the longer linspace
+    expected_rates = [x.item() for x in torch.linspace(0, drop_path_rate, requested_num_layers)]
+    for i in range(actual_num_layers):
+        actual_prob = layers[i].drop_path.drop_prob
+        assert abs(actual_prob - expected_rates[i]) < 1e-6, (
+            f"Layer {i} drop_prob should be {expected_rates[i]}, got {actual_prob}"
+        )
+
+
+def test_non_windowed_drop_path_warns(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify a warning is emitted when drop_path_rate > 0 with non-windowed backbone."""
+    mock_backbone = MagicMock()
+    monkeypatch.setattr(dinov2_module, "AutoBackbone", MagicMock(from_pretrained=MagicMock(return_value=mock_backbone)))
+
+    # The rf-detr logger sets propagate=False, so intercept warning() directly.
+    warning_messages: list[str] = []
+    rf_detr_logger = logging.getLogger("rf-detr")
+    monkeypatch.setattr(rf_detr_logger, "warning", lambda msg, *args, **kwargs: warning_messages.append(msg))
+
+    DinoV2(size="base", use_windowed_attn=False, drop_path_rate=0.1)
+
+    assert any("drop_path_rate" in msg and "ignored" in msg for msg in warning_messages), (
+        "Expected warning about drop_path_rate being ignored for non-windowed backbone"
+    )
+
+
+def test_get_backbone_encoder_layers_blocks_path() -> None:
+    """Verify _get_backbone_encoder_layers() returns enc.blocks for standard ViT backbones."""
+    mock_blocks = nn.ModuleList([nn.Linear(1, 1) for _ in range(3)])
+    # SimpleNamespace gives only the attributes we define, so hasattr checks work correctly.
+    mock_encoder = SimpleNamespace(blocks=mock_blocks)
+    mock_self = SimpleNamespace(backbone=[SimpleNamespace(encoder=mock_encoder)])
+
+    result = LWDETR._get_backbone_encoder_layers(mock_self)  # type: ignore[arg-type]
+    assert result is mock_blocks, "Should return enc.blocks for standard ViT backbone"
+
+
+def test_get_backbone_encoder_layers_trunk_blocks_path() -> None:
+    """Verify _get_backbone_encoder_layers() returns enc.trunk.blocks for aimv2 backbones."""
+    mock_blocks = nn.ModuleList([nn.Linear(1, 1) for _ in range(3)])
+    mock_trunk = SimpleNamespace(blocks=mock_blocks)
+    mock_encoder = SimpleNamespace(trunk=mock_trunk)  # no 'blocks' at top level
+    mock_self = SimpleNamespace(backbone=[SimpleNamespace(encoder=mock_encoder)])
+
+    result = LWDETR._get_backbone_encoder_layers(mock_self)  # type: ignore[arg-type]
+    assert result is mock_blocks, "Should return enc.trunk.blocks for aimv2 backbone"

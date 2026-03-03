@@ -80,6 +80,11 @@ class DinoV2(nn.Module):
         if not use_windowed_attn:
             assert not gradient_checkpointing, "Gradient checkpointing is not supported for non-windowed attention"
             assert load_dinov2_weights, "Using non-windowed attention requires loading dinov2 weights from hub"
+            if drop_path_rate > 0.0:
+                logger.warning(
+                    "drop_path_rate > 0.0 is not supported for non-windowed DinoV2 backbones. "
+                    "drop_path will be ignored."
+                )
             self.encoder = AutoBackbone.from_pretrained(
                 name,
                 out_features=[f"stage{i}" for i in out_feature_indexes],
