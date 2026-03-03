@@ -587,6 +587,16 @@ class Model:
             with open(output_dir / "results.json", "w") as f:
                 json.dump(results, f)
 
+            # Save mask results for valid split if available
+            best_stats = ema_test_stats if best_is_ema else test_stats
+            if "results_json_masks" in best_stats:
+                mask_full = best_stats["results_json_masks"]
+                mask_output = {k: v for k, v in mask_full.items() if k != "class_map"}
+                mask_output["class_map"] = {"valid": mask_full["class_map"]}
+                with open(output_dir / "results_mask.json", "w") as f:
+                    json.dump(mask_output, f)
+                logger.info("Mask results saved to %s", output_dir / "results_mask.json")
+
             total_time = time.time() - start_time
             total_time_str = str(datetime.timedelta(seconds=int(total_time)))
             logger.info("Training time %s", total_time_str)
@@ -614,12 +624,19 @@ class Model:
             with open(output_dir / "results.json", "w") as f:
                 json.dump(results, f)
 
-            # Save mask results if they exist
+            # Save mask results if they exist (read-modify-write to preserve valid split data)
             if "results_json_masks" in test_stats:
-                mask_results = test_stats["results_json_masks"]["class_map"]
-                results_mask = {"class_map": {"test": mask_results}}
-                with open(output_dir / "results_mask.json", "w") as f:
+                test_mask_class_map = test_stats["results_json_masks"]["class_map"]
+                results_mask_path = output_dir / "results_mask.json"
+                if results_mask_path.exists():
+                    with open(results_mask_path, "r") as f:
+                        results_mask = json.load(f)
+                else:
+                    results_mask = {"class_map": {}}
+                results_mask["class_map"]["test"] = test_mask_class_map
+                with open(results_mask_path, "w") as f:
                     json.dump(results_mask, f)
+                logger.info("Mask results saved to %s", results_mask_path)
 
         _run_on_train_end_callbacks(callbacks)
 
