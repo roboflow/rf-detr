@@ -144,20 +144,31 @@ class RFDETR:
         self.model.export(**kwargs)
 
     @staticmethod
-    def _load_classes(dataset_dir) -> List[str]:
+    def _load_classes(dataset_dir: str) -> List[str]:
         """Load class names from a COCO or YOLO dataset directory."""
         if is_valid_coco_dataset(dataset_dir):
             coco_path = os.path.join(dataset_dir, "train", "_annotations.coco.json")
             with open(coco_path, "r") as f:
                 anns = json.load(f)
-            categories = anns["categories"]
-            supercategory_names = {c["name"] for c in categories}
-            has_hierarchy = any(c.get("supercategory", "none") in supercategory_names for c in categories)
-            if has_hierarchy:
-                class_names = [c["name"] for c in categories if c.get("supercategory", "none") != "none"]
-            else:
-                class_names = [c["name"] for c in categories]
-            return class_names
+            categories = sorted(anns["categories"], key=lambda category: category.get("id", float("inf")))
+
+            # Catch possible placeholders for no supercategory
+            placeholders = {"", "none", "null", None}
+
+            # If no meaningful supercategory exists anywhere, treat as flat dataset
+            has_any_sc = any(c.get("supercategory", "none") not in placeholders for c in categories)
+            if not has_any_sc:
+                return [c["name"] for c in categories]
+
+            # Mixed/Hierarchical: keep only categories that are not parents of other categories.
+            # Both leaves (with a real supercategory) and standalone top-level nodes (supercategory is a
+            # placeholder) satisfy this condition — neither appears as another category's supercategory.
+            parents = {c.get("supercategory") for c in categories if c.get("supercategory", "none") not in placeholders}
+            has_children = {c["name"] for c in categories if c["name"] in parents}
+
+            class_names = [c["name"] for c in categories if c["name"] not in has_children]
+            # Safety fallback for pathological inputs
+            return class_names or [c["name"] for c in categories]
 
         # list all YAML files in the folder
         if is_valid_yolo_dataset(dataset_dir):
@@ -173,7 +184,6 @@ class RFDETR:
                 return data["names"]
             else:
                 raise ValueError(f"Found {yaml_path} but it does not contain 'names' field.")
-
         raise FileNotFoundError(
             f"Could not find class names in {dataset_dir}. "
             "Checked for COCO (train/_annotations.coco.json) and YOLO (data.yaml, data.yml) styles."
