@@ -36,6 +36,8 @@ from transformers.utils import (
 logger = logging.get_logger(__name__)
 
 
+# Copied from transformers.pytorch_utils.find_pruneable_heads_and_indices (removed from public API in transformers v5.0).
+# Source: https://github.com/huggingface/transformers/blob/v4.49.0/src/transformers/pytorch_utils.py#L127
 def find_pruneable_heads_and_indices(
     heads: Set[int], n_heads: int, head_size: int, already_pruned_heads: Set[int]
 ) -> Tuple[Set[int], torch.LongTensor]:
@@ -64,6 +66,8 @@ def _align_output_features_output_indices(
     return out_features, out_indices
 
 
+# Copied from transformers.utils.backbone_utils.get_aligned_output_features_output_indices (removed from public API in transformers v5.0).
+# Source: https://github.com/huggingface/transformers/blob/v4.49.0/src/transformers/utils/backbone_utils.py#L30
 def get_aligned_output_features_output_indices(
     out_features: Optional[List[str]],
     out_indices: Optional[Union[List[int], Tuple[int, ...]]],
@@ -75,9 +79,6 @@ def get_aligned_output_features_output_indices(
     )
     return out_features, out_indices
 
-
-# Base docstring
-_CHECKPOINT_FOR_DOC = "facebook/dinov2_with_registers-base"
 
 # General docstring
 _CONFIG_FOR_DOC = "WindowedDinov2WithRegistersConfig"
@@ -449,13 +450,13 @@ class Dinov2WithRegistersSdpaSelfAttention(Dinov2WithRegistersSelfAttention):
         self.attention_probs_dropout_prob = config.attention_probs_dropout_prob
 
     def forward(
-        self, hidden_states, output_attentions: bool = False
+        self, hidden_states: torch.Tensor, output_attentions: bool = False
     ) -> Union[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor]]:
         if output_attentions:
             # TODO: Improve this warning with e.g. `model.config.attn_implementation = "manual"` once this is implemented.
             logger.warning_once(
-                "Dinov2WithRegistersModel is using Dinov2WithRegistersSdpaSelfAttention, but `torch.nn.functional.scaled_dot_product_attention` does not support `output_attentions=True`. Falling back to the manual attention implementation, "
-                'but specifying the manual implementation will be required from Transformers version v5.0.0 onwards. This warning can be removed using the argument `attn_implementation="eager"` when loading the model.'
+                "Dinov2WithRegistersModel is using Dinov2WithRegistersSdpaSelfAttention, but `torch.nn.functional.scaled_dot_product_attention` does not support `output_attentions=True`. Falling back to the manual attention implementation. "
+                'Since Transformers v5.0.0, use `attn_implementation="eager"` when loading the model to avoid this fallback.'
             )
             return super().forward(hidden_states=hidden_states, output_attentions=output_attentions)
 
