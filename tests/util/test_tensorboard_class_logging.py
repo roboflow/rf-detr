@@ -12,7 +12,7 @@ from rfdetr.util.metrics import MetricsTensorBoardSink
 class DummyWriter:
     """Minimal stand-in for torch.utils.tensorboard.SummaryWriter (no real I/O)."""
 
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
         self.scalars = []  # list[(tag, value, step)]
         self.flushed = False
         self.closed = False
