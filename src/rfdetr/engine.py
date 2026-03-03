@@ -50,6 +50,16 @@ logger = get_logger()
 BYTES_TO_MB = 1024.0 * 1024.0
 
 
+def _is_cuda(device: torch.device) -> bool:
+    """Return True if device is a CUDA device with an active CUDA context."""
+    return (
+        isinstance(device, torch.device)
+        and device.type == "cuda"
+        and torch.cuda.is_available()
+        and torch.cuda.is_initialized()
+    )
+
+
 def _get_cuda_autocast_dtype() -> torch.dtype:
     """Return the autocast dtype that is supported on the current CUDA device."""
     if not torch.cuda.is_available():
@@ -220,8 +230,8 @@ def train_one_epoch(
                 "box_loss": f"{log_dict['loss_bbox']:.2f}",
                 "loss": f"{log_dict['loss']:.2f}",
             }
-            if torch.cuda.is_available() and torch.cuda.is_initialized():
-                postfix["max_mem"] = f"{torch.cuda.max_memory_allocated() / BYTES_TO_MB:.0f}"
+            if _is_cuda(device):
+                postfix["max_mem"] = f"{torch.cuda.max_memory_allocated() / BYTES_TO_MB:.0f} MB"
             progress_iter.set_postfix(postfix)
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
@@ -489,13 +499,8 @@ def evaluate(model, criterion, postprocess, data_loader, base_ds, device, args=N
                 "box_loss": f"{log_dict['loss_bbox']:.2f}",
                 "loss": f"{log_dict['loss']:.2f}",
             }
-            if (
-                isinstance(device, torch.device)
-                and device.type == "cuda"
-                and torch.cuda.is_available()
-                and torch.cuda.is_initialized()
-            ):
-                postfix["max_mem"] = f"{torch.cuda.max_memory_allocated() / BYTES_TO_MB:.0f}"
+            if _is_cuda(device):
+                postfix["max_mem"] = f"{torch.cuda.max_memory_allocated() / BYTES_TO_MB:.0f} MB"
             progress_iter.set_postfix(postfix)
 
     # gather the stats from all processes
