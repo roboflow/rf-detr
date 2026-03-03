@@ -213,14 +213,15 @@ def train_one_epoch(
 
         if use_progress_bar:
             log_dict = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
-            progress_iter.set_postfix(
-                {
-                    "lr": f"{log_dict['lr']:.6f}",
-                    "class_loss": f"{log_dict['class_error']:.2f}",
-                    "box_loss": f"{log_dict['loss_bbox']:.2f}",
-                    "loss": f"{log_dict['loss']:.2f}",
-                }
-            )
+            postfix = {
+                "lr": f"{log_dict['lr']:.6f}",
+                "class_loss": f"{log_dict['class_error']:.2f}",
+                "box_loss": f"{log_dict['loss_bbox']:.2f}",
+                "loss": f"{log_dict['loss']:.2f}",
+            }
+            if torch.cuda.is_available():
+                postfix["max_mem"] = f"{torch.cuda.max_memory_allocated() / (1024.0 * 1024.0):.0f}"
+            progress_iter.set_postfix(postfix)
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     logger.info(f"Epoch {epoch + 1} stats: {metric_logger}")
@@ -482,13 +483,14 @@ def evaluate(model, criterion, postprocess, data_loader, base_ds, device, args=N
 
         if use_progress_bar:
             log_dict = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
-            progress_iter.set_postfix(
-                {
-                    "class_loss": f"{log_dict['class_error']:.2f}",
-                    "box_loss": f"{log_dict['loss_bbox']:.2f}",
-                    "loss": f"{log_dict['loss']:.2f}",
-                }
-            )
+            postfix = {
+                "class_loss": f"{log_dict['class_error']:.2f}",
+                "box_loss": f"{log_dict['loss_bbox']:.2f}",
+                "loss": f"{log_dict['loss']:.2f}",
+            }
+            if torch.cuda.is_available():
+                postfix["max_mem"] = f"{torch.cuda.max_memory_allocated() / (1024.0 * 1024.0):.0f}"
+            progress_iter.set_postfix(postfix)
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()

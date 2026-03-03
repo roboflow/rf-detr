@@ -106,6 +106,8 @@ def test_train_one_epoch_progress_bar_creation_and_metrics(
     monkeypatch.setattr(engine, "GradScaler", lambda *_args, **_kwargs: scaler)
     monkeypatch.setattr(engine, "autocast", lambda **_kwargs: nullcontext())
     monkeypatch.setattr(engine.utils, "is_main_process", lambda: is_main_process)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "max_memory_allocated", lambda: 123 * 1024 * 1024)
 
     model = _DummyTrainModel()
     criterion = _DummyCriterion()
@@ -145,7 +147,8 @@ def test_train_one_epoch_progress_bar_creation_and_metrics(
     assert created[0].kwargs["desc"] == f"Epoch: [{epoch + 1}/{epochs}]"
     assert created[0].kwargs["disable"] is (not is_main_process)
     assert created[0].postfixes
-    assert set(created[0].postfixes[-1]).issuperset({"lr", "class_loss", "box_loss", "loss"})
+    assert set(created[0].postfixes[-1]).issuperset({"lr", "class_loss", "box_loss", "loss", "max_mem"})
+    assert created[0].postfixes[-1]["max_mem"] == "123"
 
 
 def test_evaluate_progress_bar_creation_and_metrics(monkeypatch) -> None:
@@ -170,6 +173,8 @@ def test_evaluate_progress_bar_creation_and_metrics(monkeypatch) -> None:
     monkeypatch.setattr(engine.utils, "is_main_process", lambda: True)
     monkeypatch.setattr(engine, "CocoEvaluator", lambda *_args, **_kwargs: coco_evaluator)
     monkeypatch.setattr(engine, "coco_extended_metrics", lambda _coco: {"class_map": [], "map": 0.0})
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "max_memory_allocated", lambda: 456 * 1024 * 1024)
 
     model = _DummyEvalModel()
     criterion = _DummyCriterion()
@@ -199,4 +204,5 @@ def test_evaluate_progress_bar_creation_and_metrics(monkeypatch) -> None:
     assert len(created) == 1
     assert created[0].kwargs["desc"] == "Test"
     assert created[0].postfixes
-    assert set(created[0].postfixes[-1]).issuperset({"class_loss", "box_loss", "loss"})
+    assert set(created[0].postfixes[-1]).issuperset({"class_loss", "box_loss", "loss", "max_mem"})
+    assert created[0].postfixes[-1]["max_mem"] == "456"
