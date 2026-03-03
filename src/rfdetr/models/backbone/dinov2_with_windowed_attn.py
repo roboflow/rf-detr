@@ -41,6 +41,8 @@ logger = logging.get_logger(__name__)
 
 # Copied from transformers.pytorch_utils.find_pruneable_heads_and_indices (removed from public API in transformers v5.0).
 # Source: https://github.com/huggingface/transformers/blob/v4.49.0/src/transformers/pytorch_utils.py#L127
+# MAINTENANCE: if this function is moved to another module or deleted, update the
+# "Copyright 2022 The HuggingFace Team" line in the file header accordingly.
 def find_pruneable_heads_and_indices(
     heads: Set[int], n_heads: int, head_size: int, already_pruned_heads: Set[int]
 ) -> Tuple[Set[int], torch.LongTensor]:
@@ -71,6 +73,8 @@ def _align_output_features_output_indices(
 
 # Copied from transformers.utils.backbone_utils.get_aligned_output_features_output_indices (removed from public API in transformers v5.0).
 # Source: https://github.com/huggingface/transformers/blob/v4.49.0/src/transformers/utils/backbone_utils.py#L30
+# MAINTENANCE: if this function is moved to another module or deleted, update the
+# "Copyright 2023 The HuggingFace Inc. team" line in the file header accordingly.
 def get_aligned_output_features_output_indices(
     out_features: Optional[List[str]],
     out_indices: Optional[Union[List[int], Tuple[int, ...]]],
