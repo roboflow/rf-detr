@@ -144,7 +144,7 @@ class RFDETR:
         self.model.export(**kwargs)
 
     @staticmethod
-    def _load_classes(dataset_dir) -> List[str]:
+    def _load_classes(dataset_dir: str) -> List[str]:
         """Load class names from a COCO or YOLO dataset directory."""
         if is_valid_coco_dataset(dataset_dir):
             coco_path = os.path.join(dataset_dir, "train", "_annotations.coco.json")
@@ -160,21 +160,13 @@ class RFDETR:
             if not has_any_sc:
                 return [c["name"] for c in categories]
 
-            # Mixed/Hierarchical:
-            # - leaves: categories that have a parent and are not themselves parents
-            # - standalone top-level: categories that have no parent and are not themselves parents
+            # Mixed/Hierarchical: keep only categories that are not parents of other categories.
+            # Both leaves (with a real supercategory) and standalone top-level nodes (supercategory is a
+            # placeholder) satisfy this condition — neither appears as another category's supercategory.
             parents = {c.get("supercategory") for c in categories if c.get("supercategory", "none") not in placeholders}
             has_children = {c["name"] for c in categories if c["name"] in parents}
 
-            # Preserve original category order while selecting only leaf and standalone top-level classes.
-            class_names = [
-                c["name"]
-                for c in categories
-                if c["name"] not in has_children
-                and (
-                    c.get("supercategory", "none") not in placeholders or c.get("supercategory", "none") in placeholders
-                )
-            ]
+            class_names = [c["name"] for c in categories if c["name"] not in has_children]
             # Safety fallback for pathological inputs
             return class_names or [c["name"] for c in categories]
 

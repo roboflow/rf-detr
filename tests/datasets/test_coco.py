@@ -356,12 +356,11 @@ class TestLoadClassesHierarchy:
         assert set(result) == {"dog", "cat"}
 
     def test_mixed_supercategories_keeps_all(self, tmp_path: Path) -> None:
-        """Mix of 'none' and non-'none' supercategories that are not category names.
+        """Mix of 'none' and non-'none' supercategories where no category is a parent of another.
 
-        A simpler ``any(supercategory != 'none')`` detection would incorrectly
-        set has_hierarchy=True here, then filter out 'dog' (supercategory 'none').
-        The set-based check avoids this: 'animal' is not a category name, so no
-        hierarchy is detected and all categories are returned.
+        'animal' appears as a supercategory but is not itself a category name, so
+        ``has_children`` is empty and all categories pass the ``name not in has_children``
+        filter — both 'dog' and 'cat' are returned.
         """
         categories = [
             {"id": 1, "name": "dog", "supercategory": "none"},
