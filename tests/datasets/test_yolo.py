@@ -289,7 +289,12 @@ class TestBuildRoboflowFromYoloAugConfig:
     @pytest.mark.parametrize(
         "square_resize_div_64,transform_fn,aug_config",
         [
-            pytest.param(True, "make_coco_transforms_square_div_64", {"HorizontalFlip": {"p": 0.5}}, id="square_div_64_with_config"),
+            pytest.param(
+                True,
+                "make_coco_transforms_square_div_64",
+                {"HorizontalFlip": {"p": 0.5}},
+                id="square_div_64_with_config",
+            ),
             pytest.param(False, "make_coco_transforms", {"HorizontalFlip": {"p": 0.5}}, id="standard_with_config"),
             pytest.param(True, "make_coco_transforms_square_div_64", None, id="square_div_64_none"),
             pytest.param(False, "make_coco_transforms", None, id="standard_none"),
