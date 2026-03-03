@@ -3,8 +3,11 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-# Modified from HuggingFace Dinov2 (https://github.com/huggingface/transformers)
-# Copyright 2024 Meta Inc. and the HuggingFace Inc. team. All rights reserved.
+# Modified from HuggingFace Transformers (https://github.com/huggingface/transformers)
+# Copyright 2022 The HuggingFace Team. All rights reserved.        (pytorch_utils.py)
+# Copyright 2023 The HuggingFace Inc. team. All rights reserved.   (backbone_utils.py)
+# Copyright 2024 Meta Inc. and the HuggingFace Inc. team. All rights reserved. (DINOv2)
+# Licensed under the Apache License, Version 2.0
 # ------------------------------------------------------------------------
 
 import collections.abc
