@@ -343,7 +343,7 @@ class TestLoadClassesHierarchy:
         ]
         _write_coco_json(tmp_path / "train" / "_annotations.coco.json", categories)
         result = RFDETR._load_classes(str(tmp_path))
-        assert set(result) == {"dog", "cat"}
+        assert result == ["dog", "cat"]
 
     def test_flat_none_supercategory_keeps_all(self, tmp_path: Path) -> None:
         """Flat datasets where every category has supercategory 'none' (#609)."""
@@ -353,7 +353,7 @@ class TestLoadClassesHierarchy:
         ]
         _write_coco_json(tmp_path / "train" / "_annotations.coco.json", categories)
         result = RFDETR._load_classes(str(tmp_path))
-        assert set(result) == {"dog", "cat"}
+        assert result == ["dog", "cat"]
 
     def test_mixed_supercategories_keeps_all(self, tmp_path: Path) -> None:
         """Mix of 'none' and non-'none' supercategories where no category is a parent of another.
@@ -368,7 +368,7 @@ class TestLoadClassesHierarchy:
         ]
         _write_coco_json(tmp_path / "train" / "_annotations.coco.json", categories)
         result = RFDETR._load_classes(str(tmp_path))
-        assert set(result) == {"dog", "cat"}
+        assert result == ["dog", "cat"]
 
     def test_category_named_none_does_not_empty_list(self, tmp_path: Path) -> None:
         """If a category is literally named 'none' and all supercategories
@@ -381,7 +381,7 @@ class TestLoadClassesHierarchy:
         ]
         _write_coco_json(tmp_path / "train" / "_annotations.coco.json", categories)
         result = RFDETR._load_classes(str(tmp_path))
-        assert set(result) == {"none", "dog", "cat"}
+        assert result == ["none", "dog", "cat"]
 
     def test_mixed_hierarchy_leaf_and_standalone_forwarding(self, tmp_path: Path) -> None:
         """Mixed hierarchy: only leaf classes + standalone top-level categories
@@ -417,7 +417,7 @@ class TestLoadClassesHierarchy:
             "microwave",
             "person",
         ]
-        assert set(result) == set(expected)
+        assert result == expected
 
     def test_placeholder_values_treated_as_no_parent(self, tmp_path: Path) -> None:
         """Placeholders like None, '', and 'null' should be treated the same
@@ -430,4 +430,16 @@ class TestLoadClassesHierarchy:
         ]
         _write_coco_json(tmp_path / "train" / "_annotations.coco.json", categories)
         result = RFDETR._load_classes(str(tmp_path))
-        assert set(result) == {"dog", "cat", "elephant"}
+        assert result == ["dog", "cat", "elephant"]
+
+    def test_unsorted_category_ids_return_id_sorted_class_order(self, tmp_path: Path) -> None:
+        """Returned class names must follow category-ID order for stable index mapping."""
+        categories = [
+            {"id": 30, "name": "truck", "supercategory": "vehicle"},
+            {"id": 10, "name": "vehicle", "supercategory": "none"},
+            {"id": 20, "name": "car", "supercategory": "vehicle"},
+            {"id": 40, "name": "person", "supercategory": "none"},
+        ]
+        _write_coco_json(tmp_path / "train" / "_annotations.coco.json", categories)
+        result = RFDETR._load_classes(str(tmp_path))
+        assert result == ["car", "truck", "person"]

@@ -150,7 +150,7 @@ class RFDETR:
             coco_path = os.path.join(dataset_dir, "train", "_annotations.coco.json")
             with open(coco_path, "r") as f:
                 anns = json.load(f)
-            categories = anns["categories"]
+            categories = sorted(anns["categories"], key=lambda category: category.get("id", float("inf")))
 
             # Catch possible placeholders for no supercategory
             placeholders = {"", "none", "null", None}
