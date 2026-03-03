@@ -47,6 +47,7 @@ import numpy as np
 from rfdetr.util.misc import NestedTensor
 
 logger = get_logger()
+BYTES_TO_MB = 1024.0 * 1024.0
 
 
 def _get_cuda_autocast_dtype() -> torch.dtype:
@@ -220,7 +221,7 @@ def train_one_epoch(
                 "loss": f"{log_dict['loss']:.2f}",
             }
             if torch.cuda.is_available():
-                postfix["max_mem"] = f"{torch.cuda.max_memory_allocated() / (1024.0 * 1024.0):.0f}"
+                postfix["max_mem"] = f"{torch.cuda.max_memory_allocated() / BYTES_TO_MB:.0f}"
             progress_iter.set_postfix(postfix)
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
@@ -489,7 +490,7 @@ def evaluate(model, criterion, postprocess, data_loader, base_ds, device, args=N
                 "loss": f"{log_dict['loss']:.2f}",
             }
             if torch.cuda.is_available():
-                postfix["max_mem"] = f"{torch.cuda.max_memory_allocated() / (1024.0 * 1024.0):.0f}"
+                postfix["max_mem"] = f"{torch.cuda.max_memory_allocated() / BYTES_TO_MB:.0f}"
             progress_iter.set_postfix(postfix)
 
     # gather the stats from all processes
