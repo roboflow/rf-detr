@@ -53,10 +53,34 @@ def coco_gt() -> COCO:
         "categories": [
             {"id": 1, "name": "cat_1"},
             {"id": 3, "name": "cat_3"},
+            {"id": 5, "name": "cat_5"},
         ],
     }
     coco.createIndex()
-    setattr(coco, "label2cat", {0: 1, 1: 3})
+    setattr(coco, "label2cat", {0: 1, 1: 3, 2: 5})
+    return coco
+
+
+@pytest.fixture
+def coco_gt_one_indexed() -> COCO:
+    """4 contiguous 1-indexed categories — the originally-reported issue scenario (#262).
+
+    label2cat = {0: 1, 1: 2, 2: 3, 3: 4}: keys != values, so evaluator stays in
+    contiguous mode regardless of label values seen at runtime.
+    """
+    coco = COCO()
+    coco.dataset = {
+        "images": [{"id": 1, "width": 10, "height": 10}],
+        "annotations": [],
+        "categories": [
+            {"id": 1, "name": "cat_1"},
+            {"id": 2, "name": "cat_2"},
+            {"id": 3, "name": "cat_3"},
+            {"id": 4, "name": "cat_4"},
+        ],
+    }
+    coco.createIndex()
+    setattr(coco, "label2cat", {0: 1, 1: 2, 2: 3, 3: 4})
     return coco
 
 
@@ -120,12 +144,94 @@ class TestConvertCocoWithMapping:
         assert target["labels"].dtype == torch.int64
 
 
-class TestCocoEvaluatorCategoryResolution:
+class TestCocoEvaluatorCategoryResolutionWithMapping:
+    """Tests CocoEvaluator for CocoDetection constructed with remap_category_ids = True."""
+
+    def test_prepare_detection_resolves_mixed_labels_in_first_batch(
+        self,
+        coco_gt: COCO,
+        base_prediction: Dict[str, torch.Tensor],
+    ) -> None:
+        evaluator = CocoEvaluator(coco_gt, ["bbox"])
+
+        labels = [0, 3]
+        expected_category_ids = [1, 3]
+        predictions = {
+            1: {
+                **base_prediction,
+                "labels": torch.tensor(labels, dtype=torch.int64),
+            }
+        }
+        results = evaluator.prepare_for_coco_detection(predictions)
+        assert [result["category_id"] for result in results] == expected_category_ids
+
+    def test_category_resolution_remains_correct_after_first_batch_had_max_value(
+        self,
+        coco_gt: COCO,
+        base_prediction: Dict[str, torch.Tensor],
+    ) -> None:
+        evaluator = CocoEvaluator(coco_gt, ["bbox"])
+
+        # Head-reinitialization adds an extra background class.
+        # First batch contains label == num_classes + 1.
+        first_batch_predictions = {
+            1: {
+                **base_prediction,
+                "labels": torch.tensor([0, 3], dtype=torch.int64),
+            }
+        }
+        evaluator.prepare_for_coco_detection(first_batch_predictions)
+
+        # Second batch should still resolve contiguous labels via label2cat.
+        expected_category_ids = [1, 3]
+        second_batch_predictions = {
+            1: {
+                **base_prediction,
+                "labels": torch.tensor([0, 1], dtype=torch.int64),
+            }
+        }
+        results = evaluator.prepare_for_coco_detection(second_batch_predictions)
+        assert [result["category_id"] for result in results] == expected_category_ids
+
+    def test_category_resolution_correct_after_noisy_label_on_one_indexed_dataset(
+        self,
+        coco_gt_one_indexed: COCO,
+        base_prediction: Dict[str, torch.Tensor],
+    ) -> None:
+        """Regression for issue #262: 4 contiguous 1-indexed categories, noisy first-batch label.
+
+        When head reinitialization produces an out-of-range label (e.g. label=4, which is also
+        a valid COCO category ID), the old heuristic incorrectly switched to raw-ID mode for the
+        entire evaluator lifetime. The new identity-mapping check is stable across batches.
+        """
+        evaluator = CocoEvaluator(coco_gt_one_indexed, ["bbox"])
+
+        # First batch: noisy label 4 is out of model-index range (0-3) but coincides with cat_id 4.
+        noisy_first_batch = {
+            1: {
+                **base_prediction,
+                "labels": torch.tensor([0, 4], dtype=torch.int64),
+            }
+        }
+        evaluator.prepare_for_coco_detection(noisy_first_batch)
+
+        # Second batch must still resolve contiguous labels via label2cat, not raw-ID pass-through.
+        second_batch = {
+            1: {
+                **base_prediction,
+                "labels": torch.tensor([0, 1], dtype=torch.int64),
+            }
+        }
+        results = evaluator.prepare_for_coco_detection(second_batch)
+        assert [result["category_id"] for result in results] == [1, 2]
+
     @pytest.mark.parametrize(
         ("labels", "expected_category_ids"),
         [
-            pytest.param([0, 1], [1, 3], id="contiguous-labels"),
-            pytest.param([1, 3], [1, 3], id="raw-coco-category-ids"),
+            pytest.param([0, 1], [1, 3], id="contiguous-labels-0-1"),
+            # label 3 is not a model-index key in label2cat (keys: 0,1,2), so the fallback
+            # path in _resolve_category_id checks cat_ids and passes it through unchanged.
+            pytest.param([3, 3], [3, 3], id="fallback-label-is-valid-cat-id"),
         ],
     )
     def test_prepare_detection_resolves_category_ids(
@@ -135,6 +241,73 @@ class TestCocoEvaluatorCategoryResolution:
         labels: List[int],
         expected_category_ids: List[int],
     ) -> None:
+        evaluator = CocoEvaluator(coco_gt, ["bbox"])
+        predictions = {
+            1: {
+                **base_prediction,
+                "labels": torch.tensor(labels, dtype=torch.int64),
+            }
+        }
+        results = evaluator.prepare_for_coco_detection(predictions)
+        assert [result["category_id"] for result in results] == expected_category_ids
+
+
+class TestCocoEvaluatorCategoryResolutionWithoutMapping:
+    """Tests CocoEvaluator for CocoDetection constructed with remap_category_ids = False."""
+
+    @pytest.mark.xfail(
+        strict=False,
+        reason=(
+            "known: evaluator incorrectly maps labels via label2cat when label2cat is present "
+            "but remap_category_ids=False — labels [1,1] should pass through as [1,1], "
+            "not be remapped to [3,3]"
+        ),
+    )
+    def test_prepare_detection_fails_to_resolve_category_ids_with_label2cat_available(
+        self,
+        coco_gt: COCO,
+        base_prediction: Dict[str, torch.Tensor],
+    ) -> None:
+        """Demonstrates a known limitation when label2cat is present but remapping is disabled.
+
+        When a CocoDetection object is created with remap_category_ids=False, label2cat is
+        never added to coco_gt. However the shared fixture has one, so the evaluator
+        incorrectly applies the mapping. The *desired* behavior is that raw labels pass
+        through unchanged (expected_category_ids=[1,1]); this test will be promoted from
+        xfail to a passing test once the root cause is addressed.
+        """
+        evaluator = CocoEvaluator(coco_gt, ["bbox"])
+        assert hasattr(coco_gt, "label2cat")
+
+        labels = [1, 1]
+        # Desired behavior: raw labels pass through unchanged as COCO category IDs.
+        expected_category_ids = [1, 1]
+        predictions = {
+            1: {
+                **base_prediction,
+                "labels": torch.tensor(labels, dtype=torch.int64),
+            }
+        }
+        results = evaluator.prepare_for_coco_detection(predictions)
+        assert [result["category_id"] for result in results] == expected_category_ids
+
+    @pytest.mark.parametrize(
+        ("labels", "expected_category_ids"),
+        [
+            pytest.param([0, 0], [], id="raw-coco-category-ids-0-0"),
+            pytest.param([1, 3], [1, 3], id="raw-coco-category-ids-1-3"),
+        ],
+    )
+    def test_prepare_detection_resolves_category_ids(
+        self,
+        coco_gt: COCO,
+        base_prediction: Dict[str, torch.Tensor],
+        labels: List[int],
+        expected_category_ids: List[int],
+    ) -> None:
+        # If mapping is disabled, label2cat attribute is not set in COCO
+        delattr(coco_gt, "label2cat")
+
         evaluator = CocoEvaluator(coco_gt, ["bbox"])
         predictions = {
             1: {
@@ -183,12 +356,11 @@ class TestLoadClassesHierarchy:
         assert result == ["dog", "cat"]
 
     def test_mixed_supercategories_keeps_all(self, tmp_path: Path) -> None:
-        """Mix of 'none' and non-'none' supercategories that are not category names.
+        """Mix of 'none' and non-'none' supercategories where no category is a parent of another.
 
-        A simpler ``any(supercategory != 'none')`` detection would incorrectly
-        set has_hierarchy=True here, then filter out 'dog' (supercategory 'none').
-        The set-based check avoids this: 'animal' is not a category name, so no
-        hierarchy is detected and all categories are returned.
+        'animal' appears as a supercategory but is not itself a category name, so
+        ``has_children`` is empty and all categories pass the ``name not in has_children``
+        filter — both 'dog' and 'cat' are returned.
         """
         categories = [
             {"id": 1, "name": "dog", "supercategory": "none"},
@@ -197,3 +369,77 @@ class TestLoadClassesHierarchy:
         _write_coco_json(tmp_path / "train" / "_annotations.coco.json", categories)
         result = RFDETR._load_classes(str(tmp_path))
         assert result == ["dog", "cat"]
+
+    def test_category_named_none_does_not_empty_list(self, tmp_path: Path) -> None:
+        """If a category is literally named 'none' and all supercategories
+        are placeholders, the loader must return all class names instead of [].
+        """
+        categories = [
+            {"id": 1, "name": "none", "supercategory": "none"},
+            {"id": 2, "name": "dog", "supercategory": "none"},
+            {"id": 3, "name": "cat", "supercategory": "none"},
+        ]
+        _write_coco_json(tmp_path / "train" / "_annotations.coco.json", categories)
+        result = RFDETR._load_classes(str(tmp_path))
+        assert result == ["none", "dog", "cat"]
+
+    def test_mixed_hierarchy_leaf_and_standalone_forwarding(self, tmp_path: Path) -> None:
+        """Mixed hierarchy: only leaf classes + standalone top-level categories
+        should be forwarded. Parent/grouping nodes are dropped.
+        """
+        categories = [
+            {"id": 1, "name": "animals", "supercategory": "none"},
+            {"id": 2, "name": "mammal", "supercategory": "animals"},
+            {"id": 3, "name": "dog", "supercategory": "mammal"},
+            {"id": 4, "name": "cat", "supercategory": "mammal"},
+            {"id": 5, "name": "bird", "supercategory": "animals"},
+            {"id": 6, "name": "eagle", "supercategory": "bird"},
+            {"id": 7, "name": "pigeon", "supercategory": "bird"},
+            {"id": 8, "name": "objects", "supercategory": "none"},
+            {"id": 9, "name": "vehicle", "supercategory": "objects"},
+            {"id": 10, "name": "car", "supercategory": "vehicle"},
+            {"id": 11, "name": "truck", "supercategory": "vehicle"},
+            {"id": 12, "name": "appliance", "supercategory": "objects"},
+            {"id": 13, "name": "toaster", "supercategory": "appliance"},
+            {"id": 14, "name": "microwave", "supercategory": "appliance"},
+            {"id": 15, "name": "person", "supercategory": "none"},
+        ]
+        _write_coco_json(tmp_path / "train" / "_annotations.coco.json", categories)
+        result = RFDETR._load_classes(str(tmp_path))
+        expected = [
+            "dog",
+            "cat",
+            "eagle",
+            "pigeon",
+            "car",
+            "truck",
+            "toaster",
+            "microwave",
+            "person",
+        ]
+        assert result == expected
+
+    def test_placeholder_values_treated_as_no_parent(self, tmp_path: Path) -> None:
+        """Placeholders like None, '', and 'null' should be treated the same
+        as 'none'.
+        """
+        categories = [
+            {"id": 1, "name": "dog", "supercategory": None},
+            {"id": 2, "name": "cat", "supercategory": ""},
+            {"id": 3, "name": "elephant", "supercategory": "null"},
+        ]
+        _write_coco_json(tmp_path / "train" / "_annotations.coco.json", categories)
+        result = RFDETR._load_classes(str(tmp_path))
+        assert result == ["dog", "cat", "elephant"]
+
+    def test_unsorted_category_ids_return_id_sorted_class_order(self, tmp_path: Path) -> None:
+        """Returned class names must follow category-ID order for stable index mapping."""
+        categories = [
+            {"id": 30, "name": "truck", "supercategory": "vehicle"},
+            {"id": 10, "name": "vehicle", "supercategory": "none"},
+            {"id": 20, "name": "car", "supercategory": "vehicle"},
+            {"id": 40, "name": "person", "supercategory": "none"},
+        ]
+        _write_coco_json(tmp_path / "train" / "_annotations.coco.json", categories)
+        result = RFDETR._load_classes(str(tmp_path))
+        assert result == ["car", "truck", "person"]

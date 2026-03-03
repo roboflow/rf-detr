@@ -78,20 +78,25 @@ class CocoEvaluator(object):
         return None
 
     def _should_use_raw_category_ids(self, labels: List[int]) -> bool:
-        """Detect whether current predictions are emitted as raw COCO category IDs.
+        """Detect whether model predictions are already raw COCO category IDs.
 
-        If labels include values that are valid COCO category IDs but not valid
-        contiguous-label indices, switch to raw-ID mode and keep it for the rest
-        of the evaluator lifetime.
+        Uses a structural check on ``label2cat``: when its keys equal its values
+        (i.e. it is an identity mapping such as ``{0: 0, 1: 1, 2: 2}``), the
+        dataset uses 0-indexed contiguous category IDs and labels can be treated
+        as raw COCO category IDs directly.
+
+        This replaces the previous per-batch label-inspection heuristic, which
+        was fragile when head-reinitialized models produced out-of-range labels
+        that coincided with valid COCO category IDs.
         """
         if self.label2cat is None:
             return True
         if self._prefer_raw_category_ids:
             return True
 
-        # If any label is a COCO category ID but not a valid contiguous index,
-        # treat the whole run as raw-ID output to avoid corrupting eval categories.
-        uses_raw_ids = any((label in self.cat_ids) and (label not in self.label2cat) for label in labels)
+        # When categories are contiguous starting from 0, label2cat is an identity mapping
+        # (keys == values), and we can safely treat labels as raw COCO category IDs.
+        uses_raw_ids = list(self.label2cat.keys()) == list(self.label2cat.values())
         if uses_raw_ids:
             self._prefer_raw_category_ids = True
             return True

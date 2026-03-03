@@ -140,6 +140,7 @@ addopts = [
 pythonpath = ["src"]
 markers = [
     "gpu: tests that require GPU or are slow on CPU",
+    "flaky: tests that may fail due to nondeterminism"
 ]
 
 [tool.codespell]
