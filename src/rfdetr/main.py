@@ -613,7 +613,7 @@ class Model:
             results["class_map"]["test"] = test_metrics
             with open(output_dir / "results.json", "w") as f:
                 json.dump(results, f)
-            
+
             # Save mask results if they exist
             if "results_json_masks" in test_stats:
                 mask_results = test_stats["results_json_masks"]["class_map"]
