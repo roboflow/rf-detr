@@ -124,26 +124,14 @@ class TestConvertCocoWithMapping:
 class TestCocoEvaluatorCategoryResolutionWithMapping:
     """Tests CocoEvaluator for CocoDetection constructed with remap_category_ids = True."""
 
-    def test_category_resolution_after_first_batch_of_labels_had_max_value(
+    def test_prepare_detection_resolves_mixed_labels_in_first_batch(
         self,
         coco_gt: COCO,
         base_prediction: Dict[str, torch.Tensor],
     ) -> None:
         evaluator = CocoEvaluator(coco_gt, ["bbox"])
 
-        # Head-reinitialization adds an extra background class
-        # The first batch of labels has at least one label = num_classes + 1
         labels = [0, 3]
-        predictions = {
-            1: {
-                **base_prediction,
-                "labels": torch.tensor(labels, dtype=torch.int64),
-            }
-        }
-        results = evaluator.prepare_for_coco_detection(predictions)
-
-        # Second batch of labels.
-        labels = [0, 1]
         expected_category_ids = [1, 3]
         predictions = {
             1: {
@@ -152,6 +140,34 @@ class TestCocoEvaluatorCategoryResolutionWithMapping:
             }
         }
         results = evaluator.prepare_for_coco_detection(predictions)
+        assert [result["category_id"] for result in results] == expected_category_ids
+
+    def test_category_resolution_remains_correct_after_first_batch_had_max_value(
+        self,
+        coco_gt: COCO,
+        base_prediction: Dict[str, torch.Tensor],
+    ) -> None:
+        evaluator = CocoEvaluator(coco_gt, ["bbox"])
+
+        # Head-reinitialization adds an extra background class.
+        # First batch contains label == num_classes + 1.
+        first_batch_predictions = {
+            1: {
+                **base_prediction,
+                "labels": torch.tensor([0, 3], dtype=torch.int64),
+            }
+        }
+        evaluator.prepare_for_coco_detection(first_batch_predictions)
+
+        # Second batch should still resolve contiguous labels via label2cat.
+        expected_category_ids = [1, 3]
+        second_batch_predictions = {
+            1: {
+                **base_prediction,
+                "labels": torch.tensor([0, 1], dtype=torch.int64),
+            }
+        }
+        results = evaluator.prepare_for_coco_detection(second_batch_predictions)
         assert [result["category_id"] for result in results] == expected_category_ids
 
     @pytest.mark.parametrize(
