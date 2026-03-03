@@ -626,13 +626,17 @@ class Model:
 
             # Save mask results if they exist (read-modify-write to preserve valid split data)
             if "results_json_masks" in test_stats:
-                test_mask_class_map = test_stats["results_json_masks"]["class_map"]
+                test_mask_results = test_stats["results_json_masks"]
+                test_mask_class_map = test_mask_results["class_map"]
                 results_mask_path = output_dir / "results_mask.json"
                 if results_mask_path.exists():
                     with open(results_mask_path, "r") as f:
                         results_mask = json.load(f)
                 else:
-                    results_mask = {"class_map": {}}
+                    # Initialize with top-level scalar metrics (e.g., map, precision, recall, f1_score)
+                    # and an empty class_map, mirroring the structure from the validation phase.
+                    results_mask = {k: v for k, v in test_mask_results.items() if k != "class_map"}
+                    results_mask["class_map"] = {}
                 results_mask["class_map"]["test"] = test_mask_class_map
                 with open(results_mask_path, "w") as f:
                     json.dump(results_mask, f)
