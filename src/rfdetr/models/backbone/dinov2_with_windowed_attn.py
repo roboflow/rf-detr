@@ -51,9 +51,9 @@ def find_pruneable_heads_and_indices(
 
 def _align_output_features_output_indices(
     out_features: Optional[List[str]],
-    out_indices: Optional[Union[List[int], Tuple[int]]],
+    out_indices: Optional[Union[List[int], Tuple[int, ...]]],
     stage_names: List[str],
-):
+) -> Tuple[List[str], List[int]]:
     if out_indices is None and out_features is None:
         out_indices = [len(stage_names) - 1]
         out_features = [stage_names[-1]]
@@ -66,7 +66,7 @@ def _align_output_features_output_indices(
 
 def get_aligned_output_features_output_indices(
     out_features: Optional[List[str]],
-    out_indices: Optional[Union[List[int], Tuple[int]]],
+    out_indices: Optional[Union[List[int], Tuple[int, ...]]],
     stage_names: List[str],
 ) -> Tuple[List[str], List[int]]:
     out_indices = list(out_indices) if out_indices is not None else None
