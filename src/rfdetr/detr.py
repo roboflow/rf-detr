@@ -198,8 +198,8 @@ class RFDETR:
             logger.warning(f"Reinitializing your detection head with {num_classes} classes.")
             self.model.reinitialize_detection_head(num_classes)
 
-        train_config = config.dict()
-        model_config = self.model_config.dict()
+        train_config = config.model_dump()
+        model_config = self.model_config.model_dump()
         model_config.pop("num_classes")
         if "class_names" in model_config:
             model_config.pop("class_names")
@@ -283,7 +283,7 @@ class RFDETR:
         """
         Retrieve a model instance based on the provided configuration.
         """
-        return Model(**config.dict())
+        return Model(**config.model_dump())
 
     # Get class_names from the model
     @property
