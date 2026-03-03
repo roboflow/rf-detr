@@ -287,16 +287,19 @@ class TestBuildRoboflowFromYoloAugConfig:
         )
 
     @pytest.mark.parametrize(
-        "square_resize_div_64,transform_fn",
+        "square_resize_div_64,transform_fn,aug_config",
         [
-            pytest.param(True, "make_coco_transforms_square_div_64", id="square_div_64"),
-            pytest.param(False, "make_coco_transforms", id="standard"),
+            pytest.param(True, "make_coco_transforms_square_div_64", {"HorizontalFlip": {"p": 0.5}}, id="square_div_64_with_config"),
+            pytest.param(False, "make_coco_transforms", {"HorizontalFlip": {"p": 0.5}}, id="standard_with_config"),
+            pytest.param(True, "make_coco_transforms_square_div_64", None, id="square_div_64_none"),
+            pytest.param(False, "make_coco_transforms", None, id="standard_none"),
         ],
     )
-    def test_aug_config_forwarded_to_transform(self, square_resize_div_64: bool, transform_fn: str) -> None:
-        """Regression test for #769: aug_config must be forwarded to transform builders."""
-        custom_aug_config = {"HorizontalFlip": {"p": 0.5}}
-        args = self._make_args(square_resize_div_64=square_resize_div_64, aug_config=custom_aug_config)
+    def test_aug_config_forwarded_to_transform(
+        self, square_resize_div_64: bool, transform_fn: str, aug_config: object
+    ) -> None:
+        """Regression test for #769: aug_config is forwarded to transform builders for all code paths."""
+        args = self._make_args(square_resize_div_64=square_resize_div_64, aug_config=aug_config)
 
         with (
             patch("rfdetr.datasets.yolo.Path") as mock_path,
@@ -314,35 +317,6 @@ class TestBuildRoboflowFromYoloAugConfig:
             build_roboflow_from_yolo("train", args, resolution=640)
 
         _, kwargs = mock_transform.call_args
-        assert kwargs.get("aug_config") == custom_aug_config, (
-            f"{transform_fn} was not called with aug_config; got {kwargs}"
+        assert kwargs.get("aug_config") == aug_config, (
+            f"{transform_fn} was not called with aug_config={aug_config!r}; got {kwargs}"
         )
-
-    @pytest.mark.parametrize(
-        "square_resize_div_64,transform_fn",
-        [
-            pytest.param(True, "make_coco_transforms_square_div_64", id="square_div_64"),
-            pytest.param(False, "make_coco_transforms", id="standard"),
-        ],
-    )
-    def test_none_aug_config_forwarded(self, square_resize_div_64: bool, transform_fn: str) -> None:
-        """When aug_config is None, transform builders receive None (use default)."""
-        args = self._make_args(square_resize_div_64=square_resize_div_64, aug_config=None)
-
-        with (
-            patch("rfdetr.datasets.yolo.Path") as mock_path,
-            patch(f"rfdetr.datasets.yolo.{transform_fn}") as mock_transform,
-            patch("rfdetr.datasets.yolo.YoloDetection") as mock_dataset,
-        ):
-            mock_path.return_value.exists.return_value = True
-            mock_path.return_value.__truediv__ = lambda self, other: self
-            mock_path.return_value.__str__ = lambda self: "/fake/dataset"
-            mock_transform.return_value = MagicMock()
-            mock_dataset.return_value = MagicMock()
-
-            from rfdetr.datasets.yolo import build_roboflow_from_yolo
-
-            build_roboflow_from_yolo("train", args, resolution=640)
-
-        _, kwargs = mock_transform.call_args
-        assert kwargs.get("aug_config") is None

@@ -477,6 +477,22 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
 
     This uses Roboflow's standard YOLO directory structure
     (train/valid/test folders with images/ and labels/ subdirectories).
+
+    Args:
+        image_set: Dataset split to load. One of ``"train"``, ``"val"``, or
+            ``"test"``.
+        args: Argument namespace. The following attributes are consumed:
+            ``dataset_dir``, ``square_resize_div_64``, ``aug_config``,
+            ``segmentation_head``, ``multi_scale``, ``expanded_scales``,
+            ``do_random_resize_via_padding``, ``patch_size``, ``num_windows``.
+            ``aug_config`` is forwarded to the transform builder; when
+            ``None`` the builder falls back to the default
+            :data:`~rfdetr.datasets.aug_config.AUG_CONFIG`.
+        resolution: Target square resolution in pixels.
+
+    Returns:
+        A :class:`YoloDetection` dataset instance ready for use with a
+        DataLoader.
     """
     root = Path(args.dataset_dir)
     assert root.exists(), f"provided Roboflow path {root} does not exist"
