@@ -108,6 +108,7 @@ def test_train_one_epoch_progress_bar_creation_and_metrics(
     monkeypatch.setattr(engine.utils, "is_main_process", lambda: is_main_process)
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
     monkeypatch.setattr(torch.cuda, "max_memory_allocated", lambda: 123 * 1024 * 1024)
+    monkeypatch.setattr(engine, "_get_cuda_autocast_dtype", lambda: torch.float16)
 
     model = _DummyTrainModel()
     criterion = _DummyCriterion()
@@ -175,6 +176,7 @@ def test_evaluate_progress_bar_creation_and_metrics(monkeypatch) -> None:
     monkeypatch.setattr(engine, "coco_extended_metrics", lambda _coco: {"class_map": [], "map": 0.0})
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
     monkeypatch.setattr(torch.cuda, "max_memory_allocated", lambda: 456 * 1024 * 1024)
+    monkeypatch.setattr(engine, "_get_cuda_autocast_dtype", lambda: torch.float16)
 
     model = _DummyEvalModel()
     criterion = _DummyCriterion()

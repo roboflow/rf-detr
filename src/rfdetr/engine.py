@@ -220,7 +220,7 @@ def train_one_epoch(
                 "box_loss": f"{log_dict['loss_bbox']:.2f}",
                 "loss": f"{log_dict['loss']:.2f}",
             }
-            if torch.cuda.is_available():
+            if torch.cuda.is_available() and torch.cuda.is_initialized():
                 postfix["max_mem"] = f"{torch.cuda.max_memory_allocated() / BYTES_TO_MB:.0f}"
             progress_iter.set_postfix(postfix)
     # gather the stats from all processes
@@ -489,7 +489,7 @@ def evaluate(model, criterion, postprocess, data_loader, base_ds, device, args=N
                 "box_loss": f"{log_dict['loss_bbox']:.2f}",
                 "loss": f"{log_dict['loss']:.2f}",
             }
-            if torch.cuda.is_available():
+            if isinstance(device, torch.device) and device.type == "cuda" and torch.cuda.is_available() and torch.cuda.is_initialized():
                 postfix["max_mem"] = f"{torch.cuda.max_memory_allocated() / BYTES_TO_MB:.0f}"
             progress_iter.set_postfix(postfix)
 
