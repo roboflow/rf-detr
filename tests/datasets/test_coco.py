@@ -62,6 +62,29 @@ def coco_gt() -> COCO:
 
 
 @pytest.fixture
+def coco_gt_one_indexed() -> COCO:
+    """4 contiguous 1-indexed categories — the originally-reported issue scenario (#262).
+
+    label2cat = {0: 1, 1: 2, 2: 3, 3: 4}: keys != values, so evaluator stays in
+    contiguous mode regardless of label values seen at runtime.
+    """
+    coco = COCO()
+    coco.dataset = {
+        "images": [{"id": 1, "width": 10, "height": 10}],
+        "annotations": [],
+        "categories": [
+            {"id": 1, "name": "cat_1"},
+            {"id": 2, "name": "cat_2"},
+            {"id": 3, "name": "cat_3"},
+            {"id": 4, "name": "cat_4"},
+        ],
+    }
+    coco.createIndex()
+    setattr(coco, "label2cat", {0: 1, 1: 2, 2: 3, 3: 4})
+    return coco
+
+
+@pytest.fixture
 def base_prediction() -> Dict[str, torch.Tensor]:
     return {
         "boxes": torch.tensor([[0.0, 0.0, 1.0, 1.0], [1.0, 1.0, 2.0, 2.0]], dtype=torch.float32),
@@ -170,12 +193,45 @@ class TestCocoEvaluatorCategoryResolutionWithMapping:
         results = evaluator.prepare_for_coco_detection(second_batch_predictions)
         assert [result["category_id"] for result in results] == expected_category_ids
 
+    def test_category_resolution_correct_after_noisy_label_on_one_indexed_dataset(
+        self,
+        coco_gt_one_indexed: COCO,
+        base_prediction: Dict[str, torch.Tensor],
+    ) -> None:
+        """Regression for issue #262: 4 contiguous 1-indexed categories, noisy first-batch label.
+
+        When head reinitialization produces an out-of-range label (e.g. label=4, which is also
+        a valid COCO category ID), the old heuristic incorrectly switched to raw-ID mode for the
+        entire evaluator lifetime. The new identity-mapping check is stable across batches.
+        """
+        evaluator = CocoEvaluator(coco_gt_one_indexed, ["bbox"])
+
+        # First batch: noisy label 4 is out of model-index range (0-3) but coincides with cat_id 4.
+        noisy_first_batch = {
+            1: {
+                **base_prediction,
+                "labels": torch.tensor([0, 4], dtype=torch.int64),
+            }
+        }
+        evaluator.prepare_for_coco_detection(noisy_first_batch)
+
+        # Second batch must still resolve contiguous labels via label2cat, not raw-ID pass-through.
+        second_batch = {
+            1: {
+                **base_prediction,
+                "labels": torch.tensor([0, 1], dtype=torch.int64),
+            }
+        }
+        results = evaluator.prepare_for_coco_detection(second_batch)
+        assert [result["category_id"] for result in results] == [1, 2]
+
     @pytest.mark.parametrize(
         ("labels", "expected_category_ids"),
         [
             pytest.param([0, 1], [1, 3], id="contiguous-labels-0-1"),
-            # Expected to fallback for mixed/legacy behavior where labels may already be COCO IDs
-            pytest.param([3, 3], [3, 3], id="contiguous-labels-3-3"),
+            # label 3 is not a model-index key in label2cat (keys: 0,1,2), so the fallback
+            # path in _resolve_category_id checks cat_ids and passes it through unchanged.
+            pytest.param([3, 3], [3, 3], id="fallback-label-is-valid-cat-id"),
         ],
     )
     def test_prepare_detection_resolves_category_ids(
@@ -199,21 +255,33 @@ class TestCocoEvaluatorCategoryResolutionWithMapping:
 class TestCocoEvaluatorCategoryResolutionWithoutMapping:
     """Tests CocoEvaluator for CocoDetection constructed with remap_category_ids = False."""
 
+    @pytest.mark.xfail(
+        strict=False,
+        reason=(
+            "known: evaluator incorrectly maps labels via label2cat when label2cat is present "
+            "but remap_category_ids=False — labels [1,1] should pass through as [1,1], "
+            "not be remapped to [3,3]"
+        ),
+    )
     def test_prepare_detection_fails_to_resolve_category_ids_with_label2cat_available(
         self,
         coco_gt: COCO,
         base_prediction: Dict[str, torch.Tensor],
     ) -> None:
-        """
-        Demonstrates why keeping label2cat in coco_gt during this test results into a bug.
-        When a CocoDetection object is created with remap_category_ids = False, label2cat is
-        never added to the coco_gt. But the fixture coco_gt has one.
+        """Demonstrates a known limitation when label2cat is present but remapping is disabled.
+
+        When a CocoDetection object is created with remap_category_ids=False, label2cat is
+        never added to coco_gt. However the shared fixture has one, so the evaluator
+        incorrectly applies the mapping. The *desired* behavior is that raw labels pass
+        through unchanged (expected_category_ids=[1,1]); this test will be promoted from
+        xfail to a passing test once the root cause is addressed.
         """
         evaluator = CocoEvaluator(coco_gt, ["bbox"])
         assert hasattr(coco_gt, "label2cat")
 
         labels = [1, 1]
-        expected_incorrectly_resolved_category_ids = [3, 3]
+        # Desired behavior: raw labels pass through unchanged as COCO category IDs.
+        expected_category_ids = [1, 1]
         predictions = {
             1: {
                 **base_prediction,
@@ -221,7 +289,7 @@ class TestCocoEvaluatorCategoryResolutionWithoutMapping:
             }
         }
         results = evaluator.prepare_for_coco_detection(predictions)
-        assert [result["category_id"] for result in results] == expected_incorrectly_resolved_category_ids
+        assert [result["category_id"] for result in results] == expected_category_ids
 
     @pytest.mark.parametrize(
         ("labels", "expected_category_ids"),
