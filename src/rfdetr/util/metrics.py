@@ -243,7 +243,13 @@ class MetricsTensorBoardSink:
         }
 
         for entry in class_map:
-            cname = self._slug(entry.get("class", "unknown"))
+            if not isinstance(entry, dict):
+                # Skip unexpected entry types to avoid crashing TensorBoard logging.
+                continue
+
+            raw_class = entry.get("class")
+            cname_source = str(raw_class) if raw_class is not None else "unknown"
+            cname = self._slug(cname_source)
             for key, value in entry.items():
                 if key == "class" or not self._is_number(value):
                     continue

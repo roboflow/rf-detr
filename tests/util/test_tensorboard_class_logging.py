@@ -28,10 +28,11 @@ class DummyWriter:
 
 
 @pytest.fixture
-def sink(tmp_path):
+def sink(tmp_path, monkeypatch):
     """MetricsTensorBoardSink with a dummy writer injected."""
+    # Ensure MetricsTensorBoardSink uses DummyWriter instead of a real SummaryWriter
+    monkeypatch.setattr("rfdetr.util.metrics.SummaryWriter", DummyWriter)
     s = MetricsTensorBoardSink(output_dir=str(tmp_path))
-    s.writer = DummyWriter()
     return s
 
 
