@@ -335,8 +335,9 @@ class LWDETR(nn.Module):
         layers = self._get_backbone_encoder_layers()
         if layers is None:
             return
-        dp_rates = [x.item() for x in torch.linspace(0, drop_path_rate, vit_encoder_num_layers)]
-        for i in range(min(vit_encoder_num_layers, len(layers))):
+        n = min(vit_encoder_num_layers, len(layers))
+        dp_rates = [x.item() for x in torch.linspace(0, drop_path_rate, n)]
+        for i in range(n):
             if hasattr(layers[i], "drop_path") and hasattr(layers[i].drop_path, "drop_prob"):
                 layers[i].drop_path.drop_prob = dp_rates[i]
 

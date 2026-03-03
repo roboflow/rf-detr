@@ -15,13 +15,21 @@ import torch.nn as nn
 import rfdetr.models.backbone.dinov2 as dinov2_module
 from rfdetr.main import Model
 from rfdetr.models.backbone.dinov2 import DinoV2
-from rfdetr.models.backbone.dinov2_with_windowed_attn import Dinov2WithRegistersDropPath
+from rfdetr.models.backbone.dinov2_with_windowed_attn import (
+    Dinov2WithRegistersDropPath,
+    WindowedDinov2WithRegistersBackbone,
+)
 from rfdetr.models.lwdetr import LWDETR
 
 
 @pytest.fixture
-def model_with_drop_path() -> Model:
+def model_with_drop_path(monkeypatch: pytest.MonkeyPatch) -> Model:
     """Create RF-DETR Nano model with drop_path enabled."""
+    monkeypatch.setattr(
+        WindowedDinov2WithRegistersBackbone,
+        "from_pretrained",
+        classmethod(lambda cls, name, config: cls(config)),
+    )
     return Model(
         encoder="dinov2_windowed_small",
         num_classes=3,
@@ -42,8 +50,13 @@ def model_with_drop_path() -> Model:
 
 
 @pytest.fixture
-def model_without_drop_path() -> Model:
+def model_without_drop_path(monkeypatch: pytest.MonkeyPatch) -> Model:
     """Create RF-DETR Nano model without drop_path."""
+    monkeypatch.setattr(
+        WindowedDinov2WithRegistersBackbone,
+        "from_pretrained",
+        classmethod(lambda cls, name, config: cls(config)),
+    )
     return Model(
         encoder="dinov2_windowed_small",
         num_classes=3,
@@ -161,8 +174,8 @@ def test_update_drop_path_partial_layers(model_with_drop_path: Model) -> None:
     # Should not raise IndexError
     model.update_drop_path(drop_path_rate, requested_num_layers)
 
-    # Actual layers updated with the rates from the longer linspace
-    expected_rates = [x.item() for x in torch.linspace(0, drop_path_rate, requested_num_layers)]
+    # Each updated layer gets a rate from 0 to drop_path_rate (shorter, capped linspace)
+    expected_rates = [x.item() for x in torch.linspace(0, drop_path_rate, actual_num_layers)]
     for i in range(actual_num_layers):
         actual_prob = layers[i].drop_path.drop_prob
         assert abs(actual_prob - expected_rates[i]) < 1e-6, (
