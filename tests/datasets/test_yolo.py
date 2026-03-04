@@ -325,6 +325,26 @@ class TestBuildRoboflowFromYoloAugConfig:
             f"{transform_fn} was not called with aug_config={aug_config!r}; got {kwargs}"
         )
 
+    def test_data_yml_selected_when_data_yaml_missing(self, tmp_path: Path) -> None:
+        """Regression test: build_roboflow_from_yolo picks data.yml when data.yaml is not present."""
+        (tmp_path / "data.yml").touch()
+        args = self._make_args(square_resize_div_64=False, aug_config=None)
+        args.dataset_dir = str(tmp_path)
+
+        with (
+            patch("rfdetr.datasets.yolo.make_coco_transforms") as mock_transform,
+            patch("rfdetr.datasets.yolo.YoloDetection") as mock_dataset,
+        ):
+            mock_transform.return_value = MagicMock()
+            mock_dataset.return_value = MagicMock()
+
+            from rfdetr.datasets.yolo import build_roboflow_from_yolo
+
+            build_roboflow_from_yolo("train", args, resolution=640)
+
+        _, kwargs = mock_dataset.call_args
+        assert kwargs["data_file"] == str(tmp_path / "data.yml")
+
 
 class TestIsValidYoloDataset:
     """Tests for the is_valid_yolo_dataset function."""

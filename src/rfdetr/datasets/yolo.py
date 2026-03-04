@@ -35,7 +35,7 @@ def is_valid_yolo_dataset(dataset_dir: str) -> bool:
 
     Returns a boolean indicating whether the dataset is in correct yolo format.
     """
-    contains_required_data_yaml = any(
+    contains_required_yolo_yaml = any(
         os.path.exists(os.path.join(dataset_dir, yaml_file)) for yaml_file in REQUIRED_YOLO_YAML_FILES
     )
     contains_required_split_dirs = all(
@@ -46,7 +46,7 @@ def is_valid_yolo_dataset(dataset_dir: str) -> bool:
         for split_dir in REQUIRED_SPLIT_DIRS
         for data_subdir in REQUIRED_DATA_SUBDIRS
     )
-    return contains_required_data_yaml and contains_required_split_dirs and contains_required_data_subdirs
+    return contains_required_yolo_yaml and contains_required_split_dirs and contains_required_data_subdirs
 
 
 class ConvertYolo:
