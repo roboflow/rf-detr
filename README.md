@@ -13,7 +13,7 @@
 
 RF-DETR is a real-time transformer architecture for object detection and instance segmentation developed by Roboflow. Built on a DINOv2 vision transformer backbone, RF-DETR delivers state-of-the-art accuracy and latency trade-offs on [Microsoft COCO](https://cocodataset.org/#home) and [RF100-VL](https://github.com/roboflow/rf100-vl).
 
-RF-DETR uses a DINOv2 vision transformer backbone and supports both detection and instance segmentation in a single, consistent API. All core models and code are released under the Apache 2.0 license.
+RF-DETR uses a DINOv2 vision transformer backbone and supports both detection and instance segmentation in a single, consistent API. The open-source `rfdetr` package and Apache-designated models are released under Apache 2.0, while Plus components (`rfdetr_plus`, including RF-DETR-XL/2XL detection models) are licensed under PML 1.0.
 
 https://github.com/user-attachments/assets/add23fd1-266f-4538-8809-d7dd5767e8e6
 
@@ -245,7 +245,10 @@ Visit our [documentation website](https://rfdetr.roboflow.com) to learn more abo
 
 ## License
 
-All source code and model weights in this repository are licensed under the Apache License 2.0. See [`LICENSE`](LICENSE) for details.
+Licensing is split by component:
+
+- The open-source `rfdetr` package and Apache-designated model weights are licensed under Apache License 2.0. See [`LICENSE`](LICENSE).
+- Plus components, including the `rfdetr_plus` extension and RF-DETR-XL / RF-DETR-2XL detection models, are licensed under PML 1.0.
 
 ## Acknowledgements
 
