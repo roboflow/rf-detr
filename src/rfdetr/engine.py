@@ -231,7 +231,9 @@ def train_one_epoch(
                 "loss": f"{log_dict['loss']:.2f}",
             }
             if _is_cuda(device):
-                postfix["max_mem"] = f"{torch.cuda.max_memory_allocated() / BYTES_TO_MB:.0f} MB"
+                postfix["max_mem"] = (
+                    f"{torch.cuda.max_memory_allocated(device=device) / BYTES_TO_MB:.0f} MB"
+                )
             progress_iter.set_postfix(postfix)
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
