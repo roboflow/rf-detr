@@ -19,7 +19,7 @@ from rfdetr.datasets.coco import (
     make_coco_transforms_square_div_64,
 )
 
-REQUIRED_YOLO_YAML_FILE = "data.yaml"
+REQUIRED_YOLO_YAML_FILES = ["data.yaml", "data.yml"]
 REQUIRED_SPLIT_DIRS = ["train", "valid"]
 REQUIRED_DATA_SUBDIRS = ["images", "labels"]
 
@@ -29,13 +29,15 @@ def is_valid_yolo_dataset(dataset_dir: str) -> bool:
     Checks if the specified dataset directory is in yolo format.
 
     We accept a dataset to be in yolo format if the following conditions are met:
-    - The dataset_dir contains a data.yaml file
+    - The dataset_dir contains a data.yaml or data.yml file
     - The dataset_dir contains "train" and "valid" subdirectories, each containing "images" and "labels" subdirectories
     - The "test" subdirectory is optional
 
     Returns a boolean indicating whether the dataset is in correct yolo format.
     """
-    contains_required_data_yaml = os.path.exists(os.path.join(dataset_dir, REQUIRED_YOLO_YAML_FILE))
+    contains_required_data_yaml = any(
+        os.path.exists(os.path.join(dataset_dir, yaml_file)) for yaml_file in REQUIRED_YOLO_YAML_FILES
+    )
     contains_required_split_dirs = all(
         os.path.exists(os.path.join(dataset_dir, split_dir)) for split_dir in REQUIRED_SPLIT_DIRS
     )
@@ -504,7 +506,8 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
         "test": (root / "test" / "images", root / "test" / "labels"),
     }
 
-    data_file = root / "data.yaml"
+    # Prefer data.yaml; fall back to data.yml if present; default to data.yaml for error reporting
+    data_file = next((root / f for f in REQUIRED_YOLO_YAML_FILES if (root / f).exists()), root / "data.yaml")
     img_folder, lb_folder = PATHS[image_set.split("_")[0]]
     square_resize_div_64 = getattr(args, "square_resize_div_64", False)
     include_masks = getattr(args, "segmentation_head", False)
