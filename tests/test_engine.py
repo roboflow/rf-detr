@@ -248,7 +248,7 @@ def test_train_one_epoch_max_mem_present_with_cuda_device(monkeypatch) -> None:
     monkeypatch.setattr(engine, "autocast", lambda **_kwargs: nullcontext())
     monkeypatch.setattr(engine.utils, "is_main_process", lambda: True)
     monkeypatch.setattr(engine, "_is_cuda", lambda _device: True)
-    monkeypatch.setattr(torch.cuda, "max_memory_allocated", lambda: 123 * 1024 * 1024)
+    monkeypatch.setattr(torch.cuda, "max_memory_allocated", lambda device=None: 123 * 1024 * 1024)
 
     model = _DummyTrainModel()
     criterion = _DummyCriterion()
@@ -311,7 +311,7 @@ def test_train_one_epoch_max_mem_absent_when_cuda_unavailable(monkeypatch) -> No
     monkeypatch.setattr(engine, "GradScaler", lambda *_args, **_kwargs: scaler)
     monkeypatch.setattr(engine, "autocast", lambda **_kwargs: nullcontext())
     monkeypatch.setattr(engine.utils, "is_main_process", lambda: True)
-    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(engine, "_is_cuda", lambda _device: False)
 
     model = _DummyTrainModel()
     criterion = _DummyCriterion()
@@ -374,9 +374,7 @@ def test_train_one_epoch_max_mem_absent_when_cuda_not_initialized(monkeypatch) -
     monkeypatch.setattr(engine, "GradScaler", lambda *_args, **_kwargs: scaler)
     monkeypatch.setattr(engine, "autocast", lambda **_kwargs: nullcontext())
     monkeypatch.setattr(engine.utils, "is_main_process", lambda: True)
-    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
-    monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda: True)
-    monkeypatch.setattr(torch.cuda, "is_initialized", lambda: False)
+    monkeypatch.setattr(engine, "_is_cuda", lambda _device: False)
 
     model = _DummyTrainModel()
     criterion = _DummyCriterion()
@@ -440,7 +438,7 @@ def test_evaluate_max_mem_present_with_cuda_device(monkeypatch) -> None:
     monkeypatch.setattr(engine, "CocoEvaluator", lambda *_args, **_kwargs: coco_evaluator)
     monkeypatch.setattr(engine, "coco_extended_metrics", lambda _coco: {"class_map": [], "map": 0.0})
     monkeypatch.setattr(engine, "_is_cuda", lambda _device: True)
-    monkeypatch.setattr(torch.cuda, "max_memory_allocated", lambda: 456 * 1024 * 1024)
+    monkeypatch.setattr(torch.cuda, "max_memory_allocated", lambda device=None: 456 * 1024 * 1024)
 
     model = _DummyEvalModel()
     criterion = _DummyCriterion()
