@@ -500,7 +500,7 @@ def evaluate(model, criterion, postprocess, data_loader, base_ds, device, args=N
                 "loss": f"{log_dict['loss']:.2f}",
             }
             if _is_cuda(device):
-                postfix["max_mem"] = f"{torch.cuda.max_memory_allocated() / BYTES_TO_MB:.0f} MB"
+                postfix["max_mem"] = f"{torch.cuda.max_memory_allocated(device) / BYTES_TO_MB:.0f} MB"
             progress_iter.set_postfix(postfix)
 
     # gather the stats from all processes
