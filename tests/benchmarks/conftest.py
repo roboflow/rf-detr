@@ -65,7 +65,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     other_tests = []
 
     for item in items:
-        # Prioritize the synthetic training convergence test
+        # Prioritize the synthetic training convergence tests (detection + segmentation)
         if "training" in item.nodeid:
             training_tests.append(item)
         else:

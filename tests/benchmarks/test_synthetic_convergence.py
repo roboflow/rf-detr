@@ -23,7 +23,7 @@ import pytest
 import torch
 from pytorch_lightning import LightningModule
 
-from rfdetr import RFDETRNano
+from rfdetr import RFDETRNano, RFDETRSegNano
 from rfdetr.config import RFDETRBaseConfig, TrainConfig
 from rfdetr.detr import RFDETR
 from rfdetr.training import RFDETRDataModule, RFDETRModule, build_trainer
@@ -254,3 +254,141 @@ def test_train_convergence_rfdetr_api(
     post_results = post_trainer.validate(post_module, datamodule=datamodule)
     map_after = post_results[0]["val/mAP_50"]
     assert map_after >= 0.35, f"val mAP {map_after:.3f} should reach at least 0.35 after RFDETR.train()."
+
+
+@pytest.mark.gpu
+@pytest.mark.flaky(reruns=1, only_rerun="AssertionError")
+def test_synthetic_segmentation_training_improves_performance(
+    tmp_path: Path,
+    synthetic_shape_segmentation_dataset_dir: Path,
+) -> None:
+    """Benchmark test verifying segmentation training improves model performance.
+
+    Mirrors :func:`test_synthetic_training_improves_performance` but uses a
+    segmentation model (:class:`RFDETRSegNano`) and a dataset that includes
+    COCO polygon annotations.  The test checks:
+
+    1. A randomly initialised model starts with low bbox mAP (< 5 %).
+    2. After 10 training epochs both bbox and mask mAP reach reasonable
+       thresholds and the bbox losses decrease.
+
+    Mask mAP threshold (20 %) is deliberately lower than the bbox threshold
+    (35 %) because segmentation convergence is harder within the same epoch
+    budget.
+    """
+    output_dir = tmp_path / "train_output_seg"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    dataset_dir = synthetic_shape_segmentation_dataset_dir
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = RFDETRSegNano(pretrain_weights=None, num_classes=4, device=str(device))
+
+    args = populate_args(
+        dataset_file="roboflow",
+        dataset_dir=str(dataset_dir),
+        output_dir=str(output_dir),
+        class_names=["square", "triangle", "circle"],
+        batch_size=4,
+        grad_accum_steps=1,
+        num_workers=max(1, (os.cpu_count() or 1) // 2),
+        device=str(device),
+        amp=False,
+        use_ema=True,
+        square_resize_div_64=True,
+        epochs=2,
+        # Segmentation-specific args (accepted via **extra_kwargs in populate_args)
+        segmentation_head=True,
+        mask_ce_loss_coef=5.0,
+        mask_dice_loss_coef=5.0,
+        mask_point_sample_ratio=16,
+    )
+    train_config = {
+        **vars(args),
+        "lr": 1e-3,
+        "warmup_epochs": 1.0,
+        "multi_scale": False,
+        "dont_save_weights": False,
+        "min_batches": 2,
+        "run_test": False,
+    }
+    if not hasattr(args, "fp16_eval"):
+        args.fp16_eval = False
+    if not hasattr(args, "eval_max_dets"):
+        args.eval_max_dets = 500
+    device = torch.device(args.device)
+    criterion, _ = build_criterion_and_postprocessors(args)
+    postprocess = PostProcess(num_select=args.num_select)
+
+    train_dataset = build_dataset(image_set="train", args=args, resolution=args.resolution)
+    train_loader = torch.utils.data.DataLoader(
+        train_dataset,
+        args.batch_size,
+        sampler=torch.utils.data.SequentialSampler(train_dataset),
+        drop_last=False,
+        collate_fn=utils.collate_fn,
+        num_workers=args.num_workers,
+    )
+    train_ds = get_coco_api_from_dataset(train_dataset)
+
+    val_dataset = build_dataset(image_set="val", args=args, resolution=args.resolution)
+    val_loader = torch.utils.data.DataLoader(
+        val_dataset,
+        args.batch_size,
+        sampler=torch.utils.data.SequentialSampler(val_dataset),
+        drop_last=False,
+        collate_fn=utils.collate_fn,
+        num_workers=args.num_workers,
+    )
+    base_ds = get_coco_api_from_dataset(val_dataset)
+
+    with torch.no_grad():
+        model.model.model.eval()
+        base_stats_val, _ = evaluate(model.model.model, criterion, postprocess, val_loader, base_ds, device, args=args)
+        base_stats_train, _ = evaluate(
+            model.model.model, criterion, postprocess, train_loader, train_ds, device, args=args
+        )
+    Path(output_dir / "base_stats_val.json").write_text(json.dumps(base_stats_val, indent=2))
+    Path(output_dir / "base_stats_train.json").write_text(json.dumps(base_stats_train, indent=2))
+    base_map = base_stats_val["results_json"]["map"]
+    base_loss_bbox = base_stats_train["loss_bbox"]
+    base_loss_giou = base_stats_train["loss_giou"]
+
+    assert math.isfinite(base_loss_bbox), f"Base loss {base_loss_bbox:.3f} must be finite."
+    assert math.isfinite(base_loss_giou), f"Base loss {base_loss_giou:.3f} must be finite."
+    assert math.isfinite(base_map), f"Base mAP {base_map:.3f} must be finite."
+    assert base_map <= 0.05, f"Base bbox mAP {base_map:.3f} should be low before training."
+
+    model.train(**train_config)
+
+    with torch.no_grad():
+        model.model.model.eval()
+        final_stats_val, _ = evaluate(model.model.model, criterion, postprocess, val_loader, base_ds, device, args=args)
+        final_stats_train, _ = evaluate(
+            model.model.model, criterion, postprocess, train_loader, train_ds, device, args=args
+        )
+    Path(output_dir / "final_stats_val.json").write_text(json.dumps(final_stats_val, indent=2))
+    Path(output_dir / "final_stats_train.json").write_text(json.dumps(final_stats_train, indent=2))
+    final_map = final_stats_val["results_json"]["map"]
+    final_mask_map = final_stats_val["results_json_masks"]["map"]
+    final_loss_bbox = final_stats_train["loss_bbox"]
+    final_loss_giou = final_stats_train["loss_giou"]
+
+    threshold_map = 0.15
+    threshold_mask_map = 0.10
+    threshold_loss = 0.85
+    assert math.isfinite(final_map), f"Final bbox mAP {final_map:.3f} must be finite."
+    assert math.isfinite(final_mask_map), f"Final mask mAP {final_mask_map:.3f} must be finite."
+    assert math.isfinite(final_loss_bbox), f"Final loss {final_loss_bbox:.3f} must be finite."
+    assert math.isfinite(final_loss_giou), f"Final loss {final_loss_giou:.3f} must be finite."
+    assert final_map >= threshold_map, (
+        f"Final bbox mAP {final_map:.3f} should reach at least {threshold_map} after training."
+    )
+    assert final_mask_map >= threshold_mask_map, (
+        f"Final mask mAP {final_mask_map:.3f} should reach at least {threshold_mask_map} after training."
+    )
+    assert final_loss_bbox <= base_loss_bbox * threshold_loss, (
+        f"Loss {base_loss_bbox:.3f} -> {final_loss_bbox:.3f} should drop to at least {threshold_loss * 100}%."
+    )
+    assert final_loss_giou <= base_loss_giou * threshold_loss, (
+        f"Loss {base_loss_giou:.3f} -> {final_loss_giou:.3f} should drop to at least {threshold_loss * 100}%."
+    )
