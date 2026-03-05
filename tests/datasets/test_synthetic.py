@@ -13,6 +13,7 @@ from rfdetr.datasets.synthetic import (
     DEFAULT_SPLIT_RATIOS,
     SYNTHETIC_SHAPES,
     DatasetSplitRatios,
+    _write_coco_json,
     calculate_boundary_overlap,
     draw_synthetic_shape,
     generate_coco_dataset,
@@ -328,6 +329,32 @@ class TestGenerateCocoDatasetWithSegmentation:
             assert isinstance(ann["segmentation"], list)
             assert len(ann["segmentation"]) == 1, "Expected exactly one polygon per annotation"
             assert len(ann["segmentation"][0]) >= 6, "Polygon must have at least 3 points"
+
+    def test_area_uses_polygon_when_segmentation_enabled(self, tmp_path):
+        """COCO area must match polygon area when segmentation annotations are present."""
+        annotations_path = tmp_path / "_annotations.coco.json"
+        polygon_data = np.empty(1, dtype=object)
+        polygon_data[0] = [0.0, 0.0, 10.0, 0.0, 0.0, 10.0]  # Right triangle area = 50
+        detections = sv.Detections(
+            xyxy=np.array([[0.0, 0.0, 10.0, 10.0]], dtype=float),
+            class_id=np.array([0], dtype=int),
+            data={"polygons": polygon_data},
+        )
+
+        _write_coco_json(
+            annotations_path=annotations_path,
+            classes=["shape"],
+            file_paths=["/tmp/synthetic.png"],
+            detections_list=[detections],
+            img_size=64,
+            with_segmentation=True,
+        )
+
+        with open(annotations_path) as fh:
+            data = json.load(fh)
+
+        assert len(data["annotations"]) == 1
+        assert data["annotations"][0]["area"] == pytest.approx(50.0)
 
     def test_sparse_category_ids(self, tmp_path):
         """Category IDs must use sparse 1-based encoding (1, 3, 5, …)."""

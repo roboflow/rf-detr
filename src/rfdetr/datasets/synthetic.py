@@ -265,6 +265,17 @@ def generate_synthetic_sample(
     return img, detections
 
 
+def _calculate_polygon_area(polygon: List[float]) -> float:
+    """Calculate polygon area from COCO-style flat coordinates."""
+    if len(polygon) < 6 or len(polygon) % 2 != 0:
+        return 0.0
+
+    points = np.asarray(polygon, dtype=float).reshape(-1, 2)
+    x_coords = points[:, 0]
+    y_coords = points[:, 1]
+    return float(0.5 * abs(np.dot(x_coords, np.roll(y_coords, -1)) - np.dot(y_coords, np.roll(x_coords, -1))))
+
+
 def _write_coco_json(
     annotations_path: Path,
     classes: List[str],
@@ -310,9 +321,17 @@ def _write_coco_json(
             w, h_box = x2 - x1, y2 - y1
             class_id = int(detections.class_id[det_idx])
             category_id = class_id * 2 + 1
+            annotation_area = w * h_box
             if with_segmentation:
                 poly = polygon_data[det_idx] if det_idx < len(polygon_data) else None
-                segmentation = [poly] if poly is not None else []
+                if poly is not None and hasattr(poly, "__len__") and len(poly) > 0:
+                    poly_list = [float(value) for value in poly]
+                    segmentation = [poly_list]
+                    polygon_area = _calculate_polygon_area(poly_list)
+                    if polygon_area > 0.0:
+                        annotation_area = polygon_area
+                else:
+                    segmentation = []
             else:
                 segmentation = []
             annotations_list.append(
@@ -321,7 +340,7 @@ def _write_coco_json(
                     "image_id": img_id,
                     "category_id": category_id,
                     "bbox": [x1, y1, w, h_box],
-                    "area": w * h_box,
+                    "area": annotation_area,
                     "iscrowd": 0,
                     "segmentation": segmentation,
                 }
@@ -341,7 +360,7 @@ def generate_coco_dataset(
     max_objects: int = 10,
     split_ratios: SplitRatiosType = DEFAULT_SPLIT_RATIOS,
     with_segmentation: bool = False,
-):
+) -> None:
     """Generate a full synthetic dataset in COCO format.
 
     Args:
