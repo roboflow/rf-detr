@@ -307,7 +307,9 @@ def _write_coco_json(
             f"but got {len(file_paths)} and {len(detections_list)}"
         )
 
-    categories = [{"id": idx * 2 + 1, "name": name, "supercategory": "shape"} for idx, name in enumerate(classes)]
+    categories = [
+        {"id": idx * 2 + 1, "name": name, "supercategory": "synthetic"} for idx, name in enumerate(classes)
+    ]
     images_list = []
     annotations_list = []
     ann_id = 1
