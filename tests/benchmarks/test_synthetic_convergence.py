@@ -268,12 +268,13 @@ def test_synthetic_segmentation_training_improves_performance(
     segmentation model (:class:`RFDETRSegNano`) and a dataset that includes
     COCO polygon annotations.  The test checks:
 
-    1. A randomly initialised model starts with low bbox mAP (< 5%).
-    2. After a short training run (2 epochs), bbox and mask mAP improve and
-       bbox losses decrease.
+    1. A randomly initialised model starts with low bbox mAP (< 5 %).
+    2. After a short training run (2 epochs in this test) both bbox and mask
+       mAP improve beyond their initial values and the bbox losses decrease.
 
-    Absolute targets are intentionally modest for runtime:
-    bbox mAP >= 15% and mask mAP >= 10%.
+    The mask mAP threshold used in this test is deliberately lower than the
+    bbox threshold because segmentation convergence is harder within the same
+    epoch budget.
     """
     output_dir = tmp_path / "train_output_seg"
     output_dir.mkdir(parents=True, exist_ok=True)

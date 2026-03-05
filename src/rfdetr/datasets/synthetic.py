@@ -315,7 +315,21 @@ def _write_coco_json(
                 "height": img_size,
             }
         )
-        polygon_data = detections.data.get("polygons", np.empty(0, dtype=object))
+        if with_segmentation:
+            polygon_data = detections.data.get("polygons")
+            if polygon_data is None:
+                raise ValueError(
+                    f"with_segmentation=True but no 'polygons' found in detections.data "
+                    f"for image index {img_id} (file: {file_path})"
+                )
+            if len(polygon_data) < len(detections):
+                raise ValueError(
+                    "with_segmentation=True requires a non-empty polygon for every detection, "
+                    f"but got only {len(polygon_data)} polygons for {len(detections)} detections "
+                    f"in image index {img_id} (file: {file_path})"
+                )
+        else:
+            polygon_data = np.empty(0, dtype=object)
         for det_idx in range(len(detections)):
             x1, y1, x2, y2 = (float(v) for v in detections.xyxy[det_idx])
             w, h_box = x2 - x1, y2 - y1
