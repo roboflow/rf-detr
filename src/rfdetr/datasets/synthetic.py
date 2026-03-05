@@ -301,6 +301,12 @@ def _write_coco_json(
             (populated by :func:`generate_synthetic_sample`).  When ``False``
             the field is an empty list.
     """
+    if len(file_paths) != len(detections_list):
+        raise ValueError(
+            "file_paths and detections_list must have the same length, "
+            f"but got {len(file_paths)} and {len(detections_list)}"
+        )
+
     categories = [{"id": idx * 2 + 1, "name": name, "supercategory": "shape"} for idx, name in enumerate(classes)]
     images_list = []
     annotations_list = []

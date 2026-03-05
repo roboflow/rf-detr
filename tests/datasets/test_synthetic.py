@@ -277,6 +277,24 @@ class TestGenerateCocoDataset:
 
 
 class TestGenerateCocoDatasetWithSegmentation:
+    def test_write_coco_json_raises_for_mismatched_inputs(self, tmp_path):
+        """Mismatched file/detection list lengths must raise to avoid silent truncation."""
+        annotations_path = tmp_path / "_annotations.coco.json"
+        detections = sv.Detections(
+            xyxy=np.empty((0, 4), dtype=float),
+            class_id=np.empty((0,), dtype=int),
+            data={"polygons": np.empty(0, dtype=object)},
+        )
+
+        with pytest.raises(ValueError, match="file_paths and detections_list must have the same length"):
+            _write_coco_json(
+                annotations_path=annotations_path,
+                classes=["shape"],
+                file_paths=["/tmp/a.png", "/tmp/b.png"],
+                detections_list=[detections],
+                img_size=64,
+            )
+
     def test_creates_files(self, tmp_path):
         """with_segmentation=True must create the same directory/file structure as the default."""
         output_dir = tmp_path / "seg_dataset"
