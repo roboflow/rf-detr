@@ -342,6 +342,18 @@ def _write_coco_json(
             x1, y1, x2, y2 = (float(v) for v in detections.xyxy[det_idx])
             w, h_box = x2 - x1, y2 - y1
             class_id = int(detections.class_id[det_idx])
+            if class_id < 0 or class_id >= len(classes):
+                raise ValueError(
+                    "Invalid class_id {class_id} for detection index {det_idx} "
+                    "in image index {img_id} (file: {file_path}); "
+                    "expected 0 <= class_id < {num_classes}".format(
+                        class_id=class_id,
+                        det_idx=det_idx,
+                        img_id=img_id,
+                        file_path=file_path,
+                        num_classes=len(classes),
+                    )
+                )
             category_id = class_id * 2 + 1
             annotation_area = w * h_box
             if with_segmentation:
