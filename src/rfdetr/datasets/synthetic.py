@@ -141,7 +141,7 @@ def draw_synthetic_shape(
 
     if shape == "square":
         x1, y1 = cx - half_size, cy - half_size
-        x2, y2 = x1 + size, y1 + size
+        x2, y2 = cx + half_size, cy + half_size
         pts = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
     elif shape == "triangle":
         height = int(size * 0.866)  # sqrt(3)/2 for equilateral triangle
