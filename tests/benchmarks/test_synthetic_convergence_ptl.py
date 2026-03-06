@@ -63,7 +63,8 @@ def _make_ptl_module_from(rfdetr_obj, dataset_dir: Path, output_dir: Path) -> RF
         dataset_dir=str(dataset_dir),
         output_dir=str(output_dir),
     )
-    module = RFDETRModule(rfdetr_obj.model_config, train_config)
+    model_config = rfdetr_obj.model_config.model_copy(update={"compile": False})
+    module = RFDETRModule(model_config, train_config)
     module.model.load_state_dict(rfdetr_obj.model.model.state_dict())
     module.model.eval()
 
@@ -148,7 +149,7 @@ def test_ptl_native_convergence(
     device = "cuda" if torch.cuda.is_available() else "cpu"
     accelerator = "cpu" if device == "cpu" else "auto"
 
-    mc = RFDETRBaseConfig(num_classes=num_classes, pretrain_weights=None, amp=False)
+    mc = RFDETRBaseConfig(num_classes=num_classes, pretrain_weights=None, amp=False, compile=False)
     tc = TrainConfig(
         dataset_file="roboflow",
         dataset_dir=str(dataset_dir),
@@ -207,14 +208,14 @@ def test_ptl_training_improves_performance(
     dataset_dir = synthetic_shape_dataset_dir
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = RFDETRNano(pretrain_weights=None, num_classes=4, device=str(device))
+    model = RFDETRNano(pretrain_weights=None, num_classes=4, device=str(device), compile=False)
 
     args = populate_args(
         dataset_file="roboflow",
         dataset_dir=str(dataset_dir),
         output_dir=str(output_dir),
         class_names=["square", "triangle", "circle"],
-        batch_size=3,
+        batch_size=4,
         grad_accum_steps=1,
         num_workers=max(1, (os.cpu_count() or 1) // 2),
         device=str(device),
@@ -279,7 +280,7 @@ def test_ptl_training_improves_performance(
         dataset_dir=str(dataset_dir),
         output_dir=str(output_dir),
         epochs=10,
-        batch_size=3,
+        batch_size=4,
         num_workers=max(1, (os.cpu_count() or 1) // 2),
         lr=1e-3,
         warmup_epochs=1.0,
