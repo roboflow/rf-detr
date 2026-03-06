@@ -22,6 +22,8 @@ Mostly copy-paste from https://github.com/pytorch/vision/blob/13b35ff/references
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+import cv2
+import numpy as np
 import pycocotools.mask as coco_mask
 import torch
 import torch.utils.data
@@ -155,6 +157,244 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         return img, target
 
 
+
+class LiaoDetection(torchvision.datasets.CocoDetection):
+
+    def __init__(
+        self,
+        img_folder: Union[str, Path],
+        ann_file: Union[str, Path],
+        transforms: Optional[Any],
+        include_masks: bool = False,
+        background_category_names=None,
+        background_category_ids=None,
+        remap_category_ids: bool = False,
+    ) -> None:
+        super(LiaoDetection, self).__init__(img_folder, ann_file)
+        self._transforms = transforms
+        self.include_masks = include_masks
+        self.background_category_ids = set()
+        if remap_category_ids:
+            # Mapping from original COCO category_id to contiguous label indices
+            self.cat2label = {cat_id: i for i, cat_id in enumerate(sorted(self.coco.cats.keys()))}
+            # Reverse mapping from contiguous label indices back to COCO category_id
+            self.label2cat = {label: cat_id for cat_id, label in self.cat2label.items()}
+            # Expose label-to-category mapping on the underlying COCO API object for evaluators
+            setattr(self.coco, "label2cat", self.label2cat)
+        else:
+            self.cat2label = None
+            self.label2cat = None
+
+        if background_category_ids is not None:
+           if isinstance(background_category_ids, (str, int)):
+                self.background_category_ids.add(background_category_ids)
+           else:
+                self.background_category_ids.update(list(background_category_ids))
+
+        normalized_bg_ids = set()
+        for bg_id in self.background_category_ids:
+            normalized_bg_ids.add(bg_id)
+            # 1) int -> str
+            if isinstance(bg_id, int):
+                normalized_bg_ids.add(str(bg_id))
+            # 2) str digit -> int
+            if isinstance(bg_id, str) and bg_id.isdigit():
+                try:
+                    normalized_bg_ids.add(int(bg_id))
+                except Exception:
+                    pass
+        self.background_category_ids = normalized_bg_ids
+        self.prepare = ConvertLiao(include_masks=include_masks, cat2label=self.cat2label, background_category_ids=self.background_category_ids)
+
+    def __getitem__(self, idx: int) -> Tuple[Any, Any]:
+        img, target = super(LiaoDetection, self).__getitem__(idx)
+        image_id = self.ids[idx]
+        target = {"image_id": image_id, "annotations": target}
+        img, target = self.prepare(img, target)
+       
+
+        #######以下是测试内容
+        #测试某张图片
+        # img is a tensor with shape (C, H, W), need to convert to (H, W, C) numpy array
+        if isinstance(img, torch.Tensor):
+            # Denormalize if needed (assuming ImageNet normalization)
+            # mean = [0.485, 0.456, 0.406]
+            # std = [0.229, 0.224, 0.225]
+            # img = img * torch.tensor(std).view(3, 1, 1) + torch.tensor(mean).view(3, 1, 1)
+            # Or just clip to [0, 1] if already normalized
+            img_np = img.cpu().permute(1, 2, 0).numpy()
+            # Clip to [0, 1] and convert to [0, 255]
+            img_np = np.clip(img_np, 0, 1)
+            img_np = (img_np * 255).astype(np.uint8)
+        else:
+            img_np = np.array(img)
+        
+        # Convert RGB to BGR for OpenCV
+        image1 = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+       
+        # Check if masks exist
+        if "masks" in target and len(target["masks"]) > 0:
+            target1 = target["masks"][0]
+            # Move to CPU if on GPU and convert to numpy
+            if isinstance(target1, torch.Tensor):
+                target1_np = target1.cpu().numpy()
+            else:
+                target1_np = np.array(target1)
+            # Convert boolean to uint8 (True -> 255, False -> 0)
+            target1_np = target1_np.astype(np.uint8) * 255
+            # Remove any extra dimensions
+            target1_np = np.squeeze(target1_np)
+            
+            cv2.imwrite("D:/hflip.png", image1)
+            cv2.imwrite("D:/hflip_target.png", target1_np)
+            
+            # 在target1_np上绘制boxes
+            if "boxes" in target:
+                boxes = target["boxes"]
+                if isinstance(boxes, torch.Tensor):
+                    boxes = boxes.cpu().numpy()  # shape: (N, 4)
+                img_with_box = cv2.cvtColor(target1_np, cv2.COLOR_GRAY2BGR)
+                for box in boxes.astype(int):
+                    x1, y1, x2, y2 = box
+                    cv2.rectangle(img_with_box, (x1, y1), (x2, y2), color=(0, 255, 0), thickness=2)
+                cv2.imwrite("D:/hflip_target_box.png", img_with_box)
+        ##以上是测试内容######################
+
+        
+        if self._transforms is not None:
+                img, target = self._transforms(
+                img, target
+            )  # boxes are absolute [x_min, y_min, x_max, y_max]; conversion to normalized [cx, cy, w, h] occurs inside Normalize
+        
+        return img, target
+
+
+
+
+class ConvertLiao(object):
+
+    def __init__(self, include_masks: bool = False, cat2label: Optional[Dict[int, int]] = None, background_category_ids = None) -> None:
+        self.include_masks = include_masks
+        self.cat2label = cat2label
+         # 确保 background_category_ids 是一个集合
+        if background_category_ids is None:
+            self.background_category_ids = set()
+        elif isinstance(background_category_ids, (str, int)):
+            # 如果是单个值，转换为集合
+            self.background_category_ids = {background_category_ids}
+        else:
+            # 如果是集合或列表，转换为集合
+            self.background_category_ids = set(background_category_ids) if background_category_ids else set()
+   
+    def __call__(self, image: Image.Image, target: Dict[str, Any]) -> Tuple[Image.Image, Dict[str, Any]]:
+        w, h = image.size
+
+        image_id = target["image_id"]
+        image_id = torch.tensor([image_id])
+
+        anno = target["annotations"]
+
+        # 分离背景类别和非背景类别的标注
+        # 非背景类别标注（用于训练）
+        anno_foreground = []
+        anno_background = []
+        
+        for obj in anno:
+            # 跳过crowd标注
+            if 'iscrowd' in obj and obj['iscrowd'] != 0:
+                continue
+            
+            category_id = obj.get('category_id')
+            # 检查类别ID是否在背景类别集合中（直接匹配）
+            is_background = category_id in self.background_category_ids
+            
+            if is_background:
+                anno_background.append(obj)
+            else:
+                anno_foreground.append(obj)
+
+
+
+        boxes = [obj["bbox"] for obj in anno_foreground]
+        # guard against no boxes via resizing
+        boxes = torch.as_tensor(boxes, dtype=torch.float32).reshape(-1, 4)
+        boxes[:, 2:] += boxes[:, :2]
+        boxes[:, 0::2].clamp_(min=0, max=w)
+        boxes[:, 1::2].clamp_(min=0, max=h)
+
+        classes: List[int] = []
+        for obj in anno_foreground:
+            category_id = obj["category_id"]
+            if getattr(self, "cat2label", None) is not None:
+                if category_id not in self.cat2label:
+                    raise KeyError(
+                        f"Unknown category_id {category_id} for image_id {target.get('image_id')} "
+                        "encountered in annotations. Check that your category mapping matches the dataset."
+                    )
+                classes.append(self.cat2label[category_id])
+            else:
+                classes.append(category_id)
+        classes = torch.tensor(classes, dtype=torch.int64)
+
+        keep = (boxes[:, 3] > boxes[:, 1]) & (boxes[:, 2] > boxes[:, 0])
+        boxes = boxes[keep]
+        classes = classes[keep]
+
+        target = {}
+        target["boxes"] = boxes
+        target["labels"] = classes
+        target["image_id"] = image_id
+
+        # for conversion to coco api
+        area = torch.tensor([obj["area"] for obj in anno_foreground])
+        iscrowd = torch.tensor([obj["iscrowd"] if "iscrowd" in obj else 0 for obj in anno_foreground])
+        target["area"] = area[keep]
+        target["iscrowd"] = iscrowd[keep]
+
+        # add segmentation masks if requested, otherwise ensure consistent key when include_masks=True
+        if self.include_masks:
+            # 先处理非背景类别的掩码
+            if len(anno_foreground) > 0 and 'segmentation' in anno_foreground[0]:
+                segmentations = [obj.get("segmentation", []) for obj in anno_foreground]
+                masks = convert_coco_poly_to_mask(segmentations, h, w)
+                if masks.numel() > 0:
+                    target["masks"] = masks[keep]
+                else:
+                    target["masks"] = torch.zeros((0, h, w), dtype=torch.uint8)
+            else:
+                target["masks"] = torch.zeros((0, h, w), dtype=torch.uint8)
+
+            # 处理背景类别的掩码：将背景掩码和非背景掩码重叠的部分变成0
+            if len(anno_background) > 0 and 'segmentation' in anno_background[0] and target["masks"].numel() > 0:
+                # 获取背景类别的掩码
+                background_segmentations = [obj.get("segmentation", []) for obj in anno_background]
+                background_masks = convert_coco_poly_to_mask(background_segmentations, h, w)
+                # background_masks 是包含所有背景 segmentation 的掩码，其形状为 [N_bg, h, w]，其中 N_bg 为背景实例的数量。
+                
+                if background_masks.numel() > 0:
+                    # 将所有背景掩码合并成一个掩码（背景区域的并集）
+                    # background_masks 形状: [N_bg, h, w]，合并后形状: [h, w]
+                    background_mask_combined = background_masks.any(dim=0).bool()
+                    
+                    # 对于每个非背景掩码，减去与背景掩码重叠的部分（重叠区域设置为0）
+                    # target["masks"] 形状: [N_fg, h, w]，其中 N_fg 为非背景实例的数量
+                    foreground_masks = target["masks"].bool()
+                    # 将背景掩码扩展到与前景掩码相同的维度进行比较
+                    background_expanded = background_mask_combined.unsqueeze(0)  # [1, h, w]
+                    
+                    # 对于每个前景掩码，移除与背景掩码重叠的部分
+                    # 使用逻辑与操作：mask & ~background_mask（保留掩码中不在背景区域的部分）
+                    foreground_masks = foreground_masks & ~background_expanded
+                    
+                    target["masks"] = foreground_masks
+
+            target["masks"] = target["masks"].bool()
+
+        target["orig_size"] = torch.as_tensor([int(h), int(w)])
+        target["size"] = torch.as_tensor([int(h), int(w)])
+
+        return image, target
+
 class ConvertCoco(object):
     """Convert a raw COCO annotation dict into model-ready tensors.
 
@@ -196,6 +436,8 @@ class ConvertCoco(object):
 
         anno = target["annotations"]
 
+
+        
         anno = [obj for obj in anno if "iscrowd" not in obj or obj["iscrowd"] == 0]
 
         boxes = [obj["bbox"] for obj in anno]
@@ -601,5 +843,77 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
             ),
             include_masks=include_masks,
             remap_category_ids=True,
+        )
+    return dataset
+
+
+def build_liao(image_set: str, args: Any, resolution: int) -> CocoDetection:
+    """Build a Roboflow COCO-format dataset.
+
+    This uses Roboflow's standard directory structure
+    (train/valid/test folders with _annotations.coco.json).
+    """
+    root = Path(args.dataset_dir)
+    if not root.exists():
+        logger.error(f"Roboflow dataset path {root} does not exist")
+        raise FileNotFoundError(f"Roboflow dataset path {root} does not exist")
+
+    PATHS = {
+        "train": (root / "train", root / "train" / "_annotations.coco.json"),
+        "val": (root / "valid", root / "valid" / "_annotations.coco.json"),
+        "test": (root / "test", root / "test" / "_annotations.coco.json"),
+    }
+    
+    img_folder, ann_file = PATHS[image_set.split("_")[0]]
+    square_resize_div_64 = getattr(args, "square_resize_div_64", False)
+    include_masks = getattr(args, "segmentation_head", False)
+    multi_scale = getattr(args, "multi_scale", False)
+    expanded_scales = getattr(args, "expanded_scales", False)
+    do_random_resize_via_padding = getattr(args, "do_random_resize_via_padding", False)
+    patch_size = getattr(args, "patch_size", 16)
+    num_windows = getattr(args, "num_windows", 4)
+    aug_config = getattr(args, "aug_config", None)
+    try:
+        background_category_ids = args.background_category_ids
+    except:
+        background_category_ids = None
+
+    if square_resize_div_64:
+        logger.info(f"Building Roboflow {image_set} dataset with square resize at resolution {resolution}")
+        dataset = LiaoDetection(
+            img_folder,
+            ann_file,
+            transforms=make_coco_transforms_square_div_64(
+                image_set,
+                resolution,
+                multi_scale=multi_scale,
+                expanded_scales=expanded_scales,
+                skip_random_resize=not do_random_resize_via_padding,
+                patch_size=patch_size,
+                num_windows=num_windows,
+                aug_config=aug_config,
+            ),
+            include_masks=include_masks,
+            remap_category_ids=False,
+            background_category_ids=background_category_ids
+        )
+    else:
+        logger.info(f"Building Roboflow {image_set} dataset at resolution {resolution}")
+        dataset = LiaoDetection(
+            img_folder,
+            ann_file,
+            transforms=make_coco_transforms(
+                image_set,
+                resolution,
+                multi_scale=multi_scale,
+                expanded_scales=expanded_scales,
+                skip_random_resize=not do_random_resize_via_padding,
+                patch_size=patch_size,
+                num_windows=num_windows,
+                aug_config=aug_config,
+            ),
+            include_masks=include_masks,
+            remap_category_ids=False,
+            background_category_ids=background_category_ids
         )
     return dataset

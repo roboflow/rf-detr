@@ -201,6 +201,10 @@ class RFDETR:
         elif config.dataset_file == "coco":
             class_names = COCO_CLASSES
             num_classes = 90
+        elif config.dataset_file == "liao":
+            class_names = self._load_classes(config.dataset_dir)
+            num_classes = len(class_names) + 1
+            self.model.class_names = class_names
         else:
             raise ValueError(f"Invalid dataset file: {config.dataset_file}")
 
