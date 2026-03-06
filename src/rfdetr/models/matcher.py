@@ -173,9 +173,17 @@ class HungarianMatcher(nn.Module):
             C = C + self.cost_mask_ce * cost_mask_ce + self.cost_mask_dice * cost_mask_dice
         C = C.view(bs, num_queries, -1).float().cpu()  # convert to float because bfloat16 doesn't play nicely with CPU
 
-        # we assume any good match will not cause NaN or Inf, so we replace them with a large value
-        max_cost = C.max() if C.numel() > 0 else 0
-        C[C.isinf() | C.isnan()] = max_cost * 2
+        # We assume any good match will not cause NaN or Inf, so replace invalid
+        # entries with a finite value that is larger than every valid cost.
+        finite_mask = torch.isfinite(C)
+        if not finite_mask.all():
+            if finite_mask.any():
+                finite_costs = C[finite_mask]
+                max_cost = finite_costs.max()
+                replacement_cost = max_cost + finite_costs.abs().max() + 1
+            else:
+                replacement_cost = C.new_tensor(1.0)
+            C[~finite_mask] = replacement_cost
 
         sizes = [len(v["boxes"]) for v in targets]
         indices = []
