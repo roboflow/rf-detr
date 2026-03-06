@@ -180,6 +180,8 @@ class HungarianMatcher(nn.Module):
             if finite_mask.any():
                 finite_costs = C[finite_mask]
                 max_cost = finite_costs.max()
+                # Add the largest absolute finite cost so the replacement stays
+                # strictly larger than every valid entry, even if all costs are negative.
                 replacement_cost = max_cost + finite_costs.abs().max() + 1
             else:
                 replacement_cost = C.new_tensor(1.0)
