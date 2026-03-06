@@ -647,6 +647,48 @@ class TestAlbumentationsWrapperFromConfig:
         transform_names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
         assert transform_names == ["HorizontalFlip"]
 
+    def test_random_sized_crop_adapts_height_width_for_albumentations_2(self, monkeypatch):
+        """RandomSizedCrop config with height/width is adapted to the Albumentations 2.x size API."""
+
+        class FakeRandomSizedCrop:
+            def __init__(self, *, min_max_height, size, p=1.0):
+                self.min_max_height = min_max_height
+                self.size = size
+                self.p = p
+
+        monkeypatch.setattr("rfdetr.datasets.transforms.A.RandomSizedCrop", FakeRandomSizedCrop)
+
+        transform = _build_albu_transform(
+            "RandomSizedCrop",
+            {"min_max_height": [384, 600], "height": 640, "width": 640},
+        )
+
+        assert isinstance(transform, FakeRandomSizedCrop)
+        assert transform.min_max_height == [384, 600]
+        assert transform.size == (640, 640)
+
+    def test_random_sized_crop_adapts_size_for_albumentations_1(self, monkeypatch):
+        """RandomSizedCrop config with size is adapted to the Albumentations 1.x height/width API."""
+
+        class FakeRandomSizedCrop:
+            def __init__(self, *, min_max_height, height, width, p=1.0):
+                self.min_max_height = min_max_height
+                self.height = height
+                self.width = width
+                self.p = p
+
+        monkeypatch.setattr("rfdetr.datasets.transforms.A.RandomSizedCrop", FakeRandomSizedCrop)
+
+        transform = _build_albu_transform(
+            "RandomSizedCrop",
+            {"min_max_height": [384, 600], "size": (640, 640)},
+        )
+
+        assert isinstance(transform, FakeRandomSizedCrop)
+        assert transform.min_max_height == [384, 600]
+        assert transform.height == 640
+        assert transform.width == 640
+
 
 class TestAlbumentationsWrapperNestedConfig:
     """Tests for nested container (OneOf, SomeOf, Sequential) support in from_config."""

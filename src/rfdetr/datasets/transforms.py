@@ -19,6 +19,7 @@ Transforms and data augmentation for both image + bbox.
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Sequence
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -219,7 +220,20 @@ def _build_albu_transform(name: str, params: Dict[str, Any]) -> A.BasicTransform
     aug_cls = getattr(A, name, None)
     if aug_cls is None:
         raise ValueError(f"Unknown Albumentations transform: {name!r}")
-    return aug_cls(**params)
+    normalized_params = dict(params)
+    if name == "RandomSizedCrop":
+        signature = inspect.signature(aug_cls.__init__)
+        if "size" in signature.parameters and "size" not in normalized_params:
+            height = normalized_params.pop("height", None)
+            width = normalized_params.pop("width", None)
+            if height is not None and width is not None:
+                normalized_params["size"] = (height, width)
+        elif "size" not in signature.parameters and "size" in normalized_params:
+            size = normalized_params.pop("size")
+            if isinstance(size, Sequence) and len(size) == 2:
+                normalized_params.setdefault("height", size[0])
+                normalized_params.setdefault("width", size[1])
+    return aug_cls(**normalized_params)
 
 
 class AlbumentationsWrapper:
