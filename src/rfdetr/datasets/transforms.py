@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Sequence
+from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 try:
@@ -220,20 +221,75 @@ def _build_albu_transform(name: str, params: Dict[str, Any]) -> A.BasicTransform
     aug_cls = getattr(A, name, None)
     if aug_cls is None:
         raise ValueError(f"Unknown Albumentations transform: {name!r}")
+    return aug_cls(**_normalize_albu_params(name, params, aug_cls))
+
+
+@lru_cache(maxsize=None)
+def _random_sized_crop_uses_size_param(aug_cls: type) -> bool:
+    """Return whether ``RandomSizedCrop`` expects a ``size`` keyword.
+
+    The Albumentations 2.x API changed ``RandomSizedCrop`` from separate
+    ``height``/``width`` parameters to a single ``size=(height, width)``
+    parameter. This helper caches the signature check per class so repeated
+    transform construction during dataset setup does not repeat introspection.
+
+    Args:
+        aug_cls: Albumentations transform class to inspect.
+
+    Returns:
+        ``True`` when the class accepts a ``size`` keyword argument; otherwise
+        ``False``.
+    """
+
+    signature = inspect.signature(aug_cls.__init__)
+    return "size" in signature.parameters
+
+
+def _normalize_albu_params(name: str, params: Dict[str, Any], aug_cls: type) -> Dict[str, Any]:
+    """Normalize transform params across Albumentations API variations.
+
+    Currently this adapts ``RandomSizedCrop`` arguments so a config using
+    ``height``/``width`` works on Albumentations 2.x and a config using
+    ``size=(height, width)`` still works on Albumentations 1.x.
+
+    Args:
+        name: Albumentations transform name.
+        params: Raw transform parameter mapping from config.
+        aug_cls: Albumentations transform class that will be instantiated.
+
+    Returns:
+        A normalized copy of ``params`` suitable for the installed
+        Albumentations version.
+
+    Examples:
+        >>> class CropV2:
+        ...     def __init__(self, *, size, min_max_height): ...
+        >>> _normalize_albu_params(
+        ...     "RandomSizedCrop",
+        ...     {"min_max_height": [384, 600], "height": 640, "width": 640},
+        ...     CropV2,
+        ... )
+        {'min_max_height': [384, 600], 'size': (640, 640)}
+    """
+
     normalized_params = dict(params)
-    if name == "RandomSizedCrop":
-        signature = inspect.signature(aug_cls.__init__)
-        if "size" in signature.parameters and "size" not in normalized_params:
-            height = normalized_params.pop("height", None)
-            width = normalized_params.pop("width", None)
-            if height is not None and width is not None:
-                normalized_params["size"] = (height, width)
-        elif "size" not in signature.parameters and "size" in normalized_params:
-            size = normalized_params.pop("size")
-            if isinstance(size, Sequence) and len(size) == 2:
-                normalized_params.setdefault("height", size[0])
-                normalized_params.setdefault("width", size[1])
-    return aug_cls(**normalized_params)
+    if name != "RandomSizedCrop":
+        return normalized_params
+
+    if _random_sized_crop_uses_size_param(aug_cls) and "size" not in normalized_params:
+        height = normalized_params.pop("height", None)
+        width = normalized_params.pop("width", None)
+        if height is not None and width is not None:
+            normalized_params["size"] = (height, width)
+        return normalized_params
+
+    if not _random_sized_crop_uses_size_param(aug_cls) and "size" in normalized_params:
+        size = normalized_params.pop("size")
+        if isinstance(size, Sequence) and len(size) == 2:
+            normalized_params.setdefault("height", size[0])
+            normalized_params.setdefault("width", size[1])
+
+    return normalized_params
 
 
 class AlbumentationsWrapper:
