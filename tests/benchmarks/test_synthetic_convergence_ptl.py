@@ -63,7 +63,13 @@ def _make_ptl_module_from(rfdetr_obj, dataset_dir: Path, output_dir: Path) -> RF
         dataset_dir=str(dataset_dir),
         output_dir=str(output_dir),
     )
-    model_config = rfdetr_obj.model_config.model_copy(update={"compile": False})
+    model_config = rfdetr_obj.model_config.model_copy(
+        update={
+            "compile": False,
+            # Disable pretrain loading so this helper has no network/disk side effects.
+            "pretrain_weights": None,
+        },
+    )
     module = RFDETRModule(model_config, train_config)
     module.model.load_state_dict(rfdetr_obj.model.model.state_dict())
     module.model.eval()
