@@ -277,9 +277,12 @@ def _normalize_albu_params(name: str, params: Dict[str, Any], aug_cls: type) -> 
         return normalized_params
 
     if _random_sized_crop_uses_size_param(aug_cls) and "size" not in normalized_params:
-        height = normalized_params.pop("height", None)
-        width = normalized_params.pop("width", None)
+        height = normalized_params.get("height")
+        width = normalized_params.get("width")
         if height is not None and width is not None:
+            # Only remove height/width after successfully constructing size
+            normalized_params.pop("height", None)
+            normalized_params.pop("width", None)
             normalized_params["size"] = (height, width)
         return normalized_params
 
