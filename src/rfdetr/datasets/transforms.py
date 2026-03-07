@@ -284,10 +284,13 @@ def _normalize_albu_params(name: str, params: Dict[str, Any], aug_cls: type) -> 
         return normalized_params
 
     if not _random_sized_crop_uses_size_param(aug_cls) and "size" in normalized_params:
-        size = normalized_params.pop("size")
+        size = normalized_params.get("size")
         if isinstance(size, Sequence) and len(size) == 2:
             normalized_params.setdefault("height", size[0])
             normalized_params.setdefault("width", size[1])
+            # Only remove ``size`` after a successful conversion; otherwise leave
+            # it so Albumentations can raise an appropriate error.
+            normalized_params.pop("size", None)
 
     return normalized_params
 
