@@ -276,13 +276,13 @@ def _normalize_albu_params(name: str, params: Dict[str, Any], aug_cls: type) -> 
     if name != "RandomSizedCrop":
         return normalized_params
 
-    if _random_sized_crop_uses_size_param(aug_cls) and "size" not in normalized_params:
-        height = normalized_params.get("height")
-        width = normalized_params.get("width")
-        if height is not None and width is not None:
-            # Only remove height/width after successfully constructing size
-            normalized_params.pop("height", None)
-            normalized_params.pop("width", None)
+    if _random_sized_crop_uses_size_param(aug_cls):
+        # Albumentations 2.x-style API: expects ``size`` and does not accept
+        # separate ``height``/``width`` kwargs. Always drop ``height``/``width``
+        # so they are never forwarded as unexpected keyword arguments.
+        height = normalized_params.pop("height", None)
+        width = normalized_params.pop("width", None)
+        if "size" not in normalized_params and height is not None and width is not None:
             normalized_params["size"] = (height, width)
         return normalized_params
 
