@@ -9,6 +9,7 @@
 
 import argparse
 import os
+import warnings
 
 import roboflow
 from rf100vl import get_rf100vl_projects
@@ -57,6 +58,13 @@ def train_from_coco_dir(coco_dir: str) -> None:
 
 
 def trainer() -> None:
+    warnings.warn(
+        "The `rfdetr` CLI entry point `rfdetr.cli.main:trainer` is deprecated as of "
+        "v1.5.1 and will be removed in v2.0.0.  Use `rfdetr fit` "
+        "(rfdetr.lit.cli:main) instead.",
+        DeprecationWarning,
+        stacklevel=1,
+    )
     parser = argparse.ArgumentParser()
     parser.add_argument("--coco_dir", type=str, required=False)
     parser.add_argument("--api_key", type=str, required=False)

@@ -58,11 +58,19 @@ repos:
         additional_dependencies:
           - tomli
 
+  #- repo: https://github.com/mwouts/jupytext
+  #  rev: v1.16.4
+  #  hooks:
+  #    - id: jupytext
+  #      args: [--update, --to, notebook]
+  #      files: ^notebooks/.*\.py$
+
   - repo: https://github.com/Lucas-C/pre-commit-hooks
     rev: v1.5.6
     hooks:
       - id: insert-license
         files: \.py$
+        exclude: ^notebooks/
         args:
           - --license-filepath
           - .github/LICENSE_HEADER.txt

@@ -4,7 +4,6 @@ on:
   push:
     branches: ["main", "release/*", "develop"]
   pull_request:
-    branches: ["main", "release/*", "develop"]
 
 permissions:
   contents: read
@@ -28,7 +27,7 @@ jobs:
   run-tests:
     name: Testing
     # needs: build  # todo: consider using this build package for testing
-    timeout-minutes: 10
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -53,14 +52,16 @@ jobs:
       - name: 🚀 Install Packages
         timeout-minutes: 5
         # Install PyTorch CPU-only first (UV_TORCH_BACKEND=cpu works with 'uv pip')
-        run: uv pip install -e . --group tests
+        run: uv pip install -e ".[cli,metrics]" --group tests
 
       - name: 🧪 Run the Test
         run: |
           uv run --no-sync pytest src/ tests/ \
             -n 2 -m "not gpu" \
             --ignore=tests/try_instantiate_all_models.py \
-            --cov=rfdetr --cov-report=xml
+            --cov=rfdetr --cov-report=xml \
+            --timeout=240 \
+            --durations=50
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
@@ -73,6 +74,7 @@ jobs:
           fail_ci_if_error: false
 
       - name: Minimize uv cache
+        continue-on-error: true
         run: uv cache prune --ci
 
   testing-guardian:
