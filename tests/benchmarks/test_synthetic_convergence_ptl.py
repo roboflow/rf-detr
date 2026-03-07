@@ -65,7 +65,6 @@ def _make_ptl_module_from(rfdetr_obj, dataset_dir: Path, output_dir: Path) -> RF
     )
     model_config = rfdetr_obj.model_config.model_copy(
         update={
-            "compile": False,
             # Disable pretrain loading so this helper has no network/disk side effects.
             "pretrain_weights": None,
         },

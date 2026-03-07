@@ -177,17 +177,6 @@ class TestInit:
             _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
         mock_compile.assert_not_called()
 
-    def test_compile_disabled_by_default(self, tmp_path):
-        """torch.compile is skipped unless model_config.compile is explicitly enabled."""
-        mc = _base_model_config()
-        tc = _base_train_config(tmp_path, multi_scale=False)
-        with (
-            patch("torch.cuda.is_available", return_value=True),
-            patch("rfdetr.lit.module.torch.compile") as mock_compile,
-        ):
-            _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
-        mock_compile.assert_not_called()
-
     def test_compile_runs_when_enabled_and_static_shapes(self, tmp_path):
         """torch.compile runs when compile=True and multi_scale=False on CUDA."""
         mc = _base_model_config(compile=True)
