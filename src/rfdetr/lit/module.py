@@ -59,7 +59,7 @@ class RFDETRModule(LightningModule):
             self._apply_lora()
         self.criterion, self.postprocess = build_criterion_and_postprocessors(self._args)
 
-        # torch.compile is opt-out: set model_config.compile=False to disable.
+        # torch.compile is opt-in: set model_config.compile=True to enable.
         # Only enabled on CUDA; MPS and CPU do not benefit from compilation.
         compile_enabled = model_config.compile and torch.cuda.is_available() and not train_config.multi_scale
         if model_config.compile and train_config.multi_scale:

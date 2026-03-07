@@ -155,7 +155,7 @@ def test_ptl_native_convergence(
     device = "cuda" if torch.cuda.is_available() else "cpu"
     accelerator = "cpu" if device == "cpu" else "auto"
 
-    mc = RFDETRBaseConfig(num_classes=num_classes, pretrain_weights=None, amp=False, compile=False)
+    mc = RFDETRBaseConfig(num_classes=num_classes, pretrain_weights=None, amp=False)
     tc = TrainConfig(
         dataset_file="roboflow",
         dataset_dir=str(dataset_dir),
@@ -214,7 +214,7 @@ def test_ptl_training_improves_performance(
     dataset_dir = synthetic_shape_dataset_dir
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = RFDETRNano(pretrain_weights=None, num_classes=4, device=str(device), compile=False)
+    model = RFDETRNano(pretrain_weights=None, num_classes=4, device=str(device))
 
     args = populate_args(
         dataset_file="roboflow",

@@ -54,6 +54,12 @@ class TestModelConfigValidation:
         with pytest.raises(ValueError, match=r"Unknown attribute: 'unknown'\."):
             setattr(config, "unknown", "value")
 
+    def test_compile_defaults_to_false(self, sample_model_config) -> None:
+        """ModelConfig defaults torch.compile to disabled unless explicitly enabled."""
+        config = ModelConfig(**sample_model_config)
+
+        assert config.compile is False
+
 
 class TestSegmentationTrainConfigNumSelect:
     """Unit tests for SegmentationTrainConfig.num_select default and per-model values."""
