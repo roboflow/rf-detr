@@ -278,12 +278,39 @@ def _normalize_albu_params(name: str, params: Dict[str, Any], aug_cls: type) -> 
 
     if _random_sized_crop_uses_size_param(aug_cls):
         # Albumentations 2.x-style API: expects ``size`` and does not accept
-        # separate ``height``/``width`` kwargs. Always drop ``height``/``width``
-        # so they are never forwarded as unexpected keyword arguments.
-        height = normalized_params.pop("height", None)
-        width = normalized_params.pop("width", None)
-        if "size" not in normalized_params and height is not None and width is not None:
+        # separate ``height``/``width`` kwargs.
+        has_size = "size" in normalized_params
+        has_height = "height" in normalized_params
+        has_width = "width" in normalized_params
+
+        if has_size:
+            # When ``size`` is already provided, drop any legacy ``height``/``width``
+            # so they are never forwarded as unexpected keyword arguments.
+            normalized_params.pop("height", None)
+            normalized_params.pop("width", None)
+            return normalized_params
+
+        if has_height and has_width:
+            height = normalized_params.pop("height")
+            width = normalized_params.pop("width")
             normalized_params["size"] = (height, width)
+            return normalized_params
+
+        if has_height != has_width:
+            # One of ``height``/``width`` was provided without the other and no
+            # explicit ``size`` was given. This is ambiguous for the
+            # Albumentations 2.x API, so raise a targeted error instead of
+            # silently dropping parameters and surfacing a generic
+            # "missing required argument 'size'" error later.
+            missing = "width" if has_height and not has_width else "height"
+            raise ValueError(
+                f"RandomSizedCrop for the installed Albumentations version expects "
+                f"'size=(height, width)'. Received only one of 'height'/'width' "
+                f"without 'size' (missing '{missing}')."
+            )
+
+        # No ``size``, ``height``, or ``width`` provided; let Albumentations
+        # surface its own error about missing required arguments.
         return normalized_params
 
     if not _random_sized_crop_uses_size_param(aug_cls) and "size" in normalized_params:
