@@ -6,6 +6,7 @@
 
 import hashlib
 import os
+import shutil
 from typing import Optional
 
 import requests
@@ -101,13 +102,15 @@ def _download_file(url: str, filename: str, expected_md5: Optional[str] = None) 
             os.remove(temp_filename)
         raise
 
-    # Validate MD5 if expected hash is provided
+    # Validate MD5 if expected hash is provided.
     if expected_md5:
         actual_md5 = _compute_file_md5(temp_filename)
         if actual_md5.lower() != expected_md5.lower():
-            os.remove(temp_filename)
-            raise ValueError(f"MD5 hash validation failed for {filename}. Expected: {expected_md5}, got: {actual_md5}")
-        logger.info(f"MD5 validation successful for {filename}")
+            if os.path.exists(temp_filename):
+                os.remove(temp_filename)
+            raise ValueError("MD5 mismatch for %s (expected %s, got %s)." % (filename, expected_md5, actual_md5))
+        else:
+            logger.info(f"MD5 validation successful for {filename}")
 
-    # Move temp file to final location
-    os.rename(temp_filename, filename)
+    # shutil.move handles cross-device moves (e.g. tmpfs → ext4 on Colab).
+    shutil.move(temp_filename, filename)

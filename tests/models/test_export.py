@@ -97,66 +97,35 @@ def test_segmentation_model_export_no_crash(tmp_path: Path) -> None:
     assert len(onnx_files) > 0, "Export should produce ONNX file(s)"
 
 
-@pytest.mark.gpu
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for export test")
-@pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed, run: pip install rfdetr[onnxexport]")
 def test_export_calls_eval_on_deepcopy_not_original(tmp_path: Path) -> None:
     """
     Verify that Model.export() calls eval() on the deepcopy, not the original model.
 
-    This test patches deepcopy to track whether eval() is called on the copied
-    model during export, ensuring the fix in PR #578 is working correctly.
+    Patches deepcopy to return a controlled mock and asserts that eval() is called
+    on that mock (the copy), not on the original model object.  Uses mocked model
+    internals so no GPU or ONNX package is required — the contract being tested is
+    a Python-level call-order invariant, not a CUDA behaviour.
     """
-    model = RFDETRSegNano()
+    mock_export_module, mock_model, mock_model_wrapper, _ = _make_export_mocks(tmp_path, segmentation_head=False)
 
-    # Access the underlying torch module and set it to training mode
-    torch_model = model.model.model.to("cuda")
-    torch_model.train()
-    assert torch_model.training is True, "Precondition: original model should start in training mode"
+    with (
+        patch("rfdetr.main.build_model", return_value=mock_model_wrapper),
+        patch("rfdetr.main.validate_pretrain_weights"),
+        patch("rfdetr.main.deepcopy", return_value=mock_model),
+        patch.dict("sys.modules", {"rfdetr.deploy.export": mock_export_module}),
+    ):
+        from rfdetr.main import Model
 
-    # Store the original deepcopy function
-    original_deepcopy = deepcopy
+        model = Model(resolution=560, pretrain_weights=None, device="cpu", segmentation_head=False)
+        model.export(output_dir=str(tmp_path), simplify=False, verbose=False)
 
-    # Mock to track eval() calls
-    eval_mock = Mock()
-
-    def tracking_deepcopy(obj):
-        """Deepcopy wrapper that tracks eval() calls on the copy"""
-        copied = original_deepcopy(obj)
-
-        # Only track eval calls on torch.nn.Module objects
-        if isinstance(copied, torch.nn.Module):
-            # Save reference to original eval before replacing it
-            original_eval = copied.eval
-
-            def tracked_eval(*args, **kwargs):
-                """Wrapper that tracks calls while delegating to the original eval"""
-                eval_mock()
-                return original_eval(*args, **kwargs)
-
-            # Replace eval with tracked version
-            copied.eval = tracked_eval
-
-        return copied
-
-    # Patch deepcopy in the main module where export is defined
-    with patch("rfdetr.main.deepcopy", side_effect=tracking_deepcopy):
-        try:
-            with ignore_tracer_warnings():
-                model.export(output_dir=str(tmp_path), simplify=False)
-        except (ImportError, OSError, RuntimeError):
-            # Expected failures: missing dependencies, network issues, CUDA errors
-            # These are acceptable as we're testing the deepcopy/eval pattern, not the full export
-            pass
-
-    # Verify that eval() was called on the deepcopy during export
-    assert eval_mock.call_count > 0, (
+    assert mock_model.eval.called, (
         "export() should call eval() on the deepcopy. "
         "This ensures the exported model is in eval mode without affecting the original."
     )
-
-    # Verify the original model's training state was not changed
-    assert torch_model.training is True, "export() should not change the original model's training state"
+    assert not mock_model_wrapper.eval.called, (
+        "export() must not call eval() on the original model — only on the deepcopy."
+    )
 
 
 @pytest.mark.gpu

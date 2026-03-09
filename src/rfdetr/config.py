@@ -67,6 +67,8 @@ class ModelConfig(BaseConfig):
     resolution: int
     group_detr: int = 13
     gradient_checkpointing: bool = False
+    compile: bool = False
+    fused_optimizer: bool = True
     positional_encoding_size: int
     ia_bce_loss: bool = True
     cls_loss_coef: float = 1.0
@@ -180,6 +182,12 @@ class RFDETRLargeConfig(ModelConfig):
     positional_encoding_size: int = 704 // 16
     pretrain_weights: Optional[str] = "rf-detr-large-2026.pth"
     resolution: int = 704
+    # Explicit so populate_args and _build_args_from_configs agree.
+    # ModelConfig does not define these fields; without them the legacy path
+    # picks up populate_args defaults (num_select=100) while the PTL path falls
+    # back to TrainConfig.num_select (300), causing a postprocess mismatch.
+    num_queries: int = 300
+    num_select: int = 300
 
 
 class RFDETRSegPreviewConfig(RFDETRBaseConfig):
@@ -284,7 +292,6 @@ class TrainConfig(BaseModel):
     lr: float = 1e-4
     lr_encoder: float = 1.5e-4
     batch_size: int = 4
-    device: Literal["auto", "cpu", "cuda", "mps"] = DEVICE
     grad_accum_steps: int = 4
     epochs: int = 100
     resume: Optional[str] = None
@@ -308,6 +315,7 @@ class TrainConfig(BaseModel):
     expanded_scales: bool = True
     do_random_resize_via_padding: bool = False
     use_ema: bool = True
+    ema_update_interval: int = 1
     num_workers: int = 2
     weight_decay: float = 1e-4
     early_stopping: bool = False
@@ -322,10 +330,45 @@ class TrainConfig(BaseModel):
     project: Optional[str] = None
     run: Optional[str] = None
     class_names: List[str] = None
-    run_test: bool = True
+    run_test: bool = False
     segmentation_head: bool = False
     eval_max_dets: int = 500
+    eval_interval: int = 1
+    log_per_class_metrics: bool = True
     aug_config: Optional[Dict[str, Any]] = None
+    # Promoted from populate_args() — PTL migration (T4-2).
+    # device is intentionally absent: PTL auto-detects accelerator via Trainer(accelerator="auto").
+    clip_max_norm: float = 0.1
+    seed: Optional[int] = None
+    sync_bn: bool = False
+    fp16_eval: bool = False
+    lr_scheduler: Literal["step", "cosine"] = "step"
+    lr_min_factor: float = 0.0
+    dont_save_weights: bool = False
+    # PTL runtime/perf tuning knobs.
+    train_log_sync_dist: bool = False
+    train_log_on_step: bool = False
+    compute_val_loss: bool = True
+    compute_test_loss: bool = True
+    pin_memory: Optional[bool] = None
+    persistent_workers: Optional[bool] = None
+    prefetch_factor: Optional[int] = None
+
+    @field_validator("ema_update_interval", "eval_interval", mode="after")
+    @classmethod
+    def validate_positive_intervals(cls, v: int) -> int:
+        """Validate interval fields are >= 1."""
+        if v < 1:
+            raise ValueError("Interval fields must be >= 1.")
+        return v
+
+    @field_validator("prefetch_factor", mode="after")
+    @classmethod
+    def validate_prefetch_factor(cls, v: Optional[int]) -> Optional[int]:
+        """Validate prefetch_factor is None or >= 1."""
+        if v is not None and v < 1:
+            raise ValueError("prefetch_factor must be >= 1 when provided.")
+        return v
 
     @field_validator("dataset_dir", "output_dir", mode="after")
     @classmethod

@@ -306,15 +306,19 @@ def download_pretrain_weights(
     """
     asset: Optional[ModelWeightAsset] = None
 
+    # Use basename for registry lookup so absolute paths (e.g.
+    # "/content/rf-detr-base.pth") match the registered short name.
+    model_name = os.path.basename(pretrain_weights)
+
     # First, check local ModelWeights - rf-detr works standalone
-    asset = ModelWeights.from_filename(pretrain_weights)
+    asset = ModelWeights.from_filename(model_name)
 
     # Only try rf-detr-plus if not found locally (lazy import)
     if asset is None:
         try:
             from rfdetr_plus.assets import ModelWeights as PlusModelWeights
 
-            asset = PlusModelWeights.from_filename(pretrain_weights)
+            asset = PlusModelWeights.from_filename(model_name)
         except (ImportError, AttributeError):
             # Package not installed or doesn't have assets module yet
             pass
@@ -328,10 +332,10 @@ def download_pretrain_weights(
         try:
             from rfdetr.platform.platform_downloads import PLATFORM_MODELS
 
-            if pretrain_weights not in PLATFORM_MODELS:
+            if model_name not in PLATFORM_MODELS:
                 return
 
-            url = PLATFORM_MODELS[pretrain_weights]
+            url = PLATFORM_MODELS[model_name]
             expected_md5 = None  # Platform models don't have MD5 hashes yet
         except (ImportError, KeyError):
             return

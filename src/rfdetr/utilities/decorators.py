@@ -9,6 +9,10 @@
 import warnings
 from typing import Any, ItemsView, Iterator, KeysView, ValuesView
 
+from deprecate import deprecated, void
+
+__all__ = ["deprecated", "void", "_DeprecatedDict"]
+
 
 class _DeprecatedDict(dict):
     """Dictionary wrapper that emits deprecation warnings when accessing values.

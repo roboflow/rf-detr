@@ -313,15 +313,21 @@ class NestedTensor(object):
         self.tensors = tensors
         self.mask = mask
 
-    def to(self, device: torch.device) -> "NestedTensor":
-        cast_tensor = self.tensors.to(device)
+    def to(self, device: torch.device, **kwargs: Any) -> "NestedTensor":
+        cast_tensor = self.tensors.to(device, **kwargs)
         mask = self.mask
         if mask is not None:
             assert mask is not None
-            cast_mask = mask.to(device)
+            cast_mask = mask.to(device, **kwargs)
         else:
             cast_mask = None
         return NestedTensor(cast_tensor, cast_mask)
+
+    def pin_memory(self) -> "NestedTensor":
+        return NestedTensor(
+            self.tensors.pin_memory(),
+            self.mask.pin_memory() if self.mask is not None else None,
+        )
 
     def decompose(self) -> Tuple[Tensor, Optional[Tensor]]:
         return self.tensors, self.mask

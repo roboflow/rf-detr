@@ -1,0 +1,21 @@
+# RF-DETR Small — example training configuration (resolution 512, patch 16).
+# Usage:
+#   rfdetr fit --config configs/rfdetr_small.yaml
+#   rfdetr fit --config configs/rfdetr_small.yaml \
+#     --model.train_config.init_args.dataset_dir /data/my_dataset \
+#     --trainer.devices 4
+
+model:
+  model_config:
+    class_path: rfdetr.config.RFDETRSmallConfig
+    init_args:
+      num_classes: 80 # set to your dataset class count
+  train_config:
+    class_path: rfdetr.config.TrainConfig
+    init_args:
+      dataset_dir: /data/coco # required: path to your COCO-format dataset
+      output_dir: output/rfdetr_small
+      epochs: 100
+      batch_size: 6
+      num_workers: 4
+      tensorboard: true

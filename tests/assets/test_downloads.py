@@ -264,3 +264,34 @@ class TestDownloadErrorHandling:
         mock_logger.warning.assert_called()
         warning_message = mock_logger.warning.call_args[0][0]
         assert "incorrect MD5 hash" in warning_message
+
+    @patch("rfdetr.assets.model_weights._download_file")
+    @patch("rfdetr.assets.model_weights.os.path.exists")
+    def test_absolute_path_resolves_to_known_model(self, mock_exists, mock_download):
+        """Absolute paths like /content/rf-detr-base.pth must still match the registry.
+
+        Regression test: previously ModelWeights.from_filename received the full
+        path instead of the basename, so it returned None and the download was
+        silently skipped.
+        """
+        mock_exists.return_value = False
+
+        download_pretrain_weights("/content/rf-detr-base.pth")
+
+        # Must have attempted a download — not silently returned
+        mock_download.assert_called_once()
+        call_kwargs = mock_download.call_args[1]
+        assert call_kwargs["filename"] == "/content/rf-detr-base.pth"
+        assert "rf-detr-base-coco.pth" in call_kwargs["url"]
+
+    @patch("rfdetr.assets.model_weights._download_file")
+    @patch("rfdetr.assets.model_weights.os.path.exists")
+    def test_nested_absolute_path_resolves_to_known_model(self, mock_exists, mock_download):
+        """Nested paths like /workspace/models/rf-detr-base.pth also resolve."""
+        mock_exists.return_value = False
+
+        download_pretrain_weights("/workspace/models/rf-detr-base.pth")
+
+        mock_download.assert_called_once()
+        call_kwargs = mock_download.call_args[1]
+        assert call_kwargs["filename"] == "/workspace/models/rf-detr-base.pth"

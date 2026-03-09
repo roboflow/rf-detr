@@ -24,7 +24,7 @@ import pytest
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 
-from rfdetr.engine import coco_extended_metrics
+from rfdetr.engine import _matching_data_from_coco_eval, coco_extended_metrics
 from rfdetr.util.visualize import save_gt_predictions_visualization
 
 VIS_DIR = Path("test_visualizations")
@@ -574,3 +574,74 @@ def test_coco_extended_metrics_does_not_crash_without_iou50_threshold(
 
     results = coco_extended_metrics(coco_eval)
     assert results is not None
+
+
+class TestMatchingDataFromCocoEval:
+    """Tests for _matching_data_from_coco_eval() — the COCOeval bridge helper."""
+
+    def test_returns_dict_keyed_by_cat_ids(self, perfect_scenario_cocoeval) -> None:
+        """Result keys match exactly the category IDs in coco_eval.params.catIds."""
+        result = _matching_data_from_coco_eval(perfect_scenario_cocoeval)
+        expected_keys = set(perfect_scenario_cocoeval.params.catIds)
+        assert set(result.keys()) == expected_keys
+
+    def test_each_entry_has_required_keys(self, perfect_scenario_cocoeval) -> None:
+        """Every per-class dict contains scores, matches, ignore, total_gt."""
+        result = _matching_data_from_coco_eval(perfect_scenario_cocoeval)
+        for cid, data in result.items():
+            assert "scores" in data, f"class {cid} missing 'scores'"
+            assert "matches" in data, f"class {cid} missing 'matches'"
+            assert "ignore" in data, f"class {cid} missing 'ignore'"
+            assert "total_gt" in data, f"class {cid} missing 'total_gt'"
+
+    def test_perfect_scenario_total_gt(self, perfect_scenario_cocoeval) -> None:
+        """Perfect fixture has 5 non-crowd GTs per class; total_gt must reflect this."""
+        result = _matching_data_from_coco_eval(perfect_scenario_cocoeval)
+        for cid in [1, 2]:
+            assert result[cid]["total_gt"] == 5, f"class {cid}: expected total_gt=5"
+
+    def test_perfect_scenario_detection_count(self, perfect_scenario_cocoeval) -> None:
+        """Perfect fixture has 5 predictions per class; scores array length must match."""
+        result = _matching_data_from_coco_eval(perfect_scenario_cocoeval)
+        for cid in [1, 2]:
+            assert len(result[cid]["scores"]) == 5, f"class {cid}: expected 5 scores"
+
+    def test_perfect_scenario_all_tps(self, perfect_scenario_cocoeval) -> None:
+        """All predictions in the perfect fixture are TPs; every match must be > 0."""
+        result = _matching_data_from_coco_eval(perfect_scenario_cocoeval)
+        for cid in [1, 2]:
+            assert (result[cid]["matches"] > 0).all(), f"class {cid}: expected all matches"
+
+    def test_perfect_scenario_none_ignored(self, perfect_scenario_cocoeval) -> None:
+        """Perfect fixture has no crowd GTs; ignore flags must all be False."""
+        result = _matching_data_from_coco_eval(perfect_scenario_cocoeval)
+        for cid in [1, 2]:
+            assert not result[cid]["ignore"].any(), f"class {cid}: expected no ignored dets"
+
+    def test_degenerate_scenario_total_gt_counted(self, degenerate_scenario_cocoeval) -> None:
+        """GTs are counted even when all predictions miss."""
+        result = _matching_data_from_coco_eval(degenerate_scenario_cocoeval)
+        for cid in [1, 2]:
+            assert result[cid]["total_gt"] == 5, f"class {cid}: expected total_gt=5"
+
+    def test_degenerate_scenario_no_matches(self, degenerate_scenario_cocoeval) -> None:
+        """Predictions that don't overlap any GT must have zero matches."""
+        result = _matching_data_from_coco_eval(degenerate_scenario_cocoeval)
+        for cid in [1, 2]:
+            assert (result[cid]["matches"] == 0).all(), f"class {cid}: expected no matches"
+
+    def test_ignore_array_is_bool_dtype(self, perfect_scenario_cocoeval) -> None:
+        """ignore array dtype must be bool for downstream compatibility."""
+        result = _matching_data_from_coco_eval(perfect_scenario_cocoeval)
+        import numpy as np
+
+        for cid in result:
+            assert result[cid]["ignore"].dtype == np.bool_, f"class {cid}: ignore not bool"
+
+    def test_scores_array_is_float_dtype(self, perfect_scenario_cocoeval) -> None:
+        """scores array dtype must be float for downstream compatibility."""
+        result = _matching_data_from_coco_eval(perfect_scenario_cocoeval)
+        import numpy as np
+
+        for cid in result:
+            assert np.issubdtype(result[cid]["scores"].dtype, np.floating), f"class {cid}: scores not float"
