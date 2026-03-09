@@ -250,7 +250,7 @@ class ConvertLiao(object):
 
         for obj in anno:
             # Skip crowd annotations.
-            if "iscrowd" in obj and obj['iscrowd'] != 0:
+            if "iscrowd" in obj and obj["iscrowd"] != 0:
                 continue
 
             category_id = obj.get("category_id")
