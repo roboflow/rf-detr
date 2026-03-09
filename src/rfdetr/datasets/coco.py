@@ -14,9 +14,10 @@
 # ------------------------------------------------------------------------
 
 """
-COCO dataset which returns image_id for evaluation.
+COCO dataset returning image_id for evaluation.
 
-Mostly copy-paste from https://github.com/pytorch/vision/blob/13b35ff/references/detection/coco_utils.py
+Main reference:
+https://github.com/pytorch/vision/blob/13b35ff/references/detection/coco_utils.py
 """
 
 from pathlib import Path
@@ -48,14 +49,14 @@ def compute_multi_scale_scales(
     patch_size: int = 16,
     num_windows: int = 4,
 ) -> List[int]:
-    # round to the nearest multiple of 4*patch_size to enable both patching and windowing
+    # Round to the nearest multiple of 4*patch_size to enable both patching and windowing.
     base_num_patches_per_window = resolution // (patch_size * num_windows)
     offsets = [-3, -2, -1, 0, 1, 2, 3, 4] if not expanded_scales else [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5]
     scales = [base_num_patches_per_window + offset for offset in offsets]
     proposed_scales = [scale * patch_size * num_windows for scale in scales]
     proposed_scales = [
         scale for scale in proposed_scales if scale >= patch_size * num_windows * 2
-    ]  # ensure minimum image size
+    ]  # Ensure minimum image size.
     return proposed_scales
 
 
@@ -66,7 +67,7 @@ def convert_coco_poly_to_mask(segmentations: List[Any], height: int, width: int)
     masks = []
     for polygons in segmentations:
         if polygons is None or len(polygons) == 0:
-            # empty segmentation for this instance
+            # Empty segmentation for this instance.
             masks.append(torch.zeros((height, width), dtype=torch.uint8))
             continue
         try:
@@ -153,7 +154,7 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         if self._transforms is not None:
             img, target = self._transforms(
                 img, target
-            )  # boxes are absolute [x_min, y_min, x_max, y_max]; conversion to normalized [cx, cy, w, h] occurs inside Normalize
+            )  # Boxes are absolute [x_min, y_min, x_max, y_max]; conversion to normalized [cx, cy, w, h] occurs inside Normalize.
         return img, target
 
 
@@ -175,29 +176,29 @@ class LiaoDetection(torchvision.datasets.CocoDetection):
         self.include_masks = include_masks
         self.background_category_ids = set()
         if remap_category_ids:
-            # Mapping from original COCO category_id to contiguous label indices
+            # Mapping from original COCO category_id to contiguous label indices.
             self.cat2label = {cat_id: i for i, cat_id in enumerate(sorted(self.coco.cats.keys()))}
-            # Reverse mapping from contiguous label indices back to COCO category_id
+            # Reverse mapping from contiguous label indices back to COCO category_id.
             self.label2cat = {label: cat_id for cat_id, label in self.cat2label.items()}
-            # Expose label-to-category mapping on the underlying COCO API object for evaluators
+            # Expose label-to-category mapping on the underlying COCO API object for evaluators.
             setattr(self.coco, "label2cat", self.label2cat)
         else:
             self.cat2label = None
             self.label2cat = None
 
         if background_category_ids is not None:
-           if isinstance(background_category_ids, (str, int)):
+            if isinstance(background_category_ids, (str, int)):
                 self.background_category_ids.add(background_category_ids)
-           else:
+            else:
                 self.background_category_ids.update(list(background_category_ids))
 
         normalized_bg_ids = set()
         for bg_id in self.background_category_ids:
             normalized_bg_ids.add(bg_id)
-            # 1) int -> str
+            # int -> str: also store string form for flexible matching
             if isinstance(bg_id, int):
                 normalized_bg_ids.add(str(bg_id))
-            # 2) str digit -> int
+            # str digit -> int: also store int form for flexible matching
             if isinstance(bg_id, str) and bg_id.isdigit():
                 try:
                     normalized_bg_ids.add(int(bg_id))
@@ -211,61 +212,11 @@ class LiaoDetection(torchvision.datasets.CocoDetection):
         image_id = self.ids[idx]
         target = {"image_id": image_id, "annotations": target}
         img, target = self.prepare(img, target)
-       
-
-        #######以下是测试内容
-        #测试某张图片
-        # img is a tensor with shape (C, H, W), need to convert to (H, W, C) numpy array
-        if isinstance(img, torch.Tensor):
-            # Denormalize if needed (assuming ImageNet normalization)
-            # mean = [0.485, 0.456, 0.406]
-            # std = [0.229, 0.224, 0.225]
-            # img = img * torch.tensor(std).view(3, 1, 1) + torch.tensor(mean).view(3, 1, 1)
-            # Or just clip to [0, 1] if already normalized
-            img_np = img.cpu().permute(1, 2, 0).numpy()
-            # Clip to [0, 1] and convert to [0, 255]
-            img_np = np.clip(img_np, 0, 1)
-            img_np = (img_np * 255).astype(np.uint8)
-        else:
-            img_np = np.array(img)
-        
-        # Convert RGB to BGR for OpenCV
-        image1 = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
-       
-        # Check if masks exist
-        if "masks" in target and len(target["masks"]) > 0:
-            target1 = target["masks"][0]
-            # Move to CPU if on GPU and convert to numpy
-            if isinstance(target1, torch.Tensor):
-                target1_np = target1.cpu().numpy()
-            else:
-                target1_np = np.array(target1)
-            # Convert boolean to uint8 (True -> 255, False -> 0)
-            target1_np = target1_np.astype(np.uint8) * 255
-            # Remove any extra dimensions
-            target1_np = np.squeeze(target1_np)
-            
-            cv2.imwrite("D:/hflip.png", image1)
-            cv2.imwrite("D:/hflip_target.png", target1_np)
-            
-            # 在target1_np上绘制boxes
-            if "boxes" in target:
-                boxes = target["boxes"]
-                if isinstance(boxes, torch.Tensor):
-                    boxes = boxes.cpu().numpy()  # shape: (N, 4)
-                img_with_box = cv2.cvtColor(target1_np, cv2.COLOR_GRAY2BGR)
-                for box in boxes.astype(int):
-                    x1, y1, x2, y2 = box
-                    cv2.rectangle(img_with_box, (x1, y1), (x2, y2), color=(0, 255, 0), thickness=2)
-                cv2.imwrite("D:/hflip_target_box.png", img_with_box)
-        ##以上是测试内容######################
-
         
         if self._transforms is not None:
-                img, target = self._transforms(
+            img, target = self._transforms(
                 img, target
-            )  # boxes are absolute [x_min, y_min, x_max, y_max]; conversion to normalized [cx, cy, w, h] occurs inside Normalize
-        
+            )  # Boxes are absolute [x_min, y_min, x_max, y_max]; conversion to normalized [cx, cy, w, h] occurs inside Normalize.
         return img, target
 
 
@@ -276,14 +227,14 @@ class ConvertLiao(object):
     def __init__(self, include_masks: bool = False, cat2label: Optional[Dict[int, int]] = None, background_category_ids = None) -> None:
         self.include_masks = include_masks
         self.cat2label = cat2label
-         # 确保 background_category_ids 是一个集合
+        # Ensure background_category_ids is a set.
         if background_category_ids is None:
             self.background_category_ids = set()
         elif isinstance(background_category_ids, (str, int)):
-            # 如果是单个值，转换为集合
+            # Single value: wrap in a set.
             self.background_category_ids = {background_category_ids}
         else:
-            # 如果是集合或列表，转换为集合
+            # Iterable (set/list): convert to set.
             self.background_category_ids = set(background_category_ids) if background_category_ids else set()
    
     def __call__(self, image: Image.Image, target: Dict[str, Any]) -> Tuple[Image.Image, Dict[str, Any]]:
@@ -294,18 +245,17 @@ class ConvertLiao(object):
 
         anno = target["annotations"]
 
-        # 分离背景类别和非背景类别的标注
-        # 非背景类别标注（用于训练）
+        # Split annotations into foreground (for training) and background.
         anno_foreground = []
         anno_background = []
-        
+
         for obj in anno:
-            # 跳过crowd标注
+            # Skip crowd annotations.
             if 'iscrowd' in obj and obj['iscrowd'] != 0:
                 continue
-            
+
             category_id = obj.get('category_id')
-            # 检查类别ID是否在背景类别集合中（直接匹配）
+            # Check if category_id is in the background set (direct match).
             is_background = category_id in self.background_category_ids
             
             if is_background:
@@ -316,7 +266,7 @@ class ConvertLiao(object):
 
 
         boxes = [obj["bbox"] for obj in anno_foreground]
-        # guard against no boxes via resizing
+        # Guard against empty box list via reshape.
         boxes = torch.as_tensor(boxes, dtype=torch.float32).reshape(-1, 4)
         boxes[:, 2:] += boxes[:, :2]
         boxes[:, 0::2].clamp_(min=0, max=w)
@@ -345,15 +295,15 @@ class ConvertLiao(object):
         target["labels"] = classes
         target["image_id"] = image_id
 
-        # for conversion to coco api
+        # For conversion to COCO API.
         area = torch.tensor([obj["area"] for obj in anno_foreground])
         iscrowd = torch.tensor([obj["iscrowd"] if "iscrowd" in obj else 0 for obj in anno_foreground])
         target["area"] = area[keep]
         target["iscrowd"] = iscrowd[keep]
 
-        # add segmentation masks if requested, otherwise ensure consistent key when include_masks=True
+        # Add segmentation masks if requested; otherwise ensure consistent key when include_masks=True.
         if self.include_masks:
-            # 先处理非背景类别的掩码
+            # Process foreground (non-background) masks first.
             if len(anno_foreground) > 0 and 'segmentation' in anno_foreground[0]:
                 segmentations = [obj.get("segmentation", []) for obj in anno_foreground]
                 masks = convert_coco_poly_to_mask(segmentations, h, w)
@@ -364,28 +314,27 @@ class ConvertLiao(object):
             else:
                 target["masks"] = torch.zeros((0, h, w), dtype=torch.uint8)
 
-            # 处理背景类别的掩码：将背景掩码和非背景掩码重叠的部分变成0
+            # Background masks: zero out regions of foreground masks that overlap with background.
             if len(anno_background) > 0 and 'segmentation' in anno_background[0] and target["masks"].numel() > 0:
-                # 获取背景类别的掩码
+                # Get background instance masks.
                 background_segmentations = [obj.get("segmentation", []) for obj in anno_background]
                 background_masks = convert_coco_poly_to_mask(background_segmentations, h, w)
-                # background_masks 是包含所有背景 segmentation 的掩码，其形状为 [N_bg, h, w]，其中 N_bg 为背景实例的数量。
-                
+                # background_masks shape: [N_bg, h, w], where N_bg is the number of background instances.
+
                 if background_masks.numel() > 0:
-                    # 将所有背景掩码合并成一个掩码（背景区域的并集）
-                    # background_masks 形状: [N_bg, h, w]，合并后形状: [h, w]
+                    # Merge all background masks into one (union of background regions).
+                    # background_masks shape: [N_bg, h, w]; merged shape: [h, w].
                     background_mask_combined = background_masks.any(dim=0).bool()
-                    
-                    # 对于每个非背景掩码，减去与背景掩码重叠的部分（重叠区域设置为0）
-                    # target["masks"] 形状: [N_fg, h, w]，其中 N_fg 为非背景实例的数量
+
+                    # For each foreground mask, remove overlap with background (set overlapping pixels to 0).
+                    # target["masks"] shape: [N_fg, h, w], where N_fg is the number of foreground instances.
                     foreground_masks = target["masks"].bool()
-                    # 将背景掩码扩展到与前景掩码相同的维度进行比较
+                    # Expand background mask to same dims as foreground for comparison.
                     background_expanded = background_mask_combined.unsqueeze(0)  # [1, h, w]
-                    
-                    # 对于每个前景掩码，移除与背景掩码重叠的部分
-                    # 使用逻辑与操作：mask & ~background_mask（保留掩码中不在背景区域的部分）
+
+                    # For each foreground mask, keep only pixels not in background: mask & ~background_mask.
                     foreground_masks = foreground_masks & ~background_expanded
-                    
+
                     target["masks"] = foreground_masks
 
             target["masks"] = target["masks"].bool()
@@ -441,7 +390,7 @@ class ConvertCoco(object):
         anno = [obj for obj in anno if "iscrowd" not in obj or obj["iscrowd"] == 0]
 
         boxes = [obj["bbox"] for obj in anno]
-        # guard against no boxes via resizing
+        # Guard against empty box list via reshape.
         boxes = torch.as_tensor(boxes, dtype=torch.float32).reshape(-1, 4)
         boxes[:, 2:] += boxes[:, :2]
         boxes[:, 0::2].clamp_(min=0, max=w)
@@ -470,13 +419,13 @@ class ConvertCoco(object):
         target["labels"] = classes
         target["image_id"] = image_id
 
-        # for conversion to coco api
+        # For conversion to COCO API.
         area = torch.tensor([obj["area"] for obj in anno])
         iscrowd = torch.tensor([obj["iscrowd"] if "iscrowd" in obj else 0 for obj in anno])
         target["area"] = area[keep]
         target["iscrowd"] = iscrowd[keep]
 
-        # add segmentation masks if requested, otherwise ensure consistent key when include_masks=True
+        # Add segmentation masks if requested; otherwise ensure consistent key when include_masks=True.
         if self.include_masks:
             if len(anno) > 0 and "segmentation" in anno[0]:
                 segmentations = [obj.get("segmentation", []) for obj in anno]
@@ -848,10 +797,11 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
 
 
 def build_liao(image_set: str, args: Any, resolution: int) -> CocoDetection:
-    """Build a Roboflow COCO-format dataset.
+    """Build a Liao-style COCO-format dataset with background category support.
 
-    This uses Roboflow's standard directory structure
-    (train/valid/test folders with _annotations.coco.json).
+    Uses the same directory structure as Roboflow
+    (train/valid/test folders with _annotations.coco.json) and supports
+    excluding background categories from training while masking overlapping regions.
     """
     root = Path(args.dataset_dir)
     if not root.exists():
