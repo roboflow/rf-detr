@@ -217,7 +217,6 @@ class LiaoDetection(torchvision.datasets.CocoDetection):
             img, target = self._transforms(
                 img, target
             )  # boxes are absolute [x_min, y_min, x_max, y_max]; conversion to normalized [cx, cy, w, h] occurs inside Normalize
-        
         return img, target
 
 
@@ -251,10 +250,10 @@ class ConvertLiao(object):
 
         for obj in anno:
             # Skip crowd annotations.
-            if 'iscrowd' in obj and obj['iscrowd'] != 0:
+            if "iscrowd" in obj and obj['iscrowd'] != 0:
                 continue
 
-            category_id = obj.get('category_id')
+            category_id = obj.get("category_id")
             # Check if category_id is in the background set (direct match).
             is_background = category_id in self.background_category_ids
 
@@ -302,7 +301,7 @@ class ConvertLiao(object):
         # Add segmentation masks if requested; otherwise ensure consistent key when include_masks=True.
         if self.include_masks:
             # Process foreground (non-background) masks first.
-            if len(anno_foreground) > 0 and 'segmentation' in anno_foreground[0]:
+            if len(anno_foreground) > 0 and "segmentation" in anno_foreground[0]:
                 segmentations = [obj.get("segmentation", []) for obj in anno_foreground]
                 masks = convert_coco_poly_to_mask(segmentations, h, w)
                 if masks.numel() > 0:
@@ -313,7 +312,7 @@ class ConvertLiao(object):
                 target["masks"] = torch.zeros((0, h, w), dtype=torch.uint8)
 
             # Background masks: zero out regions of foreground masks that overlap with background.
-            if len(anno_background) > 0 and 'segmentation' in anno_background[0] and target["masks"].numel() > 0:
+            if len(anno_background) > 0 and "segmentation" in anno_background[0] and target["masks"].numel() > 0:
                 # Get background instance masks.
                 background_segmentations = [obj.get("segmentation", []) for obj in anno_background]
                 background_masks = convert_coco_poly_to_mask(background_segmentations, h, w)
