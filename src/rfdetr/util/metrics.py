@@ -63,6 +63,9 @@ class MetricsPlotSink:
             logger.warning("No metrics data available to generate plot. Skipping plot generation.")
             return
 
+        import matplotlib
+
+        matplotlib.use("Agg")
         import matplotlib.pyplot as plt
 
         plt.ioff()

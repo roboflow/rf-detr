@@ -37,7 +37,7 @@ keywords = ["machine-learning", "deep-learning", "vision", "ML", "DL", "AI", "DE
 dependencies = [
     "requests",
     "pycocotools",
-    "torch>=2.0.0",
+    "torch>=2.2.0",
     "torchvision>=0.14.0",
     "scipy",
     "tqdm",
@@ -48,7 +48,11 @@ dependencies = [
     "supervision",
     "matplotlib",
     "roboflow",
-    "albumentations>=1.0.0,<2.0.0"
+    "albumentations>=1.0.0,<2.0.0",
+    "lightning>=2.6,<3",
+    "torchmetrics[detection]>=1.2",
+    "faster-coco-eval>=1.7.2",
+    "pyDeprecate>=0.3,<1"
 ]
 
 [project.optional-dependencies]
@@ -63,8 +67,12 @@ metrics = [
     "tensorboard>=2.13.0",
     "wandb",
     "mlflow",
-    "clearml"
+    "clearml",
+    "matplotlib",
+    "pandas",
+    "seaborn",
 ]
+cli = ["jsonargparse[signatures]>=4.27.7"]
 plus = ["rfdetr_plus>=1.0.1, <2.0.0"]
 
 [dependency-groups]
@@ -75,10 +83,11 @@ build = [
 ]
 
 tests = [
-  "pytest>=7.2.2,<9",
+  "pytest>=7.2,<9",
   "pytest-cov>=4,<8",
-  "pytest-xdist>=3.6.1,<4",
+  "pytest-xdist>=3.6,<4",
   "pytest-rerunfailures>=10,<15",
+  "pytest-timeout>=2,<3",
 ]
 
 docs = [
@@ -95,7 +104,7 @@ docs = [
 Homepage = "https://github.com/roboflow/rf-detr"
 
 [project.scripts]
-rfdetr = "rfdetr.cli.main:trainer"
+rfdetr = "rfdetr.lit.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
