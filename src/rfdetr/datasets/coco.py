@@ -135,11 +135,11 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         self._transforms = transforms
         self.include_masks = include_masks
         if remap_category_ids:
-            # Mapping from original COCO category_id to contiguous label indices
+            # Mapping from original COCO category_id to contiguous label indices.
             self.cat2label = {cat_id: i for i, cat_id in enumerate(sorted(self.coco.cats.keys()))}
-            # Reverse mapping from contiguous label indices back to COCO category_id
+            # Reverse mapping from contiguous label indices back to COCO category_id.
             self.label2cat = {label: cat_id for cat_id, label in self.cat2label.items()}
-            # Expose label-to-category mapping on the underlying COCO API object for evaluators
+            # Expose label-to-category mapping on the underlying COCO API object for evaluators.
             setattr(self.coco, "label2cat", self.label2cat)
         else:
             self.cat2label = None
@@ -227,7 +227,7 @@ class ConvertLiao(object):
     ) -> None:
         self.include_masks = include_masks
         self.cat2label = cat2label
-         # 确保 background_category_ids 是一个集合
+        # Ensure background_category_ids is a set.
         if background_category_ids is None:
             self.background_category_ids = set()
         elif isinstance(background_category_ids, (str, int)):
@@ -250,12 +250,12 @@ class ConvertLiao(object):
         anno_background = []
 
         for obj in anno:
-            # 跳过crowd标注
+            # Skip crowd annotations.
             if 'iscrowd' in obj and obj['iscrowd'] != 0:
                 continue
-            
+
             category_id = obj.get('category_id')
-            # 检查类别ID是否在背景类别集合中（直接匹配）
+            # Check if category_id is in the background set (direct match).
             is_background = category_id in self.background_category_ids
 
             if is_background:
@@ -301,7 +301,7 @@ class ConvertLiao(object):
 
         # Add segmentation masks if requested; otherwise ensure consistent key when include_masks=True.
         if self.include_masks:
-            # 先处理非背景类别的掩码
+            # Process foreground (non-background) masks first.
             if len(anno_foreground) > 0 and 'segmentation' in anno_foreground[0]:
                 segmentations = [obj.get("segmentation", []) for obj in anno_foreground]
                 masks = convert_coco_poly_to_mask(segmentations, h, w)
@@ -312,26 +312,25 @@ class ConvertLiao(object):
             else:
                 target["masks"] = torch.zeros((0, h, w), dtype=torch.uint8)
 
-            # 处理背景类别的掩码：将背景掩码和非背景掩码重叠的部分变成0
+            # Background masks: zero out regions of foreground masks that overlap with background.
             if len(anno_background) > 0 and 'segmentation' in anno_background[0] and target["masks"].numel() > 0:
-                # 获取背景类别的掩码
+                # Get background instance masks.
                 background_segmentations = [obj.get("segmentation", []) for obj in anno_background]
                 background_masks = convert_coco_poly_to_mask(background_segmentations, h, w)
-                # background_masks 是包含所有背景 segmentation 的掩码，其形状为 [N_bg, h, w]，其中 N_bg 为背景实例的数量。
-                
+                # background_masks shape: [N_bg, h, w], where N_bg is the number of background instances.
+
                 if background_masks.numel() > 0:
                     # Merge all background masks into one (union of background regions).
                     # background_masks shape: [N_bg, h, w]; merged shape: [h, w].
                     background_mask_combined = background_masks.any(dim=0).bool()
-                    
-                    # 对于每个非背景掩码，减去与背景掩码重叠的部分（重叠区域设置为0）
-                    # target["masks"] 形状: [N_fg, h, w]，其中 N_fg 为非背景实例的数量
+
+                    # For each foreground mask, remove overlap with background (set overlapping pixels to 0).
+                    # target["masks"] shape: [N_fg, h, w], where N_fg is the number of foreground instances.
                     foreground_masks = target["masks"].bool()
                     # Expand background mask to same dims as foreground for comparison.
                     background_expanded = background_mask_combined.unsqueeze(0)  # [1, h, w]
-                    
-                    # 对于每个前景掩码，移除与背景掩码重叠的部分
-                    # 使用逻辑与操作：mask & ~background_mask（保留掩码中不在背景区域的部分）
+
+                    # For each foreground mask, keep only pixels not in background: mask & ~background_mask.
                     foreground_masks = foreground_masks & ~background_expanded
 
                     target["masks"] = foreground_masks
