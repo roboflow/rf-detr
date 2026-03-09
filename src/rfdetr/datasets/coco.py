@@ -212,56 +212,7 @@ class LiaoDetection(torchvision.datasets.CocoDetection):
         image_id = self.ids[idx]
         target = {"image_id": image_id, "annotations": target}
         img, target = self.prepare(img, target)
-       
 
-        #######以下是测试内容
-        #测试某张图片
-        # img is a tensor with shape (C, H, W), need to convert to (H, W, C) numpy array
-        if isinstance(img, torch.Tensor):
-            # Denormalize if needed (assuming ImageNet normalization)
-            # mean = [0.485, 0.456, 0.406]
-            # std = [0.229, 0.224, 0.225]
-            # img = img * torch.tensor(std).view(3, 1, 1) + torch.tensor(mean).view(3, 1, 1)
-            # Or just clip to [0, 1] if already normalized
-            img_np = img.cpu().permute(1, 2, 0).numpy()
-            # Clip to [0, 1] and convert to [0, 255]
-            img_np = np.clip(img_np, 0, 1)
-            img_np = (img_np * 255).astype(np.uint8)
-        else:
-            img_np = np.array(img)
-        
-        # Convert RGB to BGR for OpenCV
-        image1 = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
-       
-        # Check if masks exist
-        if "masks" in target and len(target["masks"]) > 0:
-            target1 = target["masks"][0]
-            # Move to CPU if on GPU and convert to numpy
-            if isinstance(target1, torch.Tensor):
-                target1_np = target1.cpu().numpy()
-            else:
-                target1_np = np.array(target1)
-            # Convert boolean to uint8 (True -> 255, False -> 0)
-            target1_np = target1_np.astype(np.uint8) * 255
-            # Remove any extra dimensions
-            target1_np = np.squeeze(target1_np)
-            
-            cv2.imwrite("D:/hflip.png", image1)
-            cv2.imwrite("D:/hflip_target.png", target1_np)
-            
-            # 在target1_np上绘制boxes
-            if "boxes" in target:
-                boxes = target["boxes"]
-                if isinstance(boxes, torch.Tensor):
-                    boxes = boxes.cpu().numpy()  # shape: (N, 4)
-                img_with_box = cv2.cvtColor(target1_np, cv2.COLOR_GRAY2BGR)
-                for box in boxes.astype(int):
-                    x1, y1, x2, y2 = box
-                    cv2.rectangle(img_with_box, (x1, y1), (x2, y2), color=(0, 255, 0), thickness=2)
-                cv2.imwrite("D:/hflip_target_box.png", img_with_box)
-        ##以上是测试内容######################
-
-        
         if self._transforms is not None:
             img, target = self._transforms(
                 img, target
