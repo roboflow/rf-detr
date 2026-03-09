@@ -20,7 +20,7 @@ from typing import Any, Optional
 import torch.utils.data
 import torchvision
 
-from rfdetr.datasets.coco import build_coco, build_roboflow_from_coco, build_liao
+from rfdetr.datasets.coco import build_coco, build_liao, build_roboflow_from_coco
 from rfdetr.datasets.o365 import build_o365
 from rfdetr.datasets.yolo import YoloDetection, build_roboflow_from_yolo
 
@@ -92,6 +92,6 @@ def build_dataset(image_set: str, args: Any, resolution: int) -> torch.utils.dat
         return build_roboflow(image_set, args, resolution)
     if args.dataset_file == "yolo":
         return build_roboflow_from_yolo(image_set, args, resolution)
-    if args.dataset_file == 'liao':
+    if args.dataset_file == "liao":
         return build_liao(image_set, args, resolution)
     raise ValueError(f"dataset {args.dataset_file} not supported")
