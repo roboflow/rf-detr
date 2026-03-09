@@ -829,10 +829,7 @@ def build_liao(image_set: str, args: Any, resolution: int) -> CocoDetection:
     patch_size = getattr(args, "patch_size", 16)
     num_windows = getattr(args, "num_windows", 4)
     aug_config = getattr(args, "aug_config", None)
-    try:
-        background_category_ids = args.background_category_ids
-    except:
-        background_category_ids = None
+    background_category_ids = getattr(args, "background_category_ids", None)
 
     if square_resize_div_64:
         logger.info(f"Building Roboflow {image_set} dataset with square resize at resolution {resolution}")
