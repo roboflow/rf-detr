@@ -159,14 +159,24 @@ class CocoDetection(torchvision.datasets.CocoDetection):
 
 
 class LiaoDetection(torchvision.datasets.CocoDetection):
+    """COCO-style dataset for Liao exports with optional background categories.
+
+    This dataset behaves like :class:`CocoDetection` but allows specifying one or
+    more categories that should be treated as background and excluded from the
+    foreground label space. Background categories can be provided either by
+    name or by category id. When ``remap_category_ids`` is ``True``, the
+    remaining (non-background) categories are reindexed to form a contiguous
+    range of foreground class ids.
+    """
+
     def __init__(
         self,
         img_folder: Union[str, Path],
         ann_file: Union[str, Path],
         transforms: Optional[Any],
         include_masks: bool = False,
-        background_category_names=None,
-        background_category_ids=None,
+        background_category_names: Optional[List[str]] = None,
+        background_category_ids: Optional[List[int]] = None,
         remap_category_ids: bool = False,
     ) -> None:
         super(LiaoDetection, self).__init__(img_folder, ann_file)
