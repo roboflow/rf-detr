@@ -4,41 +4,41 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-"""Package-private helper: build a self-contained argparse.Namespace from Pydantic configs.
+"""Package-private helper: build a self-contained namespace from Pydantic configs.
 
 Replaces the previous shim in ``_args.py`` that called the deprecated
 ``populate_args()`` function from ``main.py``.  This module has zero dependency
 on ``main.py`` and can survive its deletion.
 """
 
-import argparse
+import types
 from typing import Any
 
 from rfdetr.config import ModelConfig, TrainConfig
 
 
 def build_namespace(model_config: ModelConfig, train_config: TrainConfig) -> Any:
-    """Build an argparse.Namespace from Pydantic model and train configs.
+    """Build a ``types.SimpleNamespace`` from Pydantic model and train configs.
 
     Produces the same attribute set as the legacy ``populate_args()`` so that
     ``build_model()``, ``build_criterion_and_postprocessors()``, and
     ``build_dataset()`` continue to work without modification.
 
     Fields not present in either config retain their ``populate_args()``
-    defaults, ensuring downstream consumers see a fully-populated Namespace.
+    defaults, ensuring downstream consumers see a fully-populated namespace.
 
     Args:
         model_config: Architecture configuration.
         train_config: Training hyperparameter configuration.
 
     Returns:
-        Namespace compatible with ``build_model``,
+        ``types.SimpleNamespace`` compatible with ``build_model``,
         ``build_criterion_and_postprocessors``, and ``build_dataset``.
     """
     mc = model_config
     tc = train_config
 
-    return argparse.Namespace(
+    return types.SimpleNamespace(
         # --- ModelConfig fields ---
         encoder=mc.encoder,
         out_feature_indexes=mc.out_feature_indexes,

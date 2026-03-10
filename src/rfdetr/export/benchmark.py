@@ -14,7 +14,6 @@ reliable measurements of inference latency using ONNX Runtime or TensorRT
 on the device.
 """
 
-import argparse
 import contextlib
 import copy
 import json
@@ -47,16 +46,6 @@ from rfdetr.utilities.box_ops import box_xyxy_to_cxcywh
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
-
-
-def parser_args():
-    parser = argparse.ArgumentParser("performance benchmark tool for onnx/trt model")
-    parser.add_argument("--path", type=str, help="engine file path")
-    parser.add_argument("--coco_path", type=str, default="data/coco", help="coco dataset path")
-    parser.add_argument("--device", default=0, type=int)
-    parser.add_argument("--run_benchmark", action="store_true", help="repeat the inference to benchmark the latency")
-    parser.add_argument("--disable_eval", action="store_true", help="disable evaluation")
-    return parser.parse_args()
 
 
 from rfdetr.datasets.coco_eval import CocoEvaluator, create_common_coco_eval, evaluate  # noqa: F401
@@ -380,41 +369,60 @@ class TimeProfiler(contextlib.ContextDecorator):
         return time.perf_counter()
 
 
-def main(args):
-    logger.info(args)
+def main(
+    path: str,
+    coco_path: str = "data/coco",
+    device: int = 0,
+    run_benchmark: bool = False,
+    disable_eval: bool = False,
+) -> None:
+    """Performance benchmark tool for ONNX/TRT models.
 
-    coco_gt = osp.join(args.coco_path, "annotations/instances_val2017.json")
+    Args:
+        path: Engine file path (.onnx or .engine).
+        coco_path: COCO dataset path.
+        device: CUDA device index.
+        run_benchmark: Repeat inference 10x to measure latency.
+        disable_eval: Skip COCO evaluation.
+    """
+    logger.info(
+        {
+            "path": path,
+            "coco_path": coco_path,
+            "device": device,
+            "run_benchmark": run_benchmark,
+            "disable_eval": disable_eval,
+        }
+    )
+    coco_gt = osp.join(coco_path, "annotations/instances_val2017.json")
     img_list = get_image_list(coco_gt)
-    prefix = osp.join(args.coco_path, "val2017")
-    if args.run_benchmark:
+    prefix = osp.join(coco_path, "val2017")
+    if run_benchmark:
         repeats = 10
-        logger.info(
-            "Inference for each image will be repeated 10 times to obtain a reliable measurement of inference latency."
-        )
+        logger.info("Inference for each image will be repeated 10 times ...")
     else:
         repeats = 1
 
-    if args.disable_eval:
-        coco_evaluator = None
-    else:
-        coco_evaluator = CocoEvaluator(coco_gt, ("bbox",))
-
+    coco_evaluator = None if disable_eval else CocoEvaluator(coco_gt, ("bbox",))
     time_profile = TimeProfiler()
 
-    if args.path.endswith(".onnx"):
+    if path.endswith(".onnx"):
         import onnxruntime as nxrun
 
-        sess = nxrun.InferenceSession(args.path, providers=["CUDAExecutionProvider"])
-        infer_onnx(sess, coco_evaluator, time_profile, prefix, img_list, device=f"cuda:{args.device}", repeats=repeats)
-    elif args.path.endswith(".engine"):
-        model = TRTInference(args.path, sync_mode=True, device=f"cuda:{args.device}")
+        sess = nxrun.InferenceSession(path, providers=["CUDAExecutionProvider"])
+        infer_onnx(
+            sess, coco_evaluator, time_profile, prefix, img_list, device=f"cuda:{device}", repeats=repeats
+        )
+    elif path.endswith(".engine"):
+        model = TRTInference(path, sync_mode=True, device=f"cuda:{device}")
         infer_engine(
-            model, coco_evaluator, time_profile, prefix, img_list, device=f"cuda:{args.device}", repeats=repeats
+            model, coco_evaluator, time_profile, prefix, img_list, device=f"cuda:{device}", repeats=repeats
         )
     else:
         raise NotImplementedError('Only model file names ending with ".onnx" and ".engine" are supported.')
 
 
 if __name__ == "__main__":
-    args = parser_args()
-    main(args)
+    from jsonargparse import CLI
+
+    CLI(main)

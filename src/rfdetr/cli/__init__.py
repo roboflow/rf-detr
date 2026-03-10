@@ -7,10 +7,7 @@
 """RF-DETR CLI package.
 
 The ``rfdetr`` console script and ``python -m rfdetr`` both invoke :func:`main`,
-which delegates to the Lightning CLI (:class:`~rfdetr.training.cli.RFDETRCli`).
-
-The legacy ``rfdetr.cli.main:trainer`` entry point is still importable but emits
-a :class:`DeprecationWarning` on every call.
+which runs :class:`~rfdetr.training.cli.RFDETRCli` (Lightning CLI with jsonargparse).
 """
 
 from rfdetr.training.cli import main
