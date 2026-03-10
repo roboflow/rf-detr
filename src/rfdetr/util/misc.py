@@ -66,8 +66,6 @@ __all__ = [
     "NestedTensor",
     "collate_fn",
     "nested_tensor_from_tensor_list",
-    "_max_by_axis",
-    "_onnx_nested_tensor_from_tensor_list",
     # package
     "get_sha",
     # state_dict

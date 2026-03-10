@@ -11,7 +11,7 @@ from typing import Any, ItemsView, Iterator, KeysView, ValuesView
 
 from deprecate import deprecated, void
 
-__all__ = ["deprecated", "void", "_DeprecatedDict"]
+__all__ = ["deprecated", "void"]
 
 
 class _DeprecatedDict(dict):

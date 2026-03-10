@@ -24,23 +24,18 @@ from rfdetr.detr import (
     RFDETRSegXLarge,
     RFDETRSmall,
 )
+
 __all__ = [
     "RFDETRNano",
     "RFDETRSmall",
     "RFDETRMedium",
-    "RFDETRBase",
     "RFDETRLarge",
-    "RFDETRLargeDeprecated",
     "RFDETRSegNano",
     "RFDETRSegSmall",
     "RFDETRSegMedium",
     "RFDETRSegLarge",
     "RFDETRSegXLarge",
     "RFDETRSeg2XLarge",
-    # PTL exports — resolved lazily (see __getattr__)
-    "RFDETRModule",
-    "RFDETRDataModule",
-    "build_trainer",
 ]
 
 # Lazily resolved names: avoids eager pytorch_lightning import at `import rfdetr` time.
