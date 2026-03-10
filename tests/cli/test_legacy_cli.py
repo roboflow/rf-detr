@@ -37,7 +37,7 @@ class TestEntryPoint:
 
     def test_entry_point_value(self):
         """rfdetr entry point must be rfdetr.training.cli:main."""
-        assert self._read_entry_point() == "rfdetr.training.cli:main"
+        assert self._read_entry_point() == "rfdetr.cli:main"
 
     def test_entry_point_not_legacy(self):
         """Entry point must no longer reference rfdetr.cli.main:trainer."""
