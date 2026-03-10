@@ -150,8 +150,8 @@ This configuration will:
 
 | Parameter     | Type   | Default | Description                                                                |
 | ------------- | ------ | ------- | -------------------------------------------------------------------------- |
-| `tensorboard` | `bool` | `True`  | Enable TensorBoard logging. Requires `pip install "rfdetr[metrics]"`.      |
-| `wandb`       | `bool` | `False` | Enable Weights & Biases logging. Requires `pip install "rfdetr[metrics]"`. |
+| `tensorboard` | `bool` | `True`  | Enable TensorBoard logging. Requires `pip install "rfdetr[loggers]"`.      |
+| `wandb`       | `bool` | `False` | Enable Weights & Biases logging. Requires `pip install "rfdetr[loggers]"`. |
 | `project`     | `str`  | `None`  | Project name for W&B logging.                                              |
 | `run`         | `str`  | `None`  | Run name for W&B logging. If not specified, W&B assigns a random name.     |
 

@@ -637,7 +637,7 @@ class TestOnLoadCheckpoint:
 
 
 class TestPublicAPIExports:
-    """rfdetr.__init__ exports RFDETRModule, RFDETRDataModule, and build_trainer."""
+    """rfdetr.__init__ exposes PTL names via __getattr__ (rfdetr[train] extra)."""
 
     @pytest.mark.parametrize(
         "name",
@@ -645,7 +645,7 @@ class TestPublicAPIExports:
         ids=["RFDETRModule", "RFDETRDataModule", "build_trainer"],
     )
     def test_symbol_importable_from_rfdetr(self, name):
-        """Each PTL export is accessible as rfdetr.<name>."""
+        """Each PTL export is accessible as rfdetr.<name> via lazy __getattr__."""
         import rfdetr
 
         assert hasattr(rfdetr, name), f"rfdetr.{name} is missing"
@@ -662,16 +662,12 @@ class TestPublicAPIExports:
 
         assert getattr(rfdetr, name) is getattr(rfdetr.training, name)
 
-    @pytest.mark.parametrize(
-        "name",
-        ["RFDETRModule", "RFDETRDataModule", "build_trainer"],
-        ids=["RFDETRModule", "RFDETRDataModule", "build_trainer"],
-    )
-    def test_symbol_in_rfdetr_all(self, name):
-        """Each PTL export appears in rfdetr.__all__."""
+    def test_ptl_names_not_in_all(self):
+        """PTL exports are optional (rfdetr[train]) and must not be in rfdetr.__all__."""
         import rfdetr
 
-        assert name in rfdetr.__all__
+        for name in ("RFDETRModule", "RFDETRDataModule", "build_trainer"):
+            assert name not in rfdetr.__all__, f"{name} must not be in __all__ (optional extra)"
 
     def test_rfdetr_all_no_duplicates(self):
         """rfdetr.__all__ contains no duplicate names."""

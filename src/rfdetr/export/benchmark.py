@@ -26,8 +26,6 @@ import torch
 from PIL import Image
 from tqdm.auto import tqdm
 
-from rfdetr.datasets.coco_eval import CocoEvaluator, create_common_coco_eval, evaluate  # noqa: F401
-
 try:
     import tensorrt as trt
 except ImportError:
@@ -395,7 +393,12 @@ def main(
     else:
         repeats = 1
 
-    coco_evaluator = None if disable_eval else CocoEvaluator(coco_gt, ("bbox",))
+    if not disable_eval:
+        from rfdetr.evaluation.coco_eval import CocoEvaluator
+
+        coco_evaluator = CocoEvaluator(coco_gt, ("bbox",))
+    else:
+        coco_evaluator = None
     time_profile = TimeProfiler()
 
     if path.endswith(".onnx"):

@@ -35,52 +35,51 @@ classifiers = [
 keywords = ["machine-learning", "deep-learning", "vision", "ML", "DL", "AI", "DETR", "RF-DETR", "Roboflow"]
 
 dependencies = [
-    "requests",
-    "pycocotools",
-    "torch>=2.2.0",
-    "torchvision>=0.14.0",
-    "scipy",
-    "tqdm",
-    "transformers>4.0.0, <5.0.0",
-    "peft",
-    "rf100vl",
-    "pydantic",
-    "supervision",
-    "matplotlib",
-    "roboflow",
-    "albumentations>=1.0.0,<2.0.0",
-    "pytorch_lightning>=2.6,<3",
-    "torchmetrics[detection]>=1.2",
-    "faster-coco-eval>=1.7.2",
-    "pyDeprecate>=0.3,<1"
+    "requests",                        # weight download from remote URLs
+    "torch>=2.2.0",                    # core tensor ops and model forward pass
+    "torchvision>=0.14.0",             # image transforms and ops
+    "tqdm",                            # progress bars during weight download
+    "transformers>4.0.0, <5.0.0",     # DINOv2 backbone loading
+    "peft",                            # LoRA backbone weight loading; TODO: consider moving to extras
+    "pydantic",                        # ModelConfig / TrainConfig validation
+    "supervision",                     # inference output (Detections, Masks)
+    "pyDeprecate>=0.3,<1",             # deprecation warnings for legacy APIs
 ]
 
 [project.optional-dependencies]
-onnxexport = [
+train = [
+    "pytorch_lightning>=2.6,<3",
+    "torchmetrics[detection]>=1.2",
+    "faster-coco-eval>=1.7.2",
+    "pycocotools",
+    "scipy",
+    "albumentations>=1.0.0,<2.0.0",
+    "roboflow",
+    "rf100vl",
+]
+onnx = [
     "onnx>=1.16.0,<1.20",
     "onnxsim<0.6.0",  # TODO: onnxsim 0.6.0+ hangs on install
     "onnx_graphsurgeon",
     "onnxruntime",
-    "polygraphy"
+    "polygraphy",
 ]
-metrics = [
+trt = [
+    "pycuda",
+    "onnxruntime-gpu",
+    "tensorrt>=8.6.1",
+    "polygraphy",
+]
+loggers = [
     "tensorboard>=2.13.0",
     "wandb",
     "mlflow",
     "clearml",
+]
+visual = [
     "matplotlib",
     "pandas",
     "seaborn",
-]
-deploy = [
-    "pycuda",
-    "onnx>=1.16.0,<1.20",
-    "onnxsim<0.6.0",
-    "onnxruntime",
-    "onnxruntime-gpu",
-    "onnx_graphsurgeon",
-    "tensorrt>=8.6.1",
-    "polygraphy",
 ]
 cli = ["jsonargparse[signatures]>=4.27.7"]
 plus = ["rfdetr_plus>=1.0.1, <2.0.0"]

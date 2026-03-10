@@ -11,7 +11,7 @@ RF-DETR supports integration with popular experiment tracking and visualization 
 Install the required packages:
 
 ```bash
-pip install "rfdetr[metrics]"
+pip install "rfdetr[loggers]"
 ```
 
 ### Usage
@@ -70,7 +70,7 @@ TensorBoard tracks:
 Install the required packages:
 
 ```bash
-pip install "rfdetr[metrics]"
+pip install "rfdetr[loggers]"
 ```
 
 Log in to W&B:
@@ -133,7 +133,7 @@ Access your runs at [wandb.ai](https://wandb.ai). W&B provides:
 Install the required packages:
 
 ```bash
-pip install "rfdetr[metrics]"
+pip install "rfdetr[loggers]"
 ```
 
 Initialize ClearML:
@@ -194,7 +194,7 @@ Access your experiments in the ClearML Web UI. ClearML provides:
 Install the required packages:
 
 ```bash
-pip install "rfdetr[metrics]"
+pip install "rfdetr[loggers]"
 ```
 
 ### Usage

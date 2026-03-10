@@ -138,7 +138,7 @@ class OnnxOptimizer:
         if missing_deps:
             missing_str = ", ".join(missing_deps)
             raise ImportError(
-                f"ONNX export dependencies are missing ({missing_str}). Install with: pip install rfdetr[onnxexport]"
+                f"ONNX export dependencies are missing ({missing_str}). Install with: pip install rfdetr[onnx]"
             )
         if severity is None:
             severity = G_LOGGER.INFO

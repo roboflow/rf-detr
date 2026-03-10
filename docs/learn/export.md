@@ -7,7 +7,7 @@ RF-DETR supports exporting models to the ONNX format, which enables interoperabi
 To export your model, first install the `onnxexport` extension:
 
 ```bash
-pip install "rfdetr[onnxexport]"
+pip install "rfdetr[onnx]"
 ```
 
 ## Basic Export

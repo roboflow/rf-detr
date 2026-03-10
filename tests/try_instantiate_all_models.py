@@ -21,21 +21,22 @@ from functools import partial
 from tqdm.auto import tqdm
 
 from rfdetr import (
-    RFDETR2XLarge,
-    RFDETRBase,
-    RFDETRLarge,
     RFDETRMedium,
     RFDETRNano,
     RFDETRSeg2XLarge,
     RFDETRSegLarge,
     RFDETRSegMedium,
     RFDETRSegNano,
-    RFDETRSegPreview,
     RFDETRSegSmall,
     RFDETRSegXLarge,
     RFDETRSmall,
     RFDETRXLarge,
 )
+
+try:
+    from rfdetr import RFDETR2XLarge, RFDETRLarge
+except ImportError:
+    RFDETR2XLarge = RFDETRLarge = None
 
 # Explicitly list all models to validate
 MODELS_TO_TEST = [
@@ -43,12 +44,10 @@ MODELS_TO_TEST = [
     RFDETRNano,
     RFDETRSmall,
     RFDETRMedium,
-    RFDETRBase,
     RFDETRLarge,
     partial(RFDETRXLarge, accept_platform_model_license=True),
     partial(RFDETR2XLarge, accept_platform_model_license=True),
     # Segmentation Models
-    RFDETRSegPreview,
     RFDETRSegNano,
     RFDETRSegSmall,
     RFDETRSegMedium,
@@ -79,8 +78,8 @@ def main() -> None:
             assert model_instance is not None, "Model instance is None"
             assert hasattr(model_instance, "model"), "Model missing 'model' attribute"
 
-        except Exception as e:
-            failed_models.append((model_name, str(e)))
+        except Exception as ex:
+            failed_models.append((model_name, str(ex)))
 
     pbar.close()
 

@@ -13,6 +13,7 @@ import torch
 import torch.nn as nn
 
 import rfdetr.models.backbone.dinov2 as dinov2_module
+from rfdetr._namespace import build_namespace
 from rfdetr.config import RFDETRNanoConfig, TrainConfig
 from rfdetr.models import build_model
 from rfdetr.models.backbone.dinov2 import DinoV2
@@ -21,7 +22,6 @@ from rfdetr.models.backbone.dinov2_with_windowed_attn import (
     WindowedDinov2WithRegistersBackbone,
 )
 from rfdetr.models.lwdetr import LWDETR
-from rfdetr.training._namespace import build_namespace
 
 
 @pytest.fixture

@@ -13,9 +13,9 @@ import torch.utils.data
 from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader
 
+from rfdetr._namespace import build_namespace
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.datasets import build_dataset
-from rfdetr.training._namespace import build_namespace
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.tensors import collate_fn
 

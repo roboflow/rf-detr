@@ -190,7 +190,7 @@ def _build_model_context(model_config: ModelConfig) -> "_ModelContext":
     Returns:
         Fully initialised _ModelContext ready for inference or training.
     """
-    from rfdetr.training._namespace import build_namespace
+    from rfdetr._namespace import build_namespace
 
     # A dummy TrainConfig is needed only for build_namespace's required fields;
     # dataset_dir/output_dir are unused during model construction.
@@ -390,7 +390,7 @@ class RFDETR:
         except ImportError:
             logger.error(
                 "It seems some dependencies for ONNX export are missing."
-                " Please run `pip install rfdetr[onnxexport]` and try again."
+                " Please run `pip install rfdetr[onnx]` and try again."
             )
             raise
 
