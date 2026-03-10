@@ -52,9 +52,9 @@ class MSDeformAttn(nn.Module):
         # you'd better set _d_per_head to a power of 2 which is more efficient in our CUDA implementation
         if not _is_power_of_2(_d_per_head):
             warnings.warn(
-                "You'd better set d_model in MSDeformAttn to make the "
-                "dimension of each attention head a power of 2 "
-                "which is more efficient in our CUDA implementation."
+                "You'd better set d_model in MSDeformAttn to make the"
+                " dimension of each attention head a power of 2"
+                " which is more efficient in our CUDA implementation."
             )
 
         self.im2col_step = 64

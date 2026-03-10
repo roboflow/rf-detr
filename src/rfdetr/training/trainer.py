@@ -183,9 +183,9 @@ def build_trainer(
 
     if tc.clearml:
         warnings.warn(
-            "ClearML logging is not supported via a native PTL logger in this version. "
-            "Metrics will not be logged to ClearML. Use the ClearML SDK callback directly "
-            "or wait for a dedicated ClearML PTL logger integration.",
+            "ClearML logging is not supported via a native PTL logger in this version."
+            " Metrics will not be logged to ClearML. Use the ClearML SDK callback directly"
+            " or wait for a dedicated ClearML PTL logger integration.",
             UserWarning,
             stacklevel=2,
         )

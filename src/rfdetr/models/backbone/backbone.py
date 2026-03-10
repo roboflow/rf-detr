@@ -173,16 +173,17 @@ class Backbone(BackboneBase):
         return named_param_lr_pairs
 
 
-def get_dinov2_lr_decay_rate(name, lr_decay_rate=1.0, num_layers=12):
+def get_dinov2_lr_decay_rate(name: str, lr_decay_rate: float = 1.0, num_layers: int = 12) -> float:
     """
     Calculate lr decay rate for different ViT blocks.
 
     Args:
-        name (string): parameter name.
-        lr_decay_rate (float): base lr decay rate.
-        num_layers (int): number of ViT blocks.
+        name: Parameter name.
+        lr_decay_rate: Base lr decay rate.
+        num_layers: Number of ViT blocks.
+
     Returns:
-        lr decay rate for the given parameter.
+        Lr decay rate for the given parameter.
     """
     layer_id = num_layers + 1
     if name.startswith("backbone"):

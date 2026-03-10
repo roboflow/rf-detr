@@ -10,7 +10,7 @@ import warnings
 from collections import defaultdict
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, List, Union
+from typing import Any, List, Optional, Union
 
 import numpy as np
 import requests
@@ -389,8 +389,8 @@ class RFDETR:
             from rfdetr.export.main import export_onnx, make_infer_image, onnx_simplify
         except ImportError:
             logger.error(
-                "It seems some dependencies for ONNX export are missing. "
-                "Please run `pip install rfdetr[onnxexport]` and try again."
+                "It seems some dependencies for ONNX export are missing."
+                " Please run `pip install rfdetr[onnxexport]` and try again."
             )
             raise
 
@@ -507,8 +507,8 @@ class RFDETR:
             else:
                 raise ValueError(f"Found {yaml_path} but it does not contain 'names' field.")
         raise FileNotFoundError(
-            f"Could not find class names in {dataset_dir}. "
-            "Checked for COCO (train/_annotations.coco.json) and YOLO (data.yaml, data.yml) styles."
+            f"Could not find class names in {dataset_dir}."
+            " Checked for COCO (train/_annotations.coco.json) and YOLO (data.yaml, data.yml) styles."
         )
 
     def get_train_config(self, **kwargs):
@@ -563,20 +563,19 @@ class RFDETR:
             images:
                 A single image or a list of images to process. Images can be provided
                 as file paths, PIL Images, NumPy arrays, or torch.Tensors.
-            threshold (float, optional):
+            threshold:
                 The minimum confidence score needed to consider a detected bounding box valid.
             **kwargs:
                 Additional keyword arguments.
 
         Returns:
-            Union[sv.Detections, List[sv.Detections]]: A single or multiple Detections
-                objects, each containing bounding box coordinates, confidence scores,
-                and class IDs.
+            A single or multiple Detections objects, each containing bounding box
+            coordinates, confidence scores, and class IDs.
         """
         if not self._is_optimized_for_inference and not self._has_warned_about_not_being_optimized_for_inference:
             logger.warning(
-                "Model is not optimized for inference. Latency may be higher than expected. "
-                "You can optimize the model for inference by calling model.optimize_for_inference()."
+                "Model is not optimized for inference. Latency may be higher than expected."
+                " You can optimize the model for inference by calling model.optimize_for_inference()."
             )
             self._has_warned_about_not_being_optimized_for_inference = True
 
@@ -622,18 +621,18 @@ class RFDETR:
                 raise ValueError(
                     f"Resolution mismatch. "
                     f"Model was optimized for resolution {self._optimized_resolution}, "
-                    f"but got {batch_tensor.shape[2]}. "
-                    "You can explicitly remove the optimized model by calling model.remove_optimized_model()."
+                    f"but got {batch_tensor.shape[2]}."
+                    " You can explicitly remove the optimized model by calling model.remove_optimized_model()."
                 )
             if self._optimized_has_been_compiled:
                 if self._optimized_batch_size != batch_tensor.shape[0]:
                     raise ValueError(
                         f"Batch size mismatch. "
                         f"Optimized model was compiled for batch size {self._optimized_batch_size}, "
-                        f"but got {batch_tensor.shape[0]}. "
-                        "You can explicitly remove the optimized model by calling model.remove_optimized_model(). "
-                        "Alternatively, you can recompile the optimized model for a different batch size "
-                        "by calling model.optimize_for_inference(batch_size=<new_batch_size>)."
+                        f"but got {batch_tensor.shape[0]}."
+                        " You can explicitly remove the optimized model by calling model.remove_optimized_model()."
+                        " Alternatively, you can recompile the optimized model for a different batch size"
+                        " by calling model.optimize_for_inference(batch_size=<new_batch_size>)."
                     )
 
         with torch.no_grad():
@@ -684,7 +683,14 @@ class RFDETR:
 
         return detections_list if len(detections_list) > 1 else detections_list[0]
 
-    def deploy_to_roboflow(self, workspace: str, project_id: str, version: str, api_key: str = None, size: str = None):
+    def deploy_to_roboflow(
+        self,
+        workspace: str,
+        project_id: str,
+        version: str,
+        api_key: Optional[str] = None,
+        size: Optional[str] = None,
+    ) -> None:
         """
         Deploy the trained RF-DETR model to Roboflow.
 
@@ -694,17 +700,18 @@ class RFDETR:
         Roboflow Workflows and on-device deployment.
 
         Args:
-            workspace (str): The name of the Roboflow workspace to deploy to.
-            project_ids (List[str]): A list of project IDs to which the model will be deployed
-            api_key (str, optional): Your Roboflow API key. If not provided,
+            workspace: The name of the Roboflow workspace to deploy to.
+            project_id: The project ID to which the model will be deployed.
+            version: The project version to which the model will be deployed.
+            api_key: Your Roboflow API key. If not provided,
                 it will be read from the environment variable `ROBOFLOW_API_KEY`.
-            size (str, optional): The size of the model to deploy. If not provided,
+            size: The size of the model to deploy. If not provided,
                 it will default to the size of the model being trained (e.g., "rfdetr-base", "rfdetr-large", etc.).
-            model_name (str, optional): The name you want to give the uploaded model.
-            If not provided, it will default to "<size>-uploaded".
+
         Raises:
-            ValueError: If the `api_key` is not provided and not found in the environment
-                variable `ROBOFLOW_API_KEY`, or if the `size` is not set for custom architectures.
+            ValueError: If the `api_key` is not provided and not found in the
+                environment variable `ROBOFLOW_API_KEY`, or if the `size` is
+                not set for custom architectures.
         """
         import shutil
 
@@ -807,8 +814,8 @@ class RFDETRLargeDeprecated(RFDETR):
 
     def __init__(self, **kwargs):
         warnings.warn(
-            "RFDETRLargeDeprecated is deprecated and will be removed in a future version. "
-            "Please use RFDETRLarge instead.",
+            "RFDETRLargeDeprecated is deprecated and will be removed in a future version."
+            " Please use RFDETRLarge instead.",
             category=DeprecationWarning,
             stacklevel=2,
         )
@@ -837,10 +844,10 @@ class RFDETRLarge(RFDETR):
                 logger.warning(
                     "\n"
                     "=" * 100 + "\n"
-                    "WARNING: Automatically switched to deprecated model configuration, "
-                    "due to using deprecated weights. "
-                    "This will be removed in a future version.\n"
-                    "Please retrain your model with the new weights and configuration.\n"
+                    "WARNING: Automatically switched to deprecated model configuration,"
+                    " due to using deprecated weights."
+                    " This will be removed in a future version.\n"
+                    " Please retrain your model with the new weights and configuration.\n"
                     "=" * 100 + "\n"
                 )
             except Exception:

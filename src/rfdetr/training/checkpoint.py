@@ -50,8 +50,8 @@ def convert_legacy_checkpoint(old_path: str, new_path: str) -> None:
 
     if "model" not in old:
         raise ValueError(
-            f"The checkpoint at {old_path!r} does not contain a 'model' key. "
-            "Only RF-DETR legacy .pth files produced by engine.py are supported."
+            f"The checkpoint at {old_path!r} does not contain a 'model' key."
+            " Only RF-DETR legacy .pth files produced by engine.py are supported."
         )
 
     args_obj = old.get("args")

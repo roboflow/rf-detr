@@ -4,8 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-
-from typing import Callable
+from typing import Any, Callable
 
 import torch
 import torch.nn as nn
@@ -196,19 +195,19 @@ class SegmentationHead(nn.Module):
         return [torch.einsum("bchw,bnc->bnhw", spatial_features_proj, qf) + self.bias]
 
 
-def point_sample(input, point_coords, **kwargs):
+def point_sample(input: torch.Tensor, point_coords: torch.Tensor, **kwargs: Any) -> torch.Tensor:
     """
     A wrapper around :function:`torch.nn.functional.grid_sample` to support 3D point_coords tensors.
     Unlike :function:`torch.nn.functional.grid_sample` it assumes `point_coords` to lie inside
     [0, 1] x [0, 1] square.
 
     Args:
-        input (Tensor): A tensor of shape (N, C, H, W) that contains features map on a H x W grid.
-        point_coords (Tensor): A tensor of shape (N, P, 2) or (N, Hgrid, Wgrid, 2) that contains
-        [0, 1] x [0, 1] normalized point coordinates.
+        input: A tensor of shape (N, C, H, W) that contains features map on a H x W grid.
+        point_coords: A tensor of shape (N, P, 2) or (N, Hgrid, Wgrid, 2) that contains
+            [0, 1] x [0, 1] normalized point coordinates.
 
     Returns:
-        output (Tensor): A tensor of shape (N, C, P) or (N, C, Hgrid, Wgrid) that contains
+        A tensor of shape (N, C, P) or (N, C, Hgrid, Wgrid) that contains
             features for points in `point_coords`. The features are obtained via bilinear
             interplation from `input` the same way as :function:`torch.nn.functional.grid_sample`.
     """
@@ -223,8 +222,12 @@ def point_sample(input, point_coords, **kwargs):
 
 
 def get_uncertain_point_coords_with_randomness(
-    coarse_logits, uncertainty_func, num_points, oversample_ratio=3, importance_sample_ratio=0.75
-):
+    coarse_logits: torch.Tensor,
+    uncertainty_func: Callable[[torch.Tensor], torch.Tensor],
+    num_points: int,
+    oversample_ratio: int = 3,
+    importance_sample_ratio: float = 0.75,
+) -> torch.Tensor:
     """
     Sample points in [0, 1] x [0, 1] coordinate space based on their uncertainty. The unceratinties
         are calculated for each point using 'uncertainty_func' function that takes point's logit
@@ -232,18 +235,17 @@ def get_uncertain_point_coords_with_randomness(
     See PointRend paper for details.
 
     Args:
-        coarse_logits (Tensor): A tensor of shape (N, C, Hmask, Wmask) or (N, 1, Hmask, Wmask) for
+        coarse_logits: A tensor of shape (N, C, Hmask, Wmask) or (N, 1, Hmask, Wmask) for
             class-specific or class-agnostic prediction.
         uncertainty_func: A function that takes a Tensor of shape (N, C, P) or (N, 1, P) that
             contains logit predictions for P points and returns their uncertainties as a Tensor of
             shape (N, 1, P).
-        num_points (int): The number of points P to sample.
-        oversample_ratio (int): Oversampling parameter.
-        importance_sample_ratio (float): Ratio of points that are sampled via importnace sampling.
+        num_points: The number of points P to sample.
+        oversample_ratio: Oversampling parameter.
+        importance_sample_ratio: Ratio of points that are sampled via importnace sampling.
 
     Returns:
-        point_coords (Tensor): A tensor of shape (N, P, 2) that contains the coordinates of P
-            sampled points.
+        A tensor of shape (N, P, 2) that contains the coordinates of sampled points.
     """
     assert oversample_ratio >= 1
     assert importance_sample_ratio <= 1 and importance_sample_ratio >= 0
@@ -280,13 +282,15 @@ def calculate_uncertainty(logits: torch.Tensor) -> torch.Tensor:
     """
     We estimate uncertainty as L1 distance between 0.0 and the logit prediction in 'logits' for the
         foreground class in `classes`.
+
     Args:
-        logits (Tensor): A tensor of shape (R, 1, ...) for class-specific or
+        logits: A tensor of shape (R, 1, ...) for class-specific or
             class-agnostic, where R is the total number of predicted masks in all images and C is
             the number of foreground classes. The values are logits.
+
     Returns:
-        scores (Tensor): A tensor of shape (R, 1, ...) that contains uncertainty scores with
-            the most uncertain locations having the highest uncertainty score.
+        A tensor of shape (R, 1, ...) that contains uncertainty scores with the most
+        uncertain locations having the highest uncertainty score.
     """
     assert logits.shape[1] == 1
     gt_class_logits = logits.clone()
