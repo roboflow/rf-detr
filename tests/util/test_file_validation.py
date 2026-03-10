@@ -13,7 +13,7 @@ from unittest.mock import Mock, patch
 import pytest
 import requests
 
-from rfdetr.util.files import _compute_file_md5, _download_file, _validate_file_md5
+from rfdetr.utilities.files import _compute_file_md5, _download_file, _validate_file_md5
 
 
 class _DummyTqdm:
@@ -190,8 +190,8 @@ class TestFileMD5Validation:
 class TestDownloadFile:
     """Test download helper behavior and failure cleanup."""
 
-    @patch("rfdetr.util.files.tqdm", _DummyTqdm)
-    @patch("rfdetr.util.files.requests.get")
+    @patch("rfdetr.utilities.files.tqdm", _DummyTqdm)
+    @patch("rfdetr.utilities.files.requests.get")
     def test_download_file_missing_content_length(self, mock_get: Mock, tmp_path: Path):
         """Download succeeds when content-length is missing."""
         target_path = tmp_path / "weights.bin"
@@ -204,7 +204,7 @@ class TestDownloadFile:
         assert target_path.read_bytes() == b"helloworld"
         assert not (tmp_path / "weights.bin.tmp").exists()
 
-    @patch("rfdetr.util.files.requests.get")
+    @patch("rfdetr.utilities.files.requests.get")
     def test_download_file_http_error(self, mock_get: Mock, tmp_path: Path):
         """HTTP errors raise and do not create files."""
         target_path = tmp_path / "weights.bin"
@@ -217,8 +217,8 @@ class TestDownloadFile:
         assert not target_path.exists()
         assert not (tmp_path / "weights.bin.tmp").exists()
 
-    @patch("rfdetr.util.files.tqdm", _DummyTqdm)
-    @patch("rfdetr.util.files.requests.get")
+    @patch("rfdetr.utilities.files.tqdm", _DummyTqdm)
+    @patch("rfdetr.utilities.files.requests.get")
     def test_download_file_stream_error_cleans_temp(self, mock_get: Mock, tmp_path: Path):
         """Streaming errors clean up temp files."""
         target_path = tmp_path / "weights.bin"
@@ -237,8 +237,8 @@ class TestDownloadFile:
         assert not target_path.exists()
         assert not (tmp_path / "weights.bin.tmp").exists()
 
-    @patch("rfdetr.util.files.tqdm", _DummyTqdm)
-    @patch("rfdetr.util.files.requests.get")
+    @patch("rfdetr.utilities.files.tqdm", _DummyTqdm)
+    @patch("rfdetr.utilities.files.requests.get")
     def test_download_file_md5_failure_cleans_temp(self, mock_get: Mock, tmp_path: Path):
         """MD5 failure removes temp file and target is not created."""
         target_path = tmp_path / "weights.bin"

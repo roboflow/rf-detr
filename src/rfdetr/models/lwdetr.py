@@ -37,14 +37,10 @@ from rfdetr.models.segmentation_head import (
     point_sample,
 )
 from rfdetr.models.transformer import build_transformer
-from rfdetr.util import box_ops
-from rfdetr.util.misc import (
-    NestedTensor,
-    accuracy,
-    get_world_size,
-    is_dist_avail_and_initialized,
-    nested_tensor_from_tensor_list,
-)
+from rfdetr.util.misc import accuracy
+from rfdetr.utilities import box_ops
+from rfdetr.utilities.distributed import get_world_size, is_dist_avail_and_initialized
+from rfdetr.utilities.tensors import NestedTensor, nested_tensor_from_tensor_list
 
 
 class LWDETR(nn.Module):

@@ -22,7 +22,7 @@ from rfdetr.evaluation.matching import (
     init_matching_accumulator,
     merge_matching_data,
 )
-from rfdetr.util.box_ops import box_cxcywh_to_xyxy
+from rfdetr.utilities.box_ops import box_cxcywh_to_xyxy
 
 
 class COCOEvalCallback(Callback):

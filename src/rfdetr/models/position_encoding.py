@@ -22,7 +22,7 @@ import math
 import torch
 from torch import nn
 
-from rfdetr.util.misc import NestedTensor
+from rfdetr.utilities.tensors import NestedTensor
 
 
 class PositionEmbeddingSine(nn.Module):

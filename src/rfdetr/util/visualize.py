@@ -10,7 +10,7 @@ import numpy as np
 import supervision as sv
 from PIL import Image
 
-from rfdetr.util.logger import get_logger
+from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 

@@ -33,7 +33,7 @@ from rfdetr.lit.checkpoint import convert_legacy_checkpoint
 from rfdetr.lit.cli import RFDETRCli
 from rfdetr.lit.datamodule import RFDETRDataModule
 from rfdetr.lit.module import RFDETRModule
-from rfdetr.util.logger import get_logger
+from rfdetr.utilities.logger import get_logger
 
 _logger = get_logger()
 

@@ -24,8 +24,8 @@ from peft import PeftModel
 from rfdetr.models.backbone.base import BackboneBase
 from rfdetr.models.backbone.dinov2 import DinoV2
 from rfdetr.models.backbone.projector import MultiScaleProjector
-from rfdetr.util.logger import get_logger
-from rfdetr.util.misc import NestedTensor
+from rfdetr.utilities.logger import get_logger
+from rfdetr.utilities.tensors import NestedTensor
 
 logger = get_logger()
 

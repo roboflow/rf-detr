@@ -24,8 +24,8 @@ from rfdetr.datasets.coco import compute_multi_scale_scales
 from rfdetr.lit._namespace import build_namespace
 from rfdetr.models import build_criterion_and_postprocessors, build_model
 from rfdetr.util.get_param_dicts import get_param_dict
-from rfdetr.util.logger import get_logger
-from rfdetr.util.misc import NestedTensor
+from rfdetr.utilities.logger import get_logger
+from rfdetr.utilities.tensors import NestedTensor
 
 logger = get_logger()
 

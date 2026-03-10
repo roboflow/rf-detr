@@ -13,7 +13,7 @@ from typing import Any, Dict, List
 import torch.nn as nn
 
 from rfdetr.models.backbone import Joiner
-from rfdetr.util.logger import get_logger
+from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 

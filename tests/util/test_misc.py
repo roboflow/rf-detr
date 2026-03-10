@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from rfdetr.util.misc import strip_checkpoint
+from rfdetr.utilities.state_dict import strip_checkpoint
 
 
 class TestStripCheckpoint:

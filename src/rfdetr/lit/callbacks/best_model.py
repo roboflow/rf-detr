@@ -16,8 +16,8 @@ import torch
 from pytorch_lightning import LightningModule, Trainer
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 
-from rfdetr.util.logger import get_logger
-from rfdetr.util.misc import strip_checkpoint
+from rfdetr.utilities.logger import get_logger
+from rfdetr.utilities.state_dict import strip_checkpoint
 
 logger = get_logger()
 

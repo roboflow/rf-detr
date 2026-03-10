@@ -27,7 +27,7 @@ from scipy.optimize import linear_sum_assignment
 from torch import nn
 
 from rfdetr.models.segmentation_head import point_sample
-from rfdetr.util.box_ops import batch_dice_loss, batch_sigmoid_ce_loss, box_cxcywh_to_xyxy, generalized_box_iou
+from rfdetr.utilities.box_ops import batch_dice_loss, batch_sigmoid_ce_loss, box_cxcywh_to_xyxy, generalized_box_iou
 
 
 class HungarianMatcher(nn.Module):

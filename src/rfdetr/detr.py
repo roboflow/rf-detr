@@ -42,8 +42,8 @@ from rfdetr.config import (
 from rfdetr.datasets.coco import is_valid_coco_dataset
 from rfdetr.datasets.yolo import is_valid_yolo_dataset
 from rfdetr.models import PostProcess, build_model
-from rfdetr.util.coco_classes import COCO_CLASSES
-from rfdetr.util.logger import get_logger
+from rfdetr.assets.coco_classes import COCO_CLASSES
+from rfdetr.utilities.logger import get_logger
 
 try:
     torch.set_float32_matmul_precision("high")

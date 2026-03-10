@@ -6,7 +6,7 @@
 
 import torch
 
-from rfdetr.util.box_ops import masks_to_boxes
+from rfdetr.utilities.box_ops import masks_to_boxes
 
 
 def test_masks_to_boxes_passes_ij_indexing_to_meshgrid(monkeypatch) -> None:

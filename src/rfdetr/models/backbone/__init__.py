@@ -14,7 +14,7 @@ from torch import nn
 
 from rfdetr.models.backbone.backbone import *
 from rfdetr.models.position_encoding import build_position_encoding
-from rfdetr.util.misc import NestedTensor
+from rfdetr.utilities.tensors import NestedTensor
 
 
 class Joiner(nn.Sequential):

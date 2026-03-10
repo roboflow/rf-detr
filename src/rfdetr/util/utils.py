@@ -4,15 +4,33 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-import json
-import math
-import random
-from collections import OrderedDict
-from copy import deepcopy
-from typing import Any, Callable, Dict, Optional, Union
+"""Deprecated: use ``rfdetr.utilities`` instead.
 
-import numpy as np
-import torch
+ModelEma will move to ``rfdetr.training.model_ema`` in Phase 8.
+"""
+
+import warnings
+
+warnings.warn(
+    "rfdetr.util.utils is deprecated; use rfdetr.utilities instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
+# Re-export from new locations.
+from rfdetr.utilities.reproducibility import seed_all  # noqa: E402, F401
+from rfdetr.utilities.state_dict import clean_state_dict  # noqa: E402, F401
+
+# ModelEma, BestMetricSingle, BestMetricHolder remain here until Phase 8
+# when they move to rfdetr.training.model_ema.
+import json  # noqa: E402
+import math  # noqa: E402
+from collections import OrderedDict  # noqa: E402
+from copy import deepcopy  # noqa: E402
+from typing import Any, Callable, Dict, Optional, Union  # noqa: E402
+
+import numpy as np  # noqa: E402
+import torch  # noqa: E402
 
 
 class ModelEma(torch.nn.Module):
@@ -110,9 +128,7 @@ class BestMetricHolder:
             self.best_regular = BestMetricSingle(init_res, better)
 
     def update(self, new_res: float, epoch: int, is_ema: bool = False) -> bool:
-        """
-        return if the results is the best.
-        """
+        """Return if the results is the best."""
         if not self.use_ema:
             return self.best_all.update(new_res, epoch)
         else:
@@ -140,30 +156,10 @@ class BestMetricHolder:
         return self.__repr__()
 
 
-def seed_all(seed: int = 7) -> None:
-    """Seed all random number generators for reproducibility.
-
-    Sets seeds for Python's ``random`` module, NumPy, and PyTorch (CPU and all
-    CUDA devices).  Also configures cuDNN to use deterministic algorithms and
-    disables its auto-tuner so that results are reproducible across runs at the
-    cost of a possible slight performance decrease.
-
-    Args:
-        seed: Integer seed value.  Defaults to ``7``.
-    """
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
-
-
-def clean_state_dict(state_dict: Dict[str, Any]) -> OrderedDict[str, Any]:
-    new_state_dict = OrderedDict()
-    for k, v in state_dict.items():
-        if k[:7] == "module.":
-            k = k[7:]  # remove `module.`
-        new_state_dict[k] = v
-    return new_state_dict
+__all__ = [
+    "seed_all",
+    "clean_state_dict",
+    "ModelEma",
+    "BestMetricSingle",
+    "BestMetricHolder",
+]

@@ -17,8 +17,8 @@ from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.datasets import build_dataset
 
 from rfdetr.lit._namespace import build_namespace
-from rfdetr.util.logger import get_logger
-from rfdetr.util.misc import collate_fn
+from rfdetr.utilities.logger import get_logger
+from rfdetr.utilities.tensors import collate_fn
 
 logger = get_logger()
 

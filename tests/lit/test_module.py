@@ -15,7 +15,7 @@ import torch
 from torch import nn
 
 from rfdetr.config import RFDETRBaseConfig, TrainConfig
-from rfdetr.util.misc import NestedTensor
+from rfdetr.utilities.tensors import NestedTensor
 
 # ---------------------------------------------------------------------------
 # Private helpers — used by both module-level fixtures and class-level _setup_*

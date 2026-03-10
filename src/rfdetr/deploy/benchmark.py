@@ -43,8 +43,8 @@ try:
 except ImportError:
     cuda = None
 
-from rfdetr.util.box_ops import box_xyxy_to_cxcywh
-from rfdetr.util.logger import get_logger
+from rfdetr.utilities.box_ops import box_xyxy_to_cxcywh
+from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 

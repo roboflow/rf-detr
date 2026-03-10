@@ -16,7 +16,7 @@ from rf100vl import get_rf100vl_projects
 
 from rfdetr import RFDETRBase
 from rfdetr.config import DEVICE
-from rfdetr.util.logger import get_logger
+from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 

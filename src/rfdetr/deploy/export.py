@@ -25,9 +25,9 @@ from torchvision.transforms.v2 import Compose, Resize, ToDtype, ToImage
 
 from rfdetr.datasets.transforms import Normalize
 from rfdetr.models import build_model
-from rfdetr.util.logger import get_logger
-from rfdetr.util.misc import get_rank, get_sha
-from rfdetr.util.package import get_version
+from rfdetr.utilities.distributed import get_rank
+from rfdetr.utilities.logger import get_logger
+from rfdetr.utilities.package import get_sha, get_version
 
 logger = get_logger()
 
