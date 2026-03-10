@@ -689,7 +689,6 @@ class TestPublicAPIExports:
     def test_convert_legacy_checkpoint_not_in_rfdetr_namespace(self):
         """convert_legacy_checkpoint is in rfdetr.training but not the top-level rfdetr namespace."""
         import rfdetr
-
         from rfdetr.training import convert_legacy_checkpoint  # noqa: F401
 
         # It is NOT directly on rfdetr (Phase 7.7 spec lists only the three PTL exports)

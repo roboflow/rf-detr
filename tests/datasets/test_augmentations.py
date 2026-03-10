@@ -18,7 +18,7 @@ from rfdetr.datasets._develop import _SimpleDataset
 from rfdetr.datasets.aug_config import AUG_CONFIG
 from rfdetr.datasets.coco import make_coco_transforms, make_coco_transforms_square_div_64
 from rfdetr.datasets.transforms import AlbumentationsWrapper, _build_albu_transform
-from rfdetr.util.misc import collate_fn
+from rfdetr.utilities import collate_fn
 
 
 class TestAlbumentationsWrapper:
@@ -1212,7 +1212,6 @@ class TestTrainingLoop:
             if include_masks:
                 assert target["masks"].shape == (1, 64, 64)
                 assert target["masks"].dtype == torch.bool
-
 
 
 class TestMakeCocoTransformsAugConfig:

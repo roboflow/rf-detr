@@ -20,6 +20,7 @@ import torchvision.transforms.functional as F
 import yaml
 from PIL import Image
 
+from rfdetr.assets.coco_classes import COCO_CLASSES
 from rfdetr.assets.model_weights import download_pretrain_weights, validate_pretrain_weights
 from rfdetr.config import (
     ModelConfig,
@@ -42,7 +43,6 @@ from rfdetr.config import (
 from rfdetr.datasets.coco import is_valid_coco_dataset
 from rfdetr.datasets.yolo import is_valid_yolo_dataset
 from rfdetr.models import PostProcess, build_model
-from rfdetr.assets.coco_classes import COCO_CLASSES
 from rfdetr.utilities.logger import get_logger
 
 try:

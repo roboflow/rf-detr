@@ -410,14 +410,10 @@ def main(
         import onnxruntime as nxrun
 
         sess = nxrun.InferenceSession(path, providers=["CUDAExecutionProvider"])
-        infer_onnx(
-            sess, coco_evaluator, time_profile, prefix, img_list, device=f"cuda:{device}", repeats=repeats
-        )
+        infer_onnx(sess, coco_evaluator, time_profile, prefix, img_list, device=f"cuda:{device}", repeats=repeats)
     elif path.endswith(".engine"):
         model = TRTInference(path, sync_mode=True, device=f"cuda:{device}")
-        infer_engine(
-            model, coco_evaluator, time_profile, prefix, img_list, device=f"cuda:{device}", repeats=repeats
-        )
+        infer_engine(model, coco_evaluator, time_profile, prefix, img_list, device=f"cuda:{device}", repeats=repeats)
     else:
         raise NotImplementedError('Only model file names ending with ".onnx" and ".engine" are supported.')
 

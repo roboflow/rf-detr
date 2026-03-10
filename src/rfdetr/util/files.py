@@ -19,4 +19,3 @@ from rfdetr.utilities.files import (  # noqa: E402, F401
     _download_file,
     _validate_file_md5,
 )
-

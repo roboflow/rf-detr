@@ -30,6 +30,8 @@ warnings.warn(
 )
 
 # Re-export symbols that have moved to utilities/.
+# Re-export math functions from their canonical location in rfdetr.models.math.
+from rfdetr.models.math import accuracy, interpolate, inverse_sigmoid  # noqa: F401, E402
 from rfdetr.utilities.distributed import (  # noqa: E402, F401
     all_gather,
     get_rank,
@@ -48,10 +50,6 @@ from rfdetr.utilities.tensors import (  # noqa: E402, F401
     collate_fn,
     nested_tensor_from_tensor_list,
 )
-
-# Re-export math functions from their canonical location in rfdetr.models.math.
-from rfdetr.models.math import accuracy, interpolate, inverse_sigmoid  # noqa: F401, E402
-
 
 __all__ = [
     # distributed

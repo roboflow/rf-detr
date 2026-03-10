@@ -4,10 +4,10 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-"""Package-level pytest fixtures for tests/lit/.
+"""Package-level pytest fixtures for tests/training/.
 
 Provides cross-test cleanup that prevents class-level state from leaking
-between individual tests in the lit/ test package, plus shared config
+between individual tests in the training/ test package, plus shared config
 factory fixtures used across multiple test modules.
 """
 

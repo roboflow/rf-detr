@@ -14,4 +14,8 @@ warnings.warn(
     stacklevel=2,
 )
 
-from rfdetr.training.param_groups import get_param_dict, get_vit_lr_decay_rate, get_vit_weight_decay_rate  # noqa: F401, E402
+from rfdetr.training.param_groups import (  # noqa: F401, E402
+    get_param_dict,
+    get_vit_lr_decay_rate,
+    get_vit_weight_decay_rate,
+)

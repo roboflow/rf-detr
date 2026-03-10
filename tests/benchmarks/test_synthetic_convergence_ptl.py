@@ -143,5 +143,3 @@ def test_ptl_native_convergence(
     post_results = trainer.validate(module, datamodule=datamodule)
     map_after = post_results[0]["val/mAP_50"]
     assert map_after >= 0.35, f"val mAP {map_after:.3f} should reach at least 0.35 after PTL training."
-
-
