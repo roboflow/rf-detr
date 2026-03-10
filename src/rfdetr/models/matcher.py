@@ -28,6 +28,9 @@ from torch import nn
 
 from rfdetr.models.segmentation_head import point_sample
 from rfdetr.util.box_ops import batch_dice_loss, batch_sigmoid_ce_loss, box_cxcywh_to_xyxy, generalized_box_iou
+from rfdetr.util.logger import get_logger
+
+logger = get_logger()
 
 
 class HungarianMatcher(nn.Module):
@@ -177,6 +180,11 @@ class HungarianMatcher(nn.Module):
         # entries with a finite value that is larger than every valid cost.
         finite_mask = torch.isfinite(C)
         if not finite_mask.all():
+            logger.warning(
+                "Non-finite values detected in matcher cost matrix; "
+                "replacing with finite sentinel. "
+                "Check for numerical instability."
+            )
             if finite_mask.any():
                 finite_costs = C[finite_mask]
                 max_cost = finite_costs.max()
