@@ -24,6 +24,7 @@ from rfdetr.detr import (
     RFDETRSegXLarge,
     RFDETRSmall,
 )
+from rfdetr.lit import RFDETRDataModule, RFDETRModule, build_trainer
 
 __all__ = [
     "RFDETRNano",
@@ -36,6 +37,9 @@ __all__ = [
     "RFDETRSegLarge",
     "RFDETRSegXLarge",
     "RFDETRSeg2XLarge",
+    "RFDETRModule",
+    "RFDETRDataModule",
+    "build_trainer",
 ]
 
 

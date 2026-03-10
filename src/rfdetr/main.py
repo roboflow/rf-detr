@@ -52,7 +52,7 @@ from rfdetr.util.get_param_dicts import get_param_dict
 from rfdetr.util.logger import get_logger
 from rfdetr.util.misc import get_rank, get_world_size, is_main_process, save_on_master
 from rfdetr.util.utils import BestMetricHolder, ModelEma, clean_state_dict
-from rfdetr.utilities.decorators import _DeprecatedDict
+from rfdetr.utilities.decorators import _DeprecatedDict, deprecated
 
 if str(os.environ.get("USE_FILE_SYSTEM_SHARING", "False")).lower() in ["true", "1"]:
     import torch.multiprocessing
@@ -88,6 +88,10 @@ class Model:
         if args.pretrain_weights is not None:
             logger.info("Loading pretrain weights")
 
+            # Download first (no-op if already present and hash is valid).
+            download_pretrain_weights(args.pretrain_weights)
+            if not os.path.isfile(args.pretrain_weights):
+                download_pretrain_weights(args.pretrain_weights, redownload=True, validate_md5=False)
             # Validate MD5 hash before loading (non-strict, just warns)
             validate_pretrain_weights(args.pretrain_weights, strict=False)
 
@@ -97,7 +101,7 @@ class Model:
                 logger.error(f"Failed to load pretrain weights: {e}")
                 # re-download weights if they are corrupted
                 logger.info("Failed to load pretrain weights, re-downloading")
-                download_pretrain_weights(args.pretrain_weights, redownload=True)
+                download_pretrain_weights(args.pretrain_weights, redownload=True, validate_md5=False)
                 checkpoint = torch.load(args.pretrain_weights, map_location="cpu", weights_only=False)
 
             # Extract class_names from checkpoint if available
@@ -188,11 +192,12 @@ class Model:
         logger.info(str(args))
         device = torch.device(args.device)
 
-        # fix the seed for reproducibility
-        seed = args.seed + get_rank()
-        torch.manual_seed(seed)
-        np.random.seed(seed)
-        random.seed(seed)
+        # fix the seed for reproducibility (seed=None means no explicit seeding)
+        if args.seed is not None:
+            seed = args.seed + get_rank()
+            torch.manual_seed(seed)
+            np.random.seed(seed)
+            random.seed(seed)
 
         criterion, postprocess = build_criterion_and_postprocessors(args)
         model = self.model
@@ -1050,6 +1055,18 @@ def get_args_parser():
     return parser
 
 
+# NOTE: `deprecate.deprecated` intentionally uses the keyword `template_mgs`
+# (upstream spelling) in its public API.
+@deprecated(
+    target=None,
+    deprecated_in="1.5.1",
+    remove_in="2.0.0",
+    template_mgs=(
+        "`%(source_name)s` is deprecated as of v%(deprecated_in)s and will be removed in "
+        "v%(remove_in)s. Use `build_trainer(train_config, model_config)` from `rfdetr.lit` "
+        "instead, or call `RFDETR.train()` which delegates to the PTL stack automatically."
+    ),
+)
 def populate_args(
     # Basic training parameters
     num_classes=2,
@@ -1119,6 +1136,9 @@ def populate_args(
     use_varifocal_loss=False,
     use_position_supervised_loss=False,
     ia_bce_loss=False,
+    mask_ce_loss_coef=5.0,
+    mask_dice_loss_coef=5.0,
+    mask_point_sample_ratio=16,
     # Dataset parameters
     dataset_file="coco",
     coco_path=None,
@@ -1227,6 +1247,9 @@ def populate_args(
         use_varifocal_loss=use_varifocal_loss,
         use_position_supervised_loss=use_position_supervised_loss,
         ia_bce_loss=ia_bce_loss,
+        mask_ce_loss_coef=mask_ce_loss_coef,
+        mask_dice_loss_coef=mask_dice_loss_coef,
+        mask_point_sample_ratio=mask_point_sample_ratio,
         dataset_file=dataset_file,
         coco_path=coco_path,
         dataset_dir=dataset_dir,

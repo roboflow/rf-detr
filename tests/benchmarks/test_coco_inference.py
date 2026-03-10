@@ -36,7 +36,7 @@ from rfdetr.util.misc import collate_fn
 @pytest.mark.parametrize(
     ("model_cls", "threshold_map", "threshold_f1", "num_samples", "batch_size"),
     [
-        pytest.param(RFDETRNano, 0.67, 0.66, None, 6, id="nano"),
+        pytest.param(RFDETRNano, 0.67, 0.66, 2000, 6, id="nano"),
         pytest.param(RFDETRSmall, 0.72, 0.70, 500, 6, id="small"),
         pytest.param(RFDETRMedium, 0.73, 0.71, 500, 4, id="medium"),
         pytest.param(RFDETRLarge, 0.74, 0.72, 500, 2, id="large"),
@@ -65,8 +65,8 @@ def test_coco_detection_inference_benchmark(
     thresholds represent the expected baseline performance and help detect regressions
     in model quality or inference pipeline changes.
 
-    Note: To reduce test time, some model variants use a subset of the validation
-    set (500 samples). The nano model runs on the full dataset as a comprehensive check.
+    Note: To reduce test time, model variants use a subset of the validation
+    set (500–2000 samples). Nano uses 2000 samples for a comprehensive check.
     Batch sizes are adjusted per model size to avoid GPU OOM: large models use batch_size=2,
     medium models use batch_size=4, and small models use batch_size=6.
     """
