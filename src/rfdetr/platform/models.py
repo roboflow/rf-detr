@@ -8,9 +8,7 @@ __all__: list[str] = []
 
 _PLUS_EXPORTS = {
     "RFDETR2XLarge",
-    "RFDETR2XLargeConfig",
     "RFDETRXLarge",
-    "RFDETRXLargeConfig",
 }
 
 _PLUS_AVAILABLE = True
@@ -18,9 +16,7 @@ _PLUS_AVAILABLE = True
 try:
     from rfdetr_plus.models import (
         RFDETR2XLarge,
-        RFDETR2XLargeConfig,
         RFDETRXLarge,
-        RFDETRXLargeConfig,
     )
 
     __all__ += [

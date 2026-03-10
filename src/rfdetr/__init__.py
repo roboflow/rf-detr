@@ -10,16 +10,16 @@ if os.environ.get("PYTORCH_ENABLE_MPS_FALLBACK") is None:
     os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
 from rfdetr.detr import (
-    RFDETRBase,
+    RFDETRBase,  # DEPRECATED # noqa: F401
     RFDETRLarge,
-    RFDETRLargeDeprecated,
+    RFDETRLargeDeprecated,  # DEPRECATED # noqa: F401
     RFDETRMedium,
     RFDETRNano,
     RFDETRSeg2XLarge,
     RFDETRSegLarge,
     RFDETRSegMedium,
     RFDETRSegNano,
-    RFDETRSegPreview,
+    RFDETRSegPreview,  # DEPRECATED # noqa: F401
     RFDETRSegSmall,
     RFDETRSegXLarge,
     RFDETRSmall,

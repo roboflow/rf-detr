@@ -149,9 +149,9 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         target = {"image_id": image_id, "annotations": target}
         img, target = self.prepare(img, target)
         if self._transforms is not None:
-            img, target = self._transforms(
-                img, target
-            )  # boxes are absolute [x_min, y_min, x_max, y_max]; conversion to normalized [cx, cy, w, h] occurs inside Normalize
+            img, target = self._transforms(img, target)
+            # boxes are absolute [x_min, y_min, x_max, y_max]; conversion to
+            # normalized [cx, cy, w, h] occurs inside Normalize
         return img, target
 
 

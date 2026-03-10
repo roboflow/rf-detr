@@ -15,22 +15,18 @@ on the device.
 """
 
 import contextlib
-import copy
 import json
 import os
 import os.path as osp
-import random
 import time
 from collections import OrderedDict, namedtuple
 
 import numpy as np
-import supervision as sv
 import torch
-import torchvision.transforms.functional as F
 from PIL import Image
-from pycocotools.coco import COCO
-from pycocotools.cocoeval import COCOeval
 from tqdm.auto import tqdm
+
+from rfdetr.datasets.coco_eval import CocoEvaluator, create_common_coco_eval, evaluate  # noqa: F401
 
 try:
     import tensorrt as trt
@@ -42,13 +38,9 @@ try:
 except ImportError:
     cuda = None
 
-from rfdetr.utilities.box_ops import box_xyxy_to_cxcywh
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
-
-
-from rfdetr.datasets.coco_eval import CocoEvaluator, create_common_coco_eval, evaluate  # noqa: F401
 
 
 def get_image_list(ann_file):
@@ -106,7 +98,7 @@ def post_process(outputs, target_sizes):
     scale_fct = torch.stack([img_w, img_h, img_w, img_h], dim=1)
     boxes = boxes * scale_fct[:, None, :]
 
-    results = [{"scores": s, "labels": l, "boxes": b} for s, l, b in zip(scores, labels, boxes)]
+    results = [{"scores": score, "labels": label, "boxes": box} for score, label, box in zip(scores, labels, boxes)]
 
     return results
 

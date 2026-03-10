@@ -14,7 +14,7 @@ warnings.warn(
     stacklevel=2,
 )
 
-from rfdetr.utilities.box_ops import (  # noqa: E402, F401
+from rfdetr.utilities.box_ops import (  # noqa: E402
     batch_dice_loss,
     batch_dice_loss_jit,
     batch_sigmoid_ce_loss,

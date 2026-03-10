@@ -20,8 +20,7 @@ import torchvision
 from torch import Tensor
 
 if float(torchvision.__version__.split(".")[1]) < 7.0:
-    from torchvision.ops import _new_empty_tensor
-    from torchvision.ops.misc import _output_size
+    pass
 
 
 def _max_by_axis(the_list: List[List[int]]) -> List[int]:

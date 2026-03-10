@@ -6,7 +6,7 @@
 
 """Detection and segmentation head subpackage."""
 
-from rfdetr.models.heads.segmentation import (  # noqa: F401
+from rfdetr.models.heads.segmentation import (
     DepthwiseConvBlock,
     MLPBlock,
     SegmentationHead,

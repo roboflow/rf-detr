@@ -24,16 +24,16 @@ from rfdetr.assets.coco_classes import COCO_CLASSES
 from rfdetr.assets.model_weights import download_pretrain_weights, validate_pretrain_weights
 from rfdetr.config import (
     ModelConfig,
-    RFDETRBaseConfig,
+    RFDETRBaseConfig,  # DEPRECATED
     RFDETRLargeConfig,
-    RFDETRLargeDeprecatedConfig,
+    RFDETRLargeDeprecatedConfig,  # DEPRECATED
     RFDETRMediumConfig,
     RFDETRNanoConfig,
     RFDETRSeg2XLargeConfig,
     RFDETRSegLargeConfig,
     RFDETRSegMediumConfig,
     RFDETRSegNanoConfig,
-    RFDETRSegPreviewConfig,
+    RFDETRSegPreviewConfig,  # DEPRECATED
     RFDETRSegSmallConfig,
     RFDETRSegXLargeConfig,
     RFDETRSmallConfig,
@@ -560,7 +560,7 @@ class RFDETR:
         to values in the [0, 1] range and have the shape (C, H, W).
 
         Args:
-            images (Union[str, Image.Image, np.ndarray, torch.Tensor, List[Union[str, np.ndarray, Image.Image, torch.Tensor]]]):
+            images:
                 A single image or a list of images to process. Images can be provided
                 as file paths, PIL Images, NumPy arrays, or torch.Tensors.
             threshold (float, optional):
@@ -690,7 +690,8 @@ class RFDETR:
 
         Deploying with Roboflow will create a Serverless API to which you can make requests.
 
-        You can also download weights into a Roboflow Inference deployment for use in Roboflow Workflows and on-device deployment.
+        You can also download weights into a Roboflow Inference deployment for use in
+        Roboflow Workflows and on-device deployment.
 
         Args:
             workspace (str): The name of the Roboflow workspace to deploy to.
@@ -836,7 +837,8 @@ class RFDETRLarge(RFDETR):
                 logger.warning(
                     "\n"
                     "=" * 100 + "\n"
-                    "WARNING: Automatically switched to deprecated model configuration, due to using deprecated weights. "
+                    "WARNING: Automatically switched to deprecated model configuration, "
+                    "due to using deprecated weights. "
                     "This will be removed in a future version.\n"
                     "Please retrain your model with the new weights and configuration.\n"
                     "=" * 100 + "\n"

@@ -31,8 +31,8 @@ warnings.warn(
 
 # Re-export symbols that have moved to utilities/.
 # Re-export math functions from their canonical location in rfdetr.models.math.
-from rfdetr.models.math import accuracy, interpolate, inverse_sigmoid  # noqa: F401, E402
-from rfdetr.utilities.distributed import (  # noqa: E402, F401
+from rfdetr.models.math import accuracy, interpolate, inverse_sigmoid  # noqa: E402
+from rfdetr.utilities.distributed import (  # noqa: E402
     all_gather,
     get_rank,
     get_world_size,
@@ -41,8 +41,8 @@ from rfdetr.utilities.distributed import (  # noqa: E402, F401
     reduce_dict,
     save_on_master,
 )
-from rfdetr.utilities.package import get_sha  # noqa: E402, F401
-from rfdetr.utilities.state_dict import strip_checkpoint  # noqa: E402, F401
+from rfdetr.utilities.package import get_sha  # noqa: E402
+from rfdetr.utilities.state_dict import strip_checkpoint  # noqa: E402
 from rfdetr.utilities.tensors import (  # noqa: E402, F401
     NestedTensor,
     _max_by_axis,

@@ -20,11 +20,10 @@ from pytorch_lightning import LightningModule, seed_everything
 from rfdetr.assets.model_weights import download_pretrain_weights, validate_pretrain_weights
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.datasets.coco import compute_multi_scale_scales
-from rfdetr.models import build_criterion_and_postprocessors, build_model
+from rfdetr.models.lwdetr import build_criterion_and_postprocessors, build_model
 from rfdetr.training._namespace import build_namespace
 from rfdetr.training.param_groups import get_param_dict
 from rfdetr.utilities.logger import get_logger
-from rfdetr.utilities.tensors import NestedTensor
 
 logger = get_logger()
 

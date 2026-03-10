@@ -15,8 +15,7 @@ Exports:
     build_trainer: Factory that assembles a PTL Trainer from RF-DETR configs.
 """
 
-from pytorch_lightning import Trainer, seed_everything
-from pytorch_lightning.loggers import CSVLogger, MLFlowLogger, TensorBoardLogger, WandbLogger
+from pytorch_lightning import seed_everything
 
 from rfdetr.training.callbacks import (
     BestModelCallback,
@@ -28,7 +27,7 @@ from rfdetr.training.checkpoint import convert_legacy_checkpoint
 from rfdetr.training.cli import RFDETRCli
 from rfdetr.training.datamodule import RFDETRDataModule
 from rfdetr.training.module import RFDETRModule
-from rfdetr.training.trainer import build_trainer  # noqa: F401
+from rfdetr.training.trainer import build_trainer
 from rfdetr.utilities.logger import get_logger
 
 _logger = get_logger()

@@ -49,7 +49,7 @@ dependencies = [
     "matplotlib",
     "roboflow",
     "albumentations>=1.0.0,<2.0.0",
-    "lightning>=2.6,<3",
+    "pytorch_lightning>=2.6,<3",
     "torchmetrics[detection]>=1.2",
     "faster-coco-eval>=1.7.2",
     "pyDeprecate>=0.3,<1"
@@ -127,6 +127,7 @@ include-package-data = false
 rfdetr = ["py.typed", "models/backbone/dinov2_configs/*.json"]
 
 [tool.ruff]
+fix = true
 line-length = 120
 target-version = "py310"
 
@@ -135,19 +136,13 @@ select = [
     "E",  # pycodestyle errors
     "W",  # pycodestyle warnings
     "F",  # pyflakes
-]
-extend-select = [
     "I",  # isort
 ]
+extend-select = [
+    "RUF100",  # yesqa
+]
 ignore = [
-    "E501",  # todo: will be fixed with enabling ruff-format
     "E722",  # todo: Do not use bare `except`
-    "E741",  # todo: Ambiguous variable name: `...`
-    "F401",  # todo: `...` imported but unused; consider removing, adding to `__all__`, or using a redundant alias
-    "F403",  # todo: `from ... import *` used; unable to detect undefined names
-    "F405",  # todo: `...` may be undefined, or defined from star imports
-    "E721",  # todo: Use `is` and `is not` for type comparisons, or `isinstance()` for isinstance checks
-    "F821",  # todo: Undefined name `...`
 ]
 
 [tool.pytest.ini_options]

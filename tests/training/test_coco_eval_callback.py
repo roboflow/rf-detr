@@ -6,7 +6,7 @@
 
 """Unit tests for COCOEvalCallback (PTL Ch3/T3)."""
 
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest

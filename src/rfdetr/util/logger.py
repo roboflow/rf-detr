@@ -14,6 +14,6 @@ warnings.warn(
     stacklevel=2,
 )
 
-from rfdetr.utilities.logger import get_logger  # noqa: E402, F401
+from rfdetr.utilities.logger import get_logger  # noqa: E402
 
 __all__ = ["get_logger"]

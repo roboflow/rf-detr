@@ -25,14 +25,13 @@ import math
 from typing import Callable, Optional
 
 import torch
-import torch.nn.functional as F
 from torch import nn
 
 from rfdetr.models.backbone import build_backbone
 
 # Backward-compat re-exports: loss functions that used to live in this module
 from rfdetr.models.criterion import (  # noqa: F401 — backward compat
-    SetCriterion,  # noqa: F401 — backward compat
+    SetCriterion,
     dice_loss,
     dice_loss_jit,
     position_supervised_loss,
@@ -43,8 +42,8 @@ from rfdetr.models.criterion import (  # noqa: F401 — backward compat
 )
 from rfdetr.models.heads.segmentation import SegmentationHead
 from rfdetr.models.matcher import build_matcher
-from rfdetr.models.math import MLP  # noqa: F401 — backward compat
-from rfdetr.models.postprocess import PostProcess  # noqa: F401 — backward compat
+from rfdetr.models.math import MLP
+from rfdetr.models.postprocess import PostProcess
 from rfdetr.models.transformer import build_transformer
 from rfdetr.utilities.tensors import NestedTensor, nested_tensor_from_tensor_list
 
@@ -167,7 +166,7 @@ class LWDETR(nn.Module):
 
         srcs = []
         masks = []
-        for l, feat in enumerate(features):
+        for feat in features:
             src, mask = feat.decompose()
             srcs.append(src)
             masks.append(mask)

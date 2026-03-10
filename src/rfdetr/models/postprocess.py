@@ -73,6 +73,8 @@ class PostProcess(nn.Module):
                 res_i["masks"] = masks_i > 0.0
                 results.append(res_i)
         else:
-            results = [{"scores": s, "labels": l, "boxes": b} for s, l, b in zip(scores, labels, boxes)]
+            results = [
+                {"scores": score, "labels": label, "boxes": box} for score, label, box in zip(scores, labels, boxes)
+            ]
 
         return results

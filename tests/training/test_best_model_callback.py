@@ -251,8 +251,7 @@ class TestBestModelCallback:
         from pytorch_lightning import LightningModule
 
         class _ModuleWithTestStep(LightningModule):
-            def test_step(self, batch: object, batch_idx: int) -> None:  # noqa: D102
-                ...
+            def test_step(self, batch: object, batch_idx: int) -> None: ...
 
         # Use a real subclass (not MagicMock) so type() inspection sees test_step.
         pl_module = _ModuleWithTestStep()
@@ -294,8 +293,7 @@ class TestBestModelCallback:
         from pytorch_lightning import LightningModule
 
         class _ModuleWithTestStep(LightningModule):
-            def test_step(self, batch: object, batch_idx: int) -> None:  # noqa: D102
-                ...
+            def test_step(self, batch: object, batch_idx: int) -> None: ...
 
         pl_module = _ModuleWithTestStep()
         pl_module.model = MagicMock()

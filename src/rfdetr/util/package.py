@@ -14,6 +14,6 @@ warnings.warn(
     stacklevel=2,
 )
 
-from rfdetr.utilities.package import get_sha, get_version  # noqa: E402, F401
+from rfdetr.utilities.package import get_sha, get_version  # noqa: E402
 
 __all__ = ["get_sha", "get_version"]

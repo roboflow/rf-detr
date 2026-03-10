@@ -16,9 +16,7 @@ Chapter 1 gate: these must pass before Chapter 2 begins.
 
 from unittest.mock import MagicMock, patch
 
-import pytest
 import torch
-import torch.nn as nn
 from pytorch_lightning import Trainer
 
 from rfdetr.config import SegmentationTrainConfig

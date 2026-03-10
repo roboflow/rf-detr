@@ -6,7 +6,6 @@
 
 """Comprehensive unit tests for RFDETRModule (LightningModule wrapper)."""
 
-import math
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 

@@ -15,7 +15,6 @@ import json
 from pathlib import Path
 from typing import Dict, List
 
-import pytest
 import torch
 from PIL import Image
 

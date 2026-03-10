@@ -45,9 +45,10 @@ _CONFIG_FOR_DOC = "WindowedDinov2WithRegistersConfig"
 
 class WindowedDinov2WithRegistersConfig(BackboneConfigMixin, PretrainedConfig):
     r"""
-    This is the configuration class to store the configuration of a [`Dinov2WithRegistersModel`]. It is used to instantiate an
-    Dinov2WithRegisters model according to the specified arguments, defining the model architecture. Instantiating a configuration
-    with the defaults will yield a similar configuration to that of the DINOv2 with Registers
+    This is the configuration class to store the configuration of a [`Dinov2WithRegistersModel`].
+    It is used to instantiate a Dinov2WithRegisters model according to the specified arguments,
+    defining the model architecture. Instantiating a configuration with the defaults will yield a
+    similar configuration to that of the DINOv2 with Registers
     [facebook/dinov2-with-registers-base](https://huggingface.co/facebook/dinov2-with-registers-base) architecture.
 
     Configuration objects inherit from [`PretrainedConfig`] and can be used to control the model outputs. Read the
@@ -416,10 +417,15 @@ class Dinov2WithRegistersSdpaSelfAttention(Dinov2WithRegistersSelfAttention):
         self, hidden_states, head_mask: Optional[torch.Tensor] = None, output_attentions: bool = False
     ) -> Union[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor]]:
         if output_attentions:
-            # TODO: Improve this warning with e.g. `model.config.attn_implementation = "manual"` once this is implemented.
+            # TODO: Improve this warning with e.g. `model.config.attn_implementation = "manual"`
+            # once this is implemented.
             logger.warning_once(
-                "Dinov2WithRegistersModel is using Dinov2WithRegistersSdpaSelfAttention, but `torch.nn.functional.scaled_dot_product_attention` does not support `output_attentions=True`. Falling back to the manual attention implementation, "
-                'but specifying the manual implementation will be required from Transformers version v5.0.0 onwards. This warning can be removed using the argument `attn_implementation="eager"` when loading the model.'
+                "Dinov2WithRegistersModel is using Dinov2WithRegistersSdpaSelfAttention, but "
+                "`torch.nn.functional.scaled_dot_product_attention` does not support "
+                "`output_attentions=True`. Falling back to the manual attention implementation, "
+                "but specifying the manual implementation will be required from Transformers "
+                "version v5.0.0 onwards. This warning can be removed using the argument "
+                '`attn_implementation="eager"` when loading the model.'
             )
             return super().forward(
                 hidden_states=hidden_states, head_mask=head_mask, output_attentions=output_attentions
@@ -450,8 +456,8 @@ class Dinov2WithRegistersSdpaSelfAttention(Dinov2WithRegistersSelfAttention):
 
 class Dinov2WithRegistersSelfOutput(nn.Module):
     """
-    The residual connection is defined in Dinov2WithRegistersLayer instead of here (as is the case with other models), due to the
-    layernorm applied before each block.
+    The residual connection is defined in Dinov2WithRegistersLayer instead of here
+    (as is the case with other models), due to the layernorm applied before each block.
     """
 
     def __init__(self, config: WindowedDinov2WithRegistersConfig) -> None:
@@ -933,8 +939,8 @@ DINOV2_WITH_REGISTERS_INPUTS_DOCSTRING = r"""
 
 @add_start_docstrings(
     """
-    Dinov2WithRegisters Model transformer with an image classification head on top (a linear layer on top of the final hidden state
-    of the [CLS] token) e.g. for ImageNet.
+    Dinov2WithRegisters Model transformer with an image classification head on top
+    (a linear layer on top of the final hidden state of the [CLS] token) e.g. for ImageNet.
     """,
     DINOV2_WITH_REGISTERS_START_DOCSTRING,
 )

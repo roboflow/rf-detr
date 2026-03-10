@@ -13,7 +13,14 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 # ------------------------------------------------------------------------
 
-from rfdetr.models.criterion import SetCriterion  # noqa: F401
-from rfdetr.models.lwdetr import build_criterion_and_postprocessors, build_model
-from rfdetr.models.math import MLP  # noqa: F401
-from rfdetr.models.postprocess import PostProcess  # noqa: F401
+from rfdetr.models.criterion import SetCriterion
+from rfdetr.models.lwdetr import build_model
+from rfdetr.models.math import MLP
+from rfdetr.models.postprocess import PostProcess
+
+__all__ = [
+    "SetCriterion",
+    "build_model",
+    "MLP",
+    "PostProcess",
+]

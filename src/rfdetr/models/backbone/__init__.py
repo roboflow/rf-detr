@@ -7,12 +7,12 @@
 # Copyright (c) 2024 Baidu. All Rights Reserved.
 # ------------------------------------------------------------------------
 
-from typing import Callable, Dict, List
+from typing import Callable
 
 import torch
 from torch import nn
 
-from rfdetr.models.backbone.backbone import *
+from rfdetr.models.backbone.backbone import Backbone
 from rfdetr.models.position_encoding import build_position_encoding
 from rfdetr.utilities.tensors import NestedTensor
 

@@ -14,6 +14,6 @@ warnings.warn(
     stacklevel=2,
 )
 
-from rfdetr.assets.coco_classes import COCO_CLASSES  # noqa: E402, F401
+from rfdetr.assets.coco_classes import COCO_CLASSES  # noqa: E402
 
 __all__ = ["COCO_CLASSES"]

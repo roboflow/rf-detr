@@ -23,9 +23,7 @@ from pathlib import Path
 
 import pytest
 import torch
-from pytorch_lightning import LightningModule
 
-from rfdetr import RFDETRNano
 from rfdetr.config import RFDETRBaseConfig, TrainConfig
 from rfdetr.training import RFDETRDataModule, RFDETRModule, build_trainer
 

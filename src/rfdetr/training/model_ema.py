@@ -8,11 +8,9 @@
 
 import json
 import math
-from collections import OrderedDict
 from copy import deepcopy
-from typing import Any, Callable, Dict, Optional, Union
+from typing import Callable, Dict, Optional, Union
 
-import numpy as np
 import torch
 
 

@@ -105,14 +105,18 @@ class DinoV2(nn.Module):
 
             if implied_resolution != dino_config["image_size"]:
                 logger.warning(
-                    "Using a different number of positional encodings than DINOv2, which means we're not loading DINOv2 backbone weights. This is not a problem if finetuning a pretrained RF-DETR model."
+                    "Using a different number of positional encodings than DINOv2, which means "
+                    "we're not loading DINOv2 backbone weights. This is not a problem if "
+                    "finetuning a pretrained RF-DETR model."
                 )
                 dino_config["image_size"] = implied_resolution
                 load_dinov2_weights = False
 
             if patch_size != 14:
                 logger.warning(
-                    f"Using patch size {patch_size} instead of 14, which means we're not loading DINOv2 backbone weights. This is not a problem if finetuning a pretrained RF-DETR model."
+                    f"Using patch size {patch_size} instead of 14, which means we're not loading "
+                    "DINOv2 backbone weights. This is not a problem if finetuning a pretrained "
+                    "RF-DETR model."
                 )
                 dino_config["patch_size"] = patch_size
                 load_dinov2_weights = False

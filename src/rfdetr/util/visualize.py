@@ -14,6 +14,6 @@ warnings.warn(
     stacklevel=2,
 )
 
-from rfdetr.visualize.data import save_gt_predictions_visualization  # noqa: E402, F401
+from rfdetr.visualize.data import save_gt_predictions_visualization  # noqa: E402
 
 __all__ = ["save_gt_predictions_visualization"]

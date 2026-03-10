@@ -21,8 +21,8 @@ from PIL import Image
 from torchvision.transforms.v2 import Compose, Resize, ToDtype, ToImage
 
 from rfdetr.datasets.transforms import Normalize
-from rfdetr.export._onnx.exporter import export_onnx, onnx_simplify  # noqa: F401
-from rfdetr.export.tensorrt import trtexec  # noqa: F401
+from rfdetr.export._onnx.exporter import export_onnx, onnx_simplify
+from rfdetr.export.tensorrt import trtexec
 from rfdetr.models import build_model
 from rfdetr.utilities.distributed import get_rank
 from rfdetr.utilities.logger import get_logger
