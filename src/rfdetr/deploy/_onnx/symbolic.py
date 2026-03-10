@@ -3,26 +3,16 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-# Copied and modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
-# Copyright (c) 2024 Baidu. All Rights Reserved.
-# ------------------------------------------------------------------------
-"""
-CustomOpSymbolicRegistry class
-"""
 
+"""Backward-compatibility shim — rfdetr.deploy._onnx.symbolic is deprecated; use rfdetr.export._onnx.symbolic."""
 
-class CustomOpSymbolicRegistry:
-    # _SYMBOLICS = {}
-    _OPTIMIZER = []
+import warnings
 
-    @classmethod
-    def optimizer(cls, fn):
-        cls._OPTIMIZER.append(fn)
+warnings.warn(
+    "rfdetr.deploy._onnx.symbolic is deprecated; use rfdetr.export._onnx.symbolic instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
-
-def register_optimizer():
-    def optimizer_wrapper(fn):
-        CustomOpSymbolicRegistry.optimizer(fn)
-        return fn
-
-    return optimizer_wrapper
+from rfdetr.export._onnx.symbolic import *  # noqa: F401, F403, E402
+from rfdetr.export._onnx.symbolic import CustomOpSymbolicRegistry  # noqa: E402

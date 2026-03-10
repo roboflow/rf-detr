@@ -386,7 +386,7 @@ class RFDETR:
         """
         logger.info("Exporting model to ONNX format")
         try:
-            from rfdetr.deploy.export import export_onnx, make_infer_image, onnx_simplify
+            from rfdetr.export.export import export_onnx, make_infer_image, onnx_simplify
         except ImportError:
             logger.error(
                 "It seems some dependencies for ONNX export are missing. "

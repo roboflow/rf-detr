@@ -30,7 +30,7 @@ import torch
 from torch.jit import TracerWarning
 
 from rfdetr import RFDETRSegNano
-from rfdetr.deploy import export as _cli_export_module
+from rfdetr.export import export as _cli_export_module
 
 _IS_ONNX_INSTALLED = importlib.util.find_spec("onnx") is not None
 
