@@ -115,6 +115,8 @@ RF-DETR automatically handles bounding boxes for **geometric transforms** (flips
 
 **Validation mAP is much higher than training mAP** — this is expected with strong augmentations and not a bug. See the monitoring tip above.
 
+**Upgrading albumentations to 2.x with existing `RandomSizedCrop` configs?** RF-DETR automatically adapts `height`/`width` kwargs to the `size=(height, width)` format required by albumentations 2.x. No config changes needed.
+
 ## Advanced: Custom Transforms
 
 Any Albumentations transform works by name. If your custom transform is geometric, register it in `rfdetr/datasets/transforms.py` so boxes are updated automatically:

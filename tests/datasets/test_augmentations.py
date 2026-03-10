@@ -690,6 +690,86 @@ class TestAlbumentationsWrapperFromConfig:
         assert transform.width == 640
 
 
+class TestRandomSizedCropCompat:
+    """Tests for RandomSizedCrop cross-version parameter normalization edge cases."""
+
+    @pytest.mark.parametrize(
+        "params, expected_missing",
+        [
+            pytest.param(
+                {"min_max_height": [100, 200], "height": 256},
+                "width",
+                id="height_without_width",
+            ),
+            pytest.param(
+                {"min_max_height": [100, 200], "width": 256},
+                "height",
+                id="width_without_height",
+            ),
+        ],
+    )
+    def test_errors_on_partial_hw_with_v2_api(self, monkeypatch, params, expected_missing):
+        class FakeV2:
+            def __init__(self, *, min_max_height, size, p=1.0):
+                pass
+
+        monkeypatch.setattr("rfdetr.datasets.transforms.A.RandomSizedCrop", FakeV2)
+
+        with pytest.raises(ValueError, match=f"missing '{expected_missing}'"):
+            _build_albu_transform("RandomSizedCrop", params)
+
+    @pytest.mark.parametrize(
+        "params",
+        [
+            pytest.param(
+                {"min_max_height": [100, 200], "size": (256, 256), "height": 256},
+                id="size_and_height",
+            ),
+            pytest.param(
+                {"min_max_height": [100, 200], "size": (256, 256), "width": 256},
+                id="size_and_width",
+            ),
+            pytest.param(
+                {
+                    "min_max_height": [100, 200],
+                    "size": (256, 256),
+                    "height": 256,
+                    "width": 256,
+                },
+                id="size_and_height_and_width",
+            ),
+        ],
+    )
+    def test_size_takes_precedence_over_hw_on_v2_api(self, monkeypatch, params):
+        class FakeV2:
+            def __init__(self, *, min_max_height, size, p=1.0):
+                self.size = size
+
+        monkeypatch.setattr("rfdetr.datasets.transforms.A.RandomSizedCrop", FakeV2)
+
+        # No TypeError means height/width were correctly dropped before instantiation
+        transform = _build_albu_transform("RandomSizedCrop", params)
+        assert transform.size == (256, 256)
+
+    def test_scalar_size_passes_through_on_v1_legacy_path(self, monkeypatch):
+        class FakeV1:
+            def __init__(self, *, min_max_height, height, width, p=1.0):
+                self.height = height
+                self.width = width
+
+        monkeypatch.setattr("rfdetr.datasets.transforms.A.RandomSizedCrop", FakeV1)
+
+        # Scalar size=640 does not match isinstance(size, Sequence), so the v1
+        # legacy branch leaves it in the params dict. FakeV1 does not accept
+        # ``size`` so this should raise a TypeError from the constructor — our
+        # normalization code does NOT raise a ValueError for this case.
+        with pytest.raises(TypeError):
+            _build_albu_transform(
+                "RandomSizedCrop",
+                {"min_max_height": [100, 200], "size": 640},
+            )
+
+
 class TestAlbumentationsWrapperNestedConfig:
     """Tests for nested container (OneOf, SomeOf, Sequential) support in from_config."""
 

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Relax Albumentations version requirement to support 2.x (`albumentations>=1.4.24`). `RandomSizedCrop` configs using `height`/`width` are automatically adapted to the `size=(height, width)` API ([#786](https://github.com/roboflow/rf-detr/pull/786)).
+
 ### Fixed
 
 - Fix `AttributeError` crash in `update_drop_path` when the DinoV2 backbone layer structure does not match any known pattern ([#750](https://github.com/roboflow/rf-detr/issues/750)). `_get_backbone_encoder_layers` now returns `None` for unrecognised architectures and `update_drop_path` exits early instead of raising.

@@ -315,6 +315,11 @@ def _normalize_albu_params(name: str, params: Dict[str, Any], aug_cls: type) -> 
         # surface its own error about missing required arguments.
         return normalized_params
 
+    # NOTE: This branch is unreachable when albumentations>=1.4.24 is installed
+    # (the package constraint since PR #786). albumentations 1.4.24 introduced
+    # ``size`` to RandomSizedCrop, so _random_sized_crop_uses_size_param() always
+    # returns True for any conformant installation. The code is kept for
+    # completeness and is covered only by tests using synthetic fake classes.
     if not uses_size and "size" in normalized_params:
         size = normalized_params.get("size")
         if isinstance(size, Sequence) and len(size) == 2:
