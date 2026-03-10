@@ -330,7 +330,7 @@ def download_pretrain_weights(
     else:
         # If still not found, fall back to legacy dict-based platform models
         try:
-            from rfdetr.platform.platform_downloads import PLATFORM_MODELS
+            from rfdetr.platform.downloads import PLATFORM_MODELS
 
             if model_name not in PLATFORM_MODELS:
                 return

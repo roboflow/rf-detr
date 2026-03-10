@@ -12,6 +12,6 @@
 onnx optimizer and symbolic registry
 """
 
-from rfdetr.export._onnx import optimizer, symbolic
-from rfdetr.export._onnx.optimizer import OnnxOptimizer
+from rfdetr.export._onnx import exporter, symbolic
+from rfdetr.export._onnx.exporter import OnnxOptimizer
 from rfdetr.export._onnx.symbolic import CustomOpSymbolicRegistry

@@ -72,6 +72,16 @@ metrics = [
     "pandas",
     "seaborn",
 ]
+deploy = [
+    "pycuda",
+    "onnx>=1.16.0,<1.20",
+    "onnxsim<0.6.0",
+    "onnxruntime",
+    "onnxruntime-gpu",
+    "onnx_graphsurgeon",
+    "tensorrt>=8.6.1",
+    "polygraphy",
+]
 cli = ["jsonargparse[signatures]>=4.27.7"]
 plus = ["rfdetr_plus>=1.0.1, <2.0.0"]
 

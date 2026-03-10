@@ -8,14 +8,16 @@
 # ------------------------------------------------------------------------
 
 """
-OnnxOptimizer
+ONNX export, simplification, and OnnxOptimizer.
 """
 
+import inspect
 import os
 from collections import OrderedDict
 from copy import deepcopy
 
 import numpy as np
+import torch
 
 try:
     import onnx
@@ -37,6 +39,89 @@ except ImportError:
     fold_constants = None  # type: ignore[assignment]
 
 from rfdetr.export._onnx.symbolic import CustomOpSymbolicRegistry
+from rfdetr.utilities.logger import get_logger
+
+logger = get_logger()
+
+
+# ---------------------------------------------------------------------------
+# ONNX export helpers (moved from export/export.py)
+# ---------------------------------------------------------------------------
+
+
+def export_onnx(
+    output_dir,
+    model,
+    input_names,
+    input_tensors,
+    output_names,
+    dynamic_axes,
+    backbone_only=False,
+    verbose=True,
+    opset_version=17,
+):
+    export_name = "backbone_model" if backbone_only else "inference_model"
+    output_file = os.path.join(output_dir, f"{export_name}.onnx")
+
+    # Prepare model for export
+    if hasattr(model, "export"):
+        model.export()
+
+    export_kwargs = {}
+    if "dynamo" in inspect.signature(torch.onnx.export).parameters:
+        # Torch 2.10+ may default to the dynamo exporter which requires extra deps
+        # (e.g. onnxscript). Use the legacy path for compatibility.
+        export_kwargs["dynamo"] = False
+
+    torch.onnx.export(
+        model,
+        input_tensors,
+        output_file,
+        input_names=input_names,
+        output_names=output_names,
+        export_params=True,
+        keep_initializers_as_inputs=False,
+        do_constant_folding=True,
+        verbose=verbose,
+        opset_version=opset_version,
+        dynamic_axes=dynamic_axes,
+        **export_kwargs,
+    )
+
+    logger.info(f"\nSuccessfully exported ONNX model: {output_file}")
+    return output_file
+
+
+def onnx_simplify(onnx_dir: str, input_names, input_tensors, force=False):
+    import onnx as _onnx
+    import onnxsim
+
+    sim_onnx_dir = onnx_dir.replace(".onnx", ".sim.onnx")
+    if os.path.isfile(sim_onnx_dir) and not force:
+        return sim_onnx_dir
+
+    if isinstance(input_tensors, torch.Tensor):
+        input_tensors = [input_tensors]
+
+    logger.info(f"start simplify ONNX model: {onnx_dir}")
+    opt = OnnxOptimizer(onnx_dir)
+    opt.info("Model: original")
+    opt.common_opt()
+    opt.info("Model: optimized")
+    opt.save_onnx(sim_onnx_dir)
+    input_dict = {name: tensor.detach().cpu().numpy() for name, tensor in zip(input_names, input_tensors)}
+    model_opt, check_ok = onnxsim.simplify(onnx_dir, check_n=3, input_data=input_dict, dynamic_input_shape=False)
+    if check_ok:
+        _onnx.save(model_opt, sim_onnx_dir)
+    else:
+        raise RuntimeError("Failed to simplify ONNX model.")
+    logger.info(f"Successfully simplified ONNX model: {sim_onnx_dir}")
+    return sim_onnx_dir
+
+
+# ---------------------------------------------------------------------------
+# OnnxOptimizer (moved from _onnx/optimizer.py)
+# ---------------------------------------------------------------------------
 
 
 class OnnxOptimizer:

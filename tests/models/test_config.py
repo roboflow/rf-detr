@@ -233,7 +233,7 @@ class TestBuildTrainerUsesRealFields:
 
         from rfdetr.training import build_trainer
 
-        with mock.patch("rfdetr.training.seed_everything") as mock_seed:
+        with mock.patch("pytorch_lightning.seed_everything") as mock_seed:
             build_trainer(self._tc(tmp_path, seed=99), self._mc())
         mock_seed.assert_not_called()
 
@@ -251,7 +251,7 @@ class TestBuildTrainerUsesRealFields:
             captured_kwargs.update(kwargs)
             real_trainer_init(self_t, **kwargs)
 
-        with mock.patch("rfdetr.training.Trainer.__init__", _capture_init):
+        with mock.patch("rfdetr.training.trainer.Trainer.__init__", _capture_init):
             build_trainer(self._tc(tmp_path, sync_bn=True), self._mc())
 
         assert captured_kwargs.get("sync_batchnorm") is True

@@ -180,7 +180,7 @@ class TestBuildTrainerPrecision:
         with (
             mock.patch("torch.cuda.is_available", return_value=True),
             mock.patch("torch.cuda.is_bf16_supported", return_value=False),
-            mock.patch("rfdetr.training.Trainer", side_effect=_fake_trainer),
+            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
         ):
             build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=True))
         assert captured["precision"] == "16-mixed"
@@ -203,7 +203,7 @@ class TestBuildTrainerPrecision:
         with (
             mock.patch("torch.cuda.is_available", return_value=True),
             mock.patch("torch.cuda.is_bf16_supported", return_value=True),
-            mock.patch("rfdetr.training.Trainer", side_effect=_fake_trainer),
+            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
         ):
             build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=True))
         assert captured["precision"] == "bf16-mixed"
@@ -240,7 +240,7 @@ class TestBuildTrainerEMAShardingGuard:
             return mock.MagicMock()
 
         with (
-            mock.patch("rfdetr.training.Trainer", side_effect=_fake_trainer),
+            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
             warnings.catch_warnings(record=True),
         ):
             warnings.simplefilter("always")
@@ -257,7 +257,7 @@ class TestBuildTrainerEMAShardingGuard:
         tc.__dict__["strategy"] = "fsdp"
 
         with (
-            mock.patch("rfdetr.training.Trainer", return_value=mock.MagicMock()),
+            mock.patch("rfdetr.training.trainer.Trainer", return_value=mock.MagicMock()),
             warnings.catch_warnings(record=True) as caught,
         ):
             warnings.simplefilter("always")
@@ -293,7 +293,7 @@ class TestBuildTrainerLoggers:
         from pytorch_lightning.loggers import TensorBoardLogger
 
         fake_logger = mock.MagicMock(spec=TensorBoardLogger)
-        with mock.patch("rfdetr.training.TensorBoardLogger", return_value=fake_logger):
+        with mock.patch("rfdetr.training.trainer.TensorBoardLogger", return_value=fake_logger):
             trainer = build_trainer(
                 _tc(tmp_path, tensorboard=True, use_ema=False),
                 _mc(),
@@ -307,7 +307,7 @@ class TestBuildTrainerLoggers:
         from pytorch_lightning.loggers import MLFlowLogger
 
         fake_logger = mock.MagicMock(spec=MLFlowLogger)
-        with mock.patch("rfdetr.training.MLFlowLogger", return_value=fake_logger):
+        with mock.patch("rfdetr.training.trainer.MLFlowLogger", return_value=fake_logger):
             trainer = build_trainer(
                 _tc(tmp_path, mlflow=True, use_ema=False),
                 _mc(),
@@ -318,8 +318,8 @@ class TestBuildTrainerLoggers:
         """If tensorboard package is absent, a warning is logged and training continues."""
         import unittest.mock as mock
 
-        with mock.patch("rfdetr.training.TensorBoardLogger", side_effect=ModuleNotFoundError("no tensorboard")):
-            with mock.patch("rfdetr.training._logger") as mock_logger:
+        with mock.patch("rfdetr.training.trainer.TensorBoardLogger", side_effect=ModuleNotFoundError("no tensorboard")):
+            with mock.patch("rfdetr.training.trainer._logger") as mock_logger:
                 trainer = build_trainer(
                     _tc(tmp_path, tensorboard=True, use_ema=False),
                     _mc(),
@@ -352,8 +352,8 @@ class TestBuildTrainerLoggers:
         fake_tb = mock.MagicMock(spec=TensorBoardLogger)
         fake_mlflow = mock.MagicMock(spec=MLFlowLogger)
         with (
-            mock.patch("rfdetr.training.TensorBoardLogger", return_value=fake_tb),
-            mock.patch("rfdetr.training.MLFlowLogger", return_value=fake_mlflow),
+            mock.patch("rfdetr.training.trainer.TensorBoardLogger", return_value=fake_tb),
+            mock.patch("rfdetr.training.trainer.MLFlowLogger", return_value=fake_mlflow),
         ):
             trainer = build_trainer(
                 _tc(tmp_path, tensorboard=True, mlflow=True, use_ema=False),
@@ -402,7 +402,7 @@ class TestBuildTrainerKwargs:
             captured.update(kwargs)
             return mock.MagicMock()
 
-        with mock.patch("rfdetr.training.Trainer", side_effect=_fake_trainer):
+        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
             build_trainer(
                 _tc(tmp_path, use_ema=False),
                 _mc(amp=True),

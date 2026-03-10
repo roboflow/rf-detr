@@ -14,7 +14,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from rfdetr.models.segmentation_head import (
+from rfdetr.models.heads.segmentation import (
     calculate_uncertainty,
     get_uncertain_point_coords_with_randomness,
     point_sample,

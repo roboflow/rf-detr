@@ -30,7 +30,7 @@ import torch
 from torch.jit import TracerWarning
 
 from rfdetr import RFDETRSegNano
-from rfdetr.export import export as _cli_export_module
+from rfdetr.export import main as _cli_export_module
 
 _IS_ONNX_INSTALLED = importlib.util.find_spec("onnx") is not None
 
@@ -149,7 +149,7 @@ def test_segmentation_outputs_present_in_train_and_eval(mode: Literal["train", "
 
 
 # --------------------------------------------------------------------------
-# Tests for the CLI export path: rfdetr.deploy.export.main()
+# Tests for the CLI export path: rfdetr.export.main.main()
 # --------------------------------------------------------------------------
 
 

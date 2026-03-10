@@ -73,7 +73,7 @@ class TestDownloadPretrainWeights:
         with (
             patch("rfdetr.assets.model_weights.ModelWeights.from_filename", return_value=None),
             patch.dict(
-                "sys.modules", {"rfdetr.platform": Mock(), "rfdetr.platform.platform_downloads": mock_platform_module}
+                "sys.modules", {"rfdetr.platform": Mock(), "rfdetr.platform.downloads": mock_platform_module}
             ),
         ):
             download_pretrain_weights("legacy-model.pth")

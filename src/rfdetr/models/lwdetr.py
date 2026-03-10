@@ -44,7 +44,7 @@ from rfdetr.models.criterion import (  # noqa: F401 — backward compat
 from rfdetr.models.matcher import build_matcher
 from rfdetr.models.math import MLP  # noqa: F401 — backward compat
 from rfdetr.models.postprocess import PostProcess  # noqa: F401 — backward compat
-from rfdetr.models.segmentation_head import SegmentationHead
+from rfdetr.models.heads.segmentation import SegmentationHead
 from rfdetr.models.transformer import build_transformer
 from rfdetr.utilities.tensors import NestedTensor, nested_tensor_from_tensor_list
 

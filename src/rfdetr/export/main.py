@@ -8,14 +8,11 @@
 # ------------------------------------------------------------------------
 
 """
-export ONNX model and TensorRT engine for deployment
+CLI orchestrator for ONNX and TensorRT model export.
 """
 
-import inspect
 import os
 import random
-import re
-import subprocess
 
 import numpy as np
 import torch
@@ -24,24 +21,14 @@ from PIL import Image
 from torchvision.transforms.v2 import Compose, Resize, ToDtype, ToImage
 
 from rfdetr.datasets.transforms import Normalize
+from rfdetr.export._onnx.exporter import export_onnx, onnx_simplify  # noqa: F401
+from rfdetr.export.tensorrt import trtexec  # noqa: F401
 from rfdetr.models import build_model
 from rfdetr.utilities.distributed import get_rank
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.package import get_sha, get_version
 
 logger = get_logger()
-
-
-def run_command_shell(command, dry_run: bool = False) -> subprocess.CompletedProcess:
-    if dry_run:
-        logger.info(f"\nCUDA_VISIBLE_DEVICES={os.environ['CUDA_VISIBLE_DEVICES']} {command}\n")
-    try:
-        result = subprocess.run(command, shell=True, capture_output=True, text=True, check=True)
-        return result
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Command failed with exit code {e.returncode}")
-        logger.error(f"Error output:\n{e.stderr}")
-        raise
 
 
 def make_infer_image(infer_dir, shape, batch_size, device="cuda"):
@@ -65,167 +52,6 @@ def make_infer_image(infer_dir, shape, batch_size, device="cuda"):
     # inps = utils.nested_tensor_from_tensor_list([inps for _ in range(args.batch_size)])
     inps = torch.stack([inps for _ in range(batch_size)])
     return inps
-
-
-def export_onnx(
-    output_dir,
-    model,
-    input_names,
-    input_tensors,
-    output_names,
-    dynamic_axes,
-    backbone_only=False,
-    verbose=True,
-    opset_version=17,
-):
-    export_name = "backbone_model" if backbone_only else "inference_model"
-    output_file = os.path.join(output_dir, f"{export_name}.onnx")
-
-    # Prepare model for export
-    if hasattr(model, "export"):
-        model.export()
-
-    export_kwargs = {}
-    if "dynamo" in inspect.signature(torch.onnx.export).parameters:
-        # Torch 2.10+ may default to the dynamo exporter which requires extra deps
-        # (e.g. onnxscript). Use the legacy path for compatibility.
-        export_kwargs["dynamo"] = False
-
-    torch.onnx.export(
-        model,
-        input_tensors,
-        output_file,
-        input_names=input_names,
-        output_names=output_names,
-        export_params=True,
-        keep_initializers_as_inputs=False,
-        do_constant_folding=True,
-        verbose=verbose,
-        opset_version=opset_version,
-        dynamic_axes=dynamic_axes,
-        **export_kwargs,
-    )
-
-    logger.info(f"\nSuccessfully exported ONNX model: {output_file}")
-    return output_file
-
-
-def onnx_simplify(onnx_dir: str, input_names, input_tensors, force=False):
-    import onnx
-    import onnxsim
-
-    from rfdetr.export._onnx import OnnxOptimizer
-
-    sim_onnx_dir = onnx_dir.replace(".onnx", ".sim.onnx")
-    if os.path.isfile(sim_onnx_dir) and not force:
-        return sim_onnx_dir
-
-    if isinstance(input_tensors, torch.Tensor):
-        input_tensors = [input_tensors]
-
-    logger.info(f"start simplify ONNX model: {onnx_dir}")
-    opt = OnnxOptimizer(onnx_dir)
-    opt.info("Model: original")
-    opt.common_opt()
-    opt.info("Model: optimized")
-    opt.save_onnx(sim_onnx_dir)
-    input_dict = {name: tensor.detach().cpu().numpy() for name, tensor in zip(input_names, input_tensors)}
-    model_opt, check_ok = onnxsim.simplify(onnx_dir, check_n=3, input_data=input_dict, dynamic_input_shape=False)
-    if check_ok:
-        onnx.save(model_opt, sim_onnx_dir)
-    else:
-        raise RuntimeError("Failed to simplify ONNX model.")
-    logger.info(f"Successfully simplified ONNX model: {sim_onnx_dir}")
-    return sim_onnx_dir
-
-
-def trtexec(onnx_dir: str, args) -> None:
-    engine_dir = onnx_dir.replace(".onnx", ".engine")
-
-    # Base trtexec command
-    trt_command = " ".join(
-        [
-            "trtexec",
-            f"--onnx={onnx_dir}",
-            f"--saveEngine={engine_dir}",
-            "--memPoolSize=workspace:4096 --fp16",
-            "--useCudaGraph --useSpinWait --warmUp=500 --avgRuns=1000 --duration=10",
-            f"{'--verbose' if args.verbose else ''}",
-        ]
-    )
-
-    if args.profile:
-        profile_dir = onnx_dir.replace(".onnx", ".nsys-rep")
-        # Wrap with nsys profile command
-        command = " ".join(
-            ["nsys profile", f"--output={profile_dir}", "--trace=cuda,nvtx", "--force-overwrite true", trt_command]
-        )
-        logger.info(f"Profile data will be saved to: {profile_dir}")
-    else:
-        command = trt_command
-
-    output = run_command_shell(command, args.dry_run)
-    parse_trtexec_output(output.stdout)
-
-
-def parse_trtexec_output(output_text):
-    logger.info(output_text)
-    # Common patterns in trtexec output
-    gpu_compute_pattern = (
-        r"GPU Compute Time: min = (\d+\.\d+) ms, max = (\d+\.\d+) ms, mean = (\d+\.\d+) ms, median = (\d+\.\d+) ms"
-    )
-    h2d_pattern = r"Host to Device Transfer Time: min = (\d+\.\d+) ms, max = (\d+\.\d+) ms, mean = (\d+\.\d+) ms"
-    d2h_pattern = r"Device to Host Transfer Time: min = (\d+\.\d+) ms, max = (\d+\.\d+) ms, mean = (\d+\.\d+) ms"
-    latency_pattern = r"Latency: min = (\d+\.\d+) ms, max = (\d+\.\d+) ms, mean = (\d+\.\d+) ms"
-    throughput_pattern = r"Throughput: (\d+\.\d+) qps"
-
-    stats = {}
-
-    # Extract compute times
-    if match := re.search(gpu_compute_pattern, output_text):
-        stats.update(
-            {
-                "compute_min_ms": float(match.group(1)),
-                "compute_max_ms": float(match.group(2)),
-                "compute_mean_ms": float(match.group(3)),
-                "compute_median_ms": float(match.group(4)),
-            }
-        )
-
-    # Extract H2D times
-    if match := re.search(h2d_pattern, output_text):
-        stats.update(
-            {
-                "h2d_min_ms": float(match.group(1)),
-                "h2d_max_ms": float(match.group(2)),
-                "h2d_mean_ms": float(match.group(3)),
-            }
-        )
-
-    # Extract D2H times
-    if match := re.search(d2h_pattern, output_text):
-        stats.update(
-            {
-                "d2h_min_ms": float(match.group(1)),
-                "d2h_max_ms": float(match.group(2)),
-                "d2h_mean_ms": float(match.group(3)),
-            }
-        )
-
-    if match := re.search(latency_pattern, output_text):
-        stats.update(
-            {
-                "latency_min_ms": float(match.group(1)),
-                "latency_max_ms": float(match.group(2)),
-                "latency_mean_ms": float(match.group(3)),
-            }
-        )
-
-    # Extract throughput
-    if match := re.search(throughput_pattern, output_text):
-        stats["throughput_qps"] = float(match.group(1))
-
-    return stats
 
 
 def no_batch_norm(model):
