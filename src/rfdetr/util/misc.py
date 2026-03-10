@@ -21,14 +21,11 @@ Misc functions, including distributed helpers.
 Mostly copy-paste from torchvision references.
 """
 
-import datetime
 import os
 import pickle
 import subprocess
 import tempfile
-import time
-from collections import defaultdict, deque
-from typing import Any, Dict, Generator, Iterable, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 import torch.distributed as dist
@@ -44,65 +41,6 @@ logger = get_logger()
 if float(torchvision.__version__.split(".")[1]) < 7.0:
     from torchvision.ops import _new_empty_tensor
     from torchvision.ops.misc import _output_size
-
-
-class SmoothedValue(object):
-    """Track a series of values and provide access to smoothed values over a
-    window or the global series average.
-    """
-
-    def __init__(self, window_size: int = 20, fmt: Optional[str] = None) -> None:
-        if fmt is None:
-            fmt = "{median:.4f} ({global_avg:.4f})"
-        self.deque = deque(maxlen=window_size)
-        self.total = 0.0
-        self.count = 0
-        self.fmt = fmt
-
-    def update(self, value: float, n: int = 1) -> None:
-        self.deque.append(value)
-        self.count += n
-        self.total += value * n
-
-    def synchronize_between_processes(self) -> None:
-        """
-        Warning: does not synchronize the deque!
-        """
-        if not is_dist_avail_and_initialized():
-            return
-        t = torch.tensor([self.count, self.total], dtype=torch.float64, device="cuda")
-        dist.barrier()
-        dist.all_reduce(t)
-        t = t.tolist()
-        self.count = int(t[0])
-        self.total = t[1]
-
-    @property
-    def median(self) -> float:
-        d = torch.tensor(list(self.deque))
-        return d.median().item()
-
-    @property
-    def avg(self) -> float:
-        d = torch.tensor(list(self.deque), dtype=torch.float32)
-        return d.mean().item()
-
-    @property
-    def global_avg(self) -> float:
-        return self.total / self.count
-
-    @property
-    def max(self) -> float:
-        return max(self.deque)
-
-    @property
-    def value(self) -> float:
-        return self.deque[-1]
-
-    def __str__(self) -> str:
-        return self.fmt.format(
-            median=self.median, avg=self.avg, global_avg=self.global_avg, max=self.max, value=self.value
-        )
 
 
 def all_gather(data: Any) -> List[Any]:
@@ -173,108 +111,6 @@ def reduce_dict(input_dict: Dict[str, torch.Tensor], average: bool = True) -> Di
             values /= world_size
         reduced_dict = {k: v for k, v in zip(names, values)}
     return reduced_dict
-
-
-class MetricLogger(object):
-    def __init__(self, delimiter: str = "\t", wandb_logging: bool = False) -> None:
-        self.meters = defaultdict(SmoothedValue)
-        self.delimiter = delimiter
-        if wandb_logging:
-            import wandb
-
-            self.wandb = wandb
-        else:
-            self.wandb = None
-
-    def update(self, **kwargs: Any) -> None:
-        for k, v in kwargs.items():
-            if isinstance(v, torch.Tensor):
-                v = v.item()
-            assert isinstance(v, (float, int))
-            self.meters[k].update(v)
-
-    def __getattr__(self, attr: str) -> SmoothedValue:
-        if attr in self.meters:
-            return self.meters[attr]
-        if attr in self.__dict__:
-            return self.__dict__[attr]
-        raise AttributeError("'{}' object has no attribute '{}'".format(type(self).__name__, attr))
-
-    def __str__(self) -> str:
-        loss_str = []
-        for name, meter in self.meters.items():
-            loss_str.append("{}: {}".format(name, str(meter)))
-        return self.delimiter.join(loss_str)
-
-    def synchronize_between_processes(self) -> None:
-        for meter in self.meters.values():
-            meter.synchronize_between_processes()
-
-    def add_meter(self, name: str, meter: SmoothedValue) -> None:
-        self.meters[name] = meter
-
-    def log_every(
-        self, iterable: Iterable[Any], print_freq: int, header: Optional[str] = None
-    ) -> Generator[Any, None, None]:
-        i = 0
-        if not header:
-            header = ""
-        start_time = time.time()
-        end = time.time()
-        iter_time = SmoothedValue(fmt="{avg:.4f}")
-        data_time = SmoothedValue(fmt="{avg:.4f}")
-        space_fmt = ":" + str(len(str(len(iterable)))) + "d"
-        if torch.cuda.is_available():
-            log_msg = self.delimiter.join(
-                [
-                    header,
-                    "[{0" + space_fmt + "}/{1}]",
-                    "eta: {eta}",
-                    "{meters}",
-                    "time: {time}",
-                    "data: {data}",
-                    "max mem: {memory:.0f}",
-                ]
-            )
-        else:
-            log_msg = self.delimiter.join(
-                [header, "[{0" + space_fmt + "}/{1}]", "eta: {eta}", "{meters}", "time: {time}", "data: {data}"]
-            )
-        MB = 1024.0 * 1024.0
-        for obj in iterable:
-            data_time.update(time.time() - end)
-            yield obj
-            iter_time.update(time.time() - end)
-            if i % print_freq == 0 or i == len(iterable) - 1:
-                eta_seconds = iter_time.global_avg * (len(iterable) - i)
-                eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))
-                if self.wandb:
-                    if is_main_process():
-                        log_dict = {k: v.value for k, v in self.meters.items()}
-                        self.wandb.log(log_dict)
-                if torch.cuda.is_available():
-                    logger.info(
-                        log_msg.format(
-                            i,
-                            len(iterable),
-                            eta=eta_string,
-                            meters=str(self),
-                            time=str(iter_time),
-                            data=str(data_time),
-                            memory=torch.cuda.max_memory_allocated() / MB,
-                        )
-                    )
-                else:
-                    logger.info(
-                        log_msg.format(
-                            i, len(iterable), eta=eta_string, meters=str(self), time=str(iter_time), data=str(data_time)
-                        )
-                    )
-            i += 1
-            end = time.time()
-        total_time = time.time() - start_time
-        total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-        logger.info("{} Total time: {} ({:.4f} s / it)".format(header, total_time_str, total_time / len(iterable)))
 
 
 def get_sha() -> str:
@@ -392,26 +228,6 @@ def _onnx_nested_tensor_from_tensor_list(tensor_list: List[Tensor]) -> NestedTen
     return NestedTensor(tensor, mask=mask)
 
 
-def setup_for_distributed(is_master: bool) -> None:
-    """
-    This function disables printing when not in master process
-    """
-    import builtins as __builtin__
-    import logging
-
-    builtin_print = __builtin__.print
-
-    def print(*args, **kwargs) -> None:
-        force = kwargs.pop("force", False)
-        if is_master or force:
-            builtin_print(*args, **kwargs)
-
-    __builtin__.print = print
-
-    if not is_master:
-        logging.getLogger("rf-detr").setLevel(logging.ERROR)
-
-
 def is_dist_avail_and_initialized():
     if not dist.is_available():
         return False
@@ -442,31 +258,6 @@ def save_on_master(obj, f, *args, **kwargs):
     """
     if is_main_process():
         torch.save(obj, f, *args, **kwargs)
-
-
-def init_distributed_mode(args: Any) -> None:
-    if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
-        args.rank = int(os.environ["RANK"])
-        args.world_size = int(os.environ["WORLD_SIZE"])
-        args.gpu = int(os.environ["LOCAL_RANK"])
-    elif "SLURM_PROCID" in os.environ:
-        args.rank = int(os.environ["SLURM_PROCID"])
-        args.gpu = args.rank % torch.cuda.device_count()
-    else:
-        logger.info("Not using distributed mode")
-        args.distributed = False
-        return
-
-    args.distributed = True
-
-    torch.cuda.set_device(args.gpu)
-    args.dist_backend = "nccl"
-    logger.info("| distributed init (rank {}): {}".format(args.rank, args.dist_url))
-    torch.distributed.init_process_group(
-        backend=args.dist_backend, init_method=args.dist_url, world_size=args.world_size, rank=args.rank
-    )
-    torch.distributed.barrier()
-    setup_for_distributed(args.rank == 0)
 
 
 @torch.no_grad()

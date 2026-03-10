@@ -6,9 +6,8 @@
 
 """PyTorch Lightning integration layer for RF-DETR.
 
-This package provides the transitional Lightning module, data module, callbacks,
-and CLI required for the PTL migration. It coexists with the existing engine.py /
-main.py until those are removed in a later chapter.
+This package provides the Lightning module, data module, callbacks, and CLI
+for training and evaluation.
 
 Exports:
     RFDETRModule: LightningModule wrapping the RF-DETR model and training loop.

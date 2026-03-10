@@ -8,9 +8,8 @@
 Tests for model export functionality.
 
 Use cases covered:
-- Export should use eval() on the deepcopy (not the original model).
 - Segmentation outputs must be present in both train/eval modes to avoid export crashes.
-- Segmentation model exports must include 'masks' in output_names (PR #402).
+- Export should not change the original model's training state.
 - CLI export path (deploy.export.main) must include 'masks' in output_names for
   segmentation models, call make_infer_image with the correct individual args, and
   call export_onnx with args.output_dir as the first argument.
@@ -18,15 +17,13 @@ Use cases covered:
 
 import importlib.util
 import inspect
-import sys
 import types
 import warnings
 from collections.abc import Iterator
 from contextlib import contextmanager
-from copy import deepcopy
 from pathlib import Path
 from typing import Literal
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
@@ -97,37 +94,6 @@ def test_segmentation_model_export_no_crash(tmp_path: Path) -> None:
     assert len(onnx_files) > 0, "Export should produce ONNX file(s)"
 
 
-def test_export_calls_eval_on_deepcopy_not_original(tmp_path: Path) -> None:
-    """
-    Verify that Model.export() calls eval() on the deepcopy, not the original model.
-
-    Patches deepcopy to return a controlled mock and asserts that eval() is called
-    on that mock (the copy), not on the original model object.  Uses mocked model
-    internals so no GPU or ONNX package is required — the contract being tested is
-    a Python-level call-order invariant, not a CUDA behaviour.
-    """
-    mock_export_module, mock_model, mock_model_wrapper, _ = _make_export_mocks(tmp_path, segmentation_head=False)
-
-    with (
-        patch("rfdetr.main.build_model", return_value=mock_model_wrapper),
-        patch("rfdetr.main.validate_pretrain_weights"),
-        patch("rfdetr.main.deepcopy", return_value=mock_model),
-        patch.dict("sys.modules", {"rfdetr.deploy.export": mock_export_module}),
-    ):
-        from rfdetr.main import Model
-
-        model = Model(resolution=560, pretrain_weights=None, device="cpu", segmentation_head=False)
-        model.export(output_dir=str(tmp_path), simplify=False, verbose=False)
-
-    assert mock_model.eval.called, (
-        "export() should call eval() on the deepcopy. "
-        "This ensures the exported model is in eval mode without affecting the original."
-    )
-    assert not mock_model_wrapper.eval.called, (
-        "export() must not call eval() on the original model — only on the deepcopy."
-    )
-
-
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for export test")
 @pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed, run: pip install rfdetr[onnxexport]")
@@ -180,122 +146,6 @@ def test_segmentation_outputs_present_in_train_and_eval(mode: Literal["train", "
     assert "pred_boxes" in output
     assert "pred_logits" in output
     assert "pred_masks" in output
-
-
-def _make_export_mocks(tmp_path: Path, segmentation_head: bool, backbone_only: bool = False) -> tuple:
-    """
-    Build the mock objects needed to unit-test Model.export() without ONNX or a GPU.
-
-    Returns (mock_export_module, mock_model, mock_model_wrapper, captured_kwargs_store)
-    where captured_kwargs_store is a dict that will be populated with the kwargs
-    passed to export_onnx when export() is called.
-    """
-    captured_kwargs: dict = {}
-
-    def fake_export_onnx(**kwargs):
-        captured_kwargs.update(kwargs)
-        return tmp_path / "inference_model.onnx"
-
-    mock_export_module = types.ModuleType("rfdetr.deploy.export")
-    mock_export_module.export_onnx = fake_export_onnx
-    mock_export_module.onnx_simplify = MagicMock()
-
-    mock_tensor = MagicMock()
-    mock_tensor.to.return_value = mock_tensor
-    mock_tensor.cpu.return_value = mock_tensor
-    mock_export_module.make_infer_image = MagicMock(return_value=mock_tensor)
-
-    mock_model = MagicMock()
-    mock_model.to.return_value = mock_model
-    mock_model.cpu.return_value = mock_model
-    mock_model.eval.return_value = mock_model
-    mock_model.training = False
-    if backbone_only:
-        # backbone_only: model(input) returns a tensor and .shape is accessed
-        feature_tensor = torch.zeros(1, 512, 20, 20)
-        mock_model.return_value = feature_tensor
-    elif segmentation_head:
-        mock_model.return_value = {
-            "pred_boxes": torch.zeros(1, 100, 4),
-            "pred_logits": torch.zeros(1, 100, 90),
-            "pred_masks": torch.zeros(1, 100, 27, 27),
-        }
-    else:
-        mock_model.return_value = {
-            "pred_boxes": torch.zeros(1, 300, 4),
-            "pred_logits": torch.zeros(1, 300, 90),
-        }
-
-    mock_model_wrapper = MagicMock()
-    mock_model_wrapper.to.return_value = mock_model_wrapper
-
-    return mock_export_module, mock_model, mock_model_wrapper, captured_kwargs
-
-
-@pytest.mark.parametrize(
-    "segmentation_head, backbone_only, expected_output_names",
-    [
-        pytest.param(True, False, ["dets", "labels", "masks"], id="segmentation_model"),
-        pytest.param(False, False, ["dets", "labels"], id="detection_model"),
-        pytest.param(False, True, ["features"], id="backbone_only"),
-    ],
-)
-def test_export_output_names(
-    tmp_path: Path,
-    segmentation_head: bool,
-    backbone_only: bool,
-    expected_output_names: list[str],
-) -> None:
-    """
-    Unit test: export() must pass the correct output_names to export_onnx.
-
-    Before PR #402, the export method used this one-liner:
-
-        output_names = ['features'] if backbone_only else ['dets', 'labels']
-
-    This always produced ['dets', 'labels'] for segmentation models, omitting
-    'masks'.  The parametrized case segmentation_model would therefore FAIL
-    with the old code.
-
-    The fix adds an explicit elif branch:
-
-        elif self.args.segmentation_head:
-            output_names = ['dets', 'labels', 'masks']
-    """
-    mock_export_module, mock_model, mock_model_wrapper, captured_kwargs = _make_export_mocks(
-        tmp_path, segmentation_head, backbone_only
-    )
-
-    with (
-        patch("rfdetr.main.build_model", return_value=mock_model_wrapper),
-        patch("rfdetr.main.validate_pretrain_weights"),
-        patch("rfdetr.main.deepcopy", return_value=mock_model),
-        patch.dict("sys.modules", {"rfdetr.deploy.export": mock_export_module}),
-    ):
-        from rfdetr.main import Model
-
-        model = Model(
-            segmentation_head=segmentation_head,
-            resolution=560,
-            pretrain_weights=None,
-            device="cpu",
-        )
-        model.export(
-            output_dir=str(tmp_path),
-            backbone_only=backbone_only,
-            simplify=False,
-            verbose=False,
-        )
-
-    assert "output_names" in captured_kwargs, "export_onnx was not called — check that the mock wiring is correct"
-    actual = captured_kwargs["output_names"]
-    assert actual == expected_output_names, (
-        f"output_names mismatch.\n"
-        f"  expected : {expected_output_names}\n"
-        f"  actual   : {actual}\n"
-        "Before PR #402, segmentation models produced ['dets', 'labels'] "
-        "instead of ['dets', 'labels', 'masks']."
-    )
 
 
 # --------------------------------------------------------------------------

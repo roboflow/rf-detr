@@ -13,7 +13,9 @@ import torch
 import torch.nn as nn
 
 import rfdetr.models.backbone.dinov2 as dinov2_module
-from rfdetr.main import Model
+from rfdetr.config import RFDETRNanoConfig, TrainConfig
+from rfdetr.lit._namespace import build_namespace
+from rfdetr.models import build_model
 from rfdetr.models.backbone.dinov2 import DinoV2
 from rfdetr.models.backbone.dinov2_with_windowed_attn import (
     Dinov2WithRegistersDropPath,
@@ -23,62 +25,44 @@ from rfdetr.models.lwdetr import LWDETR
 
 
 @pytest.fixture
-def model_with_drop_path(monkeypatch: pytest.MonkeyPatch) -> Model:
-    """Create RF-DETR Nano model with drop_path enabled."""
+def model_with_drop_path(monkeypatch: pytest.MonkeyPatch) -> LWDETR:
+    """Create RF-DETR Nano LWDETR with drop_path enabled."""
     monkeypatch.setattr(
         WindowedDinov2WithRegistersBackbone,
         "from_pretrained",
         classmethod(lambda cls, name, config: cls(config)),
     )
-    return Model(
-        encoder="dinov2_windowed_small",
-        num_classes=3,
-        device="cpu",
-        pretrain_weights=None,
+    mc = RFDETRNanoConfig(num_classes=3, pretrain_weights=None)
+    tc = TrainConfig(
+        dataset_dir=".",
+        output_dir=".",
         drop_path=0.1,
-        resolution=384,
-        vit_encoder_num_layers=12,
-        patch_size=14,
-        num_windows=4,
-        positional_encoding_size=37,
-        out_feature_indexes=[2, 5, 8, 11],
-        projector_scale=["P4"],
-        hidden_dim=256,
-        dec_layers=3,
-        segmentation_head=False,
     )
+    args = build_namespace(mc, tc)
+    return build_model(args)
 
 
 @pytest.fixture
-def model_without_drop_path(monkeypatch: pytest.MonkeyPatch) -> Model:
-    """Create RF-DETR Nano model without drop_path."""
+def model_without_drop_path(monkeypatch: pytest.MonkeyPatch) -> LWDETR:
+    """Create RF-DETR Nano LWDETR without drop_path."""
     monkeypatch.setattr(
         WindowedDinov2WithRegistersBackbone,
         "from_pretrained",
         classmethod(lambda cls, name, config: cls(config)),
     )
-    return Model(
-        encoder="dinov2_windowed_small",
-        num_classes=3,
-        device="cpu",
-        pretrain_weights=None,
+    mc = RFDETRNanoConfig(num_classes=3, pretrain_weights=None)
+    tc = TrainConfig(
+        dataset_dir=".",
+        output_dir=".",
         drop_path=0.0,
-        resolution=384,
-        vit_encoder_num_layers=12,
-        patch_size=14,
-        num_windows=4,
-        positional_encoding_size=37,
-        out_feature_indexes=[2, 5, 8, 11],
-        projector_scale=["P4"],
-        hidden_dim=256,
-        dec_layers=3,
-        segmentation_head=False,
     )
+    args = build_namespace(mc, tc)
+    return build_model(args)
 
 
-def test_get_backbone_encoder_layers_dinov2(model_with_drop_path: Model) -> None:
+def test_get_backbone_encoder_layers_dinov2(model_with_drop_path: LWDETR) -> None:
     """Verify _get_backbone_encoder_layers() returns encoder.encoder.layer for DinoV2."""
-    model: LWDETR = model_with_drop_path.model
+    model = model_with_drop_path
 
     layers = model._get_backbone_encoder_layers()
     assert layers is not None
@@ -94,9 +78,9 @@ def test_get_backbone_encoder_layers_dinov2(model_with_drop_path: Model) -> None
         assert hasattr(layer, "drop_path"), "Each layer should have drop_path attribute"
 
 
-def test_update_drop_path_dinov2(model_with_drop_path: Model) -> None:
+def test_update_drop_path_dinov2(model_with_drop_path: LWDETR) -> None:
     """Verify update_drop_path() sets drop_prob values correctly with linear schedule."""
-    model: LWDETR = model_with_drop_path.model
+    model = model_with_drop_path
 
     layers = model._get_backbone_encoder_layers()
     assert layers is not None
@@ -123,25 +107,22 @@ def test_update_drop_path_dinov2(model_with_drop_path: Model) -> None:
     )
 
 
-def test_drop_path_initialization(model_with_drop_path: Model, model_without_drop_path: Model) -> None:
+def test_drop_path_initialization(model_with_drop_path: LWDETR, model_without_drop_path: LWDETR) -> None:
     """Verify drop_path initialization: Dinov2WithRegistersDropPath vs Identity based on rate."""
-    model_with_dp: LWDETR = model_with_drop_path.model
-    model_without_dp: LWDETR = model_without_drop_path.model
-
-    layers_with_dp = model_with_dp._get_backbone_encoder_layers()
-    layers_without_dp = model_without_dp._get_backbone_encoder_layers()
+    layers_with_dp = model_with_drop_path._get_backbone_encoder_layers()
+    layers_without_dp = model_without_drop_path._get_backbone_encoder_layers()
 
     assert layers_with_dp is not None
     assert layers_without_dp is not None
 
-    # drop_path_rate=0.1 → every layer initialised as Dinov2WithRegistersDropPath
+    # drop_path_rate=0.1 -> every layer initialised as Dinov2WithRegistersDropPath
     for i, layer in enumerate(layers_with_dp):
         assert hasattr(layer, "drop_path"), "Layer should have drop_path attribute"
         assert isinstance(layer.drop_path, Dinov2WithRegistersDropPath), (
             f"Layer {i}: expected Dinov2WithRegistersDropPath, got {type(layer.drop_path)}"
         )
 
-    # drop_path_rate=0.0 → every layer initialised as nn.Identity
+    # drop_path_rate=0.0 -> every layer initialised as nn.Identity
     for i, layer in enumerate(layers_without_dp):
         assert hasattr(layer, "drop_path"), "Layer should have drop_path attribute"
         assert isinstance(layer.drop_path, torch.nn.Identity), (
@@ -149,9 +130,9 @@ def test_drop_path_initialization(model_with_drop_path: Model, model_without_dro
         )
 
 
-def test_update_drop_path_handles_missing_layers(model_with_drop_path: Model, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_update_drop_path_handles_missing_layers(model_with_drop_path: LWDETR, monkeypatch: pytest.MonkeyPatch) -> None:
     """Verify update_drop_path() handles models without recognizable layer structure gracefully."""
-    model: LWDETR = model_with_drop_path.model
+    model = model_with_drop_path
 
     monkeypatch.setattr(model, "_get_backbone_encoder_layers", lambda: None)
 
@@ -159,9 +140,9 @@ def test_update_drop_path_handles_missing_layers(model_with_drop_path: Model, mo
     model.update_drop_path(0.1, 12)
 
 
-def test_update_drop_path_partial_layers(model_with_drop_path: Model) -> None:
+def test_update_drop_path_partial_layers(model_with_drop_path: LWDETR) -> None:
     """Verify min() guard prevents IndexError when vit_encoder_num_layers > len(layers)."""
-    model: LWDETR = model_with_drop_path.model
+    model = model_with_drop_path
 
     layers = model._get_backbone_encoder_layers()
     assert layers is not None

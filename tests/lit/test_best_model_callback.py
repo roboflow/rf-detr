@@ -465,13 +465,14 @@ class TestRFDETREarlyStopping:
         assert trainer.should_stop is False
 
     @pytest.mark.parametrize(
-        "use_ema, maps, patience, min_delta",
+        "use_ema, maps, patience, min_delta, expected_stop_epoch",
         [
             pytest.param(
                 False,
                 [0.10, 0.20, 0.30, 0.30, 0.30, 0.30, 0.30, 0.30],
                 3,
                 0.01,
+                5,
                 id="use_ema_false_plateau",
             ),
             pytest.param(
@@ -479,50 +480,24 @@ class TestRFDETREarlyStopping:
                 [0.05, 0.15, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25],
                 3,
                 0.01,
+                5,
                 id="use_ema_true_plateau",
             ),
         ],
     )
-    def test_trigger_epoch_matches_legacy_early_stopping(
+    def test_trigger_epoch_matches_expected(
         self,
         use_ema: bool,
         maps: list,
         patience: int,
         min_delta: float,
+        expected_stop_epoch: int,
     ) -> None:
-        """RFDETREarlyStopping stops at the same epoch as legacy EarlyStoppingCallback.
+        """RFDETREarlyStopping stops at the expected epoch for a plateau sequence.
 
-        Drives both callbacks with an identical mAP sequence and asserts the
-        trigger epoch is identical, proving behavioural parity.
+        Drives the callback with an identical mAP sequence and asserts the
+        trigger epoch matches the expected value.
         """
-        from rfdetr.util.early_stopping import EarlyStoppingCallback
-
-        # --- Legacy callback ---
-        stop_calls: list[int] = []
-        legacy_model = MagicMock()
-        legacy_model.request_early_stop.side_effect = lambda: stop_calls.append(1)
-        legacy = EarlyStoppingCallback(
-            model=legacy_model,
-            patience=patience,
-            min_delta=min_delta,
-            use_ema=use_ema,
-            verbose=False,
-        )
-        legacy_stop_epoch: int | None = None
-        for epoch, m in enumerate(maps):
-            if use_ema:
-                log_stats = {
-                    "test_coco_eval_bbox": [m],
-                    "ema_test_coco_eval_bbox": [m],
-                }
-            else:
-                log_stats = {"test_coco_eval_bbox": [m]}
-            legacy.update(log_stats)
-            if stop_calls:
-                legacy_stop_epoch = epoch
-                break
-
-        # --- New callback ---
         new_cb = RFDETREarlyStopping(
             patience=patience,
             min_delta=min_delta,
@@ -541,4 +516,4 @@ class TestRFDETREarlyStopping:
                 new_stop_epoch = epoch
                 break
 
-        assert new_stop_epoch == legacy_stop_epoch
+        assert new_stop_epoch == expected_stop_epoch
