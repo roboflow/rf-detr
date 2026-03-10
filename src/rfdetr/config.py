@@ -338,6 +338,7 @@ class TrainConfig(BaseModel):
     aug_config: Optional[Dict[str, Any]] = None
     # Promoted from populate_args() — PTL migration (T4-2).
     # device is intentionally absent: PTL auto-detects accelerator via Trainer(accelerator="auto").
+    accelerator: str = "auto"
     clip_max_norm: float = 0.1
     seed: Optional[int] = None
     sync_bn: bool = False

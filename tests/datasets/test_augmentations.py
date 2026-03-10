@@ -6,8 +6,6 @@
 
 """Tests for Albumentations augmentation wrappers."""
 
-import json
-
 import albumentations as A
 import numpy as np
 import pytest
@@ -16,7 +14,6 @@ from PIL import Image
 from torch.utils.data import DataLoader
 from torchvision.transforms.v2 import Compose
 
-from rfdetr import RFDETRSegNano
 from rfdetr.datasets._develop import _SimpleDataset
 from rfdetr.datasets.aug_config import AUG_CONFIG
 from rfdetr.datasets.coco import make_coco_transforms, make_coco_transforms_square_div_64
@@ -1216,152 +1213,6 @@ class TestTrainingLoop:
                 assert target["masks"].shape == (1, 64, 64)
                 assert target["masks"].dtype == torch.bool
 
-    def test_segmentation_nano_training_with_tiny_mock_coco_dataset(self, tmp_path, monkeypatch):
-        """Integration test: run a minimal segmentation training step on a mocked COCO dataset."""
-
-        def _write_split(split_name: str) -> None:
-            split_dir = tmp_path / "tiny_seg_dataset" / split_name
-            split_dir.mkdir(parents=True, exist_ok=True)
-            image_path = split_dir / "sample.jpg"
-            Image.new("RGB", (64, 64), color="white").save(image_path)
-
-            annotations = {
-                "images": [{"id": 1, "width": 64, "height": 64, "file_name": "sample.jpg"}],
-                "categories": [{"id": 1, "name": "object", "supercategory": "object"}],
-                "annotations": [
-                    {
-                        "id": 1,
-                        "image_id": 1,
-                        "category_id": 1,
-                        "bbox": [8.0, 8.0, 16.0, 16.0],
-                        "area": 256.0,
-                        "iscrowd": 0,
-                        "segmentation": [[8.0, 8.0, 24.0, 8.0, 24.0, 24.0, 8.0, 24.0]],
-                    }
-                ],
-            }
-            (split_dir / "_annotations.coco.json").write_text(json.dumps(annotations))
-
-        for split in ("train", "valid"):
-            _write_split(split)
-
-        def _fake_evaluate(*args, **kwargs):
-            return {
-                "coco_eval_masks": [0.0, 0.0],
-                "results_json": {"map": 0.0, "f1_score": 0.0, "class_map": {}},
-            }, None
-
-        monkeypatch.setattr("rfdetr.main.evaluate", _fake_evaluate)
-
-        output_dir = tmp_path / "output"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        model = RFDETRSegNano(pretrain_weights=None, device="cpu")
-        model.train(
-            dataset_dir=str(tmp_path / "tiny_seg_dataset"),
-            epochs=1,
-            batch_size=1,
-            grad_accum_steps=1,
-            device="cpu",
-            num_workers=0,
-            resolution=64,
-            amp=False,
-            use_ema=False,
-            run_test=False,
-            tensorboard=False,
-            dont_save_weights=True,
-            min_batches=1,
-            output_dir=str(output_dir),
-        )
-
-    def test_segmentation_training_saves_results_mask_json_with_run_test(self, tmp_path, monkeypatch):
-        """results_mask.json must mirror results.json structure: valid+test keys and top-level scalars."""
-
-        def _write_split(split_name: str) -> None:
-            split_dir = tmp_path / "tiny_seg_dataset" / split_name
-            split_dir.mkdir(parents=True, exist_ok=True)
-            Image.new("RGB", (64, 64), color="white").save(split_dir / "sample.jpg")
-            annotations = {
-                "images": [{"id": 1, "width": 64, "height": 64, "file_name": "sample.jpg"}],
-                "categories": [{"id": 1, "name": "object", "supercategory": "object"}],
-                "annotations": [
-                    {
-                        "id": 1,
-                        "image_id": 1,
-                        "category_id": 1,
-                        "bbox": [8.0, 8.0, 16.0, 16.0],
-                        "area": 256.0,
-                        "iscrowd": 0,
-                        "segmentation": [[8.0, 8.0, 24.0, 8.0, 24.0, 24.0, 8.0, 24.0]],
-                    }
-                ],
-            }
-            (split_dir / "_annotations.coco.json").write_text(json.dumps(annotations))
-
-        for split in ("train", "valid", "test"):
-            _write_split(split)
-
-        def _fake_evaluate_with_masks(*args, **kwargs):
-            return {
-                "coco_eval_masks": [0.5, 0.5],
-                "results_json": {
-                    "map": 0.5,
-                    "precision": 0.5,
-                    "recall": 0.5,
-                    "f1_score": 0.5,
-                    "class_map": [],
-                },
-                "results_json_masks": {
-                    "map": 0.5,
-                    "precision": 0.6,
-                    "recall": 0.7,
-                    "f1_score": 0.65,
-                    "class_map": [
-                        {
-                            "class": "object",
-                            "map@50:95": 0.5,
-                            "map@50": 0.6,
-                            "precision": 0.6,
-                            "recall": 0.7,
-                            "f1_score": 0.65,
-                        }
-                    ],
-                },
-            }, None
-
-        monkeypatch.setattr("rfdetr.main.evaluate", _fake_evaluate_with_masks)
-
-        output_dir = tmp_path / "output"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        model = RFDETRSegNano(pretrain_weights=None, device="cpu")
-        model.train(
-            dataset_dir=str(tmp_path / "tiny_seg_dataset"),
-            epochs=1,
-            batch_size=1,
-            grad_accum_steps=1,
-            device="cpu",
-            num_workers=0,
-            resolution=64,
-            amp=False,
-            use_ema=False,
-            run_test=True,
-            tensorboard=False,
-            dont_save_weights=False,
-            min_batches=1,
-            output_dir=str(output_dir),
-        )
-
-        results_mask_path = output_dir / "results_mask.json"
-        assert results_mask_path.exists(), "results_mask.json should be written for segmentation models"
-        with open(results_mask_path) as f:
-            results_mask = json.load(f)
-
-        assert "class_map" in results_mask
-        assert "valid" in results_mask["class_map"], "results_mask.json must have 'valid' key in class_map"
-        assert "test" in results_mask["class_map"], "results_mask.json must have 'test' key in class_map"
-        assert "map" in results_mask, "results_mask.json must have top-level 'map' scalar"
-        assert "precision" in results_mask, "results_mask.json must have top-level 'precision' scalar"
-        assert "recall" in results_mask, "results_mask.json must have top-level 'recall' scalar"
-        assert "f1_score" in results_mask, "results_mask.json must have top-level 'f1_score' scalar"
 
 
 class TestMakeCocoTransformsAugConfig:

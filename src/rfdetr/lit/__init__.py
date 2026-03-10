@@ -43,7 +43,7 @@ def build_trainer(
     train_config: "TrainConfig",
     model_config: "ModelConfig",
     *,
-    accelerator: str = "auto",
+    accelerator: str | None = None,
     **trainer_kwargs: Any,
 ) -> Trainer:  # type: ignore[name-defined]
     """Assemble a PTL ``Trainer`` with the full RF-DETR callback and logger stack.
@@ -56,7 +56,8 @@ def build_trainer(
         train_config: Training hyperparameter configuration.
         model_config: Architecture configuration (used for precision and segmentation).
         accelerator: PTL accelerator string (e.g. ``"auto"``, ``"cpu"``, ``"gpu"``).
-            Defaults to ``"auto"`` so PTL selects the best available device.
+            Defaults to ``None`` which reads from ``train_config.accelerator``
+            (itself defaulting to ``"auto"``).
             Pass ``"cpu"`` to override auto-detection (e.g. when the caller
             explicitly requests CPU training via ``device="cpu"``).
         **trainer_kwargs: Extra keyword arguments forwarded verbatim to
@@ -72,6 +73,8 @@ def build_trainer(
         A configured ``pytorch_lightning.Trainer`` instance.
     """
     tc = train_config
+    if accelerator is None:
+        accelerator = tc.accelerator
 
     # --- Precision resolution ---
     def _resolve_precision() -> str:

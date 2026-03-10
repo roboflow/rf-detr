@@ -3,7 +3,7 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""PTL-native convergence tests: train_ptl() + compat.evaluate throughout.
+"""PTL-native convergence tests: RFDETR.train() + compat.evaluate throughout.
 
 Two GPU convergence benchmarks, one per training entry-point:
 
@@ -13,7 +13,7 @@ Two GPU convergence benchmarks, one per training entry-point:
   appear in the test.
 
 * :func:`test_ptl_training_improves_performance` — exercises
-  :meth:`~rfdetr.detr.RFDETR.train_ptl`.  Mirrors
+  :meth:`~rfdetr.detr.RFDETR.train`.  Mirrors
   :func:`~tests.benchmarks.test_synthetic_convergence.test_synthetic_training_improves_performance`
   exactly: same args, same dataloader construction, same assertions — only
   the training call and the evaluation wrapper differ.
@@ -196,14 +196,14 @@ def test_ptl_training_improves_performance(
     tmp_path: Path,
     synthetic_shape_dataset_dir: Path,
 ) -> None:
-    """train_ptl() converges — mirrors test_synthetic_training_improves_performance.
+    """RFDETR.train() converges — mirrors test_synthetic_training_improves_performance.
 
     Structure is intentionally identical to
     :func:`~tests.benchmarks.test_synthetic_convergence.test_synthetic_training_improves_performance`:
     same args, same dataloader construction, same assertions.  The only
     differences are:
 
-    * :meth:`~rfdetr.detr.RFDETR.train_ptl` replaces ``model.train()``.
+    * :meth:`~rfdetr.detr.RFDETR.train` (PTL stack) replaces the legacy ``model.train()``.
     * :func:`~rfdetr.lit.compat.evaluate` replaces ``engine.evaluate``.
 
     Same thresholds (mAP ≥ 35 %, F1 ≥ 35 %, loss drop to 70 %) apply.
@@ -280,7 +280,7 @@ def test_ptl_training_improves_performance(
     assert base_f1_score <= 0.05, f"Base F1 {base_f1_score:.3f} should be low before training."
 
     # Train via the PyTorch Lightning stack.
-    model.train_ptl(
+    model.train(
         dataset_file="roboflow",
         dataset_dir=str(dataset_dir),
         output_dir=str(output_dir),

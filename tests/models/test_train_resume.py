@@ -38,7 +38,7 @@ def test_resume_with_completed_epochs_returns_early(tmp_path: Path) -> None:
         warnings.catch_warnings(record=True) as caught,
     ):
         warnings.simplefilter("always")
-        model.train_ptl(
+        model.train(
             dataset_dir=str(tmp_path),
             epochs=1,
             start_epoch=1,
@@ -78,7 +78,7 @@ def test_resume_with_completed_epochs_calls_on_train_end_callback(tmp_path: Path
         patch("rfdetr.lit.RFDETRDataModule"),
         patch("rfdetr.lit.build_trainer"),
     ):
-        model.train_ptl(
+        model.train(
             dataset_dir=str(tmp_path),
             epochs=1,
             batch_size=1,

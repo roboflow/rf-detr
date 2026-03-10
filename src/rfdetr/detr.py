@@ -192,7 +192,9 @@ def _build_model_context(model_config: ModelConfig) -> "_ModelContext":
     """
     from rfdetr.lit._namespace import build_namespace
 
-    args = build_namespace(model_config, TrainConfig())
+    # A dummy TrainConfig is needed only for build_namespace's required fields;
+    # dataset_dir/output_dir are unused during model construction.
+    args = build_namespace(model_config, TrainConfig(dataset_dir=".", output_dir="."))
     nn_model = build_model(args)
 
     class_names: List[str] = []
@@ -257,39 +259,20 @@ class RFDETR:
         return ModelConfig(**kwargs)
 
     def train(self, **kwargs):
-        """Train via the legacy engine.py / main.py training stack (baseline).
-
-        All keyword arguments are forwarded to :meth:`get_train_config` to build
-        a :class:`~rfdetr.config.TrainConfig`, then on to :meth:`train_from_config`
-        which drives the legacy ``engine.py`` training loop.
-
-        The ``callbacks`` kwarg (if provided) is merged into ``self.callbacks``
-        before training starts so that caller-supplied hooks are honoured.
-        """
-        # Merge any explicit callbacks dict into self.callbacks.
-        callbacks_dict = kwargs.pop("callbacks", None)
-        if callbacks_dict:
-            for key, fns in callbacks_dict.items():
-                if callable(fns):
-                    self.callbacks[key].append(fns)
-                else:
-                    self.callbacks[key].extend(fns)
-
-        config = self.get_train_config(**kwargs)
-        self.train_from_config(config, **kwargs)
-
-    def train_ptl(self, **kwargs):
         """Train an RF-DETR model via the PyTorch Lightning stack.
 
         All keyword arguments are forwarded to :meth:`get_train_config` to build
-        a :class:`~rfdetr.config.TrainConfig`.  Two legacy kwargs are absorbed
-        silently so existing call-sites do not break:
+        a :class:`~rfdetr.config.TrainConfig`.  Several legacy kwargs are absorbed
+        so existing call-sites do not break:
 
-        * ``device`` — dropped; PTL selects the accelerator automatically.
+        * ``device`` — mapped to ``TrainConfig.accelerator``; ``"cpu"`` becomes
+          ``accelerator="cpu"``, all others default to ``"auto"``.
         * ``callbacks`` — if the dict contains any non-empty lists a
           :class:`DeprecationWarning` is emitted; the dict is then discarded.
           Use PTL :class:`~pytorch_lightning.Callback` objects passed via
           :func:`~rfdetr.lit.build_trainer` instead.
+        * ``start_epoch`` — emits :class:`DeprecationWarning` and is dropped.
+        * ``do_benchmark`` — emits :class:`DeprecationWarning` and is dropped.
 
         After training completes the underlying ``nn.Module`` is synced back
         onto ``self.model.model`` so that :meth:`predict` and :meth:`export`
@@ -310,15 +293,8 @@ class RFDETR:
         # (e.g. in tests or CPU-only environments), honour it by forwarding it as
         # the PTL accelerator.  All other device strings (cuda, mps) are ignored
         # so PTL can auto-select the best available device.
-        #
-        # FIXME(Chapter 6): the correct fix is to promote `device` to a proper
-        # `TrainConfig.accelerator` field (see Decision #11 / risk table row 4
-        # in MIGRATION_PT_LIGHTNING.md).  The current workaround only handles
-        # the `"cpu"` case and silently drops `"cuda"` / `"mps"` — PTL's
-        # `accelerator="auto"` picks the right hardware for those anyway, but
-        # explicit overrides (e.g. `device="mps"` on a CUDA machine) are lost.
         _device = kwargs.pop("device", None)
-        _accelerator = "cpu" if _device == "cpu" else "auto"
+        _accelerator = "cpu" if _device == "cpu" else None
 
         # Absorb legacy `start_epoch` — PTL resumes automatically via ckpt_path.
         if "start_epoch" in kwargs:
@@ -535,136 +511,23 @@ class RFDETR:
             "Checked for COCO (train/_annotations.coco.json) and YOLO (data.yaml, data.yml) styles."
         )
 
-    def train_from_config(self, config: TrainConfig, **kwargs):
-        if config.dataset_file == "roboflow":
-            class_names = self._load_classes(config.dataset_dir)
-            num_classes = len(class_names) + 1
-            self.model.class_names = class_names
-        elif config.dataset_file == "yolo":
-            class_names = self._load_classes(config.dataset_dir)
-            num_classes = len(class_names)
-            self.model.class_names = class_names
-        elif config.dataset_file == "coco":
-            class_names = COCO_CLASSES
-            num_classes = 90
-        else:
-            raise ValueError(f"Invalid dataset file: {config.dataset_file}")
-
-        if self.model_config.num_classes != num_classes:
-            logger.warning(f"Reinitializing your detection head with {num_classes} classes.")
-            self.model.reinitialize_detection_head(num_classes)
-
-        train_config = config.model_dump()
-        model_config = self.model_config.model_dump()
-        model_config.pop("num_classes")
-        if "class_names" in model_config:
-            model_config.pop("class_names")
-
-        if "class_names" in train_config and train_config["class_names"] is None:
-            train_config["class_names"] = class_names
-
-        for k, v in train_config.items():
-            if k in model_config and v is not None:
-                model_config.pop(k)
-            if k in kwargs:
-                kwargs.pop(k)
-
-        # Keys still present in model_config are those whose train_config value was None
-        # (i.e. not explicitly set by the user).  Prefer the model's value for those.
-        train_config_effective = {k: v for k, v in train_config.items() if k not in model_config}
-        all_kwargs = {**model_config, **train_config_effective, **kwargs, "num_classes": num_classes}
-        if all_kwargs.get("segmentation_head") and not all_kwargs.get("square_resize_div_64", False):
-            raise ValueError(
-                "Segmentation training requires consistent mask shapes across a batch. "
-                "Set `square_resize_div_64=True` (the default for segmentation configs) or omit the argument."
-            )
-
-        from rfdetr.util.metrics import MetricsPlotSink
-
-        metrics_plot_sink = MetricsPlotSink(output_dir=config.output_dir)
-        self.callbacks["on_fit_epoch_end"].append(metrics_plot_sink.update)
-        self.callbacks["on_train_end"].append(metrics_plot_sink.save)
-
-        if config.tensorboard:
-            from rfdetr.util.metrics import MetricsTensorBoardSink
-
-            metrics_tensor_board_sink = MetricsTensorBoardSink(output_dir=config.output_dir)
-            self.callbacks["on_fit_epoch_end"].append(metrics_tensor_board_sink.update)
-            self.callbacks["on_train_end"].append(metrics_tensor_board_sink.close)
-
-        if config.wandb:
-            from rfdetr.util.metrics import MetricsWandBSink
-
-            metrics_wandb_sink = MetricsWandBSink(
-                output_dir=config.output_dir, project=config.project, run=config.run, config=config.model_dump()
-            )
-            self.callbacks["on_fit_epoch_end"].append(metrics_wandb_sink.update)
-            self.callbacks["on_train_end"].append(metrics_wandb_sink.close)
-
-        if config.mlflow:
-            from rfdetr.util.metrics import MetricsMLFlowSink
-
-            metrics_mlflow_sink = MetricsMLFlowSink(
-                output_dir=config.output_dir,
-                experiment_name=config.project,
-                run_name=config.run,
-                config=config.model_dump(),
-            )
-            self.callbacks["on_fit_epoch_end"].append(metrics_mlflow_sink.update)
-            self.callbacks["on_train_end"].append(metrics_mlflow_sink.close)
-
-        if config.clearml:
-            from rfdetr.util.metrics import MetricsClearMLSink
-
-            metrics_clearml_sink = MetricsClearMLSink(
-                output_dir=config.output_dir, project=config.project, run=config.run, config=config.model_dump()
-            )
-            self.callbacks["on_fit_epoch_end"].append(metrics_clearml_sink.update)
-            self.callbacks["on_train_end"].append(metrics_clearml_sink.close)
-
-        if config.early_stopping:
-            from rfdetr.util.early_stopping import EarlyStoppingCallback
-
-            early_stopping_callback = EarlyStoppingCallback(
-                model=self.model,
-                patience=config.early_stopping_patience,
-                min_delta=config.early_stopping_min_delta,
-                use_ema=config.early_stopping_use_ema,
-                segmentation_head=config.segmentation_head,
-            )
-            self.callbacks["on_fit_epoch_end"].append(early_stopping_callback.update)
-
-        self.model.train(
-            **all_kwargs,
-            callbacks=self.callbacks,
-        )
-
     def get_train_config(self, **kwargs):
         """
         Retrieve the configuration parameters that will be used for training.
         """
         return TrainConfig(**kwargs)
 
-    def get_model(self, config: ModelConfig):
-        """Retrieve a model instance based on the provided configuration.
+    def get_model(self, config: ModelConfig) -> "_ModelContext":
+        """Retrieve a model context from the provided architecture configuration.
 
         Args:
             config: Architecture configuration.
 
         Returns:
-            Model context with model, postprocess, device, resolution, args,
+            _ModelContext with model, postprocess, device, resolution, args,
             and class_names attributes.
-
-        Note:
-            Phase 3 will switch this to return ``_build_model_context(config)``
-            once the legacy ``train_from_config()`` path is deleted.
         """
-        # Lazy import so that the module-level import of main.py:Model is gone.
-        # Switched to _build_model_context() in Phase 3 after train_from_config()
-        # is deleted. Keeping Model() here preserves the legacy training path.
-        from rfdetr.main import Model  # noqa: PLC0415  # removed in Phase 4
-
-        return Model(**config.model_dump())
+        return _build_model_context(config)
 
     # Get class_names from the model
     @property
