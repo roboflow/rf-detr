@@ -4,27 +4,25 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-"""Unit tests for _build_args_from_configs — the canonical config-to-Namespace mapping."""
-
-import warnings
+"""Unit tests for build_namespace — the canonical config-to-Namespace mapping."""
 
 import pytest
 
-from rfdetr.lit._args import _build_args_from_configs
+from rfdetr.lit._namespace import build_namespace
 
 
-class TestBuildArgsFromConfigs:
-    """_build_args_from_configs maps ModelConfig + TrainConfig to a Namespace."""
+class TestBuildNamespace:
+    """build_namespace maps ModelConfig + TrainConfig to a Namespace."""
 
     def test_returns_namespace(self, base_model_config, base_train_config):
         """The return value has attribute access (argparse.Namespace or similar)."""
-        args = _build_args_from_configs(base_model_config(), base_train_config())
+        args = build_namespace(base_model_config(), base_train_config())
         assert hasattr(args, "encoder")
 
     def test_forwards_model_config_fields(self, base_model_config, base_train_config):
         """All key ModelConfig fields are faithfully mapped."""
         mc = base_model_config(num_classes=7)
-        args = _build_args_from_configs(mc, base_train_config())
+        args = build_namespace(mc, base_train_config())
 
         assert args.encoder == mc.encoder
         assert args.num_classes == 7
@@ -52,7 +50,7 @@ class TestBuildArgsFromConfigs:
             ema_update_interval=2,
             prefetch_factor=4,
         )
-        args = _build_args_from_configs(base_model_config(), tc)
+        args = build_namespace(base_model_config(), tc)
 
         assert args.lr == pytest.approx(3e-4)
         assert args.epochs == 20
@@ -71,7 +69,7 @@ class TestBuildArgsFromConfigs:
     def test_forwards_dataset_fields(self, base_model_config, base_train_config):
         """Dataset-routing fields are forwarded to the Namespace."""
         tc = base_train_config(multi_scale=True, expanded_scales=True, dataset_file="coco")
-        args = _build_args_from_configs(base_model_config(), tc)
+        args = build_namespace(base_model_config(), tc)
 
         assert args.multi_scale is True
         assert args.expanded_scales is True
@@ -80,46 +78,44 @@ class TestBuildArgsFromConfigs:
     def test_num_queries_from_subclass_config(self, base_model_config, base_train_config):
         """num_queries is read from subclass config attributes."""
         mc = base_model_config()  # RFDETRBaseConfig has num_queries=300
-        args = _build_args_from_configs(mc, base_train_config())
+        args = build_namespace(mc, base_train_config())
         assert args.num_queries == 300
 
     def test_resume_none_becomes_empty_string(self, base_model_config, base_train_config):
         """resume=None (the default) is converted to '' for the legacy Namespace."""
         tc = base_train_config()
         assert tc.resume is None
-        args = _build_args_from_configs(base_model_config(), tc)
+        args = build_namespace(base_model_config(), tc)
         assert args.resume == ""
 
     def test_segmentation_extras_forwarded_from_seg_config(self, base_model_config, seg_train_config):
         """SegmentationTrainConfig mask loss coefficients are forwarded."""
         mc = base_model_config(segmentation_head=True)
         tc = seg_train_config()
-        args = _build_args_from_configs(mc, tc)
+        args = build_namespace(mc, tc)
 
         assert args.mask_ce_loss_coef == pytest.approx(5.0)
         assert args.mask_dice_loss_coef == pytest.approx(5.0)
 
     def test_segmentation_extras_default_for_plain_config(self, base_model_config, base_train_config):
         """mask_* attributes default to 5.0 for a plain TrainConfig (not segmentation)."""
-        args = _build_args_from_configs(base_model_config(), base_train_config())
+        args = build_namespace(base_model_config(), base_train_config())
         assert args.mask_ce_loss_coef == pytest.approx(5.0)
         assert args.mask_dice_loss_coef == pytest.approx(5.0)
 
     def test_segmentation_head_flag_forwarded(self, base_model_config, base_train_config):
         """segmentation_head=True from ModelConfig reaches the Namespace."""
         mc = base_model_config(segmentation_head=True)
-        args = _build_args_from_configs(mc, base_train_config())
+        args = build_namespace(mc, base_train_config())
         assert args.segmentation_head is True
 
-    def test_internal_populate_args_deprecation_warning_is_suppressed(self, base_model_config, base_train_config):
-        """Internal shim call must not leak populate_args FutureWarning to users."""
+    def test_no_deprecation_warning_emitted(self, base_model_config, base_train_config):
+        """build_namespace must not emit any DeprecationWarning or FutureWarning."""
+        import warnings
+
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            _build_args_from_configs(base_model_config(), base_train_config())
+            build_namespace(base_model_config(), base_train_config())
 
-        leaked = [
-            warning
-            for warning in caught
-            if issubclass(warning.category, FutureWarning) and "populate_args" in str(warning.message)
-        ]
-        assert not leaked
+        bad = [w for w in caught if issubclass(w.category, (DeprecationWarning, FutureWarning))]
+        assert not bad

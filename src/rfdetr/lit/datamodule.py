@@ -16,8 +16,7 @@ from torch.utils.data import DataLoader
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.datasets import build_dataset
 
-# TODO(Chapter 6): remove this import when _args.py is deleted.
-from rfdetr.lit._args import _build_args_from_configs
+from rfdetr.lit._namespace import build_namespace
 from rfdetr.util.logger import get_logger
 from rfdetr.util.misc import collate_fn
 
@@ -76,7 +75,7 @@ class RFDETRDataModule(LightningDataModule):
         Returns:
             Namespace compatible with ``build_dataset``.
         """
-        return _build_args_from_configs(self.model_config, self.train_config)
+        return build_namespace(self.model_config, self.train_config)
 
     # ------------------------------------------------------------------
     # PTL lifecycle hooks

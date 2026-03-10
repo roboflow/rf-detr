@@ -21,8 +21,7 @@ from rfdetr.assets.model_weights import download_pretrain_weights, validate_pret
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.datasets.coco import compute_multi_scale_scales
 
-# TODO(Chapter 6): remove this import when _args.py is deleted.
-from rfdetr.lit._args import _build_args_from_configs
+from rfdetr.lit._namespace import build_namespace
 from rfdetr.models import build_criterion_and_postprocessors, build_model
 from rfdetr.util.get_param_dicts import get_param_dict
 from rfdetr.util.logger import get_logger
@@ -90,7 +89,7 @@ class RFDETRModule(LightningModule):
             Namespace compatible with ``build_model`` and
             ``build_criterion_and_postprocessors``.
         """
-        return _build_args_from_configs(self.model_config, self.train_config)
+        return build_namespace(self.model_config, self.train_config)
 
     def _load_pretrain_weights(self) -> None:
         """Load pretrained checkpoint into ``self.model``.
