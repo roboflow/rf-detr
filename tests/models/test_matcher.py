@@ -157,9 +157,7 @@ class TestHungarianMatcherNonFiniteCosts:
         # Query 0: NaN box coordinates -> produces non-finite costs
         # Query 1: valid box, low logit -> all-negative but finite costs
         outputs = {
-            "pred_logits": torch.tensor(
-                [[[0.0], [-10.0]]], dtype=torch.float32
-            ),
+            "pred_logits": torch.tensor([[[0.0], [-10.0]]], dtype=torch.float32),
             "pred_boxes": torch.tensor(
                 [
                     [
