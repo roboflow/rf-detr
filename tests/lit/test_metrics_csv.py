@@ -26,9 +26,9 @@ import torch
 import torch.nn as nn
 
 from rfdetr.config import RFDETRBaseConfig, TrainConfig
-from rfdetr.lit import build_trainer
-from rfdetr.lit.datamodule import RFDETRDataModule
-from rfdetr.lit.module import RFDETRModule
+from rfdetr.training import build_trainer
+from rfdetr.training.datamodule import RFDETRDataModule
+from rfdetr.training.module import RFDETRModule
 
 from .helpers import _fake_postprocess, _FakeCriterion, _FakeDataset, _make_param_dicts, _TinyModel
 
@@ -41,14 +41,14 @@ def _fit_and_read_csv(mc: RFDETRBaseConfig, tc: TrainConfig, criterion=None) -> 
     """Run 1 epoch (2 train + 2 val batches) and return the resulting metrics.csv."""
     fake_criterion = criterion or _FakeCriterion()
     with (
-        patch("rfdetr.lit.module.build_model", return_value=_TinyModel()),
+        patch("rfdetr.training.module.build_model", return_value=_TinyModel()),
         patch(
-            "rfdetr.lit.module.build_criterion_and_postprocessors",
+            "rfdetr.training.module.build_criterion_and_postprocessors",
             return_value=(fake_criterion, MagicMock(side_effect=_fake_postprocess)),
         ),
-        patch("rfdetr.lit.datamodule.build_dataset", return_value=_FakeDataset(length=20)),
+        patch("rfdetr.training.datamodule.build_dataset", return_value=_FakeDataset(length=20)),
         patch(
-            "rfdetr.lit.module.get_param_dict",
+            "rfdetr.training.module.get_param_dict",
             side_effect=lambda args, model: _make_param_dicts(model),
         ),
     ):

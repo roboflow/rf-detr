@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 import torch
 
-from rfdetr.lit.callbacks.coco_eval import COCOEvalCallback
+from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
 
 # ---------------------------------------------------------------------------
 # Shared helpers

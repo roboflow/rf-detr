@@ -104,7 +104,7 @@ docs = [
 Homepage = "https://github.com/roboflow/rf-detr"
 
 [project.scripts]
-rfdetr = "rfdetr.lit.cli:main"
+rfdetr = "rfdetr.training.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

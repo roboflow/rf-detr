@@ -13,7 +13,7 @@ from typing import Any, Literal, Optional
 import numpy as np
 from pytorch_lightning import Callback, LightningModule, Trainer
 
-from rfdetr.util.drop_scheduler import drop_scheduler
+from rfdetr.training.drop_schedule import drop_scheduler
 
 
 class DropPathCallback(Callback):

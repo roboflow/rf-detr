@@ -15,7 +15,7 @@ import pytest
 import torch
 from pytorch_lightning.trainer.states import TrainerFn
 
-from rfdetr.lit.callbacks.best_model import BestModelCallback, RFDETREarlyStopping
+from rfdetr.training.callbacks.best_model import BestModelCallback, RFDETREarlyStopping
 
 # ---------------------------------------------------------------------------
 # Helpers

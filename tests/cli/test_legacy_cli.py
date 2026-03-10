@@ -7,7 +7,7 @@
 """Tests for the legacy CLI entry point migration — PTL Ch4/T5.
 
 Verifies two invariants:
-1. pyproject.toml [project.scripts] now points to rfdetr.lit.cli:main.
+1. pyproject.toml [project.scripts] now points to rfdetr.training.cli:main.
 2. The legacy rfdetr.cli.main:trainer emits a DeprecationWarning so users
    who call it programmatically are guided toward the new CLI.
 """
@@ -36,8 +36,8 @@ class TestEntryPoint:
         return m.group(1)
 
     def test_entry_point_value(self):
-        """rfdetr entry point must be rfdetr.lit.cli:main."""
-        assert self._read_entry_point() == "rfdetr.lit.cli:main"
+        """rfdetr entry point must be rfdetr.training.cli:main."""
+        assert self._read_entry_point() == "rfdetr.training.cli:main"
 
     def test_entry_point_not_legacy(self):
         """Entry point must no longer reference rfdetr.cli.main:trainer."""
@@ -75,14 +75,14 @@ class TestLegacyTrainerDeprecation:
         assert dep_warns, "trainer() must emit a DeprecationWarning"
 
     def test_deprecation_message_mentions_new_cli(self):
-        """DeprecationWarning message references rfdetr.lit.cli:main."""
+        """DeprecationWarning message references rfdetr.training.cli:main."""
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             self._call_trainer_with_coco_dir()
 
         dep_msgs = [str(w.message) for w in caught if issubclass(w.category, DeprecationWarning)]
-        assert any("rfdetr.lit.cli" in m for m in dep_msgs), (
-            f"Expected 'rfdetr.lit.cli' in deprecation message; got: {dep_msgs}"
+        assert any("rfdetr.training.cli" in m for m in dep_msgs), (
+            f"Expected 'rfdetr.training.cli' in deprecation message; got: {dep_msgs}"
         )
 
     def test_deprecation_message_mentions_version(self):

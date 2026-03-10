@@ -4,14 +4,14 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-"""Checkpoint conversion utilities for the PTL migration (Phase 8).
+"""Checkpoint conversion utilities for the PTL training stack.
 
 Provides :func:`convert_legacy_checkpoint` to convert RF-DETR ``*.pth``
 checkpoints (produced by the pre-PTL ``engine.py`` training loop) into the
 ``*.ckpt`` format expected by ``pytorch_lightning.Trainer``.
 
 Auto-detection of legacy format at load time is handled by
-:meth:`rfdetr.lit.module.RFDETRModule.on_load_checkpoint`.
+:meth:`rfdetr.training.module.RFDETRModule.on_load_checkpoint`.
 """
 
 from __future__ import annotations
@@ -33,11 +33,11 @@ def convert_legacy_checkpoint(old_path: str, new_path: str) -> None:
     rewrites it in the structure expected by ``pytorch_lightning.Trainer``:
 
     * ``state_dict`` keys are prefixed with ``"model."`` to match the
-      attribute path inside :class:`~rfdetr.lit.module.RFDETRModule`.
+      attribute path inside :class:`~rfdetr.training.module.RFDETRModule`.
     * ``args`` (``argparse.Namespace`` or ``dict``) is normalised to a plain
       ``dict`` and stored as ``hyper_parameters``.
     * ``legacy_checkpoint_format: True`` is written so
-      :meth:`~rfdetr.lit.module.RFDETRModule.on_load_checkpoint` can
+      :meth:`~rfdetr.training.module.RFDETRModule.on_load_checkpoint` can
       distinguish converted files from native PTL checkpoints.
     * If an ``ema_model`` key is present it is preserved verbatim under
       ``legacy_ema_state_dict`` for optional EMA weight restoration.

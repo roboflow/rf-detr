@@ -8,7 +8,7 @@
 For every detection and segmentation model variant, this module:
 
 1. Loads pretrained weights via the ``RFDETR`` wrapper.
-2. Copies the same weights into a fresh :class:`~rfdetr.lit.module.RFDETRModule`.
+2. Copies the same weights into a fresh :class:`~rfdetr.training.module.RFDETRModule`.
 3. Asserts the module is a genuine ``pytorch_lightning.LightningModule``.
 4. Evaluates via ``Trainer.validate`` (native PTL path).
 5. Asserts COCO baseline thresholds.
@@ -36,8 +36,8 @@ from rfdetr import (
 )
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.detr import RFDETR
-from rfdetr.lit import RFDETRDataModule, build_trainer
-from rfdetr.lit.module import RFDETRModule
+from rfdetr.training import RFDETRDataModule, build_trainer
+from rfdetr.training.module import RFDETRModule
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -76,7 +76,7 @@ def _build_datamodule(
     train_config: TrainConfig,
     num_samples: Optional[int] = None,
 ) -> RFDETRDataModule:
-    """Build and set up an :class:`~rfdetr.lit.datamodule.RFDETRDataModule`.
+    """Build and set up an :class:`~rfdetr.training.datamodule.RFDETRDataModule`.
 
     Calls ``setup("validate")`` so ``_dataset_val`` is ready.  If
     *num_samples* is provided, the validation dataset is truncated to a
@@ -92,7 +92,7 @@ def _build_datamodule(
         num_samples: If set, limit the validation dataset to this many samples.
 
     Returns:
-        Configured :class:`~rfdetr.lit.datamodule.RFDETRDataModule` with
+        Configured :class:`~rfdetr.training.datamodule.RFDETRDataModule` with
         ``_dataset_val`` populated.
     """
     dm = RFDETRDataModule(model_config, train_config)
@@ -108,7 +108,7 @@ def _build_datamodule(
 def _build_ptl_module(rfdetr_obj: RFDETR, train_config: TrainConfig) -> RFDETRModule:
     """Copy pretrained weights from *rfdetr_obj* into a fresh RFDETRModule.
 
-    Builds an :class:`~rfdetr.lit.module.RFDETRModule` with the same
+    Builds an :class:`~rfdetr.training.module.RFDETRModule` with the same
     architecture as *rfdetr_obj* (no pretrain download), loads the weights
     from ``rfdetr_obj.model.model``, and runs PTL-identity assertions before
     returning.
@@ -119,7 +119,7 @@ def _build_ptl_module(rfdetr_obj: RFDETR, train_config: TrainConfig) -> RFDETRMo
             module's training config context (must have a valid ``output_dir``).
 
     Returns:
-        Weight-synced :class:`~rfdetr.lit.module.RFDETRModule` ready for
+        Weight-synced :class:`~rfdetr.training.module.RFDETRModule` ready for
         ``Trainer.validate``.
     """
     ptl_module = RFDETRModule(rfdetr_obj.model_config, train_config)

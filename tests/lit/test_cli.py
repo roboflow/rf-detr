@@ -23,28 +23,28 @@ class TestRFDETRCliStructure:
     """RFDETRCli is correctly structured and importable."""
 
     def test_cli_module_importable(self):
-        """rfdetr.lit.cli imports without error."""
-        import rfdetr.lit.cli  # noqa: F401
+        """rfdetr.training.cli imports without error."""
+        import rfdetr.training.cli  # noqa: F401
 
     def test_rfdetr_cli_importable(self):
-        """RFDETRCli can be imported from rfdetr.lit.cli."""
-        from rfdetr.lit.cli import RFDETRCli  # noqa: F401
+        """RFDETRCli can be imported from rfdetr.training.cli."""
+        from rfdetr.training.cli import RFDETRCli  # noqa: F401
 
     def test_main_importable(self):
-        """main() can be imported from rfdetr.lit.cli."""
-        from rfdetr.lit.cli import main  # noqa: F401
+        """main() can be imported from rfdetr.training.cli."""
+        from rfdetr.training.cli import main  # noqa: F401
 
     def test_rfdetr_cli_is_lightning_cli_subclass(self):
         """RFDETRCli must subclass pytorch_lightning LightningCLI."""
         from pytorch_lightning.cli import LightningCLI
 
-        from rfdetr.lit.cli import RFDETRCli
+        from rfdetr.training.cli import RFDETRCli
 
         assert issubclass(RFDETRCli, LightningCLI)
 
     def test_main_is_callable(self):
         """main must be a callable (function, not e.g. a string)."""
-        from rfdetr.lit.cli import main
+        from rfdetr.training.cli import main
 
         assert callable(main)
 
@@ -52,13 +52,13 @@ class TestRFDETRCliStructure:
         """RFDETRCli overrides add_arguments_to_parser from LightningCLI."""
         from pytorch_lightning.cli import LightningCLI
 
-        from rfdetr.lit.cli import RFDETRCli
+        from rfdetr.training.cli import RFDETRCli
 
         assert RFDETRCli.add_arguments_to_parser is not LightningCLI.add_arguments_to_parser
 
     def test_exported_from_lit_package(self):
-        """RFDETRCli is exported from rfdetr.lit (appears in __all__)."""
-        import rfdetr.lit as lit
+        """RFDETRCli is exported from rfdetr.training (appears in __all__)."""
+        import rfdetr.training as lit
 
         assert hasattr(lit, "RFDETRCli")
         assert "RFDETRCli" in lit.__all__
@@ -76,7 +76,7 @@ class TestRFDETRCliArgumentLinking:
         """Instantiate a minimal parser and collect registered link sources."""
         import unittest.mock as mock
 
-        from rfdetr.lit.cli import RFDETRCli
+        from rfdetr.training.cli import RFDETRCli
 
         captured = []
 

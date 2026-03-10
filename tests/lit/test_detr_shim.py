@@ -24,8 +24,8 @@ import torch
 
 from rfdetr.config import RFDETRBaseConfig, TrainConfig
 from rfdetr.detr import RFDETR
-from rfdetr.lit.checkpoint import convert_legacy_checkpoint
-from rfdetr.lit.module import RFDETRModule
+from rfdetr.training.checkpoint import convert_legacy_checkpoint
+from rfdetr.training.module import RFDETRModule
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -63,15 +63,15 @@ def _make_rfdetr_self(tmp_path, **train_overrides):
 
 
 def _patch_lit():
-    """Context manager that patches all three rfdetr.lit entry points."""
+    """Context manager that patches all three rfdetr.training entry points."""
     mock_module_cls = MagicMock(name="RFDETRModule_cls")
     mock_dm_cls = MagicMock(name="RFDETRDataModule_cls")
     mock_build_trainer = MagicMock(name="build_trainer")
 
     return (
-        patch("rfdetr.lit.RFDETRModule", mock_module_cls),
-        patch("rfdetr.lit.RFDETRDataModule", mock_dm_cls),
-        patch("rfdetr.lit.build_trainer", mock_build_trainer),
+        patch("rfdetr.training.RFDETRModule", mock_module_cls),
+        patch("rfdetr.training.RFDETRDataModule", mock_dm_cls),
+        patch("rfdetr.training.build_trainer", mock_build_trainer),
         mock_module_cls,
         mock_dm_cls,
         mock_build_trainer,
@@ -655,12 +655,12 @@ class TestPublicAPIExports:
         ["RFDETRModule", "RFDETRDataModule", "build_trainer"],
         ids=["RFDETRModule", "RFDETRDataModule", "build_trainer"],
     )
-    def test_symbol_is_same_object_as_rfdetr_lit(self, name):
-        """rfdetr.<name> is the identical object to rfdetr.lit.<name>."""
+    def test_symbol_is_same_object_as_rfdetr_training(self, name):
+        """rfdetr.<name> is the identical object to rfdetr.training.<name>."""
         import rfdetr
-        import rfdetr.lit
+        import rfdetr.training
 
-        assert getattr(rfdetr, name) is getattr(rfdetr.lit, name)
+        assert getattr(rfdetr, name) is getattr(rfdetr.training, name)
 
     @pytest.mark.parametrize(
         "name",
@@ -687,11 +687,10 @@ class TestPublicAPIExports:
             assert hasattr(rfdetr, name), f"rfdetr.{name} unexpectedly missing"
 
     def test_convert_legacy_checkpoint_not_in_rfdetr_namespace(self):
-        """convert_legacy_checkpoint is in rfdetr.lit but not the top-level rfdetr namespace."""
+        """convert_legacy_checkpoint is in rfdetr.training but not the top-level rfdetr namespace."""
         import rfdetr
 
-        # It is available from rfdetr.lit
-        from rfdetr.lit import convert_legacy_checkpoint  # noqa: F401
+        from rfdetr.training import convert_legacy_checkpoint  # noqa: F401
 
         # It is NOT directly on rfdetr (Phase 7.7 spec lists only the three PTL exports)
         assert not hasattr(rfdetr, "convert_legacy_checkpoint")

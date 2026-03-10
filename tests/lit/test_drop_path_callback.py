@@ -4,7 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-"""Unit tests for :class:`rfdetr.lit.callbacks.drop_schedule.DropPathCallback`."""
+"""Unit tests for :class:`rfdetr.training.callbacks.drop_schedule.DropPathCallback`."""
 
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
-from rfdetr.lit.callbacks.drop_schedule import DropPathCallback
-from rfdetr.util.drop_scheduler import drop_scheduler
+from rfdetr.training.callbacks.drop_schedule import DropPathCallback
+from rfdetr.training.drop_schedule import drop_scheduler
 
 # ---------------------------------------------------------------------------
 # Helpers

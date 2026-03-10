@@ -4,7 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-"""Shared test helpers for the rfdetr.lit test suite.
+"""Shared test helpers for the rfdetr.training test suite.
 
 Plain classes and functions (not pytest fixtures) shared across multiple test
 modules to avoid verbatim duplication.  Import with a relative import::

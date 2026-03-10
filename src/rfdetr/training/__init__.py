@@ -4,10 +4,10 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-"""PyTorch Lightning integration layer for RF-DETR.
+"""RF-DETR training package (PyTorch Lightning).
 
-This package provides the Lightning module, data module, callbacks, and CLI
-for training and evaluation.
+Provides the Lightning module, data module, callbacks, and CLI for
+training and evaluation.
 
 Exports:
     RFDETRModule: LightningModule wrapping the RF-DETR model and training loop.
@@ -22,17 +22,17 @@ import torch
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.loggers import CSVLogger, MLFlowLogger, TensorBoardLogger, WandbLogger
 
-from rfdetr.lit.callbacks import (
+from rfdetr.training.callbacks import (
     BestModelCallback,
     DropPathCallback,
     RFDETREarlyStopping,
     RFDETREMACallback,
 )
-from rfdetr.lit.callbacks.coco_eval import COCOEvalCallback
-from rfdetr.lit.checkpoint import convert_legacy_checkpoint
-from rfdetr.lit.cli import RFDETRCli
-from rfdetr.lit.datamodule import RFDETRDataModule
-from rfdetr.lit.module import RFDETRModule
+from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
+from rfdetr.training.checkpoint import convert_legacy_checkpoint
+from rfdetr.training.cli import RFDETRCli
+from rfdetr.training.datamodule import RFDETRDataModule
+from rfdetr.training.module import RFDETRModule
 from rfdetr.utilities.logger import get_logger
 
 _logger = get_logger()

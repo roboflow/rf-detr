@@ -4,7 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-"""LightningCLI entry point for RF-DETR training and evaluation (PTL Ch4/T4).
+"""LightningCLI entry point for RF-DETR training and evaluation.
 
 Provides the ``rfdetr`` command with auto-generated subcommands::
 
@@ -21,8 +21,8 @@ the datamodule receives the same values automatically at parse time.
 
 from pytorch_lightning.cli import LightningArgumentParser, LightningCLI
 
-from rfdetr.lit.datamodule import RFDETRDataModule
-from rfdetr.lit.module import RFDETRModule
+from rfdetr.training.datamodule import RFDETRDataModule
+from rfdetr.training.module import RFDETRModule
 
 
 class RFDETRCli(LightningCLI):

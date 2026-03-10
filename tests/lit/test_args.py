@@ -8,7 +8,7 @@
 
 import pytest
 
-from rfdetr.lit._namespace import build_namespace
+from rfdetr.training._namespace import build_namespace
 
 
 class TestBuildNamespace:

@@ -222,7 +222,7 @@ class TestBuildTrainerUsesRealFields:
 
     def test_clip_max_norm_forwarded_to_trainer(self, tmp_path):
         """gradient_clip_val on the Trainer matches TrainConfig.clip_max_norm."""
-        from rfdetr.lit import build_trainer
+        from rfdetr.training import build_trainer
 
         trainer = build_trainer(self._tc(tmp_path, clip_max_norm=0.25), self._mc())
         assert trainer.gradient_clip_val == pytest.approx(0.25)
@@ -231,9 +231,9 @@ class TestBuildTrainerUsesRealFields:
         """Seeding is deferred to RFDETRModule.on_fit_start, not build_trainer()."""
         import unittest.mock as mock
 
-        from rfdetr.lit import build_trainer
+        from rfdetr.training import build_trainer
 
-        with mock.patch("rfdetr.lit.seed_everything") as mock_seed:
+        with mock.patch("rfdetr.training.seed_everything") as mock_seed:
             build_trainer(self._tc(tmp_path, seed=99), self._mc())
         mock_seed.assert_not_called()
 
@@ -241,7 +241,7 @@ class TestBuildTrainerUsesRealFields:
         """sync_batchnorm=True is passed to Trainer when TrainConfig.sync_bn is True."""
         import unittest.mock as mock
 
-        from rfdetr.lit import build_trainer
+        from rfdetr.training import build_trainer
 
         captured_kwargs = {}
 
@@ -251,7 +251,7 @@ class TestBuildTrainerUsesRealFields:
             captured_kwargs.update(kwargs)
             real_trainer_init(self_t, **kwargs)
 
-        with mock.patch("rfdetr.lit.Trainer.__init__", _capture_init):
+        with mock.patch("rfdetr.training.Trainer.__init__", _capture_init):
             build_trainer(self._tc(tmp_path, sync_bn=True), self._mc())
 
         assert captured_kwargs.get("sync_batchnorm") is True

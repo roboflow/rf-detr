@@ -61,7 +61,7 @@ def trainer() -> None:
     warnings.warn(
         "The `rfdetr` CLI entry point `rfdetr.cli.main:trainer` is deprecated as of "
         "v1.5.1 and will be removed in v2.0.0.  Use `rfdetr fit` "
-        "(rfdetr.lit.cli:main) instead.",
+        "(rfdetr.training.cli:main) instead.",
         DeprecationWarning,
         stacklevel=1,
     )

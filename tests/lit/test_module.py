@@ -89,10 +89,10 @@ def _build_module(model_config=None, train_config=None, tmp_path=None):
     fake_criterion = _fake_criterion()
     fake_postprocess = _fake_postprocess()
     with (
-        patch("rfdetr.lit.module.build_model", return_value=fake_model),
-        patch("rfdetr.lit.module.build_criterion_and_postprocessors", return_value=(fake_criterion, fake_postprocess)),
+        patch("rfdetr.training.module.build_model", return_value=fake_model),
+        patch("rfdetr.training.module.build_criterion_and_postprocessors", return_value=(fake_criterion, fake_postprocess)),
     ):
-        from rfdetr.lit.module import RFDETRModule
+        from rfdetr.training.module import RFDETRModule
 
         module = RFDETRModule(mc, tc)
     return module, fake_model, fake_criterion, fake_postprocess
@@ -172,7 +172,7 @@ class TestInit:
         tc = _base_train_config(tmp_path, multi_scale=True)
         with (
             patch("torch.cuda.is_available", return_value=True),
-            patch("rfdetr.lit.module.torch.compile") as mock_compile,
+            patch("rfdetr.training.module.torch.compile") as mock_compile,
         ):
             _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
         mock_compile.assert_not_called()
@@ -183,7 +183,7 @@ class TestInit:
         tc = _base_train_config(tmp_path, multi_scale=False)
         with (
             patch("torch.cuda.is_available", return_value=True),
-            patch("rfdetr.lit.module.torch.compile", side_effect=lambda m, **_: m) as mock_compile,
+            patch("rfdetr.training.module.torch.compile", side_effect=lambda m, **_: m) as mock_compile,
         ):
             _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
         mock_compile.assert_called_once()
@@ -207,8 +207,8 @@ class TestLoadPretrainWeights:
             }
         }
 
-    @patch("rfdetr.lit.module.torch.load")
-    @patch("rfdetr.lit.module.validate_pretrain_weights")
+    @patch("rfdetr.training.module.torch.load")
+    @patch("rfdetr.training.module.validate_pretrain_weights")
     def test_loads_checkpoint_successfully(self, mock_validate, mock_torch_load, base_model_config, build_module):
         """A valid checkpoint must be validated, loaded, and applied to the model."""
         mc = base_model_config(num_classes=90)
@@ -222,8 +222,8 @@ class TestLoadPretrainWeights:
         mock_validate.assert_called_once_with("/fake/weights.pth", strict=False)
         module.model.load_state_dict.assert_called_once()
 
-    @patch("rfdetr.lit.module.torch.load")
-    @patch("rfdetr.lit.module.validate_pretrain_weights")
+    @patch("rfdetr.training.module.torch.load")
+    @patch("rfdetr.training.module.validate_pretrain_weights")
     def test_class_count_mismatch_triggers_reinitialize(
         self, mock_validate, mock_torch_load, base_model_config, build_module
     ):
@@ -243,8 +243,8 @@ class TestLoadPretrainWeights:
         fake_model.reinitialize_detection_head.assert_has_calls([call(91), call(6)])
         assert fake_model.reinitialize_detection_head.call_count == 2
 
-    @patch("rfdetr.lit.module.torch.load")
-    @patch("rfdetr.lit.module.validate_pretrain_weights")
+    @patch("rfdetr.training.module.torch.load")
+    @patch("rfdetr.training.module.validate_pretrain_weights")
     def test_class_count_match_does_not_reinitialize(
         self, mock_validate, mock_torch_load, base_model_config, build_module
     ):
@@ -259,8 +259,8 @@ class TestLoadPretrainWeights:
 
         fake_model.reinitialize_detection_head.assert_not_called()
 
-    @patch("rfdetr.lit.module.torch.load")
-    @patch("rfdetr.lit.module.validate_pretrain_weights")
+    @patch("rfdetr.training.module.torch.load")
+    @patch("rfdetr.training.module.validate_pretrain_weights")
     def test_query_embedding_trimmed_to_configured_count(
         self, mock_validate, mock_torch_load, base_model_config, build_module
     ):
@@ -289,9 +289,9 @@ class TestLoadPretrainWeights:
         assert checkpoint["model"]["refpoint_embed.weight"].shape[0] == desired
         assert checkpoint["model"]["query_feat.weight"].shape[0] == desired
 
-    @patch("rfdetr.lit.module.os.path.isfile", return_value=True)
-    @patch("rfdetr.lit.module.download_pretrain_weights")
-    @patch("rfdetr.lit.module.validate_pretrain_weights")
+    @patch("rfdetr.training.module.os.path.isfile", return_value=True)
+    @patch("rfdetr.training.module.download_pretrain_weights")
+    @patch("rfdetr.training.module.validate_pretrain_weights")
     def test_redownloads_on_load_failure(
         self, mock_validate, mock_download, mock_isfile, base_model_config, build_module
     ):
@@ -309,7 +309,7 @@ class TestLoadPretrainWeights:
                 raise RuntimeError("corrupted file")
             return checkpoint
 
-        with patch("rfdetr.lit.module.torch.load", side_effect=fake_torch_load):
+        with patch("rfdetr.training.module.torch.load", side_effect=fake_torch_load):
             module._load_pretrain_weights()
 
         # Verify a redownload with validate_md5=False was triggered after load failure.
@@ -318,10 +318,10 @@ class TestLoadPretrainWeights:
         assert all(c.kwargs.get("validate_md5") is False for c in redownload_calls)
         assert load_calls[0] == 2
 
-    @patch("rfdetr.lit.module.os.path.isfile", return_value=False)
-    @patch("rfdetr.lit.module.download_pretrain_weights")
-    @patch("rfdetr.lit.module.validate_pretrain_weights")
-    @patch("rfdetr.lit.module.torch.load")
+    @patch("rfdetr.training.module.os.path.isfile", return_value=False)
+    @patch("rfdetr.training.module.download_pretrain_weights")
+    @patch("rfdetr.training.module.validate_pretrain_weights")
+    @patch("rfdetr.training.module.torch.load")
     def test_download_before_load_when_weights_absent(
         self, mock_torch_load, mock_validate, mock_download, mock_isfile, base_model_config, build_module
     ):
@@ -345,8 +345,8 @@ class TestLoadPretrainWeights:
         first_call = mock_download.call_args_list[0]
         assert first_call.args[0] == "/content/rf-detr-base.pth"
 
-    @patch("rfdetr.lit.module.torch.load")
-    @patch("rfdetr.lit.module.validate_pretrain_weights")
+    @patch("rfdetr.training.module.torch.load")
+    @patch("rfdetr.training.module.validate_pretrain_weights")
     def test_pretrain_class_names_stored_when_present(
         self, mock_validate, mock_torch_load, base_model_config, build_module
     ):
@@ -382,13 +382,13 @@ class TestApplyLora:
         fake_model.backbone.__getitem__ = MagicMock(return_value=fake_backbone_0)
 
         with (
-            patch("rfdetr.lit.module.build_model", return_value=fake_model),
+            patch("rfdetr.training.module.build_model", return_value=fake_model),
             patch(
-                "rfdetr.lit.module.build_criterion_and_postprocessors",
+                "rfdetr.training.module.build_criterion_and_postprocessors",
                 return_value=(_fake_criterion(), _fake_postprocess()),
             ),
         ):
-            from rfdetr.lit.module import RFDETRModule
+            from rfdetr.training.module import RFDETRModule
 
             module = RFDETRModule(mc, tc)
 
@@ -425,7 +425,7 @@ class TestApplyLora:
 class TestOnFitStart:
     """Tests for on_fit_start() seeding behavior."""
 
-    @patch("rfdetr.lit.module.seed_everything")
+    @patch("rfdetr.training.module.seed_everything")
     def test_seed_applied_when_configured(self, mock_seed, base_train_config, build_module):
         """Configured seed should be applied at fit start."""
         tc = base_train_config(seed=7)
@@ -435,7 +435,7 @@ class TestOnFitStart:
 
         mock_seed.assert_called_once_with(7, workers=True)
 
-    @patch("rfdetr.lit.module.seed_everything")
+    @patch("rfdetr.training.module.seed_everything")
     def test_seed_skipped_when_none(self, mock_seed, base_train_config, build_module):
         """No seed means on_fit_start should not call seed_everything."""
         tc = base_train_config(seed=None)
@@ -812,7 +812,7 @@ class TestConfigureOptimizers:
             pytest.param("lr_scheduler", id="lr-scheduler-key"),
         ],
     )
-    @patch("rfdetr.lit.module.get_param_dict")
+    @patch("rfdetr.training.module.get_param_dict")
     def test_configure_optimizers_returns_required_key(self, mock_get_param_dict, key, tmp_path):
         """Lightning requires both 'optimizer' and 'lr_scheduler' keys in the returned config dict."""
         module, param_dicts = self._setup_module(tmp_path)
@@ -820,7 +820,7 @@ class TestConfigureOptimizers:
 
         assert key in module.configure_optimizers()
 
-    @patch("rfdetr.lit.module.get_param_dict")
+    @patch("rfdetr.training.module.get_param_dict")
     def test_optimizer_is_adamw(self, mock_get_param_dict, tmp_path):
         """RF-DETR must use AdamW for its decoupled weight decay behavior."""
         module, param_dicts = self._setup_module(tmp_path)
@@ -828,7 +828,7 @@ class TestConfigureOptimizers:
 
         assert isinstance(module.configure_optimizers()["optimizer"], torch.optim.AdamW)
 
-    @patch("rfdetr.lit.module.get_param_dict")
+    @patch("rfdetr.training.module.get_param_dict")
     def test_scheduler_interval_is_step(self, mock_get_param_dict, tmp_path):
         """Scheduler must step per batch (not per epoch) for fine-grained warmup."""
         module, param_dicts = self._setup_module(tmp_path)
@@ -843,7 +843,7 @@ class TestConfigureOptimizers:
             pytest.param(50, "warmup_mid", id="warmup-midpoint"),
         ],
     )
-    @patch("rfdetr.lit.module.get_param_dict")
+    @patch("rfdetr.training.module.get_param_dict")
     def test_lr_lambda_warmup_phase(self, mock_get_param_dict, step, expected_behavior, tmp_path):
         """LR lambda must produce a linear ramp during the warmup phase."""
         module, param_dicts = self._setup_module(tmp_path, warmup_epochs=1.0, epochs=10)
@@ -857,7 +857,7 @@ class TestConfigureOptimizers:
         expected = float(step) / float(max(1, 100))
         assert lr_lambda(step) == pytest.approx(expected)
 
-    @patch("rfdetr.lit.module.get_param_dict")
+    @patch("rfdetr.training.module.get_param_dict")
     def test_lr_lambda_step_decay_before_drop(self, mock_get_param_dict, tmp_path):
         """Before lr_drop epoch, the LR multiplier must remain at 1.0."""
         module, param_dicts = self._setup_module(tmp_path, warmup_epochs=0.0, epochs=10, lr_drop=8)
@@ -870,7 +870,7 @@ class TestConfigureOptimizers:
         # lr_drop * steps_per_epoch = 8 * 100 = 800; step 500 < 800 → factor 1.0
         assert lr_lambda(500) == pytest.approx(1.0)
 
-    @patch("rfdetr.lit.module.get_param_dict")
+    @patch("rfdetr.training.module.get_param_dict")
     def test_lr_lambda_step_decay_after_drop(self, mock_get_param_dict, tmp_path):
         """After lr_drop epoch, the LR multiplier must decay to 0.1."""
         module, param_dicts = self._setup_module(tmp_path, warmup_epochs=0.0, epochs=10, lr_drop=8)
@@ -883,7 +883,7 @@ class TestConfigureOptimizers:
         # step 900 > 800 → factor 0.1
         assert lr_lambda(900) == pytest.approx(0.1)
 
-    @patch("rfdetr.lit.module.get_param_dict")
+    @patch("rfdetr.training.module.get_param_dict")
     def test_lr_lambda_cosine_reads_train_config_fields(self, mock_get_param_dict, tmp_path):
         """Cosine scheduler must read lr_scheduler/lr_min_factor from TrainConfig."""
         module, param_dicts = self._setup_module(

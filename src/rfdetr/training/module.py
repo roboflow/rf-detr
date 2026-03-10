@@ -21,9 +21,9 @@ from rfdetr.assets.model_weights import download_pretrain_weights, validate_pret
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.datasets.coco import compute_multi_scale_scales
 
-from rfdetr.lit._namespace import build_namespace
+from rfdetr.training._namespace import build_namespace
 from rfdetr.models import build_criterion_and_postprocessors, build_model
-from rfdetr.util.get_param_dicts import get_param_dict
+from rfdetr.training.param_groups import get_param_dict
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.tensors import NestedTensor
 
@@ -390,7 +390,7 @@ class RFDETRModule(LightningModule):
 
         Mirrors :meth:`validation_step` so ``COCOEvalCallback`` can accumulate
         results via ``on_test_batch_end`` when ``trainer.test()`` is called (e.g.
-        from :class:`~rfdetr.lit.callbacks.BestModelCallback` at end of training).
+        from :class:`~rfdetr.training.callbacks.BestModelCallback` at end of training).
 
         Args:
             batch: Tuple of (NestedTensor samples, list of target dicts).
@@ -441,11 +441,11 @@ class RFDETRModule(LightningModule):
            normally.
 
         2. **Converted format** — a file produced by
-           :func:`~rfdetr.lit.checkpoint.convert_legacy_checkpoint` that
+           :func:`~rfdetr.training.checkpoint.convert_legacy_checkpoint` that
            already has ``"state_dict"`` but also carries
            ``"legacy_ema_state_dict"``.  The EMA weights are stashed on
            ``self._pending_legacy_ema_state`` for optional restoration by
-           :class:`~rfdetr.lit.callbacks.ema.RFDETREMACallback`.
+           :class:`~rfdetr.training.callbacks.ema.RFDETREMACallback`.
 
         Args:
             checkpoint: Checkpoint dict passed in by PTL (mutated in-place).

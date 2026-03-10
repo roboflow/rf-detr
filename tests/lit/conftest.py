@@ -113,7 +113,7 @@ def _restore_rfdetr_module_trainer_property():
     """
     yield
     # Lazy import so the fixture does not force module import at collection time.
-    from rfdetr.lit.module import RFDETRModule
+    from rfdetr.training.module import RFDETRModule
 
     if "trainer" in RFDETRModule.__dict__:
         delattr(RFDETRModule, "trainer")

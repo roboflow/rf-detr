@@ -27,7 +27,7 @@ from pytorch_lightning import LightningModule
 
 from rfdetr import RFDETRNano
 from rfdetr.config import RFDETRBaseConfig, TrainConfig
-from rfdetr.lit import RFDETRDataModule, RFDETRModule, build_trainer
+from rfdetr.training import RFDETRDataModule, RFDETRModule, build_trainer
 
 # ---------------------------------------------------------------------------
 # Shared helpers

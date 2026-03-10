@@ -17,8 +17,8 @@ import torch
 from torch import nn
 from torch.optim.swa_utils import AveragedModel
 
-from rfdetr.lit.callbacks.ema import RFDETREMACallback
-from rfdetr.util.utils import ModelEma
+from rfdetr.training.callbacks.ema import RFDETREMACallback
+from rfdetr.training.model_ema import ModelEma
 
 
 class TestAvgFnDecayFormula:

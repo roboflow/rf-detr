@@ -190,7 +190,7 @@ def _build_model_context(model_config: ModelConfig) -> "_ModelContext":
     Returns:
         Fully initialised _ModelContext ready for inference or training.
     """
-    from rfdetr.lit._namespace import build_namespace
+    from rfdetr.training._namespace import build_namespace
 
     # A dummy TrainConfig is needed only for build_namespace's required fields;
     # dataset_dir/output_dir are unused during model construction.
@@ -270,7 +270,7 @@ class RFDETR:
         * ``callbacks`` — if the dict contains any non-empty lists a
           :class:`DeprecationWarning` is emitted; the dict is then discarded.
           Use PTL :class:`~pytorch_lightning.Callback` objects passed via
-          :func:`~rfdetr.lit.build_trainer` instead.
+          :func:`~rfdetr.training.build_trainer` instead.
         * ``start_epoch`` — emits :class:`DeprecationWarning` and is dropped.
         * ``do_benchmark`` — emits :class:`DeprecationWarning` and is dropped.
 
@@ -278,7 +278,7 @@ class RFDETR:
         onto ``self.model.model`` so that :meth:`predict` and :meth:`export`
         continue to work without reloading the checkpoint.
         """
-        from rfdetr.lit import RFDETRDataModule, RFDETRModule, build_trainer
+        from rfdetr.training import RFDETRDataModule, RFDETRModule, build_trainer
 
         # Absorb legacy `callbacks` dict — warn if non-empty, then discard.
         callbacks_dict = kwargs.pop("callbacks", None)
