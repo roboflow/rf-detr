@@ -6,14 +6,8 @@
 
 """Deprecated: use ``rfdetr.utilities.package`` instead."""
 
-import warnings
+from rfdetr.utilities.decorators import _warn_deprecated_module
 
-warnings.warn(
-    "rfdetr.util.package is deprecated; use rfdetr.utilities.package instead.",
-    DeprecationWarning,
-    stacklevel=2,
-)
+_warn_deprecated_module("rfdetr.util.package", "rfdetr.utilities.package")
 
-from rfdetr.utilities.package import get_sha, get_version  # noqa: E402
-
-__all__ = ["get_sha", "get_version"]
+from rfdetr.utilities.package import get_sha, get_version  # noqa: F401, E402

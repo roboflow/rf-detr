@@ -7,13 +7,10 @@
 """Backward-compatibility shim — rfdetr.deploy is deprecated; use rfdetr.export."""
 
 import sys
-import warnings
 
-warnings.warn(
-    "rfdetr.deploy is deprecated; use rfdetr.export instead.",
-    DeprecationWarning,
-    stacklevel=2,
-)
+from rfdetr.utilities.decorators import _warn_deprecated_module
+
+_warn_deprecated_module("rfdetr.deploy", "rfdetr.export")
 
 # Make old submodule paths still importable without submodule files
 import rfdetr.export.benchmark as _benchmark  # noqa: E402

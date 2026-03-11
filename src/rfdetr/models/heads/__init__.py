@@ -6,20 +6,10 @@
 
 """Detection and segmentation head subpackage."""
 
-from rfdetr.models.heads.segmentation import (
-    DepthwiseConvBlock,
-    MLPBlock,
-    SegmentationHead,
-    calculate_uncertainty,
-    get_uncertain_point_coords_with_randomness,
-    point_sample,
-)
+from rfdetr.models.heads.segmentation import DepthwiseConvBlock, MLPBlock, SegmentationHead
 
 __all__ = [
     "SegmentationHead",
     "DepthwiseConvBlock",
     "MLPBlock",
-    "point_sample",
-    "get_uncertain_point_coords_with_randomness",
-    "calculate_uncertainty",
 ]

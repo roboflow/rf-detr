@@ -6,23 +6,11 @@
 
 """Deprecated: use ``rfdetr.utilities`` or ``rfdetr.training.model_ema`` instead."""
 
-import warnings
+from rfdetr.utilities.decorators import _warn_deprecated_module
 
-warnings.warn(
-    "rfdetr.util.utils is deprecated; use rfdetr.utilities instead.",
-    DeprecationWarning,
-    stacklevel=2,
-)
+_warn_deprecated_module("rfdetr.util.utils", "rfdetr.utilities")
 
 # Re-export from new locations.
-from rfdetr.training.model_ema import BestMetricHolder, BestMetricSingle, ModelEma  # noqa: E402
-from rfdetr.utilities.reproducibility import seed_all  # noqa: E402
-from rfdetr.utilities.state_dict import clean_state_dict  # noqa: E402
-
-__all__ = [
-    "seed_all",
-    "clean_state_dict",
-    "ModelEma",
-    "BestMetricSingle",
-    "BestMetricHolder",
-]
+from rfdetr.training.model_ema import BestMetricHolder, BestMetricSingle, ModelEma  # noqa: F401, E402
+from rfdetr.utilities.reproducibility import seed_all  # noqa: F401, E402
+from rfdetr.utilities.state_dict import clean_state_dict  # noqa: F401, E402

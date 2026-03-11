@@ -6,16 +6,6 @@
 
 """Deprecated: use ``rfdetr.utilities.files`` instead."""
 
-import warnings
+from rfdetr.utilities.decorators import _warn_deprecated_module
 
-warnings.warn(
-    "rfdetr.util.files is deprecated; use rfdetr.utilities.files instead.",
-    DeprecationWarning,
-    stacklevel=2,
-)
-
-from rfdetr.utilities.files import (  # noqa: E402, F401
-    _compute_file_md5,
-    _download_file,
-    _validate_file_md5,
-)
+_warn_deprecated_module("rfdetr.util.files", "rfdetr.utilities.files")

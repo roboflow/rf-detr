@@ -6,14 +6,8 @@
 
 """Deprecated: use ``rfdetr.visualize.data`` instead."""
 
-import warnings
+from rfdetr.utilities.decorators import _warn_deprecated_module
 
-warnings.warn(
-    "rfdetr.util.visualize is deprecated; use rfdetr.visualize.data instead.",
-    DeprecationWarning,
-    stacklevel=2,
-)
+_warn_deprecated_module("rfdetr.util.visualize", "rfdetr.visualize.data")
 
-from rfdetr.visualize.data import save_gt_predictions_visualization  # noqa: E402
-
-__all__ = ["save_gt_predictions_visualization"]
+from rfdetr.visualize.data import save_gt_predictions_visualization  # noqa: F401, E402

@@ -6,14 +6,8 @@
 
 """Deprecated: use ``rfdetr.utilities.logger`` instead."""
 
-import warnings
+from rfdetr.utilities.decorators import _warn_deprecated_module
 
-warnings.warn(
-    "rfdetr.util.logger is deprecated; use rfdetr.utilities.logger instead.",
-    DeprecationWarning,
-    stacklevel=2,
-)
+_warn_deprecated_module("rfdetr.util.logger", "rfdetr.utilities.logger")
 
-from rfdetr.utilities.logger import get_logger  # noqa: E402
-
-__all__ = ["get_logger"]
+from rfdetr.utilities.logger import get_logger  # noqa: F401, E402

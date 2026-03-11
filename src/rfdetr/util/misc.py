@@ -21,18 +21,14 @@
 ``rfdetr.models.math`` and are re-exported here for backward compatibility.
 """
 
-import warnings
+from rfdetr.utilities.decorators import _warn_deprecated_module
 
-warnings.warn(
-    "rfdetr.util.misc is deprecated; use rfdetr.utilities instead.",
-    DeprecationWarning,
-    stacklevel=2,
-)
+_warn_deprecated_module("rfdetr.util.misc", "rfdetr.utilities")
 
 # Re-export symbols that have moved to utilities/.
 # Re-export math functions from their canonical location in rfdetr.models.math.
-from rfdetr.models.math import accuracy, interpolate, inverse_sigmoid  # noqa: E402
-from rfdetr.utilities.distributed import (  # noqa: E402
+from rfdetr.models.math import accuracy, interpolate, inverse_sigmoid  # noqa: F401, E402
+from rfdetr.utilities.distributed import (  # noqa: F401, E402
     all_gather,
     get_rank,
     get_world_size,
@@ -41,35 +37,10 @@ from rfdetr.utilities.distributed import (  # noqa: E402
     reduce_dict,
     save_on_master,
 )
-from rfdetr.utilities.package import get_sha  # noqa: E402
-from rfdetr.utilities.state_dict import strip_checkpoint  # noqa: E402
+from rfdetr.utilities.package import get_sha  # noqa: F401, E402
+from rfdetr.utilities.state_dict import strip_checkpoint  # noqa: F401, E402
 from rfdetr.utilities.tensors import (  # noqa: E402, F401
     NestedTensor,
-    _max_by_axis,
-    _onnx_nested_tensor_from_tensor_list,
     collate_fn,
     nested_tensor_from_tensor_list,
 )
-
-__all__ = [
-    # distributed
-    "all_gather",
-    "get_rank",
-    "get_world_size",
-    "is_dist_avail_and_initialized",
-    "is_main_process",
-    "reduce_dict",
-    "save_on_master",
-    # tensors
-    "NestedTensor",
-    "collate_fn",
-    "nested_tensor_from_tensor_list",
-    # package
-    "get_sha",
-    # state_dict
-    "strip_checkpoint",
-    # math (canonical location: rfdetr.models.math; re-exported here for compat)
-    "accuracy",
-    "interpolate",
-    "inverse_sigmoid",
-]

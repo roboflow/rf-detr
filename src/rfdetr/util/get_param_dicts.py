@@ -6,13 +6,9 @@
 
 """Backward-compatibility shim — rfdetr.util.get_param_dicts is deprecated; use rfdetr.training.param_groups."""
 
-import warnings
+from rfdetr.utilities.decorators import _warn_deprecated_module
 
-warnings.warn(
-    "rfdetr.util.get_param_dicts is deprecated; use rfdetr.training.param_groups instead.",
-    DeprecationWarning,
-    stacklevel=2,
-)
+_warn_deprecated_module("rfdetr.util.get_param_dicts", "rfdetr.training.param_groups")
 
 from rfdetr.training.param_groups import (  # noqa: F401, E402
     get_param_dict,
