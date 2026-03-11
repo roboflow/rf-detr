@@ -19,9 +19,6 @@ import torch
 import torchvision
 from torch import Tensor
 
-if float(torchvision.__version__.split(".")[1]) < 7.0:
-    pass
-
 
 def _max_by_axis(the_list: List[List[int]]) -> List[int]:
     """Return element-wise maximums of a list of lists.

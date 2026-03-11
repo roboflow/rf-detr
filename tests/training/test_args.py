@@ -66,6 +66,22 @@ class TestBuildNamespace:
         assert args.ema_update_interval == 2
         assert args.prefetch_factor == 4
 
+    def test_forwards_promoted_train_fields(self, base_model_config, base_train_config):
+        """Promoted TrainConfig fields are forwarded to the legacy namespace."""
+        tc = base_train_config(clip_max_norm=0.35, seed=123, sync_bn=True, fp16_eval=True)
+        args = build_namespace(base_model_config(), tc)
+
+        assert args.clip_max_norm == pytest.approx(0.35)
+        assert args.seed == 123
+        assert args.sync_bn is True
+        assert args.fp16_eval is True
+
+    def test_seed_falls_back_to_legacy_default_when_unset(self, base_model_config, base_train_config):
+        """seed defaults to 42 in the legacy namespace when TrainConfig.seed is None."""
+        tc = base_train_config(seed=None)
+        args = build_namespace(base_model_config(), tc)
+        assert args.seed == 42
+
     def test_forwards_dataset_fields(self, base_model_config, base_train_config):
         """Dataset-routing fields are forwarded to the Namespace."""
         tc = base_train_config(multi_scale=True, expanded_scales=True, dataset_file="coco")

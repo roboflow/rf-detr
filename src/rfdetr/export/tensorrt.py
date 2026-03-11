@@ -22,7 +22,7 @@ logger = get_logger()
 
 def run_command_shell(command, dry_run: bool = False) -> subprocess.CompletedProcess:
     if dry_run:
-        logger.info(f"\nCUDA_VISIBLE_DEVICES={os.environ['CUDA_VISIBLE_DEVICES']} {command}\n")
+        logger.info(f"\nCUDA_VISIBLE_DEVICES={os.getenv('CUDA_VISIBLE_DEVICES', '')} {command}\n")
     try:
         result = subprocess.run(command, shell=True, capture_output=True, text=True, check=True)
         return result

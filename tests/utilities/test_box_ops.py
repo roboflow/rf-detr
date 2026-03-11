@@ -31,3 +31,24 @@ def test_masks_to_boxes_passes_ij_indexing_to_meshgrid(monkeypatch) -> None:
 
     assert call_count == 1
     assert boxes.shape == (1, 4)
+
+
+def test_masks_to_boxes_builds_grid_on_masks_device(monkeypatch) -> None:
+    """`masks_to_boxes` should construct arange tensors on the same device as masks."""
+    original_arange = torch.arange
+    observed_devices = []
+
+    def _arange_with_device_capture(*args, **kwargs):
+        observed_devices.append(kwargs.get("device"))
+        return original_arange(*args, **kwargs)
+
+    monkeypatch.setattr(torch, "arange", _arange_with_device_capture)
+
+    masks = torch.zeros((1, 2, 3), dtype=torch.bool)
+    masks[0, 1, 2] = True
+
+    boxes = masks_to_boxes(masks)
+
+    assert boxes.shape == (1, 4)
+    assert observed_devices
+    assert all(device == masks.device for device in observed_devices)

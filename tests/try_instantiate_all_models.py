@@ -21,6 +21,7 @@ from functools import partial
 from tqdm.auto import tqdm
 
 from rfdetr import (
+    RFDETRLarge,
     RFDETRMedium,
     RFDETRNano,
     RFDETRSeg2XLarge,
@@ -34,9 +35,9 @@ from rfdetr import (
 )
 
 try:
-    from rfdetr import RFDETR2XLarge, RFDETRLarge
+    from rfdetr import RFDETR2XLarge
 except ImportError:
-    RFDETR2XLarge = RFDETRLarge = None
+    RFDETR2XLarge = None
 
 # Explicitly list all models to validate
 MODELS_TO_TEST = [
@@ -46,7 +47,6 @@ MODELS_TO_TEST = [
     RFDETRMedium,
     RFDETRLarge,
     partial(RFDETRXLarge, accept_platform_model_license=True),
-    partial(RFDETR2XLarge, accept_platform_model_license=True),
     # Segmentation Models
     RFDETRSegNano,
     RFDETRSegSmall,
@@ -55,6 +55,9 @@ MODELS_TO_TEST = [
     RFDETRSegXLarge,
     RFDETRSeg2XLarge,
 ]
+
+if RFDETR2XLarge is not None:
+    MODELS_TO_TEST.append(partial(RFDETR2XLarge, accept_platform_model_license=True))
 
 
 def main() -> None:

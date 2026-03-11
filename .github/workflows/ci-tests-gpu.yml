@@ -46,7 +46,7 @@ jobs:
 
       - name: 🚀 Install Packages
         timeout-minutes: 5
-        run: uv sync --group tests --extra onnx --extra plus --extra train
+        run: uv sync --group tests --extra onnx --extra plus --extra train --extra visual
 
       - name: 🧪 Run the Test
         run: |
