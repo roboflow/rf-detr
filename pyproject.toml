@@ -155,6 +155,11 @@ markers = [
     "gpu: tests that require GPU or are slow on CPU",
     "flaky: tests that may fail due to nondeterminism"
 ]
+filterwarnings = [
+    # pytest-xdist workers close their channel before teardown completes;
+    # this is a known false-positive that does not affect test results.
+    "ignore::pluggy.PluggyTeardownRaisedWarning",
+]
 
 [tool.codespell]
 skip = "*.pth"
