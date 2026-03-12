@@ -128,7 +128,7 @@ import requests
 import supervision as sv
 from PIL import Image
 from rfdetr import RFDETRMedium
-from rfdetr.util.coco_classes import COCO_CLASSES
+from rfdetr.assets.coco_classes import COCO_CLASSES
 
 model = RFDETRMedium()
 
@@ -186,7 +186,7 @@ import requests
 import supervision as sv
 from PIL import Image
 from rfdetr import RFDETRSegMedium
-from rfdetr.util.coco_classes import COCO_CLASSES
+from rfdetr.assets.coco_classes import COCO_CLASSES
 
 model = RFDETRSegMedium()
 

@@ -203,6 +203,7 @@ class TestDownloadFile:
         assert target_path.exists()
         assert target_path.read_bytes() == b"helloworld"
         assert not (tmp_path / "weights.bin.tmp").exists()
+        mock_get.assert_called_once_with("https://example.com/file.bin", stream=True, timeout=30.0)
 
     @patch("rfdetr.utilities.files.requests.get")
     def test_download_file_http_error(self, mock_get: Mock, tmp_path: Path):

@@ -28,7 +28,7 @@ Perform inference on an image using either the `rfdetr` package or the `inferenc
     import supervision as sv
     from PIL import Image
     from rfdetr import RFDETRMedium
-    from rfdetr.util.coco_classes import COCO_CLASSES
+    from rfdetr.assets.coco_classes import COCO_CLASSES
 
     model = RFDETRMedium()
 
@@ -69,7 +69,7 @@ These examples use OpenCV for decoding and display. Replace `<SOURCE_VIDEO_PATH>
     import cv2
     import supervision as sv
     from rfdetr import RFDETRMedium
-    from rfdetr.util.coco_classes import COCO_CLASSES
+    from rfdetr.assets.coco_classes import COCO_CLASSES
 
     model = RFDETRMedium()
 
@@ -104,7 +104,7 @@ These examples use OpenCV for decoding and display. Replace `<SOURCE_VIDEO_PATH>
     import cv2
     import supervision as sv
     from rfdetr import RFDETRMedium
-    from rfdetr.util.coco_classes import COCO_CLASSES
+    from rfdetr.assets.coco_classes import COCO_CLASSES
 
     model = RFDETRMedium()
 
@@ -139,7 +139,7 @@ These examples use OpenCV for decoding and display. Replace `<SOURCE_VIDEO_PATH>
     import cv2
     import supervision as sv
     from rfdetr import RFDETRMedium
-    from rfdetr.util.coco_classes import COCO_CLASSES
+    from rfdetr.assets.coco_classes import COCO_CLASSES
 
     model = RFDETRMedium()
 

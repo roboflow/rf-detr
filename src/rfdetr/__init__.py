@@ -59,8 +59,6 @@ def __getattr__(name: str):
         if hasattr(_platform_models, name):
             value = getattr(_platform_models, name)
             globals()[name] = value
-            if name not in __all__:
-                __all__.append(name)
             return value
 
         raise ImportError(_INSTALL_MSG.format(name="platform model downloads"))

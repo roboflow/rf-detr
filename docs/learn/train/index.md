@@ -4,6 +4,17 @@ You can train RF-DETR object detection and segmentation models on a custom datas
 
 This guide describes how to train both an object detection and segmentation RF-DETR model.
 
+## Training paths
+
+RF-DETR provides two training paths:
+
+| Path                                        | When to use                                                                                                                                         |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`RFDETR.train()`** (this page)            | Quickstart, fine-tuning with standard options, Colab notebooks. One call sets up and runs everything.                                               |
+| **[Custom Training API](customization.md)** | Custom callbacks, alternative loggers, multi-GPU strategies, integration with external frameworks, or any other customisation of the training loop. |
+
+Both paths run the same underlying PyTorch Lightning stack. `RFDETR.train()` constructs `RFDETRModule`, `RFDETRDataModule`, and a `Trainer` internally; the Lightning API page shows how to do the same thing explicitly so you can modify each component.
+
 ## Quick Start
 
 RF-DETR supports training on datasets in both **COCO** and **YOLO** formats. The format is automatically detected based on the structure of your dataset directory.
@@ -69,11 +80,17 @@ RF-DETR provides many configuration options to customize your training run. See 
 
 - [Resume training](advanced.md#resume-training) from a checkpoint
 - [Early stopping](advanced.md#early-stopping) to prevent overfitting
-- [Multi-GPU training](advanced.md#multi-gpu-training) with PyTorch DDP
+- [Multi-GPU training](advanced.md#multi-gpu-training) with PyTorch Lightning DDP
 - [Custom augmentations with Albumentations](augmentations.md) - Dedicated guide
 - [Memory optimization](advanced.md#memory-optimization) with gradient checkpointing
 
 → **[Learn more about advanced training](advanced.md)**
+
+## Custom Training API
+
+RF-DETR's training stack is built on PyTorch Lightning. The `RFDETR.train()` call above constructs and runs PTL primitives internally. Use them directly when you need custom callbacks, non-default loggers, multi-GPU strategies, or full control over the training loop.
+
+→ **[Custom Training API guide](customization.md)**
 
 ## Training Loggers
 

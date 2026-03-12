@@ -42,7 +42,21 @@ def get_sha() -> str:
 
     try:
         sha = _run(["git", "rev-parse", "HEAD"])
-        has_diff = bool(_run(["git", "diff-index", "HEAD"]))
+        diff_result = subprocess.run(
+            ["git", "diff-index", "--quiet", "HEAD", "--"],
+            cwd=cwd,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if diff_result.returncode not in (0, 1):
+            raise subprocess.CalledProcessError(
+                returncode=diff_result.returncode,
+                cmd=["git", "diff-index", "--quiet", "HEAD", "--"],
+                output=diff_result.stdout,
+                stderr=diff_result.stderr,
+            )
+        has_diff = diff_result.returncode == 1
         status = "has uncommitted changes" if has_diff else "clean"
         branch = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"])
         return f"sha: {sha}, status: {status}, branch: {branch}"

@@ -14,7 +14,9 @@ ONNX export, simplification, and OnnxOptimizer.
 import inspect
 import os
 from collections import OrderedDict
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
+from os import PathLike
 
 import numpy as np
 import torch
@@ -50,16 +52,32 @@ logger = get_logger()
 
 
 def export_onnx(
-    output_dir,
-    model,
-    input_names,
-    input_tensors,
-    output_names,
-    dynamic_axes,
-    backbone_only=False,
-    verbose=True,
-    opset_version=17,
-):
+    output_dir: str | PathLike[str],
+    model: torch.nn.Module,
+    input_names: Sequence[str],
+    input_tensors: torch.Tensor | Sequence[torch.Tensor],
+    output_names: Sequence[str],
+    dynamic_axes: Mapping[str, Mapping[int, str]] | None,
+    backbone_only: bool = False,
+    verbose: bool = True,
+    opset_version: int = 17,
+) -> str:
+    """Export a model to ONNX.
+
+    Args:
+        output_dir: Directory where the ONNX file will be written.
+        model: Model to export.
+        input_names: Names of model inputs in ONNX graph.
+        input_tensors: Example model input tensor(s) for tracing.
+        output_names: Names of model outputs in ONNX graph.
+        dynamic_axes: Optional dynamic axis configuration for ONNX export.
+        backbone_only: Whether to export backbone-only graph naming.
+        verbose: Whether ONNX exporter should emit verbose logs.
+        opset_version: ONNX opset version.
+
+    Returns:
+        Path to the exported ONNX model.
+    """
     export_name = "backbone_model" if backbone_only else "inference_model"
     output_file = os.path.join(output_dir, f"{export_name}.onnx")
 
@@ -92,8 +110,24 @@ def export_onnx(
     return output_file
 
 
-def onnx_simplify(onnx_dir: str, input_names, input_tensors, force=False):
-    import onnx as _onnx
+def onnx_simplify(
+    onnx_dir: str,
+    input_names: Sequence[str],
+    input_tensors: torch.Tensor | Sequence[torch.Tensor],
+    force: bool = False,
+) -> str:
+    """Optimize and simplify an ONNX graph.
+
+    Args:
+        onnx_dir: Path to the source ONNX model.
+        input_names: Input names matching the exported graph.
+        input_tensors: Input tensor sample(s) used by the simplifier.
+        force: Whether to overwrite an existing simplified model.
+
+    Returns:
+        Path to the simplified ONNX model.
+    """
+    import onnx
     import onnxsim
 
     sim_onnx_dir = onnx_dir.replace(".onnx", ".sim.onnx")
@@ -110,9 +144,9 @@ def onnx_simplify(onnx_dir: str, input_names, input_tensors, force=False):
     opt.info("Model: optimized")
     opt.save_onnx(sim_onnx_dir)
     input_dict = {name: tensor.detach().cpu().numpy() for name, tensor in zip(input_names, input_tensors)}
-    model_opt, check_ok = onnxsim.simplify(onnx_dir, check_n=3, input_data=input_dict, dynamic_input_shape=False)
+    model_opt, check_ok = onnxsim.simplify(sim_onnx_dir, check_n=3, input_data=input_dict, dynamic_input_shape=False)
     if check_ok:
-        _onnx.save(model_opt, sim_onnx_dir)
+        onnx.save(model_opt, sim_onnx_dir)
     else:
         raise RuntimeError("Failed to simplify ONNX model.")
     logger.info(f"Successfully simplified ONNX model: {sim_onnx_dir}")

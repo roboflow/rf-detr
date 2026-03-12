@@ -24,6 +24,7 @@ nav:
   - Home: index.md
   - How to:
       - Install: learn/install.md
+      - Migration Guide: learn/migration.md
       - Run Model:
           - Detection: learn/run/detection.md
           - Segmentation: learn/run/segmentation.md
@@ -33,6 +34,7 @@ nav:
           - Dataset Formats: learn/train/dataset-formats.md
           - Training Parameters: learn/train/training-parameters.md
           - Advanced Training: learn/train/advanced.md
+          - Custom Training API: learn/train/customization.md
           - Augmentations: learn/train/augmentations.md
           - Training Loggers: learn/train/loggers.md
       - Export Model: learn/export.md
@@ -60,6 +62,8 @@ nav:
       - Training Configs:
           - Train Config: reference/train_config.md
           - Segmentation Train Config: reference/segmentation_train_config.md
+      - Lightning Training:
+          - Training Primitives: reference/training.md
   - Tutorials: tutorials/index.md
   - Changelog: https://github.com/roboflow/rf-detr/releases
 

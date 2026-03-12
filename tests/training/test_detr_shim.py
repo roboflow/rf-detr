@@ -675,6 +675,19 @@ class TestPublicAPIExports:
 
         assert len(rfdetr.__all__) == len(set(rfdetr.__all__))
 
+    def test_plus_symbol_resolution_does_not_mutate_all(self, monkeypatch):
+        """Top-level __all__ remains static when plus-only symbols resolve lazily."""
+        import rfdetr
+        import rfdetr.platform.models
+
+        sentinel = object()
+        monkeypatch.setitem(rfdetr.platform.models.__dict__, "RFDETRXLarge", sentinel)
+        monkeypatch.delitem(rfdetr.__dict__, "RFDETRXLarge", raising=False)
+
+        original_all = list(rfdetr.__all__)
+        assert getattr(rfdetr, "RFDETRXLarge") is sentinel
+        assert rfdetr.__all__ == original_all
+
     def test_existing_exports_still_present(self):
         """Original RFDETR* class exports are unchanged."""
         import rfdetr
