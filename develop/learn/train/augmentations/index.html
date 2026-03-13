@@ -2291,7 +2291,7 @@
 
 
 <h1 id="augmentations">Augmentations<a class="headerlink" href="#augmentations" title="Permanent link">&para;</a></h1>
-<p>RF-DETR supports custom data augmentations via <a href="https://albumentations.ai/">Albumentations</a>, with automatic bounding box and mask handling for geometric transforms.</p>
+<p>RF-DETR supports custom data augmentations via <a href="https://albumentations.ai/">Albumentations</a>, with automatic bounding box and mask handling for geometric transforms. Albumentations 1.4.24+ and 2.x are supported.</p>
 <h2 id="quick-start">Quick Start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h2>
 <p>Pass <code>aug_config</code> to your training call. Import one of the built-in presets:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSmall</span>
@@ -2411,6 +2411,7 @@
 <p><strong>Boxes disappear after augmentation</strong> — aggressive rotations or crops can push boxes outside the image boundary. Reduce rotation angles or avoid large crops.</p>
 <p><strong>Model not improving</strong> — augmentations may be too aggressive. Start with <code>AUG_CONSERVATIVE</code> and add transforms gradually. Try removing geometric transforms first to isolate the cause.</p>
 <p><strong>Validation mAP is much higher than training mAP</strong> — this is expected with strong augmentations and not a bug. See the monitoring tip above.</p>
+<p><strong>Upgrading albumentations to 2.x with existing <code>RandomSizedCrop</code> configs?</strong> RF-DETR automatically adapts <code>height</code>/<code>width</code> kwargs to the <code>size=(height, width)</code> format required by albumentations 2.x. No config changes needed.</p>
 <h2 id="advanced-custom-transforms">Advanced: Custom Transforms<a class="headerlink" href="#advanced-custom-transforms" title="Permanent link">&para;</a></h2>
 <p>Any Albumentations transform works by name. If your custom transform is geometric, register it in <code>rfdetr/datasets/transforms.py</code> so boxes are updated automatically:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">GEOMETRIC_TRANSFORMS</span> <span class="o">=</span> <span class="p">{</span>
