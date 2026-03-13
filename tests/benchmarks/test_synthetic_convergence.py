@@ -320,9 +320,5 @@ def test_synthetic_segmentation_training_improves_performance(
     post_results = trainer.validate(module, datamodule=datamodule)
     map_after = post_results[0]["val/mAP_50"]
     segm_map_after = post_results[0]["val/segm_mAP_50"]
-    assert map_after >= 0.15, (
-        f"val bbox mAP {map_after:.3f} should reach at least 0.15 after Trainer.fit."
-    )
-    assert segm_map_after >= 0.10, (
-        f"val segm mAP {segm_map_after:.3f} should reach at least 0.10 after Trainer.fit."
-    )
+    assert map_after >= 0.15, f"val bbox mAP {map_after:.3f} should reach at least 0.15 after Trainer.fit."
+    assert segm_map_after >= 0.10, f"val segm mAP {segm_map_after:.3f} should reach at least 0.10 after Trainer.fit."

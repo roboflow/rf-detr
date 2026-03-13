@@ -506,9 +506,7 @@ class TestDrawSyntheticShapeEdgeCases:
         half_size = size // 2  # 10
         poly_y_min = min(poly[i] for i in range(1, len(poly), 2))
         # Apex is at cy - 2*int(20*0.866)//3 = cy - 11, one pixel above cy - 10
-        assert poly_y_min < cy - half_size, (
-            "Triangle apex should extend above the half_size boundary (known behaviour)"
-        )
+        assert poly_y_min < cy - half_size, "Triangle apex should extend above the half_size boundary (known behaviour)"
 
     @pytest.mark.parametrize(
         "shape,size,expected_n_coords",
