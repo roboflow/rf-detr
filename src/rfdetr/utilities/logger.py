@@ -47,9 +47,7 @@ def get_logger(name: str = "rf-detr", level: Optional[int] = None) -> _RFDETRLog
     if level is None:
         level = getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO)
 
-    logging.setLoggerClass(_RFDETRLogger)
     logger = logging.getLogger(name)
-    logging.setLoggerClass(logging.Logger)  # restore default for other callers
 
     # If the logger was already registered as a plain Logger before this call,
     # upgrade it in-place so warning_once is always available.
