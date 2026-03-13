@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Relax Albumentations version requirement to support 1.x and 2.x (`albumentations>=1.4.24,<3.0.0`). `RandomSizedCrop` configs using `height`/`width` are automatically adapted to the `size=(height, width)` API ([#786](https://github.com/roboflow/rf-detr/pull/786)).
+- Update Albumentations version requirement to support 1.x and 2.x (`albumentations>=1.4.24,<3.0.0`). `RandomSizedCrop` configs using `height`/`width` are automatically adapted to the `size=(height, width)` API ([#786](https://github.com/roboflow/rf-detr/pull/786)).
 
 ### Fixed
 

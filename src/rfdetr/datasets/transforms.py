@@ -315,10 +315,13 @@ def _normalize_albu_params(name: str, params: Dict[str, Any], aug_cls: type) -> 
         # surface its own error about missing required arguments.
         return normalized_params
 
-    # NOTE: For all real Albumentations builds >=1.4.24, ``uses_size`` is True
-    # and this branch is never reached in production. It exists to support
-    # synthetic v1-style classes in tests (e.g. ``FakeV1``).
-    if not uses_size and "size" in normalized_params:  # test-only path
+    # NOTE: For Albumentations builds >=1.4.24, ``RandomSizedCrop`` typically
+    # uses a ``size`` argument and ``uses_size`` will be True. This project
+    # also supports Albumentations 1.x-style APIs (and synthetic v1-style
+    # classes used in tests) where ``RandomSizedCrop`` may not accept ``size``
+    # directly; in those cases we map a provided ``size`` tuple back to
+    # separate ``height``/``width`` kwargs for compatibility.
+    if not uses_size and "size" in normalized_params:  # v1-style API compatibility path
         size = normalized_params.get("size")
         if isinstance(size, Sequence) and len(size) == 2:
             normalized_params.setdefault("height", size[0])
