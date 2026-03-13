@@ -81,6 +81,11 @@ class HungarianMatcher(nn.Module):
     def _sanitize_cost_matrix(C: torch.Tensor) -> torch.Tensor:
         """Replace non-finite cost entries with a large finite sentinel.
 
+        >>> HungarianMatcher._sanitize_cost_matrix(
+        ...     torch.tensor([[1.0, float("nan")], [float("inf"), -2.0]])
+        ... ).tolist()
+        [[1.0, 4.0], [4.0, -2.0]]
+
         Args:
             C: Cost matrix to sanitize before Hungarian assignment.
 
