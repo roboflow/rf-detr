@@ -171,6 +171,10 @@ def calculate_boundary_overlap(bbox: np.ndarray, img_size: int) -> float:
     Args:
         bbox: Bounding box in [x_min, y_min, x_max, y_max] format.
         img_size: Size of the image.
+
+    Returns:
+        Overlap fraction in ``[0, 1]``: ``0.0`` means the box is fully inside
+        the image; ``1.0`` means it is fully outside.
     """
     x_min, y_min, x_max, y_max = bbox
 

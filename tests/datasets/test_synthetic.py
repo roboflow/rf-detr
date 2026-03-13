@@ -13,6 +13,7 @@ from rfdetr.datasets.synthetic import (
     DEFAULT_SPLIT_RATIOS,
     SYNTHETIC_SHAPES,
     DatasetSplitRatios,
+    _calculate_polygon_area,
     _write_coco_json,
     calculate_boundary_overlap,
     draw_synthetic_shape,
@@ -409,3 +410,119 @@ class TestGenerateCocoDatasetWithSegmentation:
             data = json.load(fh)
         for img_info in data["images"]:
             assert (split_dir / img_info["file_name"]).exists()
+
+    def test_empty_polygon_falls_back_to_empty_segmentation(self, tmp_path):
+        """An empty polygon entry silently falls back to ``segmentation=[]``.
+
+        The ``len(polygon_data) < len(detections)`` guard only checks array
+        length, not contents.  An element that is an empty list passes the
+        guard and takes the ``else`` branch producing ``segmentation=[]``.
+        This test documents the existing silent-fallback behaviour.
+        """
+        annotations_path = tmp_path / "_annotations.coco.json"
+        polygon_data = np.empty(1, dtype=object)
+        polygon_data[0] = []  # empty polygon — passes length guard
+        detections = sv.Detections(
+            xyxy=np.array([[0.0, 0.0, 10.0, 10.0]], dtype=float),
+            class_id=np.array([0], dtype=int),
+            data={"polygons": polygon_data},
+        )
+        _write_coco_json(
+            annotations_path=annotations_path,
+            classes=["shape"],
+            file_paths=["/tmp/synthetic.png"],
+            detections_list=[detections],
+            img_size=64,
+            with_segmentation=True,
+        )
+        with open(annotations_path) as fh:
+            data = json.load(fh)
+        assert data["annotations"][0]["segmentation"] == []
+
+
+class TestCalculatePolygonArea:
+    @pytest.mark.parametrize(
+        "polygon,expected_area",
+        [
+            pytest.param(
+                [0.0, 0.0, 10.0, 0.0, 0.0, 10.0],
+                50.0,
+                id="right_triangle",
+            ),
+            pytest.param(
+                [0.0, 0.0, 10.0, 0.0, 10.0, 10.0, 0.0, 10.0],
+                100.0,
+                id="unit_square_10x10",
+            ),
+            pytest.param(
+                [0.0, 0.0, 5.0, 0.0, 10.0, 0.0],
+                0.0,
+                id="collinear_points_degenerate",
+            ),
+            pytest.param(
+                [0.0, 0.0, 1.0, 1.0],
+                0.0,
+                id="fewer_than_3_points",
+            ),
+            pytest.param(
+                [],
+                0.0,
+                id="empty_polygon",
+            ),
+        ],
+    )
+    def test_area(self, polygon, expected_area):
+        assert _calculate_polygon_area(polygon) == pytest.approx(expected_area)
+
+
+class TestDrawSyntheticShapeEdgeCases:
+    def test_square_polygon_uses_floor_half_for_odd_size(self):
+        """For odd size the square polygon uses ``size // 2`` (floor), which is
+        narrower than the bbox half-size ``size / 2``.  This documents the
+        known integer-floor behaviour so a future fix is caught by tests.
+        """
+        cx, cy, size = 50, 50, 21
+        img = np.zeros((100, 100, 3), dtype=np.uint8)
+        _, poly = draw_synthetic_shape(img, "square", sv.Color.WHITE, (cx, cy), size)
+
+        half_floor = size // 2  # 10
+        poly_x_min = min(poly[i] for i in range(0, len(poly), 2))
+        poly_x_max = max(poly[i] for i in range(0, len(poly), 2))
+        assert poly_x_min == pytest.approx(float(cx - half_floor))
+        assert poly_x_max == pytest.approx(float(cx + half_floor))
+
+    def test_triangle_vertex_above_half_size_boundary(self):
+        """The triangle apex extends above ``cy - size // 2`` for all sizes ≥ 12.
+
+        ``height = int(size * 0.866)`` and the apex offset is
+        ``2 * height // 3``, which exceeds ``size // 2`` because
+        ``2/3 * sqrt(3)/2 ≈ 0.577 > 0.5``.  This test documents the known
+        geometric overshoot so a future bbox-containment fix is caught.
+        """
+        cx, cy, size = 50, 50, 20
+        img = np.zeros((100, 100, 3), dtype=np.uint8)
+        _, poly = draw_synthetic_shape(img, "triangle", sv.Color.WHITE, (cx, cy), size)
+
+        half_size = size // 2  # 10
+        poly_y_min = min(poly[i] for i in range(1, len(poly), 2))
+        # Apex is at cy - 2*int(20*0.866)//3 = cy - 11, one pixel above cy - 10
+        assert poly_y_min < cy - half_size, (
+            "Triangle apex should extend above the half_size boundary (known behaviour)"
+        )
+
+    @pytest.mark.parametrize(
+        "shape,size,expected_n_coords",
+        [
+            pytest.param("square", 0, 8, id="square_size_0"),
+            pytest.param("square", 1, 8, id="square_size_1"),
+            pytest.param("circle", 0, 64, id="circle_size_0"),
+            pytest.param("circle", 1, 64, id="circle_size_1"),
+        ],
+    )
+    def test_degenerate_size_returns_polygon_without_crashing(self, shape, size, expected_n_coords):
+        """draw_synthetic_shape with size=0 or size=1 must not raise and must
+        return the expected number of flat coordinate values.
+        """
+        img = np.zeros((100, 100, 3), dtype=np.uint8)
+        _, poly = draw_synthetic_shape(img, shape, sv.Color.WHITE, (50, 50), size)
+        assert len(poly) == expected_n_coords
