@@ -267,7 +267,7 @@ class TestHungarianMatcherNonFiniteCosts:
         assert warning_messages == [expected_warning, expected_warning]
 
 
-class TestHungarianMatcherCostSanitization:
+class TestHungarianMatcherSanitization:
     """Unit tests for the private matcher cost sanitization helper."""
 
     def test_sanitize_cost_matrix_replaces_non_finite_entries(self) -> None:
@@ -288,7 +288,7 @@ class TestHungarianMatcherCostSanitization:
         assert sanitized[0, 0] == 1.0
         assert sanitized[1, 1] == -2.0
 
-    def test_sanitize_cost_matrix_uses_dtype_max_when_all_entries_are_non_finite(self) -> None:
+    def test_sanitize_cost_matrix_all_non_finite_fallback(self) -> None:
         """All-non-finite matrices should fall back to the dtype maximum."""
         cost_matrix = torch.tensor(
             [

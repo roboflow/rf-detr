@@ -31,6 +31,7 @@ from rfdetr.utilities.box_ops import batch_dice_loss, batch_sigmoid_ce_loss, box
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
+_SANITIZED_COST_MARGIN = 1.0
 
 
 class HungarianMatcher(nn.Module):
@@ -78,7 +79,15 @@ class HungarianMatcher(nn.Module):
 
     @staticmethod
     def _sanitize_cost_matrix(C: torch.Tensor) -> torch.Tensor:
-        """Replace non-finite cost entries with a large finite sentinel."""
+        """Replace non-finite cost entries with a large finite sentinel.
+
+        Args:
+            C: Cost matrix to sanitize before Hungarian assignment.
+
+        Returns:
+            Cost matrix with all non-finite entries replaced by a finite
+            sentinel that is no smaller than any valid entry.
+        """
         finite_mask = torch.isfinite(C)
         if finite_mask.all():
             return C
@@ -89,7 +98,7 @@ class HungarianMatcher(nn.Module):
             max_cost = finite_costs.max()
             # Add the largest absolute finite cost so the replacement stays
             # strictly larger than every valid entry, even if all costs are negative.
-            replacement_cost = max_cost + finite_costs.abs().max() + 1
+            replacement_cost = max_cost + finite_costs.abs().max() + _SANITIZED_COST_MARGIN
             # Guard against overflow to inf/NaN and clamp to the maximum finite value.
             if not torch.isfinite(replacement_cost):
                 replacement_cost = C.new_tensor(dtype_info.max)
