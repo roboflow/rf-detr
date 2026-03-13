@@ -7,10 +7,12 @@ import socket
 from types import SimpleNamespace
 from typing import Any
 
+import PIL.Image
 import pytest
 import supervision as sv
 import torch
 
+from rfdetr import RFDETRNano, RFDETRSegNano
 from rfdetr.detr import RFDETR
 
 _HTTP_IMAGE_URL = "http://images.cocodataset.org/val2017/000000397133.jpg"
@@ -55,6 +57,32 @@ class _DummyRFDETR(RFDETR):
 
     def get_model(self, config: SimpleNamespace) -> _DummyModel:
         return _DummyModel()
+
+
+class TestPredictReturnTypes:
+    """``RFDETR.predict()`` API contract tests using synthetic images.
+
+    Quality is not assessed here — see ``tests/benchmarks/test_coco_inference.py``.
+    """
+
+    def test_detection_returns_sv_detections(self) -> None:
+        """Detection model returns a list of ``sv.Detections``."""
+        img = PIL.Image.new("RGB", (640, 640), color=(128, 128, 128))
+        model = RFDETRNano()
+        detections = model.predict([img, img], threshold=0.3)
+        assert isinstance(detections, list), "predict() must return a list for multiple inputs"
+        assert all(isinstance(d, sv.Detections) for d in detections), "Each result must be sv.Detections"
+
+    def test_segmentation_returns_sv_detections_with_masks(self) -> None:
+        """Segmentation model returns ``sv.Detections`` with the mask field always set."""
+        img = PIL.Image.new("RGB", (640, 640), color=(128, 128, 128))
+        model = RFDETRSegNano()
+        detections = model.predict([img, img], threshold=0.3)
+        assert isinstance(detections, list), "predict() must return a list for multiple inputs"
+        assert all(isinstance(d, sv.Detections) for d in detections), "Each result must be sv.Detections"
+        assert all(d.mask is not None for d in detections), (
+            "Segmentation predict() must always set the mask field, even when no objects are detected"
+        )
 
 
 def test_predict_accepts_image_url() -> None:

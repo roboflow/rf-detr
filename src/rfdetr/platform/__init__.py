@@ -7,8 +7,8 @@ import importlib
 import warnings
 
 _INSTALL_MSG = (
-    "The {name} requires the 'plus' extras for the 'rfdetr' package. "
-    "Install it with `pip install rfdetr[plus]` (or `pip install rfdetr_plus` if supported)."
+    "The {name} requires the 'plus' extras for the 'rfdetr' package."
+    " Install it with `pip install rfdetr[plus]` (or `pip install rfdetr_plus` if supported)."
 )
 
 

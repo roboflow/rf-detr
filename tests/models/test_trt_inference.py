@@ -9,7 +9,7 @@ from unittest.mock import Mock
 import torch
 from PIL import Image
 
-from rfdetr.deploy.benchmark import TRTInference, infer_transforms
+from rfdetr.export.benchmark import TRTInference, infer_transforms
 
 
 class TestTRTInference:

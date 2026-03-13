@@ -10,7 +10,7 @@ from typing import Any, Generator
 import pytest
 
 from rfdetr.datasets.synthetic import DatasetSplitRatios, generate_coco_dataset
-from rfdetr.util.utils import seed_all
+from rfdetr.utilities.reproducibility import seed_all
 
 
 @pytest.fixture(scope="session")

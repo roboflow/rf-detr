@@ -13,4 +13,14 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 # ------------------------------------------------------------------------
 
-from rfdetr.models.lwdetr import PostProcess, build_criterion_and_postprocessors, build_model
+from rfdetr.models.criterion import SetCriterion
+from rfdetr.models.lwdetr import build_model
+from rfdetr.models.math import MLP
+from rfdetr.models.postprocess import PostProcess
+
+__all__ = [
+    "SetCriterion",
+    "build_model",
+    "MLP",
+    "PostProcess",
+]

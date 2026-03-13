@@ -7,7 +7,7 @@ RF-DETR supports exporting models to the ONNX format, which enables interoperabi
 To export your model, first install the `onnxexport` extension:
 
 ```bash
-pip install "rfdetr[onnxexport]"
+pip install "rfdetr[onnx]"
 ```
 
 ## Basic Export
@@ -124,7 +124,7 @@ If you want lower latency on NVIDIA GPUs, you can convert the exported ONNX mode
 ```python
 from argparse import Namespace
 
-from rfdetr.deploy.export import trtexec
+from rfdetr.export.tensorrt import trtexec
 
 args = Namespace(
     verbose=True,

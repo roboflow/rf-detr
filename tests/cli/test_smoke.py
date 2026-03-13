@@ -44,9 +44,9 @@ ALL_CONFIGS = [
 
 def _run_cli(*args: str) -> int:
     """Run RFDETRCli in-process with the given args; return the SystemExit code."""
-    from rfdetr.lit.cli import RFDETRCli
-    from rfdetr.lit.datamodule import RFDETRDataModule
-    from rfdetr.lit.module import RFDETRModule
+    from rfdetr.training.cli import RFDETRCli
+    from rfdetr.training.datamodule import RFDETRDataModule
+    from rfdetr.training.module import RFDETRModule
 
     with pytest.raises(SystemExit) as exc_info:
         RFDETRCli(RFDETRModule, RFDETRDataModule, args=list(args))

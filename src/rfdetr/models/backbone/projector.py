@@ -14,6 +14,8 @@
 Projector
 """
 
+from typing import Callable, Optional, Sequence, Union
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -46,14 +48,15 @@ class LayerNorm(nn.Module):
         return x
 
 
-def get_norm(norm, out_channels):
+def get_norm(norm: Optional[Union[str, Callable[[int], nn.Module]]], out_channels: int) -> Optional[nn.Module]:
     """
     Args:
-        norm (str or callable): either one of BN, SyncBN, FrozenBN, GN;
+        norm: Either one of BN, SyncBN, FrozenBN, GN;
             or a callable that takes a channel number and returns
             the normalization layer as a nn.Module.
+
     Returns:
-        nn.Module or None: the normalization layer
+        The normalization layer.
     """
     if norm is None:
         return None
@@ -169,21 +172,20 @@ class MultiScaleProjector(nn.Module):
 
     def __init__(
         self,
-        in_channels,
-        out_channels,
-        scale_factors,
-        num_blocks=3,
-        layer_norm=False,
-        rms_norm=False,
-        survival_prob=1.0,
-        force_drop_last_n_features=0,
-    ):
+        in_channels: Sequence[int],
+        out_channels: int,
+        scale_factors: Sequence[float],
+        num_blocks: int = 3,
+        layer_norm: bool = False,
+        rms_norm: bool = False,
+        survival_prob: float = 1.0,
+        force_drop_last_n_features: int = 0,
+    ) -> None:
         """
         Args:
-            net (Backbone): module representing the subnetwork backbone.
-                Must be a subclass of :class:`Backbone`.
-            out_channels (int): number of channels in the output feature maps.
-            scale_factors (list[float]): list of scaling factors to upsample or downsample
+            in_channels: Channels in each input feature map level.
+            out_channels: Number of channels in the output feature maps.
+            scale_factors: List of scaling factors to upsample or downsample
                 the input features for creating pyramid features.
         """
         super(MultiScaleProjector, self).__init__()

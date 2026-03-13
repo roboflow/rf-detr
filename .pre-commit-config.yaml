@@ -35,7 +35,7 @@ repos:
     rev: v0.15.5
     hooks:
       - id: ruff-check
-        args: [--fix]
+        args: ["--exit-non-zero-on-fix"]
         exclude: ^notebooks/.*\.py$
       - id: ruff-format
         exclude: ^notebooks/.*\.py$

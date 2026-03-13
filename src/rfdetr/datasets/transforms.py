@@ -17,10 +17,15 @@
 Transforms and data augmentation for both image + bbox.
 """
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-import albumentations as A
+try:
+    import albumentations as A
+except ImportError:
+    A = None  # type: ignore[assignment]
 import numpy as np
 import PIL
 import torch

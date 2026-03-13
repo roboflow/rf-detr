@@ -26,10 +26,10 @@ import torch.nn.functional as F
 from scipy.optimize import linear_sum_assignment
 from torch import nn
 
-from rfdetr.models.segmentation_head import point_sample
-from rfdetr.util.box_ops import batch_dice_loss, batch_sigmoid_ce_loss, box_cxcywh_to_xyxy, generalized_box_iou
-from rfdetr.util.logger import get_logger
+from rfdetr.utilities.logger import get_logger
 
+from rfdetr.models.heads.segmentation import point_sample
+from rfdetr.utilities.box_ops import batch_dice_loss, batch_sigmoid_ce_loss, box_cxcywh_to_xyxy, generalized_box_iou
 logger = get_logger()
 
 
@@ -120,15 +120,6 @@ class HungarianMatcher(nn.Module):
         cost_bbox = torch.cdist(out_bbox, tgt_bbox, p=1)
 
         if masks_present:
-            # Resize predicted masks to target mask size if needed
-            # if out_masks.shape[-2:] != tgt_masks.shape[-2:]:
-            #     # out_masks = F.interpolate(out_masks.unsqueeze(1), size=tgt_masks.shape[-2:], mode="bilinear", align_corners=False).squeeze(1)
-            #     tgt_masks = F.interpolate(tgt_masks.unsqueeze(1).float(), size=out_masks.shape[-2:], mode="bilinear", align_corners=False).squeeze(1)
-
-            # # Flatten masks
-            # pred_masks_logits = out_masks.flatten(1)  # [P, HW]
-            # tgt_masks_flat = tgt_masks.flatten(1).float()  # [T, HW]
-
             tgt_masks = torch.cat([v["masks"] for v in targets])
 
             if isinstance(outputs["pred_masks"], torch.Tensor):
@@ -141,8 +132,6 @@ class HungarianMatcher(nn.Module):
                     out_masks.unsqueeze(1), point_coords.repeat(out_masks.shape[0], 1, 1), align_corners=False
                 ).squeeze(1)
             else:
-                # pred_masks_logits = outputs["sparse_matcher_mask_logits"].flatten(0, 1)
-                # point_coords = outputs["matcher_sample_coords"]
                 spatial_features = outputs["pred_masks"]["spatial_features"]
                 query_features = outputs["pred_masks"]["query_features"]
                 bias = outputs["pred_masks"]["bias"]
