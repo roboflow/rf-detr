@@ -19,7 +19,9 @@ Transforms and data augmentation for both image + bbox.
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Sequence
+from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 try:
@@ -219,7 +221,116 @@ def _build_albu_transform(name: str, params: Dict[str, Any]) -> A.BasicTransform
     aug_cls = getattr(A, name, None)
     if aug_cls is None:
         raise ValueError(f"Unknown Albumentations transform: {name!r}")
-    return aug_cls(**params)
+    return aug_cls(**_normalize_albu_params(name, params, aug_cls))
+
+
+@lru_cache(maxsize=None)
+def _random_sized_crop_uses_size_param(aug_cls: type) -> bool:
+    """Return whether ``RandomSizedCrop`` expects a ``size`` keyword.
+
+    The Albumentations 2.x API changed ``RandomSizedCrop`` from separate
+    ``height``/``width`` parameters to a single ``size=(height, width)``
+    parameter. This helper caches the signature check per class so repeated
+    transform construction during dataset setup does not repeat introspection.
+
+    Args:
+        aug_cls: Albumentations transform class to inspect.
+
+    Returns:
+        ``True`` when the class accepts a ``size`` keyword argument; otherwise
+        ``False``.
+    """
+
+    signature = inspect.signature(aug_cls.__init__)
+    return "size" in signature.parameters
+
+
+def _normalize_albu_params(name: str, params: Dict[str, Any], aug_cls: type) -> Dict[str, Any]:
+    """Normalize transform params across Albumentations API variations.
+
+    Currently this adapts ``RandomSizedCrop`` arguments so a config using
+    ``height``/``width`` works on Albumentations 2.x and a config using
+    ``size=(height, width)`` still works on Albumentations 1.x.
+
+    Args:
+        name: Albumentations transform name.
+        params: Raw transform parameter mapping from config.
+        aug_cls: Albumentations transform class that will be instantiated.
+
+    Returns:
+        A normalized copy of ``params`` suitable for the installed
+        Albumentations version.
+
+    Examples:
+        >>> class CropV2:
+        ...     def __init__(self, *, size, min_max_height): ...
+        >>> _normalize_albu_params(
+        ...     "RandomSizedCrop",
+        ...     {"min_max_height": [384, 600], "height": 640, "width": 640},
+        ...     CropV2,
+        ... )
+        {'min_max_height': [384, 600], 'size': (640, 640)}
+    """
+
+    normalized_params = dict(params)
+    if name != "RandomSizedCrop":
+        return normalized_params
+
+    uses_size = _random_sized_crop_uses_size_param(aug_cls)
+
+    if uses_size:
+        # Albumentations 2.x-style API: expects ``size`` and does not accept
+        # separate ``height``/``width`` kwargs.
+        has_size = "size" in normalized_params
+        has_height = "height" in normalized_params
+        has_width = "width" in normalized_params
+
+        if has_size:
+            # When ``size`` is already provided, drop any legacy ``height``/``width``
+            # so they are never forwarded as unexpected keyword arguments.
+            normalized_params.pop("height", None)
+            normalized_params.pop("width", None)
+            return normalized_params
+
+        if has_height and has_width:
+            height = normalized_params.pop("height")
+            width = normalized_params.pop("width")
+            normalized_params["size"] = (height, width)
+            return normalized_params
+
+        if has_height != has_width:
+            # One of ``height``/``width`` was provided without the other and no
+            # explicit ``size`` was given. This is ambiguous for the
+            # Albumentations 2.x API, so raise a targeted error instead of
+            # silently dropping parameters and surfacing a generic
+            # "missing required argument 'size'" error later.
+            missing = "width" if has_height and not has_width else "height"
+            raise ValueError(
+                f"RandomSizedCrop for the installed Albumentations version expects "
+                f"'size=(height, width)'. Received only one of 'height'/'width' "
+                f"without 'size' (missing '{missing}')."
+            )
+
+        # No ``size``, ``height``, or ``width`` provided; let Albumentations
+        # surface its own error about missing required arguments.
+        return normalized_params
+
+    # NOTE: For Albumentations builds >=1.4.24, ``RandomSizedCrop`` typically
+    # uses a ``size`` argument and ``uses_size`` will be True. This project
+    # also supports Albumentations 1.x-style APIs (and synthetic v1-style
+    # classes used in tests) where ``RandomSizedCrop`` may not accept ``size``
+    # directly; in those cases we map a provided ``size`` tuple back to
+    # separate ``height``/``width`` kwargs for compatibility.
+    if not uses_size and "size" in normalized_params:  # v1-style API compatibility path
+        size = normalized_params.get("size")
+        if isinstance(size, Sequence) and len(size) == 2:
+            normalized_params.setdefault("height", size[0])
+            normalized_params.setdefault("width", size[1])
+            # Only remove ``size`` after a successful conversion; otherwise leave
+            # it so Albumentations can raise an appropriate error.
+            normalized_params.pop("size", None)
+
+    return normalized_params
 
 
 class AlbumentationsWrapper:

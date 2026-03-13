@@ -1,6 +1,6 @@
 # Augmentations
 
-RF-DETR supports custom data augmentations via [Albumentations](https://albumentations.ai/), with automatic bounding box and mask handling for geometric transforms.
+RF-DETR supports custom data augmentations via [Albumentations](https://albumentations.ai/), with automatic bounding box and mask handling for geometric transforms. Albumentations 1.4.24+ and 2.x are supported.
 
 ## Quick Start
 
@@ -114,6 +114,8 @@ RF-DETR automatically handles bounding boxes for **geometric transforms** (flips
 **Model not improving** — augmentations may be too aggressive. Start with `AUG_CONSERVATIVE` and add transforms gradually. Try removing geometric transforms first to isolate the cause.
 
 **Validation mAP is much higher than training mAP** — this is expected with strong augmentations and not a bug. See the monitoring tip above.
+
+**Upgrading albumentations to 2.x with existing `RandomSizedCrop` configs?** RF-DETR automatically adapts `height`/`width` kwargs to the `size=(height, width)` format required by albumentations 2.x. No config changes needed.
 
 ## Advanced: Custom Transforms
 
