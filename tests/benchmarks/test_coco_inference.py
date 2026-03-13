@@ -8,17 +8,18 @@
 For every detection and segmentation model variant, this module:
 
 1. Loads pretrained weights via the :class:`~rfdetr.detr.RFDETR` wrapper.
-2. Verifies :meth:`~rfdetr.detr.RFDETR.predict` returns valid
-   :class:`supervision.Detections` objects.
-3. Copies the same weights into a fresh :class:`~rfdetr.training.RFDETRModule`.
-4. Evaluates via ``Trainer.validate`` and asserts mAP thresholds.
+2. Copies the weights into a fresh :class:`~rfdetr.training.RFDETRModule`.
+3. Evaluates via ``Trainer.validate`` and asserts mAP thresholds.
+
+API contract tests (return type of ``predict()``) live in
+``tests/models/test_predict.py`` and do not require a COCO download.
 
 Test functions:
 
-- :func:`test_inference_detection_rfdetr_predict` — ``RFDETR.predict()``
-  returns valid detections for detection models (Nano/Small/Medium/Large).
-- :func:`test_inference_segmentation_rfdetr_predict` — ``RFDETR.predict()``
-  returns detections with masks for segmentation models (Nano through 2XLarge).
+- :func:`test_inference_detection_rfdetr_predict` — asserts mAP@50 for detection
+  models (Nano/Small/Medium/Large).
+- :func:`test_inference_segmentation_rfdetr_predict` — asserts mAP@50 for
+  segmentation models (Nano through 2XLarge).
 - :func:`test_inference_detection_ptl_predict` — ``trainer.predict()`` exercises
   the PTL predict loop (50 samples) then asserts mAP via ``Trainer.validate``.
 - :func:`test_inference_segmentation_ptl_predict` — same for segmentation models.
@@ -29,7 +30,6 @@ from pathlib import Path
 from typing import Optional
 
 import pytest
-import supervision as sv
 import torch
 from pytorch_lightning import LightningModule
 
@@ -152,12 +152,12 @@ def _build_ptl_module(rfdetr_obj: RFDETR, train_config: TrainConfig) -> RFDETRMo
 
 @pytest.mark.gpu
 @pytest.mark.parametrize(
-    ("model_cls", "threshold_map", "num_samples", "batch_size"),
+    ("model_cls", "threshold_map", "threshold_f1", "num_samples", "batch_size"),
     [
-        pytest.param(RFDETRNano, 0.67, 2000, 6, id="det-nano"),
-        pytest.param(RFDETRSmall, 0.72, 500, 6, id="det-small"),
-        pytest.param(RFDETRMedium, 0.73, 500, 4, id="det-medium"),
-        pytest.param(RFDETRLarge, 0.74, 500, 2, id="det-large"),
+        pytest.param(RFDETRNano, 0.66, 0.66, 2000, 6, id="det-nano"),
+        pytest.param(RFDETRSmall, 0.72, 0.70, 500, 6, id="det-small"),
+        pytest.param(RFDETRMedium, 0.73, 0.71, 500, 4, id="det-medium"),
+        pytest.param(RFDETRLarge, 0.74, 0.72, 500, 2, id="det-large"),
     ],
 )
 def test_inference_detection_rfdetr_predict(
@@ -165,22 +165,21 @@ def test_inference_detection_rfdetr_predict(
     download_coco_val: tuple[Path, Path],
     model_cls: type[RFDETR],
     threshold_map: float,
+    threshold_f1: float,
     num_samples: int,
     batch_size: int,
 ) -> None:
     """``RFDETR.predict()`` returns valid ``sv.Detections`` for detection models.
 
     Loads a pretrained detection model, runs ``predict()`` on a sample of COCO
-    val images, and asserts:
-
-    - Return type is a list of :class:`supervision.Detections`.
-    - ``Trainer.validate`` on the same weights meets the mAP threshold.
+    val images, and asserts ``Trainer.validate`` meets the mAP and F1 thresholds.
 
     Args:
         tmp_path: Pytest-provided temporary directory.
         download_coco_val: Fixture providing ``(images_root, annotations_path)``.
         model_cls: Detection model class to instantiate with pretrained weights.
         threshold_map: Minimum ``val/mAP_50`` required.
+        threshold_f1: Minimum ``val/F1`` (best macro-F1 across confidence sweep) required.
         num_samples: Number of val images used for ``Trainer.validate``.
         batch_size: DataLoader batch size for ``Trainer.validate``.
     """
@@ -190,35 +189,29 @@ def test_inference_detection_rfdetr_predict(
 
     rfdetr = model_cls(device=device_str)
 
-    # Verify RFDETR.predict() API returns sv.Detections.
-    # predict() accepts str paths or PIL Images, not pathlib.Path objects.
-    sample_images = [str(p) for p in sorted(images_root.glob("*.jpg"))[:4]]
-    assert sample_images, "No COCO val images found."
-    detections = rfdetr.predict(sample_images, threshold=0.3)
-    assert isinstance(detections, list), "predict() should return a list for multiple images"
-    assert all(isinstance(d, sv.Detections) for d in detections), "Each result must be sv.Detections"
-
-    # Verify mAP via Trainer.validate on the same pretrained weights.
+    # Verify mAP and F1 via Trainer.validate on the pretrained weights.
     tc = _build_train_config(coco_root, tmp_path, batch_size)
     dm = _build_datamodule(rfdetr.model_config, tc, num_samples=num_samples)
     module = _build_ptl_module(rfdetr, tc)
     accelerator = "auto" if torch.cuda.is_available() else "cpu"
     trainer = build_trainer(tc, rfdetr.model_config, accelerator=accelerator)
-    results = trainer.validate(module, datamodule=dm)
-    map_val = results[0]["val/mAP_50"]
+    (metrics,) = trainer.validate(module, datamodule=dm)
+    map_val = metrics["val/mAP_50"]
+    f1_val = metrics["val/F1"]
     assert map_val >= threshold_map, f"mAP@50 {map_val:.4f} < {threshold_map}"
+    assert f1_val >= threshold_f1, f"F1 {f1_val:.4f} < {threshold_f1}"
 
 
 @pytest.mark.gpu
 @pytest.mark.parametrize(
-    ("model_cls", "threshold_map", "num_samples", "batch_size"),
+    ("model_cls", "threshold_map", "threshold_f1", "num_samples", "batch_size"),
     [
-        pytest.param(RFDETRSegNano, 0.63, 500, 6, id="seg-nano"),
-        pytest.param(RFDETRSegSmall, 0.66, 100, 6, id="seg-small"),
-        pytest.param(RFDETRSegMedium, 0.68, 100, 4, id="seg-medium"),
-        pytest.param(RFDETRSegLarge, 0.70, 100, 2, id="seg-large"),
-        pytest.param(RFDETRSegXLarge, 0.72, 100, 2, id="seg-xlarge"),
-        pytest.param(RFDETRSeg2XLarge, 0.73, 100, 2, id="seg-2xlarge"),
+        pytest.param(RFDETRSegNano, 0.63, 0.64, 500, 6, id="seg-nano"),
+        pytest.param(RFDETRSegSmall, 0.66, 0.67, 100, 6, id="seg-small"),
+        pytest.param(RFDETRSegMedium, 0.68, 0.68, 100, 4, id="seg-medium"),
+        pytest.param(RFDETRSegLarge, 0.70, 0.69, 100, 2, id="seg-large"),
+        pytest.param(RFDETRSegXLarge, 0.72, 0.70, 100, 2, id="seg-xlarge"),
+        pytest.param(RFDETRSeg2XLarge, 0.73, 0.71, 100, 2, id="seg-2xlarge"),
     ],
 )
 def test_inference_segmentation_rfdetr_predict(
@@ -226,20 +219,21 @@ def test_inference_segmentation_rfdetr_predict(
     download_coco_val: tuple[Path, Path],
     model_cls: type[RFDETR],
     threshold_map: float,
+    threshold_f1: float,
     num_samples: int,
     batch_size: int,
 ) -> None:
-    """``RFDETR.predict()`` returns valid ``sv.Detections`` with masks for segmentation models.
+    """Asserts mAP and F1 thresholds for segmentation models via ``Trainer.validate``.
 
     Same structure as :func:`test_inference_detection_rfdetr_predict` but for
-    segmentation variants.  Also asserts that the returned detections contain a
-    non-``None`` ``mask`` field.
+    segmentation variants.
 
     Args:
         tmp_path: Pytest-provided temporary directory.
         download_coco_val: Fixture providing ``(images_root, annotations_path)``.
         model_cls: Segmentation model class to instantiate with pretrained weights.
         threshold_map: Minimum ``val/mAP_50`` (bbox) required.
+        threshold_f1: Minimum ``val/F1`` (best macro-F1 across confidence sweep) required.
         num_samples: Number of val images used for ``Trainer.validate``.
         batch_size: DataLoader batch size for ``Trainer.validate``.
     """
@@ -249,26 +243,17 @@ def test_inference_segmentation_rfdetr_predict(
 
     rfdetr = model_cls(device=device_str)
 
-    # Verify RFDETR.predict() returns sv.Detections with masks.
-    # predict() accepts str paths or PIL Images, not pathlib.Path objects.
-    sample_images = [str(p) for p in sorted(images_root.glob("*.jpg"))[:4]]
-    assert sample_images, "No COCO val images found."
-    detections = rfdetr.predict(sample_images, threshold=0.3)
-    assert isinstance(detections, list), "predict() should return a list for multiple images"
-    assert all(isinstance(d, sv.Detections) for d in detections), "Each result must be sv.Detections"
-    assert any(d.mask is not None for d in detections if len(d) > 0), (
-        "Segmentation model predict() should return detections with masks"
-    )
-
-    # Verify mAP via Trainer.validate on the same pretrained weights.
+    # Verify mAP and F1 via Trainer.validate on the pretrained weights.
     tc = _build_train_config(coco_root, tmp_path, batch_size)
     dm = _build_datamodule(rfdetr.model_config, tc, num_samples=num_samples)
     module = _build_ptl_module(rfdetr, tc)
     accelerator = "auto" if torch.cuda.is_available() else "cpu"
     trainer = build_trainer(tc, rfdetr.model_config, accelerator=accelerator)
-    results = trainer.validate(module, datamodule=dm)
-    map_val = results[0]["val/mAP_50"]
+    (metrics,) = trainer.validate(module, datamodule=dm)
+    map_val = metrics["val/mAP_50"]
+    f1_val = metrics["val/F1"]
     assert map_val >= threshold_map, f"mAP@50 {map_val:.4f} < {threshold_map}"
+    assert f1_val >= threshold_f1, f"F1 {f1_val:.4f} < {threshold_f1}"
 
 
 # ---------------------------------------------------------------------------
@@ -278,12 +263,12 @@ def test_inference_segmentation_rfdetr_predict(
 
 @pytest.mark.gpu
 @pytest.mark.parametrize(
-    ("model_cls", "threshold_map", "num_samples", "batch_size"),
+    ("model_cls", "threshold_map", "threshold_f1", "num_samples", "batch_size"),
     [
-        pytest.param(RFDETRNano, 0.67, 2000, 6, id="det-nano"),
-        pytest.param(RFDETRSmall, 0.72, 500, 6, id="det-small"),
-        pytest.param(RFDETRMedium, 0.73, 500, 4, id="det-medium"),
-        pytest.param(RFDETRLarge, 0.74, 500, 2, id="det-large"),
+        pytest.param(RFDETRNano, 0.66, 0.66, 2000, 6, id="det-nano"),
+        pytest.param(RFDETRSmall, 0.72, 0.70, 500, 6, id="det-small"),
+        pytest.param(RFDETRMedium, 0.73, 0.71, 500, 4, id="det-medium"),
+        pytest.param(RFDETRLarge, 0.74, 0.72, 500, 2, id="det-large"),
     ],
 )
 def test_inference_detection_ptl_predict(
@@ -291,6 +276,7 @@ def test_inference_detection_ptl_predict(
     download_coco_val: tuple[Path, Path],
     model_cls: type[RFDETR],
     threshold_map: float,
+    threshold_f1: float,
     num_samples: int,
     batch_size: int,
 ) -> None:
@@ -299,13 +285,14 @@ def test_inference_detection_ptl_predict(
     Loads a pretrained detection model, copies weights into a
     :class:`~rfdetr.training.RFDETRModule`, runs ``trainer.predict()`` on a
     small subset (50 samples) to exercise :meth:`~rfdetr.training.RFDETRModule.predict_step`,
-    then runs ``Trainer.validate`` on the full *num_samples* to assert mAP.
+    then runs ``Trainer.validate`` on the full *num_samples* to assert mAP and F1.
 
     Args:
         tmp_path: Pytest-provided temporary directory.
         download_coco_val: Fixture providing ``(images_root, annotations_path)``.
         model_cls: Detection model class to instantiate with pretrained weights.
         threshold_map: Minimum ``val/mAP_50`` required.
+        threshold_f1: Minimum ``val/F1`` (best macro-F1 across confidence sweep) required.
         num_samples: Number of val samples used for ``Trainer.validate``.
         batch_size: DataLoader batch size.
     """
@@ -325,23 +312,25 @@ def test_inference_detection_ptl_predict(
     assert predictions is not None, "trainer.predict() returned None"
     assert len(predictions) > 0, "trainer.predict() returned empty list"
 
-    # Verify mAP via Trainer.validate on the full num_samples.
+    # Verify mAP and F1 via Trainer.validate on the full num_samples.
     val_dm = _build_datamodule(rfdetr.model_config, tc, num_samples=num_samples)
-    results = trainer.validate(module, datamodule=val_dm)
-    map_val = results[0]["val/mAP_50"]
+    (metrics,) = trainer.validate(module, datamodule=val_dm)
+    map_val = metrics["val/mAP_50"]
+    f1_val = metrics["val/F1"]
     assert map_val >= threshold_map, f"mAP@50 {map_val:.4f} < {threshold_map}"
+    assert f1_val >= threshold_f1, f"F1 {f1_val:.4f} < {threshold_f1}"
 
 
 @pytest.mark.gpu
 @pytest.mark.parametrize(
-    ("model_cls", "threshold_map", "num_samples", "batch_size"),
+    ("model_cls", "threshold_map", "threshold_f1", "num_samples", "batch_size"),
     [
-        pytest.param(RFDETRSegNano, 0.63, 500, 6, id="seg-nano"),
-        pytest.param(RFDETRSegSmall, 0.66, 100, 6, id="seg-small"),
-        pytest.param(RFDETRSegMedium, 0.68, 100, 4, id="seg-medium"),
-        pytest.param(RFDETRSegLarge, 0.70, 100, 2, id="seg-large"),
-        pytest.param(RFDETRSegXLarge, 0.72, 100, 2, id="seg-xlarge"),
-        pytest.param(RFDETRSeg2XLarge, 0.73, 100, 2, id="seg-2xlarge"),
+        pytest.param(RFDETRSegNano, 0.63, 0.64, 500, 6, id="seg-nano"),
+        pytest.param(RFDETRSegSmall, 0.66, 0.67, 100, 6, id="seg-small"),
+        pytest.param(RFDETRSegMedium, 0.68, 0.68, 100, 4, id="seg-medium"),
+        pytest.param(RFDETRSegLarge, 0.70, 0.69, 100, 2, id="seg-large"),
+        pytest.param(RFDETRSegXLarge, 0.72, 0.70, 100, 2, id="seg-xlarge"),
+        pytest.param(RFDETRSeg2XLarge, 0.73, 0.71, 100, 2, id="seg-2xlarge"),
     ],
 )
 def test_inference_segmentation_ptl_predict(
@@ -349,6 +338,7 @@ def test_inference_segmentation_ptl_predict(
     download_coco_val: tuple[Path, Path],
     model_cls: type[RFDETR],
     threshold_map: float,
+    threshold_f1: float,
     num_samples: int,
     batch_size: int,
 ) -> None:
@@ -362,6 +352,7 @@ def test_inference_segmentation_ptl_predict(
         download_coco_val: Fixture providing ``(images_root, annotations_path)``.
         model_cls: Segmentation model class to instantiate with pretrained weights.
         threshold_map: Minimum ``val/mAP_50`` (bbox) required.
+        threshold_f1: Minimum ``val/F1`` (best macro-F1 across confidence sweep) required.
         num_samples: Number of val samples used for ``Trainer.validate``.
         batch_size: DataLoader batch size.
     """
@@ -381,8 +372,10 @@ def test_inference_segmentation_ptl_predict(
     assert predictions is not None, "trainer.predict() returned None"
     assert len(predictions) > 0, "trainer.predict() returned empty list"
 
-    # Verify mAP via Trainer.validate on the full num_samples.
+    # Verify mAP and F1 via Trainer.validate on the full num_samples.
     val_dm = _build_datamodule(rfdetr.model_config, tc, num_samples=num_samples)
-    results = trainer.validate(module, datamodule=val_dm)
-    map_val = results[0]["val/mAP_50"]
+    (metrics,) = trainer.validate(module, datamodule=val_dm)
+    map_val = metrics["val/mAP_50"]
+    f1_val = metrics["val/F1"]
     assert map_val >= threshold_map, f"mAP@50 {map_val:.4f} < {threshold_map}"
+    assert f1_val >= threshold_f1, f"F1 {f1_val:.4f} < {threshold_f1}"
