@@ -647,48 +647,6 @@ class TestAlbumentationsWrapperFromConfig:
         transform_names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
         assert transform_names == ["HorizontalFlip"]
 
-    def test_random_sized_crop_adapts_height_width_for_albumentations_2(self, monkeypatch):
-        """RandomSizedCrop config with height/width is adapted to the Albumentations 2.x size API."""
-
-        class FakeRandomSizedCropV2:
-            def __init__(self, *, min_max_height, size, p=1.0):
-                self.min_max_height = min_max_height
-                self.size = size
-                self.p = p
-
-        monkeypatch.setattr("rfdetr.datasets.transforms.A.RandomSizedCrop", FakeRandomSizedCropV2)
-
-        transform = _build_albu_transform(
-            "RandomSizedCrop",
-            {"min_max_height": [384, 600], "height": 640, "width": 640},
-        )
-
-        assert isinstance(transform, FakeRandomSizedCropV2)
-        assert transform.min_max_height == [384, 600]
-        assert transform.size == (640, 640)
-
-    def test_random_sized_crop_adapts_size_for_albumentations_1(self, monkeypatch):
-        """RandomSizedCrop config with size is adapted to the Albumentations 1.x height/width API."""
-
-        class FakeRandomSizedCropV1:
-            def __init__(self, *, min_max_height, height, width, p=1.0):
-                self.min_max_height = min_max_height
-                self.height = height
-                self.width = width
-                self.p = p
-
-        monkeypatch.setattr("rfdetr.datasets.transforms.A.RandomSizedCrop", FakeRandomSizedCropV1)
-
-        transform = _build_albu_transform(
-            "RandomSizedCrop",
-            {"min_max_height": [384, 600], "size": (640, 640)},
-        )
-
-        assert isinstance(transform, FakeRandomSizedCropV1)
-        assert transform.min_max_height == [384, 600]
-        assert transform.height == 640
-        assert transform.width == 640
-
 
 class TestRandomSizedCropCompat:
     """Tests for RandomSizedCrop cross-version parameter normalization edge cases."""
@@ -768,6 +726,74 @@ class TestRandomSizedCropCompat:
                 "RandomSizedCrop",
                 {"min_max_height": [100, 200], "size": 640},
             )
+
+    def test_adapts_height_width_for_v2_api(self, monkeypatch):
+        """RandomSizedCrop config with height/width is adapted to the Albumentations 2.x size API."""
+
+        class FakeV2:
+            def __init__(self, *, min_max_height, size, p=1.0):
+                self.min_max_height = min_max_height
+                self.size = size
+                self.p = p
+
+        monkeypatch.setattr("rfdetr.datasets.transforms.A.RandomSizedCrop", FakeV2)
+
+        transform = _build_albu_transform(
+            "RandomSizedCrop",
+            {"min_max_height": [384, 600], "height": 640, "width": 640},
+        )
+
+        assert isinstance(transform, FakeV2)
+        assert transform.min_max_height == [384, 600]
+        assert transform.size == (640, 640)
+
+    def test_adapts_size_for_v1_api(self, monkeypatch):
+        """RandomSizedCrop config with size is adapted to the Albumentations 1.x height/width API."""
+
+        class FakeV1:
+            def __init__(self, *, min_max_height, height, width, p=1.0):
+                self.min_max_height = min_max_height
+                self.height = height
+                self.width = width
+                self.p = p
+
+        monkeypatch.setattr("rfdetr.datasets.transforms.A.RandomSizedCrop", FakeV1)
+
+        transform = _build_albu_transform(
+            "RandomSizedCrop",
+            {"min_max_height": [384, 600], "size": (640, 640)},
+        )
+
+        assert isinstance(transform, FakeV1)
+        assert transform.min_max_height == [384, 600]
+        assert transform.height == 640
+        assert transform.width == 640
+
+    def test_from_config_partial_height_is_silently_skipped(self, monkeypatch):
+        """from_config swallows the ValueError for partial height-only config and skips the transform.
+
+        This documents the intentional silent-skip behavior: from_config wraps
+        _build_albu_transform in a broad except clause so bad configs produce a
+        warning rather than an exception.
+        """
+
+        class FakeV2:
+            def __init__(self, *, min_max_height, size, p=1.0):
+                pass
+
+        monkeypatch.setattr("rfdetr.datasets.transforms.A.RandomSizedCrop", FakeV2)
+
+        config = {
+            "HorizontalFlip": {"p": 0.5},
+            "RandomSizedCrop": {"min_max_height": [100, 200], "height": 256},
+        }
+
+        transforms = AlbumentationsWrapper.from_config(config)
+
+        # The invalid RandomSizedCrop is silently dropped; only HorizontalFlip survives.
+        assert len(transforms) == 1
+        transform_names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
+        assert transform_names == ["HorizontalFlip"]
 
 
 class TestAlbumentationsWrapperNestedConfig:
