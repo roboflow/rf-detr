@@ -265,3 +265,56 @@ class TestHungarianMatcherNonFiniteCosts:
         second_matcher(outputs, [standard_target])
 
         assert warning_messages == [expected_warning, expected_warning]
+
+
+class TestHungarianMatcherCostSanitization:
+    """Unit tests for the private matcher cost sanitization helper."""
+
+    def test_sanitize_cost_matrix_replaces_non_finite_entries(self) -> None:
+        """Non-finite entries should be replaced with a larger finite sentinel."""
+        cost_matrix = torch.tensor(
+            [
+                [1.0, float("nan")],
+                [float("inf"), -2.0],
+            ],
+            dtype=torch.float32,
+        )
+
+        sanitized = HungarianMatcher._sanitize_cost_matrix(cost_matrix)
+
+        assert torch.isfinite(sanitized).all()
+        assert sanitized[0, 1] == 4.0
+        assert sanitized[1, 0] == 4.0
+        assert sanitized[0, 0] == 1.0
+        assert sanitized[1, 1] == -2.0
+
+    def test_sanitize_cost_matrix_uses_dtype_max_when_all_entries_are_non_finite(self) -> None:
+        """All-non-finite matrices should fall back to the dtype maximum."""
+        cost_matrix = torch.tensor(
+            [
+                [float("nan"), float("inf")],
+                [float("-inf"), float("nan")],
+            ],
+            dtype=torch.float32,
+        )
+
+        sanitized = HungarianMatcher._sanitize_cost_matrix(cost_matrix)
+
+        assert torch.isfinite(sanitized).all()
+        assert torch.all(sanitized == torch.finfo(cost_matrix.dtype).max)
+
+    def test_sanitize_cost_matrix_clamps_overflowing_replacement_cost(self) -> None:
+        """Overflow in the computed replacement cost should clamp to dtype max."""
+        dtype_max = torch.finfo(torch.float32).max
+        cost_matrix = torch.tensor(
+            [
+                [dtype_max, float("nan")],
+                [0.0, 1.0],
+            ],
+            dtype=torch.float32,
+        )
+
+        sanitized = HungarianMatcher._sanitize_cost_matrix(cost_matrix)
+
+        assert torch.isfinite(sanitized).all()
+        assert sanitized[0, 1] == dtype_max

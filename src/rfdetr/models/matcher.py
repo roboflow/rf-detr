@@ -76,6 +76,33 @@ class HungarianMatcher(nn.Module):
         self.cost_mask_dice = cost_mask_dice
         self._warned_non_finite_costs = False
 
+    @staticmethod
+    def _sanitize_cost_matrix(C: torch.Tensor) -> torch.Tensor:
+        """Replace non-finite cost entries with a large finite sentinel."""
+        finite_mask = torch.isfinite(C)
+        if finite_mask.all():
+            return C
+
+        dtype_info = torch.finfo(C.dtype)
+        if finite_mask.any():
+            finite_costs = C[finite_mask]
+            max_cost = finite_costs.max()
+            # Add the largest absolute finite cost so the replacement stays
+            # strictly larger than every valid entry, even if all costs are negative.
+            replacement_cost = max_cost + finite_costs.abs().max() + 1
+            # Guard against overflow to inf/NaN and clamp to the maximum finite value.
+            if not torch.isfinite(replacement_cost):
+                replacement_cost = C.new_tensor(dtype_info.max)
+            else:
+                replacement_cost = torch.clamp(replacement_cost, max=dtype_info.max)
+        else:
+            # If all entries are non-finite, fall back to a large finite sentinel.
+            replacement_cost = C.new_tensor(dtype_info.max)
+
+        sanitized_C = C.clone()
+        sanitized_C[~finite_mask] = replacement_cost
+        return sanitized_C
+
     @torch.no_grad()
     def forward(self, outputs, targets, group_detr=1):
         """Performs the matching
@@ -184,22 +211,7 @@ class HungarianMatcher(nn.Module):
                     "Check for numerical instability."
                 )
                 self._warned_non_finite_costs = True
-            dtype_info = torch.finfo(C.dtype)
-            if finite_mask.any():
-                finite_costs = C[finite_mask]
-                max_cost = finite_costs.max()
-                # Add the largest absolute finite cost so the replacement stays
-                # strictly larger than every valid entry, even if all costs are negative.
-                replacement_cost = max_cost + finite_costs.abs().max() + 1
-                # Guard against overflow to inf/NaN and clamp to the maximum finite value.
-                if not torch.isfinite(replacement_cost):
-                    replacement_cost = C.new_tensor(dtype_info.max)
-                else:
-                    replacement_cost = torch.clamp(replacement_cost, max=dtype_info.max)
-            else:
-                # If all entries are non-finite, fall back to a large finite sentinel.
-                replacement_cost = C.new_tensor(dtype_info.max)
-            C[~finite_mask] = replacement_cost
+            C = self._sanitize_cost_matrix(C)
 
         sizes = [len(v["boxes"]) for v in targets]
         indices = []
