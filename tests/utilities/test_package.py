@@ -14,7 +14,7 @@ from rfdetr.utilities.package import get_sha
 def test_get_sha_marks_dirty_worktree_when_diff_command_returns_non_zero() -> None:
     """A non-zero diff exit code should report uncommitted changes, not unknown."""
 
-    def _fake_check_output(command, cwd=None):  # noqa: ANN001
+    def _fake_check_output(command, cwd=None):
         if command[:3] == ["git", "rev-parse", "HEAD"]:
             return b"abc123\n"
         if command[:4] == ["git", "rev-parse", "--abbrev-ref", "HEAD"]:

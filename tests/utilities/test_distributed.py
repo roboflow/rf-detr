@@ -8,8 +8,6 @@
 
 from unittest.mock import patch
 
-import torch
-
 from rfdetr.utilities.distributed import all_gather
 
 
