@@ -323,5 +323,5 @@ def test_train_convergence_segmentation(
     post_results = trainer.validate(module, datamodule=datamodule)
     map_after = post_results[0]["val/mAP_50"]
     segm_map_after = post_results[0]["val/segm_mAP_50"]
-    assert map_after >= 0.10, f"val bbox mAP {map_after:.3f} should reach at least 0.10 after Trainer.fit."
-    assert segm_map_after >= 0.05, f"val segm mAP {segm_map_after:.3f} should reach at least 0.05 after Trainer.fit."
+    assert map_after >= 0.2, f"val bbox mAP {map_after:.3f} should reach at least 0.10 after Trainer.fit."
+    assert segm_map_after >= 0.1, f"val segm mAP {segm_map_after:.3f} should reach at least 0.05 after Trainer.fit."
