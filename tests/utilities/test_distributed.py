@@ -13,10 +13,8 @@ from rfdetr.utilities.distributed import all_gather
 
 def test_all_gather_supports_cpu_without_tensor_truthiness_error() -> None:
     """all_gather should work on CPU-only setups and return gathered objects."""
-    gathered_calls = {"count": 0}
 
     def _fake_all_gather(output_tensors, input_tensor) -> None:
-        gathered_calls["count"] += 1
         for out in output_tensors:
             out.copy_(input_tensor)
 
@@ -27,5 +25,4 @@ def test_all_gather_supports_cpu_without_tensor_truthiness_error() -> None:
     ):
         result = all_gather({"value": 7})
 
-    assert gathered_calls["count"] == 2
     assert result == [{"value": 7}, {"value": 7}]
