@@ -61,15 +61,18 @@ class TestHungarianMatcherNonFiniteCosts:
         assert matched_queries.tolist() == [1]
         assert matched_targets.tolist() == [0]
 
-    def test_all_nonfinite_returns_one_match(
+    def test_all_nonfinite_produces_valid_assignment(
         self,
         matcher: HungarianMatcher,
         standard_target: dict[str, torch.Tensor],
     ) -> None:
-        """When ALL costs are non-finite, the fallback sentinel (1.0) should allow
-        ``linear_sum_assignment`` to complete with a valid assignment.
+        """When ALL costs are non-finite, the fallback sentinel (``dtype_info.max``)
+        should allow ``linear_sum_assignment`` to complete with a valid 1-to-1
+        assignment: exactly one match, query index in [0, num_queries), target
+        index 0.
 
-        This exercises the ``else: replacement_cost = C.new_tensor(1.0)`` branch.
+        This exercises the ``else: replacement_cost = C.new_tensor(dtype_info.max)``
+        branch.
         """
         nan = float("nan")
         outputs = {
@@ -88,57 +91,7 @@ class TestHungarianMatcherNonFiniteCosts:
         matched_queries, matched_targets = matcher(outputs, [standard_target])[0]
 
         assert len(matched_queries) == len(matched_targets) == 1
-
-    def test_all_nonfinite_query_index_in_range(
-        self,
-        matcher: HungarianMatcher,
-        standard_target: dict[str, torch.Tensor],
-    ) -> None:
-        """When ALL costs are non-finite, the matched query index must be valid
-        (within [0, num_queries)).
-        """
-        nan = float("nan")
-        outputs = {
-            "pred_logits": torch.tensor([[[nan], [nan]]], dtype=torch.float32),
-            "pred_boxes": torch.tensor(
-                [
-                    [
-                        [nan, nan, nan, nan],
-                        [nan, nan, nan, nan],
-                    ]
-                ],
-                dtype=torch.float32,
-            ),
-        }
-
-        matched_queries, _ = matcher(outputs, [standard_target])[0]
-
         assert 0 <= matched_queries.item() < 2
-
-    def test_all_nonfinite_target_index_is_zero(
-        self,
-        matcher: HungarianMatcher,
-        standard_target: dict[str, torch.Tensor],
-    ) -> None:
-        """When ALL costs are non-finite, the single target (index 0) must be
-        assigned.
-        """
-        nan = float("nan")
-        outputs = {
-            "pred_logits": torch.tensor([[[nan], [nan]]], dtype=torch.float32),
-            "pred_boxes": torch.tensor(
-                [
-                    [
-                        [nan, nan, nan, nan],
-                        [nan, nan, nan, nan],
-                    ]
-                ],
-                dtype=torch.float32,
-            ),
-        }
-
-        _, matched_targets = matcher(outputs, [standard_target])[0]
-
         assert matched_targets.item() == 0
 
     def test_negative_costs_with_nan_selects_valid_query(
@@ -234,3 +187,42 @@ class TestHungarianMatcherNonFiniteCosts:
         matched_queries, matched_targets = results[image_idx]
         assert matched_queries.tolist() == [expected_query_idx]
         assert matched_targets.tolist() == [0]
+
+    def test_group_detr_with_nonfinite_costs(
+        self,
+        matcher: HungarianMatcher,
+        standard_target: dict[str, torch.Tensor],
+    ) -> None:
+        """Sanitization runs on the full cost matrix before splitting by group, so
+        non-finite entries must be handled correctly when ``group_detr > 1``.
+
+        4 queries, 2 groups of 2. Query 0 has a NaN box; query 2 (the best valid
+        match in group 1) must be selected across groups.
+        """
+        nan = float("nan")
+        outputs = {
+            "pred_logits": torch.tensor(
+                [[[0.0], [10.0], [0.0], [10.0]]],
+                dtype=torch.float32,
+            ),
+            "pred_boxes": torch.tensor(
+                [
+                    [
+                        [nan, nan, nan, nan],  # group 0, query 0: NaN
+                        [0.5, 0.5, 0.2, 0.2],  # group 0, query 1: valid
+                        [nan, nan, nan, nan],  # group 1, query 0: NaN
+                        [0.5, 0.5, 0.2, 0.2],  # group 1, query 1: valid
+                    ]
+                ],
+                dtype=torch.float32,
+            ),
+        }
+
+        results = matcher(outputs, [standard_target], group_detr=2)
+
+        assert len(results) == 1
+        matched_queries, matched_targets = results[0]
+        # Each group contributes one match; both must map to target 0
+        assert matched_targets.tolist() == [0, 0]
+        # The valid query in each group (indices 1 and 3) must be selected
+        assert set(matched_queries.tolist()) == {1, 3}

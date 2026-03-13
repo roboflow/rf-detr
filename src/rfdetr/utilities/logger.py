@@ -12,7 +12,21 @@ import sys
 from typing import Optional
 
 
-def get_logger(name: str = "rf-detr", level: Optional[int] = None) -> logging.Logger:
+class _RFDETRLogger(logging.Logger):
+    """Logger subclass that adds a :meth:`warning_once` helper."""
+
+    def __init__(self, name: str, level: int = logging.NOTSET) -> None:
+        super().__init__(name, level)
+        self._warned_once: set[str] = set()
+
+    def warning_once(self, msg: str, *args: object, **kwargs: object) -> None:
+        """Emit *msg* as a WARNING exactly once per unique message string."""
+        if msg not in self._warned_once:
+            self._warned_once.add(msg)
+            self.warning(msg, *args, **kwargs)
+
+
+def get_logger(name: str = "rf-detr", level: Optional[int] = None) -> _RFDETRLogger:
     """Creates and configures a logger with stdout and stderr handlers.
 
     This function creates a logger that sends INFO and DEBUG level logs to stdout,
@@ -28,12 +42,21 @@ def get_logger(name: str = "rf-detr", level: Optional[int] = None) -> logging.Lo
             variable, defaulting to INFO if not set.
 
     Returns:
-        A configured logging.Logger instance.
+        A configured _RFDETRLogger instance.
     """
     if level is None:
         level = getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO)
 
+    logging.setLoggerClass(_RFDETRLogger)
     logger = logging.getLogger(name)
+    logging.setLoggerClass(logging.Logger)  # restore default for other callers
+
+    # If the logger was already registered as a plain Logger before this call,
+    # upgrade it in-place so warning_once is always available.
+    if not isinstance(logger, _RFDETRLogger):
+        logger.__class__ = _RFDETRLogger
+        logger._warned_once = set()  # type: ignore[attr-defined]
+
     logger.setLevel(level)
 
     if not logger.handlers:
@@ -54,4 +77,4 @@ def get_logger(name: str = "rf-detr", level: Optional[int] = None) -> logging.Lo
         logger.addHandler(stderr_handler)
         logger.propagate = False
 
-    return logger
+    return logger  # type: ignore[return-value]

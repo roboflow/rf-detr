@@ -46,17 +46,24 @@ class HungarianMatcher(nn.Module):
         cost_bbox: float = 1,
         cost_giou: float = 1,
         focal_alpha: float = 0.25,
-        use_pos_only: bool = False,
-        use_position_modulated_cost: bool = False,
+        use_pos_only: bool = False,  # reserved for future use; not yet implemented
+        use_position_modulated_cost: bool = False,  # reserved for future use; not yet implemented
         mask_point_sample_ratio: int = 16,
         cost_mask_ce: float = 1,
         cost_mask_dice: float = 1,
     ):
-        """Creates the matcher
-        Params:
-            cost_class: This is the relative weight of the classification error in the matching cost
-            cost_bbox: This is the relative weight of the L1 error of the bounding box coordinates in the matching cost
-            cost_giou: This is the relative weight of the giou loss of the bounding box in the matching cost
+        """Creates the matcher.
+
+        Args:
+            cost_class: Relative weight of the classification error in the matching cost.
+            cost_bbox: Relative weight of the L1 error of the bounding box coordinates.
+            cost_giou: Relative weight of the GIoU loss of the bounding box.
+            focal_alpha: Alpha parameter for focal loss used in the classification cost.
+            use_pos_only: Reserved for future use; currently has no effect.
+            use_position_modulated_cost: Reserved for future use; currently has no effect.
+            mask_point_sample_ratio: Downsampling ratio for mask point sampling.
+            cost_mask_ce: Relative weight of the binary cross-entropy mask cost.
+            cost_mask_dice: Relative weight of the Dice mask cost.
         """
         super().__init__()
         self.cost_class = cost_class
@@ -169,7 +176,7 @@ class HungarianMatcher(nn.Module):
         # entries with a finite value that is larger than every valid cost.
         finite_mask = torch.isfinite(C)
         if not finite_mask.all():
-            logger.warning(
+            logger.warning_once(
                 "Non-finite values detected in matcher cost matrix; "
                 "replacing with finite sentinel. "
                 "Check for numerical instability."
