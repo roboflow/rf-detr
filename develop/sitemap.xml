@@ -21,6 +21,10 @@
          <lastmod>2026-03-13</lastmod>
     </url>
     <url>
+         <loc>https://rfdetr.roboflow.com/develop/learn/migration/</loc>
+         <lastmod>2026-03-13</lastmod>
+    </url>
+    <url>
          <loc>https://rfdetr.roboflow.com/develop/learn/pretrained/</loc>
          <lastmod>2026-03-13</lastmod>
     </url>
@@ -42,6 +46,10 @@
     </url>
     <url>
          <loc>https://rfdetr.roboflow.com/develop/learn/train/augmentations/</loc>
+         <lastmod>2026-03-13</lastmod>
+    </url>
+    <url>
+         <loc>https://rfdetr.roboflow.com/develop/learn/train/customization/</loc>
          <lastmod>2026-03-13</lastmod>
     </url>
     <url>
@@ -122,6 +130,10 @@
     </url>
     <url>
          <loc>https://rfdetr.roboflow.com/develop/reference/train_config/</loc>
+         <lastmod>2026-03-13</lastmod>
+    </url>
+    <url>
+         <loc>https://rfdetr.roboflow.com/develop/reference/training/</loc>
          <lastmod>2026-03-13</lastmod>
     </url>
     <url>
