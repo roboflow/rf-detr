@@ -144,7 +144,9 @@ def draw_synthetic_shape(
         x2, y2 = cx + half_size, cy + half_size
         pts = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
     elif shape == "triangle":
-        height = int(size * 0.866)  # sqrt(3)/2 for equilateral triangle
+        # Constrain triangle height so its vertical extent fits within the
+        # same size//2 bounding box used by other shapes.
+        height = int(size * 0.75)
         pts = [
             [cx, cy - 2 * height // 3],
             [cx - half_size, cy + height // 3],
@@ -245,7 +247,16 @@ def generate_synthetic_sample(
                     continue
 
             img, polygon = draw_synthetic_shape(img, shape, color, (cx, cy), obj_size)
-            xyxys.append(bbox)
+
+            # Derive bbox directly from the rendered polygon to ensure consistency
+            polygon_array = np.asarray(polygon, dtype=float)
+            poly_x_min = float(np.min(polygon_array[:, 0]))
+            poly_y_min = float(np.min(polygon_array[:, 1]))
+            poly_x_max = float(np.max(polygon_array[:, 0]))
+            poly_y_max = float(np.max(polygon_array[:, 1]))
+            bbox_from_polygon = np.array([poly_x_min, poly_y_min, poly_x_max, poly_y_max], dtype=float)
+
+            xyxys.append(bbox_from_polygon)
             class_ids.append(category_id)
             polygons.append(polygon)
             placed = True
@@ -334,8 +345,8 @@ def _write_coco_json(
                 )
             if len(polygon_data) < len(detections):
                 raise ValueError(
-                    "with_segmentation=True requires a non-empty polygon for every detection, "
-                    f"but got only {len(polygon_data)} polygons for {len(detections)} detections "
+                    "with_segmentation=True requires a polygon entry for every detection (one per detection index), "
+                    f"but got only {len(polygon_data)} polygon entries for {len(detections)} detections "
                     f"in image index {img_id} (file: {file_path})"
                 )
         else:

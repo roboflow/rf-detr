@@ -476,37 +476,54 @@ class TestCalculatePolygonArea:
 
 
 class TestDrawSyntheticShapeEdgeCases:
-    def test_square_polygon_uses_floor_half_for_odd_size(self):
-        """For odd size the square polygon uses ``size // 2`` (floor), which is
-        narrower than the bbox half-size ``size / 2``.  This documents the
-        known integer-floor behaviour so a future fix is caught by tests.
+    def test_square_polygon_respects_half_size_and_image_bounds_for_odd_size(self):
+        """For odd sizes, the square polygon should:
+
+        * Have all vertices within the image bounds.
+        * Be horizontally contained within ``cx ± size / 2``.
         """
         cx, cy, size = 50, 50, 21
         img = np.zeros((100, 100, 3), dtype=np.uint8)
         _, poly = draw_synthetic_shape(img, "square", sv.Color.WHITE, (cx, cy), size)
 
-        half_floor = size // 2  # 10
-        poly_x_min = min(poly[i] for i in range(0, len(poly), 2))
-        poly_x_max = max(poly[i] for i in range(0, len(poly), 2))
-        assert poly_x_min == pytest.approx(float(cx - half_floor))
-        assert poly_x_max == pytest.approx(float(cx + half_floor))
+        half_size = size / 2.0
+        xs = [poly[i] for i in range(0, len(poly), 2)]
+        ys = [poly[i] for i in range(1, len(poly), 2)]
 
-    def test_triangle_vertex_above_half_size_boundary(self):
-        """The triangle apex extends above ``cy - size // 2`` for all sizes ≥ 12.
+        # All vertices must be inside the image
+        assert min(xs) >= 0.0
+        assert max(xs) <= float(img.shape[1])
+        assert min(ys) >= 0.0
+        assert max(ys) <= float(img.shape[0])
 
-        ``height = int(size * 0.866)`` and the apex offset is
-        ``2 * height // 3``, which exceeds ``size // 2`` because
-        ``2/3 * sqrt(3)/2 ≈ 0.577 > 0.5``.  This test documents the known
-        geometric overshoot so a future bbox-containment fix is caught.
+        # Horizontal extent should not exceed the intended half-size around cx
+        assert min(xs) >= pytest.approx(cx - half_size, rel=0.0, abs=1.0)
+        assert max(xs) <= pytest.approx(cx + half_size, rel=0.0, abs=1.0)
+
+    def test_triangle_vertices_within_half_size_and_image_bounds(self):
+        """Triangle vertices should:
+
+        * Have all vertices within the image bounds.
+        * Be vertically contained within ``cy ± size / 2`` so the apex does not
+          extend beyond the intended half-size boundary.
         """
         cx, cy, size = 50, 50, 20
         img = np.zeros((100, 100, 3), dtype=np.uint8)
         _, poly = draw_synthetic_shape(img, "triangle", sv.Color.WHITE, (cx, cy), size)
 
-        half_size = size // 2  # 10
-        poly_y_min = min(poly[i] for i in range(1, len(poly), 2))
-        # Apex is at cy - 2*int(20*0.866)//3 = cy - 11, one pixel above cy - 10
-        assert poly_y_min < cy - half_size, "Triangle apex should extend above the half_size boundary (known behaviour)"
+        half_size = size / 2.0
+        xs = [poly[i] for i in range(0, len(poly), 2)]
+        ys = [poly[i] for i in range(1, len(poly), 2)]
+
+        # All vertices must be inside the image
+        assert min(xs) >= 0.0
+        assert max(xs) <= float(img.shape[1])
+        assert min(ys) >= 0.0
+        assert max(ys) <= float(img.shape[0])
+
+        # Vertical extent should not exceed the intended half-size around cy
+        assert min(ys) >= pytest.approx(cy - half_size, rel=0.0, abs=1.0)
+        assert max(ys) <= pytest.approx(cy + half_size, rel=0.0, abs=1.0)
 
     @pytest.mark.parametrize(
         "shape,size,expected_n_coords",
