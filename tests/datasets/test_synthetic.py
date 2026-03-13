@@ -146,6 +146,22 @@ class TestGenerateSyntheticSample:
         assert "polygons" in detections.data
         assert len(detections.data["polygons"]) == 0
 
+    def test_polygon_bbox_consistency(self):
+        """detections.xyxy must match the min/max of the corresponding polygon."""
+        _, detections = generate_synthetic_sample(img_size=200, min_objects=3, max_objects=5, class_mode="shape")
+        for i in range(len(detections)):
+            poly = detections.data["polygons"][i]
+            poly_array = np.asarray(poly, dtype=float).reshape(-1, 2)
+            expected_x_min = float(np.min(poly_array[:, 0]))
+            expected_y_min = float(np.min(poly_array[:, 1]))
+            expected_x_max = float(np.max(poly_array[:, 0]))
+            expected_y_max = float(np.max(poly_array[:, 1]))
+            x_min, y_min, x_max, y_max = detections.xyxy[i]
+            assert x_min == pytest.approx(expected_x_min), f"detection {i} x_min mismatch"
+            assert y_min == pytest.approx(expected_y_min), f"detection {i} y_min mismatch"
+            assert x_max == pytest.approx(expected_x_max), f"detection {i} x_max mismatch"
+            assert y_max == pytest.approx(expected_y_max), f"detection {i} y_max mismatch"
+
 
 class TestGenerateCocoDataset:
     @pytest.mark.parametrize(
@@ -246,6 +262,32 @@ class TestGenerateCocoDataset:
                 assert (split_dir / img_info["file_name"]).exists()
 
     @pytest.mark.parametrize(
+        "num_images,split_ratios",
+        [
+            pytest.param(10, (0.33, 0.33, 0.34), id="truncating_ratios"),
+            pytest.param(7, (0.7, 0.2, 0.1), id="standard_ratios"),
+            pytest.param(5, (0.8, 0.2), id="two_split"),
+        ],
+    )
+    def test_split_image_count_equals_total(self, num_images, split_ratios, tmp_path):
+        """Total images assigned across all splits must equal num_images."""
+        output_dir = tmp_path / "test_dataset"
+        generate_coco_dataset(
+            output_dir=str(output_dir),
+            num_images=num_images,
+            img_size=64,
+            class_mode="shape",
+            split_ratios=split_ratios,
+        )
+        total_images = 0
+        for split_dir in output_dir.iterdir():
+            ann_file = split_dir / "_annotations.coco.json"
+            if ann_file.exists():
+                with open(ann_file) as fh:
+                    total_images += len(json.load(fh)["images"])
+        assert total_images == num_images
+
+    @pytest.mark.parametrize(
         "split_ratios,error_message",
         [
             pytest.param(
@@ -278,6 +320,24 @@ class TestGenerateCocoDataset:
 
 
 class TestGenerateCocoDatasetWithSegmentation:
+    def test_write_coco_json_raises_when_polygons_key_missing(self, tmp_path):
+        """with_segmentation=True must raise if detections.data has no 'polygons' key."""
+        annotations_path = tmp_path / "_annotations.coco.json"
+        detections = sv.Detections(
+            xyxy=np.array([[0.0, 0.0, 10.0, 10.0]], dtype=float),
+            class_id=np.array([0], dtype=int),
+            data={},  # intentionally no "polygons" key
+        )
+        with pytest.raises(ValueError, match="no 'polygons' found"):
+            _write_coco_json(
+                annotations_path=annotations_path,
+                classes=["shape"],
+                file_paths=["/tmp/synthetic.png"],
+                detections_list=[detections],
+                img_size=64,
+                with_segmentation=True,
+            )
+
     def test_write_coco_json_raises_for_mismatched_inputs(self, tmp_path):
         """Mismatched file/detection list lengths must raise to avoid silent truncation."""
         annotations_path = tmp_path / "_annotations.coco.json"
@@ -497,8 +557,8 @@ class TestDrawSyntheticShapeEdgeCases:
         assert max(ys) <= float(img.shape[0])
 
         # Horizontal extent should not exceed the intended half-size around cx
-        assert min(xs) >= pytest.approx(cx - half_size, rel=0.0, abs=1.0)
-        assert max(xs) <= pytest.approx(cx + half_size, rel=0.0, abs=1.0)
+        assert min(xs) >= cx - half_size - 1.0
+        assert max(xs) <= cx + half_size + 1.0
 
     def test_triangle_vertices_within_half_size_and_image_bounds(self):
         """Triangle vertices should:
@@ -522,8 +582,8 @@ class TestDrawSyntheticShapeEdgeCases:
         assert max(ys) <= float(img.shape[0])
 
         # Vertical extent should not exceed the intended half-size around cy
-        assert min(ys) >= pytest.approx(cy - half_size, rel=0.0, abs=1.0)
-        assert max(ys) <= pytest.approx(cy + half_size, rel=0.0, abs=1.0)
+        assert min(ys) >= cy - half_size - 1.0
+        assert max(ys) <= cy + half_size + 1.0
 
     @pytest.mark.parametrize(
         "shape,size,expected_n_coords",

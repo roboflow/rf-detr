@@ -144,8 +144,7 @@ def draw_synthetic_shape(
         x2, y2 = cx + half_size, cy + half_size
         pts = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
     elif shape == "triangle":
-        # Constrain triangle height so its vertical extent fits within the
-        # same size//2 bounding box used by other shapes.
+        # Apex at cy - size//2, base at cy + size//4. Total height = 0.75 * size.
         height = int(size * 0.75)
         pts = [
             [cx, cy - 2 * height // 3],
@@ -203,7 +202,26 @@ def generate_synthetic_sample(
     max_size_ratio: float = 0.3,
     overlap_threshold: float = 0.1,
 ) -> Tuple[np.ndarray, sv.Detections]:
-    """Generate a single synthetic image and its detections."""
+    """Generate a single synthetic image and its detections.
+
+    Args:
+        img_size: Side length of the square output image.
+        min_objects: Minimum number of objects to attempt placing.
+        max_objects: Maximum number of objects to attempt placing.
+        class_mode: ``"shape"`` assigns class IDs by shape type;
+            ``"color"`` assigns class IDs by colour.
+        min_size_ratio: Minimum object size as a fraction of ``img_size``.
+        max_size_ratio: Maximum object size as a fraction of ``img_size``.
+        overlap_threshold: Maximum allowed IoU between any two objects before
+            a placement attempt is rejected.
+
+    Returns:
+        Tuple of ``(image, detections)`` where ``image`` is an
+        ``(img_size, img_size, 3)`` uint8 array and ``detections`` is an
+        :class:`sv.Detections` instance whose ``data["polygons"]`` field
+        contains one flat ``[x1, y1, x2, y2, …]`` polygon list per detection,
+        matching the geometry returned by :func:`draw_synthetic_shape`.
+    """
     img = np.ones((img_size, img_size, 3), dtype=np.uint8) * 128
     color_names = list(SYNTHETIC_COLORS.keys())
     num_objects = random.randint(min_objects, max_objects)
@@ -249,7 +267,7 @@ def generate_synthetic_sample(
             img, polygon = draw_synthetic_shape(img, shape, color, (cx, cy), obj_size)
 
             # Derive bbox directly from the rendered polygon to ensure consistency
-            polygon_array = np.asarray(polygon, dtype=float)
+            polygon_array = np.asarray(polygon, dtype=float).reshape(-1, 2)
             poly_x_min = float(np.min(polygon_array[:, 0]))
             poly_y_min = float(np.min(polygon_array[:, 1]))
             poly_x_max = float(np.max(polygon_array[:, 0]))
@@ -315,6 +333,16 @@ def _write_coco_json(
             ``segmentation`` polygon taken from ``detections.data["polygons"]``
             (populated by :func:`generate_synthetic_sample`).  When ``False``
             the field is an empty list.
+
+    Raises:
+        ValueError: If ``file_paths`` and ``detections_list`` have different
+            lengths.
+        ValueError: If ``with_segmentation=True`` and a detections entry has
+            no ``"polygons"`` key in its ``data`` dict.
+        ValueError: If ``with_segmentation=True`` and the ``"polygons"`` array
+            has fewer entries than there are detections for that image.
+        ValueError: If any detection has a ``class_id`` outside the range
+            ``[0, len(classes))``.
     """
     if len(file_paths) != len(detections_list):
         raise ValueError(
@@ -443,10 +471,15 @@ def generate_coco_dataset(
     random.shuffle(all_indices)
 
     start_idx = 0
-    for split, ratio in split_ratios_dict.items():
-        num_split = int(num_images * ratio)
-        if num_split == 0 and ratio > 0:
-            num_split = 1
+    split_items = list(split_ratios_dict.items())
+    for split_idx, (split, ratio) in enumerate(split_items):
+        if split_idx == len(split_items) - 1:
+            # Last split absorbs any remainder to avoid silently losing images
+            num_split = len(all_indices) - start_idx
+        else:
+            num_split = int(num_images * ratio)
+            if num_split == 0 and ratio > 0:
+                num_split = 1
         split_indices = all_indices[start_idx : start_idx + num_split]
         start_idx += num_split
 
