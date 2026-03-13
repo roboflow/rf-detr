@@ -74,6 +74,7 @@ class HungarianMatcher(nn.Module):
         self.mask_point_sample_ratio = mask_point_sample_ratio
         self.cost_mask_ce = cost_mask_ce
         self.cost_mask_dice = cost_mask_dice
+        self._warned_non_finite_costs = False
 
     @torch.no_grad()
     def forward(self, outputs, targets, group_detr=1):
@@ -176,11 +177,13 @@ class HungarianMatcher(nn.Module):
         # entries with a finite value that is larger than every valid cost.
         finite_mask = torch.isfinite(C)
         if not finite_mask.all():
-            logger.warning_once(
-                "Non-finite values detected in matcher cost matrix; "
-                "replacing with finite sentinel. "
-                "Check for numerical instability."
-            )
+            if not self._warned_non_finite_costs:
+                logger.warning(
+                    "Non-finite values detected in matcher cost matrix; "
+                    "replacing with finite sentinel. "
+                    "Check for numerical instability."
+                )
+                self._warned_non_finite_costs = True
             dtype_info = torch.finfo(C.dtype)
             if finite_mask.any():
                 finite_costs = C[finite_mask]

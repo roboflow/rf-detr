@@ -7,6 +7,7 @@
 import pytest
 import torch
 
+from rfdetr.models import matcher as matcher_module
 from rfdetr.models.matcher import HungarianMatcher
 
 
@@ -226,3 +227,41 @@ class TestHungarianMatcherNonFiniteCosts:
         assert matched_targets.tolist() == [0, 0]
         # The valid query in each group (indices 1 and 3) must be selected
         assert set(matched_queries.tolist()) == {1, 3}
+
+    def test_warns_once_per_matcher_instance(
+        self, standard_target: dict[str, torch.Tensor], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Non-finite-cost warning should be emitted once per matcher instance."""
+        expected_warning = (
+            "Non-finite values detected in matcher cost matrix; "
+            "replacing with finite sentinel. "
+            "Check for numerical instability."
+        )
+        warning_messages: list[str] = []
+
+        def record_warning(msg: str, *args: object, **kwargs: object) -> None:
+            warning_messages.append(msg)
+
+        monkeypatch.setattr(matcher_module.logger, "warning", record_warning)
+
+        outputs = {
+            "pred_logits": torch.tensor([[[0.0], [10.0]]], dtype=torch.float32),
+            "pred_boxes": torch.tensor(
+                [
+                    [
+                        [float("nan"), 0.5, 0.2, 0.2],
+                        [0.5, 0.5, 0.2, 0.2],
+                    ]
+                ],
+                dtype=torch.float32,
+            ),
+        }
+
+        first_matcher = HungarianMatcher()
+        second_matcher = HungarianMatcher()
+
+        first_matcher(outputs, [standard_target])
+        first_matcher(outputs, [standard_target])
+        second_matcher(outputs, [standard_target])
+
+        assert warning_messages == [expected_warning, expected_warning]
