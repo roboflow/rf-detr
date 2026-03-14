@@ -38,6 +38,14 @@ from rfdetr.utilities.logger import get_logger
 logger = get_logger()
 
 
+def _xyxy_to_xywh(boxes: np.ndarray) -> np.ndarray:
+    """Convert boxes from [x1, y1, x2, y2] to [x1, y1, w, h]."""
+    boxes = boxes.copy()
+    boxes[:, 2] -= boxes[:, 0]
+    boxes[:, 3] -= boxes[:, 1]
+    return boxes
+
+
 class CocoEvaluator:
     """COCO evaluator that works in distributed mode."""
 
@@ -138,11 +146,7 @@ class CocoEvaluator:
                 continue
 
             boxes = prediction["boxes"]
-            boxes_np = boxes.cpu().numpy()
-            boxes_np = boxes_np.copy()
-            boxes_np[:, 2] -= boxes_np[:, 0]
-            boxes_np[:, 3] -= boxes_np[:, 1]
-            boxes = boxes_np.tolist()
+            boxes = _xyxy_to_xywh(boxes.cpu().numpy()).tolist()
             scores = prediction["scores"].tolist()
             labels = prediction["labels"].tolist()
             use_raw_category_ids = self._should_use_raw_category_ids(labels)
@@ -206,11 +210,7 @@ class CocoEvaluator:
                 continue
 
             boxes = prediction["boxes"]
-            boxes_np = boxes.cpu().numpy()
-            boxes_np = boxes_np.copy()
-            boxes_np[:, 2] -= boxes_np[:, 0]
-            boxes_np[:, 3] -= boxes_np[:, 1]
-            boxes = boxes_np.tolist()
+            boxes = _xyxy_to_xywh(boxes.cpu().numpy()).tolist()
             scores = prediction["scores"].tolist()
             labels = prediction["labels"].tolist()
             keypoints = prediction["keypoints"]
