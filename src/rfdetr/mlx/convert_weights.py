@@ -14,7 +14,10 @@ the flat MLX module naming, plus Conv2d weight transposition
 from __future__ import annotations
 
 import re
-from typing import Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, Optional, Tuple
+
+if TYPE_CHECKING:
+    import torch
 
 import numpy as np
 

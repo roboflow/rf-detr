@@ -19,7 +19,7 @@ intermediate layer outputs for use by a segmentation head via the
 from __future__ import annotations
 
 import math
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Tuple, Union
 
 import mlx.core as mx
 import mlx.nn as nn

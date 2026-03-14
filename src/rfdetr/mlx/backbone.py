@@ -17,7 +17,6 @@ use windowed attention with configurable window grid size.
 
 from __future__ import annotations
 
-import math
 from typing import List, Optional
 
 import mlx.core as mx

@@ -12,8 +12,6 @@ They are skipped on other platforms via the ``requires_mlx`` mark.
 
 from __future__ import annotations
 
-from typing import List
-
 import numpy as np
 import pytest
 import torch
