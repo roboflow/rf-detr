@@ -4,13 +4,17 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+from __future__ import annotations
+
 import os
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import supervision as sv
 import torch
+
+if TYPE_CHECKING:
+    import supervision as sv
 from PIL import Image
 from torchvision.datasets import VisionDataset
 
@@ -257,7 +261,8 @@ class CocoLikeAPI:
             if len(detections) == 0:
                 continue
             for i in range(len(detections)):
-                bbox_x, bbox_y, bbox_w, bbox_h = sv.xyxy_to_xywh(detections.xyxy[i : i + 1])[0]
+                x1, y1, x2, y2 = detections.xyxy[i]
+                bbox_x, bbox_y, bbox_w, bbox_h = float(x1), float(y1), float(x2 - x1), float(y2 - y1)
 
                 ann = {
                     "id": ann_id,
@@ -439,6 +444,8 @@ class YoloDetection(VisionDataset):
         self._transforms = transforms
         self.include_masks = include_masks
         self.prepare = ConvertYolo(include_masks=include_masks)
+
+        import supervision as sv
 
         # Load dataset using supervision's from_yolo method
         self.sv_dataset = sv.DetectionDataset.from_yolo(

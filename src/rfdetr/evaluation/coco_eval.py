@@ -29,7 +29,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pycocotools.mask as mask_util
-import supervision as sv
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 
@@ -139,7 +138,11 @@ class CocoEvaluator:
                 continue
 
             boxes = prediction["boxes"]
-            boxes = sv.xyxy_to_xywh(boxes.cpu().numpy()).tolist()
+            boxes_np = boxes.cpu().numpy()
+            boxes_np = boxes_np.copy()
+            boxes_np[:, 2] -= boxes_np[:, 0]
+            boxes_np[:, 3] -= boxes_np[:, 1]
+            boxes = boxes_np.tolist()
             scores = prediction["scores"].tolist()
             labels = prediction["labels"].tolist()
             use_raw_category_ids = self._should_use_raw_category_ids(labels)
@@ -203,7 +206,11 @@ class CocoEvaluator:
                 continue
 
             boxes = prediction["boxes"]
-            boxes = sv.xyxy_to_xywh(boxes.cpu().numpy()).tolist()
+            boxes_np = boxes.cpu().numpy()
+            boxes_np = boxes_np.copy()
+            boxes_np[:, 2] -= boxes_np[:, 0]
+            boxes_np[:, 3] -= boxes_np[:, 1]
+            boxes = boxes_np.tolist()
             scores = prediction["scores"].tolist()
             labels = prediction["labels"].tolist()
             keypoints = prediction["keypoints"]
