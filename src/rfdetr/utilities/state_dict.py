@@ -6,6 +6,8 @@
 
 """Checkpoint and state-dict helpers."""
 
+from __future__ import annotations
+
 import os
 import tempfile
 from collections import OrderedDict

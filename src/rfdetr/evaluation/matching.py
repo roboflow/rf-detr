@@ -14,6 +14,8 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 # ------------------------------------------------------------------------
 
+from __future__ import annotations
+
 """Greedy matching and accumulation functions for evaluation metrics."""
 
 from typing import Any, List

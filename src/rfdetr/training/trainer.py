@@ -6,6 +6,8 @@
 
 """Trainer factory — assembles a PTL Trainer from RF-DETR configs."""
 
+from __future__ import annotations
+
 import warnings
 from typing import Any
 

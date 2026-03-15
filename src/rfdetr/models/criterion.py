@@ -458,12 +458,55 @@ class SetCriterion(nn.Module):
         tgt_idx = torch.cat([tgt for (_, tgt) in indices])
         return batch_idx, tgt_idx
 
+    def loss_keypoints(self, outputs, targets, indices, num_boxes):
+        """Compute L1 regression loss and visibility BCE loss for keypoints.
+
+        Expects ``outputs`` to contain ``'pred_keypoints'`` of shape
+        ``[B, Q, num_keypoints, 3]`` (x, y, vis_logit) and targets with key
+        ``'keypoints'`` of shape ``[N_tgt, num_keypoints, 3]`` (x, y, vis).
+        Visibility targets follow COCO convention: 0=not labeled, 1=labeled
+        not visible, 2=labeled and visible.  Only keypoints with vis > 0 are
+        used for the coordinate regression loss.
+        """
+        if "pred_keypoints" not in outputs:
+            zero = outputs["pred_logits"].sum() * 0
+            return {"loss_keypoints": zero, "loss_keypoint_vis": zero}
+        idx = self._get_src_permutation_idx(indices)
+        src_kpts = outputs["pred_keypoints"][idx]  # (M, K, 3)
+
+        target_kpts = torch.cat([t["keypoints"][j] for t, (_, j) in zip(targets, indices)], dim=0)  # (M, K, 3)
+
+        if src_kpts.numel() == 0:
+            return {
+                "loss_keypoints": src_kpts.sum(),
+                "loss_keypoint_vis": src_kpts.sum(),
+            }
+
+        tgt_xy = target_kpts[..., :2]        # (M, K, 2) — normalized [0,1]
+        tgt_vis = target_kpts[..., 2]         # (M, K)    — 0/1/2
+
+        src_xy = src_kpts[..., :2]            # (M, K, 2)
+        src_vis_logit = src_kpts[..., 2]      # (M, K)
+
+        # Coordinate loss: only on labeled keypoints (vis > 0)
+        labeled = tgt_vis > 0  # (M, K) bool
+        num_labeled = labeled.sum().clamp(min=1).float()
+
+        loss_kpt = F.l1_loss(src_xy[labeled], tgt_xy[labeled], reduction="sum") / num_labeled
+
+        # Visibility loss: binary — vis > 0 means the keypoint is labeled
+        vis_target = (tgt_vis > 0).float()  # (M, K)
+        loss_vis = F.binary_cross_entropy_with_logits(src_vis_logit, vis_target, reduction="sum") / num_boxes
+
+        return {"loss_keypoints": loss_kpt, "loss_keypoint_vis": loss_vis}
+
     def get_loss(self, loss, outputs, targets, indices, num_boxes, **kwargs):
         loss_map = {
             "labels": self.loss_labels,
             "cardinality": self.loss_cardinality,
             "boxes": self.loss_boxes,
             "masks": self.loss_masks,
+            "keypoints": self.loss_keypoints,
         }
         assert loss in loss_map, f"do you really want to compute {loss} loss?"
         return loss_map[loss](outputs, targets, indices, num_boxes, **kwargs)

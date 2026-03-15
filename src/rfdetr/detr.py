@@ -27,8 +27,14 @@ from PIL import Image
 from rfdetr.assets.coco_classes import COCO_CLASSES
 from rfdetr.assets.model_weights import download_pretrain_weights, validate_pretrain_weights
 from rfdetr.config import (
+    KeypointTrainConfig,
     ModelConfig,
     RFDETRBaseConfig,  # DEPRECATED
+    RFDETRKptBaseConfig,
+    RFDETRKptLargeConfig,
+    RFDETRKptMediumConfig,
+    RFDETRKptNanoConfig,
+    RFDETRKptSmallConfig,
     RFDETRLargeConfig,
     RFDETRLargeDeprecatedConfig,  # DEPRECATED
     RFDETRMediumConfig,
@@ -416,6 +422,8 @@ class RFDETR:
             output_names = ["features"]
         elif self.model_config.segmentation_head:
             output_names = ["dets", "labels", "masks"]
+        elif self.model_config.keypoint_head:
+            output_names = ["dets", "labels", "keypoints"]
         else:
             output_names = ["dets", "labels"]
 
@@ -652,7 +660,13 @@ class RFDETR:
                     "pred_boxes": predictions[0],
                 }
                 if len(predictions) == 3:
-                    return_predictions["pred_masks"] = predictions[2]
+                    # Third output is either masks (segmentation) or keypoints
+                    if self.model_config.segmentation_head:
+                        return_predictions["pred_masks"] = predictions[2]
+                    elif self.model_config.keypoint_head:
+                        return_predictions["pred_keypoints"] = predictions[2]
+                    else:
+                        return_predictions["pred_masks"] = predictions[2]
                 predictions = return_predictions
             target_sizes = torch.tensor(orig_sizes, device=self.model.device)
             results = self.model.postprocess(predictions, target_sizes=target_sizes)
@@ -678,6 +692,18 @@ class RFDETR:
                     class_id=labels.cpu().numpy(),
                     mask=masks.squeeze(1).cpu().numpy(),
                 )
+            elif "keypoints" in result:
+                kpts = result["keypoints"][keep]
+                kpt_scores = result["keypoint_scores"][keep]
+
+                detections = sv.Detections(
+                    xyxy=boxes.float().cpu().numpy(),
+                    confidence=scores.float().cpu().numpy(),
+                    class_id=labels.cpu().numpy(),
+                )
+                # Attach keypoints as custom data: shape (N, K, 2) and scores (N, K)
+                detections.data["keypoints"] = kpts.float().cpu().numpy()
+                detections.data["keypoint_scores"] = kpt_scores.float().cpu().numpy()
             else:
                 detections = sv.Detections(
                     xyxy=boxes.float().cpu().numpy(),
@@ -937,3 +963,63 @@ class RFDETRSeg2XLarge(RFDETR):
 
     def get_train_config(self, **kwargs):
         return SegmentationTrainConfig(**kwargs)
+
+
+class RFDETRKptNano(RFDETR):
+    """Train an RF-DETR Nano model with keypoint detection."""
+
+    size = "rfdetr-kpt-nano"
+
+    def get_model_config(self, **kwargs):
+        return RFDETRKptNanoConfig(**kwargs)
+
+    def get_train_config(self, **kwargs):
+        return KeypointTrainConfig(**kwargs)
+
+
+class RFDETRKptSmall(RFDETR):
+    """Train an RF-DETR Small model with keypoint detection."""
+
+    size = "rfdetr-kpt-small"
+
+    def get_model_config(self, **kwargs):
+        return RFDETRKptSmallConfig(**kwargs)
+
+    def get_train_config(self, **kwargs):
+        return KeypointTrainConfig(**kwargs)
+
+
+class RFDETRKptMedium(RFDETR):
+    """Train an RF-DETR Medium model with keypoint detection."""
+
+    size = "rfdetr-kpt-medium"
+
+    def get_model_config(self, **kwargs):
+        return RFDETRKptMediumConfig(**kwargs)
+
+    def get_train_config(self, **kwargs):
+        return KeypointTrainConfig(**kwargs)
+
+
+class RFDETRKptBase(RFDETR):
+    """Train an RF-DETR Base model with keypoint detection."""
+
+    size = "rfdetr-kpt-base"
+
+    def get_model_config(self, **kwargs):
+        return RFDETRKptBaseConfig(**kwargs)
+
+    def get_train_config(self, **kwargs):
+        return KeypointTrainConfig(**kwargs)
+
+
+class RFDETRKptLarge(RFDETR):
+    """Train an RF-DETR Large model with keypoint detection."""
+
+    size = "rfdetr-kpt-large"
+
+    def get_model_config(self, **kwargs):
+        return RFDETRKptLargeConfig(**kwargs)
+
+    def get_train_config(self, **kwargs):
+        return KeypointTrainConfig(**kwargs)

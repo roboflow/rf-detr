@@ -6,6 +6,8 @@
 
 """COCOEvalCallback — torchmetrics-based mAP and F1 evaluation (Phase 3)."""
 
+from __future__ import annotations
+
 import contextlib
 from typing import Any
 

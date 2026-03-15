@@ -11,6 +11,8 @@
 ONNX export, simplification, and OnnxOptimizer.
 """
 
+from __future__ import annotations
+
 import inspect
 import os
 from collections import OrderedDict

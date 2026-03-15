@@ -11,6 +11,11 @@ if os.environ.get("PYTORCH_ENABLE_MPS_FALLBACK") is None:
 
 from rfdetr.detr import (
     RFDETRBase,  # DEPRECATED # noqa: F401
+    RFDETRKptBase,
+    RFDETRKptLarge,
+    RFDETRKptMedium,
+    RFDETRKptNano,
+    RFDETRKptSmall,
     RFDETRLarge,
     RFDETRLargeDeprecated,  # DEPRECATED # noqa: F401
     RFDETRMedium,
@@ -36,6 +41,11 @@ __all__ = [
     "RFDETRSegLarge",
     "RFDETRSegXLarge",
     "RFDETRSeg2XLarge",
+    "RFDETRKptNano",
+    "RFDETRKptSmall",
+    "RFDETRKptMedium",
+    "RFDETRKptBase",
+    "RFDETRKptLarge",
 ]
 
 # Lazily resolved names: avoids eager pytorch_lightning import at `import rfdetr` time.

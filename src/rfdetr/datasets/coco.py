@@ -128,10 +128,13 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         transforms: Optional[Any],
         include_masks: bool = False,
         remap_category_ids: bool = False,
+        include_keypoints: bool = False,
+        num_keypoints: int = 0,
     ) -> None:
         super(CocoDetection, self).__init__(img_folder, ann_file)
         self._transforms = transforms
         self.include_masks = include_masks
+        self.include_keypoints = include_keypoints
         if remap_category_ids:
             # Mapping from original COCO category_id to contiguous label indices
             self.cat2label = {cat_id: i for i, cat_id in enumerate(sorted(self.coco.cats.keys()))}
@@ -142,7 +145,12 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         else:
             self.cat2label = None
             self.label2cat = None
-        self.prepare = ConvertCoco(include_masks=include_masks, cat2label=self.cat2label)
+        self.prepare = ConvertCoco(
+            include_masks=include_masks,
+            cat2label=self.cat2label,
+            include_keypoints=include_keypoints,
+            num_keypoints=num_keypoints,
+        )
 
     def __getitem__(self, idx: int) -> Tuple[Any, Any]:
         img, target = super(CocoDetection, self).__getitem__(idx)
@@ -185,9 +193,17 @@ class ConvertCoco(object):
             that labels stay within the model's output range.
     """
 
-    def __init__(self, include_masks: bool = False, cat2label: Optional[Dict[int, int]] = None) -> None:
+    def __init__(
+        self,
+        include_masks: bool = False,
+        cat2label: Optional[Dict[int, int]] = None,
+        include_keypoints: bool = False,
+        num_keypoints: int = 0,
+    ) -> None:
         self.include_masks = include_masks
         self.cat2label = cat2label
+        self.include_keypoints = include_keypoints
+        self.num_keypoints = num_keypoints
 
     def __call__(self, image: Image.Image, target: Dict[str, Any]) -> Tuple[Image.Image, Dict[str, Any]]:
         w, h = image.size
@@ -248,6 +264,34 @@ class ConvertCoco(object):
                 target["masks"] = torch.zeros((0, h, w), dtype=torch.uint8)
 
             target["masks"] = target["masks"].bool()
+
+        if self.include_keypoints:
+            # Determine num_keypoints from annotations; fall back to self.num_keypoints
+            num_keypoints = self.num_keypoints
+            for obj in anno:
+                kpts = obj.get("keypoints", [])
+                if kpts:
+                    num_keypoints = len(kpts) // 3
+                    break
+
+            if num_keypoints > 0:
+                kpts_list = []
+                for obj in anno:
+                    raw = obj.get("keypoints", [0] * (num_keypoints * 3))
+                    # raw: [x1, y1, v1, x2, y2, v2, ...]
+                    kpts = torch.as_tensor(raw, dtype=torch.float32).reshape(-1, 3)
+                    # Normalize (x, y) to [0, 1] relative to image size
+                    kpts[:, 0] /= w
+                    kpts[:, 1] /= h
+                    kpts_list.append(kpts)
+
+                if kpts_list:
+                    all_kpts = torch.stack(kpts_list)  # (N, K, 3)
+                    target["keypoints"] = all_kpts[keep]
+                else:
+                    target["keypoints"] = torch.zeros((0, num_keypoints, 3), dtype=torch.float32)
+            else:
+                target["keypoints"] = torch.zeros((0, num_keypoints, 3), dtype=torch.float32)
 
         target["orig_size"] = torch.as_tensor([int(h), int(w)])
         target["size"] = torch.as_tensor([int(h), int(w)])
@@ -490,17 +534,29 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
         logger.error(f"COCO path {root} does not exist")
         raise FileNotFoundError(f"COCO path {root} does not exist")
 
-    mode = "instances"
+    # Use "person_keypoints" annotation files when training a keypoint model
+    mode = "person_keypoints" if getattr(args, "keypoint_head", False) else "instances"
+
     PATHS = {
         "train": (root / "train2017", root / "annotations" / f"{mode}_train2017.json"),
         "val": (root / "val2017", root / "annotations" / f"{mode}_val2017.json"),
         "test": (root / "test2017", root / "annotations" / "image_info_test-dev2017.json"),
     }
 
-    img_folder, ann_file = PATHS[image_set.split("_")[0]]
+    # When train_split="val", redirect training data to the val split.
+    # Useful when only val images are available locally (train set is too large).
+    train_split = getattr(args, "train_split", "train")
+    split_key = image_set.split("_")[0]
+    if split_key == "train" and train_split == "val":
+        logger.info("train_split=val: using val2017 images and annotations for training")
+        img_folder, ann_file = PATHS["val"]
+    else:
+        img_folder, ann_file = PATHS[split_key]
 
     square_resize_div_64 = getattr(args, "square_resize_div_64", False)
     include_masks = getattr(args, "segmentation_head", False)
+    include_keypoints = getattr(args, "keypoint_head", False)
+    num_keypoints = getattr(args, "num_keypoints", 0) if include_keypoints else 0
     aug_config = getattr(args, "aug_config", None)
 
     if square_resize_div_64:
@@ -519,6 +575,8 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
                 aug_config=aug_config,
             ),
             include_masks=include_masks,
+            include_keypoints=include_keypoints,
+            num_keypoints=num_keypoints,
         )
     else:
         logger.info(f"Building COCO {image_set} dataset at resolution {resolution}")
@@ -536,6 +594,8 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
                 aug_config=aug_config,
             ),
             include_masks=include_masks,
+            include_keypoints=include_keypoints,
+            num_keypoints=num_keypoints,
         )
     return dataset
 
@@ -560,6 +620,8 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
     img_folder, ann_file = PATHS[image_set.split("_")[0]]
     square_resize_div_64 = getattr(args, "square_resize_div_64", False)
     include_masks = getattr(args, "segmentation_head", False)
+    include_keypoints = getattr(args, "keypoint_head", False)
+    num_keypoints = getattr(args, "num_keypoints", 0) if include_keypoints else 0
     multi_scale = getattr(args, "multi_scale", False)
     expanded_scales = getattr(args, "expanded_scales", False)
     do_random_resize_via_padding = getattr(args, "do_random_resize_via_padding", False)
@@ -583,6 +645,8 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
                 aug_config=aug_config,
             ),
             include_masks=include_masks,
+            include_keypoints=include_keypoints,
+            num_keypoints=num_keypoints,
             remap_category_ids=True,
         )
     else:
@@ -601,6 +665,8 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
                 aug_config=aug_config,
             ),
             include_masks=include_masks,
+            include_keypoints=include_keypoints,
+            num_keypoints=num_keypoints,
             remap_category_ids=True,
         )
     return dataset

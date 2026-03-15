@@ -74,6 +74,8 @@ class ModelConfig(BaseConfig):
     cls_loss_coef: float = 1.0
     segmentation_head: bool = False
     mask_downsample_ratio: int = 4
+    keypoint_head: bool = False
+    num_keypoints: int = 17
     license: str = "Apache-2.0"
 
     @field_validator("pretrain_weights", mode="after")
@@ -332,6 +334,7 @@ class TrainConfig(BaseModel):
     class_names: List[str] = None
     run_test: bool = False
     segmentation_head: bool = False
+    train_split: str = "train"
     eval_max_dets: int = 500
     eval_interval: int = 1
     log_per_class_metrics: bool = True
@@ -383,6 +386,46 @@ class TrainConfig(BaseModel):
         return os.path.realpath(os.path.expanduser(v))
 
 
+class RFDETRKptBaseConfig(RFDETRBaseConfig):
+    """Configuration for RF-DETR Base with keypoint detection head."""
+
+    keypoint_head: bool = True
+    num_keypoints: int = 17
+    pretrain_weights: Optional[str] = "rf-detr-base.pth"
+
+
+class RFDETRKptNanoConfig(RFDETRNanoConfig):
+    """Configuration for RF-DETR Nano with keypoint detection head."""
+
+    keypoint_head: bool = True
+    num_keypoints: int = 17
+    pretrain_weights: Optional[str] = "rf-detr-nano.pth"
+
+
+class RFDETRKptSmallConfig(RFDETRSmallConfig):
+    """Configuration for RF-DETR Small with keypoint detection head."""
+
+    keypoint_head: bool = True
+    num_keypoints: int = 17
+    pretrain_weights: Optional[str] = "rf-detr-small.pth"
+
+
+class RFDETRKptMediumConfig(RFDETRMediumConfig):
+    """Configuration for RF-DETR Medium with keypoint detection head."""
+
+    keypoint_head: bool = True
+    num_keypoints: int = 17
+    pretrain_weights: Optional[str] = "rf-detr-medium.pth"
+
+
+class RFDETRKptLargeConfig(RFDETRLargeConfig):
+    """Configuration for RF-DETR Large with keypoint detection head."""
+
+    keypoint_head: bool = True
+    num_keypoints: int = 17
+    pretrain_weights: Optional[str] = "rf-detr-large-2026.pth"
+
+
 class SegmentationTrainConfig(TrainConfig):
     num_select: Optional[int] = None
     mask_point_sample_ratio: int = 16
@@ -390,3 +433,12 @@ class SegmentationTrainConfig(TrainConfig):
     mask_dice_loss_coef: float = 5.0
     cls_loss_coef: float = 5.0
     segmentation_head: bool = True
+
+
+class KeypointTrainConfig(TrainConfig):
+    """Training configuration for keypoint detection models."""
+
+    keypoint_head: bool = True
+    keypoint_loss_coef: float = 5.0
+    keypoint_vis_loss_coef: float = 1.0
+    cls_loss_coef: float = 5.0

@@ -35,6 +35,7 @@ class PostProcess(nn.Module):
         """
         out_logits, out_bbox = outputs["pred_logits"], outputs["pred_boxes"]
         out_masks = outputs.get("pred_masks", None)
+        out_keypoints = outputs.get("pred_keypoints", None)
 
         assert len(out_logits) == len(target_sizes)
         assert target_sizes.shape[1] == 2
@@ -71,6 +72,24 @@ class PostProcess(nn.Module):
                     align_corners=False,
                 )  # [K,1,H,W]
                 res_i["masks"] = masks_i > 0.0
+                results.append(res_i)
+        elif out_keypoints is not None:
+            # out_keypoints: (B, Q, K, 3) — (x, y, vis_logit) in [0,1] normalized coords
+            for i in range(out_keypoints.shape[0]):
+                res_i = {"scores": scores[i], "labels": labels[i], "boxes": boxes[i]}
+                k_idx = topk_boxes[i]  # (num_select,)
+                num_kpts = out_keypoints.shape[2]
+                kpts_i = torch.gather(
+                    out_keypoints[i],
+                    0,
+                    k_idx.unsqueeze(-1).unsqueeze(-1).repeat(1, num_kpts, 3),
+                )  # (num_select, K, 3)
+                # Scale (x, y) from normalized [0,1] to absolute pixel coordinates
+                h, w = target_sizes[i].tolist()
+                kpts_xy = kpts_i[..., :2] * torch.tensor([w, h], device=kpts_i.device, dtype=kpts_i.dtype)
+                kpts_vis = kpts_i[..., 2].sigmoid()  # visibility confidence
+                res_i["keypoints"] = kpts_xy         # (num_select, K, 2) absolute coords
+                res_i["keypoint_scores"] = kpts_vis  # (num_select, K)
                 results.append(res_i)
         else:
             results = [

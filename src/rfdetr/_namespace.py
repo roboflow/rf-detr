@@ -66,6 +66,8 @@ def build_namespace(model_config: ModelConfig, train_config: TrainConfig) -> Any
         cls_loss_coef=mc.cls_loss_coef,
         segmentation_head=mc.segmentation_head,
         mask_downsample_ratio=mc.mask_downsample_ratio,
+        keypoint_head=mc.keypoint_head,
+        num_keypoints=mc.num_keypoints,
         # num_queries / num_select live on subclass configs.
         num_queries=getattr(mc, "num_queries", 300),
         num_select=getattr(mc, "num_select", tc.num_select),
@@ -97,6 +99,10 @@ def build_namespace(model_config: ModelConfig, train_config: TrainConfig) -> Any
         mask_ce_loss_coef=getattr(tc, "mask_ce_loss_coef", 5.0),
         mask_dice_loss_coef=getattr(tc, "mask_dice_loss_coef", 5.0),
         mask_point_sample_ratio=getattr(tc, "mask_point_sample_ratio", 16),
+        # Keypoint extras (present on KeypointTrainConfig only).
+        keypoint_loss_coef=getattr(tc, "keypoint_loss_coef", 5.0),
+        keypoint_vis_loss_coef=getattr(tc, "keypoint_vis_loss_coef", 1.0),
+        train_split=getattr(tc, "train_split", "train"),
         # Evaluation extras forwarded via extra_kwargs in the legacy shim.
         eval_max_dets=tc.eval_max_dets,
         eval_interval=tc.eval_interval,

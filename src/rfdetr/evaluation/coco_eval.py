@@ -13,6 +13,8 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 # ------------------------------------------------------------------------
 
+from __future__ import annotations
+
 """COCO evaluator for ONNX/TRT export benchmarking.
 
 Provides :class:`CocoEvaluator` used by :mod:`rfdetr.export.benchmark` to
