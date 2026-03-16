@@ -7,9 +7,12 @@ import pytest
 import torch
 
 from rfdetr.models.backbone.dinov2_with_windowed_attn import (
+    Dinov2WithRegistersAttention,
+    Dinov2WithRegistersSdpaAttention,
     WindowedDinov2WithRegistersBackbone,
     WindowedDinov2WithRegistersConfig,
     WindowedDinov2WithRegistersEmbeddings,
+    WindowedDinov2WithRegistersModel,
     _find_pruneable_heads_and_indices,
     _get_aligned_output_features_output_indices,
 )
@@ -376,10 +379,6 @@ class TestSdpaFallbackWithOutputAttentions:
 
     def test_output_attentions_true_raises(self):
         """Windowed attention explicitly does not support output_attentions=True."""
-        from rfdetr.models.backbone.dinov2_with_windowed_attn import (
-            WindowedDinov2WithRegistersModel,
-        )
-
         config = _minimal_backbone_config()
         model = WindowedDinov2WithRegistersModel(config)
         model.eval()
@@ -387,3 +386,44 @@ class TestSdpaFallbackWithOutputAttentions:
         with torch.no_grad():
             with pytest.raises(AssertionError, match="output_attentions is not supported for windowed attention"):
                 model(pixel_values, output_attentions=True)
+
+
+class TestSetAttnImplementation:
+    """Tests for WindowedDinov2WithRegistersModel.set_attn_implementation."""
+
+    def test_switch_to_eager_replaces_all_layers(self):
+        """set_attn_implementation('eager') replaces every encoder layer's attention module."""
+        config = _minimal_backbone_config()
+        model = WindowedDinov2WithRegistersModel(config)
+
+        # Default after PreTrainedModel.__init__ is sdpa
+        assert model.config._attn_implementation == "sdpa"
+        for layer in model.encoder.layer:
+            assert isinstance(layer.attention, Dinov2WithRegistersSdpaAttention)
+
+        model.set_attn_implementation("eager")
+
+        assert model.config._attn_implementation == "eager"
+        for layer in model.encoder.layer:
+            assert isinstance(layer.attention, Dinov2WithRegistersAttention)
+            assert not isinstance(layer.attention, Dinov2WithRegistersSdpaAttention)
+
+    def test_switch_back_to_sdpa(self):
+        """set_attn_implementation is reversible: eager → sdpa restores SDPA modules."""
+        config = _minimal_backbone_config()
+        model = WindowedDinov2WithRegistersModel(config)
+
+        model.set_attn_implementation("eager")
+        model.set_attn_implementation("sdpa")
+
+        assert model.config._attn_implementation == "sdpa"
+        for layer in model.encoder.layer:
+            assert isinstance(layer.attention, Dinov2WithRegistersSdpaAttention)
+
+    def test_invalid_implementation_raises(self):
+        """Passing an unknown key raises ValueError with a clear message."""
+        config = _minimal_backbone_config()
+        model = WindowedDinov2WithRegistersModel(config)
+
+        with pytest.raises(ValueError, match="Unknown attn_implementation"):
+            model.set_attn_implementation("flash_attention_2")

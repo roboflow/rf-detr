@@ -9,6 +9,30 @@
 # Copyright 2024 Meta Inc. and the HuggingFace Inc. team. All rights reserved. (DINOv2)
 # Licensed under the Apache License, Version 2.0
 # ------------------------------------------------------------------------
+"""DINOv2-with-Registers backbone with windowed self-attention.
+
+This module is a local copy of the HuggingFace Transformers DINOv2-with-Registers
+implementation, extended with windowed attention support for RF-DETR.  It targets
+the transformers v5 API (``transformers>=5.0.0``).
+
+Transformers v5 API changes vs v4
+----------------------------------
+``head_mask`` removed:
+    The ``head_mask`` parameter that appeared on every ``forward()`` in v4 has been
+    dropped in v5.  It defaulted to ``None`` throughout the call chain and callers
+    universally passed ``None``, so removing it produces **identical numerics**.
+    Permanent head pruning is still available via ``model._prune_heads()``.
+
+``BackboneMixin._init_transformers_backbone`` signature:
+    In v4 this method accepted ``(self, config)``.  In v5 it accepts only ``(self)``;
+    the config is accessed via ``self.config`` internally.
+
+Helper functions copied locally:
+    ``get_aligned_output_features_output_indices`` and
+    ``find_pruneable_heads_and_indices`` were removed from the transformers v5 public
+    API.  Private copies (``_get_aligned_output_features_output_indices`` and
+    ``_find_pruneable_heads_and_indices``) are kept in this module.
+"""
 
 import collections.abc
 import math
@@ -449,6 +473,10 @@ class Dinov2WithRegistersSelfAttention(nn.Module):
     def forward(
         self, hidden_states: torch.Tensor, output_attentions: bool = False
     ) -> Union[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor]]:
+        # Note: head_mask was removed in the transformers v5 migration.
+        # In v4 the parameter defaulted to None and callers universally passed None,
+        # so dropping it produces identical numerics.  Permanent head pruning is still
+        # available via model._prune_heads().
         mixed_query_layer = self.query(hidden_states)
 
         key_layer = self.transpose_for_scores(self.key(hidden_states))
@@ -487,15 +515,12 @@ class Dinov2WithRegistersSdpaSelfAttention(Dinov2WithRegistersSelfAttention):
         self, hidden_states: torch.Tensor, output_attentions: bool = False
     ) -> Union[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor]]:
         if output_attentions:
-            # TODO: Improve this warning with e.g. `model.config.attn_implementation = "manual"`
-            # once this is implemented.
             logger.warning_once(
                 "Dinov2WithRegistersModel is using Dinov2WithRegistersSdpaSelfAttention, "
                 "but `torch.nn.functional.scaled_dot_product_attention` does not support "
-                "`output_attentions=True`. Falling back to the manual attention "
-                "implementation. "
-                'Since Transformers v5.0.0, use `attn_implementation="eager"` when '
-                "loading the model to avoid this fallback."
+                "`output_attentions=True`. Falling back to the manual attention implementation. "
+                "To avoid this fallback, call `model.set_attn_implementation('eager')` "
+                'or pass `attn_implementation="eager"` when instantiating the model.'
             )
             return super().forward(hidden_states=hidden_states, output_attentions=output_attentions)
 
@@ -891,6 +916,33 @@ class WindowedDinov2WithRegistersModel(WindowedDinov2WithRegistersPreTrainedMode
         """
         for layer, heads in heads_to_prune.items():
             self.encoder.layer[layer].attention.prune_heads(heads)
+
+    def set_attn_implementation(self, attn_implementation: str) -> None:
+        """Switch the attention implementation without reloading the model.
+
+        This is useful when you want to change the attention implementation after the model has been
+        instantiated — for example, to use ``"eager"`` (manual) attention when inspecting attention
+        weights, without having to reconstruct the entire model from scratch.
+
+        Args:
+            attn_implementation: One of ``"eager"`` (manual attention) or ``"sdpa"``
+                (:func:`torch.nn.functional.scaled_dot_product_attention`).
+
+        Raises:
+            ValueError: If *attn_implementation* is not a supported key.
+
+        Example::
+
+            >>> model.set_attn_implementation("eager")
+        """
+        if attn_implementation not in DINOV2_WITH_REGISTERS_ATTENTION_CLASSES:
+            raise ValueError(
+                f"Unknown attn_implementation {attn_implementation!r}. "
+                f"Choose from {sorted(DINOV2_WITH_REGISTERS_ATTENTION_CLASSES)}."
+            )
+        self.config._attn_implementation = attn_implementation
+        for layer in self.encoder.layer:
+            layer.attention = DINOV2_WITH_REGISTERS_ATTENTION_CLASSES[attn_implementation](self.config)
 
     @add_start_docstrings_to_model_forward(DINOV2_WITH_REGISTERS_BASE_INPUTS_DOCSTRING)
     @replace_return_docstrings(output_type=BaseModelOutputWithPooling, config_class=_CONFIG_FOR_DOC)
