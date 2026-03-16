@@ -387,6 +387,16 @@ class AlbumentationsWrapper:
                     min_visibility=0.0,  # Remove boxes with zero visibility/area after transformation
                     clip=True,  # Clip box coordinates to image boundaries after transformation
                 ),
+                # keypoint_params enables Albumentations to transform keypoint coordinates.
+                # kpt_inst_ids / kpt_kp_ids track which (instance, keypoint) each point
+                # belongs to so we can reconstruct the (N, K, 3) tensor afterwards.
+                # remove_invisible=False: keep all points even if they go out of bounds;
+                # we detect out-of-bounds and zero out visibility ourselves.
+                keypoint_params=A.KeypointParams(
+                    format="xy",
+                    label_fields=["kpt_inst_ids", "kpt_kp_ids"],
+                    remove_invisible=False,
+                ),
             )
         else:
             # Wrap non-geometric transform without bbox handling
@@ -516,8 +526,32 @@ class AlbumentationsWrapper:
                 raise ValueError(f"masks must have shape (N, H, W), got {masks_np.shape}")
             masks_np = masks_np.astype(np.uint8, copy=False)
             masks_list = [mask for mask in masks_np]
+
+        # Flatten keypoints (N, K, 3) → list of (x_abs, y_abs) with instance/kpt tracking.
+        # Albumentations transforms all points simultaneously, preserving their spatial
+        # relationship to the image (flip, crop, rotate etc.).
+        kpts_norm = target.get("keypoints")  # (N, K, 3) normalised [0,1] x, y, vis  — or None
+        kpt_xy_flat: list = []
+        kpt_inst_ids: list = []
+        kpt_kp_ids: list = []
+        if kpts_norm is not None and kpts_norm.numel() > 0:
+            h_img, w_img = image_np.shape[:2]
+            for n in range(kpts_norm.shape[0]):
+                for k in range(kpts_norm.shape[1]):
+                    kpt_xy_flat.append((float(kpts_norm[n, k, 0]) * w_img, float(kpts_norm[n, k, 1]) * h_img))
+                    kpt_inst_ids.append(n)
+                    kpt_kp_ids.append(k)
+
         # Apply transform
-        transform_kwargs = {"image": image_np, "bboxes": boxes_np, "category_ids": labels, "idxs": idxs}
+        transform_kwargs = {
+            "image": image_np,
+            "bboxes": boxes_np,
+            "category_ids": labels,
+            "idxs": idxs,
+            "keypoints": kpt_xy_flat,
+            "kpt_inst_ids": kpt_inst_ids,
+            "kpt_kp_ids": kpt_kp_ids,
+        }
         if masks_list is not None and len(masks_list) > 0:
             transform_kwargs["masks"] = masks_list
         augmented = self.transform(**transform_kwargs)
@@ -542,6 +576,34 @@ class AlbumentationsWrapper:
             if "area" in target_out:
                 boxes = target_out["boxes"]
                 target_out["area"] = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
+
+        # Reconstruct transformed keypoints when the target originally had them.
+        # _filter_per_instance_fields already keeps the right instances but leaves
+        # the coordinates in pre-transform normalised space; overwrite with the
+        # coordinates that Albumentations actually transformed.
+        if kpts_norm is not None:
+            aug_h, aug_w = augmented["image"].shape[:2]
+            N_new = len(target_out["boxes"])
+            K = kpts_norm.shape[1]
+            # Map original instance index → new (post-filter) index.
+            orig_to_new = {orig_i: new_i for new_i, orig_i in enumerate(kept_idxs)}
+            new_kpts = torch.zeros(N_new, K, 3, dtype=torch.float32)
+            aug_kpts = augmented.get("keypoints", [])
+            aug_inst = augmented.get("kpt_inst_ids", [])
+            aug_kp = augmented.get("kpt_kp_ids", [])
+            for (x_abs, y_abs), inst_id, kp_id in zip(aug_kpts, aug_inst, aug_kp):
+                inst_id = int(inst_id)
+                kp_id = int(kp_id)
+                if inst_id not in orig_to_new:
+                    continue
+                new_n = orig_to_new[inst_id]
+                orig_vis = float(kpts_norm[inst_id, kp_id, 2].item())
+                # Zero out visibility for keypoints that left the image boundary.
+                if orig_vis > 0 and 0 <= x_abs <= aug_w and 0 <= y_abs <= aug_h:
+                    new_kpts[new_n, kp_id, 0] = x_abs / aug_w
+                    new_kpts[new_n, kp_id, 1] = y_abs / aug_h
+                    new_kpts[new_n, kp_id, 2] = orig_vis
+            target_out["keypoints"] = new_kpts
         image_out = Image.fromarray(augmented["image"])
         if masks_list is not None and "masks" in augmented:
             height, width = augmented["image"].shape[:2]
