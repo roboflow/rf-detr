@@ -39,7 +39,8 @@ from transformers.utils import (
 logger = logging.get_logger(__name__)
 
 
-# Copied from transformers.pytorch_utils.find_pruneable_heads_and_indices (removed from public API in transformers v5.0).
+# Copied from transformers.pytorch_utils.find_pruneable_heads_and_indices
+# (removed from public API in transformers v5.0).
 # Source: https://github.com/huggingface/transformers/blob/v4.49.0/src/transformers/pytorch_utils.py#L127
 # MAINTENANCE: if this function is moved to another module or deleted, update the
 # "Copyright 2022 The HuggingFace Team" line in the file header accordingly.
@@ -71,7 +72,8 @@ def _align_output_features_output_indices(
     return out_features, out_indices
 
 
-# Copied from transformers.utils.backbone_utils.get_aligned_output_features_output_indices (removed from public API in transformers v5.0).
+# Copied from transformers.utils.backbone_utils.get_aligned_output_features_output_indices
+# (removed from public API in transformers v5.0).
 # Source: https://github.com/huggingface/transformers/blob/v4.49.0/src/transformers/utils/backbone_utils.py#L30
 # MAINTENANCE: if this function is moved to another module or deleted, update the
 # "Copyright 2023 The HuggingFace Inc. team" line in the file header accordingly.
@@ -464,8 +466,12 @@ class Dinov2WithRegistersSdpaSelfAttention(Dinov2WithRegistersSelfAttention):
             # TODO: Improve this warning with e.g. `model.config.attn_implementation = "manual"`
             # once this is implemented.
             logger.warning_once(
-                "Dinov2WithRegistersModel is using Dinov2WithRegistersSdpaSelfAttention, but `torch.nn.functional.scaled_dot_product_attention` does not support `output_attentions=True`. Falling back to the manual attention implementation. "
-                'Since Transformers v5.0.0, use `attn_implementation="eager"` when loading the model to avoid this fallback.'
+                "Dinov2WithRegistersModel is using Dinov2WithRegistersSdpaSelfAttention, "
+                "but `torch.nn.functional.scaled_dot_product_attention` does not support "
+                "`output_attentions=True`. Falling back to the manual attention "
+                "implementation. "
+                'Since Transformers v5.0.0, use `attn_implementation="eager"` when '
+                "loading the model to avoid this fallback."
             )
             return super().forward(hidden_states=hidden_states, output_attentions=output_attentions)
 
