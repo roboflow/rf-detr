@@ -300,12 +300,19 @@ class TestFindPruneableHeadsAndIndices:
         assert len(heads) == 0
         assert len(index) == 12  # 4 * 3, nothing masked
 
-    def test_prune_one_head_removes_correct_rows(self):
-        heads, index = _find_pruneable_heads_and_indices({0}, n_heads=4, head_size=3, already_pruned_heads=set())
-        assert 0 in heads
-        # Head 0 masked → indices 0,1,2 removed; remaining = 3*4-3 = 9
+    @pytest.mark.parametrize(
+        "head_to_prune, expected_index",
+        [
+            pytest.param({0}, list(range(3, 12)), id="prune-first-head"),
+            pytest.param({3}, list(range(9)), id="prune-last-head"),
+        ],
+    )
+    def test_prune_single_head_removes_correct_rows(self, head_to_prune, expected_index):
+        # Head N masked → N*head_size indices removed; remaining = n_heads*head_size - head_size = 9
+        heads, index = _find_pruneable_heads_and_indices(head_to_prune, n_heads=4, head_size=3, already_pruned_heads=set())
+        assert heads == head_to_prune
         assert len(index) == 9
-        assert index.tolist() == list(range(3, 12))
+        assert index.tolist() == expected_index
 
     def test_already_pruned_head_adjusts_offset(self):
         # Head 0 was already pruned. Now pruning head 1 (which is now effective head 0
@@ -313,11 +320,6 @@ class TestFindPruneableHeadsAndIndices:
         heads, index = _find_pruneable_heads_and_indices({1}, n_heads=4, head_size=3, already_pruned_heads={0})
         assert 1 in heads
         assert len(index) == 9  # 4*3 - 3 pruned
-
-    def test_prune_last_head(self):
-        heads, index = _find_pruneable_heads_and_indices({3}, n_heads=4, head_size=3, already_pruned_heads=set())
-        assert len(index) == 9
-        assert index.tolist() == list(range(9))
 
 
 # ---------------------------------------------------------------------------
@@ -344,19 +346,19 @@ def _minimal_backbone_config(**kwargs) -> WindowedDinov2WithRegistersConfig:
 class TestWindowedDinov2WithRegistersBackbone:
     """Smoke tests that guard against _init_transformers_backbone() API regressions."""
 
-    def test_instantiation_sets_stage_names(self):
+    @pytest.mark.parametrize(
+        "attr",
+        [
+            pytest.param("stage_names", id="stage_names"),
+            pytest.param("out_features", id="out_features"),
+        ],
+    )
+    def test_instantiation_sets_list_attribute(self, attr):
         config = _minimal_backbone_config()
         backbone = WindowedDinov2WithRegistersBackbone(config)
-        assert hasattr(backbone, "stage_names")
-        assert isinstance(backbone.stage_names, list)
-        assert len(backbone.stage_names) > 0
-
-    def test_instantiation_sets_out_features(self):
-        config = _minimal_backbone_config()
-        backbone = WindowedDinov2WithRegistersBackbone(config)
-        assert hasattr(backbone, "out_features")
-        assert isinstance(backbone.out_features, list)
-        assert len(backbone.out_features) > 0
+        assert hasattr(backbone, attr)
+        assert isinstance(getattr(backbone, attr), list)
+        assert len(getattr(backbone, attr)) > 0
 
     def test_forward_returns_backbone_output(self):
         config = _minimal_backbone_config()
@@ -391,34 +393,24 @@ class TestSdpaFallbackWithOutputAttentions:
 class TestSetAttnImplementation:
     """Tests for WindowedDinov2WithRegistersModel.set_attn_implementation."""
 
-    def test_switch_to_eager_replaces_all_layers(self):
-        """set_attn_implementation('eager') replaces every encoder layer's attention module."""
+    @pytest.mark.parametrize(
+        "switches, expected_impl, expected_cls",
+        [
+            pytest.param(["eager"], "eager", Dinov2WithRegistersAttention, id="sdpa-to-eager"),
+            pytest.param(["eager", "sdpa"], "sdpa", Dinov2WithRegistersSdpaAttention, id="roundtrip-back-to-sdpa"),
+        ],
+    )
+    def test_switch_updates_config_and_layers(self, switches, expected_impl, expected_cls):
+        """After each call in *switches*, config and all layer attention modules reflect the final impl."""
         config = _minimal_backbone_config()
         model = WindowedDinov2WithRegistersModel(config)
 
-        # Default after PreTrainedModel.__init__ is sdpa
-        assert model.config._attn_implementation == "sdpa"
+        for impl in switches:
+            model.set_attn_implementation(impl)
+
+        assert model.config._attn_implementation == expected_impl
         for layer in model.encoder.layer:
-            assert isinstance(layer.attention, Dinov2WithRegistersSdpaAttention)
-
-        model.set_attn_implementation("eager")
-
-        assert model.config._attn_implementation == "eager"
-        for layer in model.encoder.layer:
-            assert isinstance(layer.attention, Dinov2WithRegistersAttention)
-            assert not isinstance(layer.attention, Dinov2WithRegistersSdpaAttention)
-
-    def test_switch_back_to_sdpa(self):
-        """set_attn_implementation is reversible: eager → sdpa restores SDPA modules."""
-        config = _minimal_backbone_config()
-        model = WindowedDinov2WithRegistersModel(config)
-
-        model.set_attn_implementation("eager")
-        model.set_attn_implementation("sdpa")
-
-        assert model.config._attn_implementation == "sdpa"
-        for layer in model.encoder.layer:
-            assert isinstance(layer.attention, Dinov2WithRegistersSdpaAttention)
+            assert type(layer.attention) is expected_cls
 
     def test_invalid_implementation_raises(self):
         """Passing an unknown key raises ValueError with a clear message."""
