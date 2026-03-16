@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Breaking:** Minimum `transformers` version bumped to `>=5.0.0,<6.0.0`. The DINOv2 windowed-attention backbone now uses the transformers v5 API (`BackboneMixin._init_transformers_backbone(config)`, removed `head_mask` plumbing). Projects still on transformers v4 must pin `rfdetr<` this release ([#760](https://github.com/roboflow/rf-detr/pull/760)).
+- **Breaking:** Minimum `transformers` version bumped to `>=5.0.0,<6.0.0`. The DINOv2 windowed-attention backbone now uses the transformers v5 API (`BackboneMixin._init_transformers_backbone()`, removed `head_mask` plumbing). Projects still on transformers v4 must pin `rfdetr<` this release ([#760](https://github.com/roboflow/rf-detr/pull/760)).
 - **Breaking:** `draw_synthetic_shape` now returns `Tuple[np.ndarray, List[float]]` instead of `np.ndarray`. The second element is a flat COCO-style polygon list `[x1, y1, x2, y2, …]`. Any caller that previously did `img = draw_synthetic_shape(...)` must be updated to `img, polygon = draw_synthetic_shape(...)` ([#781](https://github.com/roboflow/rf-detr/pull/781)).
 - Update Albumentations version requirement to support 1.x and 2.x (`albumentations>=1.4.24,<3.0.0`). `RandomSizedCrop` configs using `height`/`width` are automatically adapted to the `size=(height, width)` API ([#786](https://github.com/roboflow/rf-detr/pull/786)).
 
