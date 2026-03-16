@@ -933,7 +933,22 @@ class WindowedDinov2WithRegistersModel(WindowedDinov2WithRegistersPreTrainedMode
 
         Example::
 
+            >>> from rfdetr.models.backbone.dinov2_with_windowed_attn import (
+            ...     WindowedDinov2WithRegistersConfig,
+            ...     WindowedDinov2WithRegistersModel,
+            ... )
+            >>> config = WindowedDinov2WithRegistersConfig(
+            ...     image_size=32,
+            ...     patch_size=16,
+            ...     hidden_size=32,
+            ...     num_hidden_layers=1,
+            ...     num_attention_heads=4,
+            ...     num_register_tokens=2,
+            ... )
+            >>> model = WindowedDinov2WithRegistersModel(config)
             >>> model.set_attn_implementation("eager")
+            >>> model.config._attn_implementation
+            'eager'
         """
         if attn_implementation not in DINOV2_WITH_REGISTERS_ATTENTION_CLASSES:
             raise ValueError(
