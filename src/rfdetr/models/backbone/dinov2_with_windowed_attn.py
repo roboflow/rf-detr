@@ -18,7 +18,7 @@ import torch
 from torch import nn
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 from transformers.activations import ACT2FN
-from transformers.backbone_utils import BackboneConfigMixin, BackboneMixin
+from transformers.utils.backbone_utils import BackboneConfigMixin, BackboneMixin
 from transformers.configuration_utils import PretrainedConfig
 from transformers.modeling_outputs import (
     BackboneOutput,

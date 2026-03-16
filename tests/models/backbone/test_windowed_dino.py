@@ -10,8 +10,8 @@ from rfdetr.models.backbone.dinov2_with_windowed_attn import (
     WindowedDinov2WithRegistersBackbone,
     WindowedDinov2WithRegistersConfig,
     WindowedDinov2WithRegistersEmbeddings,
-    find_pruneable_heads_and_indices,
-    get_aligned_output_features_output_indices,
+    _find_pruneable_heads_and_indices,
+    _get_aligned_output_features_output_indices,
 )
 
 
@@ -259,32 +259,32 @@ class TestGetAlignedOutputFeaturesOutputIndices:
 
     def test_both_none_returns_last_stage(self):
         stage_names = ["stage1", "stage2", "stage3"]
-        features, indices = get_aligned_output_features_output_indices(None, None, stage_names)
+        features, indices = _get_aligned_output_features_output_indices(None, None, stage_names)
         assert features == ["stage3"]
         assert indices == [2]
 
     def test_only_out_features_derives_indices(self):
         stage_names = ["stem", "layer1", "layer2", "layer3"]
-        features, indices = get_aligned_output_features_output_indices(["layer1", "layer3"], None, stage_names)
+        features, indices = _get_aligned_output_features_output_indices(["layer1", "layer3"], None, stage_names)
         assert features == ["layer1", "layer3"]
         assert indices == [1, 3]
 
     def test_only_out_indices_derives_features(self):
         stage_names = ["stem", "layer1", "layer2", "layer3"]
-        features, indices = get_aligned_output_features_output_indices(None, [0, 2], stage_names)
+        features, indices = _get_aligned_output_features_output_indices(None, [0, 2], stage_names)
         assert features == ["stem", "layer2"]
         assert indices == [0, 2]
 
     def test_both_provided_returns_as_is(self):
         stage_names = ["stem", "layer1", "layer2"]
-        features, indices = get_aligned_output_features_output_indices(["layer1"], [1], stage_names)
+        features, indices = _get_aligned_output_features_output_indices(["layer1"], [1], stage_names)
         assert features == ["layer1"]
         assert indices == [1]
 
     def test_out_indices_converted_to_list(self):
         """out_indices supplied as a tuple must be returned as a list."""
         stage_names = ["stem", "layer1", "layer2"]
-        _, indices = get_aligned_output_features_output_indices(None, (1, 2), stage_names)
+        _, indices = _get_aligned_output_features_output_indices(None, (1, 2), stage_names)
         assert isinstance(indices, list)
         assert indices == [1, 2]
 
@@ -293,12 +293,12 @@ class TestFindPruneableHeadsAndIndices:
     """Tests for the local copy of find_pruneable_heads_and_indices."""
 
     def test_no_pruning_returns_full_index(self):
-        heads, index = find_pruneable_heads_and_indices(set(), n_heads=4, head_size=3, already_pruned_heads=set())
+        heads, index = _find_pruneable_heads_and_indices(set(), n_heads=4, head_size=3, already_pruned_heads=set())
         assert len(heads) == 0
         assert len(index) == 12  # 4 * 3, nothing masked
 
     def test_prune_one_head_removes_correct_rows(self):
-        heads, index = find_pruneable_heads_and_indices({0}, n_heads=4, head_size=3, already_pruned_heads=set())
+        heads, index = _find_pruneable_heads_and_indices({0}, n_heads=4, head_size=3, already_pruned_heads=set())
         assert 0 in heads
         # Head 0 masked → indices 0,1,2 removed; remaining = 3*4-3 = 9
         assert len(index) == 9
@@ -307,12 +307,12 @@ class TestFindPruneableHeadsAndIndices:
     def test_already_pruned_head_adjusts_offset(self):
         # Head 0 was already pruned. Now pruning head 1 (which is now effective head 0
         # after offset adjustment) should remove 3 more indices from the effective mask.
-        heads, index = find_pruneable_heads_and_indices({1}, n_heads=4, head_size=3, already_pruned_heads={0})
+        heads, index = _find_pruneable_heads_and_indices({1}, n_heads=4, head_size=3, already_pruned_heads={0})
         assert 1 in heads
         assert len(index) == 9  # 4*3 - 3 pruned
 
     def test_prune_last_head(self):
-        heads, index = find_pruneable_heads_and_indices({3}, n_heads=4, head_size=3, already_pruned_heads=set())
+        heads, index = _find_pruneable_heads_and_indices({3}, n_heads=4, head_size=3, already_pruned_heads=set())
         assert len(index) == 9
         assert index.tolist() == list(range(9))
 
