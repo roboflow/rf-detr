@@ -39,14 +39,27 @@ from transformers.utils import (
 logger = logging.get_logger(__name__)
 
 
-# Copied from transformers.pytorch_utils.find_pruneable_heads_and_indices
-# (removed from public API in transformers v5.0).
-# Source: https://github.com/huggingface/transformers/blob/v4.49.0/src/transformers/pytorch_utils.py#L127
-# MAINTENANCE: if this function is moved to another module or deleted, update the
-# "Copyright 2022 The HuggingFace Team" line in the file header accordingly.
-def find_pruneable_heads_and_indices(
+def _find_pruneable_heads_and_indices(
     heads: Set[int], n_heads: int, head_size: int, already_pruned_heads: Set[int]
 ) -> Tuple[Set[int], torch.LongTensor]:
+    """Return the set of pruneable heads and their index mask for weight pruning.
+
+    Copied from transformers.pytorch_utils.find_pruneable_heads_and_indices
+    (removed from public API in transformers v5.0).
+    Source: https://github.com/huggingface/transformers/blob/v4.49.0/src/transformers/pytorch_utils.py#L127
+    MAINTENANCE: if this function is moved to another module or deleted, update the
+    "Copyright 2022 The HuggingFace Team" line in the file header accordingly.
+
+    Args:
+        heads: Indices of heads to prune.
+        n_heads: Total number of heads in the layer.
+        head_size: Size of each attention head.
+        already_pruned_heads: Heads that have already been pruned.
+
+    Returns:
+        A tuple of (heads, index) where heads is the adjusted set of head indices and
+        index is a LongTensor boolean mask selecting the remaining weights.
+    """
     mask = torch.ones(n_heads, head_size)
     heads = set(heads) - already_pruned_heads
     for head in heads:
@@ -72,16 +85,27 @@ def _align_output_features_output_indices(
     return out_features, out_indices
 
 
-# Copied from transformers.utils.backbone_utils.get_aligned_output_features_output_indices
-# (removed from public API in transformers v5.0).
-# Source: https://github.com/huggingface/transformers/blob/v4.49.0/src/transformers/utils/backbone_utils.py#L30
-# MAINTENANCE: if this function is moved to another module or deleted, update the
-# "Copyright 2023 The HuggingFace Inc. team" line in the file header accordingly.
-def get_aligned_output_features_output_indices(
+def _get_aligned_output_features_output_indices(
     out_features: Optional[List[str]],
     out_indices: Optional[Union[List[int], Tuple[int, ...]]],
     stage_names: List[str],
 ) -> Tuple[List[str], List[int]]:
+    """Align out_features and out_indices against stage_names, filling in defaults when either is None.
+
+    Copied from transformers.utils.backbone_utils.get_aligned_output_features_output_indices
+    (removed from public API in transformers v5.0).
+    Source: https://github.com/huggingface/transformers/blob/v4.49.0/src/transformers/utils/backbone_utils.py#L30
+    MAINTENANCE: if this function is moved to another module or deleted, update the
+    "Copyright 2023 The HuggingFace Inc. team" line in the file header accordingly.
+
+    Args:
+        out_features: Names of the backbone stages to return features from, or None to derive from out_indices.
+        out_indices: Integer indices of the stages to return features from, or None to derive from out_features.
+        stage_names: Ordered list of all stage names defined by the backbone config.
+
+    Returns:
+        A tuple of (out_features, out_indices) with both fields populated consistently.
+    """
     out_indices = list(out_indices) if out_indices is not None else None
     out_features, out_indices = _align_output_features_output_indices(
         out_features=out_features, out_indices=out_indices, stage_names=stage_names
@@ -226,7 +250,7 @@ class WindowedDinov2WithRegistersConfig(BackboneConfigMixin, PretrainedConfig):
         self.use_swiglu_ffn = use_swiglu_ffn
         self.num_register_tokens = num_register_tokens
         self.stage_names = ["stem"] + [f"stage{idx}" for idx in range(1, num_hidden_layers + 1)]
-        self._out_features, self._out_indices = get_aligned_output_features_output_indices(
+        self._out_features, self._out_indices = _get_aligned_output_features_output_indices(
             out_features=out_features, out_indices=out_indices, stage_names=self.stage_names
         )
         self.apply_layernorm = apply_layernorm
@@ -526,7 +550,7 @@ class Dinov2WithRegistersAttention(nn.Module):
     def prune_heads(self, heads: Set[int]) -> None:
         if len(heads) == 0:
             return
-        heads, index = find_pruneable_heads_and_indices(
+        heads, index = _find_pruneable_heads_and_indices(
             heads, self.attention.num_attention_heads, self.attention.attention_head_size, self.pruned_heads
         )
 
