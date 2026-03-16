@@ -24,7 +24,7 @@ import torch
 from pytorch_lightning import LightningModule
 
 from rfdetr import RFDETRNano
-from rfdetr.config import RFDETRBaseConfig, TrainConfig
+from rfdetr.config import RFDETRBaseConfig, RFDETRSegNanoConfig, SegmentationTrainConfig, TrainConfig
 from rfdetr.detr import RFDETR
 from rfdetr.training import RFDETRDataModule, RFDETRModule, build_trainer
 
@@ -254,3 +254,74 @@ def test_train_convergence_rfdetr_api(
     post_results = post_trainer.validate(post_module, datamodule=datamodule)
     map_after = post_results[0]["val/mAP_50"]
     assert map_after >= 0.35, f"val mAP {map_after:.3f} should reach at least 0.35 after RFDETR.train()."
+
+
+@pytest.mark.gpu
+@pytest.mark.flaky(reruns=1, only_rerun="AssertionError")
+def test_train_convergence_segmentation(
+    tmp_path: Path,
+    synthetic_shape_segmentation_dataset_dir: Path,
+) -> None:
+    """Segmentation PTL stack converges on synthetic polygon data.
+
+    Mirrors :func:`test_train_convergence_native_ptl` but uses
+    :class:`~rfdetr.config.RFDETRSegNanoConfig` and
+    :class:`~rfdetr.config.SegmentationTrainConfig` with a dataset that
+    includes COCO polygon annotations.
+
+    The mask mAP threshold is deliberately lower than the bbox threshold
+    because segmentation convergence is harder within the same epoch budget.
+    Thresholds are calibrated conservatively: the goal is to verify that the
+    segmentation training pipeline is functional (loss flows, masks are loaded,
+    both bbox and segm mAP improve) rather than to validate final accuracy.
+
+    Assertions:
+        - ``val/mAP_50`` before training ≤ 5 %.
+        - ``val/mAP_50`` after 5 epochs ≥ 10 %.
+        - ``val/segm_mAP_50`` after 5 epochs ≥ 5 %.
+    """
+    output_dir = tmp_path / "train_output_seg"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    dataset_dir = synthetic_shape_segmentation_dataset_dir
+
+    with open(dataset_dir / "train" / "_annotations.coco.json") as f:
+        num_classes = len(json.load(f)["categories"])
+
+    accelerator = "auto" if torch.cuda.is_available() else "cpu"
+
+    mc = RFDETRSegNanoConfig(num_classes=num_classes, pretrain_weights=None, amp=False)
+    tc = SegmentationTrainConfig(
+        dataset_file="roboflow",
+        dataset_dir=str(dataset_dir),
+        output_dir=str(output_dir),
+        epochs=5,
+        batch_size=4,
+        grad_accum_steps=1,
+        num_workers=max(1, (os.cpu_count() or 1) // 2),
+        lr=1e-3,
+        warmup_epochs=1.0,
+        use_ema=True,
+        multi_scale=False,
+        run_test=False,
+        tensorboard=False,
+    )
+
+    module = RFDETRModule(mc, tc)
+    datamodule = RFDETRDataModule(mc, tc)
+
+    # Pre-training baseline — untrained model should have near-zero mAP.
+    pre_trainer = build_trainer(tc, mc, accelerator=accelerator)
+    pre_results = pre_trainer.validate(module, datamodule=datamodule)
+    map_before = pre_results[0]["val/mAP_50"]
+    assert map_before <= 0.05, f"Untrained val bbox mAP {map_before:.3f} should be ≤ 5 %."
+
+    # Train via native PTL Trainer.fit.
+    trainer = build_trainer(tc, mc, accelerator=accelerator)
+    trainer.fit(module, datamodule=datamodule)
+
+    # Post-training validation — both bbox and mask mAP should have improved.
+    post_results = trainer.validate(module, datamodule=datamodule)
+    map_after = post_results[0]["val/mAP_50"]
+    segm_map_after = post_results[0]["val/segm_mAP_50"]
+    assert map_after >= 0.15, f"val bbox mAP {map_after:.3f} should reach at least 0.15 after Trainer.fit."
+    assert segm_map_after >= 0.05, f"val segm mAP {segm_map_after:.3f} should reach at least 0.05 after Trainer.fit."

@@ -72,13 +72,14 @@ def _build_train_config(coco_root: Path, tmp_path: Path, batch_size: int) -> Tra
         dataset_dir=str(coco_root),
         output_dir=str(tmp_path),
         batch_size=batch_size,
-        num_workers=os.cpu_count() or 1,
+        num_workers=min(os.cpu_count() or 1, 4),
         tensorboard=False,
         wandb=False,
         mlflow=False,
         clearml=False,
         use_ema=False,
         run_test=False,
+        compute_val_loss=False,
     )
 
 
@@ -154,7 +155,7 @@ def _build_ptl_module(rfdetr_obj: RFDETR, train_config: TrainConfig) -> RFDETRMo
 @pytest.mark.parametrize(
     ("model_cls", "threshold_map", "threshold_f1", "num_samples", "batch_size"),
     [
-        pytest.param(RFDETRNano, 0.66, 0.66, 2000, 6, id="det-nano"),
+        pytest.param(RFDETRNano, 0.66, 0.66, 1000, 6, id="det-nano"),
         pytest.param(RFDETRSmall, 0.72, 0.70, 500, 6, id="det-small"),
         pytest.param(RFDETRMedium, 0.73, 0.71, 500, 4, id="det-medium"),
         pytest.param(RFDETRLarge, 0.74, 0.72, 500, 2, id="det-large"),

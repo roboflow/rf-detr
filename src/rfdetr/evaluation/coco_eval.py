@@ -29,7 +29,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pycocotools.mask as mask_util
-import supervision as sv
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 
@@ -37,6 +36,14 @@ from rfdetr.utilities.distributed import all_gather
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
+
+
+def _xyxy_to_xywh(boxes: np.ndarray) -> np.ndarray:
+    """Convert boxes from [x1, y1, x2, y2] to [x1, y1, w, h]."""
+    boxes = boxes.copy()
+    boxes[:, 2] -= boxes[:, 0]
+    boxes[:, 3] -= boxes[:, 1]
+    return boxes
 
 
 class CocoEvaluator:
@@ -139,7 +146,7 @@ class CocoEvaluator:
                 continue
 
             boxes = prediction["boxes"]
-            boxes = sv.xyxy_to_xywh(boxes.cpu().numpy()).tolist()
+            boxes = _xyxy_to_xywh(boxes.cpu().numpy()).tolist()
             scores = prediction["scores"].tolist()
             labels = prediction["labels"].tolist()
             use_raw_category_ids = self._should_use_raw_category_ids(labels)
@@ -203,7 +210,7 @@ class CocoEvaluator:
                 continue
 
             boxes = prediction["boxes"]
-            boxes = sv.xyxy_to_xywh(boxes.cpu().numpy()).tolist()
+            boxes = _xyxy_to_xywh(boxes.cpu().numpy()).tolist()
             scores = prediction["scores"].tolist()
             labels = prediction["labels"].tolist()
             keypoints = prediction["keypoints"]

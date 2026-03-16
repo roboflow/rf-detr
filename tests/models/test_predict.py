@@ -62,7 +62,7 @@ class _DummyRFDETR(RFDETR):
 class TestPredictReturnTypes:
     """``RFDETR.predict()`` API contract tests using synthetic images.
 
-    Quality is not assessed here — see ``tests/benchmarks/test_coco_inference.py``.
+    Quality is not assessed here — see ``tests/benchmarks/test_inference_coco.py``.
     """
 
     def test_detection_returns_sv_detections(self) -> None:

@@ -3,6 +3,8 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
+from __future__ import annotations
+
 import glob
 import json
 import os
@@ -10,12 +12,14 @@ import warnings
 from collections import defaultdict
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, List, Optional, Union
+from typing import TYPE_CHECKING, Any, List, Optional, Union
 
 import numpy as np
 import requests
-import supervision as sv
 import torch
+
+if TYPE_CHECKING:
+    import supervision as sv
 import torchvision.transforms.functional as F
 import yaml
 from PIL import Image
@@ -602,6 +606,7 @@ class RFDETR:
         """
         if self._inference_backend == "mlx":
             return self._predict_mlx(images, threshold)
+        import supervision as sv
 
         if not self._is_optimized_for_inference and not self._has_warned_about_not_being_optimized_for_inference:
             logger.warning(

@@ -7,7 +7,6 @@
 from pathlib import Path
 
 import numpy as np
-import supervision as sv
 from PIL import Image
 
 from rfdetr.utilities.logger import get_logger
@@ -33,6 +32,8 @@ def save_gt_predictions_visualization(
     Boxes are labeled with class ID and confidence (for predictions).
     For predictions with known IoU, the IoU value is also shown.
     """
+    import supervision as sv
+
     save_dir.mkdir(exist_ok=True)
 
     top_padding = 60

@@ -74,8 +74,8 @@ See `pyproject.toml` for complete dependency specifications:
 
 **Important version constraints:**
 
-- PyTorch: >=1.13.0, \<=2.8.0 (2.9.0+ excluded due to known issues)
-- Transformers: >4.0.0, \<5.0.0
+- PyTorch: >=2.2.0, \<3.0.0
+- Transformers: >=5.0.0, \<6.0.0
 
 ## Testing
 
