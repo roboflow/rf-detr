@@ -4,22 +4,10 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-from importlib.metadata import PackageNotFoundError, version
-from typing import Optional
+"""Deprecated: use ``rfdetr.utilities.package`` instead."""
 
+from rfdetr.utilities.decorators import _warn_deprecated_module
 
-def get_version(package_name: str = "rfdetr") -> Optional[str]:
-    """Get the current version of the specified package.
+_warn_deprecated_module("rfdetr.util.package", "rfdetr.utilities.package")
 
-    Args:
-        package_name (str): The name of the package to get the version for.
-            Defaults to 'rfdetr'.
-
-    Returns:
-        str or None: The version string of the specified package.
-            Returns None if version cannot be determined.
-    """
-    try:
-        return version(package_name)
-    except PackageNotFoundError:
-        return None
+from rfdetr.utilities.package import get_sha, get_version  # noqa: F401, E402

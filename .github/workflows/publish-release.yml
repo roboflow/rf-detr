@@ -45,5 +45,5 @@ jobs:
         if: github.event_name == 'release'
         uses: AButler/upload-release-assets@v3.0
         with:
-          files: "dist/*"
+          files: "dist/*.whl;dist/*.tar.gz"
           repo-token: ${{ secrets.GITHUB_TOKEN }}

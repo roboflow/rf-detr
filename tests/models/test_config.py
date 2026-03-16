@@ -4,8 +4,6 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-from unittest.mock import MagicMock
-
 import pytest
 from pydantic import ValidationError
 
@@ -18,8 +16,8 @@ from rfdetr.config import (
     RFDETRSegSmallConfig,
     RFDETRSegXLargeConfig,
     SegmentationTrainConfig,
+    TrainConfig,
 )
-from rfdetr.detr import RFDETR
 
 
 @pytest.fixture
@@ -80,85 +78,180 @@ class TestSegmentationTrainConfigNumSelect:
         assert config_class().num_select == expected_num_select
 
 
-def _make_rfdetr_stub(model_config):
-    """Build a minimal RFDETR-like object for testing train_from_config() without loading weights."""
-    stub = RFDETR.__new__(RFDETR)
-    stub.model_config = model_config
-    stub.model = MagicMock()
-    stub.model.class_names = []
-    stub.callbacks = {
-        "on_fit_epoch_end": [],
-        "on_train_end": [],
-    }
-    return stub
+class TestTrainConfigT42PromotedFields:
+    """T4-2: Promoted fields exist with correct defaults; device field is absent."""
 
+    def _tc(self, tmp_path, **kwargs):
+        defaults = dict(dataset_dir=str(tmp_path), output_dir=str(tmp_path), tensorboard=False)
+        defaults.update(kwargs)
+        return TrainConfig(**defaults)
 
-class TestSegmentationNumSelectMerge:
-    """
-    Verify that SegmentationTrainConfig with num_select=None does not override the
-    model-specific num_select during train_from_config() merging.
+    # --- device field removed ---
 
-    The bug: when num_select=None in SegmentationTrainConfig, the merge loop in
-    train_from_config() removes num_select from model_config and then spreads the
-    None value, producing num_select=None in all_kwargs.
+    def test_device_not_in_model_fields(self):
+        """device must not appear in TrainConfig.model_fields (PTL auto-detects accelerator)."""
+        assert "device" not in TrainConfig.model_fields
 
-    The fix: None values in train_config should not override model_config values.
-    """
+    def test_device_kwarg_silently_ignored(self, tmp_path):
+        """Passing device= to TrainConfig is silently ignored (extra='ignore'); PTL absorbs it."""
+        # TrainConfig uses Pydantic default extra='ignore', so unknown kwargs don't raise.
+        tc = self._tc(tmp_path, device="cpu")
+        assert not hasattr(tc, "device")  # field not set on the instance
+
+    # --- promoted fields: defaults ---
+
+    def test_clip_max_norm_default(self, tmp_path):
+        """clip_max_norm defaults to 0.1."""
+        assert self._tc(tmp_path).clip_max_norm == pytest.approx(0.1)
+
+    def test_seed_default_is_none(self, tmp_path):
+        """seed defaults to None (no seeding)."""
+        assert self._tc(tmp_path).seed is None
+
+    def test_sync_bn_default_is_false(self, tmp_path):
+        """sync_bn defaults to False."""
+        assert self._tc(tmp_path).sync_bn is False
+
+    def test_fp16_eval_default_is_false(self, tmp_path):
+        """fp16_eval defaults to False."""
+        assert self._tc(tmp_path).fp16_eval is False
+
+    def test_lr_scheduler_default_is_step(self, tmp_path):
+        """lr_scheduler defaults to 'step'."""
+        assert self._tc(tmp_path).lr_scheduler == "step"
+
+    def test_lr_min_factor_default(self, tmp_path):
+        """lr_min_factor defaults to 0.0."""
+        assert self._tc(tmp_path).lr_min_factor == pytest.approx(0.0)
+
+    def test_dont_save_weights_default_is_false(self, tmp_path):
+        """dont_save_weights defaults to False."""
+        assert self._tc(tmp_path).dont_save_weights is False
+
+    def test_run_test_default_is_false(self, tmp_path):
+        """run_test defaults to False to avoid extra full-dataset test passes."""
+        assert self._tc(tmp_path).run_test is False
+
+    def test_eval_interval_default_is_one(self, tmp_path):
+        """eval_interval defaults to 1 (evaluate each epoch)."""
+        assert self._tc(tmp_path).eval_interval == 1
+
+    def test_ema_update_interval_default_is_one(self, tmp_path):
+        """ema_update_interval defaults to 1 (update every step)."""
+        assert self._tc(tmp_path).ema_update_interval == 1
+
+    def test_compute_val_loss_default_is_true(self, tmp_path):
+        """compute_val_loss defaults to True."""
+        assert self._tc(tmp_path).compute_val_loss is True
+
+    def test_compute_test_loss_default_is_true(self, tmp_path):
+        """compute_test_loss defaults to True."""
+        assert self._tc(tmp_path).compute_test_loss is True
+
+    # --- promoted fields: accept explicit values ---
 
     @pytest.mark.parametrize(
-        "model_config_cls, expected_num_select",
+        "field, value",
         [
-            (RFDETRSegNanoConfig, 100),
-            (RFDETRSegSmallConfig, 100),
-            (RFDETRSegXLargeConfig, 300),
+            pytest.param("clip_max_norm", 0.5, id="clip_max_norm"),
+            pytest.param("seed", 42, id="seed"),
+            pytest.param("sync_bn", True, id="sync_bn"),
+            pytest.param("fp16_eval", True, id="fp16_eval"),
+            pytest.param("lr_scheduler", "cosine", id="lr_scheduler_cosine"),
+            pytest.param("lr_min_factor", 0.01, id="lr_min_factor"),
+            pytest.param("dont_save_weights", True, id="dont_save_weights"),
+            pytest.param("run_test", True, id="run_test"),
+            pytest.param("eval_interval", 3, id="eval_interval"),
+            pytest.param("ema_update_interval", 4, id="ema_update_interval"),
+            pytest.param("compute_val_loss", False, id="compute_val_loss"),
+            pytest.param("compute_test_loss", False, id="compute_test_loss"),
+            pytest.param("train_log_sync_dist", True, id="train_log_sync_dist"),
+            pytest.param("train_log_on_step", True, id="train_log_on_step"),
+            pytest.param("log_per_class_metrics", False, id="log_per_class_metrics"),
+            pytest.param("prefetch_factor", 4, id="prefetch_factor"),
+            pytest.param("pin_memory", False, id="pin_memory"),
+            pytest.param("persistent_workers", False, id="persistent_workers"),
         ],
     )
-    def test_none_num_select_preserves_model_value(self, model_config_cls, expected_num_select, tmp_path) -> None:
-        """num_select should come from the model config when not set in the train config."""
-        stub = _make_rfdetr_stub(model_config_cls())
-        train_config = SegmentationTrainConfig(
+    def test_promoted_field_accepts_explicit_value(self, tmp_path, field, value):
+        """Each promoted field accepts an explicit value."""
+        tc = self._tc(tmp_path, **{field: value})
+        assert getattr(tc, field) == value
+
+    def test_lr_scheduler_rejects_invalid_value(self, tmp_path):
+        """lr_scheduler must reject values other than 'step' and 'cosine'."""
+        with pytest.raises((ValueError, ValidationError)):
+            self._tc(tmp_path, lr_scheduler="cyclic")
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            pytest.param("eval_interval", 0, id="eval_interval_zero"),
+            pytest.param("ema_update_interval", 0, id="ema_update_interval_zero"),
+            pytest.param("prefetch_factor", 0, id="prefetch_factor_zero"),
+        ],
+    )
+    def test_interval_and_prefetch_reject_non_positive_values(self, tmp_path, field, value):
+        """eval/EMA intervals and prefetch_factor must be >= 1 when provided."""
+        with pytest.raises((ValueError, ValidationError)):
+            self._tc(tmp_path, **{field: value})
+
+
+class TestBuildTrainerUsesRealFields:
+    """build_trainer() must read clip_max_norm, seed, sync_bn from real TrainConfig fields."""
+
+    def _tc(self, tmp_path, **kwargs):
+        defaults = dict(
             dataset_dir=str(tmp_path),
             output_dir=str(tmp_path),
-            dataset_file="coco",
             tensorboard=False,
+            wandb=False,
+            mlflow=False,
+            clearml=False,
+            use_ema=False,
         )
-        assert train_config.num_select is None
+        defaults.update(kwargs)
+        return TrainConfig(**defaults)
 
-        stub.train_from_config(train_config)
+    def _mc(self, **kwargs):
+        from rfdetr.config import RFDETRBaseConfig
 
-        call_kwargs = stub.model.train.call_args.kwargs
-        assert call_kwargs["num_select"] == expected_num_select, (
-            f"Expected num_select={expected_num_select} from {model_config_cls.__name__}, "
-            f"got {call_kwargs['num_select']}. "
-            "SegmentationTrainConfig.num_select=None must not override the model's value."
-        )
+        defaults = dict(pretrain_weights=None, device="cpu", num_classes=3)
+        defaults.update(kwargs)
+        return RFDETRBaseConfig(**defaults)
 
-    def test_explicit_num_select_overrides_model_value(self, tmp_path) -> None:
-        """When the user sets num_select explicitly it should win over the model default."""
-        stub = _make_rfdetr_stub(RFDETRSegNanoConfig())  # model default: 100
-        train_config = SegmentationTrainConfig(
-            dataset_dir=str(tmp_path),
-            output_dir=str(tmp_path),
-            dataset_file="coco",
-            tensorboard=False,
-            num_select=42,
-        )
+    def test_clip_max_norm_forwarded_to_trainer(self, tmp_path):
+        """gradient_clip_val on the Trainer matches TrainConfig.clip_max_norm."""
+        from rfdetr.training import build_trainer
 
-        stub.train_from_config(train_config)
+        trainer = build_trainer(self._tc(tmp_path, clip_max_norm=0.25), self._mc())
+        assert trainer.gradient_clip_val == pytest.approx(0.25)
 
-        call_kwargs = stub.model.train.call_args.kwargs
-        assert call_kwargs["num_select"] == 42
+    def test_seed_not_applied_in_build_trainer_factory(self, tmp_path):
+        """Seeding is deferred to RFDETRModule.on_fit_start, not build_trainer()."""
+        import unittest.mock as mock
 
-    def test_segmentation_raises_when_square_resize_disabled(self, tmp_path) -> None:
-        """Segmentation training must not silently override square_resize_div_64=False; it must raise ValueError."""
-        stub = _make_rfdetr_stub(RFDETRSegNanoConfig())
-        train_config = SegmentationTrainConfig(
-            dataset_dir=str(tmp_path),
-            output_dir=str(tmp_path),
-            dataset_file="coco",
-            tensorboard=False,
-            square_resize_div_64=False,
-        )
+        from rfdetr.training import build_trainer
 
-        with pytest.raises(ValueError, match="square_resize_div_64"):
-            stub.train_from_config(train_config)
+        with mock.patch("pytorch_lightning.seed_everything") as mock_seed:
+            build_trainer(self._tc(tmp_path, seed=99), self._mc())
+        mock_seed.assert_not_called()
+
+    def test_sync_bn_forwarded_to_trainer(self, tmp_path):
+        """sync_batchnorm=True is passed to Trainer when TrainConfig.sync_bn is True."""
+        import unittest.mock as mock
+
+        from rfdetr.training import build_trainer
+
+        captured_kwargs = {}
+
+        real_trainer_init = __import__("pytorch_lightning").Trainer.__init__
+
+        def _capture_init(self_t, **kwargs):
+            captured_kwargs.update(kwargs)
+            real_trainer_init(self_t, **kwargs)
+
+        with mock.patch("rfdetr.training.trainer.Trainer.__init__", _capture_init):
+            build_trainer(self._tc(tmp_path, sync_bn=True), self._mc())
+
+        assert captured_kwargs.get("sync_batchnorm") is True

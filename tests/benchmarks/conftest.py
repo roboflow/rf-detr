@@ -12,7 +12,7 @@ from rfdetr.datasets._develop import (
     _download_and_extract,
     _download_lock,
 )
-from rfdetr.util.utils import seed_all
+from rfdetr.utilities.reproducibility import seed_all
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _DATA_DIR = _PROJECT_ROOT / "data"
@@ -65,7 +65,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     other_tests = []
 
     for item in items:
-        # Prioritize the synthetic training convergence test
+        # Prioritize the synthetic training convergence tests (detection + segmentation)
         if "training" in item.nodeid:
             training_tests.append(item)
         else:

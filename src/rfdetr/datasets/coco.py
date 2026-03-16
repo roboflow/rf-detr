@@ -22,7 +22,6 @@ Mostly copy-paste from https://github.com/pytorch/vision/blob/13b35ff/references
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-import pycocotools.mask as coco_mask
 import torch
 import torch.utils.data
 import torchvision
@@ -61,6 +60,8 @@ def convert_coco_poly_to_mask(segmentations: List[Any], height: int, width: int)
     """Convert polygon segmentation to a binary mask tensor of shape [N, H, W].
     Requires pycocotools.
     """
+    import pycocotools.mask as coco_mask
+
     masks = []
     for polygons in segmentations:
         if polygons is None or len(polygons) == 0:
@@ -149,9 +150,9 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         target = {"image_id": image_id, "annotations": target}
         img, target = self.prepare(img, target)
         if self._transforms is not None:
-            img, target = self._transforms(
-                img, target
-            )  # boxes are absolute [x_min, y_min, x_max, y_max]; conversion to normalized [cx, cy, w, h] occurs inside Normalize
+            # boxes are absolute [x_min, y_min, x_max, y_max]; conversion to
+            # normalized [cx, cy, w, h] occurs inside Normalize
+            img, target = self._transforms(img, target)
         return img, target
 
 
@@ -484,7 +485,7 @@ def make_coco_transforms_square_div_64(
 
 
 def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
-    root = Path(args.coco_path)
+    root = Path(getattr(args, "dataset_dir", None) or args.coco_path)
     if not root.exists():
         logger.error(f"COCO path {root} does not exist")
         raise FileNotFoundError(f"COCO path {root} does not exist")

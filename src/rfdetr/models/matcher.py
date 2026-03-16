@@ -26,8 +26,12 @@ import torch.nn.functional as F
 from scipy.optimize import linear_sum_assignment
 from torch import nn
 
-from rfdetr.models.segmentation_head import point_sample
-from rfdetr.util.box_ops import batch_dice_loss, batch_sigmoid_ce_loss, box_cxcywh_to_xyxy, generalized_box_iou
+from rfdetr.models.heads.segmentation import point_sample
+from rfdetr.utilities.box_ops import batch_dice_loss, batch_sigmoid_ce_loss, box_cxcywh_to_xyxy, generalized_box_iou
+from rfdetr.utilities.logger import get_logger
+
+logger = get_logger()
+_SANITIZED_COST_MARGIN = 1.0
 
 
 class HungarianMatcher(nn.Module):
@@ -43,17 +47,24 @@ class HungarianMatcher(nn.Module):
         cost_bbox: float = 1,
         cost_giou: float = 1,
         focal_alpha: float = 0.25,
-        use_pos_only: bool = False,
-        use_position_modulated_cost: bool = False,
+        use_pos_only: bool = False,  # reserved for future use; not yet implemented
+        use_position_modulated_cost: bool = False,  # reserved for future use; not yet implemented
         mask_point_sample_ratio: int = 16,
         cost_mask_ce: float = 1,
         cost_mask_dice: float = 1,
     ):
-        """Creates the matcher
-        Params:
-            cost_class: This is the relative weight of the classification error in the matching cost
-            cost_bbox: This is the relative weight of the L1 error of the bounding box coordinates in the matching cost
-            cost_giou: This is the relative weight of the giou loss of the bounding box in the matching cost
+        """Creates the matcher.
+
+        Args:
+            cost_class: Relative weight of the classification error in the matching cost.
+            cost_bbox: Relative weight of the L1 error of the bounding box coordinates.
+            cost_giou: Relative weight of the GIoU loss of the bounding box.
+            focal_alpha: Alpha parameter for focal loss used in the classification cost.
+            use_pos_only: Reserved for future use; currently has no effect.
+            use_position_modulated_cost: Reserved for future use; currently has no effect.
+            mask_point_sample_ratio: Downsampling ratio for mask point sampling.
+            cost_mask_ce: Relative weight of the binary cross-entropy mask cost.
+            cost_mask_dice: Relative weight of the Dice mask cost.
         """
         super().__init__()
         self.cost_class = cost_class
@@ -64,6 +75,47 @@ class HungarianMatcher(nn.Module):
         self.mask_point_sample_ratio = mask_point_sample_ratio
         self.cost_mask_ce = cost_mask_ce
         self.cost_mask_dice = cost_mask_dice
+        self._warned_non_finite_costs = False
+
+    @staticmethod
+    def _sanitize_cost_matrix(C: torch.Tensor) -> torch.Tensor:
+        """Replace non-finite cost entries with a large finite sentinel.
+
+        >>> HungarianMatcher._sanitize_cost_matrix(
+        ...     torch.tensor([[1.0, float("nan")], [float("inf"), -2.0]])
+        ... ).tolist()
+        [[1.0, 4.0], [4.0, -2.0]]
+
+        Args:
+            C: Cost matrix to sanitize before Hungarian assignment.
+
+        Returns:
+            Cost matrix with all non-finite entries replaced by a finite
+            sentinel that is no smaller than any valid entry.
+        """
+        finite_mask = torch.isfinite(C)
+        if finite_mask.all():
+            return C
+
+        dtype_info = torch.finfo(C.dtype)
+        if finite_mask.any():
+            finite_costs = C[finite_mask]
+            max_cost = finite_costs.max()
+            # Add the largest absolute finite cost so the replacement stays
+            # strictly larger than every valid entry, even if all costs are negative.
+            replacement_cost = max_cost + finite_costs.abs().max() + _SANITIZED_COST_MARGIN
+            # Guard against overflow to inf/NaN and clamp to the maximum finite value.
+            if not torch.isfinite(replacement_cost):
+                replacement_cost = C.new_tensor(dtype_info.max)
+            else:
+                replacement_cost = torch.clamp(replacement_cost, max=dtype_info.max)
+        else:
+            # If all entries are non-finite, fall back to a large finite sentinel.
+            replacement_cost = C.new_tensor(dtype_info.max)
+
+        sanitized_C = C.clone()
+        sanitized_C[~finite_mask] = replacement_cost
+        return sanitized_C
 
     @torch.no_grad()
     def forward(self, outputs, targets, group_detr=1):
@@ -117,15 +169,6 @@ class HungarianMatcher(nn.Module):
         cost_bbox = torch.cdist(out_bbox, tgt_bbox, p=1)
 
         if masks_present:
-            # Resize predicted masks to target mask size if needed
-            # if out_masks.shape[-2:] != tgt_masks.shape[-2:]:
-            #     # out_masks = F.interpolate(out_masks.unsqueeze(1), size=tgt_masks.shape[-2:], mode="bilinear", align_corners=False).squeeze(1)
-            #     tgt_masks = F.interpolate(tgt_masks.unsqueeze(1).float(), size=out_masks.shape[-2:], mode="bilinear", align_corners=False).squeeze(1)
-
-            # # Flatten masks
-            # pred_masks_logits = out_masks.flatten(1)  # [P, HW]
-            # tgt_masks_flat = tgt_masks.flatten(1).float()  # [T, HW]
-
             tgt_masks = torch.cat([v["masks"] for v in targets])
 
             if isinstance(outputs["pred_masks"], torch.Tensor):
@@ -138,8 +181,6 @@ class HungarianMatcher(nn.Module):
                     out_masks.unsqueeze(1), point_coords.repeat(out_masks.shape[0], 1, 1), align_corners=False
                 ).squeeze(1)
             else:
-                # pred_masks_logits = outputs["sparse_matcher_mask_logits"].flatten(0, 1)
-                # point_coords = outputs["matcher_sample_coords"]
                 spatial_features = outputs["pred_masks"]["spatial_features"]
                 query_features = outputs["pred_masks"]["query_features"]
                 bias = outputs["pred_masks"]["bias"]
@@ -173,9 +214,18 @@ class HungarianMatcher(nn.Module):
             C = C + self.cost_mask_ce * cost_mask_ce + self.cost_mask_dice * cost_mask_dice
         C = C.view(bs, num_queries, -1).float().cpu()  # convert to float because bfloat16 doesn't play nicely with CPU
 
-        # we assume any good match will not cause NaN or Inf, so we replace them with a large value
-        max_cost = C.max() if C.numel() > 0 else 0
-        C[C.isinf() | C.isnan()] = max_cost * 2
+        # We assume any good match will not cause NaN or Inf, so replace invalid
+        # entries with a finite value that is larger than every valid cost.
+        finite_mask = torch.isfinite(C)
+        if not finite_mask.all():
+            if not self._warned_non_finite_costs:
+                logger.warning(
+                    "Non-finite values detected in matcher cost matrix; "
+                    "replacing with finite sentinel. "
+                    "Check for numerical instability."
+                )
+                self._warned_non_finite_costs = True
+            C = self._sanitize_cost_matrix(C)
 
         sizes = [len(v["boxes"]) for v in targets]
         indices = []

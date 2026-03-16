@@ -6,8 +6,6 @@
 
 """Tests for Albumentations augmentation wrappers."""
 
-import json
-
 import albumentations as A
 import numpy as np
 import pytest
@@ -16,12 +14,11 @@ from PIL import Image
 from torch.utils.data import DataLoader
 from torchvision.transforms.v2 import Compose
 
-from rfdetr import RFDETRSegNano
 from rfdetr.datasets._develop import _SimpleDataset
 from rfdetr.datasets.aug_config import AUG_CONFIG
 from rfdetr.datasets.coco import make_coco_transforms, make_coco_transforms_square_div_64
 from rfdetr.datasets.transforms import AlbumentationsWrapper, _build_albu_transform
-from rfdetr.util.misc import collate_fn
+from rfdetr.utilities import collate_fn
 
 
 class TestAlbumentationsWrapper:
@@ -651,6 +648,154 @@ class TestAlbumentationsWrapperFromConfig:
         assert transform_names == ["HorizontalFlip"]
 
 
+class TestRandomSizedCropCompat:
+    """Tests for RandomSizedCrop cross-version parameter normalization edge cases."""
+
+    @pytest.mark.parametrize(
+        "params, expected_missing",
+        [
+            pytest.param(
+                {"min_max_height": [100, 200], "height": 256},
+                "width",
+                id="height_without_width",
+            ),
+            pytest.param(
+                {"min_max_height": [100, 200], "width": 256},
+                "height",
+                id="width_without_height",
+            ),
+        ],
+    )
+    def test_errors_on_partial_hw_with_v2_api(self, monkeypatch, params, expected_missing):
+        class FakeV2:
+            def __init__(self, *, min_max_height, size, p=1.0):
+                pass
+
+        monkeypatch.setattr("rfdetr.datasets.transforms.A.RandomSizedCrop", FakeV2)
+
+        with pytest.raises(ValueError, match=f"missing '{expected_missing}'"):
+            _build_albu_transform("RandomSizedCrop", params)
+
+    @pytest.mark.parametrize(
+        "params",
+        [
+            pytest.param(
+                {"min_max_height": [100, 200], "size": (256, 256), "height": 256},
+                id="size_and_height",
+            ),
+            pytest.param(
+                {"min_max_height": [100, 200], "size": (256, 256), "width": 256},
+                id="size_and_width",
+            ),
+            pytest.param(
+                {
+                    "min_max_height": [100, 200],
+                    "size": (256, 256),
+                    "height": 256,
+                    "width": 256,
+                },
+                id="size_and_height_and_width",
+            ),
+        ],
+    )
+    def test_size_takes_precedence_over_hw_on_v2_api(self, monkeypatch, params):
+        class FakeV2:
+            def __init__(self, *, min_max_height, size, p=1.0):
+                self.size = size
+
+        monkeypatch.setattr("rfdetr.datasets.transforms.A.RandomSizedCrop", FakeV2)
+
+        # No TypeError means height/width were correctly dropped before instantiation
+        transform = _build_albu_transform("RandomSizedCrop", params)
+        assert transform.size == (256, 256)
+
+    def test_scalar_size_passes_through_on_v1_legacy_path(self, monkeypatch):
+        class FakeV1:
+            def __init__(self, *, min_max_height, height, width, p=1.0):
+                self.height = height
+                self.width = width
+
+        monkeypatch.setattr("rfdetr.datasets.transforms.A.RandomSizedCrop", FakeV1)
+
+        # Scalar size=640 does not match isinstance(size, Sequence), so the v1
+        # legacy branch leaves it in the params dict. FakeV1 does not accept
+        # ``size`` so this should raise a TypeError from the constructor — our
+        # normalization code does NOT raise a ValueError for this case.
+        with pytest.raises(TypeError):
+            _build_albu_transform(
+                "RandomSizedCrop",
+                {"min_max_height": [100, 200], "size": 640},
+            )
+
+    def test_adapts_height_width_for_v2_api(self, monkeypatch):
+        """RandomSizedCrop config with height/width is adapted to the Albumentations 2.x size API."""
+
+        class FakeV2:
+            def __init__(self, *, min_max_height, size, p=1.0):
+                self.min_max_height = min_max_height
+                self.size = size
+                self.p = p
+
+        monkeypatch.setattr("rfdetr.datasets.transforms.A.RandomSizedCrop", FakeV2)
+
+        transform = _build_albu_transform(
+            "RandomSizedCrop",
+            {"min_max_height": [384, 600], "height": 640, "width": 640},
+        )
+
+        assert isinstance(transform, FakeV2)
+        assert transform.min_max_height == [384, 600]
+        assert transform.size == (640, 640)
+
+    def test_adapts_size_for_v1_api(self, monkeypatch):
+        """RandomSizedCrop config with size is adapted to the Albumentations 1.x height/width API."""
+
+        class FakeV1:
+            def __init__(self, *, min_max_height, height, width, p=1.0):
+                self.min_max_height = min_max_height
+                self.height = height
+                self.width = width
+                self.p = p
+
+        monkeypatch.setattr("rfdetr.datasets.transforms.A.RandomSizedCrop", FakeV1)
+
+        transform = _build_albu_transform(
+            "RandomSizedCrop",
+            {"min_max_height": [384, 600], "size": (640, 640)},
+        )
+
+        assert isinstance(transform, FakeV1)
+        assert transform.min_max_height == [384, 600]
+        assert transform.height == 640
+        assert transform.width == 640
+
+    def test_from_config_partial_height_is_silently_skipped(self, monkeypatch):
+        """from_config swallows the ValueError for partial height-only config and skips the transform.
+
+        This documents the intentional silent-skip behavior: from_config wraps
+        _build_albu_transform in a broad except clause so bad configs produce a
+        warning rather than an exception.
+        """
+
+        class FakeV2:
+            def __init__(self, *, min_max_height, size, p=1.0):
+                pass
+
+        monkeypatch.setattr("rfdetr.datasets.transforms.A.RandomSizedCrop", FakeV2)
+
+        config = {
+            "HorizontalFlip": {"p": 0.5},
+            "RandomSizedCrop": {"min_max_height": [100, 200], "height": 256},
+        }
+
+        transforms = AlbumentationsWrapper.from_config(config)
+
+        # The invalid RandomSizedCrop is silently dropped; only HorizontalFlip survives.
+        assert len(transforms) == 1
+        transform_names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
+        assert transform_names == ["HorizontalFlip"]
+
+
 class TestAlbumentationsWrapperNestedConfig:
     """Tests for nested container (OneOf, SomeOf, Sequential) support in from_config."""
 
@@ -1215,63 +1360,6 @@ class TestTrainingLoop:
             if include_masks:
                 assert target["masks"].shape == (1, 64, 64)
                 assert target["masks"].dtype == torch.bool
-
-    def test_segmentation_nano_training_with_tiny_mock_coco_dataset(self, tmp_path, monkeypatch):
-        """Integration test: run a minimal segmentation training step on a mocked COCO dataset."""
-
-        def _write_split(split_name: str) -> None:
-            split_dir = tmp_path / "tiny_seg_dataset" / split_name
-            split_dir.mkdir(parents=True, exist_ok=True)
-            image_path = split_dir / "sample.jpg"
-            Image.new("RGB", (64, 64), color="white").save(image_path)
-
-            annotations = {
-                "images": [{"id": 1, "width": 64, "height": 64, "file_name": "sample.jpg"}],
-                "categories": [{"id": 1, "name": "object", "supercategory": "object"}],
-                "annotations": [
-                    {
-                        "id": 1,
-                        "image_id": 1,
-                        "category_id": 1,
-                        "bbox": [8.0, 8.0, 16.0, 16.0],
-                        "area": 256.0,
-                        "iscrowd": 0,
-                        "segmentation": [[8.0, 8.0, 24.0, 8.0, 24.0, 24.0, 8.0, 24.0]],
-                    }
-                ],
-            }
-            (split_dir / "_annotations.coco.json").write_text(json.dumps(annotations))
-
-        for split in ("train", "valid"):
-            _write_split(split)
-
-        def _fake_evaluate(*args, **kwargs):
-            return {
-                "coco_eval_masks": [0.0, 0.0],
-                "results_json": {"map": 0.0, "f1_score": 0.0, "class_map": {}},
-            }, None
-
-        monkeypatch.setattr("rfdetr.main.evaluate", _fake_evaluate)
-
-        output_dir = tmp_path / "output"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        model = RFDETRSegNano(pretrain_weights=None, device="cpu")
-        model.train(
-            dataset_dir=str(tmp_path / "tiny_seg_dataset"),
-            epochs=1,
-            batch_size=1,
-            grad_accum_steps=1,
-            device="cpu",
-            num_workers=0,
-            resolution=64,
-            amp=False,
-            use_ema=False,
-            run_test=False,
-            tensorboard=False,
-            dont_save_weights=True,
-            min_batches=1,
-            output_dir=str(output_dir),
-        )
 
 
 class TestMakeCocoTransformsAugConfig:

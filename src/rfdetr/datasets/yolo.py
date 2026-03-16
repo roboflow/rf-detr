@@ -4,13 +4,17 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+from __future__ import annotations
+
 import os
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import supervision as sv
 import torch
+
+if TYPE_CHECKING:
+    import supervision as sv
 from PIL import Image
 from torchvision.datasets import VisionDataset
 
@@ -19,7 +23,7 @@ from rfdetr.datasets.coco import (
     make_coco_transforms_square_div_64,
 )
 
-REQUIRED_YOLO_YAML_FILE = "data.yaml"
+REQUIRED_YOLO_YAML_FILES = ["data.yaml", "data.yml"]
 REQUIRED_SPLIT_DIRS = ["train", "valid"]
 REQUIRED_DATA_SUBDIRS = ["images", "labels"]
 
@@ -29,13 +33,15 @@ def is_valid_yolo_dataset(dataset_dir: str) -> bool:
     Checks if the specified dataset directory is in yolo format.
 
     We accept a dataset to be in yolo format if the following conditions are met:
-    - The dataset_dir contains a data.yaml file
+    - The dataset_dir contains a data.yaml or data.yml file
     - The dataset_dir contains "train" and "valid" subdirectories, each containing "images" and "labels" subdirectories
     - The "test" subdirectory is optional
 
     Returns a boolean indicating whether the dataset is in correct yolo format.
     """
-    contains_required_data_yaml = os.path.exists(os.path.join(dataset_dir, REQUIRED_YOLO_YAML_FILE))
+    contains_required_yolo_yaml = any(
+        os.path.exists(os.path.join(dataset_dir, yaml_file)) for yaml_file in REQUIRED_YOLO_YAML_FILES
+    )
     contains_required_split_dirs = all(
         os.path.exists(os.path.join(dataset_dir, split_dir)) for split_dir in REQUIRED_SPLIT_DIRS
     )
@@ -44,7 +50,7 @@ def is_valid_yolo_dataset(dataset_dir: str) -> bool:
         for split_dir in REQUIRED_SPLIT_DIRS
         for data_subdir in REQUIRED_DATA_SUBDIRS
     )
-    return contains_required_data_yaml and contains_required_split_dirs and contains_required_data_subdirs
+    return contains_required_yolo_yaml and contains_required_split_dirs and contains_required_data_subdirs
 
 
 class ConvertYolo:
@@ -255,7 +261,8 @@ class CocoLikeAPI:
             if len(detections) == 0:
                 continue
             for i in range(len(detections)):
-                bbox_x, bbox_y, bbox_w, bbox_h = sv.xyxy_to_xywh(detections.xyxy[i : i + 1])[0]
+                x1, y1, x2, y2 = detections.xyxy[i]
+                bbox_x, bbox_y, bbox_w, bbox_h = float(x1), float(y1), float(x2 - x1), float(y2 - y1)
 
                 ann = {
                     "id": ann_id,
@@ -438,6 +445,8 @@ class YoloDetection(VisionDataset):
         self.include_masks = include_masks
         self.prepare = ConvertYolo(include_masks=include_masks)
 
+        import supervision as sv
+
         # Load dataset using supervision's from_yolo method
         self.sv_dataset = sv.DetectionDataset.from_yolo(
             images_directory_path=img_folder,
@@ -477,6 +486,22 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
 
     This uses Roboflow's standard YOLO directory structure
     (train/valid/test folders with images/ and labels/ subdirectories).
+
+    Args:
+        image_set: Dataset split to load. One of ``"train"``, ``"val"``, or
+            ``"test"``.
+        args: Argument namespace. The following attributes are consumed:
+            ``dataset_dir``, ``square_resize_div_64``, ``aug_config``,
+            ``segmentation_head``, ``multi_scale``, ``expanded_scales``,
+            ``do_random_resize_via_padding``, ``patch_size``, ``num_windows``.
+            ``aug_config`` is forwarded to the transform builder; when
+            ``None`` the builder falls back to the default
+            :data:`~rfdetr.datasets.aug_config.AUG_CONFIG`.
+        resolution: Target square resolution in pixels.
+
+    Returns:
+        A :class:`YoloDetection` dataset instance ready for use with a
+        DataLoader.
     """
     root = Path(args.dataset_dir)
     assert root.exists(), f"provided Roboflow path {root} does not exist"
@@ -488,7 +513,8 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
         "test": (root / "test" / "images", root / "test" / "labels"),
     }
 
-    data_file = root / "data.yaml"
+    # Prefer data.yaml; fall back to data.yml if present; default to data.yaml for error reporting
+    data_file = next((root / f for f in REQUIRED_YOLO_YAML_FILES if (root / f).exists()), root / "data.yaml")
     img_folder, lb_folder = PATHS[image_set.split("_")[0]]
     square_resize_div_64 = getattr(args, "square_resize_div_64", False)
     include_masks = getattr(args, "segmentation_head", False)
@@ -497,6 +523,7 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
     do_random_resize_via_padding = getattr(args, "do_random_resize_via_padding", False)
     patch_size = getattr(args, "patch_size", None)
     num_windows = getattr(args, "num_windows", None)
+    aug_config = getattr(args, "aug_config", None)
 
     if square_resize_div_64:
         dataset = YoloDetection(
@@ -511,6 +538,7 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
                 skip_random_resize=not do_random_resize_via_padding,
                 patch_size=patch_size,
                 num_windows=num_windows,
+                aug_config=aug_config,
             ),
             include_masks=include_masks,
         )
@@ -527,6 +555,7 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
                 skip_random_resize=not do_random_resize_via_padding,
                 patch_size=patch_size,
                 num_windows=num_windows,
+                aug_config=aug_config,
             ),
             include_masks=include_masks,
         )

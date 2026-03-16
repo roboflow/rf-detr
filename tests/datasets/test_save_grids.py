@@ -36,11 +36,11 @@ class _FakeDataset:
 
 
 def _collate(batch):
-    import rfdetr.util.misc as utils
+    from rfdetr.utilities import nested_tensor_from_tensor_list
 
     images, targets = zip(*batch)
     # NestedTensor expected by DatasetGridSaver
-    nested = utils.nested_tensor_from_tensor_list(list(images))
+    nested = nested_tensor_from_tensor_list(list(images))
     return nested, list(targets)
 
 

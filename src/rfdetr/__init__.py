@@ -10,16 +10,16 @@ if os.environ.get("PYTORCH_ENABLE_MPS_FALLBACK") is None:
     os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
 from rfdetr.detr import (
-    RFDETRBase,
+    RFDETRBase,  # DEPRECATED # noqa: F401
     RFDETRLarge,
-    RFDETRLargeDeprecated,
+    RFDETRLargeDeprecated,  # DEPRECATED # noqa: F401
     RFDETRMedium,
     RFDETRNano,
     RFDETRSeg2XLarge,
     RFDETRSegLarge,
     RFDETRSegMedium,
     RFDETRSegNano,
-    RFDETRSegPreview,
+    RFDETRSegPreview,  # DEPRECATED # noqa: F401
     RFDETRSegSmall,
     RFDETRSegXLarge,
     RFDETRSmall,
@@ -38,25 +38,29 @@ __all__ = [
     "RFDETRSeg2XLarge",
 ]
 
+# Lazily resolved names: avoids eager pytorch_lightning import at `import rfdetr` time.
+_LAZY_TRAINING = frozenset({"RFDETRModule", "RFDETRDataModule", "build_trainer"})
+_PLUS_EXPORTS = frozenset({"RFDETR2XLarge", "RFDETRXLarge"})
+
 
 def __getattr__(name: str):
-    """Resolve plus-only exports lazily, raising only on explicit access."""
-    _PLUS_EXPORTS = {"RFDETR2XLarge", "RFDETRXLarge"}
+    """Resolve PTL and plus-only exports lazily, raising only on explicit access."""
+    if name in _LAZY_TRAINING:
+        from rfdetr import training as _training
+
+        value = getattr(_training, name)
+        globals()[name] = value
+        return value
+
     if name in _PLUS_EXPORTS:
         from rfdetr.platform import _INSTALL_MSG
         from rfdetr.platform import models as _platform_models
 
-        # Cache the resolved symbol to avoid repeated attribute lookups.
         if hasattr(_platform_models, name):
             value = getattr(_platform_models, name)
             globals()[name] = value
-            # Keep __all__ in sync with dynamically resolved exports.
-            if name not in __all__:
-                __all__.append(name)
             return value
 
-        # The name is expected to be plus-only; raise a clear install hint.
         raise ImportError(_INSTALL_MSG.format(name="platform model downloads"))
 
-    # Non-plus names fall back to the default attribute error.
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
