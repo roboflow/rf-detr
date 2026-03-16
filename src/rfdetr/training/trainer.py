@@ -117,6 +117,8 @@ def build_trainer(
             segmentation=model_config.segmentation_head,
             eval_interval=tc.eval_interval,
             log_per_class_metrics=tc.log_per_class_metrics,
+            keypoint=model_config.keypoint_head,
+            num_keypoints=model_config.num_keypoints,
         )
     )
 

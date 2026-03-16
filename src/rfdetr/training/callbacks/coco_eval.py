@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import contextlib
+import io
 from typing import Any
 
 import numpy as np
@@ -26,6 +27,134 @@ from rfdetr.evaluation.matching import (
 )
 from rfdetr.utilities.box_ops import box_cxcywh_to_xyxy
 
+# Standard COCO 17-keypoint OKS sigmas (one per keypoint).
+_COCO_17_KPT_SIGMAS: list[float] = [
+    0.026, 0.025, 0.025, 0.035, 0.035,
+    0.079, 0.079, 0.072, 0.072, 0.062, 0.062,
+    0.107, 0.107, 0.087, 0.087, 0.089, 0.089,
+]
+
+
+def _run_kpt_coco_eval(acc: list[dict], num_keypoints: int) -> np.ndarray | None:
+    """Evaluate keypoint predictions using the COCO API (pycocotools).
+
+    Builds an in-memory COCO ground-truth object from accumulated targets,
+    creates COCO detection results from accumulated predictions, and runs
+    ``COCOeval`` with ``iouType="keypoints"``.
+
+    Args:
+        acc: List of per-image accumulator dicts, each with keys
+            ``"image_id"``, ``"pred"`` (postprocessed dict), and
+            ``"target"`` (raw dataloader target dict).
+        num_keypoints: Number of keypoints per instance.
+
+    Returns:
+        ``coco_eval.stats`` array (length 8 for keypoints) or ``None`` when
+        there are no valid GT annotations or predictions.
+    """
+    from pycocotools.coco import COCO
+    from pycocotools.cocoeval import COCOeval
+
+    gt_anns: list[dict] = []
+    dt_anns: list[dict] = []
+    img_meta: dict[int, dict] = {}
+    ann_id = 0
+
+    for entry in acc:
+        img_id = entry["image_id"]
+        tgt = entry["target"]
+        pred = entry["pred"]
+        h, w = tgt["orig_size"].tolist()
+        img_meta[img_id] = {"id": img_id, "width": int(w), "height": int(h)}
+
+        # ── GT annotations ──────────────────────────────────────────────
+        kpts_gt = tgt.get("keypoints")  # (N, K, 3) normalised [0,1] x,y,vis
+        boxes_gt = tgt.get("boxes")     # (N, 4) normalised cxcywh
+        iscrowd_gt = tgt.get("iscrowd")
+
+        if kpts_gt is not None and boxes_gt is not None and len(boxes_gt) > 0:
+            scale = boxes_gt.new_tensor([w, h, w, h])
+            boxes_xyxy = box_cxcywh_to_xyxy(boxes_gt) * scale  # (N,4) abs xyxy
+
+            kpts_abs = kpts_gt.clone().float()
+            kpts_abs[..., 0] *= w
+            kpts_abs[..., 1] *= h
+            kpts_abs[..., 2] = kpts_gt[..., 2].round()  # vis: 0/1/2 (int)
+
+            for i in range(len(boxes_gt)):
+                x1, y1, x2, y2 = boxes_xyxy[i].tolist()
+                bw, bh = x2 - x1, y2 - y1
+                area = bw * bh
+                if area <= 0:
+                    continue
+                kpts_flat = kpts_abs[i].reshape(-1).tolist()
+                num_vis = int((kpts_abs[i, :, 2] > 0).sum().item())
+                ann_id += 1
+                gt_anns.append({
+                    "id": ann_id,
+                    "image_id": img_id,
+                    "category_id": 1,
+                    "keypoints": kpts_flat,
+                    "num_keypoints": num_vis,
+                    "area": float(area),
+                    "bbox": [x1, y1, bw, bh],
+                    "iscrowd": int(iscrowd_gt[i].item()) if iscrowd_gt is not None else 0,
+                })
+
+        # ── DT annotations ──────────────────────────────────────────────
+        kpts_pred = pred.get("keypoints")         # (num_select, K, 2) abs
+        kpts_vis_pred = pred.get("keypoint_scores")  # (num_select, K)
+        scores_pred = pred.get("scores")              # (num_select,)
+
+        if kpts_pred is not None and kpts_vis_pred is not None and scores_pred is not None:
+            for i in range(len(scores_pred)):
+                score = float(scores_pred[i].item())
+                if score < 1e-6:
+                    continue
+                kxy = kpts_pred[i]    # (K, 2)
+                kvis = kpts_vis_pred[i]  # (K,)
+                flat: list[float] = []
+                for k in range(kxy.shape[0]):
+                    flat += [float(kxy[k, 0]), float(kxy[k, 1]), float(kvis[k])]
+                dt_anns.append({
+                    "image_id": img_id,
+                    "category_id": 1,
+                    "keypoints": flat,
+                    "score": score,
+                })
+
+    if not gt_anns or not dt_anns:
+        return None
+
+    coco_gt = COCO()
+    coco_gt.dataset = {
+        "images": list(img_meta.values()),
+        "categories": [{
+            "id": 1,
+            "name": "object",
+            "supercategory": "",
+            "keypoints": [str(i) for i in range(num_keypoints)],
+            "skeleton": [],
+        }],
+        "annotations": gt_anns,
+    }
+    with contextlib.redirect_stdout(io.StringIO()):
+        coco_gt.createIndex()
+    with contextlib.redirect_stdout(io.StringIO()):
+        coco_dt = coco_gt.loadRes(dt_anns)
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        coco_eval = COCOeval(coco_gt, coco_dt, "keypoints")
+        if num_keypoints == 17:
+            coco_eval.params.kpt_oks_sigmas = np.array(_COCO_17_KPT_SIGMAS)
+        else:
+            coco_eval.params.kpt_oks_sigmas = np.full(num_keypoints, 0.05)
+        coco_eval.evaluate()
+        coco_eval.accumulate()
+        coco_eval.summarize()
+
+    return coco_eval.stats
+
 
 class COCOEvalCallback(Callback):
     """Validation callback that computes mAP (via torchmetrics) and macro-F1.
@@ -42,6 +171,10 @@ class COCOEvalCallback(Callback):
     For segmentation models (``segmentation=True``) additional metrics
     ``val/segm_mAP_50_95`` and ``val/segm_mAP_50`` are logged.
 
+    For keypoint models (``keypoint=True``) additional metrics
+    ``val/kpt_AP_50_95``, ``val/kpt_AP_50``, and ``val/kpt_AR`` are computed
+    via pycocotools OKS-based evaluation and logged to TensorBoard.
+
     Args:
         max_dets: Maximum detections per image passed to
             ``MeanAveragePrecision``. Defaults to 500.
@@ -50,6 +183,9 @@ class COCOEvalCallback(Callback):
         eval_interval: Run validation metrics every N epochs. Test metrics are
             always computed when ``trainer.test()`` is called.
         log_per_class_metrics: When ``False``, skip per-class AP logging/table.
+        keypoint: When ``True``, enable OKS-based keypoint AP/AR evaluation.
+        num_keypoints: Number of keypoints per instance (used only when
+            ``keypoint=True``). Defaults to 17 (COCO person).
     """
 
     def __init__(
@@ -59,15 +195,20 @@ class COCOEvalCallback(Callback):
         eval_interval: int = 1,
         log_per_class_metrics: bool = True,
         in_notebook: bool | None = None,
+        keypoint: bool = False,
+        num_keypoints: int = 17,
     ) -> None:
         super().__init__()
         self._max_dets = max_dets
         self._segmentation = segmentation
         self._eval_interval = max(1, int(eval_interval))
         self._log_per_class_metrics = bool(log_per_class_metrics)
+        self._keypoint = bool(keypoint)
+        self._num_keypoints = int(num_keypoints)
         self._class_names: list[str] = []
         self._cat_id_to_name: dict[int, str] = {}
         self._f1_local: dict[int, dict[str, Any]] = init_matching_accumulator()
+        self._kpt_acc: list[dict] = []  # keypoint evaluation accumulator
         self._output_widget: Any = None  # ipywidgets.Output, created lazily
         self._in_notebook: bool = False
         if in_notebook is None:
@@ -171,6 +312,15 @@ class COCOEvalCallback(Callback):
         batch_matching = build_matching_data(preds, targets, iou_threshold=0.5, iou_type=iou_type)
         merge_matching_data(self._f1_local, batch_matching)
 
+        # Accumulate raw preds/targets for keypoint OKS evaluation.
+        if self._keypoint:
+            for pred, tgt in zip(outputs["results"], outputs["targets"]):
+                self._kpt_acc.append({
+                    "image_id": int(tgt["image_id"].item()),
+                    "pred": pred,
+                    "target": tgt,
+                })
+
         # Run EMA model separately on the same batch so that base and EMA metrics
         # are computed from independent forward passes rather than being aliases.
         ema_cb = self._get_ema_callback(trainer)
@@ -209,6 +359,7 @@ class COCOEvalCallback(Callback):
                 if self.map_metric_ema is not None:
                     self.map_metric_ema.reset()
                 self._f1_local = init_matching_accumulator()
+                self._kpt_acc.clear()
                 return
         self._compute_and_log(trainer, pl_module, "val")
 
@@ -242,6 +393,15 @@ class COCOEvalCallback(Callback):
         iou_type = "segm" if self._segmentation else "bbox"
         batch_matching = build_matching_data(preds, targets, iou_threshold=0.5, iou_type=iou_type)
         merge_matching_data(self._f1_local, batch_matching)
+
+        # Accumulate raw preds/targets for keypoint OKS evaluation.
+        if self._keypoint:
+            for pred, tgt in zip(outputs["results"], outputs["targets"]):
+                self._kpt_acc.append({
+                    "image_id": int(tgt["image_id"].item()),
+                    "pred": pred,
+                    "target": tgt,
+                })
 
     def on_test_epoch_end(self, trainer: Any, pl_module: Any) -> None:
         """Compute and log mAP and F1 under ``test/`` prefix at end of test epoch.
@@ -322,6 +482,22 @@ class COCOEvalCallback(Callback):
                 pl_module.log(f"{split}/ema_segm_mAP_50", metrics["segm_map_50"])
                 trainer.callback_metrics[f"{split}/ema_segm_mAP_50_95"] = metrics["segm_map"].detach().cpu()
                 trainer.callback_metrics[f"{split}/ema_segm_mAP_50"] = metrics["segm_map_50"].detach().cpu()
+
+        # Keypoint OKS-based AP/AR (pycocotools, iouType="keypoints")
+        if self._keypoint and self._kpt_acc:
+            kpt_stats = _run_kpt_coco_eval(self._kpt_acc, self._num_keypoints)
+            if kpt_stats is not None:
+                # stats layout for keypoints: [AP50:95, AP50, AP75, APm, APl, AR, ARm, ARl]
+                overall["kpt mAP 50:95"] = float(kpt_stats[0])
+                overall["kpt mAP 50"] = float(kpt_stats[1])
+                overall["kpt AR"] = float(kpt_stats[5])
+                pl_module.log(f"{split}/kpt_AP_50_95", float(kpt_stats[0]))
+                pl_module.log(f"{split}/kpt_AP_50", float(kpt_stats[1]))
+                pl_module.log(f"{split}/kpt_AR", float(kpt_stats[5]))
+                trainer.callback_metrics[f"{split}/kpt_AP_50_95"] = torch.tensor(float(kpt_stats[0]))
+                trainer.callback_metrics[f"{split}/kpt_AP_50"] = torch.tensor(float(kpt_stats[1]))
+                trainer.callback_metrics[f"{split}/kpt_AR"] = torch.tensor(float(kpt_stats[5]))
+            self._kpt_acc.clear()
 
         # F1 sweep — run first so per-class F1/prec/rec are available when
         # building the unified per-class table rows below.
@@ -593,6 +769,17 @@ class COCOEvalCallback(Callback):
                     [
                         ("50:95", _fmt(overall["segm mAP 50:95"])),
                         ("50", _fmt(overall["segm mAP 50"])),
+                    ],
+                )
+            )
+        if "kpt mAP 50:95" in overall:
+            groups.append(
+                (
+                    "kpt mAP",
+                    [
+                        ("50:95", _fmt(overall["kpt mAP 50:95"])),
+                        ("50", _fmt(overall["kpt mAP 50"])),
+                        ("AR", _fmt(overall["kpt AR"])),
                     ],
                 )
             )
