@@ -309,7 +309,9 @@ class TestFindPruneableHeadsAndIndices:
     )
     def test_prune_single_head_removes_correct_rows(self, head_to_prune, expected_index):
         # Head N masked → N*head_size indices removed; remaining = n_heads*head_size - head_size = 9
-        heads, index = _find_pruneable_heads_and_indices(head_to_prune, n_heads=4, head_size=3, already_pruned_heads=set())
+        heads, index = _find_pruneable_heads_and_indices(
+            head_to_prune, n_heads=4, head_size=3, already_pruned_heads=set()
+        )
         assert heads == head_to_prune
         assert len(index) == 9
         assert index.tolist() == expected_index
