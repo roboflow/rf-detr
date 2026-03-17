@@ -1,9 +1,8 @@
 ---
 hide:
-- toc
-- navigation
+  - toc
+  - navigation
 ---
-
 
 # Tutorials
 
@@ -11,8 +10,7 @@ Use the resources below to learn how to train, build with, and deploy RF-DETR mo
 
 <div class="grid cards" markdown>
 
-- 
-    **SOTA Instance Segmentation with RF-DETR Seg (Preview) [October 2025]**
+- **SOTA Instance Segmentation with RF-DETR Seg (Preview) [October 2025]**
 
     ---
 
@@ -22,8 +20,7 @@ Use the resources below to learn how to train, build with, and deploy RF-DETR mo
 
     [:octicons-arrow-right-24: Learn more](https://blog.roboflow.com/rf-detr-segmentation-preview/)
 
-- 
-    **Announcing RF-DETR Nano, Small, and Medium [July 2025]**
+- **Announcing RF-DETR Nano, Small, and Medium [July 2025]**
 
     ---
 
@@ -33,8 +30,7 @@ Use the resources below to learn how to train, build with, and deploy RF-DETR mo
 
     [:octicons-arrow-right-24: Learn more](https://blog.roboflow.com/rf-detr-nano-small-medium/)
 
-
--   **RF-DETR: How to Train SOTA for Object Detection on a Custom Dataset [video]**
+- **RF-DETR: How to Train SOTA for Object Detection on a Custom Dataset [video]**
 
     ---
 
@@ -43,8 +39,8 @@ Use the resources below to learn how to train, build with, and deploy RF-DETR mo
     Learn how to train an RF-DETR model on a custom dataset.
 
     [:octicons-arrow-right-24: Watch the video](https://www.youtube.com/watch?v=-OvpdLAElFA)
-    
--   **How to Train RF-DETR on a Custom Dataset [article]**
+
+- **How to Train RF-DETR on a Custom Dataset [article]**
 
     ---
 
@@ -54,7 +50,7 @@ Use the resources below to learn how to train, build with, and deploy RF-DETR mo
 
     [:octicons-arrow-right-24: Read the guide](https://blog.roboflow.com/train-rf-detr-on-a-custom-dataset/)
 
--   **Deploy RF-DETR on iOS [tutorial & example application]**
+- **Deploy RF-DETR on iOS [tutorial & example application]**
 
     ---
 
@@ -64,9 +60,7 @@ Use the resources below to learn how to train, build with, and deploy RF-DETR mo
 
     [:octicons-arrow-right-24: Get started](https://blog.roboflow.com/ios-rf-detr-nano/)
 
-
-
--   **How to Deploy RF-DETR to an NVIDIA Jetson [article]**
+- **How to Deploy RF-DETR to an NVIDIA Jetson [article]**
 
     ---
 
@@ -76,7 +70,7 @@ Use the resources below to learn how to train, build with, and deploy RF-DETR mo
 
     [:octicons-arrow-right-24: Read the tutorial](https://blog.roboflow.com/how-to-deploy-rf-detr-to-an-nvidia-jetson/)
 
--   **Train and Deploy RF-DETR Models with Roboflow**
+- **Train and Deploy RF-DETR Models with Roboflow**
 
     ---
 
@@ -84,9 +78,9 @@ Use the resources below to learn how to train, build with, and deploy RF-DETR mo
 
     Learn how to train RF-DETR models in the cloud with Roboflow and deploy your models on your own hardware with Roboflow Inference and Workflows.
 
-    [:octicons-arrow-right-24: Get started](https://blog.roboflow.com/content/images/size/w1000/format/webp/2025/03/img-blog-nycerebro-2.png)
+    [:octicons-arrow-right-24: Get started](https://blog.roboflow.com/train-deploy-rf-detr/)
 
--   **RF-DETR: A SOTA Real-Time Object Detection Model**
+- **RF-DETR: A SOTA Real-Time Object Detection Model**
 
     ---
 
@@ -95,7 +89,5 @@ Use the resources below to learn how to train, build with, and deploy RF-DETR mo
     Read our announcement for RF-DETR, the first real-time model to achieve 60+ mean Average Precision when benchmarked on the COCO dataset.
 
     [:octicons-arrow-right-24: Read the announcement](https://blog.roboflow.com/rf-detr/)
-
-
 
 </div>

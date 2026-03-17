@@ -1,0 +1,21 @@
+# RF-DETR Seg Small — example segmentation training configuration (resolution 384, patch 12).
+# Usage:
+#   rfdetr fit --config configs/rfdetr_seg_small.yaml
+#   rfdetr fit --config configs/rfdetr_seg_small.yaml \
+#     --model.train_config.init_args.dataset_dir /data/my_dataset \
+#     --trainer.devices 4
+
+model:
+  model_config:
+    class_path: rfdetr.config.RFDETRSegSmallConfig
+    init_args:
+      num_classes: 80 # set to your dataset class count
+  train_config:
+    class_path: rfdetr.config.SegmentationTrainConfig
+    init_args:
+      dataset_dir: /data/coco # required: path to your COCO-format dataset
+      output_dir: output/rfdetr_seg_small
+      epochs: 100
+      batch_size: 4
+      num_workers: 4
+      tensorboard: true
