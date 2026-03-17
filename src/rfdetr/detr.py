@@ -283,6 +283,7 @@ class RFDETR:
         continue to work without reloading the checkpoint.
         """
         from rfdetr.training import RFDETRDataModule, RFDETRModule, build_trainer
+        from rfdetr.training.auto_batch import resolve_auto_batch_config
 
         # Absorb legacy `callbacks` dict — warn if non-empty, then discard.
         callbacks_dict = kwargs.pop("callbacks", None)
@@ -319,6 +320,20 @@ class RFDETR:
             )
 
         config = self.get_train_config(**kwargs)
+        if config.batch_size == "auto":
+            auto_batch = resolve_auto_batch_config(
+                model_context=self.model,
+                model_config=self.model_config,
+                train_config=config,
+            )
+            config.batch_size = auto_batch.safe_micro_batch
+            config.grad_accum_steps = auto_batch.recommended_grad_accum_steps
+            logger.info(
+                "[auto-batch] resolved train config: batch_size=%s grad_accum_steps=%s effective_batch_size=%s",
+                config.batch_size,
+                config.grad_accum_steps,
+                auto_batch.effective_batch_size,
+            )
         module = RFDETRModule(self.model_config, config)
         datamodule = RFDETRDataModule(self.model_config, config)
         trainer = build_trainer(config, self.model_config, accelerator=_accelerator)

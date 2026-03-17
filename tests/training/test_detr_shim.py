@@ -24,6 +24,7 @@ import torch
 
 from rfdetr.config import RFDETRBaseConfig, TrainConfig
 from rfdetr.detr import RFDETR
+from rfdetr.training.auto_batch import AutoBatchResult
 from rfdetr.training.checkpoint import convert_legacy_checkpoint
 from rfdetr.training.module import RFDETRModule
 
@@ -134,6 +135,7 @@ class TestRFDETRTrainPTL:
         # Create a real TrainConfig-like object where resume is ""
         mock_config = MagicMock(spec=TrainConfig)
         mock_config.resume = ""
+        mock_config.batch_size = 4  # int so auto-batch branch is not taken
         mock_self.get_train_config.return_value = mock_config
 
         p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = _patch_lit()
@@ -263,6 +265,45 @@ class TestRFDETRTrainPTL:
             RFDETR.train(mock_self, device="cpu")
         # get_train_config must have been called without device=
         assert "device" not in mock_self.get_train_config.call_args.kwargs
+
+    def test_batch_size_auto_resolved_before_module_and_datamodule_build(self, tmp_path):
+        """batch_size='auto' is resolved to ints before module/datamodule init."""
+        mock_self = _make_rfdetr_self(tmp_path, batch_size="auto", grad_accum_steps=99)
+        auto_result = AutoBatchResult(
+            safe_micro_batch=3,
+            recommended_grad_accum_steps=6,
+            effective_batch_size=18,
+            device_name="Fake GPU",
+        )
+        p_mod, p_dm, p_bt, mcls, dmcls, _mock_bt = _patch_lit()
+        with p_mod, p_dm, p_bt, patch("rfdetr.training.auto_batch.resolve_auto_batch_config", return_value=auto_result):
+            RFDETR.train(mock_self)
+
+        config = mock_self.get_train_config.return_value
+        assert config.batch_size == 3
+        assert config.grad_accum_steps == 6
+        mcls.assert_called_once_with(mock_self.model_config, config)
+        dmcls.assert_called_once_with(mock_self.model_config, config)
+
+    def test_batch_size_auto_calls_resolver_with_expected_context(self, tmp_path):
+        """Auto-batch resolver receives model context, model config, and train config."""
+        mock_self = _make_rfdetr_self(tmp_path, batch_size="auto")
+        auto_result = AutoBatchResult(
+            safe_micro_batch=2,
+            recommended_grad_accum_steps=8,
+            effective_batch_size=16,
+            device_name="Fake GPU",
+        )
+        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        with p_mod, p_dm, p_bt, patch("rfdetr.training.auto_batch.resolve_auto_batch_config", return_value=auto_result) as mock_resolve:
+            RFDETR.train(mock_self)
+
+        config = mock_self.get_train_config.return_value
+        mock_resolve.assert_called_once_with(
+            model_context=mock_self.model,
+            model_config=mock_self.model_config,
+            train_config=config,
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -291,8 +291,9 @@ class RFDETRSeg2XLargeConfig(RFDETRBaseConfig):
 class TrainConfig(BaseModel):
     lr: float = 1e-4
     lr_encoder: float = 1.5e-4
-    batch_size: int = 4
+    batch_size: int | Literal["auto"] = 4
     grad_accum_steps: int = 4
+    auto_batch_target_effective: int = 16
     epochs: int = 100
     resume: Optional[str] = None
     ema_decay: float = 0.993
@@ -354,6 +355,24 @@ class TrainConfig(BaseModel):
     pin_memory: Optional[bool] = None
     persistent_workers: Optional[bool] = None
     prefetch_factor: Optional[int] = None
+
+    @field_validator("batch_size", mode="after")
+    @classmethod
+    def validate_batch_size(cls, v: int | Literal["auto"]) -> int | Literal["auto"]:
+        """Validate batch_size is a positive integer or the literal 'auto'."""
+        if v == "auto":
+            return v
+        if v < 1:
+            raise ValueError("batch_size must be >= 1, or 'auto'.")
+        return v
+
+    @field_validator("grad_accum_steps", "auto_batch_target_effective", mode="after")
+    @classmethod
+    def validate_positive_train_steps(cls, v: int) -> int:
+        """Validate accumulation and target-effective batch are >= 1."""
+        if v < 1:
+            raise ValueError("grad_accum_steps and auto_batch_target_effective must be >= 1.")
+        return v
 
     @field_validator("ema_update_interval", "eval_interval", mode="after")
     @classmethod

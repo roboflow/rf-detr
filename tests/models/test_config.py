@@ -196,6 +196,17 @@ class TestTrainConfigT42PromotedFields:
         with pytest.raises((ValueError, ValidationError)):
             self._tc(tmp_path, **{field: value})
 
+    def test_batch_size_auto_is_accepted(self, tmp_path):
+        """batch_size accepts the special 'auto' value."""
+        tc = self._tc(tmp_path, batch_size="auto")
+        assert tc.batch_size == "auto"
+
+    @pytest.mark.parametrize("field,value", [("batch_size", 0), ("grad_accum_steps", 0), ("auto_batch_target_effective", 0)])
+    def test_auto_batch_related_fields_reject_non_positive_values(self, tmp_path, field, value):
+        """batch/accum/target-effective fields must be >= 1 (except batch_size='auto')."""
+        with pytest.raises((ValueError, ValidationError)):
+            self._tc(tmp_path, **{field: value})
+
 
 class TestBuildTrainerUsesRealFields:
     """build_trainer() must read clip_max_norm, seed, sync_bn from real TrainConfig fields."""
