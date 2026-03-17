@@ -66,6 +66,11 @@ def validate_checkpoint_compatibility(checkpoint: Dict[str, Any], model_args: An
     that users receive a clear, actionable message instead of a cryptic tensor
     size mismatch error.
 
+    If either side is missing an attribute (e.g. a legacy checkpoint saved before
+    ``segmentation_head`` or ``patch_size`` was added to ``args``), that specific
+    check is skipped silently — this preserves backwards compatibility with
+    pre-existing checkpoints.
+
     Args:
         checkpoint: Loaded checkpoint dictionary, expected to contain an optional
             ``"args"`` key with training namespace attributes.
