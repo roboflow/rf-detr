@@ -132,6 +132,30 @@ def _load_pretrain_weights_into(nn_model: torch.nn.Module, args: Any) -> List[st
     if "args" in checkpoint and hasattr(checkpoint["args"], "class_names"):
         class_names = checkpoint["args"].class_names or []
 
+    if "args" in checkpoint:
+        ckpt_args = checkpoint["args"]
+        ckpt_segmentation_head = getattr(ckpt_args, "segmentation_head", False)
+        model_segmentation_head = getattr(args, "segmentation_head", False)
+        if ckpt_segmentation_head != model_segmentation_head:
+            if ckpt_segmentation_head:
+                raise ValueError(
+                    "The checkpoint was trained with a segmentation head, but the current model does not have one. "
+                    "Load the weights into a segmentation model (e.g. RFDETRSegNano) instead of a detection model."
+                )
+            else:
+                raise ValueError(
+                    "The current model has a segmentation head, but the checkpoint was trained without one. "
+                    "Load the weights into a detection model (e.g. RFDETRNano) instead of a segmentation model."
+                )
+
+        ckpt_patch_size = getattr(ckpt_args, "patch_size", None)
+        model_patch_size = getattr(args, "patch_size", None)
+        if ckpt_patch_size is not None and model_patch_size is not None and ckpt_patch_size != model_patch_size:
+            raise ValueError(
+                f"The checkpoint was trained with patch_size={ckpt_patch_size}, but the current model uses "
+                f"patch_size={model_patch_size}. The checkpoint is incompatible with this model architecture."
+            )
+
     checkpoint_num_classes = checkpoint["model"]["class_embed.bias"].shape[0]
     if checkpoint_num_classes != args.num_classes + 1:
         logger.warning(

@@ -364,6 +364,82 @@ class TestLoadPretrainWeights:
 
         assert module._pretrain_class_names == ["cat", "dog"]
 
+    @patch("rfdetr.training.module.torch.load")
+    @patch("rfdetr.training.module.validate_pretrain_weights")
+    def test_seg_checkpoint_into_detection_model_raises(
+        self, mock_validate, mock_torch_load, base_model_config, build_module
+    ):
+        """Loading a segmentation checkpoint into a detection model must raise ValueError."""
+        mc = base_model_config(num_classes=90)
+        ckpt_args = SimpleNamespace(segmentation_head=True, patch_size=12)
+        checkpoint = self._make_checkpoint(num_classes_in_ckpt=91)
+        checkpoint["args"] = ckpt_args
+        mock_torch_load.return_value = checkpoint
+
+        module, _, _, _ = build_module(model_config=mc)
+        module._args.pretrain_weights = "/fake/weights.pth"
+        module._args.segmentation_head = False
+
+        with pytest.raises(ValueError, match="segmentation head"):
+            module._load_pretrain_weights()
+
+    @patch("rfdetr.training.module.torch.load")
+    @patch("rfdetr.training.module.validate_pretrain_weights")
+    def test_detection_checkpoint_into_seg_model_raises(
+        self, mock_validate, mock_torch_load, base_model_config, build_module
+    ):
+        """Loading a detection checkpoint into a segmentation model must raise ValueError."""
+        mc = base_model_config(num_classes=90)
+        ckpt_args = SimpleNamespace(segmentation_head=False, patch_size=16)
+        checkpoint = self._make_checkpoint(num_classes_in_ckpt=91)
+        checkpoint["args"] = ckpt_args
+        mock_torch_load.return_value = checkpoint
+
+        module, _, _, _ = build_module(model_config=mc)
+        module._args.pretrain_weights = "/fake/weights.pth"
+        module._args.segmentation_head = True
+
+        with pytest.raises(ValueError, match="segmentation head"):
+            module._load_pretrain_weights()
+
+    @patch("rfdetr.training.module.torch.load")
+    @patch("rfdetr.training.module.validate_pretrain_weights")
+    def test_patch_size_mismatch_raises(self, mock_validate, mock_torch_load, base_model_config, build_module):
+        """Loading a checkpoint with a different patch_size must raise ValueError."""
+        mc = base_model_config(num_classes=90)
+        ckpt_args = SimpleNamespace(segmentation_head=False, patch_size=12)
+        checkpoint = self._make_checkpoint(num_classes_in_ckpt=91)
+        checkpoint["args"] = ckpt_args
+        mock_torch_load.return_value = checkpoint
+
+        module, _, _, _ = build_module(model_config=mc)
+        module._args.pretrain_weights = "/fake/weights.pth"
+        module._args.segmentation_head = False
+        module._args.patch_size = 16
+
+        with pytest.raises(ValueError, match="patch_size"):
+            module._load_pretrain_weights()
+
+    @patch("rfdetr.training.module.torch.load")
+    @patch("rfdetr.training.module.validate_pretrain_weights")
+    def test_compatible_checkpoint_does_not_raise(
+        self, mock_validate, mock_torch_load, base_model_config, build_module
+    ):
+        """A checkpoint matching segmentation_head and patch_size must load without error."""
+        mc = base_model_config(num_classes=90)
+        ckpt_args = SimpleNamespace(segmentation_head=False, patch_size=14, class_names=[])
+        checkpoint = self._make_checkpoint(num_classes_in_ckpt=91)
+        checkpoint["args"] = ckpt_args
+        mock_torch_load.return_value = checkpoint
+
+        module, _, _, _ = build_module(model_config=mc)
+        module._args.pretrain_weights = "/fake/weights.pth"
+        module._args.segmentation_head = False
+        module._args.patch_size = 14
+
+        # Should not raise.
+        module._load_pretrain_weights()
+
 
 class TestApplyLora:
     """Tests for _apply_lora() — verifies that PEFT LoraConfig is constructed with the
