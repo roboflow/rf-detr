@@ -12,6 +12,7 @@ from typing import Any
 
 import numpy as np
 from pytorch_lightning import Callback
+from pytorch_lightning.loggers import CSVLogger
 
 PLOT_FILE_NAME = "metrics_plot.png"
 
@@ -75,13 +76,18 @@ class MetricsPlotCallback(Callback):
 
     def on_train_end(self, trainer: Any, pl_module: Any) -> None:
         """Save the metrics plot when training completes."""
+        # Only allow the global zero process to write the metrics plot to disk.
+        # This avoids concurrent writes under DDP/FSDP, which can corrupt the
+        # output file or cause intermittent IO errors.
+        if not getattr(trainer, "is_global_zero", True):
+            return
         csv_path = self._find_csv(trainer)
         if csv_path is None:
             return
         history = self._read_csv(csv_path)
         if not history:
             return
-        output_dir = Path(trainer.default_root_dir)
+        output_dir = csv_path.parent
         self._save_plot(history, output_dir)
 
     # ------------------------------------------------------------------
@@ -89,10 +95,35 @@ class MetricsPlotCallback(Callback):
     # ------------------------------------------------------------------
 
     def _find_csv(self, trainer: Any) -> "Path | None":
-        """Locate the CSVLogger metrics file inside the trainer's root dir."""
-        csv_path = Path(trainer.default_root_dir) / "metrics.csv"
-        if csv_path.exists():
-            return csv_path
+        """Locate the CSVLogger metrics file associated with the trainer.
+
+        This first searches for CSVLogger instances attached to the trainer and
+        uses their ``log_dir`` to locate ``metrics.csv``. If no CSVLogger is
+        found or the file does not exist there, it falls back to looking for
+        ``metrics.csv`` directly under ``trainer.default_root_dir``.
+        """
+        # Prefer metrics.csv files written by any attached CSVLogger.
+        loggers: list[Any] = []
+        if hasattr(trainer, "loggers") and trainer.loggers is not None:
+            loggers = list(trainer.loggers)
+        elif hasattr(trainer, "logger") and trainer.logger is not None:
+            loggers = [trainer.logger]
+
+        for logger in loggers:
+            if isinstance(logger, CSVLogger):
+                log_dir = getattr(logger, "log_dir", None)
+                if log_dir:
+                    csv_path = Path(log_dir) / "metrics.csv"
+                    if csv_path.exists():
+                        return csv_path
+
+        # Fallback: assume metrics.csv is directly under default_root_dir.
+        default_root = getattr(trainer, "default_root_dir", None)
+        if default_root is not None:
+            csv_path = Path(default_root) / "metrics.csv"
+            if csv_path.exists():
+                return csv_path
+
         return None
 
     def _read_csv(self, path: Path) -> list[dict]:
@@ -100,10 +131,15 @@ class MetricsPlotCallback(Callback):
             return list(csv.DictReader(fh))
 
     def _save_plot(self, history: list[dict], output_dir: Path) -> None:
-        import matplotlib
+        try:
+            import matplotlib
 
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+        except ImportError:
+            # matplotlib is an optional dependency (installed via rfdetr[visual]);
+            # if it's missing, skip plotting without failing training.
+            return
 
         e_loss, train_loss = _epoch_col(history, _LOSS_KEYS["train"])
         _, val_loss = _epoch_col(history, _LOSS_KEYS["val"])

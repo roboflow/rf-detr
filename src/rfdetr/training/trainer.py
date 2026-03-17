@@ -139,7 +139,13 @@ def build_trainer(
         )
 
     # Metrics plot — reads metrics.csv written by CSVLogger and saves a PNG.
-    callbacks.append(MetricsPlotCallback())
+    try:
+        callbacks.append(MetricsPlotCallback())
+    except (ModuleNotFoundError, ImportError) as exc:
+        _logger.warning(
+            "Metrics plotting disabled: %s. Install visual extras (e.g. matplotlib) to enable plots.",
+            exc,
+        )
 
     # --- Build loggers ---
     # Each logger is guarded by a try/except because tensorboard, wandb, and mlflow
