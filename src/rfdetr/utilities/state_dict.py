@@ -107,5 +107,7 @@ def validate_checkpoint_compatibility(checkpoint: Dict[str, Any], model_args: An
     if ckpt_patch_size is not None and model_patch_size is not None and ckpt_patch_size != model_patch_size:
         raise ValueError(
             f"The checkpoint was trained with patch_size={ckpt_patch_size}, but the current model uses "
-            f"patch_size={model_patch_size}. The checkpoint is incompatible with this model architecture."
+            f"patch_size={model_patch_size}. The checkpoint is incompatible with this model architecture. "
+            "To resolve this, either instantiate/configure the model with the checkpoint's patch_size or "
+            "use a checkpoint that was trained with the same patch_size as the current model."
         )
