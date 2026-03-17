@@ -5674,8 +5674,8 @@ only constructed once even if <code>setup</code> is called multiple times.</p>
         <p>Return the training DataLoader.</p>
 <p>Uses a replacement sampler when the dataset is too small to fill
 <code>_MIN_TRAIN_BATCHES</code> effective batches (matching legacy behaviour in
-<code>main.py</code>).  Otherwise uses a <code>BatchSampler</code> with
-<code>drop_last=True</code> to avoid incomplete batches.</p>
+<code>main.py</code>).  Otherwise uses <code>shuffle=True, drop_last=True</code> so that
+PTL can auto-inject <code>DistributedSampler</code> in DDP mode.</p>
 
 
     <p><span class="doc-section-title">Returns:</span></p>
