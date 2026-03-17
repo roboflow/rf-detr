@@ -24,6 +24,7 @@ from rfdetr.datasets.coco import compute_multi_scale_scales
 from rfdetr.models.lwdetr import build_criterion_and_postprocessors, build_model
 from rfdetr.training.param_groups import get_param_dict
 from rfdetr.utilities.logger import get_logger
+from rfdetr.utilities.state_dict import validate_checkpoint_compatibility
 
 logger = get_logger()
 
@@ -114,6 +115,8 @@ class RFDETRModule(LightningModule):
 
         if "args" in checkpoint and hasattr(checkpoint["args"], "class_names"):
             self._pretrain_class_names = checkpoint["args"].class_names
+
+        validate_checkpoint_compatibility(checkpoint, args)
 
         checkpoint_num_classes = checkpoint["model"]["class_embed.bias"].shape[0]
         if checkpoint_num_classes != args.num_classes + 1:
@@ -276,6 +279,21 @@ class RFDETRModule(LightningModule):
             sync_dist=train_log_sync_dist,
             batch_size=batch_size,
         )
+        optimizer = self.optimizers()
+        if isinstance(optimizer, list):
+            optimizer = optimizer[0]
+        # Optimizer may have multiple param groups with different LRs (e.g., backbone/decoder).
+        # Preserve the first group's LR for backward compatibility, but also log the
+        # min/max across all groups so the progress bar reflects the full schedule.
+        group_lrs = [pg["lr"] for pg in optimizer.param_groups if "lr" in pg]
+        if group_lrs:
+            base_lr = group_lrs[0]
+            min_lr = min(group_lrs)
+            max_lr = max(group_lrs)
+            # Keep LR visible in the live progress bar every step.
+            self.log("train/lr", base_lr, prog_bar=True, on_step=True, on_epoch=False)
+            self.log("train/lr_min", min_lr, prog_bar=True, on_step=True, on_epoch=False)
+            self.log("train/lr_max", max_lr, prog_bar=True, on_step=True, on_epoch=False)
         return loss_scaled
 
     def validation_step(self, batch: Tuple, batch_idx: int) -> Dict[str, Any]:
