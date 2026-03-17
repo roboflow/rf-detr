@@ -631,6 +631,8 @@ class TestTrainingStep:
         lr_calls = [c for c in module.log.call_args_list if c[0][0] == "train/lr"]
         assert len(lr_calls) == 1
         assert lr_calls[0].kwargs.get("prog_bar") is True
+        assert lr_calls[0].kwargs.get("on_step") is True
+        assert lr_calls[0].kwargs.get("on_epoch") is False
 
     def test_logs_individual_losses_as_dict(self, tmp_path):
         """Each component loss must be logged separately under train/ prefix."""
