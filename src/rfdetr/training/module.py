@@ -276,6 +276,11 @@ class RFDETRModule(LightningModule):
             sync_dist=train_log_sync_dist,
             batch_size=batch_size,
         )
+        optimizer = self.optimizers()
+        if isinstance(optimizer, list):
+            optimizer = optimizer[0]
+        current_lr = optimizer.param_groups[0]["lr"]
+        self.log("train/lr", current_lr, prog_bar=True, on_step=True, on_epoch=False)
         return loss_scaled
 
     def validation_step(self, batch: Tuple, batch_idx: int) -> Dict[str, Any]:

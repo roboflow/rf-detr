@@ -622,6 +622,16 @@ class TestTrainingStep:
         assert len(train_loss_calls) == 1
         assert train_loss_calls[0].kwargs.get("prog_bar") is True
 
+    def test_logs_learning_rate_to_prog_bar(self, tmp_path):
+        """Current learning rate must be logged as train/lr with prog_bar=True for monitoring."""
+        module, samples, targets, _, _ = self._run_step(tmp_path)
+
+        module.training_step((samples, targets), batch_idx=0)
+
+        lr_calls = [c for c in module.log.call_args_list if c[0][0] == "train/lr"]
+        assert len(lr_calls) == 1
+        assert lr_calls[0].kwargs.get("prog_bar") is True
+
     def test_logs_individual_losses_as_dict(self, tmp_path):
         """Each component loss must be logged separately under train/ prefix."""
         loss_dict = {"loss_ce": torch.tensor(0.5), "loss_bbox": torch.tensor(0.3)}
