@@ -586,6 +586,10 @@ class TestTrainingStep:
         fake_criterion.weight_dict = weight_dict or {"loss_ce": 1.0}
         module.log = MagicMock()
         module.log_dict = MagicMock()
+        # Provide a real optimizer so param_groups carries a real "lr" key.
+        real_param = nn.Parameter(torch.randn(4))
+        real_optimizer = torch.optim.SGD([real_param], lr=1e-3)
+        module.optimizers = MagicMock(return_value=real_optimizer)
         trainer = MagicMock()
         trainer.accumulate_grad_batches = accumulate_grad_batches
         module._trainer = trainer
