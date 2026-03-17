@@ -175,7 +175,7 @@ class RFDETRModule(LightningModule):
         preserving deterministic training behaviour for actual fit runs.
         """
         if self.train_config.seed is not None:
-            seed_everything(self.train_config.seed, workers=True)
+            seed_everything(self.train_config.seed + self.global_rank, workers=True)
 
     def on_train_batch_start(self, batch: Tuple, batch_idx: int) -> None:
         """Apply optional multi-scale resize to the incoming batch.

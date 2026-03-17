@@ -29,6 +29,7 @@ from .helpers import (
     _FakeCriterion,
     _FakeDataset,
     _FakeDatasetWithMasks,
+    _FakePostProcess,
     _make_param_dicts,
     _TinyModel,
 )
@@ -279,3 +280,60 @@ class TestBuildTrainerSmoke:
             datamodule = RFDETRDataModule(mc, tc)
             trainer = build_trainer(tc, mc, accelerator="cpu", fast_dev_run=2)
             trainer.fit(module, datamodule=datamodule)
+
+
+class _DDPModule(RFDETRModule):
+    """RFDETRModule subclass for ddp_spawn smoke tests.
+
+    Overrides ``configure_optimizers`` so ``get_param_dict`` is never called
+    in child processes.  ``ddp_spawn`` forks child processes that unpack a
+    pickled copy of this module; patches applied in the parent process are not
+    visible in children, so the real ``get_param_dict`` would be called and
+    would fail on ``_TinyModel`` (no ``.backbone`` attribute).
+
+    Must be defined at module level so ``pickle`` can look up the class by
+    qualified name when deserialising in the child process.
+    """
+
+    def configure_optimizers(self):
+        """Minimal single-group AdamW — bypasses get_param_dict."""
+        return torch.optim.AdamW(self.parameters(), lr=1e-4)
+
+
+class TestDDPSmoke:
+    """DDP training smoke test using ddp_spawn on CPU with 2 workers.
+
+    ``ddp_spawn`` forks child processes, so all objects passed to
+    ``trainer.fit()`` must be picklable.  ``MagicMock`` is NOT picklable;
+    this suite uses ``_FakePostProcess``, plain dataset instances, and
+    ``_DDPModule`` (module-level class) instead.
+    """
+
+    def test_ddp_spawn_fit_runs_without_error(self, base_model_config, base_train_config):
+        """ddp_spawn with 2 CPU workers must run fast_dev_run=2 without error."""
+        mc = base_model_config()
+        tc = base_train_config(use_ema=False, run_test=False, devices=2, strategy="ddp_spawn")
+
+        fake_dataset = _FakeDataset(length=20)
+
+        with (
+            patch("rfdetr.training.module.build_model", return_value=_TinyModel()),
+            patch(
+                "rfdetr.training.module.build_criterion_and_postprocessors",
+                return_value=(_FakeCriterion(), _FakePostProcess()),
+            ),
+        ):
+            module = _DDPModule(mc, tc)
+
+        datamodule = RFDETRDataModule(mc, tc)
+        # Pre-set datasets: build_dataset mock doesn't survive the spawn boundary.
+        datamodule._dataset_train = fake_dataset
+        datamodule._dataset_val = fake_dataset
+
+        trainer = build_trainer(
+            tc,
+            mc,
+            accelerator="cpu",
+            fast_dev_run=2,
+        )
+        trainer.fit(module, datamodule=datamodule)

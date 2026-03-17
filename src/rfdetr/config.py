@@ -6,7 +6,7 @@
 
 
 import os
-from typing import Any, ClassVar, Dict, List, Literal, Mapping, Optional
+from typing import Any, ClassVar, Dict, List, Literal, Mapping, Optional, Union
 
 import torch
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
@@ -342,6 +342,9 @@ class TrainConfig(BaseModel):
     clip_max_norm: float = 0.1
     seed: Optional[int] = None
     sync_bn: bool = False
+    strategy: str = "auto"
+    devices: Union[int, str] = 1
+    num_nodes: int = 1
     fp16_eval: bool = False
     lr_scheduler: Literal["step", "cosine"] = "step"
     lr_min_factor: float = 0.0

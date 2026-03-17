@@ -110,8 +110,8 @@ class RFDETRDataModule(LightningDataModule):
 
         Uses a replacement sampler when the dataset is too small to fill
         ``_MIN_TRAIN_BATCHES`` effective batches (matching legacy behaviour in
-        ``main.py``).  Otherwise uses a ``BatchSampler`` with
-        ``drop_last=True`` to avoid incomplete batches.
+        ``main.py``).  Otherwise uses ``shuffle=True, drop_last=True`` so that
+        PTL can auto-inject ``DistributedSampler`` in DDP mode.
 
         Returns:
             DataLoader for the training dataset.
@@ -143,14 +143,11 @@ class RFDETRDataModule(LightningDataModule):
                 prefetch_factor=self._prefetch_factor,
             )
 
-        batch_sampler = torch.utils.data.BatchSampler(
-            torch.utils.data.RandomSampler(dataset),
-            batch_size,
-            drop_last=True,
-        )
         return DataLoader(
             dataset,
-            batch_sampler=batch_sampler,
+            batch_size=batch_size,
+            shuffle=True,
+            drop_last=True,
             collate_fn=collate_fn,
             num_workers=args.num_workers,
             pin_memory=self._pin_memory,

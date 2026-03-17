@@ -92,6 +92,17 @@ class _FakeDatasetWithMasks(_FakeDataset):
         return image, target
 
 
+class _FakePostProcess:
+    """Picklable postprocessor for ddp_spawn tests.
+
+    ``MagicMock`` is not picklable and cannot survive the subprocess boundary
+    that ``ddp_spawn`` creates.  This plain class is a drop-in replacement.
+    """
+
+    def __call__(self, outputs, orig_sizes):
+        return _fake_postprocess(outputs, orig_sizes)
+
+
 def _fake_postprocess(outputs, orig_sizes):
     """Return one non-empty prediction per image so COCOEvalCallback has something to score."""
     n = orig_sizes.shape[0]
