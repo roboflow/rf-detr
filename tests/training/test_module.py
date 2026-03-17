@@ -364,6 +364,82 @@ class TestLoadPretrainWeights:
 
         assert module._pretrain_class_names == ["cat", "dog"]
 
+    @patch("rfdetr.training.module.torch.load")
+    @patch("rfdetr.training.module.validate_pretrain_weights")
+    def test_seg_checkpoint_into_detection_model_raises(
+        self, mock_validate, mock_torch_load, base_model_config, build_module
+    ):
+        """Loading a segmentation checkpoint into a detection model must raise ValueError."""
+        mc = base_model_config(num_classes=90)
+        ckpt_args = SimpleNamespace(segmentation_head=True, patch_size=12)
+        checkpoint = self._make_checkpoint(num_classes_in_ckpt=91)
+        checkpoint["args"] = ckpt_args
+        mock_torch_load.return_value = checkpoint
+
+        module, _, _, _ = build_module(model_config=mc)
+        module._args.pretrain_weights = "/fake/weights.pth"
+        module._args.segmentation_head = False
+
+        with pytest.raises(ValueError, match="segmentation head"):
+            module._load_pretrain_weights()
+
+    @patch("rfdetr.training.module.torch.load")
+    @patch("rfdetr.training.module.validate_pretrain_weights")
+    def test_detection_checkpoint_into_seg_model_raises(
+        self, mock_validate, mock_torch_load, base_model_config, build_module
+    ):
+        """Loading a detection checkpoint into a segmentation model must raise ValueError."""
+        mc = base_model_config(num_classes=90)
+        ckpt_args = SimpleNamespace(segmentation_head=False, patch_size=16)
+        checkpoint = self._make_checkpoint(num_classes_in_ckpt=91)
+        checkpoint["args"] = ckpt_args
+        mock_torch_load.return_value = checkpoint
+
+        module, _, _, _ = build_module(model_config=mc)
+        module._args.pretrain_weights = "/fake/weights.pth"
+        module._args.segmentation_head = True
+
+        with pytest.raises(ValueError, match="segmentation head"):
+            module._load_pretrain_weights()
+
+    @patch("rfdetr.training.module.torch.load")
+    @patch("rfdetr.training.module.validate_pretrain_weights")
+    def test_patch_size_mismatch_raises(self, mock_validate, mock_torch_load, base_model_config, build_module):
+        """Loading a checkpoint with a different patch_size must raise ValueError."""
+        mc = base_model_config(num_classes=90)
+        ckpt_args = SimpleNamespace(segmentation_head=False, patch_size=12)
+        checkpoint = self._make_checkpoint(num_classes_in_ckpt=91)
+        checkpoint["args"] = ckpt_args
+        mock_torch_load.return_value = checkpoint
+
+        module, _, _, _ = build_module(model_config=mc)
+        module._args.pretrain_weights = "/fake/weights.pth"
+        module._args.segmentation_head = False
+        module._args.patch_size = 16
+
+        with pytest.raises(ValueError, match="patch_size"):
+            module._load_pretrain_weights()
+
+    @patch("rfdetr.training.module.torch.load")
+    @patch("rfdetr.training.module.validate_pretrain_weights")
+    def test_compatible_checkpoint_does_not_raise(
+        self, mock_validate, mock_torch_load, base_model_config, build_module
+    ):
+        """A checkpoint matching segmentation_head and patch_size must load without error."""
+        mc = base_model_config(num_classes=90)
+        ckpt_args = SimpleNamespace(segmentation_head=False, patch_size=14, class_names=[])
+        checkpoint = self._make_checkpoint(num_classes_in_ckpt=91)
+        checkpoint["args"] = ckpt_args
+        mock_torch_load.return_value = checkpoint
+
+        module, _, _, _ = build_module(model_config=mc)
+        module._args.pretrain_weights = "/fake/weights.pth"
+        module._args.segmentation_head = False
+        module._args.patch_size = 14
+
+        # Should not raise.
+        module._load_pretrain_weights()
+
 
 class TestApplyLora:
     """Tests for _apply_lora() — verifies that PEFT LoraConfig is constructed with the
@@ -602,6 +678,10 @@ class TestTrainingStep:
         fake_criterion.weight_dict = weight_dict or {"loss_ce": 1.0}
         module.log = MagicMock()
         module.log_dict = MagicMock()
+        # Provide a real optimizer so param_groups carries a real "lr" key.
+        real_param = nn.Parameter(torch.randn(4))
+        real_optimizer = torch.optim.SGD([real_param], lr=1e-3)
+        module.optimizers = MagicMock(return_value=real_optimizer)
         trainer = MagicMock()
         trainer.accumulate_grad_batches = accumulate_grad_batches
         module._trainer = trainer
@@ -637,6 +717,18 @@ class TestTrainingStep:
         train_loss_calls = [c for c in module.log.call_args_list if c[0][0] == "train/loss"]
         assert len(train_loss_calls) == 1
         assert train_loss_calls[0].kwargs.get("prog_bar") is True
+
+    def test_logs_learning_rate_to_prog_bar(self, tmp_path):
+        """Current learning rate must be logged as train/lr with prog_bar=True for monitoring."""
+        module, samples, targets, _, _ = self._run_step(tmp_path)
+
+        module.training_step((samples, targets), batch_idx=0)
+
+        lr_calls = [c for c in module.log.call_args_list if c[0][0] == "train/lr"]
+        assert len(lr_calls) == 1
+        assert lr_calls[0].kwargs.get("prog_bar") is True
+        assert lr_calls[0].kwargs.get("on_step") is True
+        assert lr_calls[0].kwargs.get("on_epoch") is False
 
     def test_logs_individual_losses_as_dict(self, tmp_path):
         """Each component loss must be logged separately under train/ prefix."""

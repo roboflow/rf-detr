@@ -16,6 +16,7 @@
 import argparse
 import warnings
 from collections import defaultdict
+from types import SimpleNamespace
 from typing import Any, Dict
 from unittest.mock import MagicMock, patch
 
@@ -702,3 +703,87 @@ class TestPublicAPIExports:
 
         # It is NOT directly on rfdetr (Phase 7.7 spec lists only the three PTL exports)
         assert not hasattr(rfdetr, "convert_legacy_checkpoint")
+
+
+# ---------------------------------------------------------------------------
+# 6. _load_pretrain_weights_into — detr.py path (the non-PTL scenario from #806)
+# ---------------------------------------------------------------------------
+
+
+def _make_detr_args(
+    pretrain_weights="/fake/weights.pth",
+    num_classes=90,
+    num_queries=300,
+    group_detr=13,
+    segmentation_head=False,
+    patch_size=14,
+):
+    """Return a SimpleNamespace shaped like the args passed to _load_pretrain_weights_into."""
+    return SimpleNamespace(
+        pretrain_weights=pretrain_weights,
+        num_classes=num_classes,
+        num_queries=num_queries,
+        group_detr=group_detr,
+        segmentation_head=segmentation_head,
+        patch_size=patch_size,
+    )
+
+
+def _make_detr_checkpoint(
+    num_classes=91,
+    num_queries=300,
+    group_detr=13,
+    segmentation_head=False,
+    patch_size=14,
+):
+    """Return a minimal checkpoint dict for _load_pretrain_weights_into tests."""
+    total_queries = num_queries * group_detr
+    state = {
+        "class_embed.bias": torch.zeros(num_classes),
+        "refpoint_embed.weight": torch.zeros(total_queries, 4),
+        "query_feat.weight": torch.zeros(total_queries, 256),
+    }
+    ckpt_args = SimpleNamespace(
+        segmentation_head=segmentation_head,
+        patch_size=patch_size,
+        class_names=[],
+    )
+    return {"model": state, "args": ckpt_args}
+
+
+class TestLoadPretrainWeightsInto:
+    """Tests for _load_pretrain_weights_into (detr.py path) — the non-PTL code path
+    exercised when RFDETRNano(pretrain_weights=...) is called directly (issue #806)."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_download(self, monkeypatch):
+        """Suppress all download and file-existence side effects."""
+        monkeypatch.setattr("rfdetr.detr.download_pretrain_weights", lambda *a, **kw: None)
+        monkeypatch.setattr("rfdetr.detr.validate_pretrain_weights", lambda *a, **kw: None)
+        monkeypatch.setattr("os.path.isfile", lambda _: True)
+
+    def test_seg_ckpt_into_detection_model_raises_via_detr_path(self, monkeypatch):
+        """Segmentation checkpoint loaded via _load_pretrain_weights_into must raise ValueError."""
+        from rfdetr.detr import _load_pretrain_weights_into
+
+        checkpoint = _make_detr_checkpoint(segmentation_head=True, patch_size=14)
+        monkeypatch.setattr("rfdetr.detr.torch.load", lambda *a, **kw: checkpoint)
+
+        fake_model = MagicMock()
+        args = _make_detr_args(segmentation_head=False, patch_size=14)
+
+        with pytest.raises(ValueError, match="segmentation head"):
+            _load_pretrain_weights_into(fake_model, args)
+
+    def test_patch_size_mismatch_raises_via_detr_path(self, monkeypatch):
+        """patch_size mismatch raised by _load_pretrain_weights_into via the detr.py path."""
+        from rfdetr.detr import _load_pretrain_weights_into
+
+        checkpoint = _make_detr_checkpoint(segmentation_head=False, patch_size=12)
+        monkeypatch.setattr("rfdetr.detr.torch.load", lambda *a, **kw: checkpoint)
+
+        fake_model = MagicMock()
+        args = _make_detr_args(segmentation_head=False, patch_size=16)
+
+        with pytest.raises(ValueError, match=r"patch_size"):
+            _load_pretrain_weights_into(fake_model, args)
