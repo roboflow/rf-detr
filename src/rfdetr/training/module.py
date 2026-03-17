@@ -279,9 +279,18 @@ class RFDETRModule(LightningModule):
         optimizer = self.optimizers()
         if isinstance(optimizer, list):
             optimizer = optimizer[0]
-        current_lr = optimizer.param_groups[0]["lr"]
-        # Keep LR visible in the live progress bar every step.
-        self.log("train/lr", current_lr, prog_bar=True, on_step=True, on_epoch=False)
+        # Optimizer may have multiple param groups with different LRs (e.g., backbone/decoder).
+        # Preserve the first group's LR for backward compatibility, but also log the
+        # min/max across all groups so the progress bar reflects the full schedule.
+        group_lrs = [pg["lr"] for pg in optimizer.param_groups if "lr" in pg]
+        if group_lrs:
+            base_lr = group_lrs[0]
+            min_lr = min(group_lrs)
+            max_lr = max(group_lrs)
+            # Keep LR visible in the live progress bar every step.
+            self.log("train/lr", base_lr, prog_bar=True, on_step=True, on_epoch=False)
+            self.log("train/lr_min", min_lr, prog_bar=True, on_step=True, on_epoch=False)
+            self.log("train/lr_max", max_lr, prog_bar=True, on_step=True, on_epoch=False)
         return loss_scaled
 
     def validation_step(self, batch: Tuple, batch_idx: int) -> Dict[str, Any]:
