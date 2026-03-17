@@ -7,7 +7,7 @@
 """Comprehensive unit tests for RFDETRModule (LightningModule wrapper)."""
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 import torch
@@ -427,14 +427,30 @@ class TestOnFitStart:
     """Tests for on_fit_start() seeding behavior."""
 
     @patch("rfdetr.training.module.seed_everything")
-    def test_seed_applied_when_configured(self, mock_seed, base_train_config, build_module):
-        """Configured seed should be applied at fit start."""
+    def test_seed_at_rank_zero(self, mock_seed, base_train_config, build_module):
+        """Rank 0: seed_everything(seed + 0) == seed_everything(seed)."""
         tc = base_train_config(seed=7)
         module, _, _, _ = build_module(train_config=tc)
 
-        module.on_fit_start()
+        with patch.object(type(module), "global_rank", new_callable=PropertyMock, return_value=0):
+            module.on_fit_start()
 
         mock_seed.assert_called_once_with(7, workers=True)
+
+    @patch("rfdetr.training.module.seed_everything")
+    def test_seed_rank_offset(self, mock_seed, base_train_config, build_module):
+        """Non-zero rank: seed_everything(seed + global_rank) must be called.
+
+        Validates the rank-offset contract — each worker seeds with a unique
+        value to prevent correlated data augmentation across DDP processes.
+        """
+        tc = base_train_config(seed=7)
+        module, _, _, _ = build_module(train_config=tc)
+
+        with patch.object(type(module), "global_rank", new_callable=PropertyMock, return_value=2):
+            module.on_fit_start()
+
+        mock_seed.assert_called_once_with(9, workers=True)  # 7 + 2
 
     @patch("rfdetr.training.module.seed_everything")
     def test_seed_skipped_when_none(self, mock_seed, base_train_config, build_module):

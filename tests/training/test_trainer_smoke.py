@@ -309,8 +309,14 @@ class TestDDPSmoke:
     ``_DDPModule`` (module-level class) instead.
     """
 
-    def test_ddp_spawn_fit_runs_without_error(self, base_model_config, base_train_config):
-        """ddp_spawn with 2 CPU workers must run fast_dev_run=2 without error."""
+    def test_ddp_spawn_fit_runs_without_error(self, monkeypatch, base_model_config, base_train_config):
+        """ddp_spawn with 2 CPU workers must run fast_dev_run=2 without error.
+
+        Sets MASTER_ADDR=127.0.0.1 so gloo resolves to the loopback interface
+        on all platforms, including Windows CI runners where hostname-based
+        resolution fails.
+        """
+        monkeypatch.setenv("MASTER_ADDR", "127.0.0.1")
         mc = base_model_config()
         tc = base_train_config(use_ema=False, run_test=False, devices=2, strategy="ddp_spawn")
 

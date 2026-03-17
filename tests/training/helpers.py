@@ -97,6 +97,9 @@ class _FakePostProcess:
 
     ``MagicMock`` is not picklable and cannot survive the subprocess boundary
     that ``ddp_spawn`` creates.  This plain class is a drop-in replacement.
+
+    Delegates to ``_fake_postprocess``; keep both in sync if the fake output
+    format changes.
     """
 
     def __call__(self, outputs, orig_sizes):

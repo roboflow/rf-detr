@@ -342,8 +342,12 @@ class TrainConfig(BaseModel):
     clip_max_norm: float = 0.1
     seed: Optional[int] = None
     sync_bn: bool = False
+    # strategy maps to PTL Trainer(strategy=...). Common values: "auto", "ddp",
+    # "ddp_spawn", "fsdp", "deepspeed". Invalid values surface as PTL errors.
     strategy: str = "auto"
     devices: Union[int, str] = 1
+    # num_nodes maps to PTL Trainer(num_nodes=...) for multi-machine training.
+    # Single-machine DDP users should leave this at 1 (the default).
     num_nodes: int = 1
     fp16_eval: bool = False
     lr_scheduler: Literal["step", "cosine"] = "step"
