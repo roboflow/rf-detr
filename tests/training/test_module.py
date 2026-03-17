@@ -662,6 +662,10 @@ class TestTrainingStep:
         fake_criterion.weight_dict = weight_dict or {"loss_ce": 1.0}
         module.log = MagicMock()
         module.log_dict = MagicMock()
+        # Provide a real optimizer so param_groups carries a real "lr" key.
+        real_param = nn.Parameter(torch.randn(4))
+        real_optimizer = torch.optim.SGD([real_param], lr=1e-3)
+        module.optimizers = MagicMock(return_value=real_optimizer)
         trainer = MagicMock()
         trainer.accumulate_grad_batches = accumulate_grad_batches
         module._trainer = trainer
@@ -697,6 +701,18 @@ class TestTrainingStep:
         train_loss_calls = [c for c in module.log.call_args_list if c[0][0] == "train/loss"]
         assert len(train_loss_calls) == 1
         assert train_loss_calls[0].kwargs.get("prog_bar") is True
+
+    def test_logs_learning_rate_to_prog_bar(self, tmp_path):
+        """Current learning rate must be logged as train/lr with prog_bar=True for monitoring."""
+        module, samples, targets, _, _ = self._run_step(tmp_path)
+
+        module.training_step((samples, targets), batch_idx=0)
+
+        lr_calls = [c for c in module.log.call_args_list if c[0][0] == "train/lr"]
+        assert len(lr_calls) == 1
+        assert lr_calls[0].kwargs.get("prog_bar") is True
+        assert lr_calls[0].kwargs.get("on_step") is True
+        assert lr_calls[0].kwargs.get("on_epoch") is False
 
     def test_logs_individual_losses_as_dict(self, tmp_path):
         """Each component loss must be logged separately under train/ prefix."""
