@@ -133,11 +133,7 @@ class TestValidateCheckpointCompatibility:
         finally:
             rf_detr_logger.propagate = prev_propagate
 
-        warning_msgs = [
-            r.getMessage()
-            for r in caplog.records
-            if r.name == "rf-detr" and r.levelno >= logging.WARNING
-        ]
+        warning_msgs = [r.getMessage() for r in caplog.records if r.name == "rf-detr" and r.levelno >= logging.WARNING]
         assert any("Pass num_classes=2" in msg for msg in warning_msgs), (
             f"Expected 'Pass num_classes=2' warning, got: {warning_msgs}"
         )
@@ -160,11 +156,7 @@ class TestValidateCheckpointCompatibility:
         finally:
             rf_detr_logger.propagate = prev_propagate
 
-        warning_msgs = [
-            r.getMessage()
-            for r in caplog.records
-            if r.name == "rf-detr" and r.levelno >= logging.WARNING
-        ]
+        warning_msgs = [r.getMessage() for r in caplog.records if r.name == "rf-detr" and r.levelno >= logging.WARNING]
         assert not warning_msgs, f"Expected no warnings, got: {warning_msgs}"
 
     def test_class_count_missing_model_key_no_warning(self, caplog):
@@ -182,9 +174,5 @@ class TestValidateCheckpointCompatibility:
         finally:
             rf_detr_logger.propagate = prev_propagate
 
-        warning_msgs = [
-            r.getMessage()
-            for r in caplog.records
-            if r.name == "rf-detr" and r.levelno >= logging.WARNING
-        ]
+        warning_msgs = [r.getMessage() for r in caplog.records if r.name == "rf-detr" and r.levelno >= logging.WARNING]
         assert not warning_msgs, f"Expected no warnings, got: {warning_msgs}"
