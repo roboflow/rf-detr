@@ -81,7 +81,7 @@ def build_trainer(
         return "32-true"
 
     # --- Strategy + EMA sharding guard ---
-    strategy = getattr(tc, "strategy", "auto")
+    strategy = tc.strategy
     sharded = any(s in str(strategy).lower() for s in ("fsdp", "deepspeed"))
     enable_ema = bool(tc.use_ema) and not sharded
     if tc.use_ema and sharded:
@@ -197,7 +197,8 @@ def build_trainer(
     trainer_config: dict[str, Any] = {
         "max_epochs": tc.epochs,
         "accelerator": accelerator,
-        "devices": 1,
+        "devices": tc.devices,
+        "num_nodes": tc.num_nodes,
         "strategy": strategy,
         "precision": _resolve_precision(),
         "accumulate_grad_batches": tc.grad_accum_steps,
