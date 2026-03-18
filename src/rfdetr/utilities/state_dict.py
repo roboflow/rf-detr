@@ -71,9 +71,9 @@ def validate_checkpoint_compatibility(checkpoint: Dict[str, Any], model_args: An
     size mismatch error.
 
     If either side is missing an attribute (e.g. a legacy checkpoint saved before
-    ``segmentation_head`` or ``patch_size`` was added to ``args``), that specific
-    check is skipped silently — this preserves backwards compatibility with
-    pre-existing checkpoints.
+        ``segmentation_head`` or ``patch_size`` was added to ``args``), that specific
+        check is skipped silently — this preserves backwards compatibility with
+        pre-existing checkpoints.
 
     Args:
         checkpoint: Loaded checkpoint dictionary, expected to contain an optional
@@ -87,11 +87,22 @@ def validate_checkpoint_compatibility(checkpoint: Dict[str, Any], model_args: An
             args do not match those of the model.
 
     Note:
-        Emits ``logger.warning`` (not an exception) for class-count mismatches
-        so that callers can still proceed with reinitialization or weight loading.
-        Two scenarios are distinguished: backbone pretrain (checkpoint has more
-        classes — head will be trimmed) and fine-tuned checkpoint (checkpoint has
-        fewer classes — ``num_classes`` will be updated to match the checkpoint).
+        This helper does not mutate ``model_args``. It emits ``logger.warning``
+        (not an exception) for class-count mismatches so that callers can still
+        proceed with reinitialization or weight loading.
+
+        Two scenarios are distinguished:
+
+        * Backbone pretrain: the checkpoint head was trained with more classes
+          than the current ``model_args.num_classes``. In this case the detection
+          head is typically reinitialized or trimmed externally to match the
+          configured number of classes.
+        * Fine-tuned checkpoint: the checkpoint head was trained with fewer
+          classes than the current ``model_args.num_classes``. If you intend to
+          reuse the checkpoint's classification head as-is, set
+          ``model_args.num_classes`` to ``ckpt_num_classes - 1`` (the value
+          reported in the warning) before loading the state dict to align the
+          configuration and silence the warning.
     """
     # Emit actionable class-count mismatch warning early, before any reinit happens.
     ckpt_class_bias = checkpoint.get("model", {}).get("class_embed.bias", None)

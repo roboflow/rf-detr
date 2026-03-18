@@ -137,11 +137,9 @@ def _load_pretrain_weights_into(nn_model: torch.nn.Module, args: Any) -> List[st
 
     checkpoint_num_classes = checkpoint["model"]["class_embed.bias"].shape[0]
     if checkpoint_num_classes != args.num_classes + 1:
-        # When the checkpoint has FEWER classes than configured, align
-        # args.num_classes with the checkpoint so the config matches the
-        # actual detection head size (used by exports and serialization).
-        if checkpoint_num_classes < args.num_classes + 1:
-            args.num_classes = checkpoint_num_classes - 1
+        # Temporarily align the detection head size with the checkpoint so
+        # that state_dict loading succeeds even when the configured
+        # num_classes differs from the checkpoint.
         nn_model.reinitialize_detection_head(checkpoint_num_classes)
 
     num_desired_queries = args.num_queries * args.group_detr
@@ -152,11 +150,11 @@ def _load_pretrain_weights_into(nn_model: torch.nn.Module, args: Any) -> List[st
 
     nn_model.load_state_dict(checkpoint["model"], strict=False)
 
-    # Only reinit head when the checkpoint has MORE classes than configured
-    # (backbone pretrain scenario, e.g. COCO 91 → fine-tune on 2 classes).
-    # When the checkpoint has FEWER classes (fine-tuned checkpoint loaded with
-    # default num_classes), we keep the loaded weights intact.
-    if args.num_classes + 1 < checkpoint_num_classes:
+    # If the configured number of classes differs from the checkpoint head,
+    # reinitialize the detection head to match the requested config. This
+    # allows intentional expansion or reduction of classes while still
+    # loading backbone and other compatible weights from the checkpoint.
+    if checkpoint_num_classes != args.num_classes + 1:
         nn_model.reinitialize_detection_head(args.num_classes + 1)
 
     return class_names
