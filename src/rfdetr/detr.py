@@ -137,6 +137,11 @@ def _load_pretrain_weights_into(nn_model: torch.nn.Module, args: Any) -> List[st
 
     checkpoint_num_classes = checkpoint["model"]["class_embed.bias"].shape[0]
     if checkpoint_num_classes != args.num_classes + 1:
+        # When the checkpoint has FEWER classes than configured, align
+        # args.num_classes with the checkpoint so the config matches the
+        # actual detection head size (used by exports and serialization).
+        if checkpoint_num_classes < args.num_classes + 1:
+            args.num_classes = checkpoint_num_classes - 1
         nn_model.reinitialize_detection_head(checkpoint_num_classes)
 
     num_desired_queries = args.num_queries * args.group_detr
