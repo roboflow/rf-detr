@@ -19,5 +19,8 @@ albumentations>=1.4.24,<3.0.0
 roboflow
 rf100vl
 
+tensorboard
+numpy
+
 # Install the package itself in editable mode
 -e .

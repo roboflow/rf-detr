@@ -536,11 +536,13 @@ class AlbumentationsWrapper:
         kpt_kp_ids: list = []
         if kpts_norm is not None and kpts_norm.numel() > 0:
             h_img, w_img = image_np.shape[:2]
-            for n in range(kpts_norm.shape[0]):
-                for k in range(kpts_norm.shape[1]):
-                    kpt_xy_flat.append((float(kpts_norm[n, k, 0]) * w_img, float(kpts_norm[n, k, 1]) * h_img))
-                    kpt_inst_ids.append(n)
-                    kpt_kp_ids.append(k)
+            N_kpt, K_kpt = kpts_norm.shape[:2]
+            # Vectorised: (N, K, 2) → absolute coords → list of (x, y) tuples.
+            xy_abs = kpts_norm[:, :, :2].cpu().numpy() * np.array([w_img, h_img], dtype=np.float32)
+            kpt_xy_flat = [tuple(row) for row in xy_abs.reshape(-1, 2)]
+            inst_grid, kp_grid = np.meshgrid(np.arange(N_kpt), np.arange(K_kpt), indexing="ij")
+            kpt_inst_ids = inst_grid.ravel().tolist()
+            kpt_kp_ids = kp_grid.ravel().tolist()
 
         # Apply transform
         transform_kwargs = {
@@ -585,24 +587,35 @@ class AlbumentationsWrapper:
             aug_h, aug_w = augmented["image"].shape[:2]
             N_new = len(target_out["boxes"])
             K = kpts_norm.shape[1]
-            # Map original instance index → new (post-filter) index.
-            orig_to_new = {orig_i: new_i for new_i, orig_i in enumerate(kept_idxs)}
             new_kpts = torch.zeros(N_new, K, 3, dtype=torch.float32)
-            aug_kpts = augmented.get("keypoints", [])
-            aug_inst = augmented.get("kpt_inst_ids", [])
-            aug_kp = augmented.get("kpt_kp_ids", [])
-            for (x_abs, y_abs), inst_id, kp_id in zip(aug_kpts, aug_inst, aug_kp):
-                inst_id = int(inst_id)
-                kp_id = int(kp_id)
-                if inst_id not in orig_to_new:
-                    continue
-                new_n = orig_to_new[inst_id]
-                orig_vis = float(kpts_norm[inst_id, kp_id, 2].item())
-                # Zero out visibility for keypoints that left the image boundary.
-                if orig_vis > 0 and 0 <= x_abs <= aug_w and 0 <= y_abs <= aug_h:
-                    new_kpts[new_n, kp_id, 0] = x_abs / aug_w
-                    new_kpts[new_n, kp_id, 1] = y_abs / aug_h
-                    new_kpts[new_n, kp_id, 2] = orig_vis
+            aug_kpts_list = augmented.get("keypoints", [])
+            if aug_kpts_list and N_new > 0:
+                # Map original instance index → new (post-filter) index via numpy array.
+                N_orig = kpts_norm.shape[0]
+                inst_map = np.full(N_orig, -1, dtype=np.int32)
+                for new_i, orig_i in enumerate(kept_idxs):
+                    inst_map[int(orig_i)] = new_i
+
+                aug_xy = np.array(aug_kpts_list, dtype=np.float32)          # (M, 2)
+                aug_inst_arr = np.array(augmented["kpt_inst_ids"], dtype=np.int32)  # (M,)
+                aug_kp_arr = np.array(augmented["kpt_kp_ids"], dtype=np.int32)     # (M,)
+
+                new_n_arr = inst_map[aug_inst_arr]                          # (M,)
+                orig_vis_arr = kpts_norm.cpu().numpy()[aug_inst_arr, aug_kp_arr, 2]  # (M,)
+
+                in_bounds = (
+                    (aug_xy[:, 0] >= 0) & (aug_xy[:, 0] <= aug_w) &
+                    (aug_xy[:, 1] >= 0) & (aug_xy[:, 1] <= aug_h)
+                )
+                valid = (new_n_arr >= 0) & (orig_vis_arr > 0) & in_bounds
+
+                if valid.any():
+                    vn = new_n_arr[valid]
+                    vk = aug_kp_arr[valid]
+                    vxy = aug_xy[valid]
+                    new_kpts[vn, vk, 0] = torch.from_numpy(vxy[:, 0] / aug_w)
+                    new_kpts[vn, vk, 1] = torch.from_numpy(vxy[:, 1] / aug_h)
+                    new_kpts[vn, vk, 2] = torch.from_numpy(orig_vis_arr[valid])
             target_out["keypoints"] = new_kpts
         image_out = Image.fromarray(augmented["image"])
         if masks_list is not None and "masks" in augmented:

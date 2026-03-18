@@ -67,61 +67,70 @@ def _run_kpt_coco_eval(acc: list[dict], num_keypoints: int) -> np.ndarray | None
         h, w = tgt["orig_size"].tolist()
         img_meta[img_id] = {"id": img_id, "width": int(w), "height": int(h)}
 
-        # ── GT annotations ──────────────────────────────────────────────
+        # ── GT annotations (vectorised) ─────────────────────────────────
         kpts_gt = tgt.get("keypoints")  # (N, K, 3) normalised [0,1] x,y,vis
         boxes_gt = tgt.get("boxes")     # (N, 4) normalised cxcywh
         iscrowd_gt = tgt.get("iscrowd")
 
         if kpts_gt is not None and boxes_gt is not None and len(boxes_gt) > 0:
             scale = boxes_gt.new_tensor([w, h, w, h])
-            boxes_xyxy = box_cxcywh_to_xyxy(boxes_gt) * scale  # (N,4) abs xyxy
+            boxes_np = (box_cxcywh_to_xyxy(boxes_gt) * scale).cpu().numpy()  # (N,4)
+            bws = boxes_np[:, 2] - boxes_np[:, 0]
+            bhs = boxes_np[:, 3] - boxes_np[:, 1]
+            areas = bws * bhs
 
-            kpts_abs = kpts_gt.clone().float()
-            kpts_abs[..., 0] *= w
-            kpts_abs[..., 1] *= h
-            kpts_abs[..., 2] = kpts_gt[..., 2].round()  # vis: 0/1/2 (int)
+            kpts_np = kpts_gt.cpu().numpy().astype(np.float32).copy()  # (N, K, 3)
+            kpts_np[..., 0] *= w
+            kpts_np[..., 1] *= h
+            kpts_np[..., 2] = np.round(kpts_np[..., 2])
+            kpts_flat_all = kpts_np.reshape(len(boxes_gt), -1)          # (N, K*3)
+            num_vis_all = (kpts_np[..., 2] > 0).sum(axis=1)             # (N,)
+            iscrowd_np = iscrowd_gt.cpu().numpy() if iscrowd_gt is not None else np.zeros(len(boxes_gt))
 
-            for i in range(len(boxes_gt)):
-                x1, y1, x2, y2 = boxes_xyxy[i].tolist()
-                bw, bh = x2 - x1, y2 - y1
-                area = bw * bh
-                if area <= 0:
-                    continue
-                kpts_flat = kpts_abs[i].reshape(-1).tolist()
-                num_vis = int((kpts_abs[i, :, 2] > 0).sum().item())
+            for i in np.where(areas > 0)[0]:
                 ann_id += 1
+                x1, y1 = float(boxes_np[i, 0]), float(boxes_np[i, 1])
                 gt_anns.append({
                     "id": ann_id,
                     "image_id": img_id,
                     "category_id": 1,
-                    "keypoints": kpts_flat,
-                    "num_keypoints": num_vis,
-                    "area": float(area),
-                    "bbox": [x1, y1, bw, bh],
-                    "iscrowd": int(iscrowd_gt[i].item()) if iscrowd_gt is not None else 0,
+                    "keypoints": kpts_flat_all[i].tolist(),
+                    "num_keypoints": int(num_vis_all[i]),
+                    "area": float(areas[i]),
+                    "bbox": [x1, y1, float(bws[i]), float(bhs[i])],
+                    "iscrowd": int(iscrowd_np[i]),
                 })
 
-        # ── DT annotations ──────────────────────────────────────────────
-        kpts_pred = pred.get("keypoints")         # (num_select, K, 2) abs
+        # ── DT annotations (vectorised, top-20 per image) ───────────────
+        # COCOeval for keypoints evaluates only maxDets=20 per image.
+        # Submitting hundreds of near-zero-confidence predictions wastes time.
+        kpts_pred = pred.get("keypoints")            # (num_select, K, 2) abs
         kpts_vis_pred = pred.get("keypoint_scores")  # (num_select, K)
-        scores_pred = pred.get("scores")              # (num_select,)
+        scores_pred = pred.get("scores")             # (num_select,)
 
         if kpts_pred is not None and kpts_vis_pred is not None and scores_pred is not None:
-            for i in range(len(scores_pred)):
-                score = float(scores_pred[i].item())
-                if score < 1e-6:
-                    continue
-                kxy = kpts_pred[i]    # (K, 2)
-                kvis = kpts_vis_pred[i]  # (K,)
-                flat: list[float] = []
-                for k in range(kxy.shape[0]):
-                    flat += [float(kxy[k, 0]), float(kxy[k, 1]), float(kvis[k])]
-                dt_anns.append({
-                    "image_id": img_id,
-                    "category_id": 1,
-                    "keypoints": flat,
-                    "score": score,
-                })
+            scores_np = scores_pred.cpu().numpy()
+            # Keep top-20 predictions above a minimum confidence threshold.
+            valid_mask = scores_np >= 0.01
+            if valid_mask.any():
+                valid_idx = np.where(valid_mask)[0]
+                order = valid_idx[np.argsort(-scores_np[valid_idx])[:20]]
+
+                kpts_np_pred = kpts_pred.cpu().numpy()      # (num_select, K, 2)
+                kvis_np = kpts_vis_pred.cpu().numpy()       # (num_select, K)
+                # (top20, K, 3): interleave x, y, vis
+                top_kpts = np.concatenate(
+                    [kpts_np_pred[order], kvis_np[order, :, np.newaxis]], axis=-1
+                )  # (top20, K, 3)
+                top_kpts_flat = top_kpts.reshape(len(order), -1)  # (top20, K*3)
+
+                for j, orig_i in enumerate(order):
+                    dt_anns.append({
+                        "image_id": img_id,
+                        "category_id": 1,
+                        "keypoints": top_kpts_flat[j].tolist(),
+                        "score": float(scores_np[orig_i]),
+                    })
 
     if not gt_anns or not dt_anns:
         return None
