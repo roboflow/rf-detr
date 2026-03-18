@@ -173,9 +173,7 @@ def probe_max_micro_batch(
         upper_fail = None
 
         while candidate <= max_micro_batch:
-            if _probe_step(
-                model, criterion, candidate, resolution, device, num_classes, amp, segmentation_head
-            ):
+            if _probe_step(model, criterion, candidate, resolution, device, num_classes, amp, segmentation_head):
                 lower_ok = candidate
                 candidate *= 2
             else:
@@ -195,9 +193,7 @@ def probe_max_micro_batch(
         hi = min(upper_fail - 1, max_micro_batch)
         while lo <= hi:
             mid = (lo + hi) // 2
-            if _probe_step(
-                model, criterion, mid, resolution, device, num_classes, amp, segmentation_head
-            ):
+            if _probe_step(model, criterion, mid, resolution, device, num_classes, amp, segmentation_head):
                 lower_ok = mid
                 lo = mid + 1
             else:
