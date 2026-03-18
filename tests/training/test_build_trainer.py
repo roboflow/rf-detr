@@ -423,3 +423,93 @@ class TestBuildTrainerSeed:
         with mock.patch("pytorch_lightning.seed_everything") as mock_seed:
             build_trainer(tc, _mc())
         mock_seed.assert_not_called()
+
+
+class TestBuildTrainerDDPFields:
+    """build_trainer() must thread devices/num_nodes/strategy from TrainConfig to Trainer."""
+
+    def test_devices_threaded_from_train_config(self, tmp_path):
+        """TrainConfig.devices is forwarded to Trainer(devices=...)."""
+        import unittest.mock as mock
+
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        tc = _tc(tmp_path, use_ema=False, devices=4)
+        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
+            build_trainer(tc, _mc())
+
+        assert captured["devices"] == 4
+
+    def test_num_nodes_threaded_from_train_config(self, tmp_path):
+        """TrainConfig.num_nodes is forwarded to Trainer(num_nodes=...)."""
+        import unittest.mock as mock
+
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        tc = _tc(tmp_path, use_ema=False, num_nodes=2)
+        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
+            build_trainer(tc, _mc())
+
+        assert captured["num_nodes"] == 2
+
+    def test_strategy_threaded_from_train_config(self, tmp_path):
+        """TrainConfig.strategy is forwarded to Trainer(strategy=...)."""
+        import unittest.mock as mock
+
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        tc = _tc(tmp_path, use_ema=False, strategy="ddp")
+        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
+            build_trainer(tc, _mc())
+
+        assert captured["strategy"] == "ddp"
+
+    def test_default_devices_is_1(self, tmp_path):
+        """Default TrainConfig.devices must produce devices=1 (single-GPU default)."""
+        import unittest.mock as mock
+
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        tc = _tc(tmp_path, use_ema=False)
+        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
+            build_trainer(tc, _mc())
+
+        assert captured["devices"] == 1
+
+    def test_default_num_nodes_is_1(self, tmp_path):
+        """Default TrainConfig.num_nodes must produce num_nodes=1."""
+        import unittest.mock as mock
+
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        tc = _tc(tmp_path, use_ema=False)
+        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
+            build_trainer(tc, _mc())
+
+        assert captured["num_nodes"] == 1
+
+    def test_devices_string_accepted(self, tmp_path):
+        """TrainConfig.devices accepts a string value (e.g. '0,1')."""
+        tc = _tc(tmp_path, use_ema=False, devices="auto")
+        # Should not raise during config construction.
+        assert tc.devices == "auto"

@@ -75,6 +75,7 @@ def _fit_and_read_csv(mc: RFDETRBaseConfig, tc: TrainConfig, criterion=None) -> 
 _REQUIRED_DETECTION = frozenset(
     {
         "train/loss",
+        "train/lr",
         "val/loss",
         "val/mAP_50",
         "val/mAP_50_95",

@@ -9,7 +9,7 @@
 import os
 import tempfile
 from collections import OrderedDict
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 
 def strip_checkpoint(checkpoint: str | os.PathLike[str]) -> None:
@@ -55,3 +55,59 @@ def clean_state_dict(state_dict: Dict[str, Any]) -> OrderedDict[str, Any]:
             k = k[7:]  # remove `module.`
         new_state_dict[k] = v
     return new_state_dict
+
+
+def validate_checkpoint_compatibility(checkpoint: Dict[str, Any], model_args: Any) -> None:
+    """Validate that a checkpoint is compatible with the model configuration.
+
+    Checks for mismatches in ``segmentation_head`` and ``patch_size`` between
+    the checkpoint's saved training arguments and the current model configuration.
+    Raises a descriptive :class:`ValueError` before ``load_state_dict`` fires so
+    that users receive a clear, actionable message instead of a cryptic tensor
+    size mismatch error.
+
+    If either side is missing an attribute (e.g. a legacy checkpoint saved before
+    ``segmentation_head`` or ``patch_size`` was added to ``args``), that specific
+    check is skipped silently — this preserves backwards compatibility with
+    pre-existing checkpoints.
+
+    Args:
+        checkpoint: Loaded checkpoint dictionary, expected to contain an optional
+            ``"args"`` key with training namespace attributes.
+        model_args: Namespace (e.g. ``types.SimpleNamespace``) with at least
+            ``segmentation_head`` and ``patch_size`` attributes describing the
+            current model.
+
+    Raises:
+        ValueError: If ``segmentation_head`` or ``patch_size`` in the checkpoint
+            args do not match those of the model.
+    """
+    if "args" not in checkpoint:
+        return
+
+    ckpt_args = checkpoint["args"]
+    ckpt_segmentation_head: Optional[bool] = getattr(ckpt_args, "segmentation_head", None)
+    model_segmentation_head: Optional[bool] = getattr(model_args, "segmentation_head", None)
+
+    if ckpt_segmentation_head is not None and model_segmentation_head is not None:
+        if ckpt_segmentation_head != model_segmentation_head:
+            if ckpt_segmentation_head:
+                raise ValueError(
+                    "The checkpoint was trained with a segmentation head, but the current model does not have one. "
+                    "Load the weights into a segmentation model (e.g. RFDETRSegNano) instead of a detection model."
+                )
+            else:
+                raise ValueError(
+                    "The current model has a segmentation head, but the checkpoint was trained without one. "
+                    "Load the weights into a detection model (e.g. RFDETRNano) instead of a segmentation model."
+                )
+
+    ckpt_patch_size: Optional[int] = getattr(ckpt_args, "patch_size", None)
+    model_patch_size: Optional[int] = getattr(model_args, "patch_size", None)
+    if ckpt_patch_size is not None and model_patch_size is not None and ckpt_patch_size != model_patch_size:
+        raise ValueError(
+            f"The checkpoint was trained with patch_size={ckpt_patch_size}, but the current model uses "
+            f"patch_size={model_patch_size}. The checkpoint is incompatible with this model architecture. "
+            "To resolve this, either instantiate/configure the model with the checkpoint's patch_size or "
+            "use a checkpoint that was trained with the same patch_size as the current model."
+        )
