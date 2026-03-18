@@ -549,7 +549,7 @@ class RFDETR:
         Returns:
             dict: A dictionary mapping class IDs to class names. The keys are integers starting from
         """
-        if hasattr(self.model, "class_names") and self.model.class_names:
+        if hasattr(self.model, "class_names") and self.model.class_names is not None:
             return {i + 1: name for i, name in enumerate(self.model.class_names)}
 
         return COCO_CLASSES

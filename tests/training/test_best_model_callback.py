@@ -404,6 +404,67 @@ class TestBestModelCallback:
         )
         assert checkpoint["args"].class_names == explicit_names
 
+    def test_checkpoint_explicit_empty_class_names_not_overwritten_by_datamodule(self, tmp_path: Path) -> None:
+        """TrainConfig(class_names=[]) is preserved even when datamodule has non-empty names.
+
+        Guard-bypass regression: the truthiness check `not getattr(..., "class_names", None)`
+        treated an explicit empty list the same as None (both falsy), silently overwriting
+        the user's intent with the datamodule's names. The fix uses `is None` identity.
+        """
+        from rfdetr.config import TrainConfig
+
+        cb = BestModelCallback(output_dir=str(tmp_path))
+        trainer = _make_trainer({"val/mAP_50_95": 0.5})
+        trainer.datamodule.class_names = ["cat", "dog"]  # would overwrite if bug exists
+
+        pl_module = _make_pl_module()
+        pl_module.train_config = TrainConfig(
+            dataset_dir=str(tmp_path / "ds"), tensorboard=False, class_names=[]
+        )
+
+        cb.on_validation_end(trainer, pl_module)
+
+        checkpoint = torch.load(
+            tmp_path / "checkpoint_best_regular.pth",
+            map_location="cpu",
+            weights_only=False,
+        )
+        assert checkpoint["args"].class_names == [], (
+            "Explicit class_names=[] in TrainConfig must not be overwritten by datamodule names"
+        )
+
+    def test_ema_checkpoint_explicit_empty_class_names_not_overwritten_by_datamodule(
+        self, tmp_path: Path
+    ) -> None:
+        """EMA path: TrainConfig(class_names=[]) is preserved even when datamodule has non-empty names.
+
+        Mirrors the regular checkpoint guard-bypass regression test for the EMA path.
+        """
+        from rfdetr.config import TrainConfig
+
+        cb = BestModelCallback(
+            output_dir=str(tmp_path),
+            monitor_ema="val/ema_mAP_50_95",
+        )
+        trainer = _make_trainer({"val/mAP_50_95": 0.4, "val/ema_mAP_50_95": 0.6})
+        trainer.datamodule.class_names = ["cat", "dog"]  # would overwrite if bug exists
+
+        pl_module = _make_pl_module()
+        pl_module.train_config = TrainConfig(
+            dataset_dir=str(tmp_path / "ds"), tensorboard=False, class_names=[]
+        )
+
+        cb.on_validation_end(trainer, pl_module)
+
+        checkpoint = torch.load(
+            tmp_path / "checkpoint_best_ema.pth",
+            map_location="cpu",
+            weights_only=False,
+        )
+        assert checkpoint["args"].class_names == [], (
+            "Explicit class_names=[] in TrainConfig must not be overwritten by datamodule names (EMA path)"
+        )
+
     def test_checkpoint_empty_class_names_populated_from_datamodule(self, tmp_path: Path) -> None:
         """Checkpoint preserves explicitly-empty dataset class names.
 

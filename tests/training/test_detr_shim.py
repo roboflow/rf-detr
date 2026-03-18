@@ -837,3 +837,49 @@ class TestLoadPretrainWeightsInto:
 
         with pytest.raises(ValueError, match=r"patch_size"):
             _load_pretrain_weights_into(fake_model, args)
+
+
+# ---------------------------------------------------------------------------
+# 7. RFDETR.class_names property — empty-list identity check
+# ---------------------------------------------------------------------------
+
+
+class TestClassNamesProperty:
+    """RFDETR.class_names property uses is-None identity, not truthiness, for empty lists."""
+
+    def test_empty_class_names_returns_empty_dict_not_coco(self):
+        """class_names property returns {} when model.class_names is [], NOT COCO_CLASSES.
+
+        Regression test for #509: the truthiness check `and self.model.class_names:`
+        treated [] as falsy and fell through to return COCO_CLASSES, defeating the
+        detr.py sync-back even after training on a dataset that reports empty names.
+        The fix uses `is not None` so that [] is preserved as an empty mapping.
+        """
+        mock_self = MagicMock()
+        mock_self.model.class_names = []
+
+        result = RFDETR.class_names.fget(mock_self)
+
+        assert result == {}, (
+            "class_names=[] must return {} (empty dict), not COCO_CLASSES"
+        )
+
+    def test_none_class_names_returns_coco(self):
+        """class_names property falls back to COCO_CLASSES when model.class_names is None."""
+        from rfdetr.assets.coco_classes import COCO_CLASSES
+
+        mock_self = MagicMock()
+        mock_self.model.class_names = None
+
+        result = RFDETR.class_names.fget(mock_self)
+
+        assert result is COCO_CLASSES
+
+    def test_custom_class_names_returned_as_one_indexed_dict(self):
+        """Non-empty class_names are returned as a 1-indexed dict."""
+        mock_self = MagicMock()
+        mock_self.model.class_names = ["cat", "dog"]
+
+        result = RFDETR.class_names.fget(mock_self)
+
+        assert result == {1: "cat", 2: "dog"}

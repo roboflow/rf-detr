@@ -134,7 +134,7 @@ class BestModelCallback(ModelCheckpoint):
         if (
             dataset_class_names is not None
             and hasattr(train_config, "model_copy")
-            and not getattr(train_config, "class_names", None)
+            and getattr(train_config, "class_names", None) is None
         ):
             train_config = train_config.model_copy(update={"class_names": dataset_class_names})
         torch.save(
@@ -179,7 +179,7 @@ class BestModelCallback(ModelCheckpoint):
             if (
                 dataset_class_names is not None
                 and hasattr(ema_train_config, "model_copy")
-                and not getattr(ema_train_config, "class_names", None)
+                and getattr(ema_train_config, "class_names", None) is None
             ):
                 ema_train_config = ema_train_config.model_copy(update={"class_names": dataset_class_names})
             torch.save(
