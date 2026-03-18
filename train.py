@@ -111,6 +111,12 @@ def parse_args():
         default=None,
         help="Path or key for pretrained weights (default: official pretrained)",
     )
+    model_group.add_argument(
+        "--force_no_pretrain",
+        action="store_true",
+        default=False,
+        help="Train from scratch — disables all pretrained weights even when a model default exists.",
+    )
 
     # ------------------------------------------------------------------ #
     # Training hyperparameters
@@ -181,7 +187,9 @@ def main():
     model_kwargs = {}
     if args.num_classes is not None:
         model_kwargs["num_classes"] = args.num_classes
-    if args.pretrain_weights is not None:
+    if args.force_no_pretrain:
+        model_kwargs["pretrain_weights"] = None
+    elif args.pretrain_weights is not None:
         model_kwargs["pretrain_weights"] = args.pretrain_weights
     if is_kpt:
         model_kwargs["num_keypoints"] = args.num_keypoints
@@ -196,6 +204,8 @@ def main():
     print(f"  Batch size   : {args.batch_size}")
     if is_kpt:
         print(f"  Keypoints    : {args.num_keypoints}")
+    if args.force_no_pretrain:
+        print("  NOTE: Training from scratch (no pretrained weights)")
     if args.train_split == "val":
         print("  NOTE: Training on the val split (train set skipped)")
     print("=" * 60)
