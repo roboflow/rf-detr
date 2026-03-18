@@ -376,7 +376,9 @@ class TrainConfig(BaseModel):
             raise ValueError("batch_size must be >= 1, or 'auto'.")
         return v
 
-    @field_validator("grad_accum_steps", "auto_batch_target_effective", "auto_batch_max_targets_per_image", mode="after")
+    @field_validator(
+        "grad_accum_steps", "auto_batch_target_effective", "auto_batch_max_targets_per_image", mode="after"
+    )
     @classmethod
     def validate_positive_train_steps(cls, v: int) -> int:
         """Validate accumulation, target-effective batch, and max targets are >= 1."""
