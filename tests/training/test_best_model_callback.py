@@ -322,6 +322,88 @@ class TestBestModelCallback:
 
         trainer.test.assert_not_called()
 
+    def test_checkpoint_class_names_populated_from_datamodule(self, tmp_path: Path) -> None:
+        """Saved checkpoint args.class_names reflects dataset class names.
+
+        Regression test for #509: checkpoints were saved with class_names=None
+        when the user did not pass class_names explicitly, causing reloaded-model
+        inference to fall through to COCO labels instead of dataset labels.
+        """
+        from rfdetr.config import TrainConfig
+
+        cb = BestModelCallback(output_dir=str(tmp_path))
+        custom_names = ["cat", "dog"]
+        trainer = _make_trainer({"val/mAP_50_95": 0.5})
+        trainer.datamodule.class_names = custom_names
+
+        pl_module = _make_pl_module()
+        # Real TrainConfig with class_names unset — the bug scenario.
+        pl_module.train_config = TrainConfig(dataset_dir=str(tmp_path / "ds"), tensorboard=False)
+
+        cb.on_validation_end(trainer, pl_module)
+
+        checkpoint = torch.load(
+            tmp_path / "checkpoint_best_regular.pth",
+            map_location="cpu",
+            weights_only=False,
+        )
+        assert checkpoint["args"].class_names == custom_names
+
+    def test_ema_checkpoint_class_names_populated_from_datamodule(self, tmp_path: Path) -> None:
+        """EMA checkpoint args.class_names also reflects dataset class names.
+
+        Regression test for #509: EMA checkpoint path was not enriched with
+        class names, so EMA-selected runs would still return COCO labels after reload.
+        """
+        from rfdetr.config import TrainConfig
+
+        cb = BestModelCallback(
+            output_dir=str(tmp_path),
+            monitor_ema="val/ema_mAP_50_95",
+        )
+        custom_names = ["cat", "dog"]
+        trainer = _make_trainer({"val/mAP_50_95": 0.4, "val/ema_mAP_50_95": 0.6})
+        trainer.datamodule.class_names = custom_names
+
+        pl_module = _make_pl_module()
+        pl_module.train_config = TrainConfig(dataset_dir=str(tmp_path / "ds"), tensorboard=False)
+
+        cb.on_validation_end(trainer, pl_module)
+
+        checkpoint = torch.load(
+            tmp_path / "checkpoint_best_ema.pth",
+            map_location="cpu",
+            weights_only=False,
+        )
+        assert checkpoint["args"].class_names == custom_names
+
+    def test_checkpoint_class_names_not_overwritten_when_already_set(self, tmp_path: Path) -> None:
+        """Explicitly-set class_names in TrainConfig are preserved in the checkpoint.
+
+        When the user passes class_names=['defect'] to TrainConfig, the saved
+        checkpoint must keep that value even if the datamodule reports different names.
+        """
+        from rfdetr.config import TrainConfig
+
+        cb = BestModelCallback(output_dir=str(tmp_path))
+        trainer = _make_trainer({"val/mAP_50_95": 0.5})
+        trainer.datamodule.class_names = ["other_class"]  # would overwrite if bug exists
+
+        pl_module = _make_pl_module()
+        explicit_names = ["defect"]
+        pl_module.train_config = TrainConfig(
+            dataset_dir=str(tmp_path / "ds"), tensorboard=False, class_names=explicit_names
+        )
+
+        cb.on_validation_end(trainer, pl_module)
+
+        checkpoint = torch.load(
+            tmp_path / "checkpoint_best_regular.pth",
+            map_location="cpu",
+            weights_only=False,
+        )
+        assert checkpoint["args"].class_names == explicit_names
+
     def test_not_global_zero_does_not_save(self, tmp_path: Path) -> None:
         """Non-main process (is_global_zero=False) must not write any files."""
         cb = BestModelCallback(

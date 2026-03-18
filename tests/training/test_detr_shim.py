@@ -165,6 +165,40 @@ class TestRFDETRTrainPTL:
             result = RFDETR.train(mock_self)
         assert result is None
 
+    def test_class_names_synced_from_datamodule_after_training(self, tmp_path):
+        """self.model.class_names is set from RFDETRDataModule.class_names after train().
+
+        Regression test for #509: custom class names were not synced back from
+        RFDETRDataModule after training, causing predict() to return COCO labels
+        instead of the dataset's class labels.
+        """
+        mock_self = _make_rfdetr_self(tmp_path)
+        p_mod, p_dm, p_bt, _mcls, dmcls, _mock_bt = _patch_lit()
+        custom_class_names = ["cat", "dog", "bird"]
+        dmcls.return_value.class_names = custom_class_names
+
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self)
+
+        assert mock_self.model.class_names == custom_class_names
+
+    def test_class_names_not_synced_when_datamodule_returns_none(self, tmp_path):
+        """self.model.class_names is NOT overwritten when datamodule.class_names is None.
+
+        Ensures the sync-back guard does not clobber existing class names
+        when the datamodule has no class information (e.g. custom dataset format).
+        """
+        mock_self = _make_rfdetr_self(tmp_path)
+        sentinel_names = ["existing_class"]
+        mock_self.model.class_names = sentinel_names
+        p_mod, p_dm, p_bt, _mcls, dmcls, _mock_bt = _patch_lit()
+        dmcls.return_value.class_names = None  # datamodule has no class names
+
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self)
+
+        assert mock_self.model.class_names == sentinel_names
+
     def test_device_kwarg_silently_dropped(self, tmp_path):
         """device= is consumed without error or warning."""
         mock_self = _make_rfdetr_self(tmp_path)

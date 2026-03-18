@@ -329,6 +329,10 @@ class RFDETR:
 
         # Sync the trained weights back so predict() / export() see the updated model.
         self.model.model = module.model
+        # Sync class names from the dataset so predict() returns the correct labels (#509).
+        dataset_class_names = datamodule.class_names
+        if dataset_class_names:
+            self.model.class_names = dataset_class_names
 
     def optimize_for_inference(self, compile=True, batch_size=1, dtype=torch.float32):
         self.remove_optimized_model()
