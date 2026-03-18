@@ -178,6 +178,12 @@ def main():
     # Expand ~ in dataset_dir
     args.dataset_dir = os.path.expanduser(args.dataset_dir)
 
+    # Auto-resume: if no explicit --resume, look for last.ckpt in output_dir.
+    if args.resume is None:
+        last_ckpt = os.path.join(args.output_dir, "last.ckpt")
+        if os.path.exists(last_ckpt):
+            args.resume = last_ckpt
+
     class_name, is_seg, is_kpt = MODEL_MAP[args.model]
 
     import rfdetr
@@ -208,6 +214,8 @@ def main():
         print("  NOTE: Training from scratch (no pretrained weights)")
     if args.train_split == "val":
         print("  NOTE: Training on the val split (train set skipped)")
+    if args.resume:
+        print(f"  Resuming from  : {args.resume}")
     print("=" * 60)
 
     model = ModelClass(**model_kwargs)

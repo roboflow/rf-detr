@@ -13,6 +13,7 @@ from typing import Any
 
 import torch
 from pytorch_lightning import Trainer
+from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import CSVLogger, MLFlowLogger, TensorBoardLogger, WandbLogger
 
 from rfdetr.config import ModelConfig, TrainConfig
@@ -128,6 +129,17 @@ def build_trainer(
             output_dir=tc.output_dir,
             monitor_ema="val/ema_mAP_50_95" if enable_ema else None,
             run_test=tc.run_test,
+        )
+    )
+
+    # Full PTL checkpoint saved after every epoch — enables auto-resume.
+    # save_top_k=0 suppresses best-model files; save_last=True writes last.ckpt.
+    callbacks.append(
+        ModelCheckpoint(
+            dirpath=tc.output_dir,
+            save_last=True,
+            save_top_k=0,
+            enable_version_counter=False,
         )
     )
 
