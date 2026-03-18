@@ -132,7 +132,7 @@ class BestModelCallback(ModelCheckpoint):
         train_config = pl_module.train_config
         dataset_class_names = getattr(trainer.datamodule, "class_names", None)
         if (
-            dataset_class_names
+            dataset_class_names is not None
             and hasattr(train_config, "model_copy")
             and not getattr(train_config, "class_names", None)
         ):
@@ -177,7 +177,7 @@ class BestModelCallback(ModelCheckpoint):
             ema_train_config = pl_module.train_config
             dataset_class_names = getattr(trainer.datamodule, "class_names", None)
             if (
-                dataset_class_names
+                dataset_class_names is not None
                 and hasattr(ema_train_config, "model_copy")
                 and not getattr(ema_train_config, "class_names", None)
             ):

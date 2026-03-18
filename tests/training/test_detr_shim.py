@@ -199,6 +199,22 @@ class TestRFDETRTrainPTL:
 
         assert mock_self.model.class_names == sentinel_names
 
+    def test_empty_class_names_synced_from_datamodule_after_training(self, tmp_path):
+        """Empty class name lists are synced and overwrite stale model labels.
+
+        Empty list is a valid explicit value and should not be treated as missing.
+        """
+        mock_self = _make_rfdetr_self(tmp_path)
+        sentinel_names = ["stale_label"]
+        mock_self.model.class_names = sentinel_names
+        p_mod, p_dm, p_bt, _mcls, dmcls, _mock_bt = _patch_lit()
+        dmcls.return_value.class_names = []
+
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self)
+
+        assert mock_self.model.class_names == []
+
     def test_device_kwarg_silently_dropped(self, tmp_path):
         """device= is consumed without error or warning."""
         mock_self = _make_rfdetr_self(tmp_path)

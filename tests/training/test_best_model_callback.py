@@ -404,6 +404,52 @@ class TestBestModelCallback:
         )
         assert checkpoint["args"].class_names == explicit_names
 
+    def test_checkpoint_empty_class_names_populated_from_datamodule(self, tmp_path: Path) -> None:
+        """Checkpoint preserves explicitly-empty dataset class names.
+
+        Empty list should be treated as a provided value, not as missing.
+        """
+        from rfdetr.config import TrainConfig
+
+        cb = BestModelCallback(output_dir=str(tmp_path))
+        trainer = _make_trainer({"val/mAP_50_95": 0.5})
+        trainer.datamodule.class_names = []
+
+        pl_module = _make_pl_module()
+        pl_module.train_config = TrainConfig(dataset_dir=str(tmp_path / "ds"), tensorboard=False)
+
+        cb.on_validation_end(trainer, pl_module)
+
+        checkpoint = torch.load(
+            tmp_path / "checkpoint_best_regular.pth",
+            map_location="cpu",
+            weights_only=False,
+        )
+        assert checkpoint["args"].class_names == []
+
+    def test_ema_checkpoint_empty_class_names_populated_from_datamodule(self, tmp_path: Path) -> None:
+        """EMA checkpoint preserves explicitly-empty dataset class names."""
+        from rfdetr.config import TrainConfig
+
+        cb = BestModelCallback(
+            output_dir=str(tmp_path),
+            monitor_ema="val/ema_mAP_50_95",
+        )
+        trainer = _make_trainer({"val/mAP_50_95": 0.4, "val/ema_mAP_50_95": 0.6})
+        trainer.datamodule.class_names = []
+
+        pl_module = _make_pl_module()
+        pl_module.train_config = TrainConfig(dataset_dir=str(tmp_path / "ds"), tensorboard=False)
+
+        cb.on_validation_end(trainer, pl_module)
+
+        checkpoint = torch.load(
+            tmp_path / "checkpoint_best_ema.pth",
+            map_location="cpu",
+            weights_only=False,
+        )
+        assert checkpoint["args"].class_names == []
+
     def test_not_global_zero_does_not_save(self, tmp_path: Path) -> None:
         """Non-main process (is_global_zero=False) must not write any files."""
         cb = BestModelCallback(

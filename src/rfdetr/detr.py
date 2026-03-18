@@ -331,7 +331,7 @@ class RFDETR:
         self.model.model = module.model
         # Sync class names from the dataset so predict() returns the correct labels (#509).
         dataset_class_names = datamodule.class_names
-        if dataset_class_names:
+        if dataset_class_names is not None:
             self.model.class_names = dataset_class_names
 
     def optimize_for_inference(self, compile=True, batch_size=1, dtype=torch.float32):
