@@ -1,3 +1,9 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+
 from __future__ import annotations
 
 import math
@@ -195,7 +201,12 @@ def resolve_auto_batch_config(
     effective_batch_size = safe_micro_batch * grad_accum_steps
     device_name = torch.cuda.get_device_name(device)
 
-    logger.info("[auto-batch] device=%s segmentation=%s resolution=%s", device_name, model_config.segmentation_head, model_config.resolution)
+    logger.info(
+        "[auto-batch] device=%s segmentation=%s resolution=%s",
+        device_name,
+        model_config.segmentation_head,
+        model_config.resolution,
+    )
     logger.info(
         "[auto-batch] safe_micro_batch=%s grad_accum_steps=%s effective_batch_size=%s",
         safe_micro_batch,

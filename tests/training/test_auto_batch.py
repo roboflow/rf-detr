@@ -1,3 +1,9 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -27,8 +33,9 @@ def test_probe_max_micro_batch_uses_exponential_then_binary_search():
         micro_batch_size = args[2]
         return micro_batch_size <= threshold
 
-    with patch("rfdetr.training.auto_batch._probe_step", side_effect=_fake_probe), patch(
-        "rfdetr.training.auto_batch.torch.cuda.empty_cache"
+    with (
+        patch("rfdetr.training.auto_batch._probe_step", side_effect=_fake_probe),
+        patch("rfdetr.training.auto_batch.torch.cuda.empty_cache"),
     ):
         safe = auto_batch.probe_max_micro_batch(
             model=model,
@@ -47,9 +54,11 @@ def test_probe_max_micro_batch_raises_if_one_is_not_safe():
     model = _TinyModule()
     criterion = _TinyModule()
 
-    with patch("rfdetr.training.auto_batch._probe_step", return_value=False), patch(
-        "rfdetr.training.auto_batch.torch.cuda.empty_cache"
-    ), pytest.raises(RuntimeError, match="micro_batch_size=1"):
+    with (
+        patch("rfdetr.training.auto_batch._probe_step", return_value=False),
+        patch("rfdetr.training.auto_batch.torch.cuda.empty_cache"),
+        pytest.raises(RuntimeError, match="micro_batch_size=1"),
+    ):
         auto_batch.probe_max_micro_batch(
             model=model,
             criterion=criterion,
@@ -65,8 +74,9 @@ def test_resolve_auto_batch_config_requires_cuda():
     model_config = SimpleNamespace(resolution=64, num_classes=5, amp=False, segmentation_head=False)
     train_config = SimpleNamespace(batch_size="auto", auto_batch_target_effective=16)
 
-    with patch("rfdetr.training.auto_batch.torch.cuda.is_available", return_value=False), pytest.raises(
-        RuntimeError, match="requires a CUDA device"
+    with (
+        patch("rfdetr.training.auto_batch.torch.cuda.is_available", return_value=False),
+        pytest.raises(RuntimeError, match="requires a CUDA device"),
     ):
         auto_batch.resolve_auto_batch_config(model_context, model_config, train_config)
 
@@ -78,12 +88,12 @@ def test_resolve_auto_batch_config_returns_expected_values():
     criterion = MagicMock()
     criterion.to.return_value = criterion
 
-    with patch("rfdetr.training.auto_batch.torch.cuda.is_available", return_value=True), patch(
-        "rfdetr.training.auto_batch.build_namespace", return_value=SimpleNamespace()
-    ), patch(
-        "rfdetr.training.auto_batch.build_criterion_and_postprocessors", return_value=(criterion, None)
-    ), patch("rfdetr.training.auto_batch.probe_max_micro_batch", return_value=5), patch(
-        "rfdetr.training.auto_batch.torch.cuda.get_device_name", return_value="Fake GPU"
+    with (
+        patch("rfdetr.training.auto_batch.torch.cuda.is_available", return_value=True),
+        patch("rfdetr.training.auto_batch.build_namespace", return_value=SimpleNamespace()),
+        patch("rfdetr.training.auto_batch.build_criterion_and_postprocessors", return_value=(criterion, None)),
+        patch("rfdetr.training.auto_batch.probe_max_micro_batch", return_value=5),
+        patch("rfdetr.training.auto_batch.torch.cuda.get_device_name", return_value="Fake GPU"),
     ):
         result = auto_batch.resolve_auto_batch_config(model_context, model_config, train_config)
 

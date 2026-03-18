@@ -295,7 +295,12 @@ class TestRFDETRTrainPTL:
             device_name="Fake GPU",
         )
         p_mod, p_dm, p_bt, *_ = _patch_lit()
-        with p_mod, p_dm, p_bt, patch("rfdetr.training.auto_batch.resolve_auto_batch_config", return_value=auto_result) as mock_resolve:
+        with (
+            p_mod,
+            p_dm,
+            p_bt,
+            patch("rfdetr.training.auto_batch.resolve_auto_batch_config", return_value=auto_result) as mock_resolve,
+        ):
             RFDETR.train(mock_self)
 
         config = mock_self.get_train_config.return_value
