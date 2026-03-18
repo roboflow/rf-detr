@@ -11,6 +11,10 @@ import tempfile
 from collections import OrderedDict
 from typing import Any, Dict, Optional
 
+from rfdetr.utilities.logger import get_logger
+
+logger = get_logger()
+
 
 def strip_checkpoint(checkpoint: str | os.PathLike[str]) -> None:
     """Strip a checkpoint file down to ``model`` and ``args`` keys only.
@@ -111,3 +115,30 @@ def validate_checkpoint_compatibility(checkpoint: Dict[str, Any], model_args: An
             "To resolve this, either instantiate/configure the model with the checkpoint's patch_size or "
             "use a checkpoint that was trained with the same patch_size as the current model."
         )
+
+    # Emit actionable class-count mismatch warning early, before any reinit happens.
+    ckpt_class_bias = checkpoint.get("model", {}).get("class_embed.bias", None)
+    if ckpt_class_bias is not None:
+        ckpt_num_classes = ckpt_class_bias.shape[0]
+        model_num_classes: Optional[int] = getattr(model_args, "num_classes", None)
+        if model_num_classes is not None and ckpt_num_classes != model_num_classes + 1:
+            if model_num_classes + 1 < ckpt_num_classes:
+                # Backbone pretrain scenario: checkpoint has more classes, head will be trimmed.
+                logger.warning(
+                    "Checkpoint has %d classes but model is configured for %d. "
+                    "The detection head will be re-initialized to %d classes.",
+                    ckpt_num_classes - 1,
+                    model_num_classes,
+                    model_num_classes,
+                )
+            else:
+                # Fine-tuned checkpoint loaded with wrong (larger) num_classes.
+                logger.warning(
+                    "Checkpoint has %d classes but model is configured for %d. "
+                    "Using checkpoint class count (%d). "
+                    "Pass num_classes=%d to suppress this warning.",
+                    ckpt_num_classes - 1,
+                    model_num_classes,
+                    ckpt_num_classes - 1,
+                    ckpt_num_classes - 1,
+                )

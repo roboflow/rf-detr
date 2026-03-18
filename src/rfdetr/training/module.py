@@ -120,11 +120,6 @@ class RFDETRModule(LightningModule):
 
         checkpoint_num_classes = checkpoint["model"]["class_embed.bias"].shape[0]
         if checkpoint_num_classes != args.num_classes + 1:
-            logger.warning(
-                "Reinitializing detection head: checkpoint has %d classes, configured for %d.",
-                checkpoint_num_classes - 1,
-                args.num_classes,
-            )
             self.model.reinitialize_detection_head(checkpoint_num_classes)
 
         # Trim query embeddings to the configured query count.
@@ -142,15 +137,6 @@ class RFDETRModule(LightningModule):
         # default num_classes), we keep the loaded weights intact.
         if args.num_classes + 1 < checkpoint_num_classes:
             self.model.reinitialize_detection_head(args.num_classes + 1)
-        elif checkpoint_num_classes < args.num_classes + 1:
-            logger.warning(
-                "Checkpoint has %d classes but model is configured for %d. "
-                "Using checkpoint class count. "
-                "Pass num_classes=%d to suppress this warning.",
-                checkpoint_num_classes - 1,
-                args.num_classes,
-                checkpoint_num_classes - 1,
-            )
 
     def _apply_lora(self) -> None:
         """Apply LoRA adapters to the backbone encoder.

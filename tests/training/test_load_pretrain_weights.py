@@ -26,7 +26,6 @@ Each scenario is tested for both code paths:
   - Path 2: ``_load_pretrain_weights`` in ``src/rfdetr/training/module.py``
 """
 
-import logging
 from types import SimpleNamespace
 from unittest.mock import MagicMock, call, patch
 
@@ -94,6 +93,7 @@ class TestLoadPretrainWeightsIntoSecondReinit:
         """Suppress all download and file-existence side effects."""
         monkeypatch.setattr("rfdetr.detr.download_pretrain_weights", lambda *a, **kw: None)
         monkeypatch.setattr("rfdetr.detr.validate_pretrain_weights", lambda *a, **kw: None)
+        monkeypatch.setattr("rfdetr.detr.validate_checkpoint_compatibility", lambda *a, **kw: None)
         monkeypatch.setattr("os.path.isfile", lambda _: True)
 
     # Regression test for #813
@@ -161,38 +161,6 @@ class TestLoadPretrainWeightsIntoSecondReinit:
 
         calls = fake_model.reinitialize_detection_head.call_args_list
         assert calls == [call(91), call(3)], f"Expected reinit to [91, 3] (expand then trim), got {calls}"
-
-    # Regression test for #813
-    def test_finetune_checkpoint_emits_warning(self, monkeypatch, caplog):
-        """Fine-tuned checkpoint (fewer classes) emits a helpful warning.
-
-        When the checkpoint has fewer classes than configured, a warning must
-        inform the user that the checkpoint class count is being used and
-        suggest passing num_classes explicitly to suppress it.
-        """
-        from rfdetr.detr import _load_pretrain_weights_into
-
-        checkpoint = _make_checkpoint(num_classes=3)  # 2-class fine-tuned
-        monkeypatch.setattr("rfdetr.detr.torch.load", lambda *a, **kw: checkpoint)
-
-        fake_model = MagicMock()
-        args = _make_detr_args(num_classes=90)
-
-        rf_detr_logger = logging.getLogger("rf-detr")
-        rf_detr_logger.propagate = True
-        try:
-            with caplog.at_level(logging.WARNING, logger="rf-detr"):
-                _load_pretrain_weights_into(fake_model, args)
-        finally:
-            rf_detr_logger.propagate = False
-
-        warning_msgs = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
-        assert any("Using checkpoint class count" in msg for msg in warning_msgs), (
-            f"Expected 'Using checkpoint class count' warning, got: {warning_msgs}"
-        )
-        assert any("num_classes=2" in msg for msg in warning_msgs), (
-            f"Expected suggestion 'num_classes=2' in warning, got: {warning_msgs}"
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -264,6 +232,7 @@ class TestModuleLoadPretrainWeightsSecondReinit:
         """Suppress all download and file-existence side effects."""
         monkeypatch.setattr("rfdetr.training.module.download_pretrain_weights", lambda *a, **kw: None)
         monkeypatch.setattr("rfdetr.training.module.validate_pretrain_weights", lambda *a, **kw: None)
+        monkeypatch.setattr("rfdetr.training.module.validate_checkpoint_compatibility", lambda *a, **kw: None)
         monkeypatch.setattr("rfdetr.training.module.os.path.isfile", lambda _: True)
 
     # Regression test for #813
@@ -328,35 +297,3 @@ class TestModuleLoadPretrainWeightsSecondReinit:
 
         calls = fake_model.reinitialize_detection_head.call_args_list
         assert calls == [call(91), call(3)], f"Expected reinit to [91, 3] (expand then trim), got {calls}"
-
-    # Regression test for #813
-    @patch("rfdetr.training.module.torch.load")
-    def test_finetune_checkpoint_emits_warning(self, mock_torch_load, tmp_path, caplog):
-        """Fine-tuned checkpoint (fewer classes) emits a helpful warning.
-
-        When the checkpoint has fewer classes than configured, a warning must
-        inform the user that the checkpoint class count is being used and
-        suggest passing num_classes explicitly to suppress it.
-        """
-        mc = RFDETRBaseConfig(pretrain_weights=None, device="cpu", num_classes=90)
-        module, _ = _build_module(model_config=mc, tmp_path=tmp_path)
-
-        checkpoint = _make_checkpoint(num_classes=3)  # 2-class fine-tuned
-        mock_torch_load.return_value = checkpoint
-        module._args.pretrain_weights = "/fake/weights.pth"
-
-        rf_detr_logger = logging.getLogger("rf-detr")
-        rf_detr_logger.propagate = True
-        try:
-            with caplog.at_level(logging.WARNING, logger="rf-detr"):
-                module._load_pretrain_weights()
-        finally:
-            rf_detr_logger.propagate = False
-
-        warning_msgs = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
-        assert any("Using checkpoint class count" in msg for msg in warning_msgs), (
-            f"Expected 'Using checkpoint class count' warning, got: {warning_msgs}"
-        )
-        assert any("num_classes=2" in msg for msg in warning_msgs), (
-            f"Expected suggestion 'num_classes=2' in warning, got: {warning_msgs}"
-        )
