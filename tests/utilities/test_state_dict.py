@@ -125,12 +125,13 @@ class TestValidateCheckpointCompatibility:
         model_args = SimpleNamespace(segmentation_head=False, patch_size=14, num_classes=90)
 
         rf_detr_logger = logging.getLogger("rf-detr")
+        prev_propagate = rf_detr_logger.propagate
         rf_detr_logger.propagate = True
         try:
             with caplog.at_level(logging.WARNING, logger="rf-detr"):
                 validate_checkpoint_compatibility(checkpoint, model_args)
         finally:
-            rf_detr_logger.propagate = False
+            rf_detr_logger.propagate = prev_propagate
 
         warning_msgs = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
         assert any("Pass num_classes=2" in msg for msg in warning_msgs), (
@@ -147,12 +148,13 @@ class TestValidateCheckpointCompatibility:
         model_args = SimpleNamespace(segmentation_head=False, patch_size=14, num_classes=90)
 
         rf_detr_logger = logging.getLogger("rf-detr")
+        prev_propagate = rf_detr_logger.propagate
         rf_detr_logger.propagate = True
         try:
             with caplog.at_level(logging.WARNING, logger="rf-detr"):
                 validate_checkpoint_compatibility(checkpoint, model_args)
         finally:
-            rf_detr_logger.propagate = False
+            rf_detr_logger.propagate = prev_propagate
 
         warning_msgs = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
         assert not warning_msgs, f"Expected no warnings, got: {warning_msgs}"
@@ -164,12 +166,13 @@ class TestValidateCheckpointCompatibility:
         model_args = SimpleNamespace(segmentation_head=False, patch_size=14, num_classes=90)
 
         rf_detr_logger = logging.getLogger("rf-detr")
+        prev_propagate = rf_detr_logger.propagate
         rf_detr_logger.propagate = True
         try:
             with caplog.at_level(logging.WARNING, logger="rf-detr"):
                 validate_checkpoint_compatibility(checkpoint, model_args)
         finally:
-            rf_detr_logger.propagate = False
+            rf_detr_logger.propagate = prev_propagate
 
         warning_msgs = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
         assert not warning_msgs, f"Expected no warnings, got: {warning_msgs}"

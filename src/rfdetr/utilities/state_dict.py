@@ -85,6 +85,13 @@ def validate_checkpoint_compatibility(checkpoint: Dict[str, Any], model_args: An
     Raises:
         ValueError: If ``segmentation_head`` or ``patch_size`` in the checkpoint
             args do not match those of the model.
+
+    Note:
+        Emits ``logger.warning`` (not an exception) for class-count mismatches
+        so that callers can still proceed with reinitialization or weight loading.
+        Two scenarios are distinguished: backbone pretrain (checkpoint has more
+        classes — head will be trimmed) and fine-tuned checkpoint (checkpoint has
+        fewer classes — ``num_classes`` will be updated to match the checkpoint).
     """
     # Emit actionable class-count mismatch warning early, before any reinit happens.
     ckpt_class_bias = checkpoint.get("model", {}).get("class_embed.bias", None)

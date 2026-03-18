@@ -126,13 +126,6 @@ class RFDETRModule(LightningModule):
             # authoritative and update args.num_classes so that the later-built
             # criterion/postprocessors expect the correct number of classes.
             if checkpoint_num_classes < args.num_classes + 1:
-                logger.warning(
-                    "Checkpoint has %d classes, but config requested %d. "
-                    "Updating num_classes to %d to match checkpoint.",
-                    checkpoint_num_classes - 1,
-                    args.num_classes,
-                    checkpoint_num_classes - 1,
-                )
                 args.num_classes = checkpoint_num_classes - 1
             self.model.reinitialize_detection_head(checkpoint_num_classes)
 

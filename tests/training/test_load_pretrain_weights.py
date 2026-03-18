@@ -94,7 +94,7 @@ class TestLoadPretrainWeightsIntoSecondReinit:
         monkeypatch.setattr("rfdetr.detr.download_pretrain_weights", lambda *a, **kw: None)
         monkeypatch.setattr("rfdetr.detr.validate_pretrain_weights", lambda *a, **kw: None)
         monkeypatch.setattr("rfdetr.detr.validate_checkpoint_compatibility", lambda *a, **kw: None)
-        monkeypatch.setattr("os.path.isfile", lambda _: True)
+        monkeypatch.setattr("rfdetr.detr.os.path.isfile", lambda _: True)
 
     # Regression test for #813
     def test_finetune_checkpoint_preserves_weights(self, monkeypatch):
