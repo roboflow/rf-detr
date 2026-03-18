@@ -122,6 +122,8 @@ class RFDETRModule(LightningModule):
         user_set_num_classes = False
         if hasattr(self, "model_config") and hasattr(self.model_config, "model_fields_set"):
             user_set_num_classes = "num_classes" in getattr(self.model_config, "model_fields_set", set())
+        default_num_classes = type(self.model_config).model_fields["num_classes"].default
+        user_overrode_default_num_classes = user_set_num_classes and args.num_classes != default_num_classes
 
         checkpoint_num_classes = checkpoint["model"]["class_embed.bias"].shape[0]
         configured_num_classes_plus_bg = args.num_classes + 1
@@ -129,9 +131,10 @@ class RFDETRModule(LightningModule):
             # Align model head size before loading checkpoint weights.
             if checkpoint_num_classes < configured_num_classes_plus_bg:
                 # Checkpoint has FEWER classes than configured.
-                if not user_set_num_classes:
+                if not user_overrode_default_num_classes:
                     # Auto-align to the checkpoint when the user did NOT explicitly
-                    # set num_classes: treat checkpoint as authoritative.
+                    # override the default num_classes: treat checkpoint as
+                    # authoritative.
                     args.num_classes = checkpoint_num_classes - 1
                     configured_num_classes_plus_bg = checkpoint_num_classes
             # In all mismatch cases we need the head to match the checkpoint's
@@ -146,6 +149,11 @@ class RFDETRModule(LightningModule):
                 checkpoint["model"][name] = checkpoint["model"][name][:num_desired_queries]
 
         self.model.load_state_dict(checkpoint["model"], strict=False)
+
+        # If the user explicitly set a class count larger than the checkpoint,
+        # expand/reinitialize the head back to the configured size after load.
+        if checkpoint_num_classes < configured_num_classes_plus_bg and user_overrode_default_num_classes:
+            self.model.reinitialize_detection_head(configured_num_classes_plus_bg)
 
         # Only trim back down when loading a larger pretrain checkpoint into a
         # smaller configured task-specific class count.

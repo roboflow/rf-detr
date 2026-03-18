@@ -4,7 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-"""Regression tests for #813: fine-tuned checkpoint weight destruction.
+"""Regression tests for fine-tuned checkpoint weight destruction.
 
 When a user loads a fine-tuned N-class checkpoint but has ``num_classes``
 configured to a LARGER value (e.g. default 90), the second reinit in both
@@ -81,7 +81,7 @@ def _make_detr_args(num_classes=90, num_queries=300, group_detr=13):
 
 
 class TestLoadPretrainWeightsIntoSecondReinit:
-    """Regression tests for #813 — _load_pretrain_weights_into (detr.py path).
+    """Regression tests for _load_pretrain_weights_into (detr.py path).
 
     Validates that the second reinitialize_detection_head call only fires when
     the checkpoint has MORE classes than configured (backbone pretrain scenario),
@@ -96,7 +96,6 @@ class TestLoadPretrainWeightsIntoSecondReinit:
         monkeypatch.setattr("rfdetr.detr.validate_checkpoint_compatibility", lambda *a, **kw: None)
         monkeypatch.setattr("rfdetr.detr.os.path.isfile", lambda _: True)
 
-    # Regression test for #813
     def test_finetune_checkpoint_preserves_weights(self, monkeypatch):
         """Fine-tuned checkpoint (fewer classes) must NOT trigger second reinit.
 
@@ -220,7 +219,7 @@ def _build_module(model_config=None, train_config=None, tmp_path=None):
 
 
 class TestModuleLoadPretrainWeightsSecondReinit:
-    """Regression tests for #813 — RFDETRModule._load_pretrain_weights (module.py path).
+    """Regression tests for RFDETRModule._load_pretrain_weights (module.py path).
 
     Validates that the second reinitialize_detection_head call only fires when
     the checkpoint has MORE classes than configured (backbone pretrain scenario),
@@ -235,16 +234,15 @@ class TestModuleLoadPretrainWeightsSecondReinit:
         monkeypatch.setattr("rfdetr.training.module.validate_checkpoint_compatibility", lambda *a, **kw: None)
         monkeypatch.setattr("rfdetr.training.module.os.path.isfile", lambda _: True)
 
-    # Regression test for #813
     @patch("rfdetr.training.module.torch.load")
     def test_finetune_checkpoint_preserves_weights(self, mock_torch_load, tmp_path):
         """Fine-tuned checkpoint (fewer classes) must NOT trigger second reinit.
 
         Scenario: 2-class fine-tuned checkpoint (bias shape [3]) loaded with
-        num_classes=90. The first reinit correctly resizes the head to 3 so
+        default num_classes=90. The first reinit correctly resizes the head to 3 so
         load_state_dict works. The second reinit must NOT resize to 91.
         """
-        mc = RFDETRBaseConfig(pretrain_weights=None, device="cpu", num_classes=90)
+        mc = RFDETRBaseConfig(pretrain_weights=None, device="cpu")
         module, fake_model = _build_module(model_config=mc, tmp_path=tmp_path)
 
         checkpoint = _make_checkpoint(num_classes=3)  # 2-class fine-tuned
@@ -259,6 +257,28 @@ class TestModuleLoadPretrainWeightsSecondReinit:
             f"Expected exactly 1 reinit call (to checkpoint size), but got {len(calls)}: "
             f"{calls}. The second reinit to {module._args.num_classes + 1} destroys loaded weights."
         )
+        assert module._args.num_classes == 2, "Default num_classes should auto-align to checkpoint classes."
+
+    @patch("rfdetr.training.module.torch.load")
+    def test_user_override_larger_than_checkpoint_reexpands_head(self, mock_torch_load, tmp_path):
+        """Explicit larger num_classes must be restored after checkpoint load.
+
+        Scenario: 91-class checkpoint loaded with explicit num_classes=93.
+        Loader must temporarily match checkpoint size for load_state_dict, then
+        expand to 94 logits and keep args.num_classes unchanged.
+        """
+        mc = RFDETRBaseConfig(pretrain_weights=None, device="cpu", num_classes=93)
+        module, fake_model = _build_module(model_config=mc, tmp_path=tmp_path)
+
+        checkpoint = _make_checkpoint(num_classes=91)
+        mock_torch_load.return_value = checkpoint
+        module._args.pretrain_weights = "/fake/weights.pth"
+
+        module._load_pretrain_weights()
+
+        calls = fake_model.reinitialize_detection_head.call_args_list
+        assert calls == [call(91), call(94)], f"Expected reinit to [91, 94] (load then expand), got {calls}"
+        assert module._args.num_classes == 93, "Explicitly configured num_classes must not be overwritten."
 
     @patch("rfdetr.training.module.torch.load")
     def test_no_mismatch_no_reinit(self, mock_torch_load, tmp_path):
