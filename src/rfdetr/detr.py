@@ -150,11 +150,9 @@ def _load_pretrain_weights_into(nn_model: torch.nn.Module, args: Any) -> List[st
 
     nn_model.load_state_dict(checkpoint["model"], strict=False)
 
-    # If the configured number of classes differs from the checkpoint head,
-    # reinitialize the detection head to match the requested config. This
-    # allows intentional expansion or reduction of classes while still
-    # loading backbone and other compatible weights from the checkpoint.
-    if checkpoint_num_classes != args.num_classes + 1:
+    # Only reinitialize back to configured size when intentionally reducing a
+    # larger pretrain checkpoint to fewer task-specific classes.
+    if args.num_classes + 1 < checkpoint_num_classes:
         nn_model.reinitialize_detection_head(args.num_classes + 1)
 
     return class_names

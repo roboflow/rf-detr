@@ -134,15 +134,9 @@ class RFDETRModule(LightningModule):
                     # set num_classes: treat checkpoint as authoritative.
                     args.num_classes = checkpoint_num_classes - 1
                     configured_num_classes_plus_bg = checkpoint_num_classes
-                # In both cases (auto-align or user-expanded fine-tune), we need the
-                # head to match the checkpoint's class count so load_state_dict
-                # succeeds without size mismatches.
-                self.model.reinitialize_detection_head(checkpoint_num_classes)
-            else:
-                # Checkpoint has MORE classes than configured (backbone pretrain
-                # scenario, e.g. COCO 91 → fine-tune on 2 classes). Respect the
-                # configured num_classes and resize the head down before loading.
-                self.model.reinitialize_detection_head(configured_num_classes_plus_bg)
+            # In all mismatch cases we need the head to match the checkpoint's
+            # class count so load_state_dict succeeds without size mismatches.
+            self.model.reinitialize_detection_head(checkpoint_num_classes)
 
         # Trim query embeddings to the configured query count.
         num_desired_queries = args.num_queries * args.group_detr
@@ -153,11 +147,8 @@ class RFDETRModule(LightningModule):
 
         self.model.load_state_dict(checkpoint["model"], strict=False)
 
-        # If the user explicitly requested MORE classes than the checkpoint had,
-        # expand/reinitialize the detection head back to the configured size after
-        # loading checkpoint weights.
-        if checkpoint_num_classes < configured_num_classes_plus_bg and user_set_num_classes:
-            self.model.reinitialize_detection_head(configured_num_classes_plus_bg)
+        # Only trim back down when loading a larger pretrain checkpoint into a
+        # smaller configured task-specific class count.
         if args.num_classes + 1 < checkpoint_num_classes:
             self.model.reinitialize_detection_head(args.num_classes + 1)
 
