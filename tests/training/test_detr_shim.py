@@ -860,9 +860,7 @@ class TestClassNamesProperty:
 
         result = RFDETR.class_names.fget(mock_self)
 
-        assert result == {}, (
-            "class_names=[] must return {} (empty dict), not COCO_CLASSES"
-        )
+        assert result == {}, "class_names=[] must return {} (empty dict), not COCO_CLASSES"
 
     def test_none_class_names_returns_coco(self):
         """class_names property falls back to COCO_CLASSES when model.class_names is None."""

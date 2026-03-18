@@ -418,9 +418,7 @@ class TestBestModelCallback:
         trainer.datamodule.class_names = ["cat", "dog"]  # would overwrite if bug exists
 
         pl_module = _make_pl_module()
-        pl_module.train_config = TrainConfig(
-            dataset_dir=str(tmp_path / "ds"), tensorboard=False, class_names=[]
-        )
+        pl_module.train_config = TrainConfig(dataset_dir=str(tmp_path / "ds"), tensorboard=False, class_names=[])
 
         cb.on_validation_end(trainer, pl_module)
 
@@ -433,9 +431,7 @@ class TestBestModelCallback:
             "Explicit class_names=[] in TrainConfig must not be overwritten by datamodule names"
         )
 
-    def test_ema_checkpoint_explicit_empty_class_names_not_overwritten_by_datamodule(
-        self, tmp_path: Path
-    ) -> None:
+    def test_ema_checkpoint_explicit_empty_class_names_not_overwritten_by_datamodule(self, tmp_path: Path) -> None:
         """EMA path: TrainConfig(class_names=[]) is preserved even when datamodule has non-empty names.
 
         Mirrors the regular checkpoint guard-bypass regression test for the EMA path.
@@ -450,9 +446,7 @@ class TestBestModelCallback:
         trainer.datamodule.class_names = ["cat", "dog"]  # would overwrite if bug exists
 
         pl_module = _make_pl_module()
-        pl_module.train_config = TrainConfig(
-            dataset_dir=str(tmp_path / "ds"), tensorboard=False, class_names=[]
-        )
+        pl_module.train_config = TrainConfig(dataset_dir=str(tmp_path / "ds"), tensorboard=False, class_names=[])
 
         cb.on_validation_end(trainer, pl_module)
 
