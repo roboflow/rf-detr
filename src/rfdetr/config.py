@@ -294,6 +294,9 @@ class TrainConfig(BaseModel):
     batch_size: int | Literal["auto"] = 4
     grad_accum_steps: int = 4
     auto_batch_target_effective: int = 16
+    # Auto-batch probe: worst-case assumptions when batch_size="auto".
+    auto_batch_max_targets_per_image: int = 100
+    auto_batch_ema_headroom: float = 0.7  # scale safe batch by this when use_ema=True (EMA uses extra memory)
     epochs: int = 100
     resume: Optional[str] = None
     ema_decay: float = 0.993
@@ -373,12 +376,22 @@ class TrainConfig(BaseModel):
             raise ValueError("batch_size must be >= 1, or 'auto'.")
         return v
 
-    @field_validator("grad_accum_steps", "auto_batch_target_effective", mode="after")
+    @field_validator("grad_accum_steps", "auto_batch_target_effective", "auto_batch_max_targets_per_image", mode="after")
     @classmethod
     def validate_positive_train_steps(cls, v: int) -> int:
-        """Validate accumulation and target-effective batch are >= 1."""
+        """Validate accumulation, target-effective batch, and max targets are >= 1."""
         if v < 1:
-            raise ValueError("grad_accum_steps and auto_batch_target_effective must be >= 1.")
+            raise ValueError(
+                "grad_accum_steps, auto_batch_target_effective, and auto_batch_max_targets_per_image must be >= 1."
+            )
+        return v
+
+    @field_validator("auto_batch_ema_headroom", mode="after")
+    @classmethod
+    def validate_ema_headroom(cls, v: float) -> float:
+        """Validate auto_batch_ema_headroom is in (0, 1]."""
+        if not (0 < v <= 1.0):
+            raise ValueError("auto_batch_ema_headroom must be in (0, 1].")
         return v
 
     @field_validator("ema_update_interval", "eval_interval", mode="after")

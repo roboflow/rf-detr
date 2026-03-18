@@ -3,6 +3,19 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
+"""Auto-batch probing: find a safe micro-batch size before training.
+
+Probe assumptions (worst-case so training does not OOM):
+- Resolution: When multi_scale is True we use the maximum of the multi-scale
+  augmentation scales (same as compute_multi_scale_scales). Otherwise we use
+  model resolution. This ensures the step uses the max resolution seen in training.
+- Targets: Memory grows with number of targets per image. We use
+  auto_batch_max_targets_per_image (config) to synthesize that many targets per
+  image so the probe reflects worst-case matcher and loss memory.
+- EMA: When use_ema is True, an EMA copy of the model is kept in memory. We
+  apply auto_batch_ema_headroom (e.g. 0.7) to the probed batch size so the
+  effective safe batch leaves room for the EMA model.
+"""
 
 from __future__ import annotations
 
@@ -14,6 +27,7 @@ import torch
 
 from rfdetr._namespace import build_namespace
 from rfdetr.config import ModelConfig, TrainConfig
+from rfdetr.datasets.coco import compute_multi_scale_scales
 from rfdetr.models.lwdetr import build_criterion_and_postprocessors
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.tensors import NestedTensor
@@ -49,30 +63,38 @@ def _make_synthetic_batch(
     device: torch.device,
     num_classes: int,
     segmentation_head: bool = False,
+    max_targets_per_image: int = 1,
 ) -> tuple[NestedTensor, list[dict[str, torch.Tensor]]]:
     """Build a minimal (samples, targets) batch for probing.
 
-    When segmentation_head is True, each target dict includes a "masks" key so that
-    the criterion's loss_masks can run without KeyError.
+    Uses max_targets_per_image targets per image so memory reflects worst-case
+    matcher and loss. When segmentation_head is True, each target dict includes
+    "masks" of shape (max_targets_per_image, resolution, resolution).
     """
     tensors = torch.randn(micro_batch_size, 3, resolution, resolution, device=device)
     mask = torch.zeros(micro_batch_size, resolution, resolution, dtype=torch.bool, device=device)
     samples = NestedTensor(tensors, mask)
 
     max_label = max(0, num_classes - 1)
+    n = max(1, max_targets_per_image)
     targets: list[dict[str, torch.Tensor]] = []
     for idx in range(micro_batch_size):
+        # Replicate one box/label n times so matcher and loss see n targets per image.
+        boxes = torch.tensor([[0.5, 0.5, 0.2, 0.2]], dtype=torch.float32, device=device).expand(n, 4)
+        labels = torch.tensor([min(1, max_label)], dtype=torch.int64, device=device).expand(n)
+        iscrowd = torch.zeros(n, dtype=torch.int64, device=device)
+        area = torch.full((n,), 0.04, dtype=torch.float32, device=device)
         t: dict[str, torch.Tensor] = {
-            "boxes": torch.tensor([[0.5, 0.5, 0.2, 0.2]], dtype=torch.float32, device=device),
-            "labels": torch.tensor([min(1, max_label)], dtype=torch.int64, device=device),
+            "boxes": boxes,
+            "labels": labels,
             "image_id": torch.tensor(idx, dtype=torch.int64, device=device),
             "orig_size": torch.tensor([resolution, resolution], dtype=torch.int64, device=device),
             "size": torch.tensor([resolution, resolution], dtype=torch.int64, device=device),
-            "iscrowd": torch.tensor([0], dtype=torch.int64, device=device),
-            "area": torch.tensor([0.04], dtype=torch.float32, device=device),
+            "iscrowd": iscrowd,
+            "area": area,
         }
         if segmentation_head:
-            t["masks"] = torch.zeros(1, resolution, resolution, dtype=torch.bool, device=device)
+            t["masks"] = torch.zeros(n, resolution, resolution, dtype=torch.bool, device=device)
         targets.append(t)
     return samples, targets
 
@@ -86,6 +108,7 @@ def _probe_step(
     num_classes: int,
     amp: bool,
     segmentation_head: bool = False,
+    max_targets_per_image: int = 1,
 ) -> bool:
     """Run one forward + loss + backward; return True if successful, False on OOM."""
     try:
@@ -97,6 +120,7 @@ def _probe_step(
             device=device,
             num_classes=num_classes,
             segmentation_head=segmentation_head,
+            max_targets_per_image=max_targets_per_image,
         )
 
         with torch.autocast(device_type="cuda", enabled=amp):
@@ -127,6 +151,7 @@ def probe_max_micro_batch(
     num_classes: int,
     amp: bool,
     segmentation_head: bool = False,
+    max_targets_per_image: int = 1,
     safety_margin: float = 0.9,
     max_micro_batch: int = 128,
 ) -> int:
@@ -145,6 +170,7 @@ def probe_max_micro_batch(
         num_classes: Number of classes (for synthetic targets).
         amp: Whether to use autocast for the forward.
         segmentation_head: If True, synthetic targets include "masks" for loss_masks.
+        max_targets_per_image: Number of synthetic targets per image (worst-case memory).
         safety_margin: Fraction of max batch to return (0 < safety_margin <= 1).
         max_micro_batch: Cap on batch size to try.
 
@@ -173,7 +199,17 @@ def probe_max_micro_batch(
         upper_fail = None
 
         while candidate <= max_micro_batch:
-            if _probe_step(model, criterion, candidate, resolution, device, num_classes, amp, segmentation_head):
+            if _probe_step(
+                model,
+                criterion,
+                candidate,
+                resolution,
+                device,
+                num_classes,
+                amp,
+                segmentation_head,
+                max_targets_per_image,
+            ):
                 lower_ok = candidate
                 candidate *= 2
             else:
@@ -193,7 +229,17 @@ def probe_max_micro_batch(
         hi = min(upper_fail - 1, max_micro_batch)
         while lo <= hi:
             mid = (lo + hi) // 2
-            if _probe_step(model, criterion, mid, resolution, device, num_classes, amp, segmentation_head):
+            if _probe_step(
+                model,
+                criterion,
+                mid,
+                resolution,
+                device,
+                num_classes,
+                amp,
+                segmentation_head,
+                max_targets_per_image,
+            ):
                 lower_ok = mid
                 lo = mid + 1
             else:
@@ -263,6 +309,25 @@ def resolve_auto_batch_config(
     if not torch.cuda.is_available() or device.type != "cuda":
         raise RuntimeError("batch_size='auto' requires a CUDA device for probing in v1.")
 
+    # Use max multi-scale resolution when multi_scale is True so probe reflects worst-case.
+    multi_scale = getattr(train_config, "multi_scale", False)
+    do_random_resize = getattr(train_config, "do_random_resize_via_padding", False)
+    if multi_scale and not do_random_resize:
+        expanded_scales = getattr(train_config, "expanded_scales", True)
+        patch_size = getattr(model_config, "patch_size", 14)
+        num_windows = getattr(model_config, "num_windows", 4)
+        scales = compute_multi_scale_scales(
+            model_config.resolution,
+            expanded_scales,
+            patch_size,
+            num_windows,
+        )
+        probe_resolution = max(scales) if scales else model_config.resolution
+    else:
+        probe_resolution = model_config.resolution
+
+    max_targets_per_image = getattr(train_config, "auto_batch_max_targets_per_image", 100)
+
     args = build_namespace(model_config, train_config)
     criterion, _ = build_criterion_and_postprocessors(args)
     criterion = criterion.to(device)
@@ -270,23 +335,32 @@ def resolve_auto_batch_config(
     safe_micro_batch = probe_max_micro_batch(
         model=model_context.model,
         criterion=criterion,
-        resolution=model_config.resolution,
+        resolution=probe_resolution,
         device=device,
         num_classes=model_config.num_classes,
         amp=bool(model_config.amp),
         segmentation_head=model_config.segmentation_head,
+        max_targets_per_image=max_targets_per_image,
         safety_margin=safety_margin,
         max_micro_batch=max_micro_batch,
     )
+
+    use_ema = getattr(train_config, "use_ema", False)
+    if use_ema:
+        headroom = getattr(train_config, "auto_batch_ema_headroom", 0.7)
+        safe_micro_batch = max(1, math.floor(safe_micro_batch * headroom))
+        logger.info("[auto-batch] Applied EMA headroom (%.2f): safe_micro_batch=%s", headroom, safe_micro_batch)
+
     grad_accum_steps = recommend_grad_accum_steps(safe_micro_batch, train_config.auto_batch_target_effective)
     effective_batch_size = safe_micro_batch * grad_accum_steps
     device_name = torch.cuda.get_device_name(device)
 
     logger.info(
-        "[auto-batch] device=%s segmentation=%s resolution=%s",
+        "[auto-batch] device=%s segmentation=%s probe_resolution=%s max_targets_per_image=%s",
         device_name,
         model_config.segmentation_head,
-        model_config.resolution,
+        probe_resolution,
+        max_targets_per_image,
     )
     logger.info(
         "[auto-batch] safe_micro_batch=%s grad_accum_steps=%s effective_batch_size=%s",
