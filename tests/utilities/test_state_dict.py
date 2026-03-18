@@ -110,7 +110,7 @@ class TestValidateCheckpointCompatibility:
         finally:
             rf_detr_logger.propagate = prev_propagate
 
-        warning_msgs = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
+        warning_msgs = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
         assert any("re-initialized to 2 classes" in msg for msg in warning_msgs), (
             f"Expected 're-initialized to 2 classes' warning, got: {warning_msgs}"
         )

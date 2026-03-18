@@ -118,11 +118,13 @@ class RFDETRModule(LightningModule):
 
         validate_checkpoint_compatibility(checkpoint, args)
 
-        # Determine whether the user explicitly set num_classes on the ModelConfig.
+        # Determine whether the user explicitly set num_classes on the ModelConfig,
+        # and whether that explicit value differs from the model default.
         user_set_num_classes = False
         if hasattr(self, "model_config") and hasattr(self.model_config, "model_fields_set"):
             user_set_num_classes = "num_classes" in getattr(self.model_config, "model_fields_set", set())
         default_num_classes = type(self.model_config).model_fields["num_classes"].default
+        # True only when the user explicitly set num_classes to a non-default value.
         user_overrode_default_num_classes = user_set_num_classes and args.num_classes != default_num_classes
 
         checkpoint_num_classes = checkpoint["model"]["class_embed.bias"].shape[0]
@@ -132,9 +134,9 @@ class RFDETRModule(LightningModule):
             if checkpoint_num_classes < configured_num_classes_plus_bg:
                 # Checkpoint has FEWER classes than configured.
                 if not user_overrode_default_num_classes:
-                    # Auto-align to the checkpoint when the user did NOT explicitly
-                    # override the default num_classes: treat checkpoint as
-                    # authoritative.
+                    # Auto-align to the checkpoint when the user did NOT provide a
+                    # non-default override for num_classes (i.e., left it at the
+                    # ModelConfig default): treat the checkpoint as authoritative.
                     args.num_classes = checkpoint_num_classes - 1
                     configured_num_classes_plus_bg = checkpoint_num_classes
             # In all mismatch cases we need the head to match the checkpoint's
