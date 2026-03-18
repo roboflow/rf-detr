@@ -152,8 +152,21 @@ def _load_pretrain_weights_into(nn_model: torch.nn.Module, args: Any) -> List[st
 
     nn_model.load_state_dict(checkpoint["model"], strict=False)
 
-    if checkpoint_num_classes != args.num_classes + 1:
+    # Only reinit head when the checkpoint has MORE classes than configured
+    # (backbone pretrain scenario, e.g. COCO 91 → fine-tune on 2 classes).
+    # When the checkpoint has FEWER classes (fine-tuned checkpoint loaded with
+    # default num_classes), we keep the loaded weights intact.
+    if args.num_classes + 1 < checkpoint_num_classes:
         nn_model.reinitialize_detection_head(args.num_classes + 1)
+    elif checkpoint_num_classes < args.num_classes + 1:
+        logger.warning(
+            "Checkpoint has %d classes but model is configured for %d. "
+            "Using checkpoint class count. "
+            "Pass num_classes=%d to suppress this warning.",
+            checkpoint_num_classes - 1,
+            args.num_classes,
+            checkpoint_num_classes - 1,
+        )
 
     return class_names
 

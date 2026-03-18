@@ -136,11 +136,21 @@ class RFDETRModule(LightningModule):
 
         self.model.load_state_dict(checkpoint["model"], strict=False)
 
-        # After loading checkpoint weights (which may have a different class count),
-        # trim the detection head back to the configured num_classes so that PostProcess
-        # returns labels in [0, num_classes) rather than [0, checkpoint_num_classes).
-        if checkpoint_num_classes != args.num_classes + 1:
+        # Only reinit head when the checkpoint has MORE classes than configured
+        # (backbone pretrain scenario, e.g. COCO 91 → fine-tune on 2 classes).
+        # When the checkpoint has FEWER classes (fine-tuned checkpoint loaded with
+        # default num_classes), we keep the loaded weights intact.
+        if args.num_classes + 1 < checkpoint_num_classes:
             self.model.reinitialize_detection_head(args.num_classes + 1)
+        elif checkpoint_num_classes < args.num_classes + 1:
+            logger.warning(
+                "Checkpoint has %d classes but model is configured for %d. "
+                "Using checkpoint class count. "
+                "Pass num_classes=%d to suppress this warning.",
+                checkpoint_num_classes - 1,
+                args.num_classes,
+                checkpoint_num_classes - 1,
+            )
 
     def _apply_lora(self) -> None:
         """Apply LoRA adapters to the backbone encoder.
