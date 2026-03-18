@@ -23,6 +23,7 @@ Dataset formats supported:
 
 import argparse
 import os
+import sys
 
 MODEL_MAP = {
     "nano":       ("RFDETRNano",      False, False),
@@ -222,6 +223,7 @@ def main():
 
     # ---- Train kwargs ----
     train_kwargs = dict(
+        progress_bar=sys.stdout.isatty(),
         dataset_dir=args.dataset_dir,
         dataset_file=args.dataset_file,
         train_split=args.train_split,
