@@ -102,3 +102,38 @@ def test_resolve_auto_batch_config_returns_expected_values():
     assert result.recommended_grad_accum_steps == 4
     assert result.effective_batch_size == 20
     assert result.device_name == "Fake GPU"
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for segmentation probe")
+def test_probe_step_with_real_segmentation_criterion(tmp_path):
+    """Run one probe step with real segmentation model and criterion so loss_masks and t['masks'] are exercised."""
+    from rfdetr._namespace import build_namespace
+    from rfdetr.config import RFDETRSegNanoConfig, SegmentationTrainConfig
+    from rfdetr.models.lwdetr import build_criterion_and_postprocessors, build_model
+
+    mc = RFDETRSegNanoConfig(pretrain_weights=None, device="cuda", num_classes=2)
+    tc = SegmentationTrainConfig(
+        dataset_dir=str(tmp_path / "ds"),
+        output_dir=str(tmp_path / "out"),
+        batch_size=2,
+        grad_accum_steps=1,
+        tensorboard=False,
+    )
+    args = build_namespace(mc, tc)
+    model = build_model(args)
+    criterion, _ = build_criterion_and_postprocessors(args)
+    device = torch.device("cuda")
+    model = model.to(device)
+    criterion = criterion.to(device)
+
+    ok = auto_batch._probe_step(
+        model=model,
+        criterion=criterion,
+        micro_batch_size=1,
+        resolution=mc.resolution,
+        device=device,
+        num_classes=mc.num_classes,
+        amp=False,
+        segmentation_head=True,
+    )
+    assert ok is True
