@@ -109,15 +109,15 @@ def _run_kpt_coco_eval(acc: list[dict], num_keypoints: int) -> np.ndarray | None
         scores_pred = pred.get("scores")             # (num_select,)
 
         if kpts_pred is not None and kpts_vis_pred is not None and scores_pred is not None:
-            scores_np = scores_pred.cpu().numpy()
+            scores_np = scores_pred.cpu().float().numpy()
             # Keep top-20 predictions above a minimum confidence threshold.
             valid_mask = scores_np >= 0.01
             if valid_mask.any():
                 valid_idx = np.where(valid_mask)[0]
                 order = valid_idx[np.argsort(-scores_np[valid_idx])[:20]]
 
-                kpts_np_pred = kpts_pred.cpu().numpy()      # (num_select, K, 2)
-                kvis_np = kpts_vis_pred.cpu().numpy()       # (num_select, K)
+                kpts_np_pred = kpts_pred.cpu().float().numpy()      # (num_select, K, 2)
+                kvis_np = kpts_vis_pred.cpu().float().numpy()       # (num_select, K)
                 # (top20, K, 3): interleave x, y, vis
                 top_kpts = np.concatenate(
                     [kpts_np_pred[order], kvis_np[order, :, np.newaxis]], axis=-1
