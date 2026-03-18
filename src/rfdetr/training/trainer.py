@@ -11,9 +11,11 @@ from __future__ import annotations
 import warnings
 from typing import Any
 
+import sys
+
 import torch
-from pytorch_lightning import Trainer
-from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning import LightningModule, Trainer
+from pytorch_lightning.callbacks import Callback, ModelCheckpoint
 from pytorch_lightning.loggers import CSVLogger, MLFlowLogger, TensorBoardLogger, WandbLogger
 
 from rfdetr.config import ModelConfig, TrainConfig
@@ -27,6 +29,32 @@ from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
 from rfdetr.utilities.logger import get_logger
 
 _logger = get_logger()
+
+
+class EpochPrintCallback(Callback):
+    """Print key metrics to stdout at the end of each validation epoch.
+
+    Always active regardless of TTY — ensures progress is visible in log files
+    when the progress bar is disabled (non-interactive / background runs).
+    """
+
+    def on_validation_epoch_end(self, trainer: Trainer, pl_module: LightningModule) -> None:
+        """Print epoch summary to stdout.
+
+        Args:
+            trainer: The Lightning Trainer instance.
+            pl_module: The module being trained.
+        """
+        if not trainer.is_global_zero or trainer.sanity_checking:
+            return
+        metrics = trainer.callback_metrics
+        epoch = trainer.current_epoch
+        parts = [f"epoch {epoch}"]
+        for key in ("val/mAP_50_95", "val/mAP_50", "val/kpt_AP_50_95", "val/kpt_AP_50", "val/kpt_AR"):
+            val = metrics.get(key)
+            if val is not None:
+                parts.append(f"{key}={val.item():.4f}")
+        print("  |  ".join(parts), flush=True)
 
 
 def build_trainer(
@@ -96,7 +124,7 @@ def build_trainer(
         )
 
     # --- Build callbacks ---
-    callbacks = []
+    callbacks: list = [EpochPrintCallback()]
 
     if enable_ema:
         callbacks.append(
