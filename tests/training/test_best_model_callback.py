@@ -730,9 +730,16 @@ class TestBestModelCallback:
             ckpt_path=str(ckpt_path),
         )
 
+        # Assert that epoch and global_step were correctly restored at fit start.
+        assert resume_probe.fit_start_epoch == 1
+        assert resume_probe.fit_start_global_step == 2
+        # The first training epoch after resume should also see the restored step.
         assert resume_probe.first_train_epoch == 1
+        assert resume_probe.first_train_global_step == 2
+        # With max_epochs=2 and limit_train_batches=2, the resumed run should
+        # perform 2 additional optimizer steps (epoch 2), ending at step 4.
         assert trainer_second.current_epoch == 2
-        assert trainer_second.global_step == 2
+        assert trainer_second.global_step == 4
 
 
 # ---------------------------------------------------------------------------
