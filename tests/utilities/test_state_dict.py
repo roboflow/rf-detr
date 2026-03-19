@@ -10,8 +10,8 @@ import logging
 from types import SimpleNamespace
 
 import pytest
-import pytorch_lightning as pl
 import torch
+from pytorch_lightning import LightningModule, Trainer
 
 from rfdetr.utilities.state_dict import _make_fit_loop_state, validate_checkpoint_compatibility
 
@@ -62,14 +62,14 @@ class TestMakeFitLoopState:
     def test_ptl_accepts_fit_loop_state(self) -> None:
         """PTL's _FitLoop.load_state_dict must not raise with our synthesised state dict."""
 
-        class _DummyModule(pl.LightningModule):
+        class _DummyModule(LightningModule):
             def training_step(self, batch, idx):
                 return torch.tensor(0.0, requires_grad=True)
 
             def configure_optimizers(self):
                 return torch.optim.SGD(self.parameters(), lr=1e-3)
 
-        trainer = pl.Trainer(max_epochs=10, accelerator="cpu", enable_progress_bar=False, logger=False)
+        trainer = Trainer(max_epochs=10, accelerator="cpu", enable_progress_bar=False, logger=False)
         trainer.strategy.connect(_DummyModule())
 
         epoch = 4

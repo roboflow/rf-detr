@@ -596,8 +596,6 @@ class TestBestModelCallback:
 
     def test_regular_checkpoint_has_ptl_version_key(self, tmp_path: Path) -> None:
         """Saved regular checkpoint must include 'pytorch-lightning_version'."""
-        import pytorch_lightning as pl
-
         cb = BestModelCallback(output_dir=str(tmp_path))
         trainer = _make_trainer({"val/mAP_50_95": 0.5})
         pl_module = _make_pl_module()

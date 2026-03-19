@@ -12,9 +12,8 @@ import shutil
 from pathlib import Path
 from typing import Optional
 
-import pytorch_lightning as pl
 import torch
-from pytorch_lightning import LightningModule, Trainer
+from pytorch_lightning import LightningModule, Trainer, __version__
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 
 from rfdetr.utilities.logger import get_logger
@@ -147,7 +146,7 @@ class BestModelCallback(ModelCheckpoint):
                 # PTL-compatible keys so trainer.fit(ckpt_path=...) works directly.
                 "state_dict": {f"model.{k}": v for k, v in model_state_dict.items()},
                 "global_step": trainer.global_step,
-                "pytorch-lightning_version": pl.__version__,
+                "pytorch-lightning_version": __version__,
                 "loops": {"fit_loop": _make_fit_loop_state(trainer.current_epoch)},
                 # Keep keys present with empty values so PTL resume paths that
                 # expect them can proceed without loading optimizer state.
@@ -204,7 +203,7 @@ class BestModelCallback(ModelCheckpoint):
                     # PTL-compatible keys so trainer.fit(ckpt_path=...) works directly.
                     "state_dict": {f"model.{k}": v for k, v in ema_state_dict.items()},
                     "global_step": trainer.global_step,
-                    "pytorch-lightning_version": pl.__version__,
+                    "pytorch-lightning_version": __version__,
                     "loops": {"fit_loop": _make_fit_loop_state(trainer.current_epoch)},
                     # Keep keys present with empty values so PTL resume paths
                     # can proceed while still starting a fresh optimizer.
