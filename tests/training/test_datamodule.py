@@ -208,7 +208,7 @@ class TestSetup:
         def _build(image_set, args, resolution):
             return datasets[image_set]
 
-        with patch("rfdetr.training.datamodule.build_dataset", side_effect=_build):
+        with patch("rfdetr.training.module_data.build_dataset", side_effect=_build):
             dm.setup(stage)
         return dm, fake_train, fake_val, fake_test
 
@@ -244,7 +244,7 @@ class TestSetup:
             requested_splits.append(image_set)
             return _fake_dataset(10)
 
-        with patch("rfdetr.training.datamodule.build_dataset", side_effect=_build):
+        with patch("rfdetr.training.module_data.build_dataset", side_effect=_build):
             dm.setup("test")
 
         assert "val" in requested_splits
@@ -262,7 +262,7 @@ class TestSetup:
         dm._dataset_train = existing_train
         dm._dataset_val = existing_val
 
-        with patch("rfdetr.training.datamodule.build_dataset") as mock_build:
+        with patch("rfdetr.training.module_data.build_dataset") as mock_build:
             dm.setup("fit")
             mock_build.assert_not_called()
 
@@ -276,7 +276,7 @@ class TestSetup:
         from rfdetr.training.module_data import RFDETRDataModule
 
         dm = RFDETRDataModule(mc, tc)
-        with patch("rfdetr.training.datamodule.build_dataset") as mock_build:
+        with patch("rfdetr.training.module_data.build_dataset") as mock_build:
             dm.setup("predict")
             mock_build.assert_not_called()
 
