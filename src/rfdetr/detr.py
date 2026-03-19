@@ -653,8 +653,8 @@ class RFDETR:
             orig_sizes.append((h, w))
 
             img_tensor = img_tensor.to(self.model.device)
-            img_tensor = F.normalize(img_tensor, self.means, self.stds)
             img_tensor = F.resize(img_tensor, (self.model.resolution, self.model.resolution))
+            img_tensor = F.normalize(img_tensor, self.means, self.stds)
 
             processed_images.append(img_tensor)
 

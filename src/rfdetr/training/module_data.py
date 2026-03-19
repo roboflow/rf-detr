@@ -90,6 +90,9 @@ class RFDETRDataModule(LightningDataModule):
             if self._dataset_test is None:
                 split = "test" if self.train_config.dataset_file == "roboflow" else "val"
                 self._dataset_test = build_dataset(split, ns, resolution)
+        elif stage == "predict":
+            if self._dataset_val is None:
+                self._dataset_val = build_dataset("val", ns, resolution)
 
     def train_dataloader(self) -> DataLoader:
         """Return the training DataLoader.
@@ -169,6 +172,24 @@ class RFDETRDataModule(LightningDataModule):
             self._dataset_test,
             batch_size=self.train_config.batch_size,
             sampler=torch.utils.data.SequentialSampler(self._dataset_test),
+            drop_last=False,
+            collate_fn=collate_fn,
+            num_workers=self.train_config.num_workers,
+            pin_memory=self._pin_memory,
+            persistent_workers=self._persistent_workers,
+            prefetch_factor=self._prefetch_factor,
+        )
+
+    def predict_dataloader(self) -> DataLoader:
+        """Return the predict DataLoader (reuses the validation dataset, no augmentation).
+
+        Returns:
+            DataLoader for the validation dataset with sequential sampling.
+        """
+        return DataLoader(
+            self._dataset_val,
+            batch_size=self.train_config.batch_size,
+            sampler=torch.utils.data.SequentialSampler(self._dataset_val),
             drop_last=False,
             collate_fn=collate_fn,
             num_workers=self.train_config.num_workers,

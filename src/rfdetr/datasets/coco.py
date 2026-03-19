@@ -350,12 +350,12 @@ def make_coco_transforms(
     For the ``"train"`` split the pipeline uses a two-branch ``OneOf`` between a
     direct resize and a resize → random-crop → resize sequence (built via
     :func:`_build_train_resize_config`), followed by the augmentation stack and
-    normalisation.  For ``"val"`` and ``"val_speed"`` only resize and
-    normalisation are applied.
+    normalisation.  For ``"val"``, ``"test"``, and ``"val_speed"`` only resize and
+    normalisation are applied — no augmentation.
 
     Args:
-        image_set: Dataset split identifier — ``"train"``, ``"val"``, or
-            ``"val_speed"``.
+        image_set: Dataset split identifier — ``"train"``, ``"val"``, ``"test"``,
+            or ``"val_speed"``.
         resolution: Target short-side resolution in pixels.  During validation the
             longest side is capped at 1333 px to preserve aspect ratio.
         multi_scale: If ``True``, sample the resize target from a range of scales
@@ -401,7 +401,7 @@ def make_coco_transforms(
         aug_wrappers = AlbumentationsWrapper.from_config(resolved_aug_config)
         return Compose([*resize_wrappers, *aug_wrappers, to_image, to_float, normalize])
 
-    if image_set == "val":
+    if image_set in ("val", "test"):
         resize_wrappers = AlbumentationsWrapper.from_config(
             [
                 {"SmallestMaxSize": {"max_size": resolution}},

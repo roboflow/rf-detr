@@ -1511,9 +1511,18 @@ class TestMakeCocoTransformsAugConfig:
 
         assert len(wrappers) == 1
 
-    def test_aug_config_not_applied_on_test(self):
-        """aug_config is ignored for the test split in make_coco_transforms_square_div_64."""
-        pipeline = make_coco_transforms_square_div_64("test", 640, aug_config={"HorizontalFlip": {"p": 1.0}})
+    @pytest.mark.parametrize(
+        "make_transforms,expected_resize_wrappers",
+        [
+            # make_coco_transforms test: SmallestMaxSize + LongestMaxSize = 2 wrappers
+            pytest.param(make_coco_transforms, 2, id="make_coco_transforms"),
+            # make_coco_transforms_square_div_64 test: Resize = 1 wrapper
+            pytest.param(make_coco_transforms_square_div_64, 1, id="make_coco_transforms_square_div_64"),
+        ],
+    )
+    def test_aug_config_not_applied_on_test(self, make_transforms, expected_resize_wrappers):
+        """aug_config is ignored for test splits — only resize wrappers are present."""
+        pipeline = make_transforms("test", 640, aug_config={"HorizontalFlip": {"p": 1.0}})
         wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
 
-        assert len(wrappers) == 1
+        assert len(wrappers) == expected_resize_wrappers
