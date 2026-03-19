@@ -827,16 +827,6 @@ class RFDETRMedium(RFDETR):
         return TrainConfig(**kwargs)
 
 
-class RFDETRLargeNew(RFDETR):
-    size = "rfdetr-large"
-
-    def get_model_config(self, **kwargs):
-        return RFDETRLargeConfig(**kwargs)
-
-    def get_train_config(self, **kwargs):
-        return TrainConfig(**kwargs)
-
-
 class RFDETRLargeDeprecated(RFDETR):
     """
     Train an RF-DETR Large model.
