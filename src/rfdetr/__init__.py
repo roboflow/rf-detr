@@ -17,6 +17,7 @@ from rfdetr.detr import (
     RFDETRSegPreview,  # DEPRECATED # noqa: F401
     RFDETRSegSmall,
     RFDETRSegXLarge,
+    RFDETRSeg,
     RFDETRSmall,
 )
 
@@ -25,6 +26,7 @@ __all__ = [
     "RFDETRSmall",
     "RFDETRMedium",
     "RFDETRLarge",
+    "RFDETRSegmentation",
     "RFDETRSegNano",
     "RFDETRSegSmall",
     "RFDETRSegMedium",

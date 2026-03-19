@@ -864,43 +864,42 @@ class RFDETRLarge(RFDETR):
             return RFDETRLargeDeprecatedConfig(**kwargs)
 
 
-class RFDETRSegPreview(RFDETR):
+class RFDETRSeg(RFDETR):
+    """Base class for all RF-DETR segmentation models."""
+
+    _train_config_class = SegmentationTrainConfig
+
+
+class RFDETRSegPreview(RFDETRSeg):
     size = "rfdetr-seg-preview"
     _model_config_class = RFDETRSegPreviewConfig
-    _train_config_class = SegmentationTrainConfig
 
 
-class RFDETRSegNano(RFDETR):
+class RFDETRSegNano(RFDETRSeg):
     size = "rfdetr-seg-nano"
     _model_config_class = RFDETRSegNanoConfig
-    _train_config_class = SegmentationTrainConfig
 
 
-class RFDETRSegSmall(RFDETR):
+class RFDETRSegSmall(RFDETRSeg):
     size = "rfdetr-seg-small"
     _model_config_class = RFDETRSegSmallConfig
-    _train_config_class = SegmentationTrainConfig
 
 
-class RFDETRSegMedium(RFDETR):
+class RFDETRSegMedium(RFDETRSeg):
     size = "rfdetr-seg-medium"
     _model_config_class = RFDETRSegMediumConfig
-    _train_config_class = SegmentationTrainConfig
 
 
-class RFDETRSegLarge(RFDETR):
+class RFDETRSegLarge(RFDETRSeg):
     size = "rfdetr-seg-large"
     _model_config_class = RFDETRSegLargeConfig
-    _train_config_class = SegmentationTrainConfig
 
 
-class RFDETRSegXLarge(RFDETR):
+class RFDETRSegXLarge(RFDETRSeg):
     size = "rfdetr-seg-xlarge"
     _model_config_class = RFDETRSegXLargeConfig
-    _train_config_class = SegmentationTrainConfig
 
 
-class RFDETRSeg2XLarge(RFDETR):
+class RFDETRSeg2XLarge(RFDETRSeg):
     size = "rfdetr-seg-2xlarge"
     _model_config_class = RFDETRSeg2XLargeConfig
-    _train_config_class = SegmentationTrainConfig
