@@ -299,10 +299,19 @@ class RFDETR:
 
         # Absorb legacy `device` kwarg.  When the caller explicitly requests CPU
         # (e.g. in tests or CPU-only environments), honour it by forwarding it as
-        # the PTL accelerator.  All other device strings (cuda, mps) are ignored
-        # so PTL can auto-select the best available device.
+        # the PTL accelerator.  All other device strings (e.g. "cuda:1") are not
+        # forwarded — PTL auto-selects the best available device — so emit a
+        # DeprecationWarning so callers know the value was not honoured.
         _device = kwargs.pop("device", None)
         _accelerator = "cpu" if _device == "cpu" else None
+        if _device is not None and _device != "cpu":
+            warnings.warn(
+                f"`device='{_device}'` is deprecated and ignored; PTL auto-selects the"
+                " accelerator. To pin a specific device use `CUDA_VISIBLE_DEVICES` or"
+                " configure a PTL Trainer directly.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
         # Absorb legacy `start_epoch` — PTL resumes automatically via ckpt_path.
         if "start_epoch" in kwargs:

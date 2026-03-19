@@ -46,7 +46,7 @@ class RFDETRModelModule(LightningModule):
         self.model_config = model_config
         self.train_config = train_config
 
-        # TODO(Chapter 6): remove _args; read from model_config / train_config directly.
+        # TODO(Chapter 6, #828): remove _args; read from model_config / train_config directly.
         self._args = self._build_args()
 
         # Model, criterion, and postprocessor.
@@ -80,7 +80,7 @@ class RFDETRModelModule(LightningModule):
     # Helpers
     # ------------------------------------------------------------------
 
-    # TODO(Chapter 6): delete _build_args() when _args.py / populate_args() are removed.
+    # TODO(Chapter 6, #828): delete _build_args() when _args.py / populate_args() are removed.
     def _build_args(self) -> Any:
         """Map Pydantic configs to the legacy argparse.Namespace.
 

@@ -74,6 +74,8 @@ class ModelConfig(BaseConfig):
     cls_loss_coef: float = 1.0
     segmentation_head: bool = False
     mask_downsample_ratio: int = 4
+    backbone_lora: bool = False
+    freeze_encoder: bool = False
     license: str = "Apache-2.0"
 
     @field_validator("pretrain_weights", mode="after")
