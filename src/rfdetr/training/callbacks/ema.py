@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import math
+import warnings
 from copy import deepcopy
 from typing import Any, Optional
 
@@ -107,6 +108,19 @@ class RFDETREMACallback(Callback):
         if self._pending_average_state_dict is not None:
             self._average_model.load_state_dict(self._pending_average_state_dict)
             self._pending_average_state_dict = None
+        elif hasattr(pl_module, "_pending_legacy_ema_state"):
+            legacy_ema_state = getattr(pl_module, "_pending_legacy_ema_state")
+            if isinstance(legacy_ema_state, dict):
+                incompatible = self._average_model.module.model.load_state_dict(legacy_ema_state, strict=False)
+                if incompatible.missing_keys or incompatible.unexpected_keys:
+                    warnings.warn(
+                        "Legacy EMA checkpoint loaded with non-exact key match; "
+                        f"missing={len(incompatible.missing_keys)} "
+                        f"unexpected={len(incompatible.unexpected_keys)}.",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+            delattr(pl_module, "_pending_legacy_ema_state")
 
     def should_update(
         self,

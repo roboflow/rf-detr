@@ -693,10 +693,10 @@ class COCOEvalCallback(Callback):
         ``engine.build_matching_data`` expect ``[K, H, W]``, so squeeze the
         channel dim when present.
 
-        TODO(post-migration): audit whether ``PostProcess.forward`` should
-        drop the channel dim itself (returning ``[K, H, W]`` directly), or
-        whether other callers (e.g. ``RFDETR.predict``) rely on the 4-D shape
-        and handle ``.squeeze(1)`` themselves.  See regression fix — Bug 4.
+        ``PostProcess.forward`` currently returns ``[K, 1, H, W]`` masks.
+        Keep this callback-local squeeze for metric code paths because
+        ``RFDETR.predict`` and other inference-facing callers still consume the
+        4-D representation and apply ``.squeeze(1)`` at their boundary.
 
         Args:
             preds: Raw per-image prediction dicts from ``PostProcess``.

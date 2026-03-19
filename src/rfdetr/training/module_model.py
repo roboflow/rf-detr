@@ -474,9 +474,8 @@ class RFDETRModelModule(LightningModule):
         if "model" in checkpoint and "state_dict" not in checkpoint:
             checkpoint["state_dict"] = {"model." + k: v for k, v in checkpoint["model"].items()}
 
-        # Stash legacy EMA weights for the EMA callback to restore if active.
-        # TODO(Chapter 6): RFDETREMACallback.on_load_checkpoint consumer not yet implemented;
-        # _pending_legacy_ema_state is intentionally unused until then.
+        # Stash legacy EMA weights for RFDETREMACallback.setup(), which restores
+        # them into AveragedModel when resuming from converted legacy checkpoints.
         if "legacy_ema_state_dict" in checkpoint:
             self._pending_legacy_ema_state = checkpoint["legacy_ema_state_dict"]
 
