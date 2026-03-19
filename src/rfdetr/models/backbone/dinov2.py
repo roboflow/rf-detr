@@ -170,7 +170,7 @@ class DinoV2(nn.Module):
             )
             patch_pos_embed = patch_pos_embed.permute(0, 3, 1, 2)
 
-            # Use bicubic interpolation without antialias
+            # Use bicubic interpolation, disabling antialias only on MPS devices
             patch_pos_embed = F.interpolate(
                 patch_pos_embed,
                 size=(height, width),
