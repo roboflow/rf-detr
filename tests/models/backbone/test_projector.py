@@ -26,48 +26,47 @@ import torch
 from rfdetr.models.backbone.projector import LayerNorm
 
 
-def test_layernorm_forward_preserves_shape():
-    """LayerNorm should preserve input shape (B, C, H, W)."""
-    channels = 64
-    ln = LayerNorm(channels)
-    x = torch.randn(2, channels, 8, 8)
-    out = ln(x)
-    assert out.shape == x.shape
+class TestProjectorLayerNorm:
+    def test_layernorm_forward_preserves_shape(self) -> None:
+        """LayerNorm should preserve input shape (B, C, H, W)."""
+        channels = 64
+        ln = LayerNorm(channels)
+        x = torch.randn(2, channels, 8, 8)
+        out = ln(x)
+        assert out.shape == x.shape
 
+    def test_layernorm_normalized_shape_is_static(self) -> None:
+        """normalized_shape must be a plain tuple (not derived from a tensor)
+        so that ONNX exporters see it as a constant."""
+        channels = 128
+        ln = LayerNorm(channels)
+        assert ln.normalized_shape == (channels,)
+        assert isinstance(ln.normalized_shape, tuple)
 
-def test_layernorm_normalized_shape_is_static():
-    """normalized_shape must be a plain tuple (not derived from a tensor)
-    so that ONNX exporters see it as a constant."""
-    channels = 128
-    ln = LayerNorm(channels)
-    assert ln.normalized_shape == (channels,)
-    assert isinstance(ln.normalized_shape, tuple)
-
-
-@pytest.mark.skipif(
-    importlib.util.find_spec("onnx") is None,
-    reason="onnx not installed, run: pip install rfdetr[onnxexport]",
-)
-def test_layernorm_onnx_export(tmp_path: Path):
-    """The LayerNorm module should be exportable to ONNX without errors.
-
-    This is the regression test for the fix: prior to the change, PyTorch 2.9+
-    raised ``SymbolicValueError`` because ``(x.size(3),)`` was treated as a
-    non-constant shape during tracing.
-    """
-    channels = 64
-    ln = LayerNorm(channels)
-    ln.train(False)
-    dummy = torch.randn(1, channels, 8, 8)
-
-    onnx_path = str(tmp_path / "layernorm.onnx")
-    torch.onnx.export(
-        ln,
-        (dummy,),
-        onnx_path,
-        input_names=["input"],
-        output_names=["output"],
-        dynamic_axes={"input": {0: "batch", 2: "height", 3: "width"}},
-        opset_version=17,
+    @pytest.mark.skipif(
+        importlib.util.find_spec("onnx") is None,
+        reason="onnx not installed, run: pip install rfdetr[onnxexport]",
     )
-    assert Path(onnx_path).stat().st_size > 0, "ONNX export should produce non-empty file"
+    def test_layernorm_onnx_export(self, tmp_path: Path) -> None:
+        """The LayerNorm module should be exportable to ONNX without errors.
+
+        This is the regression test for the fix: prior to the change, PyTorch 2.9+
+        raised ``SymbolicValueError`` because ``(x.size(3),)`` was treated as a
+        non-constant shape during tracing.
+        """
+        channels = 64
+        ln = LayerNorm(channels)
+        ln.train(False)
+        dummy = torch.randn(1, channels, 8, 8)
+
+        onnx_path = str(tmp_path / "layernorm.onnx")
+        torch.onnx.export(
+            ln,
+            (dummy,),
+            onnx_path,
+            input_names=["input"],
+            output_names=["output"],
+            dynamic_axes={"input": {0: "batch", 2: "height", 3: "width"}},
+            opset_version=17,
+        )
+        assert Path(onnx_path).stat().st_size > 0, "ONNX export should produce non-empty file"
