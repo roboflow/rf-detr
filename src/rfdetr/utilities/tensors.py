@@ -219,8 +219,9 @@ def _bilinear_grid_sample(
     # Cast to input.dtype so float16 inputs don't silently upcast to float32.
     wx1 = (ix - ix0.float()).to(input.dtype).unsqueeze(1)
     wy1 = (iy - iy0.float()).to(input.dtype).unsqueeze(1)
-    wx0 = 1.0 - wx1
-    wy0 = 1.0 - wy1
+    one = wx1.new_tensor(1.0)
+    wx0 = one - wx1
+    wy0 = one - wy1
 
     if padding_mode == "border":
         ix0 = ix0.clamp(0, W - 1)
