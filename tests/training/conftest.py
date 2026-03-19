@@ -101,7 +101,7 @@ def seg_train_config(tmp_path):
 def _restore_rfdetr_module_trainer_property():
     """Restore RFDETRModelModule.trainer to the LightningModule parent property after each test.
 
-    Several unit tests in test_module.py patch the ``trainer`` property directly
+    Several unit tests in test_module_model.py patch the ``trainer`` property directly
     on the ``RFDETRModelModule`` class (``type(module).trainer = property(...)``).
     Without cleanup this mutates the class for the remainder of the session and
     breaks ``Trainer.fit()`` calls in smoke tests (PTL cannot set ``.trainer``
