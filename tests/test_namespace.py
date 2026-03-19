@@ -11,6 +11,7 @@ from typing import Any
 from rfdetr._namespace import build_namespace
 from rfdetr.config import RFDETRBaseConfig, TrainConfig
 
+
 class TestBuildNamespaceForwarding:
     """Verify that build_namespace() forwards TrainConfig fields that were
     previously hardcoded to wrong defaults."""

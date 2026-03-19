@@ -24,7 +24,7 @@ import pytest
 import torch
 
 from rfdetr.config import RFDETRBaseConfig, TrainConfig
-from rfdetr.detr import RFDETR
+from rfdetr.detr import RFDETR, RFDETRLarge
 from rfdetr.training.auto_batch import AutoBatchResult
 from rfdetr.training.checkpoint import convert_legacy_checkpoint
 from rfdetr.training.module_model import RFDETRModelModule
@@ -814,7 +814,55 @@ class TestPublicAPIExports:
 
 
 # ---------------------------------------------------------------------------
-# 6. _load_pretrain_weights_into — detr.py path (the non-PTL scenario from #806)
+# 6. RFDETRLarge deprecated-config fallback behaviour
+# ---------------------------------------------------------------------------
+
+
+class TestRFDETRLargeFallback:
+    """RFDETRLarge retries only for deprecated-weight compatibility errors."""
+
+    def test_cuda_oom_runtime_error_does_not_retry(self, monkeypatch):
+        """CUDA OOM should fail fast without deprecated-config retry."""
+        call_count = 0
+
+        def _raise_oom(self, **kwargs):
+            del self, kwargs
+            nonlocal call_count
+            call_count += 1
+            raise RuntimeError("CUDA out of memory. Tried to allocate 16.00 MiB.")
+
+        monkeypatch.setattr(RFDETR, "__init__", _raise_oom)
+
+        with pytest.raises(RuntimeError, match="out of memory"):
+            RFDETRLarge()
+
+        assert call_count == 1
+
+    def test_state_dict_runtime_error_retries_once_with_deprecated_config(self, monkeypatch):
+        """State-dict mismatch errors trigger exactly one deprecated-config retry."""
+        call_count = 0
+
+        def _raise_then_succeed(self, **kwargs):
+            del kwargs
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("Error(s) in loading state_dict for Model: size mismatch for backbone.weight")
+            self.model = MagicMock()
+
+        monkeypatch.setattr(RFDETR, "__init__", _raise_then_succeed)
+        warn_spy = MagicMock()
+        monkeypatch.setattr("rfdetr.detr.logger.warning", warn_spy)
+
+        model = RFDETRLarge()
+
+        assert model.is_deprecated is True
+        assert call_count == 2
+        warn_spy.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# 7. _load_pretrain_weights_into — detr.py path (the non-PTL scenario from #806)
 # ---------------------------------------------------------------------------
 
 

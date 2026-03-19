@@ -844,12 +844,43 @@ class RFDETRLargeDeprecated(RFDETR):
 class RFDETRLarge(RFDETR):
     size = "rfdetr-large"
 
+    @staticmethod
+    def _should_fallback_to_deprecated_config(exc: Exception) -> bool:
+        """Return whether initialization should retry with deprecated Large config.
+
+        The fallback is only for known checkpoint/config incompatibilities from
+        deprecated Large weights. Runtime issues such as CUDA OOM must fail
+        fast and must not trigger a second initialization attempt.
+
+        Args:
+            exc: Exception raised by initial ``RFDETR`` initialization.
+
+        Returns:
+            ``True`` when retrying with deprecated config is expected to help.
+        """
+        message = str(exc).lower()
+        if "out of memory" in message:
+            return False
+        if isinstance(exc, ValueError):
+            return "patch_size" in message
+        if isinstance(exc, RuntimeError):
+            incompatible_state_dict_markers = (
+                "error(s) in loading state_dict",
+                "size mismatch for",
+                "missing key(s) in state_dict",
+                "unexpected key(s) in state_dict",
+            )
+            return any(marker in message for marker in incompatible_state_dict_markers)
+        return False
+
     def __init__(self, **kwargs):
         self.init_error = None
         self.is_deprecated = False
         try:
             super().__init__(**kwargs)
         except (ValueError, RuntimeError) as exc:
+            if not self._should_fallback_to_deprecated_config(exc):
+                raise
             self.init_error = exc
             self.is_deprecated = True
             try:
