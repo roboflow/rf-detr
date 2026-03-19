@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 
 import pytest
 import torch
-from pytorch_lightning import Callback, LightningModule, Trainer, __version__
+from pytorch_lightning import Callback, LightningModule, Trainer, __version__ as ptl_version
 from pytorch_lightning.trainer.states import TrainerFn
 from torch.utils.data import DataLoader, TensorDataset
 
@@ -603,7 +603,7 @@ class TestBestModelCallback:
         cb.on_validation_end(trainer, pl_module)
 
         ckpt = torch.load(tmp_path / "checkpoint_best_regular.pth", map_location="cpu", weights_only=False)
-        assert ckpt.get("pytorch-lightning_version") == __version__
+        assert ckpt.get("pytorch-lightning_version") == ptl_version
 
     def test_ema_checkpoint_has_ptl_state_dict_key(self, tmp_path: Path) -> None:
         """Saved EMA checkpoint must include 'state_dict' with model. prefix."""
