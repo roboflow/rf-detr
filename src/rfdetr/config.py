@@ -303,6 +303,7 @@ class TrainConfig(BaseModel):
           This avoids silently changing behavior when scaling from single-GPU
           to multi-GPU training.
     """
+
     lr: float = 1e-4
     lr_encoder: float = 1.5e-4
     batch_size: int | Literal["auto"] = 4

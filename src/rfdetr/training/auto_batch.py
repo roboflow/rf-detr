@@ -380,8 +380,7 @@ def resolve_auto_batch_config(
         max_targets_per_image,
     )
     logger.info(
-        "[auto-batch] safe_micro_batch=%s grad_accum_steps=%s "
-        "effective_batch_per_device=%s global_effective_batch=%s",
+        "[auto-batch] safe_micro_batch=%s grad_accum_steps=%s effective_batch_per_device=%s global_effective_batch=%s",
         safe_micro_batch,
         grad_accum_steps,
         effective_batch_size_per_device,
