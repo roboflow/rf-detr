@@ -4,7 +4,7 @@ This page documents the training primitives that power RF-DETR. For a narrative 
 
 ## RFDETRModelModule
 
-::: rfdetr.training.module.RFDETRModelModule
+::: rfdetr.training.module_model.RFDETRModelModule
     options:
       show_source: false
       members:
@@ -25,7 +25,7 @@ This page documents the training primitives that power RF-DETR. For a narrative 
 
 ## RFDETRDataModule
 
-::: rfdetr.training.datamodule.RFDETRDataModule
+::: rfdetr.training.module_data.RFDETRDataModule
     options:
       show_source: false
       members:
