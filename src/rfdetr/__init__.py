@@ -10,6 +10,7 @@ from rfdetr.detr import (
     RFDETRLargeDeprecated,  # DEPRECATED # noqa: F401
     RFDETRMedium,
     RFDETRNano,
+    RFDETRSeg,
     RFDETRSeg2XLarge,
     RFDETRSegLarge,
     RFDETRSegMedium,
@@ -17,7 +18,6 @@ from rfdetr.detr import (
     RFDETRSegPreview,  # DEPRECATED # noqa: F401
     RFDETRSegSmall,
     RFDETRSegXLarge,
-    RFDETRSeg,
     RFDETRSmall,
 )
 
