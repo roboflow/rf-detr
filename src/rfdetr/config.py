@@ -347,6 +347,7 @@ class TrainConfig(BaseModel):
         if isinstance(value, bool):
             return "tqdm" if value else None
         return value
+
     # Promoted from populate_args() — PTL migration (T4-2).
     # device is intentionally absent: PTL auto-detects accelerator via Trainer(accelerator="auto").
     accelerator: str = "auto"
