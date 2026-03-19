@@ -516,6 +516,19 @@ class AlbumentationsWrapper:
                 raise ValueError(f"masks must have shape (N, H, W), got {masks_np.shape}")
             masks_np = masks_np.astype(np.uint8, copy=False)
             masks_list = [mask for mask in masks_np]
+        # Filter out degenerate boxes (zero-width or zero-height) before passing to
+        # Albumentations. Such boxes arise when an annotation sits exactly on or beyond
+        # the image boundary so that x_min == x_max (or y_min == y_max) after clipping.
+        # Albumentations' check_bboxes would raise ValueError for these inputs.
+        if num_boxes > 0:
+            valid_mask = (boxes_np[:, 2] > boxes_np[:, 0]) & (boxes_np[:, 3] > boxes_np[:, 1])
+            if not valid_mask.all():
+                valid_positions = np.where(valid_mask)[0].tolist()
+                boxes_np = boxes_np[valid_mask]
+                labels = [labels[i] for i in valid_positions]
+                # idxs carries original indices so downstream _filter_per_instance_fields
+                # can correctly slice fields from the un-filtered target.
+                idxs = [idxs[i] for i in valid_positions]
         # Apply transform
         transform_kwargs = {"image": image_np, "bboxes": boxes_np, "category_ids": labels, "idxs": idxs}
         if masks_list is not None and len(masks_list) > 0:

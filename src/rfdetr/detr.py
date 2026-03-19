@@ -235,6 +235,8 @@ class RFDETR:
     means = [0.485, 0.456, 0.406]
     stds = [0.229, 0.224, 0.225]
     size = None
+    _model_config_class: type[ModelConfig] = ModelConfig
+    _train_config_class: type[TrainConfig] = TrainConfig
 
     def __init__(self, **kwargs):
         self.model_config = self.get_model_config(**kwargs)
@@ -259,11 +261,11 @@ class RFDETR:
             return
         download_pretrain_weights(pretrain_weights)
 
-    def get_model_config(self, **kwargs):
+    def get_model_config(self, **kwargs) -> ModelConfig:
         """
         Retrieve the configuration parameters used by the model.
         """
-        return ModelConfig(**kwargs)
+        return self._model_config_class(**kwargs)
 
     def train(self, **kwargs):
         """Train an RF-DETR model via the PyTorch Lightning stack.
@@ -299,10 +301,21 @@ class RFDETR:
 
         # Absorb legacy `device` kwarg.  When the caller explicitly requests CPU
         # (e.g. in tests or CPU-only environments), honour it by forwarding it as
-        # the PTL accelerator.  All other device strings (cuda, mps) are ignored
-        # so PTL can auto-select the best available device.
+        # the PTL accelerator.  All other device strings (e.g. "cuda:1") are not
+        # forwarded — PTL auto-selects the best available device — so emit a
+        # DeprecationWarning so callers know the value was not honoured.
         _device = kwargs.pop("device", None)
         _accelerator = "cpu" if _device == "cpu" else None
+        if _device is not None and _device != "cpu":
+            warnings.warn(
+                f"`device='{_device}'` is deprecated and ignored; PTL auto-selects the"
+                " accelerator. To pin a specific device, configure your"
+                " accelerator/backend explicitly (for example, use"
+                " `CUDA_VISIBLE_DEVICES` for CUDA) or configure a PTL Trainer"
+                " directly.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
         # Absorb legacy `start_epoch` — PTL resumes automatically via ckpt_path.
         if "start_epoch" in kwargs:
@@ -541,11 +554,11 @@ class RFDETR:
             " Checked for COCO (train/_annotations.coco.json) and YOLO (data.yaml, data.yml) styles."
         )
 
-    def get_train_config(self, **kwargs):
+    def get_train_config(self, **kwargs) -> TrainConfig:
         """
         Retrieve the configuration parameters that will be used for training.
         """
-        return TrainConfig(**kwargs)
+        return self._train_config_class(**kwargs)
 
     def get_model(self, config: ModelConfig) -> "_ModelContext":
         """Retrieve a model context from the provided architecture configuration.
@@ -777,12 +790,7 @@ class RFDETRBase(RFDETR):
     """
 
     size = "rfdetr-base"
-
-    def get_model_config(self, **kwargs):
-        return RFDETRBaseConfig(**kwargs)
-
-    def get_train_config(self, **kwargs):
-        return TrainConfig(**kwargs)
+    _model_config_class = RFDETRBaseConfig
 
 
 class RFDETRNano(RFDETR):
@@ -791,12 +799,7 @@ class RFDETRNano(RFDETR):
     """
 
     size = "rfdetr-nano"
-
-    def get_model_config(self, **kwargs):
-        return RFDETRNanoConfig(**kwargs)
-
-    def get_train_config(self, **kwargs):
-        return TrainConfig(**kwargs)
+    _model_config_class = RFDETRNanoConfig
 
 
 class RFDETRSmall(RFDETR):
@@ -805,12 +808,7 @@ class RFDETRSmall(RFDETR):
     """
 
     size = "rfdetr-small"
-
-    def get_model_config(self, **kwargs):
-        return RFDETRSmallConfig(**kwargs)
-
-    def get_train_config(self, **kwargs):
-        return TrainConfig(**kwargs)
+    _model_config_class = RFDETRSmallConfig
 
 
 class RFDETRMedium(RFDETR):
@@ -819,22 +817,7 @@ class RFDETRMedium(RFDETR):
     """
 
     size = "rfdetr-medium"
-
-    def get_model_config(self, **kwargs):
-        return RFDETRMediumConfig(**kwargs)
-
-    def get_train_config(self, **kwargs):
-        return TrainConfig(**kwargs)
-
-
-class RFDETRLargeNew(RFDETR):
-    size = "rfdetr-large"
-
-    def get_model_config(self, **kwargs):
-        return RFDETRLargeConfig(**kwargs)
-
-    def get_train_config(self, **kwargs):
-        return TrainConfig(**kwargs)
+    _model_config_class = RFDETRMediumConfig
 
 
 class RFDETRLargeDeprecated(RFDETR):
@@ -843,6 +826,7 @@ class RFDETRLargeDeprecated(RFDETR):
     """
 
     size = "rfdetr-large"
+    _model_config_class = RFDETRLargeDeprecatedConfig
 
     def __init__(self, **kwargs):
         warnings.warn(
@@ -852,12 +836,6 @@ class RFDETRLargeDeprecated(RFDETR):
             stacklevel=2,
         )
         super().__init__(**kwargs)
-
-    def get_model_config(self, **kwargs):
-        return RFDETRLargeDeprecatedConfig(**kwargs)
-
-    def get_train_config(self, **kwargs):
-        return TrainConfig(**kwargs)
 
 
 class RFDETRLarge(RFDETR):
@@ -885,81 +863,49 @@ class RFDETRLarge(RFDETR):
             except Exception:
                 raise self.init_error
 
-    def get_model_config(self, **kwargs):
+    def get_model_config(self, **kwargs) -> ModelConfig:
         if not self.is_deprecated:
             return RFDETRLargeConfig(**kwargs)
         else:
             return RFDETRLargeDeprecatedConfig(**kwargs)
 
-    def get_train_config(self, **kwargs):
-        return TrainConfig(**kwargs)
+
+class RFDETRSeg(RFDETR):
+    """Base class for all RF-DETR segmentation models."""
+
+    _train_config_class = SegmentationTrainConfig
 
 
-class RFDETRSegPreview(RFDETR):
+class RFDETRSegPreview(RFDETRSeg):
     size = "rfdetr-seg-preview"
-
-    def get_model_config(self, **kwargs):
-        return RFDETRSegPreviewConfig(**kwargs)
-
-    def get_train_config(self, **kwargs):
-        return SegmentationTrainConfig(**kwargs)
+    _model_config_class = RFDETRSegPreviewConfig
 
 
-class RFDETRSegNano(RFDETR):
+class RFDETRSegNano(RFDETRSeg):
     size = "rfdetr-seg-nano"
-
-    def get_model_config(self, **kwargs):
-        return RFDETRSegNanoConfig(**kwargs)
-
-    def get_train_config(self, **kwargs):
-        return SegmentationTrainConfig(**kwargs)
+    _model_config_class = RFDETRSegNanoConfig
 
 
-class RFDETRSegSmall(RFDETR):
+class RFDETRSegSmall(RFDETRSeg):
     size = "rfdetr-seg-small"
-
-    def get_model_config(self, **kwargs):
-        return RFDETRSegSmallConfig(**kwargs)
-
-    def get_train_config(self, **kwargs):
-        return SegmentationTrainConfig(**kwargs)
+    _model_config_class = RFDETRSegSmallConfig
 
 
-class RFDETRSegMedium(RFDETR):
+class RFDETRSegMedium(RFDETRSeg):
     size = "rfdetr-seg-medium"
-
-    def get_model_config(self, **kwargs):
-        return RFDETRSegMediumConfig(**kwargs)
-
-    def get_train_config(self, **kwargs):
-        return SegmentationTrainConfig(**kwargs)
+    _model_config_class = RFDETRSegMediumConfig
 
 
-class RFDETRSegLarge(RFDETR):
+class RFDETRSegLarge(RFDETRSeg):
     size = "rfdetr-seg-large"
-
-    def get_model_config(self, **kwargs):
-        return RFDETRSegLargeConfig(**kwargs)
-
-    def get_train_config(self, **kwargs):
-        return SegmentationTrainConfig(**kwargs)
+    _model_config_class = RFDETRSegLargeConfig
 
 
-class RFDETRSegXLarge(RFDETR):
+class RFDETRSegXLarge(RFDETRSeg):
     size = "rfdetr-seg-xlarge"
-
-    def get_model_config(self, **kwargs):
-        return RFDETRSegXLargeConfig(**kwargs)
-
-    def get_train_config(self, **kwargs):
-        return SegmentationTrainConfig(**kwargs)
+    _model_config_class = RFDETRSegXLargeConfig
 
 
-class RFDETRSeg2XLarge(RFDETR):
+class RFDETRSeg2XLarge(RFDETRSeg):
     size = "rfdetr-seg-2xlarge"
-
-    def get_model_config(self, **kwargs):
-        return RFDETRSeg2XLargeConfig(**kwargs)
-
-    def get_train_config(self, **kwargs):
-        return SegmentationTrainConfig(**kwargs)
+    _model_config_class = RFDETRSeg2XLargeConfig

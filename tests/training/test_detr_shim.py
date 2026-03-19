@@ -217,14 +217,26 @@ class TestRFDETRTrainPTL:
 
         assert mock_self.model.class_names == []
 
-    def test_device_kwarg_silently_dropped(self, tmp_path):
-        """device= is consumed without error or warning."""
+    def test_device_kwarg_cpu_no_warning(self, tmp_path):
+        """device='cpu' is consumed without a DeprecationWarning."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            RFDETR.train(mock_self, device="cpu")
+        assert not any(issubclass(x.category, DeprecationWarning) for x in w)
+        mock_self.get_train_config.assert_called_once_with()
+
+    def test_device_kwarg_non_cpu_emits_deprecation(self, tmp_path):
+        """Non-'cpu' device= emits a DeprecationWarning and is not forwarded."""
         mock_self = _make_rfdetr_self(tmp_path)
         p_mod, p_dm, p_bt, *_ = _patch_lit()
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             RFDETR.train(mock_self, device="cuda")
-        assert not any(issubclass(x.category, DeprecationWarning) for x in w)
+        dep_warns = [x for x in w if issubclass(x.category, DeprecationWarning)]
+        assert len(dep_warns) == 1
+        assert "cuda" in str(dep_warns[0].message)
         # device must not have been forwarded to get_train_config
         mock_self.get_train_config.assert_called_once_with()
 
