@@ -69,7 +69,10 @@ def convert_legacy_checkpoint(old_path: str, new_path: str) -> None:
             )
             hyper_parameters = {}
 
+    import pytorch_lightning
+
     new: dict[str, Any] = {
+        "pytorch-lightning_version": pytorch_lightning.__version__,
         "state_dict": {"model." + k: v for k, v in old["model"].items()},
         "epoch": old.get("epoch", 0),
         "global_step": 0,

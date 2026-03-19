@@ -8,6 +8,7 @@ from __future__ import annotations
 import glob
 import json
 import os
+import tempfile
 import warnings
 from collections import defaultdict
 from copy import deepcopy
@@ -159,6 +160,44 @@ def _load_pretrain_weights_into(nn_model: torch.nn.Module, args: Any) -> List[st
         nn_model.reinitialize_detection_head(args.num_classes + 1)
 
     return class_names
+
+
+def _ensure_ptl_checkpoint(path: str) -> tuple[str, Optional[str]]:
+    """Return a PTL-compatible checkpoint path for *path*.
+
+    PyTorch Lightning 2.x requires ``pytorch-lightning_version`` to be present
+    in the checkpoint dict before it will call ``on_load_checkpoint``.  Legacy
+    RF-DETR ``.pth`` files and checkpoints produced by
+    :func:`~rfdetr.training.checkpoint.convert_legacy_checkpoint` may lack this
+    key.  When detected, the checkpoint is patched and written to a temporary
+    file whose path is returned as the second element of the tuple.  The caller
+    is responsible for deleting the temp file after use.
+
+    Args:
+        path: Path to the checkpoint file to inspect.
+
+    Returns:
+        Tuple of ``(ckpt_path, tmp_path)`` where *ckpt_path* is the path that
+        should be passed to ``trainer.fit()`` and *tmp_path* is either ``None``
+        (original file is already PTL-compatible) or the path of a temporary
+        file that the caller must delete.
+    """
+    try:
+        ckpt = torch.load(path, map_location="cpu", weights_only=False)
+    except Exception:
+        # Let PTL surface a proper error at load time.
+        return path, None
+
+    if "pytorch-lightning_version" in ckpt:
+        return path, None
+
+    import pytorch_lightning
+
+    ckpt["pytorch-lightning_version"] = pytorch_lightning.__version__
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".ckpt")
+    os.close(tmp_fd)
+    torch.save(ckpt, tmp_path)
+    return tmp_path, tmp_path
 
 
 def _apply_lora_to(nn_model: torch.nn.Module) -> None:
@@ -328,7 +367,15 @@ class RFDETR:
         module = RFDETRModule(self.model_config, config)
         datamodule = RFDETRDataModule(self.model_config, config)
         trainer = build_trainer(config, self.model_config, accelerator=_accelerator)
-        trainer.fit(module, datamodule, ckpt_path=config.resume or None)
+        ckpt_path = config.resume or None
+        _tmp_ckpt: Optional[str] = None
+        if ckpt_path:
+            ckpt_path, _tmp_ckpt = _ensure_ptl_checkpoint(ckpt_path)
+        try:
+            trainer.fit(module, datamodule, ckpt_path=ckpt_path)
+        finally:
+            if _tmp_ckpt and os.path.exists(_tmp_ckpt):
+                os.unlink(_tmp_ckpt)
 
         # Sync the trained weights back so predict() / export() see the updated model.
         self.model.model = module.model
