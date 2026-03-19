@@ -6,8 +6,6 @@
 
 """Regression tests for build_namespace() config forwarding."""
 
-import pytest
-
 from rfdetr._namespace import build_namespace
 from rfdetr.config import RFDETRBaseConfig, TrainConfig
 
