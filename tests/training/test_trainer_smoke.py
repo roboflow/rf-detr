@@ -24,7 +24,7 @@ from pytorch_lightning import Trainer
 from rfdetr.config import SegmentationTrainConfig
 from rfdetr.training import build_trainer
 from rfdetr.training.datamodule import RFDETRDataModule
-from rfdetr.training.module import RFDETRModule
+from rfdetr.training.module import RFDETRModelModule
 
 from .helpers import (
     _fake_postprocess,
@@ -82,7 +82,7 @@ class TestDetectionSmoke:
                 side_effect=lambda args, model: _make_param_dicts(model),
             ),
         ):
-            module = RFDETRModule(mc, tc)
+            module = RFDETRModelModule(mc, tc)
             datamodule = RFDETRDataModule(mc, tc)
             _make_trainer().fit(module, datamodule)
 
@@ -108,7 +108,7 @@ class TestDetectionSmoke:
                 side_effect=lambda args, model: _make_param_dicts(model),
             ),
         ):
-            module = RFDETRModule(mc, tc)
+            module = RFDETRModelModule(mc, tc)
             datamodule = RFDETRDataModule(mc, tc)
 
             original_training_step = module.training_step
@@ -145,7 +145,7 @@ class TestDetectionSmoke:
                 side_effect=lambda args, model: _make_param_dicts(model),
             ),
         ):
-            module = RFDETRModule(mc, tc)
+            module = RFDETRModelModule(mc, tc)
             datamodule = RFDETRDataModule(mc, tc)
 
             original_validation_step = module.validation_step
@@ -192,7 +192,7 @@ class TestDetectionSmoke:
                 side_effect=lambda args, model: _make_param_dicts(model),
             ),
         ):
-            module = RFDETRModule(mc, tc)
+            module = RFDETRModelModule(mc, tc)
             datamodule = RFDETRDataModule(mc, tc)
             _make_trainer().fit(module, datamodule)
 
@@ -225,7 +225,7 @@ class TestSegmentationSmoke:
                 side_effect=lambda args, model: _make_param_dicts(model),
             ),
         ):
-            module = RFDETRModule(mc, tc)
+            module = RFDETRModelModule(mc, tc)
             datamodule = RFDETRDataModule(mc, tc)
             _make_trainer().fit(module, datamodule)
 
@@ -246,7 +246,7 @@ class TestSegmentationSmoke:
                 side_effect=lambda args, model: _make_param_dicts(model),
             ),
         ):
-            module = RFDETRModule(mc, tc)
+            module = RFDETRModelModule(mc, tc)
             datamodule = RFDETRDataModule(mc, tc)
 
             assert isinstance(module.train_config, SegmentationTrainConfig)
@@ -278,13 +278,13 @@ class TestBuildTrainerSmoke:
                 side_effect=lambda args, model: _make_param_dicts(model),
             ),
         ):
-            module = RFDETRModule(mc, tc)
+            module = RFDETRModelModule(mc, tc)
             datamodule = RFDETRDataModule(mc, tc)
             trainer = build_trainer(tc, mc, accelerator="cpu", fast_dev_run=2)
             trainer.fit(module, datamodule=datamodule)
 
 
-class _DDPModule(RFDETRModule):
+class _DDPModule(RFDETRModelModule):
     """RFDETRModule subclass for ddp_spawn smoke tests.
 
     Overrides ``configure_optimizers`` so ``get_param_dict`` is never called

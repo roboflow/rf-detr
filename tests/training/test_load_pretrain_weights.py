@@ -212,9 +212,9 @@ def _build_module(model_config=None, train_config=None, tmp_path=None):
             return_value=(fake_criterion, fake_postprocess),
         ),
     ):
-        from rfdetr.training.module import RFDETRModule
+        from rfdetr.training.module import RFDETRModelModule
 
-        module = RFDETRModule(mc, tc)
+        module = RFDETRModelModule(mc, tc)
     return module, fake
 
 

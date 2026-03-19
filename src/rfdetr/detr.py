@@ -285,7 +285,7 @@ class RFDETR:
         onto ``self.model.model`` so that :meth:`predict` and :meth:`export`
         continue to work without reloading the checkpoint.
         """
-        from rfdetr.training import RFDETRDataModule, RFDETRModule, build_trainer
+        from rfdetr.training import RFDETRDataModule, RFDETRModelModule, build_trainer
 
         # Absorb legacy `callbacks` dict — warn if non-empty, then discard.
         callbacks_dict = kwargs.pop("callbacks", None)
@@ -322,7 +322,7 @@ class RFDETR:
             )
 
         config = self.get_train_config(**kwargs)
-        module = RFDETRModule(self.model_config, config)
+        module = RFDETRModelModule(self.model_config, config)
         datamodule = RFDETRDataModule(self.model_config, config)
         trainer = build_trainer(config, self.model_config, accelerator=_accelerator)
         trainer.fit(module, datamodule, ckpt_path=config.resume or None)

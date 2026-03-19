@@ -26,7 +26,7 @@ import torch
 from rfdetr.config import RFDETRBaseConfig, TrainConfig
 from rfdetr.training import build_trainer
 from rfdetr.training.datamodule import RFDETRDataModule
-from rfdetr.training.module import RFDETRModule
+from rfdetr.training.module import RFDETRModelModule
 
 from .helpers import _fake_postprocess, _FakeCriterion, _FakeDataset, _make_param_dicts, _TinyModel
 
@@ -50,7 +50,7 @@ def _fit_and_read_csv(mc: RFDETRBaseConfig, tc: TrainConfig, criterion=None) -> 
             side_effect=lambda args, model: _make_param_dicts(model),
         ),
     ):
-        module = RFDETRModule(mc, tc)
+        module = RFDETRModelModule(mc, tc)
         datamodule = RFDETRDataModule(mc, tc)
         trainer = build_trainer(
             tc,

@@ -47,7 +47,7 @@ from rfdetr import (
 )
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.detr import RFDETR
-from rfdetr.training import RFDETRDataModule, RFDETRModule, build_trainer
+from rfdetr.training import RFDETRDataModule, RFDETRModelModule, build_trainer
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -112,7 +112,7 @@ def _build_datamodule(
     return dm
 
 
-def _build_ptl_module(rfdetr_obj: RFDETR, train_config: TrainConfig) -> RFDETRModule:
+def _build_ptl_module(rfdetr_obj: RFDETR, train_config: TrainConfig) -> RFDETRModelModule:
     """Copy pretrained weights from *rfdetr_obj* into a fresh :class:`~rfdetr.training.RFDETRModule`.
 
     Constructs the module with the same architecture (no pretrain download),
@@ -128,11 +128,11 @@ def _build_ptl_module(rfdetr_obj: RFDETR, train_config: TrainConfig) -> RFDETRMo
         Weight-synced :class:`~rfdetr.training.RFDETRModule` ready for
         ``Trainer.validate`` or ``Trainer.predict``.
     """
-    module = RFDETRModule(rfdetr_obj.model_config, train_config)
+    module = RFDETRModelModule(rfdetr_obj.model_config, train_config)
     module.model.load_state_dict(rfdetr_obj.model.model.state_dict())
     module.model.eval()
 
-    assert isinstance(module, RFDETRModule), f"Expected RFDETRModule, got {type(module).__name__}"
+    assert isinstance(module, RFDETRModelModule), f"Expected RFDETRModule, got {type(module).__name__}"
     assert isinstance(module, LightningModule), (
         "module must be a pytorch_lightning.LightningModule — this confirms evaluation runs through the PTL stack"
     )
