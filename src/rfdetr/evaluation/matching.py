@@ -290,7 +290,7 @@ def distributed_merge_matching_data(
 ) -> dict[int, dict[str, Any]]:
     """Gather per-rank matching data from all DDP ranks and merge into one dict.
 
-    Uses ``utils.all_gather`` (pickle-based) so the data need not be a tensor.
+    Uses ``rfdetr.utilities.all_gather`` (pickle-based) so the data need not be a tensor.
     In single-process (non-distributed) mode, returns a merged copy of *local_data*
     unchanged.
 
