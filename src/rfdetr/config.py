@@ -289,11 +289,25 @@ class RFDETRSeg2XLargeConfig(RFDETRBaseConfig):
 
 
 class TrainConfig(BaseModel):
+    """Training hyperparameters and auto-batching configuration.
+
+    Notes:
+        * ``auto_batch_target_effective`` is interpreted as the **per-device**
+          effective batch size target, i.e. the number of images seen by a
+          single process in one optimizer step after accounting for
+          ``grad_accum_steps``. In multi-GPU / multi-node runs the global
+          effective batch size is therefore:
+
+            ``global_effective_batch = auto_batch_target_effective * devices * num_nodes``
+
+          This avoids silently changing behavior when scaling from single-GPU
+          to multi-GPU training.
+    """
     lr: float = 1e-4
     lr_encoder: float = 1.5e-4
     batch_size: int | Literal["auto"] = 4
     grad_accum_steps: int = 4
-    auto_batch_target_effective: int = 16
+    auto_batch_target_effective: int = 16  # per-device effective batch size target (before devices * num_nodes)
     # Auto-batch probe: worst-case assumptions when batch_size="auto".
     auto_batch_max_targets_per_image: int = 100
     auto_batch_ema_headroom: float = 0.7  # scale safe batch by this when use_ema=True (EMA uses extra memory)

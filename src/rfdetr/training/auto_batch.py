@@ -351,22 +351,41 @@ def resolve_auto_batch_config(
         safe_micro_batch = max(1, math.floor(safe_micro_batch * headroom))
         logger.info("[auto-batch] Applied EMA headroom (%.2f): safe_micro_batch=%s", headroom, safe_micro_batch)
 
-    grad_accum_steps = recommend_grad_accum_steps(safe_micro_batch, train_config.auto_batch_target_effective)
-    effective_batch_size = safe_micro_batch * grad_accum_steps
+    # Infer world size from train configuration (only when explicit integers are provided)
+    devices = getattr(train_config, "devices", None)
+    num_nodes = getattr(train_config, "num_nodes", 1)
+    if isinstance(devices, int) and isinstance(num_nodes, int):
+        world_size = max(1, devices * num_nodes)
+    else:
+        world_size = 1
+
+    # Interpret auto_batch_target_effective as a global target and derive a per-device target
+    target_effective_global = train_config.auto_batch_target_effective
+    if world_size > 1:
+        target_effective_per_device = max(1, math.ceil(target_effective_global / world_size))
+    else:
+        target_effective_per_device = target_effective_global
+
+    grad_accum_steps = recommend_grad_accum_steps(safe_micro_batch, target_effective_per_device)
+    effective_batch_size_per_device = safe_micro_batch * grad_accum_steps
+    global_effective_batch_size = effective_batch_size_per_device * world_size
     device_name = torch.cuda.get_device_name(device)
 
     logger.info(
-        "[auto-batch] device=%s segmentation=%s probe_resolution=%s max_targets_per_image=%s",
+        "[auto-batch] device=%s world_size=%s segmentation=%s probe_resolution=%s max_targets_per_image=%s",
         device_name,
+        world_size,
         model_config.segmentation_head,
         probe_resolution,
         max_targets_per_image,
     )
     logger.info(
-        "[auto-batch] safe_micro_batch=%s grad_accum_steps=%s effective_batch_size=%s",
+        "[auto-batch] safe_micro_batch=%s grad_accum_steps=%s "
+        "effective_batch_per_device=%s global_effective_batch=%s",
         safe_micro_batch,
         grad_accum_steps,
-        effective_batch_size,
+        effective_batch_size_per_device,
+        global_effective_batch_size,
     )
     logger.info("[auto-batch] This probe estimates train-step-safe micro-batch only.")
     logger.info("[auto-batch] Validation/test (especially segmentation mask eval) may require more memory.")
@@ -374,6 +393,6 @@ def resolve_auto_batch_config(
     return AutoBatchResult(
         safe_micro_batch=safe_micro_batch,
         recommended_grad_accum_steps=grad_accum_steps,
-        effective_batch_size=effective_batch_size,
+        effective_batch_size=effective_batch_size_per_device,
         device_name=device_name,
     )
