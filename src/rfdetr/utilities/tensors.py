@@ -160,6 +160,104 @@ def _onnx_nested_tensor_from_tensor_list(tensor_list: List[Tensor]) -> NestedTen
     return NestedTensor(tensor, mask=mask)
 
 
+def _bilinear_grid_sample(
+    input: torch.Tensor,
+    grid: torch.Tensor,
+    padding_mode: str = "zeros",
+    align_corners: bool = False,
+) -> torch.Tensor:
+    """Bilinear grid sampling compatible with all PyTorch backends including MPS.
+
+    Drop-in replacement for ``F.grid_sample(input, grid, mode='bilinear', ...)``.
+    On MPS, ``F.grid_sample`` backward (``grid_sampler_2d_backward``) is not yet
+    implemented and silently falls back to CPU.  This function uses gather-based
+    index arithmetic — natively supported on every backend — for the MPS path,
+    while delegating to ``F.grid_sample`` on CUDA/CPU where its fused kernel is
+    faster.  The two paths are numerically identical, so model accuracy is
+    unaffected.
+
+    Args:
+        input: Feature map of shape ``(N, C, H, W)``.
+        grid: Sampling grid of shape ``(N, Hg, Wg, 2)`` with values in ``[-1, 1]``.
+        padding_mode: ``"zeros"`` returns 0 for out-of-bounds samples;
+            ``"border"`` clamps to the nearest border pixel.
+        align_corners: If ``True``, grid extremes ``±1`` map to pixel centres at
+            positions ``0`` and ``H-1``/``W-1``.
+
+    Returns:
+        Sampled tensor of shape ``(N, C, Hg, Wg)``.
+    """
+    import torch.nn.functional as F
+
+    if input.device.type != "mps":
+        return F.grid_sample(input, grid, mode="bilinear", padding_mode=padding_mode, align_corners=align_corners)
+
+    if padding_mode not in ("zeros", "border"):
+        msg = (
+            f"Unsupported padding_mode={padding_mode!r} for manual grid sampling. "
+            "Only 'zeros' and 'border' are supported in this path."
+        )
+        raise ValueError(msg)
+
+    N, C, H, W = input.shape
+    Hg, Wg = grid.shape[1], grid.shape[2]
+
+    # Unnormalize [-1, 1] → floating-point pixel coordinates
+    if align_corners:
+        ix = (grid[..., 0] + 1) * (W - 1) / 2  # [N, Hg, Wg]
+        iy = (grid[..., 1] + 1) * (H - 1) / 2
+    else:
+        ix = (grid[..., 0] + 1) * W / 2 - 0.5
+        iy = (grid[..., 1] + 1) * H / 2 - 0.5
+
+    ix0 = ix.floor().long()  # top-left corner
+    iy0 = iy.floor().long()
+    ix1 = ix0 + 1
+    iy1 = iy0 + 1
+
+    # Bilinear weights: fractional distance from top-left corner  [N, 1, Hg, Wg]
+    # Cast to input.dtype so float16 inputs don't silently upcast to float32.
+    wx1 = (ix - ix0.float()).to(input.dtype).unsqueeze(1)
+    wy1 = (iy - iy0.float()).to(input.dtype).unsqueeze(1)
+    one = wx1.new_tensor(1.0)
+    wx0 = one - wx1
+    wy0 = one - wy1
+
+    if padding_mode == "border":
+        ix0 = ix0.clamp(0, W - 1)
+        iy0 = iy0.clamp(0, H - 1)
+        ix1 = ix1.clamp(0, W - 1)
+        iy1 = iy1.clamp(0, H - 1)
+    else:  # zeros: record which corners fall inside the image before clamping
+        in_x0 = (ix0 >= 0) & (ix0 < W)  # [N, Hg, Wg]
+        in_x1 = (ix1 >= 0) & (ix1 < W)
+        in_y0 = (iy0 >= 0) & (iy0 < H)
+        in_y1 = (iy1 >= 0) & (iy1 < H)
+        ix0 = ix0.clamp(0, W - 1)
+        iy0 = iy0.clamp(0, H - 1)
+        ix1 = ix1.clamp(0, W - 1)
+        iy1 = iy1.clamp(0, H - 1)
+
+    flat = input.flatten(2)  # [N, C, H*W]
+
+    def _gather(iy_: torch.Tensor, ix_: torch.Tensor) -> torch.Tensor:
+        idx = (iy_ * W + ix_).flatten(1).unsqueeze(1).expand(N, C, -1)  # [N, C, Hg*Wg]
+        return flat.gather(2, idx).view(N, C, Hg, Wg)
+
+    v00 = _gather(iy0, ix0)  # top-left
+    v10 = _gather(iy0, ix1)  # top-right
+    v01 = _gather(iy1, ix0)  # bottom-left
+    v11 = _gather(iy1, ix1)  # bottom-right
+
+    if padding_mode == "zeros":
+        v00 = v00 * (in_x0 & in_y0).unsqueeze(1)
+        v10 = v10 * (in_x1 & in_y0).unsqueeze(1)
+        v01 = v01 * (in_x0 & in_y1).unsqueeze(1)
+        v11 = v11 * (in_x1 & in_y1).unsqueeze(1)
+
+    return wx0 * wy0 * v00 + wx1 * wy0 * v10 + wx0 * wy1 * v01 + wx1 * wy1 * v11
+
+
 def collate_fn(batch: List[Tuple[Any, ...]]) -> Tuple[Any, ...]:
     """Collate a list of (image, target) pairs into a batched NestedTensor.
 

@@ -165,6 +165,56 @@ class TestRFDETRTrainPTL:
             result = RFDETR.train(mock_self)
         assert result is None
 
+    def test_class_names_synced_from_datamodule_after_training(self, tmp_path):
+        """self.model.class_names is set from RFDETRDataModule.class_names after train().
+
+        Regression test for #509: custom class names were not synced back from
+        RFDETRDataModule after training, causing predict() to return COCO labels
+        instead of the dataset's class labels.
+        """
+        mock_self = _make_rfdetr_self(tmp_path)
+        p_mod, p_dm, p_bt, _mcls, dmcls, _mock_bt = _patch_lit()
+        custom_class_names = ["cat", "dog", "bird"]
+        dmcls.return_value.class_names = custom_class_names
+
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self)
+
+        assert mock_self.model.class_names == custom_class_names
+
+    def test_class_names_not_synced_when_datamodule_returns_none(self, tmp_path):
+        """self.model.class_names is NOT overwritten when datamodule.class_names is None.
+
+        Ensures the sync-back guard does not clobber existing class names
+        when the datamodule has no class information (e.g. custom dataset format).
+        """
+        mock_self = _make_rfdetr_self(tmp_path)
+        sentinel_names = ["existing_class"]
+        mock_self.model.class_names = sentinel_names
+        p_mod, p_dm, p_bt, _mcls, dmcls, _mock_bt = _patch_lit()
+        dmcls.return_value.class_names = None  # datamodule has no class names
+
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self)
+
+        assert mock_self.model.class_names == sentinel_names
+
+    def test_empty_class_names_synced_from_datamodule_after_training(self, tmp_path):
+        """Empty class name lists are synced and overwrite stale model labels.
+
+        Empty list is a valid explicit value and should not be treated as missing.
+        """
+        mock_self = _make_rfdetr_self(tmp_path)
+        sentinel_names = ["stale_label"]
+        mock_self.model.class_names = sentinel_names
+        p_mod, p_dm, p_bt, _mcls, dmcls, _mock_bt = _patch_lit()
+        dmcls.return_value.class_names = []
+
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self)
+
+        assert mock_self.model.class_names == []
+
     def test_device_kwarg_silently_dropped(self, tmp_path):
         """device= is consumed without error or warning."""
         mock_self = _make_rfdetr_self(tmp_path)
@@ -787,3 +837,47 @@ class TestLoadPretrainWeightsInto:
 
         with pytest.raises(ValueError, match=r"patch_size"):
             _load_pretrain_weights_into(fake_model, args)
+
+
+# ---------------------------------------------------------------------------
+# 7. RFDETR.class_names property — empty-list identity check
+# ---------------------------------------------------------------------------
+
+
+class TestClassNamesProperty:
+    """RFDETR.class_names property uses is-None identity, not truthiness, for empty lists."""
+
+    def test_empty_class_names_returns_empty_dict_not_coco(self):
+        """class_names property returns {} when model.class_names is [], NOT COCO_CLASSES.
+
+        Regression test for #509: the truthiness check `and self.model.class_names:`
+        treated [] as falsy and fell through to return COCO_CLASSES, defeating the
+        detr.py sync-back even after training on a dataset that reports empty names.
+        The fix uses `is not None` so that [] is preserved as an empty mapping.
+        """
+        mock_self = MagicMock()
+        mock_self.model.class_names = []
+
+        result = RFDETR.class_names.fget(mock_self)
+
+        assert result == {}, "class_names=[] must return {} (empty dict), not COCO_CLASSES"
+
+    def test_none_class_names_returns_coco(self):
+        """class_names property falls back to COCO_CLASSES when model.class_names is None."""
+        from rfdetr.assets.coco_classes import COCO_CLASSES
+
+        mock_self = MagicMock()
+        mock_self.model.class_names = None
+
+        result = RFDETR.class_names.fget(mock_self)
+
+        assert result is COCO_CLASSES
+
+    def test_custom_class_names_returned_as_one_indexed_dict(self):
+        """Non-empty class_names are returned as a 1-indexed dict."""
+        mock_self = MagicMock()
+        mock_self.model.class_names = ["cat", "dog"]
+
+        result = RFDETR.class_names.fget(mock_self)
+
+        assert result == {1: "cat", 2: "dog"}

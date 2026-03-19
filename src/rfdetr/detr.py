@@ -137,11 +137,9 @@ def _load_pretrain_weights_into(nn_model: torch.nn.Module, args: Any) -> List[st
 
     checkpoint_num_classes = checkpoint["model"]["class_embed.bias"].shape[0]
     if checkpoint_num_classes != args.num_classes + 1:
-        logger.warning(
-            "Reinitializing detection head: checkpoint has %d classes, configured for %d.",
-            checkpoint_num_classes - 1,
-            args.num_classes,
-        )
+        # Temporarily align the detection head size with the checkpoint so
+        # that state_dict loading succeeds even when the configured
+        # num_classes differs from the checkpoint.
         nn_model.reinitialize_detection_head(checkpoint_num_classes)
 
     num_desired_queries = args.num_queries * args.group_detr
@@ -152,7 +150,9 @@ def _load_pretrain_weights_into(nn_model: torch.nn.Module, args: Any) -> List[st
 
     nn_model.load_state_dict(checkpoint["model"], strict=False)
 
-    if checkpoint_num_classes != args.num_classes + 1:
+    # Only reinitialize back to configured size when intentionally reducing a
+    # larger pretrain checkpoint to fewer task-specific classes.
+    if args.num_classes + 1 < checkpoint_num_classes:
         nn_model.reinitialize_detection_head(args.num_classes + 1)
 
     return class_names
@@ -331,6 +331,14 @@ class RFDETR:
 
         # Sync the trained weights back so predict() / export() see the updated model.
         self.model.model = module.model
+        # Sync class names: prefer explicit config.class_names, otherwise fall back to dataset (#509).
+        config_class_names = getattr(config, "class_names", None)
+        if config_class_names is not None:
+            self.model.class_names = config_class_names
+        else:
+            dataset_class_names = getattr(datamodule, "class_names", None)
+            if dataset_class_names is not None:
+                self.model.class_names = dataset_class_names
 
     def optimize_for_inference(self, compile=True, batch_size=1, dtype=torch.float32, backend: str = "pytorch"):
         """Optimize the model for inference.
@@ -573,7 +581,7 @@ class RFDETR:
         Returns:
             dict: A dictionary mapping class IDs to class names. The keys are integers starting from
         """
-        if hasattr(self.model, "class_names") and self.model.class_names:
+        if hasattr(self.model, "class_names") and self.model.class_names is not None:
             return {i + 1: name for i, name in enumerate(self.model.class_names)}
 
         return COCO_CLASSES
