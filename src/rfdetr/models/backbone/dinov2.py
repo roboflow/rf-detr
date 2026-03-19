@@ -176,7 +176,7 @@ class DinoV2(nn.Module):
                 size=(height, width),
                 mode="bicubic",
                 align_corners=False,
-                antialias=True,
+                antialias=patch_pos_embed.device.type != "mps",
             )
 
             # Reshape back

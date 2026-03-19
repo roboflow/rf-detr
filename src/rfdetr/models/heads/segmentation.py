@@ -10,6 +10,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from rfdetr.utilities.tensors import _bilinear_grid_sample
+
 
 class DepthwiseConvBlock(nn.Module):
     r"""Simplified ConvNeXt block without the MLP subnet"""
@@ -215,7 +217,9 @@ def point_sample(input: torch.Tensor, point_coords: torch.Tensor, **kwargs: Any)
     if point_coords.dim() == 3:
         add_dim = True
         point_coords = point_coords.unsqueeze(2)
-    output = F.grid_sample(input, 2.0 * point_coords - 1.0, padding_mode="border", **kwargs)
+    output = _bilinear_grid_sample(
+        input, 2.0 * point_coords - 1.0, padding_mode="border", align_corners=kwargs.get("align_corners", False)
+    )
     if add_dim:
         output = output.squeeze(3)
     return output
