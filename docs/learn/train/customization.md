@@ -23,9 +23,9 @@ Each of these objects is a standard PTL class. You can construct them directly, 
 
 ---
 
-## RFDETRModule
+## RFDETRModelModule
 
-`RFDETRModule` is a `pytorch_lightning.LightningModule`. It owns the model weights, the criterion, the postprocessor, and the optimizer/scheduler configuration.
+`RFDETRModelModule` is a `pytorch_lightning.LightningModule`. It owns the model weights, the criterion, the postprocessor, and the optimizer/scheduler configuration.
 
 ```python
 from rfdetr.config import (
@@ -169,7 +169,7 @@ trainer.fit(module, datamodule)
 
 ### Resume from checkpoint
 
-Pass the checkpoint path to `trainer.fit` via `ckpt_path`. The path can be a PTL `.ckpt` file or a legacy RF-DETR `.pth` file — `RFDETRModule.on_load_checkpoint` converts either format automatically.
+Pass the checkpoint path to `trainer.fit` via `ckpt_path`. The path can be a PTL `.ckpt` file or a legacy RF-DETR `.pth` file — `RFDETRModelModule.on_load_checkpoint` converts either format automatically.
 
 ```python
 trainer.fit(module, datamodule, ckpt_path="output/last.ckpt")

@@ -103,7 +103,7 @@ class _ModelContext:
 def _load_pretrain_weights_into(nn_model: torch.nn.Module, args: Any) -> List[str]:
     """Load pretrained checkpoint weights into *nn_model* in-place.
 
-    Mirrors ``Model.__init__`` and ``RFDETRModule._load_pretrain_weights``
+    Mirrors ``Model.__init__`` and ``RFDETRModelModule._load_pretrain_weights``
     checkpoint loading logic: validates hash, re-downloads on corruption, and
     trims query embeddings to match the configured query count.
 
