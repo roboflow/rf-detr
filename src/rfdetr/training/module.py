@@ -118,13 +118,29 @@ class RFDETRModule(LightningModule):
 
         validate_checkpoint_compatibility(checkpoint, args)
 
+        # Determine whether the user explicitly set num_classes on the ModelConfig,
+        # and whether that explicit value differs from the model default.
+        user_set_num_classes = False
+        if hasattr(self, "model_config") and hasattr(self.model_config, "model_fields_set"):
+            user_set_num_classes = "num_classes" in getattr(self.model_config, "model_fields_set", set())
+        default_num_classes = type(self.model_config).model_fields["num_classes"].default
+        # True only when the user explicitly set num_classes to a non-default value.
+        user_overrode_default_num_classes = user_set_num_classes and args.num_classes != default_num_classes
+
         checkpoint_num_classes = checkpoint["model"]["class_embed.bias"].shape[0]
-        if checkpoint_num_classes != args.num_classes + 1:
-            logger.warning(
-                "Reinitializing detection head: checkpoint has %d classes, configured for %d.",
-                checkpoint_num_classes - 1,
-                args.num_classes,
-            )
+        configured_num_classes_plus_bg = args.num_classes + 1
+        if checkpoint_num_classes != configured_num_classes_plus_bg:
+            # Align model head size before loading checkpoint weights.
+            if checkpoint_num_classes < configured_num_classes_plus_bg:
+                # Checkpoint has FEWER classes than configured.
+                if not user_overrode_default_num_classes:
+                    # Auto-align to the checkpoint when the user did NOT provide a
+                    # non-default override for num_classes (i.e., left it at the
+                    # ModelConfig default): treat the checkpoint as authoritative.
+                    args.num_classes = checkpoint_num_classes - 1
+                    configured_num_classes_plus_bg = checkpoint_num_classes
+            # In all mismatch cases we need the head to match the checkpoint's
+            # class count so load_state_dict succeeds without size mismatches.
             self.model.reinitialize_detection_head(checkpoint_num_classes)
 
         # Trim query embeddings to the configured query count.
@@ -136,10 +152,14 @@ class RFDETRModule(LightningModule):
 
         self.model.load_state_dict(checkpoint["model"], strict=False)
 
-        # After loading checkpoint weights (which may have a different class count),
-        # trim the detection head back to the configured num_classes so that PostProcess
-        # returns labels in [0, num_classes) rather than [0, checkpoint_num_classes).
-        if checkpoint_num_classes != args.num_classes + 1:
+        # If the user explicitly set a class count larger than the checkpoint,
+        # expand/reinitialize the head back to the configured size after load.
+        if checkpoint_num_classes < configured_num_classes_plus_bg and user_overrode_default_num_classes:
+            self.model.reinitialize_detection_head(configured_num_classes_plus_bg)
+
+        # Only trim back down when loading a larger pretrain checkpoint into a
+        # smaller configured task-specific class count.
+        if args.num_classes + 1 < checkpoint_num_classes:
             self.model.reinitialize_detection_head(args.num_classes + 1)
 
     def _apply_lora(self) -> None:

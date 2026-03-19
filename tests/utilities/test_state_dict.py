@@ -6,9 +6,11 @@
 
 """Unit tests for validate_checkpoint_compatibility in rfdetr.utilities.state_dict."""
 
+import logging
 from types import SimpleNamespace
 
 import pytest
+import torch
 
 from rfdetr.utilities.state_dict import validate_checkpoint_compatibility
 
@@ -85,3 +87,92 @@ class TestValidateCheckpointCompatibility:
         model_args = SimpleNamespace(segmentation_head=False, patch_size=16)
         with pytest.raises(ValueError, match=r"patch_size=12.*patch_size=16|patch_size=16.*patch_size=12"):
             validate_checkpoint_compatibility(checkpoint, model_args)
+
+    # ------------------------------------------------------------------
+    # class-count mismatch warnings
+    # ------------------------------------------------------------------
+
+    def test_class_count_mismatch_backbone_pretrain_warns(self, caplog):
+        """Backbone pretrain scenario: checkpoint 91 classes, model 2 — warns about re-init."""
+        ckpt_args = SimpleNamespace(segmentation_head=False, patch_size=14)
+        checkpoint = {
+            "args": ckpt_args,
+            "model": {"class_embed.bias": torch.randn(91)},
+        }
+        model_args = SimpleNamespace(segmentation_head=False, patch_size=14, num_classes=2)
+
+        rf_detr_logger = logging.getLogger("rf-detr")
+        prev_propagate = rf_detr_logger.propagate
+        rf_detr_logger.propagate = True
+        try:
+            with caplog.at_level(logging.WARNING, logger="rf-detr"):
+                validate_checkpoint_compatibility(checkpoint, model_args)
+        finally:
+            rf_detr_logger.propagate = prev_propagate
+
+        warning_msgs = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+        assert any("re-initialized to 2 classes" in msg for msg in warning_msgs), (
+            f"Expected 're-initialized to 2 classes' warning, got: {warning_msgs}"
+        )
+
+    def test_class_count_mismatch_finetune_checkpoint_warns(self, caplog):
+        """Fine-tuned checkpoint scenario: checkpoint 3 classes, model 90 — warns with num_classes hint."""
+        ckpt_args = SimpleNamespace(segmentation_head=False, patch_size=14)
+        checkpoint = {
+            "args": ckpt_args,
+            "model": {"class_embed.bias": torch.randn(3)},
+        }
+        model_args = SimpleNamespace(segmentation_head=False, patch_size=14, num_classes=90)
+
+        rf_detr_logger = logging.getLogger("rf-detr")
+        prev_propagate = rf_detr_logger.propagate
+        rf_detr_logger.propagate = True
+        try:
+            with caplog.at_level(logging.WARNING, logger="rf-detr"):
+                validate_checkpoint_compatibility(checkpoint, model_args)
+        finally:
+            rf_detr_logger.propagate = prev_propagate
+
+        warning_msgs = [r.getMessage() for r in caplog.records if r.name == "rf-detr" and r.levelno >= logging.WARNING]
+        assert any("Pass num_classes=2" in msg for msg in warning_msgs), (
+            f"Expected 'Pass num_classes=2' warning, got: {warning_msgs}"
+        )
+
+    def test_class_count_match_no_warning(self, caplog):
+        """Matching class count — no warning emitted."""
+        ckpt_args = SimpleNamespace(segmentation_head=False, patch_size=14)
+        checkpoint = {
+            "args": ckpt_args,
+            "model": {"class_embed.bias": torch.randn(91)},
+        }
+        model_args = SimpleNamespace(segmentation_head=False, patch_size=14, num_classes=90)
+
+        rf_detr_logger = logging.getLogger("rf-detr")
+        prev_propagate = rf_detr_logger.propagate
+        rf_detr_logger.propagate = True
+        try:
+            with caplog.at_level(logging.WARNING, logger="rf-detr"):
+                validate_checkpoint_compatibility(checkpoint, model_args)
+        finally:
+            rf_detr_logger.propagate = prev_propagate
+
+        warning_msgs = [r.getMessage() for r in caplog.records if r.name == "rf-detr" and r.levelno >= logging.WARNING]
+        assert not warning_msgs, f"Expected no warnings, got: {warning_msgs}"
+
+    def test_class_count_missing_model_key_no_warning(self, caplog):
+        """Checkpoint without 'model' key — no warning (backward compat)."""
+        ckpt_args = SimpleNamespace(segmentation_head=False, patch_size=14)
+        checkpoint = {"args": ckpt_args}
+        model_args = SimpleNamespace(segmentation_head=False, patch_size=14, num_classes=90)
+
+        rf_detr_logger = logging.getLogger("rf-detr")
+        prev_propagate = rf_detr_logger.propagate
+        rf_detr_logger.propagate = True
+        try:
+            with caplog.at_level(logging.WARNING, logger="rf-detr"):
+                validate_checkpoint_compatibility(checkpoint, model_args)
+        finally:
+            rf_detr_logger.propagate = prev_propagate
+
+        warning_msgs = [r.getMessage() for r in caplog.records if r.name == "rf-detr" and r.levelno >= logging.WARNING]
+        assert not warning_msgs, f"Expected no warnings, got: {warning_msgs}"

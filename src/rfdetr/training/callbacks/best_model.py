@@ -127,10 +127,20 @@ class BestModelCallback(ModelCheckpoint):
             _orig = getattr(pl_module.model, "_orig_mod", None)
             raw = _orig if isinstance(_orig, torch.nn.Module) else pl_module.model
             model_state_dict = raw.state_dict()
+        # Enrich train_config with dataset class names so reloaded checkpoints
+        # return the correct labels, not COCO defaults (#509).
+        train_config = pl_module.train_config
+        dataset_class_names = getattr(trainer.datamodule, "class_names", None)
+        if (
+            dataset_class_names is not None
+            and hasattr(train_config, "model_copy")
+            and getattr(train_config, "class_names", None) is None
+        ):
+            train_config = train_config.model_copy(update={"class_names": dataset_class_names})
         torch.save(
             {
                 "model": model_state_dict,
-                "args": pl_module.train_config,
+                "args": train_config,
                 "epoch": trainer.current_epoch,
             },
             pth_path,
@@ -162,10 +172,20 @@ class BestModelCallback(ModelCheckpoint):
             self._best_ema = ema_val
             self._output_dir.mkdir(parents=True, exist_ok=True)
             ema_state_dict = self._get_ema_model_state_dict(trainer, pl_module)
+            # Enrich train_config with dataset class names so reloaded checkpoints
+            # return the correct labels, not COCO defaults (#509).
+            ema_train_config = pl_module.train_config
+            dataset_class_names = getattr(trainer.datamodule, "class_names", None)
+            if (
+                dataset_class_names is not None
+                and hasattr(ema_train_config, "model_copy")
+                and getattr(ema_train_config, "class_names", None) is None
+            ):
+                ema_train_config = ema_train_config.model_copy(update={"class_names": dataset_class_names})
             torch.save(
                 {
                     "model": ema_state_dict,
-                    "args": pl_module.train_config,
+                    "args": ema_train_config,
                     "epoch": trainer.current_epoch,
                 },
                 self._output_dir / "checkpoint_best_ema.pth",

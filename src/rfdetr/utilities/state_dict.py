@@ -11,6 +11,10 @@ import tempfile
 from collections import OrderedDict
 from typing import Any, Dict, Optional
 
+from rfdetr.utilities.logger import get_logger
+
+logger = get_logger()
+
 
 def strip_checkpoint(checkpoint: str | os.PathLike[str]) -> None:
     """Strip a checkpoint file down to ``model`` and ``args`` keys only.
@@ -67,9 +71,9 @@ def validate_checkpoint_compatibility(checkpoint: Dict[str, Any], model_args: An
     size mismatch error.
 
     If either side is missing an attribute (e.g. a legacy checkpoint saved before
-    ``segmentation_head`` or ``patch_size`` was added to ``args``), that specific
-    check is skipped silently — this preserves backwards compatibility with
-    pre-existing checkpoints.
+        ``segmentation_head`` or ``patch_size`` was added to ``args``), that specific
+        check is skipped silently — this preserves backwards compatibility with
+        pre-existing checkpoints.
 
     Args:
         checkpoint: Loaded checkpoint dictionary, expected to contain an optional
@@ -81,7 +85,52 @@ def validate_checkpoint_compatibility(checkpoint: Dict[str, Any], model_args: An
     Raises:
         ValueError: If ``segmentation_head`` or ``patch_size`` in the checkpoint
             args do not match those of the model.
+
+    Note:
+        This helper does not mutate ``model_args``. It emits ``logger.warning``
+        (not an exception) for class-count mismatches so that callers can still
+        proceed with reinitialization or weight loading.
+
+        Two scenarios are distinguished:
+
+        * Backbone pretrain: the checkpoint head was trained with more classes
+          than the current ``model_args.num_classes``. In this case the detection
+          head is typically reinitialized or trimmed externally to match the
+          configured number of classes.
+        * Fine-tuned checkpoint: the checkpoint head was trained with fewer
+          classes than the current ``model_args.num_classes``. If you intend to
+          reuse the checkpoint's classification head as-is, set
+          ``model_args.num_classes`` to ``ckpt_num_classes - 1`` (the value
+          reported in the warning) before loading the state dict to align the
+          configuration and silence the warning.
     """
+    # Emit actionable class-count mismatch warning early, before any reinit happens.
+    ckpt_class_bias = checkpoint.get("model", {}).get("class_embed.bias", None)
+    if ckpt_class_bias is not None:
+        ckpt_num_classes = ckpt_class_bias.shape[0]
+        model_num_classes: Optional[int] = getattr(model_args, "num_classes", None)
+        if model_num_classes is not None and ckpt_num_classes != model_num_classes + 1:
+            if model_num_classes + 1 < ckpt_num_classes:
+                # Backbone pretrain scenario: checkpoint has more classes, head will be trimmed.
+                logger.warning(
+                    "Checkpoint has %d classes but model is configured for %d. "
+                    "The detection head will be re-initialized to %d classes.",
+                    ckpt_num_classes - 1,
+                    model_num_classes,
+                    model_num_classes,
+                )
+            else:
+                # Fine-tuned checkpoint loaded with wrong (larger) num_classes.
+                logger.warning(
+                    "Checkpoint has %d classes but model is configured for %d. "
+                    "Using checkpoint class count (%d). "
+                    "Pass num_classes=%d to suppress this warning.",
+                    ckpt_num_classes - 1,
+                    model_num_classes,
+                    ckpt_num_classes - 1,
+                    ckpt_num_classes - 1,
+                )
+
     if "args" not in checkpoint:
         return
 
