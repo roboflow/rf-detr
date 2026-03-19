@@ -217,7 +217,19 @@ class MLXInferenceModel:
             # Flatten and select top-K
             flat = prob_i.reshape(-1)
             num_select = min(self.num_select, flat.shape[0])
-            topk_idx = np.argpartition(-flat, num_select)[:num_select]
+
+            if num_select == 0:
+                # No elements to select; append empty result for this image.
+                results.append(
+                    {
+                        "scores": np.empty((0,), dtype=np.float32),
+                        "labels": np.empty((0,), dtype=np.int64),
+                        "boxes": np.empty((0, 4), dtype=np.float32),
+                    }
+                )
+                continue
+
+            topk_idx = np.argpartition(-flat, num_select - 1)[:num_select]
             topk_values = flat[topk_idx]
 
             sort_order = np.argsort(-topk_values)

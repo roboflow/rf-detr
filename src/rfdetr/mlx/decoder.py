@@ -442,13 +442,17 @@ class _TransformerDecoder(nn.Module):
         """
         output = tgt
         intermediates: List[mx.array] = []
+        last_normed: Optional[mx.array] = None
         for layer in self.layers:
             output = layer(output, memory, query_pos, reference_points, spatial_shape)
             if return_intermediate:
-                intermediates.append(output)
-        normed = self.norm(output)
+                last_normed = self.norm(output)
+                intermediates.append(last_normed)
         if return_intermediate:
-            return normed, intermediates
+            if last_normed is None:
+                last_normed = self.norm(output)
+            return last_normed, intermediates
+        normed = self.norm(output)
         return normed
 
 
