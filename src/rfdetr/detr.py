@@ -309,8 +309,10 @@ class RFDETR:
         if _device is not None and _device != "cpu":
             warnings.warn(
                 f"`device='{_device}'` is deprecated and ignored; PTL auto-selects the"
-                " accelerator. To pin a specific device use `CUDA_VISIBLE_DEVICES` or"
-                " configure a PTL Trainer directly.",
+                " accelerator. To pin a specific device, configure your"
+                " accelerator/backend explicitly (for example, use"
+                " `CUDA_VISIBLE_DEVICES` for CUDA) or configure a PTL Trainer"
+                " directly.",
                 DeprecationWarning,
                 stacklevel=2,
             )
