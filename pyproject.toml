@@ -43,7 +43,7 @@ dependencies = [
     "peft",                            # LoRA backbone weight loading; TODO: consider moving to extras
     "pydantic",                        # ModelConfig / TrainConfig validation
     "supervision",                     # inference output (Detections, Masks)
-    "pyDeprecate>=0.3,<0.6",             # deprecation warnings for legacy APIs
+    "pyDeprecate>=0.3,<0.6",           # deprecation warnings for legacy APIs
 ]
 
 [project.optional-dependencies]
