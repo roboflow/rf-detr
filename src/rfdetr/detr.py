@@ -12,7 +12,7 @@ import warnings
 from collections import defaultdict
 from copy import deepcopy
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 import numpy as np
 import requests
@@ -80,7 +80,7 @@ class _ModelContext:
         device: torch.device,
         resolution: int,
         args: Any,
-        class_names: List[str] = None,
+        class_names: Optional[List[str]] = None,
     ) -> None:
         self.model = model
         self.postprocess = postprocess
@@ -395,7 +395,7 @@ class RFDETR:
         self._optimized_has_been_compiled = False
         self._optimized_batch_size = None
         self._optimized_resolution = None
-        self._optimized_half = False
+        self._optimized_dtype = None
 
     def export(
         self,
@@ -574,12 +574,15 @@ class RFDETR:
 
     # Get class_names from the model
     @property
-    def class_names(self):
-        """
-        Retrieve the class names supported by the loaded model.
+    def class_names(self) -> Dict[int, str]:
+        """Retrieve the class names supported by the loaded model.
 
         Returns:
-            dict: A dictionary mapping class IDs to class names. The keys are integers starting from
+            A dictionary mapping integer class IDs to class name strings.
+            IDs are 1-indexed and may be non-contiguous (e.g. COCO category
+            IDs have gaps such as 11→13 and 25→27).  When no custom class
+            names are embedded in the checkpoint, returns the standard COCO
+            classes dict.
         """
         if hasattr(self.model, "class_names") and self.model.class_names is not None:
             return {i + 1: name for i, name in enumerate(self.model.class_names)}
@@ -846,8 +849,8 @@ class RFDETRLarge(RFDETR):
         self.is_deprecated = False
         try:
             super().__init__(**kwargs)
-        except Exception as e:
-            self.init_error = e
+        except (ValueError, RuntimeError) as exc:
+            self.init_error = exc
             self.is_deprecated = True
             try:
                 super().__init__(**kwargs)

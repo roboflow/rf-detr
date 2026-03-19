@@ -11,6 +11,7 @@ from __future__ import annotations
 import math
 import os
 import random
+import warnings
 from typing import Any, Dict, Optional, Tuple
 
 import torch
@@ -478,6 +479,13 @@ class RFDETRModelModule(LightningModule):
         # them into AveragedModel when resuming from converted legacy checkpoints.
         if "legacy_ema_state_dict" in checkpoint:
             self._pending_legacy_ema_state = checkpoint["legacy_ema_state_dict"]
+            warnings.warn(
+                "Checkpoint contains legacy EMA weights (`legacy_ema_state_dict`). "
+                "Add RFDETREMACallback to your trainer callbacks to restore them; "
+                "without it the stashed weights will be ignored.",
+                UserWarning,
+                stacklevel=2,
+            )
 
     def reinitialize_detection_head(self, num_classes: int) -> None:
         """Reinitialize the detection head for a new class count.

@@ -30,7 +30,7 @@ from torchvision.transforms.v2 import Compose, ToDtype, ToImage
 
 from rfdetr.datasets.aug_config import AUG_CONFIG
 from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize
-from rfdetr.util.logger import get_logger
+from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
