@@ -231,13 +231,24 @@ def point_sample(input: torch.Tensor, point_coords: torch.Tensor, **kwargs: Any)
         if kwargs:
             unexpected = ", ".join(sorted(kwargs.keys()))
             raise TypeError(f"Unexpected keyword argument(s) for bilinear mode: {unexpected}")
-        # Use the optimized bilinear grid sampler.
-        output = _bilinear_grid_sample(
-            input,
-            grid,
-            padding_mode=padding_mode,
-            align_corners=align_corners,
-        )
+        # For bilinear mode, use the optimized sampler when the padding_mode
+        # is supported by the manual/MPS path. For other padding modes,
+        # delegate to F.grid_sample to keep behavior consistent across devices.
+        if padding_mode not in ("zeros", "border"):
+            output = F.grid_sample(
+                input,
+                grid,
+                mode=mode,
+                padding_mode=padding_mode,
+                align_corners=align_corners,
+            )
+        else:
+            output = _bilinear_grid_sample(
+                input,
+                grid,
+                padding_mode=padding_mode,
+                align_corners=align_corners,
+            )
     else:
         # Delegate to torch.nn.functional.grid_sample for other modes (e.g. "nearest"),
         # forwarding any remaining supported kwargs.
