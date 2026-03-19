@@ -52,9 +52,24 @@ class RFDETRModelModule(LightningModule):
         # Model, criterion, and postprocessor.
         self.model = build_model(ns)
         if model_config.pretrain_weights is not None:
+            # Capture the configured class count before loading weights so we can
+            # detect any automatic alignment to the checkpoint.
+            prev_num_classes = self.model_config.num_classes
             self._load_pretrain_weights()
+            # If the loaded checkpoint changed the model's effective number of
+            # classes (e.g. to match a fine-tuned head), persist that back onto
+            # the model_config so downstream components see the aligned value.
+            if hasattr(self.model, "num_classes"):
+                model_num_classes = getattr(self.model, "num_classes")
+                if model_num_classes is not None and model_num_classes != prev_num_classes:
+                    self.model_config.num_classes = model_num_classes
         if model_config.backbone_lora:
             self._apply_lora()
+
+        # Rebuild the namespace after potential num_classes alignment so that
+        # the criterion and postprocessors are constructed with a config that
+        # matches the current model head.
+        ns = build_namespace(self.model_config, self.train_config)
         self.criterion, self.postprocess = build_criterion_and_postprocessors(ns)
 
         # torch.compile is opt-in: set model_config.compile=True to enable.
