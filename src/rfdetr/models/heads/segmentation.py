@@ -230,9 +230,7 @@ def point_sample(input: torch.Tensor, point_coords: torch.Tensor, **kwargs: Any)
     if mode == "bilinear":
         if kwargs:
             unexpected = ", ".join(sorted(kwargs.keys()))
-            raise TypeError(
-                f"Unexpected keyword argument(s) for bilinear mode: {unexpected}"
-            )
+            raise TypeError(f"Unexpected keyword argument(s) for bilinear mode: {unexpected}")
         # Use the optimized bilinear grid sampler.
         output = _bilinear_grid_sample(
             input,
