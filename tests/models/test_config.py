@@ -196,6 +196,31 @@ class TestTrainConfigT42PromotedFields:
         with pytest.raises((ValueError, ValidationError)):
             self._tc(tmp_path, **{field: value})
 
+    def test_batch_size_auto_is_accepted(self, tmp_path):
+        """batch_size accepts the special 'auto' value."""
+        tc = self._tc(tmp_path, batch_size="auto")
+        assert tc.batch_size == "auto"
+
+    @pytest.mark.parametrize(
+        "field,value",
+        [
+            ("batch_size", 0),
+            ("grad_accum_steps", 0),
+            ("auto_batch_target_effective", 0),
+            ("auto_batch_max_targets_per_image", 0),
+        ],
+    )
+    def test_auto_batch_related_fields_reject_non_positive_values(self, tmp_path, field, value):
+        """batch/accum/target-effective/max_targets fields must be >= 1 (except batch_size='auto')."""
+        with pytest.raises((ValueError, ValidationError)):
+            self._tc(tmp_path, **{field: value})
+
+    @pytest.mark.parametrize("ema_headroom", [0.0, 1.5])
+    def test_auto_batch_ema_headroom_must_be_in_open_one(self, tmp_path, ema_headroom):
+        """auto_batch_ema_headroom must be in (0, 1]."""
+        with pytest.raises((ValueError, ValidationError)):
+            self._tc(tmp_path, auto_batch_ema_headroom=ema_headroom)
+
 
 class TestBuildTrainerUsesRealFields:
     """build_trainer() must read clip_max_norm, seed, sync_bn from real TrainConfig fields."""

@@ -14,6 +14,7 @@ import torch.utils.data
 from torch.utils.data import DataLoader
 
 from rfdetr.config import RFDETRBaseConfig, TrainConfig
+from rfdetr.utilities.tensors import NestedTensor
 
 # ---------------------------------------------------------------------------
 # Private helpers — used by both module-level fixtures and class-level _setup_*
@@ -85,11 +86,28 @@ def _fake_dataset(length: int = 100, with_coco: bool = False) -> _FakeDataset:
     return _FakeDataset(length, with_coco)
 
 
+def _make_batch(batch_size: int = 2, channels: int = 3, h: int = 16, w: int = 16):
+    """Build a ``(NestedTensor, targets)`` tuple for transfer_batch_to_device tests."""
+    tensors = torch.randn(batch_size, channels, h, w)
+    mask = torch.zeros(batch_size, h, w, dtype=torch.bool)
+    samples = NestedTensor(tensors, mask)
+    targets = [
+        {
+            "boxes": torch.tensor([[0.5, 0.5, 0.1, 0.1]]),
+            "labels": torch.tensor([1]),
+            "image_id": torch.tensor(i),
+            "orig_size": torch.tensor([h, w]),
+        }
+        for i in range(batch_size)
+    ]
+    return samples, targets
+
+
 def _build_datamodule(model_config=None, train_config=None, tmp_path=None):
     """Construct RFDETRDataModule (build_dataset is not called at init time)."""
     mc = model_config or _base_model_config()
     tc = train_config or _base_train_config(tmp_path)
-    from rfdetr.training.datamodule import RFDETRDataModule
+    from rfdetr.training.module_data import RFDETRDataModule
 
     return RFDETRDataModule(mc, tc)
 
@@ -179,7 +197,7 @@ class TestSetup:
         """Helper: construct DataModule and call setup(stage) with build_dataset mocked."""
         mc = _base_model_config()
         tc = _base_train_config(tmp_path, dataset_file=dataset_file, **train_overrides)
-        from rfdetr.training.datamodule import RFDETRDataModule
+        from rfdetr.training.module_data import RFDETRDataModule
 
         dm = RFDETRDataModule(mc, tc)
         fake_train = _fake_dataset(100)
@@ -190,7 +208,7 @@ class TestSetup:
         def _build(image_set, args, resolution):
             return datasets[image_set]
 
-        with patch("rfdetr.training.datamodule.build_dataset", side_effect=_build):
+        with patch("rfdetr.training.module_data.build_dataset", side_effect=_build):
             dm.setup(stage)
         return dm, fake_train, fake_val, fake_test
 
@@ -217,7 +235,7 @@ class TestSetup:
         """setup('test') falls back to 'val' split for non-roboflow datasets."""
         mc = _base_model_config()
         tc = _base_train_config(tmp_path, dataset_file="coco")
-        from rfdetr.training.datamodule import RFDETRDataModule
+        from rfdetr.training.module_data import RFDETRDataModule
 
         dm = RFDETRDataModule(mc, tc)
         requested_splits = []
@@ -226,7 +244,7 @@ class TestSetup:
             requested_splits.append(image_set)
             return _fake_dataset(10)
 
-        with patch("rfdetr.training.datamodule.build_dataset", side_effect=_build):
+        with patch("rfdetr.training.module_data.build_dataset", side_effect=_build):
             dm.setup("test")
 
         assert "val" in requested_splits
@@ -236,7 +254,7 @@ class TestSetup:
         """setup('fit') skips building if datasets are already populated."""
         mc = _base_model_config()
         tc = _base_train_config(tmp_path)
-        from rfdetr.training.datamodule import RFDETRDataModule
+        from rfdetr.training.module_data import RFDETRDataModule
 
         dm = RFDETRDataModule(mc, tc)
         existing_train = _fake_dataset(50)
@@ -244,7 +262,7 @@ class TestSetup:
         dm._dataset_train = existing_train
         dm._dataset_val = existing_val
 
-        with patch("rfdetr.training.datamodule.build_dataset") as mock_build:
+        with patch("rfdetr.training.module_data.build_dataset") as mock_build:
             dm.setup("fit")
             mock_build.assert_not_called()
 
@@ -255,10 +273,10 @@ class TestSetup:
         """setup('predict') does not build any dataset."""
         mc = _base_model_config()
         tc = _base_train_config(tmp_path)
-        from rfdetr.training.datamodule import RFDETRDataModule
+        from rfdetr.training.module_data import RFDETRDataModule
 
         dm = RFDETRDataModule(mc, tc)
-        with patch("rfdetr.training.datamodule.build_dataset") as mock_build:
+        with patch("rfdetr.training.module_data.build_dataset") as mock_build:
             dm.setup("predict")
             mock_build.assert_not_called()
 
@@ -275,7 +293,7 @@ class TestTrainDataloader:
             grad_accum_steps=grad_accum_steps,
             num_workers=num_workers,
         )
-        from rfdetr.training.datamodule import RFDETRDataModule
+        from rfdetr.training.module_data import RFDETRDataModule
 
         dm = RFDETRDataModule(mc, tc)
         dm._dataset_train = _fake_dataset(dataset_length)
@@ -306,7 +324,7 @@ class TestTrainDataloader:
 
     def test_small_dataset_replacement_sampler_num_samples(self, tmp_path):
         """Replacement sampler has num_samples == effective_batch_size * _MIN_TRAIN_BATCHES."""
-        from rfdetr.training.datamodule import _MIN_TRAIN_BATCHES
+        from rfdetr.training.module_data import _MIN_TRAIN_BATCHES
 
         batch_size = 2
         grad_accum_steps = 3
@@ -334,7 +352,7 @@ class TestTrainDataloader:
 
     def test_threshold_exact_boundary_uses_batch_sampler(self, tmp_path):
         """Dataset of exactly effective_batch_size * _MIN_TRAIN_BATCHES is NOT small."""
-        from rfdetr.training.datamodule import _MIN_TRAIN_BATCHES
+        from rfdetr.training.module_data import _MIN_TRAIN_BATCHES
 
         batch_size = 2
         grad_accum = 1
@@ -350,7 +368,7 @@ class TestValDataloader:
     def _setup_dm_with_val(self, tmp_path, dataset_length=50, batch_size=2, num_workers=0):
         mc = _base_model_config()
         tc = _base_train_config(tmp_path, batch_size=batch_size, num_workers=num_workers)
-        from rfdetr.training.datamodule import RFDETRDataModule
+        from rfdetr.training.module_data import RFDETRDataModule
 
         dm = RFDETRDataModule(mc, tc)
         dm._dataset_val = _fake_dataset(dataset_length)
@@ -393,7 +411,7 @@ class TestTestDataloader:
     def _setup_dm_with_test(self, tmp_path, dataset_length=30, batch_size=2, num_workers=0):
         mc = _base_model_config()
         tc = _base_train_config(tmp_path, batch_size=batch_size, num_workers=num_workers)
-        from rfdetr.training.datamodule import RFDETRDataModule
+        from rfdetr.training.module_data import RFDETRDataModule
 
         dm = RFDETRDataModule(mc, tc)
         dm._dataset_test = _fake_dataset(dataset_length)
@@ -436,7 +454,7 @@ class TestClassNames:
         """class_names reads from _dataset_train.coco.cats when available."""
         mc = _base_model_config()
         tc = _base_train_config(tmp_path)
-        from rfdetr.training.datamodule import RFDETRDataModule
+        from rfdetr.training.module_data import RFDETRDataModule
 
         dm = RFDETRDataModule(mc, tc)
         dm._dataset_train = _fake_dataset(50, with_coco=True)
@@ -446,7 +464,7 @@ class TestClassNames:
         """class_names falls back to _dataset_val when _dataset_train has no COCO."""
         mc = _base_model_config()
         tc = _base_train_config(tmp_path)
-        from rfdetr.training.datamodule import RFDETRDataModule
+        from rfdetr.training.module_data import RFDETRDataModule
 
         dm = RFDETRDataModule(mc, tc)
         dm._dataset_train = _fake_dataset(50, with_coco=False)
@@ -457,7 +475,7 @@ class TestClassNames:
         """class_names returns None when no dataset has a coco attribute."""
         mc = _base_model_config()
         tc = _base_train_config(tmp_path)
-        from rfdetr.training.datamodule import RFDETRDataModule
+        from rfdetr.training.module_data import RFDETRDataModule
 
         dm = RFDETRDataModule(mc, tc)
         dm._dataset_train = _fake_dataset(50, with_coco=False)
@@ -468,7 +486,7 @@ class TestClassNames:
         """class_names are sorted by COCO category ID."""
         mc = _base_model_config()
         tc = _base_train_config(tmp_path)
-        from rfdetr.training.datamodule import RFDETRDataModule
+        from rfdetr.training.module_data import RFDETRDataModule
 
         dm = RFDETRDataModule(mc, tc)
         dataset = _fake_dataset(50)
@@ -487,7 +505,7 @@ class TestSegmentationSupport:
         """RFDETRDataModule can be constructed with a SegmentationTrainConfig."""
         mc = base_model_config(segmentation_head=True)
         tc = seg_train_config()
-        from rfdetr.training.datamodule import RFDETRDataModule
+        from rfdetr.training.module_data import RFDETRDataModule
 
         dm = RFDETRDataModule(mc, tc)
         assert dm.train_config is tc
@@ -497,8 +515,56 @@ class TestSegmentationSupport:
         """Segmentation-specific loss coefficients are forwarded to _args."""
         mc = base_model_config(segmentation_head=True)
         tc = seg_train_config()
-        from rfdetr.training.datamodule import RFDETRDataModule
+        from rfdetr.training.module_data import RFDETRDataModule
 
         dm = RFDETRDataModule(mc, tc)
         assert dm._args.mask_ce_loss_coef == pytest.approx(5.0)
         assert dm._args.mask_dice_loss_coef == pytest.approx(5.0)
+
+
+class TestTransferBatchToDevice:
+    """Tests for RFDETRDataModule.transfer_batch_to_device().
+
+    Verifies that NestedTensor samples and all target-dict tensors are correctly
+    moved to the target device without unwrapping the NestedTensor into plain tensors.
+    """
+
+    def test_samples_transferred_to_target_device(self, build_datamodule):
+        """Both tensors and mask in NestedTensor must land on the target device."""
+        dm = build_datamodule()
+        samples, targets = _make_batch()
+        device = torch.device("cpu")
+
+        result_samples, _ = dm.transfer_batch_to_device((samples, targets), device, dataloader_idx=0)
+
+        assert result_samples.tensors.device == device
+        assert result_samples.mask.device == device
+
+    def test_targets_transferred_to_target_device(self, build_datamodule):
+        """All tensor values in every target dict must be moved to the target device."""
+        dm = build_datamodule()
+        samples, targets = _make_batch()
+        device = torch.device("cpu")
+
+        _, result_targets = dm.transfer_batch_to_device((samples, targets), device, dataloader_idx=0)
+
+        for t in result_targets:
+            for v in t.values():
+                assert v.device == device
+
+    def test_returns_tuple_of_correct_length(self, build_datamodule):
+        """Return value must be a (samples, targets) tuple to match batch contract."""
+        dm = build_datamodule()
+        result = dm.transfer_batch_to_device(_make_batch(), torch.device("cpu"), dataloader_idx=0)
+
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+
+    def test_preserves_nested_tensor_type(self, build_datamodule):
+        """Device transfer must not unwrap NestedTensor into plain tensors."""
+        dm = build_datamodule()
+        samples, targets = _make_batch()
+
+        result_samples, _ = dm.transfer_batch_to_device((samples, targets), torch.device("cpu"), dataloader_idx=0)
+
+        assert isinstance(result_samples, NestedTensor)

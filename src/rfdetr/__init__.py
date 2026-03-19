@@ -4,11 +4,6 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-import os
-
-if os.environ.get("PYTORCH_ENABLE_MPS_FALLBACK") is None:
-    os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
-
 from rfdetr.detr import (
     RFDETRBase,  # DEPRECATED # noqa: F401
     RFDETRLarge,
@@ -39,7 +34,7 @@ __all__ = [
 ]
 
 # Lazily resolved names: avoids eager pytorch_lightning import at `import rfdetr` time.
-_LAZY_TRAINING = frozenset({"RFDETRModule", "RFDETRDataModule", "build_trainer"})
+_LAZY_TRAINING = frozenset({"RFDETRModelModule", "RFDETRDataModule", "build_trainer"})
 _PLUS_EXPORTS = frozenset({"RFDETR2XLarge", "RFDETRXLarge"})
 
 

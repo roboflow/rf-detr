@@ -11,9 +11,9 @@ The high-level `RFDETR.train()` method is the quickest path to fine-tuning, but 
 When you call `model.train(...)`, three things happen internally:
 
 ```python
-from rfdetr.training import RFDETRModule, RFDETRDataModule, build_trainer
+from rfdetr.training import RFDETRModelModule, RFDETRDataModule, build_trainer
 
-module = RFDETRModule(model_config, train_config)
+module = RFDETRModelModule(model_config, train_config)
 datamodule = RFDETRDataModule(model_config, train_config)
 trainer = build_trainer(train_config, model_config)
 trainer.fit(module, datamodule, ckpt_path=train_config.resume or None)
@@ -23,16 +23,16 @@ Each of these objects is a standard PTL class. You can construct them directly, 
 
 ---
 
-## RFDETRModule
+## RFDETRModelModule
 
-`RFDETRModule` is a `pytorch_lightning.LightningModule`. It owns the model weights, the criterion, the postprocessor, and the optimizer/scheduler configuration.
+`RFDETRModelModule` is a `pytorch_lightning.LightningModule`. It owns the model weights, the criterion, the postprocessor, and the optimizer/scheduler configuration.
 
 ```python
 from rfdetr.config import (
     RFDETRMediumConfig,
     TrainConfig,
 )  # config classes live in rfdetr.config, not the top-level rfdetr namespace
-from rfdetr.training import RFDETRModule
+from rfdetr.training import RFDETRModelModule
 
 model_config = RFDETRMediumConfig(num_classes=10)
 train_config = TrainConfig(
@@ -44,7 +44,7 @@ train_config = TrainConfig(
     output_dir="output",
 )
 
-module = RFDETRModule(model_config, train_config)
+module = RFDETRModelModule(model_config, train_config)
 ```
 
 ### Lifecycle hooks
@@ -148,7 +148,7 @@ from rfdetr.config import (
     RFDETRMediumConfig,
     TrainConfig,
 )  # config classes live in rfdetr.config, not the top-level rfdetr namespace
-from rfdetr.training import RFDETRModule, RFDETRDataModule, build_trainer
+from rfdetr.training import RFDETRModelModule, RFDETRDataModule, build_trainer
 
 model_config = RFDETRMediumConfig(num_classes=10)
 train_config = TrainConfig(
@@ -160,7 +160,7 @@ train_config = TrainConfig(
     output_dir="output",
 )
 
-module = RFDETRModule(model_config, train_config)
+module = RFDETRModelModule(model_config, train_config)
 datamodule = RFDETRDataModule(model_config, train_config)
 trainer = build_trainer(train_config, model_config)
 
@@ -169,7 +169,7 @@ trainer.fit(module, datamodule)
 
 ### Resume from checkpoint
 
-Pass the checkpoint path to `trainer.fit` via `ckpt_path`. The path can be a PTL `.ckpt` file or a legacy RF-DETR `.pth` file — `RFDETRModule.on_load_checkpoint` converts either format automatically.
+Pass the checkpoint path to `trainer.fit` via `ckpt_path`. The path can be a PTL `.ckpt` file or a legacy RF-DETR `.pth` file — `RFDETRModelModule.on_load_checkpoint` converts either format automatically.
 
 ```python
 trainer.fit(module, datamodule, ckpt_path="output/last.ckpt")
@@ -239,7 +239,7 @@ from rfdetr.config import (
     RFDETRMediumConfig,
     TrainConfig,
 )  # config classes live in rfdetr.config, not the top-level rfdetr namespace
-from rfdetr.training import RFDETRModule, RFDETRDataModule, build_trainer
+from rfdetr.training import RFDETRModelModule, RFDETRDataModule, build_trainer
 
 model_config = RFDETRMediumConfig(num_classes=10)
 train_config = TrainConfig(
@@ -251,7 +251,7 @@ train_config = TrainConfig(
     sync_bn=True,  # sync batch norms across GPUs
 )
 
-module = RFDETRModule(model_config, train_config)
+module = RFDETRModelModule(model_config, train_config)
 datamodule = RFDETRDataModule(model_config, train_config)
 trainer = build_trainer(train_config, model_config, strategy="ddp", devices="auto")
 

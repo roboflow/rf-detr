@@ -103,7 +103,7 @@ class _ModelContext:
 def _load_pretrain_weights_into(nn_model: torch.nn.Module, args: Any) -> List[str]:
     """Load pretrained checkpoint weights into *nn_model* in-place.
 
-    Mirrors ``Model.__init__`` and ``RFDETRModule._load_pretrain_weights``
+    Mirrors ``Model.__init__`` and ``RFDETRModelModule._load_pretrain_weights``
     checkpoint loading logic: validates hash, re-downloads on corruption, and
     trims query embeddings to match the configured query count.
 
@@ -287,7 +287,8 @@ class RFDETR:
         onto ``self.model.model`` so that :meth:`predict` and :meth:`export`
         continue to work without reloading the checkpoint.
         """
-        from rfdetr.training import RFDETRDataModule, RFDETRModule, build_trainer
+        from rfdetr.training import RFDETRDataModule, RFDETRModelModule, build_trainer
+        from rfdetr.training.auto_batch import resolve_auto_batch_config
 
         # Absorb legacy `callbacks` dict — warn if non-empty, then discard.
         callbacks_dict = kwargs.pop("callbacks", None)
@@ -324,7 +325,21 @@ class RFDETR:
             )
 
         config = self.get_train_config(**kwargs)
-        module = RFDETRModule(self.model_config, config)
+        if config.batch_size == "auto":
+            auto_batch = resolve_auto_batch_config(
+                model_context=self.model,
+                model_config=self.model_config,
+                train_config=config,
+            )
+            config.batch_size = auto_batch.safe_micro_batch
+            config.grad_accum_steps = auto_batch.recommended_grad_accum_steps
+            logger.info(
+                "[auto-batch] resolved train config: batch_size=%s grad_accum_steps=%s effective_batch_size=%s",
+                config.batch_size,
+                config.grad_accum_steps,
+                auto_batch.effective_batch_size,
+            )
+        module = RFDETRModelModule(self.model_config, config)
         datamodule = RFDETRDataModule(self.model_config, config)
         trainer = build_trainer(config, self.model_config, accelerator=_accelerator)
         trainer.fit(module, datamodule, ckpt_path=config.resume or None)

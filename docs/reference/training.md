@@ -2,9 +2,9 @@
 
 This page documents the training primitives that power RF-DETR. For a narrative guide with runnable examples, see [Custom Training API](../learn/train/customization.md).
 
-## RFDETRModule
+## RFDETRModelModule
 
-::: rfdetr.training.module.RFDETRModule
+::: rfdetr.training.module_model.RFDETRModelModule
     options:
       show_source: false
       members:
@@ -25,7 +25,7 @@ This page documents the training primitives that power RF-DETR. For a narrative 
 
 ## RFDETRDataModule
 
-::: rfdetr.training.datamodule.RFDETRDataModule
+::: rfdetr.training.module_data.RFDETRDataModule
     options:
       show_source: false
       members:
@@ -93,7 +93,7 @@ This page documents the training primitives that power RF-DETR. For a narrative 
 ## RFDETRCli
 
 `RFDETRCli` is the command-line entry point for RF-DETR. It wraps
-`RFDETRModule` and `RFDETRDataModule` under a single `rfdetr` command and
+`RFDETRModelModule` and `RFDETRDataModule` under a single `rfdetr` command and
 auto-generates four subcommands from the PyTorch Lightning CLI machinery:
 
 ```bash

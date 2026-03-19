@@ -41,8 +41,8 @@ from typing import Dict, List, Optional, Set, Tuple, Union
 import torch
 from torch import nn
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
+from transformers import BackboneConfigMixin, BackboneMixin  # public API; stable across all transformers v5.x
 from transformers.activations import ACT2FN
-from transformers.backbone_utils import BackboneConfigMixin, BackboneMixin
 from transformers.configuration_utils import PretrainedConfig
 from transformers.modeling_outputs import (
     BackboneOutput,

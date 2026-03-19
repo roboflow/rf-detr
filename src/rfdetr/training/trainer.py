@@ -11,6 +11,8 @@ from typing import Any
 
 import torch
 from pytorch_lightning import Trainer
+from pytorch_lightning.callbacks import RichProgressBar, TQDMProgressBar
+from pytorch_lightning.callbacks.progress.rich_progress import RichProgressBarTheme
 from pytorch_lightning.loggers import CSVLogger, MLFlowLogger, TensorBoardLogger, WandbLogger
 
 from rfdetr.config import ModelConfig, TrainConfig
@@ -94,6 +96,11 @@ def build_trainer(
 
     # --- Build callbacks ---
     callbacks = []
+
+    if tc.progress_bar == "rich":
+        callbacks.append(RichProgressBar(theme=RichProgressBarTheme(metrics_format=".3e")))
+    elif tc.progress_bar == "tqdm":
+        callbacks.append(TQDMProgressBar())
 
     if enable_ema:
         callbacks.append(
@@ -206,7 +213,7 @@ def build_trainer(
         "sync_batchnorm": sync_bn,
         "callbacks": callbacks,
         "logger": loggers if loggers else False,
-        "enable_progress_bar": tc.progress_bar,
+        "enable_progress_bar": tc.progress_bar is not None,
         "default_root_dir": tc.output_dir,
         "log_every_n_steps": 50,
         "deterministic": False,

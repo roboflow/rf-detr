@@ -289,10 +289,29 @@ class RFDETRSeg2XLargeConfig(RFDETRBaseConfig):
 
 
 class TrainConfig(BaseModel):
+    """Training hyperparameters and auto-batching configuration.
+
+    Notes:
+        * ``auto_batch_target_effective`` is interpreted as the **per-device**
+          effective batch size target, i.e. the number of images seen by a
+          single process in one optimizer step after accounting for
+          ``grad_accum_steps``. In multi-GPU / multi-node runs the global
+          effective batch size is therefore:
+
+            ``global_effective_batch = auto_batch_target_effective * devices * num_nodes``
+
+          This avoids silently changing behavior when scaling from single-GPU
+          to multi-GPU training.
+    """
+
     lr: float = 1e-4
     lr_encoder: float = 1.5e-4
-    batch_size: int = 4
+    batch_size: int | Literal["auto"] = 4
     grad_accum_steps: int = 4
+    auto_batch_target_effective: int = 16  # per-device effective batch size target (before devices * num_nodes)
+    # Auto-batch probe: worst-case assumptions when batch_size="auto".
+    auto_batch_max_targets_per_image: int = 100
+    auto_batch_ema_headroom: float = 0.7  # scale safe batch by this when use_ema=True (EMA uses extra memory)
     epochs: int = 100
     resume: Optional[str] = None
     ema_decay: float = 0.993
@@ -322,7 +341,7 @@ class TrainConfig(BaseModel):
     early_stopping_patience: int = 10
     early_stopping_min_delta: float = 0.001
     early_stopping_use_ema: bool = False
-    progress_bar: bool = False  # Enable tqdm progress bars during training and evaluation epochs.
+    progress_bar: Optional[Literal["tqdm", "rich"]] = None  # Progress bar style: "rich", "tqdm", or None to disable.
     tensorboard: bool = True
     wandb: bool = False
     mlflow: bool = False
@@ -336,6 +355,18 @@ class TrainConfig(BaseModel):
     eval_interval: int = 1
     log_per_class_metrics: bool = True
     aug_config: Optional[Dict[str, Any]] = None
+
+    @field_validator("progress_bar", mode="before")
+    @classmethod
+    def _coerce_legacy_progress_bar(cls, value: Any) -> Any:
+        """Normalize legacy boolean progress_bar values to the new string/None representation.
+
+        This preserves compatibility with older configs where ``progress_bar`` was a bool.
+        """
+        if isinstance(value, bool):
+            return "tqdm" if value else None
+        return value
+
     # Promoted from populate_args() — PTL migration (T4-2).
     # device is intentionally absent: PTL auto-detects accelerator via Trainer(accelerator="auto").
     accelerator: str = "auto"
@@ -361,6 +392,36 @@ class TrainConfig(BaseModel):
     pin_memory: Optional[bool] = None
     persistent_workers: Optional[bool] = None
     prefetch_factor: Optional[int] = None
+
+    @field_validator("batch_size", mode="after")
+    @classmethod
+    def validate_batch_size(cls, v: int | Literal["auto"]) -> int | Literal["auto"]:
+        """Validate batch_size is a positive integer or the literal 'auto'."""
+        if v == "auto":
+            return v
+        if v < 1:
+            raise ValueError("batch_size must be >= 1, or 'auto'.")
+        return v
+
+    @field_validator(
+        "grad_accum_steps", "auto_batch_target_effective", "auto_batch_max_targets_per_image", mode="after"
+    )
+    @classmethod
+    def validate_positive_train_steps(cls, v: int) -> int:
+        """Validate accumulation, target-effective batch, and max targets are >= 1."""
+        if v < 1:
+            raise ValueError(
+                "grad_accum_steps, auto_batch_target_effective, and auto_batch_max_targets_per_image must be >= 1."
+            )
+        return v
+
+    @field_validator("auto_batch_ema_headroom", mode="after")
+    @classmethod
+    def validate_ema_headroom(cls, v: float) -> float:
+        """Validate auto_batch_ema_headroom is in (0, 1]."""
+        if not (0 < v <= 1.0):
+            raise ValueError("auto_batch_ema_headroom must be in (0, 1].")
+        return v
 
     @field_validator("ema_update_interval", "eval_interval", mode="after")
     @classmethod

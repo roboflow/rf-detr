@@ -23,8 +23,8 @@ from pytorch_lightning import Trainer
 
 from rfdetr.config import SegmentationTrainConfig
 from rfdetr.training import build_trainer
-from rfdetr.training.datamodule import RFDETRDataModule
-from rfdetr.training.module import RFDETRModule
+from rfdetr.training.module_data import RFDETRDataModule
+from rfdetr.training.module_model import RFDETRModelModule
 
 from .helpers import (
     _fake_postprocess,
@@ -71,18 +71,18 @@ class TestDetectionSmoke:
         fake_dataset = _FakeDataset(length=20)
 
         with (
-            patch("rfdetr.training.module.build_model", return_value=tiny_model),
+            patch("rfdetr.training.module_model.build_model", return_value=tiny_model),
             patch(
-                "rfdetr.training.module.build_criterion_and_postprocessors",
+                "rfdetr.training.module_model.build_criterion_and_postprocessors",
                 return_value=(fake_criterion, fake_postprocess),
             ),
-            patch("rfdetr.training.datamodule.build_dataset", return_value=fake_dataset),
+            patch("rfdetr.training.module_data.build_dataset", return_value=fake_dataset),
             patch(
-                "rfdetr.training.module.get_param_dict",
+                "rfdetr.training.module_model.get_param_dict",
                 side_effect=lambda args, model: _make_param_dicts(model),
             ),
         ):
-            module = RFDETRModule(mc, tc)
+            module = RFDETRModelModule(mc, tc)
             datamodule = RFDETRDataModule(mc, tc)
             _make_trainer().fit(module, datamodule)
 
@@ -97,18 +97,18 @@ class TestDetectionSmoke:
         fake_dataset = _FakeDataset(length=20)
 
         with (
-            patch("rfdetr.training.module.build_model", return_value=tiny_model),
+            patch("rfdetr.training.module_model.build_model", return_value=tiny_model),
             patch(
-                "rfdetr.training.module.build_criterion_and_postprocessors",
+                "rfdetr.training.module_model.build_criterion_and_postprocessors",
                 return_value=(fake_criterion, fake_postprocess),
             ),
-            patch("rfdetr.training.datamodule.build_dataset", return_value=fake_dataset),
+            patch("rfdetr.training.module_data.build_dataset", return_value=fake_dataset),
             patch(
-                "rfdetr.training.module.get_param_dict",
+                "rfdetr.training.module_model.get_param_dict",
                 side_effect=lambda args, model: _make_param_dicts(model),
             ),
         ):
-            module = RFDETRModule(mc, tc)
+            module = RFDETRModelModule(mc, tc)
             datamodule = RFDETRDataModule(mc, tc)
 
             original_training_step = module.training_step
@@ -134,18 +134,18 @@ class TestDetectionSmoke:
         fake_dataset = _FakeDataset(length=20)
 
         with (
-            patch("rfdetr.training.module.build_model", return_value=tiny_model),
+            patch("rfdetr.training.module_model.build_model", return_value=tiny_model),
             patch(
-                "rfdetr.training.module.build_criterion_and_postprocessors",
+                "rfdetr.training.module_model.build_criterion_and_postprocessors",
                 return_value=(fake_criterion, fake_postprocess),
             ),
-            patch("rfdetr.training.datamodule.build_dataset", return_value=fake_dataset),
+            patch("rfdetr.training.module_data.build_dataset", return_value=fake_dataset),
             patch(
-                "rfdetr.training.module.get_param_dict",
+                "rfdetr.training.module_model.get_param_dict",
                 side_effect=lambda args, model: _make_param_dicts(model),
             ),
         ):
-            module = RFDETRModule(mc, tc)
+            module = RFDETRModelModule(mc, tc)
             datamodule = RFDETRDataModule(mc, tc)
 
             original_validation_step = module.validation_step
@@ -181,18 +181,18 @@ class TestDetectionSmoke:
         fake_criterion.weight_dict = {"loss_ce": 1.0}
 
         with (
-            patch("rfdetr.training.module.build_model", return_value=tiny_model),
+            patch("rfdetr.training.module_model.build_model", return_value=tiny_model),
             patch(
-                "rfdetr.training.module.build_criterion_and_postprocessors",
+                "rfdetr.training.module_model.build_criterion_and_postprocessors",
                 return_value=(fake_criterion, fake_postprocess),
             ),
-            patch("rfdetr.training.datamodule.build_dataset", return_value=fake_dataset),
+            patch("rfdetr.training.module_data.build_dataset", return_value=fake_dataset),
             patch(
-                "rfdetr.training.module.get_param_dict",
+                "rfdetr.training.module_model.get_param_dict",
                 side_effect=lambda args, model: _make_param_dicts(model),
             ),
         ):
-            module = RFDETRModule(mc, tc)
+            module = RFDETRModelModule(mc, tc)
             datamodule = RFDETRDataModule(mc, tc)
             _make_trainer().fit(module, datamodule)
 
@@ -214,18 +214,18 @@ class TestSegmentationSmoke:
         fake_dataset = _FakeDatasetWithMasks(length=20)
 
         with (
-            patch("rfdetr.training.module.build_model", return_value=tiny_model),
+            patch("rfdetr.training.module_model.build_model", return_value=tiny_model),
             patch(
-                "rfdetr.training.module.build_criterion_and_postprocessors",
+                "rfdetr.training.module_model.build_criterion_and_postprocessors",
                 return_value=(fake_criterion, fake_postprocess),
             ),
-            patch("rfdetr.training.datamodule.build_dataset", return_value=fake_dataset),
+            patch("rfdetr.training.module_data.build_dataset", return_value=fake_dataset),
             patch(
-                "rfdetr.training.module.get_param_dict",
+                "rfdetr.training.module_model.get_param_dict",
                 side_effect=lambda args, model: _make_param_dicts(model),
             ),
         ):
-            module = RFDETRModule(mc, tc)
+            module = RFDETRModelModule(mc, tc)
             datamodule = RFDETRDataModule(mc, tc)
             _make_trainer().fit(module, datamodule)
 
@@ -235,18 +235,18 @@ class TestSegmentationSmoke:
         tc = seg_train_config()
 
         with (
-            patch("rfdetr.training.module.build_model", return_value=_TinyModel()),
+            patch("rfdetr.training.module_model.build_model", return_value=_TinyModel()),
             patch(
-                "rfdetr.training.module.build_criterion_and_postprocessors",
+                "rfdetr.training.module_model.build_criterion_and_postprocessors",
                 return_value=(_FakeCriterion(), MagicMock(side_effect=_fake_postprocess)),
             ),
-            patch("rfdetr.training.datamodule.build_dataset", return_value=_FakeDatasetWithMasks()),
+            patch("rfdetr.training.module_data.build_dataset", return_value=_FakeDatasetWithMasks()),
             patch(
-                "rfdetr.training.module.get_param_dict",
+                "rfdetr.training.module_model.get_param_dict",
                 side_effect=lambda args, model: _make_param_dicts(model),
             ),
         ):
-            module = RFDETRModule(mc, tc)
+            module = RFDETRModelModule(mc, tc)
             datamodule = RFDETRDataModule(mc, tc)
 
             assert isinstance(module.train_config, SegmentationTrainConfig)
@@ -267,25 +267,25 @@ class TestBuildTrainerSmoke:
         tc = base_train_config(use_ema=False, run_test=False)
 
         with (
-            patch("rfdetr.training.module.build_model", return_value=_TinyModel()),
+            patch("rfdetr.training.module_model.build_model", return_value=_TinyModel()),
             patch(
-                "rfdetr.training.module.build_criterion_and_postprocessors",
+                "rfdetr.training.module_model.build_criterion_and_postprocessors",
                 return_value=(_FakeCriterion(), MagicMock(side_effect=_fake_postprocess)),
             ),
-            patch("rfdetr.training.datamodule.build_dataset", return_value=_FakeDataset(length=20)),
+            patch("rfdetr.training.module_data.build_dataset", return_value=_FakeDataset(length=20)),
             patch(
-                "rfdetr.training.module.get_param_dict",
+                "rfdetr.training.module_model.get_param_dict",
                 side_effect=lambda args, model: _make_param_dicts(model),
             ),
         ):
-            module = RFDETRModule(mc, tc)
+            module = RFDETRModelModule(mc, tc)
             datamodule = RFDETRDataModule(mc, tc)
             trainer = build_trainer(tc, mc, accelerator="cpu", fast_dev_run=2)
             trainer.fit(module, datamodule=datamodule)
 
 
-class _DDPModule(RFDETRModule):
-    """RFDETRModule subclass for ddp_spawn smoke tests.
+class _DDPModule(RFDETRModelModule):
+    """RFDETRModelModule subclass for ddp_spawn smoke tests.
 
     Overrides ``configure_optimizers`` so ``get_param_dict`` is never called
     in child processes.  ``ddp_spawn`` forks child processes that unpack a
@@ -319,9 +319,9 @@ def test_ddp_spawn_fit_runs_without_error(base_model_config, base_train_config):
     fake_dataset = _FakeDataset(length=20)
 
     with (
-        patch("rfdetr.training.module.build_model", return_value=_TinyModel()),
+        patch("rfdetr.training.module_model.build_model", return_value=_TinyModel()),
         patch(
-            "rfdetr.training.module.build_criterion_and_postprocessors",
+            "rfdetr.training.module_model.build_criterion_and_postprocessors",
             return_value=(_FakeCriterion(), _FakePostProcess()),
         ),
     ):

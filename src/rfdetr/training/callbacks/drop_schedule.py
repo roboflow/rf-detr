@@ -59,7 +59,7 @@ class DropPathCallback(Callback):
 
         Args:
             trainer: The Lightning Trainer instance.
-            pl_module: The ``RFDETRModule`` being trained.
+            pl_module: The ``RFDETRModelModule`` being trained.
         """
         epochs: int = pl_module.train_config.epochs
         total_steps = int(trainer.estimated_stepping_batches)
@@ -96,7 +96,7 @@ class DropPathCallback(Callback):
 
         Args:
             trainer: The Lightning Trainer instance.
-            pl_module: The ``RFDETRModule`` being trained.
+            pl_module: The ``RFDETRModelModule`` being trained.
             batch: The current training batch (unused).
             batch_idx: Index of the current batch within the epoch (unused).
         """

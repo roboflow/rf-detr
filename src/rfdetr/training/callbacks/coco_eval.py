@@ -281,8 +281,8 @@ class COCOEvalCallback(Callback):
             f"mAR @{self._max_dets}": float(metrics[mar_key]),
         }
 
-        pl_module.log(f"{split}/mAP_50_95", metrics[f"{pfx}map"])
-        pl_module.log(f"{split}/mAP_50", metrics[f"{pfx}map_50"])
+        pl_module.log(f"{split}/mAP_50_95", metrics[f"{pfx}map"], prog_bar=True)
+        pl_module.log(f"{split}/mAP_50", metrics[f"{pfx}map_50"], prog_bar=True)
         pl_module.log(f"{split}/mAP_75", metrics[f"{pfx}map_75"])
         pl_module.log(f"{split}/mAR", metrics[mar_key])
 
@@ -300,7 +300,7 @@ class COCOEvalCallback(Callback):
         if self.map_metric_ema is not None:
             ema_metrics = self.map_metric_ema.compute()
             ema_mar_key = f"{pfx}mar_{self._max_dets}"
-            pl_module.log(f"{split}/ema_mAP_50_95", ema_metrics[f"{pfx}map"])
+            pl_module.log(f"{split}/ema_mAP_50_95", ema_metrics[f"{pfx}map"], prog_bar=True)
             pl_module.log(f"{split}/ema_mAP_50", ema_metrics[f"{pfx}map_50"])
             pl_module.log(f"{split}/ema_mAR", ema_metrics[ema_mar_key])
             trainer.callback_metrics[f"{split}/ema_mAP_50_95"] = ema_metrics[f"{pfx}map"].detach().cpu()
@@ -335,7 +335,7 @@ class COCOEvalCallback(Callback):
             overall["F1"] = float(best["macro_f1"])
             overall["Precision"] = float(best["macro_precision"])
             overall["Recall"] = float(best["macro_recall"])
-            pl_module.log(f"{split}/F1", float(best["macro_f1"]))
+            pl_module.log(f"{split}/F1", float(best["macro_f1"]), prog_bar=True)
             pl_module.log(f"{split}/precision", float(best["macro_precision"]))
             pl_module.log(f"{split}/recall", float(best["macro_recall"]))
             trainer.callback_metrics[f"{split}/F1"] = torch.tensor(float(best["macro_f1"]))
@@ -351,7 +351,7 @@ class COCOEvalCallback(Callback):
             overall["F1"] = 0.0
             overall["Precision"] = 0.0
             overall["Recall"] = 0.0
-            pl_module.log(f"{split}/F1", 0.0)
+            pl_module.log(f"{split}/F1", 0.0, prog_bar=True)
             pl_module.log(f"{split}/precision", 0.0)
             pl_module.log(f"{split}/recall", 0.0)
             trainer.callback_metrics[f"{split}/F1"] = torch.tensor(0.0)

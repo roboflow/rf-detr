@@ -13,7 +13,7 @@ RF-DETR provides two training paths:
 | **`RFDETR.train()`** (this page)            | Quickstart, fine-tuning with standard options, Colab notebooks. One call sets up and runs everything.                                               |
 | **[Custom Training API](customization.md)** | Custom callbacks, alternative loggers, multi-GPU strategies, integration with external frameworks, or any other customisation of the training loop. |
 
-Both paths run the same underlying PyTorch Lightning stack. `RFDETR.train()` constructs `RFDETRModule`, `RFDETRDataModule`, and a `Trainer` internally; the Lightning API page shows how to do the same thing explicitly so you can modify each component.
+Both paths run the same underlying PyTorch Lightning stack. `RFDETR.train()` constructs `RFDETRModelModule`, `RFDETRDataModule`, and a `Trainer` internally; the Lightning API page shows how to do the same thing explicitly so you can modify each component.
 
 ## Quick Start
 
