@@ -12,8 +12,8 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-import pytorch_lightning as pl
 import torch
+from pytorch_lightning import Callback, LightningModule, Trainer, __version__
 from pytorch_lightning.trainer.states import TrainerFn
 from torch.utils.data import DataLoader, TensorDataset
 
@@ -64,7 +64,7 @@ def _make_pl_module() -> MagicMock:
     return pl_module
 
 
-class _ResumeTinyModule(pl.LightningModule):
+class _ResumeTinyModule(LightningModule):
     """Tiny LightningModule used to validate real ckpt_path resume behavior."""
 
     def __init__(self) -> None:
@@ -85,7 +85,7 @@ class _ResumeTinyModule(pl.LightningModule):
         return torch.optim.SGD(self.model.parameters(), lr=0.01)
 
 
-class _ResumeProbeCallback(pl.Callback):
+class _ResumeProbeCallback(Callback):
     """Capture restored epoch/step at fit start for resume assertions."""
 
     def __init__(self) -> None:
@@ -605,7 +605,7 @@ class TestBestModelCallback:
         cb.on_validation_end(trainer, pl_module)
 
         ckpt = torch.load(tmp_path / "checkpoint_best_regular.pth", map_location="cpu", weights_only=False)
-        assert ckpt.get("pytorch-lightning_version") == pl.__version__
+        assert ckpt.get("pytorch-lightning_version") == __version__
 
     def test_ema_checkpoint_has_ptl_state_dict_key(self, tmp_path: Path) -> None:
         """Saved EMA checkpoint must include 'state_dict' with model. prefix."""
@@ -690,7 +690,7 @@ class TestBestModelCallback:
         val_loader = DataLoader(TensorDataset(x, y), batch_size=2)
 
         save_cb = BestModelCallback(output_dir=str(tmp_path), run_test=False)
-        trainer_first = pl.Trainer(
+        trainer_first = Trainer(
             max_epochs=1,
             accelerator="cpu",
             enable_progress_bar=False,
@@ -712,7 +712,7 @@ class TestBestModelCallback:
         assert ckpt_data["global_step"] == first_phase_global_step
 
         resume_probe = _ResumeProbeCallback()
-        trainer_second = pl.Trainer(
+        trainer_second = Trainer(
             max_epochs=2,
             accelerator="cpu",
             enable_progress_bar=False,
