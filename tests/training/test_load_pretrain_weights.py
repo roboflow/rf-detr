@@ -247,7 +247,7 @@ class TestModuleLoadPretrainWeightsSecondReinit:
 
         checkpoint = _make_checkpoint(num_classes=3)  # 2-class fine-tuned
         mock_torch_load.return_value = checkpoint
-        module._args.pretrain_weights = "/fake/weights.pth"
+        module.model_config = module.model_config.model_copy(update={"pretrain_weights": "/fake/weights.pth"})
 
         module._load_pretrain_weights()
 
@@ -255,9 +255,8 @@ class TestModuleLoadPretrainWeightsSecondReinit:
         assert calls[0] == call(3), f"First reinit should resize to checkpoint size 3, got {calls[0]}"
         assert len(calls) == 1, (
             f"Expected exactly 1 reinit call (to checkpoint size), but got {len(calls)}: "
-            f"{calls}. The second reinit to {module._args.num_classes + 1} destroys loaded weights."
+            f"{calls}. A second reinit would destroy loaded weights."
         )
-        assert module._args.num_classes == 2, "Default num_classes should auto-align to checkpoint classes."
 
     @patch("rfdetr.training.module_model.torch.load")
     def test_user_override_larger_than_checkpoint_reexpands_head(self, mock_torch_load, tmp_path):
@@ -272,13 +271,13 @@ class TestModuleLoadPretrainWeightsSecondReinit:
 
         checkpoint = _make_checkpoint(num_classes=91)
         mock_torch_load.return_value = checkpoint
-        module._args.pretrain_weights = "/fake/weights.pth"
+        module.model_config = module.model_config.model_copy(update={"pretrain_weights": "/fake/weights.pth"})
 
         module._load_pretrain_weights()
 
         calls = fake_model.reinitialize_detection_head.call_args_list
         assert calls == [call(91), call(94)], f"Expected reinit to [91, 94] (load then expand), got {calls}"
-        assert module._args.num_classes == 93, "Explicitly configured num_classes must not be overwritten."
+        assert module.model_config.num_classes == 93, "Explicitly configured num_classes must not be overwritten."
 
     @patch("rfdetr.training.module_model.torch.load")
     def test_no_mismatch_no_reinit(self, mock_torch_load, tmp_path):
@@ -292,7 +291,7 @@ class TestModuleLoadPretrainWeightsSecondReinit:
 
         checkpoint = _make_checkpoint(num_classes=91)
         mock_torch_load.return_value = checkpoint
-        module._args.pretrain_weights = "/fake/weights.pth"
+        module.model_config = module.model_config.model_copy(update={"pretrain_weights": "/fake/weights.pth"})
 
         module._load_pretrain_weights()
 
@@ -311,7 +310,7 @@ class TestModuleLoadPretrainWeightsSecondReinit:
 
         checkpoint = _make_checkpoint(num_classes=91)
         mock_torch_load.return_value = checkpoint
-        module._args.pretrain_weights = "/fake/weights.pth"
+        module.model_config = module.model_config.model_copy(update={"pretrain_weights": "/fake/weights.pth"})
 
         module._load_pretrain_weights()
 

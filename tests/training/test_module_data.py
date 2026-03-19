@@ -147,11 +147,6 @@ class TestInit:
         dm = build_datamodule(train_config=tc)
         assert dm.train_config is tc
 
-    def test_builds_args_namespace(self, build_datamodule):
-        """_args Namespace is created during __init__."""
-        dm = build_datamodule()
-        assert dm._args is not None
-
     def test_datasets_start_as_none(self, build_datamodule):
         """All three dataset slots are None before setup() is called."""
         dm = build_datamodule()
@@ -509,17 +504,17 @@ class TestSegmentationSupport:
 
         dm = RFDETRDataModule(mc, tc)
         assert dm.train_config is tc
-        assert dm._args.segmentation_head is True
+        assert dm.model_config.segmentation_head is True
 
     def test_seg_args_have_mask_loss_coefs(self, base_model_config, seg_train_config):
-        """Segmentation-specific loss coefficients are forwarded to _args."""
+        """Segmentation-specific loss coefficients are present on train_config."""
         mc = base_model_config(segmentation_head=True)
         tc = seg_train_config()
         from rfdetr.training.module_data import RFDETRDataModule
 
         dm = RFDETRDataModule(mc, tc)
-        assert dm._args.mask_ce_loss_coef == pytest.approx(5.0)
-        assert dm._args.mask_dice_loss_coef == pytest.approx(5.0)
+        assert dm.train_config.mask_ce_loss_coef == pytest.approx(5.0)
+        assert dm.train_config.mask_dice_loss_coef == pytest.approx(5.0)
 
 
 class TestTransferBatchToDevice:

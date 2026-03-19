@@ -218,7 +218,7 @@ class TestLoadPretrainWeights:
         mock_torch_load.return_value = checkpoint
 
         module, _, _, _ = build_module(model_config=mc)
-        module._args.pretrain_weights = "/fake/weights.pth"
+        module.model_config = module.model_config.model_copy(update={"pretrain_weights": "/fake/weights.pth"})
         module._load_pretrain_weights()
 
         mock_validate.assert_called_once_with("/fake/weights.pth", strict=False)
@@ -235,7 +235,7 @@ class TestLoadPretrainWeights:
         mock_torch_load.return_value = checkpoint
 
         module, fake_model, _, _ = build_module(model_config=mc)
-        module._args.pretrain_weights = "/fake/weights.pth"
+        module.model_config = module.model_config.model_copy(update={"pretrain_weights": "/fake/weights.pth"})
         module._load_pretrain_weights()
 
         # First call: expand to checkpoint size so load_state_dict shapes match.
@@ -256,7 +256,7 @@ class TestLoadPretrainWeights:
         mock_torch_load.return_value = checkpoint
 
         module, fake_model, _, _ = build_module(model_config=mc)
-        module._args.pretrain_weights = "/fake/weights.pth"
+        module.model_config = module.model_config.model_copy(update={"pretrain_weights": "/fake/weights.pth"})
         module._load_pretrain_weights()
 
         fake_model.reinitialize_detection_head.assert_not_called()
@@ -270,8 +270,8 @@ class TestLoadPretrainWeights:
         mc = base_model_config(num_classes=90)
         module, _, _, _ = build_module(model_config=mc)
 
-        num_queries = module._args.num_queries
-        group_detr = module._args.group_detr
+        num_queries = getattr(module.model_config, "num_queries", 300)
+        group_detr = getattr(module.model_config, "group_detr", 13)
         desired = num_queries * group_detr
 
         large_total = desired + 500
@@ -285,7 +285,7 @@ class TestLoadPretrainWeights:
         }
         mock_torch_load.return_value = checkpoint
 
-        module._args.pretrain_weights = "/fake/weights.pth"
+        module.model_config = module.model_config.model_copy(update={"pretrain_weights": "/fake/weights.pth"})
         module._load_pretrain_weights()
 
         assert checkpoint["model"]["refpoint_embed.weight"].shape[0] == desired
@@ -301,7 +301,7 @@ class TestLoadPretrainWeights:
         mc = base_model_config(num_classes=90)
         checkpoint = self._make_checkpoint(num_classes_in_ckpt=91)
         module, _, _, _ = build_module(model_config=mc)
-        module._args.pretrain_weights = "/fake/weights.pth"
+        module.model_config = module.model_config.model_copy(update={"pretrain_weights": "/fake/weights.pth"})
 
         load_calls = [0]
 
@@ -339,7 +339,7 @@ class TestLoadPretrainWeights:
         mock_torch_load.return_value = checkpoint
 
         module, _, _, _ = build_module(model_config=mc)
-        module._args.pretrain_weights = "/content/rf-detr-base.pth"
+        module.model_config = module.model_config.model_copy(update={"pretrain_weights": "/content/rf-detr-base.pth"})
         module._load_pretrain_weights()
 
         # download_pretrain_weights must have been called at least once before any load
@@ -360,7 +360,7 @@ class TestLoadPretrainWeights:
         mock_torch_load.return_value = checkpoint
 
         module, _, _, _ = build_module(model_config=mc)
-        module._args.pretrain_weights = "/fake/weights.pth"
+        module.model_config = module.model_config.model_copy(update={"pretrain_weights": "/fake/weights.pth"})
         module._load_pretrain_weights()
 
         assert module._pretrain_class_names == ["cat", "dog"]
@@ -378,8 +378,9 @@ class TestLoadPretrainWeights:
         mock_torch_load.return_value = checkpoint
 
         module, _, _, _ = build_module(model_config=mc)
-        module._args.pretrain_weights = "/fake/weights.pth"
-        module._args.segmentation_head = False
+        module.model_config = module.model_config.model_copy(
+            update={"pretrain_weights": "/fake/weights.pth", "segmentation_head": False}
+        )
 
         with pytest.raises(ValueError, match="segmentation head"):
             module._load_pretrain_weights()
@@ -397,8 +398,9 @@ class TestLoadPretrainWeights:
         mock_torch_load.return_value = checkpoint
 
         module, _, _, _ = build_module(model_config=mc)
-        module._args.pretrain_weights = "/fake/weights.pth"
-        module._args.segmentation_head = True
+        module.model_config = module.model_config.model_copy(
+            update={"pretrain_weights": "/fake/weights.pth", "segmentation_head": True}
+        )
 
         with pytest.raises(ValueError, match="segmentation head"):
             module._load_pretrain_weights()
@@ -414,9 +416,9 @@ class TestLoadPretrainWeights:
         mock_torch_load.return_value = checkpoint
 
         module, _, _, _ = build_module(model_config=mc)
-        module._args.pretrain_weights = "/fake/weights.pth"
-        module._args.segmentation_head = False
-        module._args.patch_size = 16
+        module.model_config = module.model_config.model_copy(
+            update={"pretrain_weights": "/fake/weights.pth", "segmentation_head": False, "patch_size": 16}
+        )
 
         with pytest.raises(ValueError, match="patch_size"):
             module._load_pretrain_weights()
@@ -434,9 +436,9 @@ class TestLoadPretrainWeights:
         mock_torch_load.return_value = checkpoint
 
         module, _, _, _ = build_module(model_config=mc)
-        module._args.pretrain_weights = "/fake/weights.pth"
-        module._args.segmentation_head = False
-        module._args.patch_size = 14
+        module.model_config = module.model_config.model_copy(
+            update={"pretrain_weights": "/fake/weights.pth", "segmentation_head": False, "patch_size": 14}
+        )
 
         # Should not raise.
         module._load_pretrain_weights()
@@ -958,9 +960,6 @@ class TestConfigureOptimizers:
             lr_min_factor=0.2,
         )
         module._trainer.estimated_stepping_batches = 1000
-        # Guard against regressions that read deprecated Namespace fields.
-        delattr(module._args, "lr_scheduler")
-        delattr(module._args, "lr_min_factor")
         mock_get_param_dict.return_value = param_dicts
 
         scheduler = module.configure_optimizers()["lr_scheduler"]["scheduler"]
