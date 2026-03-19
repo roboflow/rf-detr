@@ -286,8 +286,8 @@ class RFDETRModelModule(LightningModule):
             min_lr = min(group_lrs)
             max_lr = max(group_lrs)
             self.log("train/lr", base_lr, prog_bar=True, on_step=True, on_epoch=False)
-            self.log("train/lr_min", min_lr, on_step=True, on_epoch=False)
-            self.log("train/lr_max", max_lr, on_step=True, on_epoch=False)
+            self.log("train/lr_min", min_lr, prog_bar=True, on_step=True, on_epoch=False)
+            self.log("train/lr_max", max_lr, prog_bar=True, on_step=True, on_epoch=False)
         return loss_scaled
 
     def validation_step(self, batch: Tuple, batch_idx: int) -> Dict[str, Any]:
