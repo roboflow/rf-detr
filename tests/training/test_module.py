@@ -93,9 +93,9 @@ def _build_module(model_config=None, train_config=None, tmp_path=None):
             "rfdetr.training.module.build_criterion_and_postprocessors", return_value=(fake_criterion, fake_postprocess)
         ),
     ):
-        from rfdetr.training.module import RFDETRModule
+        from rfdetr.training.module import RFDETRModelModule
 
-        module = RFDETRModule(mc, tc)
+        module = RFDETRModelModule(mc, tc)
     return module, fake_model, fake_criterion, fake_postprocess
 
 
@@ -465,9 +465,9 @@ class TestApplyLora:
                 return_value=(_fake_criterion(), _fake_postprocess()),
             ),
         ):
-            from rfdetr.training.module import RFDETRModule
+            from rfdetr.training.module import RFDETRModelModule
 
-            module = RFDETRModule(mc, tc)
+            module = RFDETRModelModule(mc, tc)
 
         return module, fake_model, fake_backbone_0, fake_encoder
 
@@ -617,52 +617,6 @@ class TestOnTrainBatchStart:
         module.on_train_batch_start((samples, targets), batch_idx=0)
 
         assert samples.tensors.shape == original_shape
-
-
-class TestTransferBatchToDevice:
-    """Tests for transfer_batch_to_device() — verifies that NestedTensor samples and
-    all target-dict tensors are correctly moved to the target device without unwrapping
-    the NestedTensor into plain tensors."""
-
-    def test_samples_transferred_to_target_device(self, build_module):
-        """Both tensors and mask in NestedTensor must land on the target device."""
-        module, _, _, _ = build_module()
-        samples, targets = _make_batch()
-        device = torch.device("cpu")
-
-        result_samples, _ = module.transfer_batch_to_device((samples, targets), device, dataloader_idx=0)
-
-        assert result_samples.tensors.device == device
-        assert result_samples.mask.device == device
-
-    def test_targets_transferred_to_target_device(self, build_module):
-        """All tensor values in every target dict must be moved to the target device."""
-        module, _, _, _ = build_module()
-        samples, targets = _make_batch()
-        device = torch.device("cpu")
-
-        _, result_targets = module.transfer_batch_to_device((samples, targets), device, dataloader_idx=0)
-
-        for t in result_targets:
-            for v in t.values():
-                assert v.device == device
-
-    def test_returns_tuple_of_correct_length(self, build_module):
-        """Return value must be a (samples, targets) tuple to match batch contract."""
-        module, _, _, _ = build_module()
-        result = module.transfer_batch_to_device(_make_batch(), torch.device("cpu"), dataloader_idx=0)
-
-        assert isinstance(result, tuple)
-        assert len(result) == 2
-
-    def test_preserves_nested_tensor_type(self, build_module):
-        """Device transfer must not unwrap NestedTensor into plain tensors."""
-        module, _, _, _ = build_module()
-        samples, targets = _make_batch()
-
-        result_samples, _ = module.transfer_batch_to_device((samples, targets), torch.device("cpu"), dataloader_idx=0)
-
-        assert isinstance(result_samples, NestedTensor)
 
 
 class TestTrainingStep:

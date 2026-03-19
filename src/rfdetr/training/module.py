@@ -29,7 +29,7 @@ from rfdetr.utilities.state_dict import validate_checkpoint_compatibility
 logger = get_logger()
 
 
-class RFDETRModule(LightningModule):
+class RFDETRModelModule(LightningModule):
     """LightningModule wrapping the RF-DETR model and training loop.
 
     Migrates ``Model.__init__``, ``train_one_epoch``, ``evaluate``, and
@@ -269,7 +269,7 @@ class RFDETRModule(LightningModule):
             "train/loss",
             loss,
             prog_bar=True,
-            on_step=True,  # always visible in the progress bar, regardless of train_log_on_step
+            on_step=train_log_on_step,
             on_epoch=True,
             sync_dist=train_log_sync_dist,
             batch_size=batch_size,

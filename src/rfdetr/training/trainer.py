@@ -11,7 +11,7 @@ from typing import Any
 
 import torch
 from pytorch_lightning import Trainer
-from pytorch_lightning.callbacks import RichProgressBar
+from pytorch_lightning.callbacks import RichProgressBar, TQDMProgressBar
 from pytorch_lightning.callbacks.progress.rich_progress import RichProgressBarTheme
 from pytorch_lightning.loggers import CSVLogger, MLFlowLogger, TensorBoardLogger, WandbLogger
 
@@ -99,6 +99,8 @@ def build_trainer(
 
     if tc.progress_bar == "rich":
         callbacks.append(RichProgressBar(theme=RichProgressBarTheme(metrics_format=".3e")))
+    elif tc.progress_bar == "tqdm":
+        callbacks.append(TQDMProgressBar())
 
     if enable_ema:
         callbacks.append(

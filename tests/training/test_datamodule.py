@@ -14,6 +14,7 @@ import torch.utils.data
 from torch.utils.data import DataLoader
 
 from rfdetr.config import RFDETRBaseConfig, TrainConfig
+from rfdetr.utilities.tensors import NestedTensor
 
 # ---------------------------------------------------------------------------
 # Private helpers — used by both module-level fixtures and class-level _setup_*
@@ -83,6 +84,23 @@ class _FakeDataset(torch.utils.data.Dataset):
 def _fake_dataset(length: int = 100, with_coco: bool = False) -> _FakeDataset:
     """Return a minimal ``_FakeDataset`` with a controllable length."""
     return _FakeDataset(length, with_coco)
+
+
+def _make_batch(batch_size: int = 2, channels: int = 3, h: int = 16, w: int = 16):
+    """Build a ``(NestedTensor, targets)`` tuple for transfer_batch_to_device tests."""
+    tensors = torch.randn(batch_size, channels, h, w)
+    mask = torch.zeros(batch_size, h, w, dtype=torch.bool)
+    samples = NestedTensor(tensors, mask)
+    targets = [
+        {
+            "boxes": torch.tensor([[0.5, 0.5, 0.1, 0.1]]),
+            "labels": torch.tensor([1]),
+            "image_id": torch.tensor(i),
+            "orig_size": torch.tensor([h, w]),
+        }
+        for i in range(batch_size)
+    ]
+    return samples, targets
 
 
 def _build_datamodule(model_config=None, train_config=None, tmp_path=None):
@@ -502,3 +520,51 @@ class TestSegmentationSupport:
         dm = RFDETRDataModule(mc, tc)
         assert dm._args.mask_ce_loss_coef == pytest.approx(5.0)
         assert dm._args.mask_dice_loss_coef == pytest.approx(5.0)
+
+
+class TestTransferBatchToDevice:
+    """Tests for RFDETRDataModule.transfer_batch_to_device().
+
+    Verifies that NestedTensor samples and all target-dict tensors are correctly
+    moved to the target device without unwrapping the NestedTensor into plain tensors.
+    """
+
+    def test_samples_transferred_to_target_device(self, build_datamodule):
+        """Both tensors and mask in NestedTensor must land on the target device."""
+        dm = build_datamodule()
+        samples, targets = _make_batch()
+        device = torch.device("cpu")
+
+        result_samples, _ = dm.transfer_batch_to_device((samples, targets), device, dataloader_idx=0)
+
+        assert result_samples.tensors.device == device
+        assert result_samples.mask.device == device
+
+    def test_targets_transferred_to_target_device(self, build_datamodule):
+        """All tensor values in every target dict must be moved to the target device."""
+        dm = build_datamodule()
+        samples, targets = _make_batch()
+        device = torch.device("cpu")
+
+        _, result_targets = dm.transfer_batch_to_device((samples, targets), device, dataloader_idx=0)
+
+        for t in result_targets:
+            for v in t.values():
+                assert v.device == device
+
+    def test_returns_tuple_of_correct_length(self, build_datamodule):
+        """Return value must be a (samples, targets) tuple to match batch contract."""
+        dm = build_datamodule()
+        result = dm.transfer_batch_to_device(_make_batch(), torch.device("cpu"), dataloader_idx=0)
+
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+
+    def test_preserves_nested_tensor_type(self, build_datamodule):
+        """Device transfer must not unwrap NestedTensor into plain tensors."""
+        dm = build_datamodule()
+        samples, targets = _make_batch()
+
+        result_samples, _ = dm.transfer_batch_to_device((samples, targets), torch.device("cpu"), dataloader_idx=0)
+
+        assert isinstance(result_samples, NestedTensor)
