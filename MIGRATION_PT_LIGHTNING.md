@@ -4,28 +4,28 @@
 
 ### What maintainers gain
 
-| Pain point today | After PTL migration |
-|---|---|
-| ~800 lines of boilerplate in `engine.py` + `main.py` (GradScaler, optimizer step, gradient clipping, AMP, DDP init, sampler logic) | All replaced by `Trainer` config — delete the code |
-| Custom `defaultdict(list)` callback system in `RFDETR.train()` | PTL's typed, lifecycle-aware callback hooks |
-| Manual multi-GPU setup (`init_distributed_mode`, custom samplers, `all_gather`, `reduce_dict`, `save_on_master`) | PTL handles entirely via `strategy="auto"` |
-| Resume from checkpoint requires manual `start_epoch` tracking | `trainer.fit(..., ckpt_path=...)` — PTL resumes seamlessly |
-| Two parallel config tiers: Pydantic (`config.py`) + argparse Namespace (`populate_args()`) | Pydantic only — `populate_args()` deleted |
-| Testing training loop requires full run | PTL's `Trainer(fast_dev_run=1, limit_train_batches=...)` |
-| `CocoEvaluator` wraps pycocotools internals; distributed sync is manual; `evalImgs` surgery for F1 sweep | Torchmetrics `MeanAveragePrecision` — distributed-aware, no internals access needed |
-| `coco_eval.py` hand-rolls distributed gather + pycocotools patching | Deleted entirely |
+| Pain point today                                                                                                                   | After PTL migration                                                                 |
+| ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| ~800 lines of boilerplate in `engine.py` + `main.py` (GradScaler, optimizer step, gradient clipping, AMP, DDP init, sampler logic) | All replaced by `Trainer` config — delete the code                                  |
+| Custom `defaultdict(list)` callback system in `RFDETR.train()`                                                                     | PTL's typed, lifecycle-aware callback hooks                                         |
+| Manual multi-GPU setup (`init_distributed_mode`, custom samplers, `all_gather`, `reduce_dict`, `save_on_master`)                   | PTL handles entirely via `strategy="auto"`                                          |
+| Resume from checkpoint requires manual `start_epoch` tracking                                                                      | `trainer.fit(..., ckpt_path=...)` — PTL resumes seamlessly                          |
+| Two parallel config tiers: Pydantic (`config.py`) + argparse Namespace (`populate_args()`)                                         | Pydantic only — `populate_args()` deleted                                           |
+| Testing training loop requires full run                                                                                            | PTL's `Trainer(fast_dev_run=1, limit_train_batches=...)`                            |
+| `CocoEvaluator` wraps pycocotools internals; distributed sync is manual; `evalImgs` surgery for F1 sweep                           | Torchmetrics `MeanAveragePrecision` — distributed-aware, no internals access needed |
+| `coco_eval.py` hand-rolls distributed gather + pycocotools patching                                                                | Deleted entirely                                                                    |
 
 ### What users gain
 
-| Capability | How |
-|---|---|
-| **Multi-GPU out of the box** | `rfdetr fit --trainer.devices 4` |
-| **YAML experiments** | `rfdetr fit --config my_run.yaml` |
-| **Resume training** | `rfdetr fit --ckpt_path output/last.ckpt` |
-| **Logger integration** | `--trainer.logger WandbLogger` or YAML |
-| **HP tuning** | Optuna, Ray Tune compatible |
-| **Evaluate / predict** | `rfdetr validate/predict --ckpt_path best.ckpt` |
-| **Versioned checkpoints** | PTL `ModelCheckpoint` auto-saves `last.ckpt` + `epoch=N.ckpt` |
+| Capability                   | How                                                           |
+| ---------------------------- | ------------------------------------------------------------- |
+| **Multi-GPU out of the box** | `rfdetr fit --trainer.devices 4`                              |
+| **YAML experiments**         | `rfdetr fit --config my_run.yaml`                             |
+| **Resume training**          | `rfdetr fit --ckpt_path output/last.ckpt`                     |
+| **Logger integration**       | `--trainer.logger WandbLogger` or YAML                        |
+| **HP tuning**                | Optuna, Ray Tune compatible                                   |
+| **Evaluate / predict**       | `rfdetr validate/predict --ckpt_path best.ckpt`               |
+| **Versioned checkpoints**    | PTL `ModelCheckpoint` auto-saves `last.ckpt` + `epoch=N.ckpt` |
 
 ---
 
@@ -92,11 +92,11 @@ rfdetr/
 
 **Breaking changes accepted in this migration:**
 
-| Item | Reason |
-|---|---|
-| `TrainConfig.device` field **dropped** | PTL handles device placement; passing `device=` to `.train()` was always misleading since the field had no effect in distributed runs |
-| CLI argument structure | LightningCLI replaces argparse; no backward compat on CLI flags |
-| `callbacks` dict parameter in `.train()` | The `defaultdict(list)` hook system is replaced by PTL callbacks; `@deprecated` warning emitted if non-empty |
+| Item                                     | Reason                                                                                                                                |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `TrainConfig.device` field **dropped**   | PTL handles device placement; passing `device=` to `.train()` was always misleading since the field had no effect in distributed runs |
+| CLI argument structure                   | LightningCLI replaces argparse; no backward compat on CLI flags                                                                       |
+| `callbacks` dict parameter in `.train()` | The `defaultdict(list)` hook system is replaced by PTL callbacks; `@deprecated` warning emitted if non-empty                          |
 
 **Not public API** (can change freely):
 
@@ -123,14 +123,14 @@ models/                            — stable architecture; not a public API con
 
 `torchmetrics.detection.MeanAveragePrecision` replaces the entire `CocoEvaluator` stack:
 
-| Current | Replacement |
-|---|---|
-| `pycocotools.cocoeval.COCOeval` | `torchmetrics.detection.MeanAveragePrecision` |
-| `CocoEvaluator.synchronize_between_processes()` + `all_gather()` | torchmetrics handles distributed sync internally |
-| `patched_pycocotools_summarize()` | Removed; torchmetrics returns a clean dict |
-| `CocoEvaluator.prepare_for_coco_detection()` — format conversion | Removed; torchmetrics accepts `boxes` (xyxy float) + `labels` (int) directly |
-| `pycocotools.mask` RLE encoding in `prepare_for_coco_segmentation()` | Removed; torchmetrics accepts boolean mask tensors directly |
-| `coco_eval.py` distributed merge helpers (`merge()`, `create_common_coco_eval()`) | Removed; handled by torchmetrics |
+| Current                                                                           | Replacement                                                                  |
+| --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `pycocotools.cocoeval.COCOeval`                                                   | `torchmetrics.detection.MeanAveragePrecision`                                |
+| `CocoEvaluator.synchronize_between_processes()` + `all_gather()`                  | torchmetrics handles distributed sync internally                             |
+| `patched_pycocotools_summarize()`                                                 | Removed; torchmetrics returns a clean dict                                   |
+| `CocoEvaluator.prepare_for_coco_detection()` — format conversion                  | Removed; torchmetrics accepts `boxes` (xyxy float) + `labels` (int) directly |
+| `pycocotools.mask` RLE encoding in `prepare_for_coco_segmentation()`              | Removed; torchmetrics accepts boolean mask tensors directly                  |
+| `coco_eval.py` distributed merge helpers (`merge()`, `create_common_coco_eval()`) | Removed; handled by torchmetrics                                             |
 
 The `faster-coco-eval` standalone migration PR is **superseded** — torchmetrics uses it as a backend for segmentation mask IoU (transitive dependency via `torchmetrics[detection]`).
 
@@ -155,6 +155,7 @@ The `faster-coco-eval` standalone migration PR is **superseded** — torchmetric
 ---
 
 ## 🏗️ Target Architecture
+
 ```
 rfdetr.__init__  →  detr.py (RFDETR, RFDETRBase, RFDETRNano, ...) — primary API preserved
                          └─ .train() delegates to ↓
@@ -194,9 +195,11 @@ CLI (LightningCLI)
 
 ```toml
 [project.dependencies]
-lightning = ">=2.6,<3"        # LightningCLI + callbacks + jsonargparse (transitive)
-torchmetrics = {version = ">=1.2", extras = ["detection"]}  # >=1.2 required for backend param
-pyDeprecate = ">=0.3,<1"      # @deprecated decorator for public API shims
+lightning = ">=2.6,<3" # LightningCLI + callbacks + jsonargparse (transitive)
+torchmetrics = { version = ">=1.2", extras = [
+  "detection",
+] } # >=1.2 required for backend param
+pyDeprecate = ">=0.3,<1" # @deprecated decorator for public API shims
 ```
 
 `jsonargparse` and `faster-coco-eval` are transitive (via `lightning` and `torchmetrics[detection]`). Do not list explicitly to avoid version conflicts.
@@ -216,15 +219,15 @@ Add a `deprecated` function/class decorator alongside `_DeprecatedDict` using th
 ```python
 from pyDeprecate import deprecated, void
 
+
 # Deprecate an entire function or class:
 @deprecated("Use `new_function` instead.", ver=2.0, alternative="new_function")
-def old_function(*args, **kwargs):
-    ...
+def old_function(*args, **kwargs): ...
+
 
 # Deprecate specific keyword arguments:
 @deprecated(args={"old_kwarg": "Use `new_kwarg` instead."}, ver=2.0)
-def my_func(new_kwarg, old_kwarg=None):
-    ...
+def my_func(new_kwarg, old_kwarg=None): ...
 ```
 
 `pyDeprecate` handles `DeprecationWarning` with correct `stacklevel` and optional `FutureWarning` upgrade automatically. Re-export `deprecated` and `void` from `utilities/decorators.py` so all shims import from a single internal location.
@@ -271,17 +274,17 @@ class RFDETRModelModule(L.LightningModule):
 
 **What moves in:**
 
-| Current location | New location | Notes |
-|---|---|---|
-| `Model.__init__()` — `build_model(args)` | `RFDETRModelModule.__init__()` | Model construction, weight loading |
-| `Model.__init__()` — LoRA setup | `RFDETRModelModule.__init__()` | Conditional `get_peft_model` |
-| `Model.__init__()` — `PostProcess` | `RFDETRModelModule.__init__()` | Kept as attribute |
-| `engine.train_one_epoch()` — forward + loss | `RFDETRModelModule.training_step()` | PTL handles grad accum, AMP, clipping |
-| `engine.evaluate()` — forward | `RFDETRModelModule.validation_step()` | Returns preds + targets for COCOEvalCallback |
-| `Model.train()` — optimizer setup | `RFDETRModelModule.configure_optimizers()` | AdamW + LambdaLR |
-| `engine.train_one_epoch()` — drop path/dropout | `RFDETRModelModule.on_train_batch_start()` | Uses `self.trainer.global_step` |
-| `engine.train_one_epoch()` — multi-scale resize | `RFDETRModelModule.on_train_batch_start()` | Deterministic via `random.seed(global_step)` |
-| `Model.reinitialize_detection_head()` | `RFDETRModelModule.reinitialize_detection_head()` | Preserved |
+| Current location                                | New location                                      | Notes                                        |
+| ----------------------------------------------- | ------------------------------------------------- | -------------------------------------------- |
+| `Model.__init__()` — `build_model(args)`        | `RFDETRModelModule.__init__()`                    | Model construction, weight loading           |
+| `Model.__init__()` — LoRA setup                 | `RFDETRModelModule.__init__()`                    | Conditional `get_peft_model`                 |
+| `Model.__init__()` — `PostProcess`              | `RFDETRModelModule.__init__()`                    | Kept as attribute                            |
+| `engine.train_one_epoch()` — forward + loss     | `RFDETRModelModule.training_step()`               | PTL handles grad accum, AMP, clipping        |
+| `engine.evaluate()` — forward                   | `RFDETRModelModule.validation_step()`             | Returns preds + targets for COCOEvalCallback |
+| `Model.train()` — optimizer setup               | `RFDETRModelModule.configure_optimizers()`        | AdamW + LambdaLR                             |
+| `engine.train_one_epoch()` — drop path/dropout  | `RFDETRModelModule.on_train_batch_start()`        | Uses `self.trainer.global_step`              |
+| `engine.train_one_epoch()` — multi-scale resize | `RFDETRModelModule.on_train_batch_start()`        | Deterministic via `random.seed(global_step)` |
+| `Model.reinitialize_detection_head()`           | `RFDETRModelModule.reinitialize_detection_head()` | Preserved                                    |
 
 ### 1.2 `training_step()`
 
@@ -313,8 +316,7 @@ def validation_step(self, batch, batch_idx):
     orig_sizes = torch.stack([t["orig_size"] for t in targets])
     results = self.postprocess(outputs, orig_sizes)
     # Log validation loss
-    loss = sum(loss_dict[k] * self.criterion.weight_dict[k]
-               for k in loss_dict if k in self.criterion.weight_dict)
+    loss = sum(loss_dict[k] * self.criterion.weight_dict[k] for k in loss_dict if k in self.criterion.weight_dict)
     self.log("val/loss", loss, sync_dist=True)
     return {"results": results, "targets": targets}
 ```
@@ -365,15 +367,15 @@ class RFDETRDataModule(L.LightningDataModule):
 
 ### 2.2 What moves in
 
-| Current location | New location | Notes |
-|---|---|---|
-| `Model.train()` — `build_dataset(...)` | `RFDETRDataModule.setup()` | Train, val, test datasets |
-| `Model.train()` — DataLoader construction | `train_dataloader()`, `val_dataloader()` | Including `collate_fn` |
-| `Model.train()` — small dataset uniform sampler | `train_dataloader()` | `replacement=True` sampler |
-| `Model.train()` — `num_workers` spawn guard | `__init__()` | Platform detection |
-| `RFDETR._load_classes()` | `setup()` | Class name loading |
-| `RFDETR.train_from_config()` — Roboflow download | `prepare_data()` | PTL ensures rank-0 only |
-| `TrainConfig.aug_config` | Passed to `build_dataset()` in `setup()` | Already in config |
+| Current location                                 | New location                             | Notes                      |
+| ------------------------------------------------ | ---------------------------------------- | -------------------------- |
+| `Model.train()` — `build_dataset(...)`           | `RFDETRDataModule.setup()`               | Train, val, test datasets  |
+| `Model.train()` — DataLoader construction        | `train_dataloader()`, `val_dataloader()` | Including `collate_fn`     |
+| `Model.train()` — small dataset uniform sampler  | `train_dataloader()`                     | `replacement=True` sampler |
+| `Model.train()` — `num_workers` spawn guard      | `__init__()`                             | Platform detection         |
+| `RFDETR._load_classes()`                         | `setup()`                                | Class name loading         |
+| `RFDETR.train_from_config()` — Roboflow download | `prepare_data()`                         | PTL ensures rank-0 only    |
+| `TrainConfig.aug_config`                         | Passed to `build_dataset()` in `setup()` | Already in config          |
 
 ### 2.3 Segmentation support
 
@@ -400,6 +402,7 @@ Keep in `RFDETRModelModule.on_train_batch_start()`: resize samples tensor based 
 PTL 2.6+ includes built-in weight averaging callbacks (`WeightAveraging` and `EMAWeightAveraging`), and they are explicitly customizable (`avg_fn`/`multi_avg_fn`, plus subclass overrides such as `should_update`). For RF-DETR, use these extension points to preserve existing EMA behavior.
 
 Recommended implementation:
+
 - Base on `WeightAveraging` with a custom `avg_fn` that reproduces current `ModelEma` tau warmup formula.
 - Keep default validation on regular weights; run EMA validation explicitly so both regular and EMA metrics exist every epoch.
 - If strict tau parity is not required, `EMAWeightAveraging(decay=...)` is acceptable as a simplified mode.
@@ -423,6 +426,7 @@ class RFDETREMACallback(WeightAveraging):
 ```
 
 **Metric policy (compat with current behavior):**
+
 - Log regular-model validation metrics every epoch.
 - If `use_ema=True`, also evaluate EMA weights every epoch and log `ema_*` metrics.
 - Preserve `checkpoint_best_regular.pth`, `checkpoint_best_ema.pth`, and `checkpoint_best_total.pth`.
@@ -436,6 +440,7 @@ Uses `torchmetrics.detection.MeanAveragePrecision`:
 
 ```python
 from torchmetrics.detection import MeanAveragePrecision
+
 
 class COCOEvalCallback(L.Callback):
     def __init__(self, max_dets: int = 500, segmentation: bool = False):
@@ -459,7 +464,7 @@ class COCOEvalCallback(L.Callback):
             self._class_names = dm.class_names
 
     def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
-        preds   = outputs["results"]   # list of dicts: boxes(xyxy float), scores, labels
+        preds = outputs["results"]  # list of dicts: boxes(xyxy float), scores, labels
         targets = self._convert_targets(outputs["targets"])
         self.map_metric.update(preds, targets)
         batch_matching = build_matching_data(preds, targets, iou_threshold=0.5, iou_type="bbox")
@@ -472,12 +477,12 @@ class COCOEvalCallback(L.Callback):
         pfx = "bbox_" if self._segmentation else ""
         mar_key = f"{pfx}mar_{self._max_dets}"  # dynamic: mar_500, not mar_100
         pl_module.log("val/mAP_50_95", metrics[f"{pfx}map"])
-        pl_module.log("val/mAP_50",    metrics[f"{pfx}map_50"])
-        pl_module.log("val/mAP_75",    metrics[f"{pfx}map_75"])
-        pl_module.log("val/mAR",       metrics[mar_key])
+        pl_module.log("val/mAP_50", metrics[f"{pfx}map_50"])
+        pl_module.log("val/mAP_75", metrics[f"{pfx}map_75"])
+        pl_module.log("val/mAR", metrics[mar_key])
         if self._segmentation:
             pl_module.log("val/segm_mAP_50_95", metrics["segm_map"])
-            pl_module.log("val/segm_mAP_50",    metrics["segm_map_50"])
+            pl_module.log("val/segm_mAP_50", metrics["segm_map_50"])
         # per-class AP via returned class IDs (safe: class_id maps to class_names by value)
         pc_key = f"{pfx}map_per_class"
         if pc_key in metrics and "classes" in metrics:
@@ -488,12 +493,11 @@ class COCOEvalCallback(L.Callback):
 
         # F1 sweep — gather compact matching state across ranks before sweep
         per_class_data = distributed_merge_matching_data(self._f1_local, trainer)
-        f1_results = sweep_confidence_thresholds(per_class_data,
-                                                 np.linspace(0, 1, 101), ...)
+        f1_results = sweep_confidence_thresholds(per_class_data, np.linspace(0, 1, 101), ...)
         best = max(f1_results, key=lambda x: x["macro_f1"])
-        pl_module.log("val/F1",        best["macro_f1"])
+        pl_module.log("val/F1", best["macro_f1"])
         pl_module.log("val/precision", best["macro_precision"])
-        pl_module.log("val/recall",    best["macro_recall"])
+        pl_module.log("val/recall", best["macro_recall"])
 
         self.map_metric.reset()
         self._f1_local = init_matching_accumulator()
@@ -514,6 +518,7 @@ class COCOEvalCallback(L.Callback):
 ```
 
 Key properties:
+
 - **Distributed:** `MeanAveragePrecision` accumulates correctly across ranks — no manual sync needed
 - **F1 sweep:** compact per-batch matching stats merged across ranks; no raw epoch buffers
 - **Segmentation:** `iou_type=["bbox", "segm"]` + `backend="faster_coco_eval"` for mask IoU; segmentation F1 uses mask-IoU matching
@@ -535,13 +540,13 @@ Key properties:
 
 Replace the current dict-sink pattern with PTL's native logger system:
 
-| Current | PTL replacement |
-|---|---|
-| `MetricsTensorBoardSink` | `TensorBoardLogger` (built-in) |
-| `MetricsWandBSink` | `WandbLogger` (built-in) |
-| `MetricsMLFlowSink` | `MLFlowLogger` (built-in) |
-| `MetricsClearMLSink` | Custom callback or community `ClearMLLogger` |
-| `MetricsPlotSink` | `MetricsPlotCallback` (custom; no PTL equivalent) |
+| Current                  | PTL replacement                                   |
+| ------------------------ | ------------------------------------------------- |
+| `MetricsTensorBoardSink` | `TensorBoardLogger` (built-in)                    |
+| `MetricsWandBSink`       | `WandbLogger` (built-in)                          |
+| `MetricsMLFlowSink`      | `MLFlowLogger` (built-in)                         |
+| `MetricsClearMLSink`     | Custom callback or community `ClearMLLogger`      |
+| `MetricsPlotSink`        | `MetricsPlotCallback` (custom; no PTL equivalent) |
 
 `MetricsPlotSink` is rewritten as a PTL callback (`MetricsPlotCallback`) since PTL has no built-in metrics plot.
 
@@ -552,10 +557,10 @@ Replace the current dict-sink pattern with PTL's native logger system:
 - Track both `val/regular_mAP_50_95` and `val/ema_mAP_50_95` when EMA is enabled
 - `on_validation_epoch_end()`: update best regular/EMA checkpoints independently
 - `on_fit_end()`:
-  - Write `checkpoint_best_regular.pth` and `checkpoint_best_ema.pth` (if EMA enabled)
-  - Choose best of the two and copy to `checkpoint_best_total.pth`
-  - Strip optimizer state via `util/misc.py:strip_checkpoint()`
-  - If `run_test=True`, call `trainer.test(pl_module, datamodule=trainer.datamodule, ckpt_path="best")`
+    - Write `checkpoint_best_regular.pth` and `checkpoint_best_ema.pth` (if EMA enabled)
+    - Choose best of the two and copy to `checkpoint_best_total.pth`
+    - Strip optimizer state via `util/misc.py:strip_checkpoint()`
+    - If `run_test=True`, call `trainer.test(pl_module, datamodule=trainer.datamodule, ckpt_path="best")`
 - Extends PTL's `ModelCheckpoint`
 
 > Compatibility note: this preserves existing artifact semantics documented in `docs/learn/train/*` and current training outputs.
@@ -564,8 +569,8 @@ Replace the current dict-sink pattern with PTL's native logger system:
 
 - **Delete:** `util/early_stopping.py`
 - **Replace with:** PTL callback implementation that preserves current behavior:
-  - `early_stopping_use_ema=True` → monitor EMA metric
-  - `early_stopping_use_ema=False` → monitor `max(regular, EMA)` when EMA exists, otherwise regular metric
+    - `early_stopping_use_ema=True` → monitor EMA metric
+    - `early_stopping_use_ema=False` → monitor `max(regular, EMA)` when EMA exists, otherwise regular metric
 
 ---
 
@@ -578,7 +583,8 @@ Replace the current dict-sink pattern with PTL's native logger system:
 ```python
 def build_trainer(config: TrainConfig, model_config: ModelConfig) -> L.Trainer:
     def _resolve_precision() -> str:
-        if not model_config.amp: return "32-true"
+        if not model_config.amp:
+            return "32-true"
         if torch.cuda.is_available() and getattr(torch.cuda, "is_bf16_supported", lambda: False)():
             return "bf16-mixed"
         return "16-mixed" if torch.cuda.is_available() else "32-true"
@@ -592,12 +598,19 @@ def build_trainer(config: TrainConfig, model_config: ModelConfig) -> L.Trainer:
     # EarlyStopping (optional). Loggers: TensorBoard / WandB / MLflow / ClearML — conditional on config flags.
 
     return L.Trainer(
-        max_epochs=config.epochs, accelerator="auto", devices="auto",
-        strategy=getattr(config, "strategy", "auto"), precision=_resolve_precision(),
-        accumulate_grad_batches=config.grad_accum_steps, gradient_clip_val=config.clip_max_norm,
-        sync_batchnorm=config.sync_bn, callbacks=callbacks,
+        max_epochs=config.epochs,
+        accelerator="auto",
+        devices="auto",
+        strategy=getattr(config, "strategy", "auto"),
+        precision=_resolve_precision(),
+        accumulate_grad_batches=config.grad_accum_steps,
+        gradient_clip_val=config.clip_max_norm,
+        sync_batchnorm=config.sync_bn,
+        callbacks=callbacks,
         logger=loggers if loggers else False,
-        default_root_dir=config.output_dir, log_every_n_steps=50, deterministic=False,
+        default_root_dir=config.output_dir,
+        log_every_n_steps=50,
+        deterministic=False,
     )
 ```
 
@@ -609,18 +622,18 @@ def build_trainer(config: TrainConfig, model_config: ModelConfig) -> L.Trainer:
 def train(self, **kwargs):
     if kwargs.get("callbacks") and any(kwargs["callbacks"].values()):
         warnings.warn(
-            "Custom callbacks dict is not forwarded to PTL. "
-            "Use PTL Callback objects instead.",
-            DeprecationWarning, stacklevel=2
+            "Custom callbacks dict is not forwarded to PTL. Use PTL Callback objects instead.",
+            DeprecationWarning,
+            stacklevel=2,
         )
     kwargs.pop("callbacks", None)
-    kwargs.pop("device", None)   # TrainConfig.device dropped
+    kwargs.pop("device", None)  # TrainConfig.device dropped
     run_benchmark = bool(kwargs.pop("do_benchmark", False))
 
-    config   = self.get_train_config(**kwargs)
-    module   = RFDETRModelModule(self.model_config, config)
+    config = self.get_train_config(**kwargs)
+    module = RFDETRModelModule(self.model_config, config)
     datamodule = RFDETRDataModule(config, self.model_config)
-    trainer  = build_trainer(config, self.model_config)
+    trainer = build_trainer(config, self.model_config)
     trainer.fit(module, datamodule, ckpt_path=config.resume or None)
     if run_benchmark:
         warnings.warn(
@@ -634,24 +647,24 @@ def train(self, **kwargs):
 
 ### 4.3 Configuration mapping
 
-| Current field | PTL equivalent | Action |
-|---|---|---|
-| `batch_size` | `DataModule(batch_size=...)` | Pass through |
-| `grad_accum_steps` | `Trainer(accumulate_grad_batches=...)` | Pass through |
-| `amp` (`ModelConfig`) | `Trainer(precision=auto bf16/16/32)` | Map with CUDA capability fallback |
-| `epochs` | `Trainer(max_epochs=...)` | Pass through |
-| `TrainConfig.device` | — | **Dropped** — PTL auto-detects |
-| `distributed` / `world_size` / `dist_url` | `Trainer(devices="auto", strategy="auto")` | **Deleted** from populate_args |
-| `sync_bn` | `Trainer(sync_batchnorm=True)` | Promote or always-on default |
-| `clip_max_norm` | `Trainer(gradient_clip_val=...)` | Pass through (no hardcoded 0.1) |
-| `seed` | `L.seed_everything(seed)` | Promote to `TrainConfig` |
-| `resume` | `trainer.fit(..., ckpt_path=config.resume)` | Already in `TrainConfig` |
-| `start_epoch` | — | **Deleted** — PTL resumes automatically |
-| `eval` flag | `rfdetr validate` CLI subcommand | **Deleted** from populate_args |
-| `do_benchmark` | `rfdetr benchmark` subcommand / compatibility flag | Keep compatibility in `.train()` shim; deprecate then remove |
-| `checkpoint_interval` | `ModelCheckpoint(every_n_epochs=...)` | Pass through |
-| `num_workers` | `DataModule(num_workers=...)` | Pass through |
-| `output_dir` | `Trainer(default_root_dir=...)` | Pass through |
+| Current field                             | PTL equivalent                                     | Action                                                       |
+| ----------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------ |
+| `batch_size`                              | `DataModule(batch_size=...)`                       | Pass through                                                 |
+| `grad_accum_steps`                        | `Trainer(accumulate_grad_batches=...)`             | Pass through                                                 |
+| `amp` (`ModelConfig`)                     | `Trainer(precision=auto bf16/16/32)`               | Map with CUDA capability fallback                            |
+| `epochs`                                  | `Trainer(max_epochs=...)`                          | Pass through                                                 |
+| `TrainConfig.device`                      | —                                                  | **Dropped** — PTL auto-detects                               |
+| `distributed` / `world_size` / `dist_url` | `Trainer(devices="auto", strategy="auto")`         | **Deleted** from populate_args                               |
+| `sync_bn`                                 | `Trainer(sync_batchnorm=True)`                     | Promote or always-on default                                 |
+| `clip_max_norm`                           | `Trainer(gradient_clip_val=...)`                   | Pass through (no hardcoded 0.1)                              |
+| `seed`                                    | `L.seed_everything(seed)`                          | Promote to `TrainConfig`                                     |
+| `resume`                                  | `trainer.fit(..., ckpt_path=config.resume)`        | Already in `TrainConfig`                                     |
+| `start_epoch`                             | —                                                  | **Deleted** — PTL resumes automatically                      |
+| `eval` flag                               | `rfdetr validate` CLI subcommand                   | **Deleted** from populate_args                               |
+| `do_benchmark`                            | `rfdetr benchmark` subcommand / compatibility flag | Keep compatibility in `.train()` shim; deprecate then remove |
+| `checkpoint_interval`                     | `ModelCheckpoint(every_n_epochs=...)`              | Pass through                                                 |
+| `num_workers`                             | `DataModule(num_workers=...)`                      | Pass through                                                 |
+| `output_dir`                              | `Trainer(default_root_dir=...)`                    | Pass through                                                 |
 
 ---
 
@@ -661,20 +674,20 @@ def train(self, **kwargs):
 
 `populate_args()` in `main.py` translates Pydantic → argparse Namespace for `engine.py`. Keep it as a deprecated shim during migration, then remove after benchmark/test migration no longer imports it.
 
-| Field currently in `populate_args()` | Action |
-|---|---|
-| `clip_max_norm` | Promote to `TrainConfig` (users may want to control this) |
-| `seed` | Promote to `TrainConfig` |
-| `distributed`, `world_size`, `dist_url`, `dist_backend` | **Delete** — PTL handles |
-| `start_epoch` | **Delete** — PTL resumes automatically |
-| `eval` flag | **Delete** — becomes `rfdetr validate` subcommand |
-| `do_benchmark` | Deprecate in `.train()` and route to benchmark callback/subcommand |
-| `sync_bn` | Promote to `TrainConfig` (or always-on in DDP) |
-| `print_freq` | **Delete** — `Trainer(log_every_n_steps=50)` |
-| `fp16_eval` | Promote to `TrainConfig` and map to PTL precision policy |
-| `lr_scheduler` | Promote to `TrainConfig` (cosine vs step; currently only in `populate_args`) |
-| `lr_min_factor` | Promote to `TrainConfig` (cosine minimum LR factor; only in `populate_args`) |
-| `dont_save_weights` | Promote to `TrainConfig` |
+| Field currently in `populate_args()`                    | Action                                                                       |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `clip_max_norm`                                         | Promote to `TrainConfig` (users may want to control this)                    |
+| `seed`                                                  | Promote to `TrainConfig`                                                     |
+| `distributed`, `world_size`, `dist_url`, `dist_backend` | **Delete** — PTL handles                                                     |
+| `start_epoch`                                           | **Delete** — PTL resumes automatically                                       |
+| `eval` flag                                             | **Delete** — becomes `rfdetr validate` subcommand                            |
+| `do_benchmark`                                          | Deprecate in `.train()` and route to benchmark callback/subcommand           |
+| `sync_bn`                                               | Promote to `TrainConfig` (or always-on in DDP)                               |
+| `print_freq`                                            | **Delete** — `Trainer(log_every_n_steps=50)`                                 |
+| `fp16_eval`                                             | Promote to `TrainConfig` and map to PTL precision policy                     |
+| `lr_scheduler`                                          | Promote to `TrainConfig` (cosine vs step; currently only in `populate_args`) |
+| `lr_min_factor`                                         | Promote to `TrainConfig` (cosine minimum LR factor; only in `populate_args`) |
+| `dont_save_weights`                                     | Promote to `TrainConfig`                                                     |
 
 ### 5.2 `TrainConfig` changes summary
 
@@ -698,8 +711,8 @@ class TrainConfig(BaseModel):
     sync_bn: bool = False
     fp16_eval: bool = False
     lr_scheduler: Literal["step", "cosine"] = "step"  # currently only in populate_args
-    lr_min_factor: float = 0.0                          # currently only in populate_args
-    dont_save_weights: bool = False                     # currently only in populate_args
+    lr_min_factor: float = 0.0  # currently only in populate_args
+    dont_save_weights: bool = False  # currently only in populate_args
 ```
 
 Note: `ModelConfig.device` is also kept for model placement during inference (used by `Model.__init__` and `predict()`). Only `TrainConfig.device` is dropped.
@@ -710,13 +723,13 @@ Note: `ModelConfig.device` is also kept for model placement during inference (us
 
 Long-term trajectory:
 
-| Today (`TrainConfig` field) | PTL-native home |
-|---|---|
-| `lr`, `weight_decay`, `batch_size`, `epochs`, `grad_accum_steps`, `clip_max_norm` | `RFDETRModelModule.__init__()` kwargs |
-| `num_workers`, `aug_config`, `dataset_dir`, `batch_size` | `RFDETRDataModule.__init__()` kwargs |
-| `amp`, `devices`, `strategy`, `sync_bn`, `precision` | `Trainer(...)` kwargs (set in YAML or CLI) |
-| `tensorboard`, `wandb`, `mlflow`, `output_dir` | Logger configs in YAML |
-| `early_stopping`, `early_stopping_patience`, `checkpoint_interval` | Callback configs in YAML |
+| Today (`TrainConfig` field)                                                       | PTL-native home                            |
+| --------------------------------------------------------------------------------- | ------------------------------------------ |
+| `lr`, `weight_decay`, `batch_size`, `epochs`, `grad_accum_steps`, `clip_max_norm` | `RFDETRModelModule.__init__()` kwargs      |
+| `num_workers`, `aug_config`, `dataset_dir`, `batch_size`                          | `RFDETRDataModule.__init__()` kwargs       |
+| `amp`, `devices`, `strategy`, `sync_bn`, `precision`                              | `Trainer(...)` kwargs (set in YAML or CLI) |
+| `tensorboard`, `wandb`, `mlflow`, `output_dir`                                    | Logger configs in YAML                     |
+| `early_stopping`, `early_stopping_patience`, `checkpoint_interval`                | Callback configs in YAML                   |
 
 This transition is **out of scope for this migration** — `TrainConfig` is kept as-is and threaded through `build_trainer()` / `RFDETRModelModule.__init__()` to preserve the existing user API. The monolithic config can be dissolved in a separate PR once the PTL migration is stable.
 
@@ -731,10 +744,12 @@ This transition is **out of scope for this migration** — `TrainConfig` is kept
 ```python
 from lightning.pytorch.cli import LightningCLI
 
+
 class RFDETRCli(LightningCLI):
     def add_arguments_to_parser(self, parser):
         parser.link_arguments("model.model_config.resolution", "data.resolution", apply_on="instantiate")
         parser.link_arguments("model.model_config.patch_size", "data.patch_size", apply_on="instantiate")
+
 
 def main():
     RFDETRCli(RFDETRModelModule, RFDETRDataModule)
@@ -832,9 +847,7 @@ Auto-detect in `RFDETRModule.on_load_checkpoint()`:
 def on_load_checkpoint(self, checkpoint):
     # Legacy .pth loaded directly by Trainer
     if "model" in checkpoint and "state_dict" not in checkpoint:
-        checkpoint["state_dict"] = {
-            "model." + k: v for k, v in checkpoint["model"].items()
-        }
+        checkpoint["state_dict"] = {"model." + k: v for k, v in checkpoint["model"].items()}
     # If legacy EMA weights are present, hand them to RFDETREMACallback explicitly
     if "legacy_ema_state_dict" in checkpoint:
         self._pending_legacy_ema_state = checkpoint["legacy_ema_state_dict"]
@@ -846,54 +859,54 @@ def on_load_checkpoint(self, checkpoint):
 
 ### Files to delete entirely
 
-| File | Reason |
-|---|---|
-| `src/rfdetr/main.py` | `Model` class + `populate_args()` replaced |
-| `src/rfdetr/cli/main.py` | Replaced by LightningCLI |
-| `src/rfdetr/datasets/coco_eval.py` | `CocoEvaluator` replaced by torchmetrics; all helpers deleted |
-| `src/rfdetr/util/early_stopping.py` | Replaced by PTL `EarlyStopping` callback |
+| File                                | Reason                                                        |
+| ----------------------------------- | ------------------------------------------------------------- |
+| `src/rfdetr/main.py`                | `Model` class + `populate_args()` replaced                    |
+| `src/rfdetr/cli/main.py`            | Replaced by LightningCLI                                      |
+| `src/rfdetr/datasets/coco_eval.py`  | `CocoEvaluator` replaced by torchmetrics; all helpers deleted |
+| `src/rfdetr/util/early_stopping.py` | Replaced by PTL `EarlyStopping` callback                      |
 
 ### Functions to delete from remaining files
 
-| File | Function(s) | Reason |
-|---|---|---|
-| `engine.py` | `train_one_epoch()` | Replaced by `training_step()` + Trainer |
-| `engine.py` | legacy body of `evaluate()` | Replaced by PTL validation path; keep thin compatibility wrapper until benchmark migration is complete |
-| `engine.py` | `get_autocast_args()`, `_get_cuda_autocast_dtype()` | PTL handles AMP |
-| `engine.py` | legacy internals of `coco_extended_metrics()` | Keep public symbol; re-implement using new matching helpers to satisfy `tests/util/test_metrics.py` |
-| `util/misc.py` | `MetricLogger`, `SmoothedValue` | PTL's `self.log()` |
-| `util/misc.py` | `init_distributed_mode()` | PTL |
-| `util/misc.py` | `reduce_dict()` | PTL `sync_dist=True` |
-| `util/misc.py` | `get_rank()`, `is_main_process()` | PTL trainer properties (`self.trainer.global_rank`, `self.trainer.is_global_zero`) |
-| `util/misc.py` | `get_world_size()`, `is_dist_avail_and_initialized()` | **Do NOT delete.** Still imported by `SetCriterion` in `models/lwdetr.py` for `num_boxes` all_reduce. Keep in `util/misc.py`. |
-| `util/misc.py` | `save_on_master()` | PTL checkpointing |
-| `util/metrics.py` | `MetricsTensorBoardSink`, `MetricsWandBSink`, `MetricsMLFlowSink`, `MetricsClearMLSink` | PTL built-in loggers |
-| `datasets/__init__.py` | `get_coco_api_from_dataset()` | Remove only after benchmark/tests are migrated off `engine.evaluate()` compatibility path |
+| File                   | Function(s)                                                                             | Reason                                                                                                                        |
+| ---------------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `engine.py`            | `train_one_epoch()`                                                                     | Replaced by `training_step()` + Trainer                                                                                       |
+| `engine.py`            | legacy body of `evaluate()`                                                             | Replaced by PTL validation path; keep thin compatibility wrapper until benchmark migration is complete                        |
+| `engine.py`            | `get_autocast_args()`, `_get_cuda_autocast_dtype()`                                     | PTL handles AMP                                                                                                               |
+| `engine.py`            | legacy internals of `coco_extended_metrics()`                                           | Keep public symbol; re-implement using new matching helpers to satisfy `tests/util/test_metrics.py`                           |
+| `util/misc.py`         | `MetricLogger`, `SmoothedValue`                                                         | PTL's `self.log()`                                                                                                            |
+| `util/misc.py`         | `init_distributed_mode()`                                                               | PTL                                                                                                                           |
+| `util/misc.py`         | `reduce_dict()`                                                                         | PTL `sync_dist=True`                                                                                                          |
+| `util/misc.py`         | `get_rank()`, `is_main_process()`                                                       | PTL trainer properties (`self.trainer.global_rank`, `self.trainer.is_global_zero`)                                            |
+| `util/misc.py`         | `get_world_size()`, `is_dist_avail_and_initialized()`                                   | **Do NOT delete.** Still imported by `SetCriterion` in `models/lwdetr.py` for `num_boxes` all_reduce. Keep in `util/misc.py`. |
+| `util/misc.py`         | `save_on_master()`                                                                      | PTL checkpointing                                                                                                             |
+| `util/metrics.py`      | `MetricsTensorBoardSink`, `MetricsWandBSink`, `MetricsMLFlowSink`, `MetricsClearMLSink` | PTL built-in loggers                                                                                                          |
+| `datasets/__init__.py` | `get_coco_api_from_dataset()`                                                           | Remove only after benchmark/tests are migrated off `engine.evaluate()` compatibility path                                     |
 
 ### Functions to KEEP (reused by PTL code)
 
-| File | What to keep | Used by |
-|---|---|---|
-| `engine.py` | `sweep_confidence_thresholds()` | `COCOEvalCallback` |
-| `engine.py` | new `build_matching_data()` | `COCOEvalCallback` |
-| `engine.py` | compatibility `evaluate()` wrapper + `results_json` schema | benchmark tests + migration transition |
-| `engine.py` | compatibility `coco_extended_metrics()` symbol | existing tests/imports |
-| `models/lwdetr.py` | Entire file | `RFDETRModule` |
-| `models/` | All model code | Unchanged |
-| `datasets/` | All dataset code + augmentation | `RFDETRDataModule` |
-| `datasets/aug_config.py` | All presets | Public API |
-| `config.py` | All Pydantic configs (minus `device` field) | Used directly |
-| `util/utils.py` | `clean_state_dict` | `BestModelCallback` |
-| `util/misc.py` | `strip_checkpoint()` | `BestModelCallback` |
-| `util/drop_scheduler.py` | `drop_scheduler()` | `DropPathCallback` |
-| `util/get_param_dicts.py` | `get_param_dict()` | `configure_optimizers()` |
-| `util/misc.py` | `collate_fn()`, `NestedTensor`, `nested_tensor_from_tensor_list()` | `RFDETRDataModule` |
-| `util/misc.py` | `get_world_size()`, `is_dist_avail_and_initialized()` | `SetCriterion.forward()` — `num_boxes` all_reduce for globally-normalized loss |
-| `util/metrics.py` | `MetricsPlotSink` logic | `MetricsPlotCallback` |
-| `utilities/decorators.py` | `_DeprecatedDict`, `@deprecated` | Deprecation shims |
-| `detr.py` | Entire file | Deprecated compat layer |
-| `assets/` | Model weights | Unchanged |
-| `deploy/` | ONNX export, benchmark | Unchanged |
+| File                      | What to keep                                                       | Used by                                                                        |
+| ------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
+| `engine.py`               | `sweep_confidence_thresholds()`                                    | `COCOEvalCallback`                                                             |
+| `engine.py`               | new `build_matching_data()`                                        | `COCOEvalCallback`                                                             |
+| `engine.py`               | compatibility `evaluate()` wrapper + `results_json` schema         | benchmark tests + migration transition                                         |
+| `engine.py`               | compatibility `coco_extended_metrics()` symbol                     | existing tests/imports                                                         |
+| `models/lwdetr.py`        | Entire file                                                        | `RFDETRModule`                                                                 |
+| `models/`                 | All model code                                                     | Unchanged                                                                      |
+| `datasets/`               | All dataset code + augmentation                                    | `RFDETRDataModule`                                                             |
+| `datasets/aug_config.py`  | All presets                                                        | Public API                                                                     |
+| `config.py`               | All Pydantic configs (minus `device` field)                        | Used directly                                                                  |
+| `util/utils.py`           | `clean_state_dict`                                                 | `BestModelCallback`                                                            |
+| `util/misc.py`            | `strip_checkpoint()`                                               | `BestModelCallback`                                                            |
+| `util/drop_scheduler.py`  | `drop_scheduler()`                                                 | `DropPathCallback`                                                             |
+| `util/get_param_dicts.py` | `get_param_dict()`                                                 | `configure_optimizers()`                                                       |
+| `util/misc.py`            | `collate_fn()`, `NestedTensor`, `nested_tensor_from_tensor_list()` | `RFDETRDataModule`                                                             |
+| `util/misc.py`            | `get_world_size()`, `is_dist_avail_and_initialized()`              | `SetCriterion.forward()` — `num_boxes` all_reduce for globally-normalized loss |
+| `util/metrics.py`         | `MetricsPlotSink` logic                                            | `MetricsPlotCallback`                                                          |
+| `utilities/decorators.py` | `_DeprecatedDict`, `@deprecated`                                   | Deprecation shims                                                              |
+| `detr.py`                 | Entire file                                                        | Deprecated compat layer                                                        |
+| `assets/`                 | Model weights                                                      | Unchanged                                                                      |
+| `deploy/`                 | ONNX export, benchmark                                             | Unchanged                                                                      |
 
 ---
 
@@ -908,9 +921,9 @@ def on_load_checkpoint(self, checkpoint):
 Before migrating internals, lock in behavior expected by current tests/benchmarks.
 
 - [ ] Add a migration compatibility checklist in tests:
-  - [ ] `engine.evaluate()` output schema keys (`results_json`, `results_json_masks`)
-  - [ ] `coco_extended_metrics()` symbol remains importable
-  - [ ] `rfdetr.util.*` imports remain valid
+    - [ ] `engine.evaluate()` output schema keys (`results_json`, `results_json_masks`)
+    - [ ] `coco_extended_metrics()` symbol remains importable
+    - [ ] `rfdetr.util.*` imports remain valid
 - [ ] Add explicit numeric tolerances for metric parity tests (mAP/F1) with fixed seeds and fixed dataset sample sets
 - [ ] Add benchmark acceptance gates that mirror existing benchmark tests (`tests/benchmarks/test_coco_inference.py`, `tests/benchmarks/test_synthetic_convergence.py`)
 
@@ -954,9 +967,9 @@ Create the core Lightning module and data module that replicate the current `Mod
 Replace `CocoEvaluator` (pycocotools-based) with `torchmetrics.detection.MeanAveragePrecision` and rewrite the F1 sweep helper to remove its dependency on `COCOeval.evalImgs` internals. This chapter makes the evaluation stack independent of both `pycocotools.cocoeval` and the planned-but-now-superseded `faster-coco-eval` migration PR.
 
 - [ ] Write `build_matching_data(preds_list, targets_list, iou_threshold=0.5, iou_type="bbox"|"segm")` in `engine.py`:
-  - [ ] bbox matching via `torchvision.ops.box_iou`
-  - [ ] segmentation matching via boolean mask IoU
-  - [ ] greedy highest-score-first matching with crowd handling
+    - [ ] bbox matching via `torchvision.ops.box_iou`
+    - [ ] segmentation matching via boolean mask IoU
+    - [ ] greedy highest-score-first matching with crowd handling
 - [ ] Implement compact matching accumulator + distributed merge helper for F1 (`all_gather_object` or reduced tensors), so F1 is global across DDP ranks
 - [ ] Implement `COCOEvalCallback` (`lit/callbacks/coco_eval.py`) using `MeanAveragePrecision(class_metrics=True)` for mAP and merged matching data + `sweep_confidence_thresholds()` for F1 sweep
 - [ ] Support both detection (`iou_type="bbox"`) and segmentation (`iou_type=["bbox","segm"]`, `backend="faster_coco_eval"`)
@@ -964,8 +977,8 @@ Replace `CocoEvaluator` (pycocotools-based) with `torchmetrics.detection.MeanAve
 - [ ] Preserve legacy output keys (`results_json`, `results_json_masks`, `coco_eval_bbox`, `coco_eval_masks`) in compatibility wrappers used by benchmarks
 - [ ] **Measure** mAP and F1 from the legacy `CocoEvaluator` path on the reference dataset — record as numeric baselines in the test suite
 - [ ] **Verify** the new `COCOEvalCallback` produces numbers within explicit tolerances on the same dataset:
-  - [ ] detection: `|ΔmAP50| <= 0.005`, `|ΔF1| <= 0.01`
-  - [ ] segmentation: `|Δmask mAP50| <= 0.005`, `|Δmask F1| <= 0.01`
+    - [ ] detection: `|ΔmAP50| <= 0.005`, `|ΔF1| <= 0.01`
+    - [ ] segmentation: `|Δmask mAP50| <= 0.005`, `|Δmask F1| <= 0.01`
 - [ ] **Write** tests that assert the new metrics meet the same numeric thresholds — these tests replace the legacy-path measurement once the baselines are met
 - [ ] The legacy `CocoEvaluator` code is **not deleted yet** (that happens in Chapter 6); both paths run in parallel during this chapter for comparison
 
@@ -985,10 +998,10 @@ Replace `CocoEvaluator` (pycocotools-based) with `torchmetrics.detection.MeanAve
 Implement the callbacks that handle EMA, drop-path scheduling, best-model selection, metrics plotting, and early stopping.
 
 - [ ] Implement `RFDETREMACallback` (`lit/callbacks/ema.py`) on PTL 2.6+ `WeightAveraging`/`EMAWeightAveraging` APIs:
-  - [ ] strict-parity path: custom `avg_fn` with `decay * (1 - exp(-updates / tau))`
-  - [ ] optional simplified path: `EMAWeightAveraging(decay=...)` when tau warmup parity is not required
-  - [ ] if callback adds custom state, implement `state_dict()/load_state_dict()` and unique `state_key`
-  - [ ] verify EMA weights after N steps match current `ModelEma` output for strict-parity mode
+    - [ ] strict-parity path: custom `avg_fn` with `decay * (1 - exp(-updates / tau))`
+    - [ ] optional simplified path: `EMAWeightAveraging(decay=...)` when tau warmup parity is not required
+    - [ ] if callback adds custom state, implement `state_dict()/load_state_dict()` and unique `state_key`
+    - [ ] verify EMA weights after N steps match current `ModelEma` output for strict-parity mode
 - [ ] Implement `DropPathCallback` (`lit/callbacks/drop_schedule.py`); verify drop rates match `drop_scheduler()` at the same global step values
 - [ ] Implement `BestModelCallback` (`lit/callbacks/best_model.py`); tracks regular and EMA metrics, writes `checkpoint_best_regular.pth` and `checkpoint_best_ema.pth`, selects `checkpoint_best_total.pth`, strips optimizer state, and calls `trainer.test()` from `on_fit_end()` when `run_test=True`
 - [ ] Implement `MetricsPlotCallback` (`lit/callbacks/metrics.py`) rewriting `MetricsPlotSink` as a PTL callback
@@ -1057,11 +1070,11 @@ Implement the `RFDETR.train()` internal delegation to PTL and add the `@deprecat
 Remove all code that has been superseded by the PTL stack, update tests to exercise the new paths, and confirm the package is in a clean state.
 
 - [x] Promote `device` kwarg to a proper `TrainConfig.accelerator` field (see Decision #11 / risk table row 4):
-  - `TrainConfig.accelerator` is now first-class and consumed by `build_trainer()`. The legacy `.train(device=...)` shim remains for compatibility (`"cpu"` maps to `accelerator="cpu"`; other legacy values emit deprecation warnings and defer to PTL/device env configuration).
-  - Compatibility target is RF-DETR `1.5` only; intermediate migration-stage compatibility is not a requirement.
+    - `TrainConfig.accelerator` is now first-class and consumed by `build_trainer()`. The legacy `.train(device=...)` shim remains for compatibility (`"cpu"` maps to `accelerator="cpu"`; other legacy values emit deprecation warnings and defer to PTL/device env configuration).
+    - Compatibility target is RF-DETR `1.5` only; intermediate migration-stage compatibility is not a requirement.
 - [ ] Migrate benchmark tests to PTL-native/compat APIs while preserving current acceptance thresholds:
-  - [ ] `tests/benchmarks/test_coco_inference.py`
-  - [ ] `tests/benchmarks/test_synthetic_convergence.py`
+    - [ ] `tests/benchmarks/test_coco_inference.py`
+    - [ ] `tests/benchmarks/test_synthetic_convergence.py`
 - [ ] Keep legacy metric output schema in compatibility wrappers until the benchmark migration above is complete
 - [ ] Delete `src/rfdetr/main.py` (`Model` class and `populate_args()`)
 - [ ] Delete `src/rfdetr/datasets/coco_eval.py` (`CocoEvaluator` and all helpers)
@@ -1081,42 +1094,42 @@ Remove all code that has been superseded by the PTL stack, update tests to exerc
 
 ## ⚠️ Risk Assessment
 
-| Risk | Impact | Mitigation |
-|---|---|---|
-| mAP numbers differ between torchmetrics MAP and pycocotools COCOeval | High | Compare on reference dataset before removing old evaluator; torchmetrics uses COCO-identical algorithm |
-| `build_matching_data()` F1 sweep differs from `coco_extended_metrics()` | High | Test against known-good outputs from current implementation before cutting over; lock numeric tolerances in tests |
-| F1 is computed per-rank instead of globally under DDP | High | Merge compact matching data across ranks before sweeping confidence thresholds |
-| EMA behavior differs from current `ModelEma` | Medium | Use PTL 2.6+ `WeightAveraging` with custom `avg_fn` (tau warmup) and validate weight parity after N steps |
-| EMA callback used with sharded strategy | Medium-High | Detect FSDP/DeepSpeed-style strategies and disable EMA (or provide a dedicated strategy-aware implementation) |
-| Callback ordering assumptions create race in best-model selection | Medium | Make best-model selection read `trainer.callback_metrics` in `on_validation_end()`, not order-coupled hooks |
-| Gradient accumulation semantics differ | **Critical** | Current code loads `effective_batch_size` into DataLoader and manually splits; PTL loads `batch_size` and delays `optimizer.step()`. DataLoader batch size MUST change from `effective_batch_size` to `batch_size`. Verify gradient magnitudes match on a synthetic run. |
-| Multi-scale resize with `random.seed(global_step)` differs from current step counting | Medium | Verify scales match exactly on deterministic run |
-| `NestedTensor` + PTL's `on_after_batch_transfer` device handling | Low | PTL respects custom `collate_fn`; verify `NestedTensor.to(device)` called correctly |
-| `TrainConfig.device` removal breaks existing user code | Low-Medium | Document in release notes; `@deprecated` shim absorbs `device=` kwarg silently |
-| segmentation mask format for torchmetrics (`bool` tensor vs RLE) | Medium | Verify `PostProcess` mask output is compatible; add `bool()` cast if needed |
-| Benchmark regressions during migration (`tests/benchmarks/*`) | High | Keep legacy stats schema wrappers until benchmark tests are fully migrated and green |
-| `get_world_size`/`is_dist_avail_and_initialized` deleted from `util/misc.py` | High | Imported by `models/lwdetr.py` for `num_boxes` all_reduce — not engine boilerplate. Keep in `util/misc.py`; never delete. |
+| Risk                                                                                  | Impact       | Mitigation                                                                                                                                                                                                                                                               |
+| ------------------------------------------------------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| mAP numbers differ between torchmetrics MAP and pycocotools COCOeval                  | High         | Compare on reference dataset before removing old evaluator; torchmetrics uses COCO-identical algorithm                                                                                                                                                                   |
+| `build_matching_data()` F1 sweep differs from `coco_extended_metrics()`               | High         | Test against known-good outputs from current implementation before cutting over; lock numeric tolerances in tests                                                                                                                                                        |
+| F1 is computed per-rank instead of globally under DDP                                 | High         | Merge compact matching data across ranks before sweeping confidence thresholds                                                                                                                                                                                           |
+| EMA behavior differs from current `ModelEma`                                          | Medium       | Use PTL 2.6+ `WeightAveraging` with custom `avg_fn` (tau warmup) and validate weight parity after N steps                                                                                                                                                                |
+| EMA callback used with sharded strategy                                               | Medium-High  | Detect FSDP/DeepSpeed-style strategies and disable EMA (or provide a dedicated strategy-aware implementation)                                                                                                                                                            |
+| Callback ordering assumptions create race in best-model selection                     | Medium       | Make best-model selection read `trainer.callback_metrics` in `on_validation_end()`, not order-coupled hooks                                                                                                                                                              |
+| Gradient accumulation semantics differ                                                | **Critical** | Current code loads `effective_batch_size` into DataLoader and manually splits; PTL loads `batch_size` and delays `optimizer.step()`. DataLoader batch size MUST change from `effective_batch_size` to `batch_size`. Verify gradient magnitudes match on a synthetic run. |
+| Multi-scale resize with `random.seed(global_step)` differs from current step counting | Medium       | Verify scales match exactly on deterministic run                                                                                                                                                                                                                         |
+| `NestedTensor` + PTL's `on_after_batch_transfer` device handling                      | Low          | PTL respects custom `collate_fn`; verify `NestedTensor.to(device)` called correctly                                                                                                                                                                                      |
+| `TrainConfig.device` removal breaks existing user code                                | Low-Medium   | Document in release notes; `@deprecated` shim absorbs `device=` kwarg silently                                                                                                                                                                                           |
+| segmentation mask format for torchmetrics (`bool` tensor vs RLE)                      | Medium       | Verify `PostProcess` mask output is compatible; add `bool()` cast if needed                                                                                                                                                                                              |
+| Benchmark regressions during migration (`tests/benchmarks/*`)                         | High         | Keep legacy stats schema wrappers until benchmark tests are fully migrated and green                                                                                                                                                                                     |
+| `get_world_size`/`is_dist_avail_and_initialized` deleted from `util/misc.py`          | High         | Imported by `models/lwdetr.py` for `num_boxes` all_reduce — not engine boilerplate. Keep in `util/misc.py`; never delete.                                                                                                                                                |
 
 ---
 
 ## ✅ Resolved Design Decisions
 
-| # | Topic | Decision |
-|---|---|---|
-| 1 | EMA callback | Use PTL 2.6+ `WeightAveraging`/`EMAWeightAveraging` APIs; implement strict parity via custom `avg_fn` and avoid private internals |
-| 2 | Per-epoch regular vs EMA metrics | Preserve both regular and EMA metrics/checkpoints for compatibility (`checkpoint_best_regular.pth`, `checkpoint_best_ema.pth`, `checkpoint_best_total.pth`) |
-| 3 | torchmetrics backend | `faster_coco_eval` for segmentation; omitted (torchvision default) for detection-only |
-| 4 | `MeanAveragePrecision` creation | `setup()` hook — correct device placement after DDP init |
-| 5 | `class_names` propagation | `COCOEvalCallback.on_fit_start()` reads `trainer.datamodule.class_names` |
-| 6 | F1 sweep crowd handling | Pass `iscrowd` from targets; defaults to absent for YOLO/Roboflow datasets; compute global F1 across ranks |
-| 7 | `NestedTensor` device transfer | Override `RFDETRModule.transfer_batch_to_device()` explicitly |
-| 8 | `gradient_checkpointing` | Wired in `RFDETRModule.__init__()` after `build_model()` |
-| 9 | Test-set eval after training | `trainer.test()` called from `BestModelCallback.on_fit_end()` when `run_test=True` |
-| 10 | `callbacks` dict backward compat | Deprecated shim emits extra warning if non-empty; no bridging |
-| 11 | `TrainConfig.device` | Dropped (breaking change); absorbed silently in deprecated shim |
-| 12 | `fp16_eval` | Mapped to PTL precision policy (`bf16-mixed` when supported, otherwise `16-mixed`) |
-| 13 | `SetCriterion` `num_boxes` all_reduce | **Keep as-is.** `SetCriterion` calls `all_reduce(num_boxes)` + `/ get_world_size()` before every loss to produce a globally-consistent denominator across ranks — essential for DDP stability. PTL uses the same process groups so this works unchanged. Refactoring into `training_step()` still needs `torch.distributed` in two places, changes the criterion API, and gains nothing. `get_world_size`/`is_dist_avail_and_initialized` stay in `util/misc.py`; never deleted. |
-| 14 | `RFDETRCli.link_arguments` paths | **Keep full-object linking** (`model.model_config` → `data.model_config`, `model.train_config` → `data.train_config`, `apply_on="parse"`) until after user testing. The spec's field-level paths (`data.resolution`, `data.patch_size`) require decomposing `RFDETRDataModule(model_config, train_config)` into individual params (Phase 6.3). That decomposition is deferred to Chapter 6 to avoid breaking changes before the API is validated with real users. |
+| #   | Topic                                 | Decision                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| --- | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | EMA callback                          | Use PTL 2.6+ `WeightAveraging`/`EMAWeightAveraging` APIs; implement strict parity via custom `avg_fn` and avoid private internals                                                                                                                                                                                                                                                                                                                                                |
+| 2   | Per-epoch regular vs EMA metrics      | Preserve both regular and EMA metrics/checkpoints for compatibility (`checkpoint_best_regular.pth`, `checkpoint_best_ema.pth`, `checkpoint_best_total.pth`)                                                                                                                                                                                                                                                                                                                      |
+| 3   | torchmetrics backend                  | `faster_coco_eval` for segmentation; omitted (torchvision default) for detection-only                                                                                                                                                                                                                                                                                                                                                                                            |
+| 4   | `MeanAveragePrecision` creation       | `setup()` hook — correct device placement after DDP init                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| 5   | `class_names` propagation             | `COCOEvalCallback.on_fit_start()` reads `trainer.datamodule.class_names`                                                                                                                                                                                                                                                                                                                                                                                                         |
+| 6   | F1 sweep crowd handling               | Pass `iscrowd` from targets; defaults to absent for YOLO/Roboflow datasets; compute global F1 across ranks                                                                                                                                                                                                                                                                                                                                                                       |
+| 7   | `NestedTensor` device transfer        | Override `RFDETRModule.transfer_batch_to_device()` explicitly                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 8   | `gradient_checkpointing`              | Wired in `RFDETRModule.__init__()` after `build_model()`                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| 9   | Test-set eval after training          | `trainer.test()` called from `BestModelCallback.on_fit_end()` when `run_test=True`                                                                                                                                                                                                                                                                                                                                                                                               |
+| 10  | `callbacks` dict backward compat      | Deprecated shim emits extra warning if non-empty; no bridging                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 11  | `TrainConfig.device`                  | Dropped (breaking change); absorbed silently in deprecated shim                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 12  | `fp16_eval`                           | Mapped to PTL precision policy (`bf16-mixed` when supported, otherwise `16-mixed`)                                                                                                                                                                                                                                                                                                                                                                                               |
+| 13  | `SetCriterion` `num_boxes` all_reduce | **Keep as-is.** `SetCriterion` calls `all_reduce(num_boxes)` + `/ get_world_size()` before every loss to produce a globally-consistent denominator across ranks — essential for DDP stability. PTL uses the same process groups so this works unchanged. Refactoring into `training_step()` still needs `torch.distributed` in two places, changes the criterion API, and gains nothing. `get_world_size`/`is_dist_avail_and_initialized` stay in `util/misc.py`; never deleted. |
+| 14  | `RFDETRCli.link_arguments` paths      | **Keep full-object linking** (`model.model_config` → `data.model_config`, `model.train_config` → `data.train_config`, `apply_on="parse"`) until after user testing. The spec's field-level paths (`data.resolution`, `data.patch_size`) require decomposing `RFDETRDataModule(model_config, train_config)` into individual params (Phase 6.3). That decomposition is deferred to Chapter 6 to avoid breaking changes before the API is validated with real users.                |
 
 ## 📝 Notes for Implementers
 
