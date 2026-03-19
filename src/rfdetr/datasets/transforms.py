@@ -529,8 +529,6 @@ class AlbumentationsWrapper:
                 # idxs carries original indices so downstream _filter_per_instance_fields
                 # can correctly slice fields from the un-filtered target.
                 idxs = [idxs[i] for i in valid_positions]
-                if masks_list is not None:
-                    masks_list = [masks_list[i] for i in valid_positions]
         # Apply transform
         transform_kwargs = {"image": image_np, "bboxes": boxes_np, "category_ids": labels, "idxs": idxs}
         if masks_list is not None and len(masks_list) > 0:
