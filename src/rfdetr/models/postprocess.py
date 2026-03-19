@@ -88,7 +88,7 @@ class PostProcess(nn.Module):
                 h, w = target_sizes[i].tolist()
                 kpts_xy = kpts_i[..., :2] * torch.tensor([w, h], device=kpts_i.device, dtype=kpts_i.dtype)
                 kpts_vis = kpts_i[..., 2].sigmoid()  # visibility confidence
-                res_i["keypoints"] = kpts_xy         # (num_select, K, 2) absolute coords
+                res_i["keypoints"] = kpts_xy  # (num_select, K, 2) absolute coords
                 res_i["keypoint_scores"] = kpts_vis  # (num_select, K)
                 results.append(res_i)
         else:

@@ -29,9 +29,23 @@ from rfdetr.utilities.box_ops import box_cxcywh_to_xyxy
 
 # Standard COCO 17-keypoint OKS sigmas (one per keypoint).
 _COCO_17_KPT_SIGMAS: list[float] = [
-    0.026, 0.025, 0.025, 0.035, 0.035,
-    0.079, 0.079, 0.072, 0.072, 0.062, 0.062,
-    0.107, 0.107, 0.087, 0.087, 0.089, 0.089,
+    0.026,
+    0.025,
+    0.025,
+    0.035,
+    0.035,
+    0.079,
+    0.079,
+    0.072,
+    0.072,
+    0.062,
+    0.062,
+    0.107,
+    0.107,
+    0.087,
+    0.087,
+    0.089,
+    0.089,
 ]
 
 
@@ -69,7 +83,7 @@ def _run_kpt_coco_eval(acc: list[dict], num_keypoints: int) -> np.ndarray | None
 
         # ── GT annotations (vectorised) ─────────────────────────────────
         kpts_gt = tgt.get("keypoints")  # (N, K, 3) normalised [0,1] x,y,vis
-        boxes_gt = tgt.get("boxes")     # (N, 4) normalised cxcywh
+        boxes_gt = tgt.get("boxes")  # (N, 4) normalised cxcywh
         iscrowd_gt = tgt.get("iscrowd")
 
         if kpts_gt is not None and boxes_gt is not None and len(boxes_gt) > 0:
@@ -83,30 +97,32 @@ def _run_kpt_coco_eval(acc: list[dict], num_keypoints: int) -> np.ndarray | None
             kpts_np[..., 0] *= w
             kpts_np[..., 1] *= h
             kpts_np[..., 2] = np.round(kpts_np[..., 2])
-            kpts_flat_all = kpts_np.reshape(len(boxes_gt), -1)          # (N, K*3)
-            num_vis_all = (kpts_np[..., 2] > 0).sum(axis=1)             # (N,)
+            kpts_flat_all = kpts_np.reshape(len(boxes_gt), -1)  # (N, K*3)
+            num_vis_all = (kpts_np[..., 2] > 0).sum(axis=1)  # (N,)
             iscrowd_np = iscrowd_gt.cpu().numpy() if iscrowd_gt is not None else np.zeros(len(boxes_gt))
 
             for i in np.where(areas > 0)[0]:
                 ann_id += 1
                 x1, y1 = float(boxes_np[i, 0]), float(boxes_np[i, 1])
-                gt_anns.append({
-                    "id": ann_id,
-                    "image_id": img_id,
-                    "category_id": 1,
-                    "keypoints": kpts_flat_all[i].tolist(),
-                    "num_keypoints": int(num_vis_all[i]),
-                    "area": float(areas[i]),
-                    "bbox": [x1, y1, float(bws[i]), float(bhs[i])],
-                    "iscrowd": int(iscrowd_np[i]),
-                })
+                gt_anns.append(
+                    {
+                        "id": ann_id,
+                        "image_id": img_id,
+                        "category_id": 1,
+                        "keypoints": kpts_flat_all[i].tolist(),
+                        "num_keypoints": int(num_vis_all[i]),
+                        "area": float(areas[i]),
+                        "bbox": [x1, y1, float(bws[i]), float(bhs[i])],
+                        "iscrowd": int(iscrowd_np[i]),
+                    }
+                )
 
         # ── DT annotations (vectorised, top-20 per image) ───────────────
         # COCOeval for keypoints evaluates only maxDets=20 per image.
         # Submitting hundreds of near-zero-confidence predictions wastes time.
-        kpts_pred = pred.get("keypoints")            # (num_select, K, 2) abs
+        kpts_pred = pred.get("keypoints")  # (num_select, K, 2) abs
         kpts_vis_pred = pred.get("keypoint_scores")  # (num_select, K)
-        scores_pred = pred.get("scores")             # (num_select,)
+        scores_pred = pred.get("scores")  # (num_select,)
 
         if kpts_pred is not None and kpts_vis_pred is not None and scores_pred is not None:
             scores_np = scores_pred.cpu().float().numpy()
@@ -116,8 +132,8 @@ def _run_kpt_coco_eval(acc: list[dict], num_keypoints: int) -> np.ndarray | None
                 valid_idx = np.where(valid_mask)[0]
                 order = valid_idx[np.argsort(-scores_np[valid_idx])[:20]]
 
-                kpts_np_pred = kpts_pred.cpu().float().numpy()      # (num_select, K, 2)
-                kvis_np = kpts_vis_pred.cpu().float().numpy()       # (num_select, K)
+                kpts_np_pred = kpts_pred.cpu().float().numpy()  # (num_select, K, 2)
+                kvis_np = kpts_vis_pred.cpu().float().numpy()  # (num_select, K)
                 # (top20, K, 3): interleave x, y, vis
                 top_kpts = np.concatenate(
                     [kpts_np_pred[order], kvis_np[order, :, np.newaxis]], axis=-1
@@ -125,12 +141,14 @@ def _run_kpt_coco_eval(acc: list[dict], num_keypoints: int) -> np.ndarray | None
                 top_kpts_flat = top_kpts.reshape(len(order), -1)  # (top20, K*3)
 
                 for j, orig_i in enumerate(order):
-                    dt_anns.append({
-                        "image_id": img_id,
-                        "category_id": 1,
-                        "keypoints": top_kpts_flat[j].tolist(),
-                        "score": float(scores_np[orig_i]),
-                    })
+                    dt_anns.append(
+                        {
+                            "image_id": img_id,
+                            "category_id": 1,
+                            "keypoints": top_kpts_flat[j].tolist(),
+                            "score": float(scores_np[orig_i]),
+                        }
+                    )
 
     if not gt_anns or not dt_anns:
         return None
@@ -138,13 +156,15 @@ def _run_kpt_coco_eval(acc: list[dict], num_keypoints: int) -> np.ndarray | None
     coco_gt = COCO()
     coco_gt.dataset = {
         "images": list(img_meta.values()),
-        "categories": [{
-            "id": 1,
-            "name": "object",
-            "supercategory": "",
-            "keypoints": [str(i) for i in range(num_keypoints)],
-            "skeleton": [],
-        }],
+        "categories": [
+            {
+                "id": 1,
+                "name": "object",
+                "supercategory": "",
+                "keypoints": [str(i) for i in range(num_keypoints)],
+                "skeleton": [],
+            }
+        ],
         "annotations": gt_anns,
     }
     with contextlib.redirect_stdout(io.StringIO()):
@@ -324,11 +344,13 @@ class COCOEvalCallback(Callback):
         # Accumulate raw preds/targets for keypoint OKS evaluation.
         if self._keypoint:
             for pred, tgt in zip(outputs["results"], outputs["targets"]):
-                self._kpt_acc.append({
-                    "image_id": int(tgt["image_id"].item()),
-                    "pred": pred,
-                    "target": tgt,
-                })
+                self._kpt_acc.append(
+                    {
+                        "image_id": int(tgt["image_id"].item()),
+                        "pred": pred,
+                        "target": tgt,
+                    }
+                )
 
         # Run EMA model separately on the same batch so that base and EMA metrics
         # are computed from independent forward passes rather than being aliases.
@@ -406,11 +428,13 @@ class COCOEvalCallback(Callback):
         # Accumulate raw preds/targets for keypoint OKS evaluation.
         if self._keypoint:
             for pred, tgt in zip(outputs["results"], outputs["targets"]):
-                self._kpt_acc.append({
-                    "image_id": int(tgt["image_id"].item()),
-                    "pred": pred,
-                    "target": tgt,
-                })
+                self._kpt_acc.append(
+                    {
+                        "image_id": int(tgt["image_id"].item()),
+                        "pred": pred,
+                        "target": tgt,
+                    }
+                )
 
     def on_test_epoch_end(self, trainer: Any, pl_module: Any) -> None:
         """Compute and log mAP and F1 under ``test/`` prefix at end of test epoch.

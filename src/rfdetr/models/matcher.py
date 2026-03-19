@@ -221,8 +221,8 @@ class HungarianMatcher(nn.Module):
             labeled_mask = tgt_vis > 0  # (M_total, K)
 
             # L1 distance between predicted xy and target xy
-            out_xy = out_kpts[..., :2]   # (bs*Q, K, 2)
-            tgt_xy = tgt_kpts[..., :2]   # (M_total, K, 2)
+            out_xy = out_kpts[..., :2]  # (bs*Q, K, 2)
+            tgt_xy = tgt_kpts[..., :2]  # (M_total, K, 2)
 
             # Pairwise L1: (bs*Q, M_total, K, 2) -> mean over labeled keypoints
             diff = out_xy.unsqueeze(1) - tgt_xy.unsqueeze(0)  # (bs*Q, M_total, K, 2)
@@ -230,7 +230,7 @@ class HungarianMatcher(nn.Module):
 
             # Average over labeled keypoints per target; handle all-unlabeled case
             labeled_f = labeled_mask.unsqueeze(0).float()  # (1, M_total, K)
-            num_labeled = labeled_f.sum(-1).clamp(min=1)   # (1, M_total)
+            num_labeled = labeled_f.sum(-1).clamp(min=1)  # (1, M_total)
             cost_kpts = (l1_per_kpt * labeled_f).sum(-1) / num_labeled  # (bs*Q, M_total)
 
         # Final cost matrix

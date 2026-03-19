@@ -1,3 +1,9 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+
 """
 RF-DETR Training Script
 
@@ -26,20 +32,20 @@ import os
 import sys
 
 MODEL_MAP = {
-    "nano":       ("RFDETRNano",      False, False),
-    "small":      ("RFDETRSmall",     False, False),
-    "medium":     ("RFDETRMedium",    False, False),
-    "base":       ("RFDETRBase",      False, False),
-    "large":      ("RFDETRLarge",     False, False),
-    "seg-nano":   ("RFDETRSegNano",   True,  False),
-    "seg-small":  ("RFDETRSegSmall",  True,  False),
-    "seg-medium": ("RFDETRSegMedium", True,  False),
-    "seg-large":  ("RFDETRSegLarge",  True,  False),
-    "kpt-nano":   ("RFDETRKptNano",   False, True),
-    "kpt-small":  ("RFDETRKptSmall",  False, True),
+    "nano": ("RFDETRNano", False, False),
+    "small": ("RFDETRSmall", False, False),
+    "medium": ("RFDETRMedium", False, False),
+    "base": ("RFDETRBase", False, False),
+    "large": ("RFDETRLarge", False, False),
+    "seg-nano": ("RFDETRSegNano", True, False),
+    "seg-small": ("RFDETRSegSmall", True, False),
+    "seg-medium": ("RFDETRSegMedium", True, False),
+    "seg-large": ("RFDETRSegLarge", True, False),
+    "kpt-nano": ("RFDETRKptNano", False, True),
+    "kpt-small": ("RFDETRKptSmall", False, True),
     "kpt-medium": ("RFDETRKptMedium", False, True),
-    "kpt-base":   ("RFDETRKptBase",   False, True),
-    "kpt-large":  ("RFDETRKptLarge",  False, True),
+    "kpt-base": ("RFDETRKptBase", False, True),
+    "kpt-large": ("RFDETRKptLarge", False, True),
 }
 
 
@@ -123,31 +129,30 @@ def parse_args():
     # Training hyperparameters
     # ------------------------------------------------------------------ #
     train_group = parser.add_argument_group("Training")
-    train_group.add_argument("--epochs",           type=int,   default=100)
-    train_group.add_argument("--batch_size",       type=int,   default=4)
-    train_group.add_argument("--lr",               type=float, default=1e-4)
-    train_group.add_argument("--lr_encoder",       type=float, default=1.5e-4)
-    train_group.add_argument("--weight_decay",     type=float, default=1e-4)
-    train_group.add_argument("--grad_accum_steps", type=int,   default=4)
-    train_group.add_argument("--warmup_epochs",    type=float, default=0.0)
+    train_group.add_argument("--epochs", type=int, default=100)
+    train_group.add_argument("--batch_size", type=int, default=4)
+    train_group.add_argument("--lr", type=float, default=1e-4)
+    train_group.add_argument("--lr_encoder", type=float, default=1.5e-4)
+    train_group.add_argument("--weight_decay", type=float, default=1e-4)
+    train_group.add_argument("--grad_accum_steps", type=int, default=4)
+    train_group.add_argument("--warmup_epochs", type=float, default=0.0)
 
     # ------------------------------------------------------------------ #
     # Output & checkpointing
     # ------------------------------------------------------------------ #
     out_group = parser.add_argument_group("Output")
-    out_group.add_argument("--output_dir",         type=str,   default="output")
-    out_group.add_argument("--checkpoint_interval",type=int,   default=10)
-    out_group.add_argument("--resume",             type=str,   default=None,
-                           help="Path to checkpoint to resume from")
+    out_group.add_argument("--output_dir", type=str, default="output")
+    out_group.add_argument("--checkpoint_interval", type=int, default=10)
+    out_group.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume from")
 
     # ------------------------------------------------------------------ #
     # Logging
     # ------------------------------------------------------------------ #
     log_group = parser.add_argument_group("Logging")
     log_group.add_argument("--tensorboard", action="store_true", default=True)
-    log_group.add_argument("--wandb",       action="store_true", default=False)
-    log_group.add_argument("--project",     type=str, default=None)
-    log_group.add_argument("--run",         type=str, default=None)
+    log_group.add_argument("--wandb", action="store_true", default=False)
+    log_group.add_argument("--project", type=str, default=None)
+    log_group.add_argument("--run", type=str, default=None)
 
     # ------------------------------------------------------------------ #
     # Performance
@@ -167,8 +172,8 @@ def parse_args():
     # Early stopping
     # ------------------------------------------------------------------ #
     es_group = parser.add_argument_group("Early stopping")
-    es_group.add_argument("--early_stopping",         action="store_true", default=False)
-    es_group.add_argument("--early_stopping_patience",type=int, default=10)
+    es_group.add_argument("--early_stopping", action="store_true", default=False)
+    es_group.add_argument("--early_stopping_patience", type=int, default=10)
 
     return parser.parse_args()
 
@@ -188,6 +193,7 @@ def main():
     class_name, is_seg, is_kpt = MODEL_MAP[args.model]
 
     import rfdetr
+
     ModelClass = getattr(rfdetr, class_name)
 
     # ---- Model kwargs ----

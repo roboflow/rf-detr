@@ -11,8 +11,6 @@ from __future__ import annotations
 import warnings
 from typing import Any
 
-import sys
-
 import torch
 from pytorch_lightning import LightningModule, Trainer
 from pytorch_lightning.callbacks import Callback, ModelCheckpoint

@@ -482,11 +482,11 @@ class SetCriterion(nn.Module):
                 "loss_keypoint_vis": src_kpts.sum(),
             }
 
-        tgt_xy = target_kpts[..., :2]        # (M, K, 2) — normalized [0,1]
-        tgt_vis = target_kpts[..., 2]         # (M, K)    — 0/1/2
+        tgt_xy = target_kpts[..., :2]  # (M, K, 2) — normalized [0,1]
+        tgt_vis = target_kpts[..., 2]  # (M, K)    — 0/1/2
 
-        src_xy = src_kpts[..., :2]            # (M, K, 2)
-        src_vis_logit = src_kpts[..., 2]      # (M, K)
+        src_xy = src_kpts[..., :2]  # (M, K, 2)
+        src_vis_logit = src_kpts[..., 2]  # (M, K)
 
         # Coordinate loss: only on labeled keypoints (vis > 0)
         labeled = tgt_vis > 0  # (M, K) bool
