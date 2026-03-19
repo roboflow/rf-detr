@@ -25,8 +25,8 @@ import torch
 
 from rfdetr.config import RFDETRBaseConfig, TrainConfig
 from rfdetr.training import build_trainer
-from rfdetr.training.datamodule import RFDETRDataModule
-from rfdetr.training.module import RFDETRModelModule
+from rfdetr.training.module_data import RFDETRDataModule
+from rfdetr.training.module_model import RFDETRModelModule
 
 from .helpers import _fake_postprocess, _FakeCriterion, _FakeDataset, _make_param_dicts, _TinyModel
 

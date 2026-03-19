@@ -93,7 +93,7 @@ def _build_module(model_config=None, train_config=None, tmp_path=None):
             "rfdetr.training.module.build_criterion_and_postprocessors", return_value=(fake_criterion, fake_postprocess)
         ),
     ):
-        from rfdetr.training.module import RFDETRModelModule
+        from rfdetr.training.module_model import RFDETRModelModule
 
         module = RFDETRModelModule(mc, tc)
     return module, fake_model, fake_criterion, fake_postprocess
@@ -465,7 +465,7 @@ class TestApplyLora:
                 return_value=(_fake_criterion(), _fake_postprocess()),
             ),
         ):
-            from rfdetr.training.module import RFDETRModelModule
+            from rfdetr.training.module_model import RFDETRModelModule
 
             module = RFDETRModelModule(mc, tc)
 

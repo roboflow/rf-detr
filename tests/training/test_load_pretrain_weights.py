@@ -9,7 +9,7 @@
 When a user loads a fine-tuned N-class checkpoint but has ``num_classes``
 configured to a LARGER value (e.g. default 90), the second reinit in both
 ``_load_pretrain_weights_into`` (detr.py) and ``_load_pretrain_weights``
-(training/module.py) erroneously resizes the detection head to
+(training/module_model.py) erroneously resizes the detection head to
 ``args.num_classes + 1``, destroying the loaded weights.
 
 The fix changes the second reinit condition from:
@@ -23,7 +23,7 @@ no longer clobbering loaded weights when the checkpoint has fewer classes.
 
 Each scenario is tested for both code paths:
   - Path 1: ``_load_pretrain_weights_into`` in ``src/rfdetr/detr.py``
-  - Path 2: ``_load_pretrain_weights`` in ``src/rfdetr/training/module.py``
+  - Path 2: ``_load_pretrain_weights`` in ``src/rfdetr/training/module_model.py``
 """
 
 from types import SimpleNamespace
@@ -163,7 +163,7 @@ class TestLoadPretrainWeightsIntoSecondReinit:
 
 
 # ---------------------------------------------------------------------------
-# Path 2: RFDETRModule._load_pretrain_weights (training/module.py)
+# Path 2: RFDETRModule._load_pretrain_weights (training/module_model.py)
 # ---------------------------------------------------------------------------
 
 
@@ -212,14 +212,14 @@ def _build_module(model_config=None, train_config=None, tmp_path=None):
             return_value=(fake_criterion, fake_postprocess),
         ),
     ):
-        from rfdetr.training.module import RFDETRModelModule
+        from rfdetr.training.module_model import RFDETRModelModule
 
         module = RFDETRModelModule(mc, tc)
     return module, fake
 
 
 class TestModuleLoadPretrainWeightsSecondReinit:
-    """Regression tests for RFDETRModule._load_pretrain_weights (module.py path).
+    """Regression tests for RFDETRModule._load_pretrain_weights (module_model.py path).
 
     Validates that the second reinitialize_detection_head call only fires when
     the checkpoint has MORE classes than configured (backbone pretrain scenario),

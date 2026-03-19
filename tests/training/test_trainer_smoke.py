@@ -23,8 +23,8 @@ from pytorch_lightning import Trainer
 
 from rfdetr.config import SegmentationTrainConfig
 from rfdetr.training import build_trainer
-from rfdetr.training.datamodule import RFDETRDataModule
-from rfdetr.training.module import RFDETRModelModule
+from rfdetr.training.module_data import RFDETRDataModule
+from rfdetr.training.module_model import RFDETRModelModule
 
 from .helpers import (
     _fake_postprocess,

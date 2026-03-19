@@ -21,8 +21,8 @@ the datamodule receives the same values automatically at parse time.
 
 from pytorch_lightning.cli import LightningArgumentParser, LightningCLI
 
-from rfdetr.training.datamodule import RFDETRDataModule
-from rfdetr.training.module import RFDETRModelModule
+from rfdetr.training.module_data import RFDETRDataModule
+from rfdetr.training.module_model import RFDETRModelModule
 
 
 class RFDETRCli(LightningCLI):

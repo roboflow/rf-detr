@@ -26,7 +26,7 @@ import torch
 from rfdetr.config import RFDETRBaseConfig, TrainConfig
 from rfdetr.detr import RFDETR
 from rfdetr.training.checkpoint import convert_legacy_checkpoint
-from rfdetr.training.module import RFDETRModelModule
+from rfdetr.training.module_model import RFDETRModelModule
 
 # ---------------------------------------------------------------------------
 # Shared helpers

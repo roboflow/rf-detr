@@ -107,7 +107,7 @@ def _build_datamodule(model_config=None, train_config=None, tmp_path=None):
     """Construct RFDETRDataModule (build_dataset is not called at init time)."""
     mc = model_config or _base_model_config()
     tc = train_config or _base_train_config(tmp_path)
-    from rfdetr.training.datamodule import RFDETRDataModule
+    from rfdetr.training.module_data import RFDETRDataModule
 
     return RFDETRDataModule(mc, tc)
 
@@ -197,7 +197,7 @@ class TestSetup:
         """Helper: construct DataModule and call setup(stage) with build_dataset mocked."""
         mc = _base_model_config()
         tc = _base_train_config(tmp_path, dataset_file=dataset_file, **train_overrides)
-        from rfdetr.training.datamodule import RFDETRDataModule
+        from rfdetr.training.module_data import RFDETRDataModule
 
         dm = RFDETRDataModule(mc, tc)
         fake_train = _fake_dataset(100)
@@ -235,7 +235,7 @@ class TestSetup:
         """setup('test') falls back to 'val' split for non-roboflow datasets."""
         mc = _base_model_config()
         tc = _base_train_config(tmp_path, dataset_file="coco")
-        from rfdetr.training.datamodule import RFDETRDataModule
+        from rfdetr.training.module_data import RFDETRDataModule
 
         dm = RFDETRDataModule(mc, tc)
         requested_splits = []
@@ -254,7 +254,7 @@ class TestSetup:
         """setup('fit') skips building if datasets are already populated."""
         mc = _base_model_config()
         tc = _base_train_config(tmp_path)
-        from rfdetr.training.datamodule import RFDETRDataModule
+        from rfdetr.training.module_data import RFDETRDataModule
 
         dm = RFDETRDataModule(mc, tc)
         existing_train = _fake_dataset(50)
@@ -273,7 +273,7 @@ class TestSetup:
         """setup('predict') does not build any dataset."""
         mc = _base_model_config()
         tc = _base_train_config(tmp_path)
-        from rfdetr.training.datamodule import RFDETRDataModule
+        from rfdetr.training.module_data import RFDETRDataModule
 
         dm = RFDETRDataModule(mc, tc)
         with patch("rfdetr.training.datamodule.build_dataset") as mock_build:
@@ -293,7 +293,7 @@ class TestTrainDataloader:
             grad_accum_steps=grad_accum_steps,
             num_workers=num_workers,
         )
-        from rfdetr.training.datamodule import RFDETRDataModule
+        from rfdetr.training.module_data import RFDETRDataModule
 
         dm = RFDETRDataModule(mc, tc)
         dm._dataset_train = _fake_dataset(dataset_length)
@@ -324,7 +324,7 @@ class TestTrainDataloader:
 
     def test_small_dataset_replacement_sampler_num_samples(self, tmp_path):
         """Replacement sampler has num_samples == effective_batch_size * _MIN_TRAIN_BATCHES."""
-        from rfdetr.training.datamodule import _MIN_TRAIN_BATCHES
+        from rfdetr.training.module_data import _MIN_TRAIN_BATCHES
 
         batch_size = 2
         grad_accum_steps = 3
@@ -352,7 +352,7 @@ class TestTrainDataloader:
 
     def test_threshold_exact_boundary_uses_batch_sampler(self, tmp_path):
         """Dataset of exactly effective_batch_size * _MIN_TRAIN_BATCHES is NOT small."""
-        from rfdetr.training.datamodule import _MIN_TRAIN_BATCHES
+        from rfdetr.training.module_data import _MIN_TRAIN_BATCHES
 
         batch_size = 2
         grad_accum = 1
@@ -368,7 +368,7 @@ class TestValDataloader:
     def _setup_dm_with_val(self, tmp_path, dataset_length=50, batch_size=2, num_workers=0):
         mc = _base_model_config()
         tc = _base_train_config(tmp_path, batch_size=batch_size, num_workers=num_workers)
-        from rfdetr.training.datamodule import RFDETRDataModule
+        from rfdetr.training.module_data import RFDETRDataModule
 
         dm = RFDETRDataModule(mc, tc)
         dm._dataset_val = _fake_dataset(dataset_length)
@@ -411,7 +411,7 @@ class TestTestDataloader:
     def _setup_dm_with_test(self, tmp_path, dataset_length=30, batch_size=2, num_workers=0):
         mc = _base_model_config()
         tc = _base_train_config(tmp_path, batch_size=batch_size, num_workers=num_workers)
-        from rfdetr.training.datamodule import RFDETRDataModule
+        from rfdetr.training.module_data import RFDETRDataModule
 
         dm = RFDETRDataModule(mc, tc)
         dm._dataset_test = _fake_dataset(dataset_length)
@@ -454,7 +454,7 @@ class TestClassNames:
         """class_names reads from _dataset_train.coco.cats when available."""
         mc = _base_model_config()
         tc = _base_train_config(tmp_path)
-        from rfdetr.training.datamodule import RFDETRDataModule
+        from rfdetr.training.module_data import RFDETRDataModule
 
         dm = RFDETRDataModule(mc, tc)
         dm._dataset_train = _fake_dataset(50, with_coco=True)
@@ -464,7 +464,7 @@ class TestClassNames:
         """class_names falls back to _dataset_val when _dataset_train has no COCO."""
         mc = _base_model_config()
         tc = _base_train_config(tmp_path)
-        from rfdetr.training.datamodule import RFDETRDataModule
+        from rfdetr.training.module_data import RFDETRDataModule
 
         dm = RFDETRDataModule(mc, tc)
         dm._dataset_train = _fake_dataset(50, with_coco=False)
@@ -475,7 +475,7 @@ class TestClassNames:
         """class_names returns None when no dataset has a coco attribute."""
         mc = _base_model_config()
         tc = _base_train_config(tmp_path)
-        from rfdetr.training.datamodule import RFDETRDataModule
+        from rfdetr.training.module_data import RFDETRDataModule
 
         dm = RFDETRDataModule(mc, tc)
         dm._dataset_train = _fake_dataset(50, with_coco=False)
@@ -486,7 +486,7 @@ class TestClassNames:
         """class_names are sorted by COCO category ID."""
         mc = _base_model_config()
         tc = _base_train_config(tmp_path)
-        from rfdetr.training.datamodule import RFDETRDataModule
+        from rfdetr.training.module_data import RFDETRDataModule
 
         dm = RFDETRDataModule(mc, tc)
         dataset = _fake_dataset(50)
@@ -505,7 +505,7 @@ class TestSegmentationSupport:
         """RFDETRDataModule can be constructed with a SegmentationTrainConfig."""
         mc = base_model_config(segmentation_head=True)
         tc = seg_train_config()
-        from rfdetr.training.datamodule import RFDETRDataModule
+        from rfdetr.training.module_data import RFDETRDataModule
 
         dm = RFDETRDataModule(mc, tc)
         assert dm.train_config is tc
@@ -515,7 +515,7 @@ class TestSegmentationSupport:
         """Segmentation-specific loss coefficients are forwarded to _args."""
         mc = base_model_config(segmentation_head=True)
         tc = seg_train_config()
-        from rfdetr.training.datamodule import RFDETRDataModule
+        from rfdetr.training.module_data import RFDETRDataModule
 
         dm = RFDETRDataModule(mc, tc)
         assert dm._args.mask_ce_loss_coef == pytest.approx(5.0)
