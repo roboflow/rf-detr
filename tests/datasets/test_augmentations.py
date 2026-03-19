@@ -546,6 +546,71 @@ class TestAlbumentationsWrapper:
         assert len(aug_target["masks"]) == 1
         assert aug_target["masks"].shape == (1, 50, 50)
 
+    def test_degenerate_bbox_at_image_boundary_is_silently_dropped(self):
+        """Degenerate boxes (x_min == x_max or y_min == y_max) must not raise ValueError.
+
+        Regression test: COCO annotations sometimes place a box exactly on the image
+        boundary so that both x coordinates equal the image width (normalized: 1.0).
+        Albumentations' check_bboxes rejects these with
+        "x_max is less than or equal to x_min", crashing the DataLoader worker.
+        """
+        transform = A.HorizontalFlip(p=1.0)
+        wrapper = AlbumentationsWrapper(transform)
+
+        width, height = 100, 100
+        image = Image.new("RGB", (width, height))
+
+        target = {
+            # box 0: valid                box 1: x_min==x_max (right edge)
+            # box 2: y_min==y_max (bottom edge)
+            "boxes": torch.tensor(
+                [
+                    [10.0, 20.0, 50.0, 60.0],  # valid — should survive
+                    [100.0, 14.0, 100.0, 17.0],  # degenerate: x_min == x_max
+                    [10.0, 100.0, 50.0, 100.0],  # degenerate: y_min == y_max
+                ]
+            ),
+            "labels": torch.tensor([1, 2, 3]),
+            "area": torch.tensor([1600.0, 0.0, 0.0]),
+        }
+
+        # Must not raise ValueError
+        aug_image, aug_target = wrapper(image, target)
+
+        assert isinstance(aug_image, Image.Image)
+        # Only the valid box survives
+        assert aug_target["boxes"].shape[0] == 1, f"Expected 1 valid box, got {aug_target['boxes'].shape[0]}"
+        assert aug_target["labels"].tolist() == [1]
+        assert aug_target["area"].shape[0] == 1
+
+    def test_degenerate_bbox_mixed_with_masks(self):
+        """Degenerate boxes are dropped together with their corresponding masks."""
+        transform = A.HorizontalFlip(p=1.0)
+        wrapper = AlbumentationsWrapper(transform)
+
+        width, height = 100, 100
+        image = Image.new("RGB", (width, height))
+
+        masks = torch.zeros((2, height, width), dtype=torch.uint8)
+        masks[0, 20:60, 10:50] = 1  # valid mask
+
+        target = {
+            "boxes": torch.tensor(
+                [
+                    [10.0, 20.0, 50.0, 60.0],  # valid
+                    [100.0, 14.0, 100.0, 17.0],  # degenerate: x_min == x_max
+                ]
+            ),
+            "labels": torch.tensor([1, 2]),
+            "masks": masks,
+        }
+
+        aug_image, aug_target = wrapper(image, target)
+
+        assert aug_target["boxes"].shape[0] == 1
+        assert aug_target["labels"].tolist() == [1]
+        assert aug_target["masks"].shape[0] == 1
+
 
 class TestAlbumentationsWrapperFromConfig:
     """Tests for AlbumentationsWrapper.from_config() static method."""

@@ -185,11 +185,6 @@ class TestOnFitStart:
         assert cb._cat_id_to_name == {1: "fish", 2: "shark"}
 
 
-# ---------------------------------------------------------------------------
-# Batch-end — shared behaviour for both validation and test loops
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize(
     "hook,stage",
     [
@@ -265,11 +260,6 @@ class TestOnTestBatchEnd:
 
         # Must not raise with explicit dataloader_idx=0
         cb.on_test_batch_end(_make_trainer(), _make_pl_module(), outputs, None, 0, dataloader_idx=0)
-
-
-# ---------------------------------------------------------------------------
-# Epoch-end — shared behaviour for both validation and test loops
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -404,11 +394,6 @@ class TestEpochEndCommon:
 
         logged_keys = {c.args[0] for c in module.log.call_args_list}
         assert f"{prefix}AP/3" in logged_keys
-
-
-# ---------------------------------------------------------------------------
-# Validation-epoch-end-only behaviour
-# ---------------------------------------------------------------------------
 
 
 class TestOnValidationEpochEnd:
@@ -591,9 +576,62 @@ class TestOnTestEpochEnd:
         assert not any(k.startswith("val/") for k in logged_keys)
 
 
-# ---------------------------------------------------------------------------
-# Target conversion
-# ---------------------------------------------------------------------------
+class TestConvertPreds:
+    """_convert_preds() normalizes prediction dicts for metric consumers."""
+
+    @pytest.mark.parametrize(
+        ("boxes", "expected_kept_idxs"),
+        [
+            pytest.param(
+                # Degenerate first -> keep original index 1 (non-zero keep idx).
+                [[2.0, 2.0, 2.0, 4.0], [0.0, 0.0, 3.0, 3.0], [5.0, 5.0, 5.0, 7.0]],
+                [1],
+                id="degenerate-first-keeps-index-1",
+            ),
+            pytest.param(
+                # Degenerate between valid boxes -> keep non-contiguous original indices.
+                [[0.0, 0.0, 3.0, 3.0], [2.0, 2.0, 2.0, 4.0], [4.0, 4.0, 6.0, 6.0]],
+                [0, 2],
+                id="degenerate-middle-keeps-noncontiguous",
+            ),
+        ],
+    )
+    def test_masks_remain_aligned_with_original_indices_after_degenerate_filtering(
+        self,
+        boxes: list[list[float]],
+        expected_kept_idxs: list[int],
+    ) -> None:
+        """Filtering degenerate boxes must preserve mask alignment via original indices.
+
+        Regression context: when a degenerate box is not last, keep indices are
+        non-zero/non-contiguous. Downstream filtering must keep masks from the
+        same original prediction indices.
+        """
+        cb = COCOEvalCallback()
+
+        # Distinct one-hot masks so index/mask misalignment is easy to detect.
+        masks = torch.zeros(3, 1, 2, 2, dtype=torch.bool)
+        masks[0, 0, 0, 0] = True
+        masks[1, 0, 0, 1] = True
+        masks[2, 0, 1, 0] = True
+
+        preds = [
+            {
+                "boxes": torch.tensor(boxes, dtype=torch.float32),
+                "scores": torch.tensor([0.9, 0.8, 0.7], dtype=torch.float32),
+                "labels": torch.tensor([0, 0, 0], dtype=torch.int64),
+                "masks": masks,
+            }
+        ]
+
+        out = cb._convert_preds(preds)
+        out_boxes = out[0]["boxes"]
+        out_masks = out[0]["masks"]
+        assert out_masks.shape == (3, 2, 2)
+
+        keep = torch.where((out_boxes[:, 2] > out_boxes[:, 0]) & (out_boxes[:, 3] > out_boxes[:, 1]))[0]
+        assert keep.tolist() == expected_kept_idxs
+        assert torch.equal(out_masks[keep], masks.squeeze(1)[keep])
 
 
 class TestConvertTargets:
