@@ -865,10 +865,8 @@ class RFDETRLarge(RFDETR):
             return "patch_size" in message
         if isinstance(exc, RuntimeError):
             incompatible_state_dict_markers = (
-                "error(s) in loading state_dict",
-                "size mismatch for",
-                "missing key(s) in state_dict",
-                "unexpected key(s) in state_dict",
+                "error(s) in loading state_dict size mismatch for missing key(s)"
+                " in state_dict unexpected key(s) in state_dict",
             )
             return any(marker in message for marker in incompatible_state_dict_markers)
         return False
