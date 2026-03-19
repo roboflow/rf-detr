@@ -9,9 +9,7 @@
 import pytest
 from pytorch_lightning.callbacks import RichProgressBar, TQDMProgressBar
 
-from rfdetr.config import TrainConfig
 from rfdetr.training import build_trainer
-
 
 # ---------------------------------------------------------------------------
 # TestProgressBarCallbacks — verifies the correct callback is installed
