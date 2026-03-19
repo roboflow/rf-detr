@@ -2301,7 +2301,7 @@
 </tr>
 </tbody>
 </table>
-<p>Both paths run the same underlying PyTorch Lightning stack. <code>RFDETR.train()</code> constructs <code>RFDETRModule</code>, <code>RFDETRDataModule</code>, and a <code>Trainer</code> internally; the Lightning API page shows how to do the same thing explicitly so you can modify each component.</p>
+<p>Both paths run the same underlying PyTorch Lightning stack. <code>RFDETR.train()</code> constructs <code>RFDETRModelModule</code>, <code>RFDETRDataModule</code>, and a <code>Trainer</code> internally; the Lightning API page shows how to do the same thing explicitly so you can modify each component.</p>
 <h2 id="quick-start">Quick Start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h2>
 <p>RF-DETR supports training on datasets in both <strong>COCO</strong> and <strong>YOLO</strong> formats. The format is automatically detected based on the structure of your dataset directory.</p>
 <div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">Object Detection</label><label for="__tabbed_1_2">Image Segmentation</label></div>
