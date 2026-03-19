@@ -144,6 +144,9 @@ ignore = [
     "E722",  # todo: Do not use bare `except`
 ]
 
+[tool.ruff.lint.per-file-ignores]
+"notebooks/*.py" = ["E402"]  # cell-local imports are intentional in percent-format scripts
+
 [tool.pytest.ini_options]
 addopts = [
     "-v",                   # verbose output

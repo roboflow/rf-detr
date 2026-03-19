@@ -322,7 +322,7 @@ class TrainConfig(BaseModel):
     early_stopping_patience: int = 10
     early_stopping_min_delta: float = 0.001
     early_stopping_use_ema: bool = False
-    progress_bar: bool = False  # Enable tqdm progress bars during training and evaluation epochs.
+    progress_bar: Optional[Literal["tqdm", "rich"]] = None  # Progress bar style: "rich", "tqdm", or None to disable.
     tensorboard: bool = True
     wandb: bool = False
     mlflow: bool = False

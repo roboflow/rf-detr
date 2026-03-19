@@ -226,31 +226,6 @@ class RFDETRModule(LightningModule):
                     F.interpolate(samples.mask.unsqueeze(1).float(), size=scale, mode="nearest").squeeze(1).bool()
                 )
 
-    def transfer_batch_to_device(
-        self,
-        batch: Tuple,
-        device: torch.device,
-        dataloader_idx: int,
-    ) -> Tuple:
-        """Override PTL's default to handle ``NestedTensor`` device transfer.
-
-        PTL's default iterates tuple elements and calls ``.to(device)``; that
-        works for plain tensors but ``NestedTensor`` must be moved explicitly.
-
-        Args:
-            batch: Tuple of (NestedTensor samples, list of target dicts).
-            device: Target device.
-            dataloader_idx: Index of the dataloader providing this batch.
-
-        Returns:
-            Batch with all tensors on ``device``.
-        """
-        samples, targets = batch
-        non_blocking = device.type == "cuda"
-        samples = samples.to(device, non_blocking=non_blocking)
-        targets = [{k: v.to(device, non_blocking=non_blocking) for k, v in t.items()} for t in targets]
-        return samples, targets
-
     def training_step(self, batch: Tuple, batch_idx: int) -> torch.Tensor:
         """Compute loss for one training step and log metrics.
 
@@ -294,7 +269,7 @@ class RFDETRModule(LightningModule):
             "train/loss",
             loss,
             prog_bar=True,
-            on_step=train_log_on_step,
+            on_step=True,  # always visible in the progress bar, regardless of train_log_on_step
             on_epoch=True,
             sync_dist=train_log_sync_dist,
             batch_size=batch_size,
@@ -310,10 +285,9 @@ class RFDETRModule(LightningModule):
             base_lr = group_lrs[0]
             min_lr = min(group_lrs)
             max_lr = max(group_lrs)
-            # Keep LR visible in the live progress bar every step.
             self.log("train/lr", base_lr, prog_bar=True, on_step=True, on_epoch=False)
-            self.log("train/lr_min", min_lr, prog_bar=True, on_step=True, on_epoch=False)
-            self.log("train/lr_max", max_lr, prog_bar=True, on_step=True, on_epoch=False)
+            self.log("train/lr_min", min_lr, on_step=True, on_epoch=False)
+            self.log("train/lr_max", max_lr, on_step=True, on_epoch=False)
         return loss_scaled
 
     def validation_step(self, batch: Tuple, batch_idx: int) -> Dict[str, Any]:
@@ -335,7 +309,7 @@ class RFDETRModule(LightningModule):
             loss_dict = self.criterion(outputs, targets)
             weight_dict = self.criterion.weight_dict
             loss = sum(loss_dict[k] * weight_dict[k] for k in loss_dict if k in weight_dict)
-            self.log("val/loss", loss, sync_dist=True, batch_size=len(targets))
+            self.log("val/loss", loss, prog_bar=True, on_epoch=True, sync_dist=True, batch_size=len(targets))
 
         orig_sizes = torch.stack([t["orig_size"] for t in targets])
         results = self.postprocess(outputs, orig_sizes)
