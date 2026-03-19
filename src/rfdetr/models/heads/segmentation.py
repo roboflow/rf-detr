@@ -199,8 +199,8 @@ class SegmentationHead(nn.Module):
 
 def point_sample(input: torch.Tensor, point_coords: torch.Tensor, **kwargs: Any) -> torch.Tensor:
     """
-    A wrapper around :function:`torch.nn.functional.grid_sample` to support 3D point_coords tensors.
-    Unlike :function:`torch.nn.functional.grid_sample` it assumes `point_coords` to lie inside
+    A wrapper around :func:`~rfdetr.utilities.tensors._bilinear_grid_sample` to support 3D point_coords tensors.
+    Unlike :func:`torch.nn.functional.grid_sample` it assumes `point_coords` to lie inside
     [0, 1] x [0, 1] square.
 
     Args:
@@ -211,7 +211,7 @@ def point_sample(input: torch.Tensor, point_coords: torch.Tensor, **kwargs: Any)
     Returns:
         A tensor of shape (N, C, P) or (N, C, Hgrid, Wgrid) that contains
             features for points in `point_coords`. The features are obtained via bilinear
-            interplation from `input` the same way as :function:`torch.nn.functional.grid_sample`.
+            interpolation from `input` the same way as :func:`~rfdetr.utilities.tensors._bilinear_grid_sample`.
     """
     add_dim = False
     if point_coords.dim() == 3:

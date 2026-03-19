@@ -192,6 +192,13 @@ def _bilinear_grid_sample(
     if input.device.type != "mps":
         return F.grid_sample(input, grid, mode="bilinear", padding_mode=padding_mode, align_corners=align_corners)
 
+    if padding_mode not in ("zeros", "border"):
+        msg = (
+            f"Unsupported padding_mode={padding_mode!r} for manual grid sampling. "
+            "Only 'zeros' and 'border' are supported in this path."
+        )
+        raise ValueError(msg)
+
     N, C, H, W = input.shape
     Hg, Wg = grid.shape[1], grid.shape[2]
 
@@ -209,17 +216,11 @@ def _bilinear_grid_sample(
     iy1 = iy0 + 1
 
     # Bilinear weights: fractional distance from top-left corner  [N, 1, Hg, Wg]
-    wx1 = (ix - ix0.float()).unsqueeze(1)
-    wy1 = (iy - iy0.float()).unsqueeze(1)
+    # Cast to input.dtype so float16 inputs don't silently upcast to float32.
+    wx1 = (ix - ix0.float()).to(input.dtype).unsqueeze(1)
+    wy1 = (iy - iy0.float()).to(input.dtype).unsqueeze(1)
     wx0 = 1.0 - wx1
     wy0 = 1.0 - wy1
-
-    if padding_mode not in ("zeros", "border"):
-        msg = (
-            f"Unsupported padding_mode={padding_mode!r} for manual grid sampling. "
-            "Only 'zeros' and 'border' are supported in this path."
-        )
-        raise ValueError(msg)
 
     if padding_mode == "border":
         ix0 = ix0.clamp(0, W - 1)
