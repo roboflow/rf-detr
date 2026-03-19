@@ -48,7 +48,7 @@ from rfdetr.datasets.coco import is_valid_coco_dataset
 from rfdetr.datasets.yolo import is_valid_yolo_dataset
 from rfdetr.models import PostProcess, build_model
 from rfdetr.utilities.logger import get_logger
-from rfdetr.utilities.state_dict import validate_checkpoint_compatibility
+from rfdetr.utilities.state_dict import _ckpt_args_get, validate_checkpoint_compatibility
 
 try:
     torch.set_float32_matmul_precision("high")
@@ -130,8 +130,8 @@ def _load_pretrain_weights_into(nn_model: torch.nn.Module, args: Any) -> List[st
         download_pretrain_weights(args.pretrain_weights, redownload=True, validate_md5=False)
         checkpoint = torch.load(args.pretrain_weights, map_location="cpu", weights_only=False)
 
-    if "args" in checkpoint and hasattr(checkpoint["args"], "class_names"):
-        class_names = checkpoint["args"].class_names or []
+    if "args" in checkpoint:
+        class_names = _ckpt_args_get(checkpoint["args"], "class_names") or []
 
     validate_checkpoint_compatibility(checkpoint, args)
 

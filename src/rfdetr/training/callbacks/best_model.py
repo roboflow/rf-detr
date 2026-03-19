@@ -12,12 +12,13 @@ import shutil
 from pathlib import Path
 from typing import Optional
 
+import pytorch_lightning as pl
 import torch
 from pytorch_lightning import LightningModule, Trainer
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 
 from rfdetr.utilities.logger import get_logger
-from rfdetr.utilities.state_dict import strip_checkpoint
+from rfdetr.utilities.state_dict import _make_fit_loop_state, strip_checkpoint
 
 logger = get_logger()
 
@@ -137,11 +138,17 @@ class BestModelCallback(ModelCheckpoint):
             and getattr(train_config, "class_names", None) is None
         ):
             train_config = train_config.model_copy(update={"class_names": dataset_class_names})
+        args_dict = train_config.model_dump() if hasattr(train_config, "model_dump") else train_config
         torch.save(
             {
                 "model": model_state_dict,
-                "args": train_config,
+                "args": args_dict,
                 "epoch": trainer.current_epoch,
+                # PTL-compatible keys so trainer.fit(ckpt_path=...) works directly.
+                "state_dict": {f"model.{k}": v for k, v in model_state_dict.items()},
+                "global_step": trainer.global_step,
+                "pytorch-lightning_version": pl.__version__,
+                "loops": {"fit_loop": _make_fit_loop_state(trainer.current_epoch)},
             },
             pth_path,
         )
@@ -182,11 +189,19 @@ class BestModelCallback(ModelCheckpoint):
                 and getattr(ema_train_config, "class_names", None) is None
             ):
                 ema_train_config = ema_train_config.model_copy(update={"class_names": dataset_class_names})
+            ema_args_dict = (
+                ema_train_config.model_dump() if hasattr(ema_train_config, "model_dump") else ema_train_config
+            )
             torch.save(
                 {
                     "model": ema_state_dict,
-                    "args": ema_train_config,
+                    "args": ema_args_dict,
                     "epoch": trainer.current_epoch,
+                    # PTL-compatible keys so trainer.fit(ckpt_path=...) works directly.
+                    "state_dict": {f"model.{k}": v for k, v in ema_state_dict.items()},
+                    "global_step": trainer.global_step,
+                    "pytorch-lightning_version": pl.__version__,
+                    "loops": {"fit_loop": _make_fit_loop_state(trainer.current_epoch)},
                 },
                 self._output_dir / "checkpoint_best_ema.pth",
             )

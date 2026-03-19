@@ -24,7 +24,7 @@ from rfdetr.datasets.coco import compute_multi_scale_scales
 from rfdetr.models.lwdetr import build_criterion_and_postprocessors, build_model
 from rfdetr.training.param_groups import get_param_dict
 from rfdetr.utilities.logger import get_logger
-from rfdetr.utilities.state_dict import validate_checkpoint_compatibility
+from rfdetr.utilities.state_dict import _ckpt_args_get, validate_checkpoint_compatibility
 
 logger = get_logger()
 
@@ -45,6 +45,9 @@ class RFDETRModelModule(LightningModule):
         super().__init__()
         self.model_config = model_config
         self.train_config = train_config
+        # Allow partial state-dict loading when resuming from a .pth checkpoint
+        # (which contains only model weights, not criterion/postprocess state).
+        self.strict_loading = False
 
         # Build a local namespace for the legacy builder functions.
         ns = build_namespace(model_config, train_config)
@@ -119,8 +122,8 @@ class RFDETRModelModule(LightningModule):
             download_pretrain_weights(pretrain_weights, redownload=True, validate_md5=False)
             checkpoint = torch.load(pretrain_weights, map_location="cpu", weights_only=False)
 
-        if "args" in checkpoint and hasattr(checkpoint["args"], "class_names"):
-            self._pretrain_class_names = checkpoint["args"].class_names
+        if "args" in checkpoint:
+            self._pretrain_class_names = _ckpt_args_get(checkpoint["args"], "class_names")
 
         ns = build_namespace(mc, self.train_config)
         validate_checkpoint_compatibility(checkpoint, ns)
