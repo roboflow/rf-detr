@@ -516,8 +516,19 @@ class AlbumentationsWrapper:
         """
         boxes_np = self._boxes_to_numpy(target["boxes"])
         num_boxes = boxes_np.shape[0]
-        # Track indices to keep per-instance fields synchronized
-        idxs = list(range(num_boxes))
+        # Pre-filter degenerate boxes (zero width or height) before passing to albumentations.
+        # When clip=True is set, geometric transforms can push a box's x_min to the image
+        # edge causing x_min == x_max == 1.0 after normalisation, which triggers a
+        # validation error in albumentations check_bboxes even though min_visibility=0.0
+        # should discard them.  We use the ORIGINAL indices as idxs so that
+        # _filter_per_instance_fields (which indexes into the full-length target tensors)
+        # continues to work correctly after the transform.
+        valid_mask = (boxes_np[:, 2] > boxes_np[:, 0]) & (boxes_np[:, 3] > boxes_np[:, 1])
+        valid_indices = np.where(valid_mask)[0].tolist()
+        boxes_np = boxes_np[valid_mask]
+        labels = [labels[i] for i in valid_indices]
+        # idxs map filtered positions → original positions for _filter_per_instance_fields
+        idxs = valid_indices
         masks_list = None
         if "masks" in target:
             masks = target["masks"]
@@ -537,12 +548,16 @@ class AlbumentationsWrapper:
         if kpts_norm is not None and kpts_norm.numel() > 0:
             h_img, w_img = image_np.shape[:2]
             N_kpt, K_kpt = kpts_norm.shape[:2]
-            # Vectorised: (N, K, 2) → absolute coords → list of (x, y) tuples.
-            xy_abs = kpts_norm[:, :, :2].cpu().numpy() * np.array([w_img, h_img], dtype=np.float32)
+            # Only pass keypoints for pre-filtered valid instances.  Use ORIGINAL instance
+            # indices as kpt_inst_ids so the inst_map reconstruction after the transform
+            # (which is keyed on original indices via kept_idxs) remains correct.
+            kpts_valid = kpts_norm[valid_indices] if len(valid_indices) < N_kpt else kpts_norm
+            xy_abs = kpts_valid[:, :, :2].cpu().numpy() * np.array([w_img, h_img], dtype=np.float32)
             kpt_xy_flat = [tuple(row) for row in xy_abs.reshape(-1, 2)]
-            inst_grid, kp_grid = np.meshgrid(np.arange(N_kpt), np.arange(K_kpt), indexing="ij")
-            kpt_inst_ids = inst_grid.ravel().tolist()
-            kpt_kp_ids = kp_grid.ravel().tolist()
+            inst_orig = np.repeat(valid_indices if len(valid_indices) < N_kpt else np.arange(N_kpt), K_kpt)
+            kp_flat = np.tile(np.arange(K_kpt), len(valid_indices) if len(valid_indices) < N_kpt else N_kpt)
+            kpt_inst_ids = inst_orig.tolist()
+            kpt_kp_ids = kp_flat.tolist()
 
         # Apply transform
         transform_kwargs = {
@@ -596,16 +611,15 @@ class AlbumentationsWrapper:
                 for new_i, orig_i in enumerate(kept_idxs):
                     inst_map[int(orig_i)] = new_i
 
-                aug_xy = np.array(aug_kpts_list, dtype=np.float32)          # (M, 2)
+                aug_xy = np.array(aug_kpts_list, dtype=np.float32)  # (M, 2)
                 aug_inst_arr = np.array(augmented["kpt_inst_ids"], dtype=np.int32)  # (M,)
-                aug_kp_arr = np.array(augmented["kpt_kp_ids"], dtype=np.int32)     # (M,)
+                aug_kp_arr = np.array(augmented["kpt_kp_ids"], dtype=np.int32)  # (M,)
 
-                new_n_arr = inst_map[aug_inst_arr]                          # (M,)
+                new_n_arr = inst_map[aug_inst_arr]  # (M,)
                 orig_vis_arr = kpts_norm.cpu().numpy()[aug_inst_arr, aug_kp_arr, 2]  # (M,)
 
                 in_bounds = (
-                    (aug_xy[:, 0] >= 0) & (aug_xy[:, 0] <= aug_w) &
-                    (aug_xy[:, 1] >= 0) & (aug_xy[:, 1] <= aug_h)
+                    (aug_xy[:, 0] >= 0) & (aug_xy[:, 0] <= aug_w) & (aug_xy[:, 1] >= 0) & (aug_xy[:, 1] <= aug_h)
                 )
                 valid = (new_n_arr >= 0) & (orig_vis_arr > 0) & in_bounds
 

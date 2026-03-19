@@ -546,6 +546,52 @@ class TestAlbumentationsWrapper:
         assert len(aug_target["masks"]) == 1
         assert aug_target["masks"].shape == (1, 50, 50)
 
+    def test_degenerate_boxes_are_filtered_before_albumentations(self):
+        """Test that degenerate input boxes (x_min==x_max or y_min==y_max) do not raise.
+
+        Regression test for ValueError raised by albumentations check_bboxes when a box
+        lies exactly at the image edge so that clip=True produces x_min == x_max == 1.0.
+        """
+        transform = A.HorizontalFlip(p=1.0)
+        wrapper = AlbumentationsWrapper(transform)
+
+        image = Image.new("RGB", (100, 100))
+        # Third box is degenerate: x_min == x_max (zero-width, on the right edge)
+        target = {
+            "boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0], [50.0, 50.0, 80.0, 80.0], [100.0, 10.0, 100.0, 90.0]]),
+            "labels": torch.tensor([1, 2, 3]),
+        }
+
+        # Should not raise ValueError from albumentations check_bboxes
+        aug_image, aug_target = wrapper(image, target)
+
+        assert isinstance(aug_image, Image.Image)
+        # Degenerate box should be filtered; only 2 valid boxes remain
+        assert len(aug_target["boxes"]) == 2
+        assert len(aug_target["labels"]) == 2
+
+    def test_degenerate_boxes_filtered_with_keypoints(self):
+        """Test degenerate box pre-filtering with keypoints preserves valid instances."""
+        transform = A.HorizontalFlip(p=1.0)
+        wrapper = AlbumentationsWrapper(transform)
+
+        image = Image.new("RGB", (100, 100))
+        # Box 1 valid, box 2 degenerate (zero-width at right edge)
+        target = {
+            "boxes": torch.tensor([[10.0, 10.0, 40.0, 40.0], [100.0, 10.0, 100.0, 90.0]]),
+            "labels": torch.tensor([1, 2]),
+            "keypoints": torch.tensor(
+                [[[0.25, 0.25, 1.0], [0.35, 0.35, 1.0]], [[0.95, 0.5, 1.0], [0.98, 0.6, 1.0]]],
+                dtype=torch.float32,
+            ),
+        }
+
+        aug_image, aug_target = wrapper(image, target)
+
+        assert isinstance(aug_image, Image.Image)
+        assert len(aug_target["boxes"]) == 1
+        assert aug_target["keypoints"].shape == (1, 2, 3)
+
 
 class TestAlbumentationsWrapperFromConfig:
     """Tests for AlbumentationsWrapper.from_config() static method."""
