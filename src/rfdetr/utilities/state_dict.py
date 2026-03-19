@@ -121,8 +121,9 @@ def strip_checkpoint(checkpoint: str | os.PathLike[str]) -> None:
     """Strip a checkpoint file down to ``model``, ``args``, and PTL-compatible keys.
 
     Preserves ``state_dict``, ``global_step``, ``pytorch-lightning_version``,
-    and ``loops`` when present so the stripped checkpoint can still be used
-    directly with ``trainer.fit(ckpt_path=...)``.
+    ``loops``, ``optimizer_states``, and ``lr_schedulers`` when present so the
+    stripped checkpoint can still be used directly with
+    ``trainer.fit(ckpt_path=...)``.
 
     Overwrites the file atomically so a partial write cannot corrupt it.
 

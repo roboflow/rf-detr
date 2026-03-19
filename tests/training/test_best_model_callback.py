@@ -730,8 +730,11 @@ class TestBestModelCallback:
             ckpt_path=str(ckpt_path),
         )
 
+        # PTL applies loop restoration by the first train epoch start.
         assert resume_probe.first_train_epoch == 1
         assert trainer_second.current_epoch == 2
+        # In the stripped-checkpoint resume path, optimizer state is intentionally
+        # fresh; this resumed phase contributes 2 steps (limit_train_batches=2).
         assert trainer_second.global_step == 2
 
 
