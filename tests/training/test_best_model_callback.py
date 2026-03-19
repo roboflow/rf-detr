@@ -13,7 +13,8 @@ from unittest.mock import MagicMock
 
 import pytest
 import torch
-from pytorch_lightning import Callback, LightningModule, Trainer, __version__ as ptl_version
+from pytorch_lightning import Callback, LightningModule, Trainer
+from pytorch_lightning import __version__ as ptl_version
 from pytorch_lightning.trainer.states import TrainerFn
 from torch.utils.data import DataLoader, TensorDataset
 

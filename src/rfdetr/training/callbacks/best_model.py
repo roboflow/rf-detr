@@ -13,7 +13,8 @@ from pathlib import Path
 from typing import Optional
 
 import torch
-from pytorch_lightning import LightningModule, Trainer, __version__ as ptl_version
+from pytorch_lightning import LightningModule, Trainer
+from pytorch_lightning import __version__ as ptl_version
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 
 from rfdetr.utilities.logger import get_logger
