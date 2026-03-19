@@ -17,7 +17,14 @@ logger = get_logger()
 
 # PTL-compatible keys written by BestModelCallback; preserved by strip_checkpoint so
 # checkpoint_best_total.pth can be used directly with trainer.fit(ckpt_path=...).
-_PTL_COMPAT_KEYS = ("state_dict", "global_step", "pytorch-lightning_version", "loops")
+_PTL_COMPAT_KEYS = (
+    "state_dict",
+    "global_step",
+    "pytorch-lightning_version",
+    "loops",
+    "optimizer_states",
+    "lr_schedulers",
+)
 
 
 def _ckpt_args_get(args: Any, field: str, default: Any = None) -> Any:

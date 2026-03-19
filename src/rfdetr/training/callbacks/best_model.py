@@ -149,6 +149,10 @@ class BestModelCallback(ModelCheckpoint):
                 "global_step": trainer.global_step,
                 "pytorch-lightning_version": pl.__version__,
                 "loops": {"fit_loop": _make_fit_loop_state(trainer.current_epoch)},
+                # Keep keys present with empty values so PTL resume paths that
+                # expect them can proceed without loading optimizer state.
+                "optimizer_states": [],
+                "lr_schedulers": [],
             },
             pth_path,
         )
@@ -202,6 +206,10 @@ class BestModelCallback(ModelCheckpoint):
                     "global_step": trainer.global_step,
                     "pytorch-lightning_version": pl.__version__,
                     "loops": {"fit_loop": _make_fit_loop_state(trainer.current_epoch)},
+                    # Keep keys present with empty values so PTL resume paths
+                    # can proceed while still starting a fresh optimizer.
+                    "optimizer_states": [],
+                    "lr_schedulers": [],
                 },
                 self._output_dir / "checkpoint_best_ema.pth",
             )

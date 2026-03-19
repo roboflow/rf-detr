@@ -12,8 +12,10 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+import pytorch_lightning as pl
 import torch
 from pytorch_lightning.trainer.states import TrainerFn
+from torch.utils.data import DataLoader, TensorDataset
 
 from rfdetr.training.callbacks.best_model import BestModelCallback, RFDETREarlyStopping
 
@@ -60,6 +62,49 @@ def _make_pl_module() -> MagicMock:
     # Use a real dict so torch.save can pickle it (MagicMock is not picklable).
     pl_module.train_config = {"lr": 0.001}
     return pl_module
+
+
+class _ResumeTinyModule(pl.LightningModule):
+    """Tiny LightningModule used to validate real ckpt_path resume behavior."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.model = torch.nn.Linear(4, 1)
+        self.train_config = {"lr": 0.01}
+
+    def training_step(self, batch, batch_idx):
+        x, y = batch
+        pred = self.model(x)
+        return torch.nn.functional.mse_loss(pred, y)
+
+    def validation_step(self, batch, batch_idx):
+        del batch, batch_idx
+        self.log("val/mAP_50_95", torch.tensor(0.5), on_step=False, on_epoch=True, prog_bar=False)
+
+    def configure_optimizers(self):
+        return torch.optim.SGD(self.model.parameters(), lr=0.01)
+
+
+class _ResumeProbeCallback(pl.Callback):
+    """Capture restored epoch/step at fit start for resume assertions."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.fit_start_epoch: int | None = None
+        self.fit_start_global_step: int | None = None
+        self.first_train_epoch: int | None = None
+        self.first_train_global_step: int | None = None
+
+    def on_fit_start(self, trainer, pl_module):
+        del pl_module
+        self.fit_start_epoch = trainer.current_epoch
+        self.fit_start_global_step = trainer.global_step
+
+    def on_train_epoch_start(self, trainer, pl_module):
+        del pl_module
+        if self.first_train_epoch is None:
+            self.first_train_epoch = trainer.current_epoch
+            self.first_train_global_step = trainer.global_step
 
 
 # ---------------------------------------------------------------------------
@@ -614,6 +659,8 @@ class TestBestModelCallback:
         assert "state_dict" in data, "strip_checkpoint must preserve 'state_dict'"
         assert "loops" in data, "strip_checkpoint must preserve 'loops'"
         assert "pytorch-lightning_version" in data, "strip_checkpoint must preserve 'pytorch-lightning_version'"
+        assert "optimizer_states" in data, "strip_checkpoint must preserve 'optimizer_states'"
+        assert "lr_schedulers" in data, "strip_checkpoint must preserve 'lr_schedulers'"
 
     def test_not_global_zero_does_not_save(self, tmp_path: Path) -> None:
         """Non-main process (is_global_zero=False) must not write any files."""
@@ -633,6 +680,60 @@ class TestBestModelCallback:
         assert not (tmp_path / "checkpoint_best_regular.pth").exists()
         assert not (tmp_path / "checkpoint_best_ema.pth").exists()
         assert not (tmp_path / "checkpoint_best_total.pth").exists()
+
+    def test_best_total_checkpoint_resumes_via_trainer_fit_ckpt_path(self, tmp_path: Path) -> None:
+        """checkpoint_best_total.pth must restore epoch/step when passed to Trainer.fit(ckpt_path=...)."""
+        torch.manual_seed(0)
+        x = torch.randn(8, 4)
+        y = torch.randn(8, 1)
+        train_loader = DataLoader(TensorDataset(x, y), batch_size=2)
+        val_loader = DataLoader(TensorDataset(x, y), batch_size=2)
+
+        save_cb = BestModelCallback(output_dir=str(tmp_path), run_test=False)
+        trainer_first = pl.Trainer(
+            max_epochs=1,
+            accelerator="cpu",
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            logger=False,
+            num_sanity_val_steps=0,
+            limit_train_batches=2,
+            limit_val_batches=1,
+            callbacks=[save_cb],
+            default_root_dir=str(tmp_path),
+        )
+        trainer_first.fit(_ResumeTinyModule(), train_dataloaders=train_loader, val_dataloaders=val_loader)
+
+        ckpt_path = tmp_path / "checkpoint_best_total.pth"
+        assert ckpt_path.exists()
+        first_phase_global_step = trainer_first.global_step
+        assert first_phase_global_step == 2
+        ckpt_data = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        assert ckpt_data["global_step"] == first_phase_global_step
+
+        resume_probe = _ResumeProbeCallback()
+        trainer_second = pl.Trainer(
+            max_epochs=2,
+            accelerator="cpu",
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            logger=False,
+            num_sanity_val_steps=0,
+            limit_train_batches=2,
+            limit_val_batches=1,
+            callbacks=[resume_probe],
+            default_root_dir=str(tmp_path),
+        )
+        trainer_second.fit(
+            _ResumeTinyModule(),
+            train_dataloaders=train_loader,
+            val_dataloaders=val_loader,
+            ckpt_path=str(ckpt_path),
+        )
+
+        assert resume_probe.first_train_epoch == 1
+        assert trainer_second.current_epoch == 2
+        assert trainer_second.global_step == 2
 
 
 # ---------------------------------------------------------------------------
