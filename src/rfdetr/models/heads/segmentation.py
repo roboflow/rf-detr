@@ -217,9 +217,36 @@ def point_sample(input: torch.Tensor, point_coords: torch.Tensor, **kwargs: Any)
     if point_coords.dim() == 3:
         add_dim = True
         point_coords = point_coords.unsqueeze(2)
-    output = _bilinear_grid_sample(
-        input, 2.0 * point_coords - 1.0, padding_mode="border", align_corners=kwargs.get("align_corners", False)
-    )
+
+    # Normalize coordinates from [0, 1] to [-1, 1] as expected by grid_sample.
+    grid = 2.0 * point_coords - 1.0
+
+    # Extract common grid_sample arguments, with bilinear as the default mode to
+    # preserve existing behavior when mode is not provided.
+    mode = kwargs.pop("mode", "bilinear")
+    align_corners = kwargs.pop("align_corners", False)
+    padding_mode = kwargs.pop("padding_mode", "zeros")
+
+    if mode == "bilinear":
+        # Use the optimized bilinear grid sampler.
+        output = _bilinear_grid_sample(
+            input,
+            grid,
+            padding_mode=padding_mode,
+            align_corners=align_corners,
+        )
+    else:
+        # Delegate to torch.nn.functional.grid_sample for other modes (e.g. "nearest"),
+        # forwarding any remaining supported kwargs.
+        output = F.grid_sample(
+            input,
+            grid,
+            mode=mode,
+            padding_mode=padding_mode,
+            align_corners=align_corners,
+            **kwargs,
+        )
+
     if add_dim:
         output = output.squeeze(3)
     return output

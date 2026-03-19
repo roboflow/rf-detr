@@ -214,6 +214,13 @@ def _bilinear_grid_sample(
     wx0 = 1.0 - wx1
     wy0 = 1.0 - wy1
 
+    if padding_mode not in ("zeros", "border"):
+        msg = (
+            f"Unsupported padding_mode={padding_mode!r} for manual grid sampling. "
+            "Only 'zeros' and 'border' are supported in this path."
+        )
+        raise ValueError(msg)
+
     if padding_mode == "border":
         ix0 = ix0.clamp(0, W - 1)
         iy0 = iy0.clamp(0, H - 1)
