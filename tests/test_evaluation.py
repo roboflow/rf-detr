@@ -449,7 +449,7 @@ class TestDistributedMergeMatchingData:
         """Two ranks with disjoint classes -> merged result contains both."""
         rank0 = {0: _make_matching_entry([0.9], [1], [False], 1)}
         rank1 = {1: _make_matching_entry([0.7], [0], [False], 2)}
-        with patch("rfdetr.evaluation.matching.utils.all_gather", return_value=[rank0, rank1]):
+        with patch("rfdetr.evaluation.matching.all_gather", return_value=[rank0, rank1]):
             result = distributed_merge_matching_data(rank0)
         assert set(result.keys()) == {0, 1}
         assert result[0]["total_gt"] == 1
@@ -459,7 +459,7 @@ class TestDistributedMergeMatchingData:
         """Two ranks sharing class 0 -> arrays concatenated, total_gt summed."""
         rank0 = {0: _make_matching_entry([0.9], [1], [False], 2)}
         rank1 = {0: _make_matching_entry([0.7, 0.5], [0, 1], [False, False], 3)}
-        with patch("rfdetr.evaluation.matching.utils.all_gather", return_value=[rank0, rank1]):
+        with patch("rfdetr.evaluation.matching.all_gather", return_value=[rank0, rank1]):
             result = distributed_merge_matching_data(rank0)
         np.testing.assert_allclose(result[0]["scores"], [0.9, 0.7, 0.5], rtol=1e-6)
         assert result[0]["total_gt"] == 5

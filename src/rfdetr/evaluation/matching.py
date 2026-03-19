@@ -23,7 +23,7 @@ import torch
 import torch.nn.functional as F
 from torchvision.ops import box_iou
 
-import rfdetr.util.misc as utils
+from rfdetr.utilities import all_gather
 
 
 def _compute_mask_iou(pred_masks: torch.Tensor, gt_masks: torch.Tensor) -> torch.Tensor:
@@ -290,7 +290,7 @@ def distributed_merge_matching_data(
 ) -> dict[int, dict[str, Any]]:
     """Gather per-rank matching data from all DDP ranks and merge into one dict.
 
-    Uses ``utils.all_gather`` (pickle-based) so the data need not be a tensor.
+    Uses ``rfdetr.utilities.all_gather`` (pickle-based) so the data need not be a tensor.
     In single-process (non-distributed) mode, returns a merged copy of *local_data*
     unchanged.
 
@@ -300,7 +300,7 @@ def distributed_merge_matching_data(
     Returns:
         Merged accumulator containing contributions from all ranks.
     """
-    gathered: List[dict[int, dict[str, Any]]] = utils.all_gather(local_data)
+    gathered: List[dict[int, dict[str, Any]]] = all_gather(local_data)
     merged: dict[int, dict[str, Any]] = {}
     for rank_data in gathered:
         merge_matching_data(merged, rank_data)

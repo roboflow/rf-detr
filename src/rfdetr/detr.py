@@ -820,11 +820,6 @@ class RFDETRMedium(RFDETR):
     _model_config_class = RFDETRMediumConfig
 
 
-class RFDETRLargeNew(RFDETR):
-    size = "rfdetr-large"
-    _model_config_class = RFDETRLargeConfig
-
-
 class RFDETRLargeDeprecated(RFDETR):
     """
     Train an RF-DETR Large model.
