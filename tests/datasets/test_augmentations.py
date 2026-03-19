@@ -565,7 +565,7 @@ class TestAlbumentationsWrapper:
             # box 2: y_min==y_max (bottom edge)
             "boxes": torch.tensor(
                 [
-                    [10.0, 20.0, 50.0, 60.0],   # valid — should survive
+                    [10.0, 20.0, 50.0, 60.0],  # valid — should survive
                     [100.0, 14.0, 100.0, 17.0],  # degenerate: x_min == x_max
                     [10.0, 100.0, 50.0, 100.0],  # degenerate: y_min == y_max
                 ]
@@ -579,9 +579,7 @@ class TestAlbumentationsWrapper:
 
         assert isinstance(aug_image, Image.Image)
         # Only the valid box survives
-        assert aug_target["boxes"].shape[0] == 1, (
-            f"Expected 1 valid box, got {aug_target['boxes'].shape[0]}"
-        )
+        assert aug_target["boxes"].shape[0] == 1, f"Expected 1 valid box, got {aug_target['boxes'].shape[0]}"
         assert aug_target["labels"].tolist() == [1]
         assert aug_target["area"].shape[0] == 1
 
@@ -599,7 +597,7 @@ class TestAlbumentationsWrapper:
         target = {
             "boxes": torch.tensor(
                 [
-                    [10.0, 20.0, 50.0, 60.0],   # valid
+                    [10.0, 20.0, 50.0, 60.0],  # valid
                     [100.0, 14.0, 100.0, 17.0],  # degenerate: x_min == x_max
                 ]
             ),
