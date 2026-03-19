@@ -90,7 +90,8 @@ def _build_module(model_config=None, train_config=None, tmp_path=None):
     with (
         patch("rfdetr.training.module_model.build_model", return_value=fake_model),
         patch(
-            "rfdetr.training.module_model.build_criterion_and_postprocessors", return_value=(fake_criterion, fake_postprocess)
+            "rfdetr.training.module_model.build_criterion_and_postprocessors",
+            return_value=(fake_criterion, fake_postprocess),
         ),
     ):
         from rfdetr.training.module_model import RFDETRModelModule
