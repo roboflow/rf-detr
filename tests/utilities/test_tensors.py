@@ -79,6 +79,27 @@ _PADDING_ALIGN_COMBOS = [
     pytest.param("zeros", True, id="zeros-align_corners"),
 ]
 
+_LOW_PRECISION_DTYPES = [
+    pytest.param(torch.float16, id="float16"),
+    pytest.param(torch.bfloat16, id="bfloat16"),
+]
+
+_LOW_PRECISION_GRAD_TOLERANCES = {
+    torch.float16: (1e-2, 2e-2),
+    torch.bfloat16: (3e-2, 1e-1),
+}
+
+
+def _require_grid_sample_dtype_support(dtype: torch.dtype) -> None:
+    """Skip test when current backend does not support grid_sample for dtype."""
+    input = torch.randn(1, 1, 2, 2, dtype=dtype, requires_grad=True)
+    grid = (torch.rand(1, 1, 1, 2, dtype=dtype) * 1.6 - 0.8).requires_grad_(True)
+    try:
+        out = F.grid_sample(input, grid, mode="bilinear", padding_mode="zeros", align_corners=False)
+        out.backward(torch.ones_like(out))
+    except RuntimeError as error:
+        pytest.skip(f"grid_sample dtype support missing for {dtype}: {error}")
+
 
 class TestBilinearGridSampleParity:
     """Manual gather path must match F.grid_sample for all grid/padding combos."""
@@ -305,6 +326,50 @@ class TestBilinearGridSampleGradient:
             atol=1e-4,
             rtol=1e-3,
         ), "gradcheck failed for manual bilinear grid sample path"
+
+
+class TestBilinearGridSampleLowPrecision:
+    """Low-precision parity and gradients stay aligned with F.grid_sample."""
+
+    @pytest.mark.parametrize("dtype", _LOW_PRECISION_DTYPES)
+    def test_low_precision_parity(self, seed, dtype):
+        """Manual path output matches F.grid_sample for low-precision inputs."""
+        _require_grid_sample_dtype_support(dtype)
+
+        input = torch.randn(2, 3, 6, 6, dtype=dtype)
+        grid = torch.rand(2, 4, 4, 2, dtype=dtype) * 3.0 - 1.5
+
+        expected = _grid_sample_reference(input, grid, padding_mode="zeros", align_corners=False)
+        actual = _call_manual_path(input, grid, padding_mode="zeros", align_corners=False)
+
+        torch.testing.assert_close(actual, expected, atol=1e-3, rtol=1e-3)
+        assert actual.dtype == dtype
+
+    @pytest.mark.parametrize("dtype", _LOW_PRECISION_DTYPES)
+    def test_low_precision_gradient_parity(self, seed, dtype):
+        """Manual path gradients match F.grid_sample gradients for low precision."""
+        _require_grid_sample_dtype_support(dtype)
+        atol, rtol = _LOW_PRECISION_GRAD_TOLERANCES[dtype]
+
+        input_ref = torch.randn(1, 2, 6, 6, dtype=dtype, requires_grad=True)
+        grid_ref = (torch.rand(1, 4, 4, 2, dtype=dtype) * 1.6 - 0.8).requires_grad_(True)
+
+        input_man = input_ref.detach().clone().requires_grad_(True)
+        grid_man = grid_ref.detach().clone().requires_grad_(True)
+
+        out_ref = _grid_sample_reference(input_ref, grid_ref, padding_mode="zeros", align_corners=False)
+        out_man = _call_manual_path(input_man, grid_man, padding_mode="zeros", align_corners=False)
+
+        upstream = torch.randn_like(out_ref)
+        out_ref.backward(upstream)
+        out_man.backward(upstream)
+
+        torch.testing.assert_close(input_man.grad, input_ref.grad, atol=atol, rtol=rtol)
+        torch.testing.assert_close(grid_man.grad, grid_ref.grad, atol=atol, rtol=rtol)
+        assert input_man.grad is not None
+        assert grid_man.grad is not None
+        assert input_man.grad.dtype == dtype
+        assert grid_man.grad.dtype == dtype
 
 
 class TestBilinearGridSampleRealUseCases:
