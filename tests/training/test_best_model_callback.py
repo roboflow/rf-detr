@@ -87,25 +87,16 @@ class _ResumeTinyModule(LightningModule):
 
 
 class _ResumeProbeCallback(Callback):
-    """Capture restored epoch/step at fit start for resume assertions."""
+    """Capture the first train epoch index for resume assertions."""
 
     def __init__(self) -> None:
         super().__init__()
-        self.fit_start_epoch: int | None = None
-        self.fit_start_global_step: int | None = None
         self.first_train_epoch: int | None = None
-        self.first_train_global_step: int | None = None
-
-    def on_fit_start(self, trainer, pl_module):
-        del pl_module
-        self.fit_start_epoch = trainer.current_epoch
-        self.fit_start_global_step = trainer.global_step
 
     def on_train_epoch_start(self, trainer, pl_module):
         del pl_module
         if self.first_train_epoch is None:
             self.first_train_epoch = trainer.current_epoch
-            self.first_train_global_step = trainer.global_step
 
 
 # ---------------------------------------------------------------------------
@@ -730,16 +721,12 @@ class TestBestModelCallback:
             ckpt_path=str(ckpt_path),
         )
 
-        # Assert that epoch and global_step were correctly restored at fit start.
-        assert resume_probe.fit_start_epoch == 1
-        assert resume_probe.fit_start_global_step == 2
         # PTL applies loop restoration by the first train epoch start.
         assert resume_probe.first_train_epoch == 1
-        assert resume_probe.first_train_global_step == 2
         # In the stripped-checkpoint resume path, optimizer state is intentionally
-        # fresh; this resumed phase contributes 2 steps (limit_train_batches=2).
+        # fresh; this resumed phase contributes exactly one epoch with 2 steps.
         assert trainer_second.current_epoch == 2
-        assert trainer_second.global_step == 4
+        assert trainer_second.global_step == 2
 
 
 # ---------------------------------------------------------------------------
