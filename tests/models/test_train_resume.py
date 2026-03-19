@@ -32,7 +32,7 @@ def test_resume_with_completed_epochs_returns_early(tmp_path: Path) -> None:
     model = RFDETRNano(pretrain_weights=None, num_classes=3, device="cpu")
 
     with (
-        patch("rfdetr.training.RFDETRModule"),
+        patch("rfdetr.training.RFDETRModelModule"),
         patch("rfdetr.training.RFDETRDataModule"),
         patch("rfdetr.training.build_trainer") as mock_build_trainer,
         warnings.catch_warnings(record=True) as caught,
@@ -74,7 +74,7 @@ def test_resume_with_completed_epochs_calls_on_train_end_callback(tmp_path: Path
     model.callbacks["on_train_end"].append(_callback)
 
     with (
-        patch("rfdetr.training.RFDETRModule"),
+        patch("rfdetr.training.RFDETRModelModule"),
         patch("rfdetr.training.RFDETRDataModule"),
         patch("rfdetr.training.build_trainer"),
     ):

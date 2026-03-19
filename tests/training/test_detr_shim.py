@@ -27,7 +27,7 @@ from rfdetr.config import RFDETRBaseConfig, TrainConfig
 from rfdetr.detr import RFDETR
 from rfdetr.training.auto_batch import AutoBatchResult
 from rfdetr.training.checkpoint import convert_legacy_checkpoint
-from rfdetr.training.module import RFDETRModule
+from rfdetr.training.module_model import RFDETRModelModule
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -71,7 +71,7 @@ def _patch_lit():
     mock_build_trainer = MagicMock(name="build_trainer")
 
     return (
-        patch("rfdetr.training.RFDETRModule", mock_module_cls),
+        patch("rfdetr.training.RFDETRModelModule", mock_module_cls),
         patch("rfdetr.training.RFDETRDataModule", mock_dm_cls),
         patch("rfdetr.training.build_trainer", mock_build_trainer),
         mock_module_cls,
@@ -602,7 +602,7 @@ class TestConvertLegacyCheckpoint:
         fake = _FakeModule()
         original_state_dict = dict(ckpt["state_dict"])  # copy before mutation
 
-        RFDETRModule.on_load_checkpoint(fake, ckpt)
+        RFDETRModelModule.on_load_checkpoint(fake, ckpt)
 
         # state_dict must NOT have been re-prefixed (already had "state_dict")
         assert ckpt["state_dict"] == original_state_dict
@@ -645,7 +645,7 @@ class TestOnLoadCheckpoint:
         """'model' key without 'state_dict' → state_dict written with 'model.' prefix."""
         fake = _FakeModule()
         ckpt = {"model": {"backbone.weight": torch.zeros(2)}}
-        RFDETRModule.on_load_checkpoint(fake, ckpt)
+        RFDETRModelModule.on_load_checkpoint(fake, ckpt)
         assert "state_dict" in ckpt
         assert "model.backbone.weight" in ckpt["state_dict"]
 
@@ -653,14 +653,14 @@ class TestOnLoadCheckpoint:
         """Original 'model' key is not deleted after state_dict is written."""
         fake = _FakeModule()
         ckpt = {"model": {"w": torch.zeros(1)}}
-        RFDETRModule.on_load_checkpoint(fake, ckpt)
+        RFDETRModelModule.on_load_checkpoint(fake, ckpt)
         assert "model" in ckpt  # PTL may inspect it; must not be deleted
 
     def test_empty_model_dict_produces_empty_state_dict(self):
         """Empty 'model' dict without 'state_dict' → empty state_dict written."""
         fake = _FakeModule()
         ckpt = {"model": {}}
-        RFDETRModule.on_load_checkpoint(fake, ckpt)
+        RFDETRModelModule.on_load_checkpoint(fake, ckpt)
         assert ckpt["state_dict"] == {}
 
     def test_native_ptl_format_no_op(self):
@@ -668,7 +668,7 @@ class TestOnLoadCheckpoint:
         fake = _FakeModule()
         sentinel = {"model.layer.weight": torch.zeros(1)}
         ckpt = {"state_dict": sentinel}
-        RFDETRModule.on_load_checkpoint(fake, ckpt)
+        RFDETRModelModule.on_load_checkpoint(fake, ckpt)
         assert ckpt["state_dict"] is sentinel  # not replaced
         assert not hasattr(fake, "_pending_legacy_ema_state")
 
@@ -680,7 +680,7 @@ class TestOnLoadCheckpoint:
             "state_dict": existing_sd,
             "model": {"new_key": torch.ones(1)},
         }
-        RFDETRModule.on_load_checkpoint(fake, ckpt)
+        RFDETRModelModule.on_load_checkpoint(fake, ckpt)
         assert ckpt["state_dict"] is existing_sd
         assert "model.new_key" not in ckpt["state_dict"]
 
@@ -692,21 +692,21 @@ class TestOnLoadCheckpoint:
             "state_dict": {"model.layer.weight": torch.zeros(2)},
             "legacy_ema_state_dict": ema_weights,
         }
-        RFDETRModule.on_load_checkpoint(fake, ckpt)
+        RFDETRModelModule.on_load_checkpoint(fake, ckpt)
         assert fake._pending_legacy_ema_state is ema_weights
 
     def test_no_legacy_ema_attribute_not_set(self):
         """No 'legacy_ema_state_dict' → _pending_legacy_ema_state not set on module."""
         fake = _FakeModule()
         ckpt = {"state_dict": {"model.w": torch.zeros(1)}}
-        RFDETRModule.on_load_checkpoint(fake, ckpt)
+        RFDETRModelModule.on_load_checkpoint(fake, ckpt)
         assert not hasattr(fake, "_pending_legacy_ema_state")
 
     def test_empty_checkpoint_is_noop(self):
         """Completely empty checkpoint {} triggers no mutation and no error."""
         fake = _FakeModule()
         ckpt: Dict[str, Any] = {}
-        RFDETRModule.on_load_checkpoint(fake, ckpt)  # must not raise
+        RFDETRModelModule.on_load_checkpoint(fake, ckpt)  # must not raise
         assert ckpt == {}
         assert not hasattr(fake, "_pending_legacy_ema_state")
 
@@ -715,16 +715,16 @@ class TestOnLoadCheckpoint:
         fake = _FakeModule()
         first_ema = {"w": torch.zeros(1)}
         second_ema = {"w": torch.ones(1)}
-        RFDETRModule.on_load_checkpoint(fake, {"state_dict": {}, "legacy_ema_state_dict": first_ema})
-        RFDETRModule.on_load_checkpoint(fake, {"state_dict": {}, "legacy_ema_state_dict": second_ema})
+        RFDETRModelModule.on_load_checkpoint(fake, {"state_dict": {}, "legacy_ema_state_dict": first_ema})
+        RFDETRModelModule.on_load_checkpoint(fake, {"state_dict": {}, "legacy_ema_state_dict": second_ema})
         assert fake._pending_legacy_ema_state is second_ema
 
     def test_second_call_without_ema_leaves_first_stash(self):
         """Second call without 'legacy_ema_state_dict' does not clear the stash."""
         fake = _FakeModule()
         first_ema = {"w": torch.zeros(1)}
-        RFDETRModule.on_load_checkpoint(fake, {"state_dict": {}, "legacy_ema_state_dict": first_ema})
-        RFDETRModule.on_load_checkpoint(fake, {"state_dict": {}})
+        RFDETRModelModule.on_load_checkpoint(fake, {"state_dict": {}, "legacy_ema_state_dict": first_ema})
+        RFDETRModelModule.on_load_checkpoint(fake, {"state_dict": {}})
         assert fake._pending_legacy_ema_state is first_ema
 
 
@@ -738,8 +738,8 @@ class TestPublicAPIExports:
 
     @pytest.mark.parametrize(
         "name",
-        ["RFDETRModule", "RFDETRDataModule", "build_trainer"],
-        ids=["RFDETRModule", "RFDETRDataModule", "build_trainer"],
+        ["RFDETRModelModule", "RFDETRDataModule", "build_trainer"],
+        ids=["RFDETRModelModule", "RFDETRDataModule", "build_trainer"],
     )
     def test_symbol_importable_from_rfdetr(self, name):
         """Each PTL export is accessible as rfdetr.<name> via lazy __getattr__."""
@@ -749,8 +749,8 @@ class TestPublicAPIExports:
 
     @pytest.mark.parametrize(
         "name",
-        ["RFDETRModule", "RFDETRDataModule", "build_trainer"],
-        ids=["RFDETRModule", "RFDETRDataModule", "build_trainer"],
+        ["RFDETRModelModule", "RFDETRDataModule", "build_trainer"],
+        ids=["RFDETRModelModule", "RFDETRDataModule", "build_trainer"],
     )
     def test_symbol_is_same_object_as_rfdetr_training(self, name):
         """rfdetr.<name> is the identical object to rfdetr.training.<name>."""
@@ -763,7 +763,7 @@ class TestPublicAPIExports:
         """PTL exports are optional (rfdetr[train]) and must not be in rfdetr.__all__."""
         import rfdetr
 
-        for name in ("RFDETRModule", "RFDETRDataModule", "build_trainer"):
+        for name in ("RFDETRModelModule", "RFDETRDataModule", "build_trainer"):
             assert name not in rfdetr.__all__, f"{name} must not be in __all__ (optional extra)"
 
     def test_rfdetr_all_no_duplicates(self):

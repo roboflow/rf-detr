@@ -8,7 +8,7 @@
 For every detection and segmentation model variant, this module:
 
 1. Loads pretrained weights via the :class:`~rfdetr.detr.RFDETR` wrapper.
-2. Copies the weights into a fresh :class:`~rfdetr.training.RFDETRModule`.
+2. Copies the weights into a fresh :class:`~rfdetr.training.RFDETRModelModule`.
 3. Evaluates via ``Trainer.validate`` and asserts mAP thresholds.
 
 API contract tests (return type of ``predict()``) live in
@@ -47,7 +47,7 @@ from rfdetr import (
 )
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.detr import RFDETR
-from rfdetr.training import RFDETRDataModule, RFDETRModule, build_trainer
+from rfdetr.training import RFDETRDataModule, RFDETRModelModule, build_trainer
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -112,8 +112,8 @@ def _build_datamodule(
     return dm
 
 
-def _build_ptl_module(rfdetr_obj: RFDETR, train_config: TrainConfig) -> RFDETRModule:
-    """Copy pretrained weights from *rfdetr_obj* into a fresh :class:`~rfdetr.training.RFDETRModule`.
+def _build_ptl_module(rfdetr_obj: RFDETR, train_config: TrainConfig) -> RFDETRModelModule:
+    """Copy pretrained weights from *rfdetr_obj* into a fresh :class:`~rfdetr.training.RFDETRModelModule`.
 
     Constructs the module with the same architecture (no pretrain download),
     loads weights from ``rfdetr_obj.model.model``, and asserts PTL lineage and
@@ -125,14 +125,14 @@ def _build_ptl_module(rfdetr_obj: RFDETR, train_config: TrainConfig) -> RFDETRMo
             valid ``output_dir``).
 
     Returns:
-        Weight-synced :class:`~rfdetr.training.RFDETRModule` ready for
+        Weight-synced :class:`~rfdetr.training.RFDETRModelModule` ready for
         ``Trainer.validate`` or ``Trainer.predict``.
     """
-    module = RFDETRModule(rfdetr_obj.model_config, train_config)
+    module = RFDETRModelModule(rfdetr_obj.model_config, train_config)
     module.model.load_state_dict(rfdetr_obj.model.model.state_dict())
     module.model.eval()
 
-    assert isinstance(module, RFDETRModule), f"Expected RFDETRModule, got {type(module).__name__}"
+    assert isinstance(module, RFDETRModelModule), f"Expected RFDETRModelModule, got {type(module).__name__}"
     assert isinstance(module, LightningModule), (
         "module must be a pytorch_lightning.LightningModule — this confirms evaluation runs through the PTL stack"
     )
@@ -284,8 +284,8 @@ def test_inference_detection_ptl_predict(
     """``trainer.predict()`` runs through the PTL predict loop for detection models.
 
     Loads a pretrained detection model, copies weights into a
-    :class:`~rfdetr.training.RFDETRModule`, runs ``trainer.predict()`` on a
-    small subset (50 samples) to exercise :meth:`~rfdetr.training.RFDETRModule.predict_step`,
+    :class:`~rfdetr.training.RFDETRModelModule`, runs ``trainer.predict()`` on a
+    small subset (50 samples) to exercise :meth:`~rfdetr.training.RFDETRModelModule.predict_step`,
     then runs ``Trainer.validate`` on the full *num_samples* to assert mAP and F1.
 
     Args:
@@ -307,7 +307,7 @@ def test_inference_detection_ptl_predict(
     module = _build_ptl_module(rfdetr, tc)
     trainer = build_trainer(tc, rfdetr.model_config, accelerator=accelerator)
 
-    # Run trainer.predict() on a small slice — exercises RFDETRModule.predict_step.
+    # Run trainer.predict() on a small slice — exercises RFDETRModelModule.predict_step.
     predict_dm = _build_datamodule(rfdetr.model_config, tc, num_samples=50)
     predictions = trainer.predict(module, dataloaders=predict_dm.val_dataloader())
     assert predictions is not None, "trainer.predict() returned None"
@@ -367,7 +367,7 @@ def test_inference_segmentation_ptl_predict(
     module = _build_ptl_module(rfdetr, tc)
     trainer = build_trainer(tc, rfdetr.model_config, accelerator=accelerator)
 
-    # Run trainer.predict() on a small slice — exercises RFDETRModule.predict_step.
+    # Run trainer.predict() on a small slice — exercises RFDETRModelModule.predict_step.
     predict_dm = _build_datamodule(rfdetr.model_config, tc, num_samples=50)
     predictions = trainer.predict(module, dataloaders=predict_dm.val_dataloader())
     assert predictions is not None, "trainer.predict() returned None"

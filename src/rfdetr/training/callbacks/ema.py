@@ -87,7 +87,7 @@ class RFDETREMACallback(Callback):
 
         Args:
             trainer: The Lightning Trainer instance.
-            pl_module: The ``RFDETRModule`` being trained.
+            pl_module: The ``RFDETRModelModule`` being trained.
             stage: Current trainer stage (``"fit"``, ``"validate"``, ...).
         """
         if stage != "fit":

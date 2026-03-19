@@ -11,7 +11,7 @@ Smoke test (CPU-friendly):
 
 Training convergence (GPU, synthetic dataset, no pretrained weights):
 
-* :func:`test_train_convergence_native_ptl` — ``RFDETRModule`` + ``Trainer.fit`` reaches ≥ 35 % mAP@50.
+* :func:`test_train_convergence_native_ptl` — ``RFDETRModelModule`` + ``Trainer.fit`` reaches ≥ 35 % mAP@50.
 * :func:`test_train_convergence_rfdetr_api` — ``RFDETR.train()`` reaches ≥ 35 % mAP@50.
 """
 
@@ -26,15 +26,15 @@ from pytorch_lightning import LightningModule
 from rfdetr import RFDETRNano
 from rfdetr.config import RFDETRBaseConfig, RFDETRSegNanoConfig, SegmentationTrainConfig, TrainConfig
 from rfdetr.detr import RFDETR
-from rfdetr.training import RFDETRDataModule, RFDETRModule, build_trainer
+from rfdetr.training import RFDETRDataModule, RFDETRModelModule, build_trainer
 
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
 
 
-def _make_ptl_module_from(rfdetr_obj: RFDETR, dataset_dir: Path, output_dir: Path) -> RFDETRModule:
-    """Build an :class:`~rfdetr.training.RFDETRModule` from an RFDETR instance.
+def _make_ptl_module_from(rfdetr_obj: RFDETR, dataset_dir: Path, output_dir: Path) -> RFDETRModelModule:
+    """Build an :class:`~rfdetr.training.RFDETRModelModule` from an RFDETR instance.
 
     Creates the module with the same architecture as *rfdetr_obj*, copies its
     current weights, and asserts PTL lineage before returning.
@@ -45,7 +45,7 @@ def _make_ptl_module_from(rfdetr_obj: RFDETR, dataset_dir: Path, output_dir: Pat
         output_dir: Output directory forwarded to :class:`~rfdetr.config.TrainConfig`.
 
     Returns:
-        Weight-synced :class:`~rfdetr.training.RFDETRModule` in eval mode.
+        Weight-synced :class:`~rfdetr.training.RFDETRModelModule` in eval mode.
     """
     train_config = TrainConfig(
         dataset_file="roboflow",
@@ -53,11 +53,11 @@ def _make_ptl_module_from(rfdetr_obj: RFDETR, dataset_dir: Path, output_dir: Pat
         output_dir=str(output_dir),
     )
     model_config = rfdetr_obj.model_config.model_copy(update={"pretrain_weights": None})
-    module = RFDETRModule(model_config, train_config)
+    module = RFDETRModelModule(model_config, train_config)
     module.model.load_state_dict(rfdetr_obj.model.model.state_dict())
     module.model.eval()
 
-    assert isinstance(module, RFDETRModule), f"Expected RFDETRModule, got {type(module).__name__}"
+    assert isinstance(module, RFDETRModelModule), f"Expected RFDETRModelModule, got {type(module).__name__}"
     assert isinstance(module, LightningModule), "Module must be a pytorch_lightning.LightningModule"
     return module
 
@@ -101,7 +101,7 @@ def test_train_fast_dev_run(
         grad_accum_steps=1,
     )
 
-    module = RFDETRModule(mc, tc)
+    module = RFDETRModelModule(mc, tc)
     datamodule = RFDETRDataModule(mc, tc)
     trainer = build_trainer(tc, mc, accelerator="auto", fast_dev_run=2)
     trainer.fit(module, datamodule=datamodule)
@@ -118,7 +118,7 @@ def test_train_convergence_native_ptl(
     tmp_path: Path,
     synthetic_shape_dataset_dir: Path,
 ) -> None:
-    """Native PTL stack converges: ``RFDETRModule`` + ``RFDETRDataModule`` + ``Trainer.fit``.
+    """Native PTL stack converges: ``RFDETRModelModule`` + ``RFDETRDataModule`` + ``Trainer.fit``.
 
     Uses ``Trainer.validate`` before and after ``Trainer.fit`` so only Lightning
     elements are exercised — no ``engine.evaluate`` or legacy paths.
@@ -153,7 +153,7 @@ def test_train_convergence_native_ptl(
         tensorboard=False,
     )
 
-    module = RFDETRModule(mc, tc)
+    module = RFDETRModelModule(mc, tc)
     datamodule = RFDETRDataModule(mc, tc)
 
     # Pre-training baseline — untrained model should have near-zero mAP.
@@ -306,7 +306,7 @@ def test_train_convergence_segmentation(
         tensorboard=False,
     )
 
-    module = RFDETRModule(mc, tc)
+    module = RFDETRModelModule(mc, tc)
     datamodule = RFDETRDataModule(mc, tc)
 
     # Pre-training baseline — untrained model should have near-zero mAP.

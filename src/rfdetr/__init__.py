@@ -39,7 +39,7 @@ __all__ = [
 ]
 
 # Lazily resolved names: avoids eager pytorch_lightning import at `import rfdetr` time.
-_LAZY_TRAINING = frozenset({"RFDETRModule", "RFDETRDataModule", "build_trainer"})
+_LAZY_TRAINING = frozenset({"RFDETRModelModule", "RFDETRDataModule", "build_trainer"})
 _PLUS_EXPORTS = frozenset({"RFDETR2XLarge", "RFDETRXLarge"})
 
 

@@ -103,7 +103,7 @@ class _ModelContext:
 def _load_pretrain_weights_into(nn_model: torch.nn.Module, args: Any) -> List[str]:
     """Load pretrained checkpoint weights into *nn_model* in-place.
 
-    Mirrors ``Model.__init__`` and ``RFDETRModule._load_pretrain_weights``
+    Mirrors ``Model.__init__`` and ``RFDETRModelModule._load_pretrain_weights``
     checkpoint loading logic: validates hash, re-downloads on corruption, and
     trims query embeddings to match the configured query count.
 
@@ -285,7 +285,7 @@ class RFDETR:
         onto ``self.model.model`` so that :meth:`predict` and :meth:`export`
         continue to work without reloading the checkpoint.
         """
-        from rfdetr.training import RFDETRDataModule, RFDETRModule, build_trainer
+        from rfdetr.training import RFDETRDataModule, RFDETRModelModule, build_trainer
         from rfdetr.training.auto_batch import resolve_auto_batch_config
 
         # Absorb legacy `callbacks` dict — warn if non-empty, then discard.
@@ -337,7 +337,7 @@ class RFDETR:
                 config.grad_accum_steps,
                 auto_batch.effective_batch_size,
             )
-        module = RFDETRModule(self.model_config, config)
+        module = RFDETRModelModule(self.model_config, config)
         datamodule = RFDETRDataModule(self.model_config, config)
         trainer = build_trainer(config, self.model_config, accelerator=_accelerator)
         trainer.fit(module, datamodule, ckpt_path=config.resume or None)

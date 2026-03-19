@@ -283,7 +283,7 @@ Note: `clearml=True` is accepted but has no effect in the current version — th
 
 ```python
 from rfdetr.config import RFDETRMediumConfig, TrainConfig
-from rfdetr.training import RFDETRModule, RFDETRDataModule, build_trainer
+from rfdetr.training import RFDETRModelModule, RFDETRDataModule, build_trainer
 
 model_config = RFDETRMediumConfig(num_classes=10)
 train_config = TrainConfig(
@@ -293,7 +293,7 @@ train_config = TrainConfig(
     tensorboard=True,  # built-in loggers still work
 )
 
-module = RFDETRModule(model_config, train_config)
+module = RFDETRModelModule(model_config, train_config)
 datamodule = RFDETRDataModule(model_config, train_config)
 trainer = build_trainer(train_config, model_config)
 

@@ -6,7 +6,7 @@
 
 """LightningDataModule for RF-DETR dataset construction and loaders (Phase 2)."""
 
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Tuple
 
 import torch
 import torch.utils.data
@@ -215,3 +215,23 @@ class RFDETRDataModule(LightningDataModule):
             if coco is not None and hasattr(coco, "cats"):
                 return [coco.cats[k]["name"] for k in sorted(coco.cats.keys())]
         return None
+
+    def transfer_batch_to_device(self, batch: Tuple, device: torch.device, dataloader_idx: int) -> Tuple:
+        """Move a ``(NestedTensor, targets)`` batch to *device*.
+
+        PTL's default iterates tuple elements and calls ``.to(device)``; that
+        works for plain tensors but ``NestedTensor`` must be moved explicitly.
+
+        Args:
+            batch: Tuple of (NestedTensor samples, list of target dicts).
+            device: Target device.
+            dataloader_idx: Index of the dataloader providing this batch.
+
+        Returns:
+            Batch with all tensors on ``device``.
+        """
+        samples, targets = batch
+        non_blocking = device.type == "cuda"
+        samples = samples.to(device, non_blocking=non_blocking)
+        targets = [{k: v.to(device, non_blocking=non_blocking) for k, v in t.items()} for t in targets]
+        return samples, targets

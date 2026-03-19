@@ -10,6 +10,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from rfdetr.utilities.tensors import _bilinear_grid_sample
+
 
 class DepthwiseConvBlock(nn.Module):
     r"""Simplified ConvNeXt block without the MLP subnet"""
@@ -197,8 +199,8 @@ class SegmentationHead(nn.Module):
 
 def point_sample(input: torch.Tensor, point_coords: torch.Tensor, **kwargs: Any) -> torch.Tensor:
     """
-    A wrapper around :function:`torch.nn.functional.grid_sample` to support 3D point_coords tensors.
-    Unlike :function:`torch.nn.functional.grid_sample` it assumes `point_coords` to lie inside
+    A wrapper around :func:`~rfdetr.utilities.tensors._bilinear_grid_sample` to support 3D point_coords tensors.
+    Unlike :func:`torch.nn.functional.grid_sample` it assumes `point_coords` to lie inside
     [0, 1] x [0, 1] square.
 
     Args:
@@ -209,13 +211,56 @@ def point_sample(input: torch.Tensor, point_coords: torch.Tensor, **kwargs: Any)
     Returns:
         A tensor of shape (N, C, P) or (N, C, Hgrid, Wgrid) that contains
             features for points in `point_coords`. The features are obtained via bilinear
-            interplation from `input` the same way as :function:`torch.nn.functional.grid_sample`.
+            interpolation from `input` the same way as :func:`~rfdetr.utilities.tensors._bilinear_grid_sample`.
     """
     add_dim = False
     if point_coords.dim() == 3:
         add_dim = True
         point_coords = point_coords.unsqueeze(2)
-    output = F.grid_sample(input, 2.0 * point_coords - 1.0, padding_mode="border", **kwargs)
+
+    # Normalize coordinates from [0, 1] to [-1, 1] as expected by grid_sample.
+    grid = 2.0 * point_coords - 1.0
+
+    # Extract common grid_sample arguments, with bilinear as the default mode to
+    # preserve existing behavior when mode is not provided.
+    mode = kwargs.pop("mode", "bilinear")
+    align_corners = kwargs.pop("align_corners", False)
+    padding_mode = kwargs.pop("padding_mode", "border")
+
+    if mode == "bilinear":
+        if kwargs:
+            unexpected = ", ".join(sorted(kwargs.keys()))
+            raise TypeError(f"Unexpected keyword argument(s) for bilinear mode: {unexpected}")
+        # For bilinear mode, use the optimized sampler when the padding_mode
+        # is supported by the manual/MPS path. For other padding modes,
+        # delegate to F.grid_sample to keep behavior consistent across devices.
+        if padding_mode not in ("zeros", "border"):
+            output = F.grid_sample(
+                input,
+                grid,
+                mode=mode,
+                padding_mode=padding_mode,
+                align_corners=align_corners,
+            )
+        else:
+            output = _bilinear_grid_sample(
+                input,
+                grid,
+                padding_mode=padding_mode,
+                align_corners=align_corners,
+            )
+    else:
+        # Delegate to torch.nn.functional.grid_sample for other modes (e.g. "nearest"),
+        # forwarding any remaining supported kwargs.
+        output = F.grid_sample(
+            input,
+            grid,
+            mode=mode,
+            padding_mode=padding_mode,
+            align_corners=align_corners,
+            **kwargs,
+        )
+
     if add_dim:
         output = output.squeeze(3)
     return output

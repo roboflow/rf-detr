@@ -341,7 +341,7 @@ class TrainConfig(BaseModel):
     early_stopping_patience: int = 10
     early_stopping_min_delta: float = 0.001
     early_stopping_use_ema: bool = False
-    progress_bar: bool = False  # Enable tqdm progress bars during training and evaluation epochs.
+    progress_bar: Optional[Literal["tqdm", "rich"]] = None  # Progress bar style: "rich", "tqdm", or None to disable.
     tensorboard: bool = True
     wandb: bool = False
     mlflow: bool = False
@@ -355,6 +355,18 @@ class TrainConfig(BaseModel):
     eval_interval: int = 1
     log_per_class_metrics: bool = True
     aug_config: Optional[Dict[str, Any]] = None
+
+    @field_validator("progress_bar", mode="before")
+    @classmethod
+    def _coerce_legacy_progress_bar(cls, value: Any) -> Any:
+        """Normalize legacy boolean progress_bar values to the new string/None representation.
+
+        This preserves compatibility with older configs where ``progress_bar`` was a bool.
+        """
+        if isinstance(value, bool):
+            return "tqdm" if value else None
+        return value
+
     # Promoted from populate_args() — PTL migration (T4-2).
     # device is intentionally absent: PTL auto-detects accelerator via Trainer(accelerator="auto").
     accelerator: str = "auto"
