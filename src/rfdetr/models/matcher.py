@@ -142,7 +142,7 @@ class HungarianMatcher(nn.Module):
         # We flatten to compute the cost matrices in a batch
         flat_pred_logits = outputs["pred_logits"].flatten(0, 1)
         out_prob = flat_pred_logits.sigmoid()  # [batch_size * num_queries, num_classes]
-        out_bbox = outputs["pred_boxes"].flatten(0, 1)  # [batch_size * num_queries, 4]
+        out_bbox = outputs["pred_boxes"].flatten(0, 1)  # [batch_size * num_queries, 4 or 5]
 
         # Also concat the target labels and boxes
         tgt_ids = torch.cat([v["labels"] for v in targets])
@@ -150,8 +150,12 @@ class HungarianMatcher(nn.Module):
 
         masks_present = "masks" in targets[0]
 
+        # Use only spatial part (cx, cy, w, h) for matching costs
+        out_bbox_spatial = out_bbox[..., :4]
+        tgt_bbox_spatial = tgt_bbox[..., :4]
+
         # Compute the giou cost between boxes
-        giou = generalized_box_iou(box_cxcywh_to_xyxy(out_bbox), box_cxcywh_to_xyxy(tgt_bbox))
+        giou = generalized_box_iou(box_cxcywh_to_xyxy(out_bbox_spatial), box_cxcywh_to_xyxy(tgt_bbox_spatial))
         cost_giou = -giou
 
         # Compute the classification cost.
@@ -165,8 +169,8 @@ class HungarianMatcher(nn.Module):
         pos_cost_class = alpha * ((1 - out_prob) ** gamma) * (-F.logsigmoid(flat_pred_logits))
         cost_class = pos_cost_class[:, tgt_ids] - neg_cost_class[:, tgt_ids]
 
-        # Compute the L1 cost between boxes
-        cost_bbox = torch.cdist(out_bbox, tgt_bbox, p=1)
+        # Compute the L1 cost between boxes (spatial part only)
+        cost_bbox = torch.cdist(out_bbox_spatial, tgt_bbox_spatial, p=1)
 
         if masks_present:
             tgt_masks = torch.cat([v["masks"] for v in targets])

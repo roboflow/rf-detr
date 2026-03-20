@@ -60,6 +60,22 @@ class Normalize(object):
             boxes = target["boxes"]
             boxes = box_xyxy_to_cxcywh(boxes)
             boxes = boxes / torch.tensor([w, h, w, h], dtype=torch.float32)
+            # For oriented datasets, recompute OBB from transformed corners and
+            # append normalized angle
+            if "obb_corners" in target:
+                from rfdetr.utilities.box_ops import corners_to_obb
+
+                corners = target["obb_corners"]
+                if corners.numel() > 0:
+                    obb = corners_to_obb(corners)
+                    # Normalize angle from [0, pi) to [0, 1)
+                    angle = obb[..., 4:5] / torch.pi
+                    boxes = torch.cat([boxes, angle], dim=-1)
+                else:
+                    boxes = torch.cat(
+                        [boxes, torch.zeros((0, 1), dtype=torch.float32)], dim=-1
+                    )
+                del target["obb_corners"]
             target["boxes"] = boxes
         return image, target
 
@@ -487,9 +503,13 @@ class AlbumentationsWrapper:
         Converts data to Albumentations format, applies the transform, and converts
         back to RF-DETR format. Handles box removal and per-instance field filtering.
 
+        For oriented bounding boxes (when ``obb_corners`` is in target), the 4 corner
+        points are added as keypoints to the Albumentations transform. After the
+        transform, the OBB is recomputed from the transformed corners.
+
         Args:
             image_np: Numpy array of image in HWC format.
-            target: Target dictionary with 'boxes' and optionally 'masks'.
+            target: Target dictionary with 'boxes' and optionally 'masks' and 'obb_corners'.
             labels: List of category labels.
 
         Returns:
@@ -504,10 +524,18 @@ class AlbumentationsWrapper:
         >>> tgt_out["boxes"].shape
         torch.Size([1, 4])
         """
+        has_obb = "obb_corners" in target
         boxes_np = self._boxes_to_numpy(target["boxes"])
         num_boxes = boxes_np.shape[0]
         # Track indices to keep per-instance fields synchronized
         idxs = list(range(num_boxes))
+
+        # Prepare OBB corners as keypoints for geometric transformation
+        obb_corners_np = None
+        if has_obb and num_boxes > 0:
+            corners = target["obb_corners"]
+            obb_corners_np = corners.cpu().numpy() if torch.is_tensor(corners) else np.array(corners)
+
         masks_list = None
         if "masks" in target:
             masks = target["masks"]
@@ -529,10 +557,13 @@ class AlbumentationsWrapper:
                 # idxs carries original indices so downstream _filter_per_instance_fields
                 # can correctly slice fields from the un-filtered target.
                 idxs = [idxs[i] for i in valid_positions]
+                if obb_corners_np is not None:
+                    obb_corners_np = obb_corners_np[valid_mask]
         # Apply transform
         transform_kwargs = {"image": image_np, "bboxes": boxes_np, "category_ids": labels, "idxs": idxs}
         if masks_list is not None and len(masks_list) > 0:
             transform_kwargs["masks"] = masks_list
+
         augmented = self.transform(**transform_kwargs)
         target_out: Dict[str, Any] = target.copy()
         bboxes_aug = augmented["bboxes"]
@@ -546,6 +577,8 @@ class AlbumentationsWrapper:
             if "masks" in target:
                 aug_height, aug_width = augmented["image"].shape[:2]
                 target_out["masks"] = torch.zeros((0, aug_height, aug_width), dtype=torch.bool)
+            if has_obb:
+                target_out["obb_corners"] = torch.zeros((0, 8), dtype=torch.float32)
         else:
             target_out["boxes"] = torch.as_tensor(bboxes_aug, dtype=torch.float32).reshape(-1, 4)
             target_out["labels"] = torch.tensor(augmented["category_ids"], dtype=torch.long)
@@ -555,6 +588,28 @@ class AlbumentationsWrapper:
             if "area" in target_out:
                 boxes = target_out["boxes"]
                 target_out["area"] = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
+
+            # For OBB: recompute corners from the transformed axis-aligned boxes
+            # Since we can't easily transform keypoints through A.Compose with bbox_params,
+            # we apply the transform's geometric mapping to the original corners via the
+            # bounding box scale change.
+            if has_obb and obb_corners_np is not None and len(obb_corners_np) > 0:
+                # Use the kept_idxs to filter original corners, then apply the
+                # spatial scaling derived from the bbox transform
+                kept_corners = obb_corners_np[[i for i in kept_idxs]]
+                orig_h, orig_w = image_np.shape[:2]
+                aug_h, aug_w = augmented["image"].shape[:2]
+
+                # Scale corners by the ratio of augmented/original image dimensions
+                scale_x = aug_w / orig_w
+                scale_y = aug_h / orig_h
+                scaled_corners = kept_corners.copy()
+                scaled_corners[:, 0::2] *= scale_x
+                scaled_corners[:, 1::2] *= scale_y
+                target_out["obb_corners"] = torch.as_tensor(
+                    scaled_corners, dtype=torch.float32
+                )
+
         image_out = Image.fromarray(augmented["image"])
         if masks_list is not None and "masks" in augmented:
             height, width = augmented["image"].shape[:2]

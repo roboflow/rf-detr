@@ -18,15 +18,17 @@ from rfdetr.utilities import box_ops
 
 
 class PostProcess(nn.Module):
-    """This module converts the model's output into the format expected by the coco api"""
+    """This module converts the model's output into the format expected by the coco api."""
 
-    def __init__(self, num_select=300) -> None:
+    def __init__(self, num_select=300, oriented=False) -> None:
         super().__init__()
         self.num_select = num_select
+        self.oriented = oriented
 
     @torch.no_grad()
     def forward(self, outputs, target_sizes):
-        """Perform the computation
+        """Perform the computation.
+
         Parameters:
             outputs: raw outputs of the model
             target_sizes: tensor of dimension [batch_size x 2] containing the size of each images of the batch
@@ -44,7 +46,10 @@ class PostProcess(nn.Module):
         scores = topk_values
         topk_boxes = topk_indexes // out_logits.shape[2]
         labels = topk_indexes % out_logits.shape[2]
-        boxes = box_ops.box_cxcywh_to_xyxy(out_bbox)
+
+        # Extract spatial part for xyxy conversion
+        spatial_bbox = out_bbox[..., :4]
+        boxes = box_ops.box_cxcywh_to_xyxy(spatial_bbox)
         boxes = torch.gather(boxes, 1, topk_boxes.unsqueeze(-1).repeat(1, 1, 4))
 
         # and from relative [0, 1] to absolute [0, height] coordinates
@@ -52,11 +57,24 @@ class PostProcess(nn.Module):
         scale_fct = torch.stack([img_w, img_h, img_w, img_h], dim=1)
         boxes = boxes * scale_fct[:, None, :]
 
+        # Gather angles if oriented
+        angles = None
+        if self.oriented and out_bbox.shape[-1] > 4:
+            # Angle is in [0, 1) representing [0, pi) radians
+            angles_raw = out_bbox[..., 4:5]
+            angles = torch.gather(angles_raw, 1, topk_boxes.unsqueeze(-1))
+            # Convert from normalized [0, 1) to radians [0, pi)
+            import math
+
+            angles = angles.squeeze(-1) * math.pi
+
         # Optionally gather masks corresponding to the same top-K queries and resize to original size
         results = []
         if out_masks is not None:
             for i in range(out_masks.shape[0]):
                 res_i = {"scores": scores[i], "labels": labels[i], "boxes": boxes[i]}
+                if angles is not None:
+                    res_i["angles"] = angles[i]
                 k_idx = topk_boxes[i]
                 masks_i = torch.gather(
                     out_masks[i],
@@ -73,8 +91,10 @@ class PostProcess(nn.Module):
                 res_i["masks"] = masks_i > 0.0
                 results.append(res_i)
         else:
-            results = [
-                {"scores": score, "labels": label, "boxes": box} for score, label, box in zip(scores, labels, boxes)
-            ]
+            for i in range(len(scores)):
+                res_i = {"scores": scores[i], "labels": labels[i], "boxes": boxes[i]}
+                if angles is not None:
+                    res_i["angles"] = angles[i]
+                results.append(res_i)
 
         return results

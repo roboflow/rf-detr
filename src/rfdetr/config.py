@@ -81,6 +81,7 @@ class ModelConfig(BaseConfig):
     mask_downsample_ratio: int = 4
     backbone_lora: bool = False
     freeze_encoder: bool = False
+    oriented: bool = False
     license: str = "Apache-2.0"
 
     @field_validator("pretrain_weights", mode="after")
@@ -333,7 +334,8 @@ class TrainConfig(BaseModel):
     ia_bce_loss: bool = True
     cls_loss_coef: float = 1.0
     num_select: int = 300
-    dataset_file: Literal["coco", "o365", "roboflow", "yolo"] = "roboflow"
+    loss_angle_coef: float = 1.0
+    dataset_file: Literal["coco", "o365", "roboflow", "yolo", "dota", "multi"] = "roboflow"
     square_resize_div_64: bool = True
     dataset_dir: str
     output_dir: str = "output"
@@ -465,3 +467,45 @@ class SegmentationTrainConfig(TrainConfig):
     mask_dice_loss_coef: float = 5.0
     cls_loss_coef: float = 5.0
     segmentation_head: bool = True
+
+
+class DatasetEntry(BaseModel):
+    """Configuration for a single dataset within a multi-dataset YAML config.
+
+    Args:
+        path: Path to the dataset root directory.
+        format: Dataset format identifier.
+        oriented: Whether the dataset contains oriented bounding boxes.
+        weight: Sampling weight relative to other datasets in the same split.
+        class_mapping: Optional mapping from source class names to target class indices.
+        aug_config: Optional per-dataset augmentation config override.
+    """
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
+    path: str
+    format: Literal["coco", "yolo", "dota"] = "dota"
+    oriented: bool = True
+    weight: float = 1.0
+    class_mapping: Optional[Dict[str, int]] = None
+    aug_config: Optional[Dict[str, Any]] = None
+
+
+class MultiDatasetConfig(BaseModel):
+    """Configuration for combining multiple datasets via a YAML file.
+
+    Args:
+        num_classes: Total number of output classes for the combined dataset.
+        class_names: Optional list of class names in order.
+        train: List of dataset entries for the training split.
+        val: List of dataset entries for the validation split.
+        test: Optional list of dataset entries for the test split.
+    """
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
+    num_classes: int
+    class_names: Optional[List[str]] = None
+    train: List[DatasetEntry]
+    val: List[DatasetEntry]
+    test: Optional[List[DatasetEntry]] = None

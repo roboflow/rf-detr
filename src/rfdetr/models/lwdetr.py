@@ -63,6 +63,7 @@ class LWDETR(nn.Module):
         two_stage=False,
         lite_refpoint_refine=False,
         bbox_reparam=False,
+        oriented=False,
     ):
         """Initializes the model.
         Parameters:
@@ -74,13 +75,16 @@ class LWDETR(nn.Module):
             aux_loss: True if auxiliary decoding losses (loss at each decoder layer) are to be used.
             group_detr: Number of groups to speed detr training. Default is 1.
             lite_refpoint_refine: TODO
+            oriented: If True, predict oriented bounding boxes (cx, cy, w, h, angle).
         """
         super().__init__()
         self.num_queries = num_queries
         self.transformer = transformer
+        self.oriented = oriented
         hidden_dim = transformer.d_model
         self.class_embed = nn.Linear(hidden_dim, num_classes)
-        self.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
+        bbox_dim = 5 if oriented else 4
+        self.bbox_embed = MLP(hidden_dim, hidden_dim, bbox_dim, 3)
         self.segmentation_head = segmentation_head
 
         query_dim = 4
@@ -191,10 +195,20 @@ class LWDETR(nn.Module):
             if self.bbox_reparam:
                 outputs_coord_delta = self.bbox_embed(hs)
                 outputs_coord_cxcy = outputs_coord_delta[..., :2] * ref_unsigmoid[..., 2:] + ref_unsigmoid[..., :2]
-                outputs_coord_wh = outputs_coord_delta[..., 2:].exp() * ref_unsigmoid[..., 2:]
-                outputs_coord = torch.concat([outputs_coord_cxcy, outputs_coord_wh], dim=-1)
+                outputs_coord_wh = outputs_coord_delta[..., 2:4].exp() * ref_unsigmoid[..., 2:]
+                if self.oriented:
+                    outputs_angle = outputs_coord_delta[..., 4:5].sigmoid()
+                    outputs_coord = torch.concat([outputs_coord_cxcy, outputs_coord_wh, outputs_angle], dim=-1)
+                else:
+                    outputs_coord = torch.concat([outputs_coord_cxcy, outputs_coord_wh], dim=-1)
             else:
-                outputs_coord = (self.bbox_embed(hs) + ref_unsigmoid).sigmoid()
+                raw = self.bbox_embed(hs)
+                if self.oriented:
+                    spatial = (raw[..., :4] + ref_unsigmoid).sigmoid()
+                    angle = raw[..., 4:5].sigmoid()
+                    outputs_coord = torch.concat([spatial, angle], dim=-1)
+                else:
+                    outputs_coord = (raw + ref_unsigmoid).sigmoid()
 
             outputs_class = self.class_embed(hs)
 
@@ -258,10 +272,20 @@ class LWDETR(nn.Module):
             if self.bbox_reparam:
                 outputs_coord_delta = self.bbox_embed(hs)
                 outputs_coord_cxcy = outputs_coord_delta[..., :2] * ref_unsigmoid[..., 2:] + ref_unsigmoid[..., :2]
-                outputs_coord_wh = outputs_coord_delta[..., 2:].exp() * ref_unsigmoid[..., 2:]
-                outputs_coord = torch.concat([outputs_coord_cxcy, outputs_coord_wh], dim=-1)
+                outputs_coord_wh = outputs_coord_delta[..., 2:4].exp() * ref_unsigmoid[..., 2:]
+                if self.oriented:
+                    outputs_angle = outputs_coord_delta[..., 4:5].sigmoid()
+                    outputs_coord = torch.concat([outputs_coord_cxcy, outputs_coord_wh, outputs_angle], dim=-1)
+                else:
+                    outputs_coord = torch.concat([outputs_coord_cxcy, outputs_coord_wh], dim=-1)
             else:
-                outputs_coord = (self.bbox_embed(hs) + ref_unsigmoid).sigmoid()
+                raw = self.bbox_embed(hs)
+                if self.oriented:
+                    spatial = (raw[..., :4] + ref_unsigmoid).sigmoid()
+                    angle = raw[..., 4:5].sigmoid()
+                    outputs_coord = torch.concat([spatial, angle], dim=-1)
+                else:
+                    outputs_coord = (raw + ref_unsigmoid).sigmoid()
             outputs_class = self.class_embed(hs)
             if self.segmentation_head is not None:
                 outputs_masks = self.segmentation_head(
@@ -417,6 +441,7 @@ def build_model(args):
         two_stage=args.two_stage,
         lite_refpoint_refine=args.lite_refpoint_refine,
         bbox_reparam=args.bbox_reparam,
+        oriented=getattr(args, "oriented", False),
     )
     return model
 
@@ -426,6 +451,9 @@ def build_criterion_and_postprocessors(args):
     matcher = build_matcher(args)
     weight_dict = {"loss_ce": args.cls_loss_coef, "loss_bbox": args.bbox_loss_coef}
     weight_dict["loss_giou"] = args.giou_loss_coef
+    oriented = getattr(args, "oriented", False)
+    if oriented:
+        weight_dict["loss_angle"] = getattr(args, "loss_angle_coef", 1.0)
     if args.segmentation_head:
         weight_dict["loss_mask_ce"] = args.mask_ce_loss_coef
         weight_dict["loss_mask_dice"] = args.mask_dice_loss_coef
@@ -456,6 +484,7 @@ def build_criterion_and_postprocessors(args):
             use_position_supervised_loss=args.use_position_supervised_loss,
             ia_bce_loss=args.ia_bce_loss,
             mask_point_sample_ratio=args.mask_point_sample_ratio,
+            oriented=oriented,
         )
     else:
         criterion = SetCriterion(
@@ -469,8 +498,9 @@ def build_criterion_and_postprocessors(args):
             use_varifocal_loss=args.use_varifocal_loss,
             use_position_supervised_loss=args.use_position_supervised_loss,
             ia_bce_loss=args.ia_bce_loss,
+            oriented=oriented,
         )
     criterion.to(device)
-    postprocess = PostProcess(num_select=args.num_select)
+    postprocess = PostProcess(num_select=args.num_select, oriented=oriented)
 
     return criterion, postprocess

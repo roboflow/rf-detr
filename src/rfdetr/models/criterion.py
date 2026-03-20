@@ -21,6 +21,7 @@ from rfdetr.models.heads.segmentation import (
 )
 from rfdetr.models.math import accuracy
 from rfdetr.utilities import box_ops
+from rfdetr.utilities.box_ops import circular_angle_loss
 from rfdetr.utilities.distributed import get_world_size, is_dist_avail_and_initialized
 
 
@@ -143,6 +144,7 @@ class SetCriterion(nn.Module):
         use_position_supervised_loss=False,
         ia_bce_loss=False,
         mask_point_sample_ratio: int = 16,
+        oriented=False,
     ):
         """Create the criterion.
         Parameters:
@@ -152,6 +154,7 @@ class SetCriterion(nn.Module):
             losses: list of all the losses to be applied. See get_loss for list of available losses.
             focal_alpha: alpha in Focal Loss
             group_detr: Number of groups to speed detr training. Default is 1.
+            oriented: If True, handle oriented bounding boxes with angle component.
         """
         super().__init__()
         self.num_classes = num_classes
@@ -165,6 +168,7 @@ class SetCriterion(nn.Module):
         self.use_position_supervised_loss = use_position_supervised_loss
         self.ia_bce_loss = ia_bce_loss
         self.mask_point_sample_ratio = mask_point_sample_ratio
+        self.oriented = oriented
 
     def loss_labels(self, outputs, targets, indices, num_boxes, log=True):
         """Classification loss (Binary focal loss)
@@ -182,10 +186,14 @@ class SetCriterion(nn.Module):
             src_boxes = outputs["pred_boxes"][idx]
             target_boxes = torch.cat([t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0)
 
+            # For oriented boxes, use only spatial part (cx, cy, w, h) for IoU
+            src_spatial = src_boxes[..., :4]
+            tgt_spatial = target_boxes[..., :4]
+
             iou_targets = torch.diag(
                 box_ops.box_iou(
-                    box_ops.box_cxcywh_to_xyxy(src_boxes.detach()),
-                    box_ops.box_cxcywh_to_xyxy(target_boxes),
+                    box_ops.box_cxcywh_to_xyxy(src_spatial.detach()),
+                    box_ops.box_cxcywh_to_xyxy(tgt_spatial),
                 )[0]
             )
             pos_ious = iou_targets.clone().detach()
@@ -211,10 +219,13 @@ class SetCriterion(nn.Module):
             src_boxes = outputs["pred_boxes"][idx]
             target_boxes = torch.cat([t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0)
 
+            src_spatial = src_boxes[..., :4]
+            tgt_spatial = target_boxes[..., :4]
+
             iou_targets = torch.diag(
                 box_ops.box_iou(
-                    box_ops.box_cxcywh_to_xyxy(src_boxes.detach()),
-                    box_ops.box_cxcywh_to_xyxy(target_boxes),
+                    box_ops.box_cxcywh_to_xyxy(src_spatial.detach()),
+                    box_ops.box_cxcywh_to_xyxy(tgt_spatial),
                 )[0]
             )
             pos_ious = iou_targets.clone().detach()
@@ -249,10 +260,13 @@ class SetCriterion(nn.Module):
             src_boxes = outputs["pred_boxes"][idx]
             target_boxes = torch.cat([t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0)
 
+            src_spatial = src_boxes[..., :4]
+            tgt_spatial = target_boxes[..., :4]
+
             iou_targets = torch.diag(
                 box_ops.box_iou(
-                    box_ops.box_cxcywh_to_xyxy(src_boxes.detach()),
-                    box_ops.box_cxcywh_to_xyxy(target_boxes),
+                    box_ops.box_cxcywh_to_xyxy(src_spatial.detach()),
+                    box_ops.box_cxcywh_to_xyxy(tgt_spatial),
                 )[0]
             )
             pos_ious = iou_targets.clone().detach()
@@ -326,27 +340,40 @@ class SetCriterion(nn.Module):
         return losses
 
     def loss_boxes(self, outputs, targets, indices, num_boxes):
-        """Compute the losses related to the bounding boxes, the L1 regression loss and the GIoU loss
-        targets dicts must contain the key "boxes" containing a tensor of dim [nb_target_boxes, 4]
-        The target boxes are expected in format (center_x, center_y, w, h), normalized by the image size.
+        """Compute the losses related to the bounding boxes, the L1 regression loss and the GIoU loss.
+
+        For oriented boxes (self.oriented=True), also computes a circular angle loss.
+        targets dicts must contain the key "boxes" containing a tensor of dim [nb_target_boxes, 4 or 5].
+        The target boxes are expected in format (center_x, center_y, w, h[, angle]), normalized by the image size.
         """
         assert "pred_boxes" in outputs
         idx = self._get_src_permutation_idx(indices)
         src_boxes = outputs["pred_boxes"][idx]
         target_boxes = torch.cat([t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0)
 
-        loss_bbox = F.l1_loss(src_boxes, target_boxes, reduction="none")
+        # Compute L1 and GIoU on spatial part only (cx, cy, w, h)
+        src_spatial = src_boxes[..., :4]
+        tgt_spatial = target_boxes[..., :4]
+
+        loss_bbox = F.l1_loss(src_spatial, tgt_spatial, reduction="none")
 
         losses = {}
         losses["loss_bbox"] = loss_bbox.sum() / num_boxes
 
         loss_giou = 1 - torch.diag(
             box_ops.generalized_box_iou(
-                box_ops.box_cxcywh_to_xyxy(src_boxes),
-                box_ops.box_cxcywh_to_xyxy(target_boxes),
+                box_ops.box_cxcywh_to_xyxy(src_spatial),
+                box_ops.box_cxcywh_to_xyxy(tgt_spatial),
             )
         )
         losses["loss_giou"] = loss_giou.sum() / num_boxes
+
+        if self.oriented:
+            src_angle = src_boxes[..., 4]
+            tgt_angle = target_boxes[..., 4]
+            loss_angle = circular_angle_loss(src_angle, tgt_angle)
+            losses["loss_angle"] = loss_angle.sum() / num_boxes
+
         return losses
 
     def loss_masks(self, outputs, targets, indices, num_boxes):

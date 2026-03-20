@@ -158,3 +158,94 @@ def batch_sigmoid_ce_loss(inputs: torch.Tensor, targets: torch.Tensor) -> torch.
 
 
 batch_sigmoid_ce_loss_jit = torch.jit.script(batch_sigmoid_ce_loss)  # type: torch.jit.ScriptModule
+
+
+def corners_to_obb(corners: torch.Tensor) -> torch.Tensor:
+    """Convert 4 corner points to oriented bounding box (cx, cy, w, h, angle).
+
+    Uses minimum-area rectangle fitting via the first edge as the width direction.
+    The angle is normalized to [0, pi) since rectangles have 180-degree symmetry.
+
+    Args:
+        corners: Tensor of shape (..., 8) with corner points (x1,y1,x2,y2,x3,y3,x4,y4)
+            ordered sequentially around the rectangle.
+
+    Returns:
+        Tensor of shape (..., 5) with (cx, cy, w, h, angle) where angle is in radians [0, pi).
+    """
+    shape = corners.shape[:-1]
+    pts = corners.reshape(*shape, 4, 2)
+
+    cx = pts[..., 0].mean(dim=-1)
+    cy = pts[..., 1].mean(dim=-1)
+
+    # Width direction: edge from corner 0 to corner 1
+    edge_w = pts[..., 1, :] - pts[..., 0, :]
+    # Height direction: edge from corner 1 to corner 2
+    edge_h = pts[..., 2, :] - pts[..., 1, :]
+
+    w = edge_w.norm(dim=-1)
+    h = edge_h.norm(dim=-1)
+
+    angle = torch.atan2(edge_w[..., 1], edge_w[..., 0])
+    # Normalize to [0, pi)
+    angle = angle % torch.pi
+
+    return torch.stack([cx, cy, w, h, angle], dim=-1)
+
+
+def obb_to_corners(obb: torch.Tensor) -> torch.Tensor:
+    """Convert oriented bounding box (cx, cy, w, h, angle) to 4 corner points.
+
+    Args:
+        obb: Tensor of shape (..., 5) with (cx, cy, w, h, angle) where angle is in radians.
+
+    Returns:
+        Tensor of shape (..., 8) with corner points (x1,y1,x2,y2,x3,y3,x4,y4)
+            ordered: top-left, top-right, bottom-right, bottom-left relative to the
+            rotated rectangle.
+    """
+    cx, cy, w, h, angle = obb.unbind(-1)
+
+    cos_a = torch.cos(angle)
+    sin_a = torch.sin(angle)
+
+    # Half-extents along width and height directions
+    hw = w / 2
+    hh = h / 2
+
+    # Direction vectors
+    dx_w = hw * cos_a
+    dy_w = hw * sin_a
+    dx_h = -hh * sin_a
+    dy_h = hh * cos_a
+
+    # Four corners: center +/- half-width-dir +/- half-height-dir
+    x1 = cx - dx_w - dx_h
+    y1 = cy - dy_w - dy_h
+    x2 = cx + dx_w - dx_h
+    y2 = cy + dy_w - dy_h
+    x3 = cx + dx_w + dx_h
+    y3 = cy + dy_w + dy_h
+    x4 = cx - dx_w + dx_h
+    y4 = cy - dy_w + dy_h
+
+    return torch.stack([x1, y1, x2, y2, x3, y3, x4, y4], dim=-1)
+
+
+def circular_angle_loss(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    """Compute L1-like loss for angles with circular wrapping at pi (180 degrees).
+
+    Since oriented bounding boxes have 180-degree symmetry, angles 0 and pi
+    represent the same orientation. This loss handles the discontinuity at
+    the boundary.
+
+    Args:
+        pred: Predicted angles normalized to [0, 1) representing [0, pi).
+        target: Target angles normalized to [0, 1) representing [0, pi).
+
+    Returns:
+        Per-element loss tensor with values in [0, 0.5].
+    """
+    diff = (pred - target).abs()
+    return torch.min(diff, 1.0 - diff)

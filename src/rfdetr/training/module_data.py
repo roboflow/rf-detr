@@ -106,6 +106,29 @@ class RFDETRDataModule(LightningDataModule):
         effective_batch_size = batch_size * self.train_config.grad_accum_steps
         num_workers = self.train_config.num_workers
 
+        # Use weighted sampling for multi-dataset configs
+        sample_weights = getattr(dataset, "sample_weights", None)
+        if sample_weights is not None:
+            logger.info(
+                "Training with weighted sampler for multi-dataset: %d samples",
+                len(dataset),
+            )
+            sampler = torch.utils.data.WeightedRandomSampler(
+                weights=sample_weights,
+                num_samples=len(dataset),
+                replacement=True,
+            )
+            return DataLoader(
+                dataset,
+                batch_size=batch_size,
+                sampler=sampler,
+                collate_fn=collate_fn,
+                num_workers=num_workers,
+                pin_memory=self._pin_memory,
+                persistent_workers=self._persistent_workers,
+                prefetch_factor=self._prefetch_factor,
+            )
+
         if len(dataset) < effective_batch_size * _MIN_TRAIN_BATCHES:
             logger.info(
                 "Training with uniform sampler because dataset is too small: %d < %d",
