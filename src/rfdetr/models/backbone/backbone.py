@@ -119,8 +119,12 @@ class Backbone(BackboneBase):
 
         try:
             from peft import PeftModel
-        except ImportError:
+        except ModuleNotFoundError:
+            logger.warning("peft is not installed; skipping LoRA weight merging during export.")
             return
+        except ImportError as exc:
+            logger.warning("Failed to import PeftModel from peft during export: %s", exc)
+            raise
 
         if isinstance(self.encoder, PeftModel):
             logger.info("Merging and unloading LoRA weights")

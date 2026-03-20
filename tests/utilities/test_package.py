@@ -58,4 +58,9 @@ def test_peft_not_imported_eagerly_on_backbone_import_characterization() -> None
         text=True,
         check=False,
     )
-    assert result.returncode == 0, f"peft was eagerly imported by backbone.backbone.\nstderr: {result.stderr}"
+    assert result.returncode == 0, (
+        "Subprocess for backbone import failed:\n"
+        f"return code: {result.returncode}\n"
+        f"stdout:\n{result.stdout}\n"
+        f"stderr:\n{result.stderr}"
+    )
