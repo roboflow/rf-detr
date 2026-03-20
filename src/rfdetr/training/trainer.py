@@ -189,9 +189,7 @@ def build_trainer(
             _logger.warning("MLflow logging disabled: %s. Install with: pip install mlflow", exc)
 
     if tc.clearml:
-        raise NotImplementedError(
-            "ClearML logging is not yet supported. Remove clearml=True from TrainConfig."
-        )
+        raise NotImplementedError("ClearML logging is not yet supported. Remove clearml=True from TrainConfig.")
 
     # --- Promoted config fields (T4-2 added these to TrainConfig) ---
     clip_max_norm: float = tc.clip_max_norm
