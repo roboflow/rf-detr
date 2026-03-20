@@ -65,9 +65,7 @@ class DotaDetection(VisionDataset):
 
         # Collect all image paths with supported extensions
         self.image_paths: List[Path] = sorted(
-            p
-            for p in images_dir.iterdir()
-            if p.suffix.lower() in {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
+            p for p in images_dir.iterdir() if p.suffix.lower() in {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
         )
 
         if len(self.image_paths) == 0:

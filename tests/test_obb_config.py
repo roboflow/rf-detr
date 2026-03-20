@@ -6,7 +6,6 @@
 
 """Tests for oriented bounding box configuration fields."""
 
-
 from rfdetr.config import DatasetEntry, ModelConfig, MultiDatasetConfig, TrainConfig
 
 

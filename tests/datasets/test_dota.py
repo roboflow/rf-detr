@@ -30,15 +30,10 @@ def dota_dataset_dir(tmp_path: Path) -> Path:
 
     # Create label files
     # Image 0: two objects
-    (labels_dir / "img_0000.txt").write_text(
-        "10 10 50 10 50 40 10 40 plane 0\n"
-        "60 60 90 60 90 90 60 90 ship 0\n"
-    )
+    (labels_dir / "img_0000.txt").write_text("10 10 50 10 50 40 10 40 plane 0\n60 60 90 60 90 90 60 90 ship 0\n")
 
     # Image 1: one object
-    (labels_dir / "img_0001.txt").write_text(
-        "20 20 80 20 80 80 20 80 plane 0\n"
-    )
+    (labels_dir / "img_0001.txt").write_text("20 20 80 20 80 80 20 80 plane 0\n")
 
     # Image 2: no objects (empty label file)
     (labels_dir / "img_0002.txt").write_text("")

@@ -37,9 +37,7 @@ class TestCornersToObb:
         """A box rotated by 45 degrees."""
         s = math.sqrt(2) / 2
         # Square of side 2 rotated 45 degrees, centered at origin
-        corners = torch.tensor(
-            [[0.0, -s * 2, s * 2, 0.0, 0.0, s * 2, -s * 2, 0.0]]
-        )
+        corners = torch.tensor([[0.0, -s * 2, s * 2, 0.0, 0.0, s * 2, -s * 2, 0.0]])
         obb = corners_to_obb(corners)
         assert abs(obb[0, 4].item() - math.pi / 4) < 0.01
 

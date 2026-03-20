@@ -72,9 +72,7 @@ class Normalize(object):
                     angle = obb[..., 4:5] / torch.pi
                     boxes = torch.cat([boxes, angle], dim=-1)
                 else:
-                    boxes = torch.cat(
-                        [boxes, torch.zeros((0, 1), dtype=torch.float32)], dim=-1
-                    )
+                    boxes = torch.cat([boxes, torch.zeros((0, 1), dtype=torch.float32)], dim=-1)
                 del target["obb_corners"]
             target["boxes"] = boxes
         return image, target
@@ -606,9 +604,7 @@ class AlbumentationsWrapper:
                 scaled_corners = kept_corners.copy()
                 scaled_corners[:, 0::2] *= scale_x
                 scaled_corners[:, 1::2] *= scale_y
-                target_out["obb_corners"] = torch.as_tensor(
-                    scaled_corners, dtype=torch.float32
-                )
+                target_out["obb_corners"] = torch.as_tensor(scaled_corners, dtype=torch.float32)
 
         image_out = Image.fromarray(augmented["image"])
         if masks_list is not None and "masks" in augmented:
