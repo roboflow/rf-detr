@@ -585,7 +585,7 @@ class RFDETR:
             COCO class names.
         """
         if hasattr(self.model, "class_names") and self.model.class_names is not None:
-            return self.model.class_names
+            return list(self.model.class_names)
 
         return COCO_CLASS_NAMES
 

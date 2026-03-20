@@ -987,3 +987,14 @@ class TestClassNamesProperty:
         result = RFDETR.class_names.fget(mock_self)
 
         assert result == ["cat", "dog"]
+
+    def test_custom_class_names_returns_shallow_copy(self):
+        """Mutating the returned class_names list must not mutate model state."""
+        mock_self = MagicMock()
+        mock_self.model.class_names = ["cat", "dog"]
+
+        result = RFDETR.class_names.fget(mock_self)
+        result.append("bird")
+
+        assert result == ["cat", "dog", "bird"]
+        assert mock_self.model.class_names == ["cat", "dog"]
