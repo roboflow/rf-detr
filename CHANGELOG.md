@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Deprecated
 
-The following fields are duplicated between `ModelConfig` and `TrainConfig`; clear ownership is being established for v1.9. Each field now emits `DeprecationWarning` when set on the wrong config object.  The fields continue to work as before — this is a warning-only Phase A change.
+The following fields are duplicated between `ModelConfig` and `TrainConfig`; clear ownership is being established for v1.9. Each field now emits `DeprecationWarning` when set on the wrong config object. The fields continue to work as before — this is a warning-only Phase A change.
 
 - `TrainConfig.group_detr` — architecture decision; set on `ModelConfig` instead.
 - `TrainConfig.ia_bce_loss` — loss type tied to architecture family; set on `ModelConfig` instead.
