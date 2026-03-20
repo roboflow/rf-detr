@@ -49,7 +49,21 @@ _REMOVED_IN_V17 = {
 
 
 def __getattr__(name: str):
-    """Resolve PTL and plus-only exports lazily, raising only on explicit access."""
+    """Lazily resolve training/PTL and plus-only exports and handle removed-module aliases.
+
+    This hook is only invoked on explicit attribute access (e.g. ``rfdetr.RFDETRModelModule``)
+    and supports three behaviors:
+
+    * Training/PTL exports (names in ``_LAZY_TRAINING``) are imported from ``rfdetr.training``
+      on first use to avoid importing PyTorch Lightning at ``import rfdetr`` time.
+    * Plus-only exports (names in ``_PLUS_EXPORTS``) are imported from ``rfdetr.platform.models``,
+      and a descriptive ``ImportError`` is raised with an installation hint if the model is
+      not available.
+    * Removed-module aliases (keys in ``_REMOVED_IN_V17``, such as ``util`` and ``deploy``)
+      are first attempted via a shim submodule (e.g. ``rfdetr.util``); once the shim files
+      are removed, a migration-hint ``ImportError`` is raised instead of silently masking
+      unrelated nested import errors.
+    """
     if name in _REMOVED_IN_V17:
         module_name = f"{__name__}.{name}"
         try:
