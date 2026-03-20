@@ -4,7 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-"""LightningModule for RF-DETR training and validation (Phase 1)."""
+"""LightningModule for RF-DETR training and validation."""
 
 from __future__ import annotations
 
@@ -25,17 +25,13 @@ from rfdetr.datasets.coco import compute_multi_scale_scales
 from rfdetr.models.lwdetr import build_criterion_and_postprocessors, build_model
 from rfdetr.training.param_groups import get_param_dict
 from rfdetr.utilities.logger import get_logger
-from rfdetr.utilities.state_dict import _ckpt_args_get, validate_checkpoint_compatibility
+from rfdetr.utilities.state_dict import validate_checkpoint_compatibility
 
 logger = get_logger()
 
 
 class RFDETRModelModule(LightningModule):
     """LightningModule wrapping the RF-DETR model and training loop.
-
-    Migrates ``Model.__init__``, ``train_one_epoch``, ``evaluate``, and
-    optimizer setup from ``main.py`` / ``engine.py`` into PTL lifecycle hooks.
-    Coexists with the existing code until Chapter 4 removes the legacy path.
 
     Args:
         model_config: Architecture configuration.
@@ -123,9 +119,6 @@ class RFDETRModelModule(LightningModule):
             download_pretrain_weights(pretrain_weights, redownload=True, validate_md5=False)
             checkpoint = torch.load(pretrain_weights, map_location="cpu", weights_only=False)
 
-        if "args" in checkpoint:
-            self._pretrain_class_names = _ckpt_args_get(checkpoint["args"], "class_names")
-
         ns = build_namespace(mc, self.train_config)
         validate_checkpoint_compatibility(checkpoint, ns)
 
@@ -156,7 +149,7 @@ class RFDETRModelModule(LightningModule):
             self.model.reinitialize_detection_head(checkpoint_num_classes)
 
         # Trim query embeddings to the configured query count.
-        num_desired_queries = getattr(mc, "num_queries", 300) * getattr(mc, "group_detr", 13)
+        num_desired_queries = mc.num_queries * mc.group_detr
         query_param_names = ["refpoint_embed.weight", "query_feat.weight"]
         for name in list(checkpoint["model"].keys()):
             if any(name.endswith(x) for x in query_param_names):

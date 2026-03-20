@@ -12,7 +12,7 @@ import warnings
 from collections import defaultdict
 from copy import deepcopy
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, List, Optional, Union
 
 import numpy as np
 import requests
@@ -24,7 +24,7 @@ import torchvision.transforms.functional as F
 import yaml
 from PIL import Image
 
-from rfdetr.assets.coco_classes import COCO_CLASSES
+from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
 from rfdetr.assets.model_weights import download_pretrain_weights, validate_pretrain_weights
 from rfdetr.config import (
     ModelConfig,
@@ -58,7 +58,7 @@ except Exception:
 logger = get_logger()
 
 
-class _ModelContext:
+class ModelContext:
     """Lightweight model wrapper returned by RFDETR.get_model().
 
     Provides the same attribute interface as the legacy ``main.py:Model`` but
@@ -98,6 +98,9 @@ class _ModelContext:
         """
         self.model.reinitialize_detection_head(num_classes)
         self.args.num_classes = num_classes
+
+
+_ModelContext = ModelContext  # backward compat alias
 
 
 def _load_pretrain_weights_into(nn_model: torch.nn.Module, args: Any) -> List[str]:
@@ -185,8 +188,8 @@ def _apply_lora_to(nn_model: torch.nn.Module) -> None:
     nn_model.backbone[0].encoder = get_peft_model(nn_model.backbone[0].encoder, lora_config)
 
 
-def _build_model_context(model_config: ModelConfig) -> "_ModelContext":
-    """Build a _ModelContext from ModelConfig without using legacy main.py:Model.
+def _build_model_context(model_config: ModelConfig) -> "ModelContext":
+    """Build a ModelContext from ModelConfig without using legacy main.py:Model.
 
     Replicates ``Model.__init__`` logic: builds the nn.Module, optionally loads
     pretrain weights and applies LoRA, then moves the model to the target device.
@@ -195,7 +198,7 @@ def _build_model_context(model_config: ModelConfig) -> "_ModelContext":
         model_config: Architecture configuration.
 
     Returns:
-        Fully initialised _ModelContext ready for inference or training.
+        Fully initialised ModelContext ready for inference or training.
     """
     from rfdetr._namespace import build_namespace
 
@@ -215,7 +218,7 @@ def _build_model_context(model_config: ModelConfig) -> "_ModelContext":
     nn_model = nn_model.to(device)
     postprocess = PostProcess(num_select=args.num_select)
 
-    return _ModelContext(
+    return ModelContext(
         model=nn_model,
         postprocess=postprocess,
         device=device,
@@ -560,34 +563,31 @@ class RFDETR:
         """
         return self._train_config_class(**kwargs)
 
-    def get_model(self, config: ModelConfig) -> "_ModelContext":
+    def get_model(self, config: ModelConfig) -> "ModelContext":
         """Retrieve a model context from the provided architecture configuration.
 
         Args:
             config: Architecture configuration.
 
         Returns:
-            _ModelContext with model, postprocess, device, resolution, args,
+            ModelContext with model, postprocess, device, resolution, args,
             and class_names attributes.
         """
         return _build_model_context(config)
 
-    # Get class_names from the model
     @property
-    def class_names(self) -> Dict[int, str]:
+    def class_names(self) -> List[str]:
         """Retrieve the class names supported by the loaded model.
 
         Returns:
-            A dictionary mapping integer class IDs to class name strings.
-            IDs are 1-indexed and may be non-contiguous (e.g. COCO category
-            IDs have gaps such as 11→13 and 25→27).  When no custom class
-            names are embedded in the checkpoint, returns the standard COCO
-            classes dict.
+            A list of class name strings, 0-indexed.  When no custom class
+            names are embedded in the checkpoint, returns the standard 80
+            COCO class names.
         """
         if hasattr(self.model, "class_names") and self.model.class_names is not None:
-            return {i + 1: name for i, name in enumerate(self.model.class_names)}
+            return self.model.class_names
 
-        return COCO_CLASSES
+        return COCO_CLASS_NAMES
 
     def predict(
         self,

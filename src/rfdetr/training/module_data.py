@@ -4,7 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-"""LightningDataModule for RF-DETR dataset construction and loaders (Phase 2)."""
+"""LightningDataModule for RF-DETR dataset construction and loaders."""
 
 from typing import List, Optional, Tuple
 
@@ -26,10 +26,6 @@ _MIN_TRAIN_BATCHES = 5
 
 class RFDETRDataModule(LightningDataModule):
     """LightningDataModule wrapping RF-DETR dataset construction and data loading.
-
-    Migrates ``Model.train()`` dataset construction and DataLoader setup from
-    ``main.py`` into PTL lifecycle hooks.  Coexists with the existing code until
-    Chapter 4 removes the legacy path.
 
     Args:
         model_config: Architecture configuration (used for resolution, patch_size, etc.).

@@ -189,12 +189,8 @@ def build_trainer(
             _logger.warning("MLflow logging disabled: %s. Install with: pip install mlflow", exc)
 
     if tc.clearml:
-        warnings.warn(
-            "ClearML logging is not supported via a native PTL logger in this version."
-            " Metrics will not be logged to ClearML. Use the ClearML SDK callback directly"
-            " or wait for a dedicated ClearML PTL logger integration.",
-            UserWarning,
-            stacklevel=2,
+        raise NotImplementedError(
+            "ClearML logging is not yet supported. Remove clearml=True from TrainConfig."
         )
 
     # --- Promoted config fields (T4-2 added these to TrainConfig) ---

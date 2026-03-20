@@ -68,9 +68,8 @@ def build_namespace(model_config: ModelConfig, train_config: TrainConfig) -> Any
         cls_loss_coef=mc.cls_loss_coef,
         segmentation_head=mc.segmentation_head,
         mask_downsample_ratio=mc.mask_downsample_ratio,
-        # num_queries / num_select live on subclass configs.
-        num_queries=getattr(mc, "num_queries", 300),
-        num_select=getattr(mc, "num_select", tc.num_select),
+        num_queries=mc.num_queries,
+        num_select=mc.num_select,
         # --- TrainConfig fields ---
         lr=tc.lr,
         lr_encoder=tc.lr_encoder,
@@ -155,9 +154,9 @@ def build_namespace(model_config: ModelConfig, train_config: TrainConfig) -> Any
         use_cls_token=False,
         lr_scheduler="step",
         lr_min_factor=0.0,
-        early_stopping=True,
-        early_stopping_patience=10,
-        early_stopping_min_delta=0.001,
+        early_stopping=tc.early_stopping,
+        early_stopping_patience=tc.early_stopping_patience,
+        early_stopping_min_delta=tc.early_stopping_min_delta,
         early_stopping_use_ema=tc.early_stopping_use_ema,
         subcommand=None,
     )

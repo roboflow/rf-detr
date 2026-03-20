@@ -110,7 +110,7 @@ class BestModelCallback(ModelCheckpoint):
 
         Args:
             trainer: The Lightning Trainer instance.
-            pl_module: The ``RFDETRModule`` being trained.
+            pl_module: The ``RFDETRModelModule`` being trained.
 
         Returns:
             EMA model state dict when available, otherwise the live model state dict.
@@ -185,7 +185,7 @@ class BestModelCallback(ModelCheckpoint):
 
         Args:
             trainer: The Lightning Trainer instance.
-            pl_module: The ``RFDETRModule`` being trained.
+            pl_module: The ``RFDETRModelModule`` being trained.
         """
         # Stash for use inside _save_checkpoint (which has no pl_module param).
         self._current_pl_module = pl_module
@@ -231,7 +231,7 @@ class BestModelCallback(ModelCheckpoint):
 
         Args:
             trainer: The Lightning Trainer instance.
-            pl_module: The ``RFDETRModule`` being trained.
+            pl_module: The ``RFDETRModelModule`` being trained.
         """
         if not trainer.is_global_zero:
             return
@@ -331,7 +331,7 @@ class RFDETREarlyStopping(EarlyStopping):
 
         Args:
             trainer: The Lightning Trainer instance.
-            pl_module: The ``RFDETRModule`` being trained.
+            pl_module: The ``RFDETRModelModule`` being trained.
         """
         metrics = trainer.callback_metrics
         regular_tensor = metrics.get(self._monitor_regular)

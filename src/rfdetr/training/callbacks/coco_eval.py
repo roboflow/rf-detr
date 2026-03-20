@@ -4,7 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-"""COCOEvalCallback — torchmetrics-based mAP and F1 evaluation (Phase 3)."""
+"""COCOEvalCallback — torchmetrics-based mAP and F1 evaluation."""
 
 import contextlib
 from typing import Any
@@ -146,7 +146,7 @@ class COCOEvalCallback(Callback):
         """Accumulate predictions and matching data for one validation batch.
 
         Expects ``outputs`` to be the dict returned by
-        ``RFDETRModule.validation_step``:
+        ``RFDETRModelModule.validation_step``:
         ``{"results": list[dict], "targets": list[dict]}``.
 
         When an EMA callback is present the EMA model is run on the same batch

@@ -349,24 +349,6 @@ class TestLoadPretrainWeights:
 
     @patch("rfdetr.training.module_model.torch.load")
     @patch("rfdetr.training.module_model.validate_pretrain_weights")
-    def test_pretrain_class_names_stored_when_present(
-        self, mock_validate, mock_torch_load, base_model_config, build_module
-    ):
-        """Class names from checkpoint args must be saved for transfer learning use."""
-        mc = base_model_config(num_classes=90)
-        ckpt_args = SimpleNamespace(class_names=["cat", "dog"])
-        checkpoint = self._make_checkpoint(num_classes_in_ckpt=91)
-        checkpoint["args"] = ckpt_args
-        mock_torch_load.return_value = checkpoint
-
-        module, _, _, _ = build_module(model_config=mc)
-        module.model_config = module.model_config.model_copy(update={"pretrain_weights": "/fake/weights.pth"})
-        module._load_pretrain_weights()
-
-        assert module._pretrain_class_names == ["cat", "dog"]
-
-    @patch("rfdetr.training.module_model.torch.load")
-    @patch("rfdetr.training.module_model.validate_pretrain_weights")
     def test_seg_checkpoint_into_detection_model_raises(
         self, mock_validate, mock_torch_load, base_model_config, build_module
     ):

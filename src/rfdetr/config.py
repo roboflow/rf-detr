@@ -57,6 +57,8 @@ class ModelConfig(BaseConfig):
     sa_nheads: int
     ca_nheads: int
     dec_n_points: int
+    num_queries: int = 300
+    num_select: int = 300
     bbox_reparam: bool = True
     lite_refpoint_refine: bool = True
     layer_norm: bool = True
@@ -347,7 +349,7 @@ class TrainConfig(BaseModel):
     tensorboard: bool = True
     wandb: bool = False
     mlflow: bool = False
-    clearml: bool = False
+    clearml: bool = False  # Not yet implemented — reserved for future use.
     project: Optional[str] = None
     run: Optional[str] = None
     class_names: List[str] = None
