@@ -25,7 +25,7 @@ import yaml
 from PIL import Image
 
 from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
-from rfdetr.assets.model_weights import download_pretrain_weights, validate_pretrain_weights
+from rfdetr.assets.model_weights import download_pretrain_weights
 from rfdetr.config import (
     ModelConfig,
     RFDETRBaseConfig,  # DEPRECATED
@@ -47,8 +47,8 @@ from rfdetr.config import (
 from rfdetr.datasets.coco import is_valid_coco_dataset
 from rfdetr.datasets.yolo import is_valid_yolo_dataset
 from rfdetr.models import PostProcess, build_model
+from rfdetr.models.weights import apply_lora, load_pretrain_weights
 from rfdetr.utilities.logger import get_logger
-from rfdetr.utilities.state_dict import _ckpt_args_get, validate_checkpoint_compatibility
 
 try:
     torch.set_float32_matmul_precision("high")
@@ -103,91 +103,6 @@ class ModelContext:
 _ModelContext = ModelContext  # backward compat alias
 
 
-def _load_pretrain_weights_into(nn_model: torch.nn.Module, args: Any) -> List[str]:
-    """Load pretrained checkpoint weights into *nn_model* in-place.
-
-    Mirrors ``Model.__init__`` and ``RFDETRModelModule._load_pretrain_weights``
-    checkpoint loading logic: validates hash, re-downloads on corruption, and
-    trims query embeddings to match the configured query count.
-
-    Args:
-        nn_model: The model to load weights into.
-        args: Namespace with ``pretrain_weights``, ``num_classes``,
-            ``num_queries``, and ``group_detr`` attributes.
-
-    Returns:
-        List of class names extracted from the checkpoint, or empty list.
-    """
-    class_names: List[str] = []
-
-    download_pretrain_weights(args.pretrain_weights)
-    if not os.path.isfile(args.pretrain_weights):
-        logger.warning("Pretrain weights not found after initial download; retrying without MD5 validation.")
-        download_pretrain_weights(args.pretrain_weights, redownload=True, validate_md5=False)
-    validate_pretrain_weights(args.pretrain_weights, strict=False)
-
-    try:
-        checkpoint = torch.load(args.pretrain_weights, map_location="cpu", weights_only=False)
-    except Exception:
-        logger.info("Failed to load pretrain weights, re-downloading")
-        download_pretrain_weights(args.pretrain_weights, redownload=True, validate_md5=False)
-        checkpoint = torch.load(args.pretrain_weights, map_location="cpu", weights_only=False)
-
-    if "args" in checkpoint:
-        class_names = _ckpt_args_get(checkpoint["args"], "class_names") or []
-
-    validate_checkpoint_compatibility(checkpoint, args)
-
-    checkpoint_num_classes = checkpoint["model"]["class_embed.bias"].shape[0]
-    if checkpoint_num_classes != args.num_classes + 1:
-        # Temporarily align the detection head size with the checkpoint so
-        # that state_dict loading succeeds even when the configured
-        # num_classes differs from the checkpoint.
-        nn_model.reinitialize_detection_head(checkpoint_num_classes)
-
-    num_desired_queries = args.num_queries * args.group_detr
-    query_param_names = ["refpoint_embed.weight", "query_feat.weight"]
-    for name in list(checkpoint["model"].keys()):
-        if any(name.endswith(x) for x in query_param_names):
-            checkpoint["model"][name] = checkpoint["model"][name][:num_desired_queries]
-
-    nn_model.load_state_dict(checkpoint["model"], strict=False)
-
-    # Only reinitialize back to configured size when intentionally reducing a
-    # larger pretrain checkpoint to fewer task-specific classes.
-    if args.num_classes + 1 < checkpoint_num_classes:
-        nn_model.reinitialize_detection_head(args.num_classes + 1)
-
-    return class_names
-
-
-def _apply_lora_to(nn_model: torch.nn.Module) -> None:
-    """Apply LoRA adapters to the backbone encoder of *nn_model*.
-
-    Args:
-        nn_model: LWDETR model whose backbone encoder will receive LoRA.
-    """
-    from peft import LoraConfig, get_peft_model
-
-    lora_config = LoraConfig(
-        r=16,
-        lora_alpha=16,
-        use_dora=True,
-        target_modules=[
-            "q_proj",
-            "v_proj",
-            "k_proj",
-            "qkv",
-            "query",
-            "key",
-            "value",
-            "cls_token",
-            "register_tokens",
-        ],
-    )
-    nn_model.backbone[0].encoder = get_peft_model(nn_model.backbone[0].encoder, lora_config)
-
-
 def _build_model_context(model_config: ModelConfig) -> "ModelContext":
     """Build a ModelContext from ModelConfig without using legacy main.py:Model.
 
@@ -204,15 +119,16 @@ def _build_model_context(model_config: ModelConfig) -> "ModelContext":
 
     # A dummy TrainConfig is needed only for build_namespace's required fields;
     # dataset_dir/output_dir are unused during model construction.
-    args = build_namespace(model_config, TrainConfig(dataset_dir=".", output_dir="."))
+    dummy_train_config = TrainConfig(dataset_dir=".", output_dir=".")
+    args = build_namespace(model_config, dummy_train_config)
     nn_model = build_model(args)
 
     class_names: List[str] = []
-    if args.pretrain_weights is not None:
-        class_names = _load_pretrain_weights_into(nn_model, args)
+    if model_config.pretrain_weights is not None:
+        class_names = load_pretrain_weights(nn_model, model_config, dummy_train_config)
 
-    if args.backbone_lora:
-        _apply_lora_to(nn_model)
+    if model_config.backbone_lora:
+        apply_lora(nn_model)
 
     device = torch.device(args.device)
     nn_model = nn_model.to(device)
@@ -587,7 +503,7 @@ class RFDETR:
         if hasattr(self.model, "class_names") and self.model.class_names is not None:
             return list(self.model.class_names)
 
-        return COCO_CLASS_NAMES
+        return list(COCO_CLASS_NAMES)
 
     def predict(
         self,

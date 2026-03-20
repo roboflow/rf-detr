@@ -14,6 +14,7 @@ import torch
 from torch import nn
 
 from rfdetr.config import RFDETRBaseConfig, TrainConfig
+from rfdetr.models.weights import apply_lora, load_pretrain_weights
 from rfdetr.utilities.tensors import NestedTensor
 
 # ---------------------------------------------------------------------------
@@ -209,8 +210,8 @@ class TestLoadPretrainWeights:
             }
         }
 
-    @patch("rfdetr.training.module_model.torch.load")
-    @patch("rfdetr.training.module_model.validate_pretrain_weights")
+    @patch("rfdetr.models.weights.torch.load")
+    @patch("rfdetr.models.weights.validate_pretrain_weights")
     def test_loads_checkpoint_successfully(self, mock_validate, mock_torch_load, base_model_config, build_module):
         """A valid checkpoint must be validated, loaded, and applied to the model."""
         mc = base_model_config(num_classes=90)
@@ -219,13 +220,13 @@ class TestLoadPretrainWeights:
 
         module, _, _, _ = build_module(model_config=mc)
         module.model_config = module.model_config.model_copy(update={"pretrain_weights": "/fake/weights.pth"})
-        module._load_pretrain_weights()
+        load_pretrain_weights(module.model, module.model_config, module.train_config)
 
         mock_validate.assert_called_once_with("/fake/weights.pth", strict=False)
         module.model.load_state_dict.assert_called_once()
 
-    @patch("rfdetr.training.module_model.torch.load")
-    @patch("rfdetr.training.module_model.validate_pretrain_weights")
+    @patch("rfdetr.models.weights.torch.load")
+    @patch("rfdetr.models.weights.validate_pretrain_weights")
     def test_class_count_mismatch_triggers_reinitialize(
         self, mock_validate, mock_torch_load, base_model_config, build_module
     ):
@@ -236,7 +237,7 @@ class TestLoadPretrainWeights:
 
         module, fake_model, _, _ = build_module(model_config=mc)
         module.model_config = module.model_config.model_copy(update={"pretrain_weights": "/fake/weights.pth"})
-        module._load_pretrain_weights()
+        load_pretrain_weights(module.model, module.model_config, module.train_config)
 
         # First call: expand to checkpoint size so load_state_dict shapes match.
         # Second call: trim back to configured num_classes + 1 (background class).
@@ -245,8 +246,8 @@ class TestLoadPretrainWeights:
         fake_model.reinitialize_detection_head.assert_has_calls([call(91), call(6)])
         assert fake_model.reinitialize_detection_head.call_count == 2
 
-    @patch("rfdetr.training.module_model.torch.load")
-    @patch("rfdetr.training.module_model.validate_pretrain_weights")
+    @patch("rfdetr.models.weights.torch.load")
+    @patch("rfdetr.models.weights.validate_pretrain_weights")
     def test_class_count_match_does_not_reinitialize(
         self, mock_validate, mock_torch_load, base_model_config, build_module
     ):
@@ -257,12 +258,12 @@ class TestLoadPretrainWeights:
 
         module, fake_model, _, _ = build_module(model_config=mc)
         module.model_config = module.model_config.model_copy(update={"pretrain_weights": "/fake/weights.pth"})
-        module._load_pretrain_weights()
+        load_pretrain_weights(module.model, module.model_config, module.train_config)
 
         fake_model.reinitialize_detection_head.assert_not_called()
 
-    @patch("rfdetr.training.module_model.torch.load")
-    @patch("rfdetr.training.module_model.validate_pretrain_weights")
+    @patch("rfdetr.models.weights.torch.load")
+    @patch("rfdetr.models.weights.validate_pretrain_weights")
     def test_query_embedding_trimmed_to_configured_count(
         self, mock_validate, mock_torch_load, base_model_config, build_module
     ):
@@ -286,14 +287,14 @@ class TestLoadPretrainWeights:
         mock_torch_load.return_value = checkpoint
 
         module.model_config = module.model_config.model_copy(update={"pretrain_weights": "/fake/weights.pth"})
-        module._load_pretrain_weights()
+        load_pretrain_weights(module.model, module.model_config, module.train_config)
 
         assert checkpoint["model"]["refpoint_embed.weight"].shape[0] == desired
         assert checkpoint["model"]["query_feat.weight"].shape[0] == desired
 
-    @patch("rfdetr.training.module_model.os.path.isfile", return_value=True)
-    @patch("rfdetr.training.module_model.download_pretrain_weights")
-    @patch("rfdetr.training.module_model.validate_pretrain_weights")
+    @patch("rfdetr.models.weights.os.path.isfile", return_value=True)
+    @patch("rfdetr.models.weights.download_pretrain_weights")
+    @patch("rfdetr.models.weights.validate_pretrain_weights")
     def test_redownloads_on_load_failure(
         self, mock_validate, mock_download, mock_isfile, base_model_config, build_module
     ):
@@ -311,8 +312,8 @@ class TestLoadPretrainWeights:
                 raise RuntimeError("corrupted file")
             return checkpoint
 
-        with patch("rfdetr.training.module_model.torch.load", side_effect=fake_torch_load):
-            module._load_pretrain_weights()
+        with patch("rfdetr.models.weights.torch.load", side_effect=fake_torch_load):
+            load_pretrain_weights(module.model, module.model_config, module.train_config)
 
         # Verify a redownload with validate_md5=False was triggered after load failure.
         redownload_calls = [c for c in mock_download.call_args_list if c.kwargs.get("redownload") is True]
@@ -320,10 +321,10 @@ class TestLoadPretrainWeights:
         assert all(c.kwargs.get("validate_md5") is False for c in redownload_calls)
         assert load_calls[0] == 2
 
-    @patch("rfdetr.training.module_model.os.path.isfile", return_value=False)
-    @patch("rfdetr.training.module_model.download_pretrain_weights")
-    @patch("rfdetr.training.module_model.validate_pretrain_weights")
-    @patch("rfdetr.training.module_model.torch.load")
+    @patch("rfdetr.models.weights.os.path.isfile", return_value=False)
+    @patch("rfdetr.models.weights.download_pretrain_weights")
+    @patch("rfdetr.models.weights.validate_pretrain_weights")
+    @patch("rfdetr.models.weights.torch.load")
     def test_download_before_load_when_weights_absent(
         self, mock_torch_load, mock_validate, mock_download, mock_isfile, base_model_config, build_module
     ):
@@ -340,15 +341,15 @@ class TestLoadPretrainWeights:
 
         module, _, _, _ = build_module(model_config=mc)
         module.model_config = module.model_config.model_copy(update={"pretrain_weights": "/content/rf-detr-base.pth"})
-        module._load_pretrain_weights()
+        load_pretrain_weights(module.model, module.model_config, module.train_config)
 
         # download_pretrain_weights must have been called at least once before any load
         assert mock_download.call_count >= 1
         first_call = mock_download.call_args_list[0]
         assert first_call.args[0] == "/content/rf-detr-base.pth"
 
-    @patch("rfdetr.training.module_model.torch.load")
-    @patch("rfdetr.training.module_model.validate_pretrain_weights")
+    @patch("rfdetr.models.weights.torch.load")
+    @patch("rfdetr.models.weights.validate_pretrain_weights")
     def test_seg_checkpoint_into_detection_model_raises(
         self, mock_validate, mock_torch_load, base_model_config, build_module
     ):
@@ -365,10 +366,10 @@ class TestLoadPretrainWeights:
         )
 
         with pytest.raises(ValueError, match="segmentation head"):
-            module._load_pretrain_weights()
+            load_pretrain_weights(module.model, module.model_config, module.train_config)
 
-    @patch("rfdetr.training.module_model.torch.load")
-    @patch("rfdetr.training.module_model.validate_pretrain_weights")
+    @patch("rfdetr.models.weights.torch.load")
+    @patch("rfdetr.models.weights.validate_pretrain_weights")
     def test_detection_checkpoint_into_seg_model_raises(
         self, mock_validate, mock_torch_load, base_model_config, build_module
     ):
@@ -385,10 +386,10 @@ class TestLoadPretrainWeights:
         )
 
         with pytest.raises(ValueError, match="segmentation head"):
-            module._load_pretrain_weights()
+            load_pretrain_weights(module.model, module.model_config, module.train_config)
 
-    @patch("rfdetr.training.module_model.torch.load")
-    @patch("rfdetr.training.module_model.validate_pretrain_weights")
+    @patch("rfdetr.models.weights.torch.load")
+    @patch("rfdetr.models.weights.validate_pretrain_weights")
     def test_patch_size_mismatch_raises(self, mock_validate, mock_torch_load, base_model_config, build_module):
         """Loading a checkpoint with a different patch_size must raise ValueError."""
         mc = base_model_config(num_classes=90)
@@ -403,10 +404,10 @@ class TestLoadPretrainWeights:
         )
 
         with pytest.raises(ValueError, match="patch_size"):
-            module._load_pretrain_weights()
+            load_pretrain_weights(module.model, module.model_config, module.train_config)
 
-    @patch("rfdetr.training.module_model.torch.load")
-    @patch("rfdetr.training.module_model.validate_pretrain_weights")
+    @patch("rfdetr.models.weights.torch.load")
+    @patch("rfdetr.models.weights.validate_pretrain_weights")
     def test_compatible_checkpoint_does_not_raise(
         self, mock_validate, mock_torch_load, base_model_config, build_module
     ):
@@ -423,7 +424,7 @@ class TestLoadPretrainWeights:
         )
 
         # Should not raise.
-        module._load_pretrain_weights()
+        load_pretrain_weights(module.model, module.model_config, module.train_config)
 
 
 class TestApplyLora:
@@ -463,7 +464,7 @@ class TestApplyLora:
         module, _, _, _ = self._build_module_with_backbone(tmp_path)
         mock_get_peft.return_value = MagicMock()
 
-        module._apply_lora()
+        apply_lora(module.model)
 
         mock_lora_cfg_class.assert_called_once()
         target_modules = mock_lora_cfg_class.call_args.kwargs.get("target_modules")
@@ -478,7 +479,7 @@ class TestApplyLora:
         peft_wrapped = MagicMock()
         mock_get_peft.return_value = peft_wrapped
 
-        module._apply_lora()
+        apply_lora(module.model)
 
         assert mock_get_peft.call_args[0][0] is fake_encoder
         assert fake_backbone_0.encoder is peft_wrapped
