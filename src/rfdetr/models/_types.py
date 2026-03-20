@@ -78,6 +78,12 @@ class BuilderArgs(Protocol):
     backbone_only: bool
     encoder_only: bool
     # --- Criterion ---
+    # Note: `decoder_norm`, `dropout`, and `num_feature_levels` are consumed by
+    # `build_transformer()` (called inside `build_model()`) but are intentionally
+    # absent here.  They are hardcoded constants computed/assigned inside
+    # `build_namespace()` (e.g. `num_feature_levels = len(projector_scale)`) and
+    # are never read from external callers — exposing them in the Protocol would
+    # mislead consumers into thinking they must be supplied.
     aux_loss: bool
     focal_alpha: float
     bbox_loss_coef: float

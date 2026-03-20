@@ -5,6 +5,30 @@ All notable changes to RF-DETR are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `BuilderArgs` — a `@runtime_checkable` `typing.Protocol` documenting the minimum attribute set consumed by `build_model()`, `build_backbone()`, `build_transformer()`, and `build_criterion_and_postprocessors()`. Enables static type-checker support for custom builder integrations. Exported from `rfdetr.models`.
+
+### Deprecated
+
+The following fields are duplicated between `ModelConfig` and `TrainConfig`; clear ownership is being established for v1.9. Each field now emits `DeprecationWarning` when set on the wrong config object.  The fields continue to work as before — this is a warning-only Phase A change.
+
+- `TrainConfig.group_detr` — architecture decision; set on `ModelConfig` instead.
+- `TrainConfig.ia_bce_loss` — loss type tied to architecture family; set on `ModelConfig` instead.
+- `TrainConfig.segmentation_head` — architecture flag; set on `ModelConfig` instead.
+- `TrainConfig.num_select` — postprocessor count is an architecture decision; set on `ModelConfig` instead. `SegmentationTrainConfig` users: remove the `num_select` override — the model config value is always used.
+- `ModelConfig.cls_loss_coef` — training hyperparameter; set on `TrainConfig` instead.
+
+These fields will be **removed** in v1.9 after a full release cycle.
+
+### Fixed
+
+- Fixed `_namespace.py`: `num_select` in the builder namespace now always reads from `ModelConfig`, eliminating a regression where `TrainConfig.num_select` (default 300) silently overrode model-specific values of 100–200 for segmentation variants (`RFDETRSegNano`, `RFDETRSegSmall`, `RFDETRSegMedium`, `RFDETRSegLarge`, `RFDETRSegPreview`). Post-processing now uses the correct top-k count for each model.
+
+---
+
 ## [1.6.0] — 2026-03-20
 
 ### Added
