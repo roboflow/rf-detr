@@ -4446,9 +4446,6 @@
 
 
         <p>LightningModule wrapping the RF-DETR model and training loop.</p>
-<p>Migrates <code>Model.__init__</code>, <code>train_one_epoch</code>, <code>evaluate</code>, and
-optimizer setup from <code>main.py</code> / <code>engine.py</code> into PTL lifecycle hooks.
-Coexists with the existing code until Chapter 4 removes the legacy path.</p>
 
 
 <p><span class="doc-section-title">Parameters:</span></p>
@@ -5267,9 +5264,6 @@ the module.  Two legacy formats are handled:</p>
 
 
         <p>LightningDataModule wrapping RF-DETR dataset construction and data loading.</p>
-<p>Migrates <code>Model.train()</code> dataset construction and DataLoader setup from
-<code>main.py</code> into PTL lifecycle hooks.  Coexists with the existing code until
-Chapter 4 removes the legacy path.</p>
 
 
 <p><span class="doc-section-title">Parameters:</span></p>
