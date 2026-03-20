@@ -113,6 +113,15 @@ class TestBuildNamespace:
         assert args.mask_ce_loss_coef == pytest.approx(5.0)
         assert args.mask_dice_loss_coef == pytest.approx(5.0)
 
+    def test_segmentation_num_select_none_falls_back_to_model_config(self, base_model_config, seg_train_config) -> None:
+        """SegmentationTrainConfig(num_select=None) must not overwrite ModelConfig.num_select."""
+        mc = base_model_config(segmentation_head=True, num_select=200)
+        tc = seg_train_config(num_select=None)
+
+        args = build_namespace(mc, tc)
+
+        assert args.num_select == 200
+
     def test_segmentation_extras_default_for_plain_config(self, base_model_config, base_train_config):
         """mask_* attributes default to 5.0 for a plain TrainConfig (not segmentation)."""
         args = build_namespace(base_model_config(), base_train_config())
