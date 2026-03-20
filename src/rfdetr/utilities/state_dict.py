@@ -15,9 +15,115 @@ from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
+# PTL-compatible keys written by BestModelCallback; preserved by strip_checkpoint so
+# checkpoint_best_total.pth can be used directly with trainer.fit(ckpt_path=...).
+_PTL_COMPAT_KEYS = (
+    "state_dict",
+    "global_step",
+    "pytorch-lightning_version",
+    "loops",
+    "optimizer_states",
+    "lr_schedulers",
+)
+
+
+def _ckpt_args_get(args: Any, field: str, default: Any = None) -> Any:
+    """Get a field from checkpoint ``"args"``, handling both dict and attribute access.
+
+    New checkpoints (PTL training stack) store ``"args"`` as a plain ``dict``
+    (via ``TrainConfig.model_dump()``).  Legacy checkpoints (pre-PTL engine or
+    the pre-release PTL code) stored it as a ``Namespace``-like object.  This
+    helper abstracts both so callers do not need to branch on the type.
+
+    Args:
+        args: The ``checkpoint["args"]`` value.
+        field: Field name to retrieve.
+        default: Value returned when the field is absent.
+
+    Returns:
+        The field value, or ``default`` if not found.
+    """
+    if isinstance(args, dict):
+        return args.get(field, default)
+    return getattr(args, field, default)
+
+
+def _make_fit_loop_state(epoch: int) -> dict:
+    """Build a minimal ``fit_loop`` state dict that restores the epoch counter.
+
+    ``BestModelCallback`` stores ``trainer.current_epoch`` as ``"epoch"`` in
+    the checkpoint.  That value is captured during ``on_validation_end``, which
+    fires *before* the loop's epoch-end hooks increment the counter.  To resume
+    training *after* that epoch, PTL's epoch-progress counter must be set to
+    ``epoch + 1`` so that ``trainer.current_epoch == epoch + 1`` when the new
+    ``trainer.fit()`` call begins.
+
+    Optimizer and scheduler states are intentionally omitted — loading a
+    ``.pth`` file starts a fresh optimizer for the new training phase.
+
+    Args:
+        epoch: The ``"epoch"`` value from the checkpoint (``trainer.current_epoch``
+            at the time of ``on_validation_end``).
+
+    Returns:
+        A ``fit_loop`` state dict compatible with
+        :meth:`pytorch_lightning.loops._FitLoop.load_state_dict`.
+    """
+    n = epoch + 1  # number of epochs fully completed after epoch `epoch` finishes
+    zero4 = {"ready": 0, "started": 0, "processed": 0, "completed": 0}
+    zero3 = {"ready": 0, "started": 0, "completed": 0}
+    zero2 = {"ready": 0, "completed": 0}
+    n4 = {"ready": n, "started": n, "processed": n, "completed": n}
+    return {
+        "state_dict": {},
+        "epoch_loop.state_dict": {"_batches_that_stepped": 0},
+        "epoch_loop.batch_progress": {
+            "total": {**zero4},
+            "current": {**zero4},
+            "is_last_batch": False,
+        },
+        "epoch_loop.scheduler_progress": {
+            "total": {**zero2},
+            "current": {**zero2},
+        },
+        "epoch_loop.automatic_optimization.state_dict": {},
+        "epoch_loop.automatic_optimization.optim_progress": {
+            "optimizer": {
+                "step": {
+                    "total": {**zero2},
+                    "current": {**zero2},
+                },
+                "zero_grad": {
+                    "total": {**zero3},
+                    "current": {**zero3},
+                },
+            }
+        },
+        "epoch_loop.manual_optimization.state_dict": {},
+        "epoch_loop.manual_optimization.optim_step_progress": {
+            "total": {**zero2},
+            "current": {**zero2},
+        },
+        "epoch_loop.val_loop.state_dict": {},
+        "epoch_loop.val_loop.batch_progress": {
+            "total": {**zero4},
+            "current": {**zero4},
+            "is_last_batch": False,
+        },
+        "epoch_progress": {
+            "total": {**n4},
+            "current": {**n4},
+        },
+    }
+
 
 def strip_checkpoint(checkpoint: str | os.PathLike[str]) -> None:
-    """Strip a checkpoint file down to ``model`` and ``args`` keys only.
+    """Strip a checkpoint file down to ``model``, ``args``, and PTL-compatible keys.
+
+    Preserves ``state_dict``, ``global_step``, ``pytorch-lightning_version``,
+    ``loops``, ``optimizer_states``, and ``lr_schedulers`` when present so the
+    stripped checkpoint can still be used directly with
+    ``trainer.fit(ckpt_path=...)``.
 
     Overwrites the file atomically so a partial write cannot corrupt it.
 
@@ -26,11 +132,19 @@ def strip_checkpoint(checkpoint: str | os.PathLike[str]) -> None:
     """
     import torch
 
+    # `checkpoint_best_total.pth` is produced by local RF-DETR training and can
+    # contain non-tensor metadata under "args" (e.g. `types.SimpleNamespace`).
+    # PyTorch 2.6 changed `torch.load` default `weights_only=True`, which rejects
+    # these objects. This utility intentionally operates on trusted checkpoints.
     state_dict = torch.load(checkpoint, map_location="cpu", weights_only=False)
     new_state_dict = {
         "model": state_dict["model"],
         "args": state_dict["args"],
     }
+    # Preserve PTL-compatible keys when present (written by BestModelCallback).
+    for key in _PTL_COMPAT_KEYS:
+        if key in state_dict:
+            new_state_dict[key] = state_dict[key]
     # Create the temp file in the destination directory so os.replace stays on the same filesystem (atomic).
     checkpoint_dir = os.path.dirname(os.path.abspath(os.fspath(checkpoint)))
     with tempfile.NamedTemporaryFile(dir=checkpoint_dir, delete=False) as tmp_file:
@@ -77,7 +191,7 @@ def validate_checkpoint_compatibility(checkpoint: Dict[str, Any], model_args: An
 
     Args:
         checkpoint: Loaded checkpoint dictionary, expected to contain an optional
-            ``"args"`` key with training namespace attributes.
+            ``"args"`` key with training namespace attributes or a plain dict.
         model_args: Namespace (e.g. ``types.SimpleNamespace``) with at least
             ``segmentation_head`` and ``patch_size`` attributes describing the
             current model.
@@ -135,7 +249,7 @@ def validate_checkpoint_compatibility(checkpoint: Dict[str, Any], model_args: An
         return
 
     ckpt_args = checkpoint["args"]
-    ckpt_segmentation_head: Optional[bool] = getattr(ckpt_args, "segmentation_head", None)
+    ckpt_segmentation_head: Optional[bool] = _ckpt_args_get(ckpt_args, "segmentation_head")
     model_segmentation_head: Optional[bool] = getattr(model_args, "segmentation_head", None)
 
     if ckpt_segmentation_head is not None and model_segmentation_head is not None:
@@ -151,7 +265,7 @@ def validate_checkpoint_compatibility(checkpoint: Dict[str, Any], model_args: An
                     "Load the weights into a detection model (e.g. RFDETRNano) instead of a segmentation model."
                 )
 
-    ckpt_patch_size: Optional[int] = getattr(ckpt_args, "patch_size", None)
+    ckpt_patch_size: Optional[int] = _ckpt_args_get(ckpt_args, "patch_size")
     model_patch_size: Optional[int] = getattr(model_args, "patch_size", None)
     if ckpt_patch_size is not None and model_patch_size is not None and ckpt_patch_size != model_patch_size:
         raise ValueError(

@@ -14,10 +14,11 @@ from typing import Optional
 
 import torch
 from pytorch_lightning import LightningModule, Trainer
+from pytorch_lightning import __version__ as ptl_version
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 
 from rfdetr.utilities.logger import get_logger
-from rfdetr.utilities.state_dict import strip_checkpoint
+from rfdetr.utilities.state_dict import _make_fit_loop_state, strip_checkpoint
 
 logger = get_logger()
 
@@ -68,8 +69,40 @@ class BestModelCallback(ModelCheckpoint):
         # Stash current pl_module so _save_checkpoint (no pl_module param) can access it.
         self._current_pl_module: Optional[LightningModule] = None
 
+    @staticmethod
+    def _build_checkpoint_payload(
+        model_state_dict: dict[str, torch.Tensor],
+        args_dict: object,
+        trainer: Trainer,
+    ) -> dict[str, object]:
+        """Build a PTL-compatible RF-DETR checkpoint payload.
+
+        Args:
+            model_state_dict: Model weights with raw (non-prefixed) keys.
+            args_dict: Serialized training args/config payload.
+            trainer: Active Lightning trainer providing epoch/step counters.
+
+        Returns:
+            Checkpoint dictionary that supports ``Trainer.fit(ckpt_path=...)``
+            while intentionally omitting optimizer/scheduler states.
+        """
+        return {
+            "model": model_state_dict,
+            "args": args_dict,
+            "epoch": trainer.current_epoch,
+            # PTL-compatible keys so trainer.fit(ckpt_path=...) works directly.
+            "state_dict": {f"model.{k}": v for k, v in model_state_dict.items()},
+            "global_step": trainer.global_step,
+            "pytorch-lightning_version": ptl_version,
+            "loops": {"fit_loop": _make_fit_loop_state(trainer.current_epoch)},
+            # Keep keys present with empty values so PTL resume paths that
+            # expect them can proceed without loading optimizer state.
+            "optimizer_states": [],
+            "lr_schedulers": [],
+        }
+
+    @staticmethod
     def _get_ema_model_state_dict(
-        self,
         trainer: Trainer,
         pl_module: LightningModule,
     ) -> dict[str, torch.Tensor]:
@@ -77,7 +110,7 @@ class BestModelCallback(ModelCheckpoint):
 
         Args:
             trainer: The Lightning Trainer instance.
-            pl_module: The ``RFDETRModule`` being trained.
+            pl_module: The ``RFDETRModelModule`` being trained.
 
         Returns:
             EMA model state dict when available, otherwise the live model state dict.
@@ -137,14 +170,8 @@ class BestModelCallback(ModelCheckpoint):
             and getattr(train_config, "class_names", None) is None
         ):
             train_config = train_config.model_copy(update={"class_names": dataset_class_names})
-        torch.save(
-            {
-                "model": model_state_dict,
-                "args": train_config,
-                "epoch": trainer.current_epoch,
-            },
-            pth_path,
-        )
+        args_dict = train_config.model_dump() if hasattr(train_config, "model_dump") else train_config
+        torch.save(self._build_checkpoint_payload(model_state_dict, args_dict, trainer), pth_path)
         self._last_global_step_saved = trainer.global_step
         logger.info("Best regular mAP saved to %s (epoch %d)", pth_path, trainer.current_epoch)
 
@@ -158,7 +185,7 @@ class BestModelCallback(ModelCheckpoint):
 
         Args:
             trainer: The Lightning Trainer instance.
-            pl_module: The ``RFDETRModule`` being trained.
+            pl_module: The ``RFDETRModelModule`` being trained.
         """
         # Stash for use inside _save_checkpoint (which has no pl_module param).
         self._current_pl_module = pl_module
@@ -182,12 +209,11 @@ class BestModelCallback(ModelCheckpoint):
                 and getattr(ema_train_config, "class_names", None) is None
             ):
                 ema_train_config = ema_train_config.model_copy(update={"class_names": dataset_class_names})
+            ema_args_dict = (
+                ema_train_config.model_dump() if hasattr(ema_train_config, "model_dump") else ema_train_config
+            )
             torch.save(
-                {
-                    "model": ema_state_dict,
-                    "args": ema_train_config,
-                    "epoch": trainer.current_epoch,
-                },
+                self._build_checkpoint_payload(ema_state_dict, ema_args_dict, trainer),
                 self._output_dir / "checkpoint_best_ema.pth",
             )
             logger.info(
@@ -205,7 +231,7 @@ class BestModelCallback(ModelCheckpoint):
 
         Args:
             trainer: The Lightning Trainer instance.
-            pl_module: The ``RFDETRModule`` being trained.
+            pl_module: The ``RFDETRModelModule`` being trained.
         """
         if not trainer.is_global_zero:
             return
@@ -305,7 +331,7 @@ class RFDETREarlyStopping(EarlyStopping):
 
         Args:
             trainer: The Lightning Trainer instance.
-            pl_module: The ``RFDETRModule`` being trained.
+            pl_module: The ``RFDETRModelModule`` being trained.
         """
         metrics = trainer.callback_metrics
         regular_tensor = metrics.get(self._monitor_regular)

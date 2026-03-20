@@ -21,6 +21,18 @@ from rfdetr.training.callbacks.ema import RFDETREMACallback
 from rfdetr.training.model_ema import ModelEma
 
 
+class _EMAContainerModule(nn.Module):
+    """Minimal module with `.model` to mirror RFDETRModelModule shape."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.model = nn.Linear(4, 2)
+
+    @property
+    def device(self) -> torch.device:
+        return next(self.parameters()).device
+
+
 class TestAvgFnDecayFormula:
     """Verify the tau / no-tau decay formula matches ModelEma."""
 
@@ -168,3 +180,24 @@ class TestUpdateInterval:
             cb.on_train_batch_end(trainer, pl_module, outputs=None, batch=None, batch_idx=step - 1)
 
         assert cb._average_model.update_parameters.call_count == 2
+
+
+class TestLegacyEMAResume:
+    """Legacy checkpoint EMA payload is consumed by the callback setup path."""
+
+    def test_setup_loads_pending_legacy_ema_state_into_average_model(self) -> None:
+        """`_pending_legacy_ema_state` must initialize EMA weights at fit setup."""
+        cb = RFDETREMACallback()
+        pl_module = _EMAContainerModule()
+        trainer = MagicMock()
+
+        legacy_ema_state = {k: torch.full_like(v, 2.0) for k, v in pl_module.model.state_dict().items()}
+        pl_module._pending_legacy_ema_state = legacy_ema_state
+
+        cb.setup(trainer, pl_module, stage="fit")
+
+        assert cb._average_model is not None
+        restored = cb._average_model.module.model.state_dict()
+        for key, expected in legacy_ema_state.items():
+            assert torch.allclose(restored[key], expected)
+        assert not hasattr(pl_module, "_pending_legacy_ema_state")

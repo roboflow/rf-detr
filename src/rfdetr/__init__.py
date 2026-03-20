@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 
 from rfdetr.detr import (
+    ModelContext,
     RFDETRBase,  # DEPRECATED # noqa: F401
     RFDETRLarge,
     RFDETRLargeDeprecated,  # DEPRECATED # noqa: F401
@@ -21,6 +22,7 @@ from rfdetr.detr import (
 )
 
 __all__ = [
+    "ModelContext",
     "RFDETRNano",
     "RFDETRSmall",
     "RFDETRMedium",

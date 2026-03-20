@@ -4,13 +4,14 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-"""LightningModule for RF-DETR training and validation (Phase 1)."""
+"""LightningModule for RF-DETR training and validation."""
 
 from __future__ import annotations
 
 import math
 import os
 import random
+import warnings
 from typing import Any, Dict, Optional, Tuple
 
 import torch
@@ -32,10 +33,6 @@ logger = get_logger()
 class RFDETRModelModule(LightningModule):
     """LightningModule wrapping the RF-DETR model and training loop.
 
-    Migrates ``Model.__init__``, ``train_one_epoch``, ``evaluate``, and
-    optimizer setup from ``main.py`` / ``engine.py`` into PTL lifecycle hooks.
-    Coexists with the existing code until Chapter 4 removes the legacy path.
-
     Args:
         model_config: Architecture configuration.
         train_config: Training hyperparameter configuration.
@@ -45,6 +42,9 @@ class RFDETRModelModule(LightningModule):
         super().__init__()
         self.model_config = model_config
         self.train_config = train_config
+        # Allow partial state-dict loading when resuming from a .pth checkpoint
+        # (which contains only model weights, not criterion/postprocess state).
+        self.strict_loading = False
 
         # Build a local namespace for the legacy builder functions.
         ns = build_namespace(model_config, train_config)
@@ -119,9 +119,6 @@ class RFDETRModelModule(LightningModule):
             download_pretrain_weights(pretrain_weights, redownload=True, validate_md5=False)
             checkpoint = torch.load(pretrain_weights, map_location="cpu", weights_only=False)
 
-        if "args" in checkpoint and hasattr(checkpoint["args"], "class_names"):
-            self._pretrain_class_names = checkpoint["args"].class_names
-
         ns = build_namespace(mc, self.train_config)
         validate_checkpoint_compatibility(checkpoint, ns)
 
@@ -152,7 +149,7 @@ class RFDETRModelModule(LightningModule):
             self.model.reinitialize_detection_head(checkpoint_num_classes)
 
         # Trim query embeddings to the configured query count.
-        num_desired_queries = getattr(mc, "num_queries", 300) * getattr(mc, "group_detr", 13)
+        num_desired_queries = mc.num_queries * mc.group_detr
         query_param_names = ["refpoint_embed.weight", "query_feat.weight"]
         for name in list(checkpoint["model"].keys()):
             if any(name.endswith(x) for x in query_param_names):
@@ -471,11 +468,17 @@ class RFDETRModelModule(LightningModule):
         if "model" in checkpoint and "state_dict" not in checkpoint:
             checkpoint["state_dict"] = {"model." + k: v for k, v in checkpoint["model"].items()}
 
-        # Stash legacy EMA weights for the EMA callback to restore if active.
-        # TODO(Chapter 6): RFDETREMACallback.on_load_checkpoint consumer not yet implemented;
-        # _pending_legacy_ema_state is intentionally unused until then.
+        # Stash legacy EMA weights for RFDETREMACallback.setup(), which restores
+        # them into AveragedModel when resuming from converted legacy checkpoints.
         if "legacy_ema_state_dict" in checkpoint:
             self._pending_legacy_ema_state = checkpoint["legacy_ema_state_dict"]
+            warnings.warn(
+                "Checkpoint contains legacy EMA weights (`legacy_ema_state_dict`). "
+                "Add RFDETREMACallback to your trainer callbacks to restore them; "
+                "without it the stashed weights will be ignored.",
+                UserWarning,
+                stacklevel=2,
+            )
 
     def reinitialize_detection_head(self, num_classes: int) -> None:
         """Reinitialize the detection head for a new class count.

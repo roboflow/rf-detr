@@ -4,7 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-"""LightningDataModule for RF-DETR dataset construction and loaders (Phase 2)."""
+"""LightningDataModule for RF-DETR dataset construction and loaders."""
 
 from typing import List, Optional, Tuple
 
@@ -26,10 +26,6 @@ _MIN_TRAIN_BATCHES = 5
 
 class RFDETRDataModule(LightningDataModule):
     """LightningDataModule wrapping RF-DETR dataset construction and data loading.
-
-    Migrates ``Model.train()`` dataset construction and DataLoader setup from
-    ``main.py`` into PTL lifecycle hooks.  Coexists with the existing code until
-    Chapter 4 removes the legacy path.
 
     Args:
         model_config: Architecture configuration (used for resolution, patch_size, etc.).
@@ -90,6 +86,9 @@ class RFDETRDataModule(LightningDataModule):
             if self._dataset_test is None:
                 split = "test" if self.train_config.dataset_file == "roboflow" else "val"
                 self._dataset_test = build_dataset(split, ns, resolution)
+        elif stage == "predict":
+            if self._dataset_val is None:
+                self._dataset_val = build_dataset("val", ns, resolution)
 
     def train_dataloader(self) -> DataLoader:
         """Return the training DataLoader.
@@ -169,6 +168,24 @@ class RFDETRDataModule(LightningDataModule):
             self._dataset_test,
             batch_size=self.train_config.batch_size,
             sampler=torch.utils.data.SequentialSampler(self._dataset_test),
+            drop_last=False,
+            collate_fn=collate_fn,
+            num_workers=self.train_config.num_workers,
+            pin_memory=self._pin_memory,
+            persistent_workers=self._persistent_workers,
+            prefetch_factor=self._prefetch_factor,
+        )
+
+    def predict_dataloader(self) -> DataLoader:
+        """Return the predict DataLoader (reuses the validation dataset, no augmentation).
+
+        Returns:
+            DataLoader for the validation dataset with sequential sampling.
+        """
+        return DataLoader(
+            self._dataset_val,
+            batch_size=self.train_config.batch_size,
+            sampler=torch.utils.data.SequentialSampler(self._dataset_val),
             drop_last=False,
             collate_fn=collate_fn,
             num_workers=self.train_config.num_workers,

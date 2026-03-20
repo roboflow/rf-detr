@@ -4,7 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-"""COCOEvalCallback — torchmetrics-based mAP and F1 evaluation (Phase 3)."""
+"""COCOEvalCallback — torchmetrics-based mAP and F1 evaluation."""
 
 import contextlib
 from typing import Any
@@ -146,7 +146,7 @@ class COCOEvalCallback(Callback):
         """Accumulate predictions and matching data for one validation batch.
 
         Expects ``outputs`` to be the dict returned by
-        ``RFDETRModule.validation_step``:
+        ``RFDETRModelModule.validation_step``:
         ``{"results": list[dict], "targets": list[dict]}``.
 
         When an EMA callback is present the EMA model is run on the same batch
@@ -693,10 +693,10 @@ class COCOEvalCallback(Callback):
         ``engine.build_matching_data`` expect ``[K, H, W]``, so squeeze the
         channel dim when present.
 
-        TODO(post-migration): audit whether ``PostProcess.forward`` should
-        drop the channel dim itself (returning ``[K, H, W]`` directly), or
-        whether other callers (e.g. ``RFDETR.predict``) rely on the 4-D shape
-        and handle ``.squeeze(1)`` themselves.  See regression fix — Bug 4.
+        ``PostProcess.forward`` currently returns ``[K, 1, H, W]`` masks.
+        Keep this callback-local squeeze for metric code paths because
+        ``RFDETR.predict`` and other inference-facing callers still consume the
+        4-D representation and apply ``.squeeze(1)`` at their boundary.
 
         Args:
             preds: Raw per-image prediction dicts from ``PostProcess``.

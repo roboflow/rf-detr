@@ -24,7 +24,7 @@ import torchvision.transforms.functional as F
 import yaml
 from PIL import Image
 
-from rfdetr.assets.coco_classes import COCO_CLASSES
+from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
 from rfdetr.assets.model_weights import download_pretrain_weights, validate_pretrain_weights
 from rfdetr.config import (
     ModelConfig,
@@ -48,7 +48,7 @@ from rfdetr.datasets.coco import is_valid_coco_dataset
 from rfdetr.datasets.yolo import is_valid_yolo_dataset
 from rfdetr.models import PostProcess, build_model
 from rfdetr.utilities.logger import get_logger
-from rfdetr.utilities.state_dict import validate_checkpoint_compatibility
+from rfdetr.utilities.state_dict import _ckpt_args_get, validate_checkpoint_compatibility
 
 try:
     torch.set_float32_matmul_precision("high")
@@ -58,7 +58,7 @@ except Exception:
 logger = get_logger()
 
 
-class _ModelContext:
+class ModelContext:
     """Lightweight model wrapper returned by RFDETR.get_model().
 
     Provides the same attribute interface as the legacy ``main.py:Model`` but
@@ -80,7 +80,7 @@ class _ModelContext:
         device: torch.device,
         resolution: int,
         args: Any,
-        class_names: List[str] = None,
+        class_names: Optional[List[str]] = None,
     ) -> None:
         self.model = model
         self.postprocess = postprocess
@@ -98,6 +98,9 @@ class _ModelContext:
         """
         self.model.reinitialize_detection_head(num_classes)
         self.args.num_classes = num_classes
+
+
+_ModelContext = ModelContext  # backward compat alias
 
 
 def _load_pretrain_weights_into(nn_model: torch.nn.Module, args: Any) -> List[str]:
@@ -130,8 +133,8 @@ def _load_pretrain_weights_into(nn_model: torch.nn.Module, args: Any) -> List[st
         download_pretrain_weights(args.pretrain_weights, redownload=True, validate_md5=False)
         checkpoint = torch.load(args.pretrain_weights, map_location="cpu", weights_only=False)
 
-    if "args" in checkpoint and hasattr(checkpoint["args"], "class_names"):
-        class_names = checkpoint["args"].class_names or []
+    if "args" in checkpoint:
+        class_names = _ckpt_args_get(checkpoint["args"], "class_names") or []
 
     validate_checkpoint_compatibility(checkpoint, args)
 
@@ -185,8 +188,8 @@ def _apply_lora_to(nn_model: torch.nn.Module) -> None:
     nn_model.backbone[0].encoder = get_peft_model(nn_model.backbone[0].encoder, lora_config)
 
 
-def _build_model_context(model_config: ModelConfig) -> "_ModelContext":
-    """Build a _ModelContext from ModelConfig without using legacy main.py:Model.
+def _build_model_context(model_config: ModelConfig) -> "ModelContext":
+    """Build a ModelContext from ModelConfig without using legacy main.py:Model.
 
     Replicates ``Model.__init__`` logic: builds the nn.Module, optionally loads
     pretrain weights and applies LoRA, then moves the model to the target device.
@@ -195,7 +198,7 @@ def _build_model_context(model_config: ModelConfig) -> "_ModelContext":
         model_config: Architecture configuration.
 
     Returns:
-        Fully initialised _ModelContext ready for inference or training.
+        Fully initialised ModelContext ready for inference or training.
     """
     from rfdetr._namespace import build_namespace
 
@@ -215,7 +218,7 @@ def _build_model_context(model_config: ModelConfig) -> "_ModelContext":
     nn_model = nn_model.to(device)
     postprocess = PostProcess(num_select=args.num_select)
 
-    return _ModelContext(
+    return ModelContext(
         model=nn_model,
         postprocess=postprocess,
         device=device,
@@ -395,7 +398,7 @@ class RFDETR:
         self._optimized_has_been_compiled = False
         self._optimized_batch_size = None
         self._optimized_resolution = None
-        self._optimized_half = False
+        self._optimized_dtype = None
 
     def export(
         self,
@@ -560,31 +563,31 @@ class RFDETR:
         """
         return self._train_config_class(**kwargs)
 
-    def get_model(self, config: ModelConfig) -> "_ModelContext":
+    def get_model(self, config: ModelConfig) -> "ModelContext":
         """Retrieve a model context from the provided architecture configuration.
 
         Args:
             config: Architecture configuration.
 
         Returns:
-            _ModelContext with model, postprocess, device, resolution, args,
+            ModelContext with model, postprocess, device, resolution, args,
             and class_names attributes.
         """
         return _build_model_context(config)
 
-    # Get class_names from the model
     @property
-    def class_names(self):
-        """
-        Retrieve the class names supported by the loaded model.
+    def class_names(self) -> List[str]:
+        """Retrieve the class names supported by the loaded model.
 
         Returns:
-            dict: A dictionary mapping class IDs to class names. The keys are integers starting from
+            A list of class name strings, 0-indexed.  When no custom class
+            names are embedded in the checkpoint, returns the standard 80
+            COCO class names.
         """
         if hasattr(self.model, "class_names") and self.model.class_names is not None:
-            return {i + 1: name for i, name in enumerate(self.model.class_names)}
+            return list(self.model.class_names)
 
-        return COCO_CLASSES
+        return COCO_CLASS_NAMES
 
     def predict(
         self,
@@ -653,8 +656,8 @@ class RFDETR:
             orig_sizes.append((h, w))
 
             img_tensor = img_tensor.to(self.model.device)
-            img_tensor = F.normalize(img_tensor, self.means, self.stds)
             img_tensor = F.resize(img_tensor, (self.model.resolution, self.model.resolution))
+            img_tensor = F.normalize(img_tensor, self.means, self.stds)
 
             processed_images.append(img_tensor)
 
@@ -841,13 +844,44 @@ class RFDETRLargeDeprecated(RFDETR):
 class RFDETRLarge(RFDETR):
     size = "rfdetr-large"
 
+    @staticmethod
+    def _should_fallback_to_deprecated_config(exc: Exception) -> bool:
+        """Return whether initialization should retry with deprecated Large config.
+
+        The fallback is only for known checkpoint/config incompatibilities from
+        deprecated Large weights. Runtime issues such as CUDA OOM must fail
+        fast and must not trigger a second initialization attempt.
+
+        Args:
+            exc: Exception raised by initial ``RFDETR`` initialization.
+
+        Returns:
+            ``True`` when retrying with deprecated config is expected to help.
+        """
+        message = str(exc).lower()
+        if "out of memory" in message:
+            return False
+        if isinstance(exc, ValueError):
+            return "patch_size" in message
+        if isinstance(exc, RuntimeError):
+            incompatible_state_dict_markers = (
+                "error(s) in loading state_dict",
+                "size mismatch",
+                "missing key(s) in state_dict",
+                "unexpected key(s) in state_dict",
+            )
+            return any(marker in message for marker in incompatible_state_dict_markers)
+        return False
+
     def __init__(self, **kwargs):
         self.init_error = None
         self.is_deprecated = False
         try:
             super().__init__(**kwargs)
-        except Exception as e:
-            self.init_error = e
+        except (ValueError, RuntimeError) as exc:
+            if not self._should_fallback_to_deprecated_config(exc):
+                raise
+            self.init_error = exc
             self.is_deprecated = True
             try:
                 super().__init__(**kwargs)

@@ -24,7 +24,7 @@ import pytest
 import torch
 
 from rfdetr.config import RFDETRBaseConfig, TrainConfig
-from rfdetr.detr import RFDETR
+from rfdetr.detr import RFDETR, RFDETRLarge
 from rfdetr.training.auto_batch import AutoBatchResult
 from rfdetr.training.checkpoint import convert_legacy_checkpoint
 from rfdetr.training.module_model import RFDETRModelModule
@@ -814,7 +814,55 @@ class TestPublicAPIExports:
 
 
 # ---------------------------------------------------------------------------
-# 6. _load_pretrain_weights_into — detr.py path (the non-PTL scenario from #806)
+# 6. RFDETRLarge deprecated-config fallback behaviour
+# ---------------------------------------------------------------------------
+
+
+class TestRFDETRLargeFallback:
+    """RFDETRLarge retries only for deprecated-weight compatibility errors."""
+
+    def test_cuda_oom_runtime_error_does_not_retry(self, monkeypatch):
+        """CUDA OOM should fail fast without deprecated-config retry."""
+        call_count = 0
+
+        def _raise_oom(self, **kwargs):
+            del self, kwargs
+            nonlocal call_count
+            call_count += 1
+            raise RuntimeError("CUDA out of memory. Tried to allocate 16.00 MiB.")
+
+        monkeypatch.setattr(RFDETR, "__init__", _raise_oom)
+
+        with pytest.raises(RuntimeError, match="out of memory"):
+            RFDETRLarge()
+
+        assert call_count == 1
+
+    def test_state_dict_runtime_error_retries_once_with_deprecated_config(self, monkeypatch):
+        """State-dict mismatch errors trigger exactly one deprecated-config retry."""
+        call_count = 0
+
+        def _raise_then_succeed(self, **kwargs):
+            del kwargs
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("Error(s) in loading state_dict for Model: size mismatch for backbone.weight")
+            self.model = MagicMock()
+
+        monkeypatch.setattr(RFDETR, "__init__", _raise_then_succeed)
+        warn_spy = MagicMock()
+        monkeypatch.setattr("rfdetr.detr.logger.warning", warn_spy)
+
+        model = RFDETRLarge()
+
+        assert model.is_deprecated is True
+        assert call_count == 2
+        warn_spy.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# 7. _load_pretrain_weights_into — detr.py path (the non-PTL scenario from #806)
 # ---------------------------------------------------------------------------
 
 
@@ -903,39 +951,50 @@ class TestLoadPretrainWeightsInto:
 
 
 class TestClassNamesProperty:
-    """RFDETR.class_names property uses is-None identity, not truthiness, for empty lists."""
+    """RFDETR.class_names property returns List[str] (0-indexed)."""
 
-    def test_empty_class_names_returns_empty_dict_not_coco(self):
-        """class_names property returns {} when model.class_names is [], NOT COCO_CLASSES.
+    def test_empty_class_names_returns_empty_list_not_coco(self):
+        """class_names property returns [] when model.class_names is [], NOT COCO fallback.
 
         Regression test for #509: the truthiness check `and self.model.class_names:`
         treated [] as falsy and fell through to return COCO_CLASSES, defeating the
         detr.py sync-back even after training on a dataset that reports empty names.
-        The fix uses `is not None` so that [] is preserved as an empty mapping.
+        The fix uses `is not None` so that [] is preserved.
         """
         mock_self = MagicMock()
         mock_self.model.class_names = []
 
         result = RFDETR.class_names.fget(mock_self)
 
-        assert result == {}, "class_names=[] must return {} (empty dict), not COCO_CLASSES"
+        assert result == [], "class_names=[] must return [] (empty list), not COCO fallback"
 
     def test_none_class_names_returns_coco(self):
-        """class_names property falls back to COCO_CLASSES when model.class_names is None."""
-        from rfdetr.assets.coco_classes import COCO_CLASSES
+        """class_names property falls back to COCO_CLASS_NAMES when model.class_names is None."""
+        from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
 
         mock_self = MagicMock()
         mock_self.model.class_names = None
 
         result = RFDETR.class_names.fget(mock_self)
 
-        assert result is COCO_CLASSES
+        assert result is COCO_CLASS_NAMES
 
-    def test_custom_class_names_returned_as_one_indexed_dict(self):
-        """Non-empty class_names are returned as a 1-indexed dict."""
+    def test_custom_class_names_returned_as_list(self):
+        """Non-empty class_names are returned as a 0-indexed list."""
         mock_self = MagicMock()
         mock_self.model.class_names = ["cat", "dog"]
 
         result = RFDETR.class_names.fget(mock_self)
 
-        assert result == {1: "cat", 2: "dog"}
+        assert result == ["cat", "dog"]
+
+    def test_custom_class_names_returns_shallow_copy(self):
+        """Mutating the returned class_names list must not mutate model state."""
+        mock_self = MagicMock()
+        mock_self.model.class_names = ["cat", "dog"]
+
+        result = RFDETR.class_names.fget(mock_self)
+        result.append("bird")
+
+        assert result == ["cat", "dog", "bird"]
+        assert mock_self.model.class_names == ["cat", "dog"]
