@@ -37,7 +37,15 @@ def build_namespace(model_config: ModelConfig, train_config: TrainConfig) -> Any
     """
     mc = model_config
     tc = train_config
-    train_num_select = getattr(tc, "num_select", None)
+    train_fields_set = getattr(tc, "model_fields_set", set())
+    model_fields_set = getattr(mc, "model_fields_set", set())
+    # Transitional compatibility: during deprecation, preserve explicit
+    # ModelConfig.cls_loss_coef values when TrainConfig does not set one.
+    cls_loss_coef = (
+        tc.cls_loss_coef
+        if "cls_loss_coef" in train_fields_set or "cls_loss_coef" not in model_fields_set
+        else mc.cls_loss_coef
+    )
 
     return types.SimpleNamespace(
         # --- ModelConfig fields ---
@@ -66,11 +74,11 @@ def build_namespace(model_config: ModelConfig, train_config: TrainConfig) -> Any
         gradient_checkpointing=mc.gradient_checkpointing,
         positional_encoding_size=mc.positional_encoding_size,
         ia_bce_loss=mc.ia_bce_loss,
-        cls_loss_coef=mc.cls_loss_coef,
+        cls_loss_coef=cls_loss_coef,
         segmentation_head=mc.segmentation_head,
         mask_downsample_ratio=mc.mask_downsample_ratio,
         num_queries=mc.num_queries,
-        num_select=mc.num_select if train_num_select is None else train_num_select,
+        num_select=mc.num_select,
         # --- TrainConfig fields ---
         lr=tc.lr,
         lr_encoder=tc.lr_encoder,

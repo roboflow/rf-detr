@@ -116,7 +116,9 @@ class TestBuildNamespace:
     def test_segmentation_num_select_none_falls_back_to_model_config(self, base_model_config, seg_train_config) -> None:
         """SegmentationTrainConfig(num_select=None) must not overwrite ModelConfig.num_select."""
         mc = base_model_config(segmentation_head=True, num_select=200)
-        tc = seg_train_config(num_select=None)
+        # Explicitly passing num_select=None triggers the deprecation warning (Item #3).
+        with pytest.warns(DeprecationWarning, match="TrainConfig.num_select is deprecated"):
+            tc = seg_train_config(num_select=None)
 
         args = build_namespace(mc, tc)
 
