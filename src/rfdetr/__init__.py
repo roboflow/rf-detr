@@ -4,6 +4,8 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+import importlib
+
 from rfdetr.detr import (
     ModelContext,
     RFDETRBase,  # DEPRECATED # noqa: F401
@@ -39,9 +41,27 @@ __all__ = [
 _LAZY_TRAINING = frozenset({"RFDETRModelModule", "RFDETRDataModule", "build_trainer"})
 _PLUS_EXPORTS = frozenset({"RFDETR2XLarge", "RFDETRXLarge"})
 
+# Modules removed in v1.7 — hook fires once the shim files are deleted at release time.
+_REMOVED_IN_V17 = {
+    "util": "rfdetr.util was removed in v1.7. Use rfdetr.utilities instead.",
+    "deploy": "rfdetr.deploy was removed in v1.7. Use rfdetr.export instead.",
+}
+
 
 def __getattr__(name: str):
     """Resolve PTL and plus-only exports lazily, raising only on explicit access."""
+    if name in _REMOVED_IN_V17:
+        module_name = f"{__name__}.{name}"
+        try:
+            value = importlib.import_module(module_name)
+            globals()[name] = value
+            return value
+        except ModuleNotFoundError as exc:
+            # Avoid masking nested import errors from within the shim itself.
+            if exc.name != module_name:
+                raise
+            raise ImportError(_REMOVED_IN_V17[name]) from None
+
     if name in _LAZY_TRAINING:
         from rfdetr import training as _training
 
