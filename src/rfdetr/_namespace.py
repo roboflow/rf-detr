@@ -69,7 +69,7 @@ def build_namespace(model_config: ModelConfig, train_config: TrainConfig) -> Any
         segmentation_head=mc.segmentation_head,
         mask_downsample_ratio=mc.mask_downsample_ratio,
         num_queries=mc.num_queries,
-        num_select=mc.num_select,
+        num_select=getattr(tc, "num_select", mc.num_select),
         # --- TrainConfig fields ---
         lr=tc.lr,
         lr_encoder=tc.lr_encoder,
