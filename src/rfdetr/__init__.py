@@ -80,6 +80,8 @@ class _RemovedModuleFinder(importlib.abc.MetaPathFinder):
         target: object | None = None,
     ) -> importlib.machinery.ModuleSpec | None:
         """Return a failing spec with a migration hint for removed legacy modules."""
+        if not fullname.startswith(f"{__name__}."):
+            return None
         root, _, _ = fullname.removeprefix(f"{__name__}.").partition(".")
         if root not in _REMOVED_IN_V17:
             return None
@@ -94,8 +96,9 @@ class _RemovedModuleFinder(importlib.abc.MetaPathFinder):
 
 _REMOVED_MODULE_FINDER = _RemovedModuleFinder()
 
-if not any(type(finder) is _RemovedModuleFinder for finder in sys.meta_path):
+if not getattr(sys, "_rfdetr_removed_finder", False):
     sys.meta_path.insert(0, _REMOVED_MODULE_FINDER)
+    sys._rfdetr_removed_finder = True
 
 
 def __getattr__(name: str):

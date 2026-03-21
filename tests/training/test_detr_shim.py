@@ -898,6 +898,26 @@ class TestRemovedLegacyModuleAliases:
         with pytest.raises(ImportError, match=r"rfdetr\.deploy was removed in v1\.7"):
             importlib.import_module("rfdetr.deploy.benchmark")
 
+    def test_find_spec_ignores_non_rfdetr_top_level_imports(self) -> None:
+        """find_spec must not intercept bare top-level imports like 'util' or 'deploy'."""
+        import rfdetr
+
+        finder = rfdetr._RemovedModuleFinder()
+        assert finder.find_spec("util", None) is None
+        assert finder.find_spec("deploy", None) is None
+        assert finder.find_spec("os", None) is None
+
+    def test_meta_path_insertion_is_idempotent_across_reload(self) -> None:
+        """importlib.reload(rfdetr) must not insert a second finder into sys.meta_path."""
+        import rfdetr
+
+        count_before = sum(type(f).__name__ == "_RemovedModuleFinder" for f in sys.meta_path)
+        importlib.reload(rfdetr)
+        count_after = sum(type(f).__name__ == "_RemovedModuleFinder" for f in sys.meta_path)
+        assert count_after == count_before, (
+            f"reload added {count_after - count_before} extra finder(s) to sys.meta_path"
+        )
+
 
 # ---------------------------------------------------------------------------
 # 6. RFDETRLarge deprecated-config fallback behaviour
