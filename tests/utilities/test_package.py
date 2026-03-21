@@ -6,6 +6,8 @@
 
 """Tests for package metadata helpers."""
 
+import subprocess
+import sys
 from unittest.mock import patch
 
 import pytest
@@ -35,6 +37,36 @@ def test_get_sha_marks_dirty_worktree_when_diff_command_returns_exit_code_1() ->
         sha = get_sha()
 
     assert sha == "sha: abc123, status: has uncommitted changes, branch: feature/test"
+
+
+def test_peft_not_imported_eagerly_on_backbone_import_characterization() -> None:
+    """Importing backbone.backbone must NOT pull peft into sys.modules (peft is optional).
+
+    This characterization test captures the invariant introduced in PR 1 (chore/packaging-peft-lora):
+    after the lazy-import refactor, importing backbone at module-load time must not trigger a
+    top-level ``from peft import PeftModel``.
+    """
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; "
+                "import rfdetr.models.backbone.backbone; "
+                "assert 'peft' not in sys.modules, "
+                "'peft was eagerly imported by backbone.backbone'"
+            ),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, (
+        "Subprocess for backbone import failed:\n"
+        f"return code: {result.returncode}\n"
+        f"stdout:\n{result.stdout}\n"
+        f"stderr:\n{result.stderr}"
+    )
 
 
 def test_getattr_hook_resolves_removed_util_module_while_shim_exists() -> None:

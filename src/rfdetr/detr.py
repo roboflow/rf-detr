@@ -167,7 +167,10 @@ def _apply_lora_to(nn_model: torch.nn.Module) -> None:
     Args:
         nn_model: LWDETR model whose backbone encoder will receive LoRA.
     """
-    from peft import LoraConfig, get_peft_model
+    try:
+        from peft import LoraConfig, get_peft_model
+    except ImportError as exc:
+        raise ImportError("LoRA requires peft: pip install 'rfdetr[lora]'") from exc
 
     lora_config = LoraConfig(
         r=16,

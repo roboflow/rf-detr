@@ -19,7 +19,6 @@ Backbone modules.
 
 import torch
 import torch.nn.functional as F
-from peft import PeftModel
 
 from rfdetr.models.backbone.base import BackboneBase
 from rfdetr.models.backbone.dinov2 import DinoV2
@@ -118,9 +117,18 @@ class Backbone(BackboneBase):
         self._forward_origin = self.forward
         self.forward = self.forward_export
 
+        try:
+            from peft import PeftModel
+        except ModuleNotFoundError:
+            logger.warning("peft is not installed; skipping LoRA weight merging during export.")
+            return
+        except ImportError as exc:
+            logger.warning("Failed to import PeftModel from peft during export: %s", exc)
+            raise
+
         if isinstance(self.encoder, PeftModel):
             logger.info("Merging and unloading LoRA weights")
-            self.encoder.merge_and_unload()
+            self.encoder = self.encoder.merge_and_unload()
 
     def forward(self, tensor_list: NestedTensor):
         """ """

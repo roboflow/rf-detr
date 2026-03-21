@@ -172,7 +172,10 @@ class RFDETRModelModule(LightningModule):
 
         Mirrors ``Model.__init__`` LoRA setup.
         """
-        from peft import LoraConfig, get_peft_model
+        try:
+            from peft import LoraConfig, get_peft_model
+        except ImportError as exc:
+            raise ImportError("LoRA requires peft: pip install 'rfdetr[lora]'") from exc
 
         lora_config = LoraConfig(
             r=16,
