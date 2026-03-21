@@ -72,7 +72,7 @@ def load_pretrain_weights(
         are present.
 
     Raises:
-        RuntimeError: If the checkpoint file cannot be loaded after a re-download.
+        Exception: If the checkpoint file cannot be loaded even after a re-download.
     """
     mc = model_config
     pretrain_weights = mc.pretrain_weights
@@ -97,7 +97,20 @@ def load_pretrain_weights(
 
     # Extract class_names from the checkpoint if available (ported from detr.py).
     if "args" in checkpoint:
-        class_names = _ckpt_args_get(checkpoint["args"], "class_names") or []
+        raw_class_names = _ckpt_args_get(checkpoint["args"], "class_names")
+        if raw_class_names:
+            # Normalize to a new List[str] to avoid leaking mutable references and
+            # to respect the annotated return type.
+            if isinstance(raw_class_names, str):
+                class_names = [raw_class_names]
+            else:
+                try:
+                    iterator = iter(raw_class_names)
+                except TypeError:
+                    # Non-iterable, ignore and keep the default empty list.
+                    class_names = []
+                else:
+                    class_names = [name for name in iterator if isinstance(name, str)]
 
     ns = build_namespace(mc, train_config)
     validate_checkpoint_compatibility(checkpoint, ns)
@@ -124,6 +137,8 @@ def load_pretrain_weights(
                 # ModelConfig default): treat the checkpoint as authoritative.
                 num_classes = checkpoint_num_classes - 1
                 configured_num_classes_plus_bg = checkpoint_num_classes
+                # Keep the ModelConfig in sync with the effective class count.
+                mc.num_classes = num_classes
         # In all mismatch cases we need the head to match the checkpoint's
         # class count so load_state_dict succeeds without size mismatches.
         nn_model.reinitialize_detection_head(checkpoint_num_classes)
