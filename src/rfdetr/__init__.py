@@ -3,6 +3,28 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
+"""RF-DETR public package initialiser.
+
+Two-phase legacy-module deprecation
+------------------------------------
+Some sub-packages were relocated in v1.6 and are scheduled for removal in v1.7.
+The migration is handled in two phases so users get a full release cycle to update
+their imports:
+
+**Phase 1 — v1.6 (current):** the old packages (``rfdetr.util``, ``rfdetr.deploy``)
+still exist on disk and work normally, but emit a ``DeprecationWarning`` on import.
+``_RemovedModuleFinder`` is installed in ``sys.meta_path`` but stays dormant: its
+``find_spec`` returns ``None`` whenever ``importlib.machinery.PathFinder`` can
+resolve the name (i.e. while the shim directories are present).
+
+**Phase 2 — v1.7:** the shim directories are deleted.  ``PathFinder`` can no longer
+resolve ``rfdetr.util`` / ``rfdetr.deploy``, so ``_RemovedModuleFinder`` intercepts
+the import and raises a descriptive ``ImportError`` (migration hint) instead of the
+cryptic default ``ModuleNotFoundError: No module named 'rfdetr.util'``.
+
+To complete Phase 2, delete ``src/rfdetr/util/`` and ``src/rfdetr/deploy/`` and bump
+``_REMOVED_IN_V17`` (or rename it) to reflect the new version boundary.
+"""
 
 import importlib
 import importlib.abc
