@@ -428,7 +428,7 @@ class TestSetAttnImplementation:
     [
         pytest.param(64, 64, 2, False, id="valid-square"),
         pytest.param(64, 96, 2, False, id="valid-rectangular"),
-        pytest.param(32, 32, 1, False, id="num_windows-1-no-check"),
+        pytest.param(32, 32, 1, False, id="num_windows-1-valid"),
         pytest.param(33, 64, 2, True, id="h-not-divisible"),
         pytest.param(64, 33, 2, True, id="w-not-divisible"),
         pytest.param(33, 33, 2, True, id="both-not-divisible"),
