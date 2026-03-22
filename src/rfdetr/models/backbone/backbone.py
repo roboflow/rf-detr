@@ -117,6 +117,9 @@ class Backbone(BackboneBase):
         self._forward_origin = self.forward
         self.forward = self.forward_export
 
+        if not hasattr(self.encoder, "merge_and_unload"):
+            return
+
         try:
             from peft import PeftModel
         except ModuleNotFoundError:
