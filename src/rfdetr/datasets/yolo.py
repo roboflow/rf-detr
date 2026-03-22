@@ -93,7 +93,13 @@ def _extract_yolo_class_names(data_file: str) -> list[str]:
         raise ValueError(f"Expected mapping in data file {data_file!r}, got {type(data).__name__}.")
     names = data.get("names")
     if isinstance(names, dict):
-        return [str(names[key]) for key in sorted(names.keys())]
+        def _key_sort_value(key: Any) -> tuple[int, int | str]:
+            key_str = str(key)
+            if key_str.isdigit():
+                return 0, int(key_str)
+            return 1, key_str
+
+        return [str(names[key]) for key in sorted(names.keys(), key=_key_sort_value)]
     if isinstance(names, list):
         return [str(name) for name in names]
     raise ValueError(f"Expected 'names' to be a list or dict in {data_file!r}, got {type(names).__name__}.")
@@ -159,10 +165,6 @@ def _build_lazy_yolo_segmentation_dataset(img_folder: str, lb_folder: str, data_
         label_path = Path(lb_folder) / f"{Path(image_path).stem}.txt"
         with Image.open(image_path) as image:
             width, height = image.size
-            if image.mode not in ("RGB", "L"):
-                raise ValueError(
-                    f"Lazy YOLO loader requires RGB or L (grayscale) images, but {image_path} mode is {image.mode!r}."
-                )
 
         xyxy: list[np.ndarray] = []
         class_id: list[int] = []
@@ -199,7 +201,10 @@ def _build_lazy_yolo_segmentation_dataset(img_folder: str, lb_folder: str, data_
                         dtype=np.float32,
                     )
                 xyxy.append(box * np.array([width, height, width, height], dtype=np.float32))
-                polygons.append(np.rint(polygon * np.array([width, height], dtype=np.float32)).astype(np.int32))
+                polygon_px = polygon * np.array([width, height], dtype=np.float32)
+                polygon_px[:, 0] = np.clip(polygon_px[:, 0], 0.0, float(width - 1))
+                polygon_px[:, 1] = np.clip(polygon_px[:, 1], 0.0, float(height - 1))
+                polygons.append(polygon_px.astype(np.float32))
 
         samples.append(
             _LazyYoloSample(
