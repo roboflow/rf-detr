@@ -42,9 +42,6 @@ class RFDETRTrainCheckpointCallback(Callback):
             pl_module: The Lightning module being trained.
         """
         del pl_module
-        if not trainer.is_global_zero:
-            return
-
         self._output_dir.mkdir(parents=True, exist_ok=True)
         latest_path = self._output_dir / "checkpoint.pth"
         trainer.save_checkpoint(str(latest_path), weights_only=False)
