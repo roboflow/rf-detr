@@ -75,6 +75,7 @@ trt = [
 ]
 loggers = [
     "tensorboard>=2.13.0",
+    "protobuf>=3.20.0,<4.0.0",  # TensorBoard/TensorFlow compatibility on environments with older tensorflow
     "wandb",
     "mlflow",
     "clearml",
