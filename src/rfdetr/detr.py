@@ -21,23 +21,8 @@ import torch
 
 if TYPE_CHECKING:
     import supervision as sv
-    from rfdetr.inference import ModelContext, _build_model_context, _ModelContext
-    from rfdetr.variants import (
-        RFDETRBase,
-        RFDETRLarge,
-        RFDETRLargeDeprecated,
-        RFDETRMedium,
-        RFDETRNano,
-        RFDETRSeg,
-        RFDETRSeg2XLarge,
-        RFDETRSegLarge,
-        RFDETRSegMedium,
-        RFDETRSegNano,
-        RFDETRSegPreview,
-        RFDETRSegSmall,
-        RFDETRSegXLarge,
-        RFDETRSmall,
-    )
+
+    from rfdetr.inference import ModelContext, _build_model_context
 import torchvision.transforms.functional as F
 import yaml
 from PIL import Image
