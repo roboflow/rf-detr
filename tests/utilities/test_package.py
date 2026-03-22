@@ -96,6 +96,29 @@ class TestImportPaths:
 
         assert RFDETRLarge is not None
 
+    def test_variants_import_first_does_not_trigger_circular_import(self) -> None:
+        """Importing variants before detr must still preserve shared class identity."""
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "from rfdetr.variants import RFDETRLarge; "
+                    "from rfdetr.detr import RFDETRLarge as FromDetr; "
+                    "assert RFDETRLarge is FromDetr"
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, (
+            "Subprocess for variants-first import failed:\n"
+            f"return code: {result.returncode}\n"
+            f"stdout:\n{result.stdout}\n"
+            f"stderr:\n{result.stderr}"
+        )
+
     @pytest.mark.parametrize(
         "class_name",
         [

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import glob
+import importlib
 import json
 import os
 import warnings
@@ -20,6 +21,23 @@ import torch
 
 if TYPE_CHECKING:
     import supervision as sv
+    from rfdetr.inference import ModelContext, _build_model_context, _ModelContext
+    from rfdetr.variants import (
+        RFDETRBase,
+        RFDETRLarge,
+        RFDETRLargeDeprecated,
+        RFDETRMedium,
+        RFDETRNano,
+        RFDETRSeg,
+        RFDETRSeg2XLarge,
+        RFDETRSegLarge,
+        RFDETRSegMedium,
+        RFDETRSegNano,
+        RFDETRSegPreview,
+        RFDETRSegSmall,
+        RFDETRSegXLarge,
+        RFDETRSmall,
+    )
 import torchvision.transforms.functional as F
 import yaml
 from PIL import Image
@@ -40,6 +58,27 @@ except Exception:
     pass
 
 logger = get_logger()
+
+_INFERENCE_EXPORTS = frozenset({"ModelContext", "_build_model_context", "_ModelContext"})
+_VARIANT_EXPORTS = frozenset(
+    {
+        "RFDETRBase",
+        "RFDETRLarge",
+        "RFDETRLargeDeprecated",
+        "RFDETRMedium",
+        "RFDETRNano",
+        "RFDETRSeg",
+        "RFDETRSeg2XLarge",
+        "RFDETRSegLarge",
+        "RFDETRSegMedium",
+        "RFDETRSegNano",
+        "RFDETRSegPreview",
+        "RFDETRSegSmall",
+        "RFDETRSegXLarge",
+        "RFDETRSmall",
+    }
+)
+__all__ = ["RFDETR", *_INFERENCE_EXPORTS, *_VARIANT_EXPORTS]
 
 
 class RFDETR:
@@ -601,22 +640,25 @@ class RFDETR:
         shutil.rmtree(tmp_out_dir)
 
 
-# Re-export shim — these names were previously defined here.
-# Imports are at the bottom so RFDETR is already defined when variants.py loads.
-from rfdetr.inference import ModelContext, _build_model_context, _ModelContext  # noqa: E402, F401
-from rfdetr.variants import (  # noqa: E402, F401
-    RFDETRBase,
-    RFDETRLarge,
-    RFDETRLargeDeprecated,
-    RFDETRMedium,
-    RFDETRNano,
-    RFDETRSeg,
-    RFDETRSeg2XLarge,
-    RFDETRSegLarge,
-    RFDETRSegMedium,
-    RFDETRSegNano,
-    RFDETRSegPreview,
-    RFDETRSegSmall,
-    RFDETRSegXLarge,
-    RFDETRSmall,
-)
+def __getattr__(name: str):
+    """Lazily resolve legacy re-exports without creating import-order cycles."""
+
+    if name in _INFERENCE_EXPORTS:
+        module = importlib.import_module("rfdetr.inference")
+        value = getattr(module, name)
+        globals()[name] = value
+        return value
+
+    if name in _VARIANT_EXPORTS:
+        module = importlib.import_module("rfdetr.variants")
+        value = getattr(module, name)
+        globals()[name] = value
+        return value
+
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    """Include lazy re-exports in interactive discovery."""
+
+    return sorted(set(globals()) | _INFERENCE_EXPORTS | _VARIANT_EXPORTS)

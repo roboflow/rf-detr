@@ -5,18 +5,10 @@
 # ------------------------------------------------------------------------
 """Concrete RF-DETR model variant classes.
 
-All classes inherit from :class:`~rfdetr.detr.RFDETR` which lives in
-``rfdetr.detr``.  ``variants.py`` is imported by ``detr.py`` at the *bottom*
-of that module — after ``RFDETR`` is fully defined — so the circular
-dependency (``detr → variants → detr``) resolves safely: when
-``variants.py`` executes ``from rfdetr.detr import RFDETR``, the partially
-initialised ``rfdetr.detr`` module already has ``RFDETR`` in its namespace.
-
-.. warning::
-    Do **not** move the ``from rfdetr.variants import …`` block in
-    ``detr.py`` above the ``RFDETR`` class definition.  Doing so would
-    cause an ``ImportError`` because ``RFDETR`` would not yet exist when
-    ``variants.py`` tries to import it.
+All classes inherit from :class:`~rfdetr.detr.RFDETR` which remains defined in
+``rfdetr.detr``. Backward-compatible access from ``rfdetr.detr`` is provided
+via lazy ``__getattr__`` re-exports, so importing ``rfdetr.variants`` no longer
+depends on a fragile eager ``detr -> variants`` import sequence.
 """
 
 from __future__ import annotations
@@ -40,7 +32,7 @@ from rfdetr.config import (
     RFDETRSmallConfig,
     SegmentationTrainConfig,
 )
-from rfdetr.detr import RFDETR  # circular but safe — RFDETR is defined before detr.py imports variants
+from rfdetr.detr import RFDETR
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
