@@ -1014,41 +1014,43 @@ def _make_detr_checkpoint(
 
 
 class TestLoadPretrainWeightsInto:
-    """Tests for _load_pretrain_weights_into (detr.py path) — the non-PTL code path
-    exercised when RFDETRNano(pretrain_weights=...) is called directly (issue #806)."""
+    """Tests for load_pretrain_weights (models/weights.py) — checkpoint compatibility
+    validation exercised when RFDETRNano(pretrain_weights=...) is called (issue #806)."""
 
     @pytest.fixture(autouse=True)
     def _patch_download(self, monkeypatch):
         """Suppress all download and file-existence side effects."""
-        monkeypatch.setattr("rfdetr.detr.download_pretrain_weights", lambda *a, **kw: None)
-        monkeypatch.setattr("rfdetr.detr.validate_pretrain_weights", lambda *a, **kw: None)
-        monkeypatch.setattr("os.path.isfile", lambda _: True)
+        monkeypatch.setattr("rfdetr.models.weights.download_pretrain_weights", lambda *a, **kw: None)
+        monkeypatch.setattr("rfdetr.models.weights.validate_pretrain_weights", lambda *a, **kw: None)
+        monkeypatch.setattr("rfdetr.models.weights.os.path.isfile", lambda _: True)
 
-    def test_seg_ckpt_into_detection_model_raises_via_detr_path(self, monkeypatch):
-        """Segmentation checkpoint loaded via _load_pretrain_weights_into must raise ValueError."""
-        from rfdetr.detr import _load_pretrain_weights_into
+    def test_seg_ckpt_into_detection_model_raises_via_detr_path(self, monkeypatch, tmp_path):
+        """Segmentation checkpoint must raise ValueError when loaded into a detection model."""
+        from rfdetr.models.weights import load_pretrain_weights
 
         checkpoint = _make_detr_checkpoint(segmentation_head=True, patch_size=14)
-        monkeypatch.setattr("rfdetr.detr.torch.load", lambda *a, **kw: checkpoint)
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
 
         fake_model = MagicMock()
-        args = _make_detr_args(segmentation_head=False, patch_size=14)
+        mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu", segmentation_head=False)
+        tc = _make_train_config(tmp_path)
 
         with pytest.raises(ValueError, match="segmentation head"):
-            _load_pretrain_weights_into(fake_model, args)
+            load_pretrain_weights(fake_model, mc, tc)
 
-    def test_patch_size_mismatch_raises_via_detr_path(self, monkeypatch):
-        """patch_size mismatch raised by _load_pretrain_weights_into via the detr.py path."""
-        from rfdetr.detr import _load_pretrain_weights_into
+    def test_patch_size_mismatch_raises_via_detr_path(self, monkeypatch, tmp_path):
+        """patch_size mismatch must raise ValueError via the load_pretrain_weights path."""
+        from rfdetr.models.weights import load_pretrain_weights
 
         checkpoint = _make_detr_checkpoint(segmentation_head=False, patch_size=12)
-        monkeypatch.setattr("rfdetr.detr.torch.load", lambda *a, **kw: checkpoint)
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
 
         fake_model = MagicMock()
-        args = _make_detr_args(segmentation_head=False, patch_size=16)
+        mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu", patch_size=16)
+        tc = _make_train_config(tmp_path)
 
         with pytest.raises(ValueError, match=r"patch_size"):
-            _load_pretrain_weights_into(fake_model, args)
+            load_pretrain_weights(fake_model, mc, tc)
 
 
 # ---------------------------------------------------------------------------
@@ -1083,7 +1085,8 @@ class TestClassNamesProperty:
 
         result = RFDETR.class_names.fget(mock_self)
 
-        assert result is COCO_CLASS_NAMES
+        assert result == COCO_CLASS_NAMES
+        assert result is not COCO_CLASS_NAMES, "COCO fallback must return a copy, not the mutable global"
 
     def test_custom_class_names_returned_as_list(self):
         """Non-empty class_names are returned as a 0-indexed list."""

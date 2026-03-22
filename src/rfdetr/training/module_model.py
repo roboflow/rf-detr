@@ -9,7 +9,6 @@
 from __future__ import annotations
 
 import math
-import os
 import random
 import warnings
 from typing import Any, Dict, Optional, Tuple
@@ -19,13 +18,12 @@ import torch.nn.functional as F
 from pytorch_lightning import LightningModule, seed_everything
 
 from rfdetr._namespace import build_namespace
-from rfdetr.assets.model_weights import download_pretrain_weights, validate_pretrain_weights
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.datasets.coco import compute_multi_scale_scales
 from rfdetr.models.lwdetr import build_criterion_and_postprocessors, build_model
+from rfdetr.models.weights import apply_lora, load_pretrain_weights
 from rfdetr.training.param_groups import get_param_dict
 from rfdetr.utilities.logger import get_logger
-from rfdetr.utilities.state_dict import validate_checkpoint_compatibility
 
 logger = get_logger()
 
@@ -55,7 +53,7 @@ class RFDETRModelModule(LightningModule):
             # Capture the configured class count before loading weights so we can
             # detect any automatic alignment to the checkpoint.
             prev_num_classes = self.model_config.num_classes
-            self._load_pretrain_weights()
+            load_pretrain_weights(self.model, self.model_config, self.train_config)
             # If the loaded checkpoint changed the model's effective number of
             # classes (e.g. to match a fine-tuned head), persist that back onto
             # the model_config so downstream components see the aligned value.
@@ -64,7 +62,7 @@ class RFDETRModelModule(LightningModule):
                 if model_num_classes is not None and model_num_classes != prev_num_classes:
                     self.model_config.num_classes = model_num_classes
         if model_config.backbone_lora:
-            self._apply_lora()
+            apply_lora(self.model)
 
         # Rebuild the namespace after potential num_classes alignment so that
         # the criterion and postprocessors are constructed with a config that
@@ -90,110 +88,6 @@ class RFDETRModelModule(LightningModule):
             torch._dynamo.config.suppress_errors = True
             torch._dynamo.config.capture_scalar_outputs = True
             self.model = torch.compile(self.model, dynamic=True)
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
-    def _load_pretrain_weights(self) -> None:
-        """Load pretrained checkpoint into ``self.model``.
-
-        Mirrors ``Model.__init__`` checkpoint loading logic: validates hash,
-        re-downloads on corruption, trims query embeddings to match config.
-        """
-        mc = self.model_config
-        pretrain_weights = mc.pretrain_weights
-        # Download first (no-op if already present and hash is valid).
-        download_pretrain_weights(pretrain_weights)
-        # If the first download attempt didn't produce the file (e.g. stale MD5
-        # caused an earlier ValueError that was silently swallowed), retry with
-        # MD5 validation disabled so a stale registry hash can't block training.
-        if not os.path.isfile(pretrain_weights):
-            logger.warning("Pretrain weights not found after initial download; retrying without MD5 validation.")
-            download_pretrain_weights(pretrain_weights, redownload=True, validate_md5=False)
-        validate_pretrain_weights(pretrain_weights, strict=False)
-        try:
-            checkpoint = torch.load(pretrain_weights, map_location="cpu", weights_only=False)
-        except Exception:
-            logger.info("Failed to load pretrain weights, re-downloading")
-            download_pretrain_weights(pretrain_weights, redownload=True, validate_md5=False)
-            checkpoint = torch.load(pretrain_weights, map_location="cpu", weights_only=False)
-
-        ns = build_namespace(mc, self.train_config)
-        validate_checkpoint_compatibility(checkpoint, ns)
-
-        # Determine whether the user explicitly set num_classes on the ModelConfig,
-        # and whether that explicit value differs from the model default.
-        user_set_num_classes = False
-        if hasattr(mc, "model_fields_set"):
-            user_set_num_classes = "num_classes" in getattr(mc, "model_fields_set", set())
-        default_num_classes = type(mc).model_fields["num_classes"].default
-        num_classes = mc.num_classes
-        # True only when the user explicitly set num_classes to a non-default value.
-        user_overrode_default_num_classes = user_set_num_classes and num_classes != default_num_classes
-
-        checkpoint_num_classes = checkpoint["model"]["class_embed.bias"].shape[0]
-        configured_num_classes_plus_bg = num_classes + 1
-        if checkpoint_num_classes != configured_num_classes_plus_bg:
-            # Align model head size before loading checkpoint weights.
-            if checkpoint_num_classes < configured_num_classes_plus_bg:
-                # Checkpoint has FEWER classes than configured.
-                if not user_overrode_default_num_classes:
-                    # Auto-align to the checkpoint when the user did NOT provide a
-                    # non-default override for num_classes (i.e., left it at the
-                    # ModelConfig default): treat the checkpoint as authoritative.
-                    num_classes = checkpoint_num_classes - 1
-                    configured_num_classes_plus_bg = checkpoint_num_classes
-            # In all mismatch cases we need the head to match the checkpoint's
-            # class count so load_state_dict succeeds without size mismatches.
-            self.model.reinitialize_detection_head(checkpoint_num_classes)
-
-        # Trim query embeddings to the configured query count.
-        num_desired_queries = mc.num_queries * mc.group_detr
-        query_param_names = ["refpoint_embed.weight", "query_feat.weight"]
-        for name in list(checkpoint["model"].keys()):
-            if any(name.endswith(x) for x in query_param_names):
-                checkpoint["model"][name] = checkpoint["model"][name][:num_desired_queries]
-
-        self.model.load_state_dict(checkpoint["model"], strict=False)
-
-        # If the user explicitly set a class count larger than the checkpoint,
-        # expand/reinitialize the head back to the configured size after load.
-        if checkpoint_num_classes < configured_num_classes_plus_bg and user_overrode_default_num_classes:
-            self.model.reinitialize_detection_head(configured_num_classes_plus_bg)
-
-        # Only trim back down when loading a larger pretrain checkpoint into a
-        # smaller configured task-specific class count.
-        if num_classes + 1 < checkpoint_num_classes:
-            self.model.reinitialize_detection_head(num_classes + 1)
-
-    def _apply_lora(self) -> None:
-        """Apply LoRA adapters to the backbone encoder.
-
-        Mirrors ``Model.__init__`` LoRA setup.
-        """
-        try:
-            from peft import LoraConfig, get_peft_model
-        except ImportError as exc:
-            raise ImportError("LoRA requires peft: pip install 'rfdetr[lora]'") from exc
-
-        lora_config = LoraConfig(
-            r=16,
-            lora_alpha=16,
-            use_dora=True,
-            target_modules=[
-                "q_proj",
-                "v_proj",
-                "k_proj",
-                "qkv",
-                "query",
-                "key",
-                "value",
-                "cls_token",
-                "register_tokens",
-            ],
-        )
-        self.model.backbone[0].encoder = get_peft_model(self.model.backbone[0].encoder, lora_config)
 
     # ------------------------------------------------------------------
     # PTL lifecycle hooks
