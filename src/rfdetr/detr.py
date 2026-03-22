@@ -22,7 +22,7 @@ import torch
 if TYPE_CHECKING:
     import supervision as sv
 
-    from rfdetr.inference import ModelContext, _build_model_context
+from rfdetr.inference import ModelContext, _build_model_context
 import torchvision.transforms.functional as F
 import yaml
 from PIL import Image
