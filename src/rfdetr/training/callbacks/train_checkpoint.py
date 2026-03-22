@@ -10,8 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pytorch_lightning import LightningModule, Trainer
-from pytorch_lightning.callbacks import Callback
+from pytorch_lightning import Callback, LightningModule, Trainer
 
 
 class RFDETRTrainCheckpointCallback(Callback):
