@@ -33,9 +33,7 @@ class RFDETRTrainCheckpointCallback(Callback):
         self._output_dir = Path(output_dir)
         interval = int(checkpoint_interval)
         if interval < 1:
-            raise ValueError(
-                f"checkpoint_interval must be >= 1, got {checkpoint_interval!r}."
-            )
+            raise ValueError(f"checkpoint_interval must be >= 1, got {checkpoint_interval!r}.")
         self._checkpoint_interval = interval
 
     def on_train_epoch_end(self, trainer: Trainer, pl_module: LightningModule) -> None:
