@@ -99,7 +99,7 @@ class ModelDefaults:
     use_position_supervised_loss: bool = False
     print_freq: int = 10
     do_benchmark: bool = False
-    dropout: int = 0
+    dropout: float = 0.0
     coco_path: Optional[str] = None
     dont_save_weights: bool = False
     start_epoch: int = 0
