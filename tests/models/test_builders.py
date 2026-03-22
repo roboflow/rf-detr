@@ -22,7 +22,7 @@ from rfdetr.config import (
 )
 
 try:
-    from rfdetr.models import build_model_from_config, build_criterion_from_config
+    from rfdetr.models import build_criterion_from_config, build_model_from_config
 
     HAS_CONFIG_BUILDERS = True
 except ImportError:
@@ -43,9 +43,7 @@ class TestBuildModelFromConfig:
 
         mc = RFDETRBaseConfig(num_classes=80)
         model = build_model_from_config(mc)
-        assert isinstance(model, LWDETR), (
-            f"Expected LWDETR instance, got {type(model).__name__}"
-        )
+        assert isinstance(model, LWDETR), f"Expected LWDETR instance, got {type(model).__name__}"
 
     def test_num_classes_correct(self) -> None:
         """num_classes=5 in config should produce class_embed with out_features=6.
@@ -55,8 +53,7 @@ class TestBuildModelFromConfig:
         mc = RFDETRBaseConfig(num_classes=5)
         model = build_model_from_config(mc)
         assert model.class_embed.out_features == 6, (
-            f"Expected class_embed.out_features=6 (num_classes+1), "
-            f"got {model.class_embed.out_features}"
+            f"Expected class_embed.out_features=6 (num_classes+1), got {model.class_embed.out_features}"
         )
 
     def test_parity_with_build_model_via_namespace(self) -> None:
@@ -74,17 +71,14 @@ class TestBuildModelFromConfig:
         params_native = sum(p.numel() for p in model_config_native.parameters())
         params_namespace = sum(p.numel() for p in model_namespace.parameters())
         assert params_native == params_namespace, (
-            f"Parameter count mismatch: "
-            f"config-native={params_native}, namespace={params_namespace}"
+            f"Parameter count mismatch: config-native={params_native}, namespace={params_namespace}"
         )
 
     def test_segmentation_head_created_when_true(self) -> None:
         """RFDETRSegNanoConfig has segmentation_head=True; model must have it."""
         mc = RFDETRSegNanoConfig()
         model = build_model_from_config(mc)
-        assert model.segmentation_head is not None, (
-            "Expected segmentation_head to be created for RFDETRSegNanoConfig"
-        )
+        assert model.segmentation_head is not None, "Expected segmentation_head to be created for RFDETRSegNanoConfig"
 
 
 class TestBuildCriterionFromConfig:
@@ -98,32 +92,22 @@ class TestBuildCriterionFromConfig:
         mc = RFDETRBaseConfig(num_classes=80)
         tc = TrainConfig(dataset_dir="/tmp")
         result = build_criterion_from_config(mc, tc)
-        assert isinstance(result, tuple), (
-            f"Expected tuple, got {type(result).__name__}"
-        )
+        assert isinstance(result, tuple), f"Expected tuple, got {type(result).__name__}"
         assert len(result) == 2, f"Expected 2-tuple, got {len(result)}-tuple"
         criterion, postprocess = result
-        assert isinstance(criterion, SetCriterion), (
-            f"Expected SetCriterion, got {type(criterion).__name__}"
-        )
-        assert isinstance(postprocess, PostProcess), (
-            f"Expected PostProcess, got {type(postprocess).__name__}"
-        )
+        assert isinstance(criterion, SetCriterion), f"Expected SetCriterion, got {type(criterion).__name__}"
+        assert isinstance(postprocess, PostProcess), f"Expected PostProcess, got {type(postprocess).__name__}"
 
     def test_num_select_postprocess(self) -> None:
         """RFDETRSegNanoConfig has num_select=100; PostProcess must reflect it."""
         mc = RFDETRSegNanoConfig()
         tc = SegmentationTrainConfig(dataset_dir="/tmp")
         _, postprocess = build_criterion_from_config(mc, tc)
-        assert postprocess.num_select == 100, (
-            f"Expected PostProcess.num_select=100, got {postprocess.num_select}"
-        )
+        assert postprocess.num_select == 100, f"Expected PostProcess.num_select=100, got {postprocess.num_select}"
 
     def test_segmentation_losses_included(self) -> None:
         """With segmentation config, 'masks' must be in criterion.losses."""
         mc = RFDETRSegNanoConfig()
         tc = SegmentationTrainConfig(dataset_dir="/tmp")
         criterion, _ = build_criterion_from_config(mc, tc)
-        assert "masks" in criterion.losses, (
-            f"Expected 'masks' in criterion.losses, got {criterion.losses}"
-        )
+        assert "masks" in criterion.losses, f"Expected 'masks' in criterion.losses, got {criterion.losses}"

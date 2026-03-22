@@ -13,8 +13,6 @@ refactoring (PR 5): any change that alters these outputs is a regression.
 All tests in this file must pass against the CURRENT codebase.
 """
 
-from types import SimpleNamespace
-
 import pytest
 import torch
 
@@ -29,7 +27,6 @@ from rfdetr.config import (
 from rfdetr.models.criterion import SetCriterion
 from rfdetr.models.lwdetr import LWDETR, build_criterion_and_postprocessors, build_model
 from rfdetr.models.postprocess import PostProcess
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -126,9 +123,7 @@ class TestBuildModelCharacterization:
         model = build_model(ns)
         total = sum(p.numel() for p in model.parameters())
         low, high = expected_param_count_range
-        assert low <= total <= high, (
-            f"Expected param count in [{low}, {high}], got {total}"
-        )
+        assert low <= total <= high, f"Expected param count in [{low}, {high}], got {total}"
 
     def test_encoder_only_returns_triple(self) -> None:
         """When encoder_only=True, build_model returns (encoder, None, None)."""
@@ -434,9 +429,5 @@ class TestBuildNamespaceDefaultsParity:
         for field_name in ModelDefaults.__dataclass_fields__:
             expected = getattr(MODEL_DEFAULTS, field_name)
             actual = getattr(ns, field_name, "MISSING")
-            assert actual != "MISSING", (
-                f"ModelDefaults.{field_name} has no matching namespace attribute"
-            )
-            assert actual == expected, (
-                f"ModelDefaults.{field_name}={expected!r} != namespace.{field_name}={actual!r}"
-            )
+            assert actual != "MISSING", f"ModelDefaults.{field_name} has no matching namespace attribute"
+            assert actual == expected, f"ModelDefaults.{field_name}={expected!r} != namespace.{field_name}={actual!r}"

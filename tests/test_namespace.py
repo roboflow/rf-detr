@@ -173,6 +173,5 @@ class TestNamespaceFromConfigs:
         )
         for key in sorted(legacy_attrs):
             assert legacy_attrs[key] == new_attrs[key], (
-                f"Value mismatch for '{key}': "
-                f"legacy={legacy_attrs[key]!r}, new={new_attrs[key]!r}"
+                f"Value mismatch for '{key}': legacy={legacy_attrs[key]!r}, new={new_attrs[key]!r}"
             )
