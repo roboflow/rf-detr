@@ -45,7 +45,7 @@ class RFDETRModelModule(LightningModule):
         self.strict_loading = False
 
         # Model, criterion, and postprocessor.
-        self.model = build_model_from_config(model_config)
+        self.model = build_model_from_config(model_config, train_config)
         if model_config.pretrain_weights is not None:
             # Capture the configured class count before loading weights so we can
             # detect any automatic alignment to the checkpoint.

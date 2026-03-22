@@ -12,7 +12,6 @@ on ``main.py`` and can survive its deletion.
 """
 
 import types
-from typing import Any
 
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.models._defaults import MODEL_DEFAULTS, ModelDefaults
@@ -22,7 +21,7 @@ def _namespace_from_configs(
     model_config: ModelConfig,
     train_config: TrainConfig,
     defaults: ModelDefaults = MODEL_DEFAULTS,
-) -> Any:
+) -> types.SimpleNamespace:
     """Build a ``types.SimpleNamespace`` from configs and architectural defaults.
 
     This is the internal implementation behind :func:`build_namespace`.
@@ -177,7 +176,7 @@ def _namespace_from_configs(
     )
 
 
-def build_namespace(model_config: ModelConfig, train_config: TrainConfig) -> Any:
+def build_namespace(model_config: ModelConfig, train_config: TrainConfig) -> types.SimpleNamespace:
     """Build a ``types.SimpleNamespace`` from Pydantic model and train configs.
 
     Produces the same attribute set as the legacy ``populate_args()`` so that

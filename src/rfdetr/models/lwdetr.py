@@ -483,26 +483,42 @@ def build_criterion_and_postprocessors(args: "BuilderArgs"):
 
 def build_model_from_config(
     model_config: "ModelConfig",
+    train_config: Optional["TrainConfig"] = None,
     defaults: ModelDefaults = MODEL_DEFAULTS,
 ) -> LWDETR:
     """Build an LWDETR model directly from a ModelConfig.
 
     A config-native alternative to ``build_model(build_namespace(mc, tc))``.
-    Constructs the namespace internally from ``model_config`` and ``defaults``,
-    then delegates to :func:`build_model`.
+    Constructs the namespace internally from ``model_config``, an optional
+    ``train_config``, and ``defaults``, then delegates to :func:`build_model`.
 
     Args:
         model_config: Architecture configuration.
+        train_config: Training hyperparameter configuration. If ``None``,
+            a minimal dummy ``TrainConfig(dataset_dir=".", output_dir=".")`` is
+            constructed, matching the previous default behavior.
         defaults: Hardcoded architectural constants. Defaults to ``MODEL_DEFAULTS``.
 
     Returns:
         Fully initialised LWDETR model.
+
+    Raises:
+        ValueError: If ``defaults`` request ``encoder_only`` or ``backbone_only``,
+            which would make the return type differ from ``LWDETR``.
     """
     from rfdetr._namespace import _namespace_from_configs
-    from rfdetr.config import TrainConfig
 
-    _dummy_tc = TrainConfig(dataset_dir=".", output_dir=".")
-    ns = _namespace_from_configs(model_config, _dummy_tc, defaults)
+    if defaults.encoder_only or defaults.backbone_only:
+        raise ValueError(
+            "build_model_from_config() requires defaults.encoder_only=False and defaults.backbone_only=False."
+        )
+
+    if train_config is None:
+        from rfdetr.config import TrainConfig
+
+        train_config = TrainConfig(dataset_dir=".", output_dir=".")
+
+    ns = _namespace_from_configs(model_config, train_config, defaults)
     return build_model(ns)
 
 

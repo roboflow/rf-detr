@@ -30,7 +30,7 @@ except ImportError:
 
 pytestmark = pytest.mark.skipif(
     not HAS_CONFIG_BUILDERS,
-    reason="build_model_from_config not yet implemented",
+    reason="config-native builder functions are not importable",
 )
 
 
@@ -64,7 +64,7 @@ class TestBuildModelFromConfig:
         mc = RFDETRBaseConfig(num_classes=80)
         tc = TrainConfig(dataset_dir="/tmp")
 
-        model_config_native = build_model_from_config(mc)
+        model_config_native = build_model_from_config(mc, tc)
         ns = build_namespace(mc, tc)
         model_namespace = build_model(ns)
 
@@ -79,6 +79,28 @@ class TestBuildModelFromConfig:
         mc = RFDETRSegNanoConfig()
         model = build_model_from_config(mc)
         assert model.segmentation_head is not None, "Expected segmentation_head to be created for RFDETRSegNanoConfig"
+
+    def test_drop_path_uses_train_config_value(self) -> None:
+        """Non-default TrainConfig.drop_path must reach the model builder path."""
+        mc = RFDETRBaseConfig(num_classes=80)
+        tc = TrainConfig(dataset_dir="/tmp", drop_path=0.2)
+        model = build_model_from_config(mc, tc)
+
+        layers = model._get_backbone_encoder_layers()
+        assert layers is not None
+        assert hasattr(layers[-1], "drop_path")
+        assert layers[-1].drop_path.drop_prob == pytest.approx(0.2)
+
+    def test_rejects_encoder_only_defaults(self) -> None:
+        """The config-native builder guarantees an LWDETR return value."""
+        from dataclasses import replace
+
+        from rfdetr.models import MODEL_DEFAULTS
+
+        mc = RFDETRBaseConfig(num_classes=80)
+
+        with pytest.raises(ValueError, match="encoder_only=False"):
+            build_model_from_config(mc, defaults=replace(MODEL_DEFAULTS, encoder_only=True))
 
 
 class TestBuildCriterionFromConfig:
