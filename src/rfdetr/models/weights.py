@@ -139,8 +139,6 @@ def load_pretrain_weights(
                 # ModelConfig default): treat the checkpoint as authoritative.
                 num_classes = checkpoint_num_classes - 1
                 configured_num_classes_plus_bg = checkpoint_num_classes
-                # Keep the ModelConfig in sync with the effective class count.
-                mc.num_classes = num_classes
         # In all mismatch cases we need the head to match the checkpoint's
         # class count so load_state_dict succeeds without size mismatches.
         nn_model.reinitialize_detection_head(checkpoint_num_classes)
@@ -178,12 +176,20 @@ def apply_lora(nn_model: torch.nn.Module) -> None:
 
     Raises:
         ImportError: If ``peft`` is not installed.
-            Install with ``pip install peft``.
+            Install via the RF-DETR extras, for example::
+
+                pip install "rfdetr[lora]"
+                # or
+                pip install "rfdetr[train]"
     """
     try:
         from peft import LoraConfig, get_peft_model
     except ImportError as exc:
-        raise ImportError("LoRA requires peft: pip install peft") from exc
+        raise ImportError(
+            "LoRA requires the 'peft' dependency. "
+            'Install it via RF-DETR extras, e.g.: '
+            'pip install "rfdetr[lora]" or pip install "rfdetr[train]".'
+        ) from exc
 
     lora_config = LoraConfig(
         r=16,

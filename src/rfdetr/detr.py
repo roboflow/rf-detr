@@ -126,6 +126,10 @@ def _build_model_context(model_config: ModelConfig) -> "ModelContext":
     class_names: List[str] = []
     if model_config.pretrain_weights is not None:
         class_names = load_pretrain_weights(nn_model, model_config, dummy_train_config)
+        # ``load_pretrain_weights`` can mutate ``model_config.num_classes`` when
+        # aligning to checkpoint heads. Keep the derived namespace in sync.
+        if hasattr(args, "num_classes") and getattr(args, "num_classes") != model_config.num_classes:
+            args.num_classes = model_config.num_classes
 
     if model_config.backbone_lora:
         apply_lora(nn_model)
