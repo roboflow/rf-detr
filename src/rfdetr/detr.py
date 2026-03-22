@@ -331,9 +331,10 @@ class RFDETR:
         force: bool = False,
         shape: tuple = None,
         batch_size: int = 1,
+        tensorrt: bool = False,
         **kwargs,
     ) -> None:
-        """Export the trained model to ONNX format.
+        """Export the trained model to ONNX format, and optionally to TensorRT.
 
         See the `ONNX export documentation <https://rfdetr.roboflow.com/learn/export/>`_
         for more information.
@@ -348,6 +349,9 @@ class RFDETR:
             force: Force re-export even if output already exists.
             shape: ``(height, width)`` tuple; defaults to square at model resolution.
             batch_size: Static batch size to bake into the ONNX graph.
+            tensorrt: When ``True``, convert the exported ONNX model to a TensorRT
+                ``.engine`` file using ``trtexec``.  Requires TensorRT to be installed
+                and ``trtexec`` available in ``PATH``.
             **kwargs: Additional keyword arguments forwarded to export_onnx.
         """
         logger.info("Exporting model to ONNX format")
@@ -427,6 +431,15 @@ class RFDETR:
                 onnx_dir=output_file, input_names=input_names, input_tensors=input_tensors, force=force
             )
             logger.info(f"Successfully simplified ONNX model to: {sim_output_file}")
+
+        if tensorrt:
+            from argparse import Namespace
+
+            from rfdetr.export.tensorrt import trtexec
+
+            trt_args = Namespace(verbose=verbose, profile=False, dry_run=False)
+            engine_file = trtexec(output_file, trt_args)
+            logger.info(f"Successfully exported TensorRT engine to: {engine_file}")
 
         logger.info("ONNX export completed successfully")
         self.model.model = self.model.model.to(device)

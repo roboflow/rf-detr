@@ -32,7 +32,17 @@ def run_command_shell(command, dry_run: bool = False) -> subprocess.CompletedPro
         raise
 
 
-def trtexec(onnx_dir: str, args) -> None:
+def trtexec(onnx_dir: str, args) -> str:
+    """Convert an ONNX model to a TensorRT engine using trtexec.
+
+    Args:
+        onnx_dir: Path to the input ONNX file.
+        args: Namespace with ``verbose`` (bool), ``profile`` (bool), and
+            ``dry_run`` (bool) attributes.
+
+    Returns:
+        Path to the generated ``.engine`` file.
+    """
     engine_dir = onnx_dir.replace(".onnx", ".engine")
 
     # Base trtexec command
@@ -59,6 +69,7 @@ def trtexec(onnx_dir: str, args) -> None:
 
     output = run_command_shell(command, args.dry_run)
     parse_trtexec_output(output.stdout)
+    return engine_dir
 
 
 def parse_trtexec_output(output_text):

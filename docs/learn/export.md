@@ -51,6 +51,7 @@ The `export()` method accepts several parameters to customize the export process
 | `force`         | `False`    | Force re-export even if simplified model already exists.                                                               |
 | `shape`         | `None`     | Input shape as tuple `(height, width)`. Must be divisible by 14. If not provided, uses the model's default resolution. |
 | `batch_size`    | `1`        | Batch size for the exported model.                                                                                     |
+| `tensorrt`      | `False`    | When `True`, convert the ONNX model to a TensorRT `.engine` file. Requires TensorRT (`trtexec`) to be installed.      |
 
 ## Advanced Export Examples
 
@@ -117,9 +118,24 @@ If you want lower latency on NVIDIA GPUs, you can convert the exported ONNX mode
 ### Prerequisites
 
 - Install TensorRT (`trtexec` must be available in your `PATH`)
-- Export an ONNX model first (for example: `output/inference_model.onnx`)
 
-### Python API Conversion
+### Export Directly to TensorRT
+
+Pass `tensorrt=True` to `export()` to convert the ONNX model to a TensorRT engine in one step:
+
+```python
+from rfdetr import RFDETRMedium
+
+model = RFDETRMedium(pretrain_weights="<path/to/checkpoint.pth>")
+
+model.export(tensorrt=True)
+```
+
+This exports `output/inference_model.onnx` first and then produces `output/inference_model.engine`.
+
+### Manual Python API Conversion
+
+You can also convert an existing ONNX file to a TensorRT engine separately:
 
 ```python
 from argparse import Namespace
@@ -132,10 +148,10 @@ args = Namespace(
     dry_run=False,
 )
 
-trtexec("output/inference_model.onnx", args)
+engine_path = trtexec("output/inference_model.onnx", args)
 ```
 
-This produces `output/inference_model.engine`. If `profile=True`, it also writes an Nsight Systems report (`.nsys-rep`).
+`trtexec` returns the path to the generated ``.engine`` file.  If `profile=True`, it also writes an Nsight Systems report (`.nsys-rep`).
 
 ## Using the Exported Model
 
@@ -169,6 +185,42 @@ image_array = np.expand_dims(image_array, axis=0)
 outputs = session.run(None, {"input": image_array})
 boxes, labels = outputs
 ```
+
+### TensorRT Engine
+
+Load a `.engine` file and run inference using the `TRTInference` helper:
+
+```python
+import torch
+import numpy as np
+from PIL import Image
+
+from rfdetr.export.benchmark import TRTInference
+
+# Load the TensorRT engine
+trt_model = TRTInference("output/inference_model.engine", device="cuda:0")
+
+# Prepare input image (same preprocessing as ONNX Runtime)
+resolution = 560  # must match the resolution used during export
+image = Image.open("image.jpg").convert("RGB").resize((resolution, resolution))
+image_array = np.array(image).astype(np.float32) / 255.0
+
+mean = np.array([0.485, 0.456, 0.406])
+std = np.array([0.229, 0.224, 0.225])
+image_array = (image_array - mean) / std
+
+# Convert to NCHW tensor on GPU
+input_tensor = torch.from_numpy(image_array.transpose(2, 0, 1)).float().unsqueeze(0).cuda()
+
+# Run inference — returns {"dets": ..., "labels": ...}
+outputs = trt_model({"input": input_tensor})
+boxes = outputs["dets"]   # shape: [1, num_queries, 4]  (cx, cy, w, h normalised)
+labels = outputs["labels"]  # shape: [1, num_queries, num_classes]
+```
+
+> [!NOTE]
+> `TRTInference` requires TensorRT and (for async mode) `pycuda` to be installed.
+> Run inference on the same GPU family as the one used to build the engine.
 
 ## Next Steps
 
