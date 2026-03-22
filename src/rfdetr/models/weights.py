@@ -69,13 +69,15 @@ def load_pretrain_weights(
 
     Returns:
         List of class name strings from the checkpoint, or an empty list if none
-        are present.
+        are present or if ``model_config.pretrain_weights`` is ``None``.
 
     Raises:
         Exception: If the checkpoint file cannot be loaded even after a re-download.
     """
     mc = model_config
     pretrain_weights = mc.pretrain_weights
+    if pretrain_weights is None:
+        return []
     class_names: List[str] = []
 
     # Download first (no-op if already present and hash is valid).

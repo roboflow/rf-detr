@@ -229,6 +229,20 @@ class TestLoadPretrainWeightsClassNames:
 
         assert result == [], f"Expected empty list when checkpoint has no class_names, got {result!r}"
 
+    def test_none_pretrain_weights_returns_empty_list_immediately(self, tmp_path):
+        """load_pretrain_weights returns [] without any I/O when pretrain_weights is None."""
+        from rfdetr.models.weights import load_pretrain_weights
+
+        mc = RFDETRBaseConfig(pretrain_weights=None, device="cpu")
+        tc = _make_train_config(tmp_path)
+        nn_model = _fake_nn_model()
+
+        result = load_pretrain_weights(nn_model, mc, tc)
+
+        assert result == [], f"Expected [] for None pretrain_weights, got {result!r}"
+        nn_model.load_state_dict.assert_not_called()
+        nn_model.reinitialize_detection_head.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # apply_lora
