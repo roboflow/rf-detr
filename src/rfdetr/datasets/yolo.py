@@ -93,6 +93,7 @@ def _extract_yolo_class_names(data_file: str) -> list[str]:
         raise ValueError(f"Expected mapping in data file {data_file!r}, got {type(data).__name__}.")
     names = data.get("names")
     if isinstance(names, dict):
+
         def _key_sort_value(key: Any) -> tuple[int, int | str]:
             key_str = str(key)
             if key_str.isdigit():
