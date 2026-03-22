@@ -187,7 +187,7 @@ def apply_lora(nn_model: torch.nn.Module) -> None:
     except ImportError as exc:
         raise ImportError(
             "LoRA requires the 'peft' dependency. "
-            'Install it via RF-DETR extras, e.g.: '
+            "Install it via RF-DETR extras, e.g.: "
             'pip install "rfdetr[lora]" or pip install "rfdetr[train]".'
         ) from exc
 
