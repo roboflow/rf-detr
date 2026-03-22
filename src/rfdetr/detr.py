@@ -22,7 +22,6 @@ import torch
 if TYPE_CHECKING:
     import supervision as sv
 
-from rfdetr.inference import ModelContext, _build_model_context
 import torchvision.transforms.functional as F
 import yaml
 from PIL import Image
@@ -35,6 +34,7 @@ from rfdetr.config import (
 )
 from rfdetr.datasets.coco import is_valid_coco_dataset
 from rfdetr.datasets.yolo import is_valid_yolo_dataset
+from rfdetr.inference import ModelContext, _build_model_context
 from rfdetr.utilities.logger import get_logger
 
 try:
