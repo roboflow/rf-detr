@@ -4,11 +4,13 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-"""Tests for package metadata helpers."""
+"""Tests for package metadata helpers and structural import paths."""
 
 import subprocess
 import sys
 from unittest.mock import patch
+
+import pytest
 
 from rfdetr.utilities.package import get_sha
 
@@ -64,3 +66,107 @@ def test_peft_not_imported_eagerly_on_backbone_import_characterization() -> None
         f"stdout:\n{result.stdout}\n"
         f"stderr:\n{result.stderr}"
     )
+
+
+class TestImportPaths:
+    """Structural tests for the detr.py → inference.py + variants.py split (PR 6).
+
+    After the split:
+    - ``rfdetr.inference`` exports ``ModelContext`` and ``_build_model_context``
+    - ``rfdetr.variants`` exports all 14 concrete model classes
+    - ``rfdetr.detr`` re-exports both for backward compatibility
+    - ``rfdetr`` (top-level) continues to export public names unchanged
+    """
+
+    def test_model_context_importable_from_inference(self) -> None:
+        """ModelContext must be importable from the new rfdetr.inference module."""
+        from rfdetr.inference import ModelContext
+
+        assert ModelContext is not None
+
+    def test_build_model_context_importable_from_inference(self) -> None:
+        """_build_model_context must be importable from rfdetr.inference."""
+        from rfdetr.inference import _build_model_context
+
+        assert callable(_build_model_context)
+
+    def test_rfdetr_large_importable_from_variants(self) -> None:
+        """RFDETRLarge must be importable from the new rfdetr.variants module."""
+        from rfdetr.variants import RFDETRLarge
+
+        assert RFDETRLarge is not None
+
+    @pytest.mark.parametrize(
+        "class_name",
+        [
+            pytest.param("RFDETRBase", id="base"),
+            pytest.param("RFDETRNano", id="nano"),
+            pytest.param("RFDETRSmall", id="small"),
+            pytest.param("RFDETRMedium", id="medium"),
+            pytest.param("RFDETRLargeDeprecated", id="large-deprecated"),
+            pytest.param("RFDETRLarge", id="large"),
+            pytest.param("RFDETRSeg", id="seg-base"),
+            pytest.param("RFDETRSegPreview", id="seg-preview"),
+            pytest.param("RFDETRSegNano", id="seg-nano"),
+            pytest.param("RFDETRSegSmall", id="seg-small"),
+            pytest.param("RFDETRSegMedium", id="seg-medium"),
+            pytest.param("RFDETRSegLarge", id="seg-large"),
+            pytest.param("RFDETRSegXLarge", id="seg-xlarge"),
+            pytest.param("RFDETRSeg2XLarge", id="seg-2xlarge"),
+        ],
+    )
+    def test_all_variant_classes_importable_from_variants(self, class_name: str) -> None:
+        """Every concrete variant class must be importable from rfdetr.variants."""
+        import rfdetr.variants as variants_mod
+
+        cls = getattr(variants_mod, class_name, None)
+        assert cls is not None, f"{class_name} not found in rfdetr.variants"
+
+    def test_model_context_backward_compat_from_detr(self) -> None:
+        """ModelContext must remain importable from rfdetr.detr (backward compat)."""
+        from rfdetr.detr import ModelContext
+
+        assert ModelContext is not None
+
+    def test_rfdetr_large_backward_compat_from_detr(self) -> None:
+        """RFDETRLarge must remain importable from rfdetr.detr (backward compat)."""
+        from rfdetr.detr import RFDETRLarge
+
+        assert RFDETRLarge is not None
+
+    def test_rfdetr_large_importable_from_top_level(self) -> None:
+        """RFDETRLarge must remain importable from rfdetr (top-level package)."""
+        from rfdetr import RFDETRLarge
+
+        assert RFDETRLarge is not None
+
+    def test_model_context_importable_from_top_level(self) -> None:
+        """ModelContext must remain importable from rfdetr (top-level package)."""
+        from rfdetr import ModelContext
+
+        assert ModelContext is not None
+
+    def test_identity_across_import_paths(self) -> None:
+        """The same class object must be returned regardless of import path.
+
+        This ensures re-exports are true re-exports (not copies) so that
+        isinstance() checks work across all import paths.
+        """
+        import rfdetr
+        from rfdetr.detr import ModelContext as FromDetr
+        from rfdetr.detr import RFDETRLarge as LargeFromDetr
+        from rfdetr.inference import ModelContext as FromInference
+        from rfdetr.variants import RFDETRLarge as LargeFromVariants
+
+        assert FromDetr is FromInference, (
+            "rfdetr.detr.ModelContext and rfdetr.inference.ModelContext must be the same object"
+        )
+        assert LargeFromDetr is LargeFromVariants, (
+            "rfdetr.detr.RFDETRLarge and rfdetr.variants.RFDETRLarge must be the same object"
+        )
+        assert rfdetr.RFDETRLarge is LargeFromVariants, (
+            "top-level rfdetr.RFDETRLarge and rfdetr.variants.RFDETRLarge must be the same object"
+        )
+        assert rfdetr.ModelContext is FromInference, (
+            "top-level rfdetr.ModelContext and rfdetr.inference.ModelContext must be the same object"
+        )
