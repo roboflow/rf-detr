@@ -31,7 +31,12 @@ class RFDETRTrainCheckpointCallback(Callback):
     def __init__(self, output_dir: str, checkpoint_interval: int = 10) -> None:
         super().__init__()
         self._output_dir = Path(output_dir)
-        self._checkpoint_interval = max(1, int(checkpoint_interval))
+        interval = int(checkpoint_interval)
+        if interval < 1:
+            raise ValueError(
+                f"checkpoint_interval must be >= 1, got {checkpoint_interval!r}."
+            )
+        self._checkpoint_interval = interval
 
     def on_train_epoch_end(self, trainer: Trainer, pl_module: LightningModule) -> None:
         """Persist latest and interval checkpoints at train-epoch end.
