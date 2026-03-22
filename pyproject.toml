@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rfdetr"
-version = "1.1.0"
+version = "1.6.0"
 description = "RF-DETR"
 readme = "README.md"
 authors = [
-    {name = "Roboflow, Inc", email = "peter@roboflow.com"}
+    {name = "Roboflow, Inc", email = "develop@roboflow.com"}
 ]
 license = {text = "Apache License 2.0"}
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -19,7 +19,6 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -36,54 +35,91 @@ classifiers = [
 keywords = ["machine-learning", "deep-learning", "vision", "ML", "DL", "AI", "DETR", "RF-DETR", "Roboflow"]
 
 dependencies = [
-    "cython",
-    "pycocotools",
-    "torch>=1.13.0",
-    "torchvision>=0.14.0",
-    "fairscale",
-    "scipy",
-    "timm",
-    "tqdm",
-    "numpy",
-    "accelerate",
-    "transformers",
-    "peft",
-    "ninja",
-    "einops",
-    "pandas",
-    "pylabel",
-    "polygraphy",
-    "open_clip_torch",
-    "rf100vl",
-    "pydantic",
-    "supervision",
-    "matplotlib",
+    "requests",                        # weight download from remote URLs
+    "torch>=2.2.0",                    # core tensor ops and model forward pass
+    "torchvision>=0.17.0",             # image transforms and ops (aligned with torch>=2.2.0)
+    "tqdm",                            # progress bars during weight download
+    "transformers>=5.1.0,<6.0.0",     # DINOv2 backbone loading
+    "pydantic>=2.0,<3",               # ModelConfig / TrainConfig validation
+    "supervision",                     # inference output (Detections, Masks)
+    "pyDeprecate>=0.3,<0.6",           # deprecation warnings for legacy APIs
 ]
 
 [project.optional-dependencies]
-onnxexport = [
-    "onnx",
-    "onnxsim",
+lora = [
+    "peft",                            # LoRA backbone fine-tuning
+]
+train = [
+    "peft",                            # LoRA backbone fine-tuning (available during training)
+    "pytorch_lightning>=2.6,<3",
+    "torchmetrics[detection]>=1.2",
+    "faster-coco-eval>=1.7.2",
+    "pycocotools",
+    "scipy",
+    "albumentations>=1.4.24,<3.0.0",
+    "roboflow",
+    "rf100vl",
+]
+onnx = [
+    "onnx>=1.16.0,<1.20",
+    "onnxsim<0.6.0",  # TODO: onnxsim 0.6.0+ hangs on install
     "onnx_graphsurgeon",
-    "onnxruntime"
+    "onnxruntime",
+    "polygraphy",
 ]
-metrics = [
+trt = [
+    "pycuda",
+    "onnxruntime-gpu",
+    "tensorrt>=8.6.1",
+    "polygraphy",
+]
+loggers = [
     "tensorboard>=2.13.0",
-    "wandb"
+    "wandb",
+    "mlflow",
+    "clearml",
 ]
+visual = [
+    "matplotlib",
+    "pandas",
+    "seaborn",
+]
+cli = ["jsonargparse[signatures]>=4.27.7"]
+plus = ["rfdetr_plus>=1.0.1, <2.0.0"]
+
+[dependency-groups]
 build = [
     "twine>=5.1.1",
     "wheel>=0.40",
     "build>=0.10"
 ]
 
+tests = [
+  "pytest>=7.2,<9",
+  "pytest-cov>=4,<8",
+  "pytest-xdist>=3.6,<4",
+  "pytest-rerunfailures>=10,<15",
+  "pytest-timeout>=2,<3",
+]
+
+docs = [
+    "mkdocs-material[imaging]>=9.7",
+    "mkdocstrings>=0.25.2,<0.30.0",
+    "mkdocstrings-python>=1.10.9",
+    "mike>=2.0.0",
+    "mkdocs-jupyter>=0.24.3",
+    "mkdocs-git-committers-plugin-2>=2.4.1",
+    "mkdocs-git-revision-date-localized-plugin>=1.2.4"
+]
+
 [project.urls]
 Homepage = "https://github.com/roboflow/rf-detr"
 
 [project.scripts]
-rfdetr = "rfdetr.cli.main:trainer"
+rfdetr = "rfdetr.cli:main"
 
 [tool.setuptools.packages.find]
+where = ["src"]
 include = ["rfdetr*"]
 
 [tool.setuptools]
@@ -91,3 +127,45 @@ include-package-data = false
 
 [tool.setuptools.package-data]
 rfdetr = ["py.typed", "models/backbone/dinov2_configs/*.json"]
+
+[tool.ruff]
+fix = true
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+]
+extend-select = [
+    "RUF100",  # yesqa
+]
+ignore = [
+    "E722",  # todo: Do not use bare `except`
+]
+
+[tool.ruff.lint.per-file-ignores]
+"notebooks/*.py" = ["E402"]  # cell-local imports are intentional in percent-format scripts
+
+[tool.pytest.ini_options]
+addopts = [
+    "-v",                   # verbose output
+    "--color=yes",          # colored output
+    "--doctest-modules",    # run doctests from all modules
+]
+pythonpath = ["src"]
+markers = [
+    "gpu: tests that require GPU or are slow on CPU",
+    "flaky: tests that may fail due to nondeterminism"
+]
+filterwarnings = [
+    # pytest-xdist workers close their channel before teardown completes;
+    # this is a known false-positive that does not affect test results.
+    "ignore::pluggy.PluggyTeardownRaisedWarning",
+]
+
+[tool.codespell]
+skip = "*.pth"

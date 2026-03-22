@@ -1,0 +1,22 @@
+# RF-DETR Seg 2XLarge — example segmentation training configuration (resolution 768, patch 12).
+# Usage:
+#   rfdetr fit --config configs/rfdetr_seg_2xlarge.yaml
+#   rfdetr fit --config configs/rfdetr_seg_2xlarge.yaml \
+#     --model.train_config.init_args.dataset_dir /data/my_dataset \
+#     --trainer.devices 4
+
+model:
+  model_config:
+    class_path: rfdetr.config.RFDETRSeg2XLargeConfig
+    init_args:
+      num_classes: 80 # set to your dataset class count
+  train_config:
+    class_path: rfdetr.config.SegmentationTrainConfig
+    init_args:
+      dataset_dir: /data/coco # required: path to your COCO-format dataset
+      output_dir: output/rfdetr_seg_2xlarge
+      epochs: 100
+      batch_size: 1
+      grad_accum_steps: 16 # effective batch size 16
+      num_workers: 4
+      tensorboard: true
