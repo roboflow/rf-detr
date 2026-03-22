@@ -46,7 +46,7 @@ from rfdetr.config import (
 )
 from rfdetr.datasets.coco import is_valid_coco_dataset
 from rfdetr.datasets.yolo import is_valid_yolo_dataset
-from rfdetr.models import PostProcess, build_model
+from rfdetr.models import PostProcess
 from rfdetr.models.weights import apply_lora, load_pretrain_weights
 from rfdetr.utilities.logger import get_logger
 
@@ -115,28 +115,29 @@ def _build_model_context(model_config: ModelConfig) -> "ModelContext":
     Returns:
         Fully initialised ModelContext ready for inference or training.
     """
-    from rfdetr._namespace import build_namespace
+    from rfdetr._namespace import _namespace_from_configs
+    from rfdetr.models import build_model_from_config
 
-    # A dummy TrainConfig is needed only for build_namespace's required fields;
-    # dataset_dir/output_dir are unused during model construction.
+    nn_model = build_model_from_config(model_config)
+
+    # A dummy TrainConfig is needed for load_pretrain_weights and for the
+    # namespace stored on ModelContext.
     dummy_train_config = TrainConfig(dataset_dir=".", output_dir=".")
-    args = build_namespace(model_config, dummy_train_config)
-    nn_model = build_model(args)
 
     class_names: List[str] = []
     if model_config.pretrain_weights is not None:
         class_names = load_pretrain_weights(nn_model, model_config, dummy_train_config)
-        # ``load_pretrain_weights`` can mutate ``model_config.num_classes`` when
-        # aligning to checkpoint heads. Keep the derived namespace in sync.
-        if hasattr(args, "num_classes") and getattr(args, "num_classes") != model_config.num_classes:
-            args.num_classes = model_config.num_classes
 
     if model_config.backbone_lora:
         apply_lora(nn_model)
 
-    device = torch.device(args.device)
+    device = torch.device(model_config.device)
     nn_model = nn_model.to(device)
-    postprocess = PostProcess(num_select=args.num_select)
+    postprocess = PostProcess(num_select=model_config.num_select)
+
+    # Build a namespace for ModelContext.args (still expected by downstream
+    # consumers such as reinitialize_detection_head and export).
+    args = _namespace_from_configs(model_config, dummy_train_config)
 
     return ModelContext(
         model=nn_model,

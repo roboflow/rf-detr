@@ -139,6 +139,7 @@ def load_pretrain_weights(
                 # ModelConfig default): treat the checkpoint as authoritative.
                 num_classes = checkpoint_num_classes - 1
                 configured_num_classes_plus_bg = checkpoint_num_classes
+                mc.num_classes = num_classes
         # In all mismatch cases we need the head to match the checkpoint's
         # class count so load_state_dict succeeds without size mismatches.
         nn_model.reinitialize_detection_head(checkpoint_num_classes)

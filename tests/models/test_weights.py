@@ -123,6 +123,7 @@ class TestLoadPretrainWeightsReinitScenarios:
             f"Expected exactly 1 reinit call; got {len(calls)}: {calls}. "
             "A second reinit to 91 would destroy loaded fine-tuned weights."
         )
+        assert mc.num_classes == 2, "Auto-aligned checkpoint class count must be persisted back onto ModelConfig."
 
     def test_characterization_backbone_pretrain_two_reinits(self, monkeypatch, tmp_path):
         """Backbone pretrain (more classes in checkpoint) + explicit small num_classes → 2 reinits.

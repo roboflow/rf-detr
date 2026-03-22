@@ -15,21 +15,26 @@ import types
 from typing import Any
 
 from rfdetr.config import ModelConfig, TrainConfig
+from rfdetr.models._defaults import MODEL_DEFAULTS, ModelDefaults
 
 
-def build_namespace(model_config: ModelConfig, train_config: TrainConfig) -> Any:
-    """Build a ``types.SimpleNamespace`` from Pydantic model and train configs.
+def _namespace_from_configs(
+    model_config: ModelConfig,
+    train_config: TrainConfig,
+    defaults: ModelDefaults = MODEL_DEFAULTS,
+) -> Any:
+    """Build a ``types.SimpleNamespace`` from configs and architectural defaults.
 
-    Produces the same attribute set as the legacy ``populate_args()`` so that
-    ``build_model()``, ``build_criterion_and_postprocessors()``, and
-    ``build_dataset()`` continue to work without modification.
-
-    Fields not present in either config retain their ``populate_args()``
-    defaults, ensuring downstream consumers see a fully-populated namespace.
+    This is the internal implementation behind :func:`build_namespace`.
+    Extracting it allows config-native builder functions to construct a
+    namespace without going through the public ``build_namespace()`` API
+    while still accepting overridable defaults.
 
     Args:
         model_config: Architecture configuration.
         train_config: Training hyperparameter configuration.
+        defaults: Hardcoded architectural constants.  Defaults to
+            :data:`MODEL_DEFAULTS`.
 
     Returns:
         ``types.SimpleNamespace`` compatible with ``build_model``,
@@ -37,6 +42,7 @@ def build_namespace(model_config: ModelConfig, train_config: TrainConfig) -> Any
     """
     mc = model_config
     tc = train_config
+    d = defaults
     train_fields_set = getattr(tc, "model_fields_set", set())
     model_fields_set = getattr(mc, "model_fields_set", set())
     # Transitional compatibility: during deprecation, preserve explicit
@@ -117,55 +123,76 @@ def build_namespace(model_config: ModelConfig, train_config: TrainConfig) -> Any
         train_log_sync_dist=tc.train_log_sync_dist,
         train_log_on_step=tc.train_log_on_step,
         prefetch_factor=tc.prefetch_factor,
-        # --- Hardcoded defaults (not in configs; kept for downstream consumers) ---
-        print_freq=10,
+        # --- Hardcoded defaults (from ModelDefaults) ---
+        print_freq=d.print_freq,
         clip_max_norm=tc.clip_max_norm,
-        do_benchmark=False,
-        dropout=0,
-        drop_mode="standard",
-        drop_schedule="constant",
-        cutoff_epoch=0,
-        pretrained_encoder=None,
-        pretrain_exclude_keys=None,
-        pretrain_keys_modify_to_load=None,
-        pretrained_distiller=None,
-        vit_encoder_num_layers=12,
-        window_block_indexes=None,
-        position_embedding="sine",
-        rms_norm=False,
-        force_no_pretrain=False,
-        dim_feedforward=2048,
-        decoder_norm="LN",
-        freeze_batch_norm=False,
-        set_cost_class=2,
-        set_cost_bbox=5,
-        set_cost_giou=2,
-        bbox_loss_coef=5,
-        giou_loss_coef=2,
-        focal_alpha=0.25,
-        aux_loss=True,
-        sum_group_losses=False,
-        use_varifocal_loss=False,
-        use_position_supervised_loss=False,
-        coco_path=None,
+        do_benchmark=d.do_benchmark,
+        dropout=d.dropout,
+        drop_mode=d.drop_mode,
+        drop_schedule=d.drop_schedule,
+        cutoff_epoch=d.cutoff_epoch,
+        pretrained_encoder=d.pretrained_encoder,
+        pretrain_exclude_keys=d.pretrain_exclude_keys,
+        pretrain_keys_modify_to_load=d.pretrain_keys_modify_to_load,
+        pretrained_distiller=d.pretrained_distiller,
+        vit_encoder_num_layers=d.vit_encoder_num_layers,
+        window_block_indexes=d.window_block_indexes,
+        position_embedding=d.position_embedding,
+        rms_norm=d.rms_norm,
+        force_no_pretrain=d.force_no_pretrain,
+        dim_feedforward=d.dim_feedforward,
+        decoder_norm=d.decoder_norm,
+        freeze_batch_norm=d.freeze_batch_norm,
+        set_cost_class=d.set_cost_class,
+        set_cost_bbox=d.set_cost_bbox,
+        set_cost_giou=d.set_cost_giou,
+        bbox_loss_coef=d.bbox_loss_coef,
+        giou_loss_coef=d.giou_loss_coef,
+        focal_alpha=d.focal_alpha,
+        aux_loss=d.aux_loss,
+        sum_group_losses=d.sum_group_losses,
+        use_varifocal_loss=d.use_varifocal_loss,
+        use_position_supervised_loss=d.use_position_supervised_loss,
+        coco_path=d.coco_path,
         aug_config=tc.aug_config,
-        dont_save_weights=False,
+        dont_save_weights=d.dont_save_weights,
         seed=tc.seed if tc.seed is not None else 42,
-        start_epoch=0,
-        eval=False,
+        start_epoch=d.start_epoch,
+        eval=d.eval,
         use_ema=tc.use_ema,
-        world_size=1,
-        dist_url="env://",
+        world_size=d.world_size,
+        dist_url=d.dist_url,
         sync_bn=tc.sync_bn,
         fp16_eval=tc.fp16_eval,
-        encoder_only=False,
-        backbone_only=False,
-        use_cls_token=False,
-        lr_scheduler="step",
-        lr_min_factor=0.0,
+        encoder_only=d.encoder_only,
+        backbone_only=d.backbone_only,
+        use_cls_token=d.use_cls_token,
+        lr_scheduler=d.lr_scheduler,
+        lr_min_factor=d.lr_min_factor,
         early_stopping=tc.early_stopping,
         early_stopping_patience=tc.early_stopping_patience,
         early_stopping_min_delta=tc.early_stopping_min_delta,
         early_stopping_use_ema=tc.early_stopping_use_ema,
-        subcommand=None,
+        subcommand=d.subcommand,
     )
+
+
+def build_namespace(model_config: ModelConfig, train_config: TrainConfig) -> Any:
+    """Build a ``types.SimpleNamespace`` from Pydantic model and train configs.
+
+    Produces the same attribute set as the legacy ``populate_args()`` so that
+    ``build_model()``, ``build_criterion_and_postprocessors()``, and
+    ``build_dataset()`` continue to work without modification.
+
+    Fields not present in either config retain their ``populate_args()``
+    defaults, ensuring downstream consumers see a fully-populated namespace.
+
+    Args:
+        model_config: Architecture configuration.
+        train_config: Training hyperparameter configuration.
+
+    Returns:
+        ``types.SimpleNamespace`` compatible with ``build_model``,
+        ``build_criterion_and_postprocessors``, and ``build_dataset``.
+    """
+    return _namespace_from_configs(model_config, train_config)

@@ -90,8 +90,7 @@ def test_resolve_auto_batch_config_returns_expected_values():
 
     with (
         patch("rfdetr.training.auto_batch.torch.cuda.is_available", return_value=True),
-        patch("rfdetr.training.auto_batch.build_namespace", return_value=SimpleNamespace()),
-        patch("rfdetr.training.auto_batch.build_criterion_and_postprocessors", return_value=(criterion, None)),
+        patch("rfdetr.training.auto_batch.build_criterion_from_config", return_value=(criterion, None)),
         patch("rfdetr.training.auto_batch.probe_max_micro_batch", return_value=5),
         patch("rfdetr.training.auto_batch.torch.cuda.get_device_name", return_value="Fake GPU"),
     ):

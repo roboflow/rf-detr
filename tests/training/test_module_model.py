@@ -82,16 +82,16 @@ def _fake_postprocess():
 
 
 def _build_module(model_config=None, train_config=None, tmp_path=None):
-    """Construct RFDETRModelModule with build_model and build_criterion_and_postprocessors mocked."""
+    """Construct RFDETRModelModule with build_model_from_config and build_criterion_from_config mocked."""
     mc = model_config or _base_model_config()
     tc = train_config or _base_train_config(tmp_path)
     fake_model = _fake_model()
     fake_criterion = _fake_criterion()
     fake_postprocess = _fake_postprocess()
     with (
-        patch("rfdetr.training.module_model.build_model", return_value=fake_model),
+        patch("rfdetr.training.module_model.build_model_from_config", return_value=fake_model),
         patch(
-            "rfdetr.training.module_model.build_criterion_and_postprocessors",
+            "rfdetr.training.module_model.build_criterion_from_config",
             return_value=(fake_criterion, fake_postprocess),
         ),
     ):
@@ -445,9 +445,9 @@ class TestApplyLora:
         fake_model.backbone.__getitem__ = MagicMock(return_value=fake_backbone_0)
 
         with (
-            patch("rfdetr.training.module_model.build_model", return_value=fake_model),
+            patch("rfdetr.training.module_model.build_model_from_config", return_value=fake_model),
             patch(
-                "rfdetr.training.module_model.build_criterion_and_postprocessors",
+                "rfdetr.training.module_model.build_criterion_from_config",
                 return_value=(_fake_criterion(), _fake_postprocess()),
             ),
         ):

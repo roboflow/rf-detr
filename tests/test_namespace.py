@@ -143,3 +143,36 @@ class TestBuildNamespaceFieldOwnership:
         tc = TrainConfig(dataset_dir="/tmp")
         ns = build_namespace(mc, tc)
         assert ns.num_select == expected_num_select
+
+
+class TestNamespaceFromConfigs:
+    """Parity tests ensuring _namespace_from_configs matches build_namespace output."""
+
+    def test_parity_with_build_namespace(self) -> None:
+        """_namespace_from_configs must produce identical attributes to build_namespace."""
+        try:
+            from rfdetr._namespace import _namespace_from_configs
+        except ImportError:
+            pytest.skip("_namespace_from_configs not yet extracted")
+
+        from rfdetr.models._defaults import MODEL_DEFAULTS
+
+        mc = RFDETRBaseConfig(num_classes=80)
+        tc = TrainConfig(dataset_dir="/tmp")
+
+        ns_legacy = build_namespace(mc, tc)
+        ns_new = _namespace_from_configs(mc, tc, MODEL_DEFAULTS)
+
+        legacy_attrs = vars(ns_legacy)
+        new_attrs = vars(ns_new)
+
+        assert set(legacy_attrs.keys()) == set(new_attrs.keys()), (
+            f"Key mismatch: "
+            f"legacy_only={set(legacy_attrs) - set(new_attrs)}, "
+            f"new_only={set(new_attrs) - set(legacy_attrs)}"
+        )
+        for key in sorted(legacy_attrs):
+            assert legacy_attrs[key] == new_attrs[key], (
+                f"Value mismatch for '{key}': "
+                f"legacy={legacy_attrs[key]!r}, new={new_attrs[key]!r}"
+            )

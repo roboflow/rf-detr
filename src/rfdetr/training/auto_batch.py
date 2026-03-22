@@ -25,10 +25,9 @@ from typing import Any
 
 import torch
 
-from rfdetr._namespace import build_namespace
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.datasets.coco import compute_multi_scale_scales
-from rfdetr.models.lwdetr import build_criterion_and_postprocessors
+from rfdetr.models import build_criterion_from_config
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.tensors import NestedTensor
 
@@ -328,8 +327,7 @@ def resolve_auto_batch_config(
 
     max_targets_per_image = getattr(train_config, "auto_batch_max_targets_per_image", 100)
 
-    args = build_namespace(model_config, train_config)
-    criterion, _ = build_criterion_and_postprocessors(args)
+    criterion, _ = build_criterion_from_config(model_config, train_config)
     criterion = criterion.to(device)
 
     safe_micro_batch = probe_max_micro_batch(
