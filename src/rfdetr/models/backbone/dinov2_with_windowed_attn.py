@@ -396,7 +396,32 @@ class WindowedDinov2WithRegistersEmbeddings(nn.Module):
         return torch.cat((class_pos_embed.unsqueeze(0), patch_pos_embed), dim=1)
 
     def forward(self, pixel_values: torch.Tensor, bool_masked_pos: Optional[torch.Tensor] = None) -> torch.Tensor:
-        assert pixel_values.shape[2] % (self.patch_size * self.config.num_windows) == 0 and pixel_values.shape[3] % (self.patch_size * self.config.num_windows) == 0, f"WindowedDinov2 requires input shape to be divisible by {self.patch_size * self.config.num_windows}={self.patch_size}x{self.config.num_windows}, but got {pixel_values.shape}"
+        """Compute windowed patch embeddings for the given pixel values.
+
+        Args:
+            pixel_values: Image tensor of shape ``(B, C, H, W)``. Both ``H`` and
+                ``W`` must be divisible by ``patch_size * num_windows``
+                (``{patch_size} * {num_windows}``).
+            bool_masked_pos: Optional boolean mask of shape ``(B, num_patches)``.
+                Masked positions are replaced with the learnable ``mask_token``.
+
+        Returns:
+            Patch embedding tensor. When ``num_windows > 1`` the batch dimension
+            is expanded to ``B * num_windows ** 2`` and the sequence length
+            corresponds to patches within a single window (plus CLS token and
+            any register tokens).
+
+        Raises:
+            ValueError: If ``H`` or ``W`` is not divisible by
+                ``patch_size * num_windows``.
+        """
+        divisor = self.patch_size * self.config.num_windows
+        if pixel_values.shape[2] % divisor != 0 or pixel_values.shape[3] % divisor != 0:
+            raise ValueError(
+                f"Input spatial dimensions must be divisible by patch_size * num_windows "
+                f"({self.patch_size} * {self.config.num_windows} = {divisor}), "
+                f"but got shape {pixel_values.shape}."
+            )
 
         batch_size, _, height, width = pixel_values.shape
         target_dtype = self.patch_embeddings.projection.weight.dtype
