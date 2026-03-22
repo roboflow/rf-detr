@@ -58,6 +58,7 @@ class BestModelCallback(ModelCheckpoint):
             monitor=monitor_regular,
             mode="max",
             save_top_k=1,
+            save_on_train_epoch_end=False,
             verbose=False,
             auto_insert_metric_name=False,
             enable_version_counter=False,
@@ -312,6 +313,7 @@ class RFDETREarlyStopping(EarlyStopping):
             mode="max",
             patience=patience,
             min_delta=min_delta,
+            check_on_train_epoch_end=False,
             verbose=verbose,
             check_finite=True,
             strict=False,  # We inject the key ourselves; don't crash if temporarily absent.

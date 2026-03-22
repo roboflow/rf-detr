@@ -671,6 +671,15 @@ class TestBestModelCallback:
         assert not (tmp_path / "checkpoint_best_ema.pth").exists()
         assert not (tmp_path / "checkpoint_best_total.pth").exists()
 
+    def test_train_epoch_end_ignores_missing_validation_metrics(self, tmp_path: Path) -> None:
+        """Train-epoch end must not try to checkpoint when validation metrics were not logged."""
+        cb = BestModelCallback(output_dir=str(tmp_path))
+        trainer = _make_trainer({})
+
+        cb.on_train_epoch_end(trainer, _make_pl_module())
+
+        assert not (tmp_path / "checkpoint_best_regular.pth").exists()
+
     def test_best_total_checkpoint_resumes_via_trainer_fit_ckpt_path(self, tmp_path: Path) -> None:
         """checkpoint_best_total.pth must restore epoch/step when passed to Trainer.fit(ckpt_path=...)."""
         torch.manual_seed(0)
@@ -845,6 +854,16 @@ class TestRFDETREarlyStopping:
 
         trainer = _make_trainer({})  # no metrics at all
         cb.on_validation_end(trainer, pl_module)
+
+        assert cb.wait_count == 0
+        assert trainer.should_stop is False
+
+    def test_train_epoch_end_ignores_missing_validation_metrics(self) -> None:
+        """Train-epoch end must not evaluate early stopping when validation did not run."""
+        cb = RFDETREarlyStopping(patience=1, min_delta=0.001)
+        trainer = _make_trainer({})
+
+        cb.on_train_epoch_end(trainer, _make_pl_module())
 
         assert cb.wait_count == 0
         assert trainer.should_stop is False
