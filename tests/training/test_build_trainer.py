@@ -16,6 +16,7 @@ from rfdetr.training.callbacks.best_model import BestModelCallback, RFDETREarlyS
 from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
 from rfdetr.training.callbacks.drop_schedule import DropPathCallback
 from rfdetr.training.callbacks.ema import RFDETREMACallback
+from rfdetr.training.callbacks.train_checkpoint import RFDETRTrainCheckpointCallback
 
 
 def _mc(**kwargs):
@@ -82,6 +83,18 @@ class TestBuildTrainerCallbacks:
         trainer = build_trainer(_tc(tmp_path, use_ema=False), _mc())
         types = [type(cb) for cb in trainer.callbacks]
         assert BestModelCallback in types
+
+    def test_train_checkpoint_always_present(self, tmp_path):
+        """RFDETRTrainCheckpointCallback is always included."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=False), _mc())
+        types = [type(cb) for cb in trainer.callbacks]
+        assert RFDETRTrainCheckpointCallback in types
+
+    def test_train_checkpoint_uses_interval_from_config(self, tmp_path):
+        """RFDETRTrainCheckpointCallback receives checkpoint_interval from TrainConfig."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=False, checkpoint_interval=7), _mc())
+        checkpoint_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RFDETRTrainCheckpointCallback))
+        assert checkpoint_cb._checkpoint_interval == 7
 
     def test_ema_callback_when_use_ema_true(self, tmp_path):
         """RFDETREMACallback is added when use_ema=True."""

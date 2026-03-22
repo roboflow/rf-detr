@@ -10,6 +10,7 @@ from rfdetr.training.callbacks.best_model import BestModelCallback, RFDETREarlyS
 from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
 from rfdetr.training.callbacks.drop_schedule import DropPathCallback
 from rfdetr.training.callbacks.ema import RFDETREMACallback
+from rfdetr.training.callbacks.train_checkpoint import RFDETRTrainCheckpointCallback
 
 __all__ = [
     "BestModelCallback",
@@ -17,4 +18,5 @@ __all__ = [
     "DropPathCallback",
     "RFDETREMACallback",
     "RFDETREarlyStopping",
+    "RFDETRTrainCheckpointCallback",
 ]

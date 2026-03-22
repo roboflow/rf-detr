@@ -21,6 +21,7 @@ from rfdetr.training.callbacks import (
     DropPathCallback,
     RFDETREarlyStopping,
     RFDETREMACallback,
+    RFDETRTrainCheckpointCallback,
 )
 from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
 from rfdetr.utilities.logger import get_logger
@@ -122,6 +123,14 @@ def build_trainer(
             segmentation=model_config.segmentation_head,
             eval_interval=tc.eval_interval,
             log_per_class_metrics=tc.log_per_class_metrics,
+        )
+    )
+
+    # Latest + interval training checkpoints for resume compatibility.
+    callbacks.append(
+        RFDETRTrainCheckpointCallback(
+            output_dir=tc.output_dir,
+            checkpoint_interval=tc.checkpoint_interval,
         )
     )
 
