@@ -9,13 +9,13 @@
 import pathlib
 
 import pytest
+from packaging.requirements import Requirement
+from packaging.version import Version
 
 try:
     import tomllib  # Python 3.11+
 except ModuleNotFoundError:  # Python 3.10 fallback
     import tomli as tomllib
-from packaging.requirements import Requirement
-from packaging.version import Version
 
 
 class TestOptionalDependencies:
