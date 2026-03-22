@@ -15,7 +15,7 @@ initialised ``rfdetr.detr`` module already has ``RFDETR`` in its namespace.
 .. warning::
     Do **not** move the ``from rfdetr.variants import …`` block in
     ``detr.py`` above the ``RFDETR`` class definition.  Doing so would
-    cause a ``ImportError`` because ``RFDETR`` would not yet exist when
+    cause an ``ImportError`` because ``RFDETR`` would not yet exist when
     ``variants.py`` tries to import it.
 """
 
