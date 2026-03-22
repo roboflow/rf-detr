@@ -14,6 +14,8 @@
 """
 
 import argparse
+import importlib
+import sys
 import warnings
 from collections import defaultdict
 from types import SimpleNamespace
@@ -811,6 +813,110 @@ class TestPublicAPIExports:
 
         # It is NOT directly on rfdetr (Phase 7.7 spec lists only the three PTL exports)
         assert not hasattr(rfdetr, "convert_legacy_checkpoint")
+
+
+class TestRemovedLegacyModuleAliases:
+    """Removed legacy modules resolve via shims today and via migration hints after removal."""
+
+    @staticmethod
+    def _simulate_missing_removed_module_specs(monkeypatch: pytest.MonkeyPatch, *names: str) -> None:
+        """Force the removed-module finder to behave as if shim files no longer exist."""
+        import rfdetr
+
+        path_finder = rfdetr._RemovedModuleFinder._PATH_FINDER
+        original_find_spec = path_finder.find_spec
+
+        def _fake_find_spec(fullname: str, path: list[str] | None = None, target: object | None = None) -> object:
+            if fullname in names:
+                return None
+            return original_find_spec(fullname, path, target)
+
+        monkeypatch.setattr(path_finder, "find_spec", _fake_find_spec)
+        for name in names:
+            monkeypatch.delitem(sys.modules, name, raising=False)
+
+        root_names = {name.removeprefix("rfdetr.").split(".", maxsplit=1)[0] for name in names}
+        for root_name in root_names:
+            monkeypatch.delitem(rfdetr.__dict__, root_name, raising=False)
+
+    def test_removed_util_alias_resolves_via_package_attribute(self) -> None:
+        """PEP 562 lookup resolves rfdetr.util while the shim package exists."""
+        import rfdetr
+
+        assert getattr(rfdetr, "util").__name__ == "rfdetr.util"
+
+    def test_removed_deploy_alias_resolves_via_package_attribute(self) -> None:
+        """PEP 562 lookup resolves rfdetr.deploy while the shim package exists."""
+        import rfdetr
+
+        assert rfdetr.deploy.__name__ == "rfdetr.deploy"
+
+    def test_removed_shim_missing_raises_importerror_with_getattr(self) -> None:
+        """Missing removed shim should raise ImportError with migration hint."""
+        import rfdetr
+
+        missing_name = "rfdetr.missing_removed_shim"
+        missing_exc = ModuleNotFoundError(f"No module named '{missing_name}'", name=missing_name)
+        with (
+            patch.dict(rfdetr._REMOVED_IN_V17, {"missing_removed_shim": "migration hint"}),
+            patch("rfdetr.importlib.import_module", side_effect=missing_exc),
+            pytest.raises(ImportError, match="migration hint"),
+        ):
+            getattr(rfdetr, "missing_removed_shim")
+
+    def test_nested_module_not_found_is_not_masked_for_package_attribute(self) -> None:
+        """Nested ModuleNotFoundError from inside a shim import should propagate."""
+        import rfdetr
+
+        with (
+            patch.dict(rfdetr._REMOVED_IN_V17, {"missing_dep_shim": "migration hint"}),
+            patch(
+                "rfdetr.importlib.import_module",
+                side_effect=ModuleNotFoundError("No module named 'torchvision_ops'", name="torchvision_ops"),
+            ),
+            pytest.raises(ModuleNotFoundError, match="torchvision_ops"),
+        ):
+            getattr(rfdetr, "missing_dep_shim")
+
+    def test_removed_util_import_raises_migration_hint_when_shim_is_deleted(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Dotted legacy imports get a migration hint once the util shim package is removed."""
+        self._simulate_missing_removed_module_specs(monkeypatch, "rfdetr.util")
+
+        with pytest.raises(ImportError, match=r"rfdetr\.util was removed in v1\.7"):
+            importlib.import_module("rfdetr.util")
+
+    def test_removed_deploy_submodule_import_raises_migration_hint_when_shim_is_deleted(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Dotted legacy submodule imports get a migration hint once the deploy shim is removed."""
+        self._simulate_missing_removed_module_specs(monkeypatch, "rfdetr.deploy", "rfdetr.deploy.benchmark")
+
+        with pytest.raises(ImportError, match=r"rfdetr\.deploy was removed in v1\.7"):
+            importlib.import_module("rfdetr.deploy.benchmark")
+
+    def test_find_spec_ignores_non_rfdetr_top_level_imports(self) -> None:
+        """find_spec must not intercept bare top-level imports like 'util' or 'deploy'."""
+        import rfdetr
+
+        finder = rfdetr._RemovedModuleFinder()
+        assert finder.find_spec("util", None) is None
+        assert finder.find_spec("deploy", None) is None
+        assert finder.find_spec("os", None) is None
+
+    def test_meta_path_insertion_is_idempotent_across_reload(self) -> None:
+        """importlib.reload(rfdetr) must not insert a second finder into sys.meta_path."""
+        import rfdetr
+
+        count_before = sum(type(f).__name__ == "_RemovedModuleFinder" for f in sys.meta_path)
+        importlib.reload(rfdetr)
+        count_after = sum(type(f).__name__ == "_RemovedModuleFinder" for f in sys.meta_path)
+        assert count_after == count_before, (
+            f"reload added {count_after - count_before} extra finder(s) to sys.meta_path"
+        )
 
 
 # ---------------------------------------------------------------------------
