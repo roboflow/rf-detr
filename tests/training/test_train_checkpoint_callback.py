@@ -12,10 +12,11 @@ from unittest.mock import MagicMock
 from rfdetr.training.callbacks.train_checkpoint import RFDETRTrainCheckpointCallback
 
 
-def _make_trainer(current_epoch: int) -> MagicMock:
+def _make_trainer(current_epoch: int, *, is_global_zero: bool = True) -> MagicMock:
     """Create a minimal trainer mock for checkpoint callback tests."""
     trainer = MagicMock()
     trainer.current_epoch = current_epoch
+    trainer.is_global_zero = is_global_zero
     return trainer
 
 
@@ -51,19 +52,21 @@ class TestRFDETRTrainCheckpointCallback:
 
         trainer.save_checkpoint.assert_called_once_with(str(tmp_path / "checkpoint.pth"), weights_only=False)
 
-    def test_all_ranks_call_save_checkpoint(self, tmp_path: Path) -> None:
-        """Every rank calls trainer.save_checkpoint(); PTL's DDP strategy handles rank-0 file write.
+    def test_non_global_zero_rank_still_calls_save_checkpoint(self, tmp_path: Path) -> None:
+        """Non-global-zero ranks still call save_checkpoint to participate in PTL collectives.
 
         The callback must NOT gate on is_global_zero — trainer.save_checkpoint() calls
         strategy.barrier(), which is a collective operation requiring all ranks to
         participate. Early returns on non-zero ranks cause a deadlock.
         """
         cb = RFDETRTrainCheckpointCallback(output_dir=str(tmp_path), checkpoint_interval=2)
-        trainer = _make_trainer(current_epoch=1)
+        trainer = _make_trainer(current_epoch=1, is_global_zero=False)
 
         cb.on_train_epoch_end(trainer, pl_module=MagicMock())
 
         assert trainer.save_checkpoint.call_count == 2
+        trainer.save_checkpoint.assert_any_call(str(tmp_path / "checkpoint.pth"), weights_only=False)
+        trainer.save_checkpoint.assert_any_call(str(tmp_path / "checkpoint_2.pth"), weights_only=False)
 
     def test_creates_output_dir_if_missing(self, tmp_path: Path) -> None:
         """output_dir is created (including parents) when it does not exist yet."""
