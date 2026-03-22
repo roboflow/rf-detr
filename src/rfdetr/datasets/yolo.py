@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -15,7 +16,7 @@ import torch
 
 if TYPE_CHECKING:
     import supervision as sv
-from PIL import Image
+from PIL import Image, ImageDraw
 from torchvision.datasets import VisionDataset
 
 from rfdetr.datasets.coco import (
@@ -26,6 +27,173 @@ from rfdetr.datasets.coco import (
 REQUIRED_YOLO_YAML_FILES = ["data.yaml", "data.yml"]
 REQUIRED_SPLIT_DIRS = ["train", "valid"]
 REQUIRED_DATA_SUBDIRS = ["images", "labels"]
+_YOLO_IMAGE_EXTENSIONS = {".bmp", ".dng", ".jpg", ".jpeg", ".mpo", ".png", ".tif", ".tiff", ".webp"}
+
+
+def _parse_yolo_box(values: list[str]) -> np.ndarray:
+    """Parse a YOLO center-width-height box into relative XYXY coordinates."""
+    x_center, y_center, width, height = values
+    return np.array(
+        [
+            float(x_center) - float(width) / 2,
+            float(y_center) - float(height) / 2,
+            float(x_center) + float(width) / 2,
+            float(y_center) + float(height) / 2,
+        ],
+        dtype=np.float32,
+    )
+
+
+def _box_to_polygon(box: np.ndarray) -> np.ndarray:
+    """Convert a relative XYXY box into a 4-corner polygon."""
+    return np.array(
+        [[box[0], box[1]], [box[2], box[1]], [box[2], box[3]], [box[0], box[3]]],
+        dtype=np.float32,
+    )
+
+
+def _parse_yolo_polygon(values: list[str]) -> np.ndarray:
+    """Parse a flattened YOLO polygon into relative XY points."""
+    return np.array(values, dtype=np.float32).reshape(-1, 2)
+
+
+def _polygon_to_mask(polygon: np.ndarray, resolution_wh: tuple[int, int]) -> np.ndarray:
+    """Rasterize a polygon into a dense boolean mask."""
+    width, height = resolution_wh
+    mask = Image.new("L", (width, height), 0)
+    if polygon.size > 0:
+        ImageDraw.Draw(mask).polygon([tuple(point) for point in polygon.tolist()], fill=1)
+    return np.array(mask, dtype=bool)
+
+
+def _polygons_to_masks(polygons: tuple[np.ndarray, ...], resolution_wh: tuple[int, int]) -> np.ndarray:
+    """Rasterize per-instance polygons into an ``(N, H, W)`` boolean array."""
+    if len(polygons) == 0:
+        width, height = resolution_wh
+        return np.zeros((0, height, width), dtype=bool)
+    return np.stack([_polygon_to_mask(polygon, resolution_wh) for polygon in polygons]).astype(bool, copy=False)
+
+
+def _list_yolo_image_paths(images_directory_path: str) -> list[str]:
+    """List YOLO image files in a stable order."""
+    return sorted(
+        str(path)
+        for path in Path(images_directory_path).iterdir()
+        if path.is_file() and path.suffix.lower() in _YOLO_IMAGE_EXTENSIONS
+    )
+
+
+def _extract_yolo_class_names(data_file: str) -> list[str]:
+    """Read class names from a YOLO ``data.yaml`` file."""
+    import yaml
+
+    with Path(data_file).open(encoding="utf-8") as handle:
+        data = yaml.safe_load(handle)
+    if not isinstance(data, dict):
+        raise ValueError(f"Expected mapping in data file {data_file!r}, got {type(data).__name__}.")
+    names = data.get("names")
+    if isinstance(names, dict):
+        return [str(names[key]) for key in sorted(names.keys())]
+    if isinstance(names, list):
+        return [str(name) for name in names]
+    raise ValueError(f"Expected 'names' to be a list or dict in {data_file!r}, got {type(names).__name__}.")
+
+
+@dataclass(frozen=True)
+class _LazyYoloSample:
+    """Lightweight per-image YOLO metadata with polygons kept lazy until fetch time."""
+
+    image_path: str
+    width: int
+    height: int
+    xyxy: np.ndarray
+    class_id: np.ndarray
+    polygons: tuple[np.ndarray, ...]
+
+    def to_detections(self) -> "sv.Detections":
+        """Materialize the current sample as a supervision ``Detections`` object."""
+        import supervision as sv
+
+        if len(self.class_id) == 0:
+            return sv.Detections.empty()
+        mask = _polygons_to_masks(self.polygons, (self.width, self.height))
+        return sv.Detections(class_id=self.class_id, xyxy=self.xyxy, mask=mask)
+
+
+class _LazyYoloDetectionDataset:
+    """Lazy YOLO dataset that defers dense mask rasterization until ``__getitem__``."""
+
+    def __init__(self, classes: list[str], samples: list[_LazyYoloSample]) -> None:
+        self.classes = classes
+        self._samples = samples
+
+    def __len__(self) -> int:
+        return len(self._samples)
+
+    def __getitem__(self, idx: int) -> tuple[str, np.ndarray, "sv.Detections"]:
+        import cv2
+
+        sample = self._samples[idx]
+        image = cv2.imread(sample.image_path)
+        if image is None:
+            raise ValueError(f"Could not read image from path: {sample.image_path}")
+        return sample.image_path, image, sample.to_detections()
+
+    def get_image_info(self, idx: int) -> _LazyYoloSample:
+        """Return lightweight metadata without loading pixels or dense masks."""
+        return self._samples[idx]
+
+
+def _build_lazy_yolo_segmentation_dataset(img_folder: str, lb_folder: str, data_file: str) -> _LazyYoloDetectionDataset:
+    """Build a YOLO dataset that stores polygons and rasterizes masks on demand."""
+    classes = _extract_yolo_class_names(data_file)
+    samples: list[_LazyYoloSample] = []
+
+    for image_path in _list_yolo_image_paths(img_folder):
+        label_path = Path(lb_folder) / f"{Path(image_path).stem}.txt"
+        with Image.open(image_path) as image:
+            width, height = image.size
+            if image.mode not in ("RGB", "L"):
+                raise ValueError(f"Images must be RGB or grayscale, but {image_path} mode is {image.mode!r}.")
+
+        xyxy: list[np.ndarray] = []
+        class_id: list[int] = []
+        polygons: list[np.ndarray] = []
+        if label_path.exists():
+            with label_path.open(encoding="utf-8") as handle:
+                lines = [line.strip() for line in handle if line.strip()]
+            for line in lines:
+                values = line.split()
+                class_id.append(int(values[0]))
+                if len(values) == 5:
+                    box = _parse_yolo_box(values[1:])
+                    polygon = _box_to_polygon(box)
+                else:
+                    polygon = _parse_yolo_polygon(values[1:])
+                    box = np.array(
+                        [
+                            np.min(polygon[:, 0]),
+                            np.min(polygon[:, 1]),
+                            np.max(polygon[:, 0]),
+                            np.max(polygon[:, 1]),
+                        ],
+                        dtype=np.float32,
+                    )
+                xyxy.append(box * np.array([width, height, width, height], dtype=np.float32))
+                polygons.append(np.round(polygon * np.array([width, height], dtype=np.float32)).astype(np.int32))
+
+        samples.append(
+            _LazyYoloSample(
+                image_path=image_path,
+                width=width,
+                height=height,
+                xyxy=np.array(xyxy, dtype=np.float32).reshape(-1, 4),
+                class_id=np.array(class_id, dtype=np.int64),
+                polygons=tuple(polygons),
+            )
+        )
+
+    return _LazyYoloDetectionDataset(classes=classes, samples=samples)
 
 
 def is_valid_yolo_dataset(dataset_dir: str) -> bool:
@@ -208,7 +376,7 @@ class CocoLikeAPI:
         'img_1.jpg'
     """
 
-    def __init__(self, classes: list, dataset: sv.DetectionDataset):
+    def __init__(self, classes: list, dataset: Any):
         self.classes = classes
         self.sv_dataset = dataset
 
@@ -253,28 +421,39 @@ class CocoLikeAPI:
 
         ann_id = 0
         for img_id in range(len(self.sv_dataset)):
-            image_path, cv2_image, detections = self.sv_dataset[img_id]
-            h, w = cv2_image.shape[:2]
+            if hasattr(self.sv_dataset, "get_image_info"):
+                sample = self.sv_dataset.get_image_info(img_id)
+                image_path = sample.image_path
+                h, w = sample.height, sample.width
+                xyxy = sample.xyxy
+                class_id = sample.class_id
+                has_masks = len(sample.polygons) > 0
+            else:
+                image_path, cv2_image, detections = self.sv_dataset[img_id]
+                h, w = cv2_image.shape[:2]
+                xyxy = detections.xyxy
+                class_id = detections.class_id
+                has_masks = detections.mask is not None
 
             images.append({"id": img_id, "file_name": str(image_path), "height": h, "width": w})
 
-            if len(detections) == 0:
+            if len(xyxy) == 0:
                 continue
-            for i in range(len(detections)):
-                x1, y1, x2, y2 = detections.xyxy[i]
+            for i in range(len(xyxy)):
+                x1, y1, x2, y2 = xyxy[i]
                 bbox_x, bbox_y, bbox_w, bbox_h = float(x1), float(y1), float(x2 - x1), float(y2 - y1)
 
                 ann = {
                     "id": ann_id,
                     "image_id": img_id,
-                    "category_id": int(detections.class_id[i]),
+                    "category_id": int(class_id[i]),
                     "bbox": [float(bbox_x), float(bbox_y), float(bbox_w), float(bbox_h)],
                     "area": float(bbox_w * bbox_h),
                     "iscrowd": 0,
                 }
 
                 # Add segmentation if available
-                if detections.mask is not None:
+                if has_masks:
                     # For now, use empty polygon - evaluation will still work for bbox
                     ann["segmentation"] = []
 
@@ -447,13 +626,16 @@ class YoloDetection(VisionDataset):
 
         import supervision as sv
 
-        # Load dataset using supervision's from_yolo method
-        self.sv_dataset = sv.DetectionDataset.from_yolo(
-            images_directory_path=img_folder,
-            annotations_directory_path=lb_folder,
-            data_yaml_path=data_file,
-            force_masks=include_masks,
-        )
+        if include_masks:
+            self.sv_dataset = _build_lazy_yolo_segmentation_dataset(img_folder, lb_folder, data_file)
+        else:
+            # Load dataset using supervision's from_yolo method
+            self.sv_dataset = sv.DetectionDataset.from_yolo(
+                images_directory_path=img_folder,
+                annotations_directory_path=lb_folder,
+                data_yaml_path=data_file,
+                force_masks=False,
+            )
 
         self.classes = self.sv_dataset.classes
         self.ids = list(range(len(self.sv_dataset)))

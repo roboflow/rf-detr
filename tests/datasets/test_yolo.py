@@ -11,8 +11,25 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 import supervision as sv
+import torch
+from PIL import Image
 
-from rfdetr.datasets.yolo import CocoLikeAPI, _MockSvDataset, is_valid_yolo_dataset
+from rfdetr.datasets.yolo import CocoLikeAPI, YoloDetection, _MockSvDataset, is_valid_yolo_dataset
+
+
+def _write_yolo_segmentation_dataset(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """Create a minimal YOLO segmentation dataset on disk."""
+    image_dir = tmp_path / "images"
+    label_dir = tmp_path / "labels"
+    image_dir.mkdir()
+    label_dir.mkdir()
+
+    image_path = image_dir / "sample.png"
+    Image.new("RGB", (8, 6), color=(255, 255, 255)).save(image_path)
+    (label_dir / "sample.txt").write_text("0 0.25 0.25 0.75 0.25 0.75 0.75 0.25 0.75\n", encoding="utf-8")
+    data_file = tmp_path / "data.yaml"
+    data_file.write_text("names:\n  0: carton\n", encoding="utf-8")
+    return image_dir, label_dir, data_file
 
 
 class TestCocoLikeAPI:
@@ -380,3 +397,48 @@ class TestIsValidYoloDataset:
         """Dataset without required split directories should be invalid."""
         (tmp_path / "data.yaml").touch()
         assert is_valid_yolo_dataset(str(tmp_path)) is False
+
+
+class TestYoloDetectionLazyMasks:
+    """Segmentation masks should stay lightweight until a sample is fetched."""
+
+    def test_segmentation_init_builds_coco_metadata_without_cv2_loading(self, tmp_path: Path) -> None:
+        """Dataset construction should not call cv2.imread for every image."""
+        image_dir, label_dir, data_file = _write_yolo_segmentation_dataset(tmp_path)
+
+        with patch("cv2.imread", side_effect=AssertionError("cv2.imread should not run during init")):
+            dataset = YoloDetection(
+                img_folder=str(image_dir),
+                lb_folder=str(label_dir),
+                data_file=str(data_file),
+                transforms=None,
+                include_masks=True,
+            )
+
+        sample = dataset.sv_dataset.get_image_info(0)
+        assert sample.width == 8
+        assert sample.height == 6
+        assert sample.xyxy.shape == (1, 4)
+        assert len(sample.polygons) == 1
+        assert dataset.coco.dataset["images"] == [
+            {"id": 0, "file_name": str(image_dir / "sample.png"), "height": 6, "width": 8}
+        ]
+        assert dataset.coco.dataset["annotations"][0]["segmentation"] == []
+
+    def test_segmentation_masks_are_materialized_per_sample_fetch(self, tmp_path: Path) -> None:
+        """Fetching a sample should create the dense boolean mask tensor expected downstream."""
+        image_dir, label_dir, data_file = _write_yolo_segmentation_dataset(tmp_path)
+        dataset = YoloDetection(
+            img_folder=str(image_dir),
+            lb_folder=str(label_dir),
+            data_file=str(data_file),
+            transforms=None,
+            include_masks=True,
+        )
+
+        _, target = dataset[0]
+
+        assert target["masks"].dtype == torch.bool
+        assert target["masks"].shape == (1, 6, 8)
+        assert torch.count_nonzero(target["masks"]) > 0
+        assert target["boxes"][0].tolist() == pytest.approx([2.0, 1.5, 6.0, 4.5])
