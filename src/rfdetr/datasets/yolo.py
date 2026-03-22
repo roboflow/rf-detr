@@ -27,7 +27,7 @@ from rfdetr.datasets.coco import (
 REQUIRED_YOLO_YAML_FILES = ["data.yaml", "data.yml"]
 REQUIRED_SPLIT_DIRS = ["train", "valid"]
 REQUIRED_DATA_SUBDIRS = ["images", "labels"]
-_YOLO_IMAGE_EXTENSIONS = {".bmp", ".dng", ".jpg", ".jpeg", ".mpo", ".png", ".tif", ".tiff", ".webp"}
+YOLO_IMAGE_EXTENSIONS = {".bmp", ".dng", ".jpg", ".jpeg", ".mpo", ".png", ".tif", ".tiff", ".webp"}
 
 
 def _parse_yolo_box(values: list[str]) -> np.ndarray:
@@ -71,7 +71,7 @@ def _polygons_to_masks(polygons: tuple[np.ndarray, ...], resolution_wh: tuple[in
     if len(polygons) == 0:
         width, height = resolution_wh
         return np.zeros((0, height, width), dtype=bool)
-    return np.stack([_polygon_to_mask(polygon, resolution_wh) for polygon in polygons]).astype(bool, copy=False)
+    return np.stack([_polygon_to_mask(polygon, resolution_wh) for polygon in polygons])
 
 
 def _list_yolo_image_paths(images_directory_path: str) -> list[str]:
@@ -79,7 +79,7 @@ def _list_yolo_image_paths(images_directory_path: str) -> list[str]:
     return sorted(
         str(path)
         for path in Path(images_directory_path).iterdir()
-        if path.is_file() and path.suffix.lower() in _YOLO_IMAGE_EXTENSIONS
+        if path.is_file() and path.suffix.lower() in YOLO_IMAGE_EXTENSIONS
     )
 
 
@@ -154,7 +154,9 @@ def _build_lazy_yolo_segmentation_dataset(img_folder: str, lb_folder: str, data_
         with Image.open(image_path) as image:
             width, height = image.size
             if image.mode not in ("RGB", "L"):
-                raise ValueError(f"Images must be RGB or grayscale, but {image_path} mode is {image.mode!r}.")
+                raise ValueError(
+                    f"Lazy YOLO loader requires RGB or L (grayscale) images, but {image_path} mode is {image.mode!r}."
+                )
 
         xyxy: list[np.ndarray] = []
         class_id: list[int] = []
@@ -180,7 +182,7 @@ def _build_lazy_yolo_segmentation_dataset(img_folder: str, lb_folder: str, data_
                         dtype=np.float32,
                     )
                 xyxy.append(box * np.array([width, height, width, height], dtype=np.float32))
-                polygons.append(np.round(polygon * np.array([width, height], dtype=np.float32)).astype(np.int32))
+                polygons.append(np.rint(polygon * np.array([width, height], dtype=np.float32)).astype(np.int32))
 
         samples.append(
             _LazyYoloSample(
@@ -378,6 +380,8 @@ class CocoLikeAPI:
 
     def __init__(self, classes: list, dataset: Any):
         self.classes = classes
+        # ``dataset`` may be a supervision DetectionDataset or a lazy adapter exposing
+        # ``get_image_info(idx)`` in addition to ``__len__``/``__getitem__``.
         self.sv_dataset = dataset
 
         # Build the dataset dict that COCO API expects
