@@ -439,6 +439,4 @@ class TestTrtexecReturnsEnginePath:
         with patch.object(_trt_module, "run_command_shell", return_value=fake_result):
             engine_path = _trt_module.trtexec(onnx_path, args)
 
-        assert engine_path == expected_engine, (
-            f"Expected engine path {expected_engine!r}, got {engine_path!r}"
-        )
+        assert engine_path == expected_engine, f"Expected engine path {expected_engine!r}, got {engine_path!r}"

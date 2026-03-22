@@ -444,6 +444,16 @@ class RFDETR:
         logger.info("ONNX export completed successfully")
         self.model.model = self.model.model.to(device)
 
+        if tensorrt:
+            from argparse import Namespace
+
+            from rfdetr.export.tensorrt import trtexec
+
+            logger.info("Converting ONNX model to TensorRT engine")
+            trt_args = Namespace(verbose=verbose, profile=False, dry_run=False)
+            engine_file = trtexec(output_file, trt_args)
+            logger.info(f"Successfully exported TensorRT engine to: {engine_file}")
+
     @staticmethod
     def _load_classes(dataset_dir: str) -> List[str]:
         """Load class names from a COCO or YOLO dataset directory."""

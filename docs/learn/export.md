@@ -51,7 +51,7 @@ The `export()` method accepts several parameters to customize the export process
 | `force`         | `False`    | Force re-export even if simplified model already exists.                                                               |
 | `shape`         | `None`     | Input shape as tuple `(height, width)`. Must be divisible by 14. If not provided, uses the model's default resolution. |
 | `batch_size`    | `1`        | Batch size for the exported model.                                                                                     |
-| `tensorrt`      | `False`    | When `True`, convert the ONNX model to a TensorRT `.engine` file. Requires TensorRT (`trtexec`) to be installed.      |
+| `tensorrt`      | `False`    | When `True`, convert the ONNX model to a TensorRT `.engine` file. Requires TensorRT (`trtexec`) to be installed.       |
 
 ## Advanced Export Examples
 
@@ -118,10 +118,12 @@ If you want lower latency on NVIDIA GPUs, you can convert the exported ONNX mode
 ### Prerequisites
 
 - Install TensorRT (`trtexec` must be available in your `PATH`)
+- Install the `trt` extras: `pip install "rfdetr[trt]"`
+- Export an ONNX model first (for example: `output/inference_model.onnx`)
 
 ### Export Directly to TensorRT
 
-Pass `tensorrt=True` to `export()` to convert the ONNX model to a TensorRT engine in one step:
+Pass `tensorrt=True` to `export()` to export ONNX and convert to a TensorRT engine in one step:
 
 ```python
 from rfdetr import RFDETRMedium
@@ -151,11 +153,43 @@ args = Namespace(
 engine_path = trtexec("output/inference_model.onnx", args)
 ```
 
-`trtexec` returns the path to the generated ``.engine`` file.  If `profile=True`, it also writes an Nsight Systems report (`.nsys-rep`).
+`trtexec` returns the path to the generated `.engine` file. If `profile=True`, it also writes an Nsight Systems report (`.nsys-rep`).
 
-## Using the Exported Model
+## Run Inference with a TensorRT Engine
 
-Once exported, you can use the ONNX model with various inference frameworks:
+Once you have a `.engine` file, load it for inference using `RFDETRTensorRT`:
+
+```python
+from rfdetr.export.tensorrt import RFDETRTensorRT
+
+detector = RFDETRTensorRT(
+    "output/inference_model.engine",
+    resolution=560,  # must match the resolution used during export
+    num_classes=80,  # number of classes in your model
+)
+
+detections = detector.predict("image.jpg", threshold=0.5)
+print(detections)
+```
+
+`RFDETRTensorRT.predict()` accepts the same image formats as `RFDETR.predict()` —
+file paths, URLs, PIL Images, NumPy arrays, or `torch.Tensor` — and returns
+[`supervision.Detections`](https://supervision.roboflow.com/latest/detection/core/).
+
+### RFDETRTensorRT Parameters
+
+| Parameter     | Default    | Description                                                                               |
+| ------------- | ---------- | ----------------------------------------------------------------------------------------- |
+| `engine_path` | —          | Path to the `.engine` file.                                                               |
+| `resolution`  | `560`      | Input resolution (square side length). Must match the resolution used during ONNX export. |
+| `num_classes` | `80`       | Number of output classes.                                                                 |
+| `num_select`  | `300`      | Number of top queries kept before threshold filtering.                                    |
+| `class_names` | `None`     | Optional list of class name strings (0-indexed).                                          |
+| `device`      | `"cuda:0"` | CUDA device string.                                                                       |
+
+## Using the Exported ONNX Model
+
+Once exported, you can also use the ONNX model directly with ONNX Runtime:
 
 ### ONNX Runtime
 
@@ -214,7 +248,7 @@ input_tensor = torch.from_numpy(image_array.transpose(2, 0, 1)).float().unsqueez
 
 # Run inference — returns {"dets": ..., "labels": ...}
 outputs = trt_model({"input": input_tensor})
-boxes = outputs["dets"]   # shape: [1, num_queries, 4]  (cx, cy, w, h normalised)
+boxes = outputs["dets"]  # shape: [1, num_queries, 4]  (cx, cy, w, h normalised)
 labels = outputs["labels"]  # shape: [1, num_queries, num_classes]
 ```
 
@@ -227,5 +261,5 @@ labels = outputs["labels"]  # shape: [1, num_queries, num_classes]
 After exporting your model, you may want to:
 
 - [Deploy to Roboflow](deploy.md) for cloud-based inference and workflow integration
-- Use the ONNX model with TensorRT for optimized GPU inference
+- Use the TensorRT engine with `RFDETRTensorRT` for optimized GPU inference
 - Integrate with edge deployment frameworks like ONNX Runtime or OpenVINO
