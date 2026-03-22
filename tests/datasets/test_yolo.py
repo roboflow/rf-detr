@@ -14,7 +14,13 @@ import supervision as sv
 import torch
 from PIL import Image
 
-from rfdetr.datasets.yolo import CocoLikeAPI, YoloDetection, _MockSvDataset, is_valid_yolo_dataset
+from rfdetr.datasets.yolo import (
+    CocoLikeAPI,
+    YoloDetection,
+    _extract_yolo_class_names,
+    _MockSvDataset,
+    is_valid_yolo_dataset,
+)
 
 
 def _write_yolo_segmentation_dataset(tmp_path: Path) -> tuple[Path, Path, Path]:
@@ -442,3 +448,121 @@ class TestYoloDetectionLazyMasks:
         assert target["masks"].shape == (1, 6, 8)
         assert torch.count_nonzero(target["masks"]) > 0
         assert target["boxes"][0].tolist() == pytest.approx([2.0, 1.5, 6.0, 4.5])
+
+    def test_segmentation_image_with_no_label_produces_empty_sample(self, tmp_path: Path) -> None:
+        """Image with no matching .txt label file should produce an empty sample."""
+        image_dir = tmp_path / "images"
+        label_dir = tmp_path / "labels"
+        image_dir.mkdir()
+        label_dir.mkdir()
+        Image.new("RGB", (8, 6), color=(255, 255, 255)).save(image_dir / "unlabeled.png")
+        data_file = tmp_path / "data.yaml"
+        data_file.write_text("names:\n  - carton\n", encoding="utf-8")
+
+        dataset = YoloDetection(
+            img_folder=str(image_dir),
+            lb_folder=str(label_dir),
+            data_file=str(data_file),
+            transforms=None,
+            include_masks=True,
+        )
+
+        sample = dataset.sv_dataset.get_image_info(0)
+        assert sample.xyxy.shape == (0, 4)
+        assert sample.class_id.shape == (0,)
+        assert sample.polygons == ()
+
+        _, target = dataset[0]
+        assert target["masks"].shape == (0, 6, 8)
+        assert target["boxes"].shape == (0, 4)
+
+    def test_segmentation_multi_instance_polygons_stack_correctly(self, tmp_path: Path) -> None:
+        """Two polygon annotations per image should produce masks with shape (2, H, W)."""
+        image_dir = tmp_path / "images"
+        label_dir = tmp_path / "labels"
+        image_dir.mkdir()
+        label_dir.mkdir()
+        Image.new("RGB", (8, 6), color=(255, 255, 255)).save(image_dir / "two_instances.png")
+        # Two distinct non-overlapping polygons
+        (label_dir / "two_instances.txt").write_text(
+            "0 0.1 0.1 0.4 0.1 0.4 0.4 0.1 0.4\n1 0.6 0.6 0.9 0.6 0.9 0.9 0.6 0.9\n",
+            encoding="utf-8",
+        )
+        data_file = tmp_path / "data.yaml"
+        data_file.write_text("names:\n  - cat\n  - dog\n", encoding="utf-8")
+
+        dataset = YoloDetection(
+            img_folder=str(image_dir),
+            lb_folder=str(label_dir),
+            data_file=str(data_file),
+            transforms=None,
+            include_masks=True,
+        )
+
+        _, target = dataset[0]
+        assert target["masks"].shape == (2, 6, 8), f"Expected (2, 6, 8), got {target['masks'].shape}"
+        assert target["masks"].dtype == torch.bool
+
+    @pytest.mark.parametrize(
+        "label_content, match_pattern",
+        [
+            pytest.param("0\n", "Malformed label", id="only_class_id"),
+            pytest.param("0 0.1 0.2 0.3\n", "Malformed label", id="too_few_fields"),
+            pytest.param(
+                "0 0.1 0.2 0.3 0.4 0.5\n",
+                "Malformed polygon",
+                id="odd_polygon_coords",
+            ),
+        ],
+    )
+    def test_malformed_label_line_raises_clear_error(
+        self, tmp_path: Path, label_content: str, match_pattern: str
+    ) -> None:
+        """Malformed label lines should raise a descriptive ValueError with file context."""
+        image_dir = tmp_path / "images"
+        label_dir = tmp_path / "labels"
+        image_dir.mkdir()
+        label_dir.mkdir()
+        Image.new("RGB", (8, 6), color=(255, 255, 255)).save(image_dir / "bad.png")
+        (label_dir / "bad.txt").write_text(label_content, encoding="utf-8")
+        data_file = tmp_path / "data.yaml"
+        data_file.write_text("names:\n  - carton\n", encoding="utf-8")
+
+        with pytest.raises(ValueError, match=match_pattern):
+            YoloDetection(
+                img_folder=str(image_dir),
+                lb_folder=str(label_dir),
+                data_file=str(data_file),
+                transforms=None,
+                include_masks=True,
+            )
+
+
+class TestExtractYoloClassNames:
+    """Tests for _extract_yolo_class_names with different YAML formats."""
+
+    @pytest.mark.parametrize(
+        "yaml_content, expected_names",
+        [
+            pytest.param(
+                "names:\n  - cat\n  - dog\n",
+                ["cat", "dog"],
+                id="list_format",
+            ),
+            pytest.param(
+                "names:\n  0: cat\n  1: dog\n",
+                ["cat", "dog"],
+                id="dict_format_sorted_keys",
+            ),
+            pytest.param(
+                "names:\n  1: dog\n  0: cat\n",
+                ["cat", "dog"],
+                id="dict_format_unsorted_keys",
+            ),
+        ],
+    )
+    def test_class_names_formats(self, tmp_path: Path, yaml_content: str, expected_names: list[str]) -> None:
+        """Both list and dict YAML formats for class names should be supported."""
+        data_file = tmp_path / "data.yaml"
+        data_file.write_text(yaml_content, encoding="utf-8")
+        assert _extract_yolo_class_names(str(data_file)) == expected_names

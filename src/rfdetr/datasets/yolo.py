@@ -101,7 +101,13 @@ def _extract_yolo_class_names(data_file: str) -> list[str]:
 
 @dataclass(frozen=True)
 class _LazyYoloSample:
-    """Lightweight per-image YOLO metadata with polygons kept lazy until fetch time."""
+    """Lightweight per-image YOLO metadata with polygons kept lazy until fetch time.
+
+    Note: ``frozen=True`` prevents field *reassignment* but does NOT prevent
+    in-place mutation of ``np.ndarray`` fields (e.g. ``sample.xyxy[0] = 999.0``
+    would silently succeed).  This is safe across DataLoader workers because
+    each worker receives a pickled copy of the dataset.
+    """
 
     image_path: str
     width: int
@@ -164,8 +170,19 @@ def _build_lazy_yolo_segmentation_dataset(img_folder: str, lb_folder: str, data_
         if label_path.exists():
             with label_path.open(encoding="utf-8") as handle:
                 lines = [line.strip() for line in handle if line.strip()]
-            for line in lines:
+            for i, line in enumerate(lines):
                 values = line.split()
+                if len(values) < 5:
+                    raise ValueError(
+                        f"Malformed label in {str(label_path)!r} at line {i + 1}: "
+                        f"expected 5 (bbox) or ≥ 6 (polygon) fields, got {len(values)}."
+                    )
+                if len(values) > 5 and len(values[1:]) % 2 != 0:
+                    raise ValueError(
+                        f"Malformed polygon in {str(label_path)!r} at line {i + 1}: "
+                        f"polygon coordinates must be paired (x, y) values, "
+                        f"but got {len(values[1:])} coordinate values (odd count)."
+                    )
                 class_id.append(int(values[0]))
                 if len(values) == 5:
                     box = _parse_yolo_box(values[1:])
@@ -414,7 +431,14 @@ class CocoLikeAPI:
                 self.catToImgs[cat_id].append(img_id)
 
     def _build_coco_dataset(self) -> dict:
-        """Build a COCO-format dataset dict from YOLO data."""
+        """Build a COCO-format dataset dict from YOLO data.
+
+        ``dataset`` is duck-typed: it must implement ``__len__`` and
+        ``__getitem__`` (returning ``(image_path, cv2_image, sv.Detections)``).
+        When it additionally exposes ``get_image_info(idx)`` returning a
+        :class:`_LazyYoloSample`, that lighter-weight path is used instead of
+        loading pixel data just to extract image dimensions.
+        """
         images = []
         annotations = []
         categories = []
