@@ -13,6 +13,23 @@ depends on a fragile eager ``detr -> variants`` import sequence.
 
 from __future__ import annotations
 
+__all__ = [
+    "RFDETRBase",
+    "RFDETRNano",
+    "RFDETRSmall",
+    "RFDETRMedium",
+    "RFDETRLarge",
+    "RFDETRLargeDeprecated",
+    "RFDETRSeg",
+    "RFDETRSegPreview",
+    "RFDETRSegNano",
+    "RFDETRSegSmall",
+    "RFDETRSegMedium",
+    "RFDETRSegLarge",
+    "RFDETRSegXLarge",
+    "RFDETRSeg2XLarge",
+]
+
 import warnings
 
 from rfdetr.config import (
