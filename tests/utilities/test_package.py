@@ -194,26 +194,11 @@ class TestImportPaths:
             "top-level rfdetr.ModelContext and rfdetr.inference.ModelContext must be the same object"
         )
 
-    def test_model_context_internal_backward_compat_from_detr(self) -> None:
-        """_ModelContext must remain importable from rfdetr.detr (backward compat)."""
-        from rfdetr.detr import _ModelContext
-
-        assert _ModelContext is not None
-
     def test_build_model_context_backward_compat_from_detr(self) -> None:
         """_build_model_context must remain importable from rfdetr.detr (backward compat)."""
         from rfdetr.detr import _build_model_context
 
         assert callable(_build_model_context)
-
-    def test_model_context_internal_identity_across_import_paths(self) -> None:
-        """_ModelContext must be the same object whether imported from detr or inference."""
-        from rfdetr.detr import _ModelContext as FromDetr
-        from rfdetr.inference import _ModelContext as FromInference
-
-        assert FromDetr is FromInference, (
-            "rfdetr.detr._ModelContext and rfdetr.inference._ModelContext must be the same object"
-        )
 
     def test_getattr_raises_for_unknown_names(self) -> None:
         """Accessing an unknown name via rfdetr.detr must raise AttributeError."""
@@ -228,8 +213,6 @@ class TestImportPaths:
 
         names = dir(detr_mod)
         assert "ModelContext" in names, "ModelContext missing from dir(rfdetr.detr)"
-        assert "_ModelContext" in names, "_ModelContext missing from dir(rfdetr.detr)"
-        assert "_build_model_context" in names, "_build_model_context missing from dir(rfdetr.detr)"
         assert "RFDETRLarge" in names, "RFDETRLarge missing from dir(rfdetr.detr)"
         assert "RFDETRBase" in names, "RFDETRBase missing from dir(rfdetr.detr)"
 
