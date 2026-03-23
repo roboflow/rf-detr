@@ -50,7 +50,7 @@ class RFDETRModelModule(LightningModule):
             # Capture the configured class count before loading weights so we can
             # detect any automatic alignment to the checkpoint.
             prev_num_classes = self.model_config.num_classes
-            load_pretrain_weights(self.model, self.model_config, self.train_config)
+            load_pretrain_weights(self.model, self.model_config)
             # If the loaded checkpoint changed the model's effective number of
             # classes (e.g. to match a fine-tuned head), persist that back onto
             # the model_config so downstream components see the aligned value.

@@ -1033,10 +1033,9 @@ class TestLoadPretrainWeightsInto:
 
         fake_model = MagicMock()
         mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu", segmentation_head=False)
-        tc = _make_train_config(tmp_path)
 
         with pytest.raises(ValueError, match="segmentation head"):
-            load_pretrain_weights(fake_model, mc, tc)
+            load_pretrain_weights(fake_model, mc)
 
     def test_patch_size_mismatch_raises_via_detr_path(self, monkeypatch, tmp_path):
         """patch_size mismatch must raise ValueError via the load_pretrain_weights path."""
@@ -1047,10 +1046,9 @@ class TestLoadPretrainWeightsInto:
 
         fake_model = MagicMock()
         mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu", patch_size=16)
-        tc = _make_train_config(tmp_path)
 
         with pytest.raises(ValueError, match=r"patch_size"):
-            load_pretrain_weights(fake_model, mc, tc)
+            load_pretrain_weights(fake_model, mc)
 
 
 # ---------------------------------------------------------------------------

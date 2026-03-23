@@ -110,12 +110,11 @@ class TestLoadPretrainWeightsReinitScenarios:
         from rfdetr.models.weights import load_pretrain_weights
 
         mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu")
-        tc = _make_train_config(tmp_path)
         checkpoint = _make_checkpoint(num_classes=3)
         monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
 
         nn_model = _fake_nn_model()
-        load_pretrain_weights(nn_model, mc, tc)
+        load_pretrain_weights(nn_model, mc)
 
         calls = nn_model.reinitialize_detection_head.call_args_list
         assert calls[0] == call(3), f"First reinit must resize to checkpoint size 3, got {calls[0]}"
@@ -134,12 +133,11 @@ class TestLoadPretrainWeightsReinitScenarios:
         from rfdetr.models.weights import load_pretrain_weights
 
         mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu", num_classes=2)
-        tc = _make_train_config(tmp_path)
         checkpoint = _make_checkpoint(num_classes=91)
         monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
 
         nn_model = _fake_nn_model()
-        load_pretrain_weights(nn_model, mc, tc)
+        load_pretrain_weights(nn_model, mc)
 
         calls = nn_model.reinitialize_detection_head.call_args_list
         assert calls == [call(91), call(3)], f"Expected reinit to [91, 3] (expand then trim), got {calls}"
@@ -153,12 +151,11 @@ class TestLoadPretrainWeightsReinitScenarios:
         from rfdetr.models.weights import load_pretrain_weights
 
         mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu", num_classes=93)
-        tc = _make_train_config(tmp_path)
         checkpoint = _make_checkpoint(num_classes=91)
         monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
 
         nn_model = _fake_nn_model()
-        load_pretrain_weights(nn_model, mc, tc)
+        load_pretrain_weights(nn_model, mc)
 
         calls = nn_model.reinitialize_detection_head.call_args_list
         assert calls == [call(91), call(94)], f"Expected reinit to [91, 94] (load then expand), got {calls}"
@@ -171,12 +168,11 @@ class TestLoadPretrainWeightsReinitScenarios:
         from rfdetr.models.weights import load_pretrain_weights
 
         mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu", num_classes=90)
-        tc = _make_train_config(tmp_path)
         checkpoint = _make_checkpoint(num_classes=91)
         monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
 
         nn_model = _fake_nn_model()
-        load_pretrain_weights(nn_model, mc, tc)
+        load_pretrain_weights(nn_model, mc)
 
         nn_model.reinitialize_detection_head.assert_not_called()
 
@@ -201,7 +197,6 @@ class TestLoadPretrainWeightsClassNames:
         from rfdetr.models.weights import load_pretrain_weights
 
         mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu", num_classes=90)
-        tc = _make_train_config(tmp_path)
         checkpoint = _make_checkpoint(num_classes=91)
         checkpoint["args"] = SimpleNamespace(
             segmentation_head=False,
@@ -211,7 +206,7 @@ class TestLoadPretrainWeightsClassNames:
         monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
 
         nn_model = _fake_nn_model()
-        result = load_pretrain_weights(nn_model, mc, tc)
+        result = load_pretrain_weights(nn_model, mc)
 
         assert result == ["cat", "dog", "bird"], f"Expected class names from checkpoint, got {result!r}"
 
@@ -220,13 +215,12 @@ class TestLoadPretrainWeightsClassNames:
         from rfdetr.models.weights import load_pretrain_weights
 
         mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu", num_classes=90)
-        tc = _make_train_config(tmp_path)
         checkpoint = _make_checkpoint(num_classes=91)
         checkpoint.pop("args", None)  # no args key at all
         monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
 
         nn_model = _fake_nn_model()
-        result = load_pretrain_weights(nn_model, mc, tc)
+        result = load_pretrain_weights(nn_model, mc)
 
         assert result == [], f"Expected empty list when checkpoint has no class_names, got {result!r}"
 
@@ -235,10 +229,9 @@ class TestLoadPretrainWeightsClassNames:
         from rfdetr.models.weights import load_pretrain_weights
 
         mc = RFDETRBaseConfig(pretrain_weights=None, device="cpu")
-        tc = _make_train_config(tmp_path)
         nn_model = _fake_nn_model()
 
-        result = load_pretrain_weights(nn_model, mc, tc)
+        result = load_pretrain_weights(nn_model, mc)
 
         assert result == [], f"Expected [] for None pretrain_weights, got {result!r}"
         nn_model.load_state_dict.assert_not_called()

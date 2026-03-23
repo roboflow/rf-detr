@@ -19,7 +19,8 @@ extraction from ``detr.py:_load_pretrain_weights_into``.
 from __future__ import annotations
 
 import os
-from typing import List
+import warnings
+from typing import List, Optional
 
 import torch
 
@@ -36,7 +37,7 @@ __all__ = ["load_pretrain_weights", "apply_lora"]
 def load_pretrain_weights(
     nn_model: torch.nn.Module,
     model_config: ModelConfig,
-    train_config: TrainConfig,
+    train_config: Optional[TrainConfig] = None,
 ) -> List[str]:
     """Load pretrained checkpoint weights into *nn_model* in-place.
 
@@ -63,9 +64,8 @@ def load_pretrain_weights(
         model_config: Pydantic ``ModelConfig`` instance. Must have
             ``pretrain_weights``, ``num_classes``, ``num_queries``, and
             ``group_detr`` attributes.
-        train_config: Retained for backward compatibility; no longer used
-            internally since checkpoint compatibility is validated directly
-            against ``model_config``.
+        train_config: Deprecated — no longer used internally.  Pass
+            ``None`` (or omit the argument) instead.  Will be removed in v1.9.
 
     Returns:
         List of class name strings from the checkpoint, or an empty list if none
@@ -74,6 +74,13 @@ def load_pretrain_weights(
     Raises:
         Exception: If the checkpoint file cannot be loaded even after a re-download.
     """
+    if train_config is not None:
+        warnings.warn(
+            "load_pretrain_weights() train_config argument is deprecated and will be removed in v1.9. "
+            "The argument is no longer used; omit it from your call.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
     mc = model_config
     pretrain_weights = mc.pretrain_weights
     if pretrain_weights is None:

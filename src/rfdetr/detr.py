@@ -120,14 +120,9 @@ def _build_model_context(model_config: ModelConfig) -> "ModelContext":
 
     nn_model = build_model_from_config(model_config)
 
-    # A dummy TrainConfig is needed for the namespace stored on ModelContext.
-    # load_pretrain_weights retains train_config in its signature for backward
-    # compatibility but no longer uses it internally.
-    dummy_train_config = TrainConfig(dataset_dir=".", output_dir=".")
-
     class_names: List[str] = []
     if model_config.pretrain_weights is not None:
-        class_names = load_pretrain_weights(nn_model, model_config, dummy_train_config)
+        class_names = load_pretrain_weights(nn_model, model_config)
 
     if model_config.backbone_lora:
         apply_lora(nn_model)
@@ -138,6 +133,8 @@ def _build_model_context(model_config: ModelConfig) -> "ModelContext":
 
     # Build a namespace for ModelContext.args (still expected by downstream
     # consumers such as reinitialize_detection_head and export).
+    # TODO(Chapter 6, #828): replace with a direct ModelConfig read once args is removed.
+    dummy_train_config = TrainConfig(dataset_dir=".", output_dir=".")
     args = _namespace_from_configs(model_config, dummy_train_config)
 
     return ModelContext(
