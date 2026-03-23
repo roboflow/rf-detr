@@ -34,7 +34,7 @@ from rfdetr.config import (
 )
 from rfdetr.datasets.coco import is_valid_coco_dataset
 from rfdetr.datasets.yolo import is_valid_yolo_dataset
-from rfdetr.inference import _build_model_context  # needed at runtime in get_model()
+from rfdetr.inference import ModelContext, _build_model_context
 from rfdetr.utilities.logger import get_logger
 
 try:
@@ -399,7 +399,7 @@ class RFDETR:
         """
         return self._train_config_class(**kwargs)
 
-    def get_model(self, config: ModelConfig) -> "ModelContext":
+    def get_model(self, config: ModelConfig) -> ModelContext:
         """Retrieve a model context from the provided architecture configuration.
 
         Args:

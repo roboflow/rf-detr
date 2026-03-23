@@ -1,3 +1,3 @@
-:::rfdetr.detr.RFDETRSegPreview
+:::rfdetr.variants.RFDETRSegPreview
     options:
       inherited_members: true
