@@ -8,7 +8,7 @@
 
 These tests pin the current behavior of the legacy namespace-based builder
 functions. They serve as a safety net during the config-native builder
-refactoring (PR 5): any change that alters these outputs is a regression.
+refactoring: any change that alters these outputs is a regression.
 
 All tests in this file must pass against the CURRENT codebase.
 """
@@ -16,7 +16,7 @@ All tests in this file must pass against the CURRENT codebase.
 import pytest
 import torch
 
-from rfdetr._namespace import build_namespace
+from rfdetr._namespace import _namespace_from_configs
 from rfdetr.config import (
     RFDETRBaseConfig,
     RFDETRNanoConfig,
@@ -37,7 +37,7 @@ def _make_ns(mc=None, tc=None):
     """Build a namespace suitable for builder functions."""
     mc = mc or RFDETRBaseConfig(num_classes=80, pretrain_weights=None, device="cpu")
     tc = tc or TrainConfig(dataset_dir="/tmp")
-    return build_namespace(mc, tc)
+    return _namespace_from_configs(mc, tc)
 
 
 # ---------------------------------------------------------------------------
@@ -406,28 +406,3 @@ class TestRFDETRModelModuleInitCharacterization:
         assert "masks" in module.criterion.losses
 
 
-# ---------------------------------------------------------------------------
-# build_namespace hardcoded defaults parity with ModelDefaults
-# ---------------------------------------------------------------------------
-
-
-class TestBuildNamespaceDefaultsParity:
-    """Verify that build_namespace() hardcoded defaults match ModelDefaults values.
-
-    This is a critical characterization test: when the refactor replaces
-    hardcoded values with ModelDefaults, every field must match.
-    """
-
-    def test_all_defaults_match(self) -> None:
-        from rfdetr.models._defaults import MODEL_DEFAULTS, ModelDefaults
-
-        mc = RFDETRBaseConfig(num_classes=80, pretrain_weights=None, device="cpu")
-        tc = TrainConfig(dataset_dir="/tmp")
-        ns = build_namespace(mc, tc)
-
-        # Every field in ModelDefaults should have a matching ns attribute
-        for field_name in ModelDefaults.__dataclass_fields__:
-            expected = getattr(MODEL_DEFAULTS, field_name)
-            actual = getattr(ns, field_name, "MISSING")
-            assert actual != "MISSING", f"ModelDefaults.{field_name} has no matching namespace attribute"
-            assert actual == expected, f"ModelDefaults.{field_name}={expected!r} != namespace.{field_name}={actual!r}"

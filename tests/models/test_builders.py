@@ -58,14 +58,14 @@ class TestBuildModelFromConfig:
 
     def test_parity_with_build_model_via_namespace(self) -> None:
         """Parameter count must match between config-native and namespace paths."""
-        from rfdetr._namespace import build_namespace
+        from rfdetr._namespace import _namespace_from_configs
         from rfdetr.models.lwdetr import build_model
 
         mc = RFDETRBaseConfig(num_classes=80)
         tc = TrainConfig(dataset_dir="/tmp")
 
         model_config_native = build_model_from_config(mc, tc)
-        ns = build_namespace(mc, tc)
+        ns = _namespace_from_configs(mc, tc)
         model_namespace = build_model(ns)
 
         params_native = sum(p.numel() for p in model_config_native.parameters())

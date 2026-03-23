@@ -12,6 +12,7 @@ on ``main.py`` and can survive its deletion.
 """
 
 import types
+import warnings
 
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.models._defaults import MODEL_DEFAULTS, ModelDefaults
@@ -196,7 +197,7 @@ def build_namespace(model_config: ModelConfig, train_config: TrainConfig) -> typ
         - :func:`rfdetr._namespace._namespace_from_configs` — for the rare
           case where a raw namespace is still required (e.g. ``build_dataset``)
 
-        ``build_namespace`` will be formally deprecated in v1.9.
+        ``build_namespace`` will be removed in v1.9.
 
     Args:
         model_config: Architecture configuration.
@@ -206,4 +207,11 @@ def build_namespace(model_config: ModelConfig, train_config: TrainConfig) -> typ
         ``types.SimpleNamespace`` compatible with ``build_model``,
         ``build_criterion_and_postprocessors``, and ``build_dataset``.
     """
+    warnings.warn(
+        "build_namespace() is deprecated and will be removed in v1.9. "
+        "Use build_model_from_config() or build_criterion_from_config() instead; "
+        "for raw namespace access use rfdetr._namespace._namespace_from_configs().",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     return _namespace_from_configs(model_config, train_config)
