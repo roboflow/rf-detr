@@ -537,6 +537,46 @@ class TestYoloDetectionLazyMasks:
                 include_masks=True,
             )
 
+    def test_lazy_dataset_polygon_storage_is_smaller_than_eager_masks(self, tmp_path: Path) -> None:
+        """Lazy dataset retains polygon coords, not dense masks — footprint is orders of magnitude smaller."""
+        image_dir = tmp_path / "images"
+        label_dir = tmp_path / "labels"
+        image_dir.mkdir()
+        label_dir.mkdir()
+
+        n_images = 20
+        width, height = 256, 256
+        for i in range(n_images):
+            Image.new("RGB", (width, height)).save(image_dir / f"img_{i:03d}.png")
+            # One quadrilateral polygon per image
+            (label_dir / f"img_{i:03d}.txt").write_text(
+                "0 0.1 0.1 0.9 0.1 0.9 0.9 0.1 0.9\n", encoding="utf-8"
+            )
+        data_file = tmp_path / "data.yaml"
+        data_file.write_text("names:\n  - obj\n", encoding="utf-8")
+
+        dataset = YoloDetection(
+            img_folder=str(image_dir),
+            lb_folder=str(label_dir),
+            data_file=str(data_file),
+            transforms=None,
+            include_masks=True,
+        )
+
+        # Bytes actually retained in the lazy samples (polygon coords + bbox + class id)
+        lazy_bytes = sum(
+            sample.xyxy.nbytes + sample.class_id.nbytes + sum(p.nbytes for p in sample.polygons)
+            for sample in dataset.sv_dataset._samples
+        )
+
+        # Bytes that eager rasterization would have retained (one bool mask per image)
+        eager_mask_bytes = n_images * height * width * np.dtype(bool).itemsize
+
+        assert lazy_bytes < eager_mask_bytes / 10, (
+            f"Lazy storage ({lazy_bytes} B) should be at least 10× smaller "
+            f"than eager mask cost ({eager_mask_bytes} B)."
+        )
+
     def test_out_of_range_class_id_raises_clear_error(self, tmp_path: Path) -> None:
         """A label with a class ID beyond the class count should raise ValueError at init."""
         image_dir = tmp_path / "images"

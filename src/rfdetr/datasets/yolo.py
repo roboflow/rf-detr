@@ -129,6 +129,9 @@ class _LazyYoloSample:
 
         if len(self.class_id) == 0:
             return sv.Detections.empty()
+        # TODO: replace dense rasterization with sv.CompactMasks once supervision v0.28
+        # is released. CompactMasks stores polygons + resolution instead of a full H×W
+        # bool array, eliminating this allocation entirely at fetch time.
         mask = _polygons_to_masks(self.polygons, (self.width, self.height))
         return sv.Detections(class_id=self.class_id, xyxy=self.xyxy, mask=mask)
 
@@ -157,6 +160,70 @@ class _LazyYoloDetectionDataset:
         return self._samples[idx]
 
 
+def _parse_yolo_label_line(
+    values: list[str],
+    line_num: int,
+    label_path: Path,
+    num_classes: int,
+    width: int,
+    height: int,
+) -> tuple[int, np.ndarray, np.ndarray]:
+    """Parse one YOLO label line and return ``(class_id, xyxy_px, polygon_px)``.
+
+    Args:
+        values: Whitespace-split fields from the label line.
+        line_num: 1-based line number (for error messages).
+        label_path: Path to the label file (for error messages).
+        num_classes: Total number of classes in the dataset (used for range check).
+        width: Image width in pixels.
+        height: Image height in pixels.
+
+    Returns:
+        Tuple of ``(class_id, xyxy_px, polygon_px)`` where coordinates are in
+        pixel space.
+
+    Raises:
+        ValueError: If the line is malformed or the class ID is out of range.
+    """
+    if len(values) < 5:
+        raise ValueError(
+            f"Malformed label in {str(label_path)!r} at line {line_num}: "
+            f"expected 5 (bbox) or ≥ 6 (polygon) fields, got {len(values)}."
+        )
+    if len(values) > 5 and len(values[1:]) % 2 != 0:
+        raise ValueError(
+            f"Malformed polygon in {str(label_path)!r} at line {line_num}: "
+            f"polygon coordinates must be paired (x, y) values, "
+            f"but got {len(values[1:])} coordinate values (odd count)."
+        )
+    cid = int(values[0])
+    if cid < 0 or cid >= num_classes:
+        raise ValueError(
+            f"Label {str(label_path)!r} line {line_num}: "
+            f"class ID {cid} is out of range for dataset with {num_classes} classes "
+            f"(valid range 0\u2013{num_classes - 1})."
+        )
+    if len(values) == 5:
+        box = _parse_yolo_box(values[1:])
+        polygon = _box_to_polygon(box)
+    else:
+        polygon = _parse_yolo_polygon(values[1:])
+        box = np.array(
+            [
+                np.min(polygon[:, 0]),
+                np.min(polygon[:, 1]),
+                np.max(polygon[:, 0]),
+                np.max(polygon[:, 1]),
+            ],
+            dtype=np.float32,
+        )
+    xyxy_px = box * np.array([width, height, width, height], dtype=np.float32)
+    polygon_px = polygon * np.array([width, height], dtype=np.float32)
+    polygon_px[:, 0] = np.clip(polygon_px[:, 0], 0.0, float(width - 1))
+    polygon_px[:, 1] = np.clip(polygon_px[:, 1], 0.0, float(height - 1))
+    return cid, xyxy_px, polygon_px.astype(np.float32)
+
+
 def _build_lazy_yolo_segmentation_dataset(img_folder: str, lb_folder: str, data_file: str) -> _LazyYoloDetectionDataset:
     """Build a YOLO dataset that stores polygons and rasterizes masks on demand."""
     classes = _extract_yolo_class_names(data_file)
@@ -174,45 +241,12 @@ def _build_lazy_yolo_segmentation_dataset(img_folder: str, lb_folder: str, data_
             with label_path.open(encoding="utf-8") as handle:
                 lines = [line.strip() for line in handle if line.strip()]
             for i, line in enumerate(lines):
-                values = line.split()
-                if len(values) < 5:
-                    raise ValueError(
-                        f"Malformed label in {str(label_path)!r} at line {i + 1}: "
-                        f"expected 5 (bbox) or ≥ 6 (polygon) fields, got {len(values)}."
-                    )
-                if len(values) > 5 and len(values[1:]) % 2 != 0:
-                    raise ValueError(
-                        f"Malformed polygon in {str(label_path)!r} at line {i + 1}: "
-                        f"polygon coordinates must be paired (x, y) values, "
-                        f"but got {len(values[1:])} coordinate values (odd count)."
-                    )
-                cid = int(values[0])
-                if cid < 0 or cid >= len(classes):
-                    raise ValueError(
-                        f"Label {str(label_path)!r} line {i + 1}: "
-                        f"class ID {cid} is out of range for dataset with {len(classes)} classes "
-                        f"(valid range 0\u2013{len(classes) - 1})."
-                    )
+                cid, xyxy_px, polygon_px = _parse_yolo_label_line(
+                    line.split(), i + 1, label_path, len(classes), width, height
+                )
                 class_id.append(cid)
-                if len(values) == 5:
-                    box = _parse_yolo_box(values[1:])
-                    polygon = _box_to_polygon(box)
-                else:
-                    polygon = _parse_yolo_polygon(values[1:])
-                    box = np.array(
-                        [
-                            np.min(polygon[:, 0]),
-                            np.min(polygon[:, 1]),
-                            np.max(polygon[:, 0]),
-                            np.max(polygon[:, 1]),
-                        ],
-                        dtype=np.float32,
-                    )
-                xyxy.append(box * np.array([width, height, width, height], dtype=np.float32))
-                polygon_px = polygon * np.array([width, height], dtype=np.float32)
-                polygon_px[:, 0] = np.clip(polygon_px[:, 0], 0.0, float(width - 1))
-                polygon_px[:, 1] = np.clip(polygon_px[:, 1], 0.0, float(height - 1))
-                polygons.append(polygon_px.astype(np.float32))
+                xyxy.append(xyxy_px)
+                polygons.append(polygon_px)
 
         samples.append(
             _LazyYoloSample(
