@@ -1,11 +1,20 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+
 import argparse
 import os
 from typing import List
+
 import cv2
+import numpy as np
 import supervision as sv
 from PIL import Image
-import numpy as np
+
 from rfdetr import RFDETRBase
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Visualize RF-DETR predictions on sample images.")
@@ -15,9 +24,15 @@ def parse_args():
     parser.add_argument("--confidence", type=float, default=0.5, help="Confidence threshold for predictions.")
     return parser.parse_args()
 
+
 def load_images(input_dir: str) -> List[Image.Image]:
     supported_extensions = (".jpg", ".jpeg", ".png")
-    return [Image.open(os.path.join(input_dir, f)) for f in os.listdir(input_dir) if f.lower().endswith(supported_extensions)]
+    return [
+        Image.open(os.path.join(input_dir, f))
+        for f in os.listdir(input_dir)
+        if f.lower().endswith(supported_extensions)
+    ]
+
 
 def save_annotated_image(image: Image.Image, detections: sv.Detections, output_path: str):
     annotated_image = np.array(image)
@@ -26,22 +41,23 @@ def save_annotated_image(image: Image.Image, detections: sv.Detections, output_p
     annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
     cv2.imwrite(output_path, cv2.cvtColor(annotated_image, cv2.COLOR_RGB2BGR))
 
+
 def main():
     args = parse_args()
-    
+
     # Validate inputs
     if not os.path.exists(args.input_dir):
         raise ValueError(f"Input directory {args.input_dir} does not exist.")
     os.makedirs(args.output_dir, exist_ok=True)
-    
+
     # Load model
     model = RFDETRBase(pretrain_weights=args.weights)
-    
+
     # Load images
     images = load_images(args.input_dir)
     if not images:
         raise ValueError(f"No supported images found in {args.input_dir}.")
-    
+
     # Process each image
     for idx, image in enumerate(images):
         try:
@@ -51,6 +67,7 @@ def main():
             print(f"Saved annotated image to {output_path}.")
         except Exception as e:
             print(f"Error processing image {idx}: {str(e)}.")
+
 
 if __name__ == "__main__":
     main()
