@@ -35,8 +35,6 @@ from rfdetr.config import (
 from rfdetr.datasets.coco import is_valid_coco_dataset
 from rfdetr.datasets.yolo import is_valid_yolo_dataset
 from rfdetr.inference import ModelContext, _build_model_context
-from rfdetr.models import PostProcess
-from rfdetr.models.weights import apply_lora, load_pretrain_weights
 from rfdetr.utilities.logger import get_logger
 
 try:
@@ -46,7 +44,9 @@ except Exception:
 
 logger = get_logger()
 
-_INFERENCE_EXPORTS = ("ModelContext", "_build_model_context", "_ModelContext")
+# ModelContext and _build_model_context are eagerly imported above (runtime use in get_model).
+# Only _ModelContext is resolved lazily via __getattr__.
+_INFERENCE_EXPORTS = ("_ModelContext",)
 _VARIANT_EXPORTS = (
     "RFDETRBase",
     "RFDETRLarge",
@@ -63,7 +63,7 @@ _VARIANT_EXPORTS = (
     "RFDETRSegXLarge",
     "RFDETRSmall",
 )
-__all__ = ["RFDETR", *_INFERENCE_EXPORTS, *_VARIANT_EXPORTS]
+__all__ = ["RFDETR", "ModelContext", "_build_model_context", *_INFERENCE_EXPORTS, *_VARIANT_EXPORTS]
 
 
 class RFDETR:
