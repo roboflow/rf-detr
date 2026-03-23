@@ -76,12 +76,12 @@ def _build_model_context(model_config: ModelConfig) -> ModelContext:
     Returns:
         Fully initialised ModelContext ready for inference or training.
     """
-    from rfdetr._namespace import build_namespace
+    from rfdetr._namespace import _namespace_from_configs
 
-    # A dummy TrainConfig is needed only for build_namespace's required fields;
+    # A dummy TrainConfig is needed only for _namespace_from_configs' required fields;
     # dataset_dir/output_dir are unused during model construction.
     dummy_train_config = TrainConfig(dataset_dir=".", output_dir=".")
-    args = build_namespace(model_config, dummy_train_config)
+    args = _namespace_from_configs(model_config, dummy_train_config)
     nn_model = build_model(args)
 
     class_names: List[str] = []
