@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-__all__ = ["ModelContext", "_ModelContext", "_build_model_context"]
+__all__ = ["ModelContext"]
 
 from typing import TYPE_CHECKING, Any, List, Optional
 

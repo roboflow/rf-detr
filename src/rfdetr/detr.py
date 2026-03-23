@@ -61,7 +61,7 @@ _VARIANT_EXPORTS = (
     "RFDETRSegXLarge",
     "RFDETRSmall",
 )
-__all__ = ["RFDETR", "ModelContext", "_ModelContext", "_build_model_context", *_VARIANT_EXPORTS]
+__all__ = ["RFDETR", "ModelContext", *_VARIANT_EXPORTS]
 
 
 class RFDETR:
