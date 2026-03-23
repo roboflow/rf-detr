@@ -549,9 +549,7 @@ class TestYoloDetectionLazyMasks:
         for i in range(n_images):
             Image.new("RGB", (width, height)).save(image_dir / f"img_{i:03d}.png")
             # One quadrilateral polygon per image
-            (label_dir / f"img_{i:03d}.txt").write_text(
-                "0 0.1 0.1 0.9 0.1 0.9 0.9 0.1 0.9\n", encoding="utf-8"
-            )
+            (label_dir / f"img_{i:03d}.txt").write_text("0 0.1 0.1 0.9 0.1 0.9 0.9 0.1 0.9\n", encoding="utf-8")
         data_file = tmp_path / "data.yaml"
         data_file.write_text("names:\n  - obj\n", encoding="utf-8")
 
@@ -573,8 +571,7 @@ class TestYoloDetectionLazyMasks:
         eager_mask_bytes = n_images * height * width * np.dtype(bool).itemsize
 
         assert lazy_bytes < eager_mask_bytes / 10, (
-            f"Lazy storage ({lazy_bytes} B) should be at least 10× smaller "
-            f"than eager mask cost ({eager_mask_bytes} B)."
+            f"Lazy storage ({lazy_bytes} B) should be at least 10× smaller than eager mask cost ({eager_mask_bytes} B)."
         )
 
     def test_out_of_range_class_id_raises_clear_error(self, tmp_path: Path) -> None:
