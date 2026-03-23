@@ -75,6 +75,7 @@ trt = [
 ]
 loggers = [
     "tensorboard>=2.13.0",
+    "protobuf>=3.20.0,<4.0.0",  # Pins protobuf below 4.x to avoid TensorBoard descriptor crash with protobuf>=4 (see #844)
     "wandb",
     "mlflow",
     "clearml",
@@ -100,6 +101,7 @@ tests = [
   "pytest-xdist>=3.6,<4",
   "pytest-rerunfailures>=10,<15",
   "pytest-timeout>=2,<3",
+  "tomli>=2.0; python_version < '3.11'",
 ]
 
 docs = [

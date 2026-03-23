@@ -90,8 +90,7 @@ def test_resolve_auto_batch_config_returns_expected_values():
 
     with (
         patch("rfdetr.training.auto_batch.torch.cuda.is_available", return_value=True),
-        patch("rfdetr.training.auto_batch.build_namespace", return_value=SimpleNamespace()),
-        patch("rfdetr.training.auto_batch.build_criterion_and_postprocessors", return_value=(criterion, None)),
+        patch("rfdetr.training.auto_batch.build_criterion_from_config", return_value=(criterion, None)),
         patch("rfdetr.training.auto_batch.probe_max_micro_batch", return_value=5),
         patch("rfdetr.training.auto_batch.torch.cuda.get_device_name", return_value="Fake GPU"),
     ):
@@ -107,7 +106,7 @@ def test_resolve_auto_batch_config_returns_expected_values():
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for segmentation probe")
 def test_probe_step_with_real_segmentation_criterion(tmp_path):
     """Run one probe step with real segmentation model and criterion so loss_masks and t['masks'] are exercised."""
-    from rfdetr._namespace import build_namespace
+    from rfdetr._namespace import _namespace_from_configs
     from rfdetr.config import RFDETRSegNanoConfig, SegmentationTrainConfig
     from rfdetr.models.lwdetr import build_criterion_and_postprocessors, build_model
 
@@ -119,7 +118,7 @@ def test_probe_step_with_real_segmentation_criterion(tmp_path):
         grad_accum_steps=1,
         tensorboard=False,
     )
-    args = build_namespace(mc, tc)
+    args = _namespace_from_configs(mc, tc)
     model = build_model(args)
     criterion, _ = build_criterion_and_postprocessors(args)
     device = torch.device("cuda")
