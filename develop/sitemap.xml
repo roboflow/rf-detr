@@ -69,15 +69,7 @@
          <lastmod>2026-03-23</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/develop/reference/base/</loc>
-         <lastmod>2026-03-23</lastmod>
-    </url>
-    <url>
          <loc>https://rfdetr.roboflow.com/develop/reference/large/</loc>
-         <lastmod>2026-03-23</lastmod>
-    </url>
-    <url>
-         <loc>https://rfdetr.roboflow.com/develop/reference/large_deprecated/</loc>
          <lastmod>2026-03-23</lastmod>
     </url>
     <url>
@@ -106,10 +98,6 @@
     </url>
     <url>
          <loc>https://rfdetr.roboflow.com/develop/reference/seg_nano/</loc>
-         <lastmod>2026-03-23</lastmod>
-    </url>
-    <url>
-         <loc>https://rfdetr.roboflow.com/develop/reference/seg_preview/</loc>
          <lastmod>2026-03-23</lastmod>
     </url>
     <url>
