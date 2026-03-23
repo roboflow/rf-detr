@@ -404,5 +404,3 @@ class TestRFDETRModelModuleInitCharacterization:
         tc = SegmentationTrainConfig(dataset_dir="/tmp")
         module = self._make_module(mc=mc, tc=tc)
         assert "masks" in module.criterion.losses
-
-

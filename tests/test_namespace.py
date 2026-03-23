@@ -161,7 +161,6 @@ class TestBuildNamespaceDeprecated:
     def test_result_identical_to_namespace_from_configs(self) -> None:
         """build_namespace output must equal _namespace_from_configs output."""
         from rfdetr._namespace import build_namespace
-
         from rfdetr.models._defaults import MODEL_DEFAULTS
 
         mc = RFDETRBaseConfig(num_classes=80)
