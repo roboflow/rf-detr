@@ -120,8 +120,9 @@ def _build_model_context(model_config: ModelConfig) -> "ModelContext":
 
     nn_model = build_model_from_config(model_config)
 
-    # A dummy TrainConfig is needed for load_pretrain_weights and for the
-    # namespace stored on ModelContext.
+    # A dummy TrainConfig is needed for the namespace stored on ModelContext.
+    # load_pretrain_weights retains train_config in its signature for backward
+    # compatibility but no longer uses it internally.
     dummy_train_config = TrainConfig(dataset_dir=".", output_dir=".")
 
     class_names: List[str] = []

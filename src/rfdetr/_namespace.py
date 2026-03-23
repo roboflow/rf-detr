@@ -185,12 +185,18 @@ def _namespace_from_configs(
 def build_namespace(model_config: ModelConfig, train_config: TrainConfig) -> types.SimpleNamespace:
     """Build a ``types.SimpleNamespace`` from Pydantic model and train configs.
 
-    Produces the same attribute set as the legacy ``populate_args()`` so that
-    ``build_model()``, ``build_criterion_and_postprocessors()``, and
-    ``build_dataset()`` continue to work without modification.
+    .. deprecated::
+        ``build_namespace`` is a backward-compatibility shim with no remaining
+        internal callers.  Use the config-native builders instead:
 
-    Fields not present in either config retain their ``populate_args()``
-    defaults, ensuring downstream consumers see a fully-populated namespace.
+        - :func:`rfdetr.models.build_model_from_config` — replaces
+          ``build_model(build_namespace(mc, tc))``
+        - :func:`rfdetr.models.build_criterion_from_config` — replaces
+          ``build_criterion_and_postprocessors(build_namespace(mc, tc))``
+        - :func:`rfdetr._namespace._namespace_from_configs` — for the rare
+          case where a raw namespace is still required (e.g. ``build_dataset``)
+
+        ``build_namespace`` will be formally deprecated in v1.9.
 
     Args:
         model_config: Architecture configuration.

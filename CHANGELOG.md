@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Deprecated
 
+- `build_namespace(model_config, train_config)` — no longer used internally; use `build_model_from_config`, `build_criterion_from_config`, or `_namespace_from_configs` directly. Will be formally deprecated in v1.9.
+
 The following fields are duplicated between `ModelConfig` and `TrainConfig`; clear ownership is being established for v1.9. Each field now emits `DeprecationWarning` when set on the wrong config object. The fields continue to work as before — this is a warning-only Phase A change.
 
 - `TrainConfig.group_detr` — architecture decision; set on `ModelConfig` instead.

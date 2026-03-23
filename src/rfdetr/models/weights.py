@@ -23,7 +23,6 @@ from typing import List
 
 import torch
 
-from rfdetr._namespace import build_namespace
 from rfdetr.assets.model_weights import download_pretrain_weights, validate_pretrain_weights
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.utilities.logger import get_logger
@@ -64,8 +63,9 @@ def load_pretrain_weights(
         model_config: Pydantic ``ModelConfig`` instance. Must have
             ``pretrain_weights``, ``num_classes``, ``num_queries``, and
             ``group_detr`` attributes.
-        train_config: ``TrainConfig`` used to build the namespace for checkpoint
-            compatibility validation.
+        train_config: Retained for backward compatibility; no longer used
+            internally since checkpoint compatibility is validated directly
+            against ``model_config``.
 
     Returns:
         List of class name strings from the checkpoint, or an empty list if none
@@ -114,8 +114,7 @@ def load_pretrain_weights(
                 else:
                     class_names = [name for name in iterator if isinstance(name, str)]
 
-    ns = build_namespace(mc, train_config)
-    validate_checkpoint_compatibility(checkpoint, ns)
+    validate_checkpoint_compatibility(checkpoint, mc)
 
     # Determine whether the user explicitly set num_classes on the ModelConfig,
     # and whether that explicit value differs from the model default.
