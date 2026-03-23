@@ -18,14 +18,16 @@ extraction from ``detr.py:_load_pretrain_weights_into``.
 
 from __future__ import annotations
 
+import functools
 import os
 import warnings
-from typing import List, Optional
+from typing import List
 
 import torch
 
 from rfdetr.assets.model_weights import download_pretrain_weights, validate_pretrain_weights
 from rfdetr.config import ModelConfig, TrainConfig
+from rfdetr.utilities.decorators import deprecated
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.state_dict import _ckpt_args_get, validate_checkpoint_compatibility
 
@@ -34,10 +36,22 @@ logger = get_logger()
 __all__ = ["load_pretrain_weights", "apply_lora"]
 
 
+@deprecated(
+    target=True,
+    args_mapping={"train_config": None},
+    deprecated_in="1.8",
+    remove_in="1.9",
+    num_warns=-1,
+    stream=functools.partial(warnings.warn, category=DeprecationWarning),
+    template_mgs=(
+        "%(source_name)s() `train_config` argument is deprecated and will be removed in "
+        "v%(remove_in)s. The argument is no longer used; omit it from your call."
+    ),
+)
 def load_pretrain_weights(
     nn_model: torch.nn.Module,
     model_config: ModelConfig,
-    train_config: Optional[TrainConfig] = None,
+    train_config: TrainConfig | None = None,
 ) -> List[str]:
     """Load pretrained checkpoint weights into *nn_model* in-place.
 
@@ -64,8 +78,9 @@ def load_pretrain_weights(
         model_config: Pydantic ``ModelConfig`` instance. Must have
             ``pretrain_weights``, ``num_classes``, ``num_queries``, and
             ``group_detr`` attributes.
-        train_config: Deprecated — no longer used internally.  Pass
-            ``None`` (or omit the argument) instead.  Will be removed in v1.9.
+        train_config: Deprecated since v1.8 — no longer used internally.
+            Passing a non-``None`` value emits a ``DeprecationWarning``.
+            Omit the argument; it will be removed in v1.9.
 
     Returns:
         List of class name strings from the checkpoint, or an empty list if none
@@ -74,13 +89,6 @@ def load_pretrain_weights(
     Raises:
         Exception: If the checkpoint file cannot be loaded even after a re-download.
     """
-    if train_config is not None:
-        warnings.warn(
-            "load_pretrain_weights() train_config argument is deprecated and will be removed in v1.9. "
-            "The argument is no longer used; omit it from your call.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
     mc = model_config
     pretrain_weights = mc.pretrain_weights
     if pretrain_weights is None:

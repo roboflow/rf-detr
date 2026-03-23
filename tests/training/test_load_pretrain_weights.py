@@ -201,5 +201,5 @@ class TestLoadPretrainWeightsDeprecation:
         mc = RFDETRBaseConfig(pretrain_weights=None, device="cpu")
         tc = _make_train_config()
 
-        with pytest.warns(DeprecationWarning, match="train_config argument is deprecated"):
+        with pytest.warns(DeprecationWarning, match="train_config.*deprecated"):
             load_pretrain_weights(MagicMock(), mc, tc)
