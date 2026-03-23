@@ -193,3 +193,65 @@ class TestImportPaths:
         assert rfdetr.ModelContext is FromInference, (
             "top-level rfdetr.ModelContext and rfdetr.inference.ModelContext must be the same object"
         )
+
+    def test_model_context_internal_backward_compat_from_detr(self) -> None:
+        """_ModelContext must remain importable from rfdetr.detr (backward compat)."""
+        from rfdetr.detr import _ModelContext
+
+        assert _ModelContext is not None
+
+    def test_build_model_context_backward_compat_from_detr(self) -> None:
+        """_build_model_context must remain importable from rfdetr.detr (backward compat)."""
+        from rfdetr.detr import _build_model_context
+
+        assert callable(_build_model_context)
+
+    def test_model_context_internal_identity_across_import_paths(self) -> None:
+        """_ModelContext must be the same object whether imported from detr or inference."""
+        from rfdetr.detr import _ModelContext as FromDetr
+        from rfdetr.inference import _ModelContext as FromInference
+
+        assert FromDetr is FromInference, (
+            "rfdetr.detr._ModelContext and rfdetr.inference._ModelContext must be the same object"
+        )
+
+    def test_getattr_raises_for_unknown_names(self) -> None:
+        """Accessing an unknown name via rfdetr.detr must raise AttributeError."""
+        import rfdetr.detr as detr_mod
+
+        with pytest.raises(AttributeError, match="has no attribute"):
+            _ = detr_mod._this_name_does_not_exist_12345
+
+    def test_dir_includes_lazy_exports(self) -> None:
+        """dir(rfdetr.detr) must include all lazy re-export names."""
+        import rfdetr.detr as detr_mod
+
+        names = dir(detr_mod)
+        assert "ModelContext" in names, "ModelContext missing from dir(rfdetr.detr)"
+        assert "_ModelContext" in names, "_ModelContext missing from dir(rfdetr.detr)"
+        assert "_build_model_context" in names, "_build_model_context missing from dir(rfdetr.detr)"
+        assert "RFDETRLarge" in names, "RFDETRLarge missing from dir(rfdetr.detr)"
+        assert "RFDETRBase" in names, "RFDETRBase missing from dir(rfdetr.detr)"
+
+    def test_detr_first_import_order_preserves_identity(self) -> None:
+        """Importing detr before variants must preserve object identity for variant classes."""
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "from rfdetr.detr import RFDETRLarge; "
+                    "from rfdetr.variants import RFDETRLarge as FromVariants; "
+                    "assert RFDETRLarge is FromVariants"
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, (
+            "Subprocess for detr-first import failed:\n"
+            f"return code: {result.returncode}\n"
+            f"stdout:\n{result.stdout}\n"
+            f"stderr:\n{result.stderr}"
+        )
