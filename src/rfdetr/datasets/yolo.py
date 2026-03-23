@@ -58,7 +58,11 @@ def _parse_yolo_polygon(values: list[str]) -> np.ndarray:
 
 
 def _polygon_to_mask(polygon: np.ndarray, resolution_wh: tuple[int, int]) -> np.ndarray:
-    """Rasterize a polygon into a dense boolean mask."""
+    """Rasterize a polygon into a dense boolean mask.
+
+    TODO: remove once supervision ships a direct CompactMask.from_polygon factory;
+    at that point the dense intermediate array is no longer needed.
+    """
     width, height = resolution_wh
     mask = Image.new("L", (width, height), 0)
     if polygon.size > 0:
@@ -67,7 +71,11 @@ def _polygon_to_mask(polygon: np.ndarray, resolution_wh: tuple[int, int]) -> np.
 
 
 def _polygons_to_masks(polygons: tuple[np.ndarray, ...], resolution_wh: tuple[int, int]) -> np.ndarray:
-    """Rasterize per-instance polygons into an ``(N, H, W)`` boolean array."""
+    """Rasterize per-instance polygons into an ``(N, H, W)`` boolean array.
+
+    TODO: remove once supervision ships a direct CompactMask.from_polygon factory;
+    at that point the dense intermediate array is no longer needed.
+    """
     if len(polygons) == 0:
         width, height = resolution_wh
         return np.zeros((0, height, width), dtype=bool)
@@ -129,9 +137,13 @@ class _LazyYoloSample:
 
         if len(self.class_id) == 0:
             return sv.Detections.empty()
-        # TODO: replace dense rasterization with sv.CompactMasks once supervision v0.28
-        # is released. CompactMasks stores polygons + resolution instead of a full H×W
-        # bool array, eliminating this allocation entirely at fetch time.
+        # TODO: once supervision v0.28 ships CompactMask, wrap the dense result:
+        #   compact = sv.CompactMask.from_dense(mask, self.xyxy, (self.height, self.width))
+        #   return sv.Detections(..., mask=compact)
+        # CompactMask stores crop-RLE instead of a full H×W bool array, reducing memory
+        # at the detections level for large images with sparse objects.
+        # Note: _polygon_to_mask / _polygons_to_masks remain required as the intermediate
+        # rasterization step until supervision provides a direct from_polygon factory.
         mask = _polygons_to_masks(self.polygons, (self.width, self.height))
         return sv.Detections(class_id=self.class_id, xyxy=self.xyxy, mask=mask)
 
