@@ -43,10 +43,6 @@ __all__ = ["load_pretrain_weights", "apply_lora"]
     remove_in="1.9",
     num_warns=-1,
     stream=functools.partial(warnings.warn, category=DeprecationWarning),
-    template_mgs=(
-        "%(source_name)s() `train_config` argument is deprecated and will be removed in "
-        "v%(remove_in)s. The argument is no longer used; omit it from your call."
-    ),
 )
 def load_pretrain_weights(
     nn_model: torch.nn.Module,
