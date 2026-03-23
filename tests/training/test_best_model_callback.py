@@ -86,6 +86,32 @@ class _ResumeTinyModule(LightningModule):
         return torch.optim.SGD(self.model.parameters(), lr=0.01)
 
 
+class _EvalIntervalModule(LightningModule):
+    """Tiny module that only logs val/mAP_50_95 every ``eval_interval`` epochs.
+
+    Simulates RF-DETR's COCO-eval skip behaviour: validation runs every epoch
+    but the metric key is absent on non-eval epochs.
+    """
+
+    def __init__(self, eval_interval: int = 2) -> None:
+        super().__init__()
+        self.model = torch.nn.Linear(4, 1)
+        self.train_config = {"lr": 0.01}
+        self._eval_interval = eval_interval
+
+    def training_step(self, batch, batch_idx):
+        x, y = batch
+        return torch.nn.functional.mse_loss(self.model(x), y)
+
+    def validation_step(self, batch, batch_idx):
+        del batch, batch_idx
+        if self.current_epoch % self._eval_interval == 0:
+            self.log("val/mAP_50_95", torch.tensor(0.5), on_step=False, on_epoch=True, prog_bar=False)
+
+    def configure_optimizers(self):
+        return torch.optim.SGD(self.model.parameters(), lr=0.01)
+
+
 class _ResumeProbeCallback(Callback):
     """Capture the first train epoch index for resume assertions."""
 
@@ -671,6 +697,51 @@ class TestBestModelCallback:
         assert not (tmp_path / "checkpoint_best_ema.pth").exists()
         assert not (tmp_path / "checkpoint_best_total.pth").exists()
 
+    def test_train_epoch_end_ignores_missing_validation_metrics(self, tmp_path: Path) -> None:
+        """Train-epoch end must not try to checkpoint when validation metrics were not logged."""
+        cb = BestModelCallback(output_dir=str(tmp_path))
+        trainer = _make_trainer({})
+
+        cb.on_train_epoch_end(trainer, _make_pl_module())
+
+        assert not (tmp_path / "checkpoint_best_regular.pth").exists()
+
+    def test_validation_end_ignores_missing_validation_metrics(self, tmp_path: Path) -> None:
+        """on_validation_end must not raise when val/mAP_50_95 was not logged (non-eval epoch)."""
+        cb = BestModelCallback(output_dir=str(tmp_path))
+        trainer = _make_trainer({})  # empty metrics — no val/mAP_50_95 key
+        trainer.fit_loop.epoch_loop.val_loop._has_run = True
+
+        cb.on_validation_end(trainer, _make_pl_module())  # must not raise
+
+        assert not (tmp_path / "checkpoint_best_regular.pth").exists()
+
+    def test_eval_interval_does_not_crash(self, tmp_path: Path) -> None:
+        """BestModelCallback must not crash over 3 epochs when metrics are only logged every 2nd epoch."""
+        torch.manual_seed(0)
+        x = torch.randn(8, 4)
+        y = torch.randn(8, 1)
+        train_loader = DataLoader(TensorDataset(x, y), batch_size=2)
+        val_loader = DataLoader(TensorDataset(x, y), batch_size=2)
+
+        cb = BestModelCallback(output_dir=str(tmp_path), run_test=False)
+        trainer = Trainer(
+            max_epochs=3,
+            accelerator="cpu",
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            logger=False,
+            num_sanity_val_steps=0,
+            limit_train_batches=2,
+            limit_val_batches=1,
+            callbacks=[cb],
+            default_root_dir=str(tmp_path),
+        )
+        trainer.fit(_EvalIntervalModule(eval_interval=2), train_dataloaders=train_loader, val_dataloaders=val_loader)
+
+        # Checkpoint must be written on eval epochs (0 and 2) — at least one must exist.
+        assert (tmp_path / "checkpoint_best_regular.pth").exists()
+
     def test_best_total_checkpoint_resumes_via_trainer_fit_ckpt_path(self, tmp_path: Path) -> None:
         """checkpoint_best_total.pth must restore epoch/step when passed to Trainer.fit(ckpt_path=...)."""
         torch.manual_seed(0)
@@ -845,6 +916,16 @@ class TestRFDETREarlyStopping:
 
         trainer = _make_trainer({})  # no metrics at all
         cb.on_validation_end(trainer, pl_module)
+
+        assert cb.wait_count == 0
+        assert trainer.should_stop is False
+
+    def test_train_epoch_end_ignores_missing_validation_metrics(self) -> None:
+        """Train-epoch end must not evaluate early stopping when validation did not run."""
+        cb = RFDETREarlyStopping(patience=1, min_delta=0.001)
+        trainer = _make_trainer({})
+
+        cb.on_train_epoch_end(trainer, _make_pl_module())
 
         assert cb.wait_count == 0
         assert trainer.should_stop is False

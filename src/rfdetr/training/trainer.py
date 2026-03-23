@@ -11,7 +11,7 @@ from typing import Any
 
 import torch
 from pytorch_lightning import Trainer
-from pytorch_lightning.callbacks import RichProgressBar, TQDMProgressBar
+from pytorch_lightning.callbacks import ModelCheckpoint, RichProgressBar, TQDMProgressBar
 from pytorch_lightning.callbacks.progress.rich_progress import RichProgressBarTheme
 from pytorch_lightning.loggers import CSVLogger, MLFlowLogger, TensorBoardLogger, WandbLogger
 
@@ -122,6 +122,32 @@ def build_trainer(
             segmentation=model_config.segmentation_head,
             eval_interval=tc.eval_interval,
             log_per_class_metrics=tc.log_per_class_metrics,
+        )
+    )
+
+    # Latest resume checkpoint — overwritten every epoch.
+    callbacks.append(
+        ModelCheckpoint(
+            dirpath=tc.output_dir,
+            filename="last",
+            every_n_epochs=1,
+            save_top_k=1,
+            enable_version_counter=False,
+            auto_insert_metric_name=False,
+            verbose=False,
+        )
+    )
+
+    # Interval archive checkpoints — kept for the full run.
+    callbacks.append(
+        ModelCheckpoint(
+            dirpath=tc.output_dir,
+            filename="checkpoint_{epoch}",
+            every_n_epochs=tc.checkpoint_interval,
+            save_top_k=-1,
+            enable_version_counter=False,
+            auto_insert_metric_name=False,
+            verbose=False,
         )
     )
 
