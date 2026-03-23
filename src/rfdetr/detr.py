@@ -34,7 +34,7 @@ from rfdetr.config import (
 )
 from rfdetr.datasets.coco import is_valid_coco_dataset
 from rfdetr.datasets.yolo import is_valid_yolo_dataset
-from rfdetr.inference import ModelContext, _build_model_context
+from rfdetr.inference import _build_model_context  # needed at runtime in get_model()
 from rfdetr.utilities.logger import get_logger
 
 try:
@@ -44,24 +44,22 @@ except Exception:
 
 logger = get_logger()
 
-_INFERENCE_EXPORTS = frozenset({"ModelContext", "_build_model_context", "_ModelContext"})
-_VARIANT_EXPORTS = frozenset(
-    {
-        "RFDETRBase",
-        "RFDETRLarge",
-        "RFDETRLargeDeprecated",
-        "RFDETRMedium",
-        "RFDETRNano",
-        "RFDETRSeg",
-        "RFDETRSeg2XLarge",
-        "RFDETRSegLarge",
-        "RFDETRSegMedium",
-        "RFDETRSegNano",
-        "RFDETRSegPreview",
-        "RFDETRSegSmall",
-        "RFDETRSegXLarge",
-        "RFDETRSmall",
-    }
+_INFERENCE_EXPORTS = ("ModelContext", "_build_model_context", "_ModelContext")
+_VARIANT_EXPORTS = (
+    "RFDETRBase",
+    "RFDETRLarge",
+    "RFDETRLargeDeprecated",
+    "RFDETRMedium",
+    "RFDETRNano",
+    "RFDETRSeg",
+    "RFDETRSeg2XLarge",
+    "RFDETRSegLarge",
+    "RFDETRSegMedium",
+    "RFDETRSegNano",
+    "RFDETRSegPreview",
+    "RFDETRSegSmall",
+    "RFDETRSegXLarge",
+    "RFDETRSmall",
 )
 __all__ = ["RFDETR", *_INFERENCE_EXPORTS, *_VARIANT_EXPORTS]
 
@@ -646,4 +644,4 @@ def __getattr__(name: str):
 def __dir__() -> list[str]:
     """Include lazy re-exports in interactive discovery."""
 
-    return sorted(set(globals()) | _INFERENCE_EXPORTS | _VARIANT_EXPORTS)
+    return sorted(set(globals()) | set(_INFERENCE_EXPORTS) | set(_VARIANT_EXPORTS))
