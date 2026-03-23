@@ -208,7 +208,13 @@ def _parse_yolo_label_line(
             f"polygon coordinates must be paired (x, y) values, "
             f"but got {len(values[1:])} coordinate values (odd count)."
         )
-    cid = int(values[0])
+    try:
+        cid = int(values[0])
+    except ValueError as exc:
+        raise ValueError(
+            f"Label {str(label_path)!r} line {line_num}: "
+            f"invalid class ID {values[0]!r} (must be an integer)."
+        ) from exc
     if cid < 0 or cid >= num_classes:
         raise ValueError(
             f"Label {str(label_path)!r} line {line_num}: "
