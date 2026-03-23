@@ -34,7 +34,7 @@ from rfdetr.config import (
 )
 from rfdetr.datasets.coco import is_valid_coco_dataset
 from rfdetr.datasets.yolo import is_valid_yolo_dataset
-from rfdetr.inference import ModelContext, _build_model_context
+from rfdetr.inference import ModelContext, _ModelContext, _build_model_context
 from rfdetr.utilities.logger import get_logger
 
 try:
@@ -61,7 +61,7 @@ _VARIANT_EXPORTS = (
     "RFDETRSegXLarge",
     "RFDETRSmall",
 )
-__all__ = ["RFDETR", "ModelContext", "_build_model_context", *_VARIANT_EXPORTS]
+__all__ = ["RFDETR", "ModelContext", "_ModelContext", "_build_model_context", *_VARIANT_EXPORTS]
 
 
 class RFDETR:

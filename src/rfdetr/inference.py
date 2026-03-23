@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-__all__ = ["ModelContext"]
+__all__ = ["ModelContext", "_ModelContext", "_build_model_context"]
 
 from typing import TYPE_CHECKING, Any, List, Optional
 
@@ -63,6 +63,9 @@ class ModelContext:
         self.args.num_classes = num_classes
 
 
+_ModelContext = ModelContext  # backward-compat alias
+
+
 def _build_model_context(model_config: ModelConfig) -> ModelContext:
     """Build a ModelContext from ModelConfig without using legacy main.py:Model.
 
@@ -85,7 +88,7 @@ def _build_model_context(model_config: ModelConfig) -> ModelContext:
 
     class_names: List[str] = []
     if model_config.pretrain_weights is not None:
-        class_names = load_pretrain_weights(nn_model, model_config, dummy_train_config)
+        class_names = load_pretrain_weights(nn_model, model_config)
         # ``load_pretrain_weights`` can mutate ``model_config.num_classes`` when
         # aligning to checkpoint heads. Keep the derived namespace in sync.
         if hasattr(args, "num_classes") and getattr(args, "num_classes") != model_config.num_classes:
