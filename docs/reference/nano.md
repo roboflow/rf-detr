@@ -1,3 +1,3 @@
-:::rfdetr.detr.RFDETRNano
+:::rfdetr.variants.RFDETRNano
     options:
       inherited_members: true

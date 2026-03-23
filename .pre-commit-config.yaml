@@ -1,0 +1,78 @@
+ci:
+  autofix_prs: true
+  autoupdate_schedule: monthly
+  autofix_commit_msg: "fix(pre-commit): 🎨 auto format pre-commit hooks"
+  autoupdate_commit_msg: "chore(pre-commit): ⬆ pre_commit autoupdate"
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: check-yaml
+        exclude: mkdocs.yaml
+      - id: check-executables-have-shebangs
+      - id: check-json
+      - id: check-toml
+      - id: check-case-conflict
+      - id: check-added-large-files
+      - id: detect-private-key
+      - id: pretty-format-json
+        args: ["--autofix", "--no-sort-keys", "--indent=4"]
+        exclude: \.ipynb$
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+
+  - repo: https://github.com/JoC0de/pre-commit-prettier
+    rev: v3.8.1 # using tag; previously pinned SHA when tags were not persistent
+    hooks:
+      - id: prettier
+        files: \.(ya?ml|toml)$
+        # https://prettier.io/docs/en/options.html#print-width
+        args: ["--print-width=120"]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.6
+    hooks:
+      - id: ruff-check
+        args: ["--exit-non-zero-on-fix"]
+        exclude: ^notebooks/.*\.py$
+      - id: ruff-format
+        exclude: ^notebooks/.*\.py$
+
+  - repo: https://github.com/executablebooks/mdformat
+    rev: 1.0.0
+    hooks:
+      - id: mdformat
+        exclude: ^docs/reference/
+        additional_dependencies:
+          - "mdformat-mkdocs[recommended]>=2.1.0"
+          - "mdformat-ruff"
+        args: ["--number"]
+
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.4.2
+    hooks:
+      - id: codespell
+        # args: [--write-changes]
+        additional_dependencies:
+          - tomli
+
+  #- repo: https://github.com/mwouts/jupytext
+  #  rev: v1.16.4
+  #  hooks:
+  #    - id: jupytext
+  #      args: [--update, --to, notebook]
+  #      files: ^notebooks/.*\.py$
+
+  - repo: https://github.com/Lucas-C/pre-commit-hooks
+    rev: v1.5.6
+    hooks:
+      - id: insert-license
+        files: \.py$
+        exclude: ^notebooks/
+        args:
+          - --license-filepath
+          - .github/LICENSE_HEADER.txt
+          - --comment-style
+          - "#"
