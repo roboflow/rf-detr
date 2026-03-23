@@ -212,8 +212,7 @@ def _parse_yolo_label_line(
         cid = int(values[0])
     except ValueError as exc:
         raise ValueError(
-            f"Label {str(label_path)!r} line {line_num}: "
-            f"invalid class ID {values[0]!r} (must be an integer)."
+            f"Label {str(label_path)!r} line {line_num}: invalid class ID {values[0]!r} (must be an integer)."
         ) from exc
     if cid < 0 or cid >= num_classes:
         raise ValueError(
