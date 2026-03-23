@@ -5876,6 +5876,9 @@ files) and to track a separate EMA checkpoint in parallel.</p>
 <p>At the end of training the overall winner (regular vs EMA, strict <code>&gt;</code> for
 EMA) is copied to <code>checkpoint_best_total.pth</code> and optimizer/scheduler
 state is stripped via :func:<code>rfdetr.util.misc.strip_checkpoint</code>.</p>
+<p>Checkpoints are only updated on validation epochs where the monitor metric
+is actually logged.  On non-eval epochs (when <code>eval_interval &gt; 1</code> causes
+COCO evaluation to be skipped) the callback is a no-op.</p>
 
 
 <p><span class="doc-section-title">Parameters:</span></p>
@@ -6021,6 +6024,9 @@ synthetic key before delegating to the parent's stopping logic, so all parent
 features are available for free: <code>state_dict</code>/<code>load_state_dict</code> for
 checkpoint resumption, NaN/inf guard via <code>check_finite</code>, and
 <code>stopping_threshold</code>/<code>divergence_threshold</code>.</p>
+<p>Early stopping evaluates only on validation epochs where the monitored
+metrics are logged; non-eval epochs (<code>eval_interval &gt; 1</code>) are skipped
+automatically.</p>
 
 
 <p><span class="doc-section-title">Parameters:</span></p>
