@@ -37,12 +37,23 @@ def build_namespace(model_config: ModelConfig, train_config: TrainConfig) -> Any
     """
     mc = model_config
     tc = train_config
+    train_fields_set = getattr(tc, "model_fields_set", set())
+    model_fields_set = getattr(mc, "model_fields_set", set())
+    # Transitional compatibility: during deprecation, preserve explicit
+    # ModelConfig.cls_loss_coef values when TrainConfig does not set one.
+    cls_loss_coef = (
+        tc.cls_loss_coef
+        if "cls_loss_coef" in train_fields_set or "cls_loss_coef" not in model_fields_set
+        else mc.cls_loss_coef
+    )
 
     return types.SimpleNamespace(
         # --- ModelConfig fields ---
         encoder=mc.encoder,
         out_feature_indexes=mc.out_feature_indexes,
         dec_layers=mc.dec_layers,
+        freeze_encoder=mc.freeze_encoder,
+        backbone_lora=mc.backbone_lora,
         two_stage=mc.two_stage,
         projector_scale=mc.projector_scale,
         hidden_dim=mc.hidden_dim,
@@ -63,12 +74,11 @@ def build_namespace(model_config: ModelConfig, train_config: TrainConfig) -> Any
         gradient_checkpointing=mc.gradient_checkpointing,
         positional_encoding_size=mc.positional_encoding_size,
         ia_bce_loss=mc.ia_bce_loss,
-        cls_loss_coef=mc.cls_loss_coef,
+        cls_loss_coef=cls_loss_coef,
         segmentation_head=mc.segmentation_head,
         mask_downsample_ratio=mc.mask_downsample_ratio,
-        # num_queries / num_select live on subclass configs.
-        num_queries=getattr(mc, "num_queries", 300),
-        num_select=getattr(mc, "num_select", tc.num_select),
+        num_queries=mc.num_queries,
+        num_select=mc.num_select,
         # --- TrainConfig fields ---
         lr=tc.lr,
         lr_encoder=tc.lr_encoder,
@@ -122,9 +132,7 @@ def build_namespace(model_config: ModelConfig, train_config: TrainConfig) -> Any
         vit_encoder_num_layers=12,
         window_block_indexes=None,
         position_embedding="sine",
-        freeze_encoder=False,
         rms_norm=False,
-        backbone_lora=False,
         force_no_pretrain=False,
         dim_feedforward=2048,
         decoder_norm="LN",
@@ -140,12 +148,12 @@ def build_namespace(model_config: ModelConfig, train_config: TrainConfig) -> Any
         use_varifocal_loss=False,
         use_position_supervised_loss=False,
         coco_path=None,
-        aug_config=None,
+        aug_config=tc.aug_config,
         dont_save_weights=False,
         seed=tc.seed if tc.seed is not None else 42,
         start_epoch=0,
         eval=False,
-        use_ema=False,
+        use_ema=tc.use_ema,
         world_size=1,
         dist_url="env://",
         sync_bn=tc.sync_bn,
@@ -155,9 +163,9 @@ def build_namespace(model_config: ModelConfig, train_config: TrainConfig) -> Any
         use_cls_token=False,
         lr_scheduler="step",
         lr_min_factor=0.0,
-        early_stopping=True,
-        early_stopping_patience=10,
-        early_stopping_min_delta=0.001,
-        early_stopping_use_ema=False,
+        early_stopping=tc.early_stopping,
+        early_stopping_patience=tc.early_stopping_patience,
+        early_stopping_min_delta=tc.early_stopping_min_delta,
+        early_stopping_use_ema=tc.early_stopping_use_ema,
         subcommand=None,
     )

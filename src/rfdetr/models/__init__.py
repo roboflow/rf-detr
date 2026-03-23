@@ -13,14 +13,19 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 # ------------------------------------------------------------------------
 
+from rfdetr.models._types import BuilderArgs
 from rfdetr.models.criterion import SetCriterion
 from rfdetr.models.lwdetr import build_model
 from rfdetr.models.math import MLP
 from rfdetr.models.postprocess import PostProcess
+from rfdetr.models.weights import apply_lora, load_pretrain_weights
 
 __all__ = [
+    "BuilderArgs",
     "SetCriterion",
     "build_model",
     "MLP",
     "PostProcess",
+    "load_pretrain_weights",
+    "apply_lora",
 ]

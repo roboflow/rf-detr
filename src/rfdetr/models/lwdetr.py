@@ -27,6 +27,7 @@ from typing import Callable, Optional
 import torch
 from torch import nn
 
+from rfdetr.models._types import BuilderArgs
 from rfdetr.models.backbone import build_backbone
 
 # Backward-compat re-exports: loss functions that used to live in this module
@@ -348,7 +349,7 @@ class LWDETR(nn.Module):
                 module.p = drop_rate
 
 
-def build_model(args):
+def build_model(args: "BuilderArgs"):
     # the `num_classes` naming here is somewhat misleading.
     # it indeed corresponds to `max_obj_id + 1`, where max_obj_id
     # is the maximum id for a class in your dataset. For example,
@@ -421,7 +422,7 @@ def build_model(args):
     return model
 
 
-def build_criterion_and_postprocessors(args):
+def build_criterion_and_postprocessors(args: "BuilderArgs"):
     device = torch.device(args.device)
     matcher = build_matcher(args)
     weight_dict = {"loss_ce": args.cls_loss_coef, "loss_bbox": args.bbox_loss_coef}

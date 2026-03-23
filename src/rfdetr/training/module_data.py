@@ -4,9 +4,9 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-"""LightningDataModule for RF-DETR dataset construction and loaders (Phase 2)."""
+"""LightningDataModule for RF-DETR dataset construction and loaders."""
 
-from typing import Any, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import torch
 import torch.utils.data
@@ -27,10 +27,6 @@ _MIN_TRAIN_BATCHES = 5
 class RFDETRDataModule(LightningDataModule):
     """LightningDataModule wrapping RF-DETR dataset construction and data loading.
 
-    Migrates ``Model.train()`` dataset construction and DataLoader setup from
-    ``main.py`` into PTL lifecycle hooks.  Coexists with the existing code until
-    Chapter 4 removes the legacy path.
-
     Args:
         model_config: Architecture configuration (used for resolution, patch_size, etc.).
         train_config: Training hyperparameter configuration (used for dataset params).
@@ -40,14 +36,12 @@ class RFDETRDataModule(LightningDataModule):
         super().__init__()
         self.model_config = model_config
         self.train_config = train_config
-        # TODO(Chapter 6): remove _args; read from model_config / train_config directly.
-        self._args = self._build_args()
 
         self._dataset_train: Optional[torch.utils.data.Dataset] = None
         self._dataset_val: Optional[torch.utils.data.Dataset] = None
         self._dataset_test: Optional[torch.utils.data.Dataset] = None
 
-        num_workers = self._args.num_workers
+        num_workers = self.train_config.num_workers
         self._pin_memory: bool = (
             torch.cuda.is_available() if self.train_config.pin_memory is None else bool(self.train_config.pin_memory)
         )
@@ -64,19 +58,6 @@ class RFDETRDataModule(LightningDataModule):
             self._prefetch_factor = None
 
     # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
-    # TODO(Chapter 6): delete _build_args() when _args.py / populate_args() are removed.
-    def _build_args(self) -> Any:
-        """Map Pydantic configs to the legacy argparse.Namespace.
-
-        Returns:
-            Namespace compatible with ``build_dataset``.
-        """
-        return build_namespace(self.model_config, self.train_config)
-
-    # ------------------------------------------------------------------
     # PTL lifecycle hooks
     # ------------------------------------------------------------------
 
@@ -91,19 +72,23 @@ class RFDETRDataModule(LightningDataModule):
             stage: PTL stage identifier — one of ``"fit"``, ``"validate"``,
                 ``"test"``, or ``"predict"``.
         """
-        args = self._args
+        resolution = self.model_config.resolution
+        ns = build_namespace(self.model_config, self.train_config)
         if stage == "fit":
             if self._dataset_train is None:
-                self._dataset_train = build_dataset("train", args, args.resolution)
+                self._dataset_train = build_dataset("train", ns, resolution)
             if self._dataset_val is None:
-                self._dataset_val = build_dataset("val", args, args.resolution)
+                self._dataset_val = build_dataset("val", ns, resolution)
         elif stage == "validate":
             if self._dataset_val is None:
-                self._dataset_val = build_dataset("val", args, args.resolution)
+                self._dataset_val = build_dataset("val", ns, resolution)
         elif stage == "test":
             if self._dataset_test is None:
-                split = "test" if args.dataset_file == "roboflow" else "val"
-                self._dataset_test = build_dataset(split, args, args.resolution)
+                split = "test" if self.train_config.dataset_file == "roboflow" else "val"
+                self._dataset_test = build_dataset(split, ns, resolution)
+        elif stage == "predict":
+            if self._dataset_val is None:
+                self._dataset_val = build_dataset("val", ns, resolution)
 
     def train_dataloader(self) -> DataLoader:
         """Return the training DataLoader.
@@ -116,10 +101,10 @@ class RFDETRDataModule(LightningDataModule):
         Returns:
             DataLoader for the training dataset.
         """
-        args = self._args
         dataset = self._dataset_train
-        batch_size = args.batch_size
-        effective_batch_size = batch_size * args.grad_accum_steps
+        batch_size = self.train_config.batch_size
+        effective_batch_size = batch_size * self.train_config.grad_accum_steps
+        num_workers = self.train_config.num_workers
 
         if len(dataset) < effective_batch_size * _MIN_TRAIN_BATCHES:
             logger.info(
@@ -137,7 +122,7 @@ class RFDETRDataModule(LightningDataModule):
                 batch_size=batch_size,
                 sampler=sampler,
                 collate_fn=collate_fn,
-                num_workers=args.num_workers,
+                num_workers=num_workers,
                 pin_memory=self._pin_memory,
                 persistent_workers=self._persistent_workers,
                 prefetch_factor=self._prefetch_factor,
@@ -149,7 +134,7 @@ class RFDETRDataModule(LightningDataModule):
             shuffle=True,
             drop_last=True,
             collate_fn=collate_fn,
-            num_workers=args.num_workers,
+            num_workers=num_workers,
             pin_memory=self._pin_memory,
             persistent_workers=self._persistent_workers,
             prefetch_factor=self._prefetch_factor,
@@ -161,14 +146,13 @@ class RFDETRDataModule(LightningDataModule):
         Returns:
             DataLoader for the validation dataset with sequential sampling.
         """
-        args = self._args
         return DataLoader(
             self._dataset_val,
-            batch_size=args.batch_size,
+            batch_size=self.train_config.batch_size,
             sampler=torch.utils.data.SequentialSampler(self._dataset_val),
             drop_last=False,
             collate_fn=collate_fn,
-            num_workers=args.num_workers,
+            num_workers=self.train_config.num_workers,
             pin_memory=self._pin_memory,
             persistent_workers=self._persistent_workers,
             prefetch_factor=self._prefetch_factor,
@@ -180,14 +164,31 @@ class RFDETRDataModule(LightningDataModule):
         Returns:
             DataLoader for the test dataset with sequential sampling.
         """
-        args = self._args
         return DataLoader(
             self._dataset_test,
-            batch_size=args.batch_size,
+            batch_size=self.train_config.batch_size,
             sampler=torch.utils.data.SequentialSampler(self._dataset_test),
             drop_last=False,
             collate_fn=collate_fn,
-            num_workers=args.num_workers,
+            num_workers=self.train_config.num_workers,
+            pin_memory=self._pin_memory,
+            persistent_workers=self._persistent_workers,
+            prefetch_factor=self._prefetch_factor,
+        )
+
+    def predict_dataloader(self) -> DataLoader:
+        """Return the predict DataLoader (reuses the validation dataset, no augmentation).
+
+        Returns:
+            DataLoader for the validation dataset with sequential sampling.
+        """
+        return DataLoader(
+            self._dataset_val,
+            batch_size=self.train_config.batch_size,
+            sampler=torch.utils.data.SequentialSampler(self._dataset_val),
+            drop_last=False,
+            collate_fn=collate_fn,
+            num_workers=self.train_config.num_workers,
             pin_memory=self._pin_memory,
             persistent_workers=self._persistent_workers,
             prefetch_factor=self._prefetch_factor,

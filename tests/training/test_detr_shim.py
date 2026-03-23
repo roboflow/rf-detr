@@ -14,6 +14,8 @@
 """
 
 import argparse
+import importlib
+import sys
 import warnings
 from collections import defaultdict
 from types import SimpleNamespace
@@ -24,7 +26,7 @@ import pytest
 import torch
 
 from rfdetr.config import RFDETRBaseConfig, TrainConfig
-from rfdetr.detr import RFDETR
+from rfdetr.detr import RFDETR, RFDETRLarge
 from rfdetr.training.auto_batch import AutoBatchResult
 from rfdetr.training.checkpoint import convert_legacy_checkpoint
 from rfdetr.training.module_model import RFDETRModelModule
@@ -217,14 +219,26 @@ class TestRFDETRTrainPTL:
 
         assert mock_self.model.class_names == []
 
-    def test_device_kwarg_silently_dropped(self, tmp_path):
-        """device= is consumed without error or warning."""
+    def test_device_kwarg_cpu_no_warning(self, tmp_path):
+        """device='cpu' is consumed without a DeprecationWarning."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            RFDETR.train(mock_self, device="cpu")
+        assert not any(issubclass(x.category, DeprecationWarning) for x in w)
+        mock_self.get_train_config.assert_called_once_with()
+
+    def test_device_kwarg_non_cpu_emits_deprecation(self, tmp_path):
+        """Non-'cpu' device= emits a DeprecationWarning and is not forwarded."""
         mock_self = _make_rfdetr_self(tmp_path)
         p_mod, p_dm, p_bt, *_ = _patch_lit()
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             RFDETR.train(mock_self, device="cuda")
-        assert not any(issubclass(x.category, DeprecationWarning) for x in w)
+        dep_warns = [x for x in w if issubclass(x.category, DeprecationWarning)]
+        assert len(dep_warns) == 1
+        assert "cuda" in str(dep_warns[0].message)
         # device must not have been forwarded to get_train_config
         mock_self.get_train_config.assert_called_once_with()
 
@@ -801,8 +815,160 @@ class TestPublicAPIExports:
         assert not hasattr(rfdetr, "convert_legacy_checkpoint")
 
 
+class TestRemovedLegacyModuleAliases:
+    """Removed legacy modules resolve via shims today and via migration hints after removal."""
+
+    @staticmethod
+    def _simulate_missing_removed_module_specs(monkeypatch: pytest.MonkeyPatch, *names: str) -> None:
+        """Force the removed-module finder to behave as if shim files no longer exist."""
+        import rfdetr
+
+        path_finder = rfdetr._RemovedModuleFinder._PATH_FINDER
+        original_find_spec = path_finder.find_spec
+
+        def _fake_find_spec(fullname: str, path: list[str] | None = None, target: object | None = None) -> object:
+            if fullname in names:
+                return None
+            return original_find_spec(fullname, path, target)
+
+        monkeypatch.setattr(path_finder, "find_spec", _fake_find_spec)
+        for name in names:
+            monkeypatch.delitem(sys.modules, name, raising=False)
+
+        root_names = {name.removeprefix("rfdetr.").split(".", maxsplit=1)[0] for name in names}
+        for root_name in root_names:
+            monkeypatch.delitem(rfdetr.__dict__, root_name, raising=False)
+
+    def test_removed_util_alias_resolves_via_package_attribute(self) -> None:
+        """PEP 562 lookup resolves rfdetr.util while the shim package exists."""
+        import rfdetr
+
+        assert getattr(rfdetr, "util").__name__ == "rfdetr.util"
+
+    def test_removed_deploy_alias_resolves_via_package_attribute(self) -> None:
+        """PEP 562 lookup resolves rfdetr.deploy while the shim package exists."""
+        import rfdetr
+
+        assert rfdetr.deploy.__name__ == "rfdetr.deploy"
+
+    def test_removed_shim_missing_raises_importerror_with_getattr(self) -> None:
+        """Missing removed shim should raise ImportError with migration hint."""
+        import rfdetr
+
+        missing_name = "rfdetr.missing_removed_shim"
+        missing_exc = ModuleNotFoundError(f"No module named '{missing_name}'", name=missing_name)
+        with (
+            patch.dict(rfdetr._REMOVED_IN_V17, {"missing_removed_shim": "migration hint"}),
+            patch("rfdetr.importlib.import_module", side_effect=missing_exc),
+            pytest.raises(ImportError, match="migration hint"),
+        ):
+            getattr(rfdetr, "missing_removed_shim")
+
+    def test_nested_module_not_found_is_not_masked_for_package_attribute(self) -> None:
+        """Nested ModuleNotFoundError from inside a shim import should propagate."""
+        import rfdetr
+
+        with (
+            patch.dict(rfdetr._REMOVED_IN_V17, {"missing_dep_shim": "migration hint"}),
+            patch(
+                "rfdetr.importlib.import_module",
+                side_effect=ModuleNotFoundError("No module named 'torchvision_ops'", name="torchvision_ops"),
+            ),
+            pytest.raises(ModuleNotFoundError, match="torchvision_ops"),
+        ):
+            getattr(rfdetr, "missing_dep_shim")
+
+    def test_removed_util_import_raises_migration_hint_when_shim_is_deleted(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Dotted legacy imports get a migration hint once the util shim package is removed."""
+        self._simulate_missing_removed_module_specs(monkeypatch, "rfdetr.util")
+
+        with pytest.raises(ImportError, match=r"rfdetr\.util was removed in v1\.7"):
+            importlib.import_module("rfdetr.util")
+
+    def test_removed_deploy_submodule_import_raises_migration_hint_when_shim_is_deleted(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Dotted legacy submodule imports get a migration hint once the deploy shim is removed."""
+        self._simulate_missing_removed_module_specs(monkeypatch, "rfdetr.deploy", "rfdetr.deploy.benchmark")
+
+        with pytest.raises(ImportError, match=r"rfdetr\.deploy was removed in v1\.7"):
+            importlib.import_module("rfdetr.deploy.benchmark")
+
+    def test_find_spec_ignores_non_rfdetr_top_level_imports(self) -> None:
+        """find_spec must not intercept bare top-level imports like 'util' or 'deploy'."""
+        import rfdetr
+
+        finder = rfdetr._RemovedModuleFinder()
+        assert finder.find_spec("util", None) is None
+        assert finder.find_spec("deploy", None) is None
+        assert finder.find_spec("os", None) is None
+
+    def test_meta_path_insertion_is_idempotent_across_reload(self) -> None:
+        """importlib.reload(rfdetr) must not insert a second finder into sys.meta_path."""
+        import rfdetr
+
+        count_before = sum(type(f).__name__ == "_RemovedModuleFinder" for f in sys.meta_path)
+        importlib.reload(rfdetr)
+        count_after = sum(type(f).__name__ == "_RemovedModuleFinder" for f in sys.meta_path)
+        assert count_after == count_before, (
+            f"reload added {count_after - count_before} extra finder(s) to sys.meta_path"
+        )
+
+
 # ---------------------------------------------------------------------------
-# 6. _load_pretrain_weights_into — detr.py path (the non-PTL scenario from #806)
+# 6. RFDETRLarge deprecated-config fallback behaviour
+# ---------------------------------------------------------------------------
+
+
+class TestRFDETRLargeFallback:
+    """RFDETRLarge retries only for deprecated-weight compatibility errors."""
+
+    def test_cuda_oom_runtime_error_does_not_retry(self, monkeypatch):
+        """CUDA OOM should fail fast without deprecated-config retry."""
+        call_count = 0
+
+        def _raise_oom(self, **kwargs):
+            del self, kwargs
+            nonlocal call_count
+            call_count += 1
+            raise RuntimeError("CUDA out of memory. Tried to allocate 16.00 MiB.")
+
+        monkeypatch.setattr(RFDETR, "__init__", _raise_oom)
+
+        with pytest.raises(RuntimeError, match="out of memory"):
+            RFDETRLarge()
+
+        assert call_count == 1
+
+    def test_state_dict_runtime_error_retries_once_with_deprecated_config(self, monkeypatch):
+        """State-dict mismatch errors trigger exactly one deprecated-config retry."""
+        call_count = 0
+
+        def _raise_then_succeed(self, **kwargs):
+            del kwargs
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("Error(s) in loading state_dict for Model: size mismatch for backbone.weight")
+            self.model = MagicMock()
+
+        monkeypatch.setattr(RFDETR, "__init__", _raise_then_succeed)
+        warn_spy = MagicMock()
+        monkeypatch.setattr("rfdetr.detr.logger.warning", warn_spy)
+
+        model = RFDETRLarge()
+
+        assert model.is_deprecated is True
+        assert call_count == 2
+        warn_spy.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# 7. _load_pretrain_weights_into — detr.py path (the non-PTL scenario from #806)
 # ---------------------------------------------------------------------------
 
 
@@ -848,41 +1014,43 @@ def _make_detr_checkpoint(
 
 
 class TestLoadPretrainWeightsInto:
-    """Tests for _load_pretrain_weights_into (detr.py path) — the non-PTL code path
-    exercised when RFDETRNano(pretrain_weights=...) is called directly (issue #806)."""
+    """Tests for load_pretrain_weights (models/weights.py) — checkpoint compatibility
+    validation exercised when RFDETRNano(pretrain_weights=...) is called (issue #806)."""
 
     @pytest.fixture(autouse=True)
     def _patch_download(self, monkeypatch):
         """Suppress all download and file-existence side effects."""
-        monkeypatch.setattr("rfdetr.detr.download_pretrain_weights", lambda *a, **kw: None)
-        monkeypatch.setattr("rfdetr.detr.validate_pretrain_weights", lambda *a, **kw: None)
-        monkeypatch.setattr("os.path.isfile", lambda _: True)
+        monkeypatch.setattr("rfdetr.models.weights.download_pretrain_weights", lambda *a, **kw: None)
+        monkeypatch.setattr("rfdetr.models.weights.validate_pretrain_weights", lambda *a, **kw: None)
+        monkeypatch.setattr("rfdetr.models.weights.os.path.isfile", lambda _: True)
 
-    def test_seg_ckpt_into_detection_model_raises_via_detr_path(self, monkeypatch):
-        """Segmentation checkpoint loaded via _load_pretrain_weights_into must raise ValueError."""
-        from rfdetr.detr import _load_pretrain_weights_into
+    def test_seg_ckpt_into_detection_model_raises_via_detr_path(self, monkeypatch, tmp_path):
+        """Segmentation checkpoint must raise ValueError when loaded into a detection model."""
+        from rfdetr.models.weights import load_pretrain_weights
 
         checkpoint = _make_detr_checkpoint(segmentation_head=True, patch_size=14)
-        monkeypatch.setattr("rfdetr.detr.torch.load", lambda *a, **kw: checkpoint)
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
 
         fake_model = MagicMock()
-        args = _make_detr_args(segmentation_head=False, patch_size=14)
+        mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu", segmentation_head=False)
+        tc = _make_train_config(tmp_path)
 
         with pytest.raises(ValueError, match="segmentation head"):
-            _load_pretrain_weights_into(fake_model, args)
+            load_pretrain_weights(fake_model, mc, tc)
 
-    def test_patch_size_mismatch_raises_via_detr_path(self, monkeypatch):
-        """patch_size mismatch raised by _load_pretrain_weights_into via the detr.py path."""
-        from rfdetr.detr import _load_pretrain_weights_into
+    def test_patch_size_mismatch_raises_via_detr_path(self, monkeypatch, tmp_path):
+        """patch_size mismatch must raise ValueError via the load_pretrain_weights path."""
+        from rfdetr.models.weights import load_pretrain_weights
 
         checkpoint = _make_detr_checkpoint(segmentation_head=False, patch_size=12)
-        monkeypatch.setattr("rfdetr.detr.torch.load", lambda *a, **kw: checkpoint)
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
 
         fake_model = MagicMock()
-        args = _make_detr_args(segmentation_head=False, patch_size=16)
+        mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu", patch_size=16)
+        tc = _make_train_config(tmp_path)
 
         with pytest.raises(ValueError, match=r"patch_size"):
-            _load_pretrain_weights_into(fake_model, args)
+            load_pretrain_weights(fake_model, mc, tc)
 
 
 # ---------------------------------------------------------------------------
@@ -891,39 +1059,51 @@ class TestLoadPretrainWeightsInto:
 
 
 class TestClassNamesProperty:
-    """RFDETR.class_names property uses is-None identity, not truthiness, for empty lists."""
+    """RFDETR.class_names property returns List[str] (0-indexed)."""
 
-    def test_empty_class_names_returns_empty_dict_not_coco(self):
-        """class_names property returns {} when model.class_names is [], NOT COCO_CLASSES.
+    def test_empty_class_names_returns_empty_list_not_coco(self):
+        """class_names property returns [] when model.class_names is [], NOT COCO fallback.
 
         Regression test for #509: the truthiness check `and self.model.class_names:`
         treated [] as falsy and fell through to return COCO_CLASSES, defeating the
         detr.py sync-back even after training on a dataset that reports empty names.
-        The fix uses `is not None` so that [] is preserved as an empty mapping.
+        The fix uses `is not None` so that [] is preserved.
         """
         mock_self = MagicMock()
         mock_self.model.class_names = []
 
         result = RFDETR.class_names.fget(mock_self)
 
-        assert result == {}, "class_names=[] must return {} (empty dict), not COCO_CLASSES"
+        assert result == [], "class_names=[] must return [] (empty list), not COCO fallback"
 
     def test_none_class_names_returns_coco(self):
-        """class_names property falls back to COCO_CLASSES when model.class_names is None."""
-        from rfdetr.assets.coco_classes import COCO_CLASSES
+        """class_names property falls back to COCO_CLASS_NAMES when model.class_names is None."""
+        from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
 
         mock_self = MagicMock()
         mock_self.model.class_names = None
 
         result = RFDETR.class_names.fget(mock_self)
 
-        assert result is COCO_CLASSES
+        assert result == COCO_CLASS_NAMES
+        assert result is not COCO_CLASS_NAMES, "COCO fallback must return a copy, not the mutable global"
 
-    def test_custom_class_names_returned_as_one_indexed_dict(self):
-        """Non-empty class_names are returned as a 1-indexed dict."""
+    def test_custom_class_names_returned_as_list(self):
+        """Non-empty class_names are returned as a 0-indexed list."""
         mock_self = MagicMock()
         mock_self.model.class_names = ["cat", "dog"]
 
         result = RFDETR.class_names.fget(mock_self)
 
-        assert result == {1: "cat", 2: "dog"}
+        assert result == ["cat", "dog"]
+
+    def test_custom_class_names_returns_shallow_copy(self):
+        """Mutating the returned class_names list must not mutate model state."""
+        mock_self = MagicMock()
+        mock_self.model.class_names = ["cat", "dog"]
+
+        result = RFDETR.class_names.fget(mock_self)
+        result.append("bird")
+
+        assert result == ["cat", "dog", "bird"]
+        assert mock_self.model.class_names == ["cat", "dog"]

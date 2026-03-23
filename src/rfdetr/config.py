@@ -6,6 +6,7 @@
 
 
 import os
+import warnings
 from typing import Any, ClassVar, Dict, List, Literal, Mapping, Optional, Union
 
 import torch
@@ -57,6 +58,11 @@ class ModelConfig(BaseConfig):
     sa_nheads: int
     ca_nheads: int
     dec_n_points: int
+    num_queries: int = 300
+    # NOTE:
+    # - ModelConfig is the authoritative source of `num_select` for PTL/inference; it is read via `build_namespace`.
+    # - Any `num_select` field on TrainConfig / SegmentationTrainConfig is deprecated and ignored by PTL/inference.
+    num_select: int = 300
     bbox_reparam: bool = True
     lite_refpoint_refine: bool = True
     layer_norm: bool = True
@@ -74,7 +80,29 @@ class ModelConfig(BaseConfig):
     cls_loss_coef: float = 1.0
     segmentation_head: bool = False
     mask_downsample_ratio: int = 4
+    backbone_lora: bool = False
+    freeze_encoder: bool = False
     license: str = "Apache-2.0"
+
+    @model_validator(mode="after")
+    def _warn_deprecated_model_config_fields(self) -> "ModelConfig":
+        """Emit DeprecationWarning when cls_loss_coef is explicitly set on ModelConfig.
+
+        ``cls_loss_coef`` ownership is moving to ``TrainConfig`` (Item #3, v1.7). Setting
+        it on ``ModelConfig`` is deprecated.  Use ``TrainConfig(cls_loss_coef=...)`` instead.
+        """
+        if "cls_loss_coef" in self.model_fields_set:
+            # stacklevel=2 points into Pydantic internals rather than the user call
+            # site — this is unavoidable with @model_validator(mode="after") in
+            # Pydantic v2.  The warning still fires correctly; the origin frame is
+            # less precise than ideal.
+            warnings.warn(
+                "ModelConfig.cls_loss_coef is deprecated and will be removed in v1.9. "
+                "Set cls_loss_coef on TrainConfig instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        return self
 
     @field_validator("pretrain_weights", mode="after")
     @classmethod
@@ -345,7 +373,7 @@ class TrainConfig(BaseModel):
     tensorboard: bool = True
     wandb: bool = False
     mlflow: bool = False
-    clearml: bool = False
+    clearml: bool = False  # Not yet implemented — reserved for future use.
     project: Optional[str] = None
     run: Optional[str] = None
     class_names: List[str] = None
@@ -355,6 +383,32 @@ class TrainConfig(BaseModel):
     eval_interval: int = 1
     log_per_class_metrics: bool = True
     aug_config: Optional[Dict[str, Any]] = None
+
+    @model_validator(mode="after")
+    def _warn_deprecated_train_config_fields(self) -> "TrainConfig":
+        """Emit DeprecationWarning for fields whose ownership is moving to ModelConfig.
+
+        The following fields are duplicated between ``ModelConfig`` and ``TrainConfig``
+        but ``ModelConfig`` is the authoritative source (Item #3, v1.7).  Setting them
+        on ``TrainConfig`` is deprecated.  The fields will be removed in v1.9.
+
+        - ``group_detr``: query group count is an architecture decision → ``ModelConfig``
+        - ``ia_bce_loss``: loss type is tied to architecture family → ``ModelConfig``
+        - ``segmentation_head``: architecture flag → ``ModelConfig``
+        - ``num_select``: postprocessor count is an architecture decision → ``ModelConfig``
+        """
+        _deprecated = ("group_detr", "ia_bce_loss", "segmentation_head", "num_select")
+        for field in _deprecated:
+            if field in self.model_fields_set:
+                # stacklevel=2 points into Pydantic internals; unavoidable with
+                # @model_validator(mode="after") in Pydantic v2.
+                warnings.warn(
+                    f"TrainConfig.{field} is deprecated and will be removed in v1.9. "
+                    f"Set {field} on ModelConfig instead.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+        return self
 
     @field_validator("progress_bar", mode="before")
     @classmethod

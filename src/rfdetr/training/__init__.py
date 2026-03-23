@@ -19,6 +19,7 @@ from pytorch_lightning import seed_everything
 
 from rfdetr.training.callbacks import (
     BestModelCallback,
+    COCOEvalCallback,
     DropPathCallback,
     RFDETREarlyStopping,
     RFDETREMACallback,
@@ -34,6 +35,7 @@ _logger = get_logger()
 
 __all__ = [
     "BestModelCallback",
+    "COCOEvalCallback",
     "DropPathCallback",
     "RFDETRCli",
     "RFDETRDataModule",

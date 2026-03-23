@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from rfdetr.config import (
     ModelConfig,
+    RFDETRBaseConfig,
     RFDETRSeg2XLargeConfig,
     RFDETRSegLargeConfig,
     RFDETRSegMediumConfig,
@@ -60,7 +61,9 @@ class TestSegmentationTrainConfigNumSelect:
         assert config.num_select is None
 
     def test_explicit_value_is_accepted(self) -> None:
-        config = SegmentationTrainConfig(dataset_dir="/tmp", num_select=42)
+        # Explicitly setting num_select on SegmentationTrainConfig is deprecated (Item #3).
+        with pytest.warns(DeprecationWarning, match="TrainConfig.num_select is deprecated"):
+            config = SegmentationTrainConfig(dataset_dir="/tmp", num_select=42)
         assert config.num_select == 42
 
     @pytest.mark.parametrize(
@@ -280,3 +283,71 @@ class TestBuildTrainerUsesRealFields:
             build_trainer(self._tc(tmp_path, sync_bn=True), self._mc())
 
         assert captured_kwargs.get("sync_batchnorm") is True
+
+
+class TestDeprecatedTrainConfigFields:
+    """Item #3 Phase A: TrainConfig fields deprecated in favour of ModelConfig ownership."""
+
+    def _tc(self, **kwargs):
+        defaults = dict(dataset_dir="/tmp")
+        defaults.update(kwargs)
+        return TrainConfig(**defaults)
+
+    @pytest.mark.parametrize(
+        "field,value",
+        [
+            pytest.param("group_detr", 5, id="group_detr"),
+            pytest.param("ia_bce_loss", False, id="ia_bce_loss"),
+            pytest.param("segmentation_head", True, id="segmentation_head"),
+            pytest.param("num_select", 100, id="num_select"),
+        ],
+    )
+    def test_explicitly_set_deprecated_field_emits_warning(self, field, value) -> None:
+        """Setting a deprecated TrainConfig field explicitly must emit DeprecationWarning."""
+        with pytest.warns(DeprecationWarning, match=f"TrainConfig\\.{field} is deprecated"):
+            self._tc(**{field: value})
+
+    def test_default_group_detr_no_warning(self, recwarn) -> None:
+        """TrainConfig() without explicit group_detr must NOT warn."""
+        self._tc()
+        depr_warnings = [w for w in recwarn.list if issubclass(w.category, DeprecationWarning)]
+        assert not depr_warnings, f"Unexpected DeprecationWarning: {depr_warnings}"
+
+    def test_segmentation_train_config_no_warning_on_default_fields(self, recwarn) -> None:
+        """SegmentationTrainConfig() must NOT warn for its class-level defaults.
+
+        segmentation_head=True and num_select=None are SegmentationTrainConfig defaults,
+        not explicitly set by the user — they must not trigger DeprecationWarning.
+        """
+        SegmentationTrainConfig(dataset_dir="/tmp")
+        depr_warnings = [w for w in recwarn.list if issubclass(w.category, DeprecationWarning)]
+        assert not depr_warnings, f"Unexpected DeprecationWarning: {depr_warnings}"
+
+
+class TestDeprecatedModelConfigClsLossCoef:
+    """Item #3 Phase A: ModelConfig.cls_loss_coef deprecated in favour of TrainConfig ownership."""
+
+    def test_explicit_cls_loss_coef_emits_warning(self) -> None:
+        """Setting cls_loss_coef on ModelConfig explicitly must emit DeprecationWarning."""
+        sample = dict(
+            encoder="dinov2_windowed_small",
+            out_feature_indexes=[1, 2, 3],
+            dec_layers=3,
+            projector_scale=["P3"],
+            hidden_dim=256,
+            patch_size=14,
+            num_windows=2,
+            sa_nheads=8,
+            ca_nheads=8,
+            dec_n_points=4,
+            resolution=384,
+            positional_encoding_size=256,
+        )
+        with pytest.warns(DeprecationWarning, match="ModelConfig\\.cls_loss_coef is deprecated"):
+            ModelConfig(**sample, cls_loss_coef=2.0)
+
+    def test_default_cls_loss_coef_no_warning(self, recwarn) -> None:
+        """RFDETRBaseConfig() without explicit cls_loss_coef must NOT warn."""
+        RFDETRBaseConfig(pretrain_weights=None, device="cpu")
+        depr_warnings = [w for w in recwarn.list if issubclass(w.category, DeprecationWarning)]
+        assert not depr_warnings, f"Unexpected DeprecationWarning: {depr_warnings}"

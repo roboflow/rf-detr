@@ -4,7 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-"""COCO class ID to name mapping."""
+"""COCO class ID to name mapping and flat class name list."""
 
 COCO_CLASSES = {
     1: "person",
@@ -88,3 +88,5 @@ COCO_CLASSES = {
     89: "hair drier",
     90: "toothbrush",
 }
+
+COCO_CLASS_NAMES: list[str] = [name for _, name in sorted(COCO_CLASSES.items())]

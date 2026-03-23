@@ -546,6 +546,71 @@ class TestAlbumentationsWrapper:
         assert len(aug_target["masks"]) == 1
         assert aug_target["masks"].shape == (1, 50, 50)
 
+    def test_degenerate_bbox_at_image_boundary_is_silently_dropped(self):
+        """Degenerate boxes (x_min == x_max or y_min == y_max) must not raise ValueError.
+
+        Regression test: COCO annotations sometimes place a box exactly on the image
+        boundary so that both x coordinates equal the image width (normalized: 1.0).
+        Albumentations' check_bboxes rejects these with
+        "x_max is less than or equal to x_min", crashing the DataLoader worker.
+        """
+        transform = A.HorizontalFlip(p=1.0)
+        wrapper = AlbumentationsWrapper(transform)
+
+        width, height = 100, 100
+        image = Image.new("RGB", (width, height))
+
+        target = {
+            # box 0: valid                box 1: x_min==x_max (right edge)
+            # box 2: y_min==y_max (bottom edge)
+            "boxes": torch.tensor(
+                [
+                    [10.0, 20.0, 50.0, 60.0],  # valid — should survive
+                    [100.0, 14.0, 100.0, 17.0],  # degenerate: x_min == x_max
+                    [10.0, 100.0, 50.0, 100.0],  # degenerate: y_min == y_max
+                ]
+            ),
+            "labels": torch.tensor([1, 2, 3]),
+            "area": torch.tensor([1600.0, 0.0, 0.0]),
+        }
+
+        # Must not raise ValueError
+        aug_image, aug_target = wrapper(image, target)
+
+        assert isinstance(aug_image, Image.Image)
+        # Only the valid box survives
+        assert aug_target["boxes"].shape[0] == 1, f"Expected 1 valid box, got {aug_target['boxes'].shape[0]}"
+        assert aug_target["labels"].tolist() == [1]
+        assert aug_target["area"].shape[0] == 1
+
+    def test_degenerate_bbox_mixed_with_masks(self):
+        """Degenerate boxes are dropped together with their corresponding masks."""
+        transform = A.HorizontalFlip(p=1.0)
+        wrapper = AlbumentationsWrapper(transform)
+
+        width, height = 100, 100
+        image = Image.new("RGB", (width, height))
+
+        masks = torch.zeros((2, height, width), dtype=torch.uint8)
+        masks[0, 20:60, 10:50] = 1  # valid mask
+
+        target = {
+            "boxes": torch.tensor(
+                [
+                    [10.0, 20.0, 50.0, 60.0],  # valid
+                    [100.0, 14.0, 100.0, 17.0],  # degenerate: x_min == x_max
+                ]
+            ),
+            "labels": torch.tensor([1, 2]),
+            "masks": masks,
+        }
+
+        aug_image, aug_target = wrapper(image, target)
+
+        assert aug_target["boxes"].shape[0] == 1
+        assert aug_target["labels"].tolist() == [1]
+        assert aug_target["masks"].shape[0] == 1
+
 
 class TestAlbumentationsWrapperFromConfig:
     """Tests for AlbumentationsWrapper.from_config() static method."""
@@ -1446,9 +1511,18 @@ class TestMakeCocoTransformsAugConfig:
 
         assert len(wrappers) == 1
 
-    def test_aug_config_not_applied_on_test(self):
-        """aug_config is ignored for the test split in make_coco_transforms_square_div_64."""
-        pipeline = make_coco_transforms_square_div_64("test", 640, aug_config={"HorizontalFlip": {"p": 1.0}})
+    @pytest.mark.parametrize(
+        "make_transforms,expected_resize_wrappers",
+        [
+            # make_coco_transforms test: SmallestMaxSize + LongestMaxSize = 2 wrappers
+            pytest.param(make_coco_transforms, 2, id="make_coco_transforms"),
+            # make_coco_transforms_square_div_64 test: Resize = 1 wrapper
+            pytest.param(make_coco_transforms_square_div_64, 1, id="make_coco_transforms_square_div_64"),
+        ],
+    )
+    def test_aug_config_not_applied_on_test(self, make_transforms, expected_resize_wrappers):
+        """aug_config is ignored for test splits — only resize wrappers are present."""
+        pipeline = make_transforms("test", 640, aug_config={"HorizontalFlip": {"p": 1.0}})
         wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
 
-        assert len(wrappers) == 1
+        assert len(wrappers) == expected_resize_wrappers

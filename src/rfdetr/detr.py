@@ -24,8 +24,8 @@ import torchvision.transforms.functional as F
 import yaml
 from PIL import Image
 
-from rfdetr.assets.coco_classes import COCO_CLASSES
-from rfdetr.assets.model_weights import download_pretrain_weights, validate_pretrain_weights
+from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
+from rfdetr.assets.model_weights import download_pretrain_weights
 from rfdetr.config import (
     ModelConfig,
     RFDETRBaseConfig,  # DEPRECATED
@@ -47,8 +47,8 @@ from rfdetr.config import (
 from rfdetr.datasets.coco import is_valid_coco_dataset
 from rfdetr.datasets.yolo import is_valid_yolo_dataset
 from rfdetr.models import PostProcess, build_model
+from rfdetr.models.weights import apply_lora, load_pretrain_weights
 from rfdetr.utilities.logger import get_logger
-from rfdetr.utilities.state_dict import validate_checkpoint_compatibility
 
 try:
     torch.set_float32_matmul_precision("high")
@@ -58,7 +58,7 @@ except Exception:
 logger = get_logger()
 
 
-class _ModelContext:
+class ModelContext:
     """Lightweight model wrapper returned by RFDETR.get_model().
 
     Provides the same attribute interface as the legacy ``main.py:Model`` but
@@ -80,7 +80,7 @@ class _ModelContext:
         device: torch.device,
         resolution: int,
         args: Any,
-        class_names: List[str] = None,
+        class_names: Optional[List[str]] = None,
     ) -> None:
         self.model = model
         self.postprocess = postprocess
@@ -100,93 +100,11 @@ class _ModelContext:
         self.args.num_classes = num_classes
 
 
-def _load_pretrain_weights_into(nn_model: torch.nn.Module, args: Any) -> List[str]:
-    """Load pretrained checkpoint weights into *nn_model* in-place.
-
-    Mirrors ``Model.__init__`` and ``RFDETRModelModule._load_pretrain_weights``
-    checkpoint loading logic: validates hash, re-downloads on corruption, and
-    trims query embeddings to match the configured query count.
-
-    Args:
-        nn_model: The model to load weights into.
-        args: Namespace with ``pretrain_weights``, ``num_classes``,
-            ``num_queries``, and ``group_detr`` attributes.
-
-    Returns:
-        List of class names extracted from the checkpoint, or empty list.
-    """
-    class_names: List[str] = []
-
-    download_pretrain_weights(args.pretrain_weights)
-    if not os.path.isfile(args.pretrain_weights):
-        logger.warning("Pretrain weights not found after initial download; retrying without MD5 validation.")
-        download_pretrain_weights(args.pretrain_weights, redownload=True, validate_md5=False)
-    validate_pretrain_weights(args.pretrain_weights, strict=False)
-
-    try:
-        checkpoint = torch.load(args.pretrain_weights, map_location="cpu", weights_only=False)
-    except Exception:
-        logger.info("Failed to load pretrain weights, re-downloading")
-        download_pretrain_weights(args.pretrain_weights, redownload=True, validate_md5=False)
-        checkpoint = torch.load(args.pretrain_weights, map_location="cpu", weights_only=False)
-
-    if "args" in checkpoint and hasattr(checkpoint["args"], "class_names"):
-        class_names = checkpoint["args"].class_names or []
-
-    validate_checkpoint_compatibility(checkpoint, args)
-
-    checkpoint_num_classes = checkpoint["model"]["class_embed.bias"].shape[0]
-    if checkpoint_num_classes != args.num_classes + 1:
-        # Temporarily align the detection head size with the checkpoint so
-        # that state_dict loading succeeds even when the configured
-        # num_classes differs from the checkpoint.
-        nn_model.reinitialize_detection_head(checkpoint_num_classes)
-
-    num_desired_queries = args.num_queries * args.group_detr
-    query_param_names = ["refpoint_embed.weight", "query_feat.weight"]
-    for name in list(checkpoint["model"].keys()):
-        if any(name.endswith(x) for x in query_param_names):
-            checkpoint["model"][name] = checkpoint["model"][name][:num_desired_queries]
-
-    nn_model.load_state_dict(checkpoint["model"], strict=False)
-
-    # Only reinitialize back to configured size when intentionally reducing a
-    # larger pretrain checkpoint to fewer task-specific classes.
-    if args.num_classes + 1 < checkpoint_num_classes:
-        nn_model.reinitialize_detection_head(args.num_classes + 1)
-
-    return class_names
+_ModelContext = ModelContext  # backward compat alias
 
 
-def _apply_lora_to(nn_model: torch.nn.Module) -> None:
-    """Apply LoRA adapters to the backbone encoder of *nn_model*.
-
-    Args:
-        nn_model: LWDETR model whose backbone encoder will receive LoRA.
-    """
-    from peft import LoraConfig, get_peft_model
-
-    lora_config = LoraConfig(
-        r=16,
-        lora_alpha=16,
-        use_dora=True,
-        target_modules=[
-            "q_proj",
-            "v_proj",
-            "k_proj",
-            "qkv",
-            "query",
-            "key",
-            "value",
-            "cls_token",
-            "register_tokens",
-        ],
-    )
-    nn_model.backbone[0].encoder = get_peft_model(nn_model.backbone[0].encoder, lora_config)
-
-
-def _build_model_context(model_config: ModelConfig) -> "_ModelContext":
-    """Build a _ModelContext from ModelConfig without using legacy main.py:Model.
+def _build_model_context(model_config: ModelConfig) -> "ModelContext":
+    """Build a ModelContext from ModelConfig without using legacy main.py:Model.
 
     Replicates ``Model.__init__`` logic: builds the nn.Module, optionally loads
     pretrain weights and applies LoRA, then moves the model to the target device.
@@ -195,27 +113,32 @@ def _build_model_context(model_config: ModelConfig) -> "_ModelContext":
         model_config: Architecture configuration.
 
     Returns:
-        Fully initialised _ModelContext ready for inference or training.
+        Fully initialised ModelContext ready for inference or training.
     """
     from rfdetr._namespace import build_namespace
 
     # A dummy TrainConfig is needed only for build_namespace's required fields;
     # dataset_dir/output_dir are unused during model construction.
-    args = build_namespace(model_config, TrainConfig(dataset_dir=".", output_dir="."))
+    dummy_train_config = TrainConfig(dataset_dir=".", output_dir=".")
+    args = build_namespace(model_config, dummy_train_config)
     nn_model = build_model(args)
 
     class_names: List[str] = []
-    if args.pretrain_weights is not None:
-        class_names = _load_pretrain_weights_into(nn_model, args)
+    if model_config.pretrain_weights is not None:
+        class_names = load_pretrain_weights(nn_model, model_config, dummy_train_config)
+        # ``load_pretrain_weights`` can mutate ``model_config.num_classes`` when
+        # aligning to checkpoint heads. Keep the derived namespace in sync.
+        if hasattr(args, "num_classes") and getattr(args, "num_classes") != model_config.num_classes:
+            args.num_classes = model_config.num_classes
 
-    if args.backbone_lora:
-        _apply_lora_to(nn_model)
+    if model_config.backbone_lora:
+        apply_lora(nn_model)
 
     device = torch.device(args.device)
     nn_model = nn_model.to(device)
     postprocess = PostProcess(num_select=args.num_select)
 
-    return _ModelContext(
+    return ModelContext(
         model=nn_model,
         postprocess=postprocess,
         device=device,
@@ -235,6 +158,8 @@ class RFDETR:
     means = [0.485, 0.456, 0.406]
     stds = [0.229, 0.224, 0.225]
     size = None
+    _model_config_class: type[ModelConfig] = ModelConfig
+    _train_config_class: type[TrainConfig] = TrainConfig
 
     def __init__(self, **kwargs):
         self.model_config = self.get_model_config(**kwargs)
@@ -261,11 +186,11 @@ class RFDETR:
             return
         download_pretrain_weights(pretrain_weights)
 
-    def get_model_config(self, **kwargs):
+    def get_model_config(self, **kwargs) -> ModelConfig:
         """
         Retrieve the configuration parameters used by the model.
         """
-        return ModelConfig(**kwargs)
+        return self._model_config_class(**kwargs)
 
     def train(self, **kwargs):
         """Train an RF-DETR model via the PyTorch Lightning stack.
@@ -301,10 +226,21 @@ class RFDETR:
 
         # Absorb legacy `device` kwarg.  When the caller explicitly requests CPU
         # (e.g. in tests or CPU-only environments), honour it by forwarding it as
-        # the PTL accelerator.  All other device strings (cuda, mps) are ignored
-        # so PTL can auto-select the best available device.
+        # the PTL accelerator.  All other device strings (e.g. "cuda:1") are not
+        # forwarded — PTL auto-selects the best available device — so emit a
+        # DeprecationWarning so callers know the value was not honoured.
         _device = kwargs.pop("device", None)
         _accelerator = "cpu" if _device == "cpu" else None
+        if _device is not None and _device != "cpu":
+            warnings.warn(
+                f"`device='{_device}'` is deprecated and ignored; PTL auto-selects the"
+                " accelerator. To pin a specific device, configure your"
+                " accelerator/backend explicitly (for example, use"
+                " `CUDA_VISIBLE_DEVICES` for CUDA) or configure a PTL Trainer"
+                " directly.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
         # Absorb legacy `start_epoch` — PTL resumes automatically via ckpt_path.
         if "start_epoch" in kwargs:
@@ -411,6 +347,7 @@ class RFDETR:
         self._optimized_half = False
         self._inference_backend = None
         self._mlx_model = None
+        self._optimized_dtype = None
 
     def export(
         self,
@@ -569,37 +506,37 @@ class RFDETR:
             " Checked for COCO (train/_annotations.coco.json) and YOLO (data.yaml, data.yml) styles."
         )
 
-    def get_train_config(self, **kwargs):
+    def get_train_config(self, **kwargs) -> TrainConfig:
         """
         Retrieve the configuration parameters that will be used for training.
         """
-        return TrainConfig(**kwargs)
+        return self._train_config_class(**kwargs)
 
-    def get_model(self, config: ModelConfig) -> "_ModelContext":
+    def get_model(self, config: ModelConfig) -> "ModelContext":
         """Retrieve a model context from the provided architecture configuration.
 
         Args:
             config: Architecture configuration.
 
         Returns:
-            _ModelContext with model, postprocess, device, resolution, args,
+            ModelContext with model, postprocess, device, resolution, args,
             and class_names attributes.
         """
         return _build_model_context(config)
 
-    # Get class_names from the model
     @property
-    def class_names(self):
-        """
-        Retrieve the class names supported by the loaded model.
+    def class_names(self) -> List[str]:
+        """Retrieve the class names supported by the loaded model.
 
         Returns:
-            dict: A dictionary mapping class IDs to class names. The keys are integers starting from
+            A list of class name strings, 0-indexed.  When no custom class
+            names are embedded in the checkpoint, returns the standard 80
+            COCO class names.
         """
         if hasattr(self.model, "class_names") and self.model.class_names is not None:
-            return {i + 1: name for i, name in enumerate(self.model.class_names)}
+            return list(self.model.class_names)
 
-        return COCO_CLASSES
+        return list(COCO_CLASS_NAMES)
 
     def predict(
         self,
@@ -670,8 +607,8 @@ class RFDETR:
             orig_sizes.append((h, w))
 
             img_tensor = img_tensor.to(self.model.device)
-            img_tensor = F.normalize(img_tensor, self.means, self.stds)
             img_tensor = F.resize(img_tensor, (self.model.resolution, self.model.resolution))
+            img_tensor = F.normalize(img_tensor, self.means, self.stds)
 
             processed_images.append(img_tensor)
 
@@ -892,12 +829,7 @@ class RFDETRBase(RFDETR):
     """
 
     size = "rfdetr-base"
-
-    def get_model_config(self, **kwargs):
-        return RFDETRBaseConfig(**kwargs)
-
-    def get_train_config(self, **kwargs):
-        return TrainConfig(**kwargs)
+    _model_config_class = RFDETRBaseConfig
 
 
 class RFDETRNano(RFDETR):
@@ -906,12 +838,7 @@ class RFDETRNano(RFDETR):
     """
 
     size = "rfdetr-nano"
-
-    def get_model_config(self, **kwargs):
-        return RFDETRNanoConfig(**kwargs)
-
-    def get_train_config(self, **kwargs):
-        return TrainConfig(**kwargs)
+    _model_config_class = RFDETRNanoConfig
 
 
 class RFDETRSmall(RFDETR):
@@ -920,12 +847,7 @@ class RFDETRSmall(RFDETR):
     """
 
     size = "rfdetr-small"
-
-    def get_model_config(self, **kwargs):
-        return RFDETRSmallConfig(**kwargs)
-
-    def get_train_config(self, **kwargs):
-        return TrainConfig(**kwargs)
+    _model_config_class = RFDETRSmallConfig
 
 
 class RFDETRMedium(RFDETR):
@@ -934,22 +856,7 @@ class RFDETRMedium(RFDETR):
     """
 
     size = "rfdetr-medium"
-
-    def get_model_config(self, **kwargs):
-        return RFDETRMediumConfig(**kwargs)
-
-    def get_train_config(self, **kwargs):
-        return TrainConfig(**kwargs)
-
-
-class RFDETRLargeNew(RFDETR):
-    size = "rfdetr-large"
-
-    def get_model_config(self, **kwargs):
-        return RFDETRLargeConfig(**kwargs)
-
-    def get_train_config(self, **kwargs):
-        return TrainConfig(**kwargs)
+    _model_config_class = RFDETRMediumConfig
 
 
 class RFDETRLargeDeprecated(RFDETR):
@@ -958,6 +865,7 @@ class RFDETRLargeDeprecated(RFDETR):
     """
 
     size = "rfdetr-large"
+    _model_config_class = RFDETRLargeDeprecatedConfig
 
     def __init__(self, **kwargs):
         warnings.warn(
@@ -968,23 +876,48 @@ class RFDETRLargeDeprecated(RFDETR):
         )
         super().__init__(**kwargs)
 
-    def get_model_config(self, **kwargs):
-        return RFDETRLargeDeprecatedConfig(**kwargs)
-
-    def get_train_config(self, **kwargs):
-        return TrainConfig(**kwargs)
-
 
 class RFDETRLarge(RFDETR):
     size = "rfdetr-large"
+
+    @staticmethod
+    def _should_fallback_to_deprecated_config(exc: Exception) -> bool:
+        """Return whether initialization should retry with deprecated Large config.
+
+        The fallback is only for known checkpoint/config incompatibilities from
+        deprecated Large weights. Runtime issues such as CUDA OOM must fail
+        fast and must not trigger a second initialization attempt.
+
+        Args:
+            exc: Exception raised by initial ``RFDETR`` initialization.
+
+        Returns:
+            ``True`` when retrying with deprecated config is expected to help.
+        """
+        message = str(exc).lower()
+        if "out of memory" in message:
+            return False
+        if isinstance(exc, ValueError):
+            return "patch_size" in message
+        if isinstance(exc, RuntimeError):
+            incompatible_state_dict_markers = (
+                "error(s) in loading state_dict",
+                "size mismatch",
+                "missing key(s) in state_dict",
+                "unexpected key(s) in state_dict",
+            )
+            return any(marker in message for marker in incompatible_state_dict_markers)
+        return False
 
     def __init__(self, **kwargs):
         self.init_error = None
         self.is_deprecated = False
         try:
             super().__init__(**kwargs)
-        except Exception as e:
-            self.init_error = e
+        except (ValueError, RuntimeError) as exc:
+            if not self._should_fallback_to_deprecated_config(exc):
+                raise
+            self.init_error = exc
             self.is_deprecated = True
             try:
                 super().__init__(**kwargs)
@@ -1000,81 +933,49 @@ class RFDETRLarge(RFDETR):
             except Exception:
                 raise self.init_error
 
-    def get_model_config(self, **kwargs):
+    def get_model_config(self, **kwargs) -> ModelConfig:
         if not self.is_deprecated:
             return RFDETRLargeConfig(**kwargs)
         else:
             return RFDETRLargeDeprecatedConfig(**kwargs)
 
-    def get_train_config(self, **kwargs):
-        return TrainConfig(**kwargs)
+
+class RFDETRSeg(RFDETR):
+    """Base class for all RF-DETR segmentation models."""
+
+    _train_config_class = SegmentationTrainConfig
 
 
-class RFDETRSegPreview(RFDETR):
+class RFDETRSegPreview(RFDETRSeg):
     size = "rfdetr-seg-preview"
-
-    def get_model_config(self, **kwargs):
-        return RFDETRSegPreviewConfig(**kwargs)
-
-    def get_train_config(self, **kwargs):
-        return SegmentationTrainConfig(**kwargs)
+    _model_config_class = RFDETRSegPreviewConfig
 
 
-class RFDETRSegNano(RFDETR):
+class RFDETRSegNano(RFDETRSeg):
     size = "rfdetr-seg-nano"
-
-    def get_model_config(self, **kwargs):
-        return RFDETRSegNanoConfig(**kwargs)
-
-    def get_train_config(self, **kwargs):
-        return SegmentationTrainConfig(**kwargs)
+    _model_config_class = RFDETRSegNanoConfig
 
 
-class RFDETRSegSmall(RFDETR):
+class RFDETRSegSmall(RFDETRSeg):
     size = "rfdetr-seg-small"
-
-    def get_model_config(self, **kwargs):
-        return RFDETRSegSmallConfig(**kwargs)
-
-    def get_train_config(self, **kwargs):
-        return SegmentationTrainConfig(**kwargs)
+    _model_config_class = RFDETRSegSmallConfig
 
 
-class RFDETRSegMedium(RFDETR):
+class RFDETRSegMedium(RFDETRSeg):
     size = "rfdetr-seg-medium"
-
-    def get_model_config(self, **kwargs):
-        return RFDETRSegMediumConfig(**kwargs)
-
-    def get_train_config(self, **kwargs):
-        return SegmentationTrainConfig(**kwargs)
+    _model_config_class = RFDETRSegMediumConfig
 
 
-class RFDETRSegLarge(RFDETR):
+class RFDETRSegLarge(RFDETRSeg):
     size = "rfdetr-seg-large"
-
-    def get_model_config(self, **kwargs):
-        return RFDETRSegLargeConfig(**kwargs)
-
-    def get_train_config(self, **kwargs):
-        return SegmentationTrainConfig(**kwargs)
+    _model_config_class = RFDETRSegLargeConfig
 
 
-class RFDETRSegXLarge(RFDETR):
+class RFDETRSegXLarge(RFDETRSeg):
     size = "rfdetr-seg-xlarge"
-
-    def get_model_config(self, **kwargs):
-        return RFDETRSegXLargeConfig(**kwargs)
-
-    def get_train_config(self, **kwargs):
-        return SegmentationTrainConfig(**kwargs)
+    _model_config_class = RFDETRSegXLargeConfig
 
 
-class RFDETRSeg2XLarge(RFDETR):
+class RFDETRSeg2XLarge(RFDETRSeg):
     size = "rfdetr-seg-2xlarge"
-
-    def get_model_config(self, **kwargs):
-        return RFDETRSeg2XLargeConfig(**kwargs)
-
-    def get_train_config(self, **kwargs):
-        return SegmentationTrainConfig(**kwargs)
+    _model_config_class = RFDETRSeg2XLargeConfig

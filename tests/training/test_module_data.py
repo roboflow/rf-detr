@@ -147,11 +147,6 @@ class TestInit:
         dm = build_datamodule(train_config=tc)
         assert dm.train_config is tc
 
-    def test_builds_args_namespace(self, build_datamodule):
-        """_args Namespace is created during __init__."""
-        dm = build_datamodule()
-        assert dm._args is not None
-
     def test_datasets_start_as_none(self, build_datamodule):
         """All three dataset slots are None before setup() is called."""
         dm = build_datamodule()
@@ -269,16 +264,28 @@ class TestSetup:
         assert dm._dataset_train is existing_train
         assert dm._dataset_val is existing_val
 
-    def test_predict_stage_builds_nothing(self, tmp_path):
-        """setup('predict') does not build any dataset."""
+    def test_predict_stage_builds_val_dataset(self, tmp_path):
+        """setup('predict') populates _dataset_val with the 'val' split."""
+        dm, _, fake_val, _ = self._setup_with_mock(tmp_path, "predict")
+        assert dm._dataset_val is fake_val
+        assert dm._dataset_train is None
+        assert dm._dataset_test is None
+
+    def test_predict_stage_does_not_rebuild_existing_val(self, tmp_path):
+        """setup('predict') skips building when _dataset_val is already set."""
         mc = _base_model_config()
         tc = _base_train_config(tmp_path)
         from rfdetr.training.module_data import RFDETRDataModule
 
         dm = RFDETRDataModule(mc, tc)
+        existing_val = _fake_dataset(20)
+        dm._dataset_val = existing_val
+
         with patch("rfdetr.training.module_data.build_dataset") as mock_build:
             dm.setup("predict")
             mock_build.assert_not_called()
+
+        assert dm._dataset_val is existing_val
 
 
 class TestTrainDataloader:
@@ -442,6 +449,49 @@ class TestTestDataloader:
         assert loader.batch_size == 4
 
 
+class TestPredictDataloader:
+    """predict_dataloader() reuses the validation dataset with sequential sampling."""
+
+    def _setup_dm_with_val(self, tmp_path, dataset_length=50, batch_size=2, num_workers=0):
+        mc = _base_model_config()
+        tc = _base_train_config(tmp_path, batch_size=batch_size, num_workers=num_workers)
+        from rfdetr.training.module_data import RFDETRDataModule
+
+        dm = RFDETRDataModule(mc, tc)
+        dm._dataset_val = _fake_dataset(dataset_length)
+        return dm
+
+    def test_returns_dataloader(self, tmp_path):
+        """predict_dataloader() returns a DataLoader instance."""
+        dm = self._setup_dm_with_val(tmp_path)
+        loader = dm.predict_dataloader()
+        assert isinstance(loader, DataLoader)
+
+    def test_uses_sequential_sampler(self, tmp_path):
+        """predict_dataloader uses a SequentialSampler (deterministic ordering)."""
+        dm = self._setup_dm_with_val(tmp_path)
+        loader = dm.predict_dataloader()
+        assert isinstance(loader.sampler, torch.utils.data.SequentialSampler)
+
+    def test_drop_last_false(self, tmp_path):
+        """predict_dataloader does not drop the last incomplete batch."""
+        dm = self._setup_dm_with_val(tmp_path)
+        loader = dm.predict_dataloader()
+        assert loader.drop_last is False
+
+    def test_batch_size_forwarded(self, tmp_path):
+        """The DataLoader's batch size matches the train config."""
+        dm = self._setup_dm_with_val(tmp_path, batch_size=6)
+        loader = dm.predict_dataloader()
+        assert loader.batch_size == 6
+
+    def test_num_workers_forwarded(self, tmp_path):
+        """The DataLoader's num_workers matches the train config."""
+        dm = self._setup_dm_with_val(tmp_path, num_workers=0)
+        loader = dm.predict_dataloader()
+        assert loader.num_workers == 0
+
+
 class TestClassNames:
     """class_names property extracts names from COCO dataset annotations."""
 
@@ -509,17 +559,17 @@ class TestSegmentationSupport:
 
         dm = RFDETRDataModule(mc, tc)
         assert dm.train_config is tc
-        assert dm._args.segmentation_head is True
+        assert dm.model_config.segmentation_head is True
 
     def test_seg_args_have_mask_loss_coefs(self, base_model_config, seg_train_config):
-        """Segmentation-specific loss coefficients are forwarded to _args."""
+        """Segmentation-specific loss coefficients are present on train_config."""
         mc = base_model_config(segmentation_head=True)
         tc = seg_train_config()
         from rfdetr.training.module_data import RFDETRDataModule
 
         dm = RFDETRDataModule(mc, tc)
-        assert dm._args.mask_ce_loss_coef == pytest.approx(5.0)
-        assert dm._args.mask_dice_loss_coef == pytest.approx(5.0)
+        assert dm.train_config.mask_ce_loss_coef == pytest.approx(5.0)
+        assert dm.train_config.mask_dice_loss_coef == pytest.approx(5.0)
 
 
 class TestTransferBatchToDevice:

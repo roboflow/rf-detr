@@ -302,8 +302,8 @@ class _DDPModule(RFDETRModelModule):
         return torch.optim.AdamW(self.parameters(), lr=1e-4)
 
 
-# TODO: find a Windows-compatible spawn strategy or loopback init_method fix;
-#       gloo DDP spawn fails on Windows CI (makeDeviceForHostname: unsupported gloo device).
+# Windows CI currently cannot run this smoke test because gloo DDP spawn fails
+# with makeDeviceForHostname unsupported-device errors.
 @pytest.mark.skipif(sys.platform == "win32", reason="gloo DDP spawn unsupported on Windows CI")
 def test_ddp_spawn_fit_runs_without_error(base_model_config, base_train_config):
     """ddp_spawn with 2 CPU workers must run fast_dev_run=2 without error.
