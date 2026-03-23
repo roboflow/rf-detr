@@ -35,8 +35,6 @@ from rfdetr.config import (
 from rfdetr.datasets.coco import is_valid_coco_dataset
 from rfdetr.datasets.yolo import is_valid_yolo_dataset
 from rfdetr.inference import ModelContext, _build_model_context
-from rfdetr.models import PostProcess
-from rfdetr.models.weights import apply_lora, load_pretrain_weights
 from rfdetr.utilities.logger import get_logger
 
 try:
