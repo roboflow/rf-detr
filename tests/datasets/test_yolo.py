@@ -537,6 +537,27 @@ class TestYoloDetectionLazyMasks:
                 include_masks=True,
             )
 
+    def test_out_of_range_class_id_raises_clear_error(self, tmp_path: Path) -> None:
+        """A label with a class ID beyond the class count should raise ValueError at init."""
+        image_dir = tmp_path / "images"
+        label_dir = tmp_path / "labels"
+        image_dir.mkdir()
+        label_dir.mkdir()
+        Image.new("RGB", (8, 6), color=(255, 255, 255)).save(image_dir / "sample.png")
+        # Dataset defines 1 class (ID 0); label references class ID 5 — out of range
+        (label_dir / "sample.txt").write_text("5 0.25 0.25 0.75 0.25 0.75 0.75 0.25 0.75\n", encoding="utf-8")
+        data_file = tmp_path / "data.yaml"
+        data_file.write_text("names:\n  - carton\n", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="out of range"):
+            YoloDetection(
+                img_folder=str(image_dir),
+                lb_folder=str(label_dir),
+                data_file=str(data_file),
+                transforms=None,
+                include_masks=True,
+            )
+
 
 class TestExtractYoloClassNames:
     """Tests for _extract_yolo_class_names with different YAML formats."""
@@ -558,6 +579,16 @@ class TestExtractYoloClassNames:
                 "names:\n  1: dog\n  0: cat\n",
                 ["cat", "dog"],
                 id="dict_format_unsorted_keys",
+            ),
+            pytest.param(
+                "names:\n  0: cat\n  2: dog\n",
+                ["cat", "dog"],
+                id="dict_format_sparse_keys",
+            ),
+            pytest.param(
+                "names:\n  10: cat\n  20: dog\n",
+                ["cat", "dog"],
+                id="dict_format_large_numeric_keys",
             ),
         ],
     )
