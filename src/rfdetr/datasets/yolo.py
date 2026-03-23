@@ -186,7 +186,14 @@ def _build_lazy_yolo_segmentation_dataset(img_folder: str, lb_folder: str, data_
                         f"polygon coordinates must be paired (x, y) values, "
                         f"but got {len(values[1:])} coordinate values (odd count)."
                     )
-                class_id.append(int(values[0]))
+                cid = int(values[0])
+                if cid < 0 or cid >= len(classes):
+                    raise ValueError(
+                        f"Label {str(label_path)!r} line {i + 1}: "
+                        f"class ID {cid} is out of range for dataset with {len(classes)} classes "
+                        f"(valid range 0\u2013{len(classes) - 1})."
+                    )
+                class_id.append(cid)
                 if len(values) == 5:
                     box = _parse_yolo_box(values[1:])
                     polygon = _box_to_polygon(box)
@@ -658,11 +665,11 @@ class YoloDetection(VisionDataset):
         self.include_masks = include_masks
         self.prepare = ConvertYolo(include_masks=include_masks)
 
-        import supervision as sv
-
         if include_masks:
             self.sv_dataset = _build_lazy_yolo_segmentation_dataset(img_folder, lb_folder, data_file)
         else:
+            import supervision as sv
+
             # Load dataset using supervision's from_yolo method
             self.sv_dataset = sv.DetectionDataset.from_yolo(
                 images_directory_path=img_folder,
