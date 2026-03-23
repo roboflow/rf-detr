@@ -22,7 +22,6 @@ Mostly copy-paste from https://github.com/pytorch/vision/blob/13b35ff/references
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-import pycocotools.mask as coco_mask
 import torch
 import torch.utils.data
 import torchvision
@@ -31,7 +30,7 @@ from torchvision.transforms.v2 import Compose, ToDtype, ToImage
 
 from rfdetr.datasets.aug_config import AUG_CONFIG
 from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize
-from rfdetr.util.logger import get_logger
+from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
@@ -61,6 +60,8 @@ def convert_coco_poly_to_mask(segmentations: List[Any], height: int, width: int)
     """Convert polygon segmentation to a binary mask tensor of shape [N, H, W].
     Requires pycocotools.
     """
+    import pycocotools.mask as coco_mask
+
     masks = []
     for polygons in segmentations:
         if polygons is None or len(polygons) == 0:
@@ -149,9 +150,9 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         target = {"image_id": image_id, "annotations": target}
         img, target = self.prepare(img, target)
         if self._transforms is not None:
-            img, target = self._transforms(
-                img, target
-            )  # boxes are absolute [x_min, y_min, x_max, y_max]; conversion to normalized [cx, cy, w, h] occurs inside Normalize
+            # boxes are absolute [x_min, y_min, x_max, y_max]; conversion to
+            # normalized [cx, cy, w, h] occurs inside Normalize
+            img, target = self._transforms(img, target)
         return img, target
 
 
@@ -349,12 +350,12 @@ def make_coco_transforms(
     For the ``"train"`` split the pipeline uses a two-branch ``OneOf`` between a
     direct resize and a resize → random-crop → resize sequence (built via
     :func:`_build_train_resize_config`), followed by the augmentation stack and
-    normalisation.  For ``"val"`` and ``"val_speed"`` only resize and
-    normalisation are applied.
+    normalisation.  For ``"val"``, ``"test"``, and ``"val_speed"`` only resize and
+    normalisation are applied — no augmentation.
 
     Args:
-        image_set: Dataset split identifier — ``"train"``, ``"val"``, or
-            ``"val_speed"``.
+        image_set: Dataset split identifier — ``"train"``, ``"val"``, ``"test"``,
+            or ``"val_speed"``.
         resolution: Target short-side resolution in pixels.  During validation the
             longest side is capped at 1333 px to preserve aspect ratio.
         multi_scale: If ``True``, sample the resize target from a range of scales
@@ -400,7 +401,7 @@ def make_coco_transforms(
         aug_wrappers = AlbumentationsWrapper.from_config(resolved_aug_config)
         return Compose([*resize_wrappers, *aug_wrappers, to_image, to_float, normalize])
 
-    if image_set == "val":
+    if image_set in ("val", "test"):
         resize_wrappers = AlbumentationsWrapper.from_config(
             [
                 {"SmallestMaxSize": {"max_size": resolution}},

@@ -29,8 +29,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
-from rfdetr.util.files import _download_file, _validate_file_md5
-from rfdetr.util.logger import get_logger
+from rfdetr.utilities.files import _download_file, _validate_file_md5
+from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
@@ -330,7 +330,7 @@ def download_pretrain_weights(
     else:
         # If still not found, fall back to legacy dict-based platform models
         try:
-            from rfdetr.platform.platform_downloads import PLATFORM_MODELS
+            from rfdetr.platform.downloads import PLATFORM_MODELS
 
             if model_name not in PLATFORM_MODELS:
                 return

@@ -4,13 +4,12 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-from unittest.mock import MagicMock
-
 import pytest
 from pydantic import ValidationError
 
 from rfdetr.config import (
     ModelConfig,
+    RFDETRBaseConfig,
     RFDETRSeg2XLargeConfig,
     RFDETRSegLargeConfig,
     RFDETRSegMediumConfig,
@@ -20,7 +19,6 @@ from rfdetr.config import (
     SegmentationTrainConfig,
     TrainConfig,
 )
-from rfdetr.detr import RFDETR
 
 
 @pytest.fixture
@@ -63,7 +61,9 @@ class TestSegmentationTrainConfigNumSelect:
         assert config.num_select is None
 
     def test_explicit_value_is_accepted(self) -> None:
-        config = SegmentationTrainConfig(dataset_dir="/tmp", num_select=42)
+        # Explicitly setting num_select on SegmentationTrainConfig is deprecated (Item #3).
+        with pytest.warns(DeprecationWarning, match="TrainConfig.num_select is deprecated"):
+            config = SegmentationTrainConfig(dataset_dir="/tmp", num_select=42)
         assert config.num_select == 42
 
     @pytest.mark.parametrize(
@@ -79,90 +79,6 @@ class TestSegmentationTrainConfigNumSelect:
     )
     def test_model_config_has_variant_specific_num_select(self, config_class, expected_num_select) -> None:
         assert config_class().num_select == expected_num_select
-
-
-def _make_rfdetr_stub(model_config):
-    """Build a minimal RFDETR-like object for testing train_from_config() without loading weights."""
-    stub = RFDETR.__new__(RFDETR)
-    stub.model_config = model_config
-    stub.model = MagicMock()
-    stub.model.class_names = []
-    stub.callbacks = {
-        "on_fit_epoch_end": [],
-        "on_train_end": [],
-    }
-    return stub
-
-
-class TestSegmentationNumSelectMerge:
-    """
-    Verify that SegmentationTrainConfig with num_select=None does not override the
-    model-specific num_select during train_from_config() merging.
-
-    The bug: when num_select=None in SegmentationTrainConfig, the merge loop in
-    train_from_config() removes num_select from model_config and then spreads the
-    None value, producing num_select=None in all_kwargs.
-
-    The fix: None values in train_config should not override model_config values.
-    """
-
-    @pytest.mark.parametrize(
-        "model_config_cls, expected_num_select",
-        [
-            (RFDETRSegNanoConfig, 100),
-            (RFDETRSegSmallConfig, 100),
-            (RFDETRSegXLargeConfig, 300),
-        ],
-    )
-    def test_none_num_select_preserves_model_value(self, model_config_cls, expected_num_select, tmp_path) -> None:
-        """num_select should come from the model config when not set in the train config."""
-        stub = _make_rfdetr_stub(model_config_cls())
-        train_config = SegmentationTrainConfig(
-            dataset_dir=str(tmp_path),
-            output_dir=str(tmp_path),
-            dataset_file="coco",
-            tensorboard=False,
-        )
-        assert train_config.num_select is None
-
-        stub.train_from_config(train_config)
-
-        call_kwargs = stub.model.train.call_args.kwargs
-        assert call_kwargs["num_select"] == expected_num_select, (
-            f"Expected num_select={expected_num_select} from {model_config_cls.__name__}, "
-            f"got {call_kwargs['num_select']}. "
-            "SegmentationTrainConfig.num_select=None must not override the model's value."
-        )
-
-    def test_explicit_num_select_overrides_model_value(self, tmp_path) -> None:
-        """When the user sets num_select explicitly it should win over the model default."""
-        stub = _make_rfdetr_stub(RFDETRSegNanoConfig())  # model default: 100
-        train_config = SegmentationTrainConfig(
-            dataset_dir=str(tmp_path),
-            output_dir=str(tmp_path),
-            dataset_file="coco",
-            tensorboard=False,
-            num_select=42,
-        )
-
-        stub.train_from_config(train_config)
-
-        call_kwargs = stub.model.train.call_args.kwargs
-        assert call_kwargs["num_select"] == 42
-
-    def test_segmentation_raises_when_square_resize_disabled(self, tmp_path) -> None:
-        """Segmentation training must not silently override square_resize_div_64=False; it must raise ValueError."""
-        stub = _make_rfdetr_stub(RFDETRSegNanoConfig())
-        train_config = SegmentationTrainConfig(
-            dataset_dir=str(tmp_path),
-            output_dir=str(tmp_path),
-            dataset_file="coco",
-            tensorboard=False,
-            square_resize_div_64=False,
-        )
-
-        with pytest.raises(ValueError, match="square_resize_div_64"):
-            stub.train_from_config(train_config)
 
 
 class TestTrainConfigT42PromotedFields:
@@ -283,6 +199,31 @@ class TestTrainConfigT42PromotedFields:
         with pytest.raises((ValueError, ValidationError)):
             self._tc(tmp_path, **{field: value})
 
+    def test_batch_size_auto_is_accepted(self, tmp_path):
+        """batch_size accepts the special 'auto' value."""
+        tc = self._tc(tmp_path, batch_size="auto")
+        assert tc.batch_size == "auto"
+
+    @pytest.mark.parametrize(
+        "field,value",
+        [
+            ("batch_size", 0),
+            ("grad_accum_steps", 0),
+            ("auto_batch_target_effective", 0),
+            ("auto_batch_max_targets_per_image", 0),
+        ],
+    )
+    def test_auto_batch_related_fields_reject_non_positive_values(self, tmp_path, field, value):
+        """batch/accum/target-effective/max_targets fields must be >= 1 (except batch_size='auto')."""
+        with pytest.raises((ValueError, ValidationError)):
+            self._tc(tmp_path, **{field: value})
+
+    @pytest.mark.parametrize("ema_headroom", [0.0, 1.5])
+    def test_auto_batch_ema_headroom_must_be_in_open_one(self, tmp_path, ema_headroom):
+        """auto_batch_ema_headroom must be in (0, 1]."""
+        with pytest.raises((ValueError, ValidationError)):
+            self._tc(tmp_path, auto_batch_ema_headroom=ema_headroom)
+
 
 class TestBuildTrainerUsesRealFields:
     """build_trainer() must read clip_max_norm, seed, sync_bn from real TrainConfig fields."""
@@ -309,7 +250,7 @@ class TestBuildTrainerUsesRealFields:
 
     def test_clip_max_norm_forwarded_to_trainer(self, tmp_path):
         """gradient_clip_val on the Trainer matches TrainConfig.clip_max_norm."""
-        from rfdetr.lit import build_trainer
+        from rfdetr.training import build_trainer
 
         trainer = build_trainer(self._tc(tmp_path, clip_max_norm=0.25), self._mc())
         assert trainer.gradient_clip_val == pytest.approx(0.25)
@@ -318,9 +259,9 @@ class TestBuildTrainerUsesRealFields:
         """Seeding is deferred to RFDETRModule.on_fit_start, not build_trainer()."""
         import unittest.mock as mock
 
-        from rfdetr.lit import build_trainer
+        from rfdetr.training import build_trainer
 
-        with mock.patch("rfdetr.lit.seed_everything") as mock_seed:
+        with mock.patch("pytorch_lightning.seed_everything") as mock_seed:
             build_trainer(self._tc(tmp_path, seed=99), self._mc())
         mock_seed.assert_not_called()
 
@@ -328,7 +269,7 @@ class TestBuildTrainerUsesRealFields:
         """sync_batchnorm=True is passed to Trainer when TrainConfig.sync_bn is True."""
         import unittest.mock as mock
 
-        from rfdetr.lit import build_trainer
+        from rfdetr.training import build_trainer
 
         captured_kwargs = {}
 
@@ -338,7 +279,75 @@ class TestBuildTrainerUsesRealFields:
             captured_kwargs.update(kwargs)
             real_trainer_init(self_t, **kwargs)
 
-        with mock.patch("rfdetr.lit.Trainer.__init__", _capture_init):
+        with mock.patch("rfdetr.training.trainer.Trainer.__init__", _capture_init):
             build_trainer(self._tc(tmp_path, sync_bn=True), self._mc())
 
         assert captured_kwargs.get("sync_batchnorm") is True
+
+
+class TestDeprecatedTrainConfigFields:
+    """Item #3 Phase A: TrainConfig fields deprecated in favour of ModelConfig ownership."""
+
+    def _tc(self, **kwargs):
+        defaults = dict(dataset_dir="/tmp")
+        defaults.update(kwargs)
+        return TrainConfig(**defaults)
+
+    @pytest.mark.parametrize(
+        "field,value",
+        [
+            pytest.param("group_detr", 5, id="group_detr"),
+            pytest.param("ia_bce_loss", False, id="ia_bce_loss"),
+            pytest.param("segmentation_head", True, id="segmentation_head"),
+            pytest.param("num_select", 100, id="num_select"),
+        ],
+    )
+    def test_explicitly_set_deprecated_field_emits_warning(self, field, value) -> None:
+        """Setting a deprecated TrainConfig field explicitly must emit DeprecationWarning."""
+        with pytest.warns(DeprecationWarning, match=f"TrainConfig\\.{field} is deprecated"):
+            self._tc(**{field: value})
+
+    def test_default_group_detr_no_warning(self, recwarn) -> None:
+        """TrainConfig() without explicit group_detr must NOT warn."""
+        self._tc()
+        depr_warnings = [w for w in recwarn.list if issubclass(w.category, DeprecationWarning)]
+        assert not depr_warnings, f"Unexpected DeprecationWarning: {depr_warnings}"
+
+    def test_segmentation_train_config_no_warning_on_default_fields(self, recwarn) -> None:
+        """SegmentationTrainConfig() must NOT warn for its class-level defaults.
+
+        segmentation_head=True and num_select=None are SegmentationTrainConfig defaults,
+        not explicitly set by the user — they must not trigger DeprecationWarning.
+        """
+        SegmentationTrainConfig(dataset_dir="/tmp")
+        depr_warnings = [w for w in recwarn.list if issubclass(w.category, DeprecationWarning)]
+        assert not depr_warnings, f"Unexpected DeprecationWarning: {depr_warnings}"
+
+
+class TestDeprecatedModelConfigClsLossCoef:
+    """Item #3 Phase A: ModelConfig.cls_loss_coef deprecated in favour of TrainConfig ownership."""
+
+    def test_explicit_cls_loss_coef_emits_warning(self) -> None:
+        """Setting cls_loss_coef on ModelConfig explicitly must emit DeprecationWarning."""
+        sample = dict(
+            encoder="dinov2_windowed_small",
+            out_feature_indexes=[1, 2, 3],
+            dec_layers=3,
+            projector_scale=["P3"],
+            hidden_dim=256,
+            patch_size=14,
+            num_windows=2,
+            sa_nheads=8,
+            ca_nheads=8,
+            dec_n_points=4,
+            resolution=384,
+            positional_encoding_size=256,
+        )
+        with pytest.warns(DeprecationWarning, match="ModelConfig\\.cls_loss_coef is deprecated"):
+            ModelConfig(**sample, cls_loss_coef=2.0)
+
+    def test_default_cls_loss_coef_no_warning(self, recwarn) -> None:
+        """RFDETRBaseConfig() without explicit cls_loss_coef must NOT warn."""
+        RFDETRBaseConfig(pretrain_weights=None, device="cpu")
+        depr_warnings = [w for w in recwarn.list if issubclass(w.category, DeprecationWarning)]
+        assert not depr_warnings, f"Unexpected DeprecationWarning: {depr_warnings}"

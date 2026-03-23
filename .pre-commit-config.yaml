@@ -1,6 +1,6 @@
 ci:
   autofix_prs: true
-  autoupdate_schedule: weekly
+  autoupdate_schedule: monthly
   autofix_commit_msg: "fix(pre-commit): 🎨 auto format pre-commit hooks"
   autoupdate_commit_msg: "chore(pre-commit): ⬆ pre_commit autoupdate"
 
@@ -32,10 +32,10 @@ repos:
         args: ["--print-width=120"]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.5
+    rev: v0.15.6
     hooks:
       - id: ruff-check
-        args: [--fix]
+        args: ["--exit-non-zero-on-fix"]
         exclude: ^notebooks/.*\.py$
       - id: ruff-format
         exclude: ^notebooks/.*\.py$

@@ -7,8 +7,14 @@ import pytest
 import torch
 
 from rfdetr.models.backbone.dinov2_with_windowed_attn import (
+    Dinov2WithRegistersAttention,
+    Dinov2WithRegistersSdpaAttention,
+    WindowedDinov2WithRegistersBackbone,
     WindowedDinov2WithRegistersConfig,
     WindowedDinov2WithRegistersEmbeddings,
+    WindowedDinov2WithRegistersModel,
+    _find_pruneable_heads_and_indices,
+    _get_aligned_output_features_output_indices,
 )
 
 
@@ -244,3 +250,174 @@ def test_buggy_reshape_silent_corruption_for_nonsquare():
         hidden_size,
     )
     assert correct_out.shape[-1] == hidden_size
+
+
+# ---------------------------------------------------------------------------
+# Tests for locally-copied utility functions (removed from transformers v5 public API)
+# ---------------------------------------------------------------------------
+
+
+class TestGetAlignedOutputFeaturesOutputIndices:
+    """Tests for the local copy of get_aligned_output_features_output_indices."""
+
+    def test_both_none_returns_last_stage(self):
+        stage_names = ["stage1", "stage2", "stage3"]
+        features, indices = _get_aligned_output_features_output_indices(None, None, stage_names)
+        assert features == ["stage3"]
+        assert indices == [2]
+
+    def test_only_out_features_derives_indices(self):
+        stage_names = ["stem", "layer1", "layer2", "layer3"]
+        features, indices = _get_aligned_output_features_output_indices(["layer1", "layer3"], None, stage_names)
+        assert features == ["layer1", "layer3"]
+        assert indices == [1, 3]
+
+    def test_only_out_indices_derives_features(self):
+        stage_names = ["stem", "layer1", "layer2", "layer3"]
+        features, indices = _get_aligned_output_features_output_indices(None, [0, 2], stage_names)
+        assert features == ["stem", "layer2"]
+        assert indices == [0, 2]
+
+    def test_both_provided_returns_as_is(self):
+        stage_names = ["stem", "layer1", "layer2"]
+        features, indices = _get_aligned_output_features_output_indices(["layer1"], [1], stage_names)
+        assert features == ["layer1"]
+        assert indices == [1]
+
+    def test_out_indices_converted_to_list(self):
+        """out_indices supplied as a tuple must be returned as a list."""
+        stage_names = ["stem", "layer1", "layer2"]
+        _, indices = _get_aligned_output_features_output_indices(None, (1, 2), stage_names)
+        assert isinstance(indices, list)
+        assert indices == [1, 2]
+
+
+class TestFindPruneableHeadsAndIndices:
+    """Tests for the local copy of find_pruneable_heads_and_indices."""
+
+    def test_no_pruning_returns_full_index(self):
+        heads, index = _find_pruneable_heads_and_indices(set(), n_heads=4, head_size=3, already_pruned_heads=set())
+        assert len(heads) == 0
+        assert len(index) == 12  # 4 * 3, nothing masked
+
+    @pytest.mark.parametrize(
+        "head_to_prune, expected_index",
+        [
+            pytest.param({0}, list(range(3, 12)), id="prune-first-head"),
+            pytest.param({3}, list(range(9)), id="prune-last-head"),
+        ],
+    )
+    def test_prune_single_head_removes_correct_rows(self, head_to_prune, expected_index):
+        # Head N masked → N*head_size indices removed; remaining = n_heads*head_size - head_size = 9
+        heads, index = _find_pruneable_heads_and_indices(
+            head_to_prune, n_heads=4, head_size=3, already_pruned_heads=set()
+        )
+        assert heads == head_to_prune
+        assert len(index) == 9
+        assert index.tolist() == expected_index
+
+    def test_already_pruned_head_adjusts_offset(self):
+        # Head 0 was already pruned. Now pruning head 1 (which is now effective head 0
+        # after offset adjustment) should remove 3 more indices from the effective mask.
+        heads, index = _find_pruneable_heads_and_indices({1}, n_heads=4, head_size=3, already_pruned_heads={0})
+        assert 1 in heads
+        assert len(index) == 9  # 4*3 - 3 pruned
+
+
+# ---------------------------------------------------------------------------
+# Smoke tests for WindowedDinov2WithRegistersBackbone
+# ---------------------------------------------------------------------------
+
+
+def _minimal_backbone_config(**kwargs) -> WindowedDinov2WithRegistersConfig:
+    """Return the smallest valid config for backbone instantiation tests."""
+    defaults = dict(
+        hidden_size=32,
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        intermediate_size=64,
+        patch_size=16,
+        image_size=64,
+        num_register_tokens=0,
+        num_windows=1,
+    )
+    defaults.update(kwargs)
+    return WindowedDinov2WithRegistersConfig(**defaults)
+
+
+class TestWindowedDinov2WithRegistersBackbone:
+    """Smoke tests that guard against _init_transformers_backbone() API regressions."""
+
+    @pytest.mark.parametrize(
+        "attr",
+        [
+            pytest.param("stage_names", id="stage_names"),
+            pytest.param("out_features", id="out_features"),
+        ],
+    )
+    def test_instantiation_sets_list_attribute(self, attr):
+        config = _minimal_backbone_config()
+        backbone = WindowedDinov2WithRegistersBackbone(config)
+        assert hasattr(backbone, attr)
+        assert isinstance(getattr(backbone, attr), list)
+        assert len(getattr(backbone, attr)) > 0
+
+    def test_forward_returns_backbone_output(self):
+        config = _minimal_backbone_config()
+        backbone = WindowedDinov2WithRegistersBackbone(config)
+        backbone.eval()
+        pixel_values = torch.randn(1, 3, 64, 64)
+        with torch.no_grad():
+            output = backbone(pixel_values)
+        assert hasattr(output, "feature_maps")
+        assert len(output.feature_maps) == len(backbone.out_features)
+
+
+# ---------------------------------------------------------------------------
+# Test for output_attentions=True SDPA fallback path
+# ---------------------------------------------------------------------------
+
+
+class TestSdpaFallbackWithOutputAttentions:
+    """Guards the output_attentions behaviour in windowed attention."""
+
+    def test_output_attentions_true_raises(self):
+        """Windowed attention explicitly does not support output_attentions=True."""
+        config = _minimal_backbone_config()
+        model = WindowedDinov2WithRegistersModel(config)
+        model.eval()
+        pixel_values = torch.randn(1, 3, 64, 64)
+        with torch.no_grad():
+            with pytest.raises(AssertionError, match="output_attentions is not supported for windowed attention"):
+                model(pixel_values, output_attentions=True)
+
+
+class TestSetAttnImplementation:
+    """Tests for WindowedDinov2WithRegistersModel.set_attn_implementation."""
+
+    @pytest.mark.parametrize(
+        "switches, expected_impl, expected_cls",
+        [
+            pytest.param(["eager"], "eager", Dinov2WithRegistersAttention, id="sdpa-to-eager"),
+            pytest.param(["eager", "sdpa"], "sdpa", Dinov2WithRegistersSdpaAttention, id="roundtrip-back-to-sdpa"),
+        ],
+    )
+    def test_switch_updates_config_and_layers(self, switches, expected_impl, expected_cls):
+        """After each call in *switches*, config and all layer attention modules reflect the final impl."""
+        config = _minimal_backbone_config()
+        model = WindowedDinov2WithRegistersModel(config)
+
+        for impl in switches:
+            model.set_attn_implementation(impl)
+
+        assert model.config._attn_implementation == expected_impl
+        for layer in model.encoder.layer:
+            assert type(layer.attention) is expected_cls
+
+    def test_invalid_implementation_raises(self):
+        """Passing an unknown key raises ValueError with a clear message."""
+        config = _minimal_backbone_config()
+        model = WindowedDinov2WithRegistersModel(config)
+
+        with pytest.raises(ValueError, match="Unknown attn_implementation"):
+            model.set_attn_implementation("flash_attention_2")

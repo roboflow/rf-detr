@@ -17,10 +17,17 @@
 Transforms and data augmentation for both image + bbox.
 """
 
+from __future__ import annotations
+
+import inspect
 from collections.abc import Sequence
+from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-import albumentations as A
+try:
+    import albumentations as A
+except ImportError:
+    A = None  # type: ignore[assignment]
 import numpy as np
 import PIL
 import torch
@@ -214,7 +221,116 @@ def _build_albu_transform(name: str, params: Dict[str, Any]) -> A.BasicTransform
     aug_cls = getattr(A, name, None)
     if aug_cls is None:
         raise ValueError(f"Unknown Albumentations transform: {name!r}")
-    return aug_cls(**params)
+    return aug_cls(**_normalize_albu_params(name, params, aug_cls))
+
+
+@lru_cache(maxsize=None)
+def _random_sized_crop_uses_size_param(aug_cls: type) -> bool:
+    """Return whether ``RandomSizedCrop`` expects a ``size`` keyword.
+
+    The Albumentations 2.x API changed ``RandomSizedCrop`` from separate
+    ``height``/``width`` parameters to a single ``size=(height, width)``
+    parameter. This helper caches the signature check per class so repeated
+    transform construction during dataset setup does not repeat introspection.
+
+    Args:
+        aug_cls: Albumentations transform class to inspect.
+
+    Returns:
+        ``True`` when the class accepts a ``size`` keyword argument; otherwise
+        ``False``.
+    """
+
+    signature = inspect.signature(aug_cls.__init__)
+    return "size" in signature.parameters
+
+
+def _normalize_albu_params(name: str, params: Dict[str, Any], aug_cls: type) -> Dict[str, Any]:
+    """Normalize transform params across Albumentations API variations.
+
+    Currently this adapts ``RandomSizedCrop`` arguments so a config using
+    ``height``/``width`` works on Albumentations 2.x and a config using
+    ``size=(height, width)`` still works on Albumentations 1.x.
+
+    Args:
+        name: Albumentations transform name.
+        params: Raw transform parameter mapping from config.
+        aug_cls: Albumentations transform class that will be instantiated.
+
+    Returns:
+        A normalized copy of ``params`` suitable for the installed
+        Albumentations version.
+
+    Examples:
+        >>> class CropV2:
+        ...     def __init__(self, *, size, min_max_height): ...
+        >>> _normalize_albu_params(
+        ...     "RandomSizedCrop",
+        ...     {"min_max_height": [384, 600], "height": 640, "width": 640},
+        ...     CropV2,
+        ... )
+        {'min_max_height': [384, 600], 'size': (640, 640)}
+    """
+
+    normalized_params = dict(params)
+    if name != "RandomSizedCrop":
+        return normalized_params
+
+    uses_size = _random_sized_crop_uses_size_param(aug_cls)
+
+    if uses_size:
+        # Albumentations 2.x-style API: expects ``size`` and does not accept
+        # separate ``height``/``width`` kwargs.
+        has_size = "size" in normalized_params
+        has_height = "height" in normalized_params
+        has_width = "width" in normalized_params
+
+        if has_size:
+            # When ``size`` is already provided, drop any legacy ``height``/``width``
+            # so they are never forwarded as unexpected keyword arguments.
+            normalized_params.pop("height", None)
+            normalized_params.pop("width", None)
+            return normalized_params
+
+        if has_height and has_width:
+            height = normalized_params.pop("height")
+            width = normalized_params.pop("width")
+            normalized_params["size"] = (height, width)
+            return normalized_params
+
+        if has_height != has_width:
+            # One of ``height``/``width`` was provided without the other and no
+            # explicit ``size`` was given. This is ambiguous for the
+            # Albumentations 2.x API, so raise a targeted error instead of
+            # silently dropping parameters and surfacing a generic
+            # "missing required argument 'size'" error later.
+            missing = "width" if has_height and not has_width else "height"
+            raise ValueError(
+                f"RandomSizedCrop for the installed Albumentations version expects "
+                f"'size=(height, width)'. Received only one of 'height'/'width' "
+                f"without 'size' (missing '{missing}')."
+            )
+
+        # No ``size``, ``height``, or ``width`` provided; let Albumentations
+        # surface its own error about missing required arguments.
+        return normalized_params
+
+    # NOTE: For Albumentations builds >=1.4.24, ``RandomSizedCrop`` typically
+    # uses a ``size`` argument and ``uses_size`` will be True. This project
+    # also supports Albumentations 1.x-style APIs (and synthetic v1-style
+    # classes used in tests) where ``RandomSizedCrop`` may not accept ``size``
+    # directly; in those cases we map a provided ``size`` tuple back to
+    # separate ``height``/``width`` kwargs for compatibility.
+    if not uses_size and "size" in normalized_params:  # v1-style API compatibility path
+        size = normalized_params.get("size")
+        if isinstance(size, Sequence) and len(size) == 2:
+            normalized_params.setdefault("height", size[0])
+            normalized_params.setdefault("width", size[1])
+            # Only remove ``size`` after a successful conversion; otherwise leave
+            # it so Albumentations can raise an appropriate error.
+            normalized_params.pop("size", None)
+
+    return normalized_params
 
 
 class AlbumentationsWrapper:
@@ -400,6 +516,19 @@ class AlbumentationsWrapper:
                 raise ValueError(f"masks must have shape (N, H, W), got {masks_np.shape}")
             masks_np = masks_np.astype(np.uint8, copy=False)
             masks_list = [mask for mask in masks_np]
+        # Filter out degenerate boxes (zero-width or zero-height) before passing to
+        # Albumentations. Such boxes arise when an annotation sits exactly on or beyond
+        # the image boundary so that x_min == x_max (or y_min == y_max) after clipping.
+        # Albumentations' check_bboxes would raise ValueError for these inputs.
+        if num_boxes > 0:
+            valid_mask = (boxes_np[:, 2] > boxes_np[:, 0]) & (boxes_np[:, 3] > boxes_np[:, 1])
+            if not valid_mask.all():
+                valid_positions = np.where(valid_mask)[0].tolist()
+                boxes_np = boxes_np[valid_mask]
+                labels = [labels[i] for i in valid_positions]
+                # idxs carries original indices so downstream _filter_per_instance_fields
+                # can correctly slice fields from the un-filtered target.
+                idxs = [idxs[i] for i in valid_positions]
         # Apply transform
         transform_kwargs = {"image": image_np, "bboxes": boxes_np, "category_ids": labels, "idxs": idxs}
         if masks_list is not None and len(masks_list) > 0:

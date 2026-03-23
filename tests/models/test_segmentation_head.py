@@ -9,7 +9,7 @@ from contextlib import contextmanager
 import pytest
 import torch
 
-from rfdetr.models.segmentation_head import DepthwiseConvBlock
+from rfdetr.models.heads.segmentation import DepthwiseConvBlock
 
 
 @pytest.mark.parametrize(
