@@ -23,7 +23,7 @@ class ModelDefaults:
     """Hardcoded architectural constants not exposed in ModelConfig or TrainConfig.
 
     These values mirror the legacy ``build_namespace()`` hardcoded section
-    (``_namespace.py`` lines 120-170).  Making them explicit enables testing
+    implemented in ``_namespace.py``. Making them explicit enables testing
     and future overrides without touching config validation.
 
     Note:

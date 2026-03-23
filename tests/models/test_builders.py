@@ -8,7 +8,7 @@
 
 These tests validate build_model_from_config() and build_criterion_from_config()
 which accept Pydantic config objects directly instead of requiring a pre-built
-SimpleNamespace.  Until the functions are implemented, all tests skip via the
+SimpleNamespace. If these functions cannot be imported, all tests skip via the
 module-level pytestmark.
 """
 
