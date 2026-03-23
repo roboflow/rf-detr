@@ -69,7 +69,7 @@ class ModelContext:
         postprocess: PostProcess instance for converting raw outputs to boxes.
         device: Device the model lives on.
         resolution: Input resolution (square side length in pixels).
-        args: Namespace produced by :func:`build_namespace`.
+        args: Namespace produced by :func:`rfdetr._namespace._namespace_from_configs`.
         class_names: Optional list of class name strings loaded from checkpoint.
     """
 

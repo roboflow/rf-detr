@@ -15,7 +15,7 @@ touching config validation.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Dict, List, Optional
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,6 +25,13 @@ class ModelDefaults:
     These values mirror the legacy ``build_namespace()`` hardcoded section
     (``_namespace.py`` lines 120-170).  Making them explicit enables testing
     and future overrides without touching config validation.
+
+    Note:
+        ``ModelDefaults`` is public API as of v1.7.  Fields that represent
+        true architectural decisions (e.g. ``dim_feedforward``, ``aux_loss``)
+        will be promoted to ``ModelConfig`` or ``TrainConfig`` in future
+        phases; field names and defaults may change across minor versions
+        during this transitional period.
 
     Attributes:
         drop_mode: Drop-path mode used during training.
@@ -73,11 +80,11 @@ class ModelDefaults:
     drop_schedule: str = "constant"
     cutoff_epoch: int = 0
     pretrained_encoder: Optional[str] = None
-    pretrain_exclude_keys: Optional[Any] = None
-    pretrain_keys_modify_to_load: Optional[Any] = None
-    pretrained_distiller: Optional[Any] = None
+    pretrain_exclude_keys: Optional[List[str]] = None
+    pretrain_keys_modify_to_load: Optional[Dict[str, str]] = None
+    pretrained_distiller: Optional[str] = None
     vit_encoder_num_layers: int = 12
-    window_block_indexes: Optional[Any] = None
+    window_block_indexes: Optional[List[int]] = None
     position_embedding: str = "sine"
     rms_norm: bool = False
     force_no_pretrain: bool = False

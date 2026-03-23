@@ -102,6 +102,23 @@ class TestBuildModelFromConfig:
         with pytest.raises(ValueError, match="encoder_only=False"):
             build_model_from_config(mc, defaults=replace(MODEL_DEFAULTS, encoder_only=True))
 
+    def test_rejects_backbone_only_defaults(self) -> None:
+        """backbone_only=True in defaults must also raise ValueError."""
+        from dataclasses import replace
+
+        from rfdetr.models import MODEL_DEFAULTS
+
+        mc = RFDETRBaseConfig(num_classes=80)
+
+        with pytest.raises(ValueError, match="backbone_only=False"):
+            build_model_from_config(mc, defaults=replace(MODEL_DEFAULTS, backbone_only=True))
+
+    def test_none_train_config_uses_dummy(self) -> None:
+        """build_model_from_config with train_config=None must not raise."""
+        mc = RFDETRBaseConfig(num_classes=80)
+        model = build_model_from_config(mc, train_config=None)
+        assert model is not None, "Expected a model, got None"
+
 
 class TestBuildCriterionFromConfig:
     """Tests for build_criterion_from_config(model_config, train_config, defaults)."""
@@ -133,3 +150,15 @@ class TestBuildCriterionFromConfig:
         tc = SegmentationTrainConfig(dataset_dir="/tmp")
         criterion, _ = build_criterion_from_config(mc, tc)
         assert "masks" in criterion.losses, f"Expected 'masks' in criterion.losses, got {criterion.losses}"
+
+    def test_custom_defaults_focal_alpha_applied(self) -> None:
+        """Custom focal_alpha in ModelDefaults must reach SetCriterion."""
+        from dataclasses import replace
+
+        from rfdetr.models import MODEL_DEFAULTS
+
+        mc = RFDETRBaseConfig(num_classes=80)
+        tc = TrainConfig(dataset_dir="/tmp")
+        custom_defaults = replace(MODEL_DEFAULTS, focal_alpha=0.5)
+        criterion, _ = build_criterion_from_config(mc, tc, defaults=custom_defaults)
+        assert criterion.focal_alpha == pytest.approx(0.5), f"Expected focal_alpha=0.5, got {criterion.focal_alpha}"

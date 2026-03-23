@@ -29,6 +29,12 @@ def _namespace_from_configs(
     namespace without going through the public ``build_namespace()`` API
     while still accepting overridable defaults.
 
+    This function is used by multiple modules as the transitional namespace
+    bridge: :func:`rfdetr.models.build_model_from_config`,
+    :func:`rfdetr.models.build_criterion_from_config`, and
+    :func:`rfdetr.detr._build_model_context` all call it directly to avoid
+    the public ``build_namespace()`` shim.
+
     Args:
         model_config: Architecture configuration.
         train_config: Training hyperparameter configuration.

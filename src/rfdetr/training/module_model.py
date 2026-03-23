@@ -17,7 +17,7 @@ import torch
 import torch.nn.functional as F
 from pytorch_lightning import LightningModule, seed_everything
 
-from rfdetr._namespace import build_namespace
+from rfdetr._namespace import _namespace_from_configs
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.datasets.coco import compute_multi_scale_scales
 from rfdetr.models import build_criterion_from_config, build_model_from_config
@@ -222,7 +222,7 @@ class RFDETRModelModule(LightningModule):
             PTL optimizer config dict with optimizer and step-interval scheduler.
         """
         tc = self.train_config
-        ns = build_namespace(self.model_config, tc)
+        ns = _namespace_from_configs(self.model_config, tc)
 
         # Unwrap torch.compile's OptimizedModule so get_param_dict sees the
         # original module's named_parameters() — compiled wrapper can cause

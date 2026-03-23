@@ -492,6 +492,11 @@ def build_model_from_config(
     Constructs the namespace internally from ``model_config``, an optional
     ``train_config``, and ``defaults``, then delegates to :func:`build_model`.
 
+    Note:
+        The internal ``SimpleNamespace`` bridge is transitional — it will be
+        eliminated once all builder functions accept config objects directly.
+        Callers should not rely on the namespace shape or pass it externally.
+
     Args:
         model_config: Architecture configuration.
         train_config: Training hyperparameter configuration. If ``None``,
