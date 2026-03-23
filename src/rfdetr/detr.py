@@ -45,8 +45,6 @@ except Exception:
 logger = get_logger()
 
 # ModelContext and _build_model_context are eagerly imported above (runtime use in get_model).
-# Only _ModelContext is resolved lazily via __getattr__.
-_INFERENCE_EXPORTS = ("_ModelContext",)
 _VARIANT_EXPORTS = (
     "RFDETRBase",
     "RFDETRLarge",
@@ -63,7 +61,7 @@ _VARIANT_EXPORTS = (
     "RFDETRSegXLarge",
     "RFDETRSmall",
 )
-__all__ = ["RFDETR", "ModelContext", "_build_model_context", *_INFERENCE_EXPORTS, *_VARIANT_EXPORTS]
+__all__ = ["RFDETR", "ModelContext", "_build_model_context", *_VARIANT_EXPORTS]
 
 
 class RFDETR:
@@ -628,12 +626,6 @@ class RFDETR:
 def __getattr__(name: str):
     """Lazily resolve legacy re-exports without creating import-order cycles."""
 
-    if name in _INFERENCE_EXPORTS:
-        module = importlib.import_module("rfdetr.inference")
-        value = getattr(module, name)
-        globals()[name] = value
-        return value
-
     if name in _VARIANT_EXPORTS:
         module = importlib.import_module("rfdetr.variants")
         value = getattr(module, name)
@@ -646,4 +638,4 @@ def __getattr__(name: str):
 def __dir__() -> list[str]:
     """Include lazy re-exports in interactive discovery."""
 
-    return sorted(set(globals()) | set(_INFERENCE_EXPORTS) | set(_VARIANT_EXPORTS))
+    return sorted(set(globals()) | set(_VARIANT_EXPORTS))

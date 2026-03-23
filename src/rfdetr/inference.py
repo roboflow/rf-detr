@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-__all__ = ["ModelContext", "_ModelContext", "_build_model_context"]
+__all__ = ["ModelContext"]
 
 from typing import TYPE_CHECKING, Any, List, Optional
 
@@ -61,9 +61,6 @@ class ModelContext:
         """
         self.model.reinitialize_detection_head(num_classes)
         self.args.num_classes = num_classes
-
-
-_ModelContext = ModelContext  # backward compat alias
 
 
 def _build_model_context(model_config: ModelConfig) -> ModelContext:
