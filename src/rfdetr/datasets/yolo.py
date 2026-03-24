@@ -224,7 +224,13 @@ def _parse_yolo_label_line(
         box = _parse_yolo_box(values[1:])
         polygon = _box_to_polygon(box)
     else:
-        polygon = _parse_yolo_polygon(values[1:])
+        try:
+            polygon = _parse_yolo_polygon(values[1:])
+        except ValueError as exc:
+            raise ValueError(
+                f"Malformed polygon in {str(label_path)!r} at line {line_num}: "
+                f"could not parse coordinate values as floats."
+            ) from exc
         box = np.array(
             [
                 np.min(polygon[:, 0]),
