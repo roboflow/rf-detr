@@ -139,8 +139,8 @@ class RFDETR:
             from rfdetr.training.auto_batch import resolve_auto_batch_config
         except ModuleNotFoundError as exc:
             # Preserve internal import errors so packaging/regression issues in
-            # rfdetr.training are not misreported as missing optional extras.
-            if exc.name and exc.name.startswith("rfdetr.training"):
+            # rfdetr.* are not misreported as missing optional extras.
+            if exc.name and exc.name.startswith("rfdetr."):
                 raise
             raise ImportError(
                 "RF-DETR training dependencies are missing. "
