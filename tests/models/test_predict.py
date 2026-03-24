@@ -92,3 +92,70 @@ def test_predict_accepts_image_url() -> None:
     detections = model.predict(_HTTP_IMAGE_URL)
     assert isinstance(detections, sv.Detections)
     assert detections.xyxy.shape == (1, 4)
+
+
+class TestPredictShape:
+    """Verify that ``predict(shape=...)`` controls the resize target.
+
+    Regression tests for https://github.com/roboflow/rf-detr/issues/682.
+    """
+
+    def test_predict_uses_resolution_when_no_shape_provided(self) -> None:
+        """Without ``shape=``, resize uses ``(resolution, resolution)``."""
+        from unittest.mock import patch
+
+        import torchvision.transforms.functional as F
+
+        model = _DummyRFDETR()
+        img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
+
+        with patch("rfdetr.detr.F.resize", wraps=F.resize) as mock_resize:
+            model.predict(img)
+
+        resize_size = list(mock_resize.call_args[0][1])
+        assert resize_size == [32, 32], f"Expected resize to model resolution (32, 32), got {resize_size}"
+
+    def test_predict_uses_provided_rectangular_shape(self) -> None:
+        # Regression test for #682
+        from unittest.mock import patch
+
+        import torchvision.transforms.functional as F
+
+        model = _DummyRFDETR()
+        img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
+
+        with patch("rfdetr.detr.F.resize", wraps=F.resize) as mock_resize:
+            model.predict(img, shape=(378, 672))
+
+        resize_size = list(mock_resize.call_args[0][1])
+        assert resize_size == [378, 672], (
+            f"Expected resize to user-provided shape (378, 672), got {resize_size}. "
+            "predict() must honour the shape parameter instead of falling back "
+            "to (resolution, resolution)."
+        )
+
+    def test_predict_shape_square_override(self) -> None:
+        # Regression test for #682 — square shape different from model resolution.
+        from unittest.mock import patch
+
+        import torchvision.transforms.functional as F
+
+        model = _DummyRFDETR()
+        img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
+
+        with patch("rfdetr.detr.F.resize", wraps=F.resize) as mock_resize:
+            model.predict(img, shape=(56, 56))
+
+        resize_size = list(mock_resize.call_args[0][1])
+        assert resize_size == [56, 56], (
+            f"Expected resize to user-provided shape (56, 56), got {resize_size}. "
+            "predict() must honour the shape parameter even for square sizes "
+            "that differ from the model's default resolution."
+        )
+
+    def test_predict_shape_not_divisible_by_14_raises(self) -> None:
+        """predict() must reject shapes with dimensions not divisible by 14."""
+        model = _DummyRFDETR()
+        img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
+        with pytest.raises(ValueError, match="divisible by 14"):
+            model.predict(img, shape=(378, 671))  # 671 % 14 != 0

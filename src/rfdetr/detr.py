@@ -457,6 +457,7 @@ class RFDETR:
             str, Image.Image, np.ndarray, torch.Tensor, List[Union[str, np.ndarray, Image.Image, torch.Tensor]]
         ],
         threshold: float = 0.5,
+        shape: Optional[tuple[int, int]] = None,
         **kwargs,
     ) -> Union[sv.Detections, List[sv.Detections]]:
         """Performs object detection on the input images and returns bounding box
@@ -473,6 +474,12 @@ class RFDETR:
                 as file paths, PIL Images, NumPy arrays, or torch.Tensors.
             threshold:
                 The minimum confidence score needed to consider a detected bounding box valid.
+            shape:
+                Optional ``(height, width)`` tuple to resize images to before inference.
+                When provided, overrides the model's default square resolution. Useful
+                when running inference on a model exported with a non-square shape via
+                ``export(shape=(H, W))``. Defaults to
+                ``(model.resolution, model.resolution)`` when not set.
             **kwargs:
                 Additional keyword arguments.
 
@@ -481,6 +488,10 @@ class RFDETR:
             coordinates, confidence scores, and class IDs.
         """
         import supervision as sv
+
+        if shape is not None:
+            if shape[0] % 14 != 0 or shape[1] % 14 != 0:
+                raise ValueError(f"shape must have both dimensions divisible by 14, got {shape}.")
 
         if not self._is_optimized_for_inference and not self._has_warned_about_not_being_optimized_for_inference:
             logger.warning(
@@ -518,7 +529,8 @@ class RFDETR:
             orig_sizes.append((h, w))
 
             img_tensor = img_tensor.to(self.model.device)
-            img_tensor = F.resize(img_tensor, (self.model.resolution, self.model.resolution))
+            resize_to = list(shape) if shape is not None else [self.model.resolution, self.model.resolution]
+            img_tensor = F.resize(img_tensor, resize_to)
             img_tensor = F.normalize(img_tensor, self.means, self.stds)
 
             processed_images.append(img_tensor)
@@ -526,12 +538,16 @@ class RFDETR:
         batch_tensor = torch.stack(processed_images)
 
         if self._is_optimized_for_inference:
-            if self._optimized_resolution != batch_tensor.shape[2]:
-                # this could happen if someone manually changes self.model.resolution after optimizing the model
+            if (
+                self._optimized_resolution != batch_tensor.shape[2]
+                or self._optimized_resolution != batch_tensor.shape[3]
+            ):
+                # this could happen if someone manually changes self.model.resolution after optimizing the model,
+                # or if predict(shape=...) is used with a shape that doesn't match the compiled square resolution.
                 raise ValueError(
                     f"Resolution mismatch. "
-                    f"Model was optimized for resolution {self._optimized_resolution}, "
-                    f"but got {batch_tensor.shape[2]}."
+                    f"Model was optimized for resolution {self._optimized_resolution}x{self._optimized_resolution}, "
+                    f"but got {batch_tensor.shape[2]}x{batch_tensor.shape[3]}."
                     " You can explicitly remove the optimized model by calling model.remove_optimized_model()."
                 )
             if self._optimized_has_been_compiled:
