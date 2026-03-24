@@ -512,8 +512,9 @@ class CocoLikeAPI:
             categories.append({"id": idx, "name": class_name, "supercategory": "none"})
 
         ann_id = 0
+        use_lazy_path = hasattr(self.sv_dataset, "get_image_info")
         for img_id in range(len(self.sv_dataset)):
-            if hasattr(self.sv_dataset, "get_image_info"):
+            if use_lazy_path:
                 sample = self.sv_dataset.get_image_info(img_id)
                 image_path = sample.image_path
                 h, w = sample.height, sample.width
@@ -689,8 +690,14 @@ class CocoLikeAPI:
 
 
 class YoloDetection(VisionDataset):
-    """
-    YOLO format dataset using supervision.DetectionDataset.from_yolo().
+    """YOLO format dataset with optional lazy segmentation mask loading.
+
+    For detection (``include_masks=False``) this delegates to
+    ``supervision.DetectionDataset.from_yolo()`` and loads every image eagerly.
+    For segmentation (``include_masks=True``) a lazy backend is used instead:
+    polygon coordinates are stored at construction time and dense H×W masks are
+    only rasterized on demand in ``__getitem__``, keeping RAM proportional to
+    the number of annotations rather than to (N × H × W).
 
     This class provides a VisionDataset interface compatible with RF-DETR training,
     matching the API of CocoDetection.
@@ -700,7 +707,9 @@ class YoloDetection(VisionDataset):
         lb_folder: Path to the directory containing YOLO annotation .txt files
         data_file: Path to data.yaml file containing class names and dataset info
         transforms: Optional transforms to apply to images and targets
-        include_masks: Whether to load segmentation masks (for YOLO segmentation format)
+        include_masks: Whether to load segmentation masks (for YOLO segmentation format).
+            When True the lazy polygon-based backend is used to avoid materialising
+            all masks into RAM during dataset initialisation.
     """
 
     def __init__(
