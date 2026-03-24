@@ -44,11 +44,11 @@ The `export()` method accepts several parameters to customize the export process
 | --------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `output_dir`    | `"output"` | Directory where the exported ONNX model will be saved.                                                                 |
 | `infer_dir`     | `None`     | Path to an image file to use for tracing. If not provided, a random dummy image is generated.                          |
-| `simplify`      | `False`    | Deprecated and ignored. ONNX simplification is no longer run by `export()`.                                             |
+| `simplify`      | `False`    | Deprecated and ignored. ONNX simplification is no longer run by `export()`.                                            |
 | `backbone_only` | `False`    | Export only the backbone feature extractor instead of the full model.                                                  |
 | `opset_version` | `17`       | ONNX opset version to use for export. Higher versions support more operations.                                         |
 | `verbose`       | `True`     | Whether to print verbose export information.                                                                           |
-| `force`         | `False`    | Deprecated and ignored.                                                                                               |
+| `force`         | `False`    | Deprecated and ignored.                                                                                                |
 | `shape`         | `None`     | Input shape as tuple `(height, width)`. Must be divisible by 14. If not provided, uses the model's default resolution. |
 | `batch_size`    | `1`        | Batch size for the exported model.                                                                                     |
 
