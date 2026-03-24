@@ -125,6 +125,10 @@ class RFDETR:
         After training completes the underlying ``nn.Module`` is synced back
         onto ``self.model.model`` so that :meth:`predict` and :meth:`export`
         continue to work without reloading the checkpoint.
+
+        Raises:
+            ImportError: If training dependencies are not installed. Install with
+                ``pip install "rfdetr[train,loggers]"``.
         """
         try:
             from rfdetr.training import RFDETRDataModule, RFDETRModelModule, build_trainer
