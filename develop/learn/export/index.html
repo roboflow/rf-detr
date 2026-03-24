@@ -1112,10 +1112,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#export-with-simplification" class="md-nav__link">
+  <a href="#deprecated-export-with-simplification" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Export with Simplification
+        Deprecated: Export with Simplification
       
     </span>
   </a>
@@ -2194,10 +2194,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#export-with-simplification" class="md-nav__link">
+  <a href="#deprecated-export-with-simplification" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Export with Simplification
+        Deprecated: Export with Simplification
       
     </span>
   </a>
@@ -2393,7 +2393,7 @@
 <tr>
 <td><code>simplify</code></td>
 <td><code>False</code></td>
-<td>Whether to simplify the ONNX model using onnxsim for better compatibility and performance.</td>
+<td>Deprecated and ignored. ONNX simplification is no longer run by <code>export()</code>.</td>
 </tr>
 <tr>
 <td><code>backbone_only</code></td>
@@ -2413,7 +2413,7 @@
 <tr>
 <td><code>force</code></td>
 <td><code>False</code></td>
-<td>Force re-export even if simplified model already exists.</td>
+<td>Deprecated and ignored.</td>
 </tr>
 <tr>
 <td><code>shape</code></td>
@@ -2435,13 +2435,13 @@
 </span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>
 </span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="n">output_dir</span><span class="o">=</span><span class="s2">&quot;exports/my_model&quot;</span><span class="p">)</span>
 </span></code></pre></div>
-<h3 id="export-with-simplification">Export with Simplification<a class="headerlink" href="#export-with-simplification" title="Permanent link">&para;</a></h3>
-<p>Simplifying the ONNX model can improve inference performance and compatibility with various runtimes:</p>
+<h3 id="deprecated-export-with-simplification">Deprecated: Export with Simplification<a class="headerlink" href="#deprecated-export-with-simplification" title="Permanent link">&para;</a></h3>
+<p>The <code>simplify</code> flag is deprecated and ignored:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRMedium</span>
 </span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
 </span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRMedium</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">&quot;&lt;path/to/checkpoint.pth&gt;&quot;</span><span class="p">)</span>
 </span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>
-</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="n">simplify</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="n">simplify</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>  <span class="c1"># Deprecated: same result as model.export()</span>
 </span></code></pre></div>
 <h3 id="export-with-custom-resolution">Export with Custom Resolution<a class="headerlink" href="#export-with-custom-resolution" title="Permanent link">&para;</a></h3>
 <p>Export the model with a specific input resolution (must be divisible by 14):</p>
@@ -2463,7 +2463,6 @@
 <p>After running the export, you will find the following files in your output directory:</p>
 <ul>
 <li><code>inference_model.onnx</code> - The exported ONNX model (or <code>backbone_model.onnx</code> if <code>backbone_only=True</code>)</li>
-<li><code>inference_model.sim.onnx</code> - The simplified ONNX model (if <code>simplify=True</code>)</li>
 </ul>
 <h2 id="optional-convert-onnx-to-tensorrt">Optional: Convert ONNX to TensorRT<a class="headerlink" href="#optional-convert-onnx-to-tensorrt" title="Permanent link">&para;</a></h2>
 <p>If you want lower latency on NVIDIA GPUs, you can convert the exported ONNX model to a TensorRT engine.</p>
