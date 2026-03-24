@@ -3,4 +3,8 @@
 * @SkalskiP @Borda @probicheaux @isaacrob
 
 # supervise the core model modules
-/rfdetr @probicheaux @isaacrob @Matvezy
+/rfdetr                 @probicheaux @isaacrob @Matvezy
+
+# supervise the training modules
+/src/rfdetr/training/   @Borda @probicheaux @isaacrob
+/tests/training/        @Borda @probicheaux @isaacrob
