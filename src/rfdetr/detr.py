@@ -5,8 +5,8 @@
 # ------------------------------------------------------------------------
 from __future__ import annotations
 
-import glob
 import functools
+import glob
 import importlib
 import json
 import os
@@ -265,7 +265,7 @@ class RFDETR:
         },
         deprecated_in="1.6",
         remove_in="1.8",
-        num_warns=-1,
+        num_warns=1,
         stream=functools.partial(warnings.warn, category=DeprecationWarning, stacklevel=2),
     )
     def export(
