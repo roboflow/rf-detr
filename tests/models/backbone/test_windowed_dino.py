@@ -421,3 +421,37 @@ class TestSetAttnImplementation:
 
         with pytest.raises(ValueError, match="Unknown attn_implementation"):
             model.set_attn_implementation("flash_attention_2")
+
+
+@pytest.mark.parametrize(
+    "h, w, num_windows, should_raise",
+    [
+        pytest.param(64, 64, 2, False, id="valid-square"),
+        pytest.param(64, 96, 2, False, id="valid-rectangular"),
+        pytest.param(32, 32, 1, False, id="num_windows-1-valid"),
+        pytest.param(33, 64, 2, True, id="h-not-divisible"),
+        pytest.param(64, 33, 2, True, id="w-not-divisible"),
+        pytest.param(33, 33, 2, True, id="both-not-divisible"),
+    ],
+)
+def test_forward_validates_spatial_dims(h: int, w: int, num_windows: int, should_raise: bool) -> None:
+    """WindowedDinov2WithRegistersEmbeddings raises ValueError for incompatible dims.
+
+    Both H and W must be divisible by patch_size * num_windows.  The check
+    must survive Python's -O flag (assert would be silently stripped).
+    """
+    patch_size = 16
+    config = WindowedDinov2WithRegistersConfig(
+        hidden_size=32,
+        patch_size=patch_size,
+        num_windows=num_windows,
+        image_size=max(h, w),
+        num_register_tokens=0,
+    )
+    model = WindowedDinov2WithRegistersEmbeddings(config)
+    pixel_values = torch.randn(1, 3, h, w)
+    if should_raise:
+        with pytest.raises(ValueError, match="divisible"):
+            model(pixel_values)
+    else:
+        model(pixel_values)  # must not raise

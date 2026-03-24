@@ -116,12 +116,11 @@ class TestLoadPretrainWeightsSecondReinit:
         from rfdetr.models.weights import load_pretrain_weights
 
         mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu")
-        tc = _make_train_config()
         checkpoint = _make_checkpoint(num_classes=3)
         monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
 
         fake_model = MagicMock()
-        load_pretrain_weights(fake_model, mc, tc)
+        load_pretrain_weights(fake_model, mc)
 
         calls = fake_model.reinitialize_detection_head.call_args_list
         assert calls[0] == call(3), f"First reinit should resize to checkpoint size 3, got {calls[0]}"
@@ -139,12 +138,11 @@ class TestLoadPretrainWeightsSecondReinit:
         from rfdetr.models.weights import load_pretrain_weights
 
         mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu", num_classes=90)
-        tc = _make_train_config()
         checkpoint = _make_checkpoint(num_classes=91)
         monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
 
         fake_model = MagicMock()
-        load_pretrain_weights(fake_model, mc, tc)
+        load_pretrain_weights(fake_model, mc)
 
         fake_model.reinitialize_detection_head.assert_not_called()
 
@@ -158,12 +156,11 @@ class TestLoadPretrainWeightsSecondReinit:
         from rfdetr.models.weights import load_pretrain_weights
 
         mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu", num_classes=2)
-        tc = _make_train_config()
         checkpoint = _make_checkpoint(num_classes=91)
         monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
 
         fake_model = MagicMock()
-        load_pretrain_weights(fake_model, mc, tc)
+        load_pretrain_weights(fake_model, mc)
 
         calls = fake_model.reinitialize_detection_head.call_args_list
         assert calls == [call(91), call(3)], f"Expected reinit to [91, 3] (expand then trim), got {calls}"
@@ -178,13 +175,31 @@ class TestLoadPretrainWeightsSecondReinit:
         from rfdetr.models.weights import load_pretrain_weights
 
         mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu", num_classes=93)
-        tc = _make_train_config()
         checkpoint = _make_checkpoint(num_classes=91)
         monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
 
         fake_model = MagicMock()
-        load_pretrain_weights(fake_model, mc, tc)
+        load_pretrain_weights(fake_model, mc)
 
         calls = fake_model.reinitialize_detection_head.call_args_list
         assert calls == [call(91), call(94)], f"Expected reinit to [91, 94] (load then expand), got {calls}"
         assert mc.num_classes == 93, "Explicitly configured num_classes must not be overwritten."
+
+
+# ---------------------------------------------------------------------------
+# Deprecation: train_config argument
+# ---------------------------------------------------------------------------
+
+
+class TestLoadPretrainWeightsDeprecation:
+    """Passing train_config must emit a DeprecationWarning."""
+
+    def test_emits_deprecation_warning_when_train_config_passed(self, monkeypatch):
+        """Any non-None train_config triggers a DeprecationWarning."""
+        from rfdetr.models.weights import load_pretrain_weights
+
+        mc = RFDETRBaseConfig(pretrain_weights=None, device="cpu")
+        tc = _make_train_config()
+
+        with pytest.warns(DeprecationWarning, match="train_config.*deprecated"):
+            load_pretrain_weights(MagicMock(), mc, tc)

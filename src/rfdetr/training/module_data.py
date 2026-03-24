@@ -13,7 +13,7 @@ import torch.utils.data
 from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader
 
-from rfdetr._namespace import build_namespace
+from rfdetr._namespace import _namespace_from_configs
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.datasets import build_dataset
 from rfdetr.utilities.logger import get_logger
@@ -73,7 +73,7 @@ class RFDETRDataModule(LightningDataModule):
                 ``"test"``, or ``"predict"``.
         """
         resolution = self.model_config.resolution
-        ns = build_namespace(self.model_config, self.train_config)
+        ns = _namespace_from_configs(self.model_config, self.train_config)
         if stage == "fit":
             if self._dataset_train is None:
                 self._dataset_train = build_dataset("train", ns, resolution)

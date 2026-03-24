@@ -32,8 +32,8 @@ import importlib.machinery
 import importlib.util
 import sys
 
-from rfdetr.detr import (
-    ModelContext,
+from rfdetr.inference import ModelContext
+from rfdetr.variants import (
     RFDETRBase,  # DEPRECATED # noqa: F401
     RFDETRLarge,
     RFDETRLargeDeprecated,  # DEPRECATED # noqa: F401
