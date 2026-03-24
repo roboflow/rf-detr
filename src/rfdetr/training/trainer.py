@@ -126,17 +126,19 @@ def build_trainer(
     )
 
     # Latest resume checkpoint — overwritten every epoch.
-    callbacks.append(
-        ModelCheckpoint(
-            dirpath=tc.output_dir,
-            filename="last",
-            every_n_epochs=1,
-            save_top_k=1,
-            enable_version_counter=False,
-            auto_insert_metric_name=False,
-            verbose=False,
+    # Skip when checkpoint_interval == 1 to avoid duplicate ModelCheckpoint state_key.
+    if tc.checkpoint_interval != 1:
+        callbacks.append(
+            ModelCheckpoint(
+                dirpath=tc.output_dir,
+                filename="last",
+                every_n_epochs=1,
+                save_top_k=1,
+                enable_version_counter=False,
+                auto_insert_metric_name=False,
+                verbose=False,
+            )
         )
-    )
 
     # Interval archive checkpoints — kept for the full run.
     callbacks.append(
