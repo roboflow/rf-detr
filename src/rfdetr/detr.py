@@ -125,9 +125,27 @@ class RFDETR:
         After training completes the underlying ``nn.Module`` is synced back
         onto ``self.model.model`` so that :meth:`predict` and :meth:`export`
         continue to work without reloading the checkpoint.
+
+        Raises:
+            ImportError: If training dependencies are not installed. Install with
+                ``pip install "rfdetr[train,loggers]"``.
         """
-        from rfdetr.training import RFDETRDataModule, RFDETRModelModule, build_trainer
-        from rfdetr.training.auto_batch import resolve_auto_batch_config
+        # Both imports are grouped in a single try block because they both live in
+        # the `rfdetr[train]` extras group — a missing `pytorch_lightning` (or any
+        # other training-extras package) causes either import to fail, and the
+        # remediation is identical: `pip install "rfdetr[train,loggers]"`.
+        try:
+            from rfdetr.training import RFDETRDataModule, RFDETRModelModule, build_trainer
+            from rfdetr.training.auto_batch import resolve_auto_batch_config
+        except ModuleNotFoundError as exc:
+            # Preserve internal import errors so packaging/regression issues in
+            # rfdetr.* are not misreported as missing optional extras.
+            if exc.name and exc.name.startswith("rfdetr."):
+                raise
+            raise ImportError(
+                "RF-DETR training dependencies are missing. "
+                'Install them with `pip install "rfdetr[train,loggers]"` and try again.'
+            ) from exc
 
         # Absorb legacy `callbacks` dict — warn if non-empty, then discard.
         callbacks_dict = kwargs.pop("callbacks", None)

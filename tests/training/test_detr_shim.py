@@ -14,6 +14,7 @@
 """
 
 import argparse
+import builtins
 import importlib
 import sys
 import warnings
@@ -168,6 +169,42 @@ class TestRFDETRTrainPTL:
         with p_mod, p_dm, p_bt:
             result = RFDETR.train(mock_self)
         assert result is None
+
+    def test_missing_training_extra_raises_install_hint(self, tmp_path, monkeypatch):
+        """Missing training dependencies should raise ImportError with extras install hint."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        real_import = builtins.__import__
+
+        def _mock_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name == "rfdetr.training":
+                raise ModuleNotFoundError("No module named 'pytorch_lightning'", name="pytorch_lightning")
+            return real_import(name, globals, locals, fromlist, level)
+
+        monkeypatch.setattr(builtins, "__import__", _mock_import)
+
+        with pytest.raises(ImportError, match=r"rfdetr\[train,loggers\]") as exc_info:
+            RFDETR.train(mock_self)
+        assert exc_info.value.__cause__ is not None
+
+    @pytest.mark.parametrize(
+        "missing_name",
+        ["rfdetr.training", "rfdetr.training.auto_batch"],
+        ids=["training-package", "training-submodule"],
+    )
+    def test_internal_training_module_import_error_preserved(self, tmp_path, monkeypatch, missing_name):
+        """Missing internal training modules should keep original ModuleNotFoundError."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        real_import = builtins.__import__
+
+        def _mock_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name == missing_name:
+                raise ModuleNotFoundError(f"No module named '{missing_name}'", name=missing_name)
+            return real_import(name, globals, locals, fromlist, level)
+
+        monkeypatch.setattr(builtins, "__import__", _mock_import)
+
+        with pytest.raises(ModuleNotFoundError, match=missing_name.replace(".", r"\.")):
+            RFDETR.train(mock_self)
 
     def test_class_names_synced_from_datamodule_after_training(self, tmp_path):
         """self.model.class_names is set from RFDETRDataModule.class_names after train().
