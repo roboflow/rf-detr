@@ -91,9 +91,15 @@ class TestBuildTrainerCallbacks:
 
     def test_latest_model_checkpoint_present(self, tmp_path):
         """A ModelCheckpoint (not BestModelCallback) with every_n_epochs==1 is always included."""
-        trainer = build_trainer(_tc(tmp_path, use_ema=False), _mc())
+        trainer = build_trainer(_tc(tmp_path, use_ema=False, checkpoint_interval=2), _mc())
         resume_cbs = _find_resume_checkpoints(trainer)
         assert any(cb._every_n_epochs == 1 for cb in resume_cbs)
+
+    def test_latest_model_checkpoint_absent_when_checkpoint_interval_one(self, tmp_path):
+        """No separate latest checkpoint callback when interval already saves every epoch."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=False, checkpoint_interval=1), _mc())
+        resume_cbs = _find_resume_checkpoints(trainer)
+        assert not any(cb._every_n_epochs == 1 and cb.save_top_k == 1 for cb in resume_cbs)
 
     def test_interval_model_checkpoint_present(self, tmp_path):
         """A ModelCheckpoint (not BestModelCallback) with every_n_epochs==checkpoint_interval is always included."""
@@ -101,6 +107,12 @@ class TestBuildTrainerCallbacks:
         trainer = build_trainer(tc, _mc())
         resume_cbs = _find_resume_checkpoints(trainer)
         assert any(cb._every_n_epochs == tc.checkpoint_interval for cb in resume_cbs)
+
+    def test_checkpoint_interval_one_has_single_resume_checkpoint_callback(self, tmp_path):
+        """checkpoint_interval=1 config creates only one non-best ModelCheckpoint callback."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=False, checkpoint_interval=1), _mc())
+        resume_cbs = _find_resume_checkpoints(trainer)
+        assert len(resume_cbs) == 1
 
     def test_interval_checkpoint_uses_interval_from_config(self, tmp_path):
         """Interval ModelCheckpoint receives checkpoint_interval=7 from TrainConfig."""
