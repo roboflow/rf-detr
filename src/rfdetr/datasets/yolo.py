@@ -101,14 +101,42 @@ def _extract_yolo_class_names(data_file: str) -> list[str]:
         raise ValueError(f"Expected mapping in data file {data_file!r}, got {type(data).__name__}.")
     names = data.get("names")
     if isinstance(names, dict):
-
-        def _key_sort_value(key: Any) -> tuple[int, int | str]:
+        # YOLO label files use integer class IDs. When ``names`` is a mapping, we
+        # only support the standard numeric-keyed form where keys are a contiguous
+        # 0-based range: {0: "cat", 1: "dog", ...}. This keeps class IDs consistent
+        # with range checks downstream that assume valid IDs are 0..N-1.
+        numeric_keys: list[int] = []
+        non_numeric_keys: list[Any] = []
+        for key in names.keys():
             key_str = str(key)
             if key_str.isdigit():
-                return 0, int(key_str)
-            return 1, key_str
+                numeric_keys.append(int(key_str))
+            else:
+                non_numeric_keys.append(key)
 
-        return [str(names[key]) for key in sorted(names.keys(), key=_key_sort_value)]
+        if not numeric_keys:
+            raise ValueError(
+                "Unsupported 'names' mapping in data file "
+                f"{data_file!r}: expected integer keys 0..N-1 when 'names' is a dict, "
+                f"got only non-numeric keys {list(names.keys())!r}. "
+                "Please provide 'names' as a list or as a dict with 0-based contiguous "
+                "integer keys."
+            )
+
+        unique_sorted_keys = sorted(set(numeric_keys))
+        expected_keys = list(range(len(unique_sorted_keys)))
+        if unique_sorted_keys != expected_keys or non_numeric_keys:
+            raise ValueError(
+                "Unsupported 'names' mapping in data file "
+                f"{data_file!r}: expected integer keys 0..N-1 with no gaps, "
+                f"got numeric keys {unique_sorted_keys!r} and "
+                f"non-numeric keys {non_numeric_keys!r}. "
+                "This loader assumes class IDs are contiguous 0..N-1; please remap "
+                "the 'names' keys or use the list form."
+            )
+
+        # At this point, keys are exactly 0..N-1; order them by numeric ID.
+        return [str(names[idx]) for idx in unique_sorted_keys]
     if isinstance(names, list):
         return [str(name) for name in names]
     raise ValueError(f"Expected 'names' to be a list or dict in {data_file!r}, got {type(names).__name__}.")
@@ -200,7 +228,8 @@ def _parse_yolo_label_line(
     if len(values) < 5:
         raise ValueError(
             f"Malformed label in {str(label_path)!r} at line {line_num}: "
-            f"expected 5 (bbox) or ≥ 6 (polygon) fields, got {len(values)}."
+            f"expected 5 (bbox) fields or ≥ 7 fields for polygons "
+            f"(class_id + at least 3 (x, y) points), got {len(values)}."
         )
     if len(values) > 5 and len(values[1:]) % 2 != 0:
         raise ValueError(
