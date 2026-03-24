@@ -99,7 +99,15 @@ class TestBuildTrainerCallbacks:
         """No separate latest checkpoint callback when interval already saves every epoch."""
         trainer = build_trainer(_tc(tmp_path, use_ema=False, checkpoint_interval=1), _mc())
         resume_cbs = _find_resume_checkpoints(trainer)
+        assert resume_cbs
         assert not any(cb._every_n_epochs == 1 and cb.save_top_k == 1 for cb in resume_cbs)
+        interval_cb = next(
+            (cb for cb in resume_cbs if cb._every_n_epochs == 1 and cb.save_top_k == -1),
+            None,
+        )
+        assert interval_cb is not None
+        assert interval_cb.filename == "checkpoint_{epoch}"
+        assert interval_cb.dirpath == str(tmp_path / "out")
 
     def test_interval_model_checkpoint_present(self, tmp_path):
         """A ModelCheckpoint (not BestModelCallback) with every_n_epochs==checkpoint_interval is always included."""
@@ -113,6 +121,16 @@ class TestBuildTrainerCallbacks:
         trainer = build_trainer(_tc(tmp_path, use_ema=False, checkpoint_interval=1), _mc())
         resume_cbs = _find_resume_checkpoints(trainer)
         assert len(resume_cbs) == 1
+        only_cb = resume_cbs[0]
+        assert only_cb._every_n_epochs == 1
+        assert only_cb.save_top_k == -1
+
+    def test_resume_model_checkpoints_have_unique_state_keys(self, tmp_path):
+        """Resume ModelCheckpoint callbacks always have unique state keys."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=False, checkpoint_interval=2), _mc())
+        resume_cbs = _find_resume_checkpoints(trainer)
+        state_keys = [cb.state_key for cb in resume_cbs]
+        assert len(state_keys) == len(set(state_keys))
 
     def test_interval_checkpoint_uses_interval_from_config(self, tmp_path):
         """Interval ModelCheckpoint receives checkpoint_interval=7 from TrainConfig."""
