@@ -10,7 +10,7 @@ import warnings
 from typing import Any, ClassVar, Dict, List, Literal, Mapping, Optional, Union
 
 import torch
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 
@@ -345,7 +345,7 @@ class TrainConfig(BaseModel):
     ema_decay: float = 0.993
     ema_tau: int = 100
     lr_drop: int = 100
-    checkpoint_interval: int = 10
+    checkpoint_interval: int = Field(default=10, ge=1)
     warmup_epochs: float = 0.0
     lr_vit_layer_decay: float = 0.8
     lr_component_decay: float = 0.7

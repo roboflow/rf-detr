@@ -4,25 +4,20 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-"""Unit tests for build_namespace — the canonical config-to-Namespace mapping."""
+"""Unit tests for _namespace_from_configs — the canonical config-to-Namespace mapping."""
 
 import pytest
 
-from rfdetr._namespace import build_namespace
+from rfdetr._namespace import _namespace_from_configs
 
 
-class TestBuildNamespace:
-    """build_namespace maps ModelConfig + TrainConfig to a Namespace."""
-
-    def test_returns_namespace(self, base_model_config, base_train_config):
-        """The return value has attribute access (argparse.Namespace or similar)."""
-        args = build_namespace(base_model_config(), base_train_config())
-        assert hasattr(args, "encoder")
+class TestNamespaceFromConfigs:
+    """_namespace_from_configs maps ModelConfig + TrainConfig to a Namespace."""
 
     def test_forwards_model_config_fields(self, base_model_config, base_train_config):
         """All key ModelConfig fields are faithfully mapped."""
         mc = base_model_config(num_classes=7)
-        args = build_namespace(mc, base_train_config())
+        args = _namespace_from_configs(mc, base_train_config())
 
         assert args.encoder == mc.encoder
         assert args.num_classes == 7
@@ -50,7 +45,7 @@ class TestBuildNamespace:
             ema_update_interval=2,
             prefetch_factor=4,
         )
-        args = build_namespace(base_model_config(), tc)
+        args = _namespace_from_configs(base_model_config(), tc)
 
         assert args.lr == pytest.approx(3e-4)
         assert args.epochs == 20
@@ -67,9 +62,9 @@ class TestBuildNamespace:
         assert args.prefetch_factor == 4
 
     def test_forwards_promoted_train_fields(self, base_model_config, base_train_config):
-        """Promoted TrainConfig fields are forwarded to the legacy namespace."""
+        """Promoted TrainConfig fields are forwarded to the namespace."""
         tc = base_train_config(clip_max_norm=0.35, seed=123, sync_bn=True, fp16_eval=True)
-        args = build_namespace(base_model_config(), tc)
+        args = _namespace_from_configs(base_model_config(), tc)
 
         assert args.clip_max_norm == pytest.approx(0.35)
         assert args.seed == 123
@@ -77,15 +72,15 @@ class TestBuildNamespace:
         assert args.fp16_eval is True
 
     def test_seed_falls_back_to_legacy_default_when_unset(self, base_model_config, base_train_config):
-        """seed defaults to 42 in the legacy namespace when TrainConfig.seed is None."""
+        """seed defaults to 42 in the namespace when TrainConfig.seed is None."""
         tc = base_train_config(seed=None)
-        args = build_namespace(base_model_config(), tc)
+        args = _namespace_from_configs(base_model_config(), tc)
         assert args.seed == 42
 
     def test_forwards_dataset_fields(self, base_model_config, base_train_config):
         """Dataset-routing fields are forwarded to the Namespace."""
         tc = base_train_config(multi_scale=True, expanded_scales=True, dataset_file="coco")
-        args = build_namespace(base_model_config(), tc)
+        args = _namespace_from_configs(base_model_config(), tc)
 
         assert args.multi_scale is True
         assert args.expanded_scales is True
@@ -94,21 +89,21 @@ class TestBuildNamespace:
     def test_num_queries_from_subclass_config(self, base_model_config, base_train_config):
         """num_queries is read from subclass config attributes."""
         mc = base_model_config()  # RFDETRBaseConfig has num_queries=300
-        args = build_namespace(mc, base_train_config())
+        args = _namespace_from_configs(mc, base_train_config())
         assert args.num_queries == 300
 
     def test_resume_none_becomes_empty_string(self, base_model_config, base_train_config):
-        """resume=None (the default) is converted to '' for the legacy Namespace."""
+        """resume=None (the default) is converted to '' for the Namespace."""
         tc = base_train_config()
         assert tc.resume is None
-        args = build_namespace(base_model_config(), tc)
+        args = _namespace_from_configs(base_model_config(), tc)
         assert args.resume == ""
 
     def test_segmentation_extras_forwarded_from_seg_config(self, base_model_config, seg_train_config):
         """SegmentationTrainConfig mask loss coefficients are forwarded."""
         mc = base_model_config(segmentation_head=True)
         tc = seg_train_config()
-        args = build_namespace(mc, tc)
+        args = _namespace_from_configs(mc, tc)
 
         assert args.mask_ce_loss_coef == pytest.approx(5.0)
         assert args.mask_dice_loss_coef == pytest.approx(5.0)
@@ -120,29 +115,25 @@ class TestBuildNamespace:
         with pytest.warns(DeprecationWarning, match="TrainConfig.num_select is deprecated"):
             tc = seg_train_config(num_select=None)
 
-        args = build_namespace(mc, tc)
+        args = _namespace_from_configs(mc, tc)
 
         assert args.num_select == 200
 
     def test_segmentation_extras_default_for_plain_config(self, base_model_config, base_train_config):
         """mask_* attributes default to 5.0 for a plain TrainConfig (not segmentation)."""
-        args = build_namespace(base_model_config(), base_train_config())
+        args = _namespace_from_configs(base_model_config(), base_train_config())
         assert args.mask_ce_loss_coef == pytest.approx(5.0)
         assert args.mask_dice_loss_coef == pytest.approx(5.0)
 
     def test_segmentation_head_flag_forwarded(self, base_model_config, base_train_config):
         """segmentation_head=True from ModelConfig reaches the Namespace."""
         mc = base_model_config(segmentation_head=True)
-        args = build_namespace(mc, base_train_config())
+        args = _namespace_from_configs(mc, base_train_config())
         assert args.segmentation_head is True
 
-    def test_no_deprecation_warning_emitted(self, base_model_config, base_train_config):
-        """build_namespace must not emit any DeprecationWarning or FutureWarning."""
-        import warnings
+    def test_build_namespace_emits_deprecation_warning(self, base_model_config, base_train_config):
+        """build_namespace() must emit a DeprecationWarning on every call."""
+        from rfdetr._namespace import build_namespace
 
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
+        with pytest.warns(DeprecationWarning, match="build_namespace\\(\\) is deprecated"):
             build_namespace(base_model_config(), base_train_config())
-
-        bad = [w for w in caught if issubclass(w.category, (DeprecationWarning, FutureWarning))]
-        assert not bad

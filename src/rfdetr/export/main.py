@@ -21,7 +21,7 @@ from PIL import Image
 from torchvision.transforms.v2 import Compose, Resize, ToDtype, ToImage
 
 from rfdetr.datasets.transforms import Normalize
-from rfdetr.export._onnx.exporter import export_onnx, onnx_simplify
+from rfdetr.export._onnx.exporter import export_onnx
 from rfdetr.export.tensorrt import trtexec
 from rfdetr.models import build_model
 from rfdetr.utilities.distributed import get_rank
@@ -166,7 +166,9 @@ def main(args):
     )
 
     if args.simplify:
-        output_file = onnx_simplify(output_file, input_names, input_tensors, args)
+        logger.warning(
+            "The simplify flag is deprecated and ignored. RF-DETR no longer runs ONNX simplification automatically."
+        )
 
     if args.tensorrt:
         output_file = trtexec(output_file, args)

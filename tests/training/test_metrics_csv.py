@@ -39,9 +39,9 @@ def _fit_and_read_csv(mc: RFDETRBaseConfig, tc: TrainConfig, criterion=None) -> 
     """Run 1 epoch (2 train + 2 val batches) and return the resulting metrics.csv."""
     fake_criterion = criterion or _FakeCriterion()
     with (
-        patch("rfdetr.training.module_model.build_model", return_value=_TinyModel()),
+        patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel()),
         patch(
-            "rfdetr.training.module_model.build_criterion_and_postprocessors",
+            "rfdetr.training.module_model.build_criterion_from_config",
             return_value=(fake_criterion, MagicMock(side_effect=_fake_postprocess)),
         ),
         patch("rfdetr.training.module_data.build_dataset", return_value=_FakeDataset(length=20)),

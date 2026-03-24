@@ -75,6 +75,7 @@ trt = [
 ]
 loggers = [
     "tensorboard>=2.13.0",
+    "protobuf>=3.20.0,<4.0.0",  # Pins protobuf below 4.x to avoid TensorBoard descriptor crash with protobuf>=4 (see #844)
     "wandb",
     "mlflow",
     "clearml",
@@ -88,6 +89,13 @@ cli = ["jsonargparse[signatures]>=4.27.7"]
 plus = ["rfdetr_plus>=1.0.1, <2.0.0"]
 
 [dependency-groups]
+# TODO: Temporary: GPU runner only has CUDA 12.8 driver (12080); torch>=2.11 requires a newer driver.
+#   Remove this group and the --group ci-gpu-pin references in CI once the driver is updated.
+#   Does not affect users installing rfdetr from PyPI.
+ci-gpu-pin = [
+    "torch<2.11",
+]
+
 build = [
     "twine>=5.1.1",
     "wheel>=0.40",
@@ -100,6 +108,7 @@ tests = [
   "pytest-xdist>=3.6,<4",
   "pytest-rerunfailures>=10,<15",
   "pytest-timeout>=2,<3",
+  "tomli>=2.0; python_version < '3.11'",
 ]
 
 docs = [
