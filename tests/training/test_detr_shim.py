@@ -182,8 +182,9 @@ class TestRFDETRTrainPTL:
 
         monkeypatch.setattr(builtins, "__import__", _mock_import)
 
-        with pytest.raises(ImportError, match=r"rfdetr\[train,loggers\]"):
+        with pytest.raises(ImportError, match=r"rfdetr\[train,loggers\]") as exc_info:
             RFDETR.train(mock_self)
+        assert exc_info.value.__cause__ is not None
 
     def test_class_names_synced_from_datamodule_after_training(self, tmp_path):
         """self.model.class_names is set from RFDETRDataModule.class_names after train().
