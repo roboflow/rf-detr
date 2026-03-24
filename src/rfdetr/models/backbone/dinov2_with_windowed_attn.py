@@ -400,8 +400,7 @@ class WindowedDinov2WithRegistersEmbeddings(nn.Module):
 
         Args:
             pixel_values: Image tensor of shape ``(B, C, H, W)``. Both ``H`` and
-                ``W`` must be divisible by ``patch_size * num_windows``
-                (``{patch_size} * {num_windows}``).
+                ``W`` must be divisible by ``patch_size * num_windows``.
             bool_masked_pos: Optional boolean mask of shape ``(B, num_patches)``.
                 Masked positions are replaced with the learnable ``mask_token``.
 
@@ -415,15 +414,14 @@ class WindowedDinov2WithRegistersEmbeddings(nn.Module):
             ValueError: If ``H`` or ``W`` is not divisible by
                 ``patch_size * num_windows``.
         """
+        batch_size, _, height, width = pixel_values.shape
         divisor = self.patch_size * self.config.num_windows
-        if pixel_values.shape[2] % divisor != 0 or pixel_values.shape[3] % divisor != 0:
+        if height % divisor != 0 or width % divisor != 0:
             raise ValueError(
                 f"Input spatial dimensions must be divisible by patch_size * num_windows "
                 f"({self.patch_size} * {self.config.num_windows} = {divisor}), "
-                f"but got shape {pixel_values.shape}."
+                f"but got height={height}, width={width}."
             )
-
-        batch_size, _, height, width = pixel_values.shape
         target_dtype = self.patch_embeddings.projection.weight.dtype
         embeddings = self.patch_embeddings(pixel_values.to(dtype=target_dtype))
 
