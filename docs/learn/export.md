@@ -44,11 +44,11 @@ The `export()` method accepts several parameters to customize the export process
 | --------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `output_dir`    | `"output"` | Directory where the exported ONNX model will be saved.                                                                 |
 | `infer_dir`     | `None`     | Path to an image file to use for tracing. If not provided, a random dummy image is generated.                          |
-| `simplify`      | `False`    | Whether to simplify the ONNX model using onnxsim for better compatibility and performance.                             |
+| `simplify`      | `False`    | Deprecated and ignored. ONNX simplification is no longer run by `export()`.                                            |
 | `backbone_only` | `False`    | Export only the backbone feature extractor instead of the full model.                                                  |
 | `opset_version` | `17`       | ONNX opset version to use for export. Higher versions support more operations.                                         |
 | `verbose`       | `True`     | Whether to print verbose export information.                                                                           |
-| `force`         | `False`    | Force re-export even if simplified model already exists.                                                               |
+| `force`         | `False`    | Deprecated and ignored.                                                                                                |
 | `shape`         | `None`     | Input shape as tuple `(height, width)`. Must be divisible by 14. If not provided, uses the model's default resolution. |
 | `batch_size`    | `1`        | Batch size for the exported model.                                                                                     |
 
@@ -64,16 +64,16 @@ model = RFDETRMedium(pretrain_weights="<path/to/checkpoint.pth>")
 model.export(output_dir="exports/my_model")
 ```
 
-### Export with Simplification
+### Deprecated: Export with Simplification
 
-Simplifying the ONNX model can improve inference performance and compatibility with various runtimes:
+The `simplify` flag is deprecated and ignored:
 
 ```python
 from rfdetr import RFDETRMedium
 
 model = RFDETRMedium(pretrain_weights="<path/to/checkpoint.pth>")
 
-model.export(simplify=True)
+model.export(simplify=True)  # Deprecated: same result as model.export()
 ```
 
 ### Export with Custom Resolution
@@ -105,7 +105,6 @@ model.export(backbone_only=True)
 After running the export, you will find the following files in your output directory:
 
 - `inference_model.onnx` - The exported ONNX model (or `backbone_model.onnx` if `backbone_only=True`)
-- `inference_model.sim.onnx` - The simplified ONNX model (if `simplify=True`)
 
 ## Optional: Convert ONNX to TensorRT
 
