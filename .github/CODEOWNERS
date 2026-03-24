@@ -6,5 +6,5 @@
 /rfdetr @probicheaux @isaacrob @Matvezy
 
 # supervise the training modules
-/src/rfdetr/training/ @Borda
-/tests/training/ @Borda
+/src/rfdetr/training/  @Borda @probicheaux @isaacrob
+/tests/training/ @Borda @probicheaux @isaacrob
