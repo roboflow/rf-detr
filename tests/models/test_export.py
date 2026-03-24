@@ -30,6 +30,7 @@ import torch
 from torch.jit import TracerWarning
 
 from rfdetr import RFDETRSegNano
+from rfdetr import detr as _detr_module
 from rfdetr.export import main as _cli_export_module
 
 _IS_ONNX_INSTALLED = importlib.util.find_spec("onnx") is not None
@@ -119,6 +120,60 @@ def test_export_does_not_change_original_training_state(tmp_path: Path) -> None:
 
     # After export, the original underlying model should still be in training mode
     assert torch_model.training is True, "export() should not change the original model's training state"
+
+
+def test_export_simplify_flag_is_ignored_with_deprecation_warning(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`simplify=True` should not run ONNX simplification and should emit a deprecation warning."""
+
+    class _DummyCoreModel:
+        def to(self, *_args, **_kwargs):
+            return self
+
+        def eval(self):
+            return self
+
+        def cpu(self):
+            return self
+
+        def __call__(self, *_args, **_kwargs):
+            return {
+                "pred_boxes": torch.zeros(1, 1, 4),
+                "pred_logits": torch.zeros(1, 1, 2),
+                "pred_masks": torch.zeros(1, 1, 2, 2),
+            }
+
+    model = types.SimpleNamespace(
+        model=types.SimpleNamespace(
+            model=_DummyCoreModel(),
+            device="cpu",
+            resolution=14,
+        ),
+        model_config=types.SimpleNamespace(segmentation_head=False),
+    )
+
+    input_tensor = torch.zeros(1, 3, 14, 14)
+    export_called: dict[str, bool] = {"value": False}
+
+    def _fake_make_infer_image(*_args, **_kwargs):
+        return input_tensor
+
+    def _fake_export_onnx(*_args, **_kwargs):
+        export_called["value"] = True
+        return str(tmp_path / "inference_model.onnx")
+
+    monkeypatch.setattr("rfdetr.export.main.make_infer_image", _fake_make_infer_image)
+    monkeypatch.setattr("rfdetr.export.main.export_onnx", _fake_export_onnx)
+    monkeypatch.setattr(_detr_module, "deepcopy", lambda x: x)
+
+    with pytest.deprecated_call(
+        DeprecationWarning,
+        match="`simplify=True` is deprecated and ignored during export",
+    ):
+        _detr_module.RFDETR.export(model, output_dir=str(tmp_path), simplify=True, verbose=False, shape=(14, 14))
+
+    assert export_called["value"] is True
 
 
 @pytest.mark.gpu

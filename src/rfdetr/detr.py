@@ -275,18 +275,18 @@ class RFDETR:
         Args:
             output_dir: Directory to write the ONNX file to.
             infer_dir: Optional directory of sample images for dynamic-axes inference.
-            simplify: Whether to run onnx-simplifier on the exported graph.
+            simplify: Deprecated and ignored. Simplification is no longer run.
             backbone_only: Export only the backbone (feature extractor).
             opset_version: ONNX opset version to target.
             verbose: Print export progress information.
-            force: Force re-export even if output already exists.
+            force: Deprecated and ignored.
             shape: ``(height, width)`` tuple; defaults to square at model resolution.
             batch_size: Static batch size to bake into the ONNX graph.
             **kwargs: Additional keyword arguments forwarded to export_onnx.
         """
         logger.info("Exporting model to ONNX format")
         try:
-            from rfdetr.export.main import export_onnx, make_infer_image, onnx_simplify
+            from rfdetr.export.main import export_onnx, make_infer_image
         except ImportError:
             logger.error(
                 "It seems some dependencies for ONNX export are missing."
@@ -357,10 +357,12 @@ class RFDETR:
         logger.info(f"Successfully exported ONNX model to: {output_file}")
 
         if simplify:
-            sim_output_file = onnx_simplify(
-                onnx_dir=output_file, input_names=input_names, input_tensors=input_tensors, force=force
+            warnings.warn(
+                "`simplify=True` is deprecated and ignored during export. "
+                "RF-DETR no longer runs ONNX simplification automatically.",
+                DeprecationWarning,
+                stacklevel=2,
             )
-            logger.info(f"Successfully simplified ONNX model to: {sim_output_file}")
 
         logger.info("ONNX export completed successfully")
         self.model.model = self.model.model.to(device)
