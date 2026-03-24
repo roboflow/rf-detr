@@ -2773,6 +2773,9 @@
 </span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="c1"># or a legacy checkpoint:</span>
 </span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">trainer</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">module</span><span class="p">,</span> <span class="n">datamodule</span><span class="p">,</span> <span class="n">ckpt_path</span><span class="o">=</span><span class="s2">&quot;output/checkpoint.pth&quot;</span><span class="p">)</span>
 </span></code></pre></div>
+<blockquote>
+<p><strong>Note:</strong> When <code>checkpoint_interval=1</code>, no <code>last.ckpt</code> is written. Use <code>checkpoint_{epoch}.ckpt</code> (e.g. <code>output/checkpoint_epoch=4.ckpt</code>) to resume instead.</p>
+</blockquote>
 <p>If you need to persist a converted checkpoint on disk (for example to inspect it, share it, or use it outside of PTL), convert it explicitly before passing it to <code>trainer.fit</code>:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.training</span><span class="w"> </span><span class="kn">import</span> <span class="n">convert_legacy_checkpoint</span>
 </span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>
