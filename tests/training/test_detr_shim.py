@@ -186,6 +186,21 @@ class TestRFDETRTrainPTL:
             RFDETR.train(mock_self)
         assert exc_info.value.__cause__ is not None
 
+    def test_internal_training_module_not_found_is_not_masked(self, tmp_path, monkeypatch):
+        """Missing internal training modules should keep original ModuleNotFoundError."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        real_import = builtins.__import__
+
+        def _mock_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name == "rfdetr.training":
+                raise ModuleNotFoundError("No module named 'rfdetr.training.auto_batch'", name="rfdetr.training.auto_batch")
+            return real_import(name, globals, locals, fromlist, level)
+
+        monkeypatch.setattr(builtins, "__import__", _mock_import)
+
+        with pytest.raises(ModuleNotFoundError, match=r"rfdetr\.training\.auto_batch"):
+            RFDETR.train(mock_self)
+
     def test_class_names_synced_from_datamodule_after_training(self, tmp_path):
         """self.model.class_names is set from RFDETRDataModule.class_names after train().
 

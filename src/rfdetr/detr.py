@@ -138,6 +138,9 @@ class RFDETR:
             from rfdetr.training import RFDETRDataModule, RFDETRModelModule, build_trainer
             from rfdetr.training.auto_batch import resolve_auto_batch_config
         except ModuleNotFoundError as exc:
+            missing_module = exc.name or ""
+            if missing_module.startswith("rfdetr.training"):
+                raise
             raise ImportError(
                 "RF-DETR training dependencies are missing. "
                 'Install them with `pip install "rfdetr[train,loggers]"` and try again.'
