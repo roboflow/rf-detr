@@ -167,7 +167,7 @@ def main(args):
 
     if args.simplify:
         logger.warning(
-            "`--simplify` is deprecated and ignored. RF-DETR no longer runs ONNX simplification automatically."
+            "The simplify flag is deprecated and ignored. RF-DETR no longer runs ONNX simplification automatically."
         )
 
     if args.tensorrt:

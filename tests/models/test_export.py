@@ -165,11 +165,13 @@ def test_export_simplify_flag_is_ignored_with_deprecation_warning(
 
     monkeypatch.setattr("rfdetr.export.main.make_infer_image", _fake_make_infer_image)
     monkeypatch.setattr("rfdetr.export.main.export_onnx", _fake_export_onnx)
-    monkeypatch.setattr(_detr_module, "deepcopy", lambda x: x)
+    monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
 
     with pytest.deprecated_call(
-        DeprecationWarning,
-        match="`simplify=True` is deprecated and ignored during export",
+        match=(
+            r"`simplify=True` is deprecated and ignored during export\. "
+            r"RF-DETR no longer runs ONNX simplification automatically\."
+        )
     ):
         _detr_module.RFDETR.export(model, output_dir=str(tmp_path), simplify=True, verbose=False, shape=(14, 14))
 
