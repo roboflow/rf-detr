@@ -94,7 +94,7 @@ AUG_AGGRESSIVE = {
     "Rotate": {"limit": 45, "p": 0.5},
     "Affine": {
         "scale": (0.8, 1.2),
-        "translate_percent": (0.1, 0.1),
+        "translate_percent": (-0.1, 0.1),
         "rotate": (-15, 15),
         "shear": (-5, 5),
         "p": 0.5,
