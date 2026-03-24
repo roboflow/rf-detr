@@ -459,7 +459,7 @@ class CocoLikeAPI:
         'img_1.jpg'
     """
 
-    def __init__(self, classes: list, dataset: Any):
+    def __init__(self, classes: list[str], dataset: Any):
         self.classes = classes
         # ``dataset`` may be a supervision DetectionDataset or a lazy adapter exposing
         # ``get_image_info(idx)`` in addition to ``__len__``/``__getitem__``.

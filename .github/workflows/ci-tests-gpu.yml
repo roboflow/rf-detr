@@ -16,7 +16,7 @@ env:
   PYTHON_VERSION: "3.12"
   # UV_TORCH_BACKEND only works with 'uv pip' commands, not 'uv sync'.
   # Set to "auto" for GPU workflow (auto-detects CUDA version).
-  UV_TORCH_BACKEND: "cu128"
+  UV_TORCH_BACKEND: "auto"
 
 concurrency:
   group: pytest-gpu-test-${{ github.ref }}
