@@ -126,8 +126,14 @@ class RFDETR:
         onto ``self.model.model`` so that :meth:`predict` and :meth:`export`
         continue to work without reloading the checkpoint.
         """
-        from rfdetr.training import RFDETRDataModule, RFDETRModelModule, build_trainer
-        from rfdetr.training.auto_batch import resolve_auto_batch_config
+        try:
+            from rfdetr.training import RFDETRDataModule, RFDETRModelModule, build_trainer
+            from rfdetr.training.auto_batch import resolve_auto_batch_config
+        except ModuleNotFoundError as exc:
+            raise ImportError(
+                "RF-DETR training dependencies are missing. "
+                'Install them with `pip install "rfdetr[train,loggers]"` and try again.'
+            ) from exc
 
         # Absorb legacy `callbacks` dict — warn if non-empty, then discard.
         callbacks_dict = kwargs.pop("callbacks", None)
