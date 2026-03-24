@@ -18,6 +18,7 @@ from rfdetr.datasets.yolo import (
     CocoLikeAPI,
     YoloDetection,
     _extract_yolo_class_names,
+    _LazyYoloDetectionDataset,
     _MockSvDataset,
     is_valid_yolo_dataset,
 )
@@ -563,8 +564,10 @@ class TestYoloDetectionLazyMasks:
 
         # Bytes actually retained in the lazy samples (polygon coords + bbox + class id)
         lazy_bytes = sum(
-            sample.xyxy.nbytes + sample.class_id.nbytes + sum(p.nbytes for p in sample.polygons)
-            for sample in dataset.sv_dataset._samples
+            dataset.sv_dataset.get_image_info(i).xyxy.nbytes
+            + dataset.sv_dataset.get_image_info(i).class_id.nbytes
+            + sum(p.nbytes for p in dataset.sv_dataset.get_image_info(i).polygons)
+            for i in range(len(dataset.sv_dataset))
         )
 
         # Bytes that eager rasterization would have retained (one bool mask per image)
@@ -595,6 +598,67 @@ class TestYoloDetectionLazyMasks:
                 include_masks=True,
             )
 
+    def test_include_masks_false_uses_supervision_dataset_path(self, tmp_path: Path) -> None:
+        """include_masks=False must use supervision's DetectionDataset, not the lazy path."""
+        image_dir = tmp_path / "images"
+        label_dir = tmp_path / "labels"
+        image_dir.mkdir()
+        label_dir.mkdir()
+        Image.new("RGB", (8, 6), color=(255, 255, 255)).save(image_dir / "sample.png")
+        (label_dir / "sample.txt").write_text("0 0.5 0.5 0.5 0.5\n", encoding="utf-8")
+        data_file = tmp_path / "data.yaml"
+        data_file.write_text("names:\n  - carton\n", encoding="utf-8")
+
+        dataset = YoloDetection(
+            img_folder=str(image_dir),
+            lb_folder=str(label_dir),
+            data_file=str(data_file),
+            transforms=None,
+            include_masks=False,
+        )
+
+        assert not isinstance(dataset.sv_dataset, _LazyYoloDetectionDataset)
+        assert len(dataset) == 1
+        _, target = dataset[0]
+        assert "boxes" in target
+        assert "masks" not in target
+
+    def test_lazy_getitem_cv2_returns_none_raises_value_error(self, tmp_path: Path) -> None:
+        """When cv2.imread returns None (missing/corrupted file), __getitem__ must raise ValueError."""
+        image_dir, label_dir, data_file = _write_yolo_segmentation_dataset(tmp_path)
+        dataset = YoloDetection(
+            img_folder=str(image_dir),
+            lb_folder=str(label_dir),
+            data_file=str(data_file),
+            transforms=None,
+            include_masks=True,
+        )
+
+        with patch("cv2.imread", return_value=None):
+            with pytest.raises(ValueError, match="Could not read image"):
+                dataset[0]
+
+    def test_non_integer_class_id_in_label_raises_value_error(self, tmp_path: Path) -> None:
+        """A label line with a non-integer class ID must raise ValueError during init."""
+        image_dir = tmp_path / "images"
+        label_dir = tmp_path / "labels"
+        image_dir.mkdir()
+        label_dir.mkdir()
+        Image.new("RGB", (8, 6), color=(255, 255, 255)).save(image_dir / "sample.png")
+        # "cat" is not a valid integer class ID
+        (label_dir / "sample.txt").write_text("cat 0.5 0.5 0.25 0.25\n", encoding="utf-8")
+        data_file = tmp_path / "data.yaml"
+        data_file.write_text("names:\n  - carton\n", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="invalid class ID"):
+            YoloDetection(
+                img_folder=str(image_dir),
+                lb_folder=str(label_dir),
+                data_file=str(data_file),
+                transforms=None,
+                include_masks=True,
+            )
+
 
 class TestExtractYoloClassNames:
     """Tests for _extract_yolo_class_names with different YAML formats."""
@@ -617,16 +681,6 @@ class TestExtractYoloClassNames:
                 ["cat", "dog"],
                 id="dict_format_unsorted_keys",
             ),
-            pytest.param(
-                "names:\n  0: cat\n  2: dog\n",
-                ["cat", "dog"],
-                id="dict_format_sparse_keys",
-            ),
-            pytest.param(
-                "names:\n  10: cat\n  20: dog\n",
-                ["cat", "dog"],
-                id="dict_format_large_numeric_keys",
-            ),
         ],
     )
     def test_class_names_formats(self, tmp_path: Path, yaml_content: str, expected_names: list[str]) -> None:
@@ -634,3 +688,30 @@ class TestExtractYoloClassNames:
         data_file = tmp_path / "data.yaml"
         data_file.write_text(yaml_content, encoding="utf-8")
         assert _extract_yolo_class_names(str(data_file)) == expected_names
+
+    @pytest.mark.parametrize(
+        "yaml_content",
+        [
+            pytest.param(
+                "names:\n  0: cat\n  2: dog\n",
+                id="dict_format_sparse_keys",
+            ),
+            pytest.param(
+                "names:\n  10: cat\n  20: dog\n",
+                id="dict_format_large_numeric_keys",
+            ),
+        ],
+    )
+    def test_class_names_dict_non_contiguous_raises(self, tmp_path: Path, yaml_content: str) -> None:
+        """Dict 'names' with non-contiguous or non-zero-based keys must raise ValueError.
+
+        The downstream range check in _parse_yolo_label_line assumes class IDs
+        are a contiguous 0..N-1 range.  Silently accepting sparse keys would
+        cause valid label files to be rejected during parsing (e.g. class ID 2
+        in a 2-class dataset built from {0: cat, 2: dog} would exceed the
+        num_classes bound).
+        """
+        data_file = tmp_path / "data.yaml"
+        data_file.write_text(yaml_content, encoding="utf-8")
+        with pytest.raises(ValueError, match="contiguous"):
+            _extract_yolo_class_names(str(data_file))

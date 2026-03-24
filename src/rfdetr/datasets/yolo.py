@@ -243,6 +243,10 @@ def _parse_yolo_label_line(
         raise ValueError(
             f"Label {str(label_path)!r} line {line_num}: invalid class ID {values[0]!r} (must be an integer)."
         ) from exc
+    # num_classes equals len(class_names) which _extract_yolo_class_names guarantees
+    # is a contiguous 0..N-1 range.  This assumption must remain consistent with the
+    # class-name parser: accepting sparse keys there (e.g. {0: "cat", 2: "dog"} → 2
+    # classes) would cause valid label files using the original IDs to be rejected here.
     if cid < 0 or cid >= num_classes:
         raise ValueError(
             f"Label {str(label_path)!r} line {line_num}: "
@@ -547,7 +551,7 @@ class CocoLikeAPI:
             categories.append({"id": idx, "name": class_name, "supercategory": "none"})
 
         ann_id = 0
-        use_lazy_path = hasattr(self.sv_dataset, "get_image_info")
+        use_lazy_path = isinstance(self.sv_dataset, _LazyYoloDetectionDataset)
         for img_id in range(len(self.sv_dataset)):
             if use_lazy_path:
                 sample = self.sv_dataset.get_image_info(img_id)
