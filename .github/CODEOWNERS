@@ -4,3 +4,7 @@
 
 # supervise the core model modules
 /rfdetr @probicheaux @isaacrob @Matvezy
+
+# supervise the training modules
+/src/rfdetr/training/ @Borda
+/tests/training/ @Borda
