@@ -107,7 +107,7 @@ class TestBuildTrainerCallbacks:
         )
         assert interval_cb is not None
         assert interval_cb.filename == "checkpoint_{epoch}"
-        assert interval_cb.dirpath == str(tmp_path / "out")
+        assert str(interval_cb.dirpath) == str(tmp_path / "out")
 
     def test_interval_model_checkpoint_present(self, tmp_path):
         """A ModelCheckpoint (not BestModelCallback) with every_n_epochs==checkpoint_interval is always included."""
