@@ -193,7 +193,9 @@ class TestRFDETRTrainPTL:
 
         def _mock_import(name, globals=None, locals=None, fromlist=(), level=0):
             if name == "rfdetr.training":
-                raise ModuleNotFoundError("No module named 'rfdetr.training.auto_batch'", name="rfdetr.training.auto_batch")
+                raise ModuleNotFoundError(
+                    "No module named 'rfdetr.training.auto_batch'", name="rfdetr.training.auto_batch"
+                )
             return real_import(name, globals, locals, fromlist, level)
 
         monkeypatch.setattr(builtins, "__import__", _mock_import)
