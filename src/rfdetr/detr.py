@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import glob
+import functools
 import importlib
 import json
 import os
@@ -35,6 +36,7 @@ from rfdetr.config import (
 from rfdetr.datasets.coco import is_valid_coco_dataset
 from rfdetr.datasets.yolo import is_valid_yolo_dataset
 from rfdetr.inference import ModelContext, _build_model_context
+from rfdetr.utilities.decorators import deprecated
 from rfdetr.utilities.logger import get_logger
 
 try:
@@ -254,6 +256,18 @@ class RFDETR:
         self._optimized_resolution = None
         self._optimized_dtype = None
 
+    @deprecated(
+        target=True,
+        # `simplify` / `force` are retained for API compatibility and treated as no-op.
+        args_mapping={
+            "simplify": False,
+            "force": False,
+        },
+        deprecated_in="1.6",
+        remove_in="1.8",
+        num_warns=-1,
+        stream=functools.partial(warnings.warn, category=DeprecationWarning, stacklevel=2),
+    )
     def export(
         self,
         output_dir: str = "output",
@@ -355,14 +369,6 @@ class RFDETR:
         )
 
         logger.info(f"Successfully exported ONNX model to: {output_file}")
-
-        if simplify:
-            warnings.warn(
-                "`simplify=True` is deprecated and ignored during export. "
-                "RF-DETR no longer runs ONNX simplification automatically.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
 
         logger.info("ONNX export completed successfully")
         self.model.model = self.model.model.to(device)

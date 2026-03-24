@@ -167,13 +167,59 @@ def test_export_simplify_flag_is_ignored_with_deprecation_warning(
     monkeypatch.setattr("rfdetr.export.main.export_onnx", _fake_export_onnx)
     monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
 
-    with pytest.deprecated_call(
-        match=(
-            r"`simplify=True` is deprecated and ignored during export\. "
-            r"RF-DETR no longer runs ONNX simplification automatically\."
-        )
-    ):
+    with pytest.deprecated_call(match=r".*argument `simplify`.*deprecated.*`export`.*"):
         _detr_module.RFDETR.export(model, output_dir=str(tmp_path), simplify=True, verbose=False, shape=(14, 14))
+
+    assert export_called["value"] is True
+
+
+def test_export_force_flag_is_ignored_with_deprecation_warning(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`force=True` should be a no-op and emit a deprecation warning."""
+
+    class _DummyCoreModel:
+        def to(self, *_args, **_kwargs):
+            return self
+
+        def eval(self):
+            return self
+
+        def cpu(self):
+            return self
+
+        def __call__(self, *_args, **_kwargs):
+            return {
+                "pred_boxes": torch.zeros(1, 1, 4),
+                "pred_logits": torch.zeros(1, 1, 2),
+                "pred_masks": torch.zeros(1, 1, 2, 2),
+            }
+
+    model = types.SimpleNamespace(
+        model=types.SimpleNamespace(
+            model=_DummyCoreModel(),
+            device="cpu",
+            resolution=14,
+        ),
+        model_config=types.SimpleNamespace(segmentation_head=False),
+    )
+
+    input_tensor = torch.zeros(1, 3, 14, 14)
+    export_called: dict[str, bool] = {"value": False}
+
+    def _fake_make_infer_image(*_args, **_kwargs):
+        return input_tensor
+
+    def _fake_export_onnx(*_args, **_kwargs):
+        export_called["value"] = True
+        return str(tmp_path / "inference_model.onnx")
+
+    monkeypatch.setattr("rfdetr.export.main.make_infer_image", _fake_make_infer_image)
+    monkeypatch.setattr("rfdetr.export.main.export_onnx", _fake_export_onnx)
+    monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
+
+    with pytest.deprecated_call(match=r".*argument `force`.*deprecated.*`export`.*"):
+        _detr_module.RFDETR.export(model, output_dir=str(tmp_path), force=True, verbose=False, shape=(14, 14))
 
     assert export_called["value"] is True
 
