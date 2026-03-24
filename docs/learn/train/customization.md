@@ -177,6 +177,8 @@ trainer.fit(module, datamodule, ckpt_path="output/last.ckpt")
 trainer.fit(module, datamodule, ckpt_path="output/checkpoint.pth")
 ```
 
+> **Note:** When `checkpoint_interval=1`, no `last.ckpt` is written. Use `checkpoint_{epoch}.ckpt` (e.g. `output/checkpoint_epoch=4.ckpt`) to resume instead.
+
 If you need to persist a converted checkpoint on disk (for example to inspect it, share it, or use it outside of PTL), convert it explicitly before passing it to `trainer.fit`:
 
 ```python
