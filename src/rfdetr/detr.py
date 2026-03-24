@@ -130,6 +130,10 @@ class RFDETR:
             ImportError: If training dependencies are not installed. Install with
                 ``pip install "rfdetr[train,loggers]"``.
         """
+        # Both imports are grouped in a single try block because they both live in
+        # the `rfdetr[train]` extras group — a missing `pytorch_lightning` (or any
+        # other training-extras package) causes either import to fail, and the
+        # remediation is identical: `pip install "rfdetr[train,loggers]"`.
         try:
             from rfdetr.training import RFDETRDataModule, RFDETRModelModule, build_trainer
             from rfdetr.training.auto_batch import resolve_auto_batch_config
