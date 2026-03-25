@@ -116,8 +116,12 @@ class RFDETR:
         a :class:`~rfdetr.config.TrainConfig`.  Several legacy kwargs are absorbed
         so existing call-sites do not break:
 
-        * ``device`` — mapped to ``TrainConfig.accelerator``; ``"cpu"`` becomes
-          ``accelerator="cpu"``, all others default to ``"auto"``.
+        * ``device`` — normalized via :class:`torch.device` and mapped to PyTorch
+          Lightning trainer arguments. ``"cpu"`` becomes ``accelerator="cpu"``;
+          ``"cuda"`` and ``"cuda:N"`` become ``accelerator="gpu"`` and optionally
+          ``devices=[N]``; ``"mps"`` becomes ``accelerator="mps"``. Other valid
+          torch device types fall back to PTL auto-detection and emit a
+          :class:`UserWarning`.
         * ``callbacks`` — if the dict contains any non-empty lists a
           :class:`DeprecationWarning` is emitted; the dict is then discarded.
           Use PTL :class:`~pytorch_lightning.Callback` objects passed via
@@ -180,6 +184,13 @@ class RFDETR:
             elif resolved_device.type == "mps":
                 _accelerator = "mps"
                 _devices = [resolved_device.index] if resolved_device.index is not None else None
+            else:
+                warnings.warn(
+                    f"Device type {resolved_device.type!r} is not explicitly mapped to a PyTorch Lightning "
+                    "accelerator; falling back to PTL auto-detection. Training may use an unexpected device.",
+                    UserWarning,
+                    stacklevel=2,
+                )
 
         # Absorb legacy `start_epoch` — PTL resumes automatically via ckpt_path.
         if "start_epoch" in kwargs:

@@ -131,7 +131,7 @@ class ModelConfig(BaseConfig):
 
         Raises:
             ValueError: If a string value cannot be parsed as a valid torch device.
-            TypeError: If ``v`` is not a string or ``torch.device``.
+            ValueError: If ``v`` is not a string or ``torch.device``.
         """
         if isinstance(v, torch.device):
             return str(v)
@@ -140,7 +140,7 @@ class ModelConfig(BaseConfig):
                 return str(torch.device(v))
             except (TypeError, ValueError, RuntimeError) as exc:
                 raise ValueError(f"Invalid device specifier: {v!r}.") from exc
-        raise TypeError("device must be a string or torch.device.")
+        raise ValueError("device must be a string or torch.device.")
 
 
 class RFDETRBaseConfig(ModelConfig):
