@@ -54,6 +54,8 @@ class COCOEvalCallback(Callback):
         self,
         max_dets: int = 500,
         segmentation: bool = False,
+        keypoint: bool = False,
+        num_keypoints: int = 17,
         eval_interval: int = 1,
         log_per_class_metrics: bool = True,
         in_notebook: bool | None = None,
@@ -61,11 +63,15 @@ class COCOEvalCallback(Callback):
         super().__init__()
         self._max_dets = max_dets
         self._segmentation = segmentation
+        self._keypoint = keypoint
+        self._num_keypoints = num_keypoints
         self._eval_interval = max(1, int(eval_interval))
         self._log_per_class_metrics = bool(log_per_class_metrics)
         self._class_names: list[str] = []
         self._cat_id_to_name: dict[int, str] = {}
         self._f1_local: dict[int, dict[str, Any]] = init_matching_accumulator()
+        self._kp_oks_sum: float = 0.0
+        self._kp_count: int = 0
         self._output_widget: Any = None  # ipywidgets.Output, created lazily
         self._in_notebook: bool = False
         if in_notebook is None:
@@ -168,6 +174,10 @@ class COCOEvalCallback(Callback):
         iou_type = "segm" if self._segmentation else "bbox"
         batch_matching = build_matching_data(preds, targets, iou_threshold=0.5, iou_type=iou_type)
         merge_matching_data(self._f1_local, batch_matching)
+
+        # Accumulate keypoint OKS for matched predictions
+        if self._keypoint:
+            self._accumulate_keypoint_oks(outputs["results"], outputs["targets"])
 
         # Run EMA model separately on the same batch so that base and EMA metrics
         # are computed from independent forward passes rather than being aliases.
@@ -321,6 +331,15 @@ class COCOEvalCallback(Callback):
                 trainer.callback_metrics[f"{split}/ema_segm_mAP_50_95"] = metrics["segm_map"].detach().cpu()
                 trainer.callback_metrics[f"{split}/ema_segm_mAP_50"] = metrics["segm_map_50"].detach().cpu()
 
+        # Keypoint OKS metrics
+        if self._keypoint:
+            mean_oks = self._kp_oks_sum / max(self._kp_count, 1)
+            overall["kp OKS"] = mean_oks
+            pl_module.log(f"{split}/keypoint_OKS", mean_oks, prog_bar=True)
+            trainer.callback_metrics[f"{split}/keypoint_OKS"] = torch.tensor(mean_oks)
+            self._kp_oks_sum = 0.0
+            self._kp_count = 0
+
         # F1 sweep — run first so per-class F1/prec/rec are available when
         # building the unified per-class table rows below.
         merged = distributed_merge_matching_data(self._f1_local)
@@ -396,6 +415,55 @@ class COCOEvalCallback(Callback):
             if callable(getattr(callback, "get_ema_model_state_dict", None)):
                 return callback
         return None
+
+    def _accumulate_keypoint_oks(
+        self,
+        results: list[dict[str, torch.Tensor]],
+        targets: list[dict[str, Any]],
+    ) -> None:
+        """Accumulate mean OKS between predicted and ground-truth keypoints."""
+        coco_sigmas = torch.tensor([
+            0.026, 0.025, 0.025, 0.035, 0.035, 0.079, 0.079, 0.072, 0.072,
+            0.062, 0.062, 0.107, 0.107, 0.087, 0.087, 0.089, 0.089,
+        ])
+        nk = self._num_keypoints
+        if nk > len(coco_sigmas):
+            extra = torch.full((nk - len(coco_sigmas),), 0.05)
+            sigmas = torch.cat([coco_sigmas, extra])
+        else:
+            sigmas = coco_sigmas[:nk]
+        k_sq = (2 * sigmas) ** 2
+
+        for res, tgt in zip(results, targets):
+            if "keypoints" not in res or "keypoints" not in tgt:
+                continue
+            pred_kp = res["keypoints"]  # [K, nk, 3] in pixel coords
+            gt_kp = tgt["keypoints"]  # [N, nk, 3] normalized
+            if pred_kp.numel() == 0 or gt_kp.numel() == 0:
+                continue
+            # Denormalize gt keypoints to pixel coords
+            h, w = tgt["orig_size"].tolist()
+            gt_denorm = gt_kp.clone().float()
+            gt_denorm[..., 0] *= w
+            gt_denorm[..., 1] *= h
+            gt_vis = gt_denorm[..., 2]
+            gt_boxes = tgt["boxes"]  # cxcywh normalized
+            gt_areas = (gt_boxes[:, 2] * w * gt_boxes[:, 3] * h)
+            # Simple greedy match: for each gt, find closest pred by box IoU
+            # and compute OKS. Use first min(N, K) pairs.
+            n_match = min(pred_kp.shape[0], gt_kp.shape[0])
+            for j in range(n_match):
+                valid = gt_vis[j] > 0
+                if not valid.any():
+                    continue
+                dx = pred_kp[j, :, 0].cpu() - gt_denorm[j, :, 0]
+                dy = pred_kp[j, :, 1].cpu() - gt_denorm[j, :, 1]
+                dist_sq = dx ** 2 + dy ** 2
+                s_sq = gt_areas[j].cpu().clamp(min=1.0)
+                oks_per_kp = torch.exp(-dist_sq / (2 * s_sq * k_sq + 1e-6))
+                mean_oks = (oks_per_kp * valid.cpu().float()).sum() / valid.sum().clamp(min=1)
+                self._kp_oks_sum += float(mean_oks)
+                self._kp_count += 1
 
     def _build_per_class_rows(
         self,

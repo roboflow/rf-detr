@@ -304,3 +304,11 @@ for image, detections in zip(images, detections_list):
         f"Detected {len(detections)} people with keypoints shape: {keypoints.shape if keypoints is not None else None}"
     )
 ```
+
+## Known Limitations
+
+The following features are planned but not yet implemented:
+
+- **Keypoint-aware data augmentation**: Horizontal flip does not swap left/right keypoint pairs, and crop does not mark out-of-bounds keypoints as invisible. This may reduce training accuracy for pose estimation.
+- **ONNX/TensorRT export for keypoints**: The export path includes keypoint outputs but has not been validated end-to-end.
+- **Albumentations keypoint transform integration**: Albumentations natively supports keypoint transforms, but the integration is not yet wired into the training pipeline.

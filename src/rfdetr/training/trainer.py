@@ -120,6 +120,8 @@ def build_trainer(
         COCOEvalCallback(
             max_dets=tc.eval_max_dets,
             segmentation=model_config.segmentation_head,
+            keypoint=getattr(model_config, "keypoint_head", False),
+            num_keypoints=getattr(model_config, "num_keypoints", 17),
             eval_interval=tc.eval_interval,
             log_per_class_metrics=tc.log_per_class_metrics,
         )
