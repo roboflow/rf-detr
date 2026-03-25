@@ -254,6 +254,11 @@ class RFDETR:
             self._optimized_resolution = self.model.resolution
             return
 
+        if backend != "pytorch":
+            raise ValueError(
+                f"Unknown inference backend {backend!r}. Expected 'pytorch' or 'mlx'."
+            )
+
         self.model.inference_model = deepcopy(self.model.model)
         self.model.inference_model.eval()
         self.model.inference_model.export()
@@ -525,6 +530,11 @@ class RFDETR:
                 negative, or if either dimension is not divisible by 14.
         """
         if self._inference_backend == "mlx":
+            if shape is not None:
+                raise NotImplementedError(
+                    "'shape' is not supported with backend='mlx'. "
+                    "Resize the input image before calling predict() instead."
+                )
             return self._predict_mlx(images, threshold)
         import supervision as sv
 
