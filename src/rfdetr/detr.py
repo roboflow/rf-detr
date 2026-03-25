@@ -255,9 +255,7 @@ class RFDETR:
             return
 
         if backend != "pytorch":
-            raise ValueError(
-                f"Unknown inference backend {backend!r}. Expected 'pytorch' or 'mlx'."
-            )
+            raise ValueError(f"Unknown inference backend {backend!r}. Expected 'pytorch' or 'mlx'.")
 
         self.model.inference_model = deepcopy(self.model.model)
         self.model.inference_model.eval()
