@@ -69,7 +69,7 @@ class ModelConfig(BaseConfig):
     amp: bool = True
     num_classes: int = 90
     pretrain_weights: Optional[str] = None
-    device: str | torch.device = DEVICE
+    device: str = DEVICE
     resolution: int
     group_detr: int = 13
     gradient_checkpointing: bool = False
@@ -117,7 +117,7 @@ class ModelConfig(BaseConfig):
 
     @field_validator("device", mode="before")
     @classmethod
-    def normalize_device(cls, v: str | torch.device) -> str:
+    def normalize_device(cls, v: Any) -> str:
         """Accept torch.device or string device specs and normalize to canonical string."""
         if isinstance(v, torch.device):
             return str(v)
