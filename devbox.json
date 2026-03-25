@@ -1,18 +1,18 @@
 {
-  "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/0.10.6/.schema/devbox.schema.json",
-  "packages": [
-    "uv@latest",
-    "python310@latest"
-  ],
-  "shell": {
-    "init_hook": [
-      "typeset -g POWERLEVEL9K_INSTANT_PROMPT=off",
-      "echo 'Welcome to devbox!' > /dev/null"
+    "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/0.10.6/.schema/devbox.schema.json",
+    "packages": [
+        "uv@latest",
+        "python310@latest"
     ],
-    "scripts": {
-      "test": [
-        "echo \"Error: no test specified\" && exit 1"
-      ]
+    "shell": {
+        "init_hook": [
+            "typeset -g POWERLEVEL9K_INSTANT_PROMPT=off",
+            "echo 'Welcome to devbox!' > /dev/null"
+        ],
+        "scripts": {
+            "test": [
+                "echo \"Error: no test specified\" && exit 1"
+            ]
+        }
     }
-  }
 }
