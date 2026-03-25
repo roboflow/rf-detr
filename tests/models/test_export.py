@@ -235,9 +235,7 @@ def test_rfdetr_export_dynamic_batch_forwards_dynamic_axes(
         assert axes == {0: "batch"}, f"axis spec for {name!r} should be {{0: 'batch'}}, got {axes!r}"
 
     expected_names = {"input", "dets", "labels", "masks"} if segmentation_head else {"input", "dets", "labels"}
-    assert set(dynamic_axes.keys()) == expected_names, (
-        f"expected keys {expected_names}, got {set(dynamic_axes.keys())}"
-    )
+    assert set(dynamic_axes.keys()) == expected_names, f"expected keys {expected_names}, got {set(dynamic_axes.keys())}"
 
 
 def test_export_simplify_flag_is_ignored_with_deprecation_warning(_detr_export_scaffold: tuple, tmp_path: Path) -> None:
