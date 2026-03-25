@@ -118,7 +118,7 @@ class ModelConfig(BaseConfig):
 
     @field_validator("device", mode="before")
     @classmethod
-    def normalize_device(cls, v: Any) -> str:
+    def _normalize_device(cls, v: Any) -> str:
         """Normalize supported device inputs to a canonical torch-style string.
 
         Args:

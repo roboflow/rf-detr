@@ -15,7 +15,7 @@ import warnings
 from collections import defaultdict
 from copy import deepcopy
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Optional, Union
+from typing import TYPE_CHECKING, Any, List, Optional, Union
 
 import numpy as np
 import requests
@@ -109,6 +109,45 @@ class RFDETR:
         """
         return self._model_config_class(**kwargs)
 
+    @staticmethod
+    def _resolve_trainer_device_kwargs(device: Any) -> tuple[str | None, list[int] | None]:
+        """Map a torch-style device specifier to PTL ``accelerator``/``devices`` kwargs.
+
+        Args:
+            device: A device specifier accepted by ``torch.device``.
+
+        Returns:
+            ``(accelerator, devices)`` where ``devices`` is ``None`` unless an explicit
+            device index is provided (for example ``cuda:1``).
+
+        Raises:
+            ValueError: If ``device`` is not a valid torch device specifier.
+        """
+        if device is None:
+            return None, None
+        try:
+            resolved_device = torch.device(device)
+        except (TypeError, ValueError, RuntimeError) as exc:
+            raise ValueError(
+                f"Invalid device specifier for train(): {device!r}. "
+                "Expected values like 'cpu', 'cuda', 'cuda:0', or torch.device(...)."
+            ) from exc
+
+        if resolved_device.type == "cpu":
+            return "cpu", None
+        if resolved_device.type == "cuda":
+            return "gpu", [resolved_device.index] if resolved_device.index is not None else None
+        if resolved_device.type == "mps":
+            return "mps", [resolved_device.index] if resolved_device.index is not None else None
+
+        warnings.warn(
+            f"Device type {resolved_device.type!r} is not explicitly mapped to a PyTorch Lightning "
+            "accelerator; falling back to PTL auto-detection. Training may use an unexpected device.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return None, None
+
     def train(self, **kwargs):
         """Train an RF-DETR model via the PyTorch Lightning stack.
 
@@ -166,31 +205,8 @@ class RFDETR:
         # Parse `device` kwarg and map it to PTL accelerator/devices.
         # Supports torch-style strings and torch.device (e.g. "cuda:1").
         _device = kwargs.pop("device", None)
-        _accelerator = None
-        _devices = None
-        if _device is not None:
-            try:
-                resolved_device = torch.device(_device)
-            except (TypeError, ValueError, RuntimeError) as exc:
-                raise ValueError(
-                    f"Invalid device specifier for train(): {_device!r}. "
-                    "Expected values like 'cpu', 'cuda', 'cuda:0', or torch.device(...)."
-                ) from exc
-            if resolved_device.type == "cpu":
-                _accelerator = "cpu"
-            elif resolved_device.type == "cuda":
-                _accelerator = "gpu"
-                _devices = [resolved_device.index] if resolved_device.index is not None else None
-            elif resolved_device.type == "mps":
-                _accelerator = "mps"
-                _devices = [resolved_device.index] if resolved_device.index is not None else None
-            else:
-                warnings.warn(
-                    f"Device type {resolved_device.type!r} is not explicitly mapped to a PyTorch Lightning "
-                    "accelerator; falling back to PTL auto-detection. Training may use an unexpected device.",
-                    UserWarning,
-                    stacklevel=2,
-                )
+        _device_resolver = getattr(type(self), "_resolve_trainer_device_kwargs", RFDETR._resolve_trainer_device_kwargs)
+        _accelerator, _devices = _device_resolver(_device)
 
         # Absorb legacy `start_epoch` — PTL resumes automatically via ckpt_path.
         if "start_epoch" in kwargs:
