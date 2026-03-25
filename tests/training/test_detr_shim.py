@@ -266,8 +266,8 @@ class TestRFDETRTrainPTL:
         assert not any(issubclass(x.category, DeprecationWarning) for x in w)
         mock_self.get_train_config.assert_called_once_with()
 
-    def test_device_kwarg_cuda_no_warning(self, tmp_path):
-        """device='cuda' is consumed without a DeprecationWarning."""
+    def test_device_kwarg_cuda_forwards_gpu_accelerator_without_devices(self, tmp_path):
+        """device='cuda' is mapped to accelerator='gpu' without explicit devices override."""
         mock_self = _make_rfdetr_self(tmp_path)
         p_mod, p_dm, p_bt, *_ = _patch_lit()
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
@@ -276,8 +276,8 @@ class TestRFDETRTrainPTL:
         assert not any(issubclass(x.category, DeprecationWarning) for x in w)
         mock_self.get_train_config.assert_called_once_with()
 
-    def test_device_kwarg_torch_device_cuda_index_no_warning(self, tmp_path):
-        """torch.device('cuda:1') is consumed without a DeprecationWarning."""
+    def test_device_kwarg_torch_device_cuda_index_forwards_gpu_accelerator_and_devices(self, tmp_path):
+        """torch.device('cuda:1') is mapped to accelerator='gpu' and devices=[1]."""
         mock_self = _make_rfdetr_self(tmp_path)
         p_mod, p_dm, p_bt, *_ = _patch_lit()
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
@@ -438,13 +438,14 @@ class TestRFDETRTrainPTLAbsorption:
         mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator="cpu")
 
     def test_device_cuda_absorbed_as_accelerator_gpu(self, tmp_path):
-        """device='cuda' is absorbed and forwarded as accelerator='gpu'."""
+        """device='cuda' forwards accelerator='gpu' without a devices kwarg."""
         mock_self = _make_rfdetr_self(tmp_path)
         p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = _patch_lit()
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self, device="cuda")
         config = mock_self.get_train_config.return_value
         mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator="gpu")
+        assert "devices" not in mock_bt.call_args.kwargs
 
     def test_device_cuda_index_absorbed_as_accelerator_gpu_devices_list(self, tmp_path):
         """device='cuda:1' forwards accelerator='gpu' and devices=[1]."""

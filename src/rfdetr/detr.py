@@ -159,13 +159,19 @@ class RFDETR:
                 stacklevel=2,
             )
 
-        # Absorb legacy `device` kwarg and map it to PTL accelerator/devices.
+        # Parse `device` kwarg and map it to PTL accelerator/devices.
         # Supports torch-style strings and torch.device (e.g. "cuda:1").
         _device = kwargs.pop("device", None)
         _accelerator = None
         _devices = None
         if _device is not None:
-            resolved_device = torch.device(_device)
+            try:
+                resolved_device = torch.device(_device)
+            except (TypeError, ValueError, RuntimeError) as exc:
+                raise ValueError(
+                    f"Invalid device specifier for train(): {_device!r}. "
+                    "Expected values like 'cpu', 'cuda', 'cuda:0', or torch.device(...)."
+                ) from exc
             if resolved_device.type == "cpu":
                 _accelerator = "cpu"
             elif resolved_device.type == "cuda":

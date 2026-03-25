@@ -69,6 +69,7 @@ class ModelConfig(BaseConfig):
     amp: bool = True
     num_classes: int = 90
     pretrain_weights: Optional[str] = None
+    # torch.device values are accepted at validation time and normalized to string.
     device: str = DEVICE
     resolution: int
     group_detr: int = 13
@@ -118,7 +119,20 @@ class ModelConfig(BaseConfig):
     @field_validator("device", mode="before")
     @classmethod
     def normalize_device(cls, v: Any) -> str:
-        """Accept torch.device or string device specs and normalize to canonical string."""
+        """Normalize supported device inputs to a canonical torch-style string.
+
+        Args:
+            v: Device specifier provided by callers. Supported values are
+                ``str`` (for example ``"cpu"``, ``"cuda"``, ``"cuda:1"``)
+                and ``torch.device``.
+
+        Returns:
+            Canonical string form of the parsed device (for example ``"cuda:1"``).
+
+        Raises:
+            ValueError: If a string value cannot be parsed as a valid torch device.
+            TypeError: If ``v`` is not a string or ``torch.device``.
+        """
         if isinstance(v, torch.device):
             return str(v)
         if isinstance(v, str):
