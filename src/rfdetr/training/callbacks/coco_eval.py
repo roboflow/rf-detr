@@ -679,6 +679,8 @@ class COCOEvalCallback(Callback):
                     ],
                 )
             )
+        if "kp OKS" in overall:
+            groups.append(("Keypoints", [("OKS", _fmt(overall["kp OKS"]))]))
 
         # Flatten sub-columns and compute widths (+2 for single-space padding each side)
         flat: list[tuple[str, str]] = [(s, v) for _, cols in groups for s, v in cols]
