@@ -490,9 +490,30 @@ class RFDETR:
         import supervision as sv
 
         if shape is not None:
-            if shape[0] % 14 != 0 or shape[1] % 14 != 0:
-                raise ValueError(f"shape must have both dimensions divisible by 14, got {shape}.")
+            try:
+                height, width = shape  # type: ignore[misc]
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"shape must be a sequence of two positive integers (height, width), got {shape!r}."
+                ) from None
 
+            for dim_name, dim in (("height", height), ("width", width)):
+                if not isinstance(dim, int):
+                    raise ValueError(
+                        f"shape {dim_name} must be an integer, got {type(dim).__name__} (shape={shape!r})."
+                    )
+                if dim <= 0:
+                    raise ValueError(
+                        f"shape must contain positive integers for height and width, got {shape!r}."
+                    )
+
+            if height % 14 != 0 or width % 14 != 0:
+                raise ValueError(
+                    f"shape must have both dimensions divisible by 14, got {shape!r}."
+                )
+
+            # Normalize shape to a tuple of validated integers
+            shape = (height, width)
         if not self._is_optimized_for_inference and not self._has_warned_about_not_being_optimized_for_inference:
             logger.warning(
                 "Model is not optimized for inference. Latency may be higher than expected."
