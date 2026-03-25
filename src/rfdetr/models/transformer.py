@@ -231,11 +231,15 @@ class Transformer(nn.Module):
             device=srcs[0].device,
             dtype=torch.long,
         )
+        # Keep Python int pairs for gen_encoder_output_proposals — its loop uses h/w
+        # as slice indices and linspace steps, which require Python ints, not tensors.
+        spatial_shapes_hw: list[tuple[int, int]] = []
         valid_ratios = [] if masks is not None else None
         for lvl, (src, pos_embed) in enumerate(zip(srcs, pos_embeds)):
             bs, c, h, w = src.shape
             spatial_shapes[lvl, 0] = h
             spatial_shapes[lvl, 1] = w
+            spatial_shapes_hw.append((h, w))
 
             src = src.flatten(2).transpose(1, 2)  # bs, hw, c
             pos_embed = pos_embed.flatten(2).transpose(1, 2)  # bs, hw, c
@@ -253,7 +257,7 @@ class Transformer(nn.Module):
 
         if self.two_stage:
             output_memory, output_proposals = gen_encoder_output_proposals(
-                memory, mask_flatten, spatial_shapes, unsigmoid=not self.bbox_reparam
+                memory, mask_flatten, spatial_shapes_hw, unsigmoid=not self.bbox_reparam
             )
             # group detr for first stage
             refpoint_embed_ts, memory_ts, boxes_ts = [], [], []
