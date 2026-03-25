@@ -503,14 +503,10 @@ class RFDETR:
                         f"shape {dim_name} must be an integer, got {type(dim).__name__} (shape={shape!r})."
                     )
                 if dim <= 0:
-                    raise ValueError(
-                        f"shape must contain positive integers for height and width, got {shape!r}."
-                    )
+                    raise ValueError(f"shape must contain positive integers for height and width, got {shape!r}.")
 
             if height % 14 != 0 or width % 14 != 0:
-                raise ValueError(
-                    f"shape must have both dimensions divisible by 14, got {shape!r}."
-                )
+                raise ValueError(f"shape must have both dimensions divisible by 14, got {shape!r}.")
 
             # Normalize shape to a tuple of validated integers
             shape = (height, width)
