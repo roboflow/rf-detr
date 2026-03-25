@@ -199,6 +199,10 @@ class DINOv2Backbone(nn.Module):
             feature_indices = [2, 5, 8, 11]
         self.feature_indices = feature_indices
 
+        # Full attention at the same layers where features are extracted (0-indexed).
+        # Matches the PyTorch backbone: window_block_indexes excludes out_feature_indexes,
+        # so those layers always run global attention. feature_indices are already the
+        # 0-indexed equivalents of the 1-indexed out_feature_indexes from model config.
         self.full_attn_layers = set(feature_indices)
 
         self.patch_embed = PatchEmbed(img_size, patch_size, 3, embed_dim)

@@ -46,8 +46,8 @@ class TestIsMLXAvailable:
         # Reimport to pick up the mocked modules
         from rfdetr.mlx import is_mlx_available as check
 
-        # When mlx is not importable, should return False
-        assert check() is False or sys.platform != "darwin"
+        # When mlx is not importable, should return False regardless of platform
+        assert check() is False
 
 
 class TestConvertWeights:
