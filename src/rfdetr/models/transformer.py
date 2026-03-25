@@ -90,8 +90,8 @@ def gen_encoder_output_proposals(memory, memory_padding_mask, spatial_shapes, un
             valid_H = torch.sum(~mask_flatten_[:, :, 0, 0], 1)
             valid_W = torch.sum(~mask_flatten_[:, 0, :, 0], 1)
         else:
-            valid_H = H_.expand(N_)
-            valid_W = W_.expand(N_)
+            valid_H = torch.full((N_,), H_, dtype=torch.long, device=memory.device)
+            valid_W = torch.full((N_,), W_, dtype=torch.long, device=memory.device)
 
         grid_y, grid_x = torch.meshgrid(
             torch.linspace(0, H_ - 1, H_, dtype=torch.float32, device=memory.device),
