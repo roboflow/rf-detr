@@ -32,7 +32,7 @@ class BestModelCallback(ModelCheckpoint):
 
     At the end of training the overall winner (regular vs EMA, strict ``>`` for
     EMA) is copied to ``checkpoint_best_total.pth`` and optimizer/scheduler
-    state is stripped via :func:`rfdetr.util.misc.strip_checkpoint`.
+    state is stripped via :func:`rfdetr.utilities.state_dict.strip_checkpoint`.
 
     Checkpoints are only updated on validation epochs where the monitor metric
     is actually logged.  On non-eval epochs (when ``eval_interval > 1`` causes
