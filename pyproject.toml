@@ -167,7 +167,7 @@ ignore = [
 addopts = [
     "-v",                   # verbose output
     "--color=yes",          # colored output
-#    "--doctest-modules",    # TODO: run doctests from all modules
+    "--doctest-modules",
 ]
 pythonpath = ["src"]
 markers = [
