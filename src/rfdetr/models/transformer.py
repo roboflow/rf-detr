@@ -226,11 +226,7 @@ class Transformer(nn.Module):
         lvl_pos_embed_flatten = []
         # Build spatial_shapes as a tensor directly so that the ONNX tracer
         # can track h/w symbolically instead of baking them in as constants.
-        spatial_shapes = torch.empty(
-            (len(srcs), 2),
-            device=srcs[0].device,
-            dtype=torch.long
-        )
+        spatial_shapes = torch.empty((len(srcs), 2), device=srcs[0].device, dtype=torch.long)
         # Keep Python int pairs for gen_encoder_output_proposals — its loop uses h/w
         # as slice indices and linspace steps, which require Python ints, not tensors.
         spatial_shapes_hw: list[tuple[int, int]] = []
