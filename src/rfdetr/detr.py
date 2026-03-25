@@ -286,7 +286,6 @@ class RFDETR:
         self._optimized_has_been_compiled = False
         self._optimized_batch_size = None
         self._optimized_resolution = None
-        self._optimized_half = False
         self._inference_backend = None
         self._mlx_model = None
         self._optimized_dtype = None
