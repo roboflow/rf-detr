@@ -280,6 +280,7 @@ class RFDETR:
         force: bool = False,
         shape: tuple = None,
         batch_size: int = 1,
+        dynamic_batch: bool = False,
         **kwargs,
     ) -> None:
         """Export the trained model to ONNX format.
@@ -297,6 +298,8 @@ class RFDETR:
             force: Deprecated and ignored.
             shape: ``(height, width)`` tuple; defaults to square at model resolution.
             batch_size: Static batch size to bake into the ONNX graph.
+            dynamic_batch: If True, export with a dynamic batch dimension
+                so the ONNX model accepts variable batch sizes at runtime.
             **kwargs: Additional keyword arguments forwarded to export_onnx.
         """
         logger.info("Exporting model to ONNX format")
@@ -330,7 +333,10 @@ class RFDETR:
         else:
             output_names = ["dets", "labels"]
 
-        dynamic_axes = None
+        if dynamic_batch:
+            dynamic_axes = {name: {0: "batch"} for name in input_names + output_names}
+        else:
+            dynamic_axes = None
         model.eval()
         with torch.no_grad():
             if backbone_only:
