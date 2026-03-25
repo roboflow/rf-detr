@@ -205,8 +205,7 @@ class RFDETR:
         # Parse `device` kwarg and map it to PTL accelerator/devices.
         # Supports torch-style strings and torch.device (e.g. "cuda:1").
         _device = kwargs.pop("device", None)
-        _device_resolver = getattr(type(self), "_resolve_trainer_device_kwargs", RFDETR._resolve_trainer_device_kwargs)
-        _accelerator, _devices = _device_resolver(_device)
+        _accelerator, _devices = RFDETR._resolve_trainer_device_kwargs(_device)
 
         # Absorb legacy `start_epoch` — PTL resumes automatically via ckpt_path.
         if "start_epoch" in kwargs:
