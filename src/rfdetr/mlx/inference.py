@@ -471,7 +471,6 @@ class MLXSegInferenceModel:
             ``(num_select, orig_h, orig_w)`` and contains float32 sigmoid
             probabilities.
         """
-        import cv2
 
         pred_logits, pred_boxes, mask_logits = outputs
         logits = np.clip(np.array(pred_logits, dtype=np.float32), -88.0, 88.0)
@@ -527,18 +526,16 @@ class MLXSegInferenceModel:
             scale = np.array([orig_w, orig_h, orig_w, orig_h], dtype=np.float32)
             xyxy = xyxy * scale
 
-            # Select and resize masks
+            # Select and resize masks — bilinear upsample via scipy.ndimage.zoom (vectorised)
             sel_masks_logits = masks_i[topk_boxes_idx]  # (num_select, H_mask, W_mask)
             sel_masks_logits = np.clip(sel_masks_logits, -88.0, 88.0)
             sel_masks_prob = 1.0 / (1.0 + np.exp(-sel_masks_logits))  # sigmoid
 
-            resized_masks = np.zeros((num_select, orig_h, orig_w), dtype=np.float32)
-            for j in range(num_select):
-                resized_masks[j] = cv2.resize(
-                    sel_masks_prob[j],
-                    (orig_w, orig_h),
-                    interpolation=cv2.INTER_LINEAR,
-                )
+            zoom_h = orig_h / sel_masks_prob.shape[1]
+            zoom_w = orig_w / sel_masks_prob.shape[2]
+            import scipy.ndimage
+
+            resized_masks = scipy.ndimage.zoom(sel_masks_prob, (1, zoom_h, zoom_w), order=1).astype(np.float32)
 
             results.append(
                 {
