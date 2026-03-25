@@ -6,7 +6,7 @@
 
 """LightningDataModule for RF-DETR dataset construction and loaders."""
 
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 import torch
 import torch.utils.data
@@ -40,6 +40,10 @@ class RFDETRDataModule(LightningDataModule):
         self._dataset_train: Optional[torch.utils.data.Dataset] = None
         self._dataset_val: Optional[torch.utils.data.Dataset] = None
         self._dataset_test: Optional[torch.utils.data.Dataset] = None
+
+        # GPU augmentation pipeline (Kornia); built lazily in setup("fit").
+        self._kornia_pipeline: Optional[Any] = None
+        self._kornia_normalize: Optional[Any] = None
 
         num_workers = self.train_config.num_workers
         self._pin_memory: bool = (
@@ -79,6 +83,9 @@ class RFDETRDataModule(LightningDataModule):
                 self._dataset_train = build_dataset("train", ns, resolution)
             if self._dataset_val is None:
                 self._dataset_val = build_dataset("val", ns, resolution)
+            # Build Kornia GPU augmentation pipeline (once).
+            if self._kornia_pipeline is None:
+                self._setup_kornia_pipeline()
         elif stage == "validate":
             if self._dataset_val is None:
                 self._dataset_val = build_dataset("val", ns, resolution)
@@ -193,6 +200,81 @@ class RFDETRDataModule(LightningDataModule):
             persistent_workers=self._persistent_workers,
             prefetch_factor=self._prefetch_factor,
         )
+
+    def _setup_kornia_pipeline(self) -> None:
+        """Resolve augmentation backend and build the Kornia pipeline if applicable.
+
+        Called once during ``setup("fit")``.  When ``augmentation_backend``
+        is ``"cpu"`` this is a no-op.  For ``"auto"`` the method falls back
+        silently when CUDA or Kornia are unavailable.  For ``"gpu"`` missing
+        requirements raise hard errors.
+        """
+        backend = self.train_config.augmentation_backend
+        if backend == "cpu":
+            return
+
+        if backend == "auto":
+            if not torch.cuda.is_available():
+                logger.info("augmentation_backend='auto': no CUDA, using CPU augmentation")
+                return
+            try:
+                import kornia.augmentation
+            except ImportError:
+                logger.warning("augmentation_backend='auto': kornia not installed, using CPU augmentation")
+                return
+        elif backend == "gpu":
+            if not torch.cuda.is_available():
+                raise RuntimeError("augmentation_backend='gpu' requires a CUDA device")
+            try:
+                import kornia.augmentation  # noqa: F401
+            except ImportError as e:
+                raise ImportError(
+                    "GPU augmentation requires kornia. Install with: pip install 'rfdetr[kornia]'"
+                ) from e
+
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline, build_normalize
+
+        self._kornia_pipeline = build_kornia_pipeline(
+            self.train_config.aug_config or {},
+            self.model_config.resolution,
+        )
+        self._kornia_normalize = build_normalize()
+        logger.info("Kornia GPU augmentation pipeline built (backend=%s)", backend)
+
+    def on_after_batch_transfer(self, batch: Tuple, dataloader_idx: int) -> Tuple:
+        """Apply Kornia GPU augmentation after the batch is transferred to device.
+
+        When ``_kornia_pipeline`` is set and the trainer is in training mode,
+        augmentation and normalization are applied on the GPU.  Validation
+        and test batches pass through unchanged.
+
+        Segmentation models skip GPU augmentation in phase 1 with a warning.
+
+        Args:
+            batch: Tuple of ``(NestedTensor, list[dict])`` already on device.
+            dataloader_idx: Index of the current dataloader.
+
+        Returns:
+            The (possibly augmented) batch.
+        """
+        if self.trainer.training and self._kornia_pipeline is not None:
+            if self.model_config.segmentation_head:
+                logger.warning_once(
+                    "Kornia GPU augmentation skipped for segmentation models (phase 2)"
+                )
+                return batch
+
+            from rfdetr.datasets.kornia_transforms import collate_boxes, unpack_boxes
+            from rfdetr.utilities.tensors import NestedTensor
+
+            samples, targets = batch
+            img = samples.tensors  # [B, C, H, W]
+            boxes_padded, valid = collate_boxes(targets, img.device)
+            img_aug, boxes_aug = self._kornia_pipeline(img, boxes_padded)
+            img_aug = self._kornia_normalize(img_aug)
+            targets = unpack_boxes(boxes_aug, valid, targets, *img_aug.shape[-2:])
+            batch = (NestedTensor(img_aug, samples.mask), targets)
+        return batch
 
     # ------------------------------------------------------------------
     # Properties
