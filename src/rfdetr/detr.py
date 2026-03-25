@@ -476,11 +476,11 @@ class RFDETR:
                 The minimum confidence score needed to consider a detected bounding box valid.
             shape:
                 Optional ``(height, width)`` tuple to resize images to before inference.
-                When provided, overrides the model's default square resolution. Useful
-                when running inference on a model exported with a non-square shape via
-                ``export(shape=(H, W))``. Both dimensions must be positive integers
-                divisible by 14. Defaults to
-                ``(model.resolution, model.resolution)`` when not set.
+                When provided, overrides the model's default inference resolution. The
+                tuple should match the resolution used when exporting the model
+                (typically a square shape). Both dimensions must be positive integers
+                divisible by 14. Defaults to ``(model.resolution, model.resolution)``
+                when not set.
             **kwargs:
                 Additional keyword arguments.
 
