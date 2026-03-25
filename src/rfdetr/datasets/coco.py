@@ -277,9 +277,7 @@ class ConvertCoco(object):
 
         return image, target
 
-    def _extract_keypoints(
-        self, anno: List[Dict[str, Any]], w: int, h: int
-    ) -> torch.Tensor:
+    def _extract_keypoints(self, anno: List[Dict[str, Any]], w: int, h: int) -> torch.Tensor:
         """Extract keypoints from COCO annotations.
 
         Args:
