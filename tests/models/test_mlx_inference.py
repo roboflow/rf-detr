@@ -24,6 +24,8 @@ import torch
 
 from rfdetr.mlx import is_mlx_available
 
+pytestmark = pytest.mark.mlx
+
 requires_mlx = pytest.mark.skipif(
     not is_mlx_available(),
     reason="MLX not available (requires macOS with Apple Silicon)",
