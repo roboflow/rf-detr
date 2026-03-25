@@ -229,7 +229,7 @@ class Transformer(nn.Module):
         spatial_shapes = torch.empty(
             (len(srcs), 2),
             device=srcs[0].device,
-            dtype=torch.long,
+            dtype=torch.long
         )
         # Keep Python int pairs for gen_encoder_output_proposals — its loop uses h/w
         # as slice indices and linspace steps, which require Python ints, not tensors.
