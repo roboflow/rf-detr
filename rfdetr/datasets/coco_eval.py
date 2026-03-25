@@ -46,6 +46,10 @@ class CocoEvaluator(object):
         cat_ids = sorted(coco_gt.getCatIds())
         self.continuous_to_cat_id = {i: cat_id for i, cat_id in enumerate(cat_ids)}
 
+        # DEBUG: Print category mapping info
+        from rfdetr.util.misc import get_rank
+        print(f"[DEBUG Rank {get_rank()}] CocoEvaluator: {len(cat_ids)} categories, first 5 cat_ids: {cat_ids[:5]}, mapping sample: {{0: {self.continuous_to_cat_id.get(0)}}}", flush=True)
+
         self.iou_types = iou_types
         self.coco_eval = {}
         for iou_type in iou_types:
@@ -76,14 +80,32 @@ class CocoEvaluator(object):
 
             coco_eval.cocoDt = coco_dt
             coco_eval.params.imgIds = list(img_ids)
+
+            # DEBUG: Print GT category IDs being used (once)
+            if not getattr(self, '_debug_gt_cats', False):
+                from rfdetr.util.misc import get_rank
+                gt_cat_ids = coco_eval.params.catIds
+                print(f"[DEBUG Rank {get_rank()}] GT catIds for eval: {gt_cat_ids[:5]}... (total: {len(gt_cat_ids)})", flush=True)
+                self._debug_gt_cats = True
+
             img_ids, eval_imgs = evaluate(coco_eval)
 
             self.eval_imgs[iou_type].append(eval_imgs)
 
     def synchronize_between_processes(self):
+        from rfdetr.util.misc import get_world_size, get_rank
         for iou_type in self.iou_types:
             self.eval_imgs[iou_type] = np.concatenate(self.eval_imgs[iou_type], 2)
+
+            # DEBUG: Check gathering
+            local_img_count = len(self.img_ids)
+            print(f"[DEBUG Rank {get_rank()}/{get_world_size()}] {iou_type}: {local_img_count} local images, eval_imgs shape: {self.eval_imgs[iou_type].shape}", flush=True)
+
             create_common_coco_eval(self.coco_eval[iou_type], self.img_ids, self.eval_imgs[iou_type])
+
+            # DEBUG: Check after merge
+            merged_count = len(self.coco_eval[iou_type].params.imgIds)
+            print(f"[DEBUG Rank {get_rank()}] {iou_type}: After merge: {merged_count} unique images", flush=True)
 
     def accumulate(self):
         for coco_eval in self.coco_eval.values():
@@ -106,6 +128,7 @@ class CocoEvaluator(object):
 
     def prepare_for_coco_detection(self, predictions):
         coco_results = []
+        _debug_printed = getattr(self, '_debug_printed_det', False)
         for original_id, prediction in predictions.items():
             if len(prediction) == 0:
                 continue
@@ -114,6 +137,15 @@ class CocoEvaluator(object):
             boxes = convert_to_xywh(boxes).tolist()
             scores = prediction["scores"].tolist()
             labels = prediction["labels"].tolist()
+
+            # DEBUG: Print first prediction's label mapping (once per evaluator)
+            if not _debug_printed and labels:
+                from rfdetr.util.misc import get_rank
+                raw_label = labels[0]
+                mapped_cat = self.continuous_to_cat_id.get(raw_label, raw_label)
+                print(f"[DEBUG Rank {get_rank()}] Detection: raw_label={raw_label} -> category_id={mapped_cat}, unique labels in batch: {set(labels)}", flush=True)
+                self._debug_printed_det = True
+                _debug_printed = True
 
             coco_results.extend(
                 [
