@@ -43,7 +43,7 @@ class LayerNorm(nn.Module):
         TODO: this is a hack to avoid overflow when using fp16
         """
         x = x.permute(0, 2, 3, 1)
-        x = F.layer_norm(x, (x.size(3),), self.weight, self.bias, self.eps)
+        x = F.layer_norm(x, self.normalized_shape, self.weight, self.bias, self.eps)
         x = x.permute(0, 3, 1, 2)
         return x
 
