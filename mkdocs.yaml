@@ -25,11 +25,12 @@ nav:
   - How to:
       - Install: learn/install.md
       - Migration Guide: learn/migration.md
-      - Run Model:
+      - Run a Model:
           - Detection: learn/run/detection.md
           - Segmentation: learn/run/segmentation.md
           - Pretrained Models: learn/pretrained.md
-      - Train Model:
+          - Pose Estimation: learn/run/pose.md
+      - Train a Model:
           - Overview: learn/train/index.md
           - Dataset Formats: learn/train/dataset-formats.md
           - Training Parameters: learn/train/training-parameters.md
@@ -42,7 +43,7 @@ nav:
       - Benchmarks: learn/benchmarks.md
   - API Reference:
       - RF-DETR: reference/rfdetr.md
-      - Detection Models:
+      - Object Detection Models:
           - RF-DETR Nano: reference/nano.md
           - RF-DETR Small: reference/small.md
           - RF-DETR Medium: reference/medium.md
@@ -56,6 +57,8 @@ nav:
           - RF-DETR Seg Large: reference/seg_large.md
           - RF-DETR Seg XLarge: reference/seg_xlarge.md
           - RF-DETR Seg 2XLarge: reference/seg_2xlarge.md
+      - Pose Estimation Models:
+        - RF-DETR Pose: reference/pose.md
       - Training Configs:
           - Train Config: reference/train_config.md
           - Segmentation Train Config: reference/segmentation_train_config.md

@@ -7,9 +7,23 @@
 """Detection and segmentation head subpackage."""
 
 from rfdetr.models.heads.segmentation import DepthwiseConvBlock, MLPBlock, SegmentationHead
+from rfdetr.detr import (
+    RFDETRBase,
+    RFDETRLarge,
+    RFDETRNano,
+    RFDETRSmall,
+    RFDETRMedium,
+    RFDETRSegPreview,
+    RFDETRPose,
+    RFDETRPoseNano,
+    RFDETRPoseSmall,
+    RFDETRPoseMedium,
+    RFDETRPoseLarge,
+)
 
 __all__ = [
     "SegmentationHead",
     "DepthwiseConvBlock",
     "MLPBlock",
 ]
+
