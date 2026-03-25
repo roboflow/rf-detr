@@ -516,7 +516,13 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
     square_resize_div_64 = getattr(args, "square_resize_div_64", False)
     include_masks = getattr(args, "segmentation_head", False)
     aug_config = getattr(args, "aug_config", None)
-    gpu_postprocess = getattr(args, "augmentation_backend", "cpu") != "cpu"
+    augmentation_backend = getattr(args, "augmentation_backend", "cpu")
+    if include_masks and augmentation_backend != "cpu":
+        logger.warning(
+            "Segmentation training does not currently support GPU postprocess transforms; "
+            "forcing augmentation_backend='cpu' to retain CPU transforms and normalization."
+        )
+    gpu_postprocess = augmentation_backend != "cpu" and not include_masks
 
     if square_resize_div_64:
         logger.info(f"Building COCO {image_set} dataset with square resize at resolution {resolution}")
@@ -583,7 +589,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
     patch_size = getattr(args, "patch_size", 16)
     num_windows = getattr(args, "num_windows", 4)
     aug_config = getattr(args, "aug_config", None)
-    gpu_postprocess = getattr(args, "augmentation_backend", "cpu") != "cpu"
+    gpu_postprocess = getattr(args, "augmentation_backend", "cpu") != "cpu" and not include_masks
 
     if square_resize_div_64:
         logger.info(f"Building Roboflow {image_set} dataset with square resize at resolution {resolution}")
