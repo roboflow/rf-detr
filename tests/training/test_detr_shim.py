@@ -266,17 +266,24 @@ class TestRFDETRTrainPTL:
         assert not any(issubclass(x.category, DeprecationWarning) for x in w)
         mock_self.get_train_config.assert_called_once_with()
 
-    def test_device_kwarg_non_cpu_emits_deprecation(self, tmp_path):
-        """Non-'cpu' device= emits a DeprecationWarning and is not forwarded."""
+    def test_device_kwarg_cuda_no_warning(self, tmp_path):
+        """device='cuda' is consumed without a DeprecationWarning."""
         mock_self = _make_rfdetr_self(tmp_path)
         p_mod, p_dm, p_bt, *_ = _patch_lit()
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             RFDETR.train(mock_self, device="cuda")
-        dep_warns = [x for x in w if issubclass(x.category, DeprecationWarning)]
-        assert len(dep_warns) == 1
-        assert "cuda" in str(dep_warns[0].message)
-        # device must not have been forwarded to get_train_config
+        assert not any(issubclass(x.category, DeprecationWarning) for x in w)
+        mock_self.get_train_config.assert_called_once_with()
+
+    def test_device_kwarg_torch_device_cuda_index_no_warning(self, tmp_path):
+        """torch.device('cuda:1') is consumed without a DeprecationWarning."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            RFDETR.train(mock_self, device=torch.device("cuda:1"))
+        assert not any(issubclass(x.category, DeprecationWarning) for x in w)
         mock_self.get_train_config.assert_called_once_with()
 
     def test_callbacks_none_no_warning(self, tmp_path):
@@ -429,6 +436,33 @@ class TestRFDETRTrainPTLAbsorption:
             RFDETR.train(mock_self, device="cpu")
         config = mock_self.get_train_config.return_value
         mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator="cpu")
+
+    def test_device_cuda_absorbed_as_accelerator_gpu(self, tmp_path):
+        """device='cuda' is absorbed and forwarded as accelerator='gpu'."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = _patch_lit()
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self, device="cuda")
+        config = mock_self.get_train_config.return_value
+        mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator="gpu")
+
+    def test_device_cuda_index_absorbed_as_accelerator_gpu_devices_list(self, tmp_path):
+        """device='cuda:1' forwards accelerator='gpu' and devices=[1]."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = _patch_lit()
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self, device="cuda:1")
+        config = mock_self.get_train_config.return_value
+        mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator="gpu", devices=[1])
+
+    def test_device_torch_device_cuda_index_absorbed_as_accelerator_gpu_devices_list(self, tmp_path):
+        """device=torch.device('cuda:2') forwards accelerator='gpu' and devices=[2]."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = _patch_lit()
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self, device=torch.device("cuda:2"))
+        config = mock_self.get_train_config.return_value
+        mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator="gpu", devices=[2])
 
     def test_callbacks_empty_dict_no_error(self, tmp_path):
         """callbacks={} is accepted without error."""

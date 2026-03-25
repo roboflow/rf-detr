@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 
 import pytest
+import torch
 from pydantic import ValidationError
 
 from rfdetr.config import (
@@ -51,6 +52,14 @@ class TestModelConfigValidation:
 
         with pytest.raises(ValueError, match=r"Unknown attribute: 'unknown'\."):
             setattr(config, "unknown", "value")
+
+    def test_accepts_indexed_cuda_device_string(self, sample_model_config) -> None:
+        config = ModelConfig(**sample_model_config, device="cuda:1")
+        assert config.device == "cuda:1"
+
+    def test_accepts_torch_device(self, sample_model_config) -> None:
+        config = ModelConfig(**sample_model_config, device=torch.device("cuda:2"))
+        assert config.device == "cuda:2"
 
 
 class TestSegmentationTrainConfigNumSelect:

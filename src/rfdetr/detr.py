@@ -159,23 +159,21 @@ class RFDETR:
                 stacklevel=2,
             )
 
-        # Absorb legacy `device` kwarg.  When the caller explicitly requests CPU
-        # (e.g. in tests or CPU-only environments), honour it by forwarding it as
-        # the PTL accelerator.  All other device strings (e.g. "cuda:1") are not
-        # forwarded — PTL auto-selects the best available device — so emit a
-        # DeprecationWarning so callers know the value was not honoured.
+        # Absorb legacy `device` kwarg and map it to PTL accelerator/devices.
+        # Supports torch-style strings and torch.device (e.g. "cuda:1").
         _device = kwargs.pop("device", None)
-        _accelerator = "cpu" if _device == "cpu" else None
-        if _device is not None and _device != "cpu":
-            warnings.warn(
-                f"`device='{_device}'` is deprecated and ignored; PTL auto-selects the"
-                " accelerator. To pin a specific device, configure your"
-                " accelerator/backend explicitly (for example, use"
-                " `CUDA_VISIBLE_DEVICES` for CUDA) or configure a PTL Trainer"
-                " directly.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
+        _accelerator = None
+        _devices = None
+        if _device is not None:
+            resolved_device = torch.device(_device)
+            if resolved_device.type == "cpu":
+                _accelerator = "cpu"
+            elif resolved_device.type == "cuda":
+                _accelerator = "gpu"
+                _devices = [resolved_device.index] if resolved_device.index is not None else None
+            elif resolved_device.type == "mps":
+                _accelerator = "mps"
+                _devices = [resolved_device.index] if resolved_device.index is not None else None
 
         # Absorb legacy `start_epoch` — PTL resumes automatically via ckpt_path.
         if "start_epoch" in kwargs:
@@ -212,7 +210,10 @@ class RFDETR:
             )
         module = RFDETRModelModule(self.model_config, config)
         datamodule = RFDETRDataModule(self.model_config, config)
-        trainer = build_trainer(config, self.model_config, accelerator=_accelerator)
+        trainer_kwargs = {"accelerator": _accelerator}
+        if _devices is not None:
+            trainer_kwargs["devices"] = _devices
+        trainer = build_trainer(config, self.model_config, **trainer_kwargs)
         trainer.fit(module, datamodule, ckpt_path=config.resume or None)
 
         # Sync the trained weights back so predict() / export() see the updated model.
