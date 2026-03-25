@@ -460,12 +460,12 @@ class COCOEvalCallback(Callback):
                 continue
             # Denormalize gt keypoints to pixel coords
             h, w = tgt["orig_size"].tolist()
-            gt_denorm = gt_kp.clone().float()
+            gt_denorm = gt_kp.clone().float().cpu()
             gt_denorm[..., 0] *= w
             gt_denorm[..., 1] *= h
             gt_vis = gt_denorm[..., 2]
             gt_boxes = tgt["boxes"]  # cxcywh normalized
-            gt_areas = gt_boxes[:, 2] * w * gt_boxes[:, 3] * h
+            gt_areas = (gt_boxes[:, 2] * w * gt_boxes[:, 3] * h).cpu()
             # Simple greedy match: for each gt, find closest pred by box IoU
             # and compute OKS. Use first min(N, K) pairs.
             n_match = min(pred_kp.shape[0], gt_kp.shape[0])
@@ -476,9 +476,9 @@ class COCOEvalCallback(Callback):
                 dx = pred_kp[j, :, 0].cpu() - gt_denorm[j, :, 0]
                 dy = pred_kp[j, :, 1].cpu() - gt_denorm[j, :, 1]
                 dist_sq = dx**2 + dy**2
-                s_sq = gt_areas[j].cpu().clamp(min=1.0)
+                s_sq = gt_areas[j].clamp(min=1.0)
                 oks_per_kp = torch.exp(-dist_sq / (2 * s_sq * k_sq + 1e-6))
-                mean_oks = (oks_per_kp * valid.cpu().float()).sum() / valid.sum().clamp(min=1)
+                mean_oks = (oks_per_kp * valid.float()).sum() / valid.sum().clamp(min=1)
                 self._kp_oks_sum += float(mean_oks)
                 self._kp_count += 1
 
