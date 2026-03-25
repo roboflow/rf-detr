@@ -465,6 +465,28 @@ class TestRFDETRTrainPTLAbsorption:
         config = mock_self.get_train_config.return_value
         mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator="gpu", devices=[2])
 
+    def test_device_invalid_raises_value_error_with_expected_message(self, tmp_path):
+        """Invalid device strings raise a ValueError with the train() device hint."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        with (
+            p_mod,
+            p_dm,
+            p_bt,
+            pytest.raises(ValueError, match=r"Invalid device specifier for train\(\): 'notadevice'"),
+        ):
+            RFDETR.train(mock_self, device="notadevice")
+
+    def test_device_unmapped_valid_type_warns_and_falls_back_to_auto_detection(self, tmp_path):
+        """Valid but unmapped torch device types warn and use PTL auto-detection."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = _patch_lit()
+        with p_mod, p_dm, p_bt, pytest.warns(UserWarning, match="auto-detection"):
+            RFDETR.train(mock_self, device="meta")
+        config = mock_self.get_train_config.return_value
+        mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator=None)
+        assert "devices" not in mock_bt.call_args.kwargs
+
     def test_callbacks_empty_dict_no_error(self, tmp_path):
         """callbacks={} is accepted without error."""
         mock_self = _make_rfdetr_self(tmp_path)
