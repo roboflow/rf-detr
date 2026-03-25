@@ -8,7 +8,15 @@
 from pydantic import BaseModel
 from typing import List, Optional, Literal, Type
 import torch
-DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+
+DEVICE = (
+    "cuda"
+    if torch.cuda.is_available()
+    else "mps"
+    if torch.backends.mps.is_available()
+    else "cpu"
+)
+
 
 class ModelConfig(BaseModel):
     encoder: Literal["dinov2_windowed_small", "dinov2_windowed_base"]
@@ -48,7 +56,10 @@ class RFDETRBaseConfig(ModelConfig):
     """
     The configuration for an RF-DETR Base model.
     """
-    encoder: Literal["dinov2_windowed_small", "dinov2_windowed_base"] = "dinov2_windowed_small"
+
+    encoder: Literal["dinov2_windowed_small", "dinov2_windowed_base"] = (
+        "dinov2_windowed_small"
+    )
     hidden_dim: int = 256
     patch_size: int = 14
     num_windows: int = 4
@@ -64,11 +75,15 @@ class RFDETRBaseConfig(ModelConfig):
     resolution: int = 560
     positional_encoding_size: int = 37
 
+
 class RFDETRLargeConfig(RFDETRBaseConfig):
     """
     The configuration for an RF-DETR Large model.
     """
-    encoder: Literal["dinov2_windowed_small", "dinov2_windowed_base"] = "dinov2_windowed_base"
+
+    encoder: Literal["dinov2_windowed_small", "dinov2_windowed_base"] = (
+        "dinov2_windowed_base"
+    )
     hidden_dim: int = 384
     sa_nheads: int = 12
     ca_nheads: int = 24
@@ -76,10 +91,12 @@ class RFDETRLargeConfig(RFDETRBaseConfig):
     projector_scale: List[Literal["P3", "P4", "P5"]] = ["P3", "P5"]
     pretrain_weights: Optional[str] = "rf-detr-large.pth"
 
+
 class RFDETRNanoConfig(RFDETRBaseConfig):
     """
     The configuration for an RF-DETR Nano model.
     """
+
     out_feature_indexes: List[int] = [3, 6, 9, 12]
     num_windows: int = 2
     dec_layers: int = 2
@@ -88,10 +105,12 @@ class RFDETRNanoConfig(RFDETRBaseConfig):
     positional_encoding_size: int = 24
     pretrain_weights: Optional[str] = "rf-detr-nano.pth"
 
+
 class RFDETRSmallConfig(RFDETRBaseConfig):
     """
     The configuration for an RF-DETR Small model.
     """
+
     out_feature_indexes: List[int] = [3, 6, 9, 12]
     num_windows: int = 2
     dec_layers: int = 3
@@ -100,10 +119,12 @@ class RFDETRSmallConfig(RFDETRBaseConfig):
     positional_encoding_size: int = 32
     pretrain_weights: Optional[str] = "rf-detr-small.pth"
 
+
 class RFDETRMediumConfig(RFDETRBaseConfig):
     """
     The configuration for an RF-DETR Medium model.
     """
+
     out_feature_indexes: List[int] = [3, 6, 9, 12]
     num_windows: int = 2
     dec_layers: int = 4
@@ -111,6 +132,7 @@ class RFDETRMediumConfig(RFDETRBaseConfig):
     resolution: int = 576
     positional_encoding_size: int = 36
     pretrain_weights: Optional[str] = "rf-detr-medium.pth"
+
 
 class RFDETRSegPreviewConfig(RFDETRBaseConfig):
     segmentation_head: bool = True
@@ -130,25 +152,48 @@ class RFDETRPoseConfig(RFDETRBaseConfig):
     """
     Configuration for RF-DETR Pose estimation model with keypoint detection.
     """
+
     keypoint_head: bool = True
     num_keypoints: int = 17
     keypoint_names: List[str] = [
         "nose",
-        "left_eye", "right_eye",
-        "left_ear", "right_ear",
-        "left_shoulder", "right_shoulder",
-        "left_elbow", "right_elbow",
-        "left_wrist", "right_wrist",
-        "left_hip", "right_hip",
-        "left_knee", "right_knee",
-        "left_ankle", "right_ankle"
+        "left_eye",
+        "right_eye",
+        "left_ear",
+        "right_ear",
+        "left_shoulder",
+        "right_shoulder",
+        "left_elbow",
+        "right_elbow",
+        "left_wrist",
+        "right_wrist",
+        "left_hip",
+        "right_hip",
+        "left_knee",
+        "right_knee",
+        "left_ankle",
+        "right_ankle",
     ]
     skeleton: List[List[int]] = [
-        [15, 13], [13, 11], [16, 14], [14, 12], [11, 12],  # legs
-        [5, 11], [6, 12],  # torso to hips
+        [15, 13],
+        [13, 11],
+        [16, 14],
+        [14, 12],
+        [11, 12],  # legs
+        [5, 11],
+        [6, 12],  # torso to hips
         [5, 6],  # shoulders
-        [5, 7], [6, 8], [7, 9], [8, 10],  # arms
-        [1, 2], [0, 1], [0, 2], [1, 3], [2, 4], [3, 5], [4, 6]  # face
+        [5, 7],
+        [6, 8],
+        [7, 9],
+        [8, 10],  # arms
+        [1, 2],
+        [0, 1],
+        [0, 2],
+        [1, 3],
+        [2, 4],
+        [3, 5],
+        [4, 6],  # face
     ]
     out_feature_indexes: List[int] = [3, 6, 9, 12]
     num_windows: int = 2
@@ -168,6 +213,7 @@ class RFDETRPoseNanoConfig(RFDETRPoseConfig):
     """
     Configuration for RF-DETR Pose Nano - smallest and fastest pose model.
     """
+
     dec_layers: int = 2
     resolution: int = 384
     positional_encoding_size: int = 24
@@ -178,6 +224,7 @@ class RFDETRPoseSmallConfig(RFDETRPoseConfig):
     """
     Configuration for RF-DETR Pose Small - balance of speed and accuracy.
     """
+
     dec_layers: int = 3
     resolution: int = 512
     positional_encoding_size: int = 32
@@ -188,6 +235,7 @@ class RFDETRPoseMediumConfig(RFDETRPoseConfig):
     """
     Configuration for RF-DETR Pose Medium - default pose model.
     """
+
     # Inherits all defaults from RFDETRPoseConfig (Medium architecture)
     pass
 
@@ -196,6 +244,7 @@ class RFDETRPoseLargeConfig(RFDETRPoseConfig):
     """
     Configuration for RF-DETR Pose Large - highest accuracy pose model.
     """
+
     dec_layers: int = 6
     resolution: int = 768
     positional_encoding_size: int = 48
@@ -256,6 +305,7 @@ class SegmentationTrainConfig(TrainConfig):
 
 class KeypointTrainConfig(TrainConfig):
     """Training configuration for keypoint/pose estimation."""
+
     keypoint_head: bool = True
     num_keypoints: int = 17
     keypoint_loss_coef: float = 5.0

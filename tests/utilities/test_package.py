@@ -30,8 +30,14 @@ def test_get_sha_marks_dirty_worktree_when_diff_command_returns_exit_code_1() ->
             self.returncode = returncode
 
     with (
-        patch("rfdetr.utilities.package.subprocess.check_output", side_effect=_fake_check_output),
-        patch("rfdetr.utilities.package.subprocess.run", return_value=_RunResult(returncode=1)),
+        patch(
+            "rfdetr.utilities.package.subprocess.check_output",
+            side_effect=_fake_check_output,
+        ),
+        patch(
+            "rfdetr.utilities.package.subprocess.run",
+            return_value=_RunResult(returncode=1),
+        ),
     ):
         sha = get_sha()
 
@@ -138,7 +144,9 @@ class TestImportPaths:
             pytest.param("RFDETRSeg2XLarge", id="seg-2xlarge"),
         ],
     )
-    def test_all_variant_classes_importable_from_variants(self, class_name: str) -> None:
+    def test_all_variant_classes_importable_from_variants(
+        self, class_name: str
+    ) -> None:
         """Every concrete variant class must be importable from rfdetr.variants."""
         import rfdetr.variants as variants_mod
 

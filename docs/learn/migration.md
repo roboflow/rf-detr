@@ -40,7 +40,12 @@ from rfdetr.assets.coco_classes import COCO_CLASSES
 from rfdetr.util.misc import get_rank, get_world_size, is_main_process, save_on_master
 
 # After
-from rfdetr.utilities.distributed import get_rank, get_world_size, is_main_process, save_on_master
+from rfdetr.utilities.distributed import (
+    get_rank,
+    get_world_size,
+    is_main_process,
+    save_on_master,
+)
 ```
 
 ### `rfdetr.util.logger`

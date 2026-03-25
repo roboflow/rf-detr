@@ -3,30 +3,32 @@
 You can run pose estimation models with RF-DETR to detect keypoints and body poses on people and objects. The pose model outputs bounding boxes along with keypoints in (x, y, visibility) format for each detection, following a similar approach to YOLOv11 pose estimation.
 
 !!! note "Training Required"
+
     RF-DETR Pose requires training on a keypoint dataset before inference. By default, it loads detection weights as a starting point - the backbone and detection heads are initialized from this checkpoint, while the keypoint head is randomly initialized and learned during fine-tuning.
 
 ## Model Sizes
 
 RF-DETR Pose is available in multiple sizes to balance speed and accuracy:
 
-| Model | Class | Resolution | Decoder Layers | Use Case |
-|-------|-------|------------|----------------|----------|
-| Nano | `RFDETRPoseNano` | 384 | 2 | Real-time, edge devices |
-| Small | `RFDETRPoseSmall` | 512 | 3 | Good speed/accuracy balance |
-| Medium | `RFDETRPoseMedium` | 576 | 4 | Default, good accuracy |
-| Large | `RFDETRPoseLarge` | 768 | 6 | Highest accuracy |
+| Model  | Class              | Resolution | Decoder Layers | Use Case                    |
+| ------ | ------------------ | ---------- | -------------- | --------------------------- |
+| Nano   | `RFDETRPoseNano`   | 384        | 2              | Real-time, edge devices     |
+| Small  | `RFDETRPoseSmall`  | 512        | 3              | Good speed/accuracy balance |
+| Medium | `RFDETRPoseMedium` | 576        | 4              | Default, good accuracy      |
+| Large  | `RFDETRPoseLarge`  | 768        | 6              | Highest accuracy            |
 
 ```python
 from rfdetr import RFDETRPoseNano, RFDETRPoseSmall, RFDETRPoseMedium, RFDETRPoseLarge
 
 # Choose the size that fits your needs
-model = RFDETRPoseNano()   # Fastest, lowest accuracy
+model = RFDETRPoseNano()  # Fastest, lowest accuracy
 model = RFDETRPoseSmall()  # Balanced
-model = RFDETRPoseMedium() # Default
+model = RFDETRPoseMedium()  # Default
 model = RFDETRPoseLarge()  # Slowest, highest accuracy
 ```
 
 !!! tip "Choosing a Model Size"
+
     - Use **Nano** for real-time applications or when running on edge devices
     - Use **Small** for a good balance of speed and accuracy
     - Use **Medium** (default) for most use cases
@@ -126,7 +128,7 @@ model = RFDETRPoseLarge()  # Slowest, highest accuracy
 
         cv2.imshow("Webcam", annotated_frame)
 
-        if cv2.waitKey(1) & 0xFF == ord('q'):
+        if cv2.waitKey(1) & 0xFF == ord("q"):
             break
 
     cap.release()
@@ -142,6 +144,7 @@ RF-DETR Pose outputs keypoints in the `detections.data["keypoints"]` field as a 
 - `3` = (x, y, visibility) for each keypoint
 
 The visibility value follows the COCO format:
+
 - `0` = keypoint not visible / not confident
 - `2` = keypoint visible and confident
 
@@ -156,25 +159,25 @@ confidence = detections.data["keypoints_confidence"]  # [N, K] - raw scores 0.0-
 
 By default, RF-DETR Pose uses the COCO 17-keypoint format:
 
-| Index | Keypoint Name    |
-|-------|------------------|
-| 0     | nose             |
-| 1     | left_eye         |
-| 2     | right_eye        |
-| 3     | left_ear         |
-| 4     | right_ear        |
-| 5     | left_shoulder    |
-| 6     | right_shoulder   |
-| 7     | left_elbow       |
-| 8     | right_elbow      |
-| 9     | left_wrist       |
-| 10    | right_wrist      |
-| 11    | left_hip         |
-| 12    | right_hip        |
-| 13    | left_knee        |
-| 14    | right_knee       |
-| 15    | left_ankle       |
-| 16    | right_ankle      |
+| Index | Keypoint Name  |
+| ----- | -------------- |
+| 0     | nose           |
+| 1     | left_eye       |
+| 2     | right_eye      |
+| 3     | left_ear       |
+| 4     | right_ear      |
+| 5     | left_shoulder  |
+| 6     | right_shoulder |
+| 7     | left_elbow     |
+| 8     | right_elbow    |
+| 9     | left_wrist     |
+| 10    | right_wrist    |
+| 11    | left_hip       |
+| 12    | right_hip      |
+| 13    | left_knee      |
+| 14    | right_knee     |
+| 15    | left_ankle     |
+| 16    | right_ankle    |
 
 ## Drawing Keypoints
 
@@ -184,6 +187,7 @@ Here's a helper function to draw keypoints and skeleton connections:
 import cv2
 import numpy as np
 from rfdetr.models.keypoint_head import COCO_SKELETON
+
 
 def draw_keypoints(image, keypoints, threshold=0.3):
     """
@@ -197,19 +201,19 @@ def draw_keypoints(image, keypoints, threshold=0.3):
     Returns:
         Annotated image as numpy array
     """
-    if hasattr(image, 'copy'):
+    if hasattr(image, "copy"):
         image = np.array(image)
 
     image = image.copy()
     h, w = image.shape[:2]
 
     colors = [
-        (255, 0, 0),    # Red
+        (255, 0, 0),  # Red
         (255, 127, 0),  # Orange
         (255, 255, 0),  # Yellow
-        (0, 255, 0),    # Green
+        (0, 255, 0),  # Green
         (0, 255, 255),  # Cyan
-        (0, 0, 255),    # Blue
+        (0, 0, 255),  # Blue
         (127, 0, 255),  # Purple
     ]
 
@@ -251,18 +255,39 @@ model = RFDETRPose(
     num_keypoints=21,
     keypoint_names=[
         "wrist",
-        "thumb_cmc", "thumb_mcp", "thumb_ip", "thumb_tip",
-        "index_mcp", "index_pip", "index_dip", "index_tip",
-        "middle_mcp", "middle_pip", "middle_dip", "middle_tip",
-        "ring_mcp", "ring_pip", "ring_dip", "ring_tip",
-        "pinky_mcp", "pinky_pip", "pinky_dip", "pinky_tip"
+        "thumb_cmc",
+        "thumb_mcp",
+        "thumb_ip",
+        "thumb_tip",
+        "index_mcp",
+        "index_pip",
+        "index_dip",
+        "index_tip",
+        "middle_mcp",
+        "middle_pip",
+        "middle_dip",
+        "middle_tip",
+        "ring_mcp",
+        "ring_pip",
+        "ring_dip",
+        "ring_tip",
+        "pinky_mcp",
+        "pinky_pip",
+        "pinky_dip",
+        "pinky_tip",
     ],
     skeleton=[
-        [0, 1], [1, 2], [2, 3], [3, 4],  # thumb
-        [0, 5], [5, 6], [6, 7], [7, 8],  # index
+        [0, 1],
+        [1, 2],
+        [2, 3],
+        [3, 4],  # thumb
+        [0, 5],
+        [5, 6],
+        [6, 7],
+        [7, 8],  # index
         # ... additional connections
     ],
-    pretrain_weights=None  # Train from scratch for custom keypoints
+    pretrain_weights=None,  # Train from scratch for custom keypoints
 )
 ```
 
@@ -280,7 +305,7 @@ model = RFDETRPose(pretrain_weights="path/to/pose_weights.pth")
 
 urls = [
     "https://media.roboflow.com/notebooks/examples/dog-2.jpeg",
-    "https://media.roboflow.com/notebooks/examples/dog-3.jpeg"
+    "https://media.roboflow.com/notebooks/examples/dog-3.jpeg",
 ]
 
 images = [Image.open(io.BytesIO(requests.get(url).content)) for url in urls]
@@ -289,7 +314,9 @@ detections_list = model.predict(images, threshold=0.5)
 
 for image, detections in zip(images, detections_list):
     keypoints = detections.data.get("keypoints")
-    print(f"Detected {len(detections)} people with keypoints shape: {keypoints.shape if keypoints is not None else None}")
+    print(
+        f"Detected {len(detections)} people with keypoints shape: {keypoints.shape if keypoints is not None else None}"
+    )
 ```
 
 ## Technical Architecture
@@ -355,10 +382,10 @@ self.visibility_head = MLP(hidden_dim, hidden_dim, num_keypoints, num_layers=3)
 
 Three complementary losses for keypoint supervision:
 
-| Loss | Purpose | Details |
-|------|---------|---------|
-| **L1 Loss** | Coordinate regression | Applied only on visible keypoints |
-| **BCE Loss** | Visibility classification | Applied on all keypoints |
+| Loss         | Purpose                    | Details                               |
+| ------------ | -------------------------- | ------------------------------------- |
+| **L1 Loss**  | Coordinate regression      | Applied only on visible keypoints     |
+| **BCE Loss** | Visibility classification  | Applied on all keypoints              |
 | **OKS Loss** | COCO-compatible similarity | Incorporates scale and per-keypoint σ |
 
 **Why OKS Loss:**
@@ -370,12 +397,12 @@ Three complementary losses for keypoint supervision:
 
 ### Comparison to Alternative Methods
 
-| Method | Approach | Pros | Cons |
-|--------|----------|------|------|
-| **RF-DETR Pose** | Query → MLP | End-to-end, global context, no anchors | Needs more epochs |
-| **YOLO Pose** | Grid cell → Conv | Fast, well-optimized | Anchor assignment heuristics, local features only |
-| **HRNet** | High-res heatmaps | Very accurate | Expensive, separate from detection |
-| **ViTPose** | ViT + heatmaps | Strong features | Two-stage, not end-to-end |
+| Method           | Approach          | Pros                                   | Cons                                              |
+| ---------------- | ----------------- | -------------------------------------- | ------------------------------------------------- |
+| **RF-DETR Pose** | Query → MLP       | End-to-end, global context, no anchors | Needs more epochs                                 |
+| **YOLO Pose**    | Grid cell → Conv  | Fast, well-optimized                   | Anchor assignment heuristics, local features only |
+| **HRNet**        | High-res heatmaps | Very accurate                          | Expensive, separate from detection                |
+| **ViTPose**      | ViT + heatmaps    | Strong features                        | Two-stage, not end-to-end                         |
 
 ### Design Benefits for RF-DETR
 

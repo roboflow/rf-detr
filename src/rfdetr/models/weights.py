@@ -25,11 +25,17 @@ from typing import List
 
 import torch
 
-from rfdetr.assets.model_weights import download_pretrain_weights, validate_pretrain_weights
+from rfdetr.assets.model_weights import (
+    download_pretrain_weights,
+    validate_pretrain_weights,
+)
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.utilities.decorators import deprecated
 from rfdetr.utilities.logger import get_logger
-from rfdetr.utilities.state_dict import _ckpt_args_get, validate_checkpoint_compatibility
+from rfdetr.utilities.state_dict import (
+    _ckpt_args_get,
+    validate_checkpoint_compatibility,
+)
 
 logger = get_logger()
 
@@ -97,16 +103,22 @@ def load_pretrain_weights(
     # caused an earlier ValueError that was silently swallowed), retry with
     # MD5 validation disabled so a stale registry hash can't block training.
     if not os.path.isfile(pretrain_weights):
-        logger.warning("Pretrain weights not found after initial download; retrying without MD5 validation.")
+        logger.warning(
+            "Pretrain weights not found after initial download; retrying without MD5 validation."
+        )
         download_pretrain_weights(pretrain_weights, redownload=True, validate_md5=False)
     validate_pretrain_weights(pretrain_weights, strict=False)
 
     try:
-        checkpoint = torch.load(pretrain_weights, map_location="cpu", weights_only=False)
+        checkpoint = torch.load(
+            pretrain_weights, map_location="cpu", weights_only=False
+        )
     except Exception:
         logger.info("Failed to load pretrain weights, re-downloading")
         download_pretrain_weights(pretrain_weights, redownload=True, validate_md5=False)
-        checkpoint = torch.load(pretrain_weights, map_location="cpu", weights_only=False)
+        checkpoint = torch.load(
+            pretrain_weights, map_location="cpu", weights_only=False
+        )
 
     # Extract class_names from the checkpoint if available (ported from detr.py).
     if "args" in checkpoint:
@@ -135,7 +147,9 @@ def load_pretrain_weights(
     default_num_classes = type(mc).model_fields["num_classes"].default
     num_classes = mc.num_classes
     # True only when the user explicitly set num_classes to a non-default value.
-    user_overrode_default_num_classes = user_set_num_classes and num_classes != default_num_classes
+    user_overrode_default_num_classes = (
+        user_set_num_classes and num_classes != default_num_classes
+    )
 
     checkpoint_num_classes = checkpoint["model"]["class_embed.bias"].shape[0]
     configured_num_classes_plus_bg = num_classes + 1
@@ -165,7 +179,10 @@ def load_pretrain_weights(
 
     # If the user explicitly set a class count larger than the checkpoint,
     # expand/reinitialize the head back to the configured size after load.
-    if checkpoint_num_classes < configured_num_classes_plus_bg and user_overrode_default_num_classes:
+    if (
+        checkpoint_num_classes < configured_num_classes_plus_bg
+        and user_overrode_default_num_classes
+    ):
         nn_model.reinitialize_detection_head(configured_num_classes_plus_bg)
 
     # Only trim back down when loading a larger pretrain checkpoint into a
@@ -218,4 +235,6 @@ def apply_lora(nn_model: torch.nn.Module) -> None:
             "register_tokens",
         ],
     )
-    nn_model.backbone[0].encoder = get_peft_model(nn_model.backbone[0].encoder, lora_config)
+    nn_model.backbone[0].encoder = get_peft_model(
+        nn_model.backbone[0].encoder, lora_config
+    )

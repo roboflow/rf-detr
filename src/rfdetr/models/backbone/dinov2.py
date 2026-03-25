@@ -69,7 +69,11 @@ class DinoV2(nn.Module):
     ):
         super().__init__()
 
-        name = f"facebook/dinov2-with-registers-{size}" if use_registers else f"facebook/dinov2-{size}"
+        name = (
+            f"facebook/dinov2-with-registers-{size}"
+            if use_registers
+            else f"facebook/dinov2-{size}"
+        )
 
         self.shape = shape
         self.patch_size = patch_size
@@ -78,8 +82,12 @@ class DinoV2(nn.Module):
         # Create the encoder
 
         if not use_windowed_attn:
-            assert not gradient_checkpointing, "Gradient checkpointing is not supported for non-windowed attention"
-            assert load_dinov2_weights, "Using non-windowed attention requires loading dinov2 weights from hub"
+            assert not gradient_checkpointing, (
+                "Gradient checkpointing is not supported for non-windowed attention"
+            )
+            assert load_dinov2_weights, (
+                "Using non-windowed attention requires loading dinov2 weights from hub"
+            )
             if drop_path_rate > 0.0:
                 logger.warning(
                     "drop_path_rate > 0.0 is not supported for non-windowed DinoV2 backbones."
@@ -154,7 +162,9 @@ class DinoV2(nn.Module):
         self._export = True
         shape = self.shape
 
-        def make_new_interpolated_pos_encoding(position_embeddings, patch_size, height, width):
+        def make_new_interpolated_pos_encoding(
+            position_embeddings, patch_size, height, width
+        ):
 
             num_positions = position_embeddings.shape[1] - 1
             dim = position_embeddings.shape[-1]

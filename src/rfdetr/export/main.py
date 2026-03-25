@@ -94,10 +94,16 @@ def main(args):
     logger.info(f"number of parameters: {n_parameters}")
     n_backbone_parameters = sum(p.numel() for p in model.backbone.parameters())
     logger.info(f"number of backbone parameters: {n_backbone_parameters}")
-    n_projector_parameters = sum(p.numel() for p in model.backbone[0].projector.parameters())
+    n_projector_parameters = sum(
+        p.numel() for p in model.backbone[0].projector.parameters()
+    )
     logger.info(f"number of projector parameters: {n_projector_parameters}")
-    n_backbone_encoder_parameters = sum(p.numel() for p in model.backbone[0].encoder.parameters())
-    logger.info(f"number of backbone encoder parameters: {n_backbone_encoder_parameters}")
+    n_backbone_encoder_parameters = sum(
+        p.numel() for p in model.backbone[0].encoder.parameters()
+    )
+    logger.info(
+        f"number of backbone encoder parameters: {n_backbone_encoder_parameters}"
+    )
     n_transformer_parameters = sum(p.numel() for p in model.transformer.parameters())
     logger.info(f"number of transformer parameters: {n_transformer_parameters}")
     if args.resume:
@@ -110,7 +116,9 @@ def main(args):
 
     model.to(device)
 
-    input_tensors = make_infer_image(args.infer_dir, args.shape, args.batch_size, device)
+    input_tensors = make_infer_image(
+        args.infer_dir, args.shape, args.batch_size, device
+    )
     input_names = ["input"]
     if args.backbone_only:
         output_names = ["features"]
@@ -138,7 +146,9 @@ def main(args):
                 )
             else:
                 # masks is a dict with spatial_features, query_features, bias
-                logger.debug(f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}")
+                logger.debug(
+                    f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}"
+                )
                 logger.debug(
                     "Mask spatial_features: "
                     f"{masks['spatial_features'].shape}, "
@@ -149,7 +159,9 @@ def main(args):
             outputs = model(input_tensors)
             dets = outputs["pred_boxes"]
             labels = outputs["pred_logits"]
-            logger.debug(f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}")
+            logger.debug(
+                f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}"
+            )
     model.cpu()
     input_tensors = input_tensors.cpu()
 

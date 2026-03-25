@@ -54,7 +54,10 @@ class TestRFDETRCliStructure:
 
         from rfdetr.training.cli import RFDETRCli
 
-        assert RFDETRCli.add_arguments_to_parser is not LightningCLI.add_arguments_to_parser
+        assert (
+            RFDETRCli.add_arguments_to_parser
+            is not LightningCLI.add_arguments_to_parser
+        )
 
     def test_exported_from_lit_package(self):
         """RFDETRCli is exported from rfdetr.training (appears in __all__)."""

@@ -239,7 +239,9 @@ def test_all_models_have_valid_urls():
 
 
 # GOOD: Parametrized - each model is a separate test case
-@pytest.mark.parametrize("model", list(ModelWeights), ids=[m.filename for m in ModelWeights])
+@pytest.mark.parametrize(
+    "model", list(ModelWeights), ids=[m.filename for m in ModelWeights]
+)
 def test_all_models_have_valid_urls(model):
     assert model.url.startswith("http")  # Clear which model failed
 ```

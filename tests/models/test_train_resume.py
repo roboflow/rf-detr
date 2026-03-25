@@ -49,11 +49,15 @@ def test_resume_with_completed_epochs_returns_early(tmp_path: Path) -> None:
         )
 
     depr = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-    assert any("start_epoch" in str(w.message) for w in depr), "Expected a DeprecationWarning mentioning start_epoch"
+    assert any("start_epoch" in str(w.message) for w in depr), (
+        "Expected a DeprecationWarning mentioning start_epoch"
+    )
     mock_build_trainer.return_value.fit.assert_called_once()
 
 
-def test_resume_with_completed_epochs_calls_on_train_end_callback(tmp_path: Path) -> None:
+def test_resume_with_completed_epochs_calls_on_train_end_callback(
+    tmp_path: Path,
+) -> None:
     """Old-style on_train_end callbacks are not forwarded to PTL.
 
     In the legacy engine.py path, callbacks added to ``model.callbacks["on_train_end"]``

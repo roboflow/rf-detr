@@ -27,7 +27,11 @@ def mock_file_operations():
         # Default: MD5 validation passes
         mock_validate.return_value = True
 
-        yield {"exists": mock_exists, "download": mock_download, "validate": mock_validate}
+        yield {
+            "exists": mock_exists,
+            "download": mock_download,
+            "validate": mock_validate,
+        }
 
 
 class TestDownloadPretrainWeights:
@@ -62,17 +66,31 @@ class TestDownloadPretrainWeights:
 
         # Should attempt download (whether from plus or local)
         # The important part is that the function doesn't crash
-        assert mock_file_operations["download"].called or not mock_file_operations["exists"].return_value
+        assert (
+            mock_file_operations["download"].called
+            or not mock_file_operations["exists"].return_value
+        )
 
     def test_download_from_platform_models_fallback(self, mock_file_operations):
         """Test falling back to PLATFORM_MODELS when model not in ModelWeights."""
         # Mock PLATFORM_MODELS
         mock_platform_module = Mock()
-        mock_platform_module.PLATFORM_MODELS = {"legacy-model.pth": "https://legacy.com/model.pth"}
+        mock_platform_module.PLATFORM_MODELS = {
+            "legacy-model.pth": "https://legacy.com/model.pth"
+        }
 
         with (
-            patch("rfdetr.assets.model_weights.ModelWeights.from_filename", return_value=None),
-            patch.dict("sys.modules", {"rfdetr.platform": Mock(), "rfdetr.platform.downloads": mock_platform_module}),
+            patch(
+                "rfdetr.assets.model_weights.ModelWeights.from_filename",
+                return_value=None,
+            ),
+            patch.dict(
+                "sys.modules",
+                {
+                    "rfdetr.platform": Mock(),
+                    "rfdetr.platform.downloads": mock_platform_module,
+                },
+            ),
         ):
             download_pretrain_weights("legacy-model.pth")
 
@@ -121,7 +139,9 @@ class TestDownloadPretrainWeights:
         assert call_kwargs["expected_md5"] is None
 
     @patch("rfdetr.assets.model_weights.ModelWeights.from_filename", return_value=None)
-    def test_nonexistent_model_returns_early(self, mock_from_filename, mock_file_operations):
+    def test_nonexistent_model_returns_early(
+        self, mock_from_filename, mock_file_operations
+    ):
         """Test that function returns early for non-existent models."""
         download_pretrain_weights("nonexistent-model.pth")
 
@@ -131,9 +151,16 @@ class TestDownloadPretrainWeights:
     def test_model_without_md5_hash(self, mock_file_operations):
         """Test downloading a model that has no MD5 hash."""
         # Create a mock asset without MD5
-        mock_asset = ModelWeightAsset(filename="test-no-md5.pth", url="https://example.com/test.pth", md5_hash=None)
+        mock_asset = ModelWeightAsset(
+            filename="test-no-md5.pth",
+            url="https://example.com/test.pth",
+            md5_hash=None,
+        )
 
-        with patch("rfdetr.assets.model_weights.ModelWeights.from_filename", return_value=mock_asset):
+        with patch(
+            "rfdetr.assets.model_weights.ModelWeights.from_filename",
+            return_value=mock_asset,
+        ):
             download_pretrain_weights("test-no-md5.pth", validate_md5=True)
 
         # Should pass None for expected_md5
@@ -145,9 +172,16 @@ class TestDownloadPretrainWeights:
         mock_file_operations["exists"].return_value = True
 
         # Create a mock asset without MD5
-        mock_asset = ModelWeightAsset(filename="test-no-md5.pth", url="https://example.com/test.pth", md5_hash=None)
+        mock_asset = ModelWeightAsset(
+            filename="test-no-md5.pth",
+            url="https://example.com/test.pth",
+            md5_hash=None,
+        )
 
-        with patch("rfdetr.assets.model_weights.ModelWeights.from_filename", return_value=mock_asset):
+        with patch(
+            "rfdetr.assets.model_weights.ModelWeights.from_filename",
+            return_value=mock_asset,
+        ):
             download_pretrain_weights("test-no-md5.pth")
 
         # Should not download if file exists (no MD5 to validate)
@@ -157,12 +191,16 @@ class TestDownloadPretrainWeights:
 class TestDownloadIntegration:
     """Integration tests for the complete download flow."""
 
-    @pytest.mark.parametrize("model", list(ModelWeights), ids=[m.filename for m in ModelWeights])
+    @pytest.mark.parametrize(
+        "model", list(ModelWeights), ids=[m.filename for m in ModelWeights]
+    )
     def test_all_models_have_valid_md5_format(self, model: ModelWeightAsset) -> None:
         """Test that MD5 hashes are valid when present (prevent typos)."""
         # MD5 should be None or valid 32-char hex string
         if model.md5_hash is not None:
-            assert len(model.md5_hash) == 32, f"{model.filename} has invalid MD5 length: {len(model.md5_hash)}"
+            assert len(model.md5_hash) == 32, (
+                f"{model.filename} has invalid MD5 length: {len(model.md5_hash)}"
+            )
             assert all(c in "0123456789abcdef" for c in model.md5_hash.lower()), (
                 f"{model.filename} has invalid MD5 characters"
             )
@@ -186,7 +224,9 @@ class TestDownloadIntegration:
     @patch("rfdetr.assets.model_weights.os.path.exists")
     @patch("rfdetr.assets.model_weights._validate_file_md5")
     @patch("rfdetr.assets.model_weights._download_file")
-    def test_download_flow_for_real_model(self, mock_download, mock_validate, mock_exists):
+    def test_download_flow_for_real_model(
+        self, mock_download, mock_validate, mock_exists
+    ):
         """Test the complete download flow for a real model."""
         mock_exists.return_value = False
         mock_validate.return_value = True
@@ -221,7 +261,9 @@ class TestDownloadErrorHandling:
     @patch("rfdetr.assets.model_weights.ModelWeights.from_filename", return_value=None)
     @patch("rfdetr.assets.model_weights._download_file")
     @patch("rfdetr.assets.model_weights.os.path.exists")
-    def test_handles_missing_platform_models_gracefully(self, mock_exists, mock_download, mock_from_filename):
+    def test_handles_missing_platform_models_gracefully(
+        self, mock_exists, mock_download, mock_from_filename
+    ):
         """Test that missing platform models is handled gracefully."""
         mock_exists.return_value = False
 
@@ -235,7 +277,9 @@ class TestDownloadErrorHandling:
     @patch("rfdetr.assets.model_weights._download_file")
     @patch("rfdetr.assets.model_weights.os.path.exists")
     @patch("rfdetr.assets.model_weights.logger")
-    def test_logs_info_messages(self, mock_logger, mock_exists, mock_download, mock_validate):
+    def test_logs_info_messages(
+        self, mock_logger, mock_exists, mock_download, mock_validate
+    ):
         """Test that appropriate log messages are generated."""
         mock_exists.return_value = False
         mock_validate.return_value = True
@@ -251,7 +295,9 @@ class TestDownloadErrorHandling:
     @patch("rfdetr.assets.model_weights._validate_file_md5")
     @patch("rfdetr.assets.model_weights.os.path.exists")
     @patch("rfdetr.assets.model_weights.logger")
-    def test_logs_warning_on_incorrect_md5(self, mock_logger, mock_exists, mock_validate, mock_download):
+    def test_logs_warning_on_incorrect_md5(
+        self, mock_logger, mock_exists, mock_validate, mock_download
+    ):
         """Test that warning is logged when MD5 is incorrect."""
         mock_exists.return_value = True
         mock_validate.return_value = False
@@ -284,7 +330,9 @@ class TestDownloadErrorHandling:
 
     @patch("rfdetr.assets.model_weights._download_file")
     @patch("rfdetr.assets.model_weights.os.path.exists")
-    def test_nested_absolute_path_resolves_to_known_model(self, mock_exists, mock_download):
+    def test_nested_absolute_path_resolves_to_known_model(
+        self, mock_exists, mock_download
+    ):
         """Nested paths like /workspace/models/rf-detr-base.pth also resolve."""
         mock_exists.return_value = False
 

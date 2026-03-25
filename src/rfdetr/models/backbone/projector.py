@@ -48,7 +48,9 @@ class LayerNorm(nn.Module):
         return x
 
 
-def get_norm(norm: Optional[Union[str, Callable[[int], nn.Module]]], out_channels: int) -> Optional[nn.Module]:
+def get_norm(
+    norm: Optional[Union[str, Callable[[int], nn.Module]]], out_channels: int
+) -> Optional[nn.Module]:
     """
     Args:
         norm: Either one of BN, SyncBN, FrozenBN, GN;
@@ -116,7 +118,9 @@ class ConvX(nn.Module):
         if rms_norm:
             self.bn = nn.RMSNorm(out_planes)
         else:
-            self.bn = get_norm("LN", out_planes) if layer_norm else nn.BatchNorm2d(out_planes)
+            self.bn = (
+                get_norm("LN", out_planes) if layer_norm else nn.BatchNorm2d(out_planes)
+            )
         self.act = get_activation(act, inplace=True)
 
     def forward(self, x):
@@ -128,12 +132,27 @@ class ConvX(nn.Module):
 class Bottleneck(nn.Module):
     """Standard bottleneck."""
 
-    def __init__(self, c1, c2, shortcut=True, g=1, k=(3, 3), e=0.5, act="silu", layer_norm=False, rms_norm=False):
+    def __init__(
+        self,
+        c1,
+        c2,
+        shortcut=True,
+        g=1,
+        k=(3, 3),
+        e=0.5,
+        act="silu",
+        layer_norm=False,
+        rms_norm=False,
+    ):
         """ch_in, ch_out, shortcut, groups, kernels, expand"""
         super().__init__()
         c_ = int(c2 * e)  # hidden channels
-        self.cv1 = ConvX(c1, c_, k[0], 1, act=act, layer_norm=layer_norm, rms_norm=rms_norm)
-        self.cv2 = ConvX(c_, c2, k[1], 1, groups=g, act=act, layer_norm=layer_norm, rms_norm=rms_norm)
+        self.cv1 = ConvX(
+            c1, c_, k[0], 1, act=act, layer_norm=layer_norm, rms_norm=rms_norm
+        )
+        self.cv2 = ConvX(
+            c_, c2, k[1], 1, groups=g, act=act, layer_norm=layer_norm, rms_norm=rms_norm
+        )
         self.add = shortcut and c1 == c2
 
     def forward(self, x):
@@ -144,16 +163,39 @@ class Bottleneck(nn.Module):
 class C2f(nn.Module):
     """Faster Implementation of CSP Bottleneck with 2 convolutions."""
 
-    def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5, act="silu", layer_norm=False, rms_norm=False):
+    def __init__(
+        self,
+        c1,
+        c2,
+        n=1,
+        shortcut=False,
+        g=1,
+        e=0.5,
+        act="silu",
+        layer_norm=False,
+        rms_norm=False,
+    ):
         """ch_in, ch_out, number, shortcut, groups, expansion"""
         super().__init__()
         self.c = int(c2 * e)  # hidden channels
-        self.cv1 = ConvX(c1, 2 * self.c, 1, 1, act=act, layer_norm=layer_norm, rms_norm=rms_norm)
+        self.cv1 = ConvX(
+            c1, 2 * self.c, 1, 1, act=act, layer_norm=layer_norm, rms_norm=rms_norm
+        )
         self.cv2 = ConvX(
             (2 + n) * self.c, c2, 1, act=act, layer_norm=layer_norm, rms_norm=rms_norm
         )  # optional act=FReLU(c2)
         self.m = nn.ModuleList(
-            Bottleneck(self.c, self.c, shortcut, g, k=(3, 3), e=1.0, act=act, layer_norm=layer_norm, rms_norm=rms_norm)
+            Bottleneck(
+                self.c,
+                self.c,
+                shortcut,
+                g,
+                k=(3, 3),
+                e=1.0,
+                act=act,
+                layer_norm=layer_norm,
+                rms_norm=rms_norm,
+            )
             for _ in range(n)
         )
 
@@ -210,10 +252,14 @@ class MultiScaleProjector(nn.Module):
                 if scale == 4.0:
                     layers.extend(
                         [
-                            nn.ConvTranspose2d(in_dim, in_dim // 2, kernel_size=2, stride=2),
+                            nn.ConvTranspose2d(
+                                in_dim, in_dim // 2, kernel_size=2, stride=2
+                            ),
                             get_norm("LN", in_dim // 2),
                             nn.GELU(),
-                            nn.ConvTranspose2d(in_dim // 2, in_dim // 4, kernel_size=2, stride=2),
+                            nn.ConvTranspose2d(
+                                in_dim // 2, in_dim // 4, kernel_size=2, stride=2
+                            ),
                         ]
                     )
                     # in_dim // 4
@@ -228,7 +274,9 @@ class MultiScaleProjector(nn.Module):
                     # else:
                     layers.extend(
                         [
-                            nn.ConvTranspose2d(in_dim, in_dim // 2, kernel_size=2, stride=2),
+                            nn.ConvTranspose2d(
+                                in_dim, in_dim // 2, kernel_size=2, stride=2
+                            ),
                         ]
                     )
                     # in_dim // 2
@@ -244,7 +292,9 @@ class MultiScaleProjector(nn.Module):
                     self.use_extra_pool = True
                     continue
                 else:
-                    raise NotImplementedError("Unsupported scale_factor:{}".format(scale))
+                    raise NotImplementedError(
+                        "Unsupported scale_factor:{}".format(scale)
+                    )
                 layers = nn.Sequential(*layers)
                 stages_sampling[-1].append(layers)
             stages_sampling[-1] = nn.ModuleList(stages_sampling[-1])
@@ -296,7 +346,9 @@ class MultiScaleProjector(nn.Module):
                 feat_fuse = feat_fuse[0]
             results.append(stage(feat_fuse))
         if self.use_extra_pool:
-            results.append(F.max_pool2d(results[-1], kernel_size=1, stride=2, padding=0))
+            results.append(
+                F.max_pool2d(results[-1], kernel_size=1, stride=2, padding=0)
+            )
         return results
 
 
@@ -307,8 +359,12 @@ class SimpleProjector(nn.Module):
             self.convx1 = ConvX(in_dim, in_dim * 2, layer_norm=True, act="silu")
             self.convx2 = ConvX(in_dim * 2, out_dim, layer_norm=True, act="silu")
         else:
-            self.convx1 = ConvX(in_dim, out_dim, kernel=(3, 1), layer_norm=True, act="silu")
-            self.convx2 = ConvX(out_dim, out_dim, kernel=(1, 3), layer_norm=True, act="silu")
+            self.convx1 = ConvX(
+                in_dim, out_dim, kernel=(3, 1), layer_norm=True, act="silu"
+            )
+            self.convx2 = ConvX(
+                out_dim, out_dim, kernel=(1, 3), layer_norm=True, act="silu"
+            )
         self.ln = get_norm("LN", out_dim)
 
     def forward(self, x):

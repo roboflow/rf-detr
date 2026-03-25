@@ -23,7 +23,9 @@ from rfdetr.config import RFDETRBaseConfig, TrainConfig
 # ---------------------------------------------------------------------------
 
 
-def _make_checkpoint(num_classes: int = 91, num_queries: int = 300, group_detr: int = 13) -> dict:
+def _make_checkpoint(
+    num_classes: int = 91, num_queries: int = 300, group_detr: int = 13
+) -> dict:
     """Build a minimal checkpoint dict with the given class count.
 
     Args:
@@ -95,12 +97,21 @@ class TestLoadPretrainWeightsReinitScenarios:
     @pytest.fixture(autouse=True)
     def _patch_io(self, monkeypatch):
         """Suppress all download, file-existence, and validation side effects."""
-        monkeypatch.setattr("rfdetr.models.weights.download_pretrain_weights", lambda *a, **kw: None)
-        monkeypatch.setattr("rfdetr.models.weights.validate_pretrain_weights", lambda *a, **kw: None)
-        monkeypatch.setattr("rfdetr.models.weights.validate_checkpoint_compatibility", lambda *a, **kw: None)
+        monkeypatch.setattr(
+            "rfdetr.models.weights.download_pretrain_weights", lambda *a, **kw: None
+        )
+        monkeypatch.setattr(
+            "rfdetr.models.weights.validate_pretrain_weights", lambda *a, **kw: None
+        )
+        monkeypatch.setattr(
+            "rfdetr.models.weights.validate_checkpoint_compatibility",
+            lambda *a, **kw: None,
+        )
         monkeypatch.setattr("rfdetr.models.weights.os.path.isfile", lambda _: True)
 
-    def test_characterization_fine_tuned_checkpoint_auto_aligns_default_num_classes(self, monkeypatch, tmp_path):
+    def test_characterization_fine_tuned_checkpoint_auto_aligns_default_num_classes(
+        self, monkeypatch, tmp_path
+    ):
         """Fine-tuned checkpoint (fewer classes) + default num_classes → 1 reinit to ckpt size.
 
         When the user did NOT explicitly set num_classes (default=90), the loader
@@ -111,20 +122,28 @@ class TestLoadPretrainWeightsReinitScenarios:
 
         mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu")
         checkpoint = _make_checkpoint(num_classes=3)
-        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+        monkeypatch.setattr(
+            "rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint
+        )
 
         nn_model = _fake_nn_model()
         load_pretrain_weights(nn_model, mc)
 
         calls = nn_model.reinitialize_detection_head.call_args_list
-        assert calls[0] == call(3), f"First reinit must resize to checkpoint size 3, got {calls[0]}"
+        assert calls[0] == call(3), (
+            f"First reinit must resize to checkpoint size 3, got {calls[0]}"
+        )
         assert len(calls) == 1, (
             f"Expected exactly 1 reinit call; got {len(calls)}: {calls}. "
             "A second reinit to 91 would destroy loaded fine-tuned weights."
         )
-        assert mc.num_classes == 2, "Auto-aligned checkpoint class count must be persisted back onto ModelConfig."
+        assert mc.num_classes == 2, (
+            "Auto-aligned checkpoint class count must be persisted back onto ModelConfig."
+        )
 
-    def test_characterization_backbone_pretrain_two_reinits(self, monkeypatch, tmp_path):
+    def test_characterization_backbone_pretrain_two_reinits(
+        self, monkeypatch, tmp_path
+    ):
         """Backbone pretrain (more classes in checkpoint) + explicit small num_classes → 2 reinits.
 
         Scenario: 91-class COCO checkpoint, user explicitly requested num_classes=2.
@@ -132,17 +151,25 @@ class TestLoadPretrainWeightsReinitScenarios:
         """
         from rfdetr.models.weights import load_pretrain_weights
 
-        mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu", num_classes=2)
+        mc = RFDETRBaseConfig(
+            pretrain_weights="/fake/weights.pth", device="cpu", num_classes=2
+        )
         checkpoint = _make_checkpoint(num_classes=91)
-        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+        monkeypatch.setattr(
+            "rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint
+        )
 
         nn_model = _fake_nn_model()
         load_pretrain_weights(nn_model, mc)
 
         calls = nn_model.reinitialize_detection_head.call_args_list
-        assert calls == [call(91), call(3)], f"Expected reinit to [91, 3] (expand then trim), got {calls}"
+        assert calls == [call(91), call(3)], (
+            f"Expected reinit to [91, 3] (expand then trim), got {calls}"
+        )
 
-    def test_characterization_user_override_larger_than_checkpoint_reexpands(self, monkeypatch, tmp_path):
+    def test_characterization_user_override_larger_than_checkpoint_reexpands(
+        self, monkeypatch, tmp_path
+    ):
         """Explicit num_classes larger than checkpoint → 2 reinits (load then expand back).
 
         Scenario: 91-class checkpoint, user explicitly set num_classes=93.
@@ -150,15 +177,21 @@ class TestLoadPretrainWeightsReinitScenarios:
         """
         from rfdetr.models.weights import load_pretrain_weights
 
-        mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu", num_classes=93)
+        mc = RFDETRBaseConfig(
+            pretrain_weights="/fake/weights.pth", device="cpu", num_classes=93
+        )
         checkpoint = _make_checkpoint(num_classes=91)
-        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+        monkeypatch.setattr(
+            "rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint
+        )
 
         nn_model = _fake_nn_model()
         load_pretrain_weights(nn_model, mc)
 
         calls = nn_model.reinitialize_detection_head.call_args_list
-        assert calls == [call(91), call(94)], f"Expected reinit to [91, 94] (load then expand), got {calls}"
+        assert calls == [call(91), call(94)], (
+            f"Expected reinit to [91, 94] (load then expand), got {calls}"
+        )
 
     def test_characterization_no_mismatch_no_reinit(self, monkeypatch, tmp_path):
         """Checkpoint class count matches config → no reinit.
@@ -167,9 +200,13 @@ class TestLoadPretrainWeightsReinitScenarios:
         """
         from rfdetr.models.weights import load_pretrain_weights
 
-        mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu", num_classes=90)
+        mc = RFDETRBaseConfig(
+            pretrain_weights="/fake/weights.pth", device="cpu", num_classes=90
+        )
         checkpoint = _make_checkpoint(num_classes=91)
-        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+        monkeypatch.setattr(
+            "rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint
+        )
 
         nn_model = _fake_nn_model()
         load_pretrain_weights(nn_model, mc)
@@ -187,42 +224,65 @@ class TestLoadPretrainWeightsClassNames:
 
     @pytest.fixture(autouse=True)
     def _patch_io(self, monkeypatch):
-        monkeypatch.setattr("rfdetr.models.weights.download_pretrain_weights", lambda *a, **kw: None)
-        monkeypatch.setattr("rfdetr.models.weights.validate_pretrain_weights", lambda *a, **kw: None)
-        monkeypatch.setattr("rfdetr.models.weights.validate_checkpoint_compatibility", lambda *a, **kw: None)
+        monkeypatch.setattr(
+            "rfdetr.models.weights.download_pretrain_weights", lambda *a, **kw: None
+        )
+        monkeypatch.setattr(
+            "rfdetr.models.weights.validate_pretrain_weights", lambda *a, **kw: None
+        )
+        monkeypatch.setattr(
+            "rfdetr.models.weights.validate_checkpoint_compatibility",
+            lambda *a, **kw: None,
+        )
         monkeypatch.setattr("rfdetr.models.weights.os.path.isfile", lambda _: True)
 
-    def test_characterization_class_names_extracted_from_checkpoint(self, monkeypatch, tmp_path):
+    def test_characterization_class_names_extracted_from_checkpoint(
+        self, monkeypatch, tmp_path
+    ):
         """class_names stored in checkpoint args are returned as a list of strings."""
         from rfdetr.models.weights import load_pretrain_weights
 
-        mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu", num_classes=90)
+        mc = RFDETRBaseConfig(
+            pretrain_weights="/fake/weights.pth", device="cpu", num_classes=90
+        )
         checkpoint = _make_checkpoint(num_classes=91)
         checkpoint["args"] = SimpleNamespace(
             segmentation_head=False,
             patch_size=14,
             class_names=["cat", "dog", "bird"],
         )
-        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+        monkeypatch.setattr(
+            "rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint
+        )
 
         nn_model = _fake_nn_model()
         result = load_pretrain_weights(nn_model, mc)
 
-        assert result == ["cat", "dog", "bird"], f"Expected class names from checkpoint, got {result!r}"
+        assert result == ["cat", "dog", "bird"], (
+            f"Expected class names from checkpoint, got {result!r}"
+        )
 
-    def test_characterization_empty_class_names_when_absent_from_checkpoint(self, monkeypatch, tmp_path):
+    def test_characterization_empty_class_names_when_absent_from_checkpoint(
+        self, monkeypatch, tmp_path
+    ):
         """Empty list returned when checkpoint has no args or no class_names key."""
         from rfdetr.models.weights import load_pretrain_weights
 
-        mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu", num_classes=90)
+        mc = RFDETRBaseConfig(
+            pretrain_weights="/fake/weights.pth", device="cpu", num_classes=90
+        )
         checkpoint = _make_checkpoint(num_classes=91)
         checkpoint.pop("args", None)  # no args key at all
-        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+        monkeypatch.setattr(
+            "rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint
+        )
 
         nn_model = _fake_nn_model()
         result = load_pretrain_weights(nn_model, mc)
 
-        assert result == [], f"Expected empty list when checkpoint has no class_names, got {result!r}"
+        assert result == [], (
+            f"Expected empty list when checkpoint has no class_names, got {result!r}"
+        )
 
     def test_none_pretrain_weights_returns_empty_list_immediately(self, tmp_path):
         """load_pretrain_weights returns [] without any I/O when pretrain_weights is None."""
@@ -270,8 +330,12 @@ class TestApplyLora:
         assert lora_kwargs.get("lora_alpha") == 16, "LoRA alpha must be 16"
         assert lora_kwargs.get("use_dora") is True, "DoRA must be enabled"
 
-        assert mock_peft.get_peft_model.call_count == 1, "get_peft_model must be called exactly once"
-        assert nn_model.backbone[0].encoder is fake_peft_model, "backbone encoder must be replaced with the peft model"
+        assert mock_peft.get_peft_model.call_count == 1, (
+            "get_peft_model must be called exactly once"
+        )
+        assert nn_model.backbone[0].encoder is fake_peft_model, (
+            "backbone encoder must be replaced with the peft model"
+        )
 
     def test_characterization_apply_lora_target_modules(self):
         """apply_lora must target exactly the 9 expected module names."""
@@ -294,7 +358,9 @@ class TestApplyLora:
             "cls_token",
             "register_tokens",
         }
-        actual_targets = set(mock_peft.LoraConfig.call_args.kwargs.get("target_modules", []))
+        actual_targets = set(
+            mock_peft.LoraConfig.call_args.kwargs.get("target_modules", [])
+        )
         assert actual_targets == expected_targets, (
             f"LoRA target_modules mismatch.\nExpected: {expected_targets}\nGot: {actual_targets}"
         )

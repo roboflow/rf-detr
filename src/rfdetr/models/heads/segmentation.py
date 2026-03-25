@@ -18,9 +18,13 @@ class DepthwiseConvBlock(nn.Module):
 
     def __init__(self, dim, layer_scale_init_value=0):
         super().__init__()
-        self.dwconv = nn.Conv2d(dim, dim, kernel_size=3, padding=1, groups=dim)  # depthwise conv
+        self.dwconv = nn.Conv2d(
+            dim, dim, kernel_size=3, padding=1, groups=dim
+        )  # depthwise conv
         self.norm = nn.LayerNorm(dim, eps=1e-6)
-        self.pwconv1 = nn.Linear(dim, dim)  # pointwise/1x1 convs, implemented with linear layers
+        self.pwconv1 = nn.Linear(
+            dim, dim
+        )  # pointwise/1x1 convs, implemented with linear layers
         self.act = nn.GELU()
         self.gamma = (
             nn.Parameter(layer_scale_init_value * torch.ones((dim)), requires_grad=True)
@@ -76,19 +80,33 @@ class MLPBlock(nn.Module):
 
 
 class SegmentationHead(nn.Module):
-    def __init__(self, in_dim, num_blocks: int, bottleneck_ratio: int = 1, downsample_ratio: int = 4):
+    def __init__(
+        self,
+        in_dim,
+        num_blocks: int,
+        bottleneck_ratio: int = 1,
+        downsample_ratio: int = 4,
+    ):
         super().__init__()
 
         self.downsample_ratio = downsample_ratio
-        self.interaction_dim = in_dim // bottleneck_ratio if bottleneck_ratio is not None else in_dim
-        self.blocks = nn.ModuleList([DepthwiseConvBlock(in_dim) for _ in range(num_blocks)])
+        self.interaction_dim = (
+            in_dim // bottleneck_ratio if bottleneck_ratio is not None else in_dim
+        )
+        self.blocks = nn.ModuleList(
+            [DepthwiseConvBlock(in_dim) for _ in range(num_blocks)]
+        )
         self.spatial_features_proj = (
-            nn.Identity() if bottleneck_ratio is None else nn.Conv2d(in_dim, self.interaction_dim, kernel_size=1)
+            nn.Identity()
+            if bottleneck_ratio is None
+            else nn.Conv2d(in_dim, self.interaction_dim, kernel_size=1)
         )
 
         self.query_features_block = MLPBlock(in_dim)
         self.query_features_proj = (
-            nn.Identity() if bottleneck_ratio is None else nn.Linear(in_dim, self.interaction_dim)
+            nn.Identity()
+            if bottleneck_ratio is None
+            else nn.Linear(in_dim, self.interaction_dim)
         )
 
         self.bias = nn.Parameter(torch.zeros(1), requires_grad=True)
@@ -100,7 +118,12 @@ class SegmentationHead(nn.Module):
         self._forward_origin = self.forward
         self.forward = self.forward_export
         for name, m in self.named_modules():
-            if hasattr(m, "export") and isinstance(m.export, Callable) and hasattr(m, "_export") and not m._export:
+            if (
+                hasattr(m, "export")
+                and isinstance(m.export, Callable)
+                and hasattr(m, "_export")
+                and not m._export
+            ):
                 m.export()
 
     def forward(
@@ -113,8 +136,13 @@ class SegmentationHead(nn.Module):
         # spatial features: (B, C, H, W)
         # query features: [(B, N, C)] for each decoder layer
         # output: (B, N, H*r, W*r)
-        target_size = (image_size[0] // self.downsample_ratio, image_size[1] // self.downsample_ratio)
-        spatial_features = F.interpolate(spatial_features, size=target_size, mode="bilinear", align_corners=False)
+        target_size = (
+            image_size[0] // self.downsample_ratio,
+            image_size[1] // self.downsample_ratio,
+        )
+        spatial_features = F.interpolate(
+            spatial_features, size=target_size, mode="bilinear", align_corners=False
+        )
 
         mask_logits = []
         if not skip_blocks:
@@ -122,11 +150,18 @@ class SegmentationHead(nn.Module):
                 spatial_features = block(spatial_features)
                 spatial_features_proj = self.spatial_features_proj(spatial_features)
                 qf = self.query_features_proj(self.query_features_block(qf))
-                mask_logits.append(torch.einsum("bchw,bnc->bnhw", spatial_features_proj, qf) + self.bias)
+                mask_logits.append(
+                    torch.einsum("bchw,bnc->bnhw", spatial_features_proj, qf)
+                    + self.bias
+                )
         else:
-            assert len(query_features) == 1, "skip_blocks is only supported for length 1 query features"
+            assert len(query_features) == 1, (
+                "skip_blocks is only supported for length 1 query features"
+            )
             qf = self.query_features_proj(self.query_features_block(query_features[0]))
-            mask_logits.append(torch.einsum("bchw,bnc->bnhw", spatial_features, qf) + self.bias)
+            mask_logits.append(
+                torch.einsum("bchw,bnc->bnhw", spatial_features, qf) + self.bias
+            )
 
         return mask_logits
 
@@ -140,8 +175,13 @@ class SegmentationHead(nn.Module):
         # spatial features: (B, C, H, W)
         # query features: [(B, N, C)] for each decoder layer
         # output: dict containing the intermediate results
-        target_size = (image_size[0] // self.downsample_ratio, image_size[1] // self.downsample_ratio)
-        spatial_features = F.interpolate(spatial_features, size=target_size, mode="bilinear", align_corners=False)
+        target_size = (
+            image_size[0] // self.downsample_ratio,
+            image_size[1] // self.downsample_ratio,
+        )
+        spatial_features = F.interpolate(
+            spatial_features, size=target_size, mode="bilinear", align_corners=False
+        )
 
         # num_points = max(spatial_features.shape[-2], spatial_features.shape[-2] * spatial_features.shape[-1] // 16)
 
@@ -161,7 +201,9 @@ class SegmentationHead(nn.Module):
                     }
                 )
         else:
-            assert len(query_features) == 1, "skip_blocks is only supported for length 1 query features"
+            assert len(query_features) == 1, (
+                "skip_blocks is only supported for length 1 query features"
+            )
 
             qf = self.query_features_proj(self.query_features_block(query_features[0]))
 
@@ -182,10 +224,17 @@ class SegmentationHead(nn.Module):
         image_size: tuple[int, int],
         skip_blocks: bool = False,
     ) -> list[torch.Tensor]:
-        assert len(query_features) == 1, "at export time, segmentation head expects exactly one query feature"
+        assert len(query_features) == 1, (
+            "at export time, segmentation head expects exactly one query feature"
+        )
 
-        target_size = (image_size[0] // self.downsample_ratio, image_size[1] // self.downsample_ratio)
-        spatial_features = F.interpolate(spatial_features, size=target_size, mode="bilinear", align_corners=False)
+        target_size = (
+            image_size[0] // self.downsample_ratio,
+            image_size[1] // self.downsample_ratio,
+        )
+        spatial_features = F.interpolate(
+            spatial_features, size=target_size, mode="bilinear", align_corners=False
+        )
 
         if not skip_blocks:
             for block in self.blocks:
@@ -197,7 +246,9 @@ class SegmentationHead(nn.Module):
         return [torch.einsum("bchw,bnc->bnhw", spatial_features_proj, qf) + self.bias]
 
 
-def point_sample(input: torch.Tensor, point_coords: torch.Tensor, **kwargs: Any) -> torch.Tensor:
+def point_sample(
+    input: torch.Tensor, point_coords: torch.Tensor, **kwargs: Any
+) -> torch.Tensor:
     """
     A wrapper around :func:`~rfdetr.utilities.tensors._bilinear_grid_sample` to support 3D point_coords tensors.
     Unlike :func:`torch.nn.functional.grid_sample` it assumes `point_coords` to lie inside
@@ -230,7 +281,9 @@ def point_sample(input: torch.Tensor, point_coords: torch.Tensor, **kwargs: Any)
     if mode == "bilinear":
         if kwargs:
             unexpected = ", ".join(sorted(kwargs.keys()))
-            raise TypeError(f"Unexpected keyword argument(s) for bilinear mode: {unexpected}")
+            raise TypeError(
+                f"Unexpected keyword argument(s) for bilinear mode: {unexpected}"
+            )
         # For bilinear mode, use the optimized sampler when the padding_mode
         # is supported by the manual/MPS path. For other padding modes,
         # delegate to F.grid_sample to keep behavior consistent across devices.
@@ -309,14 +362,20 @@ def get_uncertain_point_coords_with_randomness(
     num_uncertain_points = int(importance_sample_ratio * num_points)
     num_random_points = num_points - num_uncertain_points
     idx = torch.topk(point_uncertainties[:, 0, :], k=num_uncertain_points, dim=1)[1]
-    shift = num_sampled * torch.arange(num_boxes, dtype=torch.long, device=coarse_logits.device)
+    shift = num_sampled * torch.arange(
+        num_boxes, dtype=torch.long, device=coarse_logits.device
+    )
     idx += shift[:, None]
-    point_coords = point_coords.view(-1, 2)[idx.view(-1), :].view(num_boxes, num_uncertain_points, 2)
+    point_coords = point_coords.view(-1, 2)[idx.view(-1), :].view(
+        num_boxes, num_uncertain_points, 2
+    )
     if num_random_points > 0:
         point_coords = torch.cat(
             [
                 point_coords,
-                torch.rand(num_boxes, num_random_points, 2, device=coarse_logits.device),
+                torch.rand(
+                    num_boxes, num_random_points, 2, device=coarse_logits.device
+                ),
             ],
             dim=1,
         )

@@ -28,7 +28,11 @@ def _mc(**kwargs):
 
 def _find_resume_checkpoints(trainer):
     """Return ModelCheckpoint callbacks that are NOT BestModelCallback."""
-    return [cb for cb in trainer.callbacks if isinstance(cb, ModelCheckpoint) and not isinstance(cb, BestModelCallback)]
+    return [
+        cb
+        for cb in trainer.callbacks
+        if isinstance(cb, ModelCheckpoint) and not isinstance(cb, BestModelCallback)
+    ]
 
 
 def _tc(tmp_path, **kwargs):
@@ -69,7 +73,9 @@ class TestBuildTrainerCallbacks:
 
     def test_coco_eval_always_present(self, tmp_path):
         """COCOEvalCallback is always included regardless of config flags."""
-        trainer = build_trainer(_tc(tmp_path, use_ema=False, early_stopping=False), _mc())
+        trainer = build_trainer(
+            _tc(tmp_path, use_ema=False, early_stopping=False), _mc()
+        )
         types = [type(cb) for cb in trainer.callbacks]
         assert COCOEvalCallback in types
 
@@ -79,7 +85,9 @@ class TestBuildTrainerCallbacks:
             _tc(tmp_path, use_ema=False, eval_interval=3, log_per_class_metrics=False),
             _mc(),
         )
-        coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
+        coco_cb = next(
+            cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback)
+        )
         assert coco_cb._eval_interval == 3
         assert coco_cb._log_per_class_metrics is False
 
@@ -91,18 +99,30 @@ class TestBuildTrainerCallbacks:
 
     def test_latest_model_checkpoint_present(self, tmp_path):
         """A ModelCheckpoint (not BestModelCallback) with every_n_epochs==1 is included when checkpoint_interval > 1."""
-        trainer = build_trainer(_tc(tmp_path, use_ema=False, checkpoint_interval=2), _mc())
+        trainer = build_trainer(
+            _tc(tmp_path, use_ema=False, checkpoint_interval=2), _mc()
+        )
         resume_cbs = _find_resume_checkpoints(trainer)
         assert any(cb._every_n_epochs == 1 for cb in resume_cbs)
 
-    def test_latest_model_checkpoint_absent_when_checkpoint_interval_one(self, tmp_path):
+    def test_latest_model_checkpoint_absent_when_checkpoint_interval_one(
+        self, tmp_path
+    ):
         """No separate latest checkpoint callback when interval already saves every epoch."""
-        trainer = build_trainer(_tc(tmp_path, use_ema=False, checkpoint_interval=1), _mc())
+        trainer = build_trainer(
+            _tc(tmp_path, use_ema=False, checkpoint_interval=1), _mc()
+        )
         resume_cbs = _find_resume_checkpoints(trainer)
         assert resume_cbs
-        assert not any(cb._every_n_epochs == 1 and cb.save_top_k == 1 for cb in resume_cbs)
+        assert not any(
+            cb._every_n_epochs == 1 and cb.save_top_k == 1 for cb in resume_cbs
+        )
         interval_cb = next(
-            (cb for cb in resume_cbs if cb._every_n_epochs == 1 and cb.save_top_k == -1),
+            (
+                cb
+                for cb in resume_cbs
+                if cb._every_n_epochs == 1 and cb.save_top_k == -1
+            ),
             None,
         )
         assert interval_cb is not None
@@ -116,9 +136,13 @@ class TestBuildTrainerCallbacks:
         resume_cbs = _find_resume_checkpoints(trainer)
         assert any(cb._every_n_epochs == tc.checkpoint_interval for cb in resume_cbs)
 
-    def test_checkpoint_interval_one_has_single_resume_checkpoint_callback(self, tmp_path):
+    def test_checkpoint_interval_one_has_single_resume_checkpoint_callback(
+        self, tmp_path
+    ):
         """checkpoint_interval=1 config creates only one non-best ModelCheckpoint callback."""
-        trainer = build_trainer(_tc(tmp_path, use_ema=False, checkpoint_interval=1), _mc())
+        trainer = build_trainer(
+            _tc(tmp_path, use_ema=False, checkpoint_interval=1), _mc()
+        )
         resume_cbs = _find_resume_checkpoints(trainer)
         assert len(resume_cbs) == 1
         only_cb = resume_cbs[0]
@@ -133,9 +157,13 @@ class TestBuildTrainerCallbacks:
             pytest.param(7, id="interval_7"),
         ],
     )
-    def test_all_model_checkpoints_have_unique_state_keys(self, tmp_path, checkpoint_interval):
+    def test_all_model_checkpoints_have_unique_state_keys(
+        self, tmp_path, checkpoint_interval
+    ):
         """All ModelCheckpoint callbacks (including BestModelCallback) always have unique state keys."""
-        trainer = build_trainer(_tc(tmp_path, use_ema=False, checkpoint_interval=checkpoint_interval), _mc())
+        trainer = build_trainer(
+            _tc(tmp_path, use_ema=False, checkpoint_interval=checkpoint_interval), _mc()
+        )
         all_mc_cbs = [cb for cb in trainer.callbacks if isinstance(cb, ModelCheckpoint)]
         state_keys = [cb.state_key for cb in all_mc_cbs]
         assert len(state_keys) == len(set(state_keys)), (
@@ -145,7 +173,9 @@ class TestBuildTrainerCallbacks:
 
     def test_interval_checkpoint_uses_interval_from_config(self, tmp_path):
         """Interval ModelCheckpoint receives checkpoint_interval=7 from TrainConfig."""
-        trainer = build_trainer(_tc(tmp_path, use_ema=False, checkpoint_interval=7), _mc())
+        trainer = build_trainer(
+            _tc(tmp_path, use_ema=False, checkpoint_interval=7), _mc()
+        )
         resume_cbs = _find_resume_checkpoints(trainer)
         assert any(cb._every_n_epochs == 7 for cb in resume_cbs)
 
@@ -164,8 +194,12 @@ class TestBuildTrainerCallbacks:
 
     def test_ema_callback_uses_update_interval(self, tmp_path):
         """RFDETREMACallback receives ema_update_interval from TrainConfig."""
-        trainer = build_trainer(_tc(tmp_path, use_ema=True, ema_update_interval=4), _mc())
-        ema_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RFDETREMACallback))
+        trainer = build_trainer(
+            _tc(tmp_path, use_ema=True, ema_update_interval=4), _mc()
+        )
+        ema_cb = next(
+            cb for cb in trainer.callbacks if isinstance(cb, RFDETREMACallback)
+        )
         assert ema_cb._update_interval_steps == 4
 
     def test_no_ema_callback_when_use_ema_false(self, tmp_path):
@@ -330,7 +364,9 @@ class TestBuildTrainerEMAShardingGuard:
         tc.__dict__["strategy"] = "fsdp"
 
         with (
-            mock.patch("rfdetr.training.trainer.Trainer", return_value=mock.MagicMock()),
+            mock.patch(
+                "rfdetr.training.trainer.Trainer", return_value=mock.MagicMock()
+            ),
             warnings.catch_warnings(record=True) as caught,
         ):
             warnings.simplefilter("always")
@@ -366,7 +402,9 @@ class TestBuildTrainerLoggers:
         from pytorch_lightning.loggers import TensorBoardLogger
 
         fake_logger = mock.MagicMock(spec=TensorBoardLogger)
-        with mock.patch("rfdetr.training.trainer.TensorBoardLogger", return_value=fake_logger):
+        with mock.patch(
+            "rfdetr.training.trainer.TensorBoardLogger", return_value=fake_logger
+        ):
             trainer = build_trainer(
                 _tc(tmp_path, tensorboard=True, use_ema=False),
                 _mc(),
@@ -380,7 +418,9 @@ class TestBuildTrainerLoggers:
         from pytorch_lightning.loggers import MLFlowLogger
 
         fake_logger = mock.MagicMock(spec=MLFlowLogger)
-        with mock.patch("rfdetr.training.trainer.MLFlowLogger", return_value=fake_logger):
+        with mock.patch(
+            "rfdetr.training.trainer.MLFlowLogger", return_value=fake_logger
+        ):
             trainer = build_trainer(
                 _tc(tmp_path, mlflow=True, use_ema=False),
                 _mc(),
@@ -391,7 +431,10 @@ class TestBuildTrainerLoggers:
         """If tensorboard package is absent, a warning is logged and training continues."""
         import unittest.mock as mock
 
-        with mock.patch("rfdetr.training.trainer.TensorBoardLogger", side_effect=ModuleNotFoundError("no tensorboard")):
+        with mock.patch(
+            "rfdetr.training.trainer.TensorBoardLogger",
+            side_effect=ModuleNotFoundError("no tensorboard"),
+        ):
             with mock.patch("rfdetr.training.trainer._logger") as mock_logger:
                 trainer = build_trainer(
                     _tc(tmp_path, tensorboard=True, use_ema=False),
@@ -422,8 +465,12 @@ class TestBuildTrainerLoggers:
         fake_tb = mock.MagicMock(spec=TensorBoardLogger)
         fake_mlflow = mock.MagicMock(spec=MLFlowLogger)
         with (
-            mock.patch("rfdetr.training.trainer.TensorBoardLogger", return_value=fake_tb),
-            mock.patch("rfdetr.training.trainer.MLFlowLogger", return_value=fake_mlflow),
+            mock.patch(
+                "rfdetr.training.trainer.TensorBoardLogger", return_value=fake_tb
+            ),
+            mock.patch(
+                "rfdetr.training.trainer.MLFlowLogger", return_value=fake_mlflow
+            ),
         ):
             trainer = build_trainer(
                 _tc(tmp_path, tensorboard=True, mlflow=True, use_ema=False),

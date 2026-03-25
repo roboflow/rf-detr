@@ -11,9 +11,18 @@ from typing import Any
 
 import torch
 from pytorch_lightning import Trainer
-from pytorch_lightning.callbacks import ModelCheckpoint, RichProgressBar, TQDMProgressBar
+from pytorch_lightning.callbacks import (
+    ModelCheckpoint,
+    RichProgressBar,
+    TQDMProgressBar,
+)
 from pytorch_lightning.callbacks.progress.rich_progress import RichProgressBarTheme
-from pytorch_lightning.loggers import CSVLogger, MLFlowLogger, TensorBoardLogger, WandbLogger
+from pytorch_lightning.loggers import (
+    CSVLogger,
+    MLFlowLogger,
+    TensorBoardLogger,
+    WandbLogger,
+)
 
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.training.callbacks import (
@@ -98,7 +107,9 @@ def build_trainer(
     callbacks = []
 
     if tc.progress_bar == "rich":
-        callbacks.append(RichProgressBar(theme=RichProgressBarTheme(metrics_format=".3e")))
+        callbacks.append(
+            RichProgressBar(theme=RichProgressBarTheme(metrics_format=".3e"))
+        )
     elif tc.progress_bar == "tqdm":
         callbacks.append(TQDMProgressBar())
 
@@ -190,7 +201,10 @@ def build_trainer(
                 )
             )
         except ModuleNotFoundError as exc:
-            _logger.warning("TensorBoard logging disabled: %s. Install with: pip install tensorboard", exc)
+            _logger.warning(
+                "TensorBoard logging disabled: %s. Install with: pip install tensorboard",
+                exc,
+            )
 
     if tc.wandb:
         try:
@@ -202,7 +216,9 @@ def build_trainer(
                 )
             )
         except ModuleNotFoundError as exc:
-            _logger.warning("WandB logging disabled: %s. Install with: pip install wandb", exc)
+            _logger.warning(
+                "WandB logging disabled: %s. Install with: pip install wandb", exc
+            )
 
     if tc.mlflow:
         try:
@@ -214,10 +230,14 @@ def build_trainer(
                 )
             )
         except ModuleNotFoundError as exc:
-            _logger.warning("MLflow logging disabled: %s. Install with: pip install mlflow", exc)
+            _logger.warning(
+                "MLflow logging disabled: %s. Install with: pip install mlflow", exc
+            )
 
     if tc.clearml:
-        raise NotImplementedError("ClearML logging is not yet supported. Remove clearml=True from TrainConfig.")
+        raise NotImplementedError(
+            "ClearML logging is not yet supported. Remove clearml=True from TrainConfig."
+        )
 
     # --- Promoted config fields (T4-2 added these to TrainConfig) ---
     clip_max_norm: float = tc.clip_max_norm

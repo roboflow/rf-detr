@@ -13,7 +13,10 @@ import pytest
 import torch
 from pytorch_lightning import LightningModule, Trainer
 
-from rfdetr.utilities.state_dict import _make_fit_loop_state, validate_checkpoint_compatibility
+from rfdetr.utilities.state_dict import (
+    _make_fit_loop_state,
+    validate_checkpoint_compatibility,
+)
 
 # ---------------------------------------------------------------------------
 # _make_fit_loop_state
@@ -31,7 +34,9 @@ class TestMakeFitLoopState:
             pytest.param(9, 10, id="epoch_9"),
         ],
     )
-    def test_epoch_progress_completed_is_epoch_plus_one(self, epoch: int, expected_n: int) -> None:
+    def test_epoch_progress_completed_is_epoch_plus_one(
+        self, epoch: int, expected_n: int
+    ) -> None:
         """epoch_progress.current.completed == epoch + 1 so PTL sets current_epoch correctly."""
         state = _make_fit_loop_state(epoch)
         assert state["epoch_progress"]["current"]["completed"] == expected_n
@@ -57,7 +62,9 @@ class TestMakeFitLoopState:
             bp = state[key]
             assert bp["is_last_batch"] is False
             for scope in ("total", "current"):
-                assert all(v == 0 for v in bp[scope].values()), f"{key}.{scope} not zero: {bp[scope]}"
+                assert all(v == 0 for v in bp[scope].values()), (
+                    f"{key}.{scope} not zero: {bp[scope]}"
+                )
 
     def test_ptl_accepts_fit_loop_state(self) -> None:
         """PTL's _FitLoop.load_state_dict must not raise with our synthesised state dict."""
@@ -69,7 +76,9 @@ class TestMakeFitLoopState:
             def configure_optimizers(self):
                 return torch.optim.SGD(self.parameters(), lr=1e-3)
 
-        trainer = Trainer(max_epochs=10, accelerator="cpu", enable_progress_bar=False, logger=False)
+        trainer = Trainer(
+            max_epochs=10, accelerator="cpu", enable_progress_bar=False, logger=False
+        )
         trainer.strategy.connect(_DummyModule())
 
         epoch = 4
@@ -172,7 +181,10 @@ class TestValidateCheckpointCompatibility:
         ckpt_args = SimpleNamespace(segmentation_head=False, patch_size=12)
         checkpoint = {"args": ckpt_args}
         model_args = SimpleNamespace(segmentation_head=False, patch_size=16)
-        with pytest.raises(ValueError, match=r"patch_size=12.*patch_size=16|patch_size=16.*patch_size=12"):
+        with pytest.raises(
+            ValueError,
+            match=r"patch_size=12.*patch_size=16|patch_size=16.*patch_size=12",
+        ):
             validate_checkpoint_compatibility(checkpoint, model_args)
 
     # ------------------------------------------------------------------
@@ -186,7 +198,9 @@ class TestValidateCheckpointCompatibility:
             "args": ckpt_args,
             "model": {"class_embed.bias": torch.randn(91)},
         }
-        model_args = SimpleNamespace(segmentation_head=False, patch_size=14, num_classes=2)
+        model_args = SimpleNamespace(
+            segmentation_head=False, patch_size=14, num_classes=2
+        )
 
         rf_detr_logger = logging.getLogger("rf-detr")
         prev_propagate = rf_detr_logger.propagate
@@ -197,7 +211,9 @@ class TestValidateCheckpointCompatibility:
         finally:
             rf_detr_logger.propagate = prev_propagate
 
-        warning_msgs = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+        warning_msgs = [
+            r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING
+        ]
         assert any("re-initialized to 2 classes" in msg for msg in warning_msgs), (
             f"Expected 're-initialized to 2 classes' warning, got: {warning_msgs}"
         )
@@ -209,7 +225,9 @@ class TestValidateCheckpointCompatibility:
             "args": ckpt_args,
             "model": {"class_embed.bias": torch.randn(3)},
         }
-        model_args = SimpleNamespace(segmentation_head=False, patch_size=14, num_classes=90)
+        model_args = SimpleNamespace(
+            segmentation_head=False, patch_size=14, num_classes=90
+        )
 
         rf_detr_logger = logging.getLogger("rf-detr")
         prev_propagate = rf_detr_logger.propagate
@@ -220,7 +238,11 @@ class TestValidateCheckpointCompatibility:
         finally:
             rf_detr_logger.propagate = prev_propagate
 
-        warning_msgs = [r.getMessage() for r in caplog.records if r.name == "rf-detr" and r.levelno >= logging.WARNING]
+        warning_msgs = [
+            r.getMessage()
+            for r in caplog.records
+            if r.name == "rf-detr" and r.levelno >= logging.WARNING
+        ]
         assert any("Pass num_classes=2" in msg for msg in warning_msgs), (
             f"Expected 'Pass num_classes=2' warning, got: {warning_msgs}"
         )
@@ -232,7 +254,9 @@ class TestValidateCheckpointCompatibility:
             "args": ckpt_args,
             "model": {"class_embed.bias": torch.randn(91)},
         }
-        model_args = SimpleNamespace(segmentation_head=False, patch_size=14, num_classes=90)
+        model_args = SimpleNamespace(
+            segmentation_head=False, patch_size=14, num_classes=90
+        )
 
         rf_detr_logger = logging.getLogger("rf-detr")
         prev_propagate = rf_detr_logger.propagate
@@ -243,14 +267,20 @@ class TestValidateCheckpointCompatibility:
         finally:
             rf_detr_logger.propagate = prev_propagate
 
-        warning_msgs = [r.getMessage() for r in caplog.records if r.name == "rf-detr" and r.levelno >= logging.WARNING]
+        warning_msgs = [
+            r.getMessage()
+            for r in caplog.records
+            if r.name == "rf-detr" and r.levelno >= logging.WARNING
+        ]
         assert not warning_msgs, f"Expected no warnings, got: {warning_msgs}"
 
     def test_class_count_missing_model_key_no_warning(self, caplog):
         """Checkpoint without 'model' key — no warning (backward compat)."""
         ckpt_args = SimpleNamespace(segmentation_head=False, patch_size=14)
         checkpoint = {"args": ckpt_args}
-        model_args = SimpleNamespace(segmentation_head=False, patch_size=14, num_classes=90)
+        model_args = SimpleNamespace(
+            segmentation_head=False, patch_size=14, num_classes=90
+        )
 
         rf_detr_logger = logging.getLogger("rf-detr")
         prev_propagate = rf_detr_logger.propagate
@@ -261,5 +291,9 @@ class TestValidateCheckpointCompatibility:
         finally:
             rf_detr_logger.propagate = prev_propagate
 
-        warning_msgs = [r.getMessage() for r in caplog.records if r.name == "rf-detr" and r.levelno >= logging.WARNING]
+        warning_msgs = [
+            r.getMessage()
+            for r in caplog.records
+            if r.name == "rf-detr" and r.levelno >= logging.WARNING
+        ]
         assert not warning_msgs, f"Expected no warnings, got: {warning_msgs}"

@@ -62,7 +62,9 @@ class TestSegmentationTrainConfigNumSelect:
 
     def test_explicit_value_is_accepted(self) -> None:
         # Explicitly setting num_select on SegmentationTrainConfig is deprecated (Item #3).
-        with pytest.warns(DeprecationWarning, match="TrainConfig.num_select is deprecated"):
+        with pytest.warns(
+            DeprecationWarning, match="TrainConfig.num_select is deprecated"
+        ):
             config = SegmentationTrainConfig(dataset_dir="/tmp", num_select=42)
         assert config.num_select == 42
 
@@ -77,7 +79,9 @@ class TestSegmentationTrainConfigNumSelect:
             (RFDETRSeg2XLargeConfig, 300),
         ],
     )
-    def test_model_config_has_variant_specific_num_select(self, config_class, expected_num_select) -> None:
+    def test_model_config_has_variant_specific_num_select(
+        self, config_class, expected_num_select
+    ) -> None:
         assert config_class().num_select == expected_num_select
 
 
@@ -85,7 +89,9 @@ class TestTrainConfigT42PromotedFields:
     """T4-2: Promoted fields exist with correct defaults; device field is absent."""
 
     def _tc(self, tmp_path, **kwargs):
-        defaults = dict(dataset_dir=str(tmp_path), output_dir=str(tmp_path), tensorboard=False)
+        defaults = dict(
+            dataset_dir=str(tmp_path), output_dir=str(tmp_path), tensorboard=False
+        )
         defaults.update(kwargs)
         return TrainConfig(**defaults)
 
@@ -194,7 +200,9 @@ class TestTrainConfigT42PromotedFields:
             pytest.param("prefetch_factor", 0, id="prefetch_factor_zero"),
         ],
     )
-    def test_interval_and_prefetch_reject_non_positive_values(self, tmp_path, field, value):
+    def test_interval_and_prefetch_reject_non_positive_values(
+        self, tmp_path, field, value
+    ):
         """eval/EMA intervals and prefetch_factor must be >= 1 when provided."""
         with pytest.raises((ValueError, ValidationError)):
             self._tc(tmp_path, **{field: value})
@@ -213,7 +221,9 @@ class TestTrainConfigT42PromotedFields:
             ("auto_batch_max_targets_per_image", 0),
         ],
     )
-    def test_auto_batch_related_fields_reject_non_positive_values(self, tmp_path, field, value):
+    def test_auto_batch_related_fields_reject_non_positive_values(
+        self, tmp_path, field, value
+    ):
         """batch/accum/target-effective/max_targets fields must be >= 1 (except batch_size='auto')."""
         with pytest.raises((ValueError, ValidationError)):
             self._tc(tmp_path, **{field: value})
@@ -304,23 +314,31 @@ class TestDeprecatedTrainConfigFields:
     )
     def test_explicitly_set_deprecated_field_emits_warning(self, field, value) -> None:
         """Setting a deprecated TrainConfig field explicitly must emit DeprecationWarning."""
-        with pytest.warns(DeprecationWarning, match=f"TrainConfig\\.{field} is deprecated"):
+        with pytest.warns(
+            DeprecationWarning, match=f"TrainConfig\\.{field} is deprecated"
+        ):
             self._tc(**{field: value})
 
     def test_default_group_detr_no_warning(self, recwarn) -> None:
         """TrainConfig() without explicit group_detr must NOT warn."""
         self._tc()
-        depr_warnings = [w for w in recwarn.list if issubclass(w.category, DeprecationWarning)]
+        depr_warnings = [
+            w for w in recwarn.list if issubclass(w.category, DeprecationWarning)
+        ]
         assert not depr_warnings, f"Unexpected DeprecationWarning: {depr_warnings}"
 
-    def test_segmentation_train_config_no_warning_on_default_fields(self, recwarn) -> None:
+    def test_segmentation_train_config_no_warning_on_default_fields(
+        self, recwarn
+    ) -> None:
         """SegmentationTrainConfig() must NOT warn for its class-level defaults.
 
         segmentation_head=True and num_select=None are SegmentationTrainConfig defaults,
         not explicitly set by the user — they must not trigger DeprecationWarning.
         """
         SegmentationTrainConfig(dataset_dir="/tmp")
-        depr_warnings = [w for w in recwarn.list if issubclass(w.category, DeprecationWarning)]
+        depr_warnings = [
+            w for w in recwarn.list if issubclass(w.category, DeprecationWarning)
+        ]
         assert not depr_warnings, f"Unexpected DeprecationWarning: {depr_warnings}"
 
 
@@ -343,11 +361,15 @@ class TestDeprecatedModelConfigClsLossCoef:
             resolution=384,
             positional_encoding_size=256,
         )
-        with pytest.warns(DeprecationWarning, match="ModelConfig\\.cls_loss_coef is deprecated"):
+        with pytest.warns(
+            DeprecationWarning, match="ModelConfig\\.cls_loss_coef is deprecated"
+        ):
             ModelConfig(**sample, cls_loss_coef=2.0)
 
     def test_default_cls_loss_coef_no_warning(self, recwarn) -> None:
         """RFDETRBaseConfig() without explicit cls_loss_coef must NOT warn."""
         RFDETRBaseConfig(pretrain_weights=None, device="cpu")
-        depr_warnings = [w for w in recwarn.list if issubclass(w.category, DeprecationWarning)]
+        depr_warnings = [
+            w for w in recwarn.list if issubclass(w.category, DeprecationWarning)
+        ]
         assert not depr_warnings, f"Unexpected DeprecationWarning: {depr_warnings}"

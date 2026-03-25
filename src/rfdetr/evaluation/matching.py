@@ -40,7 +40,9 @@ def _compute_mask_iou(pred_masks: torch.Tensor, gt_masks: torch.Tensor) -> torch
     m = gt_masks.shape[0]
     if pred_masks.shape[-2:] != gt_masks.shape[-2:]:
         h, w = pred_masks.shape[-2:]
-        gt_masks = F.interpolate(gt_masks.float().unsqueeze(1), size=(h, w), mode="nearest").squeeze(1)
+        gt_masks = F.interpolate(
+            gt_masks.float().unsqueeze(1), size=(h, w), mode="nearest"
+        ).squeeze(1)
     pred_flat = pred_masks.bool().view(n, -1).float()  # [N, HW]
     gt_flat = gt_masks.bool().view(m, -1).float()  # [M, HW]
     inter = torch.mm(pred_flat, gt_flat.t())  # [N, M]
@@ -217,7 +219,9 @@ def build_matching_data(
                 gt_items: torch.Tensor = gt_boxes[gt_mask_c]  # [n_gt, 4]
             else:
                 if pred_masks is None or gt_masks is None:
-                    raise ValueError("iou_type='segm' requires 'masks' in both preds and targets")
+                    raise ValueError(
+                        "iou_type='segm' requires 'masks' in both preds and targets"
+                    )
                 p_items = pred_masks[pred_mask_c]  # [n_pred, H, W]
                 gt_items = gt_masks[gt_mask_c]  # [n_gt, H, W]
 

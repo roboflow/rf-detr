@@ -130,24 +130,39 @@ class LWDETR(nn.Module):
     def reinitialize_detection_head(self, num_classes):
         base = self.class_embed.weight.shape[0]
         num_repeats = int(math.ceil(num_classes / base))
-        self.class_embed.weight.data = self.class_embed.weight.data.repeat(num_repeats, 1)
+        self.class_embed.weight.data = self.class_embed.weight.data.repeat(
+            num_repeats, 1
+        )
         self.class_embed.weight.data = self.class_embed.weight.data[:num_classes]
         self.class_embed.bias.data = self.class_embed.bias.data.repeat(num_repeats)
         self.class_embed.bias.data = self.class_embed.bias.data[:num_classes]
 
         if self.two_stage:
             for enc_out_class_embed in self.transformer.enc_out_class_embed:
-                enc_out_class_embed.weight.data = enc_out_class_embed.weight.data.repeat(num_repeats, 1)
-                enc_out_class_embed.weight.data = enc_out_class_embed.weight.data[:num_classes]
-                enc_out_class_embed.bias.data = enc_out_class_embed.bias.data.repeat(num_repeats)
-                enc_out_class_embed.bias.data = enc_out_class_embed.bias.data[:num_classes]
+                enc_out_class_embed.weight.data = (
+                    enc_out_class_embed.weight.data.repeat(num_repeats, 1)
+                )
+                enc_out_class_embed.weight.data = enc_out_class_embed.weight.data[
+                    :num_classes
+                ]
+                enc_out_class_embed.bias.data = enc_out_class_embed.bias.data.repeat(
+                    num_repeats
+                )
+                enc_out_class_embed.bias.data = enc_out_class_embed.bias.data[
+                    :num_classes
+                ]
 
     def export(self):
         self._export = True
         self._forward_origin = self.forward
         self.forward = self.forward_export
         for name, m in self.named_modules():
-            if hasattr(m, "export") and isinstance(m.export, Callable) and hasattr(m, "_export") and not m._export:
+            if (
+                hasattr(m, "export")
+                and isinstance(m.export, Callable)
+                and hasattr(m, "_export")
+                and not m._export
+            ):
                 m.export()
 
     def forward(self, samples: NestedTensor, targets=None):
@@ -186,7 +201,11 @@ class LWDETR(nn.Module):
             query_feat_weight = self.query_feat.weight[: self.num_queries]
 
         if self.segmentation_head is not None:
-            seg_head_fwd = self.segmentation_head.sparse_forward if self.training else self.segmentation_head.forward
+            seg_head_fwd = (
+                self.segmentation_head.sparse_forward
+                if self.training
+                else self.segmentation_head.forward
+            )
 
         hs, ref_unsigmoid, hs_enc, ref_enc = self.transformer(
             srcs, masks, poss, refpoint_embed_weight, query_feat_weight
@@ -195,16 +214,25 @@ class LWDETR(nn.Module):
         if hs is not None:
             if self.bbox_reparam:
                 outputs_coord_delta = self.bbox_embed(hs)
-                outputs_coord_cxcy = outputs_coord_delta[..., :2] * ref_unsigmoid[..., 2:] + ref_unsigmoid[..., :2]
-                outputs_coord_wh = outputs_coord_delta[..., 2:].exp() * ref_unsigmoid[..., 2:]
-                outputs_coord = torch.concat([outputs_coord_cxcy, outputs_coord_wh], dim=-1)
+                outputs_coord_cxcy = (
+                    outputs_coord_delta[..., :2] * ref_unsigmoid[..., 2:]
+                    + ref_unsigmoid[..., :2]
+                )
+                outputs_coord_wh = (
+                    outputs_coord_delta[..., 2:].exp() * ref_unsigmoid[..., 2:]
+                )
+                outputs_coord = torch.concat(
+                    [outputs_coord_cxcy, outputs_coord_wh], dim=-1
+                )
             else:
                 outputs_coord = (self.bbox_embed(hs) + ref_unsigmoid).sigmoid()
 
             outputs_class = self.class_embed(hs)
 
             if self.segmentation_head is not None:
-                outputs_masks = seg_head_fwd(features[0].tensors, hs, samples.tensors.shape[-2:])
+                outputs_masks = seg_head_fwd(
+                    features[0].tensors, hs, samples.tensors.shape[-2:]
+                )
 
             out = {"pred_logits": outputs_class[-1], "pred_boxes": outputs_coord[-1]}
             if self.segmentation_head is not None:
@@ -221,7 +249,9 @@ class LWDETR(nn.Module):
             hs_enc_list = hs_enc.chunk(group_detr, dim=1)
             cls_enc = []
             for g_idx in range(group_detr):
-                cls_enc_gidx = self.transformer.enc_out_class_embed[g_idx](hs_enc_list[g_idx])
+                cls_enc_gidx = self.transformer.enc_out_class_embed[g_idx](
+                    hs_enc_list[g_idx]
+                )
                 cls_enc.append(cls_enc_gidx)
 
             cls_enc = torch.cat(cls_enc, dim=1)
@@ -262,9 +292,16 @@ class LWDETR(nn.Module):
         if hs is not None:
             if self.bbox_reparam:
                 outputs_coord_delta = self.bbox_embed(hs)
-                outputs_coord_cxcy = outputs_coord_delta[..., :2] * ref_unsigmoid[..., 2:] + ref_unsigmoid[..., :2]
-                outputs_coord_wh = outputs_coord_delta[..., 2:].exp() * ref_unsigmoid[..., 2:]
-                outputs_coord = torch.concat([outputs_coord_cxcy, outputs_coord_wh], dim=-1)
+                outputs_coord_cxcy = (
+                    outputs_coord_delta[..., :2] * ref_unsigmoid[..., 2:]
+                    + ref_unsigmoid[..., :2]
+                )
+                outputs_coord_wh = (
+                    outputs_coord_delta[..., 2:].exp() * ref_unsigmoid[..., 2:]
+                )
+                outputs_coord = torch.concat(
+                    [outputs_coord_cxcy, outputs_coord_wh], dim=-1
+                )
             else:
                 outputs_coord = (self.bbox_embed(hs) + ref_unsigmoid).sigmoid()
             outputs_class = self.class_embed(hs)
@@ -303,10 +340,15 @@ class LWDETR(nn.Module):
         if outputs_masks is not None:
             return [
                 {"pred_logits": a, "pred_boxes": b, "pred_masks": c}
-                for a, b, c in zip(outputs_class[:-1], outputs_coord[:-1], outputs_masks[:-1])
+                for a, b, c in zip(
+                    outputs_class[:-1], outputs_coord[:-1], outputs_masks[:-1]
+                )
             ]
         else:
-            return [{"pred_logits": a, "pred_boxes": b} for a, b in zip(outputs_class[:-1], outputs_coord[:-1])]
+            return [
+                {"pred_logits": a, "pred_boxes": b}
+                for a, b in zip(outputs_class[:-1], outputs_coord[:-1])
+            ]
 
     def _get_backbone_encoder_layers(self) -> Optional[nn.ModuleList]:
         """Resolve the list of transformer blocks/layers from backbone[0].encoder.
@@ -324,11 +366,17 @@ class LWDETR(nn.Module):
             return enc.blocks
         if hasattr(enc, "trunk") and hasattr(enc.trunk, "blocks"):
             return enc.trunk.blocks
-        if hasattr(enc, "encoder") and hasattr(enc.encoder, "encoder") and hasattr(enc.encoder.encoder, "layer"):
+        if (
+            hasattr(enc, "encoder")
+            and hasattr(enc.encoder, "encoder")
+            and hasattr(enc.encoder.encoder, "layer")
+        ):
             return enc.encoder.encoder.layer
         return None
 
-    def update_drop_path(self, drop_path_rate: float, vit_encoder_num_layers: int) -> None:
+    def update_drop_path(
+        self, drop_path_rate: float, vit_encoder_num_layers: int
+    ) -> None:
         """Update drop_path rates for backbone encoder layers with linear schedule.
 
         Applies a linear schedule where the first layer has drop_path_rate=0 and the last
@@ -344,7 +392,9 @@ class LWDETR(nn.Module):
         n = min(vit_encoder_num_layers, len(layers))
         dp_rates = [x.item() for x in torch.linspace(0, drop_path_rate, n)]
         for i in range(n):
-            if hasattr(layers[i], "drop_path") and hasattr(layers[i].drop_path, "drop_prob"):
+            if hasattr(layers[i], "drop_path") and hasattr(
+                layers[i].drop_path, "drop_prob"
+            ):
                 layers[i].drop_path.drop_prob = dp_rates[i]
 
     def update_dropout(self, drop_rate):
@@ -382,7 +432,11 @@ def build_model(args: "BuilderArgs"):
         target_shape=(
             args.shape
             if hasattr(args, "shape")
-            else ((args.resolution, args.resolution) if hasattr(args, "resolution") else (640, 640))
+            else (
+                (args.resolution, args.resolution)
+                if hasattr(args, "resolution")
+                else (640, 640)
+            )
         ),
         rms_norm=args.rms_norm,
         backbone_lora=args.backbone_lora,

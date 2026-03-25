@@ -47,8 +47,12 @@ class RFDETRCli(LightningCLI):
             parser: The jsonargparse ``LightningArgumentParser`` provided by
                 ``LightningCLI``.
         """
-        parser.link_arguments("model.model_config", "data.model_config", apply_on="parse")
-        parser.link_arguments("model.train_config", "data.train_config", apply_on="parse")
+        parser.link_arguments(
+            "model.model_config", "data.model_config", apply_on="parse"
+        )
+        parser.link_arguments(
+            "model.train_config", "data.train_config", apply_on="parse"
+        )
 
 
 def main() -> None:

@@ -157,7 +157,9 @@ class TestLoadClassesHierarchy:
         result = RFDETR._load_classes(str(tmp_path))
         assert result == ["none", "dog", "cat"]
 
-    def test_mixed_hierarchy_leaf_and_standalone_forwarding(self, tmp_path: Path) -> None:
+    def test_mixed_hierarchy_leaf_and_standalone_forwarding(
+        self, tmp_path: Path
+    ) -> None:
         """Mixed hierarchy: only leaf classes + standalone top-level categories
         should be forwarded. Parent/grouping nodes are dropped.
         """
@@ -206,7 +208,9 @@ class TestLoadClassesHierarchy:
         result = RFDETR._load_classes(str(tmp_path))
         assert result == ["dog", "cat", "elephant"]
 
-    def test_unsorted_category_ids_return_id_sorted_class_order(self, tmp_path: Path) -> None:
+    def test_unsorted_category_ids_return_id_sorted_class_order(
+        self, tmp_path: Path
+    ) -> None:
         """Returned class names must follow category-ID order for stable index mapping."""
         categories = [
             {"id": 30, "name": "truck", "supercategory": "vehicle"},

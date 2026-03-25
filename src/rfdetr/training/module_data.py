@@ -43,7 +43,9 @@ class RFDETRDataModule(LightningDataModule):
 
         num_workers = self.train_config.num_workers
         self._pin_memory: bool = (
-            torch.cuda.is_available() if self.train_config.pin_memory is None else bool(self.train_config.pin_memory)
+            torch.cuda.is_available()
+            if self.train_config.pin_memory is None
+            else bool(self.train_config.pin_memory)
         )
         self._persistent_workers: bool = (
             num_workers > 0
@@ -52,7 +54,9 @@ class RFDETRDataModule(LightningDataModule):
         )
         if num_workers > 0:
             self._prefetch_factor = (
-                self.train_config.prefetch_factor if self.train_config.prefetch_factor is not None else 2
+                self.train_config.prefetch_factor
+                if self.train_config.prefetch_factor is not None
+                else 2
             )
         else:
             self._prefetch_factor = None
@@ -84,7 +88,9 @@ class RFDETRDataModule(LightningDataModule):
                 self._dataset_val = build_dataset("val", ns, resolution)
         elif stage == "test":
             if self._dataset_test is None:
-                split = "test" if self.train_config.dataset_file == "roboflow" else "val"
+                split = (
+                    "test" if self.train_config.dataset_file == "roboflow" else "val"
+                )
                 self._dataset_test = build_dataset(split, ns, resolution)
         elif stage == "predict":
             if self._dataset_val is None:
@@ -217,7 +223,9 @@ class RFDETRDataModule(LightningDataModule):
                 return [coco.cats[k]["name"] for k in sorted(coco.cats.keys())]
         return None
 
-    def transfer_batch_to_device(self, batch: Tuple, device: torch.device, dataloader_idx: int) -> Tuple:
+    def transfer_batch_to_device(
+        self, batch: Tuple, device: torch.device, dataloader_idx: int
+    ) -> Tuple:
         """Move a ``(NestedTensor, targets)`` batch to *device*.
 
         PTL's default iterates tuple elements and calls ``.to(device)``; that
@@ -234,5 +242,8 @@ class RFDETRDataModule(LightningDataModule):
         samples, targets = batch
         non_blocking = device.type == "cuda"
         samples = samples.to(device, non_blocking=non_blocking)
-        targets = [{k: v.to(device, non_blocking=non_blocking) for k, v in t.items()} for t in targets]
+        targets = [
+            {k: v.to(device, non_blocking=non_blocking) for k, v in t.items()}
+            for t in targets
+        ]
         return samples, targets

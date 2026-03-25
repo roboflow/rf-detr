@@ -67,7 +67,13 @@ class TestBuildTrainResizeConfigSquareSingleScale:
                     {
                         "OneOf": {
                             "transforms": [
-                                {"RandomSizedCrop": {"min_max_height": [384, 600], "height": 640, "width": 640}},
+                                {
+                                    "RandomSizedCrop": {
+                                        "min_max_height": [384, 600],
+                                        "height": 640,
+                                        "width": 640,
+                                    }
+                                },
                             ],
                         }
                     },
@@ -110,8 +116,20 @@ class TestBuildTrainResizeConfigSquareMultiScale:
                     {
                         "OneOf": {
                             "transforms": [
-                                {"RandomSizedCrop": {"min_max_height": [384, 600], "height": 480, "width": 480}},
-                                {"RandomSizedCrop": {"min_max_height": [384, 600], "height": 640, "width": 640}},
+                                {
+                                    "RandomSizedCrop": {
+                                        "min_max_height": [384, 600],
+                                        "height": 480,
+                                        "width": 480,
+                                    }
+                                },
+                                {
+                                    "RandomSizedCrop": {
+                                        "min_max_height": [384, 600],
+                                        "height": 640,
+                                        "width": 640,
+                                    }
+                                },
                             ],
                         }
                     },
@@ -157,7 +175,9 @@ class TestBuildTrainResizeConfigNonSquareSingleScale:
     def test_custom_max_size(self):
         result = _build_train_resize_config([640], square=False, max_size=800)
         option_a = result[0]["OneOf"]["transforms"][0]
-        assert option_a["Sequential"]["transforms"][1] == {"LongestMaxSize": {"max_size": 800}}
+        assert option_a["Sequential"]["transforms"][1] == {
+            "LongestMaxSize": {"max_size": 800}
+        }
 
 
 class TestBuildTrainResizeConfigNonSquareMultiScale:
@@ -193,5 +213,9 @@ class TestBuildTrainResizeConfigNonSquareMultiScale:
         result = _build_train_resize_config([480, 640], square=False, max_size=1000)
         option_a = result[0]["OneOf"]["transforms"][0]
         option_b = result[0]["OneOf"]["transforms"][1]
-        assert option_a["Sequential"]["transforms"][1] == {"LongestMaxSize": {"max_size": 1000}}
-        assert option_b["Sequential"]["transforms"][3] == {"LongestMaxSize": {"max_size": 1000}}
+        assert option_a["Sequential"]["transforms"][1] == {
+            "LongestMaxSize": {"max_size": 1000}
+        }
+        assert option_b["Sequential"]["transforms"][3] == {
+            "LongestMaxSize": {"max_size": 1000}
+        }

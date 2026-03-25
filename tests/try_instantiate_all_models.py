@@ -70,7 +70,11 @@ def main() -> None:
     pbar = tqdm(MODELS_TO_TEST, desc="Testing models", unit="model")
     for model_class in pbar:
         # Handle partial-wrapped classes
-        model_name = model_class.func.size if isinstance(model_class, partial) else model_class.size
+        model_name = (
+            model_class.func.size
+            if isinstance(model_class, partial)
+            else model_class.size
+        )
         pbar.set_description(f"Testing {model_name}")
 
         try:

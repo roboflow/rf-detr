@@ -14,7 +14,9 @@ from rfdetr.utilities.reproducibility import seed_all
 
 
 @pytest.fixture(scope="session")
-def synthetic_shape_dataset_dir(tmp_path_factory: pytest.TempPathFactory) -> Generator[Path, Any, None]:
+def synthetic_shape_dataset_dir(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Generator[Path, Any, None]:
     """Build a synthetic COCO-style dataset on disk and clean it up after tests.
 
     Args:
@@ -41,7 +43,9 @@ def synthetic_shape_dataset_dir(tmp_path_factory: pytest.TempPathFactory) -> Gen
     test_dir = dataset_dir / "test"
     if not test_dir.exists():
         test_dir.mkdir(parents=True, exist_ok=True)
-        (test_dir / "_annotations.coco.json").write_text((valid_dir / "_annotations.coco.json").read_text())
+        (test_dir / "_annotations.coco.json").write_text(
+            (valid_dir / "_annotations.coco.json").read_text()
+        )
         # Ensure test split has corresponding images referenced by the annotations
         for item in valid_dir.iterdir():
             if item.is_file() and item.name != "_annotations.coco.json":
@@ -85,7 +89,9 @@ def synthetic_shape_segmentation_dataset_dir(
     test_dir = dataset_dir / "test"
     if not test_dir.exists():
         test_dir.mkdir(parents=True, exist_ok=True)
-        (test_dir / "_annotations.coco.json").write_text((valid_dir / "_annotations.coco.json").read_text())
+        (test_dir / "_annotations.coco.json").write_text(
+            (valid_dir / "_annotations.coco.json").read_text()
+        )
         for item in valid_dir.iterdir():
             if item.is_file() and item.name != "_annotations.coco.json":
                 shutil.copy2(item, test_dir / item.name)

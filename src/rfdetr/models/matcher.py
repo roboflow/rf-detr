@@ -27,7 +27,12 @@ from scipy.optimize import linear_sum_assignment
 from torch import nn
 
 from rfdetr.models.heads.segmentation import point_sample
-from rfdetr.utilities.box_ops import batch_dice_loss, batch_sigmoid_ce_loss, box_cxcywh_to_xyxy, generalized_box_iou
+from rfdetr.utilities.box_ops import (
+    batch_dice_loss,
+    batch_sigmoid_ce_loss,
+    box_cxcywh_to_xyxy,
+    generalized_box_iou,
+)
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -70,7 +75,9 @@ class HungarianMatcher(nn.Module):
         self.cost_class = cost_class
         self.cost_bbox = cost_bbox
         self.cost_giou = cost_giou
-        assert cost_class != 0 or cost_bbox != 0 or cost_giou != 0, "all costs can't be 0"
+        assert cost_class != 0 or cost_bbox != 0 or cost_giou != 0, (
+            "all costs can't be 0"
+        )
         self.focal_alpha = focal_alpha
         self.mask_point_sample_ratio = mask_point_sample_ratio
         self.cost_mask_ce = cost_mask_ce
@@ -103,7 +110,9 @@ class HungarianMatcher(nn.Module):
             max_cost = finite_costs.max()
             # Add the largest absolute finite cost so the replacement stays
             # strictly larger than every valid entry, even if all costs are negative.
-            replacement_cost = max_cost + finite_costs.abs().max() + _SANITIZED_COST_MARGIN
+            replacement_cost = (
+                max_cost + finite_costs.abs().max() + _SANITIZED_COST_MARGIN
+            )
             # Guard against overflow to inf/NaN and clamp to the maximum finite value.
             if not torch.isfinite(replacement_cost):
                 replacement_cost = C.new_tensor(dtype_info.max)
@@ -151,7 +160,9 @@ class HungarianMatcher(nn.Module):
         masks_present = "masks" in targets[0]
 
         # Compute the giou cost between boxes
-        giou = generalized_box_iou(box_cxcywh_to_xyxy(out_bbox), box_cxcywh_to_xyxy(tgt_bbox))
+        giou = generalized_box_iou(
+            box_cxcywh_to_xyxy(out_bbox), box_cxcywh_to_xyxy(tgt_bbox)
+        )
         cost_giou = -giou
 
         # Compute the classification cost.
@@ -161,8 +172,12 @@ class HungarianMatcher(nn.Module):
         # neg_cost_class = (1 - alpha) * (out_prob ** gamma) * (-(1 - out_prob + 1e-8).log())
         # pos_cost_class = alpha * ((1 - out_prob) ** gamma) * (-(out_prob + 1e-8).log())
         # we refactor these with logsigmoid for numerical stability
-        neg_cost_class = (1 - alpha) * (out_prob**gamma) * (-F.logsigmoid(-flat_pred_logits))
-        pos_cost_class = alpha * ((1 - out_prob) ** gamma) * (-F.logsigmoid(flat_pred_logits))
+        neg_cost_class = (
+            (1 - alpha) * (out_prob**gamma) * (-F.logsigmoid(-flat_pred_logits))
+        )
+        pos_cost_class = (
+            alpha * ((1 - out_prob) ** gamma) * (-F.logsigmoid(flat_pred_logits))
+        )
         cost_class = pos_cost_class[:, tgt_ids] - neg_cost_class[:, tgt_ids]
 
         # Compute the L1 cost between boxes
@@ -174,24 +189,41 @@ class HungarianMatcher(nn.Module):
             if isinstance(outputs["pred_masks"], torch.Tensor):
                 out_masks = outputs["pred_masks"].flatten(0, 1)
 
-                num_points = out_masks.shape[-2] * out_masks.shape[-1] // self.mask_point_sample_ratio
+                num_points = (
+                    out_masks.shape[-2]
+                    * out_masks.shape[-1]
+                    // self.mask_point_sample_ratio
+                )
 
                 point_coords = torch.rand(1, num_points, 2, device=out_masks.device)
                 pred_masks_logits = point_sample(
-                    out_masks.unsqueeze(1), point_coords.repeat(out_masks.shape[0], 1, 1), align_corners=False
+                    out_masks.unsqueeze(1),
+                    point_coords.repeat(out_masks.shape[0], 1, 1),
+                    align_corners=False,
                 ).squeeze(1)
             else:
                 spatial_features = outputs["pred_masks"]["spatial_features"]
                 query_features = outputs["pred_masks"]["query_features"]
                 bias = outputs["pred_masks"]["bias"]
 
-                num_points = spatial_features.shape[-2] * spatial_features.shape[-1] // self.mask_point_sample_ratio
-                point_coords = torch.rand(1, num_points, 2, device=spatial_features.device)
+                num_points = (
+                    spatial_features.shape[-2]
+                    * spatial_features.shape[-1]
+                    // self.mask_point_sample_ratio
+                )
+                point_coords = torch.rand(
+                    1, num_points, 2, device=spatial_features.device
+                )
                 pred_masks_logits = point_sample(
-                    spatial_features, point_coords.repeat(spatial_features.shape[0], 1, 1), align_corners=False
+                    spatial_features,
+                    point_coords.repeat(spatial_features.shape[0], 1, 1),
+                    align_corners=False,
                 )
                 # print(f"pred_masks_logits.shape: {pred_masks_logits.shape}")
-                pred_masks_logits = torch.einsum("bcp,bnc->bnp", pred_masks_logits, query_features) + bias
+                pred_masks_logits = (
+                    torch.einsum("bcp,bnc->bnp", pred_masks_logits, query_features)
+                    + bias
+                )
                 pred_masks_logits = pred_masks_logits.flatten(0, 1)
 
             tgt_masks = tgt_masks.to(pred_masks_logits.dtype)
@@ -209,10 +241,20 @@ class HungarianMatcher(nn.Module):
             cost_mask_dice = batch_dice_loss(pred_masks_logits, tgt_masks_flat)
 
         # Final cost matrix
-        C = self.cost_bbox * cost_bbox + self.cost_class * cost_class + self.cost_giou * cost_giou
+        C = (
+            self.cost_bbox * cost_bbox
+            + self.cost_class * cost_class
+            + self.cost_giou * cost_giou
+        )
         if masks_present:
-            C = C + self.cost_mask_ce * cost_mask_ce + self.cost_mask_dice * cost_mask_dice
-        C = C.view(bs, num_queries, -1).float().cpu()  # convert to float because bfloat16 doesn't play nicely with CPU
+            C = (
+                C
+                + self.cost_mask_ce * cost_mask_ce
+                + self.cost_mask_dice * cost_mask_dice
+            )
+        C = (
+            C.view(bs, num_queries, -1).float().cpu()
+        )  # convert to float because bfloat16 doesn't play nicely with CPU
 
         # We assume any good match will not cause NaN or Inf, so replace invalid
         # entries with a finite value that is larger than every valid cost.
@@ -233,7 +275,9 @@ class HungarianMatcher(nn.Module):
         C_list = C.split(g_num_queries, dim=1)
         for g_i in range(group_detr):
             C_g = C_list[g_i]
-            indices_g = [linear_sum_assignment(c[i]) for i, c in enumerate(C_g.split(sizes, -1))]
+            indices_g = [
+                linear_sum_assignment(c[i]) for i, c in enumerate(C_g.split(sizes, -1))
+            ]
             if g_i == 0:
                 indices = indices_g
             else:
@@ -244,7 +288,13 @@ class HungarianMatcher(nn.Module):
                     )
                     for indice1, indice2 in zip(indices, indices_g)
                 ]
-        return [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]
+        return [
+            (
+                torch.as_tensor(i, dtype=torch.int64),
+                torch.as_tensor(j, dtype=torch.int64),
+            )
+            for i, j in indices
+        ]
 
 
 def build_matcher(args):

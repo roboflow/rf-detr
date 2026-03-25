@@ -174,11 +174,22 @@ class BestModelCallback(ModelCheckpoint):
             and hasattr(train_config, "model_copy")
             and getattr(train_config, "class_names", None) is None
         ):
-            train_config = train_config.model_copy(update={"class_names": dataset_class_names})
-        args_dict = train_config.model_dump() if hasattr(train_config, "model_dump") else train_config
-        torch.save(self._build_checkpoint_payload(model_state_dict, args_dict, trainer), pth_path)
+            train_config = train_config.model_copy(
+                update={"class_names": dataset_class_names}
+            )
+        args_dict = (
+            train_config.model_dump()
+            if hasattr(train_config, "model_dump")
+            else train_config
+        )
+        torch.save(
+            self._build_checkpoint_payload(model_state_dict, args_dict, trainer),
+            pth_path,
+        )
         self._last_global_step_saved = trainer.global_step
-        logger.info("Best regular mAP saved to %s (epoch %d)", pth_path, trainer.current_epoch)
+        logger.info(
+            "Best regular mAP saved to %s (epoch %d)", pth_path, trainer.current_epoch
+        )
 
     def on_validation_end(self, trainer: Trainer, pl_module: LightningModule) -> None:
         """Save best regular/EMA checkpoints when validation mAP improves.
@@ -204,7 +215,9 @@ class BestModelCallback(ModelCheckpoint):
         # EMA model — custom tracking on top of parent.
         if self._monitor_ema is None or not trainer.is_global_zero:
             return
-        ema_val = trainer.callback_metrics.get(self._monitor_ema, torch.tensor(0.0)).item()
+        ema_val = trainer.callback_metrics.get(
+            self._monitor_ema, torch.tensor(0.0)
+        ).item()
         if ema_val > self._best_ema:
             self._best_ema = ema_val
             self._output_dir.mkdir(parents=True, exist_ok=True)
@@ -218,9 +231,13 @@ class BestModelCallback(ModelCheckpoint):
                 and hasattr(ema_train_config, "model_copy")
                 and getattr(ema_train_config, "class_names", None) is None
             ):
-                ema_train_config = ema_train_config.model_copy(update={"class_names": dataset_class_names})
+                ema_train_config = ema_train_config.model_copy(
+                    update={"class_names": dataset_class_names}
+                )
             ema_args_dict = (
-                ema_train_config.model_dump() if hasattr(ema_train_config, "model_dump") else ema_train_config
+                ema_train_config.model_dump()
+                if hasattr(ema_train_config, "model_dump")
+                else ema_train_config
             )
             torch.save(
                 self._build_checkpoint_payload(ema_state_dict, ema_args_dict, trainer),
@@ -246,7 +263,9 @@ class BestModelCallback(ModelCheckpoint):
         if not trainer.is_global_zero:
             return
 
-        best_regular = self.best_model_score.item() if self.best_model_score is not None else 0.0
+        best_regular = (
+            self.best_model_score.item() if self.best_model_score is not None else 0.0
+        )
         regular_path = Path(self.best_model_path) if self.best_model_path else None
         ema_path = self._output_dir / "checkpoint_best_ema.pth"
         total_path = self._output_dir / "checkpoint_best_total.pth"
@@ -268,17 +287,26 @@ class BestModelCallback(ModelCheckpoint):
         if self._run_test:
             # Only call trainer.test() when the module actually defines test_step().
             cls_test_step = getattr(type(pl_module), "test_step", None)
-            has_test_step = cls_test_step is not None and cls_test_step is not LightningModule.test_step
+            has_test_step = (
+                cls_test_step is not None
+                and cls_test_step is not LightningModule.test_step
+            )
             if has_test_step:
                 # Load best weights before test — mirrors legacy main.py:602-609.
                 if total_path.exists():
-                    ckpt = torch.load(total_path, map_location="cpu", weights_only=False)
+                    ckpt = torch.load(
+                        total_path, map_location="cpu", weights_only=False
+                    )
                     # Checkpoints always store plain keys; load into the unwrapped module
                     # so compiled (OptimizedModule) and non-compiled models both work.
                     _orig = getattr(pl_module.model, "_orig_mod", None)
-                    raw = _orig if isinstance(_orig, torch.nn.Module) else pl_module.model
+                    raw = (
+                        _orig if isinstance(_orig, torch.nn.Module) else pl_module.model
+                    )
                     raw.load_state_dict(ckpt["model"], strict=True)
-                    logger.info("Loaded best weights from %s for test evaluation.", total_path)
+                    logger.info(
+                        "Loaded best weights from %s for test evaluation.", total_path
+                    )
                 trainer.test(pl_module, datamodule=trainer.datamodule, verbose=False)
 
 
@@ -352,7 +380,9 @@ class RFDETREarlyStopping(EarlyStopping):
         regular_tensor = metrics.get(self._monitor_regular)
         ema_tensor = metrics.get(self._monitor_ema)
 
-        regular_val: Optional[float] = regular_tensor.item() if regular_tensor is not None else None
+        regular_val: Optional[float] = (
+            regular_tensor.item() if regular_tensor is not None else None
+        )
         ema_val: Optional[float] = ema_tensor.item() if ema_tensor is not None else None
 
         if regular_val is None and ema_val is None:

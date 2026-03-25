@@ -124,7 +124,9 @@ def build_datamodule(tmp_path):
     build_dataset is mocked automatically.
     tmp_path is injected automatically so test methods do not need to declare it.
     """
-    return lambda model_config=None, train_config=None: _build_datamodule(model_config, train_config, tmp_path)
+    return lambda model_config=None, train_config=None: _build_datamodule(
+        model_config, train_config, tmp_path
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -154,31 +156,41 @@ class TestInit:
         assert dm._dataset_val is None
         assert dm._dataset_test is None
 
-    def test_prefetch_factor_defaults_to_two_when_workers_enabled(self, build_datamodule, base_train_config):
+    def test_prefetch_factor_defaults_to_two_when_workers_enabled(
+        self, build_datamodule, base_train_config
+    ):
         """prefetch_factor defaults to 2 for worker-based DataLoaders."""
         tc = base_train_config(num_workers=2, prefetch_factor=None)
         dm = build_datamodule(train_config=tc)
         assert dm._prefetch_factor == 2
 
-    def test_prefetch_factor_honors_train_config(self, build_datamodule, base_train_config):
+    def test_prefetch_factor_honors_train_config(
+        self, build_datamodule, base_train_config
+    ):
         """prefetch_factor from TrainConfig is forwarded when workers are enabled."""
         tc = base_train_config(num_workers=2, prefetch_factor=5)
         dm = build_datamodule(train_config=tc)
         assert dm._prefetch_factor == 5
 
-    def test_prefetch_factor_none_when_workers_disabled(self, build_datamodule, base_train_config):
+    def test_prefetch_factor_none_when_workers_disabled(
+        self, build_datamodule, base_train_config
+    ):
         """prefetch_factor is None when num_workers == 0."""
         tc = base_train_config(num_workers=0, prefetch_factor=5)
         dm = build_datamodule(train_config=tc)
         assert dm._prefetch_factor is None
 
-    def test_pin_memory_override_is_respected(self, build_datamodule, base_train_config):
+    def test_pin_memory_override_is_respected(
+        self, build_datamodule, base_train_config
+    ):
         """pin_memory can be explicitly overridden from TrainConfig."""
         tc = base_train_config(pin_memory=False)
         dm = build_datamodule(train_config=tc)
         assert dm._pin_memory is False
 
-    def test_persistent_workers_override_is_respected(self, build_datamodule, base_train_config):
+    def test_persistent_workers_override_is_respected(
+        self, build_datamodule, base_train_config
+    ):
         """persistent_workers can be explicitly overridden from TrainConfig."""
         tc = base_train_config(num_workers=2, persistent_workers=False)
         dm = build_datamodule(train_config=tc)
@@ -188,7 +200,9 @@ class TestInit:
 class TestSetup:
     """setup(stage) builds the correct dataset(s) for each PTL stage."""
 
-    def _setup_with_mock(self, tmp_path, stage, dataset_file="roboflow", **train_overrides):
+    def _setup_with_mock(
+        self, tmp_path, stage, dataset_file="roboflow", **train_overrides
+    ):
         """Helper: construct DataModule and call setup(stage) with build_dataset mocked."""
         mc = _base_model_config()
         tc = _base_train_config(tmp_path, dataset_file=dataset_file, **train_overrides)
@@ -223,7 +237,9 @@ class TestSetup:
 
     def test_test_stage_roboflow_uses_test_split(self, tmp_path):
         """setup('test') requests 'test' split when dataset_file=='roboflow'."""
-        dm, _, _, fake_test = self._setup_with_mock(tmp_path, "test", dataset_file="roboflow")
+        dm, _, _, fake_test = self._setup_with_mock(
+            tmp_path, "test", dataset_file="roboflow"
+        )
         assert dm._dataset_test is fake_test
 
     def test_test_stage_non_roboflow_uses_val_split(self, tmp_path):
@@ -291,7 +307,9 @@ class TestSetup:
 class TestTrainDataloader:
     """train_dataloader() returns the correct DataLoader for large and small datasets."""
 
-    def _setup_dm_with_train(self, tmp_path, dataset_length, batch_size=2, grad_accum_steps=1, num_workers=0):
+    def _setup_dm_with_train(
+        self, tmp_path, dataset_length, batch_size=2, grad_accum_steps=1, num_workers=0
+    ):
         """Construct DataModule and inject a fake _dataset_train of given length."""
         mc = _base_model_config()
         tc = _base_train_config(
@@ -315,7 +333,9 @@ class TestTrainDataloader:
     def test_large_dataset_uses_batch_sampler(self, tmp_path):
         """A large dataset uses a BatchSampler (drop_last=True, no replacement)."""
         # 200 samples > 2*1*5=10 threshold → large path
-        dm = self._setup_dm_with_train(tmp_path, dataset_length=200, batch_size=2, grad_accum_steps=1)
+        dm = self._setup_dm_with_train(
+            tmp_path, dataset_length=200, batch_size=2, grad_accum_steps=1
+        )
         loader = dm.train_dataloader()
         assert loader.batch_sampler is not None
         assert isinstance(loader.batch_sampler, torch.utils.data.BatchSampler)
@@ -324,7 +344,9 @@ class TestTrainDataloader:
     def test_small_dataset_uses_replacement_sampler(self, tmp_path):
         """A small dataset (< effective_batch * min_batches) uses a replacement sampler."""
         # 3 samples < 2*1*5=10 threshold → small path
-        dm = self._setup_dm_with_train(tmp_path, dataset_length=3, batch_size=2, grad_accum_steps=1)
+        dm = self._setup_dm_with_train(
+            tmp_path, dataset_length=3, batch_size=2, grad_accum_steps=1
+        )
         loader = dm.train_dataloader()
         assert isinstance(loader.sampler, torch.utils.data.RandomSampler)
         assert loader.sampler.replacement is True
@@ -364,7 +386,9 @@ class TestTrainDataloader:
         batch_size = 2
         grad_accum = 1
         length = batch_size * grad_accum * _MIN_TRAIN_BATCHES  # exactly at threshold
-        dm = self._setup_dm_with_train(tmp_path, dataset_length=length, batch_size=batch_size)
+        dm = self._setup_dm_with_train(
+            tmp_path, dataset_length=length, batch_size=batch_size
+        )
         loader = dm.train_dataloader()
         assert isinstance(loader.batch_sampler, torch.utils.data.BatchSampler)
 
@@ -372,9 +396,13 @@ class TestTrainDataloader:
 class TestValDataloader:
     """val_dataloader() returns a SequentialSampler with drop_last=False."""
 
-    def _setup_dm_with_val(self, tmp_path, dataset_length=50, batch_size=2, num_workers=0):
+    def _setup_dm_with_val(
+        self, tmp_path, dataset_length=50, batch_size=2, num_workers=0
+    ):
         mc = _base_model_config()
-        tc = _base_train_config(tmp_path, batch_size=batch_size, num_workers=num_workers)
+        tc = _base_train_config(
+            tmp_path, batch_size=batch_size, num_workers=num_workers
+        )
         from rfdetr.training.module_data import RFDETRDataModule
 
         dm = RFDETRDataModule(mc, tc)
@@ -415,9 +443,13 @@ class TestValDataloader:
 class TestTestDataloader:
     """test_dataloader() returns a SequentialSampler with drop_last=False."""
 
-    def _setup_dm_with_test(self, tmp_path, dataset_length=30, batch_size=2, num_workers=0):
+    def _setup_dm_with_test(
+        self, tmp_path, dataset_length=30, batch_size=2, num_workers=0
+    ):
         mc = _base_model_config()
-        tc = _base_train_config(tmp_path, batch_size=batch_size, num_workers=num_workers)
+        tc = _base_train_config(
+            tmp_path, batch_size=batch_size, num_workers=num_workers
+        )
         from rfdetr.training.module_data import RFDETRDataModule
 
         dm = RFDETRDataModule(mc, tc)
@@ -452,9 +484,13 @@ class TestTestDataloader:
 class TestPredictDataloader:
     """predict_dataloader() reuses the validation dataset with sequential sampling."""
 
-    def _setup_dm_with_val(self, tmp_path, dataset_length=50, batch_size=2, num_workers=0):
+    def _setup_dm_with_val(
+        self, tmp_path, dataset_length=50, batch_size=2, num_workers=0
+    ):
         mc = _base_model_config()
-        tc = _base_train_config(tmp_path, batch_size=batch_size, num_workers=num_workers)
+        tc = _base_train_config(
+            tmp_path, batch_size=batch_size, num_workers=num_workers
+        )
         from rfdetr.training.module_data import RFDETRDataModule
 
         dm = RFDETRDataModule(mc, tc)
@@ -585,7 +621,9 @@ class TestTransferBatchToDevice:
         samples, targets = _make_batch()
         device = torch.device("cpu")
 
-        result_samples, _ = dm.transfer_batch_to_device((samples, targets), device, dataloader_idx=0)
+        result_samples, _ = dm.transfer_batch_to_device(
+            (samples, targets), device, dataloader_idx=0
+        )
 
         assert result_samples.tensors.device == device
         assert result_samples.mask.device == device
@@ -596,7 +634,9 @@ class TestTransferBatchToDevice:
         samples, targets = _make_batch()
         device = torch.device("cpu")
 
-        _, result_targets = dm.transfer_batch_to_device((samples, targets), device, dataloader_idx=0)
+        _, result_targets = dm.transfer_batch_to_device(
+            (samples, targets), device, dataloader_idx=0
+        )
 
         for t in result_targets:
             for v in t.values():
@@ -605,7 +645,9 @@ class TestTransferBatchToDevice:
     def test_returns_tuple_of_correct_length(self, build_datamodule):
         """Return value must be a (samples, targets) tuple to match batch contract."""
         dm = build_datamodule()
-        result = dm.transfer_batch_to_device(_make_batch(), torch.device("cpu"), dataloader_idx=0)
+        result = dm.transfer_batch_to_device(
+            _make_batch(), torch.device("cpu"), dataloader_idx=0
+        )
 
         assert isinstance(result, tuple)
         assert len(result) == 2
@@ -615,6 +657,8 @@ class TestTransferBatchToDevice:
         dm = build_datamodule()
         samples, targets = _make_batch()
 
-        result_samples, _ = dm.transfer_batch_to_device((samples, targets), torch.device("cpu"), dataloader_idx=0)
+        result_samples, _ = dm.transfer_batch_to_device(
+            (samples, targets), torch.device("cpu"), dataloader_idx=0
+        )
 
         assert isinstance(result_samples, NestedTensor)

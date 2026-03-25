@@ -22,9 +22,13 @@ logger = get_logger()
 
 def run_command_shell(command, dry_run: bool = False) -> subprocess.CompletedProcess:
     if dry_run:
-        logger.info(f"\nCUDA_VISIBLE_DEVICES={os.getenv('CUDA_VISIBLE_DEVICES', '')} {command}\n")
+        logger.info(
+            f"\nCUDA_VISIBLE_DEVICES={os.getenv('CUDA_VISIBLE_DEVICES', '')} {command}\n"
+        )
     try:
-        result = subprocess.run(command, shell=True, capture_output=True, text=True, check=True)
+        result = subprocess.run(
+            command, shell=True, capture_output=True, text=True, check=True
+        )
         return result
     except subprocess.CalledProcessError as e:
         logger.error(f"Command failed with exit code {e.returncode}")
@@ -51,7 +55,13 @@ def trtexec(onnx_dir: str, args) -> None:
         profile_dir = onnx_dir.replace(".onnx", ".nsys-rep")
         # Wrap with nsys profile command
         command = " ".join(
-            ["nsys profile", f"--output={profile_dir}", "--trace=cuda,nvtx", "--force-overwrite true", trt_command]
+            [
+                "nsys profile",
+                f"--output={profile_dir}",
+                "--trace=cuda,nvtx",
+                "--force-overwrite true",
+                trt_command,
+            ]
         )
         logger.info(f"Profile data will be saved to: {profile_dir}")
     else:
@@ -64,12 +74,12 @@ def trtexec(onnx_dir: str, args) -> None:
 def parse_trtexec_output(output_text):
     logger.info(output_text)
     # Common patterns in trtexec output
-    gpu_compute_pattern = (
-        r"GPU Compute Time: min = (\d+\.\d+) ms, max = (\d+\.\d+) ms, mean = (\d+\.\d+) ms, median = (\d+\.\d+) ms"
-    )
+    gpu_compute_pattern = r"GPU Compute Time: min = (\d+\.\d+) ms, max = (\d+\.\d+) ms, mean = (\d+\.\d+) ms, median = (\d+\.\d+) ms"
     h2d_pattern = r"Host to Device Transfer Time: min = (\d+\.\d+) ms, max = (\d+\.\d+) ms, mean = (\d+\.\d+) ms"
     d2h_pattern = r"Device to Host Transfer Time: min = (\d+\.\d+) ms, max = (\d+\.\d+) ms, mean = (\d+\.\d+) ms"
-    latency_pattern = r"Latency: min = (\d+\.\d+) ms, max = (\d+\.\d+) ms, mean = (\d+\.\d+) ms"
+    latency_pattern = (
+        r"Latency: min = (\d+\.\d+) ms, max = (\d+\.\d+) ms, mean = (\d+\.\d+) ms"
+    )
     throughput_pattern = r"Throughput: (\d+\.\d+) qps"
 
     stats = {}

@@ -12,7 +12,13 @@ from typing import Any, ClassVar, Dict, List, Literal, Mapping, Optional, Union
 import torch
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+DEVICE = (
+    "cuda"
+    if torch.cuda.is_available()
+    else "mps"
+    if torch.backends.mps.is_available()
+    else "cpu"
+)
 
 
 class BaseConfig(BaseModel):
@@ -21,7 +27,9 @@ class BaseConfig(BaseModel):
     If any unknown fields are provided, a ValueError is raised listing the unknown and available parameters.
     """
 
-    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", validate_assignment=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(
+        extra="forbid", validate_assignment=True
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -32,7 +40,9 @@ class BaseConfig(BaseModel):
         provided_params = set(values)
         unknown_params = provided_params - allowed_params
         if unknown_params:
-            unknown_params_list = ", ".join(f"'{param}'" for param in sorted(unknown_params))
+            unknown_params_list = ", ".join(
+                f"'{param}'" for param in sorted(unknown_params)
+            )
             allowed_params_list = ", ".join(sorted(allowed_params))
             raise ValueError(
                 f"Unknown parameter(s): {unknown_params_list}. Available parameter(s): {allowed_params_list}."
@@ -121,7 +131,9 @@ class RFDETRBaseConfig(ModelConfig):
     The configuration for an RF-DETR Base model.
     """
 
-    encoder: Literal["dinov2_windowed_small", "dinov2_windowed_base"] = "dinov2_windowed_small"
+    encoder: Literal["dinov2_windowed_small", "dinov2_windowed_base"] = (
+        "dinov2_windowed_small"
+    )
     hidden_dim: int = 256
     patch_size: int = 14
     num_windows: int = 4
@@ -143,7 +155,9 @@ class RFDETRLargeDeprecatedConfig(RFDETRBaseConfig):
     The configuration for an RF-DETR Large model.
     """
 
-    encoder: Literal["dinov2_windowed_small", "dinov2_windowed_base"] = "dinov2_windowed_base"
+    encoder: Literal["dinov2_windowed_small", "dinov2_windowed_base"] = (
+        "dinov2_windowed_base"
+    )
     hidden_dim: int = 384
     sa_nheads: int = 12
     ca_nheads: int = 24
@@ -336,10 +350,14 @@ class TrainConfig(BaseModel):
     lr_encoder: float = 1.5e-4
     batch_size: int | Literal["auto"] = 4
     grad_accum_steps: int = 4
-    auto_batch_target_effective: int = 16  # per-device effective batch size target (before devices * num_nodes)
+    auto_batch_target_effective: int = (
+        16  # per-device effective batch size target (before devices * num_nodes)
+    )
     # Auto-batch probe: worst-case assumptions when batch_size="auto".
     auto_batch_max_targets_per_image: int = 100
-    auto_batch_ema_headroom: float = 0.7  # scale safe batch by this when use_ema=True (EMA uses extra memory)
+    auto_batch_ema_headroom: float = (
+        0.7  # scale safe batch by this when use_ema=True (EMA uses extra memory)
+    )
     epochs: int = 100
     resume: Optional[str] = None
     ema_decay: float = 0.993
@@ -369,7 +387,9 @@ class TrainConfig(BaseModel):
     early_stopping_patience: int = 10
     early_stopping_min_delta: float = 0.001
     early_stopping_use_ema: bool = False
-    progress_bar: Optional[Literal["tqdm", "rich"]] = None  # Progress bar style: "rich", "tqdm", or None to disable.
+    progress_bar: Optional[Literal["tqdm", "rich"]] = (
+        None  # Progress bar style: "rich", "tqdm", or None to disable.
+    )
     tensorboard: bool = True
     wandb: bool = False
     mlflow: bool = False
@@ -458,7 +478,10 @@ class TrainConfig(BaseModel):
         return v
 
     @field_validator(
-        "grad_accum_steps", "auto_batch_target_effective", "auto_batch_max_targets_per_image", mode="after"
+        "grad_accum_steps",
+        "auto_batch_target_effective",
+        "auto_batch_max_targets_per_image",
+        mode="after",
     )
     @classmethod
     def validate_positive_train_steps(cls, v: int) -> int:

@@ -16,7 +16,10 @@ from torchvision.transforms.v2 import Compose
 
 from rfdetr.datasets._develop import _SimpleDataset
 from rfdetr.datasets.aug_config import AUG_AGGRESSIVE, AUG_CONFIG
-from rfdetr.datasets.coco import make_coco_transforms, make_coco_transforms_square_div_64
+from rfdetr.datasets.coco import (
+    make_coco_transforms,
+    make_coco_transforms_square_div_64,
+)
 from rfdetr.datasets.transforms import AlbumentationsWrapper, _build_albu_transform
 from rfdetr.utilities import collate_fn
 
@@ -27,8 +30,18 @@ class TestAlbumentationsWrapper:
     @pytest.mark.parametrize(
         "transform_class,params,box_in,box_out",
         [
-            (A.HorizontalFlip, {"p": 1.0}, [10.0, 20.0, 30.0, 40.0], [70.0, 20.0, 90.0, 40.0]),
-            (A.VerticalFlip, {"p": 1.0}, [10.0, 20.0, 30.0, 40.0], [10.0, 60.0, 30.0, 80.0]),
+            (
+                A.HorizontalFlip,
+                {"p": 1.0},
+                [10.0, 20.0, 30.0, 40.0],
+                [70.0, 20.0, 90.0, 40.0],
+            ),
+            (
+                A.VerticalFlip,
+                {"p": 1.0},
+                [10.0, 20.0, 30.0, 40.0],
+                [10.0, 60.0, 30.0, 80.0],
+            ),
         ],
     )
     def test_flip_transforms_with_boxes(self, transform_class, params, box_in, box_out):
@@ -51,7 +64,10 @@ class TestAlbumentationsWrapper:
         wrapper = AlbumentationsWrapper(transform)
 
         image = Image.new("RGB", (100, 100))
-        target = {"boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0]]), "labels": torch.tensor([1])}
+        target = {
+            "boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0]]),
+            "labels": torch.tensor([1]),
+        }
 
         aug_image, aug_target = wrapper(image, target)
 
@@ -66,7 +82,10 @@ class TestAlbumentationsWrapper:
         wrapper = AlbumentationsWrapper(transform)
 
         image = Image.new("RGB", (100, 100))
-        target = {"boxes": torch.zeros((0, 4)), "labels": torch.zeros((0,), dtype=torch.long)}
+        target = {
+            "boxes": torch.zeros((0, 4)),
+            "labels": torch.zeros((0,), dtype=torch.long),
+        }
 
         aug_image, aug_target = wrapper(image, target)
 
@@ -157,7 +176,10 @@ class TestAlbumentationsWrapper:
 
         image = Image.new("RGB", (640, 480))
         target = {
-            "boxes": torch.tensor([[10.0, 20.0, 100.0, 200.0], [300.0, 100.0, 500.0, 400.0]], dtype=torch.float32),
+            "boxes": torch.tensor(
+                [[10.0, 20.0, 100.0, 200.0], [300.0, 100.0, 500.0, 400.0]],
+                dtype=torch.float32,
+            ),
             "labels": torch.tensor([1, 2]),
             "orig_size": torch.tensor([480, 640]),  # shape [2], same as num_boxes!
             "size": torch.tensor([480, 640]),
@@ -172,7 +194,9 @@ class TestAlbumentationsWrapper:
         assert aug_target["orig_size"].shape == torch.Size([2]), (
             f"orig_size should have shape [2], got {aug_target['orig_size'].shape}"
         )
-        assert torch.equal(aug_target["orig_size"], target["orig_size"]), "orig_size should be unchanged"
+        assert torch.equal(aug_target["orig_size"], target["orig_size"]), (
+            "orig_size should be unchanged"
+        )
 
         # Verify other global fields are also preserved
         assert aug_target["size"].shape == torch.Size([2])
@@ -197,7 +221,10 @@ class TestAlbumentationsWrapper:
         masks[1, 200:300, 300:500] = 1  # Mask for second box
 
         target = {
-            "boxes": torch.tensor([[10.0, 20.0, 100.0, 200.0], [300.0, 100.0, 500.0, 400.0]], dtype=torch.float32),
+            "boxes": torch.tensor(
+                [[10.0, 20.0, 100.0, 200.0], [300.0, 100.0, 500.0, 400.0]],
+                dtype=torch.float32,
+            ),
             "labels": torch.tensor([1, 2]),
             "masks": masks,  # shape [2, 480, 640], same first dim as orig_size!
             "orig_size": torch.tensor([480, 640]),  # shape [2]
@@ -213,13 +240,17 @@ class TestAlbumentationsWrapper:
         assert aug_target["orig_size"].shape == torch.Size([2]), (
             f"orig_size should have shape [2], got {aug_target['orig_size'].shape}"
         )
-        assert torch.equal(aug_target["orig_size"], target["orig_size"]), "orig_size should be unchanged"
+        assert torch.equal(aug_target["orig_size"], target["orig_size"]), (
+            "orig_size should be unchanged"
+        )
 
         # Verify masks are transformed (per-instance field)
         assert aug_target["masks"].shape == torch.Size([2, 480, 640]), (
             f"masks should have shape [2, 480, 640], got {aug_target['masks'].shape}"
         )
-        assert aug_target["masks"].dtype == torch.bool, "masks should be converted to bool after transform"
+        assert aug_target["masks"].dtype == torch.bool, (
+            "masks should be converted to bool after transform"
+        )
         # Masks should be flipped - verify they're different
         assert not torch.equal(aug_target["masks"], target["masks"].bool()), (
             "masks should be transformed (flipped) for geometric transform"
@@ -249,7 +280,10 @@ class TestAlbumentationsWrapper:
         wrapper = AlbumentationsWrapper(transform)
 
         image = Image.new("RGB", (100, 100))
-        target = {"boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0]]), "labels": torch.tensor([1])}
+        target = {
+            "boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0]]),
+            "labels": torch.tensor([1]),
+        }
 
         aug_image, aug_target = wrapper(image, target)
 
@@ -300,7 +334,9 @@ class TestAlbumentationsWrapper:
             ],
             dtype=torch.float32,
         )
-        assert torch.allclose(mask_bbox, aug_target["boxes"][0].to(dtype=torch.float32), atol=1.0)
+        assert torch.allclose(
+            mask_bbox, aug_target["boxes"][0].to(dtype=torch.float32), atol=1.0
+        )
 
     @pytest.mark.parametrize(
         "transform_class,params",
@@ -579,7 +615,9 @@ class TestAlbumentationsWrapper:
 
         assert isinstance(aug_image, Image.Image)
         # Only the valid box survives
-        assert aug_target["boxes"].shape[0] == 1, f"Expected 1 valid box, got {aug_target['boxes'].shape[0]}"
+        assert aug_target["boxes"].shape[0] == 1, (
+            f"Expected 1 valid box, got {aug_target['boxes'].shape[0]}"
+        )
         assert aug_target["labels"].tolist() == [1]
         assert aug_target["area"].shape[0] == 1
 
@@ -627,7 +665,9 @@ class TestAlbumentationsWrapperFromConfig:
         assert len(transforms) == 2
         assert all(isinstance(t, AlbumentationsWrapper) for t in transforms)
         # Validate transform names match config in correct order
-        transform_names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
+        transform_names = [
+            t.transform.transforms[0].__class__.__name__ for t in transforms
+        ]
         assert transform_names == list(config.keys())
 
     def test_build_from_empty_config(self):
@@ -649,7 +689,9 @@ class TestAlbumentationsWrapperFromConfig:
 
         # Only valid transform should be included
         assert len(transforms) == 1
-        transform_names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
+        transform_names = [
+            t.transform.transforms[0].__class__.__name__ for t in transforms
+        ]
         assert transform_names == ["HorizontalFlip"]
 
     def test_invalid_params_skipped(self):
@@ -663,7 +705,9 @@ class TestAlbumentationsWrapperFromConfig:
 
         # At least HorizontalFlip should succeed
         assert len(transforms) >= 1
-        transform_names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
+        transform_names = [
+            t.transform.transforms[0].__class__.__name__ for t in transforms
+        ]
         assert transform_names[0] == "HorizontalFlip"
 
     def test_invalid_config_type(self):
@@ -682,7 +726,9 @@ class TestAlbumentationsWrapperFromConfig:
 
         assert len(transforms) == 2
         # Validate transform names match config in correct order
-        transform_names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
+        transform_names = [
+            t.transform.transforms[0].__class__.__name__ for t in transforms
+        ]
         assert transform_names == list(config.keys())
 
     def test_config_with_complex_params(self):
@@ -696,7 +742,9 @@ class TestAlbumentationsWrapperFromConfig:
 
         assert len(transforms) == 2
         # Validate transform names match config in correct order
-        transform_names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
+        transform_names = [
+            t.transform.transforms[0].__class__.__name__ for t in transforms
+        ]
         assert transform_names == list(config.keys())
 
     def test_non_dict_params_skipped(self):
@@ -709,7 +757,9 @@ class TestAlbumentationsWrapperFromConfig:
         transforms = AlbumentationsWrapper.from_config(config)
 
         assert len(transforms) == 1
-        transform_names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
+        transform_names = [
+            t.transform.transforms[0].__class__.__name__ for t in transforms
+        ]
         assert transform_names == ["HorizontalFlip"]
 
 
@@ -731,7 +781,9 @@ class TestRandomSizedCropCompat:
             ),
         ],
     )
-    def test_errors_on_partial_hw_with_v2_api(self, monkeypatch, params, expected_missing):
+    def test_errors_on_partial_hw_with_v2_api(
+        self, monkeypatch, params, expected_missing
+    ):
         class FakeV2:
             def __init__(self, *, min_max_height, size, p=1.0):
                 pass
@@ -857,7 +909,9 @@ class TestRandomSizedCropCompat:
 
         # The invalid RandomSizedCrop is silently dropped; only HorizontalFlip survives.
         assert len(transforms) == 1
-        transform_names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
+        transform_names = [
+            t.transform.transforms[0].__class__.__name__ for t in transforms
+        ]
         assert transform_names == ["HorizontalFlip"]
 
 
@@ -866,7 +920,9 @@ class TestAlbumentationsWrapperNestedConfig:
 
     def test_one_of_geometric_detection(self):
         """OneOf containing a geometric transform is treated as geometric."""
-        wrapper = AlbumentationsWrapper(A.OneOf([A.HorizontalFlip(p=1.0), A.GaussianBlur(p=1.0)]))
+        wrapper = AlbumentationsWrapper(
+            A.OneOf([A.HorizontalFlip(p=1.0), A.GaussianBlur(p=1.0)])
+        )
         assert wrapper._is_geometric is True
 
     def test_one_of_pixel_detection(self):
@@ -876,7 +932,9 @@ class TestAlbumentationsWrapperNestedConfig:
 
     def test_sequential_geometric_detection(self):
         """Sequential containing a geometric transform is treated as geometric."""
-        wrapper = AlbumentationsWrapper(A.Sequential([A.Rotate(limit=45, p=1.0), A.GaussianBlur(p=1.0)]))
+        wrapper = AlbumentationsWrapper(
+            A.Sequential([A.Rotate(limit=45, p=1.0), A.GaussianBlur(p=1.0)])
+        )
         assert wrapper._is_geometric is True
 
     def test_from_config_nested_one_of(self):
@@ -1120,7 +1178,9 @@ class TestIntegration:
 
         # Validate transform names match config in correct order
         assert len(transforms) == 2
-        transform_names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
+        transform_names = [
+            t.transform.transforms[0].__class__.__name__ for t in transforms
+        ]
         assert transform_names == list(config.keys())
 
         # Compose them
@@ -1149,7 +1209,9 @@ class TestIntegration:
 
         # Validate transform names match config
         assert len(transforms) == 1
-        transform_names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
+        transform_names = [
+            t.transform.transforms[0].__class__.__name__ for t in transforms
+        ]
         assert transform_names == list(config.keys())
 
         composed = Compose(transforms)
@@ -1173,14 +1235,18 @@ class TestIntegration:
 
         # Validate transform names match in correct order
         assert len(transforms) == 3
-        transform_names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
+        transform_names = [
+            t.transform.transforms[0].__class__.__name__ for t in transforms
+        ]
         assert transform_names == list(aug_config.keys())
 
         composed = Compose(transforms)
 
         image = Image.new("RGB", (640, 480))
         target = {
-            "boxes": torch.tensor([[50.0, 60.0, 200.0, 300.0], [300.0, 100.0, 500.0, 400.0]]),
+            "boxes": torch.tensor(
+                [[50.0, 60.0, 200.0, 300.0], [300.0, 100.0, 500.0, 400.0]]
+            ),
             "labels": torch.tensor([1, 2]),
         }
 
@@ -1307,7 +1373,9 @@ class TestTrainingLoop:
 
         # Create dataset and dataloader
         dataset = _SimpleDataset(num_samples=12, transforms=transforms)
-        dataloader = DataLoader(dataset, batch_size=4, shuffle=True, collate_fn=collate_fn, num_workers=0)
+        dataloader = DataLoader(
+            dataset, batch_size=4, shuffle=True, collate_fn=collate_fn, num_workers=0
+        )
 
         # Run through batches
         for batch_idx, (images, targets) in enumerate(dataloader):
@@ -1329,7 +1397,9 @@ class TestTrainingLoop:
             # Verify images and targets are valid
             assert images.tensors.shape[0] == len(targets)
             num_boxes = [len(t["boxes"]) for t in targets]
-            assert all(n > 0 for n in num_boxes), "All targets should have at least one box"
+            assert all(n > 0 for n in num_boxes), (
+                "All targets should have at least one box"
+            )
 
             # Only test a few batches for speed
             if batch_idx >= 1:
@@ -1345,7 +1415,9 @@ class TestTrainingLoop:
         transforms = Compose(aug_transforms)
 
         # Create dataset with samples that have different numbers of boxes
-        dataset = _SimpleDataset(num_samples=9, transforms=transforms)  # Will cycle through 1,2,3 boxes
+        dataset = _SimpleDataset(
+            num_samples=9, transforms=transforms
+        )  # Will cycle through 1,2,3 boxes
         dataloader = DataLoader(
             dataset,
             batch_size=6,  # Batch will contain mix of 1,2,3 box samples
@@ -1360,7 +1432,9 @@ class TestTrainingLoop:
         # Verify we have samples with different numbers of boxes
         num_boxes_list = [len(t["boxes"]) for t in targets]
         assert 1 in num_boxes_list, "Should have samples with 1 box"
-        assert 2 in num_boxes_list, "Should have samples with 2 boxes (critical edge case)"
+        assert 2 in num_boxes_list, (
+            "Should have samples with 2 boxes (critical edge case)"
+        )
         assert 3 in num_boxes_list, "Should have samples with 3 boxes"
 
         # Verify all orig_sizes are consistent
@@ -1382,8 +1456,12 @@ class TestTrainingLoop:
         ],
         ids=["horizontal_flip", "vertical_flip", "random_rotate_90"],
     )
-    @pytest.mark.parametrize("include_masks", [False, True], ids=["detection", "segmentation"])
-    def test_geometric_dataloader_compatibility(self, include_masks, transform_class, transform_kwargs):
+    @pytest.mark.parametrize(
+        "include_masks", [False, True], ids=["detection", "segmentation"]
+    )
+    def test_geometric_dataloader_compatibility(
+        self, include_masks, transform_class, transform_kwargs
+    ):
         """Test geometric Albumentations transforms work in DataLoader for detection and segmentation."""
 
         class _TinyTrainDataset:
@@ -1397,7 +1475,9 @@ class TestTrainingLoop:
                 height, width = 64, 64
                 image = Image.new("RGB", (width, height))
                 target = {
-                    "boxes": torch.tensor([[8.0, 12.0, 24.0, 28.0]], dtype=torch.float32),
+                    "boxes": torch.tensor(
+                        [[8.0, 12.0, 24.0, 28.0]], dtype=torch.float32
+                    ),
                     "labels": torch.tensor([1], dtype=torch.int64),
                     "orig_size": torch.tensor([height, width]),
                     "size": torch.tensor([height, width]),
@@ -1411,11 +1491,20 @@ class TestTrainingLoop:
                     target["masks"] = masks
 
                 image, target = self._transforms(image, target)
-                image = torch.from_numpy(np.array(image)).permute(2, 0, 1).float() / 255.0
+                image = (
+                    torch.from_numpy(np.array(image)).permute(2, 0, 1).float() / 255.0
+                )
                 return image, target
 
-        transforms = Compose([AlbumentationsWrapper(transform_class(**transform_kwargs))])
-        dataloader = DataLoader(_TinyTrainDataset(transforms), batch_size=2, collate_fn=collate_fn, num_workers=0)
+        transforms = Compose(
+            [AlbumentationsWrapper(transform_class(**transform_kwargs))]
+        )
+        dataloader = DataLoader(
+            _TinyTrainDataset(transforms),
+            batch_size=2,
+            collate_fn=collate_fn,
+            num_workers=0,
+        )
         images, targets = next(iter(dataloader))
 
         assert images.tensors.shape[0] == 2
@@ -1442,11 +1531,15 @@ class TestMakeCocoTransformsAugConfig:
         pipeline = make_transforms("train", 640)
         # Train pipeline: [resize_wrapper, *aug_wrappers, normalize]
         # First AlbumentationsWrapper is the resize OneOf; remaining are from aug_config.
-        wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
+        wrappers = [
+            t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)
+        ]
         aug_wrappers = wrappers[1:]
 
         expected_names = list(AUG_CONFIG.keys())
-        actual_names = [w.transform.transforms[0].__class__.__name__ for w in aug_wrappers]
+        actual_names = [
+            w.transform.transforms[0].__class__.__name__ for w in aug_wrappers
+        ]
         assert actual_names == expected_names
 
     @pytest.mark.parametrize(
@@ -1459,7 +1552,9 @@ class TestMakeCocoTransformsAugConfig:
     def test_empty_dict_disables_augmentations(self, make_transforms):
         """aug_config={} means no aug wrappers beyond the resize wrapper."""
         pipeline = make_transforms("train", 640, aug_config={})
-        wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
+        wrappers = [
+            t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)
+        ]
         aug_wrappers = wrappers[1:]  # skip resize wrapper
 
         assert aug_wrappers == []
@@ -1475,11 +1570,16 @@ class TestMakeCocoTransformsAugConfig:
         """aug_config with a custom dict wires up exactly those transforms."""
         custom = {"HorizontalFlip": {"p": 1.0}}
         pipeline = make_transforms("train", 640, aug_config=custom)
-        wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
+        wrappers = [
+            t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)
+        ]
         aug_wrappers = wrappers[1:]  # skip resize wrapper
 
         assert len(aug_wrappers) == 1
-        assert aug_wrappers[0].transform.transforms[0].__class__.__name__ == "HorizontalFlip"
+        assert (
+            aug_wrappers[0].transform.transforms[0].__class__.__name__
+            == "HorizontalFlip"
+        )
 
     @pytest.mark.parametrize(
         "make_transforms,expected_resize_wrappers",
@@ -1487,13 +1587,23 @@ class TestMakeCocoTransformsAugConfig:
             # make_coco_transforms val: SmallestMaxSize + LongestMaxSize = 2 wrappers
             pytest.param(make_coco_transforms, 2, id="make_coco_transforms"),
             # make_coco_transforms_square_div_64 val: Resize = 1 wrapper
-            pytest.param(make_coco_transforms_square_div_64, 1, id="make_coco_transforms_square_div_64"),
+            pytest.param(
+                make_coco_transforms_square_div_64,
+                1,
+                id="make_coco_transforms_square_div_64",
+            ),
         ],
     )
-    def test_aug_config_not_applied_on_val(self, make_transforms, expected_resize_wrappers):
+    def test_aug_config_not_applied_on_val(
+        self, make_transforms, expected_resize_wrappers
+    ):
         """aug_config is ignored for val splits — only resize wrappers are present."""
-        pipeline = make_transforms("val", 640, aug_config={"HorizontalFlip": {"p": 1.0}})
-        wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
+        pipeline = make_transforms(
+            "val", 640, aug_config={"HorizontalFlip": {"p": 1.0}}
+        )
+        wrappers = [
+            t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)
+        ]
 
         assert len(wrappers) == expected_resize_wrappers
 
@@ -1506,8 +1616,12 @@ class TestMakeCocoTransformsAugConfig:
     )
     def test_aug_config_not_applied_on_val_speed(self, make_transforms):
         """aug_config is ignored for val_speed splits — only the resize wrapper is present."""
-        pipeline = make_transforms("val_speed", 640, aug_config={"HorizontalFlip": {"p": 1.0}})
-        wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
+        pipeline = make_transforms(
+            "val_speed", 640, aug_config={"HorizontalFlip": {"p": 1.0}}
+        )
+        wrappers = [
+            t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)
+        ]
 
         assert len(wrappers) == 1
 
@@ -1517,13 +1631,23 @@ class TestMakeCocoTransformsAugConfig:
             # make_coco_transforms test: SmallestMaxSize + LongestMaxSize = 2 wrappers
             pytest.param(make_coco_transforms, 2, id="make_coco_transforms"),
             # make_coco_transforms_square_div_64 test: Resize = 1 wrapper
-            pytest.param(make_coco_transforms_square_div_64, 1, id="make_coco_transforms_square_div_64"),
+            pytest.param(
+                make_coco_transforms_square_div_64,
+                1,
+                id="make_coco_transforms_square_div_64",
+            ),
         ],
     )
-    def test_aug_config_not_applied_on_test(self, make_transforms, expected_resize_wrappers):
+    def test_aug_config_not_applied_on_test(
+        self, make_transforms, expected_resize_wrappers
+    ):
         """aug_config is ignored for test splits — only resize wrappers are present."""
-        pipeline = make_transforms("test", 640, aug_config={"HorizontalFlip": {"p": 1.0}})
-        wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
+        pipeline = make_transforms(
+            "test", 640, aug_config={"HorizontalFlip": {"p": 1.0}}
+        )
+        wrappers = [
+            t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)
+        ]
         assert len(wrappers) == expected_resize_wrappers
 
 
@@ -1546,4 +1670,6 @@ class TestAugPresets:
             f"AUG_AGGRESSIVE translate_percent upper bound must be positive to allow "
             f"right/down translation; got {translate!r}"
         )
-        assert lo < hi, f"AUG_AGGRESSIVE translate_percent must be a non-degenerate range; got {translate!r}"
+        assert lo < hi, (
+            f"AUG_AGGRESSIVE translate_percent must be a non-degenerate range; got {translate!r}"
+        )

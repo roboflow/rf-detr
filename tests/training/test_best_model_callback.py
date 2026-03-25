@@ -80,7 +80,13 @@ class _ResumeTinyModule(LightningModule):
 
     def validation_step(self, batch, batch_idx):
         del batch, batch_idx
-        self.log("val/mAP_50_95", torch.tensor(0.5), on_step=False, on_epoch=True, prog_bar=False)
+        self.log(
+            "val/mAP_50_95",
+            torch.tensor(0.5),
+            on_step=False,
+            on_epoch=True,
+            prog_bar=False,
+        )
 
     def configure_optimizers(self):
         return torch.optim.SGD(self.model.parameters(), lr=0.01)
@@ -106,7 +112,13 @@ class _EvalIntervalModule(LightningModule):
     def validation_step(self, batch, batch_idx):
         del batch, batch_idx
         if self.current_epoch % self._eval_interval == 0:
-            self.log("val/mAP_50_95", torch.tensor(0.5), on_step=False, on_epoch=True, prog_bar=False)
+            self.log(
+                "val/mAP_50_95",
+                torch.tensor(0.5),
+                on_step=False,
+                on_epoch=True,
+                prog_bar=False,
+            )
 
     def configure_optimizers(self):
         return torch.optim.SGD(self.model.parameters(), lr=0.01)
@@ -143,7 +155,9 @@ class TestBestModelCallback:
 
         assert (tmp_path / "checkpoint_best_regular.pth").exists()
 
-    def test_regular_checkpoint_not_saved_on_no_improvement(self, tmp_path: Path) -> None:
+    def test_regular_checkpoint_not_saved_on_no_improvement(
+        self, tmp_path: Path
+    ) -> None:
         """Metric 0.3 after best 0.5 does not create a checkpoint file."""
         cb = BestModelCallback(output_dir=str(tmp_path))
         pl_module = _make_pl_module()
@@ -193,10 +207,14 @@ class TestBestModelCallback:
 
         cb.on_validation_end(trainer, pl_module)
 
-        checkpoint = torch.load(tmp_path / "checkpoint_best_ema.pth", map_location="cpu", weights_only=False)
+        checkpoint = torch.load(
+            tmp_path / "checkpoint_best_ema.pth", map_location="cpu", weights_only=False
+        )
         assert checkpoint["model"] == ema_state
 
-    def test_regular_checkpoint_uses_ema_weights_when_ema_enabled(self, tmp_path: Path) -> None:
+    def test_regular_checkpoint_uses_ema_weights_when_ema_enabled(
+        self, tmp_path: Path
+    ) -> None:
         """Regular checkpoint must store EMA-evaluated weights when EMA is enabled."""
         cb = BestModelCallback(
             output_dir=str(tmp_path),
@@ -214,7 +232,11 @@ class TestBestModelCallback:
 
         cb.on_validation_end(trainer, pl_module)
 
-        checkpoint = torch.load(tmp_path / "checkpoint_best_regular.pth", map_location="cpu", weights_only=False)
+        checkpoint = torch.load(
+            tmp_path / "checkpoint_best_regular.pth",
+            map_location="cpu",
+            weights_only=False,
+        )
         assert checkpoint["model"] == ema_state
 
     def test_best_total_regular_wins(self, tmp_path: Path) -> None:
@@ -330,9 +352,13 @@ class TestBestModelCallback:
         cb.on_validation_end(trainer, pl_module)
         cb.on_fit_end(trainer, pl_module)
 
-        trainer.test.assert_called_once_with(pl_module, datamodule=trainer.datamodule, verbose=False)
+        trainer.test.assert_called_once_with(
+            pl_module, datamodule=trainer.datamodule, verbose=False
+        )
 
-    def test_run_test_true_without_test_step_skips_trainer_test(self, tmp_path: Path) -> None:
+    def test_run_test_true_without_test_step_skips_trainer_test(
+        self, tmp_path: Path
+    ) -> None:
         """run_test=True but no test_step override — trainer.test() is NOT called.
 
         The guard in BestModelCallback.on_fit_end() skips trainer.test() for
@@ -374,7 +400,9 @@ class TestBestModelCallback:
         # Model weights must be loaded from checkpoint_best_total.pth with strict=True
         pl_module.model.load_state_dict.assert_called_once()
         call_kwargs = pl_module.model.load_state_dict.call_args.kwargs
-        assert call_kwargs.get("strict") is True, "load_state_dict must be called with strict=True"
+        assert call_kwargs.get("strict") is True, (
+            "load_state_dict must be called with strict=True"
+        )
 
     def test_run_test_false_skips_trainer_test(self, tmp_path: Path) -> None:
         """run_test=False means trainer.test() is never called."""
@@ -387,7 +415,9 @@ class TestBestModelCallback:
 
         trainer.test.assert_not_called()
 
-    def test_checkpoint_class_names_populated_from_datamodule(self, tmp_path: Path) -> None:
+    def test_checkpoint_class_names_populated_from_datamodule(
+        self, tmp_path: Path
+    ) -> None:
         """Saved checkpoint args.class_names reflects dataset class names.
 
         Regression test for #509: checkpoints were saved with class_names=None
@@ -403,7 +433,9 @@ class TestBestModelCallback:
 
         pl_module = _make_pl_module()
         # Real TrainConfig with class_names unset — the bug scenario.
-        pl_module.train_config = TrainConfig(dataset_dir=str(tmp_path / "ds"), tensorboard=False)
+        pl_module.train_config = TrainConfig(
+            dataset_dir=str(tmp_path / "ds"), tensorboard=False
+        )
 
         cb.on_validation_end(trainer, pl_module)
 
@@ -414,7 +446,9 @@ class TestBestModelCallback:
         )
         assert checkpoint["args"]["class_names"] == custom_names
 
-    def test_ema_checkpoint_class_names_populated_from_datamodule(self, tmp_path: Path) -> None:
+    def test_ema_checkpoint_class_names_populated_from_datamodule(
+        self, tmp_path: Path
+    ) -> None:
         """EMA checkpoint args.class_names also reflects dataset class names.
 
         Regression test for #509: EMA checkpoint path was not enriched with
@@ -431,7 +465,9 @@ class TestBestModelCallback:
         trainer.datamodule.class_names = custom_names
 
         pl_module = _make_pl_module()
-        pl_module.train_config = TrainConfig(dataset_dir=str(tmp_path / "ds"), tensorboard=False)
+        pl_module.train_config = TrainConfig(
+            dataset_dir=str(tmp_path / "ds"), tensorboard=False
+        )
 
         cb.on_validation_end(trainer, pl_module)
 
@@ -442,7 +478,9 @@ class TestBestModelCallback:
         )
         assert checkpoint["args"]["class_names"] == custom_names
 
-    def test_checkpoint_class_names_not_overwritten_when_already_set(self, tmp_path: Path) -> None:
+    def test_checkpoint_class_names_not_overwritten_when_already_set(
+        self, tmp_path: Path
+    ) -> None:
         """Explicitly-set class_names in TrainConfig are preserved in the checkpoint.
 
         When the user passes class_names=['defect'] to TrainConfig, the saved
@@ -452,12 +490,16 @@ class TestBestModelCallback:
 
         cb = BestModelCallback(output_dir=str(tmp_path))
         trainer = _make_trainer({"val/mAP_50_95": 0.5})
-        trainer.datamodule.class_names = ["other_class"]  # would overwrite if bug exists
+        trainer.datamodule.class_names = [
+            "other_class"
+        ]  # would overwrite if bug exists
 
         pl_module = _make_pl_module()
         explicit_names = ["defect"]
         pl_module.train_config = TrainConfig(
-            dataset_dir=str(tmp_path / "ds"), tensorboard=False, class_names=explicit_names
+            dataset_dir=str(tmp_path / "ds"),
+            tensorboard=False,
+            class_names=explicit_names,
         )
 
         cb.on_validation_end(trainer, pl_module)
@@ -469,7 +511,9 @@ class TestBestModelCallback:
         )
         assert checkpoint["args"]["class_names"] == explicit_names
 
-    def test_checkpoint_explicit_empty_class_names_not_overwritten_by_datamodule(self, tmp_path: Path) -> None:
+    def test_checkpoint_explicit_empty_class_names_not_overwritten_by_datamodule(
+        self, tmp_path: Path
+    ) -> None:
         """TrainConfig(class_names=[]) is preserved even when datamodule has non-empty names.
 
         Guard-bypass regression: the truthiness check `not getattr(..., "class_names", None)`
@@ -483,7 +527,9 @@ class TestBestModelCallback:
         trainer.datamodule.class_names = ["cat", "dog"]  # would overwrite if bug exists
 
         pl_module = _make_pl_module()
-        pl_module.train_config = TrainConfig(dataset_dir=str(tmp_path / "ds"), tensorboard=False, class_names=[])
+        pl_module.train_config = TrainConfig(
+            dataset_dir=str(tmp_path / "ds"), tensorboard=False, class_names=[]
+        )
 
         cb.on_validation_end(trainer, pl_module)
 
@@ -496,7 +542,9 @@ class TestBestModelCallback:
             "Explicit class_names=[] in TrainConfig must not be overwritten by datamodule names"
         )
 
-    def test_ema_checkpoint_explicit_empty_class_names_not_overwritten_by_datamodule(self, tmp_path: Path) -> None:
+    def test_ema_checkpoint_explicit_empty_class_names_not_overwritten_by_datamodule(
+        self, tmp_path: Path
+    ) -> None:
         """EMA path: TrainConfig(class_names=[]) is preserved even when datamodule has non-empty names.
 
         Mirrors the regular checkpoint guard-bypass regression test for the EMA path.
@@ -511,7 +559,9 @@ class TestBestModelCallback:
         trainer.datamodule.class_names = ["cat", "dog"]  # would overwrite if bug exists
 
         pl_module = _make_pl_module()
-        pl_module.train_config = TrainConfig(dataset_dir=str(tmp_path / "ds"), tensorboard=False, class_names=[])
+        pl_module.train_config = TrainConfig(
+            dataset_dir=str(tmp_path / "ds"), tensorboard=False, class_names=[]
+        )
 
         cb.on_validation_end(trainer, pl_module)
 
@@ -524,7 +574,9 @@ class TestBestModelCallback:
             "Explicit class_names=[] in TrainConfig must not be overwritten by datamodule names (EMA path)"
         )
 
-    def test_checkpoint_empty_class_names_populated_from_datamodule(self, tmp_path: Path) -> None:
+    def test_checkpoint_empty_class_names_populated_from_datamodule(
+        self, tmp_path: Path
+    ) -> None:
         """Checkpoint preserves explicitly-empty dataset class names.
 
         Empty list should be treated as a provided value, not as missing.
@@ -536,7 +588,9 @@ class TestBestModelCallback:
         trainer.datamodule.class_names = []
 
         pl_module = _make_pl_module()
-        pl_module.train_config = TrainConfig(dataset_dir=str(tmp_path / "ds"), tensorboard=False)
+        pl_module.train_config = TrainConfig(
+            dataset_dir=str(tmp_path / "ds"), tensorboard=False
+        )
 
         cb.on_validation_end(trainer, pl_module)
 
@@ -547,7 +601,9 @@ class TestBestModelCallback:
         )
         assert checkpoint["args"]["class_names"] == []
 
-    def test_ema_checkpoint_empty_class_names_populated_from_datamodule(self, tmp_path: Path) -> None:
+    def test_ema_checkpoint_empty_class_names_populated_from_datamodule(
+        self, tmp_path: Path
+    ) -> None:
         """EMA checkpoint preserves explicitly-empty dataset class names."""
         from rfdetr.config import TrainConfig
 
@@ -559,7 +615,9 @@ class TestBestModelCallback:
         trainer.datamodule.class_names = []
 
         pl_module = _make_pl_module()
-        pl_module.train_config = TrainConfig(dataset_dir=str(tmp_path / "ds"), tensorboard=False)
+        pl_module.train_config = TrainConfig(
+            dataset_dir=str(tmp_path / "ds"), tensorboard=False
+        )
 
         cb.on_validation_end(trainer, pl_module)
 
@@ -579,12 +637,18 @@ class TestBestModelCallback:
         cb = BestModelCallback(output_dir=str(tmp_path))
         trainer = _make_trainer({"val/mAP_50_95": 0.5})
         pl_module = _make_pl_module()
-        pl_module.train_config = TrainConfig(dataset_dir=str(tmp_path / "ds"), tensorboard=False)
+        pl_module.train_config = TrainConfig(
+            dataset_dir=str(tmp_path / "ds"), tensorboard=False
+        )
 
         cb.on_validation_end(trainer, pl_module)
 
         # weights_only=True must succeed now that args is a plain dict.
-        ckpt = torch.load(tmp_path / "checkpoint_best_regular.pth", map_location="cpu", weights_only=True)
+        ckpt = torch.load(
+            tmp_path / "checkpoint_best_regular.pth",
+            map_location="cpu",
+            weights_only=True,
+        )
         assert isinstance(ckpt["args"], dict)
 
     def test_regular_checkpoint_has_ptl_state_dict_key(self, tmp_path: Path) -> None:
@@ -595,7 +659,11 @@ class TestBestModelCallback:
 
         cb.on_validation_end(trainer, pl_module)
 
-        ckpt = torch.load(tmp_path / "checkpoint_best_regular.pth", map_location="cpu", weights_only=False)
+        ckpt = torch.load(
+            tmp_path / "checkpoint_best_regular.pth",
+            map_location="cpu",
+            weights_only=False,
+        )
         assert "state_dict" in ckpt
         assert all(k.startswith("model.") for k in ckpt["state_dict"])
 
@@ -607,7 +675,11 @@ class TestBestModelCallback:
 
         cb.on_validation_end(trainer, pl_module)
 
-        ckpt = torch.load(tmp_path / "checkpoint_best_regular.pth", map_location="cpu", weights_only=False)
+        ckpt = torch.load(
+            tmp_path / "checkpoint_best_regular.pth",
+            map_location="cpu",
+            weights_only=False,
+        )
         assert "loops" in ckpt
         ep = ckpt["loops"]["fit_loop"]["epoch_progress"]
         assert ep["current"]["completed"] == 4  # epoch 3 + 1
@@ -620,30 +692,44 @@ class TestBestModelCallback:
 
         cb.on_validation_end(trainer, pl_module)
 
-        ckpt = torch.load(tmp_path / "checkpoint_best_regular.pth", map_location="cpu", weights_only=False)
+        ckpt = torch.load(
+            tmp_path / "checkpoint_best_regular.pth",
+            map_location="cpu",
+            weights_only=False,
+        )
         assert ckpt.get("pytorch-lightning_version") == ptl_version
 
     def test_ema_checkpoint_has_ptl_state_dict_key(self, tmp_path: Path) -> None:
         """Saved EMA checkpoint must include 'state_dict' with model. prefix."""
-        cb = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95")
+        cb = BestModelCallback(
+            output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95"
+        )
         trainer = _make_trainer({"val/mAP_50_95": 0.4, "val/ema_mAP_50_95": 0.6})
         pl_module = _make_pl_module()
 
         cb.on_validation_end(trainer, pl_module)
 
-        ckpt = torch.load(tmp_path / "checkpoint_best_ema.pth", map_location="cpu", weights_only=False)
+        ckpt = torch.load(
+            tmp_path / "checkpoint_best_ema.pth", map_location="cpu", weights_only=False
+        )
         assert "state_dict" in ckpt
         assert all(k.startswith("model.") for k in ckpt["state_dict"])
 
     def test_ema_checkpoint_has_loops_key(self, tmp_path: Path) -> None:
         """Saved EMA checkpoint must include 'loops' with fit_loop epoch counter."""
-        cb = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95")
-        trainer = _make_trainer({"val/mAP_50_95": 0.4, "val/ema_mAP_50_95": 0.6}, current_epoch=5)
+        cb = BestModelCallback(
+            output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95"
+        )
+        trainer = _make_trainer(
+            {"val/mAP_50_95": 0.4, "val/ema_mAP_50_95": 0.6}, current_epoch=5
+        )
         pl_module = _make_pl_module()
 
         cb.on_validation_end(trainer, pl_module)
 
-        ckpt = torch.load(tmp_path / "checkpoint_best_ema.pth", map_location="cpu", weights_only=False)
+        ckpt = torch.load(
+            tmp_path / "checkpoint_best_ema.pth", map_location="cpu", weights_only=False
+        )
         assert "loops" in ckpt
         ep = ckpt["loops"]["fit_loop"]["epoch_progress"]
         assert ep["current"]["completed"] == 6  # epoch 5 + 1
@@ -658,7 +744,11 @@ class TestBestModelCallback:
 
         cb.on_validation_end(trainer, pl_module)
 
-        ckpt = torch.load(tmp_path / "checkpoint_best_regular.pth", map_location="cpu", weights_only=False)
+        ckpt = torch.load(
+            tmp_path / "checkpoint_best_regular.pth",
+            map_location="cpu",
+            weights_only=False,
+        )
         assert torch.equal(ckpt["state_dict"]["model.w"], weights["w"])
 
     def test_best_total_preserves_ptl_keys_after_strip(self, tmp_path: Path) -> None:
@@ -674,8 +764,12 @@ class TestBestModelCallback:
         data = torch.load(total, map_location="cpu", weights_only=False)
         assert "state_dict" in data, "strip_checkpoint must preserve 'state_dict'"
         assert "loops" in data, "strip_checkpoint must preserve 'loops'"
-        assert "pytorch-lightning_version" in data, "strip_checkpoint must preserve 'pytorch-lightning_version'"
-        assert "optimizer_states" in data, "strip_checkpoint must preserve 'optimizer_states'"
+        assert "pytorch-lightning_version" in data, (
+            "strip_checkpoint must preserve 'pytorch-lightning_version'"
+        )
+        assert "optimizer_states" in data, (
+            "strip_checkpoint must preserve 'optimizer_states'"
+        )
         assert "lr_schedulers" in data, "strip_checkpoint must preserve 'lr_schedulers'"
 
     def test_not_global_zero_does_not_save(self, tmp_path: Path) -> None:
@@ -697,7 +791,9 @@ class TestBestModelCallback:
         assert not (tmp_path / "checkpoint_best_ema.pth").exists()
         assert not (tmp_path / "checkpoint_best_total.pth").exists()
 
-    def test_train_epoch_end_ignores_missing_validation_metrics(self, tmp_path: Path) -> None:
+    def test_train_epoch_end_ignores_missing_validation_metrics(
+        self, tmp_path: Path
+    ) -> None:
         """Train-epoch end must not try to checkpoint when validation metrics were not logged."""
         cb = BestModelCallback(output_dir=str(tmp_path))
         trainer = _make_trainer({})
@@ -706,7 +802,9 @@ class TestBestModelCallback:
 
         assert not (tmp_path / "checkpoint_best_regular.pth").exists()
 
-    def test_validation_end_ignores_missing_validation_metrics(self, tmp_path: Path) -> None:
+    def test_validation_end_ignores_missing_validation_metrics(
+        self, tmp_path: Path
+    ) -> None:
         """on_validation_end must not raise when val/mAP_50_95 was not logged (non-eval epoch)."""
         cb = BestModelCallback(output_dir=str(tmp_path))
         trainer = _make_trainer({})  # empty metrics — no val/mAP_50_95 key
@@ -737,12 +835,18 @@ class TestBestModelCallback:
             callbacks=[cb],
             default_root_dir=str(tmp_path),
         )
-        trainer.fit(_EvalIntervalModule(eval_interval=2), train_dataloaders=train_loader, val_dataloaders=val_loader)
+        trainer.fit(
+            _EvalIntervalModule(eval_interval=2),
+            train_dataloaders=train_loader,
+            val_dataloaders=val_loader,
+        )
 
         # Checkpoint must be written on eval epochs (0 and 2) — at least one must exist.
         assert (tmp_path / "checkpoint_best_regular.pth").exists()
 
-    def test_best_total_checkpoint_resumes_via_trainer_fit_ckpt_path(self, tmp_path: Path) -> None:
+    def test_best_total_checkpoint_resumes_via_trainer_fit_ckpt_path(
+        self, tmp_path: Path
+    ) -> None:
         """checkpoint_best_total.pth must restore epoch/step when passed to Trainer.fit(ckpt_path=...)."""
         torch.manual_seed(0)
         x = torch.randn(8, 4)
@@ -763,7 +867,11 @@ class TestBestModelCallback:
             callbacks=[save_cb],
             default_root_dir=str(tmp_path),
         )
-        trainer_first.fit(_ResumeTinyModule(), train_dataloaders=train_loader, val_dataloaders=val_loader)
+        trainer_first.fit(
+            _ResumeTinyModule(),
+            train_dataloaders=train_loader,
+            val_dataloaders=val_loader,
+        )
 
         ckpt_path = tmp_path / "checkpoint_best_total.pth"
         assert ckpt_path.exists()

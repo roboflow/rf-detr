@@ -34,7 +34,9 @@ class _DummyModel:
         self.resolution = 32
         self.model = torch.nn.Identity()
 
-    def postprocess(self, predictions: Any, target_sizes: torch.Tensor) -> list[dict[str, torch.Tensor]]:
+    def postprocess(
+        self, predictions: Any, target_sizes: torch.Tensor
+    ) -> list[dict[str, torch.Tensor]]:
         batch = target_sizes.shape[0]
         results = []
         for _ in range(batch):
@@ -70,16 +72,24 @@ class TestPredictReturnTypes:
         img = PIL.Image.new("RGB", (640, 640), color=(128, 128, 128))
         model = RFDETRNano()
         detections = model.predict([img, img], threshold=0.3)
-        assert isinstance(detections, list), "predict() must return a list for multiple inputs"
-        assert all(isinstance(d, sv.Detections) for d in detections), "Each result must be sv.Detections"
+        assert isinstance(detections, list), (
+            "predict() must return a list for multiple inputs"
+        )
+        assert all(isinstance(d, sv.Detections) for d in detections), (
+            "Each result must be sv.Detections"
+        )
 
     def test_segmentation_returns_sv_detections_with_masks(self) -> None:
         """Segmentation model returns ``sv.Detections`` with the mask field always set."""
         img = PIL.Image.new("RGB", (640, 640), color=(128, 128, 128))
         model = RFDETRSegNano()
         detections = model.predict([img, img], threshold=0.3)
-        assert isinstance(detections, list), "predict() must return a list for multiple inputs"
-        assert all(isinstance(d, sv.Detections) for d in detections), "Each result must be sv.Detections"
+        assert isinstance(detections, list), (
+            "predict() must return a list for multiple inputs"
+        )
+        assert all(isinstance(d, sv.Detections) for d in detections), (
+            "Each result must be sv.Detections"
+        )
         assert all(d.mask is not None for d in detections), (
             "Segmentation predict() must always set the mask field, even when no objects are detected"
         )

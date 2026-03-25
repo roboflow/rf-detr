@@ -164,7 +164,9 @@ def test_window_partition_correct_window_content():
             [[15.0], [16.0], [17.0], [21.0], [22.0], [23.0]],
         ]
     )
-    assert torch.equal(windowed, expected), f"Window content mismatch:\n{windowed}\n!=\n{expected}"
+    assert torch.equal(windowed, expected), (
+        f"Window content mismatch:\n{windowed}\n!=\n{expected}"
+    )
 
 
 def test_buggy_reshape_raises_for_nonsquare():
@@ -239,7 +241,9 @@ def test_buggy_reshape_silent_corruption_for_nonsquare():
         num_h_patches_per_window,  # bug
         -1,
     )
-    assert buggy_out.shape[-1] != hidden_size, "Buggy reshape should produce wrong last dim"
+    assert buggy_out.shape[-1] != hidden_size, (
+        "Buggy reshape should produce wrong last dim"
+    )
 
     # Correct reshape always yields last dim == hidden_size
     correct_out = pixel_tokens_2d.reshape(
@@ -262,32 +266,42 @@ class TestGetAlignedOutputFeaturesOutputIndices:
 
     def test_both_none_returns_last_stage(self):
         stage_names = ["stage1", "stage2", "stage3"]
-        features, indices = _get_aligned_output_features_output_indices(None, None, stage_names)
+        features, indices = _get_aligned_output_features_output_indices(
+            None, None, stage_names
+        )
         assert features == ["stage3"]
         assert indices == [2]
 
     def test_only_out_features_derives_indices(self):
         stage_names = ["stem", "layer1", "layer2", "layer3"]
-        features, indices = _get_aligned_output_features_output_indices(["layer1", "layer3"], None, stage_names)
+        features, indices = _get_aligned_output_features_output_indices(
+            ["layer1", "layer3"], None, stage_names
+        )
         assert features == ["layer1", "layer3"]
         assert indices == [1, 3]
 
     def test_only_out_indices_derives_features(self):
         stage_names = ["stem", "layer1", "layer2", "layer3"]
-        features, indices = _get_aligned_output_features_output_indices(None, [0, 2], stage_names)
+        features, indices = _get_aligned_output_features_output_indices(
+            None, [0, 2], stage_names
+        )
         assert features == ["stem", "layer2"]
         assert indices == [0, 2]
 
     def test_both_provided_returns_as_is(self):
         stage_names = ["stem", "layer1", "layer2"]
-        features, indices = _get_aligned_output_features_output_indices(["layer1"], [1], stage_names)
+        features, indices = _get_aligned_output_features_output_indices(
+            ["layer1"], [1], stage_names
+        )
         assert features == ["layer1"]
         assert indices == [1]
 
     def test_out_indices_converted_to_list(self):
         """out_indices supplied as a tuple must be returned as a list."""
         stage_names = ["stem", "layer1", "layer2"]
-        _, indices = _get_aligned_output_features_output_indices(None, (1, 2), stage_names)
+        _, indices = _get_aligned_output_features_output_indices(
+            None, (1, 2), stage_names
+        )
         assert isinstance(indices, list)
         assert indices == [1, 2]
 
@@ -296,7 +310,9 @@ class TestFindPruneableHeadsAndIndices:
     """Tests for the local copy of find_pruneable_heads_and_indices."""
 
     def test_no_pruning_returns_full_index(self):
-        heads, index = _find_pruneable_heads_and_indices(set(), n_heads=4, head_size=3, already_pruned_heads=set())
+        heads, index = _find_pruneable_heads_and_indices(
+            set(), n_heads=4, head_size=3, already_pruned_heads=set()
+        )
         assert len(heads) == 0
         assert len(index) == 12  # 4 * 3, nothing masked
 
@@ -307,7 +323,9 @@ class TestFindPruneableHeadsAndIndices:
             pytest.param({3}, list(range(9)), id="prune-last-head"),
         ],
     )
-    def test_prune_single_head_removes_correct_rows(self, head_to_prune, expected_index):
+    def test_prune_single_head_removes_correct_rows(
+        self, head_to_prune, expected_index
+    ):
         # Head N masked → N*head_size indices removed; remaining = n_heads*head_size - head_size = 9
         heads, index = _find_pruneable_heads_and_indices(
             head_to_prune, n_heads=4, head_size=3, already_pruned_heads=set()
@@ -319,7 +337,9 @@ class TestFindPruneableHeadsAndIndices:
     def test_already_pruned_head_adjusts_offset(self):
         # Head 0 was already pruned. Now pruning head 1 (which is now effective head 0
         # after offset adjustment) should remove 3 more indices from the effective mask.
-        heads, index = _find_pruneable_heads_and_indices({1}, n_heads=4, head_size=3, already_pruned_heads={0})
+        heads, index = _find_pruneable_heads_and_indices(
+            {1}, n_heads=4, head_size=3, already_pruned_heads={0}
+        )
         assert 1 in heads
         assert len(index) == 9  # 4*3 - 3 pruned
 
@@ -388,7 +408,10 @@ class TestSdpaFallbackWithOutputAttentions:
         model.eval()
         pixel_values = torch.randn(1, 3, 64, 64)
         with torch.no_grad():
-            with pytest.raises(AssertionError, match="output_attentions is not supported for windowed attention"):
+            with pytest.raises(
+                AssertionError,
+                match="output_attentions is not supported for windowed attention",
+            ):
                 model(pixel_values, output_attentions=True)
 
 
@@ -398,11 +421,20 @@ class TestSetAttnImplementation:
     @pytest.mark.parametrize(
         "switches, expected_impl, expected_cls",
         [
-            pytest.param(["eager"], "eager", Dinov2WithRegistersAttention, id="sdpa-to-eager"),
-            pytest.param(["eager", "sdpa"], "sdpa", Dinov2WithRegistersSdpaAttention, id="roundtrip-back-to-sdpa"),
+            pytest.param(
+                ["eager"], "eager", Dinov2WithRegistersAttention, id="sdpa-to-eager"
+            ),
+            pytest.param(
+                ["eager", "sdpa"],
+                "sdpa",
+                Dinov2WithRegistersSdpaAttention,
+                id="roundtrip-back-to-sdpa",
+            ),
         ],
     )
-    def test_switch_updates_config_and_layers(self, switches, expected_impl, expected_cls):
+    def test_switch_updates_config_and_layers(
+        self, switches, expected_impl, expected_cls
+    ):
         """After each call in *switches*, config and all layer attention modules reflect the final impl."""
         config = _minimal_backbone_config()
         model = WindowedDinov2WithRegistersModel(config)
@@ -434,7 +466,9 @@ class TestSetAttnImplementation:
         pytest.param(33, 33, 2, True, id="both-not-divisible"),
     ],
 )
-def test_forward_validates_spatial_dims(h: int, w: int, num_windows: int, should_raise: bool) -> None:
+def test_forward_validates_spatial_dims(
+    h: int, w: int, num_windows: int, should_raise: bool
+) -> None:
     """WindowedDinov2WithRegistersEmbeddings raises ValueError for incompatible dims.
 
     Both H and W must be divisible by patch_size * num_windows.  The check

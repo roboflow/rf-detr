@@ -78,7 +78,15 @@ def _fake_criterion():
 
 def _fake_postprocess():
     """Return a callable MagicMock for postprocess."""
-    return MagicMock(return_value=[{"boxes": torch.zeros(1, 4), "scores": torch.ones(1), "labels": torch.zeros(1)}])
+    return MagicMock(
+        return_value=[
+            {
+                "boxes": torch.zeros(1, 4),
+                "scores": torch.ones(1),
+                "labels": torch.zeros(1),
+            }
+        ]
+    )
 
 
 def _build_module(model_config=None, train_config=None, tmp_path=None):
@@ -89,7 +97,10 @@ def _build_module(model_config=None, train_config=None, tmp_path=None):
     fake_criterion = _fake_criterion()
     fake_postprocess = _fake_postprocess()
     with (
-        patch("rfdetr.training.module_model.build_model_from_config", return_value=fake_model),
+        patch(
+            "rfdetr.training.module_model.build_model_from_config",
+            return_value=fake_model,
+        ),
         patch(
             "rfdetr.training.module_model.build_criterion_from_config",
             return_value=(fake_criterion, fake_postprocess),
@@ -132,7 +143,9 @@ def build_module(tmp_path):
     build_model and build_criterion_and_postprocessors are mocked automatically.
     tmp_path is injected automatically so test methods do not need to declare it.
     """
-    return lambda model_config=None, train_config=None: _build_module(model_config, train_config, tmp_path)
+    return lambda model_config=None, train_config=None: _build_module(
+        model_config, train_config, tmp_path
+    )
 
 
 @pytest.fixture
@@ -186,7 +199,10 @@ class TestInit:
         tc = _base_train_config(tmp_path, multi_scale=False)
         with (
             patch("torch.cuda.is_available", return_value=True),
-            patch("rfdetr.training.module_model.torch.compile", side_effect=lambda m, **_: m) as mock_compile,
+            patch(
+                "rfdetr.training.module_model.torch.compile",
+                side_effect=lambda m, **_: m,
+            ) as mock_compile,
         ):
             _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
         mock_compile.assert_called_once()
@@ -212,14 +228,18 @@ class TestLoadPretrainWeights:
 
     @patch("rfdetr.models.weights.torch.load")
     @patch("rfdetr.models.weights.validate_pretrain_weights")
-    def test_loads_checkpoint_successfully(self, mock_validate, mock_torch_load, base_model_config, build_module):
+    def test_loads_checkpoint_successfully(
+        self, mock_validate, mock_torch_load, base_model_config, build_module
+    ):
         """A valid checkpoint must be validated, loaded, and applied to the model."""
         mc = base_model_config(num_classes=90)
         checkpoint = self._make_checkpoint(num_classes_in_ckpt=91)
         mock_torch_load.return_value = checkpoint
 
         module, _, _, _ = build_module(model_config=mc)
-        module.model_config = module.model_config.model_copy(update={"pretrain_weights": "/fake/weights.pth"})
+        module.model_config = module.model_config.model_copy(
+            update={"pretrain_weights": "/fake/weights.pth"}
+        )
         load_pretrain_weights(module.model, module.model_config)
 
         mock_validate.assert_called_once_with("/fake/weights.pth", strict=False)
@@ -236,7 +256,9 @@ class TestLoadPretrainWeights:
         mock_torch_load.return_value = checkpoint
 
         module, fake_model, _, _ = build_module(model_config=mc)
-        module.model_config = module.model_config.model_copy(update={"pretrain_weights": "/fake/weights.pth"})
+        module.model_config = module.model_config.model_copy(
+            update={"pretrain_weights": "/fake/weights.pth"}
+        )
         load_pretrain_weights(module.model, module.model_config)
 
         # First call: expand to checkpoint size so load_state_dict shapes match.
@@ -257,7 +279,9 @@ class TestLoadPretrainWeights:
         mock_torch_load.return_value = checkpoint
 
         module, fake_model, _, _ = build_module(model_config=mc)
-        module.model_config = module.model_config.model_copy(update={"pretrain_weights": "/fake/weights.pth"})
+        module.model_config = module.model_config.model_copy(
+            update={"pretrain_weights": "/fake/weights.pth"}
+        )
         load_pretrain_weights(module.model, module.model_config)
 
         fake_model.reinitialize_detection_head.assert_not_called()
@@ -286,7 +310,9 @@ class TestLoadPretrainWeights:
         }
         mock_torch_load.return_value = checkpoint
 
-        module.model_config = module.model_config.model_copy(update={"pretrain_weights": "/fake/weights.pth"})
+        module.model_config = module.model_config.model_copy(
+            update={"pretrain_weights": "/fake/weights.pth"}
+        )
         load_pretrain_weights(module.model, module.model_config)
 
         assert checkpoint["model"]["refpoint_embed.weight"].shape[0] == desired
@@ -302,7 +328,9 @@ class TestLoadPretrainWeights:
         mc = base_model_config(num_classes=90)
         checkpoint = self._make_checkpoint(num_classes_in_ckpt=91)
         module, _, _, _ = build_module(model_config=mc)
-        module.model_config = module.model_config.model_copy(update={"pretrain_weights": "/fake/weights.pth"})
+        module.model_config = module.model_config.model_copy(
+            update={"pretrain_weights": "/fake/weights.pth"}
+        )
 
         load_calls = [0]
 
@@ -316,7 +344,11 @@ class TestLoadPretrainWeights:
             load_pretrain_weights(module.model, module.model_config)
 
         # Verify a redownload with validate_md5=False was triggered after load failure.
-        redownload_calls = [c for c in mock_download.call_args_list if c.kwargs.get("redownload") is True]
+        redownload_calls = [
+            c
+            for c in mock_download.call_args_list
+            if c.kwargs.get("redownload") is True
+        ]
         assert len(redownload_calls) >= 1
         assert all(c.kwargs.get("validate_md5") is False for c in redownload_calls)
         assert load_calls[0] == 2
@@ -326,7 +358,13 @@ class TestLoadPretrainWeights:
     @patch("rfdetr.models.weights.validate_pretrain_weights")
     @patch("rfdetr.models.weights.torch.load")
     def test_download_before_load_when_weights_absent(
-        self, mock_torch_load, mock_validate, mock_download, mock_isfile, base_model_config, build_module
+        self,
+        mock_torch_load,
+        mock_validate,
+        mock_download,
+        mock_isfile,
+        base_model_config,
+        build_module,
     ):
         """download_pretrain_weights must be called before torch.load so a fresh
         environment (e.g. Colab) downloads weights automatically.
@@ -340,7 +378,9 @@ class TestLoadPretrainWeights:
         mock_torch_load.return_value = checkpoint
 
         module, _, _, _ = build_module(model_config=mc)
-        module.model_config = module.model_config.model_copy(update={"pretrain_weights": "/content/rf-detr-base.pth"})
+        module.model_config = module.model_config.model_copy(
+            update={"pretrain_weights": "/content/rf-detr-base.pth"}
+        )
         load_pretrain_weights(module.model, module.model_config)
 
         # download_pretrain_weights must have been called at least once before any load
@@ -390,7 +430,9 @@ class TestLoadPretrainWeights:
 
     @patch("rfdetr.models.weights.torch.load")
     @patch("rfdetr.models.weights.validate_pretrain_weights")
-    def test_patch_size_mismatch_raises(self, mock_validate, mock_torch_load, base_model_config, build_module):
+    def test_patch_size_mismatch_raises(
+        self, mock_validate, mock_torch_load, base_model_config, build_module
+    ):
         """Loading a checkpoint with a different patch_size must raise ValueError."""
         mc = base_model_config(num_classes=90)
         ckpt_args = SimpleNamespace(segmentation_head=False, patch_size=12)
@@ -400,7 +442,11 @@ class TestLoadPretrainWeights:
 
         module, _, _, _ = build_module(model_config=mc)
         module.model_config = module.model_config.model_copy(
-            update={"pretrain_weights": "/fake/weights.pth", "segmentation_head": False, "patch_size": 16}
+            update={
+                "pretrain_weights": "/fake/weights.pth",
+                "segmentation_head": False,
+                "patch_size": 16,
+            }
         )
 
         with pytest.raises(ValueError, match="patch_size"):
@@ -413,14 +459,20 @@ class TestLoadPretrainWeights:
     ):
         """A checkpoint matching segmentation_head and patch_size must load without error."""
         mc = base_model_config(num_classes=90)
-        ckpt_args = SimpleNamespace(segmentation_head=False, patch_size=14, class_names=[])
+        ckpt_args = SimpleNamespace(
+            segmentation_head=False, patch_size=14, class_names=[]
+        )
         checkpoint = self._make_checkpoint(num_classes_in_ckpt=91)
         checkpoint["args"] = ckpt_args
         mock_torch_load.return_value = checkpoint
 
         module, _, _, _ = build_module(model_config=mc)
         module.model_config = module.model_config.model_copy(
-            update={"pretrain_weights": "/fake/weights.pth", "segmentation_head": False, "patch_size": 14}
+            update={
+                "pretrain_weights": "/fake/weights.pth",
+                "segmentation_head": False,
+                "patch_size": 14,
+            }
         )
 
         # Should not raise.
@@ -445,7 +497,10 @@ class TestApplyLora:
         fake_model.backbone.__getitem__ = MagicMock(return_value=fake_backbone_0)
 
         with (
-            patch("rfdetr.training.module_model.build_model_from_config", return_value=fake_model),
+            patch(
+                "rfdetr.training.module_model.build_model_from_config",
+                return_value=fake_model,
+            ),
             patch(
                 "rfdetr.training.module_model.build_criterion_from_config",
                 return_value=(_fake_criterion(), _fake_postprocess()),
@@ -459,7 +514,9 @@ class TestApplyLora:
 
     @patch("peft.get_peft_model")
     @patch("peft.LoraConfig")
-    def test_calls_lora_config_with_correct_target_modules(self, mock_lora_cfg_class, mock_get_peft, tmp_path):
+    def test_calls_lora_config_with_correct_target_modules(
+        self, mock_lora_cfg_class, mock_get_peft, tmp_path
+    ):
         """LoRA must target the expected attention and token projection modules."""
         module, _, _, _ = self._build_module_with_backbone(tmp_path)
         mock_get_peft.return_value = MagicMock()
@@ -468,14 +525,28 @@ class TestApplyLora:
 
         mock_lora_cfg_class.assert_called_once()
         target_modules = mock_lora_cfg_class.call_args.kwargs.get("target_modules")
-        expected = ["q_proj", "v_proj", "k_proj", "qkv", "query", "key", "value", "cls_token", "register_tokens"]
+        expected = [
+            "q_proj",
+            "v_proj",
+            "k_proj",
+            "qkv",
+            "query",
+            "key",
+            "value",
+            "cls_token",
+            "register_tokens",
+        ]
         assert target_modules == expected
 
     @patch("peft.get_peft_model")
     @patch("peft.LoraConfig")
-    def test_replaces_encoder_with_peft_model(self, mock_lora_cfg_class, mock_get_peft, tmp_path):
+    def test_replaces_encoder_with_peft_model(
+        self, mock_lora_cfg_class, mock_get_peft, tmp_path
+    ):
         """The backbone encoder must be replaced in-place with the PEFT-wrapped model."""
-        module, _, fake_backbone_0, fake_encoder = self._build_module_with_backbone(tmp_path)
+        module, _, fake_backbone_0, fake_encoder = self._build_module_with_backbone(
+            tmp_path
+        )
         peft_wrapped = MagicMock()
         mock_get_peft.return_value = peft_wrapped
 
@@ -494,7 +565,9 @@ class TestOnFitStart:
         tc = base_train_config(seed=7)
         module, _, _, _ = build_module(train_config=tc)
 
-        with patch.object(type(module), "global_rank", new_callable=PropertyMock, return_value=0):
+        with patch.object(
+            type(module), "global_rank", new_callable=PropertyMock, return_value=0
+        ):
             module.on_fit_start()
 
         mock_seed.assert_called_once_with(7, workers=True)
@@ -509,7 +582,9 @@ class TestOnFitStart:
         tc = base_train_config(seed=7)
         module, _, _, _ = build_module(train_config=tc)
 
-        with patch.object(type(module), "global_rank", new_callable=PropertyMock, return_value=2):
+        with patch.object(
+            type(module), "global_rank", new_callable=PropertyMock, return_value=2
+        ):
             module.on_fit_start()
 
         mock_seed.assert_called_once_with(9, workers=True)  # 7 + 2
@@ -585,7 +660,9 @@ class TestOnTrainBatchStart:
 
     def test_multi_scale_resize_mutates_nested_tensor(self, tmp_path):
         """Multi-scale training must resize the input tensor to a square resolution."""
-        module, _ = self._setup_module(tmp_path, multi_scale=True, do_random_resize_via_padding=False)
+        module, _ = self._setup_module(
+            tmp_path, multi_scale=True, do_random_resize_via_padding=False
+        )
         module._trainer.global_step = 0
         samples, targets = _make_batch(batch_size=2, h=16, w=16)
 
@@ -596,7 +673,9 @@ class TestOnTrainBatchStart:
 
     def test_multi_scale_skipped_when_random_resize_via_padding(self, tmp_path):
         """Padding-based resize takes precedence, so multi-scale must be a no-op."""
-        module, _ = self._setup_module(tmp_path, multi_scale=True, do_random_resize_via_padding=True)
+        module, _ = self._setup_module(
+            tmp_path, multi_scale=True, do_random_resize_via_padding=True
+        )
         samples, targets = _make_batch(batch_size=2, h=16, w=16)
         original_shape = samples.tensors.shape
 
@@ -610,7 +689,9 @@ class TestTrainingStep:
     under the train/ prefix, prog_bar visibility, scalar tensor output, and that losses
     absent from weight_dict are excluded from the total."""
 
-    def _run_step(self, tmp_path, loss_dict=None, weight_dict=None, accumulate_grad_batches=1):
+    def _run_step(
+        self, tmp_path, loss_dict=None, weight_dict=None, accumulate_grad_batches=1
+    ):
         module, fake_model, fake_criterion, _ = _build_module(tmp_path=tmp_path)
         samples, targets = _make_batch()
         fake_model.return_value = {}
@@ -630,9 +711,15 @@ class TestTrainingStep:
 
     def test_returns_weighted_loss_sum(self, tmp_path):
         """Total loss must equal the sum of each loss multiplied by its weight."""
-        loss_dict = {"loss_ce": torch.tensor(1.0), "loss_bbox": torch.tensor(2.0), "loss_giou": torch.tensor(3.0)}
+        loss_dict = {
+            "loss_ce": torch.tensor(1.0),
+            "loss_bbox": torch.tensor(2.0),
+            "loss_giou": torch.tensor(3.0),
+        }
         weight_dict = {"loss_ce": 1.0, "loss_bbox": 5.0, "loss_giou": 2.0}
-        module, samples, targets, _, _ = self._run_step(tmp_path, loss_dict, weight_dict)
+        module, samples, targets, _, _ = self._run_step(
+            tmp_path, loss_dict, weight_dict
+        )
 
         loss = module.training_step((samples, targets), batch_idx=0)
 
@@ -642,7 +729,9 @@ class TestTrainingStep:
         """Loss must be divided by accumulate_grad_batches to match legacy engine scaling."""
         loss_dict = {"loss_ce": torch.tensor(4.0)}
         weight_dict = {"loss_ce": 1.0}
-        module, samples, targets, _, _ = self._run_step(tmp_path, loss_dict, weight_dict, accumulate_grad_batches=4)
+        module, samples, targets, _, _ = self._run_step(
+            tmp_path, loss_dict, weight_dict, accumulate_grad_batches=4
+        )
 
         loss = module.training_step((samples, targets), batch_idx=0)
 
@@ -654,7 +743,9 @@ class TestTrainingStep:
 
         module.training_step((samples, targets), batch_idx=0)
 
-        train_loss_calls = [c for c in module.log.call_args_list if c[0][0] == "train/loss"]
+        train_loss_calls = [
+            c for c in module.log.call_args_list if c[0][0] == "train/loss"
+        ]
         assert len(train_loss_calls) == 1
         assert train_loss_calls[0].kwargs.get("prog_bar") is True
 
@@ -674,7 +765,9 @@ class TestTrainingStep:
         """Each component loss must be logged separately under train/ prefix."""
         loss_dict = {"loss_ce": torch.tensor(0.5), "loss_bbox": torch.tensor(0.3)}
         weight_dict = {"loss_ce": 1.0, "loss_bbox": 5.0}
-        module, samples, targets, _, _ = self._run_step(tmp_path, loss_dict, weight_dict)
+        module, samples, targets, _, _ = self._run_step(
+            tmp_path, loss_dict, weight_dict
+        )
 
         module.training_step((samples, targets), batch_idx=0)
 
@@ -693,9 +786,14 @@ class TestTrainingStep:
 
     def test_ignores_losses_not_in_weight_dict(self, tmp_path):
         """Losses absent from weight_dict (e.g. cardinality_error) must not affect total."""
-        loss_dict = {"loss_ce": torch.tensor(1.0), "cardinality_error": torch.tensor(99.0)}
+        loss_dict = {
+            "loss_ce": torch.tensor(1.0),
+            "cardinality_error": torch.tensor(99.0),
+        }
         weight_dict = {"loss_ce": 2.0}
-        module, samples, targets, _, _ = self._run_step(tmp_path, loss_dict, weight_dict)
+        module, samples, targets, _, _ = self._run_step(
+            tmp_path, loss_dict, weight_dict
+        )
 
         loss = module.training_step((samples, targets), batch_idx=0)
 
@@ -744,7 +842,9 @@ class TestValidationStep:
     def test_can_disable_val_loss_computation(self, tmp_path):
         """compute_val_loss=False skips criterion call and val/loss logging."""
         tc = _base_train_config(tmp_path, compute_val_loss=False)
-        module, fake_model, fake_criterion, _ = _build_module(train_config=tc, tmp_path=tmp_path)
+        module, fake_model, fake_criterion, _ = _build_module(
+            train_config=tc, tmp_path=tmp_path
+        )
         samples, targets = _make_batch()
         fake_model.return_value = {}
         module.log = MagicMock()
@@ -797,7 +897,9 @@ class TestTestStep:
     def test_logs_test_loss(self, tmp_path):
         """Test loss must be logged under test/ prefix for monitoring."""
         _, _, module = self._run_test_step(tmp_path)
-        test_loss_calls = [c for c in module.log.call_args_list if c[0][0] == "test/loss"]
+        test_loss_calls = [
+            c for c in module.log.call_args_list if c[0][0] == "test/loss"
+        ]
         assert len(test_loss_calls) == 1
 
     def test_model_called_with_samples_only(self, tmp_path):
@@ -823,7 +925,9 @@ class TestTestStep:
     def test_can_disable_test_loss_computation(self, tmp_path):
         """compute_test_loss=False skips criterion call and test/loss logging."""
         tc = _base_train_config(tmp_path, compute_test_loss=False)
-        module, fake_model, fake_criterion, _ = _build_module(train_config=tc, tmp_path=tmp_path)
+        module, fake_model, fake_criterion, _ = _build_module(
+            train_config=tc, tmp_path=tmp_path
+        )
         samples, targets = _make_batch()
         fake_model.return_value = {}
         module.log = MagicMock()
@@ -862,7 +966,9 @@ class TestConfigureOptimizers:
         ],
     )
     @patch("rfdetr.training.module_model.get_param_dict")
-    def test_configure_optimizers_returns_required_key(self, mock_get_param_dict, key, tmp_path):
+    def test_configure_optimizers_returns_required_key(
+        self, mock_get_param_dict, key, tmp_path
+    ):
         """Lightning requires both 'optimizer' and 'lr_scheduler' keys in the returned config dict."""
         module, param_dicts = self._setup_module(tmp_path)
         mock_get_param_dict.return_value = param_dicts
@@ -893,7 +999,9 @@ class TestConfigureOptimizers:
         ],
     )
     @patch("rfdetr.training.module_model.get_param_dict")
-    def test_lr_lambda_warmup_phase(self, mock_get_param_dict, step, expected_behavior, tmp_path):
+    def test_lr_lambda_warmup_phase(
+        self, mock_get_param_dict, step, expected_behavior, tmp_path
+    ):
         """LR lambda must produce a linear ramp during the warmup phase."""
         module, param_dicts = self._setup_module(tmp_path, warmup_epochs=1.0, epochs=10)
         module._trainer.estimated_stepping_batches = 1000
@@ -909,7 +1017,9 @@ class TestConfigureOptimizers:
     @patch("rfdetr.training.module_model.get_param_dict")
     def test_lr_lambda_step_decay_before_drop(self, mock_get_param_dict, tmp_path):
         """Before lr_drop epoch, the LR multiplier must remain at 1.0."""
-        module, param_dicts = self._setup_module(tmp_path, warmup_epochs=0.0, epochs=10, lr_drop=8)
+        module, param_dicts = self._setup_module(
+            tmp_path, warmup_epochs=0.0, epochs=10, lr_drop=8
+        )
         module._trainer.estimated_stepping_batches = 1000
         mock_get_param_dict.return_value = param_dicts
 
@@ -922,7 +1032,9 @@ class TestConfigureOptimizers:
     @patch("rfdetr.training.module_model.get_param_dict")
     def test_lr_lambda_step_decay_after_drop(self, mock_get_param_dict, tmp_path):
         """After lr_drop epoch, the LR multiplier must decay to 0.1."""
-        module, param_dicts = self._setup_module(tmp_path, warmup_epochs=0.0, epochs=10, lr_drop=8)
+        module, param_dicts = self._setup_module(
+            tmp_path, warmup_epochs=0.0, epochs=10, lr_drop=8
+        )
         module._trainer.estimated_stepping_batches = 1000
         mock_get_param_dict.return_value = param_dicts
 
@@ -933,7 +1045,9 @@ class TestConfigureOptimizers:
         assert lr_lambda(900) == pytest.approx(0.1)
 
     @patch("rfdetr.training.module_model.get_param_dict")
-    def test_lr_lambda_cosine_reads_train_config_fields(self, mock_get_param_dict, tmp_path):
+    def test_lr_lambda_cosine_reads_train_config_fields(
+        self, mock_get_param_dict, tmp_path
+    ):
         """Cosine scheduler must read lr_scheduler/lr_min_factor from TrainConfig."""
         module, param_dicts = self._setup_module(
             tmp_path,

@@ -91,7 +91,10 @@ def _build_model_context(model_config: ModelConfig) -> ModelContext:
         class_names = load_pretrain_weights(nn_model, model_config)
         # ``load_pretrain_weights`` can mutate ``model_config.num_classes`` when
         # aligning to checkpoint heads. Keep the derived namespace in sync.
-        if hasattr(args, "num_classes") and getattr(args, "num_classes") != model_config.num_classes:
+        if (
+            hasattr(args, "num_classes")
+            and getattr(args, "num_classes") != model_config.num_classes
+        ):
             args.num_classes = model_config.num_classes
 
     if model_config.backbone_lora:

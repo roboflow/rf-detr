@@ -71,7 +71,9 @@ def _make_synthetic_batch(
     "masks" of shape (max_targets_per_image, resolution, resolution).
     """
     tensors = torch.randn(micro_batch_size, 3, resolution, resolution, device=device)
-    mask = torch.zeros(micro_batch_size, resolution, resolution, dtype=torch.bool, device=device)
+    mask = torch.zeros(
+        micro_batch_size, resolution, resolution, dtype=torch.bool, device=device
+    )
     samples = NestedTensor(tensors, mask)
 
     max_label = max(0, num_classes - 1)
@@ -79,21 +81,31 @@ def _make_synthetic_batch(
     targets: list[dict[str, torch.Tensor]] = []
     for idx in range(micro_batch_size):
         # Replicate one box/label n times so matcher and loss see n targets per image.
-        boxes = torch.tensor([[0.5, 0.5, 0.2, 0.2]], dtype=torch.float32, device=device).expand(n, 4)
-        labels = torch.tensor([min(1, max_label)], dtype=torch.int64, device=device).expand(n)
+        boxes = torch.tensor(
+            [[0.5, 0.5, 0.2, 0.2]], dtype=torch.float32, device=device
+        ).expand(n, 4)
+        labels = torch.tensor(
+            [min(1, max_label)], dtype=torch.int64, device=device
+        ).expand(n)
         iscrowd = torch.zeros(n, dtype=torch.int64, device=device)
         area = torch.full((n,), 0.04, dtype=torch.float32, device=device)
         t: dict[str, torch.Tensor] = {
             "boxes": boxes,
             "labels": labels,
             "image_id": torch.tensor(idx, dtype=torch.int64, device=device),
-            "orig_size": torch.tensor([resolution, resolution], dtype=torch.int64, device=device),
-            "size": torch.tensor([resolution, resolution], dtype=torch.int64, device=device),
+            "orig_size": torch.tensor(
+                [resolution, resolution], dtype=torch.int64, device=device
+            ),
+            "size": torch.tensor(
+                [resolution, resolution], dtype=torch.int64, device=device
+            ),
             "iscrowd": iscrowd,
             "area": area,
         }
         if segmentation_head:
-            t["masks"] = torch.zeros(n, resolution, resolution, dtype=torch.bool, device=device)
+            t["masks"] = torch.zeros(
+                n, resolution, resolution, dtype=torch.bool, device=device
+            )
         targets.append(t)
     return samples, targets
 
@@ -126,7 +138,11 @@ def _probe_step(
             outputs = model(samples, targets)
             loss_dict = criterion(outputs, targets)
             weight_dict = criterion.weight_dict
-            loss = sum(loss_dict[name] * weight_dict[name] for name in loss_dict if name in weight_dict)
+            loss = sum(
+                loss_dict[name] * weight_dict[name]
+                for name in loss_dict
+                if name in weight_dict
+            )
 
         if not torch.isfinite(loss):
             raise RuntimeError("auto-batch probe produced a non-finite training loss.")
@@ -255,7 +271,9 @@ def probe_max_micro_batch(
         torch.cuda.empty_cache()
 
 
-def recommend_grad_accum_steps(safe_micro_batch: int, target_effective_batch: int) -> int:
+def recommend_grad_accum_steps(
+    safe_micro_batch: int, target_effective_batch: int
+) -> int:
     """Recommend gradient accumulation steps to reach target effective batch size.
 
     Args:
@@ -306,7 +324,9 @@ def resolve_auto_batch_config(
     """
     device = model_context.device
     if not torch.cuda.is_available() or device.type != "cuda":
-        raise RuntimeError("batch_size='auto' requires a CUDA device for probing in v1.")
+        raise RuntimeError(
+            "batch_size='auto' requires a CUDA device for probing in v1."
+        )
 
     # Use max multi-scale resolution when multi_scale is True so probe reflects worst-case.
     multi_scale = getattr(train_config, "multi_scale", False)
@@ -325,7 +345,9 @@ def resolve_auto_batch_config(
     else:
         probe_resolution = model_config.resolution
 
-    max_targets_per_image = getattr(train_config, "auto_batch_max_targets_per_image", 100)
+    max_targets_per_image = getattr(
+        train_config, "auto_batch_max_targets_per_image", 100
+    )
 
     criterion, _ = build_criterion_from_config(model_config, train_config)
     criterion = criterion.to(device)
@@ -347,7 +369,11 @@ def resolve_auto_batch_config(
     if use_ema:
         headroom = getattr(train_config, "auto_batch_ema_headroom", 0.7)
         safe_micro_batch = max(1, math.floor(safe_micro_batch * headroom))
-        logger.info("[auto-batch] Applied EMA headroom (%.2f): safe_micro_batch=%s", headroom, safe_micro_batch)
+        logger.info(
+            "[auto-batch] Applied EMA headroom (%.2f): safe_micro_batch=%s",
+            headroom,
+            safe_micro_batch,
+        )
 
     # Infer world size from train configuration (only when explicit integers are provided)
     devices = getattr(train_config, "devices", None)
@@ -360,11 +386,15 @@ def resolve_auto_batch_config(
     # Interpret auto_batch_target_effective as a global target and derive a per-device target
     target_effective_global = train_config.auto_batch_target_effective
     if world_size > 1:
-        target_effective_per_device = max(1, math.ceil(target_effective_global / world_size))
+        target_effective_per_device = max(
+            1, math.ceil(target_effective_global / world_size)
+        )
     else:
         target_effective_per_device = target_effective_global
 
-    grad_accum_steps = recommend_grad_accum_steps(safe_micro_batch, target_effective_per_device)
+    grad_accum_steps = recommend_grad_accum_steps(
+        safe_micro_batch, target_effective_per_device
+    )
     effective_batch_size_per_device = safe_micro_batch * grad_accum_steps
     global_effective_batch_size = effective_batch_size_per_device * world_size
     device_name = torch.cuda.get_device_name(device)
@@ -385,7 +415,9 @@ def resolve_auto_batch_config(
         global_effective_batch_size,
     )
     logger.info("[auto-batch] This probe estimates train-step-safe micro-batch only.")
-    logger.info("[auto-batch] Validation/test (especially segmentation mask eval) may require more memory.")
+    logger.info(
+        "[auto-batch] Validation/test (especially segmentation mask eval) may require more memory."
+    )
 
     return AutoBatchResult(
         safe_micro_batch=safe_micro_batch,

@@ -189,11 +189,15 @@ def _build_albu_transform(name: str, params: Dict[str, Any]) -> A.BasicTransform
     if name in ALBUMENTATIONS_CONTAINERS:
         raw_nested = params.get("transforms", [])
         if not isinstance(raw_nested, list):
-            raise ValueError(f"'{name}.transforms' must be a list, got {type(raw_nested).__name__}")
+            raise ValueError(
+                f"'{name}.transforms' must be a list, got {type(raw_nested).__name__}"
+            )
         nested_transforms: List[A.BasicTransform] = []
         for entry in raw_nested:
             if not isinstance(entry, dict) or len(entry) != 1:
-                raise ValueError(f"Each nested transform entry must be a single-key dict, got {entry!r}")
+                raise ValueError(
+                    f"Each nested transform entry must be a single-key dict, got {entry!r}"
+                )
             nested_name, nested_params = next(iter(entry.items()))
             if not isinstance(nested_params, dict):
                 raise ValueError(
@@ -205,10 +209,14 @@ def _build_albu_transform(name: str, params: Dict[str, Any]) -> A.BasicTransform
         if name == "OneOf":
             if not nested_transforms:
                 raise ValueError("'OneOf' requires at least one transform")
-            other_params = {k: v for k, v in params.items() if k not in ("transforms", "p")}
+            other_params = {
+                k: v for k, v in params.items() if k not in ("transforms", "p")
+            }
             other_params["p"] = 1.0  # OneOf always fires; selection is via per-child p
         elif name == "Sequential":
-            other_params = {k: v for k, v in params.items() if k not in ("transforms", "p")}
+            other_params = {
+                k: v for k, v in params.items() if k not in ("transforms", "p")
+            }
             other_params["p"] = 1.0  # Sequential always runs all transforms
         else:
             other_params = {k: v for k, v in params.items() if k != "transforms"}
@@ -245,7 +253,9 @@ def _random_sized_crop_uses_size_param(aug_cls: type) -> bool:
     return "size" in signature.parameters
 
 
-def _normalize_albu_params(name: str, params: Dict[str, Any], aug_cls: type) -> Dict[str, Any]:
+def _normalize_albu_params(
+    name: str, params: Dict[str, Any], aug_cls: type
+) -> Dict[str, Any]:
     """Normalize transform params across Albumentations API variations.
 
     Currently this adapts ``RandomSizedCrop`` arguments so a config using
@@ -383,7 +393,10 @@ class AlbumentationsWrapper:
                 [transform],
                 bbox_params=A.BboxParams(
                     format="pascal_voc",  # Boxes are in (x1, y1, x2, y2) format
-                    label_fields=["category_ids", "idxs"],  # Track labels and indices for per-instance field sync
+                    label_fields=[
+                        "category_ids",
+                        "idxs",
+                    ],  # Track labels and indices for per-instance field sync
                     min_visibility=0.0,  # Remove boxes with zero visibility/area after transformation
                     clip=True,  # Clip box coordinates to image boundaries after transformation
                 ),
@@ -412,7 +425,9 @@ class AlbumentationsWrapper:
             return object.__repr__(self)
 
         transform_type = "geometric" if self._is_geometric else "pixel-level"
-        return f"{self.__class__.__name__}(transform={transform}, type={transform_type})"
+        return (
+            f"{self.__class__.__name__}(transform={transform}, type={transform_type})"
+        )
 
     @staticmethod
     def _boxes_to_numpy(boxes: Union[torch.Tensor, np.ndarray]) -> np.ndarray:
@@ -429,7 +444,9 @@ class AlbumentationsWrapper:
         return boxes_np
 
     @staticmethod
-    def _clear_per_instance_fields(target: Dict[str, Any], num_boxes: int) -> Dict[str, Any]:
+    def _clear_per_instance_fields(
+        target: Dict[str, Any], num_boxes: int
+    ) -> Dict[str, Any]:
         """Clear all per-instance fields when no boxes remain.
 
         >>> import torch
@@ -454,7 +471,9 @@ class AlbumentationsWrapper:
         return result
 
     @staticmethod
-    def _filter_per_instance_fields(target: Dict[str, Any], num_boxes: int, kept_idxs: List[int]) -> Dict[str, Any]:
+    def _filter_per_instance_fields(
+        target: Dict[str, Any], num_boxes: int, kept_idxs: List[int]
+    ) -> Dict[str, Any]:
         """Filter per-instance fields to match kept box indices.
 
         >>> import torch
@@ -511,9 +530,13 @@ class AlbumentationsWrapper:
         masks_list = None
         if "masks" in target:
             masks = target["masks"]
-            masks_np = masks.cpu().numpy() if torch.is_tensor(masks) else np.array(masks)
+            masks_np = (
+                masks.cpu().numpy() if torch.is_tensor(masks) else np.array(masks)
+            )
             if masks_np.ndim != 3:
-                raise ValueError(f"masks must have shape (N, H, W), got {masks_np.shape}")
+                raise ValueError(
+                    f"masks must have shape (N, H, W), got {masks_np.shape}"
+                )
             masks_np = masks_np.astype(np.uint8, copy=False)
             masks_list = [mask for mask in masks_np]
         # Filter out degenerate boxes (zero-width or zero-height) before passing to
@@ -521,7 +544,9 @@ class AlbumentationsWrapper:
         # the image boundary so that x_min == x_max (or y_min == y_max) after clipping.
         # Albumentations' check_bboxes would raise ValueError for these inputs.
         if num_boxes > 0:
-            valid_mask = (boxes_np[:, 2] > boxes_np[:, 0]) & (boxes_np[:, 3] > boxes_np[:, 1])
+            valid_mask = (boxes_np[:, 2] > boxes_np[:, 0]) & (
+                boxes_np[:, 3] > boxes_np[:, 1]
+            )
             if not valid_mask.all():
                 valid_positions = np.where(valid_mask)[0].tolist()
                 boxes_np = boxes_np[valid_mask]
@@ -530,7 +555,12 @@ class AlbumentationsWrapper:
                 # can correctly slice fields from the un-filtered target.
                 idxs = [idxs[i] for i in valid_positions]
         # Apply transform
-        transform_kwargs = {"image": image_np, "bboxes": boxes_np, "category_ids": labels, "idxs": idxs}
+        transform_kwargs = {
+            "image": image_np,
+            "bboxes": boxes_np,
+            "category_ids": labels,
+            "idxs": idxs,
+        }
         if masks_list is not None and len(masks_list) > 0:
             transform_kwargs["masks"] = masks_list
         augmented = self.transform(**transform_kwargs)
@@ -545,16 +575,26 @@ class AlbumentationsWrapper:
             # Override masks after _clear_per_instance_fields to ensure bool dtype.
             if "masks" in target:
                 aug_height, aug_width = augmented["image"].shape[:2]
-                target_out["masks"] = torch.zeros((0, aug_height, aug_width), dtype=torch.bool)
+                target_out["masks"] = torch.zeros(
+                    (0, aug_height, aug_width), dtype=torch.bool
+                )
         else:
-            target_out["boxes"] = torch.as_tensor(bboxes_aug, dtype=torch.float32).reshape(-1, 4)
-            target_out["labels"] = torch.tensor(augmented["category_ids"], dtype=torch.long)
-            target_out.update(self._filter_per_instance_fields(target, num_boxes, kept_idxs))
+            target_out["boxes"] = torch.as_tensor(
+                bboxes_aug, dtype=torch.float32
+            ).reshape(-1, 4)
+            target_out["labels"] = torch.tensor(
+                augmented["category_ids"], dtype=torch.long
+            )
+            target_out.update(
+                self._filter_per_instance_fields(target, num_boxes, kept_idxs)
+            )
             # Recompute area from the transformed box coordinates so it stays consistent with
             # the new image scale (e.g. after resize the original COCO area values are stale).
             if "area" in target_out:
                 boxes = target_out["boxes"]
-                target_out["area"] = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
+                target_out["area"] = (boxes[:, 2] - boxes[:, 0]) * (
+                    boxes[:, 3] - boxes[:, 1]
+                )
         image_out = Image.fromarray(augmented["image"])
         if masks_list is not None and "masks" in augmented:
             height, width = augmented["image"].shape[:2]
@@ -563,7 +603,9 @@ class AlbumentationsWrapper:
             if len(masks_aug) == 0:
                 target_out["masks"] = torch.zeros((0, height, width), dtype=torch.bool)
             else:
-                target_out["masks"] = torch.as_tensor(np.stack(masks_aug), dtype=torch.bool)
+                target_out["masks"] = torch.as_tensor(
+                    np.stack(masks_aug), dtype=torch.bool
+                )
         return image_out, target_out
 
     def __call__(
@@ -615,7 +657,9 @@ class AlbumentationsWrapper:
             image_np = np.array(image)
             if self._is_geometric:
                 # Geometric A.Compose requires label_fields even when there are no boxes
-                augmented = self.transform(image=image_np, bboxes=[], category_ids=[], idxs=[])
+                augmented = self.transform(
+                    image=image_np, bboxes=[], category_ids=[], idxs=[]
+                )
             else:
                 augmented = self.transform(image=image_np)
             return Image.fromarray(augmented["image"]), None
@@ -631,7 +675,11 @@ class AlbumentationsWrapper:
         image_np = np.array(image)
 
         # Convert labels tensor to Python list (required by Albumentations category_ids)
-        labels = target["labels"].cpu().tolist() if torch.is_tensor(target["labels"]) else list(target["labels"])
+        labels = (
+            target["labels"].cpu().tolist()
+            if torch.is_tensor(target["labels"])
+            else list(target["labels"])
+        )
 
         # === Apply Transform ===
         if self._is_geometric and "masks" in target and "boxes" not in target:
@@ -641,7 +689,9 @@ class AlbumentationsWrapper:
             )
         if self._is_geometric and "boxes" in target:
             # Geometric path: transform image and boxes together
-            image_out, target_out = self._apply_geometric_transform(image_np, target, labels)
+            image_out, target_out = self._apply_geometric_transform(
+                image_np, target, labels
+            )
         else:
             # Non-geometric path: transform image only
             augmented = self.transform(image=image_np)
@@ -727,10 +777,14 @@ class AlbumentationsWrapper:
         elif isinstance(config_dict, dict):
             entries = [{k: v} for k, v in config_dict.items()]
         else:
-            raise TypeError(f"config_dict must be a dictionary or list, got {type(config_dict)}")
+            raise TypeError(
+                f"config_dict must be a dictionary or list, got {type(config_dict)}"
+            )
 
         if not entries:
-            logger.warning("Empty augmentation config provided, no transforms will be applied")
+            logger.warning(
+                "Empty augmentation config provided, no transforms will be applied"
+            )
             return []
 
         transforms = []

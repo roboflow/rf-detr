@@ -47,7 +47,11 @@ def compute_multi_scale_scales(
 ) -> List[int]:
     # round to the nearest multiple of 4*patch_size to enable both patching and windowing
     base_num_patches_per_window = resolution // (patch_size * num_windows)
-    offsets = [-3, -2, -1, 0, 1, 2, 3, 4] if not expanded_scales else [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5]
+    offsets = (
+        [-3, -2, -1, 0, 1, 2, 3, 4]
+        if not expanded_scales
+        else [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5]
+    )
     scales = [base_num_patches_per_window + offset for offset in offsets]
     proposed_scales = [scale * patch_size * num_windows for scale in scales]
     proposed_scales = [
@@ -56,7 +60,9 @@ def compute_multi_scale_scales(
     return proposed_scales
 
 
-def convert_coco_poly_to_mask(segmentations: List[Any], height: int, width: int) -> torch.Tensor:
+def convert_coco_poly_to_mask(
+    segmentations: List[Any], height: int, width: int
+) -> torch.Tensor:
     """Convert polygon segmentation to a binary mask tensor of shape [N, H, W].
     Requires pycocotools.
     """
@@ -134,7 +140,9 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         self.include_masks = include_masks
         if remap_category_ids:
             # Mapping from original COCO category_id to contiguous label indices
-            self.cat2label = {cat_id: i for i, cat_id in enumerate(sorted(self.coco.cats.keys()))}
+            self.cat2label = {
+                cat_id: i for i, cat_id in enumerate(sorted(self.coco.cats.keys()))
+            }
             # Reverse mapping from contiguous label indices back to COCO category_id
             self.label2cat = {label: cat_id for cat_id, label in self.cat2label.items()}
             # Expose label-to-category mapping on the underlying COCO API object for evaluators
@@ -142,7 +150,9 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         else:
             self.cat2label = None
             self.label2cat = None
-        self.prepare = ConvertCoco(include_masks=include_masks, cat2label=self.cat2label)
+        self.prepare = ConvertCoco(
+            include_masks=include_masks, cat2label=self.cat2label
+        )
 
     def __getitem__(self, idx: int) -> Tuple[Any, Any]:
         img, target = super(CocoDetection, self).__getitem__(idx)
@@ -185,11 +195,15 @@ class ConvertCoco(object):
             that labels stay within the model's output range.
     """
 
-    def __init__(self, include_masks: bool = False, cat2label: Optional[Dict[int, int]] = None) -> None:
+    def __init__(
+        self, include_masks: bool = False, cat2label: Optional[Dict[int, int]] = None
+    ) -> None:
         self.include_masks = include_masks
         self.cat2label = cat2label
 
-    def __call__(self, image: Image.Image, target: Dict[str, Any]) -> Tuple[Image.Image, Dict[str, Any]]:
+    def __call__(
+        self, image: Image.Image, target: Dict[str, Any]
+    ) -> Tuple[Image.Image, Dict[str, Any]]:
         w, h = image.size
 
         image_id = target["image_id"]
@@ -231,7 +245,9 @@ class ConvertCoco(object):
 
         # for conversion to coco api
         area = torch.tensor([obj["area"] for obj in anno])
-        iscrowd = torch.tensor([obj["iscrowd"] if "iscrowd" in obj else 0 for obj in anno])
+        iscrowd = torch.tensor(
+            [obj["iscrowd"] if "iscrowd" in obj else 0 for obj in anno]
+        )
         target["area"] = area[keep]
         target["iscrowd"] = iscrowd[keep]
 
@@ -297,7 +313,13 @@ def _build_train_resize_config(
                     {
                         "OneOf": {
                             "transforms": [
-                                {"RandomSizedCrop": {"min_max_height": [384, 600], "height": s, "width": s}}
+                                {
+                                    "RandomSizedCrop": {
+                                        "min_max_height": [384, 600],
+                                        "height": s,
+                                        "width": s,
+                                    }
+                                }
                                 for s in scales
                             ],
                         }
@@ -388,7 +410,9 @@ def make_coco_transforms(
     scales = [resolution]
     if multi_scale:
         # scales = [448, 512, 576, 640, 704, 768, 832, 896]
-        scales = compute_multi_scale_scales(resolution, expanded_scales, patch_size, num_windows)
+        scales = compute_multi_scale_scales(
+            resolution, expanded_scales, patch_size, num_windows
+        )
         if skip_random_resize:
             scales = [scales[-1]]
         logger.info(f"Using multi-scale training with scales: {scales}")
@@ -410,7 +434,9 @@ def make_coco_transforms(
         )
         return Compose([*resize_wrappers, to_image, to_float, normalize])
     if image_set == "val_speed":
-        resize_wrappers = AlbumentationsWrapper.from_config([{"Resize": {"height": resolution, "width": resolution}}])
+        resize_wrappers = AlbumentationsWrapper.from_config(
+            [{"Resize": {"height": resolution, "width": resolution}}]
+        )
         return Compose([*resize_wrappers, to_image, to_float, normalize])
 
     raise ValueError(f"unknown {image_set}")
@@ -466,19 +492,27 @@ def make_coco_transforms_square_div_64(
     scales = [resolution]
     if multi_scale:
         # scales = [448, 512, 576, 640, 704, 768, 832, 896]
-        scales = compute_multi_scale_scales(resolution, expanded_scales, patch_size, num_windows)
+        scales = compute_multi_scale_scales(
+            resolution, expanded_scales, patch_size, num_windows
+        )
         if skip_random_resize:
             scales = [scales[-1]]
-        logger.info(f"Using multi-scale training with square resize and scales: {scales}")
+        logger.info(
+            f"Using multi-scale training with square resize and scales: {scales}"
+        )
 
     if image_set == "train":
         resolved_aug_config = aug_config if aug_config is not None else AUG_CONFIG
-        resize_wrappers = AlbumentationsWrapper.from_config(_build_train_resize_config(scales, square=True))
+        resize_wrappers = AlbumentationsWrapper.from_config(
+            _build_train_resize_config(scales, square=True)
+        )
         aug_wrappers = AlbumentationsWrapper.from_config(resolved_aug_config)
         return Compose([*resize_wrappers, *aug_wrappers, to_image, to_float, normalize])
 
     if image_set in ("val", "test", "val_speed"):
-        resize_wrappers = AlbumentationsWrapper.from_config([{"Resize": {"height": resolution, "width": resolution}}])
+        resize_wrappers = AlbumentationsWrapper.from_config(
+            [{"Resize": {"height": resolution, "width": resolution}}]
+        )
         return Compose([*resize_wrappers, to_image, to_float, normalize])
 
     raise ValueError(f"unknown {image_set}")
@@ -494,7 +528,10 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
     PATHS = {
         "train": (root / "train2017", root / "annotations" / f"{mode}_train2017.json"),
         "val": (root / "val2017", root / "annotations" / f"{mode}_val2017.json"),
-        "test": (root / "test2017", root / "annotations" / "image_info_test-dev2017.json"),
+        "test": (
+            root / "test2017",
+            root / "annotations" / "image_info_test-dev2017.json",
+        ),
     }
 
     img_folder, ann_file = PATHS[image_set.split("_")[0]]
@@ -504,7 +541,9 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
     aug_config = getattr(args, "aug_config", None)
 
     if square_resize_div_64:
-        logger.info(f"Building COCO {image_set} dataset with square resize at resolution {resolution}")
+        logger.info(
+            f"Building COCO {image_set} dataset with square resize at resolution {resolution}"
+        )
         dataset = CocoDetection(
             img_folder,
             ann_file,
@@ -540,7 +579,9 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
     return dataset
 
 
-def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
+def build_roboflow_from_coco(
+    image_set: str, args: Any, resolution: int
+) -> CocoDetection:
     """Build a Roboflow COCO-format dataset.
 
     This uses Roboflow's standard directory structure
@@ -568,7 +609,9 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
     aug_config = getattr(args, "aug_config", None)
 
     if square_resize_div_64:
-        logger.info(f"Building Roboflow {image_set} dataset with square resize at resolution {resolution}")
+        logger.info(
+            f"Building Roboflow {image_set} dataset with square resize at resolution {resolution}"
+        )
         dataset = CocoDetection(
             img_folder,
             ann_file,

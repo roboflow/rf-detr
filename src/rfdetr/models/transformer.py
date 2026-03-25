@@ -34,7 +34,9 @@ class MLP(nn.Module):
         super().__init__()
         self.num_layers = num_layers
         h = [hidden_dim] * (num_layers - 1)
-        self.layers = nn.ModuleList(nn.Linear(n, k) for n, k in zip([input_dim] + h, h + [output_dim]))
+        self.layers = nn.ModuleList(
+            nn.Linear(n, k) for n, k in zip([input_dim] + h, h + [output_dim])
+        )
 
     def forward(self, x):
         for i, layer in enumerate(self.layers):
@@ -52,18 +54,26 @@ def gen_sineembed_for_position(pos_tensor, dim=128):
     y_embed = pos_tensor[:, :, 1] * scale
     pos_x = x_embed[:, :, None] / dim_t
     pos_y = y_embed[:, :, None] / dim_t
-    pos_x = torch.stack((pos_x[:, :, 0::2].sin(), pos_x[:, :, 1::2].cos()), dim=3).flatten(2)
-    pos_y = torch.stack((pos_y[:, :, 0::2].sin(), pos_y[:, :, 1::2].cos()), dim=3).flatten(2)
+    pos_x = torch.stack(
+        (pos_x[:, :, 0::2].sin(), pos_x[:, :, 1::2].cos()), dim=3
+    ).flatten(2)
+    pos_y = torch.stack(
+        (pos_y[:, :, 0::2].sin(), pos_y[:, :, 1::2].cos()), dim=3
+    ).flatten(2)
     if pos_tensor.size(-1) == 2:
         pos = torch.cat((pos_y, pos_x), dim=2)
     elif pos_tensor.size(-1) == 4:
         w_embed = pos_tensor[:, :, 2] * scale
         pos_w = w_embed[:, :, None] / dim_t
-        pos_w = torch.stack((pos_w[:, :, 0::2].sin(), pos_w[:, :, 1::2].cos()), dim=3).flatten(2)
+        pos_w = torch.stack(
+            (pos_w[:, :, 0::2].sin(), pos_w[:, :, 1::2].cos()), dim=3
+        ).flatten(2)
 
         h_embed = pos_tensor[:, :, 3] * scale
         pos_h = h_embed[:, :, None] / dim_t
-        pos_h = torch.stack((pos_h[:, :, 0::2].sin(), pos_h[:, :, 1::2].cos()), dim=3).flatten(2)
+        pos_h = torch.stack(
+            (pos_h[:, :, 0::2].sin(), pos_h[:, :, 1::2].cos()), dim=3
+        ).flatten(2)
 
         pos = torch.cat((pos_y, pos_x, pos_w, pos_h), dim=2)
     else:
@@ -71,7 +81,9 @@ def gen_sineembed_for_position(pos_tensor, dim=128):
     return pos
 
 
-def gen_encoder_output_proposals(memory, memory_padding_mask, spatial_shapes, unsigmoid=True):
+def gen_encoder_output_proposals(
+    memory, memory_padding_mask, spatial_shapes, unsigmoid=True
+):
     r"""
     Input:
         - memory: bs, \sum{hw}, d_model
@@ -86,7 +98,9 @@ def gen_encoder_output_proposals(memory, memory_padding_mask, spatial_shapes, un
     _cur = 0
     for lvl, (H_, W_) in enumerate(spatial_shapes):
         if memory_padding_mask is not None:
-            mask_flatten_ = memory_padding_mask[:, _cur : (_cur + H_ * W_)].view(N_, H_, W_, 1)
+            mask_flatten_ = memory_padding_mask[:, _cur : (_cur + H_ * W_)].view(
+                N_, H_, W_, 1
+            )
             valid_H = torch.sum(~mask_flatten_[:, :, 0, 0], 1)
             valid_W = torch.sum(~mask_flatten_[:, 0, :, 0], 1)
         else:
@@ -100,7 +114,9 @@ def gen_encoder_output_proposals(memory, memory_padding_mask, spatial_shapes, un
         )
         grid = torch.cat([grid_x.unsqueeze(-1), grid_y.unsqueeze(-1)], -1)  # H_, W_, 2
 
-        scale = torch.cat([valid_W.unsqueeze(-1), valid_H.unsqueeze(-1)], 1).view(N_, 1, 1, 2)
+        scale = torch.cat([valid_W.unsqueeze(-1), valid_H.unsqueeze(-1)], 1).view(
+            N_, 1, 1, 2
+        )
         grid = (grid.unsqueeze(0).expand(N_, -1, -1, -1) + 0.5) / scale
 
         wh = torch.ones_like(grid) * 0.05 * (2.0**lvl)
@@ -110,21 +126,35 @@ def gen_encoder_output_proposals(memory, memory_padding_mask, spatial_shapes, un
         _cur += H_ * W_
 
     output_proposals = torch.cat(proposals, 1)
-    output_proposals_valid = ((output_proposals > 0.01) & (output_proposals < 0.99)).all(-1, keepdim=True)
+    output_proposals_valid = (
+        (output_proposals > 0.01) & (output_proposals < 0.99)
+    ).all(-1, keepdim=True)
 
     if unsigmoid:
-        output_proposals = torch.log(output_proposals / (1 - output_proposals))  # unsigmoid
+        output_proposals = torch.log(
+            output_proposals / (1 - output_proposals)
+        )  # unsigmoid
         if memory_padding_mask is not None:
-            output_proposals = output_proposals.masked_fill(memory_padding_mask.unsqueeze(-1), float("inf"))
-        output_proposals = output_proposals.masked_fill(~output_proposals_valid, float("inf"))
+            output_proposals = output_proposals.masked_fill(
+                memory_padding_mask.unsqueeze(-1), float("inf")
+            )
+        output_proposals = output_proposals.masked_fill(
+            ~output_proposals_valid, float("inf")
+        )
     else:
         if memory_padding_mask is not None:
-            output_proposals = output_proposals.masked_fill(memory_padding_mask.unsqueeze(-1), float(0))
-        output_proposals = output_proposals.masked_fill(~output_proposals_valid, float(0))
+            output_proposals = output_proposals.masked_fill(
+                memory_padding_mask.unsqueeze(-1), float(0)
+            )
+        output_proposals = output_proposals.masked_fill(
+            ~output_proposals_valid, float(0)
+        )
 
     output_memory = memory
     if memory_padding_mask is not None:
-        output_memory = output_memory.masked_fill(memory_padding_mask.unsqueeze(-1), float(0))
+        output_memory = output_memory.masked_fill(
+            memory_padding_mask.unsqueeze(-1), float(0)
+        )
     output_memory = output_memory.masked_fill(~output_proposals_valid, float(0))
 
     return output_memory.to(memory.dtype), output_proposals.to(memory.dtype)
@@ -186,8 +216,12 @@ class Transformer(nn.Module):
 
         self.two_stage = two_stage
         if two_stage:
-            self.enc_output = nn.ModuleList([nn.Linear(d_model, d_model) for _ in range(group_detr)])
-            self.enc_output_norm = nn.ModuleList([nn.LayerNorm(d_model) for _ in range(group_detr)])
+            self.enc_output = nn.ModuleList(
+                [nn.Linear(d_model, d_model) for _ in range(group_detr)]
+            )
+            self.enc_output_norm = nn.ModuleList(
+                [nn.LayerNorm(d_model) for _ in range(group_detr)]
+            )
 
         self._reset_parameters()
 
@@ -248,8 +282,12 @@ class Transformer(nn.Module):
         # Passing Python ints avoids .item() calls inside the function, which would
         # cause torch.compile graph breaks on loop-accumulated slice indices.
         spatial_shapes_hw = list(spatial_shapes)
-        spatial_shapes = torch.as_tensor(spatial_shapes, dtype=torch.long, device=memory.device)
-        level_start_index = torch.cat((spatial_shapes.new_zeros((1,)), spatial_shapes.prod(1).cumsum(0)[:-1]))
+        spatial_shapes = torch.as_tensor(
+            spatial_shapes, dtype=torch.long, device=memory.device
+        )
+        level_start_index = torch.cat(
+            (spatial_shapes.new_zeros((1,)), spatial_shapes.prod(1).cumsum(0)[:-1])
+        )
 
         if self.two_stage:
             output_memory, output_proposals = gen_encoder_output_proposals(
@@ -259,35 +297,55 @@ class Transformer(nn.Module):
             refpoint_embed_ts, memory_ts, boxes_ts = [], [], []
             group_detr = self.group_detr if self.training else 1
             for g_idx in range(group_detr):
-                output_memory_gidx = self.enc_output_norm[g_idx](self.enc_output[g_idx](output_memory))
+                output_memory_gidx = self.enc_output_norm[g_idx](
+                    self.enc_output[g_idx](output_memory)
+                )
 
-                enc_outputs_class_unselected_gidx = self.enc_out_class_embed[g_idx](output_memory_gidx)
+                enc_outputs_class_unselected_gidx = self.enc_out_class_embed[g_idx](
+                    output_memory_gidx
+                )
                 if self.bbox_reparam:
-                    enc_outputs_coord_delta_gidx = self.enc_out_bbox_embed[g_idx](output_memory_gidx)
-                    enc_outputs_coord_cxcy_gidx = (
-                        enc_outputs_coord_delta_gidx[..., :2] * output_proposals[..., 2:] + output_proposals[..., :2]
+                    enc_outputs_coord_delta_gidx = self.enc_out_bbox_embed[g_idx](
+                        output_memory_gidx
                     )
-                    enc_outputs_coord_wh_gidx = enc_outputs_coord_delta_gidx[..., 2:].exp() * output_proposals[..., 2:]
+                    enc_outputs_coord_cxcy_gidx = (
+                        enc_outputs_coord_delta_gidx[..., :2]
+                        * output_proposals[..., 2:]
+                        + output_proposals[..., :2]
+                    )
+                    enc_outputs_coord_wh_gidx = (
+                        enc_outputs_coord_delta_gidx[..., 2:].exp()
+                        * output_proposals[..., 2:]
+                    )
                     enc_outputs_coord_unselected_gidx = torch.concat(
                         [enc_outputs_coord_cxcy_gidx, enc_outputs_coord_wh_gidx], dim=-1
                     )
                 else:
                     enc_outputs_coord_unselected_gidx = (
-                        self.enc_out_bbox_embed[g_idx](output_memory_gidx) + output_proposals
+                        self.enc_out_bbox_embed[g_idx](output_memory_gidx)
+                        + output_proposals
                     )  # (bs, \sum{hw}, 4) unsigmoid
 
-                topk = min(self.num_queries, enc_outputs_class_unselected_gidx.shape[-2])
-                topk_proposals_gidx = torch.topk(enc_outputs_class_unselected_gidx.max(-1)[0], topk, dim=1)[1]  # bs, nq
+                topk = min(
+                    self.num_queries, enc_outputs_class_unselected_gidx.shape[-2]
+                )
+                topk_proposals_gidx = torch.topk(
+                    enc_outputs_class_unselected_gidx.max(-1)[0], topk, dim=1
+                )[1]  # bs, nq
 
                 refpoint_embed_gidx_undetach = torch.gather(
-                    enc_outputs_coord_unselected_gidx, 1, topk_proposals_gidx.unsqueeze(-1).repeat(1, 1, 4)
+                    enc_outputs_coord_unselected_gidx,
+                    1,
+                    topk_proposals_gidx.unsqueeze(-1).repeat(1, 1, 4),
                 )  # unsigmoid
                 # for decoder layer, detached as initial ones, (bs, nq, 4)
                 refpoint_embed_gidx = refpoint_embed_gidx_undetach.detach()
 
                 # get memory tgt
                 tgt_undetach_gidx = torch.gather(
-                    output_memory_gidx, 1, topk_proposals_gidx.unsqueeze(-1).repeat(1, 1, self.d_model)
+                    output_memory_gidx,
+                    1,
+                    topk_proposals_gidx.unsqueeze(-1).repeat(1, 1, self.d_model),
                 )
 
                 refpoint_embed_ts.append(refpoint_embed_gidx)
@@ -308,14 +366,27 @@ class Transformer(nn.Module):
                 refpoint_embed_subset = refpoint_embed[..., ts_len:, :]
 
                 if self.bbox_reparam:
-                    refpoint_embed_cxcy = refpoint_embed_ts_subset[..., :2] * refpoint_embed_ts[..., 2:]
-                    refpoint_embed_cxcy = refpoint_embed_cxcy + refpoint_embed_ts[..., :2]
-                    refpoint_embed_wh = refpoint_embed_ts_subset[..., 2:].exp() * refpoint_embed_ts[..., 2:]
-                    refpoint_embed_ts_subset = torch.concat([refpoint_embed_cxcy, refpoint_embed_wh], dim=-1)
+                    refpoint_embed_cxcy = (
+                        refpoint_embed_ts_subset[..., :2] * refpoint_embed_ts[..., 2:]
+                    )
+                    refpoint_embed_cxcy = (
+                        refpoint_embed_cxcy + refpoint_embed_ts[..., :2]
+                    )
+                    refpoint_embed_wh = (
+                        refpoint_embed_ts_subset[..., 2:].exp()
+                        * refpoint_embed_ts[..., 2:]
+                    )
+                    refpoint_embed_ts_subset = torch.concat(
+                        [refpoint_embed_cxcy, refpoint_embed_wh], dim=-1
+                    )
                 else:
-                    refpoint_embed_ts_subset = refpoint_embed_ts_subset + refpoint_embed_ts
+                    refpoint_embed_ts_subset = (
+                        refpoint_embed_ts_subset + refpoint_embed_ts
+                    )
 
-                refpoint_embed = torch.concat([refpoint_embed_ts_subset, refpoint_embed_subset], dim=-2)
+                refpoint_embed = torch.concat(
+                    [refpoint_embed_ts_subset, refpoint_embed_subset], dim=-2
+                )
 
             hs, references = self.decoder(
                 tgt,
@@ -325,7 +396,9 @@ class Transformer(nn.Module):
                 refpoints_unsigmoid=refpoint_embed,
                 level_start_index=level_start_index,
                 spatial_shapes=spatial_shapes,
-                valid_ratios=valid_ratios.to(memory.dtype) if valid_ratios is not None else valid_ratios,
+                valid_ratios=valid_ratios.to(memory.dtype)
+                if valid_ratios is not None
+                else valid_ratios,
             )
         else:
             assert self.two_stage, "if not using decoder, two_stage must be True"
@@ -370,10 +443,15 @@ class TransformerDecoder(nn.Module):
     def refpoints_refine(self, refpoints_unsigmoid, new_refpoints_delta):
         if self.bbox_reparam:
             new_refpoints_cxcy = (
-                new_refpoints_delta[..., :2] * refpoints_unsigmoid[..., 2:] + refpoints_unsigmoid[..., :2]
+                new_refpoints_delta[..., :2] * refpoints_unsigmoid[..., 2:]
+                + refpoints_unsigmoid[..., :2]
             )
-            new_refpoints_wh = new_refpoints_delta[..., 2:].exp() * refpoints_unsigmoid[..., 2:]
-            new_refpoints_unsigmoid = torch.concat([new_refpoints_cxcy, new_refpoints_wh], dim=-1)
+            new_refpoints_wh = (
+                new_refpoints_delta[..., 2:].exp() * refpoints_unsigmoid[..., 2:]
+            )
+            new_refpoints_unsigmoid = torch.concat(
+                [new_refpoints_cxcy, new_refpoints_wh], dim=-1
+            )
         else:
             new_refpoints_unsigmoid = refpoints_unsigmoid + new_refpoints_delta
         return new_refpoints_unsigmoid
@@ -403,11 +481,14 @@ class TransformerDecoder(nn.Module):
             obj_center = refpoints[..., :4]
 
             if self._export:
-                query_sine_embed = gen_sineembed_for_position(obj_center, self.d_model / 2)  # bs, nq, 256*2
+                query_sine_embed = gen_sineembed_for_position(
+                    obj_center, self.d_model / 2
+                )  # bs, nq, 256*2
                 refpoints_input = obj_center[:, :, None]  # bs, nq, 1, 4
             else:
                 refpoints_input = (
-                    obj_center[:, :, None] * torch.cat([valid_ratios, valid_ratios], -1)[:, None]
+                    obj_center[:, :, None]
+                    * torch.cat([valid_ratios, valid_ratios], -1)[:, None]
                 )  # bs, nq, nlevel, 4
                 query_sine_embed = gen_sineembed_for_position(
                     refpoints_input[:, :, 0, :], self.d_model / 2
@@ -418,18 +499,24 @@ class TransformerDecoder(nn.Module):
         # always use init refpoints
         if self.lite_refpoint_refine:
             if self.bbox_reparam:
-                obj_center, refpoints_input, query_pos, query_sine_embed = get_reference(refpoints_unsigmoid)
+                obj_center, refpoints_input, query_pos, query_sine_embed = (
+                    get_reference(refpoints_unsigmoid)
+                )
             else:
-                obj_center, refpoints_input, query_pos, query_sine_embed = get_reference(refpoints_unsigmoid.sigmoid())
+                obj_center, refpoints_input, query_pos, query_sine_embed = (
+                    get_reference(refpoints_unsigmoid.sigmoid())
+                )
 
         for layer_id, layer in enumerate(self.layers):
             # iter refine each layer
             if not self.lite_refpoint_refine:
                 if self.bbox_reparam:
-                    obj_center, refpoints_input, query_pos, query_sine_embed = get_reference(refpoints_unsigmoid)
+                    obj_center, refpoints_input, query_pos, query_sine_embed = (
+                        get_reference(refpoints_unsigmoid)
+                    )
                 else:
-                    obj_center, refpoints_input, query_pos, query_sine_embed = get_reference(
-                        refpoints_unsigmoid.sigmoid()
+                    obj_center, refpoints_input, query_pos, query_sine_embed = (
+                        get_reference(refpoints_unsigmoid.sigmoid())
                     )
 
             # For the first decoder layer, we do not apply transformation over p_s
@@ -456,7 +543,9 @@ class TransformerDecoder(nn.Module):
             if not self.lite_refpoint_refine:
                 # box iterative update
                 new_refpoints_delta = self.bbox_embed(output)
-                new_refpoints_unsigmoid = self.refpoints_refine(refpoints_unsigmoid, new_refpoints_delta)
+                new_refpoints_unsigmoid = self.refpoints_refine(
+                    refpoints_unsigmoid, new_refpoints_delta
+                )
                 if layer_id != self.num_layers - 1:
                     hs_refpoints_unsigmoid.append(new_refpoints_unsigmoid)
                 refpoints_unsigmoid = new_refpoints_unsigmoid.detach()
@@ -508,12 +597,19 @@ class TransformerDecoderLayer(nn.Module):
     ):
         super().__init__()
         # Decoder Self-Attention
-        self.self_attn = nn.MultiheadAttention(embed_dim=d_model, num_heads=sa_nhead, dropout=dropout, batch_first=True)
+        self.self_attn = nn.MultiheadAttention(
+            embed_dim=d_model, num_heads=sa_nhead, dropout=dropout, batch_first=True
+        )
         self.dropout1 = nn.Dropout(dropout)
         self.norm1 = nn.LayerNorm(d_model)
 
         # Decoder Cross-Attention
-        self.cross_attn = MSDeformAttn(d_model, n_levels=num_feature_levels, n_heads=ca_nhead, n_points=dec_n_points)
+        self.cross_attn = MSDeformAttn(
+            d_model,
+            n_levels=num_feature_levels,
+            n_heads=ca_nhead,
+            n_points=dec_n_points,
+        )
 
         self.nhead = ca_nhead
 
@@ -563,7 +659,14 @@ class TransformerDecoderLayer(nn.Module):
             k = torch.cat(k.split(num_queries // self.group_detr, dim=1), dim=0)
             v = torch.cat(v.split(num_queries // self.group_detr, dim=1), dim=0)
 
-        tgt2 = self.self_attn(q, k, v, attn_mask=tgt_mask, key_padding_mask=tgt_key_padding_mask, need_weights=False)[0]
+        tgt2 = self.self_attn(
+            q,
+            k,
+            v,
+            attn_mask=tgt_mask,
+            key_padding_mask=tgt_key_padding_mask,
+            need_weights=False,
+        )[0]
 
         if self.training:
             tgt2 = torch.cat(tgt2.split(bs, dim=0), dim=1)

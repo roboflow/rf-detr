@@ -137,7 +137,11 @@ class RFDETR:
         # other training-extras package) causes either import to fail, and the
         # remediation is identical: `pip install "rfdetr[train,loggers]"`.
         try:
-            from rfdetr.training import RFDETRDataModule, RFDETRModelModule, build_trainer
+            from rfdetr.training import (
+                RFDETRDataModule,
+                RFDETRModelModule,
+                build_trainer,
+            )
             from rfdetr.training.auto_batch import resolve_auto_batch_config
         except ModuleNotFoundError as exc:
             # Preserve internal import errors so packaging/regression issues in
@@ -242,7 +246,12 @@ class RFDETR:
             self.model.inference_model = torch.jit.trace(
                 self.model.inference_model,
                 torch.randn(
-                    batch_size, 3, self.model.resolution, self.model.resolution, device=self.model.device, dtype=dtype
+                    batch_size,
+                    3,
+                    self.model.resolution,
+                    self.model.resolution,
+                    device=self.model.device,
+                    dtype=dtype,
                 ),
             )
             self._optimized_has_been_compiled = True
@@ -266,7 +275,9 @@ class RFDETR:
         deprecated_in="1.6",
         remove_in="1.8",
         num_warns=1,
-        stream=functools.partial(warnings.warn, category=DeprecationWarning, stacklevel=2),
+        stream=functools.partial(
+            warnings.warn, category=DeprecationWarning, stacklevel=2
+        ),
     )
     def export(
         self,
@@ -320,7 +331,9 @@ class RFDETR:
             if shape[0] % 14 != 0 or shape[1] % 14 != 0:
                 raise ValueError("Shape must be divisible by 14")
 
-        input_tensors = make_infer_image(infer_dir, shape, batch_size, device).to(device)
+        input_tensors = make_infer_image(infer_dir, shape, batch_size, device).to(
+            device
+        )
         input_names = ["input"]
         if backbone_only:
             output_names = ["features"]
@@ -346,12 +359,16 @@ class RFDETR:
                         f"Masks: {masks.shape}"
                     )
                 else:
-                    logger.debug(f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}")
+                    logger.debug(
+                        f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}"
+                    )
             else:
                 outputs = model(input_tensors)
                 dets = outputs["pred_boxes"]
                 labels = outputs["pred_logits"]
-                logger.debug(f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}")
+                logger.debug(
+                    f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}"
+                )
 
         model.cpu()
         input_tensors = input_tensors.cpu()
@@ -380,31 +397,46 @@ class RFDETR:
             coco_path = os.path.join(dataset_dir, "train", "_annotations.coco.json")
             with open(coco_path, "r") as f:
                 anns = json.load(f)
-            categories = sorted(anns["categories"], key=lambda category: category.get("id", float("inf")))
+            categories = sorted(
+                anns["categories"],
+                key=lambda category: category.get("id", float("inf")),
+            )
 
             # Catch possible placeholders for no supercategory
             placeholders = {"", "none", "null", None}
 
             # If no meaningful supercategory exists anywhere, treat as flat dataset
-            has_any_sc = any(c.get("supercategory", "none") not in placeholders for c in categories)
+            has_any_sc = any(
+                c.get("supercategory", "none") not in placeholders for c in categories
+            )
             if not has_any_sc:
                 return [c["name"] for c in categories]
 
             # Mixed/Hierarchical: keep only categories that are not parents of other categories.
             # Both leaves (with a real supercategory) and standalone top-level nodes (supercategory is a
             # placeholder) satisfy this condition — neither appears as another category's supercategory.
-            parents = {c.get("supercategory") for c in categories if c.get("supercategory", "none") not in placeholders}
+            parents = {
+                c.get("supercategory")
+                for c in categories
+                if c.get("supercategory", "none") not in placeholders
+            }
             has_children = {c["name"] for c in categories if c["name"] in parents}
 
-            class_names = [c["name"] for c in categories if c["name"] not in has_children]
+            class_names = [
+                c["name"] for c in categories if c["name"] not in has_children
+            ]
             # Safety fallback for pathological inputs
             return class_names or [c["name"] for c in categories]
 
         # list all YAML files in the folder
         if is_valid_yolo_dataset(dataset_dir):
-            yaml_paths = glob.glob(os.path.join(dataset_dir, "*.yaml")) + glob.glob(os.path.join(dataset_dir, "*.yml"))
+            yaml_paths = glob.glob(os.path.join(dataset_dir, "*.yaml")) + glob.glob(
+                os.path.join(dataset_dir, "*.yml")
+            )
             # any YAML file starting with data e.g. data.yaml, dataset.yaml
-            yaml_data_files = [yp for yp in yaml_paths if os.path.basename(yp).startswith("data")]
+            yaml_data_files = [
+                yp for yp in yaml_paths if os.path.basename(yp).startswith("data")
+            ]
             yaml_path = yaml_data_files[0]
             with open(yaml_path, "r") as f:
                 data = yaml.safe_load(f)
@@ -413,7 +445,9 @@ class RFDETR:
                     return [data["names"][i] for i in sorted(data["names"].keys())]
                 return data["names"]
             else:
-                raise ValueError(f"Found {yaml_path} but it does not contain 'names' field.")
+                raise ValueError(
+                    f"Found {yaml_path} but it does not contain 'names' field."
+                )
         raise FileNotFoundError(
             f"Could not find class names in {dataset_dir}."
             " Checked for COCO (train/_annotations.coco.json) and YOLO (data.yaml, data.yml) styles."
@@ -454,7 +488,11 @@ class RFDETR:
     def predict(
         self,
         images: Union[
-            str, Image.Image, np.ndarray, torch.Tensor, List[Union[str, np.ndarray, Image.Image, torch.Tensor]]
+            str,
+            Image.Image,
+            np.ndarray,
+            torch.Tensor,
+            List[Union[str, np.ndarray, Image.Image, torch.Tensor]],
         ],
         threshold: float = 0.5,
         **kwargs,
@@ -482,7 +520,10 @@ class RFDETR:
         """
         import supervision as sv
 
-        if not self._is_optimized_for_inference and not self._has_warned_about_not_being_optimized_for_inference:
+        if (
+            not self._is_optimized_for_inference
+            and not self._has_warned_about_not_being_optimized_for_inference
+        ):
             logger.warning(
                 "Model is not optimized for inference. Latency may be higher than expected."
                 " You can optimize the model for inference by calling model.optimize_for_inference()."
@@ -511,14 +552,18 @@ class RFDETR:
                     "Image has pixel values above 1. Please ensure the image is normalized (scaled to [0, 1])."
                 )
             if img.shape[0] != 3:
-                raise ValueError(f"Invalid image shape. Expected 3 channels (RGB), but got {img.shape[0]} channels.")
+                raise ValueError(
+                    f"Invalid image shape. Expected 3 channels (RGB), but got {img.shape[0]} channels."
+                )
             img_tensor = img
 
             h, w = img_tensor.shape[1:]
             orig_sizes.append((h, w))
 
             img_tensor = img_tensor.to(self.model.device)
-            img_tensor = F.resize(img_tensor, (self.model.resolution, self.model.resolution))
+            img_tensor = F.resize(
+                img_tensor, (self.model.resolution, self.model.resolution)
+            )
             img_tensor = F.normalize(img_tensor, self.means, self.stds)
 
             processed_images.append(img_tensor)
@@ -547,7 +592,9 @@ class RFDETR:
 
         with torch.no_grad():
             if self._is_optimized_for_inference:
-                predictions = self.model.inference_model(batch_tensor.to(dtype=self._optimized_dtype))
+                predictions = self.model.inference_model(
+                    batch_tensor.to(dtype=self._optimized_dtype)
+                )
             else:
                 predictions = self.model.model(batch_tensor)
             if isinstance(predictions, tuple):
@@ -630,7 +677,9 @@ class RFDETR:
         if api_key is None:
             api_key = os.getenv("ROBOFLOW_API_KEY")
             if api_key is None:
-                raise ValueError("Set api_key=<KEY> in deploy_to_roboflow or export ROBOFLOW_API_KEY=<KEY>")
+                raise ValueError(
+                    "Set api_key=<KEY> in deploy_to_roboflow or export ROBOFLOW_API_KEY=<KEY>"
+                )
 
         rf = Roboflow(api_key=api_key)
         workspace = rf.workspace(workspace)
@@ -642,7 +691,9 @@ class RFDETR:
         tmp_out_dir = ".roboflow_temp_upload"
         os.makedirs(tmp_out_dir, exist_ok=True)
         outpath = os.path.join(tmp_out_dir, "weights.pt")
-        torch.save({"model": self.model.model.state_dict(), "args": self.model.args}, outpath)
+        torch.save(
+            {"model": self.model.model.state_dict(), "args": self.model.args}, outpath
+        )
         project = workspace.project(project_id)
         version = project.version(version)
         version.deploy(model_type=size, model_path=tmp_out_dir, filename="weights.pt")

@@ -96,7 +96,9 @@ def all_gather(data: Any) -> List[Any]:
     for _ in size_list:
         tensor_list.append(torch.empty((max_size,), dtype=torch.uint8, device=device))
     if local_size != max_size:
-        padding = torch.empty(size=(max_size - local_size,), dtype=torch.uint8, device=device)
+        padding = torch.empty(
+            size=(max_size - local_size,), dtype=torch.uint8, device=device
+        )
         tensor = torch.cat((tensor, padding), dim=0)
     dist.all_gather(tensor_list, tensor)
 
@@ -108,7 +110,9 @@ def all_gather(data: Any) -> List[Any]:
     return data_list
 
 
-def reduce_dict(input_dict: Dict[str, torch.Tensor], average: bool = True) -> Dict[str, torch.Tensor]:
+def reduce_dict(
+    input_dict: Dict[str, torch.Tensor], average: bool = True
+) -> Dict[str, torch.Tensor]:
     """Reduce values in *input_dict* across all processes.
 
     Args:

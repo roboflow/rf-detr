@@ -54,8 +54,14 @@ def _call_manual_path(
         def __repr__(self):
             return "device(type='mps')"
 
-    with patch.object(torch.Tensor, "device", new_callable=lambda: property(lambda self: _FakeMPSDevice())):
-        return _bilinear_grid_sample(input, grid, padding_mode=padding_mode, align_corners=align_corners)
+    with patch.object(
+        torch.Tensor,
+        "device",
+        new_callable=lambda: property(lambda self: _FakeMPSDevice()),
+    ):
+        return _bilinear_grid_sample(
+            input, grid, padding_mode=padding_mode, align_corners=align_corners
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -95,7 +101,9 @@ def _require_grid_sample_dtype_support(dtype: torch.dtype) -> None:
     input = torch.randn(1, 1, 2, 2, dtype=dtype, requires_grad=True)
     grid = (torch.rand(1, 1, 1, 2, dtype=dtype) * 1.6 - 0.8).requires_grad_(True)
     try:
-        out = F.grid_sample(input, grid, mode="bilinear", padding_mode="zeros", align_corners=False)
+        out = F.grid_sample(
+            input, grid, mode="bilinear", padding_mode="zeros", align_corners=False
+        )
         out.backward(torch.ones_like(out))
     except RuntimeError as error:
         pytest.skip(f"grid_sample dtype support missing for {dtype}: {error}")
@@ -123,7 +131,9 @@ class TestBilinearGridSampleParity:
         "padding_mode, align_corners",
         _PADDING_ALIGN_COMBOS,
     )
-    def test_partially_outside_grid_coordinates(self, seed, padding_mode, align_corners):
+    def test_partially_outside_grid_coordinates(
+        self, seed, padding_mode, align_corners
+    ):
         """Grid values spanning [-1.5, 1.5] -- some samples fall outside the image."""
         input = torch.randn(1, 3, 8, 8)
         grid = torch.rand(1, 6, 6, 2) * 3.0 - 1.5
@@ -234,7 +244,9 @@ class TestBilinearGridSampleDelegation:
         grid = torch.rand(1, 4, 4, 2) * 2.0 - 1.0
 
         expected = _grid_sample_reference(input, grid, "zeros", False)
-        actual = _bilinear_grid_sample(input, grid, padding_mode="zeros", align_corners=False)
+        actual = _bilinear_grid_sample(
+            input, grid, padding_mode="zeros", align_corners=False
+        )
 
         torch.testing.assert_close(actual, expected, atol=0, rtol=0)
 
@@ -244,7 +256,9 @@ class TestBilinearGridSampleDelegation:
         grid = torch.rand(2, 3, 3, 2) * 3.0 - 1.5
 
         expected = _grid_sample_reference(input, grid, "border", False)
-        actual = _bilinear_grid_sample(input, grid, padding_mode="border", align_corners=False)
+        actual = _bilinear_grid_sample(
+            input, grid, padding_mode="border", align_corners=False
+        )
 
         torch.testing.assert_close(actual, expected, atol=0, rtol=0)
 
@@ -267,7 +281,9 @@ class TestBilinearGridSampleOutputShape:
         grid = torch.rand(n, hg, wg, 2) * 2.0 - 1.0
 
         actual = _call_manual_path(input, grid)
-        assert actual.shape == (n, c, hg, wg), f"Expected shape ({n}, {c}, {hg}, {wg}), got {actual.shape}"
+        assert actual.shape == (n, c, hg, wg), (
+            f"Expected shape ({n}, {c}, {hg}, {wg}), got {actual.shape}"
+        )
 
 
 class TestBilinearGridSampleGradient:
@@ -291,7 +307,9 @@ class TestBilinearGridSampleGradient:
         grid_man = grid_ref.detach().clone().requires_grad_(True)
 
         # Forward
-        out_ref = _grid_sample_reference(input_ref, grid_ref, padding_mode, align_corners)
+        out_ref = _grid_sample_reference(
+            input_ref, grid_ref, padding_mode, align_corners
+        )
         out_man = _call_manual_path(input_man, grid_man, padding_mode, align_corners)
 
         # Backward with same upstream gradient
@@ -317,10 +335,14 @@ class TestBilinearGridSampleGradient:
     def test_gradcheck_manual_path(self, seed):
         """torch.autograd.gradcheck passes on the manual path (double precision)."""
         input = torch.randn(1, 1, 4, 4, dtype=torch.float64, requires_grad=True)
-        grid = (torch.rand(1, 3, 3, 2, dtype=torch.float64) * 1.6 - 0.8).requires_grad_(True)
+        grid = (torch.rand(1, 3, 3, 2, dtype=torch.float64) * 1.6 - 0.8).requires_grad_(
+            True
+        )
 
         assert torch.autograd.gradcheck(
-            lambda inp, grd: _call_manual_path(inp, grd, padding_mode="zeros", align_corners=False),
+            lambda inp, grd: _call_manual_path(
+                inp, grd, padding_mode="zeros", align_corners=False
+            ),
             (input, grid),
             eps=1e-6,
             atol=1e-4,
@@ -339,8 +361,12 @@ class TestBilinearGridSampleLowPrecision:
         input = torch.randn(2, 3, 6, 6, dtype=dtype)
         grid = torch.rand(2, 4, 4, 2, dtype=dtype) * 3.0 - 1.5
 
-        expected = _grid_sample_reference(input, grid, padding_mode="zeros", align_corners=False)
-        actual = _call_manual_path(input, grid, padding_mode="zeros", align_corners=False)
+        expected = _grid_sample_reference(
+            input, grid, padding_mode="zeros", align_corners=False
+        )
+        actual = _call_manual_path(
+            input, grid, padding_mode="zeros", align_corners=False
+        )
 
         torch.testing.assert_close(actual, expected, atol=1e-3, rtol=1e-3)
         assert actual.dtype == dtype
@@ -352,13 +378,19 @@ class TestBilinearGridSampleLowPrecision:
         atol, rtol = _LOW_PRECISION_GRAD_TOLERANCES[dtype]
 
         input_ref = torch.randn(1, 2, 6, 6, dtype=dtype, requires_grad=True)
-        grid_ref = (torch.rand(1, 4, 4, 2, dtype=dtype) * 1.6 - 0.8).requires_grad_(True)
+        grid_ref = (torch.rand(1, 4, 4, 2, dtype=dtype) * 1.6 - 0.8).requires_grad_(
+            True
+        )
 
         input_man = input_ref.detach().clone().requires_grad_(True)
         grid_man = grid_ref.detach().clone().requires_grad_(True)
 
-        out_ref = _grid_sample_reference(input_ref, grid_ref, padding_mode="zeros", align_corners=False)
-        out_man = _call_manual_path(input_man, grid_man, padding_mode="zeros", align_corners=False)
+        out_ref = _grid_sample_reference(
+            input_ref, grid_ref, padding_mode="zeros", align_corners=False
+        )
+        out_man = _call_manual_path(
+            input_man, grid_man, padding_mode="zeros", align_corners=False
+        )
 
         upstream = torch.randn_like(out_ref)
         out_ref.backward(upstream)

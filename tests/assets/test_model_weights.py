@@ -68,14 +68,18 @@ def test_list_models():
     assert all(isinstance(m, str) for m in models)
 
 
-@pytest.mark.parametrize("asset", list(ModelWeights), ids=[a.filename for a in ModelWeights])
+@pytest.mark.parametrize(
+    "asset", list(ModelWeights), ids=[a.filename for a in ModelWeights]
+)
 def test_all_assets_have_valid_urls(asset: ModelWeightAsset) -> None:
     """Test that all assets have valid URLs."""
     assert asset.url.startswith("http")
     assert len(asset.url) > 20  # Reasonable minimum URL length
 
 
-@pytest.mark.parametrize("asset", list(ModelWeights), ids=[a.filename for a in ModelWeights])
+@pytest.mark.parametrize(
+    "asset", list(ModelWeights), ids=[a.filename for a in ModelWeights]
+)
 def test_all_assets_have_valid_filenames(asset: ModelWeightAsset) -> None:
     """Test that all assets have valid filenames."""
     assert len(asset.filename) > 0
@@ -90,7 +94,9 @@ def test_filenames_are_unique():
 
 def test_model_weight_asset_optional_md5():
     """Test that MD5 hash is optional (important for new models)."""
-    asset = ModelWeightAsset(filename="test-model.pth", url="https://example.com/test-model.pth")
+    asset = ModelWeightAsset(
+        filename="test-model.pth", url="https://example.com/test-model.pth"
+    )
 
     assert asset.md5_hash is None, "MD5 hash should be optional"
 

@@ -27,10 +27,16 @@ class TestCalculateBoundaryOverlap:
         "bbox,expected_overlap",
         [
             pytest.param(np.array([40.0, 40.0, 60.0, 60.0]), 0.0, id="fully_inside"),
-            pytest.param(np.array([-10.0, 40.0, 10.0, 60.0]), 0.5, id="half_outside_horizontally"),
+            pytest.param(
+                np.array([-10.0, 40.0, 10.0, 60.0]), 0.5, id="half_outside_horizontally"
+            ),
             pytest.param(np.array([110.0, 40.0, 130.0, 60.0]), 1.0, id="fully_outside"),
-            pytest.param(np.array([0.0, 0.0, 50.0, 50.0]), 0.0, id="exactly_at_boundary"),
-            pytest.param(np.array([50.0, 50.0, 100.0, 100.0]), 0.0, id="exactly_at_max_boundary"),
+            pytest.param(
+                np.array([0.0, 0.0, 50.0, 50.0]), 0.0, id="exactly_at_boundary"
+            ),
+            pytest.param(
+                np.array([50.0, 50.0, 100.0, 100.0]), 0.0, id="exactly_at_max_boundary"
+            ),
         ],
     )
     def test_overlap_values(self, bbox, expected_overlap):
@@ -49,7 +55,9 @@ class TestDrawSyntheticShape:
     )
     def test_pixels_are_modified(self, shape, color):
         img = np.zeros((100, 100, 3), dtype=np.uint8)
-        img_modified, polygon = draw_synthetic_shape(img.copy(), shape, color, (50, 50), 20)
+        img_modified, polygon = draw_synthetic_shape(
+            img.copy(), shape, color, (50, 50), 20
+        )
         assert not np.array_equal(img, img_modified)
         assert len(polygon) >= 6
         assert len(polygon) % 2 == 0
@@ -67,7 +75,9 @@ class TestDrawSyntheticShape:
         img = np.zeros((100, 100, 3), dtype=np.uint8)
         _, poly = draw_synthetic_shape(img, shape, sv.Color.WHITE, (cx, cy), size)
         assert len(poly) >= 6, f"{shape} polygon has fewer than 6 values: {poly}"
-        assert len(poly) % 2 == 0, f"{shape} polygon has an odd number of values: {poly}"
+        assert len(poly) % 2 == 0, (
+            f"{shape} polygon has an odd number of values: {poly}"
+        )
 
     @pytest.mark.parametrize(
         "shape,cx,cy,size,expected_n_coords",
@@ -118,9 +128,14 @@ class TestGenerateSyntheticSample:
             pytest.param(100, 0, 0, "shape", id="zero_objects"),
         ],
     )
-    def test_output_shape_and_detection_count(self, img_size, min_objects, max_objects, class_mode):
+    def test_output_shape_and_detection_count(
+        self, img_size, min_objects, max_objects, class_mode
+    ):
         img, detections = generate_synthetic_sample(
-            img_size=img_size, min_objects=min_objects, max_objects=max_objects, class_mode=class_mode
+            img_size=img_size,
+            min_objects=min_objects,
+            max_objects=max_objects,
+            class_mode=class_mode,
         )
         assert img.shape == (img_size, img_size, 3)
         assert min_objects <= len(detections) <= max_objects
@@ -129,26 +144,34 @@ class TestGenerateSyntheticSample:
 
     def test_polygon_data_present(self):
         """detections.data must contain a 'polygons' array with one entry per detection."""
-        _, detections = generate_synthetic_sample(img_size=100, min_objects=2, max_objects=4, class_mode="shape")
+        _, detections = generate_synthetic_sample(
+            img_size=100, min_objects=2, max_objects=4, class_mode="shape"
+        )
         assert "polygons" in detections.data
         assert len(detections.data["polygons"]) == len(detections)
 
     def test_polygon_data_non_empty(self):
         """Each stored polygon must be a non-empty list of floats."""
-        _, detections = generate_synthetic_sample(img_size=100, min_objects=1, max_objects=3, class_mode="shape")
+        _, detections = generate_synthetic_sample(
+            img_size=100, min_objects=1, max_objects=3, class_mode="shape"
+        )
         for poly in detections.data["polygons"]:
             assert isinstance(poly, list)
             assert len(poly) >= 6
 
     def test_zero_objects_polygon_data(self):
         """With zero objects the polygon data array must be present but empty."""
-        _, detections = generate_synthetic_sample(img_size=100, min_objects=0, max_objects=0, class_mode="shape")
+        _, detections = generate_synthetic_sample(
+            img_size=100, min_objects=0, max_objects=0, class_mode="shape"
+        )
         assert "polygons" in detections.data
         assert len(detections.data["polygons"]) == 0
 
     def test_polygon_bbox_consistency(self):
         """detections.xyxy must match the min/max of the corresponding polygon."""
-        _, detections = generate_synthetic_sample(img_size=200, min_objects=3, max_objects=5, class_mode="shape")
+        _, detections = generate_synthetic_sample(
+            img_size=200, min_objects=3, max_objects=5, class_mode="shape"
+        )
         for i in range(len(detections)):
             poly = detections.data["polygons"][i]
             poly_array = np.asarray(poly, dtype=float).reshape(-1, 2)
@@ -157,10 +180,18 @@ class TestGenerateSyntheticSample:
             expected_x_max = float(np.max(poly_array[:, 0]))
             expected_y_max = float(np.max(poly_array[:, 1]))
             x_min, y_min, x_max, y_max = detections.xyxy[i]
-            assert x_min == pytest.approx(expected_x_min), f"detection {i} x_min mismatch"
-            assert y_min == pytest.approx(expected_y_min), f"detection {i} y_min mismatch"
-            assert x_max == pytest.approx(expected_x_max), f"detection {i} x_max mismatch"
-            assert y_max == pytest.approx(expected_y_max), f"detection {i} y_max mismatch"
+            assert x_min == pytest.approx(expected_x_min), (
+                f"detection {i} x_min mismatch"
+            )
+            assert y_min == pytest.approx(expected_y_min), (
+                f"detection {i} y_min mismatch"
+            )
+            assert x_max == pytest.approx(expected_x_max), (
+                f"detection {i} x_max mismatch"
+            )
+            assert y_max == pytest.approx(expected_y_max), (
+                f"detection {i} y_max mismatch"
+            )
 
 
 class TestGenerateCocoDataset:
@@ -237,7 +268,9 @@ class TestGenerateCocoDataset:
             ),
         ],
     )
-    def test_splits_created(self, num_images, img_size, class_mode, split_ratios, expected_splits, tmp_path):
+    def test_splits_created(
+        self, num_images, img_size, class_mode, split_ratios, expected_splits, tmp_path
+    ):
         output_dir = tmp_path / "test_dataset"
         generate_coco_dataset(
             output_dir=str(output_dir),
@@ -347,7 +380,9 @@ class TestGenerateCocoDatasetWithSegmentation:
             data={"polygons": np.empty(0, dtype=object)},
         )
 
-        with pytest.raises(ValueError, match="file_paths and detections_list must have the same length"):
+        with pytest.raises(
+            ValueError, match="file_paths and detections_list must have the same length"
+        ):
             _write_coco_json(
                 annotations_path=annotations_path,
                 classes=["shape"],
@@ -406,8 +441,12 @@ class TestGenerateCocoDatasetWithSegmentation:
         for ann in data["annotations"]:
             assert "segmentation" in ann
             assert isinstance(ann["segmentation"], list)
-            assert len(ann["segmentation"]) == 1, "Expected exactly one polygon per annotation"
-            assert len(ann["segmentation"][0]) >= 6, "Polygon must have at least 3 points"
+            assert len(ann["segmentation"]) == 1, (
+                "Expected exactly one polygon per annotation"
+            )
+            assert len(ann["segmentation"][0]) >= 6, (
+                "Polygon must have at least 3 points"
+            )
 
     def test_area_uses_polygon_when_segmentation_enabled(self, tmp_path):
         """COCO area must match polygon area when segmentation annotations are present."""
@@ -594,7 +633,9 @@ class TestDrawSyntheticShapeEdgeCases:
             pytest.param("circle", 1, 64, id="circle_size_1"),
         ],
     )
-    def test_degenerate_size_returns_polygon_without_crashing(self, shape, size, expected_n_coords):
+    def test_degenerate_size_returns_polygon_without_crashing(
+        self, shape, size, expected_n_coords
+    ):
         """draw_synthetic_shape with size=0 or size=1 must not raise and must
         return the expected number of flat coordinate values.
         """

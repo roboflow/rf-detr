@@ -19,7 +19,7 @@ import torchvision.transforms.functional as F
 from PIL import Image
 
 try:
-    torch.set_float32_matmul_precision('high')
+    torch.set_float32_matmul_precision("high")
 except:
     pass
 
@@ -38,19 +38,26 @@ from rfdetr.config import (
     TrainConfig,
     SegmentationTrainConfig,
     KeypointTrainConfig,
-    ModelConfig
+    ModelConfig,
 )
 from rfdetr.main import Model, download_pretrain_weights
-from rfdetr.util.metrics import MetricsPlotSink, MetricsTensorBoardSink, MetricsWandBSink
+from rfdetr.util.metrics import (
+    MetricsPlotSink,
+    MetricsTensorBoardSink,
+    MetricsWandBSink,
+)
 from rfdetr.util.coco_classes import COCO_CLASSES
 
 logger = getLogger(__name__)
+
+
 class RFDETR:
     """
     The base RF-DETR class implements the core methods for training RF-DETR models,
     running inference on the models, optimising models, and uploading trained
     models for deployment.
     """
+
     means = [0.485, 0.456, 0.406]
     stds = [0.229, 0.224, 0.225]
     size = None
@@ -87,7 +94,7 @@ class RFDETR:
         """
         config = self.get_train_config(**kwargs)
         self.train_from_config(config, **kwargs)
-    
+
     def optimize_for_inference(self, compile=True, batch_size=1, dtype=torch.float32):
         self.remove_optimized_model()
 
@@ -105,14 +112,17 @@ class RFDETR:
             self.model.inference_model = torch.jit.trace(
                 self.model.inference_model,
                 torch.randn(
-                    batch_size, 3, self.model.resolution, self.model.resolution, 
+                    batch_size,
+                    3,
+                    self.model.resolution,
+                    self.model.resolution,
                     device=self.model.device,
-                    dtype=dtype
-                )
+                    dtype=dtype,
+                ),
             )
             self._optimized_has_been_compiled = True
             self._optimized_batch_size = batch_size
-    
+
     def remove_optimized_model(self):
         self.model.inference_model = None
         self._is_optimized_for_inference = False
@@ -120,7 +130,7 @@ class RFDETR:
         self._optimized_batch_size = None
         self._optimized_resolution = None
         self._optimized_half = False
-    
+
     def export(self, **kwargs):
         """
         Export your model to an ONNX file.
@@ -136,7 +146,11 @@ class RFDETR:
             ) as f:
                 anns = json.load(f)
                 num_classes = len(anns["categories"])
-                class_names = [c["name"] for c in anns["categories"] if c["supercategory"] != "none"]
+                class_names = [
+                    c["name"]
+                    for c in anns["categories"]
+                    if c["supercategory"] != "none"
+                ]
                 self.model.class_names = class_names
         elif config.dataset_file == "coco":
             class_names = COCO_CLASSES
@@ -146,13 +160,13 @@ class RFDETR:
 
         if self.model_config.num_classes != num_classes:
             self.model.reinitialize_detection_head(num_classes)
-        
+
         train_config = config.dict()
         model_config = self.model_config.dict()
         model_config.pop("num_classes")
         if "class_names" in model_config:
             model_config.pop("class_names")
-        
+
         if "class_names" in train_config and train_config["class_names"] is None:
             train_config["class_names"] = class_names
 
@@ -161,15 +175,22 @@ class RFDETR:
                 model_config.pop(k)
             if k in kwargs:
                 kwargs.pop(k)
-        
-        all_kwargs = {**model_config, **train_config, **kwargs, "num_classes": num_classes}
+
+        all_kwargs = {
+            **model_config,
+            **train_config,
+            **kwargs,
+            "num_classes": num_classes,
+        }
 
         metrics_plot_sink = MetricsPlotSink(output_dir=config.output_dir)
         self.callbacks["on_fit_epoch_end"].append(metrics_plot_sink.update)
         self.callbacks["on_train_end"].append(metrics_plot_sink.save)
 
         if config.tensorboard:
-            metrics_tensor_board_sink = MetricsTensorBoardSink(output_dir=config.output_dir)
+            metrics_tensor_board_sink = MetricsTensorBoardSink(
+                output_dir=config.output_dir
+            )
             self.callbacks["on_fit_epoch_end"].append(metrics_tensor_board_sink.update)
             self.callbacks["on_train_end"].append(metrics_tensor_board_sink.close)
 
@@ -178,19 +199,20 @@ class RFDETR:
                 output_dir=config.output_dir,
                 project=config.project,
                 run=config.run,
-                config=config.model_dump()
+                config=config.model_dump(),
             )
             self.callbacks["on_fit_epoch_end"].append(metrics_wandb_sink.update)
             self.callbacks["on_train_end"].append(metrics_wandb_sink.close)
 
         if config.early_stopping:
             from rfdetr.util.early_stopping import EarlyStoppingCallback
+
             early_stopping_callback = EarlyStoppingCallback(
                 model=self.model,
                 patience=config.early_stopping_patience,
                 min_delta=config.early_stopping_min_delta,
                 use_ema=config.early_stopping_use_ema,
-                segmentation_head=config.segmentation_head
+                segmentation_head=config.segmentation_head,
             )
             self.callbacks["on_fit_epoch_end"].append(early_stopping_callback.update)
 
@@ -210,7 +232,7 @@ class RFDETR:
         Retrieve a model instance based on the provided configuration.
         """
         return Model(**config.dict())
-    
+
     # Get class_names from the model
     @property
     def class_names(self):
@@ -220,14 +242,20 @@ class RFDETR:
         Returns:
             dict: A dictionary mapping class IDs to class names. The keys are integers starting from
         """
-        if hasattr(self.model, 'class_names') and self.model.class_names:
-            return {i+1: name for i, name in enumerate(self.model.class_names)}
-            
+        if hasattr(self.model, "class_names") and self.model.class_names:
+            return {i + 1: name for i, name in enumerate(self.model.class_names)}
+
         return COCO_CLASSES
 
     def predict(
         self,
-        images: Union[str, Image.Image, np.ndarray, torch.Tensor, List[Union[str, np.ndarray, Image.Image, torch.Tensor]]],
+        images: Union[
+            str,
+            Image.Image,
+            np.ndarray,
+            torch.Tensor,
+            List[Union[str, np.ndarray, Image.Image, torch.Tensor]],
+        ],
         threshold: float = 0.5,
         **kwargs,
     ) -> Union[sv.Detections, List[sv.Detections]]:
@@ -253,7 +281,10 @@ class RFDETR:
                 objects, each containing bounding box coordinates, confidence scores,
                 and class IDs.
         """
-        if not self._is_optimized_for_inference and not self._has_warned_about_not_being_optimized_for_inference:
+        if (
+            not self._is_optimized_for_inference
+            and not self._has_warned_about_not_being_optimized_for_inference
+        ):
             logger.warning(
                 "Model is not optimized for inference. "
                 "Latency may be higher than expected. "
@@ -270,13 +301,12 @@ class RFDETR:
         processed_images = []
 
         for img in images:
-
             if isinstance(img, str):
                 img = Image.open(img)
 
             if not isinstance(img, torch.Tensor):
                 img = F.to_tensor(img)
-            
+
             if (img > 1).any():
                 raise ValueError(
                     "Image has pixel values above 1. Please ensure the image is "
@@ -288,13 +318,15 @@ class RFDETR:
                     f"{img.shape[0]} channels."
                 )
             img_tensor = img
-            
+
             h, w = img_tensor.shape[1:]
             orig_sizes.append((h, w))
 
             img_tensor = img_tensor.to(self.model.device)
             img_tensor = F.normalize(img_tensor, self.means, self.stds)
-            img_tensor = F.resize(img_tensor, (self.model.resolution, self.model.resolution))
+            img_tensor = F.resize(
+                img_tensor, (self.model.resolution, self.model.resolution)
+            )
 
             processed_images.append(img_tensor)
 
@@ -303,22 +335,28 @@ class RFDETR:
         if self._is_optimized_for_inference:
             if self._optimized_resolution != batch_tensor.shape[2]:
                 # this could happen if someone manually changes self.model.resolution after optimizing the model
-                raise ValueError(f"Resolution mismatch. "
-                                 f"Model was optimized for resolution {self._optimized_resolution}, "
-                                 f"but got {batch_tensor.shape[2]}. "
-                                 "You can explicitly remove the optimized model by calling model.remove_optimized_model().")
+                raise ValueError(
+                    f"Resolution mismatch. "
+                    f"Model was optimized for resolution {self._optimized_resolution}, "
+                    f"but got {batch_tensor.shape[2]}. "
+                    "You can explicitly remove the optimized model by calling model.remove_optimized_model()."
+                )
             if self._optimized_has_been_compiled:
                 if self._optimized_batch_size != batch_tensor.shape[0]:
-                    raise ValueError(f"Batch size mismatch. "
-                                     f"Optimized model was compiled for batch size {self._optimized_batch_size}, "
-                                     f"but got {batch_tensor.shape[0]}. "
-                                     "You can explicitly remove the optimized model by calling model.remove_optimized_model(). "
-                                     "Alternatively, you can recompile the optimized model for a different batch size "
-                                     "by calling model.optimize_for_inference(batch_size=<new_batch_size>).")
+                    raise ValueError(
+                        f"Batch size mismatch. "
+                        f"Optimized model was compiled for batch size {self._optimized_batch_size}, "
+                        f"but got {batch_tensor.shape[0]}. "
+                        "You can explicitly remove the optimized model by calling model.remove_optimized_model(). "
+                        "Alternatively, you can recompile the optimized model for a different batch size "
+                        "by calling model.optimize_for_inference(batch_size=<new_batch_size>)."
+                    )
 
         with torch.inference_mode():
             if self._is_optimized_for_inference:
-                predictions = self.model.inference_model(batch_tensor.to(dtype=self._optimized_dtype))
+                predictions = self.model.inference_model(
+                    batch_tensor.to(dtype=self._optimized_dtype)
+                )
             else:
                 predictions = self.model.model(batch_tensor)
             if isinstance(predictions, tuple):
@@ -366,13 +404,22 @@ class RFDETR:
                 if "keypoints_confidence" in result:
                     keypoints_conf = result["keypoints_confidence"]
                     keypoints_conf = keypoints_conf[keep]
-                    detections.data["keypoints_confidence"] = keypoints_conf.cpu().numpy()
+                    detections.data["keypoints_confidence"] = (
+                        keypoints_conf.cpu().numpy()
+                    )
 
             detections_list.append(detections)
 
         return detections_list if len(detections_list) > 1 else detections_list[0]
-    
-    def deploy_to_roboflow(self, workspace: str, project_id: str, version: str, api_key: str = None, size: str = None):
+
+    def deploy_to_roboflow(
+        self,
+        workspace: str,
+        project_id: str,
+        version: str,
+        api_key: str = None,
+        size: str = None,
+    ):
         """
         Deploy the trained RF-DETR model to Roboflow.
 
@@ -395,11 +442,13 @@ class RFDETR:
         """
         from roboflow import Roboflow
         import shutil
+
         if api_key is None:
             api_key = os.getenv("ROBOFLOW_API_KEY")
             if api_key is None:
-                raise ValueError("Set api_key=<KEY> in deploy_to_roboflow or export ROBOFLOW_API_KEY=<KEY>")
-
+                raise ValueError(
+                    "Set api_key=<KEY> in deploy_to_roboflow or export ROBOFLOW_API_KEY=<KEY>"
+                )
 
         rf = Roboflow(api_key=api_key)
         workspace = rf.workspace(workspace)
@@ -412,79 +461,87 @@ class RFDETR:
         os.makedirs(tmp_out_dir, exist_ok=True)
         outpath = os.path.join(tmp_out_dir, "weights.pt")
         torch.save(
-            {
-                "model": self.model.model.state_dict(),
-                "args": self.model.args
-            }, outpath
+            {"model": self.model.model.state_dict(), "args": self.model.args}, outpath
         )
         project = workspace.project(project_id)
         version = project.version(version)
-        version.deploy(
-            model_type=size,
-            model_path=tmp_out_dir,
-            filename="weights.pt"
-        )
+        version.deploy(model_type=size, model_path=tmp_out_dir, filename="weights.pt")
         shutil.rmtree(tmp_out_dir)
-
 
 
 class RFDETRBase(RFDETR):
     """
     Train an RF-DETR Base model (29M parameters).
     """
+
     size = "rfdetr-base"
+
     def get_model_config(self, **kwargs):
         return RFDETRBaseConfig(**kwargs)
 
     def get_train_config(self, **kwargs):
         return TrainConfig(**kwargs)
 
+
 class RFDETRLarge(RFDETR):
     """
     Train an RF-DETR Large model.
     """
+
     size = "rfdetr-large"
+
     def get_model_config(self, **kwargs):
         return RFDETRLargeConfig(**kwargs)
 
     def get_train_config(self, **kwargs):
         return TrainConfig(**kwargs)
 
+
 class RFDETRNano(RFDETR):
     """
     Train an RF-DETR Nano model.
     """
+
     size = "rfdetr-nano"
+
     def get_model_config(self, **kwargs):
         return RFDETRNanoConfig(**kwargs)
 
     def get_train_config(self, **kwargs):
         return TrainConfig(**kwargs)
 
+
 class RFDETRSmall(RFDETR):
     """
     Train an RF-DETR Small model.
     """
+
     size = "rfdetr-small"
+
     def get_model_config(self, **kwargs):
         return RFDETRSmallConfig(**kwargs)
 
     def get_train_config(self, **kwargs):
         return TrainConfig(**kwargs)
 
+
 class RFDETRMedium(RFDETR):
     """
     Train an RF-DETR Medium model.
     """
+
     size = "rfdetr-medium"
+
     def get_model_config(self, **kwargs):
         return RFDETRMediumConfig(**kwargs)
 
     def get_train_config(self, **kwargs):
         return TrainConfig(**kwargs)
 
+
 class RFDETRSegPreview(RFDETR):
     size = "rfdetr-seg-preview"
+
     def get_model_config(self, **kwargs):
         return RFDETRSegPreviewConfig(**kwargs)
 
@@ -505,6 +562,7 @@ class RFDETRPose(RFDETR):
         >>> # Access keypoints via detections.data["keypoints"]
         >>> keypoints = detections.data.get("keypoints")  # [N, K, 3]
     """
+
     size = "rfdetr-pose"
 
     def get_model_config(self, **kwargs):
@@ -512,8 +570,8 @@ class RFDETRPose(RFDETR):
 
     def get_train_config(self, **kwargs):
         # Automatically use num_keypoints from model config if not specified
-        if 'num_keypoints' not in kwargs:
-            kwargs['num_keypoints'] = self.model_config.num_keypoints
+        if "num_keypoints" not in kwargs:
+            kwargs["num_keypoints"] = self.model_config.num_keypoints
         return KeypointTrainConfig(**kwargs)
 
 
@@ -524,6 +582,7 @@ class RFDETRPoseNano(RFDETRPose):
     Uses rf-detr-nano.pth backbone with keypoint head.
     Resolution: 384, Decoder layers: 2
     """
+
     size = "rfdetr-pose-nano"
 
     def get_model_config(self, **kwargs):
@@ -537,6 +596,7 @@ class RFDETRPoseSmall(RFDETRPose):
     Uses rf-detr-small.pth backbone with keypoint head.
     Resolution: 512, Decoder layers: 3
     """
+
     size = "rfdetr-pose-small"
 
     def get_model_config(self, **kwargs):
@@ -550,6 +610,7 @@ class RFDETRPoseMedium(RFDETRPose):
     Uses rf-detr-medium.pth backbone with keypoint head.
     Resolution: 576, Decoder layers: 4
     """
+
     size = "rfdetr-pose-medium"
 
     def get_model_config(self, **kwargs):
@@ -563,6 +624,7 @@ class RFDETRPoseLarge(RFDETRPose):
     Uses rf-detr-large.pth backbone with keypoint head.
     Resolution: 768, Decoder layers: 6
     """
+
     size = "rfdetr-pose-large"
 
     def get_model_config(self, **kwargs):

@@ -49,7 +49,9 @@ class ModelEma(torch.nn.Module):
         update_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
     ) -> None:
         with torch.no_grad():
-            for ema_v, model_v in zip(self.module.state_dict().values(), model.state_dict().values()):
+            for ema_v, model_v in zip(
+                self.module.state_dict().values(), model.state_dict().values()
+            ):
                 if self.device is not None:
                     model_v = model_v.to(device=self.device)
                 ema_v.copy_(update_fn(ema_v, model_v))
@@ -101,7 +103,9 @@ class BestMetricSingle:
 
 
 class BestMetricHolder:
-    def __init__(self, init_res: float = 0.0, better: str = "large", use_ema: bool = False) -> None:
+    def __init__(
+        self, init_res: float = 0.0, better: str = "large", use_ema: bool = False
+    ) -> None:
         self.best_all = BestMetricSingle(init_res, better)
         self.use_ema = use_ema
         if use_ema:

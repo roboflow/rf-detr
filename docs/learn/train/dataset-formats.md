@@ -277,7 +277,9 @@ dataset = sv.DetectionDataset.from_yolo(
 )
 
 # Save as COCO
-dataset.as_coco(images_directory_path="output/images", annotations_path="output/annotations.json")
+dataset.as_coco(
+    images_directory_path="output/images", annotations_path="output/annotations.json"
+)
 ```
 
 ### COCO to YOLO
@@ -292,7 +294,9 @@ dataset = sv.DetectionDataset.from_coco(
 
 # Save as YOLO
 dataset.as_yolo(
-    images_directory_path="output/images", annotations_directory_path="output/labels", data_yaml_path="output/data.yaml"
+    images_directory_path="output/images",
+    annotations_directory_path="output/labels",
+    data_yaml_path="output/data.yaml",
 )
 ```
 

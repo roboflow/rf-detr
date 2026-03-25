@@ -101,7 +101,9 @@ class TestMatchSingleClass:
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
         if gt_crowd is None:
             gt_crowd = torch.zeros(len(gt_items), dtype=torch.bool)
-        return _match_single_class(pred_scores, pred_items, gt_items, gt_crowd, iou_threshold, iou_type)
+        return _match_single_class(
+            pred_scores, pred_items, gt_items, gt_crowd, iou_threshold, iou_type
+        )
 
     def test_perfect_overlap_is_tp(self) -> None:
         """A prediction that perfectly overlaps the GT box is a true positive."""
@@ -181,7 +183,9 @@ class TestMatchSingleClass:
         mask = torch.ones(1, 4, 4, dtype=torch.bool)
         scores = torch.tensor([0.9])
         gt_crowd = torch.tensor([False])
-        _, matches, _, total_gt = _match_single_class(scores, mask, mask, gt_crowd, 0.5, "segm")
+        _, matches, _, total_gt = _match_single_class(
+            scores, mask, mask, gt_crowd, 0.5, "segm"
+        )
         assert matches[0] == 1
         assert total_gt == 1
 
@@ -299,7 +303,9 @@ class TestBuildMatchingData:
     def test_mixed_crowd_non_crowd_gts(self) -> None:
         """Pred matched to non-crowd GT is TP; crowd GT not counted in total_gt."""
         pred = self._make_pred([[0, 0, 10, 10]], [0.9], [0])
-        target = self._make_target([[0, 0, 10, 10], [20, 20, 30, 30]], [0, 0], iscrowd=[0, 1])
+        target = self._make_target(
+            [[0, 0, 10, 10], [20, 20, 30, 30]], [0, 0], iscrowd=[0, 1]
+        )
         result = build_matching_data([pred], [target])
         assert result[0]["total_gt"] == 1
         assert result[0]["matches"][0] == 1
@@ -449,7 +455,9 @@ class TestDistributedMergeMatchingData:
         """Two ranks with disjoint classes -> merged result contains both."""
         rank0 = {0: _make_matching_entry([0.9], [1], [False], 1)}
         rank1 = {1: _make_matching_entry([0.7], [0], [False], 2)}
-        with patch("rfdetr.evaluation.matching.all_gather", return_value=[rank0, rank1]):
+        with patch(
+            "rfdetr.evaluation.matching.all_gather", return_value=[rank0, rank1]
+        ):
             result = distributed_merge_matching_data(rank0)
         assert set(result.keys()) == {0, 1}
         assert result[0]["total_gt"] == 1
@@ -459,7 +467,9 @@ class TestDistributedMergeMatchingData:
         """Two ranks sharing class 0 -> arrays concatenated, total_gt summed."""
         rank0 = {0: _make_matching_entry([0.9], [1], [False], 2)}
         rank1 = {0: _make_matching_entry([0.7, 0.5], [0, 1], [False, False], 3)}
-        with patch("rfdetr.evaluation.matching.all_gather", return_value=[rank0, rank1]):
+        with patch(
+            "rfdetr.evaluation.matching.all_gather", return_value=[rank0, rank1]
+        ):
             result = distributed_merge_matching_data(rank0)
         np.testing.assert_allclose(result[0]["scores"], [0.9, 0.7, 0.5], rtol=1e-6)
         assert result[0]["total_gt"] == 5

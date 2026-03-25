@@ -49,7 +49,9 @@ def _xyxy_to_xywh(boxes: np.ndarray) -> np.ndarray:
 class CocoEvaluator:
     """COCO evaluator that works in distributed mode."""
 
-    def __init__(self, coco_gt: COCO, iou_types: List[str], max_dets: int = 100) -> None:
+    def __init__(
+        self, coco_gt: COCO, iou_types: List[str], max_dets: int = 100
+    ) -> None:
         assert isinstance(iou_types, (list, tuple))
         coco_gt = copy.deepcopy(coco_gt)
         self.coco_gt = coco_gt
@@ -69,7 +71,9 @@ class CocoEvaluator:
         self.cat_ids = set(coco_gt.cats.keys())
         self._prefer_raw_category_ids = False
 
-    def _resolve_category_id(self, label: int, use_raw_category_ids: bool) -> Optional[int]:
+    def _resolve_category_id(
+        self, label: int, use_raw_category_ids: bool
+    ) -> Optional[int]:
         """Resolve a predicted label to a COCO category_id."""
         if use_raw_category_ids:
             return label if label in self.cat_ids else None
@@ -114,7 +118,9 @@ class CocoEvaluator:
         """Merge eval results across distributed processes."""
         for iou_type in self.iou_types:
             self.eval_imgs[iou_type] = np.concatenate(self.eval_imgs[iou_type], 2)
-            create_common_coco_eval(self.coco_eval[iou_type], self.img_ids, self.eval_imgs[iou_type])
+            create_common_coco_eval(
+                self.coco_eval[iou_type], self.img_ids, self.eval_imgs[iou_type]
+            )
 
     def accumulate(self) -> None:
         """Accumulate per-image evaluation results into mean metrics."""
@@ -127,7 +133,9 @@ class CocoEvaluator:
             logger.info("IoU metric: {}".format(iou_type))
             patched_pycocotools_summarize(coco_eval)
 
-    def prepare(self, predictions: Dict[int, Any], iou_type: str) -> List[Dict[str, Any]]:
+    def prepare(
+        self, predictions: Dict[int, Any], iou_type: str
+    ) -> List[Dict[str, Any]]:
         """Convert predictions to COCO format for the given iou_type."""
         if iou_type == "bbox":
             return self.prepare_for_coco_detection(predictions)
@@ -138,7 +146,9 @@ class CocoEvaluator:
         else:
             raise ValueError("Unknown iou type {}".format(iou_type))
 
-    def prepare_for_coco_detection(self, predictions: Dict[int, Any]) -> List[Dict[str, Any]]:
+    def prepare_for_coco_detection(
+        self, predictions: Dict[int, Any]
+    ) -> List[Dict[str, Any]]:
         """Format bounding-box predictions as COCO result dicts."""
         coco_results = []
         for original_id, prediction in predictions.items():
@@ -164,7 +174,9 @@ class CocoEvaluator:
                 )
         return coco_results
 
-    def prepare_for_coco_segmentation(self, predictions: Dict[int, Any]) -> List[Dict[str, Any]]:
+    def prepare_for_coco_segmentation(
+        self, predictions: Dict[int, Any]
+    ) -> List[Dict[str, Any]]:
         """Format segmentation mask predictions as COCO result dicts."""
         coco_results = []
         for original_id, prediction in predictions.items():
@@ -182,7 +194,9 @@ class CocoEvaluator:
             use_raw_category_ids = self._should_use_raw_category_ids(labels)
 
             rles = [
-                mask_util.encode(np.array(mask.cpu()[0, :, :, np.newaxis], dtype=np.uint8, order="F"))[0]
+                mask_util.encode(
+                    np.array(mask.cpu()[0, :, :, np.newaxis], dtype=np.uint8, order="F")
+                )[0]
                 for mask in masks
             ]
             for rle in rles:
@@ -202,7 +216,9 @@ class CocoEvaluator:
                 )
         return coco_results
 
-    def prepare_for_coco_keypoint(self, predictions: Dict[int, Any]) -> List[Dict[str, Any]]:
+    def prepare_for_coco_keypoint(
+        self, predictions: Dict[int, Any]
+    ) -> List[Dict[str, Any]]:
         """Format keypoint predictions as COCO result dicts."""
         coco_results = []
         for original_id, prediction in predictions.items():
@@ -254,7 +270,9 @@ def merge(img_ids: List[int], eval_imgs: Any) -> Tuple[np.ndarray, np.ndarray]:
     return merged_img_ids_arr, merged_eval_imgs_arr
 
 
-def create_common_coco_eval(coco_eval: COCOeval, img_ids: List[int], eval_imgs: Any) -> None:
+def create_common_coco_eval(
+    coco_eval: COCOeval, img_ids: List[int], eval_imgs: Any
+) -> None:
     """Populate a COCOeval object with merged distributed results."""
     img_ids_arr, eval_imgs = merge(img_ids, eval_imgs)
     img_ids_list = list(img_ids_arr)
@@ -274,7 +292,9 @@ def evaluate(self: COCOeval) -> Tuple[List[int], np.ndarray]:
     p = self.params
     if p.useSegm is not None:
         p.iouType = "segm" if p.useSegm == 1 else "bbox"
-        logger.warning("useSegm (deprecated) is not None. Running {} evaluation".format(p.iouType))
+        logger.warning(
+            "useSegm (deprecated) is not None. Running {} evaluation".format(p.iouType)
+        )
     p.imgIds = list(np.unique(p.imgIds))
     if p.useCats:
         p.catIds = list(np.unique(p.catIds))
@@ -288,12 +308,19 @@ def evaluate(self: COCOeval) -> Tuple[List[int], np.ndarray]:
         computeIoU = self.computeIoU
     elif p.iouType == "keypoints":
         computeIoU = self.computeOks
-    self.ious = {(imgId, catId): computeIoU(imgId, catId) for imgId in p.imgIds for catId in catIds}
+    self.ious = {
+        (imgId, catId): computeIoU(imgId, catId)
+        for imgId in p.imgIds
+        for catId in catIds
+    }
 
     evaluateImg = self.evaluateImg
     maxDet = p.maxDets[-1]
     evalImgs = [
-        evaluateImg(imgId, catId, areaRng, maxDet) for catId in catIds for areaRng in p.areaRng for imgId in p.imgIds
+        evaluateImg(imgId, catId, areaRng, maxDet)
+        for catId in catIds
+        for areaRng in p.areaRng
+        for imgId in p.imgIds
     ]
     evalImgs = np.asarray(evalImgs).reshape(len(catIds), len(p.areaRng), len(p.imgIds))
     self._paramsEval = copy.deepcopy(self.params)
@@ -307,12 +334,21 @@ def evaluate(self: COCOeval) -> Tuple[List[int], np.ndarray]:
 def patched_pycocotools_summarize(self: COCOeval) -> None:
     """Compute and display summary metrics for evaluation results."""
 
-    def _summarize(ap: int = 1, iouThr: Optional[float] = None, areaRng: str = "all", maxDets: int = 100) -> float:
+    def _summarize(
+        ap: int = 1,
+        iouThr: Optional[float] = None,
+        areaRng: str = "all",
+        maxDets: int = 100,
+    ) -> float:
         p = self.params
         iStr = " {:<18} {} @[ IoU={:<9} | area={:>6s} | maxDets={:>3d} ] = {:0.3f}"
         titleStr = "Average Precision" if ap == 1 else "Average Recall"
         typeStr = "(AP)" if ap == 1 else "(AR)"
-        iouStr = "{:0.2f}:{:0.2f}".format(p.iouThrs[0], p.iouThrs[-1]) if iouThr is None else "{:0.2f}".format(iouThr)
+        iouStr = (
+            "{:0.2f}:{:0.2f}".format(p.iouThrs[0], p.iouThrs[-1])
+            if iouThr is None
+            else "{:0.2f}".format(iouThr)
+        )
 
         aind = [i for i, aRng in enumerate(p.areaRngLbl) if aRng == areaRng]
         mind = [i for i, mDet in enumerate(p.maxDets) if mDet == maxDets]

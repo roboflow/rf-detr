@@ -53,7 +53,15 @@ class DatasetSplitRatios:
 
     def to_dict(self) -> Dict[str, float]:
         """Convert to dictionary, filtering out zero ratios."""
-        return {k: v for k, v in {"train": self.train, "val": self.val, "test": self.test}.items() if v > 0}
+        return {
+            k: v
+            for k, v in {
+                "train": self.train,
+                "val": self.val,
+                "test": self.test,
+            }.items()
+            if v > 0
+        }
 
 
 # Default split ratios instance
@@ -86,9 +94,15 @@ def _normalize_split_ratios(split_ratios: SplitRatiosType) -> Dict[str, float]:
         if len(split_ratios) == 2:
             result = {"train": split_ratios[0], "val": split_ratios[1]}
         elif len(split_ratios) == 3:
-            result = {"train": split_ratios[0], "val": split_ratios[1], "test": split_ratios[2]}
+            result = {
+                "train": split_ratios[0],
+                "val": split_ratios[1],
+                "test": split_ratios[2],
+            }
         else:
-            raise ValueError(f"Split ratios tuple must have 2 or 3 elements, got {len(split_ratios)}")
+            raise ValueError(
+                f"Split ratios tuple must have 2 or 3 elements, got {len(split_ratios)}"
+            )
 
         # Validate tuple ratios are non-negative and sum to approximately 1.0
         if any(ratio < 0 for ratio in split_ratios):
@@ -107,7 +121,9 @@ def _normalize_split_ratios(split_ratios: SplitRatiosType) -> Dict[str, float]:
             raise ValueError(f"Split ratios must sum to 1.0, got {total}")
         return split_ratios
 
-    raise TypeError(f"split_ratios must be DatasetSplitRatios, tuple, or dict, got {type(split_ratios)}")
+    raise TypeError(
+        f"split_ratios must be DatasetSplitRatios, tuple, or dict, got {type(split_ratios)}"
+    )
 
 
 # Available shapes for synthetic dataset generation
@@ -155,13 +171,18 @@ def draw_synthetic_shape(
         r = half_size
         n_pts = 32
         pts = [
-            [int(cx + r * math.cos(2 * math.pi * i / n_pts)), int(cy + r * math.sin(2 * math.pi * i / n_pts))]
+            [
+                int(cx + r * math.cos(2 * math.pi * i / n_pts)),
+                int(cy + r * math.sin(2 * math.pi * i / n_pts)),
+            ]
             for i in range(n_pts)
         ]
     else:
         return img, []
 
-    img = sv.draw_filled_polygon(scene=img, polygon=np.array(pts, dtype=np.int32), color=color)
+    img = sv.draw_filled_polygon(
+        scene=img, polygon=np.array(pts, dtype=np.int32), color=color
+    )
     polygon = [float(v) for pt in pts for v in pt]
     return img, polygon
 
@@ -253,7 +274,12 @@ def generate_synthetic_sample(
 
             # [x_min, y_min, x_max, y_max]
             bbox = np.array(
-                [float(cx - obj_size / 2), float(cy - obj_size / 2), float(cx + obj_size / 2), float(cy + obj_size / 2)]
+                [
+                    float(cx - obj_size / 2),
+                    float(cy - obj_size / 2),
+                    float(cx + obj_size / 2),
+                    float(cy + obj_size / 2),
+                ]
             )
 
             if calculate_boundary_overlap(bbox, img_size) > 0.05:
@@ -272,7 +298,9 @@ def generate_synthetic_sample(
             poly_y_min = float(np.min(polygon_array[:, 1]))
             poly_x_max = float(np.max(polygon_array[:, 0]))
             poly_y_max = float(np.max(polygon_array[:, 1]))
-            bbox_from_polygon = np.array([poly_x_min, poly_y_min, poly_x_max, poly_y_max], dtype=float)
+            bbox_from_polygon = np.array(
+                [poly_x_min, poly_y_min, poly_x_max, poly_y_max], dtype=float
+            )
 
             xyxys.append(bbox_from_polygon)
             class_ids.append(category_id)
@@ -306,7 +334,13 @@ def _calculate_polygon_area(polygon: List[float]) -> float:
     points = np.asarray(polygon, dtype=float).reshape(-1, 2)
     x_coords = points[:, 0]
     y_coords = points[:, 1]
-    return float(0.5 * abs(np.dot(x_coords, np.roll(y_coords, -1)) - np.dot(y_coords, np.roll(x_coords, -1))))
+    return float(
+        0.5
+        * abs(
+            np.dot(x_coords, np.roll(y_coords, -1))
+            - np.dot(y_coords, np.roll(x_coords, -1))
+        )
+    )
 
 
 def _write_coco_json(
@@ -350,12 +384,17 @@ def _write_coco_json(
             f"but got {len(file_paths)} and {len(detections_list)}"
         )
 
-    categories = [{"id": idx * 2 + 1, "name": name, "supercategory": "synthetic"} for idx, name in enumerate(classes)]
+    categories = [
+        {"id": idx * 2 + 1, "name": name, "supercategory": "synthetic"}
+        for idx, name in enumerate(classes)
+    ]
     images_list = []
     annotations_list = []
     ann_id = 1
 
-    for img_id, (file_path, detections) in enumerate(zip(file_paths, detections_list), start=1):
+    for img_id, (file_path, detections) in enumerate(
+        zip(file_paths, detections_list), start=1
+    ):
         images_list.append(
             {
                 "id": img_id,
@@ -423,7 +462,14 @@ def _write_coco_json(
             ann_id += 1
 
     with open(annotations_path, "w") as fh:
-        json.dump({"images": images_list, "annotations": annotations_list, "categories": categories}, fh)
+        json.dump(
+            {
+                "images": images_list,
+                "annotations": annotations_list,
+                "categories": categories,
+            },
+            fh,
+        )
 
 
 def generate_coco_dataset(
@@ -510,17 +556,34 @@ def generate_coco_dataset(
             file_paths_ordered.append(file_path)
             detections_ordered.append(detections)
 
-        _write_coco_json(annotations_path, classes, file_paths_ordered, detections_ordered, img_size, with_segmentation)
+        _write_coco_json(
+            annotations_path,
+            classes,
+            file_paths_ordered,
+            detections_ordered,
+            img_size,
+            with_segmentation,
+        )
 
 
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Generate synthetic COCO dataset")
-    parser.add_argument("--output", type=str, default="synthetic_dataset", help="Output directory")
-    parser.add_argument("--num_images", type=int, default=100, help="Total number of images")
+    parser.add_argument(
+        "--output", type=str, default="synthetic_dataset", help="Output directory"
+    )
+    parser.add_argument(
+        "--num_images", type=int, default=100, help="Total number of images"
+    )
     parser.add_argument("--img_size", type=int, default=640, help="Image size (square)")
-    parser.add_argument("--mode", type=str, choices=["shape", "color"], default="shape", help="Classification mode")
+    parser.add_argument(
+        "--mode",
+        type=str,
+        choices=["shape", "color"],
+        default="shape",
+        help="Classification mode",
+    )
 
     args = parser.parse_args()
     generate_coco_dataset(args.output, args.num_images, args.img_size, args.mode)

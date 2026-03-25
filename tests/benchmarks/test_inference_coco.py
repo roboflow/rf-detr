@@ -54,7 +54,9 @@ from rfdetr.training import RFDETRDataModule, RFDETRModelModule, build_trainer
 # ---------------------------------------------------------------------------
 
 
-def _build_train_config(coco_root: Path, tmp_path: Path, batch_size: int) -> TrainConfig:
+def _build_train_config(
+    coco_root: Path, tmp_path: Path, batch_size: int
+) -> TrainConfig:
     """Build a minimal :class:`~rfdetr.config.TrainConfig` for COCO inference runs.
 
     Loggers and EMA are disabled; the config is only used for validation.
@@ -112,7 +114,9 @@ def _build_datamodule(
     return dm
 
 
-def _build_ptl_module(rfdetr_obj: RFDETR, train_config: TrainConfig) -> RFDETRModelModule:
+def _build_ptl_module(
+    rfdetr_obj: RFDETR, train_config: TrainConfig
+) -> RFDETRModelModule:
     """Copy pretrained weights from *rfdetr_obj* into a fresh :class:`~rfdetr.training.RFDETRModelModule`.
 
     Constructs the module with the same architecture (no pretrain download),
@@ -132,7 +136,9 @@ def _build_ptl_module(rfdetr_obj: RFDETR, train_config: TrainConfig) -> RFDETRMo
     module.model.load_state_dict(rfdetr_obj.model.model.state_dict())
     module.model.eval()
 
-    assert isinstance(module, RFDETRModelModule), f"Expected RFDETRModelModule, got {type(module).__name__}"
+    assert isinstance(module, RFDETRModelModule), (
+        f"Expected RFDETRModelModule, got {type(module).__name__}"
+    )
     assert isinstance(module, LightningModule), (
         "module must be a pytorch_lightning.LightningModule — this confirms evaluation runs through the PTL stack"
     )

@@ -37,11 +37,11 @@ If you are training a pose estimation model, your COCO JSON annotations should h
 
 RF-DETR automatically handles both 0-indexed and 1-indexed category IDs in your COCO annotations. You don't need to modify your dataset - the model will work correctly regardless of how your `category_id` values are numbered.
 
-| Dataset category_ids | What happens |
-|---------------------|--------------|
-| `[0, 1, 2]` (0-indexed) | Identity mapping, no change |
+| Dataset category_ids    | What happens                                   |
+| ----------------------- | ---------------------------------------------- |
+| `[0, 1, 2]` (0-indexed) | Identity mapping, no change                    |
 | `[1, 2, 3]` (1-indexed) | Automatically mapped to `[0, 1, 2]` internally |
-| `[1, 5, 10]` (gaps) | Mapped to contiguous `[0, 1, 2]` |
+| `[1, 5, 10]` (gaps)     | Mapped to contiguous `[0, 1, 2]`               |
 
 **How it works:**
 
@@ -68,6 +68,7 @@ You can fine-tune RF-DETR from pre-trained COCO checkpoints.
 For object detection, the RF-DETR-B checkpoint is used by default. To get started quickly with training an object detection model, please refer to our fine-tuning Google Colab [notebook](https://colab.research.google.com/github/roboflow-ai/notebooks/blob/main/notebooks/how-to-finetune-rf-detr-on-detection-dataset.ipynb).
 
 For image segmentation, the RF-DETR-Seg (Preview) checkpoint is used by default.
+
 ## Training paths
 
 RF-DETR provides two training paths:
@@ -121,12 +122,12 @@ RF-DETR supports training on datasets in both **COCO** and **YOLO** formats. The
 
     RF-DETR Pose is available in multiple sizes. Choose based on your speed/accuracy needs:
 
-    | Model | Resolution | Speed | Import |
-    |-------|------------|-------|--------|
-    | Nano | 384 | Fastest | `RFDETRPoseNano` |
-    | Small | 512 | Fast | `RFDETRPoseSmall` |
-    | Medium | 576 | Medium | `RFDETRPoseMedium` |
-    | Large | 768 | Slow | `RFDETRPoseLarge` |
+    | Model  | Resolution | Speed   | Import             |
+    | ------ | ---------- | ------- | ------------------ |
+    | Nano   | 384        | Fastest | `RFDETRPoseNano`   |
+    | Small  | 512        | Fast    | `RFDETRPoseSmall`  |
+    | Medium | 576        | Medium  | `RFDETRPoseMedium` |
+    | Large  | 768        | Slow    | `RFDETRPoseLarge`  |
 
     ```python
     from rfdetr import RFDETRPoseNano  # or RFDETRPoseSmall, RFDETRPoseMedium, RFDETRPoseLarge
@@ -293,7 +294,6 @@ During training, multiple model checkpoints are saved to the output directory:
     )
     ```
 
-
 ### Early stopping
 
 Early stopping monitors validation mAP and halts training if improvements remain below a threshold for a set number of epochs. This can reduce wasted computation once the model converges. Additional parameters—such as `early_stopping_patience`, `early_stopping_min_delta`, and `early_stopping_use_ema`—let you fine-tune the stopping behavior.
@@ -359,7 +359,6 @@ After training your model, you can:
     )
     ```
 
-
 ### Multi-GPU training
 
 You can fine-tune RF-DETR on multiple GPUs using PyTorch’s Distributed Data Parallel (DDP). Create a `main.py` script that initializes your model and calls `.train()` as usual than run it in terminal.
@@ -384,14 +383,14 @@ Replace `8` in the `--nproc_per_node argument` with the number of GPUs you want 
     ```bash
     pip install "rfdetr[metrics]"
     ```
-  
+
 - To activate logging, pass the extra parameter `tensorboard=True` to `.train()`:
 
     ```python
     from rfdetr import RFDETRBase
-    
+
     model = RFDETRBase()
-    
+
     model.train(
         dataset_dir=<DATASET_PATH>,
         epochs=100,
@@ -417,7 +416,7 @@ Replace `8` in the `--nproc_per_node argument` with the number of GPUs you want 
     %load_ext tensorboard
     %tensorboard --logdir <OUTPUT_DIR>
     ```
-      
+
 </details>
 
 ### Logging with Weights and Biases
@@ -447,9 +446,9 @@ Replace `8` in the `--nproc_per_node argument` with the number of GPUs you want 
 
     ```python
     from rfdetr import RFDETRBase
-    
+
     model = RFDETRBase()
-    
+
     model.train(
         dataset_dir=<DATASET_PATH>,
         epochs=100,
@@ -464,7 +463,7 @@ Replace `8` in the `--nproc_per_node argument` with the number of GPUs you want 
     ```
 
     In W&B, projects are collections of related machine learning experiments, and runs are individual sessions where training or evaluation happens. If you don't specify a name for a run, W&B will assign a random one automatically.
-  
+
 </details>
 
 ### Load and run fine-tuned model

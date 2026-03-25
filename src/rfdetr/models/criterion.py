@@ -24,7 +24,9 @@ from rfdetr.utilities import box_ops
 from rfdetr.utilities.distributed import get_world_size, is_dist_avail_and_initialized
 
 
-def sigmoid_focal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: float = 2):
+def sigmoid_focal_loss(
+    inputs, targets, num_boxes, alpha: float = 0.25, gamma: float = 2
+):
     """
     Loss used in RetinaNet for dense detection: https://arxiv.org/abs/1708.02002.
     Args:
@@ -52,10 +54,13 @@ def sigmoid_focal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: f
     return loss.mean(1).sum() / num_boxes
 
 
-def sigmoid_varifocal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: float = 2):
+def sigmoid_varifocal_loss(
+    inputs, targets, num_boxes, alpha: float = 0.25, gamma: float = 2
+):
     prob = inputs.sigmoid()
     focal_weight = (
-        targets * (targets > 0.0).float() + (1 - alpha) * (prob - targets).abs().pow(gamma) * (targets <= 0.0).float()
+        targets * (targets > 0.0).float()
+        + (1 - alpha) * (prob - targets).abs().pow(gamma) * (targets <= 0.0).float()
     )
     ce_loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
     loss = ce_loss * focal_weight
@@ -63,13 +68,17 @@ def sigmoid_varifocal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamm
     return loss.mean(1).sum() / num_boxes
 
 
-def position_supervised_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: float = 2):
+def position_supervised_loss(
+    inputs, targets, num_boxes, alpha: float = 0.25, gamma: float = 2
+):
     prob = inputs.sigmoid()
     ce_loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
     loss = ce_loss * (torch.abs(targets - prob) ** gamma)
 
     if alpha >= 0:
-        alpha_t = alpha * (targets > 0.0).float() + (1 - alpha) * (targets <= 0.0).float()
+        alpha_t = (
+            alpha * (targets > 0.0).float() + (1 - alpha) * (targets <= 0.0).float()
+        )
         loss = alpha_t * loss
 
     return loss.mean(1).sum() / num_boxes
@@ -174,13 +183,17 @@ class SetCriterion(nn.Module):
         src_logits = outputs["pred_logits"]
 
         idx = self._get_src_permutation_idx(indices)
-        target_classes_o = torch.cat([t["labels"][J] for t, (_, J) in zip(targets, indices)])
+        target_classes_o = torch.cat(
+            [t["labels"][J] for t, (_, J) in zip(targets, indices)]
+        )
 
         if self.ia_bce_loss:
             alpha = self.focal_alpha
             gamma = 2
             src_boxes = outputs["pred_boxes"][idx]
-            target_boxes = torch.cat([t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0)
+            target_boxes = torch.cat(
+                [t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0
+            )
 
             iou_targets = torch.diag(
                 box_ops.box_iou(
@@ -204,12 +217,16 @@ class SetCriterion(nn.Module):
             neg_weights[tuple(pos_ind)] = 1 - t.to(neg_weights.dtype)
             # a reformulation of the standard loss_ce = - pos_weights * prob.log() - neg_weights * (1 - prob).log()
             # with a focus on statistical stability by using fused logsigmoid
-            loss_ce = neg_weights * src_logits - F.logsigmoid(src_logits) * (pos_weights + neg_weights)
+            loss_ce = neg_weights * src_logits - F.logsigmoid(src_logits) * (
+                pos_weights + neg_weights
+            )
             loss_ce = loss_ce.sum() / num_boxes
 
         elif self.use_position_supervised_loss:
             src_boxes = outputs["pred_boxes"][idx]
-            target_boxes = torch.cat([t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0)
+            target_boxes = torch.cat(
+                [t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0
+            )
 
             iou_targets = torch.diag(
                 box_ops.box_iou(
@@ -232,7 +249,10 @@ class SetCriterion(nn.Module):
             pos_ious_func = pos_ious_func.to(cls_iou_func_targets.dtype)
             cls_iou_func_targets[tuple(pos_ind)] = pos_ious_func
             norm_cls_iou_func_targets = cls_iou_func_targets / (
-                cls_iou_func_targets.view(cls_iou_func_targets.shape[0], -1, 1).amax(1, True) + 1e-8
+                cls_iou_func_targets.view(cls_iou_func_targets.shape[0], -1, 1).amax(
+                    1, True
+                )
+                + 1e-8
             )
             loss_ce = (
                 position_supervised_loss(
@@ -247,7 +267,9 @@ class SetCriterion(nn.Module):
 
         elif self.use_varifocal_loss:
             src_boxes = outputs["pred_boxes"][idx]
-            target_boxes = torch.cat([t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0)
+            target_boxes = torch.cat(
+                [t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0
+            )
 
             iou_targets = torch.diag(
                 box_ops.box_iou(
@@ -318,7 +340,9 @@ class SetCriterion(nn.Module):
         """
         pred_logits = outputs["pred_logits"]
         device = pred_logits.device
-        tgt_lengths = torch.as_tensor([len(v["labels"]) for v in targets], device=device)
+        tgt_lengths = torch.as_tensor(
+            [len(v["labels"]) for v in targets], device=device
+        )
         # Count the number of predictions that are NOT "no-object" (which is the last class)
         card_pred = (pred_logits.argmax(-1) != pred_logits.shape[-1] - 1).sum(1)
         card_err = F.l1_loss(card_pred.float(), tgt_lengths.float())
@@ -333,7 +357,9 @@ class SetCriterion(nn.Module):
         assert "pred_boxes" in outputs
         idx = self._get_src_permutation_idx(indices)
         src_boxes = outputs["pred_boxes"][idx]
-        target_boxes = torch.cat([t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0)
+        target_boxes = torch.cat(
+            [t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0
+        )
 
         loss_bbox = F.l1_loss(src_boxes, target_boxes, reduction="none")
 
@@ -372,14 +398,20 @@ class SetCriterion(nn.Module):
             else:
                 batched_selected_masks = []
                 per_batch_counts = idx[0].unique(return_counts=True)[1]
-                batch_indices = torch.cat((torch.zeros_like(per_batch_counts[:1]), per_batch_counts), dim=0).cumsum(0)
+                batch_indices = torch.cat(
+                    (torch.zeros_like(per_batch_counts[:1]), per_batch_counts), dim=0
+                ).cumsum(0)
 
                 for i in range(per_batch_counts.shape[0]):
                     batch_indicator = idx[0][batch_indices[i] : batch_indices[i + 1]]
                     box_indicator = idx[1][batch_indices[i] : batch_indices[i + 1]]
 
-                    this_batch_queries = query_features[(batch_indicator, box_indicator)]
-                    this_batch_spatial_features = spatial_features[idx[0][batch_indices[i + 1] - 1]]
+                    this_batch_queries = query_features[
+                        (batch_indicator, box_indicator)
+                    ]
+                    this_batch_spatial_features = spatial_features[
+                        idx[0][batch_indices[i + 1] - 1]
+                    ]
 
                     this_batch_masks = (
                         torch.einsum(
@@ -400,7 +432,9 @@ class SetCriterion(nn.Module):
                 "loss_mask_dice": src_masks.sum(),
             }
         # gather matched target masks
-        target_masks = torch.cat([t["masks"][j] for t, (_, j) in zip(targets, indices)], dim=0)  # [N, Ht, Wt]
+        target_masks = torch.cat(
+            [t["masks"][j] for t, (_, j) in zip(targets, indices)], dim=0
+        )  # [N, Ht, Wt]
 
         # No need to upsample predictions as we are using normalized coordinates :)
         # N x 1 x H x W
@@ -448,13 +482,17 @@ class SetCriterion(nn.Module):
 
     def _get_src_permutation_idx(self, indices):
         # permute predictions following indices
-        batch_idx = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])
+        batch_idx = torch.cat(
+            [torch.full_like(src, i) for i, (src, _) in enumerate(indices)]
+        )
         src_idx = torch.cat([src for (src, _) in indices])
         return batch_idx, src_idx
 
     def _get_tgt_permutation_idx(self, indices):
         # permute targets following indices
-        batch_idx = torch.cat([torch.full_like(tgt, i) for i, (_, tgt) in enumerate(indices)])
+        batch_idx = torch.cat(
+            [torch.full_like(tgt, i) for i, (_, tgt) in enumerate(indices)]
+        )
         tgt_idx = torch.cat([tgt for (_, tgt) in indices])
         return batch_idx, tgt_idx
 
@@ -485,7 +523,9 @@ class SetCriterion(nn.Module):
         num_boxes = sum(len(t["labels"]) for t in targets)
         if not self.sum_group_losses:
             num_boxes = num_boxes * group_detr
-        num_boxes = torch.as_tensor([num_boxes], dtype=torch.float, device=next(iter(outputs.values())).device)
+        num_boxes = torch.as_tensor(
+            [num_boxes], dtype=torch.float, device=next(iter(outputs.values())).device
+        )
         if is_dist_avail_and_initialized():
             torch.distributed.all_reduce(num_boxes)
         num_boxes = torch.clamp(num_boxes / get_world_size(), min=1).item()
@@ -504,7 +544,9 @@ class SetCriterion(nn.Module):
                     if loss == "labels":
                         # Logging is enabled only for the last layer
                         kwargs = {"log": False}
-                    l_dict = self.get_loss(loss, aux_outputs, targets, indices, num_boxes, **kwargs)
+                    l_dict = self.get_loss(
+                        loss, aux_outputs, targets, indices, num_boxes, **kwargs
+                    )
                     l_dict = {k + f"_{i}": v for k, v in l_dict.items()}
                     losses.update(l_dict)
 
@@ -516,7 +558,9 @@ class SetCriterion(nn.Module):
                 if loss == "labels":
                     # Logging is enabled only for the last layer
                     kwargs["log"] = False
-                l_dict = self.get_loss(loss, enc_outputs, targets, indices, num_boxes, **kwargs)
+                l_dict = self.get_loss(
+                    loss, enc_outputs, targets, indices, num_boxes, **kwargs
+                )
                 l_dict = {k + "_enc": v for k, v in l_dict.items()}
                 losses.update(l_dict)
 

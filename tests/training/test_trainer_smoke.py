@@ -71,12 +71,17 @@ class TestDetectionSmoke:
         fake_dataset = _FakeDataset(length=20)
 
         with (
-            patch("rfdetr.training.module_model.build_model_from_config", return_value=tiny_model),
+            patch(
+                "rfdetr.training.module_model.build_model_from_config",
+                return_value=tiny_model,
+            ),
             patch(
                 "rfdetr.training.module_model.build_criterion_from_config",
                 return_value=(fake_criterion, fake_postprocess),
             ),
-            patch("rfdetr.training.module_data.build_dataset", return_value=fake_dataset),
+            patch(
+                "rfdetr.training.module_data.build_dataset", return_value=fake_dataset
+            ),
             patch(
                 "rfdetr.training.module_model.get_param_dict",
                 side_effect=lambda args, model: _make_param_dicts(model),
@@ -86,7 +91,9 @@ class TestDetectionSmoke:
             datamodule = RFDETRDataModule(mc, tc)
             _make_trainer().fit(module, datamodule)
 
-    def test_training_step_called_expected_times(self, base_model_config, base_train_config):
+    def test_training_step_called_expected_times(
+        self, base_model_config, base_train_config
+    ):
         """fast_dev_run=2 must run exactly 2 training steps."""
         mc = base_model_config()
         tc = base_train_config()
@@ -97,12 +104,17 @@ class TestDetectionSmoke:
         fake_dataset = _FakeDataset(length=20)
 
         with (
-            patch("rfdetr.training.module_model.build_model_from_config", return_value=tiny_model),
+            patch(
+                "rfdetr.training.module_model.build_model_from_config",
+                return_value=tiny_model,
+            ),
             patch(
                 "rfdetr.training.module_model.build_criterion_from_config",
                 return_value=(fake_criterion, fake_postprocess),
             ),
-            patch("rfdetr.training.module_data.build_dataset", return_value=fake_dataset),
+            patch(
+                "rfdetr.training.module_data.build_dataset", return_value=fake_dataset
+            ),
             patch(
                 "rfdetr.training.module_model.get_param_dict",
                 side_effect=lambda args, model: _make_param_dicts(model),
@@ -134,12 +146,17 @@ class TestDetectionSmoke:
         fake_dataset = _FakeDataset(length=20)
 
         with (
-            patch("rfdetr.training.module_model.build_model_from_config", return_value=tiny_model),
+            patch(
+                "rfdetr.training.module_model.build_model_from_config",
+                return_value=tiny_model,
+            ),
             patch(
                 "rfdetr.training.module_model.build_criterion_from_config",
                 return_value=(fake_criterion, fake_postprocess),
             ),
-            patch("rfdetr.training.module_data.build_dataset", return_value=fake_dataset),
+            patch(
+                "rfdetr.training.module_data.build_dataset", return_value=fake_dataset
+            ),
             patch(
                 "rfdetr.training.module_model.get_param_dict",
                 side_effect=lambda args, model: _make_param_dicts(model),
@@ -181,12 +198,17 @@ class TestDetectionSmoke:
         fake_criterion.weight_dict = {"loss_ce": 1.0}
 
         with (
-            patch("rfdetr.training.module_model.build_model_from_config", return_value=tiny_model),
+            patch(
+                "rfdetr.training.module_model.build_model_from_config",
+                return_value=tiny_model,
+            ),
             patch(
                 "rfdetr.training.module_model.build_criterion_from_config",
                 return_value=(fake_criterion, fake_postprocess),
             ),
-            patch("rfdetr.training.module_data.build_dataset", return_value=fake_dataset),
+            patch(
+                "rfdetr.training.module_data.build_dataset", return_value=fake_dataset
+            ),
             patch(
                 "rfdetr.training.module_model.get_param_dict",
                 side_effect=lambda args, model: _make_param_dicts(model),
@@ -214,12 +236,17 @@ class TestSegmentationSmoke:
         fake_dataset = _FakeDatasetWithMasks(length=20)
 
         with (
-            patch("rfdetr.training.module_model.build_model_from_config", return_value=tiny_model),
+            patch(
+                "rfdetr.training.module_model.build_model_from_config",
+                return_value=tiny_model,
+            ),
             patch(
                 "rfdetr.training.module_model.build_criterion_from_config",
                 return_value=(fake_criterion, fake_postprocess),
             ),
-            patch("rfdetr.training.module_data.build_dataset", return_value=fake_dataset),
+            patch(
+                "rfdetr.training.module_data.build_dataset", return_value=fake_dataset
+            ),
             patch(
                 "rfdetr.training.module_model.get_param_dict",
                 side_effect=lambda args, model: _make_param_dicts(model),
@@ -235,12 +262,21 @@ class TestSegmentationSmoke:
         tc = seg_train_config()
 
         with (
-            patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel()),
+            patch(
+                "rfdetr.training.module_model.build_model_from_config",
+                return_value=_TinyModel(),
+            ),
             patch(
                 "rfdetr.training.module_model.build_criterion_from_config",
-                return_value=(_FakeCriterion(), MagicMock(side_effect=_fake_postprocess)),
+                return_value=(
+                    _FakeCriterion(),
+                    MagicMock(side_effect=_fake_postprocess),
+                ),
             ),
-            patch("rfdetr.training.module_data.build_dataset", return_value=_FakeDatasetWithMasks()),
+            patch(
+                "rfdetr.training.module_data.build_dataset",
+                return_value=_FakeDatasetWithMasks(),
+            ),
             patch(
                 "rfdetr.training.module_model.get_param_dict",
                 side_effect=lambda args, model: _make_param_dicts(model),
@@ -267,12 +303,21 @@ class TestBuildTrainerSmoke:
         tc = base_train_config(use_ema=False, run_test=False)
 
         with (
-            patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel()),
+            patch(
+                "rfdetr.training.module_model.build_model_from_config",
+                return_value=_TinyModel(),
+            ),
             patch(
                 "rfdetr.training.module_model.build_criterion_from_config",
-                return_value=(_FakeCriterion(), MagicMock(side_effect=_fake_postprocess)),
+                return_value=(
+                    _FakeCriterion(),
+                    MagicMock(side_effect=_fake_postprocess),
+                ),
             ),
-            patch("rfdetr.training.module_data.build_dataset", return_value=_FakeDataset(length=20)),
+            patch(
+                "rfdetr.training.module_data.build_dataset",
+                return_value=_FakeDataset(length=20),
+            ),
             patch(
                 "rfdetr.training.module_model.get_param_dict",
                 side_effect=lambda args, model: _make_param_dicts(model),
@@ -304,7 +349,9 @@ class _DDPModule(RFDETRModelModule):
 
 # Windows CI currently cannot run this smoke test because gloo DDP spawn fails
 # with makeDeviceForHostname unsupported-device errors.
-@pytest.mark.skipif(sys.platform == "win32", reason="gloo DDP spawn unsupported on Windows CI")
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="gloo DDP spawn unsupported on Windows CI"
+)
 def test_ddp_spawn_fit_runs_without_error(base_model_config, base_train_config):
     """ddp_spawn with 2 CPU workers must run fast_dev_run=2 without error.
 
@@ -314,12 +361,17 @@ def test_ddp_spawn_fit_runs_without_error(base_model_config, base_train_config):
     ``_DDPModule`` (module-level class) instead.
     """
     mc = base_model_config()
-    tc = base_train_config(use_ema=False, run_test=False, devices=2, strategy="ddp_spawn")
+    tc = base_train_config(
+        use_ema=False, run_test=False, devices=2, strategy="ddp_spawn"
+    )
 
     fake_dataset = _FakeDataset(length=20)
 
     with (
-        patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel()),
+        patch(
+            "rfdetr.training.module_model.build_model_from_config",
+            return_value=_TinyModel(),
+        ),
         patch(
             "rfdetr.training.module_model.build_criterion_from_config",
             return_value=(_FakeCriterion(), _FakePostProcess()),

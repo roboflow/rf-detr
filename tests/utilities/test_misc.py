@@ -52,5 +52,7 @@ class TestStripCheckpoint:
 
         recovered = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
         assert set(recovered.keys()) == set(original_checkpoint.keys())
-        assert recovered["model"]["weight"].equal(original_checkpoint["model"]["weight"])
+        assert recovered["model"]["weight"].equal(
+            original_checkpoint["model"]["weight"]
+        )
         assert recovered["optimizer"] == original_checkpoint["optimizer"]

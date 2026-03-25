@@ -40,17 +40,23 @@ def is_valid_yolo_dataset(dataset_dir: str) -> bool:
     Returns a boolean indicating whether the dataset is in correct yolo format.
     """
     contains_required_yolo_yaml = any(
-        os.path.exists(os.path.join(dataset_dir, yaml_file)) for yaml_file in REQUIRED_YOLO_YAML_FILES
+        os.path.exists(os.path.join(dataset_dir, yaml_file))
+        for yaml_file in REQUIRED_YOLO_YAML_FILES
     )
     contains_required_split_dirs = all(
-        os.path.exists(os.path.join(dataset_dir, split_dir)) for split_dir in REQUIRED_SPLIT_DIRS
+        os.path.exists(os.path.join(dataset_dir, split_dir))
+        for split_dir in REQUIRED_SPLIT_DIRS
     )
     contains_required_data_subdirs = all(
         os.path.exists(os.path.join(dataset_dir, split_dir, data_subdir))
         for split_dir in REQUIRED_SPLIT_DIRS
         for data_subdir in REQUIRED_DATA_SUBDIRS
     )
-    return contains_required_yolo_yaml and contains_required_split_dirs and contains_required_data_subdirs
+    return (
+        contains_required_yolo_yaml
+        and contains_required_split_dirs
+        and contains_required_data_subdirs
+    )
 
 
 class ConvertYolo:
@@ -135,7 +141,9 @@ class ConvertYolo:
 
         if self.include_masks:
             if detections.mask is not None and np.size(detections.mask) > 0:
-                masks = torch.from_numpy(detections.mask[keep.cpu().numpy()]).to(torch.uint8)
+                masks = torch.from_numpy(detections.mask[keep.cpu().numpy()]).to(
+                    torch.uint8
+                )
                 target_out["masks"] = masks
             else:
                 target_out["masks"] = torch.zeros((0, h, w), dtype=torch.uint8)
@@ -160,7 +168,9 @@ class _MockSvDataset:
         import numpy as np
         import supervision as sv
 
-        det = sv.Detections(xyxy=np.array([[10 * i, 20, 30, 40]]), class_id=np.array([i]))
+        det = sv.Detections(
+            xyxy=np.array([[10 * i, 20, 30, 40]]), class_id=np.array([i])
+        )
         return f"img_{i}.jpg", np.zeros((100, 100, 3), dtype=np.uint8), det
 
 
@@ -256,19 +266,31 @@ class CocoLikeAPI:
             image_path, cv2_image, detections = self.sv_dataset[img_id]
             h, w = cv2_image.shape[:2]
 
-            images.append({"id": img_id, "file_name": str(image_path), "height": h, "width": w})
+            images.append(
+                {"id": img_id, "file_name": str(image_path), "height": h, "width": w}
+            )
 
             if len(detections) == 0:
                 continue
             for i in range(len(detections)):
                 x1, y1, x2, y2 = detections.xyxy[i]
-                bbox_x, bbox_y, bbox_w, bbox_h = float(x1), float(y1), float(x2 - x1), float(y2 - y1)
+                bbox_x, bbox_y, bbox_w, bbox_h = (
+                    float(x1),
+                    float(y1),
+                    float(x2 - x1),
+                    float(y2 - y1),
+                )
 
                 ann = {
                     "id": ann_id,
                     "image_id": img_id,
                     "category_id": int(detections.class_id[i]),
-                    "bbox": [float(bbox_x), float(bbox_y), float(bbox_w), float(bbox_h)],
+                    "bbox": [
+                        float(bbox_x),
+                        float(bbox_y),
+                        float(bbox_w),
+                        float(bbox_h),
+                    ],
                     "area": float(bbox_w * bbox_h),
                     "iscrowd": 0,
                 }
@@ -318,7 +340,11 @@ class CocoLikeAPI:
             anns = [ann for ann in anns if ann["category_id"] in catIds]
 
         if len(areaRng) == 2:
-            anns = [ann for ann in anns if ann["area"] >= areaRng[0] and ann["area"] <= areaRng[1]]
+            anns = [
+                ann
+                for ann in anns
+                if ann["area"] >= areaRng[0] and ann["area"] <= areaRng[1]
+            ]
 
         if iscrowd is not None:
             anns = [ann for ann in anns if ann["iscrowd"] == iscrowd]
@@ -481,7 +507,9 @@ class YoloDetection(VisionDataset):
         return img, target
 
 
-def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> YoloDetection:
+def build_roboflow_from_yolo(
+    image_set: str, args: Any, resolution: int
+) -> YoloDetection:
     """Build a Roboflow YOLO-format dataset.
 
     This uses Roboflow's standard YOLO directory structure
@@ -514,7 +542,10 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
     }
 
     # Prefer data.yaml; fall back to data.yml if present; default to data.yaml for error reporting
-    data_file = next((root / f for f in REQUIRED_YOLO_YAML_FILES if (root / f).exists()), root / "data.yaml")
+    data_file = next(
+        (root / f for f in REQUIRED_YOLO_YAML_FILES if (root / f).exists()),
+        root / "data.yaml",
+    )
     img_folder, lb_folder = PATHS[image_set.split("_")[0]]
     square_resize_div_64 = getattr(args, "square_resize_div_64", False)
     include_masks = getattr(args, "segmentation_head", False)

@@ -28,23 +28,37 @@ from rfdetr.training import build_trainer
 from rfdetr.training.module_data import RFDETRDataModule
 from rfdetr.training.module_model import RFDETRModelModule
 
-from .helpers import _fake_postprocess, _FakeCriterion, _FakeDataset, _make_param_dicts, _TinyModel
+from .helpers import (
+    _fake_postprocess,
+    _FakeCriterion,
+    _FakeDataset,
+    _make_param_dicts,
+    _TinyModel,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers local to this module
 # ---------------------------------------------------------------------------
 
 
-def _fit_and_read_csv(mc: RFDETRBaseConfig, tc: TrainConfig, criterion=None) -> pd.DataFrame:
+def _fit_and_read_csv(
+    mc: RFDETRBaseConfig, tc: TrainConfig, criterion=None
+) -> pd.DataFrame:
     """Run 1 epoch (2 train + 2 val batches) and return the resulting metrics.csv."""
     fake_criterion = criterion or _FakeCriterion()
     with (
-        patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel()),
+        patch(
+            "rfdetr.training.module_model.build_model_from_config",
+            return_value=_TinyModel(),
+        ),
         patch(
             "rfdetr.training.module_model.build_criterion_from_config",
             return_value=(fake_criterion, MagicMock(side_effect=_fake_postprocess)),
         ),
-        patch("rfdetr.training.module_data.build_dataset", return_value=_FakeDataset(length=20)),
+        patch(
+            "rfdetr.training.module_data.build_dataset",
+            return_value=_FakeDataset(length=20),
+        ),
         patch(
             "rfdetr.training.module_model.get_param_dict",
             side_effect=lambda args, model: _make_param_dicts(model),
@@ -100,7 +114,9 @@ _REQUIRED_DETECTION_EMA = _REQUIRED_DETECTION | frozenset(
 class TestDetectionMetricsCSV:
     """metrics.csv contains all columns that plot_metrics() needs for detection."""
 
-    def test_base_metrics_present_without_ema(self, base_model_config, base_train_config):
+    def test_base_metrics_present_without_ema(
+        self, base_model_config, base_train_config
+    ):
         """Without EMA all core val/* columns must appear in metrics.csv with non-NaN data."""
         mc = base_model_config()
         tc = base_train_config(use_ema=False, run_test=False)
@@ -112,7 +128,9 @@ class TestDetectionMetricsCSV:
         all_nan = {c for c in _REQUIRED_DETECTION if df[c].isna().all()}
         assert not all_nan, f"Columns with all-NaN values: {sorted(all_nan)}"
 
-    def test_ema_metrics_present_with_ema_enabled(self, base_model_config, base_train_config):
+    def test_ema_metrics_present_with_ema_enabled(
+        self, base_model_config, base_train_config
+    ):
         """With use_ema=True the ema_* aliases must also appear in metrics.csv."""
         mc = base_model_config()
         tc = base_train_config(use_ema=True, run_test=False)
@@ -144,7 +162,9 @@ class TestDetectionMetricsCSV:
                 return {"loss_ce": dummy.mean() * 0 + FIXED_LOSS}
 
         mc = base_model_config()
-        tc = base_train_config(use_ema=False, run_test=False, grad_accum_steps=GRAD_ACCUM)
+        tc = base_train_config(
+            use_ema=False, run_test=False, grad_accum_steps=GRAD_ACCUM
+        )
         df = _fit_and_read_csv(mc, tc, criterion=_FixedCriterion())
 
         logged = df["train/loss"].dropna().mean()

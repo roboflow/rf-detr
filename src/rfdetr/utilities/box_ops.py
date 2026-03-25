@@ -42,7 +42,9 @@ def box_xyxy_to_cxcywh(x: torch.Tensor) -> torch.Tensor:
 
 
 # modified from torchvision to also return the union
-def box_iou(boxes1: torch.Tensor, boxes2: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+def box_iou(
+    boxes1: torch.Tensor, boxes2: torch.Tensor
+) -> Tuple[torch.Tensor, torch.Tensor]:
     """Compute pairwise IoU and union for two sets of boxes.
 
     Returns:
@@ -149,10 +151,16 @@ def batch_sigmoid_ce_loss(inputs: torch.Tensor, targets: torch.Tensor) -> torch.
     """
     hw = inputs.shape[1]
 
-    pos = F.binary_cross_entropy_with_logits(inputs, torch.ones_like(inputs), reduction="none")
-    neg = F.binary_cross_entropy_with_logits(inputs, torch.zeros_like(inputs), reduction="none")
+    pos = F.binary_cross_entropy_with_logits(
+        inputs, torch.ones_like(inputs), reduction="none"
+    )
+    neg = F.binary_cross_entropy_with_logits(
+        inputs, torch.zeros_like(inputs), reduction="none"
+    )
 
-    loss = torch.einsum("nc,mc->nm", pos, targets) + torch.einsum("nc,mc->nm", neg, (1 - targets))
+    loss = torch.einsum("nc,mc->nm", pos, targets) + torch.einsum(
+        "nc,mc->nm", neg, (1 - targets)
+    )
 
     return loss / hw
 

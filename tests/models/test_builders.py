@@ -43,7 +43,9 @@ class TestBuildModelFromConfig:
 
         mc = RFDETRBaseConfig(num_classes=80)
         model = build_model_from_config(mc)
-        assert isinstance(model, LWDETR), f"Expected LWDETR instance, got {type(model).__name__}"
+        assert isinstance(model, LWDETR), (
+            f"Expected LWDETR instance, got {type(model).__name__}"
+        )
 
     def test_num_classes_correct(self) -> None:
         """num_classes=5 in config should produce class_embed with out_features=6.
@@ -78,7 +80,9 @@ class TestBuildModelFromConfig:
         """RFDETRSegNanoConfig has segmentation_head=True; model must have it."""
         mc = RFDETRSegNanoConfig()
         model = build_model_from_config(mc)
-        assert model.segmentation_head is not None, "Expected segmentation_head to be created for RFDETRSegNanoConfig"
+        assert model.segmentation_head is not None, (
+            "Expected segmentation_head to be created for RFDETRSegNanoConfig"
+        )
 
     def test_drop_path_uses_train_config_value(self) -> None:
         """Non-default TrainConfig.drop_path must reach the model builder path."""
@@ -100,7 +104,9 @@ class TestBuildModelFromConfig:
         mc = RFDETRBaseConfig(num_classes=80)
 
         with pytest.raises(ValueError, match="encoder_only=False"):
-            build_model_from_config(mc, defaults=replace(MODEL_DEFAULTS, encoder_only=True))
+            build_model_from_config(
+                mc, defaults=replace(MODEL_DEFAULTS, encoder_only=True)
+            )
 
     def test_rejects_backbone_only_defaults(self) -> None:
         """backbone_only=True in defaults must also raise ValueError."""
@@ -111,7 +117,9 @@ class TestBuildModelFromConfig:
         mc = RFDETRBaseConfig(num_classes=80)
 
         with pytest.raises(ValueError, match="backbone_only=False"):
-            build_model_from_config(mc, defaults=replace(MODEL_DEFAULTS, backbone_only=True))
+            build_model_from_config(
+                mc, defaults=replace(MODEL_DEFAULTS, backbone_only=True)
+            )
 
     def test_none_train_config_uses_dummy(self) -> None:
         """build_model_from_config with train_config=None must not raise."""
@@ -134,22 +142,30 @@ class TestBuildCriterionFromConfig:
         assert isinstance(result, tuple), f"Expected tuple, got {type(result).__name__}"
         assert len(result) == 2, f"Expected 2-tuple, got {len(result)}-tuple"
         criterion, postprocess = result
-        assert isinstance(criterion, SetCriterion), f"Expected SetCriterion, got {type(criterion).__name__}"
-        assert isinstance(postprocess, PostProcess), f"Expected PostProcess, got {type(postprocess).__name__}"
+        assert isinstance(criterion, SetCriterion), (
+            f"Expected SetCriterion, got {type(criterion).__name__}"
+        )
+        assert isinstance(postprocess, PostProcess), (
+            f"Expected PostProcess, got {type(postprocess).__name__}"
+        )
 
     def test_num_select_postprocess(self) -> None:
         """RFDETRSegNanoConfig has num_select=100; PostProcess must reflect it."""
         mc = RFDETRSegNanoConfig()
         tc = SegmentationTrainConfig(dataset_dir="/tmp")
         _, postprocess = build_criterion_from_config(mc, tc)
-        assert postprocess.num_select == 100, f"Expected PostProcess.num_select=100, got {postprocess.num_select}"
+        assert postprocess.num_select == 100, (
+            f"Expected PostProcess.num_select=100, got {postprocess.num_select}"
+        )
 
     def test_segmentation_losses_included(self) -> None:
         """With segmentation config, 'masks' must be in criterion.losses."""
         mc = RFDETRSegNanoConfig()
         tc = SegmentationTrainConfig(dataset_dir="/tmp")
         criterion, _ = build_criterion_from_config(mc, tc)
-        assert "masks" in criterion.losses, f"Expected 'masks' in criterion.losses, got {criterion.losses}"
+        assert "masks" in criterion.losses, (
+            f"Expected 'masks' in criterion.losses, got {criterion.losses}"
+        )
 
     def test_custom_defaults_focal_alpha_applied(self) -> None:
         """Custom focal_alpha in ModelDefaults must reach SetCriterion."""
@@ -161,4 +177,6 @@ class TestBuildCriterionFromConfig:
         tc = TrainConfig(dataset_dir="/tmp")
         custom_defaults = replace(MODEL_DEFAULTS, focal_alpha=0.5)
         criterion, _ = build_criterion_from_config(mc, tc, defaults=custom_defaults)
-        assert criterion.focal_alpha == pytest.approx(0.5), f"Expected focal_alpha=0.5, got {criterion.focal_alpha}"
+        assert criterion.focal_alpha == pytest.approx(0.5), (
+            f"Expected focal_alpha=0.5, got {criterion.focal_alpha}"
+        )

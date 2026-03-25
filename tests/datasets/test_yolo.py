@@ -193,7 +193,9 @@ class TestCocoLikeAPI:
 
         # Check bbox format
         assert len(ann["bbox"]) == 4, "BBox must have 4 coordinates"
-        assert all(isinstance(x, (int, float)) for x in ann["bbox"]), "BBox coordinates must be numeric"
+        assert all(isinstance(x, (int, float)) for x in ann["bbox"]), (
+            "BBox coordinates must be numeric"
+        )
 
         # Check area
         assert isinstance(ann["area"], (int, float)), "Area must be numeric"
@@ -251,9 +253,14 @@ class TestCocoLikeAPI:
         class MultiAnnotationMockDataset(_MockSvDataset):
             def __getitem__(self, i):
                 if i == 0:
-                    det = sv.Detections(xyxy=np.array([[10, 20, 30, 40], [50, 60, 70, 80]]), class_id=np.array([0, 1]))
+                    det = sv.Detections(
+                        xyxy=np.array([[10, 20, 30, 40], [50, 60, 70, 80]]),
+                        class_id=np.array([0, 1]),
+                    )
                 else:
-                    det = sv.Detections(xyxy=np.array([[15, 25, 35, 45]]), class_id=np.array([0]))
+                    det = sv.Detections(
+                        xyxy=np.array([[15, 25, 35, 45]]), class_id=np.array([0])
+                    )
                 return f"img_{i}.jpg", np.zeros((100, 100, 3), dtype=np.uint8), det
 
         api = CocoLikeAPI(["cat", "dog"], MultiAnnotationMockDataset())
@@ -274,7 +281,9 @@ class TestCocoLikeAPI:
 class TestBuildRoboflowFromYoloAugConfig:
     """Regression tests for #769: aug_config forwarded to transform builders."""
 
-    def _make_args(self, square_resize_div_64: bool, aug_config=None) -> types.SimpleNamespace:
+    def _make_args(
+        self, square_resize_div_64: bool, aug_config=None
+    ) -> types.SimpleNamespace:
         return types.SimpleNamespace(
             dataset_dir="/fake/dataset",
             square_resize_div_64=square_resize_div_64,
@@ -296,8 +305,18 @@ class TestBuildRoboflowFromYoloAugConfig:
                 {"HorizontalFlip": {"p": 0.5}},
                 id="square_div_64_with_config",
             ),
-            pytest.param(False, "make_coco_transforms", {"HorizontalFlip": {"p": 0.5}}, id="standard_with_config"),
-            pytest.param(True, "make_coco_transforms_square_div_64", None, id="square_div_64_none"),
+            pytest.param(
+                False,
+                "make_coco_transforms",
+                {"HorizontalFlip": {"p": 0.5}},
+                id="standard_with_config",
+            ),
+            pytest.param(
+                True,
+                "make_coco_transforms_square_div_64",
+                None,
+                id="square_div_64_none",
+            ),
             pytest.param(False, "make_coco_transforms", None, id="standard_none"),
         ],
     )
@@ -305,7 +324,9 @@ class TestBuildRoboflowFromYoloAugConfig:
         self, square_resize_div_64: bool, transform_fn: str, aug_config: object
     ) -> None:
         """Regression test for #769: aug_config is forwarded to transform builders for all code paths."""
-        args = self._make_args(square_resize_div_64=square_resize_div_64, aug_config=aug_config)
+        args = self._make_args(
+            square_resize_div_64=square_resize_div_64, aug_config=aug_config
+        )
 
         with (
             patch("rfdetr.datasets.yolo.Path") as mock_path,
@@ -364,7 +385,9 @@ class TestIsValidYoloDataset:
             pytest.param("data.yml", id="data_yml"),
         ],
     )
-    def test_valid_dataset_with_yaml_variants(self, tmp_path: Path, yaml_filename: str) -> None:
+    def test_valid_dataset_with_yaml_variants(
+        self, tmp_path: Path, yaml_filename: str
+    ) -> None:
         """Regression test: both data.yaml and data.yml are accepted as valid YOLO datasets."""
         dataset_dir = self._create_valid_yolo_dataset(tmp_path, yaml_filename)
         assert is_valid_yolo_dataset(dataset_dir) is True

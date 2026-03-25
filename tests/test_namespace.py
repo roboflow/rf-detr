@@ -12,7 +12,12 @@ from typing import Any
 import pytest
 
 from rfdetr._namespace import _namespace_from_configs
-from rfdetr.config import RFDETRBaseConfig, RFDETRSegNanoConfig, SegmentationTrainConfig, TrainConfig
+from rfdetr.config import (
+    RFDETRBaseConfig,
+    RFDETRSegNanoConfig,
+    SegmentationTrainConfig,
+    TrainConfig,
+)
 from rfdetr.models._types import BuilderArgs
 
 
@@ -44,11 +49,15 @@ class TestNamespaceForwarding:
         ns = self._make_ns(use_ema=False)
         assert ns.use_ema is False
 
-    def test_early_stopping_use_ema_forwarded_true(self: "TestNamespaceForwarding") -> None:
+    def test_early_stopping_use_ema_forwarded_true(
+        self: "TestNamespaceForwarding",
+    ) -> None:
         ns = self._make_ns(early_stopping_use_ema=True)
         assert ns.early_stopping_use_ema is True
 
-    def test_early_stopping_use_ema_forwarded_false(self: "TestNamespaceForwarding") -> None:
+    def test_early_stopping_use_ema_forwarded_false(
+        self: "TestNamespaceForwarding",
+    ) -> None:
         ns = self._make_ns(early_stopping_use_ema=False)
         assert ns.early_stopping_use_ema is False
 
@@ -107,15 +116,21 @@ class TestNamespaceFieldOwnership:
 
     def test_cls_loss_coef_train_config_wins_over_explicit_model_config(self) -> None:
         """When both are explicitly set, TrainConfig.cls_loss_coef takes precedence."""
-        with pytest.warns(DeprecationWarning, match="ModelConfig\\.cls_loss_coef is deprecated"):
+        with pytest.warns(
+            DeprecationWarning, match="ModelConfig\\.cls_loss_coef is deprecated"
+        ):
             mc = RFDETRBaseConfig(num_classes=80, cls_loss_coef=0.5)
         tc = TrainConfig(dataset_dir="/tmp", cls_loss_coef=3.0)
         ns = _namespace_from_configs(mc, tc)
         assert ns.cls_loss_coef == pytest.approx(3.0)
 
-    def test_cls_loss_coef_model_config_explicit_is_preserved_during_deprecation(self) -> None:
+    def test_cls_loss_coef_model_config_explicit_is_preserved_during_deprecation(
+        self,
+    ) -> None:
         """Explicit ModelConfig.cls_loss_coef remains effective until removal."""
-        with pytest.warns(DeprecationWarning, match="ModelConfig\\.cls_loss_coef is deprecated"):
+        with pytest.warns(
+            DeprecationWarning, match="ModelConfig\\.cls_loss_coef is deprecated"
+        ):
             mc = RFDETRBaseConfig(num_classes=80, cls_loss_coef=2.5)
         tc = TrainConfig(dataset_dir="/tmp")
         ns = _namespace_from_configs(mc, tc)
@@ -137,7 +152,9 @@ class TestNamespaceFieldOwnership:
             pytest.param(RFDETRBaseConfig, 300, id="base"),
         ],
     )
-    def test_num_select_matches_model_config_variant(self, config_class, expected_num_select) -> None:
+    def test_num_select_matches_model_config_variant(
+        self, config_class, expected_num_select
+    ) -> None:
         """ns.num_select must equal the model config's num_select for each variant."""
         mc = config_class()
         tc = TrainConfig(dataset_dir="/tmp")
@@ -155,7 +172,9 @@ class TestBuildNamespaceDeprecated:
         mc = RFDETRBaseConfig(num_classes=80)
         tc = TrainConfig(dataset_dir="/tmp")
 
-        with pytest.warns(DeprecationWarning, match="build_namespace\\(\\) is deprecated"):
+        with pytest.warns(
+            DeprecationWarning, match="build_namespace\\(\\) is deprecated"
+        ):
             build_namespace(mc, tc)
 
     def test_result_identical_to_namespace_from_configs(self) -> None:

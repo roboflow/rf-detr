@@ -20,6 +20,7 @@ Mostly copy-paste from https://github.com/pytorch/vision/blob/edfd5a7/references
 The difference is that there is less copy-pasting from pycocotools
 in the end of the file, as python3 can suppress prints with contextlib
 """
+
 import os
 import contextlib
 import copy
@@ -48,7 +49,11 @@ class CocoEvaluator(object):
 
         # DEBUG: Print category mapping info
         from rfdetr.util.misc import get_rank
-        print(f"[DEBUG Rank {get_rank()}] CocoEvaluator: {len(cat_ids)} categories, first 5 cat_ids: {cat_ids[:5]}, mapping sample: {{0: {self.continuous_to_cat_id.get(0)}}}", flush=True)
+
+        print(
+            f"[DEBUG Rank {get_rank()}] CocoEvaluator: {len(cat_ids)} categories, first 5 cat_ids: {cat_ids[:5]}, mapping sample: {{0: {self.continuous_to_cat_id.get(0)}}}",
+            flush=True,
+        )
 
         self.iou_types = iou_types
         self.coco_eval = {}
@@ -73,7 +78,7 @@ class CocoEvaluator(object):
             results = self.prepare(predictions, iou_type)
 
             # suppress pycocotools prints
-            with open(os.devnull, 'w') as devnull:
+            with open(os.devnull, "w") as devnull:
                 with contextlib.redirect_stdout(devnull):
                     coco_dt = COCO.loadRes(self.coco_gt, results) if results else COCO()
             coco_eval = self.coco_eval[iou_type]
@@ -82,10 +87,14 @@ class CocoEvaluator(object):
             coco_eval.params.imgIds = list(img_ids)
 
             # DEBUG: Print GT category IDs being used (once)
-            if not getattr(self, '_debug_gt_cats', False):
+            if not getattr(self, "_debug_gt_cats", False):
                 from rfdetr.util.misc import get_rank
+
                 gt_cat_ids = coco_eval.params.catIds
-                print(f"[DEBUG Rank {get_rank()}] GT catIds for eval: {gt_cat_ids[:5]}... (total: {len(gt_cat_ids)})", flush=True)
+                print(
+                    f"[DEBUG Rank {get_rank()}] GT catIds for eval: {gt_cat_ids[:5]}... (total: {len(gt_cat_ids)})",
+                    flush=True,
+                )
                 self._debug_gt_cats = True
 
             img_ids, eval_imgs = evaluate(coco_eval)
@@ -94,18 +103,27 @@ class CocoEvaluator(object):
 
     def synchronize_between_processes(self):
         from rfdetr.util.misc import get_world_size, get_rank
+
         for iou_type in self.iou_types:
             self.eval_imgs[iou_type] = np.concatenate(self.eval_imgs[iou_type], 2)
 
             # DEBUG: Check gathering
             local_img_count = len(self.img_ids)
-            print(f"[DEBUG Rank {get_rank()}/{get_world_size()}] {iou_type}: {local_img_count} local images, eval_imgs shape: {self.eval_imgs[iou_type].shape}", flush=True)
+            print(
+                f"[DEBUG Rank {get_rank()}/{get_world_size()}] {iou_type}: {local_img_count} local images, eval_imgs shape: {self.eval_imgs[iou_type].shape}",
+                flush=True,
+            )
 
-            create_common_coco_eval(self.coco_eval[iou_type], self.img_ids, self.eval_imgs[iou_type])
+            create_common_coco_eval(
+                self.coco_eval[iou_type], self.img_ids, self.eval_imgs[iou_type]
+            )
 
             # DEBUG: Check after merge
             merged_count = len(self.coco_eval[iou_type].params.imgIds)
-            print(f"[DEBUG Rank {get_rank()}] {iou_type}: After merge: {merged_count} unique images", flush=True)
+            print(
+                f"[DEBUG Rank {get_rank()}] {iou_type}: After merge: {merged_count} unique images",
+                flush=True,
+            )
 
     def accumulate(self):
         for coco_eval in self.coco_eval.values():
@@ -128,7 +146,7 @@ class CocoEvaluator(object):
 
     def prepare_for_coco_detection(self, predictions):
         coco_results = []
-        _debug_printed = getattr(self, '_debug_printed_det', False)
+        _debug_printed = getattr(self, "_debug_printed_det", False)
         for original_id, prediction in predictions.items():
             if len(prediction) == 0:
                 continue
@@ -141,9 +159,13 @@ class CocoEvaluator(object):
             # DEBUG: Print first prediction's label mapping (once per evaluator)
             if not _debug_printed and labels:
                 from rfdetr.util.misc import get_rank
+
                 raw_label = labels[0]
                 mapped_cat = self.continuous_to_cat_id.get(raw_label, raw_label)
-                print(f"[DEBUG Rank {get_rank()}] Detection: raw_label={raw_label} -> category_id={mapped_cat}, unique labels in batch: {set(labels)}", flush=True)
+                print(
+                    f"[DEBUG Rank {get_rank()}] Detection: raw_label={raw_label} -> category_id={mapped_cat}, unique labels in batch: {set(labels)}",
+                    flush=True,
+                )
                 self._debug_printed_det = True
                 _debug_printed = True
 
@@ -152,7 +174,9 @@ class CocoEvaluator(object):
                     {
                         "image_id": original_id,
                         # Convert 0-indexed class label back to original COCO category ID
-                        "category_id": self.continuous_to_cat_id.get(labels[k], labels[k]),
+                        "category_id": self.continuous_to_cat_id.get(
+                            labels[k], labels[k]
+                        ),
                         "bbox": box,
                         "score": scores[k],
                     }
@@ -177,7 +201,9 @@ class CocoEvaluator(object):
             labels = prediction["labels"].tolist()
 
             rles = [
-                mask_util.encode(np.array(mask.cpu()[0, :, :, np.newaxis], dtype=np.uint8, order="F"))[0]
+                mask_util.encode(
+                    np.array(mask.cpu()[0, :, :, np.newaxis], dtype=np.uint8, order="F")
+                )[0]
                 for mask in masks
             ]
             for rle in rles:
@@ -188,7 +214,9 @@ class CocoEvaluator(object):
                     {
                         "image_id": original_id,
                         # Convert 0-indexed class label back to original COCO category ID
-                        "category_id": self.continuous_to_cat_id.get(labels[k], labels[k]),
+                        "category_id": self.continuous_to_cat_id.get(
+                            labels[k], labels[k]
+                        ),
                         "segmentation": rle,
                         "score": scores[k],
                     }
@@ -215,8 +243,10 @@ class CocoEvaluator(object):
                     {
                         "image_id": original_id,
                         # Convert 0-indexed class label back to original COCO category ID
-                        "category_id": self.continuous_to_cat_id.get(labels[k], labels[k]),
-                        'keypoints': keypoint,
+                        "category_id": self.continuous_to_cat_id.get(
+                            labels[k], labels[k]
+                        ),
+                        "keypoints": keypoint,
                         "score": scores[k],
                     }
                     for k, keypoint in enumerate(keypoints)
@@ -269,17 +299,19 @@ def create_common_coco_eval(coco_eval, img_ids, eval_imgs):
 
 
 def evaluate(self):
-    '''
+    """
     Run per image evaluation on given images and store results (a list of dict) in self.evalImgs
     :return: None
-    '''
+    """
     # tic = time.time()
     # print('Running per image evaluation...')
     p = self.params
     # add backward compatibility if useSegm is specified in params
     if p.useSegm is not None:
-        p.iouType = 'segm' if p.useSegm == 1 else 'bbox'
-        print('useSegm (deprecated) is not None. Running {} evaluation'.format(p.iouType))
+        p.iouType = "segm" if p.useSegm == 1 else "bbox"
+        print(
+            "useSegm (deprecated) is not None. Running {} evaluation".format(p.iouType)
+        )
     # print('Evaluate annotation type *{}*'.format(p.iouType))
     p.imgIds = list(np.unique(p.imgIds))
     if p.useCats:
@@ -291,14 +323,15 @@ def evaluate(self):
     # loop through images, area range, max detection number
     catIds = p.catIds if p.useCats else [-1]
 
-    if p.iouType == 'segm' or p.iouType == 'bbox':
+    if p.iouType == "segm" or p.iouType == "bbox":
         computeIoU = self.computeIoU
-    elif p.iouType == 'keypoints':
+    elif p.iouType == "keypoints":
         computeIoU = self.computeOks
     self.ious = {
         (imgId, catId): computeIoU(imgId, catId)
         for imgId in p.imgIds
-        for catId in catIds}
+        for catId in catIds
+    }
 
     evaluateImg = self.evaluateImg
     maxDet = p.maxDets[-1]
@@ -314,6 +347,7 @@ def evaluate(self):
     # toc = time.time()
     # print('DONE (t={:0.2f}s).'.format(toc-tic))
     return p.imgIds, evalImgs
+
 
 #################################################################
 # end of straight copy from pycocotools, just removing the prints

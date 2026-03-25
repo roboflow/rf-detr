@@ -10,6 +10,7 @@ Keypoint Head for RF-DETR Pose Estimation
 Outputs (x, y, visibility) for each keypoint per detection query,
 following YOLOv11's approach for pose estimation.
 """
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -19,7 +20,9 @@ from typing import List, Optional
 class MLP(nn.Module):
     """Simple multi-layer perceptron (also called FFN)"""
 
-    def __init__(self, input_dim: int, hidden_dim: int, output_dim: int, num_layers: int):
+    def __init__(
+        self, input_dim: int, hidden_dim: int, output_dim: int, num_layers: int
+    ):
         super().__init__()
         self.num_layers = num_layers
         h = [hidden_dim] * (num_layers - 1)
@@ -131,47 +134,77 @@ class KeypointHead(nn.Module):
 # COCO keypoint constants for reference
 COCO_KEYPOINT_NAMES = [
     "nose",
-    "left_eye", "right_eye",
-    "left_ear", "right_ear",
-    "left_shoulder", "right_shoulder",
-    "left_elbow", "right_elbow",
-    "left_wrist", "right_wrist",
-    "left_hip", "right_hip",
-    "left_knee", "right_knee",
-    "left_ankle", "right_ankle"
+    "left_eye",
+    "right_eye",
+    "left_ear",
+    "right_ear",
+    "left_shoulder",
+    "right_shoulder",
+    "left_elbow",
+    "right_elbow",
+    "left_wrist",
+    "right_wrist",
+    "left_hip",
+    "right_hip",
+    "left_knee",
+    "right_knee",
+    "left_ankle",
+    "right_ankle",
 ]
 
 # Skeleton connections for COCO (pairs of keypoint indices)
 COCO_SKELETON = [
-    [15, 13], [13, 11], [16, 14], [14, 12], [11, 12],  # legs
-    [5, 11], [6, 12],  # torso to hips
+    [15, 13],
+    [13, 11],
+    [16, 14],
+    [14, 12],
+    [11, 12],  # legs
+    [5, 11],
+    [6, 12],  # torso to hips
     [5, 6],  # shoulders
-    [5, 7], [6, 8], [7, 9], [8, 10],  # arms
-    [1, 2], [0, 1], [0, 2], [1, 3], [2, 4], [3, 5], [4, 6]  # face
+    [5, 7],
+    [6, 8],
+    [7, 9],
+    [8, 10],  # arms
+    [1, 2],
+    [0, 1],
+    [0, 2],
+    [1, 3],
+    [2, 4],
+    [3, 5],
+    [4, 6],  # face
 ]
 
 # COCO keypoint sigmas for OKS calculation
 # These control how strict the matching is for each keypoint
 COCO_KEYPOINT_SIGMAS = [
     0.026,  # nose
-    0.025, 0.025,  # eyes
-    0.035, 0.035,  # ears
-    0.079, 0.079,  # shoulders
-    0.072, 0.072,  # elbows
-    0.062, 0.062,  # wrists
-    0.107, 0.107,  # hips
-    0.087, 0.087,  # knees
-    0.089, 0.089   # ankles
+    0.025,
+    0.025,  # eyes
+    0.035,
+    0.035,  # ears
+    0.079,
+    0.079,  # shoulders
+    0.072,
+    0.072,  # elbows
+    0.062,
+    0.062,  # wrists
+    0.107,
+    0.107,  # hips
+    0.087,
+    0.087,  # knees
+    0.089,
+    0.089,  # ankles
 ]
 
 # Flip pairs for horizontal augmentation (left <-> right)
 COCO_KEYPOINT_FLIP_PAIRS = [
-    (1, 2),   # left_eye <-> right_eye
-    (3, 4),   # left_ear <-> right_ear
-    (5, 6),   # left_shoulder <-> right_shoulder
-    (7, 8),   # left_elbow <-> right_elbow
+    (1, 2),  # left_eye <-> right_eye
+    (3, 4),  # left_ear <-> right_ear
+    (5, 6),  # left_shoulder <-> right_shoulder
+    (7, 8),  # left_elbow <-> right_elbow
     (9, 10),  # left_wrist <-> right_wrist
-    (11, 12), # left_hip <-> right_hip
-    (13, 14), # left_knee <-> right_knee
-    (15, 16)  # left_ankle <-> right_ankle
+    (11, 12),  # left_hip <-> right_hip
+    (13, 14),  # left_knee <-> right_knee
+    (15, 16),  # left_ankle <-> right_ankle
 ]

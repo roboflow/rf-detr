@@ -40,7 +40,9 @@ class PostProcess(nn.Module):
         assert target_sizes.shape[1] == 2
 
         prob = out_logits.sigmoid()
-        topk_values, topk_indexes = torch.topk(prob.view(out_logits.shape[0], -1), self.num_select, dim=1)
+        topk_values, topk_indexes = torch.topk(
+            prob.view(out_logits.shape[0], -1), self.num_select, dim=1
+        )
         scores = topk_values
         topk_boxes = topk_indexes // out_logits.shape[2]
         labels = topk_indexes % out_logits.shape[2]
@@ -61,7 +63,9 @@ class PostProcess(nn.Module):
                 masks_i = torch.gather(
                     out_masks[i],
                     0,
-                    k_idx.unsqueeze(-1).unsqueeze(-1).repeat(1, out_masks.shape[-2], out_masks.shape[-1]),
+                    k_idx.unsqueeze(-1)
+                    .unsqueeze(-1)
+                    .repeat(1, out_masks.shape[-2], out_masks.shape[-1]),
                 )  # [K, Hm, Wm]
                 h, w = target_sizes[i].tolist()
                 masks_i = F.interpolate(
@@ -74,7 +78,8 @@ class PostProcess(nn.Module):
                 results.append(res_i)
         else:
             results = [
-                {"scores": score, "labels": label, "boxes": box} for score, label, box in zip(scores, labels, boxes)
+                {"scores": score, "labels": label, "boxes": box}
+                for score, label, box in zip(scores, labels, boxes)
             ]
 
         return results

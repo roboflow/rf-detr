@@ -72,7 +72,9 @@ class TestConfigFilesExist:
     @pytest.mark.parametrize("name", ALL_CONFIGS)
     def test_config_file_exists(self, name):
         """configs/{name}.yaml must exist."""
-        assert (CONFIGS_DIR / f"{name}.yaml").exists(), f"Missing config file: {name}.yaml"
+        assert (CONFIGS_DIR / f"{name}.yaml").exists(), (
+            f"Missing config file: {name}.yaml"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -106,12 +108,16 @@ class TestConfigStructure:
     @pytest.mark.parametrize("name", ALL_CONFIGS)
     def test_has_model_config(self, name):
         """model.model_config must be present."""
-        assert "model_config" in _load(name)["model"], f"{name}.yaml missing model.model_config"
+        assert "model_config" in _load(name)["model"], (
+            f"{name}.yaml missing model.model_config"
+        )
 
     @pytest.mark.parametrize("name", ALL_CONFIGS)
     def test_has_train_config(self, name):
         """model.train_config must be present."""
-        assert "train_config" in _load(name)["model"], f"{name}.yaml missing model.train_config"
+        assert "train_config" in _load(name)["model"], (
+            f"{name}.yaml missing model.train_config"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -141,4 +147,6 @@ class TestConfigClassPaths:
     def test_det_uses_train_config(self, name):
         """Detection configs must use TrainConfig (not a subclass)."""
         got = _load(name)["model"]["train_config"]["class_path"]
-        assert got == "rfdetr.config.TrainConfig", f"{name}.yaml: train_config must use TrainConfig, got {got!r}"
+        assert got == "rfdetr.config.TrainConfig", (
+            f"{name}.yaml: train_config must use TrainConfig, got {got!r}"
+        )

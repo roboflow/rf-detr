@@ -9,7 +9,9 @@ import torch
 from rfdetr.models.transformer import gen_encoder_output_proposals
 
 
-def test_gen_encoder_output_proposals_passes_ij_indexing_to_meshgrid(monkeypatch) -> None:
+def test_gen_encoder_output_proposals_passes_ij_indexing_to_meshgrid(
+    monkeypatch,
+) -> None:
     """`gen_encoder_output_proposals` should call `torch.meshgrid` with explicit ij indexing."""
     original_meshgrid = torch.meshgrid
     call_count = 0

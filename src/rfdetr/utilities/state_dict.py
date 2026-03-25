@@ -175,7 +175,9 @@ def clean_state_dict(state_dict: Dict[str, Any]) -> OrderedDict[str, Any]:
     return new_state_dict
 
 
-def validate_checkpoint_compatibility(checkpoint: Dict[str, Any], model_args: Any) -> None:
+def validate_checkpoint_compatibility(
+    checkpoint: Dict[str, Any], model_args: Any
+) -> None:
     """Validate that a checkpoint is compatible with the model configuration.
 
     Checks for mismatches in ``segmentation_head`` and ``patch_size`` between
@@ -249,8 +251,12 @@ def validate_checkpoint_compatibility(checkpoint: Dict[str, Any], model_args: An
         return
 
     ckpt_args = checkpoint["args"]
-    ckpt_segmentation_head: Optional[bool] = _ckpt_args_get(ckpt_args, "segmentation_head")
-    model_segmentation_head: Optional[bool] = getattr(model_args, "segmentation_head", None)
+    ckpt_segmentation_head: Optional[bool] = _ckpt_args_get(
+        ckpt_args, "segmentation_head"
+    )
+    model_segmentation_head: Optional[bool] = getattr(
+        model_args, "segmentation_head", None
+    )
 
     if ckpt_segmentation_head is not None and model_segmentation_head is not None:
         if ckpt_segmentation_head != model_segmentation_head:
@@ -267,7 +273,11 @@ def validate_checkpoint_compatibility(checkpoint: Dict[str, Any], model_args: An
 
     ckpt_patch_size: Optional[int] = _ckpt_args_get(ckpt_args, "patch_size")
     model_patch_size: Optional[int] = getattr(model_args, "patch_size", None)
-    if ckpt_patch_size is not None and model_patch_size is not None and ckpt_patch_size != model_patch_size:
+    if (
+        ckpt_patch_size is not None
+        and model_patch_size is not None
+        and ckpt_patch_size != model_patch_size
+    ):
         raise ValueError(
             f"The checkpoint was trained with patch_size={ckpt_patch_size}, but the current model uses "
             f"patch_size={model_patch_size}. The checkpoint is incompatible with this model architecture. "

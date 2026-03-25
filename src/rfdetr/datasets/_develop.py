@@ -130,7 +130,9 @@ def _download_and_extract(url: str, dest_dir: Path) -> None:
                 continue
             target_path = (dest_dir_resolved / member.filename).resolve()
             if not target_path.is_relative_to(dest_dir_resolved):
-                raise RuntimeError(f"Unsafe path detected in ZIP file: {member.filename!r}")
+                raise RuntimeError(
+                    f"Unsafe path detected in ZIP file: {member.filename!r}"
+                )
             if member.is_dir():
                 target_path.mkdir(parents=True, exist_ok=True)
             else:
@@ -142,7 +144,9 @@ def _download_and_extract(url: str, dest_dir: Path) -> None:
 
 
 @contextmanager
-def _download_lock(lock_path: Path, timeout_s: float = 600.0, poll_s: float = 0.5) -> Generator[None, Any, None]:
+def _download_lock(
+    lock_path: Path, timeout_s: float = 600.0, poll_s: float = 0.5
+) -> Generator[None, Any, None]:
     """Provide a simple cross-process lock using an exclusive lock file.
 
     Args:

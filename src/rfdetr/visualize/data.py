@@ -77,8 +77,12 @@ def save_gt_predictions_visualization(
         ]
     )
 
-    gt_box_annotator = sv.BoxAnnotator(color=gt_colors, thickness=3, color_lookup=sv.ColorLookup.CLASS)
-    pred_box_annotator = sv.BoxAnnotator(color=pred_colors, thickness=3, color_lookup=sv.ColorLookup.CLASS)
+    gt_box_annotator = sv.BoxAnnotator(
+        color=gt_colors, thickness=3, color_lookup=sv.ColorLookup.CLASS
+    )
+    pred_box_annotator = sv.BoxAnnotator(
+        color=pred_colors, thickness=3, color_lookup=sv.ColorLookup.CLASS
+    )
 
     gt_label_annotator = sv.LabelAnnotator(
         color=gt_colors,
@@ -108,10 +112,14 @@ def save_gt_predictions_visualization(
 
     if gt_detections is not None:
         image = gt_box_annotator.annotate(scene=image, detections=gt_detections)
-        image = gt_label_annotator.annotate(scene=image, detections=gt_detections, labels=gt_labels)
+        image = gt_label_annotator.annotate(
+            scene=image, detections=gt_detections, labels=gt_labels
+        )
     if pred_detections is not None:
         image = pred_box_annotator.annotate(scene=image, detections=pred_detections)
-        image = pred_label_annotator.annotate(scene=image, detections=pred_detections, labels=pred_labels)
+        image = pred_label_annotator.annotate(
+            scene=image, detections=pred_detections, labels=pred_labels
+        )
 
     Image.fromarray(image).save(save_dir / f"{scenario_name}.png")
     logger.info(f"Saved visualization to {save_dir}/{scenario_name}.png")

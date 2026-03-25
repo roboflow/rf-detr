@@ -24,7 +24,12 @@ import torch
 from pytorch_lightning import LightningModule
 
 from rfdetr import RFDETRNano
-from rfdetr.config import RFDETRBaseConfig, RFDETRSegNanoConfig, SegmentationTrainConfig, TrainConfig
+from rfdetr.config import (
+    RFDETRBaseConfig,
+    RFDETRSegNanoConfig,
+    SegmentationTrainConfig,
+    TrainConfig,
+)
 from rfdetr.detr import RFDETR
 from rfdetr.training import RFDETRDataModule, RFDETRModelModule, build_trainer
 
@@ -33,7 +38,9 @@ from rfdetr.training import RFDETRDataModule, RFDETRModelModule, build_trainer
 # ---------------------------------------------------------------------------
 
 
-def _make_ptl_module_from(rfdetr_obj: RFDETR, dataset_dir: Path, output_dir: Path) -> RFDETRModelModule:
+def _make_ptl_module_from(
+    rfdetr_obj: RFDETR, dataset_dir: Path, output_dir: Path
+) -> RFDETRModelModule:
     """Build an :class:`~rfdetr.training.RFDETRModelModule` from an RFDETR instance.
 
     Creates the module with the same architecture as *rfdetr_obj*, copies its
@@ -57,8 +64,12 @@ def _make_ptl_module_from(rfdetr_obj: RFDETR, dataset_dir: Path, output_dir: Pat
     module.model.load_state_dict(rfdetr_obj.model.model.state_dict())
     module.model.eval()
 
-    assert isinstance(module, RFDETRModelModule), f"Expected RFDETRModelModule, got {type(module).__name__}"
-    assert isinstance(module, LightningModule), "Module must be a pytorch_lightning.LightningModule"
+    assert isinstance(module, RFDETRModelModule), (
+        f"Expected RFDETRModelModule, got {type(module).__name__}"
+    )
+    assert isinstance(module, LightningModule), (
+        "Module must be a pytorch_lightning.LightningModule"
+    )
     return module
 
 
@@ -169,7 +180,9 @@ def test_train_convergence_native_ptl(
     # Post-training validation — model should have converged.
     post_results = trainer.validate(module, datamodule=datamodule)
     map_after = post_results[0]["val/mAP_50"]
-    assert map_after >= 0.35, f"val mAP {map_after:.3f} should reach at least 0.35 after Trainer.fit."
+    assert map_after >= 0.35, (
+        f"val mAP {map_after:.3f} should reach at least 0.35 after Trainer.fit."
+    )
 
 
 @pytest.mark.gpu
@@ -253,7 +266,9 @@ def test_train_convergence_rfdetr_api(
     post_trainer = build_trainer(tc, mc, accelerator=accelerator)
     post_results = post_trainer.validate(post_module, datamodule=datamodule)
     map_after = post_results[0]["val/mAP_50"]
-    assert map_after >= 0.35, f"val mAP {map_after:.3f} should reach at least 0.35 after RFDETR.train()."
+    assert map_after >= 0.35, (
+        f"val mAP {map_after:.3f} should reach at least 0.35 after RFDETR.train()."
+    )
 
 
 @pytest.mark.gpu
@@ -313,7 +328,9 @@ def test_train_convergence_segmentation(
     pre_trainer = build_trainer(tc, mc, accelerator=accelerator)
     pre_results = pre_trainer.validate(module, datamodule=datamodule)
     map_before = pre_results[0]["val/mAP_50"]
-    assert map_before <= 0.05, f"Untrained val bbox mAP {map_before:.3f} should be ≤ 5 %."
+    assert map_before <= 0.05, (
+        f"Untrained val bbox mAP {map_before:.3f} should be ≤ 5 %."
+    )
 
     # Train via native PTL Trainer.fit.
     trainer = build_trainer(tc, mc, accelerator=accelerator)
@@ -323,5 +340,9 @@ def test_train_convergence_segmentation(
     post_results = trainer.validate(module, datamodule=datamodule)
     map_after = post_results[0]["val/mAP_50"]
     segm_map_after = post_results[0]["val/segm_mAP_50"]
-    assert map_after >= 0.15, f"val bbox mAP {map_after:.3f} should reach at least 0.15 after Trainer.fit."
-    assert segm_map_after >= 0.05, f"val segm mAP {segm_map_after:.3f} should reach at least 0.05 after Trainer.fit."
+    assert map_after >= 0.15, (
+        f"val bbox mAP {map_after:.3f} should reach at least 0.15 after Trainer.fit."
+    )
+    assert segm_map_after >= 0.05, (
+        f"val segm mAP {segm_map_after:.3f} should reach at least 0.05 after Trainer.fit."
+    )

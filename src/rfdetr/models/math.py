@@ -23,7 +23,9 @@ if float(torchvision.__version__.split(".")[1]) < 7.0:
 
 
 @torch.no_grad()
-def accuracy(output: torch.Tensor, target: torch.Tensor, topk: Tuple[int, ...] = (1,)) -> List[torch.Tensor]:
+def accuracy(
+    output: torch.Tensor, target: torch.Tensor, topk: Tuple[int, ...] = (1,)
+) -> List[torch.Tensor]:
     """Computes the precision@k for the specified values of k."""
     if target.numel() == 0:
         return [torch.zeros([], device=output.device)]
@@ -51,13 +53,17 @@ def interpolate(
     """Equivalent to nn.functional.interpolate, but with support for empty batch sizes."""
     if float(torchvision.__version__.split(".")[1]) < 7.0:
         if input.numel() > 0:
-            return torch.nn.functional.interpolate(input, size, scale_factor, mode, align_corners)
+            return torch.nn.functional.interpolate(
+                input, size, scale_factor, mode, align_corners
+            )
 
         output_shape = _output_size(2, input, size, scale_factor)
         output_shape = list(input.shape[:-2]) + list(output_shape)
         return _new_empty_tensor(input, output_shape)
     else:
-        return torchvision.ops.misc.interpolate(input, size, scale_factor, mode, align_corners)
+        return torchvision.ops.misc.interpolate(
+            input, size, scale_factor, mode, align_corners
+        )
 
 
 def inverse_sigmoid(x: torch.Tensor, eps: float = 1e-5) -> torch.Tensor:
@@ -74,7 +80,9 @@ class MLP(nn.Module):
         super().__init__()
         self.num_layers = num_layers
         h = [hidden_dim] * (num_layers - 1)
-        self.layers = nn.ModuleList(nn.Linear(n, k) for n, k in zip([input_dim] + h, h + [output_dim]))
+        self.layers = nn.ModuleList(
+            nn.Linear(n, k) for n, k in zip([input_dim] + h, h + [output_dim])
+        )
 
     def forward(self, x):
         for i, layer in enumerate(self.layers):

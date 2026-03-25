@@ -126,7 +126,8 @@ class COCOEvalCallback(Callback):
                     # indices.  label2cat maps remapped_label → original_cat_id;
                     # use it to build label → name so class IDs match predictions.
                     self._cat_id_to_name = {
-                        label: coco.cats[cat_id]["name"] for label, cat_id in coco.label2cat.items()
+                        label: coco.cats[cat_id]["name"]
+                        for label, cat_id in coco.label2cat.items()
                     }
                 else:
                     # Raw COCO category IDs used as labels (standard COCO dataset).
@@ -166,7 +167,9 @@ class COCOEvalCallback(Callback):
         self.map_metric.update(preds, targets)
 
         iou_type = "segm" if self._segmentation else "bbox"
-        batch_matching = build_matching_data(preds, targets, iou_threshold=0.5, iou_type=iou_type)
+        batch_matching = build_matching_data(
+            preds, targets, iou_threshold=0.5, iou_type=iou_type
+        )
         merge_matching_data(self._f1_local, batch_matching)
 
         # Run EMA model separately on the same batch so that base and EMA metrics
@@ -182,7 +185,9 @@ class COCOEvalCallback(Callback):
                     backend="faster_coco_eval",
                 ).to(pl_module.device)
             samples, _ = batch
-            orig_sizes = torch.stack([t["orig_size"] for t in outputs["targets"]]).to(pl_module.device)
+            orig_sizes = torch.stack([t["orig_size"] for t in outputs["targets"]]).to(
+                pl_module.device
+            )
             ema_underlying = ema_cb._average_model.module.model
             with torch.no_grad():
                 ema_underlying.eval()  # AveragedModel deepcopy is not managed by PTL
@@ -201,7 +206,11 @@ class COCOEvalCallback(Callback):
         if self._eval_interval > 1:
             current_epoch = int(getattr(trainer, "current_epoch", 0)) + 1
             max_epochs = getattr(trainer, "max_epochs", None)
-            is_last_epoch = isinstance(max_epochs, int) and max_epochs > 0 and current_epoch >= max_epochs
+            is_last_epoch = (
+                isinstance(max_epochs, int)
+                and max_epochs > 0
+                and current_epoch >= max_epochs
+            )
             if current_epoch % self._eval_interval != 0 and not is_last_epoch:
                 self.map_metric.reset()
                 if self.map_metric_ema is not None:
@@ -238,7 +247,9 @@ class COCOEvalCallback(Callback):
         self.map_metric.update(preds, targets)
 
         iou_type = "segm" if self._segmentation else "bbox"
-        batch_matching = build_matching_data(preds, targets, iou_threshold=0.5, iou_type=iou_type)
+        batch_matching = build_matching_data(
+            preds, targets, iou_threshold=0.5, iou_type=iou_type
+        )
         merge_matching_data(self._f1_local, batch_matching)
 
     def on_test_epoch_end(self, trainer: Any, pl_module: Any) -> None:
@@ -290,9 +301,15 @@ class COCOEvalCallback(Callback):
         # read fresh values each epoch.  pl_module.log() from a callback's
         # on_*_epoch_end goes only to logged_metrics (external loggers), not to
         # callback_metrics, so checkpointing would see stale values otherwise.
-        trainer.callback_metrics[f"{split}/mAP_50_95"] = metrics[f"{pfx}map"].detach().cpu()
-        trainer.callback_metrics[f"{split}/mAP_50"] = metrics[f"{pfx}map_50"].detach().cpu()
-        trainer.callback_metrics[f"{split}/mAP_75"] = metrics[f"{pfx}map_75"].detach().cpu()
+        trainer.callback_metrics[f"{split}/mAP_50_95"] = (
+            metrics[f"{pfx}map"].detach().cpu()
+        )
+        trainer.callback_metrics[f"{split}/mAP_50"] = (
+            metrics[f"{pfx}map_50"].detach().cpu()
+        )
+        trainer.callback_metrics[f"{split}/mAP_75"] = (
+            metrics[f"{pfx}map_75"].detach().cpu()
+        )
         trainer.callback_metrics[f"{split}/mAR"] = metrics[mar_key].detach().cpu()
 
         # EMA metrics — computed from a separate EMA forward pass accumulated
@@ -300,12 +317,20 @@ class COCOEvalCallback(Callback):
         if self.map_metric_ema is not None:
             ema_metrics = self.map_metric_ema.compute()
             ema_mar_key = f"{pfx}mar_{self._max_dets}"
-            pl_module.log(f"{split}/ema_mAP_50_95", ema_metrics[f"{pfx}map"], prog_bar=True)
+            pl_module.log(
+                f"{split}/ema_mAP_50_95", ema_metrics[f"{pfx}map"], prog_bar=True
+            )
             pl_module.log(f"{split}/ema_mAP_50", ema_metrics[f"{pfx}map_50"])
             pl_module.log(f"{split}/ema_mAR", ema_metrics[ema_mar_key])
-            trainer.callback_metrics[f"{split}/ema_mAP_50_95"] = ema_metrics[f"{pfx}map"].detach().cpu()
-            trainer.callback_metrics[f"{split}/ema_mAP_50"] = ema_metrics[f"{pfx}map_50"].detach().cpu()
-            trainer.callback_metrics[f"{split}/ema_mAR"] = ema_metrics[ema_mar_key].detach().cpu()
+            trainer.callback_metrics[f"{split}/ema_mAP_50_95"] = (
+                ema_metrics[f"{pfx}map"].detach().cpu()
+            )
+            trainer.callback_metrics[f"{split}/ema_mAP_50"] = (
+                ema_metrics[f"{pfx}map_50"].detach().cpu()
+            )
+            trainer.callback_metrics[f"{split}/ema_mAR"] = (
+                ema_metrics[ema_mar_key].detach().cpu()
+            )
             self.map_metric_ema.reset()
 
         if self._segmentation:
@@ -313,13 +338,21 @@ class COCOEvalCallback(Callback):
             overall["segm mAP 50"] = float(metrics["segm_map_50"])
             pl_module.log(f"{split}/segm_mAP_50_95", metrics["segm_map"])
             pl_module.log(f"{split}/segm_mAP_50", metrics["segm_map_50"])
-            trainer.callback_metrics[f"{split}/segm_mAP_50_95"] = metrics["segm_map"].detach().cpu()
-            trainer.callback_metrics[f"{split}/segm_mAP_50"] = metrics["segm_map_50"].detach().cpu()
+            trainer.callback_metrics[f"{split}/segm_mAP_50_95"] = (
+                metrics["segm_map"].detach().cpu()
+            )
+            trainer.callback_metrics[f"{split}/segm_mAP_50"] = (
+                metrics["segm_map_50"].detach().cpu()
+            )
             if self._has_ema_callback(trainer):
                 pl_module.log(f"{split}/ema_segm_mAP_50_95", metrics["segm_map"])
                 pl_module.log(f"{split}/ema_segm_mAP_50", metrics["segm_map_50"])
-                trainer.callback_metrics[f"{split}/ema_segm_mAP_50_95"] = metrics["segm_map"].detach().cpu()
-                trainer.callback_metrics[f"{split}/ema_segm_mAP_50"] = metrics["segm_map_50"].detach().cpu()
+                trainer.callback_metrics[f"{split}/ema_segm_mAP_50_95"] = (
+                    metrics["segm_map"].detach().cpu()
+                )
+                trainer.callback_metrics[f"{split}/ema_segm_mAP_50"] = (
+                    metrics["segm_map_50"].detach().cpu()
+                )
 
         # F1 sweep — run first so per-class F1/prec/rec are available when
         # building the unified per-class table rows below.
@@ -329,8 +362,12 @@ class COCOEvalCallback(Callback):
         if merged:
             sorted_ids = sorted(merged.keys())
             per_class_list = [merged[cid] for cid in sorted_ids]
-            classes_with_gt = [i for i, cid in enumerate(sorted_ids) if merged[cid]["total_gt"] > 0]
-            f1_results = sweep_confidence_thresholds(per_class_list, np.linspace(0, 1, 101), classes_with_gt)
+            classes_with_gt = [
+                i for i, cid in enumerate(sorted_ids) if merged[cid]["total_gt"] > 0
+            ]
+            f1_results = sweep_confidence_thresholds(
+                per_class_list, np.linspace(0, 1, 101), classes_with_gt
+            )
             best = max(f1_results, key=lambda x: x["macro_f1"])
             overall["F1"] = float(best["macro_f1"])
             overall["Precision"] = float(best["macro_precision"])
@@ -338,9 +375,15 @@ class COCOEvalCallback(Callback):
             pl_module.log(f"{split}/F1", float(best["macro_f1"]), prog_bar=True)
             pl_module.log(f"{split}/precision", float(best["macro_precision"]))
             pl_module.log(f"{split}/recall", float(best["macro_recall"]))
-            trainer.callback_metrics[f"{split}/F1"] = torch.tensor(float(best["macro_f1"]))
-            trainer.callback_metrics[f"{split}/precision"] = torch.tensor(float(best["macro_precision"]))
-            trainer.callback_metrics[f"{split}/recall"] = torch.tensor(float(best["macro_recall"]))
+            trainer.callback_metrics[f"{split}/F1"] = torch.tensor(
+                float(best["macro_f1"])
+            )
+            trainer.callback_metrics[f"{split}/precision"] = torch.tensor(
+                float(best["macro_precision"])
+            )
+            trainer.callback_metrics[f"{split}/recall"] = torch.tensor(
+                float(best["macro_recall"])
+            )
             for k, cid in enumerate(sorted_ids):
                 f1_by_cid[cid] = {
                     "f1": float(best["per_class_f1"][k]),
@@ -364,7 +407,11 @@ class COCOEvalCallback(Callback):
             metrics = dict(metrics)
             metrics["classes"] = metrics["classes"].unsqueeze(0)
             for k in list(metrics):
-                if isinstance(metrics[k], torch.Tensor) and metrics[k].ndim == 0 and "per_class" in k:
+                if (
+                    isinstance(metrics[k], torch.Tensor)
+                    and metrics[k].ndim == 0
+                    and "per_class" in k
+                ):
                     metrics[k] = metrics[k].unsqueeze(0)
 
         # Per-class AR from torchmetrics (keyed by category_id)
@@ -379,7 +426,12 @@ class COCOEvalCallback(Callback):
         # returns -1 for AP and torchmetrics returns NaN for AR on such classes,
         # so they would show as all dashes in the table).
         per_class = self._build_per_class_rows(
-            metrics=metrics, pfx=pfx, split=split, pl_module=pl_module, ar_by_cid=ar_by_cid, f1_by_cid=f1_by_cid
+            metrics=metrics,
+            pfx=pfx,
+            split=split,
+            pl_module=pl_module,
+            ar_by_cid=ar_by_cid,
+            f1_by_cid=f1_by_cid,
         )
 
         self._print_metrics_tables(trainer, split, overall, per_class)
@@ -430,13 +482,24 @@ class COCOEvalCallback(Callback):
         for class_id, ap in zip(metrics["classes"], metrics[pc_key]):
             ap_f = float(ap)
             ar_f = ar_by_cid.get(int(class_id), float("nan"))
-            if ap_f < 0 and (ar_f != ar_f or ar_f < 0):  # no ground-truth: skip ghost class
+            if ap_f < 0 and (
+                ar_f != ar_f or ar_f < 0
+            ):  # no ground-truth: skip ghost class
                 continue
             idx = int(class_id)
             name = self._cat_id_to_name.get(idx, str(idx))
             pl_module.log(f"{split}/AP/{name}", ap)
             row: dict[str, Any] = {"name": name, "ap": ap_f, "ar": ar_f}
-            row.update(f1_by_cid.get(idx, {"f1": float("nan"), "precision": float("nan"), "recall": float("nan")}))
+            row.update(
+                f1_by_cid.get(
+                    idx,
+                    {
+                        "f1": float("nan"),
+                        "precision": float("nan"),
+                        "recall": float("nan"),
+                    },
+                )
+            )
             per_class.append(row)
         return per_class
 
@@ -631,7 +694,9 @@ class COCOEvalCallback(Callback):
         TL, TR = "┏", "┓"
         T_DN = "┳"  # heavy T-down: top-border internal group separator
         TR_L, TR_R = "┡", "┩"  # transition-row left/right edges
-        GRP_J = "╇"  # transition-row at group boundary: heavy-up, heavy-horiz, light-down
+        GRP_J = (
+            "╇"  # transition-row at group boundary: heavy-up, heavy-horiz, light-down
+        )
         SUB_J = "┯"  # transition-row within group: no-up, heavy-horiz, light-down
         ML, MR, MX = "├", "┤", "┼"
         BL_C, BR_C, BT = "└", "┘", "┴"
@@ -684,7 +749,9 @@ class COCOEvalCallback(Callback):
 
         return "\n".join([title_line, r1, r2, r3, r4, r5, r6, r7])
 
-    def _convert_preds(self, preds: list[dict[str, torch.Tensor]]) -> list[dict[str, torch.Tensor]]:
+    def _convert_preds(
+        self, preds: list[dict[str, torch.Tensor]]
+    ) -> list[dict[str, torch.Tensor]]:
         """Normalise prediction dicts from ``PostProcess`` for torchmetrics.
 
         ``PostProcess.forward`` returns masks with shape ``[K, 1, H, W]``
@@ -708,12 +775,18 @@ class COCOEvalCallback(Callback):
         out = []
         for p in preds:
             entry = dict(p)
-            if "masks" in entry and entry["masks"].ndim == 4 and entry["masks"].shape[1] == 1:
+            if (
+                "masks" in entry
+                and entry["masks"].ndim == 4
+                and entry["masks"].shape[1] == 1
+            ):
                 entry["masks"] = entry["masks"].squeeze(1)
             out.append(entry)
         return out
 
-    def _convert_targets(self, targets: list[dict[str, torch.Tensor]]) -> list[dict[str, torch.Tensor]]:
+    def _convert_targets(
+        self, targets: list[dict[str, torch.Tensor]]
+    ) -> list[dict[str, torch.Tensor]]:
         """Convert targets from normalised CxCyWH to absolute xyxy boxes.
 
         Also passes ``iscrowd`` and ``masks`` through unchanged.

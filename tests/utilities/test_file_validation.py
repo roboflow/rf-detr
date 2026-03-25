@@ -132,8 +132,12 @@ class TestFileMD5Validation:
         finally:
             os.unlink(temp_file)
 
-    @pytest.mark.parametrize("hash_case", ["lower", "upper"], ids=["lowercase", "uppercase"])
-    def test_validate_file_md5_case_insensitive(self, hash_case: Literal["lower", "upper"]) -> None:
+    @pytest.mark.parametrize(
+        "hash_case", ["lower", "upper"], ids=["lowercase", "uppercase"]
+    )
+    def test_validate_file_md5_case_insensitive(
+        self, hash_case: Literal["lower", "upper"]
+    ) -> None:
         """Test that MD5 validation is case-insensitive."""
         with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
             f.write("Test content")
@@ -203,7 +207,9 @@ class TestDownloadFile:
         assert target_path.exists()
         assert target_path.read_bytes() == b"helloworld"
         assert not (tmp_path / "weights.bin.tmp").exists()
-        mock_get.assert_called_once_with("https://example.com/file.bin", stream=True, timeout=30.0)
+        mock_get.assert_called_once_with(
+            "https://example.com/file.bin", stream=True, timeout=30.0
+        )
 
     @patch("rfdetr.utilities.files.requests.get")
     def test_download_file_http_error(self, mock_get: Mock, tmp_path: Path):
@@ -220,7 +226,9 @@ class TestDownloadFile:
 
     @patch("rfdetr.utilities.files.tqdm", _DummyTqdm)
     @patch("rfdetr.utilities.files.requests.get")
-    def test_download_file_stream_error_cleans_temp(self, mock_get: Mock, tmp_path: Path):
+    def test_download_file_stream_error_cleans_temp(
+        self, mock_get: Mock, tmp_path: Path
+    ):
         """Streaming errors clean up temp files."""
         target_path = tmp_path / "weights.bin"
 
@@ -240,7 +248,9 @@ class TestDownloadFile:
 
     @patch("rfdetr.utilities.files.tqdm", _DummyTqdm)
     @patch("rfdetr.utilities.files.requests.get")
-    def test_download_file_md5_failure_cleans_temp(self, mock_get: Mock, tmp_path: Path):
+    def test_download_file_md5_failure_cleans_temp(
+        self, mock_get: Mock, tmp_path: Path
+    ):
         """MD5 failure removes temp file and target is not created."""
         target_path = tmp_path / "weights.bin"
         response = _FakeResponse([b"data"], headers={"content-length": "4"})

@@ -21,7 +21,9 @@ from rfdetr.training.drop_schedule import drop_scheduler
 # ---------------------------------------------------------------------------
 
 
-def _make_mock_trainer(global_step: int = 0, estimated_stepping_batches: int = 50) -> MagicMock:
+def _make_mock_trainer(
+    global_step: int = 0, estimated_stepping_batches: int = 50
+) -> MagicMock:
     """Create a minimal mock Trainer with controllable step metadata."""
     trainer = MagicMock()
     trainer.global_step = global_step
@@ -193,4 +195,6 @@ class TestOnTrainBatchStart:
         cb.on_train_batch_start(trainer, pl_module, batch=None, batch_idx=0)
 
         assert cb._dp_schedule is not None
-        pl_module.model.update_drop_path.assert_called_once_with(cb._dp_schedule[step], 6)
+        pl_module.model.update_drop_path.assert_called_once_with(
+            cb._dp_schedule[step], 6
+        )

@@ -71,7 +71,9 @@ def test_probe_max_micro_batch_raises_if_one_is_not_safe():
 
 def test_resolve_auto_batch_config_requires_cuda():
     model_context = SimpleNamespace(device=torch.device("cpu"), model=MagicMock())
-    model_config = SimpleNamespace(resolution=64, num_classes=5, amp=False, segmentation_head=False)
+    model_config = SimpleNamespace(
+        resolution=64, num_classes=5, amp=False, segmentation_head=False
+    )
     train_config = SimpleNamespace(batch_size="auto", auto_batch_target_effective=16)
 
     with (
@@ -83,18 +85,28 @@ def test_resolve_auto_batch_config_requires_cuda():
 
 def test_resolve_auto_batch_config_returns_expected_values():
     model_context = SimpleNamespace(device=torch.device("cuda"), model=MagicMock())
-    model_config = SimpleNamespace(resolution=64, num_classes=5, amp=False, segmentation_head=True)
+    model_config = SimpleNamespace(
+        resolution=64, num_classes=5, amp=False, segmentation_head=True
+    )
     train_config = SimpleNamespace(batch_size="auto", auto_batch_target_effective=16)
     criterion = MagicMock()
     criterion.to.return_value = criterion
 
     with (
         patch("rfdetr.training.auto_batch.torch.cuda.is_available", return_value=True),
-        patch("rfdetr.training.auto_batch.build_criterion_from_config", return_value=(criterion, None)),
+        patch(
+            "rfdetr.training.auto_batch.build_criterion_from_config",
+            return_value=(criterion, None),
+        ),
         patch("rfdetr.training.auto_batch.probe_max_micro_batch", return_value=5),
-        patch("rfdetr.training.auto_batch.torch.cuda.get_device_name", return_value="Fake GPU"),
+        patch(
+            "rfdetr.training.auto_batch.torch.cuda.get_device_name",
+            return_value="Fake GPU",
+        ),
     ):
-        result = auto_batch.resolve_auto_batch_config(model_context, model_config, train_config)
+        result = auto_batch.resolve_auto_batch_config(
+            model_context, model_config, train_config
+        )
 
     assert isinstance(result, AutoBatchResult)
     assert result.safe_micro_batch == 5
@@ -103,7 +115,9 @@ def test_resolve_auto_batch_config_returns_expected_values():
     assert result.device_name == "Fake GPU"
 
 
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for segmentation probe")
+@pytest.mark.skipif(
+    not torch.cuda.is_available(), reason="CUDA required for segmentation probe"
+)
 def test_probe_step_with_real_segmentation_criterion(tmp_path):
     """Run one probe step with real segmentation model and criterion so loss_masks and t['masks'] are exercised."""
     from rfdetr._namespace import _namespace_from_configs

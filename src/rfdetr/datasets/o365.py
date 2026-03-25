@@ -14,7 +14,11 @@ from typing import Any
 
 from PIL import Image
 
-from rfdetr.datasets.coco import CocoDetection, make_coco_transforms, make_coco_transforms_square_div_64
+from rfdetr.datasets.coco import (
+    CocoDetection,
+    make_coco_transforms,
+    make_coco_transforms_square_div_64,
+)
 
 Image.MAX_IMAGE_PIXELS = None
 
@@ -34,7 +38,10 @@ def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
             img_folder,
             ann_file,
             transforms=make_coco_transforms_square_div_64(
-                image_set, resolution, multi_scale=args.multi_scale, expanded_scales=args.expanded_scales
+                image_set,
+                resolution,
+                multi_scale=args.multi_scale,
+                expanded_scales=args.expanded_scales,
             ),
         )
     else:
@@ -42,7 +49,10 @@ def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
             img_folder,
             ann_file,
             transforms=make_coco_transforms(
-                image_set, resolution, multi_scale=args.multi_scale, expanded_scales=args.expanded_scales
+                image_set,
+                resolution,
+                multi_scale=args.multi_scale,
+                expanded_scales=args.expanded_scales,
             ),
         )
     return dataset

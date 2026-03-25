@@ -84,7 +84,9 @@ def post_process(outputs, target_sizes):
     assert target_sizes.shape[1] == 2
 
     prob = out_logits.sigmoid()
-    topk_values, topk_indexes = torch.topk(prob.view(out_logits.shape[0], -1), 300, dim=1)
+    topk_values, topk_indexes = torch.topk(
+        prob.view(out_logits.shape[0], -1), 300, dim=1
+    )
     scores = topk_values
     topk_boxes = topk_indexes // out_logits.shape[2]
     labels = topk_indexes % out_logits.shape[2]
@@ -96,7 +98,10 @@ def post_process(outputs, target_sizes):
     scale_fct = torch.stack([img_w, img_h, img_w, img_h], dim=1)
     boxes = boxes * scale_fct[:, None, :]
 
-    results = [{"scores": score, "labels": label, "boxes": box} for score, label, box in zip(scores, labels, boxes)]
+    results = [
+        {"scores": score, "labels": label, "boxes": box}
+        for score, label, box in zip(scores, labels, boxes)
+    ]
 
     return results
 
@@ -126,7 +131,11 @@ def infer_onnx(sess, coco_evaluator, time_profile, prefix, img_list, device, rep
         if coco_evaluator is not None:
             coco_evaluator.update(res)
 
-    logger.info("Model latency with ONNX Runtime: {}ms".format(1000 * sum(time_list) / len(img_list)))
+    logger.info(
+        "Model latency with ONNX Runtime: {}ms".format(
+            1000 * sum(time_list) / len(img_list)
+        )
+    )
 
     # accumulate predictions from all images
     stats = {}
@@ -138,7 +147,9 @@ def infer_onnx(sess, coco_evaluator, time_profile, prefix, img_list, device, rep
         logger.info(stats)
 
 
-def infer_engine(model, coco_evaluator, time_profile, prefix, img_list, device, repeats=1):
+def infer_engine(
+    model, coco_evaluator, time_profile, prefix, img_list, device, repeats=1
+):
     time_list = []
     for img_dict in tqdm(img_list):
         image = load_image(os.path.join(prefix, img_dict["file_name"]))
@@ -163,7 +174,11 @@ def infer_engine(model, coco_evaluator, time_profile, prefix, img_list, device, 
             res = {img_dict["id"]: results[0]}
             coco_evaluator.update(res)
 
-    logger.info("Model latency with TensorRT: {}ms".format(1000 * sum(time_list) / len(img_list)))
+    logger.info(
+        "Model latency with TensorRT: {}ms".format(
+            1000 * sum(time_list) / len(img_list)
+        )
+    )
 
     # accumulate predictions from all images
     stats = {}
@@ -179,23 +194,34 @@ class TRTInference(object):
     """TensorRT inference engine"""
 
     def __init__(
-        self, engine_path="dino.engine", device="cuda:0", sync_mode: bool = False, max_batch_size=32, verbose=False
+        self,
+        engine_path="dino.engine",
+        device="cuda:0",
+        sync_mode: bool = False,
+        max_batch_size=32,
+        verbose=False,
     ):
         if not trt:
-            raise ImportError("TensorRT is not installed. Please install TensorRT to use TRTInference.")
+            raise ImportError(
+                "TensorRT is not installed. Please install TensorRT to use TRTInference."
+            )
 
         self.engine_path = engine_path
         self.device = device
         self.sync_mode = sync_mode
         self.max_batch_size = max_batch_size
 
-        self.logger = trt.Logger(trt.Logger.VERBOSE) if verbose else trt.Logger(trt.Logger.INFO)
+        self.logger = (
+            trt.Logger(trt.Logger.VERBOSE) if verbose else trt.Logger(trt.Logger.INFO)
+        )
 
         self.engine = self.load_engine(engine_path)
 
         self.context = self.engine.create_execution_context()
 
-        self.bindings = self.get_bindings(self.engine, self.context, self.max_batch_size, self.device)
+        self.bindings = self.get_bindings(
+            self.engine, self.context, self.max_batch_size, self.device
+        )
         self.bindings_addr = OrderedDict((n, v.ptr) for n, v in self.bindings.items())
 
         self.input_names = self.get_input_names()
@@ -218,7 +244,9 @@ class TRTInference(object):
         for name, binding in self.bindings.items():
             if self.engine.get_tensor_mode(name) == trt.TensorIOMode.INPUT:
                 logger.info(f"make dummy input {name} with shape {binding.shape}")
-                blob[name] = torch.rand(batch_size, *binding.shape[1:]).float().to("cuda:0")
+                blob[name] = (
+                    torch.rand(batch_size, *binding.shape[1:]).float().to("cuda:0")
+                )
         return blob
 
     def load_engine(self, path):
@@ -272,7 +300,9 @@ class TRTInference(object):
     def run_async(self, blob):
         self.bindings_addr.update({n: blob[n].data_ptr() for n in self.input_names})
         bindings_addr = [int(v) for _, v in self.bindings_addr.items()]
-        self.context.execute_async_v2(bindings=bindings_addr, stream_handle=self.stream.handle)
+        self.context.execute_async_v2(
+            bindings=bindings_addr, stream_handle=self.stream.handle
+        )
         outputs = {n: self.bindings[n].data for n in self.output_names}
         self.stream.synchronize()
         return outputs
@@ -314,7 +344,9 @@ class TRTInference(object):
             trt.OnnxParser(network, self.logger) as parser,
             builder.create_builder_config() as config,
         ):
-            config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, 1 << 30)  # 1024 MiB
+            config.set_memory_pool_limit(
+                trt.MemoryPoolType.WORKSPACE, 1 << 30
+            )  # 1024 MiB
             config.set_flag(trt.BuilderFlag.FP16)
 
             with open(onnx_file_path, "rb") as model:
@@ -405,12 +437,30 @@ def main(
         import onnxruntime as nxrun
 
         sess = nxrun.InferenceSession(path, providers=["CUDAExecutionProvider"])
-        infer_onnx(sess, coco_evaluator, time_profile, prefix, img_list, device=f"cuda:{device}", repeats=repeats)
+        infer_onnx(
+            sess,
+            coco_evaluator,
+            time_profile,
+            prefix,
+            img_list,
+            device=f"cuda:{device}",
+            repeats=repeats,
+        )
     elif path.endswith(".engine"):
         model = TRTInference(path, sync_mode=True, device=f"cuda:{device}")
-        infer_engine(model, coco_evaluator, time_profile, prefix, img_list, device=f"cuda:{device}", repeats=repeats)
+        infer_engine(
+            model,
+            coco_evaluator,
+            time_profile,
+            prefix,
+            img_list,
+            device=f"cuda:{device}",
+            repeats=repeats,
+        )
     else:
-        raise NotImplementedError('Only model file names ending with ".onnx" and ".engine" are supported.')
+        raise NotImplementedError(
+            'Only model file names ending with ".onnx" and ".engine" are supported.'
+        )
 
 
 if __name__ == "__main__":

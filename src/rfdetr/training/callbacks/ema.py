@@ -111,7 +111,9 @@ class RFDETREMACallback(Callback):
         elif hasattr(pl_module, "_pending_legacy_ema_state"):
             legacy_ema_state = getattr(pl_module, "_pending_legacy_ema_state")
             if isinstance(legacy_ema_state, dict):
-                incompatible = self._average_model.module.model.load_state_dict(legacy_ema_state, strict=False)
+                incompatible = self._average_model.module.model.load_state_dict(
+                    legacy_ema_state, strict=False
+                )
                 if incompatible.missing_keys or incompatible.unexpected_keys:
                     warnings.warn(
                         "Legacy EMA checkpoint loaded with non-exact key match; "
@@ -148,7 +150,9 @@ class RFDETREMACallback(Callback):
             return
         if self._swapped_state_dict is None:
             self._swapped_state_dict = deepcopy(pl_module.state_dict())
-            pl_module.load_state_dict(self._average_model.module.state_dict(), strict=True)
+            pl_module.load_state_dict(
+                self._average_model.module.state_dict(), strict=True
+            )
             return
         pl_module.load_state_dict(self._swapped_state_dict, strict=True)
         self._swapped_state_dict = None
@@ -177,7 +181,9 @@ class RFDETREMACallback(Callback):
         """Optionally update EMA at epoch boundaries."""
         if self._average_model is None:
             return
-        if trainer.current_epoch > self._latest_update_epoch and self.should_update(epoch_idx=trainer.current_epoch):
+        if trainer.current_epoch > self._latest_update_epoch and self.should_update(
+            epoch_idx=trainer.current_epoch
+        ):
             self._average_model.update_parameters(pl_module)
             self._latest_update_epoch = trainer.current_epoch
 
@@ -192,7 +198,9 @@ class RFDETREMACallback(Callback):
     def on_train_end(self, trainer: Trainer, pl_module: LightningModule) -> None:
         """Leave the module in EMA state after training finishes."""
         if self._average_model is not None:
-            pl_module.load_state_dict(self._average_model.module.state_dict(), strict=True)
+            pl_module.load_state_dict(
+                self._average_model.module.state_dict(), strict=True
+            )
         self._swapped_state_dict = None
 
     def state_dict(self) -> dict[str, Any]:
@@ -213,6 +221,11 @@ class RFDETREMACallback(Callback):
 
     def get_ema_model_state_dict(self) -> Optional[dict[str, torch.Tensor]]:
         """Expose EMA model weights for external checkpoint callbacks."""
-        if self._average_model is None or not hasattr(self._average_model.module, "model"):
+        if self._average_model is None or not hasattr(
+            self._average_model.module, "model"
+        ):
             return None
-        return {k: v.detach().clone() for k, v in self._average_model.module.model.state_dict().items()}
+        return {
+            k: v.detach().clone()
+            for k, v in self._average_model.module.model.state_dict().items()
+        }

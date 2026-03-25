@@ -73,10 +73,14 @@ def _download_file(
     # Check if file exists and has correct hash
     if os.path.exists(filename) and expected_md5:
         if _validate_file_md5(filename, expected_md5):
-            logger.info(f"File {filename} already exists with correct MD5 hash. Skipping download.")
+            logger.info(
+                f"File {filename} already exists with correct MD5 hash. Skipping download."
+            )
             return
         else:
-            logger.warning(f"File {filename} exists but MD5 hash mismatch. Re-downloading...")
+            logger.warning(
+                f"File {filename} exists but MD5 hash mismatch. Re-downloading..."
+            )
             os.remove(filename)
 
     response = requests.get(url, stream=True, timeout=timeout)
@@ -114,7 +118,10 @@ def _download_file(
         if actual_md5.lower() != expected_md5.lower():
             if os.path.exists(temp_filename):
                 os.remove(temp_filename)
-            raise ValueError("MD5 mismatch for %s (expected %s, got %s)." % (filename, expected_md5, actual_md5))
+            raise ValueError(
+                "MD5 mismatch for %s (expected %s, got %s)."
+                % (filename, expected_md5, actual_md5)
+            )
         else:
             logger.info(f"MD5 validation successful for {filename}")
 

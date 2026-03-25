@@ -123,10 +123,14 @@ class Backbone(BackboneBase):
         try:
             from peft import PeftModel
         except ModuleNotFoundError:
-            logger.warning("peft is not installed; skipping LoRA weight merging during export.")
+            logger.warning(
+                "peft is not installed; skipping LoRA weight merging during export."
+            )
             return
         except ImportError as exc:
-            logger.warning("Failed to import PeftModel from peft during export: %s", exc)
+            logger.warning(
+                "Failed to import PeftModel from peft during export: %s", exc
+            )
             raise
 
         if isinstance(self.encoder, PeftModel):
@@ -143,7 +147,9 @@ class Backbone(BackboneBase):
         for feat in feats:
             m = tensor_list.mask
             assert m is not None
-            mask = F.interpolate(m[None].float(), size=feat.shape[-2:]).to(torch.bool)[0]
+            mask = F.interpolate(m[None].float(), size=feat.shape[-2:]).to(torch.bool)[
+                0
+            ]
             out.append(NestedTensor(feat, mask))
         return out
 
@@ -155,7 +161,9 @@ class Backbone(BackboneBase):
         for feat in feats:
             # x: [(B, C, H, W)]
             b, _, h, w = feat.shape
-            out_masks.append(torch.zeros((b, h, w), dtype=torch.bool, device=feat.device))
+            out_masks.append(
+                torch.zeros((b, h, w), dtype=torch.bool, device=feat.device)
+            )
             out_feats.append(feat)
         return out_feats, out_masks
 
@@ -184,7 +192,9 @@ class Backbone(BackboneBase):
         return named_param_lr_pairs
 
 
-def get_dinov2_lr_decay_rate(name: str, lr_decay_rate: float = 1.0, num_layers: int = 12) -> float:
+def get_dinov2_lr_decay_rate(
+    name: str, lr_decay_rate: float = 1.0, num_layers: int = 12
+) -> float:
     """
     Calculate lr decay rate for different ViT blocks.
 

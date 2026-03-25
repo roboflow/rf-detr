@@ -212,7 +212,10 @@ class TestBatchEndCommon:
         cb.setup(_make_trainer(), _make_pl_module(), stage=stage)
         cb.map_metric = MagicMock(name="map_metric")
 
-        outputs = {"results": _detection_preds(0), "targets": _detection_targets(label=1)}
+        outputs = {
+            "results": _detection_preds(0),
+            "targets": _detection_targets(label=1),
+        }
         getattr(cb, hook)(_make_trainer(), _make_pl_module(), outputs, None, 0)
         total_after_1 = sum(v["total_gt"] for v in cb._f1_local.values())
 
@@ -259,7 +262,9 @@ class TestOnTestBatchEnd:
         outputs = {"results": _detection_preds(0), "targets": _detection_targets()}
 
         # Must not raise with explicit dataloader_idx=0
-        cb.on_test_batch_end(_make_trainer(), _make_pl_module(), outputs, None, 0, dataloader_idx=0)
+        cb.on_test_batch_end(
+            _make_trainer(), _make_pl_module(), outputs, None, 0, dataloader_idx=0
+        )
 
 
 @pytest.mark.parametrize(
@@ -320,7 +325,9 @@ class TestEpochEndCommon:
 
         getattr(cb, hook)(_make_trainer(), module)
 
-        f1_call = next(c for c in module.log.call_args_list if c.args[0] == f"{prefix}F1")
+        f1_call = next(
+            c for c in module.log.call_args_list if c.args[0] == f"{prefix}F1"
+        )
         assert f1_call.args[1] == pytest.approx(0.0)
 
     def test_state_reset_after_epoch(self, stage, hook, prefix) -> None:
@@ -360,7 +367,9 @@ class TestEpochEndCommon:
         assert f"{prefix}segm_mAP_50_95" in logged_keys
         assert f"{prefix}segm_mAP_50" in logged_keys
 
-    def test_per_class_ap_logged_when_classes_present(self, stage, hook, prefix) -> None:
+    def test_per_class_ap_logged_when_classes_present(
+        self, stage, hook, prefix
+    ) -> None:
         """AP/<name> is logged for each class when class metrics are present."""
         cb = COCOEvalCallback()
         cb._class_names = ["cat", "dog"]
@@ -379,7 +388,9 @@ class TestEpochEndCommon:
         assert f"{prefix}AP/cat" in logged_keys
         assert f"{prefix}AP/dog" in logged_keys
 
-    def test_per_class_ap_falls_back_to_str_id_when_no_class_names(self, stage, hook, prefix) -> None:
+    def test_per_class_ap_falls_back_to_str_id_when_no_class_names(
+        self, stage, hook, prefix
+    ) -> None:
         """AP/<id> is logged when class_names is empty."""
         cb = COCOEvalCallback()
         cb.setup(_make_trainer(), _make_pl_module(), stage=stage)
@@ -496,7 +507,9 @@ class TestOnValidationEpochEnd:
         assert trainer.callback_metrics["val/mAP_50_95"].item() == pytest.approx(0.4)
         assert trainer.callback_metrics["val/mAP_50"].item() == pytest.approx(0.6)
 
-    def test_callback_metrics_updated_with_ema_when_map_metric_ema_populated(self) -> None:
+    def test_callback_metrics_updated_with_ema_when_map_metric_ema_populated(
+        self,
+    ) -> None:
         """EMA metrics are written to callback_metrics when map_metric_ema has data."""
         cb = COCOEvalCallback(max_dets=500)
         trainer = _make_trainer()
@@ -629,7 +642,9 @@ class TestConvertPreds:
         out_masks = out[0]["masks"]
         assert out_masks.shape == (3, 2, 2)
 
-        keep = torch.where((out_boxes[:, 2] > out_boxes[:, 0]) & (out_boxes[:, 3] > out_boxes[:, 1]))[0]
+        keep = torch.where(
+            (out_boxes[:, 2] > out_boxes[:, 0]) & (out_boxes[:, 3] > out_boxes[:, 1])
+        )[0]
         assert keep.tolist() == expected_kept_idxs
         assert torch.equal(out_masks[keep], masks.squeeze(1)[keep])
 

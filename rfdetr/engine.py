@@ -17,6 +17,7 @@
 """
 Train and eval functions used in main.py
 """
+
 import math
 import sys
 from typing import Iterable
@@ -31,19 +32,22 @@ from rfdetr.datasets.coco import compute_multi_scale_scales
 
 try:
     from torch.amp import autocast, GradScaler
+
     DEPRECATED_AMP = False
 except ImportError:
     from torch.cuda.amp import autocast, GradScaler
+
     DEPRECATED_AMP = True
 from typing import DefaultDict, List, Callable
 from rfdetr.util.misc import NestedTensor
 import numpy as np
 
+
 def get_autocast_args(args):
     if DEPRECATED_AMP:
-        return {'enabled': args.amp, 'dtype': torch.bfloat16}
+        return {"enabled": args.amp, "dtype": torch.bfloat16}
     else:
-        return {'device_type': 'cuda', 'enabled': args.amp, 'dtype': torch.bfloat16}
+        return {"device_type": "cuda", "enabled": args.amp, "dtype": torch.bfloat16}
 
 
 def train_one_epoch(
@@ -79,7 +83,7 @@ def train_one_epoch(
     if DEPRECATED_AMP:
         scaler = GradScaler(enabled=args.amp)
     else:
-        scaler = GradScaler('cuda', enabled=args.amp)
+        scaler = GradScaler("cuda", enabled=args.amp)
 
     optimizer.zero_grad()
     assert batch_size % args.grad_accum_steps == 0
@@ -110,20 +114,35 @@ def train_one_epoch(
                 model.update_dropout(schedules["do"][it])
 
         if args.multi_scale and not args.do_random_resize_via_padding:
-            scales = compute_multi_scale_scales(args.resolution, args.expanded_scales, args.patch_size, args.num_windows)
+            scales = compute_multi_scale_scales(
+                args.resolution, args.expanded_scales, args.patch_size, args.num_windows
+            )
             random.seed(it)
             scale = random.choice(scales)
             with torch.inference_mode():
-                samples.tensors = F.interpolate(samples.tensors, size=scale, mode='bilinear', align_corners=False)
-                samples.mask = F.interpolate(samples.mask.unsqueeze(1).float(), size=scale, mode='nearest').squeeze(1).bool()
+                samples.tensors = F.interpolate(
+                    samples.tensors, size=scale, mode="bilinear", align_corners=False
+                )
+                samples.mask = (
+                    F.interpolate(
+                        samples.mask.unsqueeze(1).float(), size=scale, mode="nearest"
+                    )
+                    .squeeze(1)
+                    .bool()
+                )
 
         for i in range(args.grad_accum_steps):
             start_idx = i * sub_batch_size
             final_idx = start_idx + sub_batch_size
             new_samples_tensors = samples.tensors[start_idx:final_idx]
-            new_samples = NestedTensor(new_samples_tensors, samples.mask[start_idx:final_idx])
+            new_samples = NestedTensor(
+                new_samples_tensors, samples.mask[start_idx:final_idx]
+            )
             new_samples = new_samples.to(device)
-            new_targets = [{k: v.to(device) for k, v in t.items()} for t in targets[start_idx:final_idx]]
+            new_targets = [
+                {k: v.to(device) for k, v in t.items()}
+                for t in targets[start_idx:final_idx]
+            ]
 
             with autocast(**get_autocast_args(args)):
                 outputs = model(new_samples, new_targets)
@@ -135,7 +154,6 @@ def train_one_epoch(
                     if k in weight_dict
                 )
 
-
             scaler.scale(losses).backward()
 
         # reduce losses over all GPUs for logging purposes
@@ -144,7 +162,7 @@ def train_one_epoch(
             f"{k}_unscaled": v for k, v in loss_dict_reduced.items()
         }
         loss_dict_reduced_scaled = {
-            k:  v * weight_dict[k]
+            k: v * weight_dict[k]
             for k, v in loss_dict_reduced.items()
             if k in weight_dict
         }
@@ -185,7 +203,10 @@ def coco_extended_metrics(coco_eval):
 
     iou_thrs, rec_thrs = coco_eval.params.iouThrs, coco_eval.params.recThrs
     iou50_idx, area_idx, maxdet_idx = (
-        int(np.argwhere(np.isclose(iou_thrs, 0.50))), 0, 2)
+        int(np.argwhere(np.isclose(iou_thrs, 0.50))),
+        0,
+        2,
+    )
 
     P = coco_eval.eval["precision"]
     S = coco_eval.eval["scores"]
@@ -195,14 +216,14 @@ def coco_extended_metrics(coco_eval):
     prec = prec_raw.copy().astype(float)
     prec[prec < 0] = np.nan
 
-    f1_cls   = 2 * prec * rec_thrs[:, None] / (prec + rec_thrs[:, None])
+    f1_cls = 2 * prec * rec_thrs[:, None] / (prec + rec_thrs[:, None])
     f1_macro = np.nanmean(f1_cls, axis=1)
 
-    best_j   = int(f1_macro.argmax())
+    best_j = int(f1_macro.argmax())
 
     macro_precision = float(np.nanmean(prec[best_j]))
-    macro_recall    = float(rec_thrs[best_j])
-    macro_f1        = float(f1_macro[best_j])
+    macro_recall = float(rec_thrs[best_j])
+    macro_f1 = float(f1_macro[best_j])
 
     score_vec = S[iou50_idx, best_j, :, area_idx, maxdet_idx].astype(float)
     score_vec[prec_raw[best_j] < 0] = np.nan
@@ -215,39 +236,48 @@ def coco_extended_metrics(coco_eval):
     cat_id_to_name = {c["id"]: c["name"] for c in coco_eval.cocoGt.loadCats(cat_ids)}
     for k, cid in enumerate(cat_ids):
         p_slice = P[:, :, k, area_idx, maxdet_idx]
-        valid   = p_slice > -1
+        valid = p_slice > -1
         ap_50_95 = float(p_slice[valid].mean()) if valid.any() else float("nan")
-        ap_50    = float(p_slice[iou50_idx][p_slice[iou50_idx] > -1].mean()) if (p_slice[iou50_idx] > -1).any() else float("nan")
+        ap_50 = (
+            float(p_slice[iou50_idx][p_slice[iou50_idx] > -1].mean())
+            if (p_slice[iou50_idx] > -1).any()
+            else float("nan")
+        )
 
         pc = float(prec[best_j, k]) if prec_raw[best_j, k] > -1 else float("nan")
         rc = macro_recall
 
-        #Doing to this to filter out dataset class
+        # Doing to this to filter out dataset class
         if np.isnan(ap_50_95) or np.isnan(ap_50) or np.isnan(pc) or np.isnan(rc):
             continue
 
-        per_class.append({
-            "class"      : cat_id_to_name[int(cid)],
-            "map@50:95"  : ap_50_95,
-            "map@50"     : ap_50,
-            "precision"  : pc,
-            "recall"     : rc,
-        })
+        per_class.append(
+            {
+                "class": cat_id_to_name[int(cid)],
+                "map@50:95": ap_50_95,
+                "map@50": ap_50,
+                "precision": pc,
+                "recall": rc,
+            }
+        )
 
-    per_class.append({
-        "class"     : "all",
-        "map@50:95" : map_50_95,
-        "map@50"    : map_50,
-        "precision" : macro_precision,
-        "recall"    : macro_recall,
-    })
+    per_class.append(
+        {
+            "class": "all",
+            "map@50:95": map_50_95,
+            "map@50": map_50,
+            "precision": macro_precision,
+            "recall": macro_recall,
+        }
+    )
 
     return {
         "class_map": per_class,
-        "map"      : map_50,
+        "map": map_50,
         "precision": macro_precision,
-        "recall"   : macro_recall
+        "recall": macro_recall,
     }
+
 
 def evaluate(model, criterion, postprocess, data_loader, base_ds, device, args=None):
     model.eval()
@@ -262,10 +292,10 @@ def evaluate(model, criterion, postprocess, data_loader, base_ds, device, args=N
     header = "Test:"
 
     iou_types = ["bbox"]
-    if getattr(args, 'segmentation_head', False):
+    if getattr(args, "segmentation_head", False):
         iou_types.append("segm")
-    num_keypoints = getattr(args, 'num_keypoints', 17)
-    if getattr(args, 'keypoint_head', False):
+    num_keypoints = getattr(args, "num_keypoints", 17)
+    if getattr(args, "keypoint_head", False):
         iou_types.append("keypoints")
     iou_types = tuple(iou_types)
     coco_evaluator = CocoEvaluator(base_ds, iou_types, num_keypoints=num_keypoints)
@@ -346,5 +376,7 @@ def evaluate(model, criterion, postprocess, data_loader, base_ds, device, args=N
             stats["coco_eval_masks"] = coco_evaluator.coco_eval["segm"].stats.tolist()
 
         if "keypoints" in iou_types:
-            stats["coco_eval_keypoints"] = coco_evaluator.coco_eval["keypoints"].stats.tolist()
+            stats["coco_eval_keypoints"] = coco_evaluator.coco_eval[
+                "keypoints"
+            ].stats.tolist()
     return stats, coco_evaluator

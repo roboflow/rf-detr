@@ -139,7 +139,8 @@ def _namespace_from_configs(
     # ModelConfig.cls_loss_coef values when TrainConfig does not set one.
     cls_loss_coef = (
         tc.cls_loss_coef
-        if "cls_loss_coef" in train_fields_set or "cls_loss_coef" not in model_fields_set
+        if "cls_loss_coef" in train_fields_set
+        or "cls_loss_coef" not in model_fields_set
         else mc.cls_loss_coef
     )
 
@@ -166,7 +167,9 @@ def _namespace_from_configs(
     )
 
 
-def build_namespace(model_config: ModelConfig, train_config: TrainConfig) -> types.SimpleNamespace:
+def build_namespace(
+    model_config: ModelConfig, train_config: TrainConfig
+) -> types.SimpleNamespace:
     """Build a ``types.SimpleNamespace`` from Pydantic model and train configs.
 
     .. deprecated::

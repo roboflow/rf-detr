@@ -8,7 +8,12 @@ Pass `aug_config` to your training call. Import one of the built-in presets:
 
 ```python
 from rfdetr import RFDETRSmall
-from rfdetr.datasets.aug_config import AUG_CONSERVATIVE, AUG_AGGRESSIVE, AUG_AERIAL, AUG_INDUSTRIAL
+from rfdetr.datasets.aug_config import (
+    AUG_CONSERVATIVE,
+    AUG_AGGRESSIVE,
+    AUG_AERIAL,
+    AUG_INDUSTRIAL,
+)
 
 model = RFDETRSmall()
 model.train(dataset_dir="path/to/dataset", epochs=100, aug_config=AUG_CONSERVATIVE)
@@ -81,7 +86,9 @@ If you need the same transform twice, or want explicit ordering, pass a list ins
 aug_config = [
     {"HorizontalFlip": {"p": 0.5}},
     {"Rotate": {"limit": 45, "p": 0.3}},
-    {"Rotate": {"limit": 5, "p": 0.5}},  # second Rotate — only possible with list format
+    {
+        "Rotate": {"limit": 5, "p": 0.5}
+    },  # second Rotate — only possible with list format
 ]
 ```
 

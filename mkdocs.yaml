@@ -58,7 +58,7 @@ nav:
           - RF-DETR Seg XLarge: reference/seg_xlarge.md
           - RF-DETR Seg 2XLarge: reference/seg_2xlarge.md
       - Pose Estimation Models:
-        - RF-DETR Pose: reference/pose.md
+          - RF-DETR Pose: reference/pose.md
       - Training Configs:
           - Train Config: reference/train_config.md
           - Segmentation Train Config: reference/segmentation_train_config.md

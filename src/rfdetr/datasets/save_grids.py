@@ -32,7 +32,11 @@ class DatasetGridSaver:
     """
 
     def __init__(
-        self, data_loader: DataLoader, output_dir: Path, max_batches: int = 3, dataset_type: str = "train"
+        self,
+        data_loader: DataLoader,
+        output_dir: Path,
+        max_batches: int = 3,
+        dataset_type: str = "train",
     ) -> None:
         self.data_loader = data_loader
         self.output_dir = output_dir
@@ -66,21 +70,33 @@ class DatasetGridSaver:
             axes = axes.flatten()
 
             sample_index = 0
-            for sample_index, (single_image, single_target) in enumerate(zip(sample.tensors, target)):
+            for sample_index, (single_image, single_target) in enumerate(
+                zip(sample.tensors, target)
+            ):
                 if sample_index >= 9:
                     break
                 self._annotate_and_plot(
-                    single_image, single_target, axes[sample_index], inv_normalize, box_annotator, label_annotator
+                    single_image,
+                    single_target,
+                    axes[sample_index],
+                    inv_normalize,
+                    box_annotator,
+                    label_annotator,
                 )
 
             for i in range(sample_index, 9):
                 axes[i].axis("off")
 
             fig.tight_layout()
-            plt.savefig(self.output_dir / f"{self.dataset_type}_batch{batch_idx}_grid.jpg", dpi=200)
+            plt.savefig(
+                self.output_dir / f"{self.dataset_type}_batch{batch_idx}_grid.jpg",
+                dpi=200,
+            )
             plt.close()
 
-        logger.info(f"Saved {self.dataset_type} grids with augmented images to: {self.output_dir.resolve()}")
+        logger.info(
+            f"Saved {self.dataset_type} grids with augmented images to: {self.output_dir.resolve()}"
+        )
 
     @staticmethod
     def _annotate_and_plot(
@@ -111,7 +127,11 @@ class DatasetGridSaver:
         de_normalized_img = inv_normalize(single_image)
         if isinstance(de_normalized_img, torch.Tensor):
             de_normalized_img = de_normalized_img.detach().cpu().numpy()
-        scene = PILImage.fromarray((np.clip(de_normalized_img.transpose(1, 2, 0), 0.0, 1.0) * 255).astype(np.uint8))
+        scene = PILImage.fromarray(
+            (np.clip(de_normalized_img.transpose(1, 2, 0), 0.0, 1.0) * 255).astype(
+                np.uint8
+            )
+        )
 
         if len(single_target["boxes"]) > 0:
             labels_tensor = single_target["labels"]
@@ -127,13 +147,19 @@ class DatasetGridSaver:
                 boxes_iter = boxes
 
             xyxy = np.asarray(
-                [[b[0] * w, b[1] * h, b[2] * w, b[3] * h] for box in boxes_iter for b in [box_cxcywh_to_xyxy(box)]],
+                [
+                    [b[0] * w, b[1] * h, b[2] * w, b[3] * h]
+                    for box in boxes_iter
+                    for b in [box_cxcywh_to_xyxy(box)]
+                ],
                 dtype=np.float32,
             )
             detections = sv.Detections(xyxy=xyxy, class_id=class_ids)
             labels = [str(c) for c in class_ids]
             scene = box_annotator.annotate(scene=scene, detections=detections)
-            scene = label_annotator.annotate(scene=scene, detections=detections, labels=labels)
+            scene = label_annotator.annotate(
+                scene=scene, detections=detections, labels=labels
+            )
 
         ax.imshow(scene)
         ax.axis("off")

@@ -103,7 +103,9 @@ class DropPathCallback(Callback):
         step: int = trainer.global_step
 
         if self._dp_schedule is not None and step < len(self._dp_schedule):
-            pl_module.model.update_drop_path(self._dp_schedule[step], self._vit_encoder_num_layers)
+            pl_module.model.update_drop_path(
+                self._dp_schedule[step], self._vit_encoder_num_layers
+            )
 
         if self._do_schedule is not None and step < len(self._do_schedule):
             pl_module.model.update_dropout(self._do_schedule[step])

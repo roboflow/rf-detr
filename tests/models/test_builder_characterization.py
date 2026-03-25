@@ -74,7 +74,9 @@ class TestBuildModelCharacterization:
             pytest.param(RFDETRSegNanoConfig, 100, id="seg_nano"),
         ],
     )
-    def test_num_queries_per_config_variant(self, config_class, expected_queries) -> None:
+    def test_num_queries_per_config_variant(
+        self, config_class, expected_queries
+    ) -> None:
         mc = config_class(pretrain_weights=None, device="cpu")
         ns = _make_ns(mc=mc)
         model = build_model(ns)
@@ -116,14 +118,18 @@ class TestBuildModelCharacterization:
             pytest.param(RFDETRNanoConfig, (25_000_000, 40_000_000), id="nano"),
         ],
     )
-    def test_param_count_in_expected_range(self, config_class, expected_param_count_range) -> None:
+    def test_param_count_in_expected_range(
+        self, config_class, expected_param_count_range
+    ) -> None:
         """Sanity check that the model has a plausible number of parameters."""
         mc = config_class(num_classes=80, pretrain_weights=None, device="cpu")
         ns = _make_ns(mc=mc)
         model = build_model(ns)
         total = sum(p.numel() for p in model.parameters())
         low, high = expected_param_count_range
-        assert low <= total <= high, f"Expected param count in [{low}, {high}], got {total}"
+        assert low <= total <= high, (
+            f"Expected param count in [{low}, {high}], got {total}"
+        )
 
     def test_encoder_only_returns_triple(self) -> None:
         """When encoder_only=True, build_model returns (encoder, None, None)."""

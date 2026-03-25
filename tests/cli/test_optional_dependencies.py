@@ -48,9 +48,9 @@ class TestOptionalDependencies:
         protobuf_requirements = [req for req in requirements if req.name == "protobuf"]
         assert protobuf_requirements, "loggers extra must include protobuf dependency"
 
-        assert any(self.has_upper_bound_below_4(req) for req in protobuf_requirements), (
-            "protobuf dependency must include an upper bound below 4.0.0"
-        )
+        assert any(
+            self.has_upper_bound_below_4(req) for req in protobuf_requirements
+        ), "protobuf dependency must include an upper bound below 4.0.0"
 
     @pytest.mark.parametrize(
         "dep_str,expected",

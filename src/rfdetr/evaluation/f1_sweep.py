@@ -62,14 +62,20 @@ def sweep_confidence_thresholds(
 
             precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
             recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-            f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+            f1 = (
+                2 * precision * recall / (precision + recall)
+                if (precision + recall) > 0
+                else 0.0
+            )
 
             per_class_precisions.append(precision)
             per_class_recalls.append(recall)
             per_class_f1s.append(f1)
 
         if len(classes_with_gt) > 0:
-            macro_precision = np.mean([per_class_precisions[k] for k in classes_with_gt])
+            macro_precision = np.mean(
+                [per_class_precisions[k] for k in classes_with_gt]
+            )
             macro_recall = np.mean([per_class_recalls[k] for k in classes_with_gt])
             macro_f1 = np.mean([per_class_f1s[k] for k in classes_with_gt])
         else:

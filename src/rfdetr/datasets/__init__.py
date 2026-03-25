@@ -57,7 +57,9 @@ def detect_roboflow_format(dataset_dir: Path) -> str:
     yolo_data_file_yaml = dataset_dir / "data.yaml"
     yolo_data_file_yml = dataset_dir / "data.yml"
     yolo_images_dir = dataset_dir / "train" / "images"
-    if (yolo_data_file_yaml.exists() or yolo_data_file_yml.exists()) and yolo_images_dir.exists():
+    if (
+        yolo_data_file_yaml.exists() or yolo_data_file_yml.exists()
+    ) and yolo_images_dir.exists():
         return "yolo"
 
     raise ValueError(
@@ -67,7 +69,9 @@ def detect_roboflow_format(dataset_dir: Path) -> str:
     )
 
 
-def build_roboflow(image_set: str, args: Any, resolution: int) -> torch.utils.data.Dataset:
+def build_roboflow(
+    image_set: str, args: Any, resolution: int
+) -> torch.utils.data.Dataset:
     """Build a Roboflow dataset, auto-detecting COCO or YOLO format.
 
     This function detects the dataset format and delegates to the
@@ -83,7 +87,9 @@ def build_roboflow(image_set: str, args: Any, resolution: int) -> torch.utils.da
     return build_roboflow_from_yolo(image_set, args, resolution)
 
 
-def build_dataset(image_set: str, args: Any, resolution: int) -> torch.utils.data.Dataset:
+def build_dataset(
+    image_set: str, args: Any, resolution: int
+) -> torch.utils.data.Dataset:
     if args.dataset_file == "coco":
         return build_coco(image_set, args, resolution)
     if args.dataset_file == "o365":

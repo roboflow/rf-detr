@@ -20,8 +20,12 @@ def test_all_gather_supports_cpu_without_tensor_truthiness_error() -> None:
 
     with (
         patch("rfdetr.utilities.distributed.get_world_size", return_value=2),
-        patch("rfdetr.utilities.distributed.dist.all_gather", side_effect=_fake_all_gather),
-        patch("rfdetr.utilities.distributed.torch.cuda.is_available", return_value=False),
+        patch(
+            "rfdetr.utilities.distributed.dist.all_gather", side_effect=_fake_all_gather
+        ),
+        patch(
+            "rfdetr.utilities.distributed.torch.cuda.is_available", return_value=False
+        ),
     ):
         result = all_gather({"value": 7})
 

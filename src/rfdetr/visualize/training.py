@@ -57,17 +57,23 @@ def plot_metrics(
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
     except ImportError as exc:
-        raise ImportError("matplotlib is required for plot_metrics(). Install it with: pip install matplotlib") from exc
+        raise ImportError(
+            "matplotlib is required for plot_metrics(). Install it with: pip install matplotlib"
+        ) from exc
 
     try:
         import pandas as pd
     except ImportError as exc:
-        raise ImportError("pandas is required for plot_metrics(). Install it with: pip install pandas") from exc
+        raise ImportError(
+            "pandas is required for plot_metrics(). Install it with: pip install pandas"
+        ) from exc
 
     try:
         import seaborn as sns
     except ImportError as exc:
-        raise ImportError("seaborn is required for plot_metrics(). Install it with: pip install seaborn") from exc
+        raise ImportError(
+            "seaborn is required for plot_metrics(). Install it with: pip install seaborn"
+        ) from exc
 
     csv_path = Path(metrics_csv)
     if not csv_path.exists():
@@ -84,22 +90,36 @@ def plot_metrics(
 
     def _val_cols(*patterns: str) -> list[str]:
         """Return val/ columns whose name contains any of the given patterns."""
-        return [c for c in df.columns if c.startswith("val/") and any(p in c for p in patterns) and df[c].notna().any()]
+        return [
+            c
+            for c in df.columns
+            if c.startswith("val/")
+            and any(p in c for p in patterns)
+            and df[c].notna().any()
+        ]
 
     # Loss: only the aggregate scalars, not per-component breakdowns.
-    loss_cols = [c for c in ("train/loss", "val/loss", "test/loss") if c in df.columns and df[c].notna().any()]
+    loss_cols = [
+        c
+        for c in ("train/loss", "val/loss", "test/loss")
+        if c in df.columns and df[c].notna().any()
+    ]
 
     # AP/AR: all val/ columns matching each group (base + EMA when present).
     # test/ metrics are excluded — they only appear at the final epoch as a
     # single dot which seaborn renders as a legend entry with no visible line.
     metric_groups: dict[str, list[str]] = {
         "Loss": loss_cols,
-        "AP@0.50": _val_cols("mAP_50"),  # matches mAP_50 and ema_mAP_50 but not mAP_50_95
+        "AP@0.50": _val_cols(
+            "mAP_50"
+        ),  # matches mAP_50 and ema_mAP_50 but not mAP_50_95
         "AP@0.50:0.95": _val_cols("mAP_50_95"),
         "AR": _val_cols("mAR"),
     }
     # Exclude mAP_50_95 hits from the AP@0.50 bucket (substring overlap).
-    metric_groups["AP@0.50"] = [c for c in metric_groups["AP@0.50"] if "mAP_50_95" not in c]
+    metric_groups["AP@0.50"] = [
+        c for c in metric_groups["AP@0.50"] if "mAP_50_95" not in c
+    ]
     metric_groups = {k: v for k, v in metric_groups.items() if v}
 
     n_groups = len(metric_groups)
@@ -114,7 +134,9 @@ def plot_metrics(
     for idx, (title, metric_list) in enumerate(metric_groups.items()):
         ax = axes_flat[idx]
         group_data = melted[melted["metric"].isin(metric_list)]
-        sns.lineplot(data=group_data, x="epoch", y="value", hue="metric", marker="o", ax=ax)
+        sns.lineplot(
+            data=group_data, x="epoch", y="value", hue="metric", marker="o", ax=ax
+        )
         ax.set_title(title, fontsize=13, fontweight="bold")
         ax.set_xlabel("Epoch", fontsize=11)
         ax.set_ylabel(title, fontsize=11)

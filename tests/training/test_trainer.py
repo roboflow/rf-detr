@@ -19,7 +19,9 @@ from rfdetr.training import build_trainer
 class TestProgressBarCallbacks:
     """build_trainer() must install the right progress bar callback for each mode."""
 
-    def test_rich_progress_bar_installed_for_rich(self, base_model_config, base_train_config):
+    def test_rich_progress_bar_installed_for_rich(
+        self, base_model_config, base_train_config
+    ):
         """progress_bar='rich' must add RichProgressBar and not TQDMProgressBar."""
         mc = base_model_config()
         tc = base_train_config(progress_bar="rich")
@@ -28,7 +30,9 @@ class TestProgressBarCallbacks:
         assert RichProgressBar in cb_types
         assert TQDMProgressBar not in cb_types
 
-    def test_tqdm_progress_bar_installed_for_tqdm(self, base_model_config, base_train_config):
+    def test_tqdm_progress_bar_installed_for_tqdm(
+        self, base_model_config, base_train_config
+    ):
         """progress_bar='tqdm' must add TQDMProgressBar and not RichProgressBar."""
         mc = base_model_config()
         tc = base_train_config(progress_bar="tqdm")
@@ -37,7 +41,9 @@ class TestProgressBarCallbacks:
         assert TQDMProgressBar in cb_types
         assert RichProgressBar not in cb_types
 
-    def test_no_progress_bar_callback_for_none(self, base_model_config, base_train_config):
+    def test_no_progress_bar_callback_for_none(
+        self, base_model_config, base_train_config
+    ):
         """progress_bar=None must not add any progress bar callback."""
         mc = base_model_config()
         tc = base_train_config(progress_bar=None)

@@ -89,7 +89,9 @@ class TestModelEmaParity:
         cb = RFDETREMACallback(decay=decay, tau=tau)
 
         # Initialise manual EMA state from model (same as ModelEma deepcopy)
-        ema_weights: dict[str, torch.Tensor] = {name: p.clone() for name, p in model.named_parameters()}
+        ema_weights: dict[str, torch.Tensor] = {
+            name: p.clone() for name, p in model.named_parameters()
+        }
 
         for step in range(n_steps):
             # Perturb model parameters
@@ -103,7 +105,9 @@ class TestModelEmaParity:
             # Replicate update via callback avg_fn
             model_weights = {name: p.clone() for name, p in model.named_parameters()}
             for name in ema_weights:
-                ema_weights[name] = cb._avg_fn(ema_weights[name], model_weights[name], step)
+                ema_weights[name] = cb._avg_fn(
+                    ema_weights[name], model_weights[name], step
+                )
 
         # Compare
         legacy_state = dict(model_ema.module.named_parameters())
@@ -177,7 +181,9 @@ class TestUpdateInterval:
 
         for step in (1, 2, 3, 4):
             trainer.global_step = step
-            cb.on_train_batch_end(trainer, pl_module, outputs=None, batch=None, batch_idx=step - 1)
+            cb.on_train_batch_end(
+                trainer, pl_module, outputs=None, batch=None, batch_idx=step - 1
+            )
 
         assert cb._average_model.update_parameters.call_count == 2
 
@@ -191,7 +197,9 @@ class TestLegacyEMAResume:
         pl_module = _EMAContainerModule()
         trainer = MagicMock()
 
-        legacy_ema_state = {k: torch.full_like(v, 2.0) for k, v in pl_module.model.state_dict().items()}
+        legacy_ema_state = {
+            k: torch.full_like(v, 2.0) for k, v in pl_module.model.state_dict().items()
+        }
         pl_module._pending_legacy_ema_state = legacy_ema_state
 
         cb.setup(trainer, pl_module, stage="fit")

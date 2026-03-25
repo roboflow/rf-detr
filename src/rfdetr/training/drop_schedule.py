@@ -41,7 +41,9 @@ def drop_scheduler(
     elif mode == "late":
         assert schedule in ["constant"]
         early_schedule = np.full(early_iters, 0)
-        final_schedule = np.concatenate((early_schedule, np.full(late_iters, drop_rate)))
+        final_schedule = np.concatenate(
+            (early_schedule, np.full(late_iters, drop_rate))
+        )
 
     assert len(final_schedule) == epochs * niter_per_ep
     return final_schedule

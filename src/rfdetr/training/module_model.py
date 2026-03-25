@@ -56,20 +56,31 @@ class RFDETRModelModule(LightningModule):
             # the model_config so downstream components see the aligned value.
             if hasattr(self.model, "num_classes"):
                 model_num_classes = getattr(self.model, "num_classes")
-                if model_num_classes is not None and model_num_classes != prev_num_classes:
+                if (
+                    model_num_classes is not None
+                    and model_num_classes != prev_num_classes
+                ):
                     self.model_config.num_classes = model_num_classes
         if model_config.backbone_lora:
             apply_lora(self.model)
 
         # Build criterion and postprocessor after potential num_classes
         # alignment so they match the current model head.
-        self.criterion, self.postprocess = build_criterion_from_config(self.model_config, self.train_config)
+        self.criterion, self.postprocess = build_criterion_from_config(
+            self.model_config, self.train_config
+        )
 
         # torch.compile is opt-in: set model_config.compile=True to enable.
         # Only enabled on CUDA; MPS and CPU do not benefit from compilation.
-        compile_enabled = model_config.compile and torch.cuda.is_available() and not train_config.multi_scale
+        compile_enabled = (
+            model_config.compile
+            and torch.cuda.is_available()
+            and not train_config.multi_scale
+        )
         if model_config.compile and train_config.multi_scale:
-            logger.info("Disabling torch.compile because multi_scale=True introduces dynamic input shapes.")
+            logger.info(
+                "Disabling torch.compile because multi_scale=True introduces dynamic input shapes."
+            )
         if compile_enabled:
             # dynamic=True: one compiled graph handles all multi-scale input sizes instead
             # of recompiling per (H, W) pair. suppress_errors=True: if inductor can't
@@ -112,14 +123,22 @@ class RFDETRModelModule(LightningModule):
 
         if tc.multi_scale and not tc.do_random_resize_via_padding:
             samples, _ = batch
-            scales = compute_multi_scale_scales(mc.resolution, tc.expanded_scales, mc.patch_size, mc.num_windows)
+            scales = compute_multi_scale_scales(
+                mc.resolution, tc.expanded_scales, mc.patch_size, mc.num_windows
+            )
             step = self.trainer.global_step
             random.seed(step)
             scale = random.choice(scales)
             with torch.no_grad():
-                samples.tensors = F.interpolate(samples.tensors, size=scale, mode="bilinear", align_corners=False)
+                samples.tensors = F.interpolate(
+                    samples.tensors, size=scale, mode="bilinear", align_corners=False
+                )
                 samples.mask = (
-                    F.interpolate(samples.mask.unsqueeze(1).float(), size=scale, mode="nearest").squeeze(1).bool()
+                    F.interpolate(
+                        samples.mask.unsqueeze(1).float(), size=scale, mode="nearest"
+                    )
+                    .squeeze(1)
+                    .bool()
                 )
 
     def training_step(self, batch: Tuple, batch_idx: int) -> torch.Tensor:
@@ -182,8 +201,12 @@ class RFDETRModelModule(LightningModule):
             min_lr = min(group_lrs)
             max_lr = max(group_lrs)
             self.log("train/lr", base_lr, prog_bar=True, on_step=True, on_epoch=False)
-            self.log("train/lr_min", min_lr, prog_bar=True, on_step=True, on_epoch=False)
-            self.log("train/lr_max", max_lr, prog_bar=True, on_step=True, on_epoch=False)
+            self.log(
+                "train/lr_min", min_lr, prog_bar=True, on_step=True, on_epoch=False
+            )
+            self.log(
+                "train/lr_max", max_lr, prog_bar=True, on_step=True, on_epoch=False
+            )
         return loss_scaled
 
     def validation_step(self, batch: Tuple, batch_idx: int) -> Dict[str, Any]:
@@ -204,8 +227,17 @@ class RFDETRModelModule(LightningModule):
         if self.train_config.compute_val_loss:
             loss_dict = self.criterion(outputs, targets)
             weight_dict = self.criterion.weight_dict
-            loss = sum(loss_dict[k] * weight_dict[k] for k in loss_dict if k in weight_dict)
-            self.log("val/loss", loss, prog_bar=True, on_epoch=True, sync_dist=True, batch_size=len(targets))
+            loss = sum(
+                loss_dict[k] * weight_dict[k] for k in loss_dict if k in weight_dict
+            )
+            self.log(
+                "val/loss",
+                loss,
+                prog_bar=True,
+                on_epoch=True,
+                sync_dist=True,
+                batch_size=len(targets),
+            )
 
         orig_sizes = torch.stack([t["orig_size"] for t in targets])
         results = self.postprocess(outputs, orig_sizes)
@@ -230,7 +262,11 @@ class RFDETRModelModule(LightningModule):
         model_for_params = getattr(self.model, "_orig_mod", self.model)
         param_dicts = get_param_dict(ns, model_for_params)
         param_dicts = [p for p in param_dicts if p["params"].requires_grad]
-        use_fused = self.model_config.fused_optimizer and torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+        use_fused = (
+            self.model_config.fused_optimizer
+            and torch.cuda.is_available()
+            and torch.cuda.is_bf16_supported()
+        )
         optimizer = torch.optim.AdamW(
             param_dicts,
             lr=tc.lr,
@@ -246,8 +282,12 @@ class RFDETRModelModule(LightningModule):
             if current_step < warmup_steps:
                 return float(current_step) / float(max(1, warmup_steps))
             if tc.lr_scheduler == "cosine":
-                progress = float(current_step - warmup_steps) / float(max(1, total_steps - warmup_steps))
-                return tc.lr_min_factor + (1 - tc.lr_min_factor) * 0.5 * (1 + math.cos(math.pi * progress))
+                progress = float(current_step - warmup_steps) / float(
+                    max(1, total_steps - warmup_steps)
+                )
+                return tc.lr_min_factor + (1 - tc.lr_min_factor) * 0.5 * (
+                    1 + math.cos(math.pi * progress)
+                )
             # Step decay: drop by 10× after lr_drop epochs.
             if current_step < tc.lr_drop * steps_per_epoch:
                 return 1.0
@@ -280,7 +320,11 @@ class RFDETRModelModule(LightningModule):
             gradient_clip_algorithm: Clipping algorithm; forwarded to super()
                 for the non-fused path.
         """
-        use_fused = self.model_config.fused_optimizer and torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+        use_fused = (
+            self.model_config.fused_optimizer
+            and torch.cuda.is_available()
+            and torch.cuda.is_bf16_supported()
+        )
         if use_fused:
             if gradient_clip_val and gradient_clip_val > 0:
                 torch.nn.utils.clip_grad_norm_(self.parameters(), gradient_clip_val)
@@ -310,14 +354,18 @@ class RFDETRModelModule(LightningModule):
         if self.train_config.compute_test_loss:
             loss_dict = self.criterion(outputs, targets)
             weight_dict = self.criterion.weight_dict
-            loss = sum(loss_dict[k] * weight_dict[k] for k in loss_dict if k in weight_dict)
+            loss = sum(
+                loss_dict[k] * weight_dict[k] for k in loss_dict if k in weight_dict
+            )
             self.log("test/loss", loss, sync_dist=True, batch_size=len(targets))
 
         orig_sizes = torch.stack([t["orig_size"] for t in targets])
         results = self.postprocess(outputs, orig_sizes)
         return {"results": results, "targets": targets}
 
-    def predict_step(self, batch: Tuple, batch_idx: int, dataloader_idx: int = 0) -> Any:
+    def predict_step(
+        self, batch: Tuple, batch_idx: int, dataloader_idx: int = 0
+    ) -> Any:
         """Run inference on a preprocessed batch and return postprocessed results.
 
         Args:
@@ -358,7 +406,9 @@ class RFDETRModelModule(LightningModule):
         """
         # Raw legacy .pth: no "state_dict" key — build it from "model".
         if "model" in checkpoint and "state_dict" not in checkpoint:
-            checkpoint["state_dict"] = {"model." + k: v for k, v in checkpoint["model"].items()}
+            checkpoint["state_dict"] = {
+                "model." + k: v for k, v in checkpoint["model"].items()
+            }
 
         # Stash legacy EMA weights for RFDETREMACallback.setup(), which restores
         # them into AveragedModel when resuming from converted legacy checkpoints.
