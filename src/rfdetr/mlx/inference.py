@@ -488,10 +488,24 @@ class MLXSegInferenceModel:
             boxes_i = boxes[i]  # (nQ, 4) cxcywh
             masks_i = masks_np[i]  # (nQ, H_mask, W_mask)
 
+            orig_h, orig_w = orig_sizes[i]
+
             # Flatten and select top-K
             flat = prob_i.reshape(-1)
             num_select = min(self.num_select, flat.shape[0])
-            topk_idx = np.argpartition(-flat, num_select)[:num_select]
+
+            if num_select == 0:
+                results.append(
+                    {
+                        "scores": np.empty((0,), dtype=np.float32),
+                        "labels": np.empty((0,), dtype=np.int64),
+                        "boxes": np.empty((0, 4), dtype=np.float32),
+                        "masks": np.empty((0, orig_h, orig_w), dtype=np.float32),
+                    }
+                )
+                continue
+
+            topk_idx = np.argpartition(-flat, num_select - 1)[:num_select]
             topk_values = flat[topk_idx]
 
             sort_order = np.argsort(-topk_values)
@@ -510,8 +524,6 @@ class MLXSegInferenceModel:
             x2 = cx + w / 2
             y2 = cy + h / 2
             xyxy = np.stack([x1, y1, x2, y2], axis=-1)
-
-            orig_h, orig_w = orig_sizes[i]
             scale = np.array([orig_w, orig_h, orig_w, orig_h], dtype=np.float32)
             xyxy = xyxy * scale
 
