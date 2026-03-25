@@ -35,6 +35,7 @@ class PostProcess(nn.Module):
         """
         out_logits, out_bbox = outputs["pred_logits"], outputs["pred_boxes"]
         out_masks = outputs.get("pred_masks", None)
+        out_keypoints = outputs.get("pred_keypoints", None)
 
         assert len(out_logits) == len(target_sizes)
         assert target_sizes.shape[1] == 2
@@ -52,18 +53,20 @@ class PostProcess(nn.Module):
         scale_fct = torch.stack([img_w, img_h, img_w, img_h], dim=1)
         boxes = boxes * scale_fct[:, None, :]
 
-        # Optionally gather masks corresponding to the same top-K queries and resize to original size
+        # Build results for each image
         results = []
-        if out_masks is not None:
-            for i in range(out_masks.shape[0]):
-                res_i = {"scores": scores[i], "labels": labels[i], "boxes": boxes[i]}
-                k_idx = topk_boxes[i]
+        for i in range(out_logits.shape[0]):
+            res_i = {"scores": scores[i], "labels": labels[i], "boxes": boxes[i]}
+            k_idx = topk_boxes[i]
+            h, w = target_sizes[i].tolist()
+
+            # Optionally gather masks corresponding to the same top-K queries
+            if out_masks is not None:
                 masks_i = torch.gather(
                     out_masks[i],
                     0,
                     k_idx.unsqueeze(-1).unsqueeze(-1).repeat(1, out_masks.shape[-2], out_masks.shape[-1]),
                 )  # [K, Hm, Wm]
-                h, w = target_sizes[i].tolist()
                 masks_i = F.interpolate(
                     masks_i.unsqueeze(1),
                     size=(int(h), int(w)),
@@ -71,10 +74,29 @@ class PostProcess(nn.Module):
                     align_corners=False,
                 )  # [K,1,H,W]
                 res_i["masks"] = masks_i > 0.0
-                results.append(res_i)
-        else:
-            results = [
-                {"scores": score, "labels": label, "boxes": box} for score, label, box in zip(scores, labels, boxes)
-            ]
+
+            # Optionally gather keypoints and scale to pixel coordinates
+            if out_keypoints is not None:
+                num_keypoints = out_keypoints.shape[2]
+                kpts_i = torch.gather(
+                    out_keypoints[i],
+                    0,
+                    k_idx.unsqueeze(-1).unsqueeze(-1).repeat(1, num_keypoints, 3),
+                )  # [K, num_keypoints, 3]
+
+                # Scale coordinates from [0,1] to pixel space
+                kpts_i_scaled = kpts_i.clone()
+                kpts_i_scaled[..., 0] = kpts_i[..., 0] * w  # x
+                kpts_i_scaled[..., 1] = kpts_i[..., 1] * h  # y
+                # Convert visibility logits to confidence scores via sigmoid
+                vis_conf = kpts_i[..., 2].sigmoid()
+                # For COCO evaluation: 2 = visible, 0 = not labeled
+                kpts_i_scaled[..., 2] = (vis_conf > 0.5).float() * 2
+
+                res_i["keypoints"] = kpts_i_scaled
+                # Also store raw visibility confidence for user access
+                res_i["keypoints_confidence"] = vis_conf
+
+            results.append(res_i)
 
         return results

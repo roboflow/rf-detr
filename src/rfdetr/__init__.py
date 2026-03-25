@@ -39,6 +39,11 @@ from rfdetr.variants import (
     RFDETRLargeDeprecated,  # DEPRECATED # noqa: F401
     RFDETRMedium,
     RFDETRNano,
+    RFDETRPose,
+    RFDETRPoseLarge,
+    RFDETRPoseMedium,
+    RFDETRPoseNano,
+    RFDETRPoseSmall,
     RFDETRSeg2XLarge,
     RFDETRSegLarge,
     RFDETRSegMedium,
@@ -61,6 +66,11 @@ __all__ = [
     "RFDETRSegLarge",
     "RFDETRSegXLarge",
     "RFDETRSeg2XLarge",
+    "RFDETRPose",
+    "RFDETRPoseNano",
+    "RFDETRPoseSmall",
+    "RFDETRPoseMedium",
+    "RFDETRPoseLarge",
 ]
 
 # Lazily resolved names: avoids eager pytorch_lightning import at `import rfdetr` time.

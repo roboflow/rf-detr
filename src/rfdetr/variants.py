@@ -28,17 +28,28 @@ __all__ = [
     "RFDETRSegLarge",
     "RFDETRSegXLarge",
     "RFDETRSeg2XLarge",
+    "RFDETRPose",
+    "RFDETRPoseNano",
+    "RFDETRPoseSmall",
+    "RFDETRPoseMedium",
+    "RFDETRPoseLarge",
 ]
 
 import warnings
 
 from rfdetr.config import (
+    KeypointTrainConfig,
     ModelConfig,
     RFDETRBaseConfig,
     RFDETRLargeConfig,
     RFDETRLargeDeprecatedConfig,
     RFDETRMediumConfig,
     RFDETRNanoConfig,
+    RFDETRPoseConfig,
+    RFDETRPoseLargeConfig,
+    RFDETRPoseMediumConfig,
+    RFDETRPoseNanoConfig,
+    RFDETRPoseSmallConfig,
     RFDETRSeg2XLargeConfig,
     RFDETRSegLargeConfig,
     RFDETRSegMediumConfig,
@@ -48,6 +59,7 @@ from rfdetr.config import (
     RFDETRSegXLargeConfig,
     RFDETRSmallConfig,
     SegmentationTrainConfig,
+    TrainConfig,
 )
 from rfdetr.detr import RFDETR
 from rfdetr.utilities.logger import get_logger
@@ -211,3 +223,50 @@ class RFDETRSegXLarge(RFDETRSeg):
 class RFDETRSeg2XLarge(RFDETRSeg):
     size = "rfdetr-seg-2xlarge"
     _model_config_class = RFDETRSeg2XLargeConfig
+
+
+class RFDETRPose(RFDETR):
+    """RF-DETR Pose estimation model for keypoint/pose detection.
+
+    Outputs (x, y, visibility) for each keypoint per detected object.
+    Access keypoints via ``detections.data["keypoints"]`` which returns
+    an array of shape ``[N, K, 3]``.
+    """
+
+    size = "rfdetr-pose"
+    _model_config_class = RFDETRPoseConfig
+    _train_config_class = KeypointTrainConfig
+
+    def get_train_config(self, **kwargs) -> TrainConfig:
+        """Retrieve training config, auto-setting num_keypoints from model config."""
+        if "num_keypoints" not in kwargs:
+            kwargs["num_keypoints"] = self.model_config.num_keypoints
+        return self._train_config_class(**kwargs)
+
+
+class RFDETRPoseNano(RFDETRPose):
+    """RF-DETR Pose Nano - smallest and fastest pose estimation model."""
+
+    size = "rfdetr-pose-nano"
+    _model_config_class = RFDETRPoseNanoConfig
+
+
+class RFDETRPoseSmall(RFDETRPose):
+    """RF-DETR Pose Small - balance of speed and accuracy."""
+
+    size = "rfdetr-pose-small"
+    _model_config_class = RFDETRPoseSmallConfig
+
+
+class RFDETRPoseMedium(RFDETRPose):
+    """RF-DETR Pose Medium - default pose model."""
+
+    size = "rfdetr-pose-medium"
+    _model_config_class = RFDETRPoseMediumConfig
+
+
+class RFDETRPoseLarge(RFDETRPose):
+    """RF-DETR Pose Large - highest accuracy pose model."""
+
+    size = "rfdetr-pose-large"
+    _model_config_class = RFDETRPoseLargeConfig

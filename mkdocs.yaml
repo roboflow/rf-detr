@@ -28,6 +28,7 @@ nav:
       - Run Model:
           - Detection: learn/run/detection.md
           - Segmentation: learn/run/segmentation.md
+          - Pose Estimation: learn/run/pose.md
           - Pretrained Models: learn/pretrained.md
       - Train Model:
           - Overview: learn/train/index.md
@@ -56,6 +57,8 @@ nav:
           - RF-DETR Seg Large: reference/seg_large.md
           - RF-DETR Seg XLarge: reference/seg_xlarge.md
           - RF-DETR Seg 2XLarge: reference/seg_2xlarge.md
+      - Pose Estimation Models:
+          - RF-DETR Pose: reference/pose.md
       - Training Configs:
           - Train Config: reference/train_config.md
           - Segmentation Train Config: reference/segmentation_train_config.md

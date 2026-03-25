@@ -49,6 +49,8 @@ _MC_NAMESPACE_FIELDS = {
     "resolution",
     "sa_nheads",
     "segmentation_head",
+    "keypoint_head",
+    "num_keypoints",
     "two_stage",
 }
 
@@ -69,6 +71,8 @@ _TC_NON_NAMESPACE_FIELDS = {
     "group_detr",
     "ia_bce_loss",
     "segmentation_head",
+    "keypoint_head",
+    "num_keypoints",
     "num_select",
     # PTL Trainer / DDP.
     "accelerator",
@@ -158,6 +162,10 @@ def _namespace_from_configs(
             "mask_ce_loss_coef": getattr(tc, "mask_ce_loss_coef", 5.0),
             "mask_dice_loss_coef": getattr(tc, "mask_dice_loss_coef", 5.0),
             "mask_point_sample_ratio": getattr(tc, "mask_point_sample_ratio", 16),
+            # Keypoint extras (KeypointTrainConfig only — absent from base TrainConfig).
+            "keypoint_loss_coef": getattr(tc, "keypoint_loss_coef", 5.0),
+            "keypoint_visibility_loss_coef": getattr(tc, "keypoint_visibility_loss_coef", 2.0),
+            "keypoint_oks_loss_coef": getattr(tc, "keypoint_oks_loss_coef", 2.0),
             # Transformations: fields requiring a default sentinel or transitional priority.
             "cls_loss_coef": cls_loss_coef,
             "resume": tc.resume or "",

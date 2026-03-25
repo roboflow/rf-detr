@@ -446,6 +446,138 @@ class SetCriterion(nn.Module):
         del target_masks
         return losses
 
+    def loss_keypoints(self, outputs, targets, indices, num_boxes):
+        """Compute keypoint losses: L1 for coordinates, BCE for visibility, and OKS loss.
+
+        Expects outputs to contain 'pred_keypoints' of shape [B, Q, K, 3]
+        where K is num_keypoints and 3 is (x, y, visibility_logit).
+        Targets must have 'keypoints' key with shape [N, K, 3] where visibility is 0/1/2.
+        """
+        # Skip keypoint loss for encoder outputs (two-stage) which don't have keypoint predictions
+        if "pred_keypoints" not in outputs:
+            device = outputs["pred_logits"].device
+            return {
+                "loss_keypoints_l1": torch.tensor(0.0, device=device),
+                "loss_keypoints_vis": torch.tensor(0.0, device=device),
+                "loss_keypoints_oks": torch.tensor(0.0, device=device),
+            }
+
+        idx = self._get_src_permutation_idx(indices)
+        src_keypoints = outputs["pred_keypoints"][idx]  # [N, K, 3]
+
+        # Handle no matches
+        if src_keypoints.numel() == 0:
+            device = outputs["pred_keypoints"].device
+            return {
+                "loss_keypoints_l1": torch.tensor(0.0, device=device),
+                "loss_keypoints_vis": torch.tensor(0.0, device=device),
+                "loss_keypoints_oks": torch.tensor(0.0, device=device),
+            }
+
+        # Gather target keypoints - skip if any target is missing keypoints
+        if not all("keypoints" in t for t in targets):
+            device = outputs["pred_keypoints"].device
+            return {
+                "loss_keypoints_l1": torch.tensor(0.0, device=device),
+                "loss_keypoints_vis": torch.tensor(0.0, device=device),
+                "loss_keypoints_oks": torch.tensor(0.0, device=device),
+            }
+
+        target_keypoints = torch.cat([t["keypoints"][j] for t, (_, j) in zip(targets, indices)], dim=0)  # [N, K, 3]
+
+        # Separate coordinates and visibility
+        src_coords = src_keypoints[..., :2]  # [N, K, 2]
+        src_vis_logits = src_keypoints[..., 2]  # [N, K]
+
+        target_coords = target_keypoints[..., :2]  # [N, K, 2]
+        target_vis = target_keypoints[..., 2]  # [N, K] values 0/1/2
+
+        # Create mask for valid keypoints (visibility > 0)
+        valid_mask = target_vis > 0  # [N, K]
+
+        # L1 loss for coordinates (only for visible keypoints)
+        if valid_mask.any():
+            coord_loss = F.l1_loss(
+                src_coords[valid_mask],
+                target_coords[valid_mask],
+                reduction="sum",
+            ) / (valid_mask.sum() + 1e-6)
+        else:
+            coord_loss = src_coords.sum() * 0
+
+        # BCE loss for visibility
+        target_vis_binary = (target_vis > 0).float()
+        vis_loss = F.binary_cross_entropy_with_logits(src_vis_logits, target_vis_binary, reduction="mean")
+
+        # OKS loss (Object Keypoint Similarity)
+        oks_loss = self._compute_oks_loss(src_coords, target_coords, valid_mask, targets, indices)
+
+        return {
+            "loss_keypoints_l1": coord_loss,
+            "loss_keypoints_vis": vis_loss,
+            "loss_keypoints_oks": oks_loss,
+        }
+
+    def _compute_oks_loss(self, src_coords, target_coords, valid_mask, targets, indices):
+        """Compute OKS-based loss similar to COCO evaluation metric.
+
+        OKS = exp(-d^2 / (2 * s^2 * k^2))
+        where d is distance, s is object scale, k is per-keypoint constant.
+        """
+        device = src_coords.device
+
+        # COCO keypoint sigmas
+        coco_sigmas = torch.tensor(
+            [
+                0.026,
+                0.025,
+                0.025,
+                0.035,
+                0.035,
+                0.079,
+                0.079,
+                0.072,
+                0.072,
+                0.062,
+                0.062,
+                0.107,
+                0.107,
+                0.087,
+                0.087,
+                0.089,
+                0.089,
+            ],
+            device=device,
+        )
+
+        num_keypoints = src_coords.shape[1]
+        if num_keypoints > len(coco_sigmas):
+            extra_sigmas = torch.full((num_keypoints - len(coco_sigmas),), 0.05, device=device)
+            sigmas = torch.cat([coco_sigmas, extra_sigmas])
+        else:
+            sigmas = coco_sigmas[:num_keypoints]
+
+        # Get bounding box areas for scale
+        target_boxes = torch.cat([t["boxes"][j] for t, (_, j) in zip(targets, indices)], dim=0)  # [N, 4] cxcywh
+
+        areas = target_boxes[:, 2] * target_boxes[:, 3]  # w * h
+        scales = areas.sqrt()  # [N]
+
+        # Compute squared distances
+        dists = ((src_coords - target_coords) ** 2).sum(dim=-1)  # [N, K]
+
+        # Compute OKS per keypoint
+        k_squared = (2 * sigmas) ** 2
+        oks = torch.exp(-dists / (2 * scales.unsqueeze(-1) ** 2 * k_squared.unsqueeze(0) + 1e-6))
+
+        # Apply mask and compute loss (1 - mean OKS)
+        oks_masked = oks * valid_mask.float()
+        num_valid = valid_mask.float().sum(dim=-1).clamp(min=1)
+        oks_per_instance = oks_masked.sum(dim=-1) / num_valid
+
+        oks_loss = 1 - oks_per_instance.mean()
+        return oks_loss
+
     def _get_src_permutation_idx(self, indices):
         # permute predictions following indices
         batch_idx = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])
@@ -464,6 +596,7 @@ class SetCriterion(nn.Module):
             "cardinality": self.loss_cardinality,
             "boxes": self.loss_boxes,
             "masks": self.loss_masks,
+            "keypoints": self.loss_keypoints,
         }
         assert loss in loss_map, f"do you really want to compute {loss} loss?"
         return loss_map[loss](outputs, targets, indices, num_boxes, **kwargs)

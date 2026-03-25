@@ -53,6 +53,11 @@ _VARIANT_EXPORTS = (
     "RFDETRLargeDeprecated",
     "RFDETRMedium",
     "RFDETRNano",
+    "RFDETRPose",
+    "RFDETRPoseLarge",
+    "RFDETRPoseMedium",
+    "RFDETRPoseNano",
+    "RFDETRPoseSmall",
     "RFDETRSeg",
     "RFDETRSeg2XLarge",
     "RFDETRSegLarge",
@@ -588,6 +593,17 @@ class RFDETR:
                     confidence=scores.float().cpu().numpy(),
                     class_id=labels.cpu().numpy(),
                 )
+
+            # Add keypoints if available
+            if "keypoints" in result:
+                keypoints = result["keypoints"]
+                keypoints = keypoints[keep]
+                detections.data["keypoints"] = keypoints.cpu().numpy()
+
+                if "keypoints_confidence" in result:
+                    keypoints_conf = result["keypoints_confidence"]
+                    keypoints_conf = keypoints_conf[keep]
+                    detections.data["keypoints_confidence"] = keypoints_conf.cpu().numpy()
 
             detections_list.append(detections)
 
