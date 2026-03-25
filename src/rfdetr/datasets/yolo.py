@@ -551,7 +551,7 @@ class CocoLikeAPI:
             categories.append({"id": idx, "name": class_name, "supercategory": "none"})
 
         ann_id = 0
-        use_lazy_path = isinstance(self.sv_dataset, _LazyYoloDetectionDataset)
+        use_lazy_path = hasattr(self.sv_dataset, "get_image_info")
         for img_id in range(len(self.sv_dataset)):
             if use_lazy_path:
                 sample = self.sv_dataset.get_image_info(img_id)
