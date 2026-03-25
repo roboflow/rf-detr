@@ -9,6 +9,7 @@ import functools
 import glob
 import importlib
 import json
+import operator
 import os
 import warnings
 from collections import defaultdict
@@ -457,6 +458,7 @@ class RFDETR:
             str, Image.Image, np.ndarray, torch.Tensor, List[Union[str, np.ndarray, Image.Image, torch.Tensor]]
         ],
         threshold: float = 0.5,
+        shape: tuple[int, int] | None = None,
         **kwargs,
     ) -> Union[sv.Detections, List[sv.Detections]]:
         """Performs object detection on the input images and returns bounding box
@@ -473,14 +475,57 @@ class RFDETR:
                 as file paths, PIL Images, NumPy arrays, or torch.Tensors.
             threshold:
                 The minimum confidence score needed to consider a detected bounding box valid.
+            shape:
+                Optional ``(height, width)`` tuple to resize images to before inference.
+                When provided, overrides the model's default inference resolution. The
+                tuple should match the resolution used when exporting the model
+                (typically a square shape). Both dimensions must be positive integers
+                divisible by 14. Defaults to ``(model.resolution, model.resolution)``
+                when not set.
             **kwargs:
                 Additional keyword arguments.
 
         Returns:
             A single or multiple Detections objects, each containing bounding box
             coordinates, confidence scores, and class IDs.
+
+        Raises:
+            ValueError: If ``shape`` cannot be unpacked as a two-element sequence,
+                if either dimension does not support the ``__index__`` protocol
+                (e.g. ``float``) or is a ``bool``, if either dimension is zero or
+                negative, or if either dimension is not divisible by 14.
         """
         import supervision as sv
+
+        if shape is not None:
+            try:
+                height, width = shape
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"shape must be a sequence of two positive integers (height, width), got {shape!r}."
+                ) from None
+
+            for dim_name, dim in (("height", height), ("width", width)):
+                if isinstance(dim, bool):
+                    raise ValueError(
+                        f"shape {dim_name} must be an integer, got {type(dim).__name__} (shape={shape!r})."
+                    )
+                try:
+                    operator.index(dim)
+                except TypeError:
+                    raise ValueError(
+                        f"shape {dim_name} must be an integer, got {type(dim).__name__} (shape={shape!r})."
+                    ) from None
+                if dim <= 0:
+                    raise ValueError(f"shape must contain positive integers for height and width, got {shape!r}.")
+
+            # Normalize to plain Python ints; also accepts numpy.int64, torch scalars, etc.
+            height, width = operator.index(height), operator.index(width)
+
+            if height % 14 != 0 or width % 14 != 0:
+                raise ValueError(f"shape must have both dimensions divisible by 14, got {shape!r}.")
+
+            shape = (height, width)
 
         if not self._is_optimized_for_inference and not self._has_warned_about_not_being_optimized_for_inference:
             logger.warning(
@@ -518,7 +563,8 @@ class RFDETR:
             orig_sizes.append((h, w))
 
             img_tensor = img_tensor.to(self.model.device)
-            img_tensor = F.resize(img_tensor, (self.model.resolution, self.model.resolution))
+            resize_to = list(shape) if shape is not None else [self.model.resolution, self.model.resolution]
+            img_tensor = F.resize(img_tensor, resize_to)
             img_tensor = F.normalize(img_tensor, self.means, self.stds)
 
             processed_images.append(img_tensor)
@@ -526,12 +572,16 @@ class RFDETR:
         batch_tensor = torch.stack(processed_images)
 
         if self._is_optimized_for_inference:
-            if self._optimized_resolution != batch_tensor.shape[2]:
-                # this could happen if someone manually changes self.model.resolution after optimizing the model
+            if (
+                self._optimized_resolution != batch_tensor.shape[2]
+                or self._optimized_resolution != batch_tensor.shape[3]
+            ):
+                # this could happen if someone manually changes self.model.resolution after optimizing the model,
+                # or if predict(shape=...) is used with a shape that doesn't match the compiled square resolution.
                 raise ValueError(
                     f"Resolution mismatch. "
-                    f"Model was optimized for resolution {self._optimized_resolution}, "
-                    f"but got {batch_tensor.shape[2]}."
+                    f"Model was optimized for resolution {self._optimized_resolution}x{self._optimized_resolution}, "
+                    f"but got {batch_tensor.shape[2]}x{batch_tensor.shape[3]}."
                     " You can explicitly remove the optimized model by calling model.remove_optimized_model()."
                 )
             if self._optimized_has_been_compiled:
