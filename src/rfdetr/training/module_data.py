@@ -228,9 +228,7 @@ class RFDETRDataModule(LightningDataModule):
             try:
                 import kornia.augmentation  # noqa: F401
             except ImportError as e:
-                raise ImportError(
-                    "GPU augmentation requires kornia. Install with: pip install 'rfdetr[kornia]'"
-                ) from e
+                raise ImportError("GPU augmentation requires kornia. Install with: pip install 'rfdetr[kornia]'") from e
 
         from rfdetr.datasets.kornia_transforms import build_kornia_pipeline, build_normalize
 
@@ -259,9 +257,7 @@ class RFDETRDataModule(LightningDataModule):
         """
         if self.trainer.training and self._kornia_pipeline is not None:
             if self.model_config.segmentation_head:
-                logger.warning_once(
-                    "Kornia GPU augmentation skipped for segmentation models (phase 2)"
-                )
+                logger.warning_once("Kornia GPU augmentation skipped for segmentation models (phase 2)")
                 return batch
 
             from rfdetr.datasets.kornia_transforms import collate_boxes, unpack_boxes
