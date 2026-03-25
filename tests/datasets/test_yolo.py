@@ -11,8 +11,32 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 import supervision as sv
+import torch
+from PIL import Image
 
-from rfdetr.datasets.yolo import CocoLikeAPI, _MockSvDataset, is_valid_yolo_dataset
+from rfdetr.datasets.yolo import (
+    CocoLikeAPI,
+    YoloDetection,
+    _extract_yolo_class_names,
+    _LazyYoloDetectionDataset,
+    _MockSvDataset,
+    is_valid_yolo_dataset,
+)
+
+
+def _write_yolo_segmentation_dataset(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """Create a minimal YOLO segmentation dataset on disk."""
+    image_dir = tmp_path / "images"
+    label_dir = tmp_path / "labels"
+    image_dir.mkdir()
+    label_dir.mkdir()
+
+    image_path = image_dir / "sample.png"
+    Image.new("RGB", (8, 6), color=(255, 255, 255)).save(image_path)
+    (label_dir / "sample.txt").write_text("0 0.25 0.25 0.75 0.25 0.75 0.75 0.25 0.75\n", encoding="utf-8")
+    data_file = tmp_path / "data.yaml"
+    data_file.write_text("names:\n  0: carton\n", encoding="utf-8")
+    return image_dir, label_dir, data_file
 
 
 class TestCocoLikeAPI:
@@ -380,3 +404,314 @@ class TestIsValidYoloDataset:
         """Dataset without required split directories should be invalid."""
         (tmp_path / "data.yaml").touch()
         assert is_valid_yolo_dataset(str(tmp_path)) is False
+
+
+class TestYoloDetectionLazyMasks:
+    """Segmentation masks should stay lightweight until a sample is fetched."""
+
+    def test_segmentation_init_builds_coco_metadata_without_cv2_loading(self, tmp_path: Path) -> None:
+        """Dataset construction should not call cv2.imread for every image."""
+        image_dir, label_dir, data_file = _write_yolo_segmentation_dataset(tmp_path)
+
+        with patch("cv2.imread", side_effect=AssertionError("cv2.imread should not run during init")):
+            dataset = YoloDetection(
+                img_folder=str(image_dir),
+                lb_folder=str(label_dir),
+                data_file=str(data_file),
+                transforms=None,
+                include_masks=True,
+            )
+
+        sample = dataset.sv_dataset.get_image_info(0)
+        assert sample.width == 8
+        assert sample.height == 6
+        assert sample.xyxy.shape == (1, 4)
+        assert len(sample.polygons) == 1
+        assert dataset.coco.dataset["images"] == [
+            {"id": 0, "file_name": str(image_dir / "sample.png"), "height": 6, "width": 8}
+        ]
+        assert dataset.coco.dataset["annotations"][0]["segmentation"] == []
+
+    def test_segmentation_masks_are_materialized_per_sample_fetch(self, tmp_path: Path) -> None:
+        """Fetching a sample should create the dense boolean mask tensor expected downstream."""
+        image_dir, label_dir, data_file = _write_yolo_segmentation_dataset(tmp_path)
+        dataset = YoloDetection(
+            img_folder=str(image_dir),
+            lb_folder=str(label_dir),
+            data_file=str(data_file),
+            transforms=None,
+            include_masks=True,
+        )
+
+        _, target = dataset[0]
+
+        assert target["masks"].dtype == torch.bool
+        assert target["masks"].shape == (1, 6, 8)
+        assert torch.count_nonzero(target["masks"]) > 0
+        assert target["boxes"][0].tolist() == pytest.approx([2.0, 1.5, 6.0, 4.5])
+
+    def test_segmentation_image_with_no_label_produces_empty_sample(self, tmp_path: Path) -> None:
+        """Image with no matching .txt label file should produce an empty sample."""
+        image_dir = tmp_path / "images"
+        label_dir = tmp_path / "labels"
+        image_dir.mkdir()
+        label_dir.mkdir()
+        Image.new("RGB", (8, 6), color=(255, 255, 255)).save(image_dir / "unlabeled.png")
+        data_file = tmp_path / "data.yaml"
+        data_file.write_text("names:\n  - carton\n", encoding="utf-8")
+
+        dataset = YoloDetection(
+            img_folder=str(image_dir),
+            lb_folder=str(label_dir),
+            data_file=str(data_file),
+            transforms=None,
+            include_masks=True,
+        )
+
+        sample = dataset.sv_dataset.get_image_info(0)
+        assert sample.xyxy.shape == (0, 4)
+        assert sample.class_id.shape == (0,)
+        assert sample.polygons == ()
+
+        _, target = dataset[0]
+        assert target["masks"].shape == (0, 6, 8)
+        assert target["boxes"].shape == (0, 4)
+
+    def test_segmentation_multi_instance_polygons_stack_correctly(self, tmp_path: Path) -> None:
+        """Two polygon annotations per image should produce masks with shape (2, H, W)."""
+        image_dir = tmp_path / "images"
+        label_dir = tmp_path / "labels"
+        image_dir.mkdir()
+        label_dir.mkdir()
+        Image.new("RGB", (8, 6), color=(255, 255, 255)).save(image_dir / "two_instances.png")
+        # Two distinct non-overlapping polygons
+        (label_dir / "two_instances.txt").write_text(
+            "0 0.1 0.1 0.4 0.1 0.4 0.4 0.1 0.4\n1 0.6 0.6 0.9 0.6 0.9 0.9 0.6 0.9\n",
+            encoding="utf-8",
+        )
+        data_file = tmp_path / "data.yaml"
+        data_file.write_text("names:\n  - cat\n  - dog\n", encoding="utf-8")
+
+        dataset = YoloDetection(
+            img_folder=str(image_dir),
+            lb_folder=str(label_dir),
+            data_file=str(data_file),
+            transforms=None,
+            include_masks=True,
+        )
+
+        _, target = dataset[0]
+        assert target["masks"].shape == (2, 6, 8), f"Expected (2, 6, 8), got {target['masks'].shape}"
+        assert target["masks"].dtype == torch.bool
+
+    @pytest.mark.parametrize(
+        "label_content, match_pattern",
+        [
+            pytest.param("0\n", "Malformed label", id="only_class_id"),
+            pytest.param("0 0.1 0.2 0.3\n", "Malformed label", id="too_few_fields"),
+            pytest.param(
+                "0 0.1 0.2 0.3 0.4 0.5\n",
+                "Malformed polygon",
+                id="odd_polygon_coords",
+            ),
+        ],
+    )
+    def test_malformed_label_line_raises_clear_error(
+        self, tmp_path: Path, label_content: str, match_pattern: str
+    ) -> None:
+        """Malformed label lines should raise a descriptive ValueError with file context."""
+        image_dir = tmp_path / "images"
+        label_dir = tmp_path / "labels"
+        image_dir.mkdir()
+        label_dir.mkdir()
+        Image.new("RGB", (8, 6), color=(255, 255, 255)).save(image_dir / "bad.png")
+        (label_dir / "bad.txt").write_text(label_content, encoding="utf-8")
+        data_file = tmp_path / "data.yaml"
+        data_file.write_text("names:\n  - carton\n", encoding="utf-8")
+
+        with pytest.raises(ValueError, match=match_pattern):
+            YoloDetection(
+                img_folder=str(image_dir),
+                lb_folder=str(label_dir),
+                data_file=str(data_file),
+                transforms=None,
+                include_masks=True,
+            )
+
+    def test_lazy_dataset_polygon_storage_is_smaller_than_eager_masks(self, tmp_path: Path) -> None:
+        """Lazy dataset retains polygon coords, not dense masks — footprint is orders of magnitude smaller."""
+        image_dir = tmp_path / "images"
+        label_dir = tmp_path / "labels"
+        image_dir.mkdir()
+        label_dir.mkdir()
+
+        n_images = 20
+        width, height = 256, 256
+        for i in range(n_images):
+            Image.new("RGB", (width, height)).save(image_dir / f"img_{i:03d}.png")
+            # One quadrilateral polygon per image
+            (label_dir / f"img_{i:03d}.txt").write_text("0 0.1 0.1 0.9 0.1 0.9 0.9 0.1 0.9\n", encoding="utf-8")
+        data_file = tmp_path / "data.yaml"
+        data_file.write_text("names:\n  - obj\n", encoding="utf-8")
+
+        dataset = YoloDetection(
+            img_folder=str(image_dir),
+            lb_folder=str(label_dir),
+            data_file=str(data_file),
+            transforms=None,
+            include_masks=True,
+        )
+
+        # Bytes actually retained in the lazy samples (polygon coords + bbox + class id)
+        lazy_bytes = sum(
+            dataset.sv_dataset.get_image_info(i).xyxy.nbytes
+            + dataset.sv_dataset.get_image_info(i).class_id.nbytes
+            + sum(p.nbytes for p in dataset.sv_dataset.get_image_info(i).polygons)
+            for i in range(len(dataset.sv_dataset))
+        )
+
+        # Bytes that eager rasterization would have retained (one bool mask per image)
+        eager_mask_bytes = n_images * height * width * np.dtype(bool).itemsize
+
+        assert lazy_bytes < eager_mask_bytes / 10, (
+            f"Lazy storage ({lazy_bytes} B) should be at least 10× smaller than eager mask cost ({eager_mask_bytes} B)."
+        )
+
+    def test_out_of_range_class_id_raises_clear_error(self, tmp_path: Path) -> None:
+        """A label with a class ID beyond the class count should raise ValueError at init."""
+        image_dir = tmp_path / "images"
+        label_dir = tmp_path / "labels"
+        image_dir.mkdir()
+        label_dir.mkdir()
+        Image.new("RGB", (8, 6), color=(255, 255, 255)).save(image_dir / "sample.png")
+        # Dataset defines 1 class (ID 0); label references class ID 5 — out of range
+        (label_dir / "sample.txt").write_text("5 0.25 0.25 0.75 0.25 0.75 0.75 0.25 0.75\n", encoding="utf-8")
+        data_file = tmp_path / "data.yaml"
+        data_file.write_text("names:\n  - carton\n", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="out of range"):
+            YoloDetection(
+                img_folder=str(image_dir),
+                lb_folder=str(label_dir),
+                data_file=str(data_file),
+                transforms=None,
+                include_masks=True,
+            )
+
+    def test_include_masks_false_uses_supervision_dataset_path(self, tmp_path: Path) -> None:
+        """include_masks=False must use supervision's DetectionDataset, not the lazy path."""
+        image_dir = tmp_path / "images"
+        label_dir = tmp_path / "labels"
+        image_dir.mkdir()
+        label_dir.mkdir()
+        Image.new("RGB", (8, 6), color=(255, 255, 255)).save(image_dir / "sample.png")
+        (label_dir / "sample.txt").write_text("0 0.5 0.5 0.5 0.5\n", encoding="utf-8")
+        data_file = tmp_path / "data.yaml"
+        data_file.write_text("names:\n  - carton\n", encoding="utf-8")
+
+        dataset = YoloDetection(
+            img_folder=str(image_dir),
+            lb_folder=str(label_dir),
+            data_file=str(data_file),
+            transforms=None,
+            include_masks=False,
+        )
+
+        assert not isinstance(dataset.sv_dataset, _LazyYoloDetectionDataset)
+        assert len(dataset) == 1
+        _, target = dataset[0]
+        assert "boxes" in target
+        assert "masks" not in target
+
+    def test_lazy_getitem_cv2_returns_none_raises_value_error(self, tmp_path: Path) -> None:
+        """When cv2.imread returns None (missing/corrupted file), __getitem__ must raise ValueError."""
+        image_dir, label_dir, data_file = _write_yolo_segmentation_dataset(tmp_path)
+        dataset = YoloDetection(
+            img_folder=str(image_dir),
+            lb_folder=str(label_dir),
+            data_file=str(data_file),
+            transforms=None,
+            include_masks=True,
+        )
+
+        with patch("cv2.imread", return_value=None):
+            with pytest.raises(ValueError, match="Could not read image"):
+                dataset[0]
+
+    def test_non_integer_class_id_in_label_raises_value_error(self, tmp_path: Path) -> None:
+        """A label line with a non-integer class ID must raise ValueError during init."""
+        image_dir = tmp_path / "images"
+        label_dir = tmp_path / "labels"
+        image_dir.mkdir()
+        label_dir.mkdir()
+        Image.new("RGB", (8, 6), color=(255, 255, 255)).save(image_dir / "sample.png")
+        # "cat" is not a valid integer class ID
+        (label_dir / "sample.txt").write_text("cat 0.5 0.5 0.25 0.25\n", encoding="utf-8")
+        data_file = tmp_path / "data.yaml"
+        data_file.write_text("names:\n  - carton\n", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="invalid class ID"):
+            YoloDetection(
+                img_folder=str(image_dir),
+                lb_folder=str(label_dir),
+                data_file=str(data_file),
+                transforms=None,
+                include_masks=True,
+            )
+
+
+class TestExtractYoloClassNames:
+    """Tests for _extract_yolo_class_names with different YAML formats."""
+
+    @pytest.mark.parametrize(
+        "yaml_content, expected_names",
+        [
+            pytest.param(
+                "names:\n  - cat\n  - dog\n",
+                ["cat", "dog"],
+                id="list_format",
+            ),
+            pytest.param(
+                "names:\n  0: cat\n  1: dog\n",
+                ["cat", "dog"],
+                id="dict_format_sorted_keys",
+            ),
+            pytest.param(
+                "names:\n  1: dog\n  0: cat\n",
+                ["cat", "dog"],
+                id="dict_format_unsorted_keys",
+            ),
+        ],
+    )
+    def test_class_names_formats(self, tmp_path: Path, yaml_content: str, expected_names: list[str]) -> None:
+        """Both list and dict YAML formats for class names should be supported."""
+        data_file = tmp_path / "data.yaml"
+        data_file.write_text(yaml_content, encoding="utf-8")
+        assert _extract_yolo_class_names(str(data_file)) == expected_names
+
+    @pytest.mark.parametrize(
+        "yaml_content",
+        [
+            pytest.param(
+                "names:\n  0: cat\n  2: dog\n",
+                id="dict_format_sparse_keys",
+            ),
+            pytest.param(
+                "names:\n  10: cat\n  20: dog\n",
+                id="dict_format_large_numeric_keys",
+            ),
+        ],
+    )
+    def test_class_names_dict_non_contiguous_raises(self, tmp_path: Path, yaml_content: str) -> None:
+        """Dict 'names' with non-contiguous or non-zero-based keys must raise ValueError.
+
+        The downstream range check in _parse_yolo_label_line assumes class IDs
+        are a contiguous 0..N-1 range.  Silently accepting sparse keys would
+        cause valid label files to be rejected during parsing (e.g. class ID 2
+        in a 2-class dataset built from {0: cat, 2: dog} would exceed the
+        num_classes bound).
+        """
+        data_file = tmp_path / "data.yaml"
+        data_file.write_text(yaml_content, encoding="utf-8")
+        with pytest.raises(ValueError, match="contiguous"):
+            _extract_yolo_class_names(str(data_file))
