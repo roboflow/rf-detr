@@ -422,10 +422,27 @@ class COCOEvalCallback(Callback):
         targets: list[dict[str, Any]],
     ) -> None:
         """Accumulate mean OKS between predicted and ground-truth keypoints."""
-        coco_sigmas = torch.tensor([
-            0.026, 0.025, 0.025, 0.035, 0.035, 0.079, 0.079, 0.072, 0.072,
-            0.062, 0.062, 0.107, 0.107, 0.087, 0.087, 0.089, 0.089,
-        ])
+        coco_sigmas = torch.tensor(
+            [
+                0.026,
+                0.025,
+                0.025,
+                0.035,
+                0.035,
+                0.079,
+                0.079,
+                0.072,
+                0.072,
+                0.062,
+                0.062,
+                0.107,
+                0.107,
+                0.087,
+                0.087,
+                0.089,
+                0.089,
+            ]
+        )
         nk = self._num_keypoints
         if nk > len(coco_sigmas):
             extra = torch.full((nk - len(coco_sigmas),), 0.05)
@@ -448,7 +465,7 @@ class COCOEvalCallback(Callback):
             gt_denorm[..., 1] *= h
             gt_vis = gt_denorm[..., 2]
             gt_boxes = tgt["boxes"]  # cxcywh normalized
-            gt_areas = (gt_boxes[:, 2] * w * gt_boxes[:, 3] * h)
+            gt_areas = gt_boxes[:, 2] * w * gt_boxes[:, 3] * h
             # Simple greedy match: for each gt, find closest pred by box IoU
             # and compute OKS. Use first min(N, K) pairs.
             n_match = min(pred_kp.shape[0], gt_kp.shape[0])
@@ -458,7 +475,7 @@ class COCOEvalCallback(Callback):
                     continue
                 dx = pred_kp[j, :, 0].cpu() - gt_denorm[j, :, 0]
                 dy = pred_kp[j, :, 1].cpu() - gt_denorm[j, :, 1]
-                dist_sq = dx ** 2 + dy ** 2
+                dist_sq = dx**2 + dy**2
                 s_sq = gt_areas[j].cpu().clamp(min=1.0)
                 oks_per_kp = torch.exp(-dist_sq / (2 * s_sq * k_sq + 1e-6))
                 mean_oks = (oks_per_kp * valid.cpu().float()).sum() / valid.sum().clamp(min=1)
