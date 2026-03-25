@@ -168,6 +168,76 @@ def _detr_export_scaffold(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     return model, export_called
 
 
+@pytest.mark.parametrize(
+    "dynamic_batch, segmentation_head",
+    [
+        pytest.param(True, False, id="detection_dynamic"),
+        pytest.param(True, True, id="segmentation_dynamic"),
+        pytest.param(False, False, id="detection_static"),
+    ],
+)
+def test_rfdetr_export_dynamic_batch_forwards_dynamic_axes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    dynamic_batch: bool,
+    segmentation_head: bool,
+) -> None:
+    """`RFDETR.export(..., dynamic_batch=True)` must pass a non-None `dynamic_axes` dict
+    to `export_onnx`; `dynamic_batch=False` must pass `None`.
+    """
+
+    class _DummyCoreModel:
+        def to(self, *_args, **_kwargs):
+            return self
+
+        def eval(self):
+            return self
+
+        def cpu(self):
+            return self
+
+        def __call__(self, *_args, **_kwargs):
+            if segmentation_head:
+                return {
+                    "pred_boxes": torch.zeros(1, 1, 4),
+                    "pred_logits": torch.zeros(1, 1, 2),
+                    "pred_masks": torch.zeros(1, 1, 2, 2),
+                }
+            return {"pred_boxes": torch.zeros(1, 1, 4), "pred_logits": torch.zeros(1, 1, 2)}
+
+    model = types.SimpleNamespace(
+        model=types.SimpleNamespace(model=_DummyCoreModel(), device="cpu", resolution=14),
+        model_config=types.SimpleNamespace(segmentation_head=segmentation_head),
+    )
+
+    captured: dict = {}
+
+    def _fake_make_infer_image(*_args, **_kwargs):
+        return torch.zeros(1, 3, 14, 14)
+
+    def _fake_export_onnx(*_args, dynamic_axes=None, **_kw):
+        captured["dynamic_axes"] = dynamic_axes
+        return str(tmp_path / "inference_model.onnx")
+
+    monkeypatch.setattr("rfdetr.export.main.make_infer_image", _fake_make_infer_image)
+    monkeypatch.setattr("rfdetr.export.main.export_onnx", _fake_export_onnx)
+    monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
+
+    _detr_module.RFDETR.export(model, output_dir=str(tmp_path), dynamic_batch=dynamic_batch, shape=(14, 14))
+
+    dynamic_axes = captured.get("dynamic_axes")
+    if not dynamic_batch:
+        assert dynamic_axes is None, f"expected None for static export, got {dynamic_axes!r}"
+        return
+
+    assert isinstance(dynamic_axes, dict), f"expected dict, got {dynamic_axes!r}"
+    for name, axes in dynamic_axes.items():
+        assert axes == {0: "batch"}, f"axis spec for {name!r} should be {{0: 'batch'}}, got {axes!r}"
+
+    expected_names = {"input", "dets", "labels", "masks"} if segmentation_head else {"input", "dets", "labels"}
+    assert set(dynamic_axes.keys()) == expected_names, f"expected keys {expected_names}, got {set(dynamic_axes.keys())}"
+
+
 def test_export_simplify_flag_is_ignored_with_deprecation_warning(_detr_export_scaffold: tuple, tmp_path: Path) -> None:
     """`simplify=True` should not run ONNX simplification and should emit a deprecation warning."""
     model, export_called = _detr_export_scaffold
@@ -243,6 +313,7 @@ class TestCliExportMain:
         opset_version: int = 17,
         simplify: bool = False,
         tensorrt: bool = False,
+        dynamic_batch: bool = False,
     ) -> types.SimpleNamespace:
         return types.SimpleNamespace(
             device="cpu",
@@ -259,6 +330,7 @@ class TestCliExportMain:
             opset_version=opset_version,
             simplify=simplify,
             tensorrt=tensorrt,
+            dynamic_batch=dynamic_batch,
         )
 
     @staticmethod
@@ -313,6 +385,7 @@ class TestCliExportMain:
             export_onnx_captured["output_dir"] = output_dir
             export_onnx_captured["model"] = model
             export_onnx_captured["output_names"] = output_names
+            export_onnx_captured["dynamic_axes"] = dynamic_axes
             export_onnx_captured["kwargs"] = kwargs
             return str(args.output_dir) + "/inference_model.onnx"
 
@@ -454,3 +527,51 @@ class TestCliExportMain:
         mock_logger.warning.assert_called_once()
         assert "simplify" in mock_logger.warning.call_args[0][0].lower()
         assert export_onnx_called["value"] is True, "export_onnx should still be called with simplify=True"
+
+    @pytest.mark.parametrize(
+        "dynamic_batch, segmentation_head, backbone_only",
+        [
+            pytest.param(True, False, False, id="detection_dynamic"),
+            pytest.param(True, True, False, id="segmentation_dynamic"),
+            pytest.param(True, False, True, id="backbone_only_dynamic"),
+            pytest.param(False, False, False, id="detection_static"),
+        ],
+    )
+    def test_dynamic_batch_forwards_dynamic_axes(
+        self,
+        output_dir: str,
+        dynamic_batch: bool,
+        segmentation_head: bool,
+        backbone_only: bool,
+    ) -> None:
+        """CLI --dynamic_batch=True must pass {name: {0: 'batch'}} for every I/O name.
+
+        When dynamic_batch=False, dynamic_axes must be None (static export).
+        """
+        args = self._make_args(
+            output_dir=output_dir,
+            dynamic_batch=dynamic_batch,
+            segmentation_head=segmentation_head,
+            backbone_only=backbone_only,
+        )
+        _, captured = self._run(args)
+
+        dynamic_axes = captured.get("dynamic_axes")
+        if not dynamic_batch:
+            assert dynamic_axes is None, f"expected None for static export, got {dynamic_axes!r}"
+            return
+
+        assert isinstance(dynamic_axes, dict), f"expected dict, got {dynamic_axes!r}"
+        for name, axes in dynamic_axes.items():
+            assert axes == {0: "batch"}, f"axis spec for {name!r} should be {{0: 'batch'}}, got {axes!r}"
+
+        # Every input/output name must have an entry
+        if backbone_only:
+            expected_names = {"input", "features"}
+        elif segmentation_head:
+            expected_names = {"input", "dets", "labels", "masks"}
+        else:
+            expected_names = {"input", "dets", "labels"}
+        assert set(dynamic_axes.keys()) == expected_names, (
+            f"expected keys {expected_names}, got {set(dynamic_axes.keys())}"
+        )

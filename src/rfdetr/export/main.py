@@ -118,7 +118,10 @@ def main(args):
         output_names = ["dets", "labels", "masks"]
     else:
         output_names = ["dets", "labels"]
-    dynamic_axes = None
+    if getattr(args, "dynamic_batch", False):
+        dynamic_axes = {name: {0: "batch"} for name in input_names + output_names}
+    else:
+        dynamic_axes = None
     # Run model inference in pytorch mode
     model.eval().to("cuda")
     input_tensors = input_tensors.to("cuda")
