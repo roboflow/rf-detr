@@ -478,7 +478,8 @@ class RFDETR:
                 Optional ``(height, width)`` tuple to resize images to before inference.
                 When provided, overrides the model's default square resolution. Useful
                 when running inference on a model exported with a non-square shape via
-                ``export(shape=(H, W))``. Defaults to
+                ``export(shape=(H, W))``. Both dimensions must be positive integers
+                divisible by 14. Defaults to
                 ``(model.resolution, model.resolution)`` when not set.
             **kwargs:
                 Additional keyword arguments.
@@ -486,19 +487,25 @@ class RFDETR:
         Returns:
             A single or multiple Detections objects, each containing bounding box
             coordinates, confidence scores, and class IDs.
+
+        Raises:
+            ValueError: If ``shape`` cannot be unpacked as a two-element sequence,
+                if either dimension is not a plain ``int`` (e.g. ``float`` or ``bool``),
+                if either dimension is zero or negative, or if either dimension is
+                not divisible by 14.
         """
         import supervision as sv
 
         if shape is not None:
             try:
-                height, width = shape  # type: ignore[misc]
+                height, width = shape
             except (TypeError, ValueError):
                 raise ValueError(
                     f"shape must be a sequence of two positive integers (height, width), got {shape!r}."
                 ) from None
 
             for dim_name, dim in (("height", height), ("width", width)):
-                if not isinstance(dim, int):
+                if not isinstance(dim, int) or isinstance(dim, bool):
                     raise ValueError(
                         f"shape {dim_name} must be an integer, got {type(dim).__name__} (shape={shape!r})."
                     )
@@ -510,6 +517,7 @@ class RFDETR:
 
             # Normalize shape to a tuple of validated integers
             shape = (height, width)
+
         if not self._is_optimized_for_inference and not self._has_warned_about_not_being_optimized_for_inference:
             logger.warning(
                 "Model is not optimized for inference. Latency may be higher than expected."
