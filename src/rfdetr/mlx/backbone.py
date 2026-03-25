@@ -199,8 +199,7 @@ class DINOv2Backbone(nn.Module):
             feature_indices = [2, 5, 8, 11]
         self.feature_indices = feature_indices
 
-        # Full attention at every 3rd layer starting from 3
-        self.full_attn_layers = set(range(3, depth, 3))
+        self.full_attn_layers = set(feature_indices)
 
         self.patch_embed = PatchEmbed(img_size, patch_size, 3, embed_dim)
         num_patches = self.patch_embed.num_patches
