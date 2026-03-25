@@ -406,10 +406,10 @@ class RFDETRPoseMediumConfig(RFDETRPoseConfig):
 class RFDETRPoseLargeConfig(RFDETRPoseConfig):
     """Configuration for RF-DETR Pose Large - highest accuracy pose model."""
 
-    dec_layers: int = 6
-    resolution: int = 768
-    positional_encoding_size: int = 48
-    pretrain_weights: Optional[str] = "rf-detr-large.pth"
+    dec_layers: int = 4
+    resolution: int = 704
+    positional_encoding_size: int = 704 // 16
+    pretrain_weights: Optional[str] = "rf-detr-large-2026.pth"
 
 
 class TrainConfig(BaseModel):
