@@ -9,6 +9,7 @@ import functools
 import glob
 import importlib
 import json
+import operator
 import os
 import warnings
 from collections import defaultdict
@@ -490,9 +491,9 @@ class RFDETR:
 
         Raises:
             ValueError: If ``shape`` cannot be unpacked as a two-element sequence,
-                if either dimension is not a plain ``int`` (e.g. ``float`` or ``bool``),
-                if either dimension is zero or negative, or if either dimension is
-                not divisible by 14.
+                if either dimension does not support the ``__index__`` protocol
+                (e.g. ``float``) or is a ``bool``, if either dimension is zero or
+                negative, or if either dimension is not divisible by 14.
         """
         import supervision as sv
 
@@ -505,17 +506,25 @@ class RFDETR:
                 ) from None
 
             for dim_name, dim in (("height", height), ("width", width)):
-                if not isinstance(dim, int) or isinstance(dim, bool):
+                if isinstance(dim, bool):
                     raise ValueError(
                         f"shape {dim_name} must be an integer, got {type(dim).__name__} (shape={shape!r})."
                     )
+                try:
+                    operator.index(dim)
+                except TypeError:
+                    raise ValueError(
+                        f"shape {dim_name} must be an integer, got {type(dim).__name__} (shape={shape!r})."
+                    ) from None
                 if dim <= 0:
                     raise ValueError(f"shape must contain positive integers for height and width, got {shape!r}.")
+
+            # Normalize to plain Python ints; also accepts numpy.int64, torch scalars, etc.
+            height, width = operator.index(height), operator.index(width)
 
             if height % 14 != 0 or width % 14 != 0:
                 raise ValueError(f"shape must have both dimensions divisible by 14, got {shape!r}.")
 
-            # Normalize shape to a tuple of validated integers
             shape = (height, width)
 
         if not self._is_optimized_for_inference and not self._has_warned_about_not_being_optimized_for_inference:

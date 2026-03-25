@@ -7,6 +7,7 @@ import socket
 from types import SimpleNamespace
 from typing import Any
 
+import numpy as np
 import PIL.Image
 import pytest
 import supervision as sv
@@ -152,6 +153,29 @@ class TestPredictShape:
             "predict() must honour the shape parameter even for square sizes "
             "that differ from the model's default resolution."
         )
+
+    @pytest.mark.parametrize(
+        "int_shape",
+        [
+            pytest.param((np.int64(378), np.int64(672)), id="numpy_int64"),
+            pytest.param((np.int32(378), np.int32(672)), id="numpy_int32"),
+            pytest.param((torch.tensor(378), torch.tensor(672)), id="torch_scalar"),
+        ],
+    )
+    def test_predict_shape_accepts_integer_like_types(self, int_shape: tuple) -> None:
+        """predict() accepts integer-like types (numpy, torch) via the __index__ protocol."""
+        from unittest.mock import patch
+
+        import torchvision.transforms.functional as F
+
+        model = _DummyRFDETR()
+        img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
+
+        with patch("rfdetr.detr.F.resize", wraps=F.resize) as mock_resize:
+            model.predict(img, shape=int_shape)  # type: ignore[arg-type]
+
+        resize_size = list(mock_resize.call_args[0][1])
+        assert resize_size == [378, 672], f"predict() must accept integer-like shape types, got resize {resize_size}"
 
     @pytest.mark.parametrize(
         "bad_shape",
