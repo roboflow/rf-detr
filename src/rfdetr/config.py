@@ -622,3 +622,4 @@ class KeypointTrainConfig(TrainConfig):
     keypoint_visibility_loss_coef: float = 2.0
     keypoint_oks_loss_coef: float = 2.0
     cls_loss_coef: float = 2.0  # Slightly higher for pose since fewer classes
+    progress_bar: Optional[Literal["tqdm", "rich"]] = "tqdm"
