@@ -153,12 +153,19 @@ class TestPredictShape:
             "that differ from the model's default resolution."
         )
 
-    def test_predict_shape_not_divisible_by_14_raises(self) -> None:
+    @pytest.mark.parametrize(
+        "bad_shape",
+        [
+            pytest.param((378, 671), id="width_not_div_14"),  # 671 % 14 != 0
+            pytest.param((371, 672), id="height_not_div_14"),  # 371 % 14 != 0
+        ],
+    )
+    def test_predict_shape_not_divisible_by_14_raises(self, bad_shape: tuple[int, int]) -> None:
         """predict() must reject shapes with dimensions not divisible by 14."""
         model = _DummyRFDETR()
         img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
         with pytest.raises(ValueError, match="divisible by 14"):
-            model.predict(img, shape=(378, 671))  # 671 % 14 != 0
+            model.predict(img, shape=bad_shape)
 
     @pytest.mark.parametrize(
         "bad_shape",
@@ -169,13 +176,14 @@ class TestPredictShape:
             pytest.param((0, 56), id="zero_height"),
             pytest.param((-14, 56), id="negative_height"),
             pytest.param((56, 0), id="zero_width"),
+            pytest.param((56, -14), id="negative_width"),
             pytest.param((True, 56), id="bool_height"),
             pytest.param((56, False), id="bool_width"),
         ],
     )
-    def test_predict_shape_invalid_raises(self, bad_shape: tuple) -> None:
+    def test_predict_shape_invalid_raises(self, bad_shape: tuple[int | float | bool, ...]) -> None:
         """predict() must raise ValueError for invalid shape values."""
         model = _DummyRFDETR()
         img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="shape"):
             model.predict(img, shape=bad_shape)  # type: ignore[arg-type]

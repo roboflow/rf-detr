@@ -457,7 +457,7 @@ class RFDETR:
             str, Image.Image, np.ndarray, torch.Tensor, List[Union[str, np.ndarray, Image.Image, torch.Tensor]]
         ],
         threshold: float = 0.5,
-        shape: Optional[tuple[int, int]] = None,
+        shape: tuple[int, int] | None = None,
         **kwargs,
     ) -> Union[sv.Detections, List[sv.Detections]]:
         """Performs object detection on the input images and returns bounding box
