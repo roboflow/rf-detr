@@ -272,6 +272,45 @@ class RFDETR:
         """
         return self._model_config_class(**kwargs)
 
+    @staticmethod
+    def _resolve_trainer_device_kwargs(device: Any) -> tuple[str | None, list[int] | None]:
+        """Map a torch-style device specifier to PTL ``accelerator``/``devices`` kwargs.
+
+        Args:
+            device: A device specifier accepted by ``torch.device``.
+
+        Returns:
+            ``(accelerator, devices)`` where ``devices`` is ``None`` unless an explicit
+            device index is provided (for example ``cuda:1``).
+
+        Raises:
+            ValueError: If ``device`` is not a valid torch device specifier.
+        """
+        if device is None:
+            return None, None
+        try:
+            resolved_device = torch.device(device)
+        except (TypeError, ValueError, RuntimeError) as exc:
+            raise ValueError(
+                f"Invalid device specifier for train(): {device!r}. "
+                "Expected values like 'cpu', 'cuda', 'cuda:0', or torch.device(...)."
+            ) from exc
+
+        if resolved_device.type == "cpu":
+            return "cpu", None
+        if resolved_device.type == "cuda":
+            return "gpu", [resolved_device.index] if resolved_device.index is not None else None
+        if resolved_device.type == "mps":
+            return "mps", [resolved_device.index] if resolved_device.index is not None else None
+
+        warnings.warn(
+            f"Device type {resolved_device.type!r} is not explicitly mapped to a PyTorch Lightning "
+            "accelerator; falling back to PTL auto-detection. Training may use an unexpected device.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return None, None
+
     def train(self, **kwargs):
         """Train an RF-DETR model via the PyTorch Lightning stack.
 
@@ -279,8 +318,12 @@ class RFDETR:
         a :class:`~rfdetr.config.TrainConfig`.  Several legacy kwargs are absorbed
         so existing call-sites do not break:
 
-        * ``device`` — mapped to ``TrainConfig.accelerator``; ``"cpu"`` becomes
-          ``accelerator="cpu"``, all others default to ``"auto"``.
+        * ``device`` — normalized via :class:`torch.device` and mapped to PyTorch
+          Lightning trainer arguments. ``"cpu"`` becomes ``accelerator="cpu"``;
+          ``"cuda"`` and ``"cuda:N"`` become ``accelerator="gpu"`` and optionally
+          ``devices=[N]``; ``"mps"`` becomes ``accelerator="mps"``. Other valid
+          torch device types fall back to PTL auto-detection and emit a
+          :class:`UserWarning`.
         * ``callbacks`` — if the dict contains any non-empty lists a
           :class:`DeprecationWarning` is emitted; the dict is then discarded.
           Use PTL :class:`~pytorch_lightning.Callback` objects passed via
@@ -322,23 +365,10 @@ class RFDETR:
                 stacklevel=2,
             )
 
-        # Absorb legacy `device` kwarg.  When the caller explicitly requests CPU
-        # (e.g. in tests or CPU-only environments), honour it by forwarding it as
-        # the PTL accelerator.  All other device strings (e.g. "cuda:1") are not
-        # forwarded — PTL auto-selects the best available device — so emit a
-        # DeprecationWarning so callers know the value was not honoured.
+        # Parse `device` kwarg and map it to PTL accelerator/devices.
+        # Supports torch-style strings and torch.device (e.g. "cuda:1").
         _device = kwargs.pop("device", None)
-        _accelerator = "cpu" if _device == "cpu" else None
-        if _device is not None and _device != "cpu":
-            warnings.warn(
-                f"`device='{_device}'` is deprecated and ignored; PTL auto-selects the"
-                " accelerator. To pin a specific device, configure your"
-                " accelerator/backend explicitly (for example, use"
-                " `CUDA_VISIBLE_DEVICES` for CUDA) or configure a PTL Trainer"
-                " directly.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
+        _accelerator, _devices = RFDETR._resolve_trainer_device_kwargs(_device)
 
         # Absorb legacy `start_epoch` — PTL resumes automatically via ckpt_path.
         if "start_epoch" in kwargs:
@@ -375,7 +405,10 @@ class RFDETR:
             )
         module = RFDETRModelModule(self.model_config, config)
         datamodule = RFDETRDataModule(self.model_config, config)
-        trainer = build_trainer(config, self.model_config, accelerator=_accelerator)
+        trainer_kwargs = {"accelerator": _accelerator}
+        if _devices is not None:
+            trainer_kwargs["devices"] = _devices
+        trainer = build_trainer(config, self.model_config, **trainer_kwargs)
         trainer.fit(module, datamodule, ckpt_path=config.resume or None)
 
         # Sync the trained weights back so predict() / export() see the updated model.
