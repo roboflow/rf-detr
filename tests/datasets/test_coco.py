@@ -268,13 +268,30 @@ class TestBuildO365RawGpuBackend:
         assert len(o365_warns) == 0, "cpu backend must not warn about O365 GPU augmentation"
 
     def test_auto_backend_emits_warning(self):
-        """auto backend calls logger.warning about the O365 Phase 1 limitation."""
-        from unittest.mock import patch
+        """auto + CUDA + kornia available: logger.warning about O365 Phase 1 limitation."""
+        import sys
+        from unittest.mock import MagicMock, patch
 
-        with patch("rfdetr.datasets.o365.logger") as mock_logger:
+        with (
+            patch("torch.cuda.is_available", return_value=True),
+            patch.dict(sys.modules, {"kornia": MagicMock(), "kornia.augmentation": MagicMock()}),
+            patch("rfdetr.datasets.o365.logger") as mock_logger,
+        ):
             self._call_build_o365_raw("auto")
         o365_warns = [c for c in mock_logger.warning.call_args_list if "O365" in str(c)]
         assert len(o365_warns) >= 1, "auto backend must warn about O365 GPU aug limitation"
+
+    def test_auto_backend_no_cuda_no_warning(self):
+        """auto + no CUDA: resolves to cpu, no O365 warning emitted."""
+        from unittest.mock import patch
+
+        with (
+            patch("torch.cuda.is_available", return_value=False),
+            patch("rfdetr.datasets.o365.logger") as mock_logger,
+        ):
+            self._call_build_o365_raw("auto")
+        o365_warns = [c for c in mock_logger.warning.call_args_list if "O365" in str(c)]
+        assert len(o365_warns) == 0, "auto + no CUDA must not warn about O365 GPU aug"
 
     def test_gpu_postprocess_false_for_cpu_backend(self):
         """cpu backend passes gpu_postprocess=False (or omits it) to make_coco_transforms."""
@@ -283,10 +300,26 @@ class TestBuildO365RawGpuBackend:
         assert call_kwargs.get("gpu_postprocess", False) is False
 
     def test_gpu_postprocess_true_for_auto_backend(self):
-        """auto backend passes gpu_postprocess=True to make_coco_transforms."""
-        _, mock_transform, _ = self._call_build_o365_raw("auto")
+        """auto + CUDA + kornia available: gpu_postprocess=True passed to make_coco_transforms."""
+        import sys
+        from unittest.mock import MagicMock, patch
+
+        with (
+            patch("torch.cuda.is_available", return_value=True),
+            patch.dict(sys.modules, {"kornia": MagicMock(), "kornia.augmentation": MagicMock()}),
+        ):
+            _, mock_transform, _ = self._call_build_o365_raw("auto")
         call_kwargs = mock_transform.call_args.kwargs if mock_transform.call_args else {}
         assert call_kwargs.get("gpu_postprocess", False) is True
+
+    def test_gpu_postprocess_false_for_auto_no_cuda(self):
+        """auto + no CUDA: gpu_postprocess=False so CPU Normalize is retained."""
+        from unittest.mock import patch
+
+        with patch("torch.cuda.is_available", return_value=False):
+            _, mock_transform, _ = self._call_build_o365_raw("auto")
+        call_kwargs = mock_transform.call_args.kwargs if mock_transform.call_args else {}
+        assert call_kwargs.get("gpu_postprocess", False) is False, "auto + no CUDA must not strip CPU Normalize"
 
     def test_square_resize_uses_square_transform(self):
         """square_resize_div_64=True delegates to make_coco_transforms_square_div_64."""
