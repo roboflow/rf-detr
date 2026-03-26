@@ -521,7 +521,7 @@ class RFDETR:
         ],
         threshold: float = 0.5,
         shape: tuple[int, int] | None = None,
-        patch_size: int = 14,
+        patch_size: int | None = None,
         **kwargs,
     ) -> Union[sv.Detections, List[sv.Detections]]:
         """Performs object detection on the input images and returns bounding box
@@ -543,8 +543,13 @@ class RFDETR:
                 When provided, overrides the model's default inference resolution. The
                 tuple should match the resolution used when exporting the model
                 (typically a square shape). Both dimensions must be positive integers
-                divisible by patch_size. Defaults to ``(model.resolution, model.resolution)``
-                when not set.
+                divisible by ``patch_size * num_windows``. Defaults to
+                ``(model.resolution, model.resolution)`` when not set.
+            patch_size:
+                Backbone patch size used for shape divisibility validation. Defaults
+                to ``model_config.patch_size`` (typically 14 for large models, 16 for
+                smaller ones). Divisibility is checked against
+                ``patch_size * num_windows``.
             **kwargs:
                 Additional keyword arguments.
 
@@ -556,9 +561,18 @@ class RFDETR:
             ValueError: If ``shape`` cannot be unpacked as a two-element sequence,
                 if either dimension does not support the ``__index__`` protocol
                 (e.g. ``float``) or is a ``bool``, if either dimension is zero or
-                negative, or if either dimension is not divisible by patch_size.
+                negative, if either dimension is not divisible by
+                ``patch_size * num_windows``, or if ``patch_size`` is not a positive
+                integer.
         """
         import supervision as sv
+
+        if patch_size is None:
+            patch_size = getattr(self.model_config, "patch_size", 14)
+        if not isinstance(patch_size, int) or patch_size <= 0:
+            raise ValueError(f"patch_size must be a positive integer, got {patch_size!r}")
+        num_windows = getattr(self.model_config, "num_windows", 1)
+        block_size = patch_size * num_windows
 
         if shape is not None:
             try:
@@ -585,8 +599,11 @@ class RFDETR:
             # Normalize to plain Python ints; also accepts numpy.int64, torch scalars, etc.
             height, width = operator.index(height), operator.index(width)
 
-            if height % patch_size != 0 or width % patch_size != 0:
-                raise ValueError(f"shape must have both dimensions divisible by {patch_size}, got {shape!r}.")
+            if height % block_size != 0 or width % block_size != 0:
+                raise ValueError(
+                    f"shape must have both dimensions divisible by {block_size} "
+                    f"(patch_size={patch_size} * num_windows={num_windows}), got {shape!r}."
+                )
 
             shape = (height, width)
 
