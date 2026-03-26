@@ -714,14 +714,7 @@ class TestExportPatchSize:
         with pytest.raises(ValueError, match="shape"):
             _detr_module.RFDETR.export(model, output_dir=str(tmp_path), shape=bad_shape)
 
-    @pytest.mark.parametrize(
-        "bad_num_windows",
-        [
-            pytest.param(0, id="zero"),
-            pytest.param(-1, id="negative"),
-            pytest.param(True, id="bool_true"),
-        ],
-    )
+    @pytest.mark.parametrize("bad_num_windows", [0, -1, True])
     def test_export_invalid_num_windows_raises(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bad_num_windows: int
     ) -> None:

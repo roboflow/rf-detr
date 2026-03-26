@@ -240,15 +240,7 @@ class TestPredictPatchSize:
         with pytest.raises(ValueError, match="divisible by 32"):
             model.predict(img, shape=(48, 64))
 
-    @pytest.mark.parametrize(
-        "bad_patch_size",
-        [
-            pytest.param(0, id="zero"),
-            pytest.param(-1, id="negative"),
-            pytest.param(True, id="bool_true"),
-            pytest.param(False, id="bool_false"),
-        ],
-    )
+    @pytest.mark.parametrize("bad_patch_size", [0, -1, True, False])
     def test_predict_invalid_patch_size_raises(self, bad_patch_size: int) -> None:
         """predict() must raise ValueError when patch_size is not a positive integer."""
         model = _DummyRFDETR()
@@ -272,14 +264,7 @@ class TestPredictPatchSize:
         # Should not raise — patch_size matches config, 64 % 32 == 0
         model.predict(img, shape=(64, 64), patch_size=16)
 
-    @pytest.mark.parametrize(
-        "bad_num_windows",
-        [
-            pytest.param(0, id="zero"),
-            pytest.param(-1, id="negative"),
-            pytest.param(True, id="bool_true"),
-        ],
-    )
+    @pytest.mark.parametrize("bad_num_windows", [0, -1, True])
     def test_predict_invalid_num_windows_raises(self, bad_num_windows: int) -> None:
         """predict() must raise ValueError when model_config.num_windows is not a positive integer."""
         model = self._make_model_with_config(patch_size=14, num_windows=1)

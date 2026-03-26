@@ -167,15 +167,7 @@ class TestResolvePatchSize:
         with pytest.raises(ValueError, match="predict"):
             _resolve_patch_size(16, self._cfg(14), "predict")
 
-    @pytest.mark.parametrize(
-        "bad",
-        [
-            pytest.param(0, id="zero"),
-            pytest.param(-1, id="negative"),
-            pytest.param(True, id="bool_true"),
-            pytest.param(False, id="bool_false"),
-        ],
-    )
+    @pytest.mark.parametrize("bad", [0, -1, True, False])
     def test_invalid_explicit_patch_size_raises(self, bad: int) -> None:
         """Non-positive-int patch_size must raise ValueError before the mismatch check."""
         cfg = SimpleNamespace(patch_size=bad)
