@@ -629,10 +629,7 @@ class TestExportPatchSize:
         with pytest.raises(ValueError, match="patch_size"):
             _detr_module.RFDETR.export(model, output_dir=str(tmp_path), patch_size=16)
 
-    @pytest.mark.parametrize(
-        "bad_patch_size",
-        [0, -1],
-    )
+    @pytest.mark.parametrize("bad_patch_size", [0, -1])
     def test_export_invalid_patch_size_raises(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bad_patch_size: int
     ) -> None:
@@ -676,10 +673,7 @@ class TestExportPatchSize:
         # Should not raise
         _detr_module.RFDETR.export(model, output_dir=str(tmp_path), shape=(64, 64))
 
-    @pytest.mark.parametrize(
-        "bad_patch_size",
-        [True, False],
-    )
+    @pytest.mark.parametrize("bad_patch_size", [True, False])
     def test_export_bool_patch_size_raises(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bad_patch_size: bool
     ) -> None:
