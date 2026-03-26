@@ -217,3 +217,79 @@ class TestLoadClassesHierarchy:
         _write_coco_json(tmp_path / "train" / "_annotations.coco.json", categories)
         result = RFDETR._load_classes(str(tmp_path))
         assert result == ["car", "truck", "person"]
+
+
+# ---------------------------------------------------------------------------
+# TestBuildO365RawGpuBackend — validates that build_o365_raw emits a WARNING
+# and passes gpu_postprocess when augmentation_backend != 'cpu'.
+# ---------------------------------------------------------------------------
+
+
+class TestBuildO365RawGpuBackend:
+    """build_o365_raw warns and wires gpu_postprocess for non-cpu backends."""
+
+    class _FakeArgs:
+        """Minimal args stub for build_o365_raw."""
+
+        def __init__(self, augmentation_backend="cpu", square_resize_div_64=False):
+            self.augmentation_backend = augmentation_backend
+            self.square_resize_div_64 = square_resize_div_64
+            self.multi_scale = False
+            self.expanded_scales = False
+            self.dataset_dir = "/nonexistent/o365"
+            self.coco_path = "/nonexistent/o365"
+
+    def _call_build_o365_raw(self, augmentation_backend, square_resize_div_64=False):
+        """Call build_o365_raw with mocked CocoDetection and transform builders."""
+        from unittest.mock import MagicMock, patch
+
+        from rfdetr.datasets.o365 import build_o365_raw
+
+        args = self._FakeArgs(augmentation_backend=augmentation_backend, square_resize_div_64=square_resize_div_64)
+        fake_dataset = MagicMock()
+
+        with (
+            patch("rfdetr.datasets.o365.CocoDetection", return_value=fake_dataset),
+            patch("rfdetr.datasets.o365.make_coco_transforms") as mock_transform,
+            patch("rfdetr.datasets.o365.make_coco_transforms_square_div_64") as mock_sq_transform,
+        ):
+            mock_transform.return_value = MagicMock()
+            mock_sq_transform.return_value = MagicMock()
+            result = build_o365_raw("train", args, resolution=640)
+            return result, mock_transform, mock_sq_transform
+
+    def test_cpu_backend_no_warning(self):
+        """cpu backend does not call logger.warning with O365 content."""
+        from unittest.mock import patch
+
+        with patch("rfdetr.datasets.o365.logger") as mock_logger:
+            self._call_build_o365_raw("cpu")
+        o365_warns = [c for c in mock_logger.warning.call_args_list if "O365" in str(c)]
+        assert len(o365_warns) == 0, "cpu backend must not warn about O365 GPU augmentation"
+
+    def test_auto_backend_emits_warning(self):
+        """auto backend calls logger.warning about the O365 Phase 1 limitation."""
+        from unittest.mock import patch
+
+        with patch("rfdetr.datasets.o365.logger") as mock_logger:
+            self._call_build_o365_raw("auto")
+        o365_warns = [c for c in mock_logger.warning.call_args_list if "O365" in str(c)]
+        assert len(o365_warns) >= 1, "auto backend must warn about O365 GPU aug limitation"
+
+    def test_gpu_postprocess_false_for_cpu_backend(self):
+        """cpu backend passes gpu_postprocess=False (or omits it) to make_coco_transforms."""
+        _, mock_transform, _ = self._call_build_o365_raw("cpu")
+        call_kwargs = mock_transform.call_args.kwargs if mock_transform.call_args else {}
+        assert call_kwargs.get("gpu_postprocess", False) is False
+
+    def test_gpu_postprocess_true_for_auto_backend(self):
+        """auto backend passes gpu_postprocess=True to make_coco_transforms."""
+        _, mock_transform, _ = self._call_build_o365_raw("auto")
+        call_kwargs = mock_transform.call_args.kwargs if mock_transform.call_args else {}
+        assert call_kwargs.get("gpu_postprocess", False) is True
+
+    def test_square_resize_uses_square_transform(self):
+        """square_resize_div_64=True delegates to make_coco_transforms_square_div_64."""
+        _, mock_transform, mock_sq_transform = self._call_build_o365_raw("cpu", square_resize_div_64=True)
+        mock_sq_transform.assert_called_once()
+        mock_transform.assert_not_called()

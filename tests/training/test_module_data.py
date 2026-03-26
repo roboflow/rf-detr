@@ -831,3 +831,73 @@ class TestOnAfterBatchTransfer:
         result_samples, _ = dm.on_after_batch_transfer((samples, targets), dataloader_idx=0)
 
         assert isinstance(result_samples, NestedTensor), f"Expected NestedTensor, got {type(result_samples).__name__}"
+
+
+# ---------------------------------------------------------------------------
+# TestKorniaSetupDoneSentinel — validates the _kornia_setup_done guard
+# ---------------------------------------------------------------------------
+
+
+class TestKorniaSetupDoneSentinel:
+    """_kornia_setup_done prevents _setup_kornia_pipeline re-running on repeated setup('fit') calls."""
+
+    def _build_dm(self, tmp_path, augmentation_backend="auto"):
+        mc = _base_model_config()
+        tc = _base_train_config(tmp_path, augmentation_backend=augmentation_backend)
+        from rfdetr.training.module_data import RFDETRDataModule
+
+        return RFDETRDataModule(mc, tc)
+
+    def _setup_fit_with_mocks(self, dm):
+        """Call setup('fit') with build_dataset and cuda mocked (no CUDA → fallback)."""
+        fake_train = _fake_dataset(100)
+        fake_val = _fake_dataset(20)
+
+        def _build(image_set, args, resolution):
+            return fake_train if image_set == "train" else fake_val
+
+        with (
+            patch("rfdetr.training.module_data.build_dataset", side_effect=_build),
+            patch("torch.cuda.is_available", return_value=False),
+        ):
+            dm.setup("fit")
+        return dm
+
+    def test_sentinel_starts_false(self, tmp_path):
+        """_kornia_setup_done is False immediately after __init__."""
+        dm = self._build_dm(tmp_path)
+        assert dm._kornia_setup_done is False
+
+    def test_sentinel_set_after_fit(self, tmp_path):
+        """_kornia_setup_done becomes True after the first setup('fit')."""
+        dm = self._build_dm(tmp_path)
+        dm = self._setup_fit_with_mocks(dm)
+        assert dm._kornia_setup_done is True
+
+    def test_setup_kornia_pipeline_not_called_twice(self, tmp_path):
+        """Calling setup('fit') twice only calls _setup_kornia_pipeline once."""
+        dm = self._build_dm(tmp_path)
+        call_count = 0
+        original_setup = dm._setup_kornia_pipeline
+
+        def _counting_setup():
+            nonlocal call_count
+            call_count += 1
+            original_setup()
+
+        dm._setup_kornia_pipeline = _counting_setup
+
+        fake_train = _fake_dataset(100)
+        fake_val = _fake_dataset(20)
+
+        def _build(image_set, args, resolution):
+            return fake_train if image_set == "train" else fake_val
+
+        with (
+            patch("rfdetr.training.module_data.build_dataset", side_effect=_build),
+            patch("torch.cuda.is_available", return_value=False),
+        ):
+            dm.setup("fit")
+            dm.setup("fit")
+
+        assert call_count == 1, f"_setup_kornia_pipeline called {call_count} times; expected exactly 1"
