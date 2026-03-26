@@ -367,7 +367,7 @@ class RFDETR:
                     f"{model_patch_size}. Patch size is an architectural parameter; instantiate the model with the "
                     f"desired patch_size (and compatible checkpoint) before exporting."
                 )
-        if not isinstance(patch_size, int) or patch_size <= 0:
+        if isinstance(patch_size, bool) or not isinstance(patch_size, int) or patch_size <= 0:
             raise ValueError(f"patch_size must be a positive integer, got {patch_size!r}")
         num_windows = getattr(self.model_config, "num_windows", 1)
         block_size = patch_size * num_windows
@@ -568,7 +568,15 @@ class RFDETR:
 
         if patch_size is None:
             patch_size = getattr(self.model_config, "patch_size", 14)
-        if not isinstance(patch_size, int) or patch_size <= 0:
+        else:
+            model_patch_size = getattr(self.model_config, "patch_size", None)
+            if model_patch_size is not None and patch_size != model_patch_size:
+                raise ValueError(
+                    f"predict(patch_size={patch_size}) does not match the instantiated model's "
+                    f"patch_size={model_patch_size}. Patch size is an architectural parameter; "
+                    f"omit patch_size to use the model's configured value."
+                )
+        if isinstance(patch_size, bool) or not isinstance(patch_size, int) or patch_size <= 0:
             raise ValueError(f"patch_size must be a positive integer, got {patch_size!r}")
         num_windows = getattr(self.model_config, "num_windows", 1)
         block_size = patch_size * num_windows

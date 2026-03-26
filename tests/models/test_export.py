@@ -581,7 +581,9 @@ class TestExportPatchSize:
     """RFDETR.export() patch_size validation and shape-divisibility tests."""
 
     @staticmethod
-    def _scaffold(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, patch_size: int, num_windows: int):
+    def _scaffold(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path, patch_size: int, num_windows: int
+    ) -> types.SimpleNamespace:
         """Build a minimal RFDETR-like namespace with controllable patch_size/num_windows."""
         import types
 
