@@ -655,6 +655,23 @@ class TestExportPatchSize:
         with pytest.raises(ValueError, match="divisible by 32"):
             _detr_module.RFDETR.export(model, output_dir=str(tmp_path), shape=(48, 64))
 
+    @pytest.mark.parametrize(
+        "bad_shape",
+        [
+            pytest.param((-64, 64), id="negative_height"),
+            pytest.param((64, -64), id="negative_width"),
+            pytest.param((0, 64), id="zero_height"),
+            pytest.param((64, 0), id="zero_width"),
+        ],
+    )
+    def test_export_negative_or_zero_shape_raises(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bad_shape: tuple[int, int]
+    ) -> None:
+        """export() must reject non-positive shape dimensions (Python -N % M == 0 wraps silently)."""
+        model = self._scaffold(monkeypatch, tmp_path, patch_size=16, num_windows=2)
+        with pytest.raises(ValueError, match="positive integers"):
+            _detr_module.RFDETR.export(model, output_dir=str(tmp_path), shape=bad_shape)
+
     def test_export_shape_valid_for_block_size(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """export() accepts shape divisible by patch_size * num_windows without error."""
         # patch_size=16, num_windows=2 → block_size=32; shape (64, 64) is valid

@@ -378,6 +378,8 @@ class RFDETR:
         if shape is None:
             shape = (self.model.resolution, self.model.resolution)
         else:
+            if shape[0] <= 0 or shape[1] <= 0:
+                raise ValueError(f"shape must contain positive integers for height and width, got {shape!r}.")
             if shape[0] % block_size != 0 or shape[1] % block_size != 0:
                 raise ValueError(
                     f"Shape must be divisible by {block_size} (patch_size={patch_size} * num_windows={num_windows})"
