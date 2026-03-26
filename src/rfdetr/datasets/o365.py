@@ -46,8 +46,6 @@ def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
             has_cuda = False
 
         try:
-            import kornia  # type: ignore[unused-import]
-
             has_kornia = True
         except Exception:
             has_kornia = False
