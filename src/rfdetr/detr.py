@@ -314,6 +314,7 @@ class RFDETR:
         shape: tuple = None,
         batch_size: int = 1,
         dynamic_batch: bool = False,
+        patch_size: int = 14,
         **kwargs,
     ) -> None:
         """Export the trained model to ONNX format.
@@ -354,8 +355,8 @@ class RFDETR:
         if shape is None:
             shape = (self.model.resolution, self.model.resolution)
         else:
-            if shape[0] % 14 != 0 or shape[1] % 14 != 0:
-                raise ValueError("Shape must be divisible by 14")
+            if shape[0] % patch_size != 0 or shape[1] % patch_size != 0:
+                raise ValueError(f"Shape must be divisible by {patch_size}")
 
         input_tensors = make_infer_image(infer_dir, shape, batch_size, device).to(device)
         input_names = ["input"]
@@ -498,6 +499,7 @@ class RFDETR:
         ],
         threshold: float = 0.5,
         shape: tuple[int, int] | None = None,
+        patch_size: int = 14,
         **kwargs,
     ) -> Union[sv.Detections, List[sv.Detections]]:
         """Performs object detection on the input images and returns bounding box
@@ -561,8 +563,8 @@ class RFDETR:
             # Normalize to plain Python ints; also accepts numpy.int64, torch scalars, etc.
             height, width = operator.index(height), operator.index(width)
 
-            if height % 14 != 0 or width % 14 != 0:
-                raise ValueError(f"shape must have both dimensions divisible by 14, got {shape!r}.")
+            if height % patch_size != 0 or width % patch_size != 0:
+                raise ValueError(f"shape must have both dimensions divisible by {patch_size}, got {shape!r}.")
 
             shape = (height, width)
 
