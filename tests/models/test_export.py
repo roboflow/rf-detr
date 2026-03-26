@@ -631,7 +631,7 @@ class TestExportPatchSize:
 
     @pytest.mark.parametrize(
         "bad_patch_size",
-        [0,-1],
+        [0, -1],
     )
     def test_export_invalid_patch_size_raises(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bad_patch_size: int
