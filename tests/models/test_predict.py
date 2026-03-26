@@ -245,6 +245,8 @@ class TestPredictPatchSize:
         [
             pytest.param(0, id="zero"),
             pytest.param(-1, id="negative"),
+            pytest.param(True, id="bool_true"),
+            pytest.param(False, id="bool_false"),
         ],
     )
     def test_predict_invalid_patch_size_raises(self, bad_patch_size: int) -> None:
@@ -253,3 +255,11 @@ class TestPredictPatchSize:
         img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
         with pytest.raises(ValueError, match="patch_size must be a positive integer"):
             model.predict(img, patch_size=bad_patch_size)  # type: ignore[arg-type]
+
+    def test_predict_patch_size_mismatch_raises(self) -> None:
+        """predict() must raise ValueError when caller's patch_size != model_config.patch_size."""
+        # model has patch_size=16; passing patch_size=14 should raise immediately
+        model = self._make_model_with_config(patch_size=16, num_windows=1)
+        img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
+        with pytest.raises(ValueError, match="does not match"):
+            model.predict(img, shape=(16, 16), patch_size=14)

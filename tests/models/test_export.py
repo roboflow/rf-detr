@@ -585,7 +585,6 @@ class TestExportPatchSize:
         monkeypatch: pytest.MonkeyPatch, tmp_path: Path, patch_size: int, num_windows: int
     ) -> types.SimpleNamespace:
         """Build a minimal RFDETR-like namespace with controllable patch_size/num_windows."""
-        import types
 
         class _DummyCoreModel:
             def to(self, *_a, **_kw):
@@ -662,3 +661,32 @@ class TestExportPatchSize:
         model = self._scaffold(monkeypatch, tmp_path, patch_size=16, num_windows=2)
         # Should not raise
         _detr_module.RFDETR.export(model, output_dir=str(tmp_path), shape=(64, 64))
+
+    @pytest.mark.parametrize(
+        "bad_patch_size",
+        [
+            pytest.param(True, id="bool_true"),
+            pytest.param(False, id="bool_false"),
+        ],
+    )
+    def test_export_bool_patch_size_raises(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bad_patch_size: bool
+    ) -> None:
+        """export() must reject bool values for patch_size (isinstance(True, int) is True)."""
+        model = self._scaffold(monkeypatch, tmp_path, patch_size=14, num_windows=1)
+        with pytest.raises(ValueError, match="patch_size must be a positive integer"):
+            _detr_module.RFDETR.export(model, output_dir=str(tmp_path), patch_size=bad_patch_size)
+
+
+def test_make_infer_image_produces_correct_rectangular_shape() -> None:
+    """make_infer_image must produce a (B, C, H, W) tensor for non-square shapes.
+
+    Regression test for the square-resize bug where ``Resize((shape[0], shape[0]))``
+    was used instead of ``Resize((shape[0], shape[1]))``, causing the output width
+    to silently equal the height.
+    """
+    from rfdetr.export.main import make_infer_image
+
+    h, w, b = 112, 224, 2
+    tensor = make_infer_image(infer_dir=None, shape=(h, w), batch_size=b, device="cpu")
+    assert tensor.shape == (b, 3, h, w), f"Expected shape ({b}, 3, {h}, {w}), got {tensor.shape}"
