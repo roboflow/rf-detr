@@ -66,31 +66,26 @@ class TestValidateShapeDimsArityErrors:
             _validate_shape_dims(56, 14, 14, 1)  # type: ignore[arg-type]
 
 
-@pytest.mark.parametrize(
-    "shape,match",
-    [
-        ((True, 56), "height"),
-        ((56, False), "width"),
-    ],
-)
-def test_validate_shape_dims_bool_dim_raises(shape: tuple, match: str) -> None:
-    """Bool dims must raise ValueError even though bool is an int subtype."""
-    with pytest.raises(ValueError, match=f"{match} must be an integer"):
-        _validate_shape_dims(shape, 14, 14, 1)  # type: ignore[arg-type]
+class TestValidateShapeDimsInvalidDim:
+    """_validate_shape_dims rejects bool, float, and non-positive dimension values."""
 
+    @pytest.mark.parametrize("shape,match", [((True, 56), "height"), ((56, False), "width")])
+    def test_bool_dim_raises(self, shape: tuple, match: str) -> None:
+        """Bool dims must raise ValueError even though bool is an int subtype."""
+        with pytest.raises(ValueError, match=f"{match} must be an integer"):
+            _validate_shape_dims(shape, 14, 14, 1)  # type: ignore[arg-type]
 
-@pytest.mark.parametrize("shape", [(56.0, 56.0), (56.0, 56), (56, 56.0)])
-def test_validate_shape_dims_float_dim_raises(shape: tuple) -> None:
-    """Float dims must raise ValueError (operator.index rejects them)."""
-    with pytest.raises(ValueError, match="must be an integer"):
-        _validate_shape_dims(shape, 14, 14, 1)
+    @pytest.mark.parametrize("shape", [(56.0, 56.0), (56.0, 56), (56, 56.0)])
+    def test_float_dim_raises(self, shape: tuple) -> None:
+        """Float dims must raise ValueError (operator.index rejects them)."""
+        with pytest.raises(ValueError, match="must be an integer"):
+            _validate_shape_dims(shape, 14, 14, 1)
 
-
-@pytest.mark.parametrize("shape", [(0, 56), (56, 0), (-14, 56), (56, -14)])
-def test_validate_shape_dims_non_positive_dim_raises(shape: tuple[int, int]) -> None:
-    """Zero or negative dims must raise ValueError."""
-    with pytest.raises(ValueError, match="positive integers"):
-        _validate_shape_dims(shape, 14, 14, 1)
+    @pytest.mark.parametrize("shape", [(0, 56), (56, 0), (-14, 56), (56, -14)])
+    def test_non_positive_dim_raises(self, shape: tuple[int, int]) -> None:
+        """Zero or negative dims must raise ValueError."""
+        with pytest.raises(ValueError, match="positive integers"):
+            _validate_shape_dims(shape, 14, 14, 1)
 
 
 class TestValidateShapeDimsDivisibilityCheck:
