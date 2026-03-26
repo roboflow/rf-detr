@@ -116,6 +116,41 @@ def _validate_shape_dims(
     return height, width
 
 
+def _resolve_patch_size(patch_size: int | None, model_config: object, caller: str) -> int:
+    """Resolve and validate the ``patch_size`` argument for :meth:`RFDETR.export` and :meth:`RFDETR.predict`.
+
+    Args:
+        patch_size: Value supplied by the caller, or ``None`` to read from ``model_config``.
+        model_config: The model's configuration object.  Must expose ``patch_size`` as a
+            positive integer attribute when ``patch_size`` is ``None`` or when a mismatch
+            check is needed.
+        caller: Name of the calling method (``"export"`` or ``"predict"``) — used in
+            error messages to help the caller locate the problem.
+
+    Returns:
+        A validated, positive :class:`int` patch size.
+
+    Raises:
+        ValueError: If the resolved or provided ``patch_size`` is not a positive integer,
+            or if a caller-provided value disagrees with ``model_config.patch_size``.
+    """
+    if patch_size is None:
+        patch_size = getattr(model_config, "patch_size", 14)
+    else:
+        if isinstance(patch_size, bool) or not isinstance(patch_size, int) or patch_size <= 0:
+            raise ValueError(f"patch_size must be a positive integer, got {patch_size!r}")
+        model_patch_size = getattr(model_config, "patch_size", None)
+        if model_patch_size is not None and patch_size != model_patch_size:
+            raise ValueError(
+                f"{caller}(patch_size={patch_size}) does not match the instantiated model's "
+                f"patch_size={model_patch_size}. Patch size is an architectural parameter; "
+                f"omit patch_size to use the model's configured value."
+            )
+    if isinstance(patch_size, bool) or not isinstance(patch_size, int) or patch_size <= 0:
+        raise ValueError(f"patch_size must be a positive integer, got {patch_size!r}")
+    return patch_size
+
+
 class RFDETR:
     """
     The base RF-DETR class implements the core methods for training RF-DETR models,
@@ -406,20 +441,7 @@ class RFDETR:
 
         os.makedirs(output_dir, exist_ok=True)
         output_dir_path = Path(output_dir)
-        if patch_size is None:
-            patch_size = getattr(self.model_config, "patch_size", 14)
-        else:
-            if isinstance(patch_size, bool) or not isinstance(patch_size, int) or patch_size <= 0:
-                raise ValueError(f"patch_size must be a positive integer, got {patch_size!r}")
-            model_patch_size = getattr(self.model_config, "patch_size", None)
-            if model_patch_size is not None and patch_size != model_patch_size:
-                raise ValueError(
-                    f"export(patch_size={patch_size}) does not match the instantiated model's patch_size="
-                    f"{model_patch_size}. Patch size is an architectural parameter; instantiate the model with the "
-                    f"desired patch_size (and compatible checkpoint) before exporting."
-                )
-        if isinstance(patch_size, bool) or not isinstance(patch_size, int) or patch_size <= 0:
-            raise ValueError(f"patch_size must be a positive integer, got {patch_size!r}")
+        patch_size = _resolve_patch_size(patch_size, self.model_config, "export")
         num_windows = getattr(self.model_config, "num_windows", 1)
         if isinstance(num_windows, bool) or not isinstance(num_windows, int) or num_windows <= 0:
             raise ValueError(f"num_windows must be a positive integer, got {num_windows!r}")
@@ -622,20 +644,7 @@ class RFDETR:
         """
         import supervision as sv
 
-        if patch_size is None:
-            patch_size = getattr(self.model_config, "patch_size", 14)
-        else:
-            if isinstance(patch_size, bool) or not isinstance(patch_size, int) or patch_size <= 0:
-                raise ValueError(f"patch_size must be a positive integer, got {patch_size!r}")
-            model_patch_size = getattr(self.model_config, "patch_size", None)
-            if model_patch_size is not None and patch_size != model_patch_size:
-                raise ValueError(
-                    f"predict(patch_size={patch_size}) does not match the instantiated model's "
-                    f"patch_size={model_patch_size}. Patch size is an architectural parameter; "
-                    f"omit patch_size to use the model's configured value."
-                )
-        if isinstance(patch_size, bool) or not isinstance(patch_size, int) or patch_size <= 0:
-            raise ValueError(f"patch_size must be a positive integer, got {patch_size!r}")
+        patch_size = _resolve_patch_size(patch_size, self.model_config, "predict")
         num_windows = getattr(self.model_config, "num_windows", 1)
         if isinstance(num_windows, bool) or not isinstance(num_windows, int) or num_windows <= 0:
             raise ValueError(f"model_config.num_windows must be a positive integer, got {num_windows!r}")

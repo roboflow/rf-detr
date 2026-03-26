@@ -4,15 +4,17 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-"""Unit tests for :func:`rfdetr.detr._validate_shape_dims`.
+"""Unit tests for :func:`rfdetr.detr._validate_shape_dims` and :func:`rfdetr.detr._resolve_patch_size`.
 
-Tests call the helper directly so each validation path has a single focused
+Tests call each helper directly so each validation path has a single focused
 test without the export/predict scaffolding overhead.
 """
 
+from types import SimpleNamespace
+
 import pytest
 
-from rfdetr.detr import _validate_shape_dims
+from rfdetr.detr import _resolve_patch_size, _validate_shape_dims
 
 
 class TestValidateShapeDimsHappyPath:
@@ -134,3 +136,53 @@ class TestValidateShapeDimsDivisibilityCheck:
         with pytest.raises(ValueError, match="patch_size=16") as exc_info:
             _validate_shape_dims((48, 64), 32, 16, 2)
         assert "num_windows=2" in str(exc_info.value)
+
+
+class TestResolvePatchSize:
+    """_resolve_patch_size resolves and validates patch_size for export()/predict()."""
+
+    def _cfg(self, patch_size: int) -> SimpleNamespace:
+        """Return a minimal model_config stub with the given patch_size."""
+        return SimpleNamespace(patch_size=patch_size)
+
+    def test_none_reads_from_model_config(self) -> None:
+        """patch_size=None resolves to model_config.patch_size."""
+        assert _resolve_patch_size(None, self._cfg(16), "export") == 16
+
+    def test_none_falls_back_to_14_when_config_missing(self) -> None:
+        """patch_size=None falls back to 14 when model_config has no patch_size."""
+        assert _resolve_patch_size(None, SimpleNamespace(), "export") == 14
+
+    def test_explicit_matching_config_accepted(self) -> None:
+        """Providing patch_size equal to model_config.patch_size succeeds."""
+        assert _resolve_patch_size(14, self._cfg(14), "export") == 14
+
+    def test_explicit_mismatch_raises(self) -> None:
+        """Providing patch_size != model_config.patch_size must raise ValueError."""
+        with pytest.raises(ValueError, match="does not match"):
+            _resolve_patch_size(16, self._cfg(14), "export")
+
+    def test_mismatch_error_includes_caller_name(self) -> None:
+        """Mismatch error message includes the caller name for context."""
+        with pytest.raises(ValueError, match="predict"):
+            _resolve_patch_size(16, self._cfg(14), "predict")
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            pytest.param(0, id="zero"),
+            pytest.param(-1, id="negative"),
+            pytest.param(True, id="bool_true"),
+            pytest.param(False, id="bool_false"),
+        ],
+    )
+    def test_invalid_explicit_patch_size_raises(self, bad: int) -> None:
+        """Non-positive-int patch_size must raise ValueError before the mismatch check."""
+        cfg = SimpleNamespace(patch_size=bad)
+        with pytest.raises(ValueError, match="patch_size must be a positive integer"):
+            _resolve_patch_size(bad, cfg, "export")
+
+    def test_invalid_config_patch_size_raises(self) -> None:
+        """Bad patch_size in model_config (when caller passes None) must raise ValueError."""
+        with pytest.raises(ValueError, match="patch_size must be a positive integer"):
+            _resolve_patch_size(None, SimpleNamespace(patch_size=0), "export")
