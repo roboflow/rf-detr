@@ -16,6 +16,7 @@ from torch.utils.data import DataLoader
 from rfdetr._namespace import _namespace_from_configs
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.datasets import build_dataset
+from rfdetr.datasets.aug_config import AUG_CONFIG
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.tensors import collate_fn
 
@@ -240,7 +241,7 @@ class RFDETRDataModule(LightningDataModule):
         from rfdetr.datasets.kornia_transforms import build_kornia_pipeline, build_normalize
 
         self._kornia_pipeline = build_kornia_pipeline(
-            self.train_config.aug_config or {},
+            self.train_config.aug_config if self.train_config.aug_config is not None else AUG_CONFIG,
             self.model_config.resolution,
         )
         self._kornia_normalize = build_normalize()

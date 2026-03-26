@@ -715,6 +715,35 @@ class TestBackendResolution:
         dm = self._setup_with_mock_build(dm)
         assert getattr(dm, "_kornia_pipeline", None) is None, "cpu backend must never build a Kornia pipeline"
 
+    def test_gpu_path_uses_aug_config_fallback(self, tmp_path):
+        """When aug_config=None (default), GPU path passes AUG_CONFIG to build_kornia_pipeline."""
+        import sys
+        from unittest.mock import MagicMock, patch
+
+        from rfdetr.datasets.aug_config import AUG_CONFIG
+
+        dm = self._build_dm_with_backend(tmp_path, "auto")
+        assert dm.train_config.aug_config is None, "precondition: aug_config must be None for this test"
+
+        captured = {}
+
+        def _fake_build_kornia(aug_cfg, resolution):
+            captured["aug_config"] = aug_cfg
+            return MagicMock()
+
+        with (
+            patch("torch.cuda.is_available", return_value=True),
+            patch("rfdetr.training.module_data.build_dataset", side_effect=lambda *a, **k: _fake_dataset(10)),
+            patch.dict(sys.modules, {"kornia": MagicMock(), "kornia.augmentation": MagicMock()}),
+            patch("rfdetr.datasets.kornia_transforms.build_kornia_pipeline", side_effect=_fake_build_kornia),
+            patch("rfdetr.datasets.kornia_transforms.build_normalize", return_value=MagicMock()),
+        ):
+            dm.setup("fit")
+
+        assert captured.get("aug_config") is AUG_CONFIG, (
+            "GPU path must fall back to AUG_CONFIG when train_config.aug_config is None"
+        )
+
 
 # ---------------------------------------------------------------------------
 # TestOnAfterBatchTransfer — validates GPU-side augmentation hook
