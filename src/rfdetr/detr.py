@@ -314,7 +314,7 @@ class RFDETR:
         shape: tuple = None,
         batch_size: int = 1,
         dynamic_batch: bool = False,
-        patch_size: int = 14,
+        patch_size: int | None = None,
         **kwargs,
     ) -> None:
         """Export the trained model to ONNX format.
@@ -352,6 +352,16 @@ class RFDETR:
 
         os.makedirs(output_dir, exist_ok=True)
         output_dir_path = Path(output_dir)
+        if patch_size is None:
+            patch_size = getattr(self.model_config, "patch_size", 14)
+        else:
+            model_patch_size = getattr(self.model_config, "patch_size", None)
+            if model_patch_size is not None and patch_size != model_patch_size:
+                raise ValueError(
+                    f"export(patch_size={patch_size}) does not match the instantiated model's patch_size="
+                    f"{model_patch_size}. Patch size is an architectural parameter; instantiate the model with the "
+                    f"desired patch_size (and compatible checkpoint) before exporting."
+                )
         if shape is None:
             shape = (self.model.resolution, self.model.resolution)
         else:
