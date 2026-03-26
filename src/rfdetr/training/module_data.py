@@ -44,6 +44,10 @@ class RFDETRDataModule(LightningDataModule):
         # GPU augmentation pipeline (Kornia); built lazily in setup("fit").
         self._kornia_pipeline: Optional[Any] = None
         self._kornia_normalize: Optional[Any] = None
+        # Sentinel: True once _setup_kornia_pipeline has run (even on fallback paths
+        # where _kornia_pipeline stays None), preventing redundant re-runs on repeated
+        # setup("fit") calls (e.g. during validation loops in some PTL strategies).
+        self._kornia_setup_done: bool = False
 
         num_workers = self.train_config.num_workers
         self._pin_memory: bool = (
@@ -84,8 +88,11 @@ class RFDETRDataModule(LightningDataModule):
             if self._dataset_val is None:
                 self._dataset_val = build_dataset("val", ns, resolution)
             # Build Kornia GPU augmentation pipeline (once).
-            if self._kornia_pipeline is None:
+            # Use _kornia_setup_done (not _kornia_pipeline is None) so that fallback
+            # paths — where the pipeline stays None — do not re-run on every setup("fit").
+            if not self._kornia_setup_done:
                 self._setup_kornia_pipeline()
+                self._kornia_setup_done = True
         elif stage == "validate":
             if self._dataset_val is None:
                 self._dataset_val = build_dataset("val", ns, resolution)
@@ -215,7 +222,7 @@ class RFDETRDataModule(LightningDataModule):
 
         if backend == "auto":
             if not torch.cuda.is_available():
-                logger.info("augmentation_backend='auto': no CUDA, using CPU augmentation")
+                logger.warning("augmentation_backend='auto': no CUDA, falling back to CPU augmentation")
                 return
             try:
                 import kornia.augmentation
