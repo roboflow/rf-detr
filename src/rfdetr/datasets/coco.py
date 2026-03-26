@@ -525,12 +525,31 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
     include_masks = getattr(args, "segmentation_head", False)
     aug_config = getattr(args, "aug_config", None)
     augmentation_backend = getattr(args, "augmentation_backend", "cpu")
+    resolved_augmentation_backend = augmentation_backend
     if include_masks and augmentation_backend != "cpu":
         logger.warning(
             "Segmentation training does not currently support GPU postprocess transforms; "
             "forcing augmentation_backend='cpu' to retain CPU transforms and normalization."
         )
-    gpu_postprocess = augmentation_backend != "cpu" and not include_masks
+        resolved_augmentation_backend = "cpu"
+        if hasattr(args, "augmentation_backend"):
+            setattr(args, "augmentation_backend", "cpu")
+    if resolved_augmentation_backend == "auto":
+        gpu_available = torch.cuda.is_available()
+        if gpu_available:
+            try:
+                import kornia  # type: ignore[import-not-found]
+            except ImportError:
+                gpu_available = False
+        if not gpu_available:
+            logger.warning(
+                "augmentation_backend='auto' resolved to 'cpu' because CUDA or kornia is unavailable; "
+                "disabling GPU postprocess transforms and retaining CPU normalization."
+            )
+            resolved_augmentation_backend = "cpu"
+            if hasattr(args, "augmentation_backend"):
+                setattr(args, "augmentation_backend", "cpu")
+    gpu_postprocess = resolved_augmentation_backend != "cpu" and not include_masks
 
     if square_resize_div_64:
         logger.info(f"Building COCO {image_set} dataset with square resize at resolution {resolution}")

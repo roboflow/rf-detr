@@ -149,7 +149,7 @@ def _make_gaussian_blur(params: Dict[str, Any]) -> Any:
         blur_limit = blur_limit + 1
     blur_limit = max(3, blur_limit)
     return K.RandomGaussianBlur(
-        kernel_size=(3, blur_limit),
+        kernel_size=(blur_limit, blur_limit),
         sigma=(0.1, 2.0),
         p=params.get("p", 0.5),
     )
@@ -246,8 +246,8 @@ def build_normalize(
     import kornia.augmentation as K
 
     return K.Normalize(
-        mean=torch.tensor(mean),
-        std=torch.tensor(std),
+        mean=mean,
+        std=std,
     )
 
 

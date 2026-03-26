@@ -32,13 +32,38 @@ def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
 
     square_resize_div_64 = getattr(args, "square_resize_div_64", False)
     augmentation_backend = getattr(args, "augmentation_backend", "cpu")
-    if augmentation_backend != "cpu":
+    resolved_backend = augmentation_backend
+
+    if augmentation_backend == "auto":
+        # Resolve 'auto' based on CUDA and kornia availability
+        has_cuda = False
+        has_kornia = False
+        try:
+            import torch
+
+            has_cuda = bool(torch.cuda.is_available())
+        except Exception:
+            has_cuda = False
+
+        try:
+            import kornia  # type: ignore[unused-import]
+
+            has_kornia = True
+        except Exception:
+            has_kornia = False
+
+        if has_cuda and has_kornia:
+            resolved_backend = "gpu"
+        else:
+            resolved_backend = "cpu"
+
+    if resolved_backend != "cpu":
         logger.warning(
             "O365 dataset does not support custom aug_config in Phase 1 GPU augmentation; "
             "Albumentations augmentation is skipped and normalization runs on GPU. "
             "Pass augmentation_backend='cpu' for full CPU augmentation pipeline with O365."
         )
-    gpu_postprocess = augmentation_backend != "cpu"
+    gpu_postprocess = resolved_backend != "cpu"
 
     if square_resize_div_64:
         dataset = CocoDetection(
