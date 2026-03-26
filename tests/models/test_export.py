@@ -631,10 +631,7 @@ class TestExportPatchSize:
 
     @pytest.mark.parametrize(
         "bad_patch_size",
-        [
-            pytest.param(0, id="zero"),
-            pytest.param(-1, id="negative"),
-        ],
+        [0,-1],
     )
     def test_export_invalid_patch_size_raises(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bad_patch_size: int
@@ -681,10 +678,7 @@ class TestExportPatchSize:
 
     @pytest.mark.parametrize(
         "bad_patch_size",
-        [
-            pytest.param(True, id="bool_true"),
-            pytest.param(False, id="bool_false"),
-        ],
+        [True, False],
     )
     def test_export_bool_patch_size_raises(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bad_patch_size: bool
