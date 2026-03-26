@@ -575,3 +575,88 @@ class TestCliExportMain:
         assert set(dynamic_axes.keys()) == expected_names, (
             f"expected keys {expected_names}, got {set(dynamic_axes.keys())}"
         )
+
+
+class TestExportPatchSize:
+    """RFDETR.export() patch_size validation and shape-divisibility tests."""
+
+    @staticmethod
+    def _scaffold(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, patch_size: int, num_windows: int):
+        """Build a minimal RFDETR-like namespace with controllable patch_size/num_windows."""
+        import types
+
+        class _DummyCoreModel:
+            def to(self, *_a, **_kw):
+                return self
+
+            def eval(self):
+                return self
+
+            def cpu(self):
+                return self
+
+            def __call__(self, *_a, **_kw):
+                return {"pred_boxes": torch.zeros(1, 1, 4), "pred_logits": torch.zeros(1, 1, 2)}
+
+        model = types.SimpleNamespace(
+            model=types.SimpleNamespace(
+                model=_DummyCoreModel(),
+                device="cpu",
+                resolution=patch_size * num_windows * 2,  # always valid
+            ),
+            model_config=types.SimpleNamespace(
+                segmentation_head=False,
+                patch_size=patch_size,
+                num_windows=num_windows,
+            ),
+        )
+
+        def _fake_make_infer_image(*_a, **_kw):
+            return torch.zeros(1, 3, 8, 8)
+
+        def _fake_export_onnx(*_a, **_kw):
+            return str(tmp_path / "inference_model.onnx")
+
+        monkeypatch.setattr("rfdetr.export.main.make_infer_image", _fake_make_infer_image)
+        monkeypatch.setattr("rfdetr.export.main.export_onnx", _fake_export_onnx)
+        monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
+        return model
+
+    def test_export_patch_size_mismatch_raises(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """export(patch_size=X) must raise ValueError when X != model_config.patch_size."""
+        model = self._scaffold(monkeypatch, tmp_path, patch_size=14, num_windows=4)
+        with pytest.raises(ValueError, match="patch_size"):
+            _detr_module.RFDETR.export(model, output_dir=str(tmp_path), patch_size=16)
+
+    @pytest.mark.parametrize(
+        "bad_patch_size",
+        [
+            pytest.param(0, id="zero"),
+            pytest.param(-1, id="negative"),
+        ],
+    )
+    def test_export_invalid_patch_size_raises(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bad_patch_size: int
+    ) -> None:
+        """export() must raise ValueError when patch_size is not a positive integer."""
+        model = self._scaffold(monkeypatch, tmp_path, patch_size=14, num_windows=4)
+        # Override model_config.patch_size so the mismatch check is bypassed
+        model.model_config.patch_size = bad_patch_size
+        with pytest.raises(ValueError, match="patch_size must be a positive integer"):
+            _detr_module.RFDETR.export(model, output_dir=str(tmp_path), patch_size=bad_patch_size)
+
+    def test_export_shape_must_be_divisible_by_block_size(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """export() must reject shapes not divisible by patch_size * num_windows."""
+        # patch_size=16, num_windows=2 → block_size=32; shape (48, 64): 48 % 32 != 0
+        model = self._scaffold(monkeypatch, tmp_path, patch_size=16, num_windows=2)
+        with pytest.raises(ValueError, match="divisible by 32"):
+            _detr_module.RFDETR.export(model, output_dir=str(tmp_path), shape=(48, 64))
+
+    def test_export_shape_valid_for_block_size(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """export() accepts shape divisible by patch_size * num_windows without error."""
+        # patch_size=16, num_windows=2 → block_size=32; shape (64, 64) is valid
+        model = self._scaffold(monkeypatch, tmp_path, patch_size=16, num_windows=2)
+        # Should not raise
+        _detr_module.RFDETR.export(model, output_dir=str(tmp_path), shape=(64, 64))

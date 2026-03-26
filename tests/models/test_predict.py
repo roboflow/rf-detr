@@ -211,3 +211,45 @@ class TestPredictShape:
         img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
         with pytest.raises(ValueError, match="shape"):
             model.predict(img, shape=bad_shape)  # type: ignore[arg-type]
+
+
+class TestPredictPatchSize:
+    """predict() patch_size resolution and validation tests."""
+
+    def _make_model_with_config(self, patch_size: int, num_windows: int) -> _DummyRFDETR:
+        """Return a _DummyRFDETR whose model_config carries patch_size and num_windows."""
+        from types import SimpleNamespace
+
+        model = _DummyRFDETR()
+        model.model_config = SimpleNamespace(patch_size=patch_size, num_windows=num_windows)
+        return model
+
+    def test_predict_defaults_patch_size_from_model_config(self) -> None:
+        """predict() reads patch_size from model_config when not provided by the caller."""
+        # patch_size=16, num_windows=2 → block_size=32; shape=(64,64) is valid
+        model = self._make_model_with_config(patch_size=16, num_windows=2)
+        img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
+        # Should not raise — 64 % 32 == 0
+        model.predict(img, shape=(64, 64))
+
+    def test_predict_shape_must_be_divisible_by_block_size(self) -> None:
+        """predict() rejects shapes not divisible by patch_size * num_windows."""
+        # patch_size=16, num_windows=2 → block_size=32; shape (48, 64) fails (48%32==16)
+        model = self._make_model_with_config(patch_size=16, num_windows=2)
+        img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
+        with pytest.raises(ValueError, match="divisible by 32"):
+            model.predict(img, shape=(48, 64))
+
+    @pytest.mark.parametrize(
+        "bad_patch_size",
+        [
+            pytest.param(0, id="zero"),
+            pytest.param(-1, id="negative"),
+        ],
+    )
+    def test_predict_invalid_patch_size_raises(self, bad_patch_size: int) -> None:
+        """predict() must raise ValueError when patch_size is not a positive integer."""
+        model = _DummyRFDETR()
+        img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
+        with pytest.raises(ValueError, match="patch_size must be a positive integer"):
+            model.predict(img, patch_size=bad_patch_size)  # type: ignore[arg-type]

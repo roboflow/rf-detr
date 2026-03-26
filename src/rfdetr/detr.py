@@ -376,8 +376,7 @@ class RFDETR:
         else:
             if shape[0] % block_size != 0 or shape[1] % block_size != 0:
                 raise ValueError(
-                    f"Shape must be divisible by {block_size} "
-                    f"(patch_size={patch_size} * num_windows={num_windows})"
+                    f"Shape must be divisible by {block_size} (patch_size={patch_size} * num_windows={num_windows})"
                 )
 
         input_tensors = make_infer_image(infer_dir, shape, batch_size, device).to(device)
