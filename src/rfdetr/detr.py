@@ -582,9 +582,7 @@ class RFDETR:
             raise ValueError(f"patch_size must be a positive integer, got {patch_size!r}")
         num_windows = getattr(self.model_config, "num_windows", 1)
         if isinstance(num_windows, bool) or not isinstance(num_windows, int) or num_windows <= 0:
-            raise ValueError(
-                f"model_config.num_windows must be a positive integer, got {num_windows!r}"
-            )
+            raise ValueError(f"model_config.num_windows must be a positive integer, got {num_windows!r}")
         block_size = patch_size * num_windows
 
         if shape is not None:
