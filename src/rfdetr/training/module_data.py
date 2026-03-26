@@ -25,6 +25,41 @@ logger = get_logger()
 _MIN_TRAIN_BATCHES = 5
 
 
+def _resolve_augmentation_backend(backend: str) -> str:
+    """Resolve ``"auto"`` to ``"cpu"`` or ``"gpu"`` based on runtime availability.
+
+    For ``"cpu"`` and ``"gpu"`` the value is returned unchanged.  For
+    ``"auto"`` the function checks CUDA and kornia availability and returns
+    ``"gpu"`` only when both are present; otherwise ``"cpu"``.
+
+    Called before dataset construction so that ``gpu_postprocess`` in the
+    dataset builders always matches what the DataModule will actually do in
+    ``on_after_batch_transfer``.
+
+    Args:
+        backend: Value of ``TrainConfig.augmentation_backend``.
+
+    Returns:
+        Resolved backend string, either ``"cpu"`` or ``"gpu"``.
+
+    Examples:
+        >>> _resolve_augmentation_backend("cpu")
+        'cpu'
+        >>> _resolve_augmentation_backend("gpu")
+        'gpu'
+    """
+    if backend != "auto":
+        return backend
+    if not torch.cuda.is_available():
+        return "cpu"
+    try:
+        import kornia.augmentation  # noqa: F401
+
+        return "gpu"
+    except ImportError:
+        return "cpu"
+
+
 class RFDETRDataModule(LightningDataModule):
     """LightningDataModule wrapping RF-DETR dataset construction and data loading.
 
@@ -84,6 +119,14 @@ class RFDETRDataModule(LightningDataModule):
         resolution = self.model_config.resolution
         ns = _namespace_from_configs(self.model_config, self.train_config)
         if stage == "fit":
+            # Resolve 'auto' to an actual backend before building datasets so that
+            # gpu_postprocess in dataset builders always matches what the DataModule
+            # will actually do in on_after_batch_transfer.  Without this, 'auto' on
+            # a machine without CUDA/kornia would strip CPU Normalize from datasets
+            # while _kornia_pipeline stays None, leaving training inputs unnormalized.
+            resolved = _resolve_augmentation_backend(self.train_config.augmentation_backend)
+            if resolved != self.train_config.augmentation_backend:
+                ns.augmentation_backend = resolved
             if self._dataset_train is None:
                 self._dataset_train = build_dataset("train", ns, resolution)
             if self._dataset_val is None:
@@ -273,6 +316,10 @@ class RFDETRDataModule(LightningDataModule):
 
             samples, targets = batch
             img = samples.tensors  # [B, C, H, W]
+            # Move Kornia modules to the batch device (no-op if already there).
+            # nn.Module.to() is in-place; no reassignment needed.
+            self._kornia_pipeline.to(img.device)
+            self._kornia_normalize.to(img.device)
             boxes_padded, valid = collate_boxes(targets, img.device)
             img_aug, boxes_aug = self._kornia_pipeline(img, boxes_padded)
             img_aug = self._kornia_normalize(img_aug)

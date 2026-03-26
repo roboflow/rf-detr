@@ -744,6 +744,46 @@ class TestBackendResolution:
             "GPU path must fall back to AUG_CONFIG when train_config.aug_config is None"
         )
 
+    def test_auto_no_cuda_does_not_strip_cpu_normalize(self, tmp_path):
+        """auto + no CUDA: gpu_postprocess must be False so CPU Normalize is retained."""
+        dm = self._build_dm_with_backend(tmp_path, "auto")
+        captured_gpu_postprocess = {}
+
+        def _spy_build(image_set, args, resolution):
+            captured_gpu_postprocess[image_set] = getattr(args, "augmentation_backend", "cpu")
+            return _fake_dataset(10)
+
+        with (
+            patch("torch.cuda.is_available", return_value=False),
+            patch("rfdetr.training.module_data.build_dataset", side_effect=_spy_build),
+        ):
+            dm.setup("fit")
+
+        # When CUDA is unavailable, resolved backend must be 'cpu' so datasets are
+        # built with gpu_postprocess=False and CPU Normalize is not stripped.
+        assert captured_gpu_postprocess.get("train") == "cpu", (
+            "auto + no CUDA must resolve to cpu before dataset build to preserve CPU Normalize"
+        )
+
+    def test_resolve_augmentation_backend_auto_no_cuda(self):
+        """_resolve_augmentation_backend returns 'cpu' for auto when CUDA is absent."""
+        from rfdetr.training.module_data import _resolve_augmentation_backend
+
+        with patch("torch.cuda.is_available", return_value=False):
+            assert _resolve_augmentation_backend("auto") == "cpu"
+
+    def test_resolve_augmentation_backend_cpu_passthrough(self):
+        """_resolve_augmentation_backend passes 'cpu' through unchanged."""
+        from rfdetr.training.module_data import _resolve_augmentation_backend
+
+        assert _resolve_augmentation_backend("cpu") == "cpu"
+
+    def test_resolve_augmentation_backend_gpu_passthrough(self):
+        """_resolve_augmentation_backend passes 'gpu' through unchanged."""
+        from rfdetr.training.module_data import _resolve_augmentation_backend
+
+        assert _resolve_augmentation_backend("gpu") == "gpu"
+
 
 # ---------------------------------------------------------------------------
 # TestOnAfterBatchTransfer — validates GPU-side augmentation hook
