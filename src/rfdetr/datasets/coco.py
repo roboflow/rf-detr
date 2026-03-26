@@ -374,6 +374,10 @@ def make_coco_transforms(
             :class:`~rfdetr.datasets.transforms.AlbumentationsWrapper`.  Falls back
             to the default :data:`~rfdetr.datasets.aug_config.AUG_CONFIG` when
             ``None``.
+        gpu_postprocess: When ``True``, skip Albumentations augmentation wrappers and
+            ``Normalize`` from the CPU pipeline.  The ``RFDETRDataModule`` then applies
+            both augmentation and normalization on the GPU in
+            ``on_after_batch_transfer``.  Has no effect on val/test splits.
 
     Returns:
         A :class:`torchvision.transforms.v2.Compose` pipeline ready to be passed
@@ -462,6 +466,10 @@ def make_coco_transforms_square_div_64(
         aug_config: Augmentation configuration dictionary compatible with
             :class:`~rfdetr.datasets.transforms.AlbumentationsWrapper`. If ``None``,
             the default :data:`~rfdetr.datasets.aug_config.AUG_CONFIG` is used.
+        gpu_postprocess: When ``True``, skip Albumentations augmentation wrappers and
+            ``Normalize`` from the CPU pipeline.  The ``RFDETRDataModule`` then applies
+            both augmentation and normalization on the GPU in
+            ``on_after_batch_transfer``.  Has no effect on val/test splits.
 
     Returns:
         A ``Compose`` object containing the composed image transforms appropriate

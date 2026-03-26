@@ -121,7 +121,7 @@ def _restore_rfdetr_module_trainer_property():
 
 @pytest.fixture(autouse=True)
 def _restore_rfdetr_datamodule_trainer_property():
-    """Restore RFDETRDataModule.trainer to the LightningModule parent property after each test.
+    """Restore RFDETRDataModule.trainer to the LightningDataModule parent property after each test.
 
     Tests that mock the ``trainer`` property on ``RFDETRDataModule`` (e.g. for
     ``on_after_batch_transfer`` tests) patch it at the class level.  Without
