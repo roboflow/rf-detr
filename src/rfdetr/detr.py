@@ -521,7 +521,7 @@ class RFDETR:
                 When provided, overrides the model's default inference resolution. The
                 tuple should match the resolution used when exporting the model
                 (typically a square shape). Both dimensions must be positive integers
-                divisible by 14. Defaults to ``(model.resolution, model.resolution)``
+                divisible by patch_size. Defaults to ``(model.resolution, model.resolution)``
                 when not set.
             **kwargs:
                 Additional keyword arguments.
@@ -534,7 +534,7 @@ class RFDETR:
             ValueError: If ``shape`` cannot be unpacked as a two-element sequence,
                 if either dimension does not support the ``__index__`` protocol
                 (e.g. ``float``) or is a ``bool``, if either dimension is zero or
-                negative, or if either dimension is not divisible by 14.
+                negative, or if either dimension is not divisible by patch_size.
         """
         import supervision as sv
 
