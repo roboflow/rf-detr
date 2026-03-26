@@ -311,7 +311,7 @@ class RFDETR:
         opset_version: int = 17,
         verbose: bool = True,
         force: bool = False,
-        shape: tuple = None,
+        shape: tuple[int, int] | None = None,
         batch_size: int = 1,
         dynamic_batch: bool = False,
         patch_size: int | None = None,
