@@ -641,7 +641,7 @@ class TestExportPatchSize:
     ) -> None:
         """export() must raise ValueError when patch_size is not a positive integer."""
         model = self._scaffold(monkeypatch, tmp_path, patch_size=14, num_windows=4)
-        # Override model_config.patch_size so the mismatch check is bypassed
+        # Keep model_config.patch_size consistent with the patch_size argument for this test
         model.model_config.patch_size = bad_patch_size
         with pytest.raises(ValueError, match="patch_size must be a positive integer"):
             _detr_module.RFDETR.export(model, output_dir=str(tmp_path), patch_size=bad_patch_size)
