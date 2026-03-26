@@ -67,6 +67,55 @@ _VARIANT_EXPORTS = (
 __all__ = ["RFDETR", "ModelContext", *_VARIANT_EXPORTS]
 
 
+def _validate_shape_dims(
+    shape: object,
+    block_size: int,
+    patch_size: int,
+    num_windows: int,
+) -> tuple[int, int]:
+    """Validate a user-supplied ``(height, width)`` shape tuple and return normalised plain-int dims.
+
+    Args:
+        shape: The raw value supplied by the caller (e.g. from ``export(shape=...)`` or
+            ``predict(shape=...)``).  Must be a two-element sequence of positive integers
+            (or integer-compatible types accepted by :func:`operator.index`).
+        block_size: Required divisor for both dimensions.  Equals ``patch_size * num_windows``.
+        patch_size: Backbone patch size — used only in error messages.
+        num_windows: Number of attention windows — used only in error messages.
+
+    Returns:
+        A ``(height, width)`` tuple of plain Python :class:`int` values.
+
+    Raises:
+        ValueError: If ``shape`` cannot be unpacked as a two-element sequence, if either
+            dimension is a bool, float, or other non-integer type, if either dimension is
+            not positive, or if either dimension is not divisible by ``block_size``.
+    """
+    try:
+        height, width = shape  # type: ignore[misc]
+    except (TypeError, ValueError):
+        raise ValueError(f"shape must be a sequence of two positive integers (height, width), got {shape!r}.") from None
+    for dim_name, dim in (("height", height), ("width", width)):
+        if isinstance(dim, bool):
+            raise ValueError(f"shape {dim_name} must be an integer, got {type(dim).__name__} (shape={shape!r}).")
+        try:
+            operator.index(dim)
+        except TypeError:
+            raise ValueError(
+                f"shape {dim_name} must be an integer, got {type(dim).__name__} (shape={shape!r})."
+            ) from None
+        if dim <= 0:
+            raise ValueError(f"shape must contain positive integers for height and width, got {shape!r}.")
+    # Normalise to plain Python ints; also accepts numpy.int64, torch scalars, etc.
+    height, width = operator.index(height), operator.index(width)
+    if height % block_size != 0 or width % block_size != 0:
+        raise ValueError(
+            f"shape must have both dimensions divisible by {block_size} "
+            f"(patch_size={patch_size} * num_windows={num_windows}), got {shape!r}."
+        )
+    return height, width
+
+
 class RFDETR:
     """
     The base RF-DETR class implements the core methods for training RF-DETR models,
@@ -384,32 +433,7 @@ class RFDETR:
                     f"Provide an explicit shape divisible by {block_size}."
                 )
         else:
-            try:
-                height, width = shape
-            except (TypeError, ValueError):
-                raise ValueError(
-                    f"shape must be a sequence of two positive integers (height, width), got {shape!r}."
-                ) from None
-            for dim_name, dim in (("height", height), ("width", width)):
-                if isinstance(dim, bool):
-                    raise ValueError(
-                        f"shape {dim_name} must be an integer, got {type(dim).__name__} (shape={shape!r})."
-                    )
-                try:
-                    operator.index(dim)
-                except TypeError:
-                    raise ValueError(
-                        f"shape {dim_name} must be an integer, got {type(dim).__name__} (shape={shape!r})."
-                    ) from None
-                if dim <= 0:
-                    raise ValueError(f"shape must contain positive integers for height and width, got {shape!r}.")
-            height, width = operator.index(height), operator.index(width)
-            if height % block_size != 0 or width % block_size != 0:
-                raise ValueError(
-                    f"shape must have both dimensions divisible by {block_size} "
-                    f"(patch_size={patch_size} * num_windows={num_windows}), got {shape!r}."
-                )
-            shape = (height, width)
+            shape = _validate_shape_dims(shape, block_size, patch_size, num_windows)
 
         input_tensors = make_infer_image(infer_dir, shape, batch_size, device).to(device)
         input_names = ["input"]
@@ -626,37 +650,7 @@ class RFDETR:
                     f"Provide an explicit shape divisible by {block_size}."
                 )
         else:
-            try:
-                height, width = shape
-            except (TypeError, ValueError):
-                raise ValueError(
-                    f"shape must be a sequence of two positive integers (height, width), got {shape!r}."
-                ) from None
-
-            for dim_name, dim in (("height", height), ("width", width)):
-                if isinstance(dim, bool):
-                    raise ValueError(
-                        f"shape {dim_name} must be an integer, got {type(dim).__name__} (shape={shape!r})."
-                    )
-                try:
-                    operator.index(dim)
-                except TypeError:
-                    raise ValueError(
-                        f"shape {dim_name} must be an integer, got {type(dim).__name__} (shape={shape!r})."
-                    ) from None
-                if dim <= 0:
-                    raise ValueError(f"shape must contain positive integers for height and width, got {shape!r}.")
-
-            # Normalize to plain Python ints; also accepts numpy.int64, torch scalars, etc.
-            height, width = operator.index(height), operator.index(width)
-
-            if height % block_size != 0 or width % block_size != 0:
-                raise ValueError(
-                    f"shape must have both dimensions divisible by {block_size} "
-                    f"(patch_size={patch_size} * num_windows={num_windows}), got {shape!r}."
-                )
-
-            shape = (height, width)
+            shape = _validate_shape_dims(shape, block_size, patch_size, num_windows)
 
         if not self._is_optimized_for_inference and not self._has_warned_about_not_being_optimized_for_inference:
             logger.warning(
