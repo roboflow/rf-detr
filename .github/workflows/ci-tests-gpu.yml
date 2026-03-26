@@ -28,7 +28,7 @@ jobs:
     if: github.event_name == 'push' || !github.event.pull_request.draft
     timeout-minutes: 35
     # self-hosted runner with GPU support
-    runs-on: arc-gpu-runner-set-lqntn-runner-9rb9r
+    runs-on: arc-gpu-runner-set
     steps:
       - name: 🖥️ Print GPU information
         run: nvidia-smi
