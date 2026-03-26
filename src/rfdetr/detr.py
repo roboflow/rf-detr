@@ -331,9 +331,14 @@ class RFDETR:
             verbose: Print export progress information.
             force: Deprecated and ignored.
             shape: ``(height, width)`` tuple; defaults to square at model resolution.
+                Both dimensions must be divisible by ``patch_size * num_windows``.
             batch_size: Static batch size to bake into the ONNX graph.
             dynamic_batch: If True, export with a dynamic batch dimension
                 so the ONNX model accepts variable batch sizes at runtime.
+            patch_size: Backbone patch size. Defaults to the value stored in
+                ``model_config.patch_size`` (typically 14 or 16). When provided
+                explicitly it must match the instantiated model's patch size.
+                Shape divisibility is validated against ``patch_size * num_windows``.
             **kwargs: Additional keyword arguments forwarded to export_onnx.
         """
         logger.info("Exporting model to ONNX format")
@@ -362,11 +367,18 @@ class RFDETR:
                     f"{model_patch_size}. Patch size is an architectural parameter; instantiate the model with the "
                     f"desired patch_size (and compatible checkpoint) before exporting."
                 )
+        if not isinstance(patch_size, int) or patch_size <= 0:
+            raise ValueError(f"patch_size must be a positive integer, got {patch_size!r}")
+        num_windows = getattr(self.model_config, "num_windows", 1)
+        block_size = patch_size * num_windows
         if shape is None:
             shape = (self.model.resolution, self.model.resolution)
         else:
-            if shape[0] % patch_size != 0 or shape[1] % patch_size != 0:
-                raise ValueError(f"Shape must be divisible by {patch_size}")
+            if shape[0] % block_size != 0 or shape[1] % block_size != 0:
+                raise ValueError(
+                    f"Shape must be divisible by {block_size} "
+                    f"(patch_size={patch_size} * num_windows={num_windows})"
+                )
 
         input_tensors = make_infer_image(infer_dir, shape, batch_size, device).to(device)
         input_names = ["input"]
