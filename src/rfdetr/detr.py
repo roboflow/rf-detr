@@ -377,13 +377,39 @@ class RFDETR:
         block_size = patch_size * num_windows
         if shape is None:
             shape = (self.model.resolution, self.model.resolution)
-        else:
-            if shape[0] <= 0 or shape[1] <= 0:
-                raise ValueError(f"shape must contain positive integers for height and width, got {shape!r}.")
-            if shape[0] % block_size != 0 or shape[1] % block_size != 0:
+            if shape[0] % block_size != 0:
                 raise ValueError(
-                    f"Shape must be divisible by {block_size} (patch_size={patch_size} * num_windows={num_windows})"
+                    f"Model's default resolution ({self.model.resolution}) is not divisible by "
+                    f"block_size={block_size} (patch_size={patch_size} * num_windows={num_windows}). "
+                    f"Provide an explicit shape divisible by {block_size}."
                 )
+        else:
+            try:
+                height, width = shape
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"shape must be a sequence of two positive integers (height, width), got {shape!r}."
+                ) from None
+            for dim_name, dim in (("height", height), ("width", width)):
+                if isinstance(dim, bool):
+                    raise ValueError(
+                        f"shape {dim_name} must be an integer, got {type(dim).__name__} (shape={shape!r})."
+                    )
+                try:
+                    operator.index(dim)
+                except TypeError:
+                    raise ValueError(
+                        f"shape {dim_name} must be an integer, got {type(dim).__name__} (shape={shape!r})."
+                    ) from None
+                if dim <= 0:
+                    raise ValueError(f"shape must contain positive integers for height and width, got {shape!r}.")
+            height, width = operator.index(height), operator.index(width)
+            if height % block_size != 0 or width % block_size != 0:
+                raise ValueError(
+                    f"shape must have both dimensions divisible by {block_size} "
+                    f"(patch_size={patch_size} * num_windows={num_windows}), got {shape!r}."
+                )
+            shape = (height, width)
 
         input_tensors = make_infer_image(infer_dir, shape, batch_size, device).to(device)
         input_names = ["input"]
@@ -591,7 +617,15 @@ class RFDETR:
             raise ValueError(f"model_config.num_windows must be a positive integer, got {num_windows!r}")
         block_size = patch_size * num_windows
 
-        if shape is not None:
+        if shape is None:
+            default_res = self.model.resolution
+            if default_res % block_size != 0:
+                raise ValueError(
+                    f"Model's default resolution ({default_res}) is not divisible by "
+                    f"block_size={block_size} (patch_size={patch_size} * num_windows={num_windows}). "
+                    f"Provide an explicit shape divisible by {block_size}."
+                )
+        else:
             try:
                 height, width = shape
             except (TypeError, ValueError):

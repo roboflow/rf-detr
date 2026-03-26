@@ -694,6 +694,60 @@ class TestExportPatchSize:
         with pytest.raises(ValueError, match="patch_size must be a positive integer"):
             _detr_module.RFDETR.export(model, output_dir=str(tmp_path), patch_size=bad_patch_size)
 
+    def test_export_explicit_patch_size_matching_config_succeeds(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """export(patch_size=X) must succeed when X matches model_config.patch_size."""
+        model = self._scaffold(monkeypatch, tmp_path, patch_size=14, num_windows=4)
+        # patch_size=14 matches model_config.patch_size=14; block_size=56; resolution=112 (56*2)
+        _detr_module.RFDETR.export(model, output_dir=str(tmp_path), patch_size=14)
+
+    @pytest.mark.parametrize(
+        "bad_shape",
+        [
+            pytest.param((14.0, 14.0), id="float_dims"),
+            pytest.param((14,), id="wrong_arity_one_element"),
+            pytest.param((14, 14, 3), id="wrong_arity_three_elements"),
+            pytest.param((True, 14), id="bool_height"),
+            pytest.param((14, False), id="bool_width"),
+        ],
+    )
+    def test_export_invalid_shape_type_raises(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bad_shape: tuple
+    ) -> None:
+        """export() must raise ValueError for float, bool, or wrong-arity shape tuples."""
+        model = self._scaffold(monkeypatch, tmp_path, patch_size=14, num_windows=1)
+        with pytest.raises(ValueError, match="shape"):
+            _detr_module.RFDETR.export(model, output_dir=str(tmp_path), shape=bad_shape)
+
+    @pytest.mark.parametrize(
+        "bad_num_windows",
+        [
+            pytest.param(0, id="zero"),
+            pytest.param(-1, id="negative"),
+            pytest.param(True, id="bool_true"),
+        ],
+    )
+    def test_export_invalid_num_windows_raises(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bad_num_windows: int
+    ) -> None:
+        """export() must raise ValueError when model_config.num_windows is not a positive integer."""
+        model = self._scaffold(monkeypatch, tmp_path, patch_size=14, num_windows=1)
+        model.model_config.num_windows = bad_num_windows
+        with pytest.raises(ValueError, match="num_windows must be a positive integer"):
+            _detr_module.RFDETR.export(model, output_dir=str(tmp_path))
+
+    def test_export_default_resolution_not_divisible_by_block_size_raises(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """export() with shape=None must raise ValueError when model.resolution % block_size != 0."""
+        # patch_size=14, num_windows=3 → block_size=42; scaffold sets resolution=84 (42*2) which is valid
+        # Override resolution to 50 (not divisible by 42) to trigger the check
+        model = self._scaffold(monkeypatch, tmp_path, patch_size=14, num_windows=3)
+        model.model.resolution = 50
+        with pytest.raises(ValueError, match="default resolution"):
+            _detr_module.RFDETR.export(model, output_dir=str(tmp_path))
+
 
 def test_make_infer_image_produces_correct_rectangular_shape() -> None:
     """make_infer_image must produce a (B, C, H, W) tensor for non-square shapes.

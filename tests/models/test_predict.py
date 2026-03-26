@@ -32,7 +32,7 @@ def _is_online(host: str, port: int, timeout_s: float = 3.0) -> bool:
 class _DummyModel:
     def __init__(self) -> None:
         self.device = torch.device("cpu")
-        self.resolution = 32
+        self.resolution = 28
         self.model = torch.nn.Identity()
 
     def postprocess(self, predictions: Any, target_sizes: torch.Tensor) -> list[dict[str, torch.Tensor]]:
@@ -114,7 +114,7 @@ class TestPredictShape:
             model.predict(img)
 
         resize_size = list(mock_resize.call_args[0][1])
-        assert resize_size == [32, 32], f"Expected resize to model resolution (32, 32), got {resize_size}"
+        assert resize_size == [28, 28], f"Expected resize to model resolution (28, 28), got {resize_size}"
 
     def test_predict_uses_provided_rectangular_shape(self) -> None:
         # Regression test for #682
@@ -263,3 +263,36 @@ class TestPredictPatchSize:
         img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
         with pytest.raises(ValueError, match="does not match"):
             model.predict(img, shape=(16, 16), patch_size=14)
+
+    def test_predict_explicit_patch_size_matching_config_succeeds(self) -> None:
+        """predict(patch_size=X) must succeed when X matches model_config.patch_size."""
+        # patch_size=16, num_windows=2 → block_size=32; shape=(64,64) is valid
+        model = self._make_model_with_config(patch_size=16, num_windows=2)
+        img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
+        # Should not raise — patch_size matches config, 64 % 32 == 0
+        model.predict(img, shape=(64, 64), patch_size=16)
+
+    @pytest.mark.parametrize(
+        "bad_num_windows",
+        [
+            pytest.param(0, id="zero"),
+            pytest.param(-1, id="negative"),
+            pytest.param(True, id="bool_true"),
+        ],
+    )
+    def test_predict_invalid_num_windows_raises(self, bad_num_windows: int) -> None:
+        """predict() must raise ValueError when model_config.num_windows is not a positive integer."""
+        model = self._make_model_with_config(patch_size=14, num_windows=1)
+        model.model_config.num_windows = bad_num_windows
+        img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
+        with pytest.raises(ValueError, match="num_windows must be a positive integer"):
+            model.predict(img, shape=(14, 14))
+
+    def test_predict_default_resolution_not_divisible_by_block_size_raises(self) -> None:
+        """predict() with shape=None must raise ValueError when model.resolution % block_size != 0."""
+        # patch_size=14, num_windows=1 → block_size=14; set resolution=25 (not divisible)
+        model = self._make_model_with_config(patch_size=14, num_windows=1)
+        model.model.resolution = 25
+        img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
+        with pytest.raises(ValueError, match="default resolution"):
+            model.predict(img)
