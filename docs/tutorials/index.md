@@ -70,6 +70,15 @@ Use the resources below to learn how to train, build with, and deploy RF-DETR mo
 
     [:octicons-arrow-right-24: Read the tutorial](https://blog.roboflow.com/how-to-deploy-rf-detr-to-an-nvidia-jetson/)
 
+- **Deploy RF-DETR with LitServe [Lightning AI Studio]**
+
+    ---
+
+    ![](https://blog.roboflow.com/content/images/size/w1000/format/webp/2025/03/img-blog-nycerebro--2--min.png)
+    Learn how to deploy RF-DETR as a scalable inference server using LitServe, the AI model serving framework from Lightning AI.
+
+    [:octicons-arrow-right-24: Open the Studio](https://lightning.ai/bhimrajyadav/studios/deploy-rf-detr-a-sota-real-time-object-detection-model-using-litserve)
+
 - **Train and Deploy RF-DETR Models with Roboflow**
 
     ---
