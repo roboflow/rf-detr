@@ -26,7 +26,7 @@ jobs:
   run-gpu-tests:
     name: Testing
     if: github.event_name == 'push' || !github.event.pull_request.draft
-    timeout-minutes: 35
+    timeout-minutes: 40
     runs-on: Roboflow-GPU-VM-Runner
     steps:
       - name: 🖥️ Print GPU information
