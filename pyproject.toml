@@ -87,6 +87,10 @@ visual = [
 ]
 cli = ["jsonargparse[signatures]>=4.27.7"]
 plus = ["rfdetr_plus>=1.0.1, <2.0.0"]
+mlx = [
+    "mlx>=0.22.0; sys_platform == 'darwin'",
+    "scipy",
+]
 
 [dependency-groups]
 # TODO: Temporary: GPU runner only has CUDA 12.8 driver (12080); torch>=2.11 requires a newer driver.
@@ -163,11 +167,12 @@ ignore = [
 addopts = [
     "-v",                   # verbose output
     "--color=yes",          # colored output
-    "--doctest-modules",    # run doctests from all modules
+    "--doctest-modules",
 ]
 pythonpath = ["src"]
 markers = [
     "gpu: tests that require GPU or are slow on CPU",
+    "mlx: tests that require MLX (macOS Apple Silicon only)",
     "flaky: tests that may fail due to nondeterminism"
 ]
 filterwarnings = [

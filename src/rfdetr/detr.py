@@ -177,6 +177,8 @@ class RFDETR:
         self._optimized_batch_size = None
         self._optimized_resolution = None
         self._optimized_dtype = None
+        self._inference_backend = None
+        self._mlx_model = None
 
     def maybe_download_pretrain_weights(self):
         """
@@ -343,8 +345,34 @@ class RFDETR:
             if dataset_class_names is not None:
                 self.model.class_names = dataset_class_names
 
-    def optimize_for_inference(self, compile=True, batch_size=1, dtype=torch.float32):
+    def optimize_for_inference(self, compile=True, batch_size=1, dtype=torch.float32, backend: str = "pytorch"):
+        """Optimize the model for inference.
+
+        Args:
+            compile: Whether to JIT-compile the PyTorch model.
+            batch_size: Batch size for JIT compilation.
+            dtype: Data type for PyTorch inference.
+            backend: Inference backend. "pytorch" for JIT-traced PyTorch,
+                "mlx" for native Apple Silicon inference via MLX (macOS only).
+        """
         self.remove_optimized_model()
+
+        if backend == "mlx":
+            if getattr(self.model_config, "segmentation_head", False):
+                from rfdetr.mlx import build_mlx_seg_inference
+
+                self._mlx_model = build_mlx_seg_inference(self.model_config, self.model)
+            else:
+                from rfdetr.mlx import build_mlx_inference
+
+                self._mlx_model = build_mlx_inference(self.model_config, self.model)
+            self._is_optimized_for_inference = True
+            self._inference_backend = "mlx"
+            self._optimized_resolution = self.model.resolution
+            return
+
+        if backend != "pytorch":
+            raise ValueError(f"Unknown inference backend {backend!r}. Expected 'pytorch' or 'mlx'.")
 
         self.model.inference_model = deepcopy(self.model.model)
         self.model.inference_model.eval()
@@ -352,6 +380,7 @@ class RFDETR:
 
         self._optimized_resolution = self.model.resolution
         self._is_optimized_for_inference = True
+        self._inference_backend = "pytorch"
 
         self.model.inference_model = self.model.inference_model.to(dtype=dtype)
         self._optimized_dtype = dtype
@@ -372,6 +401,8 @@ class RFDETR:
         self._optimized_has_been_compiled = False
         self._optimized_batch_size = None
         self._optimized_resolution = None
+        self._inference_backend = None
+        self._mlx_model = None
         self._optimized_dtype = None
 
     @deprecated(
@@ -642,6 +673,13 @@ class RFDETR:
                 ``patch_size * num_windows``, or if ``patch_size`` is not a positive
                 integer.
         """
+        if self._inference_backend == "mlx":
+            if shape is not None:
+                raise NotImplementedError(
+                    "'shape' is not supported with backend='mlx'. "
+                    "Resize the input image before calling predict() instead."
+                )
+            return self._predict_mlx(images, threshold)
         import supervision as sv
 
         patch_size = _resolve_patch_size(patch_size, self.model_config, "predict")
@@ -773,6 +811,91 @@ class RFDETR:
                     class_id=labels.cpu().numpy(),
                 )
 
+            detections_list.append(detections)
+
+        return detections_list if len(detections_list) > 1 else detections_list[0]
+
+    def _predict_mlx(
+        self,
+        images: Union[
+            str, Image.Image, np.ndarray, torch.Tensor, List[Union[str, np.ndarray, Image.Image, torch.Tensor]]
+        ],
+        threshold: float = 0.5,
+    ) -> Union[sv.Detections, List[sv.Detections]]:
+        """Run inference through the MLX backend.
+
+        Accepts the same input types as predict(). Preprocesses images on CPU
+        (load + resize), then passes uint8 arrays to the compiled MLX pipeline.
+
+        Args:
+            images: Single image or list of images.
+            threshold: Confidence threshold.
+
+        Returns:
+            Detection results as sv.Detections.
+        """
+        import mlx.core as mx
+
+        if not isinstance(images, list):
+            images = [images]
+
+        orig_sizes = []
+        uint8_arrays = []
+        resolution = self._mlx_model.resolution
+
+        for img in images:
+            if isinstance(img, str):
+                if img.startswith("http"):
+                    img = requests.get(img, stream=True).raw
+                img = Image.open(img)
+
+            if isinstance(img, torch.Tensor):
+                # Convert CHW float [0,1] tensor to HWC uint8
+                img = (img.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+            elif isinstance(img, Image.Image):
+                img = np.array(img)
+
+            if img.ndim == 2:
+                img = np.stack([img] * 3, axis=-1)
+            elif img.shape[2] == 4:
+                img = img[:, :, :3]
+
+            orig_sizes.append((img.shape[0], img.shape[1]))
+
+            # Resize to model resolution using PIL (fast CPU resize)
+            pil_img = Image.fromarray(img)
+            pil_img = pil_img.resize((resolution, resolution), Image.BILINEAR)
+            uint8_arrays.append(np.array(pil_img))
+
+        # Stack into batch and run MLX inference
+        batch = np.stack(uint8_arrays)
+        x = mx.array(batch)
+        outputs = self._mlx_model.forward(x)
+
+        # Postprocess to numpy
+        results = self._mlx_model.postprocess(outputs, orig_sizes)
+
+        detections_list = []
+        for result in results:
+            scores = result["scores"]
+            labels = result["labels"]
+            boxes = result["boxes"]
+
+            keep = scores > threshold
+            scores = scores[keep]
+            labels = labels[keep]
+            boxes = boxes[keep]
+
+            mask = None
+            if "masks" in result:
+                mask = (result["masks"][keep] > 0.5).astype(bool)
+
+            detections = sv.Detections(
+                xyxy=boxes.astype(np.float32),
+                confidence=scores.astype(np.float32),
+                class_id=labels.astype(np.intp),
+                mask=mask,
+            )
             detections_list.append(detections)
 
         return detections_list if len(detections_list) > 1 else detections_list[0]
