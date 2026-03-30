@@ -784,7 +784,7 @@ class RFDETR:
         self,
         workspace: str,
         project_id: str,
-        version: str,
+        version: int | str,
         api_key: str | None = None,
         size: str | None = None,
     ) -> None:
