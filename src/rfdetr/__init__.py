@@ -32,6 +32,7 @@ import importlib.machinery
 import importlib.util
 import sys
 
+from rfdetr.detr import RFDETR
 from rfdetr.inference import ModelContext
 from rfdetr.variants import (
     RFDETRBase,  # DEPRECATED # noqa: F401
@@ -51,6 +52,7 @@ from rfdetr.variants import (
 
 __all__ = [
     "ModelContext",
+    "from_checkpoint",
     "RFDETRNano",
     "RFDETRSmall",
     "RFDETRMedium",
@@ -62,6 +64,11 @@ __all__ = [
     "RFDETRSegXLarge",
     "RFDETRSeg2XLarge",
 ]
+
+
+def from_checkpoint(path, **kwargs):
+    """Convenience wrapper for RFDETR.from_checkpoint(); see that method for full documentation."""
+    return RFDETR.from_checkpoint(path, **kwargs)
 
 # Lazily resolved names: avoids eager pytorch_lightning import at `import rfdetr` time.
 _LAZY_TRAINING = frozenset({"RFDETRModelModule", "RFDETRDataModule", "build_trainer"})
