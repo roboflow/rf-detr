@@ -223,6 +223,17 @@ class TestFromCheckpointEdgeCases:
         call_kwargs = mock_cls.call_args.kwargs
         assert call_kwargs["pretrain_weights"] == str(tmp_path / "ckpt.pth")
 
+    def test_characterization_caller_num_classes_overrides_checkpoint(self, tmp_path: Path) -> None:
+        """Caller-supplied num_classes takes precedence over the checkpoint's stored value."""
+        _, mock_cls = _call_from_checkpoint(
+            _ns("rf-detr-small.pth", num_classes=80),
+            tmp_path / "ckpt.pth",
+            "rfdetr.variants.RFDETRSmall",
+            num_classes=5,
+        )
+        call_kwargs = mock_cls.call_args.kwargs
+        assert call_kwargs["num_classes"] == 5
+
     @pytest.mark.skipif(HAS_PLUS, reason="rfdetr_plus is installed — guard not active")
     def test_characterization_xlarge_without_plus_raises_import_error(self, tmp_path: Path) -> None:
         """xlarge checkpoint without rfdetr_plus raises ImportError instead of wrong class."""
