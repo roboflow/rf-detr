@@ -310,7 +310,7 @@ class RFDETR:
         # pretrain_weights is placed after **kwargs so it always wins even if
         # a caller accidentally passes pretrain_weights inside kwargs.
         constructor_kwargs: dict[str, Any] = {**kwargs, "pretrain_weights": str(path)}
-        if num_classes is not None:
+        if num_classes is not None and "num_classes" not in kwargs:
             constructor_kwargs["num_classes"] = num_classes
 
         return model_cls(**constructor_kwargs)
