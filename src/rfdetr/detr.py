@@ -825,28 +825,29 @@ class RFDETR:
         size = self.size or size
         tmp_out_dir = ".roboflow_temp_upload"
         os.makedirs(tmp_out_dir, exist_ok=True)
+        try:
+            # Write class_names.txt so the Roboflow upload pipeline can discover
+            # the class labels without relying on args.class_names in the checkpoint.
+            class_names_path = os.path.join(tmp_out_dir, "class_names.txt")
+            with open(class_names_path, "w") as f:
+                f.write("\n".join(self.class_names))
 
-        # Write class_names.txt so the Roboflow upload pipeline can discover
-        # the class labels without relying on args.class_names in the checkpoint.
-        class_names_path = os.path.join(tmp_out_dir, "class_names.txt")
-        with open(class_names_path, "w") as f:
-            f.write("\n".join(self.class_names))
+            # Also embed class_names in the args namespace so that any code path
+            # that loads the checkpoint directly (e.g. roboflow-python's second
+            # fallback) can find them.  Mutating the shared SimpleNamespace is
+            # intentional here: this mirrors reinitialize_detection_head(), which
+            # already mutates args.num_classes in-place.
+            args = self.model.args
+            if not hasattr(args, "class_names") or args.class_names is None:
+                args.class_names = self.class_names
 
-        # Also embed class_names in the args namespace so that any code path
-        # that loads the checkpoint directly (e.g. roboflow-python's second
-        # fallback) can find them.  Mutating the shared SimpleNamespace is
-        # intentional here: this mirrors reinitialize_detection_head(), which
-        # already mutates args.num_classes in-place.
-        args = self.model.args
-        if not hasattr(args, "class_names") or args.class_names is None:
-            args.class_names = self.class_names
-
-        outpath = os.path.join(tmp_out_dir, "weights.pt")
-        torch.save({"model": self.model.model.state_dict(), "args": args}, outpath)
-        project = workspace.project(project_id)
-        version = project.version(version)
-        version.deploy(model_type=size, model_path=tmp_out_dir, filename="weights.pt")
-        shutil.rmtree(tmp_out_dir)
+            outpath = os.path.join(tmp_out_dir, "weights.pt")
+            torch.save({"model": self.model.model.state_dict(), "args": args}, outpath)
+            project = workspace.project(project_id)
+            version = project.version(version)
+            version.deploy(model_type=size, model_path=tmp_out_dir, filename="weights.pt")
+        finally:
+            shutil.rmtree(tmp_out_dir, ignore_errors=True)
 
 
 def __getattr__(name: str):

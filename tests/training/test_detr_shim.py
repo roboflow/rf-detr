@@ -1219,6 +1219,10 @@ class TestDeployToRoboflow:
         mock_self = MagicMock(spec=RFDETR)
         mock_self.size = size
         mock_self.class_names = class_names  # the property, resolved to a plain list
+        # `model` is an instance attribute (set in __init__), not a class attribute, so
+        # MagicMock(spec=RFDETR).__getattr__ would raise AttributeError for it.  Assign
+        # it directly via __setattr__ so sub-attribute chaining works correctly.
+        mock_self.model = MagicMock()
         mock_self.model.model.state_dict.return_value = {}
         mock_self.model.args = SimpleNamespace(num_classes=len(class_names))
         return mock_self
@@ -1245,7 +1249,7 @@ class TestDeployToRoboflow:
 
         mock_rf.workspace.return_value.project.return_value.version.return_value.deploy.side_effect = deploy_side_effect
 
-        with patch("rfdetr.detr.Roboflow", return_value=mock_rf):
+        with patch("roboflow.Roboflow", return_value=mock_rf):
             RFDETR.deploy_to_roboflow(
                 mock_self,
                 workspace="test-workspace",
@@ -1279,7 +1283,7 @@ class TestDeployToRoboflow:
         mock_rf = MagicMock()
         mock_rf.workspace.return_value.project.return_value.version.return_value.deploy.return_value = None
 
-        with patch("rfdetr.detr.Roboflow", return_value=mock_rf), patch("torch.save", side_effect=capturing_save):
+        with patch("roboflow.Roboflow", return_value=mock_rf), patch("torch.save", side_effect=capturing_save):
             RFDETR.deploy_to_roboflow(
                 mock_self,
                 workspace="test-workspace",
@@ -1311,7 +1315,7 @@ class TestDeployToRoboflow:
         mock_rf = MagicMock()
         mock_rf.workspace.return_value.project.return_value.version.return_value.deploy.return_value = None
 
-        with patch("rfdetr.detr.Roboflow", return_value=mock_rf), patch("torch.save", side_effect=capturing_save):
+        with patch("roboflow.Roboflow", return_value=mock_rf), patch("torch.save", side_effect=capturing_save):
             RFDETR.deploy_to_roboflow(
                 mock_self,
                 workspace="test-workspace",
@@ -1332,7 +1336,7 @@ class TestDeployToRoboflow:
         mock_rf = MagicMock()
         mock_rf.workspace.return_value.project.return_value.version.return_value.deploy.return_value = None
 
-        with patch("rfdetr.detr.Roboflow", return_value=mock_rf):
+        with patch("roboflow.Roboflow", return_value=mock_rf):
             RFDETR.deploy_to_roboflow(
                 mock_self,
                 workspace="test-workspace",
@@ -1342,3 +1346,26 @@ class TestDeployToRoboflow:
             )
 
         assert not (tmp_path / ".roboflow_temp_upload").exists(), "Temp upload dir must be removed after deploy"
+
+    def test_temp_dir_cleaned_up_after_deploy_failure(self, tmp_path, monkeypatch):
+        """Temp upload dir must be removed even when deploy() raises an exception."""
+        monkeypatch.chdir(tmp_path)
+
+        mock_self = self._make_mock_self(["cat"])
+        mock_rf = MagicMock()
+        mock_rf.workspace.return_value.project.return_value.version.return_value.deploy.side_effect = RuntimeError(
+            "upload failed"
+        )
+
+        with patch("roboflow.Roboflow", return_value=mock_rf), pytest.raises(RuntimeError, match="upload failed"):
+            RFDETR.deploy_to_roboflow(
+                mock_self,
+                workspace="test-workspace",
+                project_id="test-project",
+                version=1,
+                api_key="dummy-key",
+            )
+
+        assert not (tmp_path / ".roboflow_temp_upload").exists(), (
+            "Temp upload dir must be removed even after a failed deploy"
+        )
