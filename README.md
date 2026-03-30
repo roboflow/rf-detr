@@ -133,7 +133,7 @@ from rfdetr.assets.coco_classes import COCO_CLASSES
 
 model = RFDETRMedium()
 
-image = Image.open("https://media.roboflow.com/dog.jpg")
+image = Image.open(requests.get("https://media.roboflow.com/dog.jpg", stream=True).raw)
 detections = model.predict(image, threshold=0.5)
 
 labels = [f"{COCO_CLASSES[class_id]}" for class_id in detections.class_id]
@@ -157,7 +157,7 @@ from inference import get_model
 
 model = get_model("rfdetr-medium")
 
-image = Image.open("https://media.roboflow.com/dog.jpg")
+image = Image.open(requests.get("https://media.roboflow.com/dog.jpg", stream=True).raw)
 predictions = model.infer(image, confidence=0.5)[0]
 detections = sv.Detections.from_inference(predictions)
 
@@ -191,7 +191,7 @@ from rfdetr.assets.coco_classes import COCO_CLASSES
 
 model = RFDETRSegMedium()
 
-image = Image.open("https://media.roboflow.com/dog.jpg")
+image = Image.open(requests.get("https://media.roboflow.com/dog.jpg", stream=True).raw)
 detections = model.predict(image, threshold=0.5)
 
 labels = [f"{COCO_CLASSES[class_id]}" for class_id in detections.class_id]
@@ -215,7 +215,7 @@ from inference import get_model
 
 model = get_model("rfdetr-seg-medium")
 
-image = Image.open("https://media.roboflow.com/dog.jpg")
+image = Image.open(requests.get("https://media.roboflow.com/dog.jpg", stream=True).raw)
 predictions = model.infer(image, confidence=0.5)[0]
 detections = sv.Detections.from_inference(predictions)
 
