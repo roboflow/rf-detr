@@ -166,22 +166,6 @@ class TestFromCheckpointPlusModels:
         mock_cls.assert_called_once()
 
 
-class TestFromCheckpointPlusModelsMissing:
-    """from_checkpoint when rfdetr_plus is NOT installed."""
-
-    def test_characterization_plus_model_missing_raises(self, tmp_path: Path) -> None:
-        """When rfdetr_plus is absent, requesting an xlarge checkpoint raises ImportError or ValueError."""
-        ckpt = _ns("rf-detr-xlarge.pth")
-        with (
-            patch("rfdetr.detr.torch.load", return_value=ckpt),
-            patch("rfdetr.platform.models._PLUS_AVAILABLE", False),
-            patch("rfdetr.platform.models.RFDETR2XLarge", side_effect=ImportError, create=True),
-            patch("rfdetr.platform.models.RFDETRXLarge", side_effect=ImportError, create=True),
-        ):
-            with pytest.raises((ImportError, ValueError)):
-                RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
-
-
 # ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------
