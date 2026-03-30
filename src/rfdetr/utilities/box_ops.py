@@ -17,8 +17,6 @@
 
 """Utilities for bounding box manipulation and GIoU."""
 
-from typing import Tuple
-
 import torch
 import torch.nn.functional as F
 from torchvision.ops.boxes import box_area
@@ -42,7 +40,7 @@ def box_xyxy_to_cxcywh(x: torch.Tensor) -> torch.Tensor:
 
 
 # modified from torchvision to also return the union
-def box_iou(boxes1: torch.Tensor, boxes2: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+def box_iou(boxes1: torch.Tensor, boxes2: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     """Compute pairwise IoU and union for two sets of boxes.
 
     Returns:

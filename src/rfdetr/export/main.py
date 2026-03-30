@@ -40,7 +40,7 @@ def make_infer_image(infer_dir, shape, batch_size, device="cuda"):
 
     transforms = Compose(
         [
-            Resize((shape[0], shape[0])),
+            Resize((shape[0], shape[1])),
             ToImage(),
             ToDtype(torch.float32, scale=True),
             Normalize(),

@@ -15,7 +15,7 @@ import warnings
 from collections import defaultdict
 from copy import deepcopy
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Optional, Union
+from typing import TYPE_CHECKING, Any, List, Optional, Union
 
 import numpy as np
 import requests
@@ -67,6 +67,90 @@ _VARIANT_EXPORTS = (
 __all__ = ["RFDETR", "ModelContext", *_VARIANT_EXPORTS]
 
 
+def _validate_shape_dims(
+    shape: object,
+    block_size: int,
+    patch_size: int,
+    num_windows: int,
+) -> tuple[int, int]:
+    """Validate a user-supplied ``(height, width)`` shape tuple and return normalised plain-int dims.
+
+    Args:
+        shape: The raw value supplied by the caller (e.g. from ``export(shape=...)`` or
+            ``predict(shape=...)``).  Must be a two-element sequence of positive integers
+            (or integer-compatible types accepted by :func:`operator.index`).
+        block_size: Required divisor for both dimensions.  Equals ``patch_size * num_windows``.
+        patch_size: Backbone patch size — used only in error messages.
+        num_windows: Number of attention windows — used only in error messages.
+
+    Returns:
+        A ``(height, width)`` tuple of plain Python :class:`int` values.
+
+    Raises:
+        ValueError: If ``shape`` cannot be unpacked as a two-element sequence, if either
+            dimension is a bool, float, or other non-integer type, if either dimension is
+            not positive, or if either dimension is not divisible by ``block_size``.
+    """
+    try:
+        height, width = shape  # type: ignore[misc]
+    except (TypeError, ValueError):
+        raise ValueError(f"shape must be a sequence of two positive integers (height, width), got {shape!r}.") from None
+    for dim_name, dim in (("height", height), ("width", width)):
+        if isinstance(dim, bool):
+            raise ValueError(f"shape {dim_name} must be an integer, got {type(dim).__name__} (shape={shape!r}).")
+        try:
+            operator.index(dim)
+        except TypeError:
+            raise ValueError(
+                f"shape {dim_name} must be an integer, got {type(dim).__name__} (shape={shape!r})."
+            ) from None
+        if dim <= 0:
+            raise ValueError(f"shape must contain positive integers for height and width, got {shape!r}.")
+    # Normalise to plain Python ints; also accepts numpy.int64, torch scalars, etc.
+    height, width = operator.index(height), operator.index(width)
+    if height % block_size != 0 or width % block_size != 0:
+        raise ValueError(
+            f"shape must have both dimensions divisible by {block_size} "
+            f"(patch_size={patch_size} * num_windows={num_windows}), got {shape!r}."
+        )
+    return height, width
+
+
+def _resolve_patch_size(patch_size: int | None, model_config: object, caller: str) -> int:
+    """Resolve and validate the ``patch_size`` argument for :meth:`RFDETR.export` and :meth:`RFDETR.predict`.
+
+    Args:
+        patch_size: Value supplied by the caller, or ``None`` to read from ``model_config``.
+        model_config: The model's configuration object.  Must expose ``patch_size`` as a
+            positive integer attribute when ``patch_size`` is ``None`` or when a mismatch
+            check is needed.
+        caller: Name of the calling method (``"export"`` or ``"predict"``) — used in
+            error messages to help the caller locate the problem.
+
+    Returns:
+        A validated, positive :class:`int` patch size.
+
+    Raises:
+        ValueError: If the resolved or provided ``patch_size`` is not a positive integer,
+            or if a caller-provided value disagrees with ``model_config.patch_size``.
+    """
+    if patch_size is None:
+        patch_size = getattr(model_config, "patch_size", 14)
+    else:
+        if isinstance(patch_size, bool) or not isinstance(patch_size, int) or patch_size <= 0:
+            raise ValueError(f"patch_size must be a positive integer, got {patch_size!r}")
+        model_patch_size = getattr(model_config, "patch_size", None)
+        if model_patch_size is not None and patch_size != model_patch_size:
+            raise ValueError(
+                f"{caller}(patch_size={patch_size}) does not match the instantiated model's "
+                f"patch_size={model_patch_size}. Patch size is an architectural parameter; "
+                f"omit patch_size to use the model's configured value."
+            )
+    if isinstance(patch_size, bool) or not isinstance(patch_size, int) or patch_size <= 0:
+        raise ValueError(f"patch_size must be a positive integer, got {patch_size!r}")
+    return patch_size
+
+
 class RFDETR:
     """
     The base RF-DETR class implements the core methods for training RF-DETR models,
@@ -109,6 +193,45 @@ class RFDETR:
         """
         return self._model_config_class(**kwargs)
 
+    @staticmethod
+    def _resolve_trainer_device_kwargs(device: Any) -> tuple[str | None, list[int] | None]:
+        """Map a torch-style device specifier to PTL ``accelerator``/``devices`` kwargs.
+
+        Args:
+            device: A device specifier accepted by ``torch.device``.
+
+        Returns:
+            ``(accelerator, devices)`` where ``devices`` is ``None`` unless an explicit
+            device index is provided (for example ``cuda:1``).
+
+        Raises:
+            ValueError: If ``device`` is not a valid torch device specifier.
+        """
+        if device is None:
+            return None, None
+        try:
+            resolved_device = torch.device(device)
+        except (TypeError, ValueError, RuntimeError) as exc:
+            raise ValueError(
+                f"Invalid device specifier for train(): {device!r}. "
+                "Expected values like 'cpu', 'cuda', 'cuda:0', or torch.device(...)."
+            ) from exc
+
+        if resolved_device.type == "cpu":
+            return "cpu", None
+        if resolved_device.type == "cuda":
+            return "gpu", [resolved_device.index] if resolved_device.index is not None else None
+        if resolved_device.type == "mps":
+            return "mps", [resolved_device.index] if resolved_device.index is not None else None
+
+        warnings.warn(
+            f"Device type {resolved_device.type!r} is not explicitly mapped to a PyTorch Lightning "
+            "accelerator; falling back to PTL auto-detection. Training may use an unexpected device.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return None, None
+
     def train(self, **kwargs):
         """Train an RF-DETR model via the PyTorch Lightning stack.
 
@@ -116,8 +239,12 @@ class RFDETR:
         a :class:`~rfdetr.config.TrainConfig`.  Several legacy kwargs are absorbed
         so existing call-sites do not break:
 
-        * ``device`` — mapped to ``TrainConfig.accelerator``; ``"cpu"`` becomes
-          ``accelerator="cpu"``, all others default to ``"auto"``.
+        * ``device`` — normalized via :class:`torch.device` and mapped to PyTorch
+          Lightning trainer arguments. ``"cpu"`` becomes ``accelerator="cpu"``;
+          ``"cuda"`` and ``"cuda:N"`` become ``accelerator="gpu"`` and optionally
+          ``devices=[N]``; ``"mps"`` becomes ``accelerator="mps"``. Other valid
+          torch device types fall back to PTL auto-detection and emit a
+          :class:`UserWarning`.
         * ``callbacks`` — if the dict contains any non-empty lists a
           :class:`DeprecationWarning` is emitted; the dict is then discarded.
           Use PTL :class:`~pytorch_lightning.Callback` objects passed via
@@ -159,23 +286,10 @@ class RFDETR:
                 stacklevel=2,
             )
 
-        # Absorb legacy `device` kwarg.  When the caller explicitly requests CPU
-        # (e.g. in tests or CPU-only environments), honour it by forwarding it as
-        # the PTL accelerator.  All other device strings (e.g. "cuda:1") are not
-        # forwarded — PTL auto-selects the best available device — so emit a
-        # DeprecationWarning so callers know the value was not honoured.
+        # Parse `device` kwarg and map it to PTL accelerator/devices.
+        # Supports torch-style strings and torch.device (e.g. "cuda:1").
         _device = kwargs.pop("device", None)
-        _accelerator = "cpu" if _device == "cpu" else None
-        if _device is not None and _device != "cpu":
-            warnings.warn(
-                f"`device='{_device}'` is deprecated and ignored; PTL auto-selects the"
-                " accelerator. To pin a specific device, configure your"
-                " accelerator/backend explicitly (for example, use"
-                " `CUDA_VISIBLE_DEVICES` for CUDA) or configure a PTL Trainer"
-                " directly.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
+        _accelerator, _devices = RFDETR._resolve_trainer_device_kwargs(_device)
 
         # Absorb legacy `start_epoch` — PTL resumes automatically via ckpt_path.
         if "start_epoch" in kwargs:
@@ -212,7 +326,10 @@ class RFDETR:
             )
         module = RFDETRModelModule(self.model_config, config)
         datamodule = RFDETRDataModule(self.model_config, config)
-        trainer = build_trainer(config, self.model_config, accelerator=_accelerator)
+        trainer_kwargs = {"accelerator": _accelerator}
+        if _devices is not None:
+            trainer_kwargs["devices"] = _devices
+        trainer = build_trainer(config, self.model_config, **trainer_kwargs)
         trainer.fit(module, datamodule, ckpt_path=config.resume or None)
 
         # Sync the trained weights back so predict() / export() see the updated model.
@@ -278,9 +395,10 @@ class RFDETR:
         opset_version: int = 17,
         verbose: bool = True,
         force: bool = False,
-        shape: tuple = None,
+        shape: tuple[int, int] | None = None,
         batch_size: int = 1,
         dynamic_batch: bool = False,
+        patch_size: int | None = None,
         **kwargs,
     ) -> None:
         """Export the trained model to ONNX format.
@@ -297,9 +415,14 @@ class RFDETR:
             verbose: Print export progress information.
             force: Deprecated and ignored.
             shape: ``(height, width)`` tuple; defaults to square at model resolution.
+                Both dimensions must be divisible by ``patch_size * num_windows``.
             batch_size: Static batch size to bake into the ONNX graph.
             dynamic_batch: If True, export with a dynamic batch dimension
                 so the ONNX model accepts variable batch sizes at runtime.
+            patch_size: Backbone patch size. Defaults to the value stored in
+                ``model_config.patch_size`` (typically 14 or 16). When provided
+                explicitly it must match the instantiated model's patch size.
+                Shape divisibility is validated against ``patch_size * num_windows``.
             **kwargs: Additional keyword arguments forwarded to export_onnx.
         """
         logger.info("Exporting model to ONNX format")
@@ -318,11 +441,21 @@ class RFDETR:
 
         os.makedirs(output_dir, exist_ok=True)
         output_dir_path = Path(output_dir)
+        patch_size = _resolve_patch_size(patch_size, self.model_config, "export")
+        num_windows = getattr(self.model_config, "num_windows", 1)
+        if isinstance(num_windows, bool) or not isinstance(num_windows, int) or num_windows <= 0:
+            raise ValueError(f"num_windows must be a positive integer, got {num_windows!r}")
+        block_size = patch_size * num_windows
         if shape is None:
             shape = (self.model.resolution, self.model.resolution)
+            if shape[0] % block_size != 0:
+                raise ValueError(
+                    f"Model's default resolution ({self.model.resolution}) is not divisible by "
+                    f"block_size={block_size} (patch_size={patch_size} * num_windows={num_windows}). "
+                    f"Provide an explicit shape divisible by {block_size}."
+                )
         else:
-            if shape[0] % 14 != 0 or shape[1] % 14 != 0:
-                raise ValueError("Shape must be divisible by 14")
+            shape = _validate_shape_dims(shape, block_size, patch_size, num_windows)
 
         input_tensors = make_infer_image(infer_dir, shape, batch_size, device).to(device)
         input_names = ["input"]
@@ -465,6 +598,7 @@ class RFDETR:
         ],
         threshold: float = 0.5,
         shape: tuple[int, int] | None = None,
+        patch_size: int | None = None,
         **kwargs,
     ) -> Union[sv.Detections, List[sv.Detections]]:
         """Performs object detection on the input images and returns bounding box
@@ -486,8 +620,13 @@ class RFDETR:
                 When provided, overrides the model's default inference resolution. The
                 tuple should match the resolution used when exporting the model
                 (typically a square shape). Both dimensions must be positive integers
-                divisible by 14. Defaults to ``(model.resolution, model.resolution)``
-                when not set.
+                divisible by ``patch_size * num_windows``. Defaults to
+                ``(model.resolution, model.resolution)`` when not set.
+            patch_size:
+                Backbone patch size used for shape divisibility validation. Defaults
+                to ``model_config.patch_size`` (typically 14 for large models, 16 for
+                smaller ones). Divisibility is checked against
+                ``patch_size * num_windows``.
             **kwargs:
                 Additional keyword arguments.
 
@@ -499,39 +638,28 @@ class RFDETR:
             ValueError: If ``shape`` cannot be unpacked as a two-element sequence,
                 if either dimension does not support the ``__index__`` protocol
                 (e.g. ``float``) or is a ``bool``, if either dimension is zero or
-                negative, or if either dimension is not divisible by 14.
+                negative, if either dimension is not divisible by
+                ``patch_size * num_windows``, or if ``patch_size`` is not a positive
+                integer.
         """
         import supervision as sv
 
-        if shape is not None:
-            try:
-                height, width = shape
-            except (TypeError, ValueError):
+        patch_size = _resolve_patch_size(patch_size, self.model_config, "predict")
+        num_windows = getattr(self.model_config, "num_windows", 1)
+        if isinstance(num_windows, bool) or not isinstance(num_windows, int) or num_windows <= 0:
+            raise ValueError(f"model_config.num_windows must be a positive integer, got {num_windows!r}")
+        block_size = patch_size * num_windows
+
+        if shape is None:
+            default_res = self.model.resolution
+            if default_res % block_size != 0:
                 raise ValueError(
-                    f"shape must be a sequence of two positive integers (height, width), got {shape!r}."
-                ) from None
-
-            for dim_name, dim in (("height", height), ("width", width)):
-                if isinstance(dim, bool):
-                    raise ValueError(
-                        f"shape {dim_name} must be an integer, got {type(dim).__name__} (shape={shape!r})."
-                    )
-                try:
-                    operator.index(dim)
-                except TypeError:
-                    raise ValueError(
-                        f"shape {dim_name} must be an integer, got {type(dim).__name__} (shape={shape!r})."
-                    ) from None
-                if dim <= 0:
-                    raise ValueError(f"shape must contain positive integers for height and width, got {shape!r}.")
-
-            # Normalize to plain Python ints; also accepts numpy.int64, torch scalars, etc.
-            height, width = operator.index(height), operator.index(width)
-
-            if height % 14 != 0 or width % 14 != 0:
-                raise ValueError(f"shape must have both dimensions divisible by 14, got {shape!r}.")
-
-            shape = (height, width)
+                    f"Model's default resolution ({default_res}) is not divisible by "
+                    f"block_size={block_size} (patch_size={patch_size} * num_windows={num_windows}). "
+                    f"Provide an explicit shape divisible by {block_size}."
+                )
+        else:
+            shape = _validate_shape_dims(shape, block_size, patch_size, num_windows)
 
         if not self._is_optimized_for_inference and not self._has_warned_about_not_being_optimized_for_inference:
             logger.warning(

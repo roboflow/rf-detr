@@ -9,7 +9,6 @@
 import logging
 import os
 import sys
-from typing import Optional
 
 
 class _RFDETRLogger(logging.Logger):
@@ -26,7 +25,7 @@ class _RFDETRLogger(logging.Logger):
             self.warning(msg, *args, **kwargs)
 
 
-def get_logger(name: str = "rf-detr", level: Optional[int] = None) -> _RFDETRLogger:
+def get_logger(name: str = "rf-detr", level: int | None = None) -> _RFDETRLogger:
     """Creates and configures a logger with stdout and stderr handlers.
 
     This function creates a logger that sends INFO and DEBUG level logs to stdout,

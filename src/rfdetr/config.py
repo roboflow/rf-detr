@@ -69,7 +69,8 @@ class ModelConfig(BaseConfig):
     amp: bool = True
     num_classes: int = 90
     pretrain_weights: Optional[str] = None
-    device: Literal["cpu", "cuda", "mps"] = DEVICE
+    # torch.device values are accepted at validation time and normalized to string.
+    device: str = DEVICE
     resolution: int
     group_detr: int = 13
     gradient_checkpointing: bool = False
@@ -114,6 +115,32 @@ class ModelConfig(BaseConfig):
         if v is None:
             return v
         return os.path.realpath(os.path.expanduser(v))
+
+    @field_validator("device", mode="before")
+    @classmethod
+    def _normalize_device(cls, v: Any) -> str:
+        """Normalize supported device inputs to a canonical torch-style string.
+
+        Args:
+            v: Device specifier provided by callers. Supported values are
+                ``str`` (for example ``"cpu"``, ``"cuda"``, ``"cuda:1"``)
+                and ``torch.device``.
+
+        Returns:
+            Canonical string form of the parsed device (for example ``"cuda:1"``).
+
+        Raises:
+            ValueError: If a string value cannot be parsed as a valid torch device.
+            ValueError: If ``v`` is not a string or ``torch.device``.
+        """
+        if isinstance(v, torch.device):
+            return str(v)
+        if isinstance(v, str):
+            try:
+                return str(torch.device(v))
+            except (TypeError, ValueError, RuntimeError) as exc:
+                raise ValueError(f"Invalid device specifier: {v!r}.") from exc
+        raise ValueError("device must be a string or torch.device.")
 
 
 class RFDETRBaseConfig(ModelConfig):
