@@ -38,6 +38,7 @@ from rfdetr.datasets.coco import is_valid_coco_dataset
 from rfdetr.datasets.yolo import is_valid_yolo_dataset
 from rfdetr.inference import ModelContext, _build_model_context
 from rfdetr.utilities.decorators import deprecated
+from rfdetr.utilities.distributed import is_main_process
 from rfdetr.utilities.logger import get_logger
 
 try:
@@ -474,6 +475,23 @@ class RFDETR:
             dataset_class_names = getattr(datamodule, "class_names", None)
             if dataset_class_names is not None:
                 self.model.class_names = dataset_class_names
+
+        # Save complete training configuration to disk for reproducibility.
+        # Guard to main process only to avoid races in distributed/multi-GPU training.
+        if is_main_process():
+            complete_config = {
+                "train_config": config.model_dump(),
+                "model_config": self.model_config.model_dump(),
+                "model_config_type": self.model_config.__class__.__name__,
+                "class_names": self.model.class_names,
+                "num_classes": len(self.model.class_names) if self.model.class_names else 0,
+            }
+            try:
+                os.makedirs(config.output_dir, exist_ok=True)
+                with open(os.path.join(config.output_dir, "training_config.json"), "w") as f:
+                    json.dump(complete_config, f, indent=2, default=str)
+            except OSError as exc:
+                logger.warning("Could not save training_config.json to %s: %s", config.output_dir, exc)
 
     def optimize_for_inference(self, compile=True, batch_size=1, dtype=torch.float32):
         self.remove_optimized_model()

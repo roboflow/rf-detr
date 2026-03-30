@@ -16,9 +16,12 @@
 import argparse
 import builtins
 import importlib
+import json
+import os
 import sys
 import warnings
 from collections import defaultdict
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -135,12 +138,7 @@ class TestRFDETRTrainPTL:
 
     def test_ckpt_path_none_when_resume_is_empty_string(self, tmp_path):
         """config.resume='' is coerced to ckpt_path=None via `resume or None`."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        # Create a real TrainConfig-like object where resume is ""
-        mock_config = MagicMock(spec=TrainConfig)
-        mock_config.resume = ""
-        mock_config.batch_size = 4  # int so auto-batch branch is not taken
-        mock_self.get_train_config.return_value = mock_config
+        mock_self = _make_rfdetr_self(tmp_path, resume="")
 
         p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = _patch_lit()
         with p_mod, p_dm, p_bt:
@@ -1400,3 +1398,71 @@ class TestDeployToRoboflow:
         assert not (tmp_path / ".roboflow_temp_upload").exists(), (
             "Temp upload dir must be removed even after a failed deploy"
         )
+
+
+# ---------------------------------------------------------------------------
+# TestSaveTrainingConfig
+# ---------------------------------------------------------------------------
+
+
+class TestSaveTrainingConfig:
+    """RFDETR.train() writes training_config.json to output_dir after training."""
+
+    def _run_train(self, tmp_path, class_names=None, **train_overrides):
+        """Run RFDETR.train() with patched PTL; return (mock_self, output_dir path).
+
+        class_names is injected via the datamodule mock (the path RFDETR.train uses
+        to sync self.model.class_names after trainer.fit completes).
+        """
+        if class_names is None:
+            class_names = ["cat", "dog", "bird"]
+        mock_self = _make_rfdetr_self(tmp_path, **train_overrides)
+        p_mod, p_dm, p_bt, _, dmcls, _ = _patch_lit()
+        dmcls.return_value.class_names = class_names
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self)
+        config = mock_self.get_train_config.return_value
+        return mock_self, config.output_dir
+
+    def test_training_config_json_created(self, tmp_path):
+        """training_config.json is written to output_dir after train() completes."""
+        _, output_dir = self._run_train(tmp_path)
+        assert os.path.exists(os.path.join(output_dir, "training_config.json"))
+
+    def test_training_config_json_has_required_keys(self, tmp_path):
+        """Saved JSON contains all expected top-level keys."""
+        _, output_dir = self._run_train(tmp_path)
+        with open(os.path.join(output_dir, "training_config.json")) as f:
+            saved = json.load(f)
+        assert set(saved.keys()) == {"train_config", "model_config", "model_config_type", "class_names", "num_classes"}
+
+    def test_training_config_json_class_names_and_num_classes(self, tmp_path):
+        """class_names and num_classes in saved JSON match model state after training."""
+        _, output_dir = self._run_train(tmp_path)
+        with open(os.path.join(output_dir, "training_config.json")) as f:
+            saved = json.load(f)
+        assert saved["class_names"] == ["cat", "dog", "bird"]
+        assert saved["num_classes"] == 3
+
+    def test_model_config_type_reflects_class_name(self, tmp_path):
+        """model_config_type field matches the actual model config class name."""
+        _, output_dir = self._run_train(tmp_path)
+        with open(os.path.join(output_dir, "training_config.json")) as f:
+            saved = json.load(f)
+        assert saved["model_config_type"] == "RFDETRBaseConfig"
+
+    def test_non_serializable_value_coerced_not_raises(self, tmp_path):
+        """Non-JSON-serializable values are coerced via default=str, not raising TypeError."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        p_mod, p_dm, p_bt, _, dmcls, _ = _patch_lit()
+        dmcls.return_value.class_names = [Path("/some/class"), None]
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self)  # must not raise TypeError
+        config = mock_self.get_train_config.return_value
+        assert os.path.exists(os.path.join(config.output_dir, "training_config.json"))
+
+    def test_output_dir_created_when_missing(self, tmp_path):
+        """output_dir is created by makedirs if it does not exist before training."""
+        nested_dir = str(tmp_path / "new" / "nested" / "output")
+        _, output_dir = self._run_train(tmp_path, output_dir=nested_dir)
+        assert os.path.exists(os.path.join(output_dir, "training_config.json"))
