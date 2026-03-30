@@ -1215,7 +1215,7 @@ class TestDeployToRoboflow:
     Roboflow with a FileNotFoundError from the Roboflow client library.
     """
 
-    def _make_mock_self(self, class_names, size="rfdetr-base"):
+    def _make_mock_self(self, class_names, size="rfdetr-small"):
         """Return a minimal RFDETR-like mock suitable for deploy_to_roboflow."""
         mock_self = MagicMock(spec=RFDETR)
         mock_self.size = size
