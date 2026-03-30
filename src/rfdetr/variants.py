@@ -213,8 +213,6 @@ class RFDETRSeg2XLarge(RFDETRSeg):
     _model_config_class = RFDETRSeg2XLargeConfig
 
 
-
-
 def from_checkpoint(path, **kwargs):
     """Load an RF-DETR model from a training checkpoint, automatically
     inferring the model size from the saved args.
