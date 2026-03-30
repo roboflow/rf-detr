@@ -847,8 +847,8 @@ class RFDETR:
             outpath = os.path.join(tmp_out_dir, "weights.pt")
             torch.save({"model": self.model.model.state_dict(), "args": args}, outpath)
             project = workspace.project(project_id)
-            version = project.version(version)
-            version.deploy(model_type=size, model_path=tmp_out_dir, filename="weights.pt")
+            project_version = project.version(version)
+            project_version.deploy(model_type=size, model_path=tmp_out_dir, filename="weights.pt")
         finally:
             shutil.rmtree(tmp_out_dir, ignore_errors=True)
 
