@@ -829,7 +829,7 @@ class RFDETR:
             # Write class_names.txt so the Roboflow upload pipeline can discover
             # the class labels without relying on args.class_names in the checkpoint.
             class_names_path = os.path.join(tmp_out_dir, "class_names.txt")
-            with open(class_names_path, "w") as f:
+            with open(class_names_path, "w", encoding="utf-8", newline="\n") as f:
                 f.write("\n".join(self.class_names))
 
             # Also embed class_names in the args namespace so that any code path
