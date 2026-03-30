@@ -211,7 +211,14 @@ class RFDETR:
             An instance of the appropriate :class:`RFDETR` subclass loaded from
             the checkpoint.
 
+        Warning:
+            This method calls ``torch.load`` with ``weights_only=False``, which
+            unpickles arbitrary Python objects. Only load checkpoints from
+            trusted sources.
+
         Raises:
+            FileNotFoundError: If *path* does not exist.
+            OSError: If *path* exists but cannot be read.
             KeyError: If the checkpoint does not contain an ``"args"`` key.
             ValueError: If the model size cannot be inferred from the
                 ``pretrain_weights`` field in the saved args.
