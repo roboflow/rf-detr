@@ -15,7 +15,7 @@ import warnings
 from collections import defaultdict
 from copy import deepcopy
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, List, Optional, Union
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import requests
@@ -90,6 +90,7 @@ def _validate_shape_dims(
         ValueError: If ``shape`` cannot be unpacked as a two-element sequence, if either
             dimension is a bool, float, or other non-integer type, if either dimension is
             not positive, or if either dimension is not divisible by ``block_size``.
+
     """
     try:
         height, width = shape  # type: ignore[misc]
@@ -102,7 +103,7 @@ def _validate_shape_dims(
             operator.index(dim)
         except TypeError:
             raise ValueError(
-                f"shape {dim_name} must be an integer, got {type(dim).__name__} (shape={shape!r})."
+                f"shape {dim_name} must be an integer, got {type(dim).__name__} (shape={shape!r}).",
             ) from None
         if dim <= 0:
             raise ValueError(f"shape must contain positive integers for height and width, got {shape!r}.")
@@ -111,7 +112,7 @@ def _validate_shape_dims(
     if height % block_size != 0 or width % block_size != 0:
         raise ValueError(
             f"shape must have both dimensions divisible by {block_size} "
-            f"(patch_size={patch_size} * num_windows={num_windows}), got {shape!r}."
+            f"(patch_size={patch_size} * num_windows={num_windows}), got {shape!r}.",
         )
     return height, width
 
@@ -133,6 +134,7 @@ def _resolve_patch_size(patch_size: int | None, model_config: object, caller: st
     Raises:
         ValueError: If the resolved or provided ``patch_size`` is not a positive integer,
             or if a caller-provided value disagrees with ``model_config.patch_size``.
+
     """
     if patch_size is None:
         patch_size = getattr(model_config, "patch_size", 14)
@@ -144,7 +146,7 @@ def _resolve_patch_size(patch_size: int | None, model_config: object, caller: st
             raise ValueError(
                 f"{caller}(patch_size={patch_size}) does not match the instantiated model's "
                 f"patch_size={model_patch_size}. Patch size is an architectural parameter; "
-                f"omit patch_size to use the model's configured value."
+                f"omit patch_size to use the model's configured value.",
             )
     if isinstance(patch_size, bool) or not isinstance(patch_size, int) or patch_size <= 0:
         raise ValueError(f"patch_size must be a positive integer, got {patch_size!r}")
@@ -152,8 +154,7 @@ def _resolve_patch_size(patch_size: int | None, model_config: object, caller: st
 
 
 class RFDETR:
-    """
-    The base RF-DETR class implements the core methods for training RF-DETR models,
+    """The base RF-DETR class implements the core methods for training RF-DETR models,
     running inference on the models, optimising models, and uploading trained
     models for deployment.
     """
@@ -179,18 +180,14 @@ class RFDETR:
         self._optimized_dtype = None
 
     def maybe_download_pretrain_weights(self):
-        """
-        Download pre-trained weights if they are not already downloaded.
-        """
+        """Download pre-trained weights if they are not already downloaded."""
         pretrain_weights = self.model_config.pretrain_weights
         if pretrain_weights is None:
             return
         download_pretrain_weights(pretrain_weights)
 
     def get_model_config(self, **kwargs) -> ModelConfig:
-        """
-        Retrieve the configuration parameters used by the model.
-        """
+        """Retrieve the configuration parameters used by the model."""
         return self._model_config_class(**kwargs)
 
     @staticmethod
@@ -206,6 +203,7 @@ class RFDETR:
 
         Raises:
             ValueError: If ``device`` is not a valid torch device specifier.
+
         """
         if device is None:
             return None, None
@@ -214,7 +212,7 @@ class RFDETR:
         except (TypeError, ValueError, RuntimeError) as exc:
             raise ValueError(
                 f"Invalid device specifier for train(): {device!r}. "
-                "Expected values like 'cpu', 'cuda', 'cuda:0', or torch.device(...)."
+                "Expected values like 'cpu', 'cuda', 'cuda:0', or torch.device(...).",
             ) from exc
 
         if resolved_device.type == "cpu":
@@ -259,6 +257,7 @@ class RFDETR:
         Raises:
             ImportError: If training dependencies are not installed. Install with
                 ``pip install "rfdetr[train,loggers]"``.
+
         """
         # Both imports are grouped in a single try block because they both live in
         # the `rfdetr[train]` extras group — a missing `pytorch_lightning` (or any
@@ -274,7 +273,7 @@ class RFDETR:
                 raise
             raise ImportError(
                 "RF-DETR training dependencies are missing. "
-                'Install them with `pip install "rfdetr[train,loggers]"` and try again.'
+                'Install them with `pip install "rfdetr[train,loggers]"` and try again.',
             ) from exc
 
         # Absorb legacy `callbacks` dict — warn if non-empty, then discard.
@@ -360,7 +359,12 @@ class RFDETR:
             self.model.inference_model = torch.jit.trace(
                 self.model.inference_model,
                 torch.randn(
-                    batch_size, 3, self.model.resolution, self.model.resolution, device=self.model.device, dtype=dtype
+                    batch_size,
+                    3,
+                    self.model.resolution,
+                    self.model.resolution,
+                    device=self.model.device,
+                    dtype=dtype,
                 ),
             )
             self._optimized_has_been_compiled = True
@@ -424,6 +428,7 @@ class RFDETR:
                 explicitly it must match the instantiated model's patch size.
                 Shape divisibility is validated against ``patch_size * num_windows``.
             **kwargs: Additional keyword arguments forwarded to export_onnx.
+
         """
         logger.info("Exporting model to ONNX format")
         try:
@@ -431,7 +436,7 @@ class RFDETR:
         except ImportError:
             logger.error(
                 "It seems some dependencies for ONNX export are missing."
-                " Please run `pip install rfdetr[onnx]` and try again."
+                " Please run `pip install rfdetr[onnx]` and try again.",
             )
             raise
 
@@ -452,7 +457,7 @@ class RFDETR:
                 raise ValueError(
                     f"Model's default resolution ({self.model.resolution}) is not divisible by "
                     f"block_size={block_size} (patch_size={patch_size} * num_windows={num_windows}). "
-                    f"Provide an explicit shape divisible by {block_size}."
+                    f"Provide an explicit shape divisible by {block_size}.",
                 )
         else:
             shape = _validate_shape_dims(shape, block_size, patch_size, num_windows)
@@ -483,7 +488,7 @@ class RFDETR:
                 if isinstance(masks, torch.Tensor):
                     logger.debug(
                         f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}, "
-                        f"Masks: {masks.shape}"
+                        f"Masks: {masks.shape}",
                     )
                 else:
                     logger.debug(f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}")
@@ -514,11 +519,11 @@ class RFDETR:
         self.model.model = self.model.model.to(device)
 
     @staticmethod
-    def _load_classes(dataset_dir: str) -> List[str]:
+    def _load_classes(dataset_dir: str) -> list[str]:
         """Load class names from a COCO or YOLO dataset directory."""
         if is_valid_coco_dataset(dataset_dir):
             coco_path = os.path.join(dataset_dir, "train", "_annotations.coco.json")
-            with open(coco_path, "r") as f:
+            with open(coco_path) as f:
                 anns = json.load(f)
             categories = sorted(anns["categories"], key=lambda category: category.get("id", float("inf")))
 
@@ -546,23 +551,20 @@ class RFDETR:
             # any YAML file starting with data e.g. data.yaml, dataset.yaml
             yaml_data_files = [yp for yp in yaml_paths if os.path.basename(yp).startswith("data")]
             yaml_path = yaml_data_files[0]
-            with open(yaml_path, "r") as f:
+            with open(yaml_path) as f:
                 data = yaml.safe_load(f)
             if "names" in data:
                 if isinstance(data["names"], dict):
                     return [data["names"][i] for i in sorted(data["names"].keys())]
                 return data["names"]
-            else:
-                raise ValueError(f"Found {yaml_path} but it does not contain 'names' field.")
+            raise ValueError(f"Found {yaml_path} but it does not contain 'names' field.")
         raise FileNotFoundError(
             f"Could not find class names in {dataset_dir}."
-            " Checked for COCO (train/_annotations.coco.json) and YOLO (data.yaml, data.yml) styles."
+            " Checked for COCO (train/_annotations.coco.json) and YOLO (data.yaml, data.yml) styles.",
         )
 
     def get_train_config(self, **kwargs) -> TrainConfig:
-        """
-        Retrieve the configuration parameters that will be used for training.
-        """
+        """Retrieve the configuration parameters that will be used for training."""
         return self._train_config_class(**kwargs)
 
     def get_model(self, config: ModelConfig) -> ModelContext:
@@ -574,17 +576,19 @@ class RFDETR:
         Returns:
             ModelContext with model, postprocess, device, resolution, args,
             and class_names attributes.
+
         """
         return _build_model_context(config)
 
     @property
-    def class_names(self) -> List[str]:
+    def class_names(self) -> list[str]:
         """Retrieve the class names supported by the loaded model.
 
         Returns:
             A list of class name strings, 0-indexed.  When no custom class
             names are embedded in the checkpoint, returns the standard 80
             COCO class names.
+
         """
         if hasattr(self.model, "class_names") and self.model.class_names is not None:
             return list(self.model.class_names)
@@ -593,14 +597,12 @@ class RFDETR:
 
     def predict(
         self,
-        images: Union[
-            str, Image.Image, np.ndarray, torch.Tensor, List[Union[str, np.ndarray, Image.Image, torch.Tensor]]
-        ],
+        images: str | Image.Image | np.ndarray | torch.Tensor | list[str | np.ndarray | Image.Image | torch.Tensor],
         threshold: float = 0.5,
         shape: tuple[int, int] | None = None,
         patch_size: int | None = None,
         **kwargs,
-    ) -> Union[sv.Detections, List[sv.Detections]]:
+    ) -> sv.Detections | list[sv.Detections]:
         """Performs object detection on the input images and returns bounding box
         predictions.
 
@@ -641,6 +643,7 @@ class RFDETR:
                 negative, if either dimension is not divisible by
                 ``patch_size * num_windows``, or if ``patch_size`` is not a positive
                 integer.
+
         """
         import supervision as sv
 
@@ -656,7 +659,7 @@ class RFDETR:
                 raise ValueError(
                     f"Model's default resolution ({default_res}) is not divisible by "
                     f"block_size={block_size} (patch_size={patch_size} * num_windows={num_windows}). "
-                    f"Provide an explicit shape divisible by {block_size}."
+                    f"Provide an explicit shape divisible by {block_size}.",
                 )
         else:
             shape = _validate_shape_dims(shape, block_size, patch_size, num_windows)
@@ -664,7 +667,7 @@ class RFDETR:
         if not self._is_optimized_for_inference and not self._has_warned_about_not_being_optimized_for_inference:
             logger.warning(
                 "Model is not optimized for inference. Latency may be higher than expected."
-                " You can optimize the model for inference by calling model.optimize_for_inference()."
+                " You can optimize the model for inference by calling model.optimize_for_inference().",
             )
             self._has_warned_about_not_being_optimized_for_inference = True
 
@@ -687,7 +690,7 @@ class RFDETR:
 
             if (img > 1).any():
                 raise ValueError(
-                    "Image has pixel values above 1. Please ensure the image is normalized (scaled to [0, 1])."
+                    "Image has pixel values above 1. Please ensure the image is normalized (scaled to [0, 1]).",
                 )
             if img.shape[0] != 3:
                 raise ValueError(f"Invalid image shape. Expected 3 channels (RGB), but got {img.shape[0]} channels.")
@@ -716,7 +719,7 @@ class RFDETR:
                     f"Resolution mismatch. "
                     f"Model was optimized for resolution {self._optimized_resolution}x{self._optimized_resolution}, "
                     f"but got {batch_tensor.shape[2]}x{batch_tensor.shape[3]}."
-                    " You can explicitly remove the optimized model by calling model.remove_optimized_model()."
+                    " You can explicitly remove the optimized model by calling model.remove_optimized_model().",
                 )
             if self._optimized_has_been_compiled:
                 if self._optimized_batch_size != batch_tensor.shape[0]:
@@ -726,7 +729,7 @@ class RFDETR:
                         f"but got {batch_tensor.shape[0]}."
                         " You can explicitly remove the optimized model by calling model.remove_optimized_model()."
                         " Alternatively, you can recompile the optimized model for a different batch size"
-                        " by calling model.optimize_for_inference(batch_size=<new_batch_size>)."
+                        " by calling model.optimize_for_inference(batch_size=<new_batch_size>).",
                     )
 
         with torch.no_grad():
@@ -782,11 +785,10 @@ class RFDETR:
         workspace: str,
         project_id: str,
         version: str,
-        api_key: Optional[str] = None,
-        size: Optional[str] = None,
+        api_key: str | None = None,
+        size: str | None = None,
     ) -> None:
-        """
-        Deploy the trained RF-DETR model to Roboflow.
+        """Deploy the trained RF-DETR model to Roboflow.
 
         Deploying with Roboflow will create a Serverless API to which you can make requests.
 
@@ -806,6 +808,7 @@ class RFDETR:
             ValueError: If the `api_key` is not provided and not found in the
                 environment variable `ROBOFLOW_API_KEY`, or if the `size` is
                 not set for custom architectures.
+
         """
         import shutil
 
@@ -852,7 +855,6 @@ class RFDETR:
 
 def __getattr__(name: str):
     """Lazily resolve legacy re-exports without creating import-order cycles."""
-
     if name in _VARIANT_EXPORTS:
         module = importlib.import_module("rfdetr.variants")
         value = getattr(module, name)
@@ -864,5 +866,4 @@ def __getattr__(name: str):
 
 def __dir__() -> list[str]:
     """Include lazy re-exports in interactive discovery."""
-
     return sorted(set(globals()) | set(_VARIANT_EXPORTS))
