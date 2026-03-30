@@ -70,6 +70,7 @@ instance/
 
 # Sphinx documentation
 docs/_build/
+docs/adr/
 
 # PyBuilder
 .pybuilder/
@@ -98,7 +99,7 @@ ipython_config.py
 #   Similar to Pipfile.lock, it is generally recommended to include uv.lock in version control.
 #   This is especially recommended for binary packages to ensure reproducibility, and is more
 #   commonly ignored for libraries.
-#uv.lock
+uv.lock
 
 # poetry
 #   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.
@@ -173,6 +174,7 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
+# Jetbrain's IDEs
 .idea/
 
 # model artifacts
@@ -180,3 +182,24 @@ rf-detr*
 output/*
 
 train_test.py
+
+# test artifacts
+test_visualizations/
+
+# datasets
+data/
+datasets/
+
+debugging/
+
+# AI assistant
+.claude/
+
+# Local docs development (versions.json is managed by mike on gh-pages in production)
+docs/versions.json
+
+# do not upload python version or notebooks
+notebooks/*.py
+
+# tracking work in progress
+tasks/

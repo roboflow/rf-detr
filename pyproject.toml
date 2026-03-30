@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rfdetr"
-version = "1.4.0.post0"
+version = "1.6.0"
 description = "RF-DETR"
 readme = "README.md"
 authors = [
-    {name = "Roboflow, Inc", email = "peter@roboflow.com"}
+    {name = "Roboflow, Inc", email = "develop@roboflow.com"}
 ]
 license = {text = "Apache License 2.0"}
 requires-python = ">=3.10"
@@ -35,36 +35,67 @@ classifiers = [
 keywords = ["machine-learning", "deep-learning", "vision", "ML", "DL", "AI", "DETR", "RF-DETR", "Roboflow"]
 
 dependencies = [
-    "pycocotools",
-    "torch>=1.13.0,<=2.8.0", # TODO: Torch >=2.9.0 is excluded due to known issues. PRs that help lift this restriction are welcome.
-    "torchvision>=0.14.0",
-    "scipy",
-    "tqdm",
-    "numpy",
-    "transformers>4.0.0, <5.0.0",
-    "peft",
-    "polygraphy",
-    "rf100vl",
-    "pydantic",
-    "supervision",
-    "matplotlib",
-    "roboflow",
-    "pillow-avif-plugin<1.5.3" # TODO: # Temporary pin. pillow-avif-plugin 1.5.3 fails to install in CI due to a broken wheel. Remove once the upstream issue is fixed.
+    "requests",                        # weight download from remote URLs
+    "torch>=2.2.0",                    # core tensor ops and model forward pass
+    "torchvision>=0.17.0",             # image transforms and ops (aligned with torch>=2.2.0)
+    "tqdm",                            # progress bars during weight download
+    "transformers>=5.1.0,<6.0.0",     # DINOv2 backbone loading
+    "pydantic>=2.0,<3",               # ModelConfig / TrainConfig validation
+    "supervision",                     # inference output (Detections, Masks)
+    "pyDeprecate>=0.3,<0.6",           # deprecation warnings for legacy APIs
 ]
 
 [project.optional-dependencies]
-onnxexport = [
-    "onnx",
-    "onnxsim",
+lora = [
+    "peft",                            # LoRA backbone fine-tuning
+]
+train = [
+    "peft",                            # LoRA backbone fine-tuning (available during training)
+    "pytorch_lightning>=2.6,<3",
+    "torchmetrics[detection]>=1.2",
+    "faster-coco-eval>=1.7.2",
+    "pycocotools",
+    "scipy",
+    "albumentations>=1.4.24,<3.0.0",
+    "roboflow",
+    "rf100vl",
+]
+onnx = [
+    "onnx>=1.16.0,<1.20",
+    "onnxsim<0.6.0",  # TODO: onnxsim 0.6.0+ hangs on install
     "onnx_graphsurgeon",
-    "onnxruntime"
+    "onnxruntime",
+    "polygraphy",
 ]
-metrics = [
+trt = [
+    "pycuda",
+    "onnxruntime-gpu",
+    "tensorrt>=8.6.1",
+    "polygraphy",
+]
+loggers = [
     "tensorboard>=2.13.0",
-    "wandb"
+    "protobuf>=3.20.0,<4.0.0",  # Pins protobuf below 4.x to avoid TensorBoard descriptor crash with protobuf>=4 (see #844)
+    "wandb",
+    "mlflow",
+    "clearml",
 ]
+visual = [
+    "matplotlib",
+    "pandas",
+    "seaborn",
+]
+cli = ["jsonargparse[signatures]>=4.27.7"]
+plus = ["rfdetr_plus>=1.0.1, <2.0.0"]
 
 [dependency-groups]
+# TODO: Temporary: GPU runner only has CUDA 12.8 driver (12080); torch>=2.11 requires a newer driver.
+#   Remove this group and the --group ci-gpu-pin references in CI once the driver is updated.
+#   Does not affect users installing rfdetr from PyPI.
+ci-gpu-pin = [
+    "torch<2.11",
+]
+
 build = [
     "twine>=5.1.1",
     "wheel>=0.40",
@@ -72,8 +103,12 @@ build = [
 ]
 
 tests = [
-  "pytest>=7.2.2,<9",
+  "pytest>=7.2,<9",
   "pytest-cov>=4,<8",
+  "pytest-xdist>=3.6,<4",
+  "pytest-rerunfailures>=10,<15",
+  "pytest-timeout>=2,<3",
+  "tomli>=2.0; python_version < '3.11'",
 ]
 
 docs = [
@@ -82,7 +117,7 @@ docs = [
     "mkdocstrings-python>=1.10.9",
     "mike>=2.0.0",
     "mkdocs-jupyter>=0.24.3",
-    "mkdocs-git-committers-plugin-2>=2.4.1; python_version >= '3.8' and python_version < '4'",
+    "mkdocs-git-committers-plugin-2>=2.4.1",
     "mkdocs-git-revision-date-localized-plugin>=1.2.4"
 ]
 
@@ -90,9 +125,10 @@ docs = [
 Homepage = "https://github.com/roboflow/rf-detr"
 
 [project.scripts]
-rfdetr = "rfdetr.cli.main:trainer"
+rfdetr = "rfdetr.cli:main"
 
 [tool.setuptools.packages.find]
+where = ["src"]
 include = ["rfdetr*"]
 
 [tool.setuptools]
@@ -102,6 +138,7 @@ include-package-data = false
 rfdetr = ["py.typed", "models/backbone/dinov2_configs/*.json"]
 
 [tool.ruff]
+fix = true
 line-length = 120
 target-version = "py310"
 
@@ -110,17 +147,34 @@ select = [
     "E",  # pycodestyle errors
     "W",  # pycodestyle warnings
     "F",  # pyflakes
-]
-extend-select = [
     "I",  # isort
 ]
-ignore = [
-    "E501",  # todo: will be fixed with enabling ruff-format
-    "E722",  # todo: Do not use bare `except`
-    "E741",  # todo: Ambiguous variable name: `...`
-    "F401",  # todo: `...` imported but unused; consider removing, adding to `__all__`, or using a redundant alias
-    "F403",  # todo: `from ... import *` used; unable to detect undefined names
-    "F405",  # todo: `...` may be undefined, or defined from star imports
-    "E721",  # todo: Use `is` and `is not` for type comparisons, or `isinstance()` for isinstance checks
-    "F821",  # todo: Undefined name `...`
+extend-select = [
+    "RUF100",  # yesqa
 ]
+ignore = [
+    "E722",  # todo: Do not use bare `except`
+]
+
+[tool.ruff.lint.per-file-ignores]
+"notebooks/*.py" = ["E402"]  # cell-local imports are intentional in percent-format scripts
+
+[tool.pytest.ini_options]
+addopts = [
+    "-v",                   # verbose output
+    "--color=yes",          # colored output
+    "--doctest-modules",    # run doctests from all modules
+]
+pythonpath = ["src"]
+markers = [
+    "gpu: tests that require GPU or are slow on CPU",
+    "flaky: tests that may fail due to nondeterminism"
+]
+filterwarnings = [
+    # pytest-xdist workers close their channel before teardown completes;
+    # this is a known false-positive that does not affect test results.
+    "ignore::pluggy.PluggyTeardownRaisedWarning",
+]
+
+[tool.codespell]
+skip = "*.pth"

@@ -14,12 +14,13 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: 📥 Checkout the repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.0.1
 
       - name: 🐍 Install uv and set Python version ${{ inputs.python-version }}
-        uses: astral-sh/setup-uv@681c641aba71e4a1c380be3ab5e12ad51f415867 # v7.1.6
+        uses: astral-sh/setup-uv@v7.2.0
         with:
           python-version: ${{ inputs.python-version }}
           activate-environment: true
