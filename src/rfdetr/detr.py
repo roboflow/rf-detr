@@ -847,6 +847,10 @@ class RFDETR:
                 raise ValueError(
                     "Image has pixel values above 1. Please ensure the image is normalized (scaled to [0, 1]).",
                 )
+            if (img < 0).any():
+                raise ValueError(
+                    "Image has pixel values below 0. Please ensure the image is normalized (scaled to [0, 1]).",
+                )
             if img.shape[0] != 3:
                 raise ValueError(f"Invalid image shape. Expected 3 channels (RGB), but got {img.shape[0]} channels.")
             img_tensor = img
