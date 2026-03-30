@@ -156,7 +156,10 @@ class TestFromCheckpointPlusModels:
         "pretrain_weights, patch_target",
         [
             pytest.param("rf-detr-xlarge.pth", "rfdetr.platform.models.RFDETRXLarge", id="xlarge"),
-            pytest.param("rf-detr-xxlarge.pth", "rfdetr.platform.models.RFDETR2XLarge", id="2xlarge"),
+            pytest.param("rf-detr-xxlarge.pth", "rfdetr.platform.models.RFDETR2XLarge", id="2xlarge-xxlarge-alias"),
+            # Regression: RFDETR2XLarge.size == "rfdetr-2xlarge"; "xlarge" is a substring of
+            # "rfdetr-2xlarge" and would incorrectly match RFDETRXLarge without the "2xlarge" entry.
+            pytest.param("rfdetr-2xlarge.pth", "rfdetr.platform.models.RFDETR2XLarge", id="2xlarge-size-label"),
         ],
     )
     def test_characterization_infers_plus_model_class(

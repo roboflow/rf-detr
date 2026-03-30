@@ -248,7 +248,8 @@ class RFDETR:
             from rfdetr.platform.models import RFDETR2XLarge, RFDETRXLarge
 
             _plus_entries: list[tuple[str, type[RFDETR]]] = [
-                ("xxlarge", RFDETR2XLarge),
+                ("2xlarge", RFDETR2XLarge),  # alias for "rfdetr-2xlarge" size label (training ckpts)
+                ("xxlarge", RFDETR2XLarge),  # official weight filename "rf-detr-xxlarge.pth"
                 ("xlarge", RFDETRXLarge),
             ]
             _plus_available = True
