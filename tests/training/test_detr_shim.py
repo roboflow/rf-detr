@@ -138,13 +138,7 @@ class TestRFDETRTrainPTL:
 
     def test_ckpt_path_none_when_resume_is_empty_string(self, tmp_path):
         """config.resume='' is coerced to ckpt_path=None via `resume or None`."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        # Create a real TrainConfig-like object where resume is ""
-        mock_config = MagicMock(spec=TrainConfig)
-        mock_config.resume = ""
-        mock_config.batch_size = 4  # int so auto-batch branch is not taken
-        mock_config.output_dir = str(tmp_path / "out")  # needed by training_config.json save
-        mock_self.get_train_config.return_value = mock_config
+        mock_self = _make_rfdetr_self(tmp_path, resume="")
 
         p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = _patch_lit()
         with p_mod, p_dm, p_bt:
