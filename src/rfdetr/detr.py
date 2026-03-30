@@ -914,6 +914,7 @@ class RFDETR:
                 )
 
             detections.data["source_image"] = source_images[i]
+            detections.data["source_shape"] = orig_sizes[i]
 
             detections_list.append(detections)
 
