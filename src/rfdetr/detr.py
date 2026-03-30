@@ -811,6 +811,7 @@ class RFDETR:
 
         orig_sizes = []
         processed_images = []
+        source_images = []
 
         for img in images:
             if isinstance(img, str):
@@ -819,7 +820,10 @@ class RFDETR:
                 img = Image.open(img)
 
             if not isinstance(img, torch.Tensor):
+                source_images.append(np.array(img))
                 img = F.to_tensor(img)
+            else:
+                source_images.append((img.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8))
 
             if (img > 1).any():
                 raise ValueError(
@@ -882,7 +886,7 @@ class RFDETR:
             results = self.model.postprocess(predictions, target_sizes=target_sizes)
 
         detections_list = []
-        for result in results:
+        for i, result in enumerate(results):
             scores = result["scores"]
             labels = result["labels"]
             boxes = result["boxes"]
@@ -908,6 +912,8 @@ class RFDETR:
                     confidence=scores.float().cpu().numpy(),
                     class_id=labels.cpu().numpy(),
                 )
+
+            detections.data["source_image"] = source_images[i]
 
             detections_list.append(detections)
 
