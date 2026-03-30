@@ -22,20 +22,17 @@ Perform inference on an image using either the `rfdetr` package or the `inferenc
 === "rfdetr"
 
     ```python
-    import requests
     import supervision as sv
-    from PIL import Image
     from rfdetr import RFDETRSegMedium
     from rfdetr.assets.coco_classes import COCO_CLASSES
 
     model = RFDETRSegMedium()
 
-    image = Image.open(requests.get("https://media.roboflow.com/dog.jpg", stream=True).raw)
-    detections = model.predict(image, threshold=0.5)
+    detections = model.predict("https://media.roboflow.com/dog.jpg", threshold=0.5)
 
     labels = [f"{COCO_CLASSES[class_id]}" for class_id in detections.class_id]
 
-    annotated_image = sv.MaskAnnotator().annotate(image, detections)
+    annotated_image = sv.MaskAnnotator().annotate(detections.data["source_image"], detections)
     annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
     ```
 

@@ -842,6 +842,7 @@ class RFDETR:
 
         orig_sizes = []
         processed_images = []
+        source_images = []
 
         for img in images:
             if isinstance(img, str):
@@ -850,11 +851,21 @@ class RFDETR:
                 img = Image.open(img)
 
             if not isinstance(img, torch.Tensor):
+                src = np.array(img)
+                if src.dtype != np.uint8:
+                    src = (src * 255).clip(0, 255).astype(np.uint8)
+                source_images.append(src)
                 img = F.to_tensor(img)
+            else:
+                source_images.append((img.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8))
 
             if (img > 1).any():
                 raise ValueError(
                     "Image has pixel values above 1. Please ensure the image is normalized (scaled to [0, 1]).",
+                )
+            if (img < 0).any():
+                raise ValueError(
+                    "Image has pixel values below 0. Please ensure the image is normalized (scaled to [0, 1]).",
                 )
             if img.shape[0] != 3:
                 raise ValueError(f"Invalid image shape. Expected 3 channels (RGB), but got {img.shape[0]} channels.")
@@ -913,7 +924,7 @@ class RFDETR:
             results = self.model.postprocess(predictions, target_sizes=target_sizes)
 
         detections_list = []
-        for result in results:
+        for i, result in enumerate(results):
             scores = result["scores"]
             labels = result["labels"]
             boxes = result["boxes"]
@@ -939,6 +950,9 @@ class RFDETR:
                     confidence=scores.float().cpu().numpy(),
                     class_id=labels.cpu().numpy(),
                 )
+
+            detections.data["source_image"] = source_images[i]
+            detections.data["source_shape"] = orig_sizes[i]
 
             detections_list.append(detections)
 
