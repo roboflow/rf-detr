@@ -9,7 +9,6 @@
 import hashlib
 import os
 import shutil
-from typing import Optional
 
 import requests
 from tqdm.auto import tqdm
@@ -56,7 +55,7 @@ def _validate_file_md5(filepath: str, expected_md5: str) -> bool:
 def _download_file(
     url: str,
     filename: str,
-    expected_md5: Optional[str] = None,
+    expected_md5: str | None = None,
     timeout: float = DEFAULT_DOWNLOAD_TIMEOUT_SECONDS,
 ) -> None:
     """Download a file from a URL with optional MD5 validation.

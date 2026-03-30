@@ -13,14 +13,14 @@
 
 """Tensor utilities: NestedTensor, collate_fn, and helpers."""
 
-from typing import Any, List, Optional, Tuple
+from typing import Any
 
 import torch
 import torchvision
 from torch import Tensor
 
 
-def _max_by_axis(the_list: List[List[int]]) -> List[int]:
+def _max_by_axis(the_list: list[list[int]]) -> list[int]:
     """Return element-wise maximums of a list of lists.
 
     Args:
@@ -42,7 +42,7 @@ class NestedTensor:
     Stores both the padded tensor and a boolean mask indicating padding positions.
     """
 
-    def __init__(self, tensors: Tensor, mask: Optional[Tensor]) -> None:
+    def __init__(self, tensors: Tensor, mask: Tensor | None) -> None:
         self.tensors = tensors
         self.mask = mask
 
@@ -76,7 +76,7 @@ class NestedTensor:
             self.mask.pin_memory() if self.mask is not None else None,
         )
 
-    def decompose(self) -> Tuple[Tensor, Optional[Tensor]]:
+    def decompose(self) -> tuple[Tensor, Tensor | None]:
         """Return ``(tensors, mask)`` tuple.
 
         Returns:
@@ -88,7 +88,7 @@ class NestedTensor:
         return str(self.tensors)
 
 
-def nested_tensor_from_tensor_list(tensor_list: List[Tensor]) -> NestedTensor:
+def nested_tensor_from_tensor_list(tensor_list: list[Tensor]) -> NestedTensor:
     """Pad a list of variable-size tensors into a single NestedTensor.
 
     Args:
@@ -124,7 +124,7 @@ def nested_tensor_from_tensor_list(tensor_list: List[Tensor]) -> NestedTensor:
 # _onnx_nested_tensor_from_tensor_list() is an implementation of
 # nested_tensor_from_tensor_list() that is supported by ONNX tracing.
 @torch.jit.unused
-def _onnx_nested_tensor_from_tensor_list(tensor_list: List[Tensor]) -> NestedTensor:
+def _onnx_nested_tensor_from_tensor_list(tensor_list: list[Tensor]) -> NestedTensor:
     """ONNX-tracing-compatible variant of ``nested_tensor_from_tensor_list``.
 
     Args:
@@ -258,7 +258,7 @@ def _bilinear_grid_sample(
     return wx0 * wy0 * v00 + wx1 * wy0 * v10 + wx0 * wy1 * v01 + wx1 * wy1 * v11
 
 
-def collate_fn(batch: List[Tuple[Any, ...]]) -> Tuple[Any, ...]:
+def collate_fn(batch: list[tuple[Any, ...]]) -> tuple[Any, ...]:
     """Collate a list of (image, target) pairs into a batched NestedTensor.
 
     Args:
