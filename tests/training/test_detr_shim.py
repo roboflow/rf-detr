@@ -1234,10 +1234,18 @@ class TestDeployToRoboflow:
         class_names = ["cat", "dog", "bird"]
         mock_self = self._make_mock_self(class_names)
         mock_rf = MagicMock()
-        mock_rf.workspace.return_value.project.return_value.version.return_value.deploy.return_value = None
 
-        # Prevent temp dir deletion so we can inspect its contents.
-        with patch("rfdetr.detr.Roboflow", return_value=mock_rf), patch("shutil.rmtree"):
+        captured: dict = {}
+
+        def deploy_side_effect(model_type, model_path, filename):
+            # Inspect class_names.txt while the temp dir still exists (before cleanup).
+            f = (tmp_path / model_path / "class_names.txt").resolve()
+            if f.exists():
+                captured["content"] = f.read_text()
+
+        mock_rf.workspace.return_value.project.return_value.version.return_value.deploy.side_effect = deploy_side_effect
+
+        with patch("rfdetr.detr.Roboflow", return_value=mock_rf):
             RFDETR.deploy_to_roboflow(
                 mock_self,
                 workspace="test-workspace",
@@ -1246,9 +1254,8 @@ class TestDeployToRoboflow:
                 api_key="dummy-key",
             )
 
-        class_names_file = tmp_path / ".roboflow_temp_upload" / "class_names.txt"
-        assert class_names_file.exists(), "class_names.txt must be written to the upload dir"
-        assert class_names_file.read_text() == "cat\ndog\nbird"
+        assert "content" in captured, "class_names.txt was not present in the upload directory during deploy"
+        assert captured["content"] == "cat\ndog\nbird"
 
     def test_args_class_names_set_in_checkpoint(self, tmp_path, monkeypatch):
         """The saved checkpoint args must contain class_names when args lacks it.
@@ -1264,11 +1271,10 @@ class TestDeployToRoboflow:
         assert not hasattr(mock_self.model.args, "class_names")
 
         saved_checkpoints: list = []
-        original_torch_save = torch.save
 
         def capturing_save(obj, path, *args, **kwargs):
+            # Only capture the object; skip actual disk I/O for this unit test.
             saved_checkpoints.append(obj)
-            original_torch_save(obj, path, *args, **kwargs)
 
         mock_rf = MagicMock()
         mock_rf.workspace.return_value.project.return_value.version.return_value.deploy.return_value = None

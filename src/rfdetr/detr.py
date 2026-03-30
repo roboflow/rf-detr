@@ -834,7 +834,9 @@ class RFDETR:
 
         # Also embed class_names in the args namespace so that any code path
         # that loads the checkpoint directly (e.g. roboflow-python's second
-        # fallback) can find them.
+        # fallback) can find them.  Mutating the shared SimpleNamespace is
+        # intentional here: this mirrors reinitialize_detection_head(), which
+        # already mutates args.num_classes in-place.
         args = self.model.args
         if not hasattr(args, "class_names") or args.class_names is None:
             args.class_names = self.class_names
