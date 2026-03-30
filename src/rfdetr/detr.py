@@ -190,6 +190,131 @@ class RFDETR:
         """Retrieve the configuration parameters used by the model."""
         return self._model_config_class(**kwargs)
 
+    @classmethod
+    def from_checkpoint(cls, path: str | os.PathLike[str], **kwargs: Any) -> RFDETR:
+        """Load an RF-DETR model from a training checkpoint, automatically
+        inferring the model size from the saved args.
+
+        The correct subclass is inferred from the ``pretrain_weights`` field
+        stored in the checkpoint's ``args`` entry.  Both legacy
+        ``argparse.Namespace`` checkpoints (produced by ``engine.py``) and
+        dict-style checkpoints (produced by the PTL training stack) are
+        supported.
+
+        Args:
+            path: Path to a checkpoint file (e.g. ``checkpoint_best_total.pth``).
+            **kwargs: Additional keyword arguments forwarded to the model
+                constructor (e.g. ``accept_platform_model_license=True`` for
+                XLarge / 2XLarge models).
+
+        Returns:
+            An instance of the appropriate :class:`RFDETR` subclass loaded from
+            the checkpoint.
+
+        Raises:
+            KeyError: If the checkpoint does not contain an ``"args"`` key.
+            ValueError: If the model size cannot be inferred from the
+                ``pretrain_weights`` field in the saved args.
+
+        Examples:
+            >>> model = RFDETR.from_checkpoint("checkpoint_best_total.pth")  # doctest: +SKIP
+            >>> model = RFDETRSmall.from_checkpoint("checkpoint_best_total.pth")  # doctest: +SKIP
+        """
+        # Local imports break the variants → detr import cycle.
+        from rfdetr.variants import (
+            RFDETRBase,
+            RFDETRLarge,
+            RFDETRMedium,
+            RFDETRNano,
+            RFDETRSeg2XLarge,
+            RFDETRSegLarge,
+            RFDETRSegMedium,
+            RFDETRSegNano,
+            RFDETRSegPreview,
+            RFDETRSegSmall,
+            RFDETRSegXLarge,
+            RFDETRSmall,
+        )
+
+        _plus_available = False
+        try:
+            from rfdetr.platform.models import RFDETR2XLarge, RFDETRXLarge
+
+            _plus_entries: list[tuple[str, type[RFDETR]]] = [
+                ("xxlarge", RFDETR2XLarge),
+                ("xlarge", RFDETRXLarge),
+            ]
+            _plus_available = True
+        except ImportError:
+            _plus_entries = []
+
+        # weights_only=False is required because legacy checkpoints embed
+        # argparse.Namespace objects that cannot be deserialised with
+        # weights_only=True.
+        ckpt: dict[str, Any] = torch.load(path, map_location="cpu", weights_only=False)
+        args = ckpt["args"]
+
+        if isinstance(args, dict):
+            weights_name = str(args.get("pretrain_weights", "")).lower()
+        else:
+            weights_name = str(getattr(args, "pretrain_weights", "")).lower()
+
+        # Guard: "xlarge"/"xxlarge" without a "seg-" prefix are plus-only models.
+        # Without the plus package, "xlarge" would otherwise silently fall through
+        # to the generic "large" key and instantiate the wrong class.
+        if not _plus_available and "xlarge" in weights_name and "seg-" not in weights_name:
+            from rfdetr.platform import _INSTALL_MSG
+
+            raise ImportError(
+                f"Checkpoint pretrain_weights={weights_name!r} requires the "
+                f"rfdetr_plus package. " + _INSTALL_MSG.format(name="platform model downloads")
+            )
+
+        # Ordered most-specific first so "seg-xxlarge"/"seg-2xlarge" match before
+        # "seg-xlarge", "xxlarge" before "xlarge", and "seg-*" prefixes before
+        # their bare counterparts.
+        _model_map: list[tuple[str, type[RFDETR]]] = [
+            ("seg-2xlarge", RFDETRSeg2XLarge),  # alias for "rfdetr-seg-2xlarge" size label
+            ("seg-xxlarge", RFDETRSeg2XLarge),  # official weight filename "rf-detr-seg-xxlarge.pt"
+            ("seg-xlarge", RFDETRSegXLarge),
+            ("seg-large", RFDETRSegLarge),
+            ("seg-medium", RFDETRSegMedium),
+            ("seg-small", RFDETRSegSmall),
+            ("seg-nano", RFDETRSegNano),
+            ("seg-preview", RFDETRSegPreview),
+            *_plus_entries,
+            ("large", RFDETRLarge),
+            ("medium", RFDETRMedium),
+            ("small", RFDETRSmall),
+            ("nano", RFDETRNano),
+            ("base", RFDETRBase),
+        ]
+
+        model_cls: type[RFDETR] | None = None
+        for name, klass in _model_map:
+            if name in weights_name:
+                model_cls = klass
+                break
+
+        if model_cls is None:
+            raise ValueError(
+                f"Could not infer model size from pretrain_weights={weights_name!r}. "
+                "Please instantiate the model class directly."
+            )
+
+        if isinstance(args, dict):
+            num_classes: int | None = args.get("num_classes")
+        else:
+            num_classes = getattr(args, "num_classes", None)
+
+        # pretrain_weights is placed after **kwargs so it always wins even if
+        # a caller accidentally passes pretrain_weights inside kwargs.
+        constructor_kwargs: dict[str, Any] = {**kwargs, "pretrain_weights": str(path)}
+        if num_classes is not None:
+            constructor_kwargs["num_classes"] = num_classes
+
+        return model_cls(**constructor_kwargs)
+
     @staticmethod
     def _resolve_trainer_device_kwargs(device: Any) -> tuple[str | None, list[int] | None]:
         """Map a torch-style device specifier to PTL ``accelerator``/``devices`` kwargs.
