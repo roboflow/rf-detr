@@ -97,7 +97,7 @@ class TestFromCheckpointNamespaceArgs:
         patch_target: str,
     ) -> None:
         """Namespace-style args: correct subclass is called for each model size."""
-        result, mock_cls = _call_from_checkpoint(_ns(pretrain_weights), tmp_path / "ckpt.pth", patch_target)
+        _, mock_cls = _call_from_checkpoint(_ns(pretrain_weights), tmp_path / "ckpt.pth", patch_target)
 
         mock_cls.assert_called_once()
         call_kwargs = mock_cls.call_args.kwargs
@@ -127,7 +127,7 @@ class TestFromCheckpointDictArgs:
         patch_target: str,
     ) -> None:
         """Dict-style args: correct subclass is called without AttributeError."""
-        result, mock_cls = _call_from_checkpoint(_dict(pretrain_weights), tmp_path / "ckpt.pth", patch_target)
+        _, mock_cls = _call_from_checkpoint(_dict(pretrain_weights), tmp_path / "ckpt.pth", patch_target)
 
         mock_cls.assert_called_once()
         call_kwargs = mock_cls.call_args.kwargs
