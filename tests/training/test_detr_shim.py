@@ -1199,3 +1199,140 @@ class TestClassNamesProperty:
 
         assert result == ["cat", "dog", "bird"]
         assert mock_self.model.class_names == ["cat", "dog"]
+
+
+# ---------------------------------------------------------------------------
+# 8. RFDETR.deploy_to_roboflow — class_names.txt and args.class_names
+# ---------------------------------------------------------------------------
+
+
+class TestDeployToRoboflow:
+    """deploy_to_roboflow writes class_names.txt and embeds class_names in args.
+
+    Regression tests for the bug where RFDETRSeg models (and any model whose
+    args namespace lacks a ``class_names`` attribute) failed to upload to
+    Roboflow with a FileNotFoundError from the Roboflow client library.
+    """
+
+    def _make_mock_self(self, class_names, size="rfdetr-base"):
+        """Return a minimal RFDETR-like mock suitable for deploy_to_roboflow."""
+        mock_self = MagicMock(spec=RFDETR)
+        mock_self.size = size
+        mock_self.class_names = class_names  # the property, resolved to a plain list
+        mock_self.model.model.state_dict.return_value = {}
+        mock_self.model.args = SimpleNamespace(num_classes=len(class_names))
+        return mock_self
+
+    def test_class_names_txt_written_with_correct_content(self, tmp_path, monkeypatch):
+        """deploy_to_roboflow must write class_names.txt with one name per line.
+
+        Regression: RFDETRSeg models were failing with FileNotFoundError from
+        the Roboflow client library because class_names.txt was absent.
+        """
+        monkeypatch.chdir(tmp_path)
+
+        class_names = ["cat", "dog", "bird"]
+        mock_self = self._make_mock_self(class_names)
+        mock_rf = MagicMock()
+        mock_rf.workspace.return_value.project.return_value.version.return_value.deploy.return_value = None
+
+        # Prevent temp dir deletion so we can inspect its contents.
+        with patch("rfdetr.detr.Roboflow", return_value=mock_rf), patch("shutil.rmtree"):
+            RFDETR.deploy_to_roboflow(
+                mock_self,
+                workspace="test-workspace",
+                project_id="test-project",
+                version=1,
+                api_key="dummy-key",
+            )
+
+        class_names_file = tmp_path / ".roboflow_temp_upload" / "class_names.txt"
+        assert class_names_file.exists(), "class_names.txt must be written to the upload dir"
+        assert class_names_file.read_text() == "cat\ndog\nbird"
+
+    def test_args_class_names_set_in_checkpoint(self, tmp_path, monkeypatch):
+        """The saved checkpoint args must contain class_names when args lacks it.
+
+        Regression: args.class_names was absent after switching to PTL training,
+        causing the Roboflow client library to raise FileNotFoundError.
+        """
+        monkeypatch.chdir(tmp_path)
+
+        class_names = ["cat", "dog"]
+        mock_self = self._make_mock_self(class_names)
+        # Ensure class_names is absent from args (mimics the regression scenario).
+        assert not hasattr(mock_self.model.args, "class_names")
+
+        saved_checkpoints: list = []
+        original_torch_save = torch.save
+
+        def capturing_save(obj, path, *args, **kwargs):
+            saved_checkpoints.append(obj)
+            original_torch_save(obj, path, *args, **kwargs)
+
+        mock_rf = MagicMock()
+        mock_rf.workspace.return_value.project.return_value.version.return_value.deploy.return_value = None
+
+        with patch("rfdetr.detr.Roboflow", return_value=mock_rf), patch("torch.save", side_effect=capturing_save):
+            RFDETR.deploy_to_roboflow(
+                mock_self,
+                workspace="test-workspace",
+                project_id="test-project",
+                version=1,
+                api_key="dummy-key",
+            )
+
+        assert saved_checkpoints, "torch.save must have been called"
+        checkpoint = saved_checkpoints[0]
+        assert "args" in checkpoint
+        saved_args = checkpoint["args"]
+        assert hasattr(saved_args, "class_names"), "class_names must be present in saved args"
+        assert saved_args.class_names == class_names
+
+    def test_existing_args_class_names_not_overwritten(self, tmp_path, monkeypatch):
+        """If args already has class_names set, deploy_to_roboflow must not overwrite it."""
+        monkeypatch.chdir(tmp_path)
+
+        existing_names = ["existing_cat", "existing_dog"]
+        mock_self = self._make_mock_self(["cat", "dog"])
+        mock_self.model.args.class_names = existing_names
+
+        saved_checkpoints: list = []
+
+        def capturing_save(obj, path, *args, **kwargs):
+            saved_checkpoints.append(obj)
+
+        mock_rf = MagicMock()
+        mock_rf.workspace.return_value.project.return_value.version.return_value.deploy.return_value = None
+
+        with patch("rfdetr.detr.Roboflow", return_value=mock_rf), patch("torch.save", side_effect=capturing_save):
+            RFDETR.deploy_to_roboflow(
+                mock_self,
+                workspace="test-workspace",
+                project_id="test-project",
+                version=1,
+                api_key="dummy-key",
+            )
+
+        assert saved_checkpoints
+        saved_args = saved_checkpoints[0]["args"]
+        assert saved_args.class_names == existing_names, "existing args.class_names must not be overwritten"
+
+    def test_temp_dir_cleaned_up_after_deploy(self, tmp_path, monkeypatch):
+        """The temporary upload directory must be removed after a successful deploy."""
+        monkeypatch.chdir(tmp_path)
+
+        mock_self = self._make_mock_self(["cat"])
+        mock_rf = MagicMock()
+        mock_rf.workspace.return_value.project.return_value.version.return_value.deploy.return_value = None
+
+        with patch("rfdetr.detr.Roboflow", return_value=mock_rf):
+            RFDETR.deploy_to_roboflow(
+                mock_self,
+                workspace="test-workspace",
+                project_id="test-project",
+                version=1,
+                api_key="dummy-key",
+            )
+
+        assert not (tmp_path / ".roboflow_temp_upload").exists(), "Temp upload dir must be removed after deploy"
