@@ -103,6 +103,7 @@ class TestFromCheckpointNamespaceArgs:
         call_kwargs = mock_cls.call_args.kwargs
         assert call_kwargs.get("num_classes") == 80
         assert call_kwargs.get("pretrain_weights") == str(tmp_path / "ckpt.pth")
+        assert result is mock_cls.return_value
 
 
 # ---------------------------------------------------------------------------
