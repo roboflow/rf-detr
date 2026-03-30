@@ -125,6 +125,13 @@ class TestPredictSourceData:
         assert detections.data["source_image"].dtype == np.uint8
         assert detections.data["source_image"].shape == (48, 64, 3)
 
+    def test_tensor_with_negative_values_raises(self) -> None:
+        """Tensor with negative pixel values raises ValueError."""
+        tensor = torch.full((3, 48, 64), -0.1)
+        model = _DummyRFDETR()
+        with pytest.raises(ValueError, match="below 0"):
+            model.predict(tensor)
+
     def test_source_image_batch(self) -> None:
         """Batch predict stores a source_image per detection."""
         img1 = PIL.Image.new("RGB", (64, 48), color=(100, 100, 100))

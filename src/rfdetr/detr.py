@@ -838,7 +838,10 @@ class RFDETR:
                 img = Image.open(img)
 
             if not isinstance(img, torch.Tensor):
-                source_images.append(np.array(img))
+                src = np.array(img)
+                if src.dtype != np.uint8:
+                    src = (src * 255).clip(0, 255).astype(np.uint8)
+                source_images.append(src)
                 img = F.to_tensor(img)
             else:
                 source_images.append((img.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8))
