@@ -97,7 +97,7 @@ class TestFromCheckpointNamespaceArgs:
         patch_target: str,
     ) -> None:
         """Namespace-style args: correct subclass is called for each model size."""
-        _, mock_cls = _call_from_checkpoint(_ns(pretrain_weights), tmp_path / "ckpt.pth", patch_target)
+        result, mock_cls = _call_from_checkpoint(_ns(pretrain_weights), tmp_path / "ckpt.pth", patch_target)
 
         mock_cls.assert_called_once()
         call_kwargs = mock_cls.call_args.kwargs
