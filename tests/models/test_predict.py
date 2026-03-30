@@ -95,6 +95,56 @@ def test_predict_accepts_image_url() -> None:
     assert detections.xyxy.shape == (1, 4)
 
 
+class TestPredictSourceData:
+    """Verify that ``predict()`` populates ``source_image`` and ``source_shape``."""
+
+    def test_source_image_from_pil(self) -> None:
+        """PIL input stores the original image as a numpy array."""
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+        model = _DummyRFDETR()
+        detections = model.predict(img)
+        assert "source_image" in detections.data
+        assert isinstance(detections.data["source_image"], np.ndarray)
+        assert detections.data["source_image"].shape == (48, 64, 3)
+
+    def test_source_shape_from_pil(self) -> None:
+        """PIL input stores the original (height, width) tuple."""
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+        model = _DummyRFDETR()
+        detections = model.predict(img)
+        assert "source_shape" in detections.data
+        assert detections.data["source_shape"] == (48, 64)
+
+    def test_source_image_from_tensor(self) -> None:
+        """Tensor input stores the original image as a uint8 numpy array."""
+        tensor = torch.rand(3, 48, 64)
+        model = _DummyRFDETR()
+        detections = model.predict(tensor)
+        assert "source_image" in detections.data
+        assert isinstance(detections.data["source_image"], np.ndarray)
+        assert detections.data["source_image"].dtype == np.uint8
+        assert detections.data["source_image"].shape == (48, 64, 3)
+
+    def test_tensor_with_negative_values_raises(self) -> None:
+        """Tensor with negative pixel values raises ValueError."""
+        tensor = torch.full((3, 48, 64), -0.1)
+        model = _DummyRFDETR()
+        with pytest.raises(ValueError, match="below 0"):
+            model.predict(tensor)
+
+    def test_source_image_batch(self) -> None:
+        """Batch predict stores a source_image per detection."""
+        img1 = PIL.Image.new("RGB", (64, 48), color=(100, 100, 100))
+        img2 = PIL.Image.new("RGB", (32, 24), color=(200, 200, 200))
+        model = _DummyRFDETR()
+        detections_list = model.predict([img1, img2])
+        assert isinstance(detections_list, list)
+        assert detections_list[0].data["source_image"].shape == (48, 64, 3)
+        assert detections_list[1].data["source_image"].shape == (24, 32, 3)
+        assert detections_list[0].data["source_shape"] == (48, 64)
+        assert detections_list[1].data["source_shape"] == (24, 32)
+
+
 class TestPredictShape:
     """Verify that ``predict(shape=...)`` controls the resize target.
 
