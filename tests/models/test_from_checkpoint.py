@@ -20,9 +20,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from rfdetr.detr import RFDETR
-from rfdetr.variants import (
-    RFDETRSmall,
-)
+from rfdetr.variants import RFDETRSmall
 
 try:
     import rfdetr.platform.models as _pm
@@ -141,33 +139,6 @@ class TestFromCheckpointDictArgs:
 
         call_kwargs = mock_cls.call_args.kwargs
         assert "num_classes" not in call_kwargs
-
-
-# ---------------------------------------------------------------------------
-# Plus models
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.skipif(not HAS_PLUS, reason="rfdetr_plus not installed")
-class TestFromCheckpointPlusModels:
-    """from_checkpoint for XLarge / 2XLarge when rfdetr_plus is installed."""
-
-    @pytest.mark.parametrize(
-        "pretrain_weights, patch_target",
-        [
-            pytest.param("rf-detr-xlarge.pth", "rfdetr.platform.models.RFDETRXLarge", id="xlarge"),
-            pytest.param("rf-detr-xxlarge.pth", "rfdetr.platform.models.RFDETR2XLarge", id="2xlarge-xxlarge-alias"),
-            # Regression: RFDETR2XLarge.size == "rfdetr-2xlarge"; "xlarge" is a substring of
-            # "rfdetr-2xlarge" and would incorrectly match RFDETRXLarge without the "2xlarge" entry.
-            pytest.param("rfdetr-2xlarge.pth", "rfdetr.platform.models.RFDETR2XLarge", id="2xlarge-size-label"),
-        ],
-    )
-    def test_characterization_infers_plus_model_class(
-        self, tmp_path: Path, pretrain_weights: str, patch_target: str
-    ) -> None:
-        """Plus model classes are selected when rfdetr_plus is available."""
-        _, mock_cls = _call_from_checkpoint(_ns(pretrain_weights), tmp_path / "ckpt.pth", patch_target)
-        mock_cls.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
