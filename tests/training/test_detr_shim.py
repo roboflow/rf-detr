@@ -1241,7 +1241,7 @@ class TestDeployToRoboflow:
 
         captured: dict = {}
 
-        def deploy_side_effect(model_type, model_path, filename):
+        def deploy_side_effect(model_type, model_path, filename, **kwargs):
             # Inspect class_names.txt while the temp dir still exists (before cleanup).
             f = (tmp_path / model_path / "class_names.txt").resolve()
             if f.exists():
