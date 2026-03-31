@@ -89,8 +89,8 @@ def _patch_lit():
 
 @pytest.fixture
 def patch_lit():
-    """Return a factory producing patches for rfdetr.training entry points."""
-    return _patch_lit
+    """Provide patched rfdetr.training entry points for tests."""
+    return _patch_lit()
 
 
 # ---------------------------------------------------------------------------
@@ -104,7 +104,7 @@ class TestRFDETRTrainPTL:
     def test_build_trainer_called_with_config_and_model_config(self, tmp_path, patch_lit):
         """build_trainer receives (train_config, model_config) in the right order."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit()
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self)
 
@@ -114,7 +114,7 @@ class TestRFDETRTrainPTL:
     def test_trainer_fit_called_with_module_and_datamodule(self, tmp_path, patch_lit):
         """trainer.fit() is called with (module_instance, datamodule_instance)."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, mcls, dmcls, mock_bt = patch_lit()
+        p_mod, p_dm, p_bt, mcls, dmcls, mock_bt = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self)
 
@@ -126,7 +126,7 @@ class TestRFDETRTrainPTL:
     def test_ckpt_path_none_when_resume_not_set(self, tmp_path, patch_lit):
         """trainer.fit receives ckpt_path=None when config.resume is None."""
         mock_self = _make_rfdetr_self(tmp_path)  # resume defaults to None
-        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit()
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self)
 
@@ -136,7 +136,7 @@ class TestRFDETRTrainPTL:
     def test_ckpt_path_forwarded_when_resume_set(self, tmp_path, patch_lit):
         """trainer.fit receives ckpt_path when config.resume is a path string."""
         mock_self = _make_rfdetr_self(tmp_path, resume="/some/checkpoint.ckpt")
-        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit()
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self)
 
@@ -147,7 +147,7 @@ class TestRFDETRTrainPTL:
         """config.resume='' is coerced to ckpt_path=None via `resume or None`."""
         mock_self = _make_rfdetr_self(tmp_path, resume="")
 
-        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit()
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self)
 
@@ -158,7 +158,7 @@ class TestRFDETRTrainPTL:
     def test_model_model_synced_back_by_identity(self, tmp_path, patch_lit):
         """self.model.model is reassigned to module.model (identity, not copy)."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, mcls, _dmcls, mock_bt = patch_lit()
+        p_mod, p_dm, p_bt, mcls, _dmcls, mock_bt = patch_lit
         sentinel_nn_module = object()
         mcls.return_value.model = sentinel_nn_module
 
@@ -170,7 +170,7 @@ class TestRFDETRTrainPTL:
     def test_returns_none(self, tmp_path, patch_lit):
         """RFDETR.train() has no return value."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt:
             result = RFDETR.train(mock_self)
         assert result is None
@@ -219,7 +219,7 @@ class TestRFDETRTrainPTL:
         instead of the dataset's class labels.
         """
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, _mcls, dmcls, _mock_bt = patch_lit()
+        p_mod, p_dm, p_bt, _mcls, dmcls, _mock_bt = patch_lit
         custom_class_names = ["cat", "dog", "bird"]
         dmcls.return_value.class_names = custom_class_names
 
@@ -237,7 +237,7 @@ class TestRFDETRTrainPTL:
         mock_self = _make_rfdetr_self(tmp_path)
         sentinel_names = ["existing_class"]
         mock_self.model.class_names = sentinel_names
-        p_mod, p_dm, p_bt, _mcls, dmcls, _mock_bt = patch_lit()
+        p_mod, p_dm, p_bt, _mcls, dmcls, _mock_bt = patch_lit
         dmcls.return_value.class_names = None  # datamodule has no class names
 
         with p_mod, p_dm, p_bt:
@@ -253,7 +253,7 @@ class TestRFDETRTrainPTL:
         mock_self = _make_rfdetr_self(tmp_path)
         sentinel_names = ["stale_label"]
         mock_self.model.class_names = sentinel_names
-        p_mod, p_dm, p_bt, _mcls, dmcls, _mock_bt = patch_lit()
+        p_mod, p_dm, p_bt, _mcls, dmcls, _mock_bt = patch_lit
         dmcls.return_value.class_names = []
 
         with p_mod, p_dm, p_bt:
@@ -264,7 +264,7 @@ class TestRFDETRTrainPTL:
     def test_device_kwarg_cpu_no_warning(self, tmp_path, patch_lit):
         """device='cpu' is consumed without a DeprecationWarning."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             RFDETR.train(mock_self, device="cpu")
@@ -274,7 +274,7 @@ class TestRFDETRTrainPTL:
     def test_device_kwarg_cuda_forwards_gpu_accelerator_without_devices(self, tmp_path, patch_lit):
         """device='cuda' is mapped to accelerator='gpu' without explicit devices override."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             RFDETR.train(mock_self, device="cuda")
@@ -284,7 +284,7 @@ class TestRFDETRTrainPTL:
     def test_device_kwarg_torch_device_cuda_index_forwards_gpu_accelerator_and_devices(self, tmp_path, patch_lit):
         """torch.device('cuda:1') is mapped to accelerator='gpu' and devices=[1]."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             RFDETR.train(mock_self, device=torch.device("cuda:1"))
@@ -294,7 +294,7 @@ class TestRFDETRTrainPTL:
     def test_callbacks_none_no_warning(self, tmp_path, patch_lit):
         """callbacks=None produces no DeprecationWarning."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             RFDETR.train(mock_self, callbacks=None)
@@ -303,7 +303,7 @@ class TestRFDETRTrainPTL:
     def test_callbacks_empty_dict_no_warning(self, tmp_path, patch_lit):
         """callbacks={} (falsy dict) produces no DeprecationWarning."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             RFDETR.train(mock_self, callbacks={})
@@ -313,7 +313,7 @@ class TestRFDETRTrainPTL:
         """Callbacks dict with all-empty lists produces no DeprecationWarning."""
         mock_self = _make_rfdetr_self(tmp_path)
         callbacks = defaultdict(list)
-        p_mod, p_dm, p_bt, *_ = patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             RFDETR.train(mock_self, callbacks=callbacks)
@@ -323,7 +323,7 @@ class TestRFDETRTrainPTL:
         """Callbacks dict with a non-empty list emits DeprecationWarning."""
         mock_self = _make_rfdetr_self(tmp_path)
         callbacks = {"on_fit_epoch_end": [lambda: None]}
-        p_mod, p_dm, p_bt, *_ = patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             RFDETR.train(mock_self, callbacks=callbacks)
@@ -335,7 +335,7 @@ class TestRFDETRTrainPTL:
         """Mixed callbacks (some empty, some non-empty) triggers DeprecationWarning."""
         mock_self = _make_rfdetr_self(tmp_path)
         callbacks = {"on_fit_epoch_end": [], "on_train_end": [lambda: None]}
-        p_mod, p_dm, p_bt, *_ = patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             RFDETR.train(mock_self, callbacks=callbacks)
@@ -344,7 +344,7 @@ class TestRFDETRTrainPTL:
     def test_do_benchmark_false_no_warning(self, tmp_path, patch_lit):
         """do_benchmark=False (default) emits no DeprecationWarning."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             RFDETR.train(mock_self, do_benchmark=False)
@@ -354,7 +354,7 @@ class TestRFDETRTrainPTL:
     def test_do_benchmark_truthy_emits_deprecation_warning(self, tmp_path, truthy_value, patch_lit):
         """Any truthy do_benchmark value emits DeprecationWarning."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             RFDETR.train(mock_self, do_benchmark=truthy_value)
@@ -365,7 +365,7 @@ class TestRFDETRTrainPTL:
     def test_do_benchmark_not_forwarded_to_get_train_config(self, tmp_path, patch_lit):
         """do_benchmark is popped before calling get_train_config."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True):
             warnings.simplefilter("always")
             RFDETR.train(mock_self, do_benchmark=True)
@@ -374,7 +374,7 @@ class TestRFDETRTrainPTL:
     def test_device_not_forwarded_to_get_train_config(self, tmp_path, patch_lit):
         """device= is popped and not passed on to get_train_config."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self, device="cpu")
         # get_train_config must have been called without device=
@@ -389,7 +389,7 @@ class TestRFDETRTrainPTL:
             effective_batch_size=18,
             device_name="Fake GPU",
         )
-        p_mod, p_dm, p_bt, mcls, dmcls, _mock_bt = patch_lit()
+        p_mod, p_dm, p_bt, mcls, dmcls, _mock_bt = patch_lit
         with p_mod, p_dm, p_bt, patch("rfdetr.training.auto_batch.resolve_auto_batch_config", return_value=auto_result):
             RFDETR.train(mock_self)
 
@@ -408,7 +408,7 @@ class TestRFDETRTrainPTL:
             effective_batch_size=16,
             device_name="Fake GPU",
         )
-        p_mod, p_dm, p_bt, *_ = patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with (
             p_mod,
             p_dm,
@@ -436,7 +436,7 @@ class TestRFDETRTrainPTLAbsorption:
     def test_device_cpu_absorbed_as_accelerator_cpu(self, tmp_path, patch_lit):
         """device='cpu' is absorbed and forwarded to build_trainer as accelerator='cpu'."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit()
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self, device="cpu")
         config = mock_self.get_train_config.return_value
@@ -445,7 +445,7 @@ class TestRFDETRTrainPTLAbsorption:
     def test_device_cuda_absorbed_as_accelerator_gpu(self, tmp_path, patch_lit):
         """device='cuda' forwards accelerator='gpu' without a devices kwarg."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit()
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self, device="cuda")
         config = mock_self.get_train_config.return_value
@@ -455,7 +455,7 @@ class TestRFDETRTrainPTLAbsorption:
     def test_device_cuda_index_absorbed_as_accelerator_gpu_devices_list(self, tmp_path, patch_lit):
         """device='cuda:1' forwards accelerator='gpu' and devices=[1]."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit()
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self, device="cuda:1")
         config = mock_self.get_train_config.return_value
@@ -464,7 +464,7 @@ class TestRFDETRTrainPTLAbsorption:
     def test_device_torch_device_cuda_index_absorbed_as_accelerator_gpu_devices_list(self, tmp_path, patch_lit):
         """device=torch.device('cuda:2') forwards accelerator='gpu' and devices=[2]."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit()
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self, device=torch.device("cuda:2"))
         config = mock_self.get_train_config.return_value
@@ -473,7 +473,7 @@ class TestRFDETRTrainPTLAbsorption:
     def test_device_invalid_raises_value_error_with_expected_message(self, tmp_path, patch_lit):
         """Invalid device strings raise a ValueError with the train() device hint."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with (
             p_mod,
             p_dm,
@@ -485,7 +485,7 @@ class TestRFDETRTrainPTLAbsorption:
     def test_device_unmapped_valid_type_warns_and_falls_back_to_auto_detection(self, tmp_path, patch_lit):
         """Valid but unmapped torch device types warn and use PTL auto-detection."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit()
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
         with p_mod, p_dm, p_bt, pytest.warns(UserWarning, match="auto-detection"):
             RFDETR.train(mock_self, device="meta")
         config = mock_self.get_train_config.return_value
@@ -495,7 +495,7 @@ class TestRFDETRTrainPTLAbsorption:
     def test_callbacks_empty_dict_no_error(self, tmp_path, patch_lit):
         """callbacks={} is accepted without error."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self, callbacks={})  # must not raise
 
@@ -503,7 +503,7 @@ class TestRFDETRTrainPTLAbsorption:
         """Callbacks with non-empty lists emits DeprecationWarning."""
         mock_self = _make_rfdetr_self(tmp_path)
         callbacks = {"on_fit_epoch_end": [lambda: None]}
-        p_mod, p_dm, p_bt, *_ = patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             RFDETR.train(mock_self, callbacks=callbacks)
@@ -513,7 +513,7 @@ class TestRFDETRTrainPTLAbsorption:
     def test_start_epoch_emits_deprecation_warning(self, tmp_path, patch_lit):
         """start_epoch=1 emits DeprecationWarning and is dropped."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             RFDETR.train(mock_self, start_epoch=1)
@@ -525,7 +525,7 @@ class TestRFDETRTrainPTLAbsorption:
     def test_do_benchmark_true_emits_deprecation_warning(self, tmp_path, patch_lit):
         """do_benchmark=True emits DeprecationWarning."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             RFDETR.train(mock_self, do_benchmark=True)
@@ -535,7 +535,7 @@ class TestRFDETRTrainPTLAbsorption:
     def test_returns_none(self, tmp_path, patch_lit):
         """RFDETR.train() returns None."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt:
             result = RFDETR.train(mock_self)
         assert result is None
@@ -1429,7 +1429,7 @@ class TestSaveTrainingConfig:
         if class_names is None:
             class_names = ["cat", "dog", "bird"]
         mock_self = _make_rfdetr_self(tmp_path, **train_overrides)
-        p_mod, p_dm, p_bt, _, dmcls, _ = patch_lit()
+        p_mod, p_dm, p_bt, _, dmcls, _ = patch_lit
         dmcls.return_value.class_names = class_names
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self)
@@ -1466,7 +1466,7 @@ class TestSaveTrainingConfig:
     def test_non_serializable_value_coerced_not_raises(self, tmp_path, patch_lit):
         """Non-JSON-serializable values are coerced via default=str, not raising TypeError."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, _, dmcls, _ = patch_lit()
+        p_mod, p_dm, p_bt, _, dmcls, _ = patch_lit
         dmcls.return_value.class_names = [Path("/some/class"), None]
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self)  # must not raise TypeError
@@ -1503,20 +1503,16 @@ class TestRFDETRTrainNumClassesAutoDetect:
     _FOUR_CLASS_NAMES = ["ball", "goalkeeper", "referee", "player"]
 
     @pytest.fixture
-    def make_mock_self(self):
-        """Return a factory producing RFDETR-like mocks for num_classes auto-detect tests."""
-
-        def _make_mock_self(tmp_path, model_config=None):
-            mock = MagicMock()
-            mock.model_config = model_config or RFDETRBaseConfig(pretrain_weights=None, device="cpu")
-            mock.model = MagicMock()
-            mock.get_train_config.return_value = _make_train_config(tmp_path)
-            # Bind the real instance method so train()'s self._align_num_classes_from_dataset
-            # call exercises actual logic rather than a no-op MagicMock.
-            mock._align_num_classes_from_dataset = lambda ds: RFDETR._align_num_classes_from_dataset(mock, ds)
-            return mock
-
-        return _make_mock_self
+    def mock_self(self, tmp_path):
+        """Return a RFDETR-like mock for num_classes auto-detect tests."""
+        mock = MagicMock()
+        mock.model_config = RFDETRBaseConfig(pretrain_weights=None, device="cpu")
+        mock.model = MagicMock()
+        mock.get_train_config.return_value = _make_train_config(tmp_path)
+        # Bind the real instance method so train()'s self._align_num_classes_from_dataset
+        # call exercises actual logic rather than a no-op MagicMock.
+        mock._align_num_classes_from_dataset = lambda ds: RFDETR._align_num_classes_from_dataset(mock, ds)
+        return mock
 
     def _write_coco_categories(self, dataset_dir: Path, categories: list[dict[str, Any]]) -> None:
         """Write a minimal COCO annotation file with provided categories."""
@@ -1524,16 +1520,15 @@ class TestRFDETRTrainNumClassesAutoDetect:
         with (dataset_dir / "train" / "_annotations.coco.json").open("w", encoding="utf-8") as f:
             json.dump({"images": [], "annotations": [], "categories": categories}, f)
 
-    def test_auto_adjusts_num_classes_when_not_overridden(self, tmp_path, make_mock_self, patch_lit):
+    def test_auto_adjusts_num_classes_when_not_overridden(self, mock_self, patch_lit):
         """When user did not set num_classes, auto-adjust to the dataset class count.
 
         Scenario: model built without explicit num_classes → default=90.
         Dataset has 4 classes.  Expected: model_config.num_classes becomes 4.
         """
-        mock_self = make_mock_self(tmp_path)
         assert "num_classes" not in mock_self.model_config.model_fields_set
 
-        p_mod, p_dm, p_bt, *_ = patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with (
             p_mod,
             p_dm,
@@ -1544,13 +1539,12 @@ class TestRFDETRTrainNumClassesAutoDetect:
 
         assert mock_self.model_config.num_classes == 4
 
-    def test_coco_auto_detect_uses_full_category_mapping_not_leaf_only_names(self, tmp_path, make_mock_self, patch_lit):
+    def test_coco_auto_detect_uses_full_category_mapping_not_leaf_only_names(self, mock_self, patch_lit):
         """COCO class-count detection must follow ``coco.cats`` semantics.
 
         Regression test for hierarchical COCO datasets where leaf-only class
         names can undercount categories relative to label remapping.
         """
-        mock_self = make_mock_self(tmp_path)
         dataset_dir = Path(mock_self.get_train_config.return_value.dataset_dir)
         self._write_coco_categories(
             dataset_dir,
@@ -1561,7 +1555,7 @@ class TestRFDETRTrainNumClassesAutoDetect:
             ],
         )
 
-        p_mod, p_dm, p_bt, *_ = patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with (
             p_mod,
             p_dm,
@@ -1572,18 +1566,18 @@ class TestRFDETRTrainNumClassesAutoDetect:
 
         assert mock_self.model_config.num_classes == 3
 
-    def test_auto_adjusts_when_default_explicitly_passed(self, tmp_path, make_mock_self, patch_lit):
+    def test_auto_adjusts_when_default_explicitly_passed(self, mock_self, patch_lit):
         """Passing num_classes=<default> is treated the same as not setting it.
 
         Scenario: user passes num_classes=90 (the ModelConfig default) explicitly.
         Dataset has 4 classes.  Expected: model_config.num_classes becomes 4.
         """
         mc = RFDETRBaseConfig(pretrain_weights=None, device="cpu", num_classes=90)
-        mock_self = make_mock_self(tmp_path, model_config=mc)
+        mock_self.model_config = mc
         # num_classes is in model_fields_set, but equals the class default (90).
         assert "num_classes" in mock_self.model_config.model_fields_set
 
-        p_mod, p_dm, p_bt, *_ = patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with (
             p_mod,
             p_dm,
@@ -1598,7 +1592,7 @@ class TestRFDETRTrainNumClassesAutoDetect:
         self,
         tmp_path,
         caplog,
-        make_mock_self,
+        mock_self,
         patch_lit,
     ):
         """When user explicitly set a non-default num_classes, it is preserved.
@@ -1607,10 +1601,10 @@ class TestRFDETRTrainNumClassesAutoDetect:
         Expected: model_config.num_classes stays at 10.
         """
         mc = RFDETRBaseConfig(pretrain_weights=None, device="cpu", num_classes=10)
-        mock_self = make_mock_self(tmp_path, model_config=mc)
+        mock_self.model_config = mc
         dataset_dir = mock_self.get_train_config.return_value.dataset_dir
 
-        p_mod, p_dm, p_bt, *_ = patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with (
             p_mod,
             p_dm,
@@ -1633,12 +1627,11 @@ class TestRFDETRTrainNumClassesAutoDetect:
             for record in caplog.records
         )
 
-    def test_auto_adjust_syncs_model_args_num_classes(self, tmp_path, make_mock_self, patch_lit):
+    def test_auto_adjust_syncs_model_args_num_classes(self, mock_self, patch_lit):
         """When auto-adjusting, keep ModelContext args.num_classes in sync."""
-        mock_self = make_mock_self(tmp_path)
         mock_self.model.args = SimpleNamespace(num_classes=90)
 
-        p_mod, p_dm, p_bt, *_ = patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with (
             p_mod,
             p_dm,
@@ -1650,16 +1643,16 @@ class TestRFDETRTrainNumClassesAutoDetect:
         assert mock_self.model_config.num_classes == 4
         assert mock_self.model.args.num_classes == 4
 
-    def test_no_adjustment_when_num_classes_already_matches_dataset(self, tmp_path, make_mock_self, patch_lit):
+    def test_no_adjustment_when_num_classes_already_matches_dataset(self, mock_self, patch_lit):
         """No adjustment when the model's num_classes already equals the dataset count.
 
         Scenario: user passes num_classes=4 and dataset has 4 classes.
         Expected: model_config.num_classes remains 4 (no log noise, no error).
         """
         mc = RFDETRBaseConfig(pretrain_weights=None, device="cpu", num_classes=4)
-        mock_self = make_mock_self(tmp_path, model_config=mc)
+        mock_self.model_config = mc
 
-        p_mod, p_dm, p_bt, *_ = patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with (
             p_mod,
             p_dm,
@@ -1679,13 +1672,12 @@ class TestRFDETRTrainNumClassesAutoDetect:
             pytest.param(OSError("io error"), id="os-error"),
         ],
     )
-    def test_no_crash_when_dataset_detection_raises(self, tmp_path, exc, make_mock_self, patch_lit):
+    def test_no_crash_when_dataset_detection_raises(self, exc, mock_self, patch_lit):
         """Training proceeds even if _load_classes raises a known exception.
 
         Dataset detection is best-effort; errors must not block training.
         """
-        mock_self = make_mock_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with (
             p_mod,
             p_dm,
@@ -1694,15 +1686,14 @@ class TestRFDETRTrainNumClassesAutoDetect:
         ):
             RFDETR.train(mock_self)  # must not raise
 
-    def test_no_crash_when_dataset_dir_is_none(self, tmp_path, make_mock_self, patch_lit):
+    def test_no_crash_when_dataset_dir_is_none(self, mock_self, patch_lit):
         """Training proceeds when config.dataset_dir resolves to None.
 
         Guards against AttributeError if getattr returns None.
         """
-        mock_self = make_mock_self(tmp_path)
         # Override dataset_dir to None on the train config mock.
         mock_self.get_train_config.return_value.dataset_dir = None
 
-        p_mod, p_dm, p_bt, *_ = patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self)  # must not raise
