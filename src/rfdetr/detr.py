@@ -237,7 +237,6 @@ class RFDETR:
         from rfdetr.variants import (
             RFDETRBase,
             RFDETRLarge,
-            RFDETRLargeDeprecated,
             RFDETRMedium,
             RFDETRNano,
             RFDETRSeg2XLarge,
