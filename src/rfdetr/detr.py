@@ -15,7 +15,7 @@ import warnings
 from collections import defaultdict
 from copy import deepcopy
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import requests
@@ -66,6 +66,32 @@ _VARIANT_EXPORTS = (
     "RFDETRSmall",
 )
 __all__ = ["RFDETR", "ModelContext", *_VARIANT_EXPORTS]
+
+_CHECKPOINT_MODEL_NAME_EXCLUDED_SYMBOLS = frozenset({"RFDETRBase", "RFDETRLargeDeprecated", "RFDETRSeg"})
+_CHECKPOINT_MODEL_NAME_CLASS_SYMBOLS: tuple[str, ...] = tuple(
+    class_symbol for class_symbol in _VARIANT_EXPORTS if class_symbol not in _CHECKPOINT_MODEL_NAME_EXCLUDED_SYMBOLS
+)
+_CHECKPOINT_PLUS_MODEL_NAME_CLASS_SYMBOLS: tuple[str, ...] = ("RFDETRXLarge", "RFDETR2XLarge")
+_CHECKPOINT_MODEL_MAP_ENTRIES: tuple[tuple[str, str], ...] = (
+    ("seg-2xlarge", "RFDETRSeg2XLarge"),
+    ("seg-xxlarge", "RFDETRSeg2XLarge"),
+    ("seg-xlarge", "RFDETRSegXLarge"),
+    ("seg-large", "RFDETRSegLarge"),
+    ("seg-medium", "RFDETRSegMedium"),
+    ("seg-small", "RFDETRSegSmall"),
+    ("seg-nano", "RFDETRSegNano"),
+    ("seg-preview", "RFDETRSegPreview"),
+    ("large", "RFDETRLarge"),
+    ("medium", "RFDETRMedium"),
+    ("small", "RFDETRSmall"),
+    ("nano", "RFDETRNano"),
+    ("base", "RFDETRBase"),
+)
+_CHECKPOINT_PLUS_MODEL_MAP_ENTRIES: tuple[tuple[str, str], ...] = (
+    ("2xlarge", "RFDETR2XLarge"),
+    ("xxlarge", "RFDETR2XLarge"),
+    ("xlarge", "RFDETRXLarge"),
+)
 
 
 def _validate_shape_dims(
@@ -254,9 +280,8 @@ class RFDETR:
             from rfdetr.platform.models import RFDETR2XLarge, RFDETRXLarge
 
             _plus_entries: list[tuple[str, type[RFDETR]]] = [
-                ("2xlarge", RFDETR2XLarge),  # alias for "rfdetr-2xlarge" size label (training ckpts)
-                ("xxlarge", RFDETR2XLarge),  # official weight filename "rf-detr-xxlarge.pth"
-                ("xlarge", RFDETRXLarge),
+                (name, cast("type[RFDETR]", locals()[class_symbol]))
+                for name, class_symbol in _CHECKPOINT_PLUS_MODEL_MAP_ENTRIES
             ]
             _plus_available = True
         except ImportError:
@@ -272,39 +297,24 @@ class RFDETR:
         # "seg-xlarge", "xxlarge" before "xlarge", and "seg-*" prefixes before
         # their bare counterparts.
         _model_map: list[tuple[str, type[RFDETR]]] = [
-            ("seg-2xlarge", RFDETRSeg2XLarge),  # alias for "rfdetr-seg-2xlarge" size label
-            ("seg-xxlarge", RFDETRSeg2XLarge),  # official weight filename "rf-detr-seg-xxlarge.pt"
-            ("seg-xlarge", RFDETRSegXLarge),
-            ("seg-large", RFDETRSegLarge),
-            ("seg-medium", RFDETRSegMedium),
-            ("seg-small", RFDETRSegSmall),
-            ("seg-nano", RFDETRSegNano),
-            ("seg-preview", RFDETRSegPreview),
-            *_plus_entries,
-            ("large", RFDETRLarge),
-            ("medium", RFDETRMedium),
-            ("small", RFDETRSmall),
-            ("nano", RFDETRNano),
-            ("base", RFDETRBase),
+            (name, cast("type[RFDETR]", locals()[class_symbol]))
+            for name, class_symbol in _CHECKPOINT_MODEL_MAP_ENTRIES
         ]
+        _model_map[8:8] = _plus_entries
 
         # New checkpoints store model_name directly — use it when available.
         _name_map: dict[str, type[RFDETR]] = {
-            "RFDETRNano": RFDETRNano,
-            "RFDETRSmall": RFDETRSmall,
-            "RFDETRMedium": RFDETRMedium,
-            "RFDETRLarge": RFDETRLarge,
-            "RFDETRSegNano": RFDETRSegNano,
-            "RFDETRSegSmall": RFDETRSegSmall,
-            "RFDETRSegMedium": RFDETRSegMedium,
-            "RFDETRSegLarge": RFDETRSegLarge,
-            "RFDETRSegXLarge": RFDETRSegXLarge,
-            "RFDETRSeg2XLarge": RFDETRSeg2XLarge,
+            class_symbol: cast("type[RFDETR]", locals()[class_symbol])
+            for class_symbol in _CHECKPOINT_MODEL_NAME_CLASS_SYMBOLS
         }
         # Plus-model classes are resolved only when rfdetr_plus is installed.
         if _plus_available:
-            _name_map["RFDETRXLarge"] = RFDETRXLarge  # type: ignore[possibly-undefined]
-            _name_map["RFDETR2XLarge"] = RFDETR2XLarge  # type: ignore[possibly-undefined]
+            _name_map.update(
+                {
+                    class_symbol: cast("type[RFDETR]", locals()[class_symbol])
+                    for class_symbol in _CHECKPOINT_PLUS_MODEL_NAME_CLASS_SYMBOLS
+                }
+            )
         saved_model_name = ckpt.get("model_name")
         model_cls: type[RFDETR] | None = None
         if isinstance(saved_model_name, str):
