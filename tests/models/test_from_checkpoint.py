@@ -217,3 +217,72 @@ class TestFromCheckpointEdgeCases:
             with patch("rfdetr.detr.torch.load", return_value=ckpt):
                 with pytest.raises(ImportError):
                     RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+
+
+# ---------------------------------------------------------------------------
+# model_name in checkpoint (#887)
+# ---------------------------------------------------------------------------
+
+
+def _ckpt_with_model_name(model_name: str, num_classes: int = 80) -> dict:
+    """Fake checkpoint with model_name key (new format)."""
+    return {
+        "args": {"pretrain_weights": "rf-detr-small.pth", "num_classes": num_classes},
+        "model_name": model_name,
+    }
+
+
+class TestFromCheckpointModelName:
+    """from_checkpoint uses model_name when present in checkpoint."""
+
+    @pytest.mark.parametrize(
+        "model_name, patch_target",
+        [
+            pytest.param("RFDETRNano", "rfdetr.variants.RFDETRNano", id="nano"),
+            pytest.param("RFDETRSmall", "rfdetr.variants.RFDETRSmall", id="small"),
+            pytest.param("RFDETRMedium", "rfdetr.variants.RFDETRMedium", id="medium"),
+            pytest.param("RFDETRLarge", "rfdetr.variants.RFDETRLarge", id="large"),
+            pytest.param("RFDETRBase", "rfdetr.variants.RFDETRBase", id="base"),
+            pytest.param("RFDETRSegNano", "rfdetr.variants.RFDETRSegNano", id="seg-nano"),
+            pytest.param("RFDETRSegSmall", "rfdetr.variants.RFDETRSegSmall", id="seg-small"),
+            pytest.param("RFDETRSegMedium", "rfdetr.variants.RFDETRSegMedium", id="seg-medium"),
+            pytest.param("RFDETRSegLarge", "rfdetr.variants.RFDETRSegLarge", id="seg-large"),
+            pytest.param("RFDETRSegXLarge", "rfdetr.variants.RFDETRSegXLarge", id="seg-xlarge"),
+            pytest.param("RFDETRSeg2XLarge", "rfdetr.variants.RFDETRSeg2XLarge", id="seg-2xlarge"),
+        ],
+    )
+    def test_model_name_resolves_correct_class(
+        self,
+        tmp_path: Path,
+        model_name: str,
+        patch_target: str,
+    ) -> None:
+        """model_name in checkpoint maps directly to the correct subclass."""
+        result, mock_cls = _call_from_checkpoint(_ckpt_with_model_name(model_name), tmp_path / "ckpt.pth", patch_target)
+        mock_cls.assert_called_once()
+        assert result is mock_cls.return_value
+
+    def test_model_name_takes_priority_over_pretrain_weights(self, tmp_path: Path) -> None:
+        """model_name is used even when pretrain_weights points to a different size."""
+        ckpt = {
+            "args": {"pretrain_weights": "rf-detr-nano.pth", "num_classes": 80},
+            "model_name": "RFDETRLarge",
+        }
+        _, mock_cls = _call_from_checkpoint(ckpt, tmp_path / "ckpt.pth", "rfdetr.variants.RFDETRLarge")
+        mock_cls.assert_called_once()
+
+    def test_falls_back_to_pretrain_weights_without_model_name(self, tmp_path: Path) -> None:
+        """Old checkpoints without model_name still work via pretrain_weights parsing."""
+        ckpt = _dict("rf-detr-small.pth")
+        assert "model_name" not in ckpt
+        _, mock_cls = _call_from_checkpoint(ckpt, tmp_path / "ckpt.pth", "rfdetr.variants.RFDETRSmall")
+        mock_cls.assert_called_once()
+
+    def test_unknown_model_name_falls_back_to_pretrain_weights(self, tmp_path: Path) -> None:
+        """Unrecognised model_name falls back to pretrain_weights parsing."""
+        ckpt = {
+            "args": {"pretrain_weights": "rf-detr-small.pth", "num_classes": 80},
+            "model_name": "UnknownModel",
+        }
+        _, mock_cls = _call_from_checkpoint(ckpt, tmp_path / "ckpt.pth", "rfdetr.variants.RFDETRSmall")
+        mock_cls.assert_called_once()

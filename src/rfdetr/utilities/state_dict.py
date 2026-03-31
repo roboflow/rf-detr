@@ -141,6 +141,9 @@ def strip_checkpoint(checkpoint: str | os.PathLike[str]) -> None:
         "model": state_dict["model"],
         "args": state_dict["args"],
     }
+    # Preserve model_name when present (#887).
+    if "model_name" in state_dict:
+        new_state_dict["model_name"] = state_dict["model_name"]
     # Preserve PTL-compatible keys when present (written by BestModelCallback).
     for key in _PTL_COMPAT_KEYS:
         if key in state_dict:

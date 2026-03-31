@@ -284,7 +284,20 @@ class RFDETR:
         ]
 
         # New checkpoints store model_name directly — use it when available.
-        _name_map: dict[str, type[RFDETR]] = {klass.__name__: klass for _, klass in _model_map}
+        _name_map: dict[str, type[RFDETR]] = {
+            "RFDETRNano": RFDETRNano,
+            "RFDETRSmall": RFDETRSmall,
+            "RFDETRMedium": RFDETRMedium,
+            "RFDETRLarge": RFDETRLarge,
+            "RFDETRBase": RFDETRBase,
+            "RFDETRSegNano": RFDETRSegNano,
+            "RFDETRSegSmall": RFDETRSegSmall,
+            "RFDETRSegMedium": RFDETRSegMedium,
+            "RFDETRSegLarge": RFDETRSegLarge,
+            "RFDETRSegXLarge": RFDETRSegXLarge,
+            "RFDETRSeg2XLarge": RFDETRSeg2XLarge,
+            "RFDETRSegPreview": RFDETRSegPreview,
+        }
         saved_model_name = ckpt.get("model_name")
         model_cls: type[RFDETR] | None = _name_map.get(saved_model_name) if saved_model_name else None
 
