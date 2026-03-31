@@ -1492,11 +1492,18 @@ class TestRFDETRTrainNumClassesAutoDetect:
     _FOUR_CLASS_NAMES = ["ball", "goalkeeper", "referee", "player"]
 
     def _make_mock_self(self, tmp_path, model_config=None):
-        """Return a MagicMock shaped like RFDETR with real config objects."""
+        """Return a MagicMock shaped like RFDETR with real config objects.
+
+        ``_align_num_classes_from_dataset`` is bound to the real implementation so that
+        ``RFDETR.train(mock_self)`` exercises the actual alignment logic.
+        """
         mock = MagicMock()
         mock.model_config = model_config or RFDETRBaseConfig(pretrain_weights=None, device="cpu")
         mock.model = MagicMock()
         mock.get_train_config.return_value = _make_train_config(tmp_path)
+        # Bind the real instance method so train()'s self._align_num_classes_from_dataset
+        # call exercises actual logic rather than a no-op MagicMock.
+        mock._align_num_classes_from_dataset = lambda ds: RFDETR._align_num_classes_from_dataset(mock, ds)
         return mock
 
     def _write_coco_categories(self, dataset_dir: Path, categories: list[dict[str, Any]]) -> None:
