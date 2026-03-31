@@ -295,15 +295,12 @@ class RFDETR:
             "RFDETRSmall": RFDETRSmall,
             "RFDETRMedium": RFDETRMedium,
             "RFDETRLarge": RFDETRLarge,
-            "RFDETRLargeDeprecated": RFDETRLargeDeprecated,
-            "RFDETRBase": RFDETRBase,
             "RFDETRSegNano": RFDETRSegNano,
             "RFDETRSegSmall": RFDETRSegSmall,
             "RFDETRSegMedium": RFDETRSegMedium,
             "RFDETRSegLarge": RFDETRSegLarge,
             "RFDETRSegXLarge": RFDETRSegXLarge,
             "RFDETRSeg2XLarge": RFDETRSeg2XLarge,
-            "RFDETRSegPreview": RFDETRSegPreview,
         }
         # Plus-model classes are resolved only when rfdetr_plus is installed.
         if _plus_available:
