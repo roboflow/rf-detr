@@ -260,20 +260,6 @@ class RFDETR:
             >>> model = RFDETRSmall.from_checkpoint("checkpoint_best_total.pth")  # doctest: +SKIP
         """
         # Local imports break the variants → detr import cycle.
-        from rfdetr.variants import (
-            RFDETRBase,
-            RFDETRLarge,
-            RFDETRMedium,
-            RFDETRNano,
-            RFDETRSeg2XLarge,
-            RFDETRSegLarge,
-            RFDETRSegMedium,
-            RFDETRSegNano,
-            RFDETRSegPreview,
-            RFDETRSegSmall,
-            RFDETRSegXLarge,
-            RFDETRSmall,
-        )
 
         _plus_available = False
         try:
@@ -297,8 +283,7 @@ class RFDETR:
         # "seg-xlarge", "xxlarge" before "xlarge", and "seg-*" prefixes before
         # their bare counterparts.
         _model_map: list[tuple[str, type[RFDETR]]] = [
-            (name, cast("type[RFDETR]", locals()[class_symbol]))
-            for name, class_symbol in _CHECKPOINT_MODEL_MAP_ENTRIES
+            (name, cast("type[RFDETR]", locals()[class_symbol])) for name, class_symbol in _CHECKPOINT_MODEL_MAP_ENTRIES
         ]
         _model_map[8:8] = _plus_entries
 
