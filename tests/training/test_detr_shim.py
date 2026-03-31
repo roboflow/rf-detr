@@ -1524,12 +1524,8 @@ class TestRFDETRTrainNumClassesAutoDetect:
         assert "num_classes" not in mock_self.model_config.model_fields_set
 
         p_mod, p_dm, p_bt, *_ = patch_lit
-        with (
-            p_mod,
-            p_dm,
-            p_bt,
-            patch.object(RFDETR, "_load_classes", return_value=self._FOUR_CLASS_NAMES),
-        ):
+        load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=self._FOUR_CLASS_NAMES)
+        with p_mod, p_dm, p_bt, load_classes_patch:
             RFDETR.train(mock_self)
 
         assert mock_self.model_config.num_classes == 4
@@ -1551,12 +1547,8 @@ class TestRFDETRTrainNumClassesAutoDetect:
         )
 
         p_mod, p_dm, p_bt, *_ = patch_lit
-        with (
-            p_mod,
-            p_dm,
-            p_bt,
-            patch.object(RFDETR, "_load_classes", return_value=["dog", "cat"]),
-        ):
+        load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=["dog", "cat"])
+        with p_mod, p_dm, p_bt, load_classes_patch:
             RFDETR.train(mock_self)
 
         assert mock_self.model_config.num_classes == 3
@@ -1573,12 +1565,8 @@ class TestRFDETRTrainNumClassesAutoDetect:
         assert "num_classes" in mock_self.model_config.model_fields_set
 
         p_mod, p_dm, p_bt, *_ = patch_lit
-        with (
-            p_mod,
-            p_dm,
-            p_bt,
-            patch.object(RFDETR, "_load_classes", return_value=self._FOUR_CLASS_NAMES),
-        ):
+        load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=self._FOUR_CLASS_NAMES)
+        with p_mod, p_dm, p_bt, load_classes_patch:
             RFDETR.train(mock_self)
 
         assert mock_self.model_config.num_classes == 4
@@ -1600,12 +1588,8 @@ class TestRFDETRTrainNumClassesAutoDetect:
         dataset_dir = mock_self.get_train_config.return_value.dataset_dir
 
         p_mod, p_dm, p_bt, *_ = patch_lit
-        with (
-            p_mod,
-            p_dm,
-            p_bt,
-            patch.object(RFDETR, "_load_classes", return_value=self._FOUR_CLASS_NAMES),
-        ):
+        load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=self._FOUR_CLASS_NAMES)
+        with p_mod, p_dm, p_bt, load_classes_patch:
             previous_propagate = detr_logger.propagate
             detr_logger.propagate = True
             try:
@@ -1627,12 +1611,8 @@ class TestRFDETRTrainNumClassesAutoDetect:
         mock_self.model.args = SimpleNamespace(num_classes=90)
 
         p_mod, p_dm, p_bt, *_ = patch_lit
-        with (
-            p_mod,
-            p_dm,
-            p_bt,
-            patch.object(RFDETR, "_load_classes", return_value=self._FOUR_CLASS_NAMES),
-        ):
+        load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=self._FOUR_CLASS_NAMES)
+        with p_mod, p_dm, p_bt, load_classes_patch:
             RFDETR.train(mock_self)
 
         assert mock_self.model_config.num_classes == 4
@@ -1648,12 +1628,8 @@ class TestRFDETRTrainNumClassesAutoDetect:
         mock_self.model_config = mc
 
         p_mod, p_dm, p_bt, *_ = patch_lit
-        with (
-            p_mod,
-            p_dm,
-            p_bt,
-            patch.object(RFDETR, "_load_classes", return_value=self._FOUR_CLASS_NAMES),
-        ):
+        load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=self._FOUR_CLASS_NAMES)
+        with p_mod, p_dm, p_bt, load_classes_patch:
             RFDETR.train(mock_self)
 
         assert mock_self.model_config.num_classes == 4
@@ -1673,12 +1649,8 @@ class TestRFDETRTrainNumClassesAutoDetect:
         Dataset detection is best-effort; errors must not block training.
         """
         p_mod, p_dm, p_bt, *_ = patch_lit
-        with (
-            p_mod,
-            p_dm,
-            p_bt,
-            patch.object(RFDETR, "_load_classes", side_effect=exc),
-        ):
+        load_classes_patch = patch.object(RFDETR, "_load_classes", side_effect=exc)
+        with p_mod, p_dm, p_bt, load_classes_patch:
             RFDETR.train(mock_self)  # must not raise
 
     def test_no_crash_when_dataset_dir_is_none(self, mock_self, patch_lit):
