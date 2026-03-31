@@ -71,8 +71,9 @@ def _make_rfdetr_self(tmp_path, **train_overrides):
     return mock
 
 
-def _patch_lit():
-    """Context manager that patches all three rfdetr.training entry points."""
+@pytest.fixture
+def patch_lit():
+    """Provide patched rfdetr.training entry points for tests."""
     mock_module_cls = MagicMock(name="RFDETRModule_cls")
     mock_dm_cls = MagicMock(name="RFDETRDataModule_cls")
     mock_build_trainer = MagicMock(name="build_trainer")
@@ -85,12 +86,6 @@ def _patch_lit():
         mock_dm_cls,
         mock_build_trainer,
     )
-
-
-@pytest.fixture
-def patch_lit():
-    """Provide patched rfdetr.training entry points for tests."""
-    return _patch_lit()
 
 
 # ---------------------------------------------------------------------------
