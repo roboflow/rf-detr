@@ -487,6 +487,14 @@ class RFDETR:
                 config.grad_accum_steps,
                 auto_batch.effective_batch_size,
             )
+
+        # Auto-detect num_classes from the training dataset and align model_config.
+        # This must run before RFDETRModelModule is constructed so that weight loading
+        # inside the module uses the correct (dataset-derived) class count.
+        dataset_dir = getattr(config, "dataset_dir", None)
+        if dataset_dir:
+            self._align_num_classes_from_dataset(dataset_dir)
+
         module = RFDETRModelModule(self.model_config, config)
         datamodule = RFDETRDataModule(self.model_config, config)
         trainer_kwargs = {"accelerator": _accelerator}
@@ -687,7 +695,7 @@ class RFDETR:
         """Load class names from a COCO or YOLO dataset directory."""
         if is_valid_coco_dataset(dataset_dir):
             coco_path = os.path.join(dataset_dir, "train", "_annotations.coco.json")
-            with open(coco_path) as f:
+            with open(coco_path, encoding="utf-8") as f:
                 anns = json.load(f)
             categories = sorted(anns["categories"], key=lambda category: category.get("id", float("inf")))
 
@@ -726,6 +734,87 @@ class RFDETR:
             f"Could not find class names in {dataset_dir}."
             " Checked for COCO (train/_annotations.coco.json) and YOLO (data.yaml, data.yml) styles.",
         )
+
+    @staticmethod
+    def _detect_num_classes_for_training(dataset_dir: str) -> int:
+        """Detect the class count using the same category basis as training labels.
+
+        For COCO-style datasets this counts all categories by ``id`` from
+        ``train/_annotations.coco.json`` (matching the remapping based on
+        ``coco.cats`` used by the training datamodule). For YOLO-style datasets
+        it falls back to ``_load_classes``.
+        """
+        if is_valid_coco_dataset(dataset_dir):
+            coco_path = os.path.join(dataset_dir, "train", "_annotations.coco.json")
+            with open(coco_path, encoding="utf-8") as f:
+                anns = json.load(f)
+            categories = anns["categories"]
+            cat_by_id = {category["id"]: category for category in categories}
+            return len(cat_by_id)
+
+        return len(RFDETR._load_classes(dataset_dir))
+
+    def _align_num_classes_from_dataset(self, dataset_dir: str) -> None:
+        """Auto-detect the dataset class count and align ``model_config.num_classes`` in-place.
+
+        Must be called before ``RFDETRModelModule`` is constructed so that weight loading inside
+        the module uses the correct (dataset-derived) class count.
+
+        When the user did **not** explicitly override ``num_classes`` (or passed the class-config
+        default), ``model_config.num_classes`` and ``self.model.args.num_classes`` are updated
+        to match the dataset.  When the user *did* set a non-default value that differs from the
+        dataset, the configured value is preserved and a warning is emitted.
+
+        Failures from ``_detect_num_classes_for_training`` are caught and logged at DEBUG level
+        so that training is never blocked by detection errors.
+
+        Args:
+            dataset_dir: Path to the training dataset root directory.
+        """
+        try:
+            dataset_num_classes = RFDETR._detect_num_classes_for_training(dataset_dir)
+        except (FileNotFoundError, ValueError, KeyError, OSError) as exc:
+            # Best-effort only; do not block training if detection fails.
+            logger.debug("Could not auto-detect num_classes from dataset '%s': %s", dataset_dir, exc)
+            return
+
+        model_num_classes = self.model_config.num_classes
+
+        if dataset_num_classes == model_num_classes:
+            return
+
+        # Determine whether the user explicitly overrode num_classes to a non-default value.
+        # "num_classes" in model_fields_set is True when the field was explicitly set at
+        # construction time; comparing against the class default filters out cases where the
+        # user passed the default value explicitly (treat those like "not set").
+        user_set = "num_classes" in getattr(self.model_config, "model_fields_set", set())
+        default_nc = type(self.model_config).model_fields["num_classes"].default
+        user_overrode = user_set and model_num_classes != default_nc
+
+        if not user_overrode:
+            logger.debug(
+                "Detected %d classes in dataset '%s'; auto-adjusting model num_classes from %d to %d.",
+                dataset_num_classes,
+                dataset_dir,
+                model_num_classes,
+                dataset_num_classes,
+            )
+            self.model_config.num_classes = dataset_num_classes
+            # Keep serialized checkpoint metadata in sync with the updated class count.
+            model_args = getattr(self.model, "args", None)
+            if model_args is not None:
+                model_args.num_classes = dataset_num_classes
+        else:
+            logger.warning(
+                "Dataset '%s' has %d classes but model was initialized with num_classes=%d. "
+                "Using the model's configured value (%d). If this is unintentional, "
+                "reinitialize the model with num_classes=%d.",
+                dataset_dir,
+                dataset_num_classes,
+                model_num_classes,
+                model_num_classes,
+                dataset_num_classes,
+            )
 
     def get_train_config(self, **kwargs) -> TrainConfig:
         """Retrieve the configuration parameters that will be used for training."""
