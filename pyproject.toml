@@ -195,7 +195,10 @@ mypy_path = "src"
 overrides = [
   { module = [
     "tests.*",
-    "examples.*",
+    "einops", "einops.*",
+    "matplotlib", "matplotlib.*",
+    "pandas", "pandas.*",
+    "seaborn", "seaborn.*",
   ], ignore_errors = true },
   { module = [
     "torchvision", "torchvision.*",
