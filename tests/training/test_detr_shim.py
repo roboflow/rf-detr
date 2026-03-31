@@ -26,6 +26,7 @@ import torch
 
 from rfdetr.config import RFDETRBaseConfig, TrainConfig
 from rfdetr.detr import RFDETR, RFDETRLarge
+from rfdetr.detr import logger as detr_logger
 from rfdetr.training.auto_batch import AutoBatchResult
 from rfdetr.training.checkpoint import convert_legacy_checkpoint
 from rfdetr.training.module_model import RFDETRModelModule
@@ -65,8 +66,9 @@ def _make_rfdetr_self(tmp_path, **train_overrides):
     return mock
 
 
-def _patch_lit():
-    """Context manager that patches all three rfdetr.training entry points."""
+@pytest.fixture
+def patch_lit():
+    """Provide patched rfdetr.training entry points for tests."""
     mock_module_cls = MagicMock(name="RFDETRModule_cls")
     mock_dm_cls = MagicMock(name="RFDETRDataModule_cls")
     mock_build_trainer = MagicMock(name="build_trainer")
@@ -89,20 +91,20 @@ def _patch_lit():
 class TestRFDETRTrainPTL:
     """RFDETR.train() delegates to PTL build_trainer().fit()."""
 
-    def test_build_trainer_called_with_config_and_model_config(self, tmp_path):
+    def test_build_trainer_called_with_config_and_model_config(self, tmp_path, patch_lit):
         """build_trainer receives (train_config, model_config) in the right order."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = _patch_lit()
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self)
 
         config = mock_self.get_train_config.return_value
         mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator=None)
 
-    def test_trainer_fit_called_with_module_and_datamodule(self, tmp_path):
+    def test_trainer_fit_called_with_module_and_datamodule(self, tmp_path, patch_lit):
         """trainer.fit() is called with (module_instance, datamodule_instance)."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, mcls, dmcls, mock_bt = _patch_lit()
+        p_mod, p_dm, p_bt, mcls, dmcls, mock_bt = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self)
 
@@ -111,27 +113,27 @@ class TestRFDETRTrainPTL:
         assert fit_args[0][0] is mcls.return_value  # module instance
         assert fit_args[0][1] is dmcls.return_value  # datamodule instance
 
-    def test_ckpt_path_none_when_resume_not_set(self, tmp_path):
+    def test_ckpt_path_none_when_resume_not_set(self, tmp_path, patch_lit):
         """trainer.fit receives ckpt_path=None when config.resume is None."""
         mock_self = _make_rfdetr_self(tmp_path)  # resume defaults to None
-        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = _patch_lit()
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self)
 
         trainer = mock_bt.return_value
         trainer.fit.assert_called_once_with(_mcls.return_value, _dmcls.return_value, ckpt_path=None)
 
-    def test_ckpt_path_forwarded_when_resume_set(self, tmp_path):
+    def test_ckpt_path_forwarded_when_resume_set(self, tmp_path, patch_lit):
         """trainer.fit receives ckpt_path when config.resume is a path string."""
         mock_self = _make_rfdetr_self(tmp_path, resume="/some/checkpoint.ckpt")
-        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = _patch_lit()
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self)
 
         trainer = mock_bt.return_value
         trainer.fit.assert_called_once_with(_mcls.return_value, _dmcls.return_value, ckpt_path="/some/checkpoint.ckpt")
 
-    def test_ckpt_path_none_when_resume_is_empty_string(self, tmp_path):
+    def test_ckpt_path_none_when_resume_is_empty_string(self, tmp_path, patch_lit):
         """config.resume='' is coerced to ckpt_path=None via `resume or None`."""
         mock_self = _make_rfdetr_self(tmp_path)
         # Create a real TrainConfig-like object where resume is ""
@@ -140,7 +142,7 @@ class TestRFDETRTrainPTL:
         mock_config.batch_size = 4  # int so auto-batch branch is not taken
         mock_self.get_train_config.return_value = mock_config
 
-        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = _patch_lit()
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self)
 
@@ -148,10 +150,10 @@ class TestRFDETRTrainPTL:
         _, fit_kwargs = trainer.fit.call_args
         assert fit_kwargs["ckpt_path"] is None
 
-    def test_model_model_synced_back_by_identity(self, tmp_path):
+    def test_model_model_synced_back_by_identity(self, tmp_path, patch_lit):
         """self.model.model is reassigned to module.model (identity, not copy)."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, mcls, _dmcls, mock_bt = _patch_lit()
+        p_mod, p_dm, p_bt, mcls, _dmcls, mock_bt = patch_lit
         sentinel_nn_module = object()
         mcls.return_value.model = sentinel_nn_module
 
@@ -160,15 +162,15 @@ class TestRFDETRTrainPTL:
 
         assert mock_self.model.model is sentinel_nn_module
 
-    def test_returns_none(self, tmp_path):
+    def test_returns_none(self, tmp_path, patch_lit):
         """RFDETR.train() has no return value."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt:
             result = RFDETR.train(mock_self)
         assert result is None
 
-    def test_missing_training_extra_raises_install_hint(self, tmp_path, monkeypatch):
+    def test_missing_training_extra_raises_install_hint(self, tmp_path, monkeypatch, patch_lit):
         """Missing training dependencies should raise ImportError with extras install hint."""
         mock_self = _make_rfdetr_self(tmp_path)
         real_import = builtins.__import__
@@ -189,7 +191,7 @@ class TestRFDETRTrainPTL:
         ["rfdetr.training", "rfdetr.training.auto_batch"],
         ids=["training-package", "training-submodule"],
     )
-    def test_internal_training_module_import_error_preserved(self, tmp_path, monkeypatch, missing_name):
+    def test_internal_training_module_import_error_preserved(self, tmp_path, monkeypatch, missing_name, patch_lit):
         """Missing internal training modules should keep original ModuleNotFoundError."""
         mock_self = _make_rfdetr_self(tmp_path)
         real_import = builtins.__import__
@@ -204,7 +206,7 @@ class TestRFDETRTrainPTL:
         with pytest.raises(ModuleNotFoundError, match=missing_name.replace(".", r"\.")):
             RFDETR.train(mock_self)
 
-    def test_class_names_synced_from_datamodule_after_training(self, tmp_path):
+    def test_class_names_synced_from_datamodule_after_training(self, tmp_path, patch_lit):
         """self.model.class_names is set from RFDETRDataModule.class_names after train().
 
         Regression test for #509: custom class names were not synced back from
@@ -212,7 +214,7 @@ class TestRFDETRTrainPTL:
         instead of the dataset's class labels.
         """
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, _mcls, dmcls, _mock_bt = _patch_lit()
+        p_mod, p_dm, p_bt, _mcls, dmcls, _mock_bt = patch_lit
         custom_class_names = ["cat", "dog", "bird"]
         dmcls.return_value.class_names = custom_class_names
 
@@ -221,7 +223,7 @@ class TestRFDETRTrainPTL:
 
         assert mock_self.model.class_names == custom_class_names
 
-    def test_class_names_not_synced_when_datamodule_returns_none(self, tmp_path):
+    def test_class_names_not_synced_when_datamodule_returns_none(self, tmp_path, patch_lit):
         """self.model.class_names is NOT overwritten when datamodule.class_names is None.
 
         Ensures the sync-back guard does not clobber existing class names
@@ -230,7 +232,7 @@ class TestRFDETRTrainPTL:
         mock_self = _make_rfdetr_self(tmp_path)
         sentinel_names = ["existing_class"]
         mock_self.model.class_names = sentinel_names
-        p_mod, p_dm, p_bt, _mcls, dmcls, _mock_bt = _patch_lit()
+        p_mod, p_dm, p_bt, _mcls, dmcls, _mock_bt = patch_lit
         dmcls.return_value.class_names = None  # datamodule has no class names
 
         with p_mod, p_dm, p_bt:
@@ -238,7 +240,7 @@ class TestRFDETRTrainPTL:
 
         assert mock_self.model.class_names == sentinel_names
 
-    def test_empty_class_names_synced_from_datamodule_after_training(self, tmp_path):
+    def test_empty_class_names_synced_from_datamodule_after_training(self, tmp_path, patch_lit):
         """Empty class name lists are synced and overwrite stale model labels.
 
         Empty list is a valid explicit value and should not be treated as missing.
@@ -246,7 +248,7 @@ class TestRFDETRTrainPTL:
         mock_self = _make_rfdetr_self(tmp_path)
         sentinel_names = ["stale_label"]
         mock_self.model.class_names = sentinel_names
-        p_mod, p_dm, p_bt, _mcls, dmcls, _mock_bt = _patch_lit()
+        p_mod, p_dm, p_bt, _mcls, dmcls, _mock_bt = patch_lit
         dmcls.return_value.class_names = []
 
         with p_mod, p_dm, p_bt:
@@ -254,69 +256,69 @@ class TestRFDETRTrainPTL:
 
         assert mock_self.model.class_names == []
 
-    def test_device_kwarg_cpu_no_warning(self, tmp_path):
+    def test_device_kwarg_cpu_no_warning(self, tmp_path, patch_lit):
         """device='cpu' is consumed without a DeprecationWarning."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             RFDETR.train(mock_self, device="cpu")
         assert not any(issubclass(x.category, DeprecationWarning) for x in w)
         mock_self.get_train_config.assert_called_once_with()
 
-    def test_device_kwarg_cuda_forwards_gpu_accelerator_without_devices(self, tmp_path):
+    def test_device_kwarg_cuda_forwards_gpu_accelerator_without_devices(self, tmp_path, patch_lit):
         """device='cuda' is mapped to accelerator='gpu' without explicit devices override."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             RFDETR.train(mock_self, device="cuda")
         assert not any(issubclass(x.category, DeprecationWarning) for x in w)
         mock_self.get_train_config.assert_called_once_with()
 
-    def test_device_kwarg_torch_device_cuda_index_forwards_gpu_accelerator_and_devices(self, tmp_path):
+    def test_device_kwarg_torch_device_cuda_index_forwards_gpu_accelerator_and_devices(self, tmp_path, patch_lit):
         """torch.device('cuda:1') is mapped to accelerator='gpu' and devices=[1]."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             RFDETR.train(mock_self, device=torch.device("cuda:1"))
         assert not any(issubclass(x.category, DeprecationWarning) for x in w)
         mock_self.get_train_config.assert_called_once_with()
 
-    def test_callbacks_none_no_warning(self, tmp_path):
+    def test_callbacks_none_no_warning(self, tmp_path, patch_lit):
         """callbacks=None produces no DeprecationWarning."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             RFDETR.train(mock_self, callbacks=None)
         assert not any(issubclass(x.category, DeprecationWarning) for x in w)
 
-    def test_callbacks_empty_dict_no_warning(self, tmp_path):
+    def test_callbacks_empty_dict_no_warning(self, tmp_path, patch_lit):
         """callbacks={} (falsy dict) produces no DeprecationWarning."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             RFDETR.train(mock_self, callbacks={})
         assert not any(issubclass(x.category, DeprecationWarning) for x in w)
 
-    def test_callbacks_all_empty_lists_no_warning(self, tmp_path):
+    def test_callbacks_all_empty_lists_no_warning(self, tmp_path, patch_lit):
         """Callbacks dict with all-empty lists produces no DeprecationWarning."""
         mock_self = _make_rfdetr_self(tmp_path)
         callbacks = defaultdict(list)
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             RFDETR.train(mock_self, callbacks=callbacks)
         assert not any(issubclass(x.category, DeprecationWarning) for x in w)
 
-    def test_callbacks_non_empty_emits_deprecation_warning(self, tmp_path):
+    def test_callbacks_non_empty_emits_deprecation_warning(self, tmp_path, patch_lit):
         """Callbacks dict with a non-empty list emits DeprecationWarning."""
         mock_self = _make_rfdetr_self(tmp_path)
         callbacks = {"on_fit_epoch_end": [lambda: None]}
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             RFDETR.train(mock_self, callbacks=callbacks)
@@ -324,30 +326,30 @@ class TestRFDETRTrainPTL:
         assert len(depr) >= 1
         assert "PTL" in str(depr[0].message)
 
-    def test_callbacks_mixed_emits_deprecation_warning(self, tmp_path):
+    def test_callbacks_mixed_emits_deprecation_warning(self, tmp_path, patch_lit):
         """Mixed callbacks (some empty, some non-empty) triggers DeprecationWarning."""
         mock_self = _make_rfdetr_self(tmp_path)
         callbacks = {"on_fit_epoch_end": [], "on_train_end": [lambda: None]}
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             RFDETR.train(mock_self, callbacks=callbacks)
         assert any(issubclass(x.category, DeprecationWarning) for x in w)
 
-    def test_do_benchmark_false_no_warning(self, tmp_path):
+    def test_do_benchmark_false_no_warning(self, tmp_path, patch_lit):
         """do_benchmark=False (default) emits no DeprecationWarning."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             RFDETR.train(mock_self, do_benchmark=False)
         assert not any(issubclass(x.category, DeprecationWarning) for x in w)
 
     @pytest.mark.parametrize("truthy_value", [True, 1, "yes"], ids=["bool_true", "int_1", "str_yes"])
-    def test_do_benchmark_truthy_emits_deprecation_warning(self, tmp_path, truthy_value):
+    def test_do_benchmark_truthy_emits_deprecation_warning(self, tmp_path, truthy_value, patch_lit):
         """Any truthy do_benchmark value emits DeprecationWarning."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             RFDETR.train(mock_self, do_benchmark=truthy_value)
@@ -355,25 +357,25 @@ class TestRFDETRTrainPTL:
         assert len(depr) >= 1
         assert "rfdetr benchmark" in str(depr[0].message)
 
-    def test_do_benchmark_not_forwarded_to_get_train_config(self, tmp_path):
+    def test_do_benchmark_not_forwarded_to_get_train_config(self, tmp_path, patch_lit):
         """do_benchmark is popped before calling get_train_config."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True):
             warnings.simplefilter("always")
             RFDETR.train(mock_self, do_benchmark=True)
         mock_self.get_train_config.assert_called_once_with()
 
-    def test_device_not_forwarded_to_get_train_config(self, tmp_path):
+    def test_device_not_forwarded_to_get_train_config(self, tmp_path, patch_lit):
         """device= is popped and not passed on to get_train_config."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self, device="cpu")
         # get_train_config must have been called without device=
         assert "device" not in mock_self.get_train_config.call_args.kwargs
 
-    def test_batch_size_auto_resolved_before_module_and_datamodule_build(self, tmp_path):
+    def test_batch_size_auto_resolved_before_module_and_datamodule_build(self, tmp_path, patch_lit):
         """batch_size='auto' is resolved to ints before module/datamodule init."""
         mock_self = _make_rfdetr_self(tmp_path, batch_size="auto", grad_accum_steps=99)
         auto_result = AutoBatchResult(
@@ -382,7 +384,7 @@ class TestRFDETRTrainPTL:
             effective_batch_size=18,
             device_name="Fake GPU",
         )
-        p_mod, p_dm, p_bt, mcls, dmcls, _mock_bt = _patch_lit()
+        p_mod, p_dm, p_bt, mcls, dmcls, _mock_bt = patch_lit
         with p_mod, p_dm, p_bt, patch("rfdetr.training.auto_batch.resolve_auto_batch_config", return_value=auto_result):
             RFDETR.train(mock_self)
 
@@ -392,7 +394,7 @@ class TestRFDETRTrainPTL:
         mcls.assert_called_once_with(mock_self.model_config, config)
         dmcls.assert_called_once_with(mock_self.model_config, config)
 
-    def test_batch_size_auto_calls_resolver_with_expected_context(self, tmp_path):
+    def test_batch_size_auto_calls_resolver_with_expected_context(self, tmp_path, patch_lit):
         """Auto-batch resolver receives model context, model config, and train config."""
         mock_self = _make_rfdetr_self(tmp_path, batch_size="auto")
         auto_result = AutoBatchResult(
@@ -401,7 +403,7 @@ class TestRFDETRTrainPTL:
             effective_batch_size=16,
             device_name="Fake GPU",
         )
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with (
             p_mod,
             p_dm,
@@ -426,47 +428,47 @@ class TestRFDETRTrainPTL:
 class TestRFDETRTrainPTLAbsorption:
     """RFDETR.train() absorbs legacy kwargs and routes through PTL build_trainer()."""
 
-    def test_device_cpu_absorbed_as_accelerator_cpu(self, tmp_path):
+    def test_device_cpu_absorbed_as_accelerator_cpu(self, tmp_path, patch_lit):
         """device='cpu' is absorbed and forwarded to build_trainer as accelerator='cpu'."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = _patch_lit()
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self, device="cpu")
         config = mock_self.get_train_config.return_value
         mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator="cpu")
 
-    def test_device_cuda_absorbed_as_accelerator_gpu(self, tmp_path):
+    def test_device_cuda_absorbed_as_accelerator_gpu(self, tmp_path, patch_lit):
         """device='cuda' forwards accelerator='gpu' without a devices kwarg."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = _patch_lit()
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self, device="cuda")
         config = mock_self.get_train_config.return_value
         mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator="gpu")
         assert "devices" not in mock_bt.call_args.kwargs
 
-    def test_device_cuda_index_absorbed_as_accelerator_gpu_devices_list(self, tmp_path):
+    def test_device_cuda_index_absorbed_as_accelerator_gpu_devices_list(self, tmp_path, patch_lit):
         """device='cuda:1' forwards accelerator='gpu' and devices=[1]."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = _patch_lit()
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self, device="cuda:1")
         config = mock_self.get_train_config.return_value
         mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator="gpu", devices=[1])
 
-    def test_device_torch_device_cuda_index_absorbed_as_accelerator_gpu_devices_list(self, tmp_path):
+    def test_device_torch_device_cuda_index_absorbed_as_accelerator_gpu_devices_list(self, tmp_path, patch_lit):
         """device=torch.device('cuda:2') forwards accelerator='gpu' and devices=[2]."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = _patch_lit()
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self, device=torch.device("cuda:2"))
         config = mock_self.get_train_config.return_value
         mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator="gpu", devices=[2])
 
-    def test_device_invalid_raises_value_error_with_expected_message(self, tmp_path):
+    def test_device_invalid_raises_value_error_with_expected_message(self, tmp_path, patch_lit):
         """Invalid device strings raise a ValueError with the train() device hint."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with (
             p_mod,
             p_dm,
@@ -475,38 +477,38 @@ class TestRFDETRTrainPTLAbsorption:
         ):
             RFDETR.train(mock_self, device="notadevice")
 
-    def test_device_unmapped_valid_type_warns_and_falls_back_to_auto_detection(self, tmp_path):
+    def test_device_unmapped_valid_type_warns_and_falls_back_to_auto_detection(self, tmp_path, patch_lit):
         """Valid but unmapped torch device types warn and use PTL auto-detection."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = _patch_lit()
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
         with p_mod, p_dm, p_bt, pytest.warns(UserWarning, match="auto-detection"):
             RFDETR.train(mock_self, device="meta")
         config = mock_self.get_train_config.return_value
         mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator=None)
         assert "devices" not in mock_bt.call_args.kwargs
 
-    def test_callbacks_empty_dict_no_error(self, tmp_path):
+    def test_callbacks_empty_dict_no_error(self, tmp_path, patch_lit):
         """callbacks={} is accepted without error."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self, callbacks={})  # must not raise
 
-    def test_callbacks_non_empty_emits_deprecation_warning(self, tmp_path):
+    def test_callbacks_non_empty_emits_deprecation_warning(self, tmp_path, patch_lit):
         """Callbacks with non-empty lists emits DeprecationWarning."""
         mock_self = _make_rfdetr_self(tmp_path)
         callbacks = {"on_fit_epoch_end": [lambda: None]}
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             RFDETR.train(mock_self, callbacks=callbacks)
         depr = [x for x in w if issubclass(x.category, DeprecationWarning)]
         assert len(depr) >= 1
 
-    def test_start_epoch_emits_deprecation_warning(self, tmp_path):
+    def test_start_epoch_emits_deprecation_warning(self, tmp_path, patch_lit):
         """start_epoch=1 emits DeprecationWarning and is dropped."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             RFDETR.train(mock_self, start_epoch=1)
@@ -515,20 +517,20 @@ class TestRFDETRTrainPTLAbsorption:
         # start_epoch must not reach get_train_config
         assert "start_epoch" not in mock_self.get_train_config.call_args.kwargs
 
-    def test_do_benchmark_true_emits_deprecation_warning(self, tmp_path):
+    def test_do_benchmark_true_emits_deprecation_warning(self, tmp_path, patch_lit):
         """do_benchmark=True emits DeprecationWarning."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             RFDETR.train(mock_self, do_benchmark=True)
         depr = [x for x in w if issubclass(x.category, DeprecationWarning)]
         assert any("do_benchmark" in str(d.message) or "rfdetr benchmark" in str(d.message) for d in depr)
 
-    def test_returns_none(self, tmp_path):
+    def test_returns_none(self, tmp_path, patch_lit):
         """RFDETR.train() returns None."""
         mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt:
             result = RFDETR.train(mock_self)
         assert result is None
@@ -577,7 +579,7 @@ def _make_legacy_pth(tmp_path, epoch=5, include_ema=False, args_value="namespace
 class TestConvertLegacyCheckpoint:
     """convert_legacy_checkpoint() produces a valid PTL .ckpt file."""
 
-    def test_state_dict_keys_prefixed_with_model(self, tmp_path):
+    def test_state_dict_keys_prefixed_with_model(self, tmp_path, patch_lit):
         """All state_dict keys must be prefixed with 'model.'."""
         src = _make_legacy_pth(tmp_path)
         dst = str(tmp_path / "out.ckpt")
@@ -585,7 +587,7 @@ class TestConvertLegacyCheckpoint:
         ckpt = torch.load(dst, map_location="cpu", weights_only=False)
         assert all(k.startswith("model.") for k in ckpt["state_dict"])
 
-    def test_state_dict_keys_dot_containing_names_prefixed_once(self, tmp_path):
+    def test_state_dict_keys_dot_containing_names_prefixed_once(self, tmp_path, patch_lit):
         """Keys already containing dots are prefixed exactly once."""
         path = str(tmp_path / "dot_keys.pth")
         torch.save({"model": {"backbone.layer.weight": torch.zeros(1)}, "epoch": 0}, path)
@@ -595,7 +597,7 @@ class TestConvertLegacyCheckpoint:
         assert "model.backbone.layer.weight" in ckpt["state_dict"]
         assert "model.model.backbone.layer.weight" not in ckpt["state_dict"]
 
-    def test_epoch_preserved(self, tmp_path):
+    def test_epoch_preserved(self, tmp_path, patch_lit):
         """Epoch value is copied from the source checkpoint."""
         src = _make_legacy_pth(tmp_path, epoch=42)
         dst = str(tmp_path / "out.ckpt")
@@ -603,7 +605,7 @@ class TestConvertLegacyCheckpoint:
         ckpt = torch.load(dst, map_location="cpu", weights_only=False)
         assert ckpt["epoch"] == 42
 
-    def test_epoch_defaults_to_zero_when_missing(self, tmp_path):
+    def test_epoch_defaults_to_zero_when_missing(self, tmp_path, patch_lit):
         """Missing epoch key in source defaults to 0."""
         path = str(tmp_path / "no_epoch.pth")
         torch.save({"model": {"w": torch.zeros(1)}}, path)
@@ -612,7 +614,7 @@ class TestConvertLegacyCheckpoint:
         ckpt = torch.load(dst, map_location="cpu", weights_only=False)
         assert ckpt["epoch"] == 0
 
-    def test_global_step_always_zero(self, tmp_path):
+    def test_global_step_always_zero(self, tmp_path, patch_lit):
         """global_step is always written as 0."""
         src = _make_legacy_pth(tmp_path)
         dst = str(tmp_path / "out.ckpt")
@@ -620,7 +622,7 @@ class TestConvertLegacyCheckpoint:
         ckpt = torch.load(dst, map_location="cpu", weights_only=False)
         assert ckpt["global_step"] == 0
 
-    def test_legacy_checkpoint_format_flag_set(self, tmp_path):
+    def test_legacy_checkpoint_format_flag_set(self, tmp_path, patch_lit):
         """legacy_checkpoint_format is always True in output."""
         src = _make_legacy_pth(tmp_path)
         dst = str(tmp_path / "out.ckpt")
@@ -628,7 +630,7 @@ class TestConvertLegacyCheckpoint:
         ckpt = torch.load(dst, map_location="cpu", weights_only=False)
         assert ckpt["legacy_checkpoint_format"] is True
 
-    def test_args_as_namespace_converted_to_dict(self, tmp_path):
+    def test_args_as_namespace_converted_to_dict(self, tmp_path, patch_lit):
         """argparse.Namespace args are converted to a plain dict via vars()."""
         src = _make_legacy_pth(tmp_path, args_value="namespace")
         dst = str(tmp_path / "out.ckpt")
@@ -637,7 +639,7 @@ class TestConvertLegacyCheckpoint:
         assert isinstance(ckpt["hyper_parameters"], dict)
         assert ckpt["hyper_parameters"]["lr"] == pytest.approx(1e-4)
 
-    def test_args_as_dict_kept_as_dict(self, tmp_path):
+    def test_args_as_dict_kept_as_dict(self, tmp_path, patch_lit):
         """Plain dict args is preserved as-is."""
         src = _make_legacy_pth(tmp_path, args_value="dict")
         dst = str(tmp_path / "out.ckpt")
@@ -645,7 +647,7 @@ class TestConvertLegacyCheckpoint:
         ckpt = torch.load(dst, map_location="cpu", weights_only=False)
         assert ckpt["hyper_parameters"] == {"lr": pytest.approx(1e-4), "epochs": 100}
 
-    def test_args_none_gives_empty_hyper_parameters(self, tmp_path):
+    def test_args_none_gives_empty_hyper_parameters(self, tmp_path, patch_lit):
         """args=None produces an empty hyper_parameters dict."""
         src = _make_legacy_pth(tmp_path, args_value=None)
         dst = str(tmp_path / "out.ckpt")
@@ -653,7 +655,7 @@ class TestConvertLegacyCheckpoint:
         ckpt = torch.load(dst, map_location="cpu", weights_only=False)
         assert ckpt["hyper_parameters"] == {}
 
-    def test_args_missing_key_gives_empty_hyper_parameters(self, tmp_path):
+    def test_args_missing_key_gives_empty_hyper_parameters(self, tmp_path, patch_lit):
         """No 'args' key at all also produces empty hyper_parameters."""
         src = _make_legacy_pth(tmp_path, args_value="missing")
         dst = str(tmp_path / "out.ckpt")
@@ -661,7 +663,7 @@ class TestConvertLegacyCheckpoint:
         ckpt = torch.load(dst, map_location="cpu", weights_only=False)
         assert ckpt["hyper_parameters"] == {}
 
-    def test_args_custom_object_with_dict_converted_via_vars(self, tmp_path):
+    def test_args_custom_object_with_dict_converted_via_vars(self, tmp_path, patch_lit):
         """A custom object with __dict__ is converted via vars()."""
         opts = _CustomArgs()
         opts.lr = 2e-4
@@ -674,7 +676,7 @@ class TestConvertLegacyCheckpoint:
         ckpt = torch.load(dst, map_location="cpu", weights_only=False)
         assert ckpt["hyper_parameters"]["lr"] == pytest.approx(2e-4)
 
-    def test_ema_model_preserved_as_legacy_ema_state_dict(self, tmp_path):
+    def test_ema_model_preserved_as_legacy_ema_state_dict(self, tmp_path, patch_lit):
         """ema_model present in source is written as legacy_ema_state_dict."""
         src = _make_legacy_pth(tmp_path, include_ema=True)
         dst = str(tmp_path / "out.ckpt")
@@ -683,7 +685,7 @@ class TestConvertLegacyCheckpoint:
         assert "legacy_ema_state_dict" in ckpt
         assert "layer.weight" in ckpt["legacy_ema_state_dict"]
 
-    def test_no_ema_model_no_legacy_ema_state_dict(self, tmp_path):
+    def test_no_ema_model_no_legacy_ema_state_dict(self, tmp_path, patch_lit):
         """No ema_model in source means legacy_ema_state_dict is absent."""
         src = _make_legacy_pth(tmp_path, include_ema=False)
         dst = str(tmp_path / "out.ckpt")
@@ -691,7 +693,7 @@ class TestConvertLegacyCheckpoint:
         ckpt = torch.load(dst, map_location="cpu", weights_only=False)
         assert "legacy_ema_state_dict" not in ckpt
 
-    def test_round_trip_with_on_load_checkpoint(self, tmp_path):
+    def test_round_trip_with_on_load_checkpoint(self, tmp_path, patch_lit):
         """convert_legacy_checkpoint output is handled correctly by on_load_checkpoint.
 
         After conversion, loading the .ckpt via on_load_checkpoint must NOT
@@ -715,7 +717,7 @@ class TestConvertLegacyCheckpoint:
         # EMA stashed
         assert hasattr(fake, "_pending_legacy_ema_state")
 
-    def test_missing_model_key_raises_value_error(self, tmp_path):
+    def test_missing_model_key_raises_value_error(self, tmp_path, patch_lit):
         """Source file with no 'model' key raises ValueError with a clear message."""
         path = str(tmp_path / "no_model.pth")
         torch.save({"epoch": 5}, path)
@@ -724,7 +726,7 @@ class TestConvertLegacyCheckpoint:
         with pytest.raises(ValueError, match="'model' key"):
             convert_legacy_checkpoint(path, dst)
 
-    def test_args_primitive_type_falls_back_to_empty_dict(self, tmp_path):
+    def test_args_primitive_type_falls_back_to_empty_dict(self, tmp_path, patch_lit):
         """Args of a non-dict, non-Namespace type (e.g. string) falls back to {} with a warning."""
         path = str(tmp_path / "prim_args.pth")
         torch.save({"model": {"w": torch.zeros(1)}, "args": "legacy_string_value"}, path)
@@ -747,7 +749,7 @@ class _FakeModule:
 class TestOnLoadCheckpoint:
     """RFDETRModule.on_load_checkpoint auto-detects legacy formats."""
 
-    def test_raw_pth_writes_state_dict_with_prefix(self):
+    def test_raw_pth_writes_state_dict_with_prefix(self, patch_lit):
         """'model' key without 'state_dict' → state_dict written with 'model.' prefix."""
         fake = _FakeModule()
         ckpt = {"model": {"backbone.weight": torch.zeros(2)}}
@@ -755,21 +757,21 @@ class TestOnLoadCheckpoint:
         assert "state_dict" in ckpt
         assert "model.backbone.weight" in ckpt["state_dict"]
 
-    def test_raw_pth_original_model_key_preserved(self):
+    def test_raw_pth_original_model_key_preserved(self, patch_lit):
         """Original 'model' key is not deleted after state_dict is written."""
         fake = _FakeModule()
         ckpt = {"model": {"w": torch.zeros(1)}}
         RFDETRModelModule.on_load_checkpoint(fake, ckpt)
         assert "model" in ckpt  # PTL may inspect it; must not be deleted
 
-    def test_empty_model_dict_produces_empty_state_dict(self):
+    def test_empty_model_dict_produces_empty_state_dict(self, patch_lit):
         """Empty 'model' dict without 'state_dict' → empty state_dict written."""
         fake = _FakeModule()
         ckpt = {"model": {}}
         RFDETRModelModule.on_load_checkpoint(fake, ckpt)
         assert ckpt["state_dict"] == {}
 
-    def test_native_ptl_format_no_op(self):
+    def test_native_ptl_format_no_op(self, patch_lit):
         """Native PTL checkpoint (has 'state_dict', no 'model') → no mutation."""
         fake = _FakeModule()
         sentinel = {"model.layer.weight": torch.zeros(1)}
@@ -778,7 +780,7 @@ class TestOnLoadCheckpoint:
         assert ckpt["state_dict"] is sentinel  # not replaced
         assert not hasattr(fake, "_pending_legacy_ema_state")
 
-    def test_both_model_and_state_dict_present_state_dict_not_overwritten(self):
+    def test_both_model_and_state_dict_present_state_dict_not_overwritten(self, patch_lit):
         """'state_dict' is NOT overwritten when both 'model' and 'state_dict' exist."""
         fake = _FakeModule()
         existing_sd = {"model.existing": torch.zeros(1)}
@@ -790,7 +792,7 @@ class TestOnLoadCheckpoint:
         assert ckpt["state_dict"] is existing_sd
         assert "model.new_key" not in ckpt["state_dict"]
 
-    def test_legacy_ema_state_dict_stashed(self):
+    def test_legacy_ema_state_dict_stashed(self, patch_lit):
         """'legacy_ema_state_dict' in checkpoint → stashed on _pending_legacy_ema_state."""
         fake = _FakeModule()
         ema_weights = {"layer.weight": torch.ones(2)}
@@ -801,14 +803,14 @@ class TestOnLoadCheckpoint:
         RFDETRModelModule.on_load_checkpoint(fake, ckpt)
         assert fake._pending_legacy_ema_state is ema_weights
 
-    def test_no_legacy_ema_attribute_not_set(self):
+    def test_no_legacy_ema_attribute_not_set(self, patch_lit):
         """No 'legacy_ema_state_dict' → _pending_legacy_ema_state not set on module."""
         fake = _FakeModule()
         ckpt = {"state_dict": {"model.w": torch.zeros(1)}}
         RFDETRModelModule.on_load_checkpoint(fake, ckpt)
         assert not hasattr(fake, "_pending_legacy_ema_state")
 
-    def test_empty_checkpoint_is_noop(self):
+    def test_empty_checkpoint_is_noop(self, patch_lit):
         """Completely empty checkpoint {} triggers no mutation and no error."""
         fake = _FakeModule()
         ckpt: dict[str, Any] = {}
@@ -816,7 +818,7 @@ class TestOnLoadCheckpoint:
         assert ckpt == {}
         assert not hasattr(fake, "_pending_legacy_ema_state")
 
-    def test_second_call_overwrites_pending_ema(self):
+    def test_second_call_overwrites_pending_ema(self, patch_lit):
         """Calling on_load_checkpoint twice with EMA overwrites the stash."""
         fake = _FakeModule()
         first_ema = {"w": torch.zeros(1)}
@@ -825,7 +827,7 @@ class TestOnLoadCheckpoint:
         RFDETRModelModule.on_load_checkpoint(fake, {"state_dict": {}, "legacy_ema_state_dict": second_ema})
         assert fake._pending_legacy_ema_state is second_ema
 
-    def test_second_call_without_ema_leaves_first_stash(self):
+    def test_second_call_without_ema_leaves_first_stash(self, patch_lit):
         """Second call without 'legacy_ema_state_dict' does not clear the stash."""
         fake = _FakeModule()
         first_ema = {"w": torch.zeros(1)}
@@ -847,7 +849,7 @@ class TestPublicAPIExports:
         ["RFDETRModelModule", "RFDETRDataModule", "build_trainer"],
         ids=["RFDETRModelModule", "RFDETRDataModule", "build_trainer"],
     )
-    def test_symbol_importable_from_rfdetr(self, name):
+    def test_symbol_importable_from_rfdetr(self, name, patch_lit):
         """Each PTL export is accessible as rfdetr.<name> via lazy __getattr__."""
         import rfdetr
 
@@ -858,27 +860,27 @@ class TestPublicAPIExports:
         ["RFDETRModelModule", "RFDETRDataModule", "build_trainer"],
         ids=["RFDETRModelModule", "RFDETRDataModule", "build_trainer"],
     )
-    def test_symbol_is_same_object_as_rfdetr_training(self, name):
+    def test_symbol_is_same_object_as_rfdetr_training(self, name, patch_lit):
         """rfdetr.<name> is the identical object to rfdetr.training.<name>."""
         import rfdetr
         import rfdetr.training
 
         assert getattr(rfdetr, name) is getattr(rfdetr.training, name)
 
-    def test_ptl_names_not_in_all(self):
+    def test_ptl_names_not_in_all(self, patch_lit):
         """PTL exports are optional (rfdetr[train]) and must not be in rfdetr.__all__."""
         import rfdetr
 
         for name in ("RFDETRModelModule", "RFDETRDataModule", "build_trainer"):
             assert name not in rfdetr.__all__, f"{name} must not be in __all__ (optional extra)"
 
-    def test_rfdetr_all_no_duplicates(self):
+    def test_rfdetr_all_no_duplicates(self, patch_lit):
         """rfdetr.__all__ contains no duplicate names."""
         import rfdetr
 
         assert len(rfdetr.__all__) == len(set(rfdetr.__all__))
 
-    def test_plus_symbol_resolution_does_not_mutate_all(self, monkeypatch):
+    def test_plus_symbol_resolution_does_not_mutate_all(self, monkeypatch, patch_lit):
         """Top-level __all__ remains static when plus-only symbols resolve lazily."""
         import rfdetr
         import rfdetr.platform.models
@@ -891,14 +893,14 @@ class TestPublicAPIExports:
         assert rfdetr.RFDETRXLarge is sentinel
         assert rfdetr.__all__ == original_all
 
-    def test_existing_exports_still_present(self):
+    def test_existing_exports_still_present(self, patch_lit):
         """Original RFDETR* class exports are unchanged."""
         import rfdetr
 
         for name in ["RFDETRNano", "RFDETRSmall", "RFDETRMedium", "RFDETRLarge"]:
             assert hasattr(rfdetr, name), f"rfdetr.{name} unexpectedly missing"
 
-    def test_convert_legacy_checkpoint_not_in_rfdetr_namespace(self):
+    def test_convert_legacy_checkpoint_not_in_rfdetr_namespace(self, patch_lit):
         """convert_legacy_checkpoint is in rfdetr.training but not the top-level rfdetr namespace."""
         import rfdetr
         from rfdetr.training import convert_legacy_checkpoint  # noqa: F401
@@ -915,7 +917,7 @@ class TestPublicAPIExports:
 class TestRFDETRLargeFallback:
     """RFDETRLarge retries only for deprecated-weight compatibility errors."""
 
-    def test_cuda_oom_runtime_error_does_not_retry(self, monkeypatch):
+    def test_cuda_oom_runtime_error_does_not_retry(self, monkeypatch, patch_lit):
         """CUDA OOM should fail fast without deprecated-config retry."""
         call_count = 0
 
@@ -932,7 +934,7 @@ class TestRFDETRLargeFallback:
 
         assert call_count == 1
 
-    def test_state_dict_runtime_error_retries_once_with_deprecated_config(self, monkeypatch):
+    def test_state_dict_runtime_error_retries_once_with_deprecated_config(self, monkeypatch, patch_lit):
         """State-dict mismatch errors trigger exactly one deprecated-config retry."""
         call_count = 0
 
@@ -1047,7 +1049,7 @@ class TestLoadPretrainWeightsInto:
 class TestClassNamesProperty:
     """RFDETR.class_names property returns List[str] (0-indexed)."""
 
-    def test_empty_class_names_returns_empty_list_not_coco(self):
+    def test_empty_class_names_returns_empty_list_not_coco(self, patch_lit):
         """class_names property returns [] when model.class_names is [], NOT COCO fallback.
 
         Regression test for #509: the truthiness check `and self.model.class_names:`
@@ -1062,7 +1064,7 @@ class TestClassNamesProperty:
 
         assert result == [], "class_names=[] must return [] (empty list), not COCO fallback"
 
-    def test_none_class_names_returns_coco(self):
+    def test_none_class_names_returns_coco(self, patch_lit):
         """class_names property falls back to COCO_CLASS_NAMES when model.class_names is None."""
         from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
 
@@ -1073,7 +1075,7 @@ class TestClassNamesProperty:
 
         assert result is COCO_CLASS_NAMES
 
-    def test_custom_class_names_returned_as_list(self):
+    def test_custom_class_names_returned_as_list(self, patch_lit):
         """Non-empty class_names are returned as a 0-indexed list."""
         mock_self = MagicMock()
         mock_self.model.class_names = ["cat", "dog"]
@@ -1082,7 +1084,7 @@ class TestClassNamesProperty:
 
         assert result == ["cat", "dog"]
 
-    def test_custom_class_names_returns_shallow_copy(self):
+    def test_custom_class_names_returns_shallow_copy(self, patch_lit):
         """Mutating the returned class_names list must not mutate model state."""
         mock_self = MagicMock()
         mock_self.model.class_names = ["cat", "dog"]
@@ -1107,10 +1109,12 @@ class TestDeployToRoboflow:
     Roboflow with a FileNotFoundError from the Roboflow client library.
     """
 
-    def _make_mock_self(self, class_names, size="rfdetr-small"):
-        """Return a minimal RFDETR-like mock suitable for deploy_to_roboflow."""
+    @pytest.fixture
+    def mock_self(self):
+        """Return a minimal RFDETR-like mock for deploy_to_roboflow tests."""
+        class_names = ["cat", "dog"]
         mock_self = MagicMock(spec=RFDETR)
-        mock_self.size = size
+        mock_self.size = "rfdetr-small"
         mock_self.class_names = class_names  # the property, resolved to a plain list
         # `model` is an instance attribute (set in __init__), not a class attribute, so
         # MagicMock(spec=RFDETR).__getattr__ would raise AttributeError for it.  Assign
@@ -1120,7 +1124,13 @@ class TestDeployToRoboflow:
         mock_self.model.args = SimpleNamespace(num_classes=len(class_names))
         return mock_self
 
-    def test_class_names_txt_written_with_correct_content(self, tmp_path, monkeypatch):
+    @staticmethod
+    def _set_class_names(mock_self: MagicMock, class_names: list[str]) -> None:
+        """Update class names and keep args.num_classes in sync."""
+        mock_self.class_names = class_names
+        mock_self.model.args.num_classes = len(class_names)
+
+    def test_class_names_txt_written_with_correct_content(self, tmp_path, monkeypatch, mock_self, patch_lit):
         """deploy_to_roboflow must write class_names.txt with one name per line.
 
         Regression: RFDETRSeg models were failing with FileNotFoundError from
@@ -1129,7 +1139,7 @@ class TestDeployToRoboflow:
         monkeypatch.chdir(tmp_path)
 
         class_names = ["cat", "dog", "bird"]
-        mock_self = self._make_mock_self(class_names)
+        self._set_class_names(mock_self, class_names)
         mock_rf = MagicMock()
 
         captured: dict = {}
@@ -1154,7 +1164,7 @@ class TestDeployToRoboflow:
         assert "content" in captured, "class_names.txt was not present in the upload directory during deploy"
         assert captured["content"] == "cat\ndog\nbird"
 
-    def test_args_class_names_set_in_checkpoint(self, tmp_path, monkeypatch):
+    def test_args_class_names_set_in_checkpoint(self, tmp_path, monkeypatch, mock_self, patch_lit):
         """The saved checkpoint args must contain class_names when args lacks it.
 
         Regression: args.class_names was absent after switching to PTL training,
@@ -1163,7 +1173,6 @@ class TestDeployToRoboflow:
         monkeypatch.chdir(tmp_path)
 
         class_names = ["cat", "dog"]
-        mock_self = self._make_mock_self(class_names)
         # Ensure class_names is absent from args (mimics the regression scenario).
         assert not hasattr(mock_self.model.args, "class_names")
 
@@ -1192,12 +1201,11 @@ class TestDeployToRoboflow:
         assert hasattr(saved_args, "class_names"), "class_names must be present in saved args"
         assert saved_args.class_names == class_names
 
-    def test_args_class_names_set_when_none_in_checkpoint(self, tmp_path, monkeypatch):
+    def test_args_class_names_set_when_none_in_checkpoint(self, tmp_path, monkeypatch, mock_self, patch_lit):
         """class_names must be set when args has the attribute but its value is None."""
         monkeypatch.chdir(tmp_path)
 
         class_names = ["cat", "dog"]
-        mock_self = self._make_mock_self(class_names)
         # Simulate the case where args has class_names but it is explicitly None.
         mock_self.model.args.class_names = None
 
@@ -1222,12 +1230,11 @@ class TestDeployToRoboflow:
         saved_args = saved_checkpoints[0]["args"]
         assert saved_args.class_names == class_names, "class_names must be populated when args.class_names is None"
 
-    def test_existing_args_class_names_not_overwritten(self, tmp_path, monkeypatch):
+    def test_existing_args_class_names_not_overwritten(self, tmp_path, monkeypatch, mock_self, patch_lit):
         """If args already has class_names set, deploy_to_roboflow must not overwrite it."""
         monkeypatch.chdir(tmp_path)
 
         existing_names = ["existing_cat", "existing_dog"]
-        mock_self = self._make_mock_self(["cat", "dog"])
         mock_self.model.args.class_names = existing_names
 
         saved_checkpoints: list = []
@@ -1251,11 +1258,11 @@ class TestDeployToRoboflow:
         saved_args = saved_checkpoints[0]["args"]
         assert saved_args.class_names == existing_names, "existing args.class_names must not be overwritten"
 
-    def test_temp_dir_cleaned_up_after_deploy(self, tmp_path, monkeypatch):
+    def test_temp_dir_cleaned_up_after_deploy(self, tmp_path, monkeypatch, mock_self, patch_lit):
         """The temporary upload directory must be removed after a successful deploy."""
         monkeypatch.chdir(tmp_path)
 
-        mock_self = self._make_mock_self(["cat"])
+        self._set_class_names(mock_self, ["cat"])
         mock_rf = MagicMock()
         mock_rf.workspace.return_value.project.return_value.version.return_value.deploy.return_value = None
 
@@ -1270,11 +1277,11 @@ class TestDeployToRoboflow:
 
         assert not (tmp_path / ".roboflow_temp_upload").exists(), "Temp upload dir must be removed after deploy"
 
-    def test_temp_dir_cleaned_up_after_deploy_failure(self, tmp_path, monkeypatch):
+    def test_temp_dir_cleaned_up_after_deploy_failure(self, tmp_path, monkeypatch, mock_self, patch_lit):
         """Temp upload dir must be removed even when deploy() raises an exception."""
         monkeypatch.chdir(tmp_path)
 
-        mock_self = self._make_mock_self(["cat"])
+        self._set_class_names(mock_self, ["cat"])
         mock_rf = MagicMock()
         mock_rf.workspace.return_value.project.return_value.version.return_value.deploy.side_effect = RuntimeError(
             "upload failed",
