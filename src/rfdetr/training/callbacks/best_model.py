@@ -157,6 +157,17 @@ class BestModelCallback(ModelCheckpoint):
                 return normalized_name
 
         config_type_name = type(model_config).__name__ if model_config is not None else ""
+
+        # Handle deprecated config types that should resolve to a canonical model name.
+        deprecated_aliases: dict[str, str] = {
+            # RFDETRLargeDeprecatedConfig should resolve to canonical RFDETRLarge
+            "RFDETRLargeDeprecatedConfig": "RFDETRLarge",
+        }
+        if config_type_name in deprecated_aliases:
+            return deprecated_aliases[config_type_name]
+        if config_type_name.startswith("RFDETR") and config_type_name.endswith("DeprecatedConfig"):
+            # Generic fallback for other RFDETR*DeprecatedConfig types.
+            return config_type_name.removesuffix("DeprecatedConfig")
         if config_type_name.startswith("RFDETR") and config_type_name.endswith("Config"):
             return config_type_name.removesuffix("Config")
         return None
