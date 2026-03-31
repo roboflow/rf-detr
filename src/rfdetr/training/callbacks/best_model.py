@@ -158,11 +158,6 @@ class BestModelCallback(ModelCheckpoint):
 
         config_type_name = type(model_config).__name__ if model_config is not None else ""
         if config_type_name.startswith("RFDETR") and config_type_name.endswith("Config"):
-            # Strip "DeprecatedConfig" before "Config" to match the canonical class
-            # name used by RFDETR.train() (type(self).__name__ on the user-facing class).
-            # e.g. "RFDETRLargeDeprecatedConfig" -> "RFDETRLarge", not "RFDETRLargeDeprecated".
-            if config_type_name.endswith("DeprecatedConfig"):
-                return config_type_name.removesuffix("DeprecatedConfig")
             return config_type_name.removesuffix("Config")
         return None
 
