@@ -194,13 +194,18 @@ class RFDETR:
     @classmethod
     def from_checkpoint(cls, path: str | os.PathLike[str], **kwargs: Any) -> RFDETR:
         """Load an RF-DETR model from a training checkpoint, automatically
-        inferring the model size from the saved args.
+        inferring the model class.
 
-        The correct subclass is inferred from the ``pretrain_weights`` field
-        stored in the checkpoint's ``args`` entry.  Both legacy
-        ``argparse.Namespace`` checkpoints (produced by ``engine.py``) and
-        dict-style checkpoints (produced by the PTL training stack) are
-        supported.
+        The correct subclass is resolved in order of preference:
+
+        1. ``model_name`` key in the checkpoint (written by the PTL training
+           stack since v1.7).
+        2. ``pretrain_weights`` field in the checkpoint's ``args`` entry
+           (legacy fallback).
+
+        Both legacy ``argparse.Namespace`` checkpoints (produced by
+        ``engine.py``) and dict-style checkpoints (produced by the PTL
+        training stack) are supported.
 
         Args:
             path: Path to a checkpoint file (e.g. ``checkpoint_best_total.pth``).
@@ -221,8 +226,8 @@ class RFDETR:
             FileNotFoundError: If *path* does not exist.
             OSError: If *path* exists but cannot be read.
             KeyError: If the checkpoint does not contain an ``"args"`` key.
-            ValueError: If the model size cannot be inferred from the
-                ``pretrain_weights`` field in the saved args.
+            ValueError: If the model class cannot be inferred from
+                ``model_name`` or ``pretrain_weights``.
 
         Examples:
             >>> model = RFDETR.from_checkpoint("checkpoint_best_total.pth")  # doctest: +SKIP
@@ -299,15 +304,19 @@ class RFDETR:
             "RFDETRSegPreview": RFDETRSegPreview,
         }
         saved_model_name = ckpt.get("model_name")
-        model_cls: type[RFDETR] | None = _name_map.get(saved_model_name) if saved_model_name else None
+        model_cls: type[RFDETR] | None = None
+        if isinstance(saved_model_name, str):
+            normalized_name = saved_model_name.strip()
+            if normalized_name:
+                model_cls = _name_map.get(normalized_name)
 
         # Fall back to pretrain_weights filename parsing for older checkpoints.
-        if model_cls is None:
-            if isinstance(args, dict):
-                weights_name = str(args.get("pretrain_weights", "")).lower()
-            else:
-                weights_name = str(getattr(args, "pretrain_weights", "")).lower()
+        if isinstance(args, dict):
+            weights_name = str(args.get("pretrain_weights", "")).lower()
+        else:
+            weights_name = str(getattr(args, "pretrain_weights", "")).lower()
 
+        if model_cls is None:
             # Guard: "xlarge"/"xxlarge" without a "seg-" prefix are plus-only models.
             if not _plus_available and "xlarge" in weights_name and "seg-" not in weights_name:
                 from rfdetr.platform import _INSTALL_MSG
@@ -324,7 +333,9 @@ class RFDETR:
 
         if model_cls is None:
             raise ValueError(
-                f"Could not infer model size from checkpoint at {path!r}. Please instantiate the model class directly."
+                f"Could not infer model size from checkpoint at {path!r} "
+                f"(model_name={saved_model_name!r}, pretrain_weights={weights_name!r}). "
+                f"Please instantiate the model class directly."
             )
 
         if isinstance(args, dict):
