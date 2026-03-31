@@ -32,6 +32,8 @@ __all__ = [
 
 import warnings
 
+from deprecate import deprecated
+
 from rfdetr.config import (
     ModelConfig,
     RFDETRBaseConfig,
@@ -56,10 +58,9 @@ logger = get_logger()
 
 
 class RFDETRBase(RFDETR):
-    """RF-DETR Base model — deprecated, raises on instantiation.
+    """RF-DETR Base model — deprecated since v1.7.0.
 
-    .. deprecated::
-        ``RFDETRBase`` is deprecated and will be removed in a future release.
+    .. deprecated:: 1.7.0
         Use one of the supported variants: :class:`RFDETRNano`, :class:`RFDETRSmall`,
         :class:`RFDETRMedium`, or :class:`RFDETRLarge`.
     """
@@ -67,11 +68,25 @@ class RFDETRBase(RFDETR):
     size = "rfdetr-base"
     _model_config_class = RFDETRBaseConfig
 
+    @deprecated(
+        target=None,
+        deprecated_in="1.7.0",
+        remove_in="2.0.0",
+        template_mgs=(
+            "`%(source_name)s` is deprecated since v%(deprecated_in)s and will be removed "
+            "in v%(remove_in)s. Use RFDETRNano, RFDETRSmall, RFDETRMedium, or RFDETRLarge instead."
+        ),
+    )
     def __init__(self, **kwargs) -> None:
-        raise RuntimeError(
-            "RFDETRBase is deprecated and will be removed in a future release. "
-            "Use one of the supported variants: RFDETRNano, RFDETRSmall, RFDETRMedium, or RFDETRLarge."
-        )
+        """Initialize a deprecated RFDETRBase instance.
+
+        Args:
+            **kwargs: Forwarded to :class:`~rfdetr.detr.RFDETR`.
+
+        Examples:
+            >>> RFDETRBase()  # doctest: +SKIP
+        """
+        super().__init__(**kwargs)
 
 
 class RFDETRNano(RFDETR):
@@ -189,10 +204,9 @@ class RFDETRSeg(RFDETR):
 
 
 class RFDETRSegPreview(RFDETRSeg):
-    """RF-DETR Segmentation Preview model — deprecated, raises on instantiation.
+    """RF-DETR Segmentation Preview model — deprecated since v1.7.0.
 
-    .. deprecated::
-        ``RFDETRSegPreview`` is deprecated and will be removed in a future release.
+    .. deprecated:: 1.7.0
         Use one of the supported segmentation variants: :class:`RFDETRSegNano`, :class:`RFDETRSegSmall`,
         :class:`RFDETRSegMedium`, or :class:`RFDETRSegLarge`.
     """
@@ -200,12 +214,25 @@ class RFDETRSegPreview(RFDETRSeg):
     size = "rfdetr-seg-preview"
     _model_config_class = RFDETRSegPreviewConfig
 
+    @deprecated(
+        target=None,
+        deprecated_in="1.7.0",
+        remove_in="2.0.0",
+        template_mgs=(
+            "`%(source_name)s` is deprecated since v%(deprecated_in)s and will be removed "
+            "in v%(remove_in)s. Use RFDETRSegNano, RFDETRSegSmall, RFDETRSegMedium, or RFDETRSegLarge instead."
+        ),
+    )
     def __init__(self, **kwargs) -> None:
-        raise RuntimeError(
-            "RFDETRSegPreview is deprecated and will be removed in a future release. "
-            "Use one of the supported segmentation variants: RFDETRSegNano, RFDETRSegSmall, "
-            "RFDETRSegMedium, or RFDETRSegLarge."
-        )
+        """Initialize a deprecated RFDETRSegPreview instance.
+
+        Args:
+            **kwargs: Forwarded to :class:`~rfdetr.variants.RFDETRSeg`.
+
+        Examples:
+            >>> RFDETRSegPreview()  # doctest: +SKIP
+        """
+        super().__init__(**kwargs)
 
 
 class RFDETRSegNano(RFDETRSeg):
