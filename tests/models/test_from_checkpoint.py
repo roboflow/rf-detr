@@ -249,6 +249,7 @@ class TestFromCheckpointModelName:
             pytest.param("RFDETRSegLarge", "rfdetr.variants.RFDETRSegLarge", id="seg-large"),
             pytest.param("RFDETRSegXLarge", "rfdetr.variants.RFDETRSegXLarge", id="seg-xlarge"),
             pytest.param("RFDETRSeg2XLarge", "rfdetr.variants.RFDETRSeg2XLarge", id="seg-2xlarge"),
+            pytest.param("RFDETRSegPreview", "rfdetr.variants.RFDETRSegPreview", id="seg-preview"),
         ],
     )
     def test_model_name_resolves_correct_class(
