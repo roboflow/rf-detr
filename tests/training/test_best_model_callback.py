@@ -18,7 +18,7 @@ from pytorch_lightning import __version__ as ptl_version
 from pytorch_lightning.trainer.states import TrainerFn
 from torch.utils.data import DataLoader, TensorDataset
 
-from rfdetr.config import RFDETRMediumConfig
+from rfdetr.config import RFDETRLargeDeprecatedConfig, RFDETRMediumConfig
 from rfdetr.training.callbacks.best_model import BestModelCallback, RFDETREarlyStopping
 
 # ---------------------------------------------------------------------------
@@ -1007,8 +1007,8 @@ class TestCheckpointModelName:
         ckpt = torch.load(tmp_path / "checkpoint_best_regular.pth", weights_only=False)
         assert ckpt["model_name"] == "RFDETRLarge"
 
-    def test_regular_checkpoint_model_name_none_when_not_set(self, tmp_path: Path) -> None:
-        """model_name is None when model_config has no model_name attribute."""
+    def test_regular_checkpoint_model_name_absent_when_not_set(self, tmp_path: Path) -> None:
+        """model_name key is absent when model_config has no model_name attribute."""
         cb = BestModelCallback(output_dir=str(tmp_path))
         trainer = _make_trainer({"val/mAP_50_95": 0.5})
         pl_module = _make_pl_module()
@@ -1016,7 +1016,7 @@ class TestCheckpointModelName:
         cb.on_validation_end(trainer, pl_module)
 
         ckpt = torch.load(tmp_path / "checkpoint_best_regular.pth", weights_only=False)
-        assert ckpt["model_name"] is None
+        assert "model_name" not in ckpt
 
     def test_regular_checkpoint_infers_model_name_from_model_config_type(self, tmp_path: Path) -> None:
         """When model_name is unset, infer class name from concrete ModelConfig type."""
@@ -1045,3 +1045,19 @@ class TestCheckpointModelName:
 
         ckpt = torch.load(tmp_path / "checkpoint_best_ema.pth", weights_only=False)
         assert ckpt["model_name"] == "RFDETRMedium"
+
+    def test_deprecated_config_infers_canonical_class_name(self, tmp_path: Path) -> None:
+        """RFDETRLargeDeprecatedConfig resolves to 'RFDETRLarge', not 'RFDETRLargeDeprecated'.
+
+        Ensures consistency with the RFDETR.train() path which uses
+        type(self).__name__ (the user-facing class), not the config type name.
+        """
+        cb = BestModelCallback(output_dir=str(tmp_path))
+        trainer = _make_trainer({"val/mAP_50_95": 0.5})
+        pl_module = _make_pl_module()
+        pl_module.model_config = RFDETRLargeDeprecatedConfig(model_name=None)
+
+        cb.on_validation_end(trainer, pl_module)
+
+        ckpt = torch.load(tmp_path / "checkpoint_best_regular.pth", weights_only=False)
+        assert ckpt["model_name"] == "RFDETRLarge"

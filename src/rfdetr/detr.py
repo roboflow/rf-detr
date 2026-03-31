@@ -305,6 +305,10 @@ class RFDETR:
             "RFDETRSeg2XLarge": RFDETRSeg2XLarge,
             "RFDETRSegPreview": RFDETRSegPreview,
         }
+        # Plus-model classes are resolved only when rfdetr_plus is installed.
+        if _plus_available:
+            _name_map["RFDETRXLarge"] = RFDETRXLarge  # type: ignore[possibly-undefined]
+            _name_map["RFDETR2XLarge"] = RFDETR2XLarge  # type: ignore[possibly-undefined]
         saved_model_name = ckpt.get("model_name")
         model_cls: type[RFDETR] | None = None
         if isinstance(saved_model_name, str):

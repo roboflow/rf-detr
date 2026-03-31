@@ -255,6 +255,18 @@ class TestFromCheckpointModelName:
             pytest.param("RFDETRSegXLarge", "rfdetr.variants.RFDETRSegXLarge", id="seg-xlarge"),
             pytest.param("RFDETRSeg2XLarge", "rfdetr.variants.RFDETRSeg2XLarge", id="seg-2xlarge"),
             pytest.param("RFDETRSegPreview", "rfdetr.variants.RFDETRSegPreview", id="seg-preview"),
+            pytest.param(
+                "RFDETRXLarge",
+                "rfdetr.platform.models.RFDETRXLarge",
+                id="xlarge",
+                marks=pytest.mark.skipif(not HAS_PLUS, reason="rfdetr_plus not installed"),
+            ),
+            pytest.param(
+                "RFDETR2XLarge",
+                "rfdetr.platform.models.RFDETR2XLarge",
+                id="2xlarge",
+                marks=pytest.mark.skipif(not HAS_PLUS, reason="rfdetr_plus not installed"),
+            ),
         ],
     )
     def test_model_name_resolves_correct_class(

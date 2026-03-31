@@ -93,10 +93,9 @@ class BestModelCallback(ModelCheckpoint):
             Checkpoint dictionary that supports ``Trainer.fit(ckpt_path=...)``
             while intentionally omitting optimizer/scheduler states.
         """
-        return {
+        payload: dict[str, object] = {
             "model": model_state_dict,
             "args": args_dict,
-            "model_name": model_name,
             "epoch": trainer.current_epoch,
             # PTL-compatible keys so trainer.fit(ckpt_path=...) works directly.
             "state_dict": {f"model.{k}": v for k, v in model_state_dict.items()},
@@ -108,6 +107,11 @@ class BestModelCallback(ModelCheckpoint):
             "optimizer_states": [],
             "lr_schedulers": [],
         }
+        # Only write model_name when resolved — omit the key entirely when None
+        # so old-format and unresolved checkpoints are indistinguishable.
+        if model_name is not None:
+            payload["model_name"] = model_name
+        return payload
 
     @staticmethod
     def _get_ema_model_state_dict(
@@ -154,6 +158,11 @@ class BestModelCallback(ModelCheckpoint):
 
         config_type_name = type(model_config).__name__ if model_config is not None else ""
         if config_type_name.startswith("RFDETR") and config_type_name.endswith("Config"):
+            # Strip "DeprecatedConfig" before "Config" to match the canonical class
+            # name used by RFDETR.train() (type(self).__name__ on the user-facing class).
+            # e.g. "RFDETRLargeDeprecatedConfig" -> "RFDETRLarge", not "RFDETRLargeDeprecated".
+            if config_type_name.endswith("DeprecatedConfig"):
+                return config_type_name.removesuffix("DeprecatedConfig")
             return config_type_name.removesuffix("Config")
         return None
 
