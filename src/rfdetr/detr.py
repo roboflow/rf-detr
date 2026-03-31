@@ -335,7 +335,7 @@ class RFDETR:
 
         if model_cls is None:
             raise ValueError(
-                f"Could not infer model size from checkpoint at {path!r} "
+                f"Could not infer model class from checkpoint at {path!r} "
                 f"(model_name={saved_model_name!r}, pretrain_weights={weights_name!r}). "
                 f"Please instantiate the model class directly."
             )
