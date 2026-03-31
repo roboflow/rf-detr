@@ -457,6 +457,55 @@ class RFDETR:
                 config.grad_accum_steps,
                 auto_batch.effective_batch_size,
             )
+
+        # Auto-detect num_classes from the training dataset and align model_config.
+        # This must run before RFDETRModelModule is constructed so that weight loading
+        # inside the module uses the correct (dataset-derived) class count.
+        dataset_dir = getattr(config, "dataset_dir", None)
+        if dataset_dir:
+            try:
+                detected_class_names = RFDETR._load_classes(dataset_dir)
+                dataset_num_classes = len(detected_class_names)
+                model_num_classes = self.model_config.num_classes
+
+                if dataset_num_classes != model_num_classes:
+                    # Determine whether the user explicitly overrode num_classes to a
+                    # non-default value.  "num_classes" in model_fields_set is True when
+                    # the field was explicitly set at construction time; comparing against
+                    # the class default filters out cases where the user passed the
+                    # default value explicitly (treat those like "not set").
+                    user_set = "num_classes" in getattr(self.model_config, "model_fields_set", set())
+                    default_nc = type(self.model_config).model_fields["num_classes"].default
+                    user_overrode = user_set and model_num_classes != default_nc
+
+                    if not user_overrode:
+                        logger.info(
+                            "Detected %d classes in dataset '%s'; auto-adjusting model num_classes from %d to %d.",
+                            dataset_num_classes,
+                            dataset_dir,
+                            model_num_classes,
+                            dataset_num_classes,
+                        )
+                        self.model_config.num_classes = dataset_num_classes
+                    else:
+                        logger.warning(
+                            "Dataset '%s' has %d classes but model was initialized "
+                            "with num_classes=%d. Using the model's configured value "
+                            "(%d). If this is unintentional, reinitialize the model "
+                            "with num_classes=%d.",
+                            dataset_dir,
+                            dataset_num_classes,
+                            model_num_classes,
+                            model_num_classes,
+                            dataset_num_classes,
+                        )
+            except (FileNotFoundError, ValueError, KeyError, OSError) as exc:
+                logger.debug(
+                    "Could not auto-detect num_classes from dataset '%s': %s",
+                    dataset_dir,
+                    exc,
+                )  # Best-effort only; do not block training if detection fails.
+
         module = RFDETRModelModule(self.model_config, config)
         datamodule = RFDETRDataModule(self.model_config, config)
         trainer_kwargs = {"accelerator": _accelerator}

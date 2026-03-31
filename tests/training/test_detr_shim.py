@@ -1466,3 +1466,153 @@ class TestSaveTrainingConfig:
         nested_dir = str(tmp_path / "new" / "nested" / "output")
         _, output_dir = self._run_train(tmp_path, output_dir=nested_dir)
         assert os.path.exists(os.path.join(output_dir, "training_config.json"))
+
+
+# ---------------------------------------------------------------------------
+# TestRFDETRTrainNumClassesAutoDetect
+# ---------------------------------------------------------------------------
+
+
+class TestRFDETRTrainNumClassesAutoDetect:
+    """RFDETR.train() auto-detects num_classes from the training dataset.
+
+    When the user did not explicitly override ``num_classes`` (or passed the
+    class-config default), the model's ``num_classes`` is automatically aligned
+    to the dataset's class count before ``RFDETRModelModule`` is constructed.
+
+    When the user *did* explicitly set a non-default ``num_classes`` that differs
+    from the dataset, the configured value is preserved and a warning is logged.
+
+    Dataset detection is best-effort: if ``_load_classes`` raises any of the
+    expected exceptions (``FileNotFoundError``, ``ValueError``, ``KeyError``,
+    ``OSError``), training proceeds unaffected without raising.
+    """
+
+    _FOUR_CLASS_NAMES = ["ball", "goalkeeper", "referee", "player"]
+
+    def _make_mock_self(self, tmp_path, model_config=None):
+        """Return a MagicMock shaped like RFDETR with real config objects."""
+        mock = MagicMock()
+        mock.model_config = model_config or RFDETRBaseConfig(pretrain_weights=None, device="cpu")
+        mock.model = MagicMock()
+        mock.get_train_config.return_value = _make_train_config(tmp_path)
+        return mock
+
+    def test_auto_adjusts_num_classes_when_not_overridden(self, tmp_path):
+        """When user did not set num_classes, auto-adjust to the dataset class count.
+
+        Scenario: model built without explicit num_classes → default=90.
+        Dataset has 4 classes.  Expected: model_config.num_classes becomes 4.
+        """
+        mock_self = self._make_mock_self(tmp_path)
+        assert "num_classes" not in mock_self.model_config.model_fields_set
+
+        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        with (
+            p_mod,
+            p_dm,
+            p_bt,
+            patch.object(RFDETR, "_load_classes", return_value=self._FOUR_CLASS_NAMES),
+        ):
+            RFDETR.train(mock_self)
+
+        assert mock_self.model_config.num_classes == 4
+
+    def test_auto_adjusts_when_default_explicitly_passed(self, tmp_path):
+        """Passing num_classes=<default> is treated the same as not setting it.
+
+        Scenario: user passes num_classes=90 (the ModelConfig default) explicitly.
+        Dataset has 4 classes.  Expected: model_config.num_classes becomes 4.
+        """
+        mc = RFDETRBaseConfig(pretrain_weights=None, device="cpu", num_classes=90)
+        mock_self = self._make_mock_self(tmp_path, model_config=mc)
+        # num_classes is in model_fields_set, but equals the class default (90).
+        assert "num_classes" in mock_self.model_config.model_fields_set
+
+        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        with (
+            p_mod,
+            p_dm,
+            p_bt,
+            patch.object(RFDETR, "_load_classes", return_value=self._FOUR_CLASS_NAMES),
+        ):
+            RFDETR.train(mock_self)
+
+        assert mock_self.model_config.num_classes == 4
+
+    def test_preserves_explicit_non_default_num_classes_when_dataset_differs(self, tmp_path):
+        """When user explicitly set a non-default num_classes, it is preserved.
+
+        Scenario: user passes num_classes=10 (non-default).  Dataset has 4 classes.
+        Expected: model_config.num_classes stays at 10.
+        """
+        mc = RFDETRBaseConfig(pretrain_weights=None, device="cpu", num_classes=10)
+        mock_self = self._make_mock_self(tmp_path, model_config=mc)
+
+        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        with (
+            p_mod,
+            p_dm,
+            p_bt,
+            patch.object(RFDETR, "_load_classes", return_value=self._FOUR_CLASS_NAMES),
+        ):
+            RFDETR.train(mock_self)
+
+        assert mock_self.model_config.num_classes == 10
+
+    def test_no_adjustment_when_num_classes_already_matches_dataset(self, tmp_path):
+        """No adjustment when the model's num_classes already equals the dataset count.
+
+        Scenario: user passes num_classes=4 and dataset has 4 classes.
+        Expected: model_config.num_classes remains 4 (no log noise, no error).
+        """
+        mc = RFDETRBaseConfig(pretrain_weights=None, device="cpu", num_classes=4)
+        mock_self = self._make_mock_self(tmp_path, model_config=mc)
+
+        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        with (
+            p_mod,
+            p_dm,
+            p_bt,
+            patch.object(RFDETR, "_load_classes", return_value=self._FOUR_CLASS_NAMES),
+        ):
+            RFDETR.train(mock_self)
+
+        assert mock_self.model_config.num_classes == 4
+
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            pytest.param(FileNotFoundError("no such dataset"), id="file-not-found"),
+            pytest.param(ValueError("bad dataset"), id="value-error"),
+            pytest.param(KeyError("missing key"), id="key-error"),
+            pytest.param(OSError("io error"), id="os-error"),
+        ],
+    )
+    def test_no_crash_when_dataset_detection_raises(self, tmp_path, exc):
+        """Training proceeds even if _load_classes raises a known exception.
+
+        Dataset detection is best-effort; errors must not block training.
+        """
+        mock_self = self._make_mock_self(tmp_path)
+        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        with (
+            p_mod,
+            p_dm,
+            p_bt,
+            patch.object(RFDETR, "_load_classes", side_effect=exc),
+        ):
+            RFDETR.train(mock_self)  # must not raise
+
+    def test_no_crash_when_dataset_dir_is_none(self, tmp_path):
+        """Training proceeds when config.dataset_dir resolves to None.
+
+        Guards against AttributeError if getattr returns None.
+        """
+        mock_self = self._make_mock_self(tmp_path)
+        # Override dataset_dir to None on the train config mock.
+        mock_self.get_train_config.return_value.dataset_dir = None
+
+        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self)  # must not raise
