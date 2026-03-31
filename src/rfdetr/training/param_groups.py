@@ -8,7 +8,7 @@
 # ------------------------------------------------------------------------
 """Functions to get params dict"""
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, cast
 
 import torch.nn as nn
 
@@ -57,7 +57,7 @@ def get_vit_weight_decay_rate(name: str, weight_decay_rate: float = 1.0) -> floa
 
 def get_param_dict(args: Any, model_without_ddp: nn.Module) -> List[Dict[str, Any]]:
     assert isinstance(model_without_ddp.backbone, Joiner)
-    backbone = model_without_ddp.backbone[0]
+    backbone = cast(Any, model_without_ddp.backbone[0])
     backbone_named_param_lr_pairs = backbone.get_named_param_lr_pairs(args, prefix="backbone.0")
     backbone_param_lr_pairs = [param_dict for _, param_dict in backbone_named_param_lr_pairs.items()]
 
