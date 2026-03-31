@@ -1216,24 +1216,27 @@ class TestDeployToRoboflow:
     """
 
     @pytest.fixture
-    def make_mock_self(self):
-        """Return a factory producing RFDETR-like mocks for deploy_to_roboflow tests."""
+    def mock_self(self):
+        """Return a minimal RFDETR-like mock for deploy_to_roboflow tests."""
+        class_names = ["cat", "dog"]
+        mock_self = MagicMock(spec=RFDETR)
+        mock_self.size = "rfdetr-small"
+        mock_self.class_names = class_names  # the property, resolved to a plain list
+        # `model` is an instance attribute (set in __init__), not a class attribute, so
+        # MagicMock(spec=RFDETR).__getattr__ would raise AttributeError for it.  Assign
+        # it directly via __setattr__ so sub-attribute chaining works correctly.
+        mock_self.model = MagicMock()
+        mock_self.model.model.state_dict.return_value = {}
+        mock_self.model.args = SimpleNamespace(num_classes=len(class_names))
+        return mock_self
 
-        def _make_mock_self(class_names, size="rfdetr-small"):
-            mock_self = MagicMock(spec=RFDETR)
-            mock_self.size = size
-            mock_self.class_names = class_names  # the property, resolved to a plain list
-            # `model` is an instance attribute (set in __init__), not a class attribute, so
-            # MagicMock(spec=RFDETR).__getattr__ would raise AttributeError for it.  Assign
-            # it directly via __setattr__ so sub-attribute chaining works correctly.
-            mock_self.model = MagicMock()
-            mock_self.model.model.state_dict.return_value = {}
-            mock_self.model.args = SimpleNamespace(num_classes=len(class_names))
-            return mock_self
+    @staticmethod
+    def _set_class_names(mock_self: MagicMock, class_names: list[str]) -> None:
+        """Update class names and keep args.num_classes in sync."""
+        mock_self.class_names = class_names
+        mock_self.model.args.num_classes = len(class_names)
 
-        return _make_mock_self
-
-    def test_class_names_txt_written_with_correct_content(self, tmp_path, monkeypatch, make_mock_self, patch_lit):
+    def test_class_names_txt_written_with_correct_content(self, tmp_path, monkeypatch, mock_self, patch_lit):
         """deploy_to_roboflow must write class_names.txt with one name per line.
 
         Regression: RFDETRSeg models were failing with FileNotFoundError from
@@ -1242,7 +1245,7 @@ class TestDeployToRoboflow:
         monkeypatch.chdir(tmp_path)
 
         class_names = ["cat", "dog", "bird"]
-        mock_self = make_mock_self(class_names)
+        self._set_class_names(mock_self, class_names)
         mock_rf = MagicMock()
 
         captured: dict = {}
@@ -1267,7 +1270,7 @@ class TestDeployToRoboflow:
         assert "content" in captured, "class_names.txt was not present in the upload directory during deploy"
         assert captured["content"] == "cat\ndog\nbird"
 
-    def test_args_class_names_set_in_checkpoint(self, tmp_path, monkeypatch, make_mock_self, patch_lit):
+    def test_args_class_names_set_in_checkpoint(self, tmp_path, monkeypatch, mock_self, patch_lit):
         """The saved checkpoint args must contain class_names when args lacks it.
 
         Regression: args.class_names was absent after switching to PTL training,
@@ -1276,7 +1279,6 @@ class TestDeployToRoboflow:
         monkeypatch.chdir(tmp_path)
 
         class_names = ["cat", "dog"]
-        mock_self = make_mock_self(class_names)
         # Ensure class_names is absent from args (mimics the regression scenario).
         assert not hasattr(mock_self.model.args, "class_names")
 
@@ -1305,12 +1307,11 @@ class TestDeployToRoboflow:
         assert hasattr(saved_args, "class_names"), "class_names must be present in saved args"
         assert saved_args.class_names == class_names
 
-    def test_args_class_names_set_when_none_in_checkpoint(self, tmp_path, monkeypatch, make_mock_self, patch_lit):
+    def test_args_class_names_set_when_none_in_checkpoint(self, tmp_path, monkeypatch, mock_self, patch_lit):
         """class_names must be set when args has the attribute but its value is None."""
         monkeypatch.chdir(tmp_path)
 
         class_names = ["cat", "dog"]
-        mock_self = make_mock_self(class_names)
         # Simulate the case where args has class_names but it is explicitly None.
         mock_self.model.args.class_names = None
 
@@ -1335,12 +1336,11 @@ class TestDeployToRoboflow:
         saved_args = saved_checkpoints[0]["args"]
         assert saved_args.class_names == class_names, "class_names must be populated when args.class_names is None"
 
-    def test_existing_args_class_names_not_overwritten(self, tmp_path, monkeypatch, make_mock_self, patch_lit):
+    def test_existing_args_class_names_not_overwritten(self, tmp_path, monkeypatch, mock_self, patch_lit):
         """If args already has class_names set, deploy_to_roboflow must not overwrite it."""
         monkeypatch.chdir(tmp_path)
 
         existing_names = ["existing_cat", "existing_dog"]
-        mock_self = make_mock_self(["cat", "dog"])
         mock_self.model.args.class_names = existing_names
 
         saved_checkpoints: list = []
@@ -1364,11 +1364,11 @@ class TestDeployToRoboflow:
         saved_args = saved_checkpoints[0]["args"]
         assert saved_args.class_names == existing_names, "existing args.class_names must not be overwritten"
 
-    def test_temp_dir_cleaned_up_after_deploy(self, tmp_path, monkeypatch, make_mock_self, patch_lit):
+    def test_temp_dir_cleaned_up_after_deploy(self, tmp_path, monkeypatch, mock_self, patch_lit):
         """The temporary upload directory must be removed after a successful deploy."""
         monkeypatch.chdir(tmp_path)
 
-        mock_self = make_mock_self(["cat"])
+        self._set_class_names(mock_self, ["cat"])
         mock_rf = MagicMock()
         mock_rf.workspace.return_value.project.return_value.version.return_value.deploy.return_value = None
 
@@ -1383,11 +1383,11 @@ class TestDeployToRoboflow:
 
         assert not (tmp_path / ".roboflow_temp_upload").exists(), "Temp upload dir must be removed after deploy"
 
-    def test_temp_dir_cleaned_up_after_deploy_failure(self, tmp_path, monkeypatch, make_mock_self, patch_lit):
+    def test_temp_dir_cleaned_up_after_deploy_failure(self, tmp_path, monkeypatch, mock_self, patch_lit):
         """Temp upload dir must be removed even when deploy() raises an exception."""
         monkeypatch.chdir(tmp_path)
 
-        mock_self = make_mock_self(["cat"])
+        self._set_class_names(mock_self, ["cat"])
         mock_rf = MagicMock()
         mock_rf.workspace.return_value.project.return_value.version.return_value.deploy.side_effect = RuntimeError(
             "upload failed",
