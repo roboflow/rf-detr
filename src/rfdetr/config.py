@@ -84,6 +84,7 @@ class ModelConfig(BaseConfig):
     backbone_lora: bool = False
     freeze_encoder: bool = False
     license: str = "Apache-2.0"
+    model_name: Optional[str] = None
 
     @model_validator(mode="after")
     def _warn_deprecated_model_config_fields(self) -> "ModelConfig":

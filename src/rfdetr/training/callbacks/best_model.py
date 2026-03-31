@@ -79,6 +79,7 @@ class BestModelCallback(ModelCheckpoint):
         model_state_dict: dict[str, torch.Tensor],
         args_dict: object,
         trainer: Trainer,
+        model_name: str | None = None,
     ) -> dict[str, object]:
         """Build a PTL-compatible RF-DETR checkpoint payload.
 
@@ -86,6 +87,7 @@ class BestModelCallback(ModelCheckpoint):
             model_state_dict: Model weights with raw (non-prefixed) keys.
             args_dict: Serialized training args/config payload.
             trainer: Active Lightning trainer providing epoch/step counters.
+            model_name: Name of the model class (e.g. ``"RFDETRLarge"``).
 
         Returns:
             Checkpoint dictionary that supports ``Trainer.fit(ckpt_path=...)``
@@ -94,6 +96,7 @@ class BestModelCallback(ModelCheckpoint):
         return {
             "model": model_state_dict,
             "args": args_dict,
+            "model_name": model_name,
             "epoch": trainer.current_epoch,
             # PTL-compatible keys so trainer.fit(ckpt_path=...) works directly.
             "state_dict": {f"model.{k}": v for k, v in model_state_dict.items()},
@@ -176,7 +179,10 @@ class BestModelCallback(ModelCheckpoint):
         ):
             train_config = train_config.model_copy(update={"class_names": dataset_class_names})
         args_dict = train_config.model_dump() if hasattr(train_config, "model_dump") else train_config
-        torch.save(self._build_checkpoint_payload(model_state_dict, args_dict, trainer), pth_path)
+        model_name = getattr(pl_module.model_config, "model_name", None)
+        torch.save(
+            self._build_checkpoint_payload(model_state_dict, args_dict, trainer, model_name=model_name), pth_path
+        )
         self._last_global_step_saved = trainer.global_step
         logger.info("Best regular mAP saved to %s (epoch %d)", pth_path, trainer.current_epoch)
 
@@ -222,8 +228,9 @@ class BestModelCallback(ModelCheckpoint):
             ema_args_dict = (
                 ema_train_config.model_dump() if hasattr(ema_train_config, "model_dump") else ema_train_config
             )
+            ema_model_name = getattr(pl_module.model_config, "model_name", None)
             torch.save(
-                self._build_checkpoint_payload(ema_state_dict, ema_args_dict, trainer),
+                self._build_checkpoint_payload(ema_state_dict, ema_args_dict, trainer, model_name=ema_model_name),
                 self._output_dir / "checkpoint_best_ema.pth",
             )
             logger.info(

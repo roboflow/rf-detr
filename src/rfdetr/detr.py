@@ -263,22 +263,6 @@ class RFDETR:
         ckpt: dict[str, Any] = torch.load(path, map_location="cpu", weights_only=False)
         args = ckpt["args"]
 
-        if isinstance(args, dict):
-            weights_name = str(args.get("pretrain_weights", "")).lower()
-        else:
-            weights_name = str(getattr(args, "pretrain_weights", "")).lower()
-
-        # Guard: "xlarge"/"xxlarge" without a "seg-" prefix are plus-only models.
-        # Without the plus package, "xlarge" would otherwise silently fall through
-        # to the generic "large" key and instantiate the wrong class.
-        if not _plus_available and "xlarge" in weights_name and "seg-" not in weights_name:
-            from rfdetr.platform import _INSTALL_MSG
-
-            raise ImportError(
-                f"Checkpoint pretrain_weights={weights_name!r} requires the "
-                f"rfdetr_plus package. " + _INSTALL_MSG.format(name="platform model downloads")
-            )
-
         # Ordered most-specific first so "seg-xxlarge"/"seg-2xlarge" match before
         # "seg-xlarge", "xxlarge" before "xlarge", and "seg-*" prefixes before
         # their bare counterparts.
@@ -299,16 +283,35 @@ class RFDETR:
             ("base", RFDETRBase),
         ]
 
-        model_cls: type[RFDETR] | None = None
-        for name, klass in _model_map:
-            if name in weights_name:
-                model_cls = klass
-                break
+        # New checkpoints store model_name directly — use it when available.
+        _name_map: dict[str, type[RFDETR]] = {klass.__name__: klass for _, klass in _model_map}
+        saved_model_name = ckpt.get("model_name")
+        model_cls: type[RFDETR] | None = _name_map.get(saved_model_name) if saved_model_name else None
+
+        # Fall back to pretrain_weights filename parsing for older checkpoints.
+        if model_cls is None:
+            if isinstance(args, dict):
+                weights_name = str(args.get("pretrain_weights", "")).lower()
+            else:
+                weights_name = str(getattr(args, "pretrain_weights", "")).lower()
+
+            # Guard: "xlarge"/"xxlarge" without a "seg-" prefix are plus-only models.
+            if not _plus_available and "xlarge" in weights_name and "seg-" not in weights_name:
+                from rfdetr.platform import _INSTALL_MSG
+
+                raise ImportError(
+                    f"Checkpoint pretrain_weights={weights_name!r} requires the "
+                    f"rfdetr_plus package. " + _INSTALL_MSG.format(name="platform model downloads")
+                )
+
+            for name, klass in _model_map:
+                if name in weights_name:
+                    model_cls = klass
+                    break
 
         if model_cls is None:
             raise ValueError(
-                f"Could not infer model size from pretrain_weights={weights_name!r}. "
-                "Please instantiate the model class directly."
+                f"Could not infer model size from checkpoint at {path!r}. Please instantiate the model class directly."
             )
 
         if isinstance(args, dict):
@@ -457,6 +460,7 @@ class RFDETR:
                 config.grad_accum_steps,
                 auto_batch.effective_batch_size,
             )
+        self.model_config.model_name = type(self).__name__
         module = RFDETRModelModule(self.model_config, config)
         datamodule = RFDETRDataModule(self.model_config, config)
         trainer_kwargs = {"accelerator": _accelerator}
