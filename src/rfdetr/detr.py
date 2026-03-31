@@ -260,6 +260,7 @@ class RFDETR:
             >>> model = RFDETRSmall.from_checkpoint("checkpoint_best_total.pth")  # doctest: +SKIP
         """
         # Local imports break the variants → detr import cycle.
+        # Module aliases are needed for dynamic getattr() resolution below.
         import rfdetr.variants as variants
 
         _plus_available = False
@@ -292,10 +293,19 @@ class RFDETR:
             class_symbol: cast("type[RFDETR]", getattr(variants, class_symbol))
             for class_symbol in _CHECKPOINT_MODEL_NAME_CLASS_SYMBOLS
         }
-        _model_map: list[tuple[str, type[RFDETR]]] = [
-            (name, _variant_symbols[class_symbol]) for name, class_symbol in _CHECKPOINT_MODEL_MAP_ENTRIES
+        # Build in three explicit segments: seg-* entries, then plus-model entries
+        # (xlarge/2xlarge), then base entries — order determines lookup priority.
+        _seg_map: list[tuple[str, type[RFDETR]]] = [
+            (name, _variant_symbols[class_symbol])
+            for name, class_symbol in _CHECKPOINT_MODEL_MAP_ENTRIES
+            if name.startswith("seg-")
         ]
-        _model_map[8:8] = _plus_entries
+        _base_map: list[tuple[str, type[RFDETR]]] = [
+            (name, _variant_symbols[class_symbol])
+            for name, class_symbol in _CHECKPOINT_MODEL_MAP_ENTRIES
+            if not name.startswith("seg-")
+        ]
+        _model_map: list[tuple[str, type[RFDETR]]] = _seg_map + _plus_entries + _base_map
 
         # New checkpoints store model_name directly — use it when available.
         _name_map: dict[str, type[RFDETR]] = dict(_variant_symbols)
