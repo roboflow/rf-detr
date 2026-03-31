@@ -67,7 +67,7 @@ _VARIANT_EXPORTS = (
 )
 __all__ = ["RFDETR", "ModelContext", *_VARIANT_EXPORTS]
 
-_CHECKPOINT_MODEL_NAME_EXCLUDED_SYMBOLS = frozenset({"RFDETRBase", "RFDETRLargeDeprecated", "RFDETRSeg"})
+_CHECKPOINT_MODEL_NAME_EXCLUDED_SYMBOLS = frozenset({"RFDETRLargeDeprecated", "RFDETRSeg"})
 _CHECKPOINT_MODEL_NAME_CLASS_SYMBOLS: tuple[str, ...] = tuple(
     class_symbol for class_symbol in _VARIANT_EXPORTS if class_symbol not in _CHECKPOINT_MODEL_NAME_EXCLUDED_SYMBOLS
 )
@@ -306,6 +306,8 @@ class RFDETR:
             normalized_name = saved_model_name.strip()
             if normalized_name:
                 model_cls = _name_map.get(normalized_name)
+        else:
+            normalized_name = ""
 
         # Fall back to pretrain_weights filename parsing for older checkpoints.
         if isinstance(args, dict):
@@ -314,12 +316,16 @@ class RFDETR:
             weights_name = str(getattr(args, "pretrain_weights", "")).lower()
 
         if model_cls is None:
-            # Guard: "xlarge"/"xxlarge" without a "seg-" prefix are plus-only models.
-            if not _plus_available and "xlarge" in weights_name and "seg-" not in weights_name:
+            # Guard: plus-only checkpoints should raise an actionable install error
+            # when rfdetr_plus is missing, regardless of whether class inference
+            # relies on model_name (new format) or pretrain_weights (legacy format).
+            plus_by_model_name = normalized_name in _CHECKPOINT_PLUS_MODEL_NAME_CLASS_SYMBOLS
+            plus_by_weights_name = "xlarge" in weights_name and "seg-" not in weights_name
+            if not _plus_available and (plus_by_model_name or plus_by_weights_name):
                 from rfdetr.platform import _INSTALL_MSG
 
                 raise ImportError(
-                    f"Checkpoint pretrain_weights={weights_name!r} requires the "
+                    f"Checkpoint model_name={saved_model_name!r}, pretrain_weights={weights_name!r} requires the "
                     f"rfdetr_plus package. " + _INSTALL_MSG.format(name="platform model downloads")
                 )
 

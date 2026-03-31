@@ -242,6 +242,7 @@ class TestFromCheckpointModelName:
             pytest.param("RFDETRSmall", "rfdetr.variants.RFDETRSmall", id="small"),
             pytest.param("RFDETRMedium", "rfdetr.variants.RFDETRMedium", id="medium"),
             pytest.param("RFDETRLarge", "rfdetr.variants.RFDETRLarge", id="large"),
+            pytest.param("RFDETRBase", "rfdetr.variants.RFDETRBase", id="base"),
             pytest.param("RFDETRSegNano", "rfdetr.variants.RFDETRSegNano", id="seg-nano"),
             pytest.param("RFDETRSegSmall", "rfdetr.variants.RFDETRSegSmall", id="seg-small"),
             pytest.param("RFDETRSegMedium", "rfdetr.variants.RFDETRSegMedium", id="seg-medium"),
@@ -285,3 +286,15 @@ class TestFromCheckpointModelName:
         }
         _, mock_cls = _call_from_checkpoint(ckpt, tmp_path / "ckpt.pth", "rfdetr.variants.RFDETRSmall")
         mock_cls.assert_called_once()
+
+    @pytest.mark.skipif(HAS_PLUS, reason="rfdetr_plus is installed — guard not active")
+    def test_plus_model_name_without_plus_raises_import_error(self, tmp_path: Path) -> None:
+        """Plus checkpoints using model_name still raise install guidance without rfdetr_plus."""
+        for model_name in ("RFDETRXLarge", "RFDETR2XLarge"):
+            ckpt = {
+                "args": {"pretrain_weights": "", "num_classes": 80},
+                "model_name": model_name,
+            }
+            with patch("rfdetr.detr.torch.load", return_value=ckpt):
+                with pytest.raises(ImportError, match="rfdetr_plus package"):
+                    RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
