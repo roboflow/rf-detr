@@ -40,6 +40,11 @@ def _dict(pretrain_weights: str, num_classes: int = 80) -> dict:
     return {"args": {"pretrain_weights": pretrain_weights, "num_classes": num_classes}}
 
 
+def _dict_model_name(model_name: str, num_classes: int = 80) -> dict:
+    """Fake PTL-style checkpoint with dict args using explicit model_name."""
+    return {"args": {"model_name": model_name, "num_classes": num_classes}}
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -139,6 +144,27 @@ class TestFromCheckpointDictArgs:
 
         call_kwargs = mock_cls.call_args.kwargs
         assert "num_classes" not in call_kwargs
+
+    @pytest.mark.parametrize(
+        "model_name, patch_target",
+        [
+            pytest.param("RFDETRBase", "rfdetr.variants.RFDETRBase", id="base-classname"),
+            pytest.param("RFDETRSegPreview", "rfdetr.variants.RFDETRSegPreview", id="seg-preview-classname"),
+        ],
+    )
+    def test_characterization_model_name_round_trip_without_pretrain_weights(
+        self,
+        tmp_path: Path,
+        model_name: str,
+        patch_target: str,
+    ) -> None:
+        """Dict args with model_name (and no pretrain_weights) infer the right subclass."""
+        _, mock_cls = _call_from_checkpoint(_dict_model_name(model_name), tmp_path / "ckpt.pth", patch_target)
+
+        mock_cls.assert_called_once()
+        call_kwargs = mock_cls.call_args.kwargs
+        assert call_kwargs.get("num_classes") == 80
+        assert call_kwargs.get("pretrain_weights") == str(tmp_path / "ckpt.pth")
 
 
 # ---------------------------------------------------------------------------

@@ -196,8 +196,8 @@ class RFDETR:
         """Load an RF-DETR model from a training checkpoint, automatically
         inferring the model size from the saved args.
 
-        The correct subclass is inferred from the ``pretrain_weights`` field
-        stored in the checkpoint's ``args`` entry.  Both legacy
+        The correct subclass is inferred from ``args.model_name`` (when
+        available) or falls back to ``args.pretrain_weights``. Both legacy
         ``argparse.Namespace`` checkpoints (produced by ``engine.py``) and
         dict-style checkpoints (produced by the PTL training stack) are
         supported.
@@ -221,8 +221,8 @@ class RFDETR:
             FileNotFoundError: If *path* does not exist.
             OSError: If *path* exists but cannot be read.
             KeyError: If the checkpoint does not contain an ``"args"`` key.
-            ValueError: If the model size cannot be inferred from the
-                ``pretrain_weights`` field in the saved args.
+            ValueError: If the model size cannot be inferred from saved
+                checkpoint args.
 
         Examples:
             >>> model = RFDETR.from_checkpoint("checkpoint_best_total.pth")  # doctest: +SKIP
@@ -265,18 +265,78 @@ class RFDETR:
 
         if isinstance(args, dict):
             weights_name = str(args.get("pretrain_weights", "")).lower()
+            model_name = str(args.get("model_name", ""))
         else:
             weights_name = str(getattr(args, "pretrain_weights", "")).lower()
+            model_name = str(getattr(args, "model_name", ""))
 
-        # Guard: "xlarge"/"xxlarge" without a "seg-" prefix are plus-only models.
-        # Without the plus package, "xlarge" would otherwise silently fall through
-        # to the generic "large" key and instantiate the wrong class.
+        def _normalize_variant_token(value: str) -> str:
+            return "".join(char for char in value.lower() if char.isalnum())
+
+        model_name_token = _normalize_variant_token(model_name)
+
+        # Guard: "xlarge"/"xxlarge" without a segmentation prefix are plus-only
+        # models. Without the plus package these names must fail loudly to avoid
+        # silently instantiating the wrong class.
+        plus_only_name_tokens = {
+            "rfdetr2xlarge",
+            "rfdetrxxlarge",
+            "rfdetrxlarge",
+            "2xlarge",
+            "xxlarge",
+            "xlarge",
+        }
+        if not _plus_available and model_name_token in plus_only_name_tokens:
+            from rfdetr.platform import _INSTALL_MSG
+
+            raise ImportError(
+                f"Checkpoint model_name={model_name!r} requires the "
+                f"rfdetr_plus package. " + _INSTALL_MSG.format(name="platform model downloads")
+            )
         if not _plus_available and "xlarge" in weights_name and "seg-" not in weights_name:
             from rfdetr.platform import _INSTALL_MSG
 
             raise ImportError(
                 f"Checkpoint pretrain_weights={weights_name!r} requires the "
                 f"rfdetr_plus package. " + _INSTALL_MSG.format(name="platform model downloads")
+            )
+
+        _name_map: dict[str, type[RFDETR]] = {
+            "rfdetrseg2xlarge": RFDETRSeg2XLarge,
+            "rfdetrsegxxlarge": RFDETRSeg2XLarge,  # alias
+            "rfdetrsegxlarge": RFDETRSegXLarge,
+            "rfdetrseglarge": RFDETRSegLarge,
+            "rfdetrsegmedium": RFDETRSegMedium,
+            "rfdetrsegsmall": RFDETRSegSmall,
+            "rfdetrsegnano": RFDETRSegNano,
+            "rfdetrsegpreview": RFDETRSegPreview,
+            "rfdetrlarge": RFDETRLarge,
+            "rfdetrmedium": RFDETRMedium,
+            "rfdetrsmall": RFDETRSmall,
+            "rfdetrnano": RFDETRNano,
+            "rfdetrbase": RFDETRBase,
+            # Robust aliases for serialized "size" labels.
+            "seg2xlarge": RFDETRSeg2XLarge,
+            "segxxlarge": RFDETRSeg2XLarge,
+            "segxlarge": RFDETRSegXLarge,
+            "seglarge": RFDETRSegLarge,
+            "segmedium": RFDETRSegMedium,
+            "segsmall": RFDETRSegSmall,
+            "segnano": RFDETRSegNano,
+            "segpreview": RFDETRSegPreview,
+            "large": RFDETRLarge,
+            "medium": RFDETRMedium,
+            "small": RFDETRSmall,
+            "nano": RFDETRNano,
+            "base": RFDETRBase,
+        }
+        if _plus_available:
+            _name_map.update(
+                {
+                    "rfdetr2xlarge": RFDETR2XLarge,
+                    "rfdetrxxlarge": RFDETR2XLarge,  # alias
+                    "rfdetrxlarge": RFDETRXLarge,
+                }
             )
 
         # Ordered most-specific first so "seg-xxlarge"/"seg-2xlarge" match before
@@ -299,15 +359,17 @@ class RFDETR:
             ("base", RFDETRBase),
         ]
 
-        model_cls: type[RFDETR] | None = None
-        for name, klass in _model_map:
-            if name in weights_name:
-                model_cls = klass
-                break
+        model_cls = _name_map.get(model_name_token) if model_name_token else None
+        if model_cls is None:
+            for name, klass in _model_map:
+                if name in weights_name:
+                    model_cls = klass
+                    break
 
         if model_cls is None:
             raise ValueError(
-                f"Could not infer model size from pretrain_weights={weights_name!r}. "
+                "Could not infer model size from checkpoint args "
+                f"(model_name={model_name!r}, pretrain_weights={weights_name!r}). "
                 "Please instantiate the model class directly."
             )
 
