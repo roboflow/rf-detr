@@ -137,6 +137,26 @@ class BestModelCallback(ModelCheckpoint):
         raw = _orig if isinstance(_orig, torch.nn.Module) else pl_module.model
         return raw.state_dict()
 
+    @staticmethod
+    def _resolve_model_name(pl_module: LightningModule) -> str | None:
+        """Resolve checkpoint model_name from model_config or config type.
+
+        The CLI/PTL path does not call ``RFDETR.train()``, so
+        ``model_config.model_name`` may be unset. In that case, infer the model
+        class from concrete config names like ``RFDETRSmallConfig``.
+        """
+        model_config = getattr(pl_module, "model_config", None)
+        configured_name = getattr(model_config, "model_name", None) if model_config is not None else None
+        if isinstance(configured_name, str):
+            normalized_name = configured_name.strip()
+            if normalized_name:
+                return normalized_name
+
+        config_type_name = type(model_config).__name__ if model_config is not None else ""
+        if config_type_name.startswith("RFDETR") and config_type_name.endswith("Config"):
+            return config_type_name.removesuffix("Config")
+        return None
+
     def _save_checkpoint(self, trainer: Trainer, filepath: str) -> None:
         """Save stripped ``.pth`` format instead of a full ``.ckpt``.
 
@@ -179,9 +199,7 @@ class BestModelCallback(ModelCheckpoint):
         ):
             train_config = train_config.model_copy(update={"class_names": dataset_class_names})
         args_dict = train_config.model_dump() if hasattr(train_config, "model_dump") else train_config
-        _cfg = getattr(pl_module, "model_config", None)
-        _raw_name = getattr(_cfg, "model_name", None) if _cfg is not None else None
-        model_name = _raw_name if isinstance(_raw_name, str) else None
+        model_name = self._resolve_model_name(pl_module)
         torch.save(
             self._build_checkpoint_payload(model_state_dict, args_dict, trainer, model_name=model_name), pth_path
         )
@@ -230,9 +248,7 @@ class BestModelCallback(ModelCheckpoint):
             ema_args_dict = (
                 ema_train_config.model_dump() if hasattr(ema_train_config, "model_dump") else ema_train_config
             )
-            _ema_cfg = getattr(pl_module, "model_config", None)
-            _raw_ema_name = getattr(_ema_cfg, "model_name", None) if _ema_cfg is not None else None
-            ema_model_name = _raw_ema_name if isinstance(_raw_ema_name, str) else None
+            ema_model_name = self._resolve_model_name(pl_module)
             torch.save(
                 self._build_checkpoint_payload(ema_state_dict, ema_args_dict, trainer, model_name=ema_model_name),
                 self._output_dir / "checkpoint_best_ema.pth",

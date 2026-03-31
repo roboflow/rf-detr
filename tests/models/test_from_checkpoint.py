@@ -242,6 +242,11 @@ class TestFromCheckpointModelName:
             pytest.param("RFDETRSmall", "rfdetr.variants.RFDETRSmall", id="small"),
             pytest.param("RFDETRMedium", "rfdetr.variants.RFDETRMedium", id="medium"),
             pytest.param("RFDETRLarge", "rfdetr.variants.RFDETRLarge", id="large"),
+            pytest.param(
+                "RFDETRLargeDeprecated",
+                "rfdetr.variants.RFDETRLargeDeprecated",
+                id="large-deprecated",
+            ),
             pytest.param("RFDETRBase", "rfdetr.variants.RFDETRBase", id="base"),
             pytest.param("RFDETRSegNano", "rfdetr.variants.RFDETRSegNano", id="seg-nano"),
             pytest.param("RFDETRSegSmall", "rfdetr.variants.RFDETRSegSmall", id="seg-small"),

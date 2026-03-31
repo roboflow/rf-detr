@@ -18,6 +18,7 @@ from pytorch_lightning import __version__ as ptl_version
 from pytorch_lightning.trainer.states import TrainerFn
 from torch.utils.data import DataLoader, TensorDataset
 
+from rfdetr.config import RFDETRMediumConfig
 from rfdetr.training.callbacks.best_model import BestModelCallback, RFDETREarlyStopping
 
 # ---------------------------------------------------------------------------
@@ -1016,6 +1017,18 @@ class TestCheckpointModelName:
 
         ckpt = torch.load(tmp_path / "checkpoint_best_regular.pth", weights_only=False)
         assert ckpt["model_name"] is None
+
+    def test_regular_checkpoint_infers_model_name_from_model_config_type(self, tmp_path: Path) -> None:
+        """When model_name is unset, infer class name from concrete ModelConfig type."""
+        cb = BestModelCallback(output_dir=str(tmp_path))
+        trainer = _make_trainer({"val/mAP_50_95": 0.5})
+        pl_module = _make_pl_module()
+        pl_module.model_config = RFDETRMediumConfig(model_name=None)
+
+        cb.on_validation_end(trainer, pl_module)
+
+        ckpt = torch.load(tmp_path / "checkpoint_best_regular.pth", weights_only=False)
+        assert ckpt["model_name"] == "RFDETRMedium"
 
     def test_ema_checkpoint_contains_model_name(self, tmp_path: Path) -> None:
         """EMA checkpoint also includes model_name."""
