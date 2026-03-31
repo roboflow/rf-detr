@@ -478,7 +478,7 @@ class RFDETR:
                     user_overrode = user_set and model_num_classes != default_nc
 
                     if not user_overrode:
-                        logger.info(
+                        logger.debug(
                             "Detected %d classes in dataset '%s'; auto-adjusting model num_classes from %d to %d.",
                             dataset_num_classes,
                             dataset_dir,
@@ -727,7 +727,7 @@ class RFDETR:
         """Load class names from a COCO or YOLO dataset directory."""
         if is_valid_coco_dataset(dataset_dir):
             coco_path = os.path.join(dataset_dir, "train", "_annotations.coco.json")
-            with open(coco_path) as f:
+            with open(coco_path, encoding="utf-8") as f:
                 anns = json.load(f)
             categories = sorted(anns["categories"], key=lambda category: category.get("id", float("inf")))
 
@@ -778,7 +778,7 @@ class RFDETR:
         """
         if is_valid_coco_dataset(dataset_dir):
             coco_path = os.path.join(dataset_dir, "train", "_annotations.coco.json")
-            with open(coco_path) as f:
+            with open(coco_path, encoding="utf-8") as f:
                 anns = json.load(f)
             categories = anns["categories"]
             cat_by_id = {category["id"]: category for category in categories}

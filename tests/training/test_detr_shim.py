@@ -31,6 +31,7 @@ import torch
 
 from rfdetr.config import RFDETRBaseConfig, TrainConfig
 from rfdetr.detr import RFDETR, RFDETRLarge
+from rfdetr.detr import logger as detr_logger
 from rfdetr.training.auto_batch import AutoBatchResult
 from rfdetr.training.checkpoint import convert_legacy_checkpoint
 from rfdetr.training.module_model import RFDETRModelModule
@@ -1574,7 +1575,7 @@ class TestRFDETRTrainNumClassesAutoDetect:
 
         assert mock_self.model_config.num_classes == 4
 
-    def test_preserves_explicit_non_default_num_classes_when_dataset_differs(self, tmp_path):
+    def test_preserves_explicit_non_default_num_classes_when_dataset_differs(self, tmp_path, caplog):
         """When user explicitly set a non-default num_classes, it is preserved.
 
         Scenario: user passes num_classes=10 (non-default).  Dataset has 4 classes.
@@ -1582,6 +1583,7 @@ class TestRFDETRTrainNumClassesAutoDetect:
         """
         mc = RFDETRBaseConfig(pretrain_weights=None, device="cpu", num_classes=10)
         mock_self = self._make_mock_self(tmp_path, model_config=mc)
+        dataset_dir = mock_self.get_train_config.return_value.dataset_dir
 
         p_mod, p_dm, p_bt, *_ = _patch_lit()
         with (
@@ -1590,9 +1592,21 @@ class TestRFDETRTrainNumClassesAutoDetect:
             p_bt,
             patch.object(RFDETR, "_load_classes", return_value=self._FOUR_CLASS_NAMES),
         ):
-            RFDETR.train(mock_self)
+            previous_propagate = detr_logger.propagate
+            detr_logger.propagate = True
+            try:
+                with caplog.at_level("WARNING", logger="rf-detr"):
+                    RFDETR.train(mock_self)
+            finally:
+                detr_logger.propagate = previous_propagate
 
         assert mock_self.model_config.num_classes == 10
+        assert any(
+            record.levelname == "WARNING"
+            and f"Dataset '{dataset_dir}' has 4 classes" in record.message
+            and "num_classes=10" in record.message
+            for record in caplog.records
+        )
 
     def test_auto_adjust_syncs_model_args_num_classes(self, tmp_path):
         """When auto-adjusting, keep ModelContext args.num_classes in sync."""
