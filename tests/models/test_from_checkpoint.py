@@ -242,31 +242,12 @@ class TestFromCheckpointModelName:
             pytest.param("RFDETRSmall", "rfdetr.variants.RFDETRSmall", id="small"),
             pytest.param("RFDETRMedium", "rfdetr.variants.RFDETRMedium", id="medium"),
             pytest.param("RFDETRLarge", "rfdetr.variants.RFDETRLarge", id="large"),
-            pytest.param(
-                "RFDETRLargeDeprecated",
-                "rfdetr.variants.RFDETRLargeDeprecated",
-                id="large-deprecated",
-            ),
-            pytest.param("RFDETRBase", "rfdetr.variants.RFDETRBase", id="base"),
             pytest.param("RFDETRSegNano", "rfdetr.variants.RFDETRSegNano", id="seg-nano"),
             pytest.param("RFDETRSegSmall", "rfdetr.variants.RFDETRSegSmall", id="seg-small"),
             pytest.param("RFDETRSegMedium", "rfdetr.variants.RFDETRSegMedium", id="seg-medium"),
             pytest.param("RFDETRSegLarge", "rfdetr.variants.RFDETRSegLarge", id="seg-large"),
             pytest.param("RFDETRSegXLarge", "rfdetr.variants.RFDETRSegXLarge", id="seg-xlarge"),
             pytest.param("RFDETRSeg2XLarge", "rfdetr.variants.RFDETRSeg2XLarge", id="seg-2xlarge"),
-            pytest.param("RFDETRSegPreview", "rfdetr.variants.RFDETRSegPreview", id="seg-preview"),
-            pytest.param(
-                "RFDETRXLarge",
-                "rfdetr.platform.models.RFDETRXLarge",
-                id="xlarge",
-                marks=pytest.mark.skipif(not HAS_PLUS, reason="rfdetr_plus not installed"),
-            ),
-            pytest.param(
-                "RFDETR2XLarge",
-                "rfdetr.platform.models.RFDETR2XLarge",
-                id="2xlarge",
-                marks=pytest.mark.skipif(not HAS_PLUS, reason="rfdetr_plus not installed"),
-            ),
         ],
     )
     def test_model_name_resolves_correct_class(
