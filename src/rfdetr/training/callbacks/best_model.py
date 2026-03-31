@@ -34,6 +34,10 @@ class BestModelCallback(ModelCheckpoint):
     EMA) is copied to ``checkpoint_best_total.pth`` and optimizer/scheduler
     state is stripped via :func:`rfdetr.util.misc.strip_checkpoint`.
 
+    Checkpoints are only updated on validation epochs where the monitor metric
+    is actually logged.  On non-eval epochs (when ``eval_interval > 1`` causes
+    COCO evaluation to be skipped) the callback is a no-op.
+
     Args:
         output_dir: Directory where checkpoint files are written.
         monitor_regular: Metric key for the regular model mAP.
@@ -58,6 +62,7 @@ class BestModelCallback(ModelCheckpoint):
             monitor=monitor_regular,
             mode="max",
             save_top_k=1,
+            save_on_train_epoch_end=False,
             verbose=False,
             auto_insert_metric_name=False,
             enable_version_counter=False,
@@ -189,6 +194,11 @@ class BestModelCallback(ModelCheckpoint):
         """
         # Stash for use inside _save_checkpoint (which has no pl_module param).
         self._current_pl_module = pl_module
+        # Guard: only run checkpoint logic when the monitored metric was actually
+        # logged this epoch (non-eval epochs with eval_interval > 1 skip COCO eval
+        # so the key is absent from callback_metrics).
+        if self.monitor not in trainer.callback_metrics:
+            return
         super().on_validation_end(trainer, pl_module)
 
         # EMA model — custom tracking on top of parent.
@@ -285,6 +295,10 @@ class RFDETREarlyStopping(EarlyStopping):
     checkpoint resumption, NaN/inf guard via ``check_finite``, and
     ``stopping_threshold``/``divergence_threshold``.
 
+    Early stopping evaluates only on validation epochs where the monitored
+    metrics are logged; non-eval epochs (``eval_interval > 1``) are skipped
+    automatically.
+
     Args:
         patience: Number of epochs with no improvement before stopping.
         min_delta: Minimum mAP improvement to reset the patience counter.
@@ -312,6 +326,7 @@ class RFDETREarlyStopping(EarlyStopping):
             mode="max",
             patience=patience,
             min_delta=min_delta,
+            check_on_train_epoch_end=False,
             verbose=verbose,
             check_finite=True,
             strict=False,  # We inject the key ourselves; don't crash if temporarily absent.

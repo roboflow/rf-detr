@@ -21,14 +21,13 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import torch
 
-from rfdetr._namespace import build_namespace
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.datasets.coco import compute_multi_scale_scales
-from rfdetr.models.lwdetr import build_criterion_and_postprocessors
+from rfdetr.models import build_criterion_from_config
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.tensors import NestedTensor
 
@@ -125,14 +124,19 @@ def _probe_step(
 
         with torch.autocast(device_type="cuda", enabled=amp):
             outputs = model(samples, targets)
-            loss_dict = criterion(outputs, targets)
-            weight_dict = criterion.weight_dict
-            loss = sum(loss_dict[name] * weight_dict[name] for name in loss_dict if name in weight_dict)
+            loss_dict = cast(dict[str, torch.Tensor], criterion(outputs, targets))
+            weight_dict = cast(dict[str, float], getattr(criterion, "weight_dict"))
+            weighted_losses = [loss_dict[name] * weight_dict[name] for name in loss_dict if name in weight_dict]
+            loss = (
+                torch.stack(weighted_losses).sum()
+                if weighted_losses
+                else torch.tensor(0.0, dtype=torch.float32, device=device)
+            )
 
         if not torch.isfinite(loss):
             raise RuntimeError("auto-batch probe produced a non-finite training loss.")
 
-        loss.backward()
+        torch.autograd.backward(loss)
         model.zero_grad(set_to_none=True)
         criterion.zero_grad(set_to_none=True)
         return True
@@ -328,8 +332,7 @@ def resolve_auto_batch_config(
 
     max_targets_per_image = getattr(train_config, "auto_batch_max_targets_per_image", 100)
 
-    args = build_namespace(model_config, train_config)
-    criterion, _ = build_criterion_and_postprocessors(args)
+    criterion, _ = build_criterion_from_config(model_config, train_config)
     criterion = criterion.to(device)
 
     safe_micro_batch = probe_max_micro_batch(

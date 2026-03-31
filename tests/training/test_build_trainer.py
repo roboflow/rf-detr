@@ -9,6 +9,7 @@
 import warnings
 
 import pytest
+from pytorch_lightning.callbacks import ModelCheckpoint
 
 from rfdetr.config import RFDETRBaseConfig, SegmentationTrainConfig, TrainConfig
 from rfdetr.training import build_trainer
@@ -23,6 +24,11 @@ def _mc(**kwargs):
     defaults = dict(pretrain_weights=None, device="cpu", num_classes=3)
     defaults.update(kwargs)
     return RFDETRBaseConfig(**defaults)
+
+
+def _find_resume_checkpoints(trainer):
+    """Return ModelCheckpoint callbacks that are NOT BestModelCallback."""
+    return [cb for cb in trainer.callbacks if isinstance(cb, ModelCheckpoint) and not isinstance(cb, BestModelCallback)]
 
 
 def _tc(tmp_path, **kwargs):
@@ -82,6 +88,73 @@ class TestBuildTrainerCallbacks:
         trainer = build_trainer(_tc(tmp_path, use_ema=False), _mc())
         types = [type(cb) for cb in trainer.callbacks]
         assert BestModelCallback in types
+
+    def test_latest_model_checkpoint_present(self, tmp_path):
+        """A ModelCheckpoint (not BestModelCallback) with every_n_epochs==1 is included when checkpoint_interval > 1."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=False, checkpoint_interval=2), _mc())
+        resume_cbs = _find_resume_checkpoints(trainer)
+        assert any(cb._every_n_epochs == 1 for cb in resume_cbs)
+
+    def test_latest_model_checkpoint_absent_when_checkpoint_interval_one(self, tmp_path):
+        """No separate latest checkpoint callback when interval already saves every epoch."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=False, checkpoint_interval=1), _mc())
+        resume_cbs = _find_resume_checkpoints(trainer)
+        assert resume_cbs
+        assert not any(cb._every_n_epochs == 1 and cb.save_top_k == 1 for cb in resume_cbs)
+        interval_cb = next(
+            (cb for cb in resume_cbs if cb._every_n_epochs == 1 and cb.save_top_k == -1),
+            None,
+        )
+        assert interval_cb is not None
+        assert interval_cb.filename == "checkpoint_{epoch}"
+        assert str(interval_cb.dirpath) == str(tmp_path / "out")
+
+    def test_interval_model_checkpoint_present(self, tmp_path):
+        """A ModelCheckpoint (not BestModelCallback) with every_n_epochs==checkpoint_interval is always included."""
+        tc = _tc(tmp_path, use_ema=False)
+        trainer = build_trainer(tc, _mc())
+        resume_cbs = _find_resume_checkpoints(trainer)
+        assert any(cb._every_n_epochs == tc.checkpoint_interval for cb in resume_cbs)
+
+    def test_checkpoint_interval_one_has_single_resume_checkpoint_callback(self, tmp_path):
+        """checkpoint_interval=1 config creates only one non-best ModelCheckpoint callback."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=False, checkpoint_interval=1), _mc())
+        resume_cbs = _find_resume_checkpoints(trainer)
+        assert len(resume_cbs) == 1
+        only_cb = resume_cbs[0]
+        assert only_cb._every_n_epochs == 1
+        assert only_cb.save_top_k == -1
+
+    @pytest.mark.parametrize(
+        "checkpoint_interval",
+        [
+            pytest.param(1, id="interval_1"),
+            pytest.param(2, id="interval_2"),
+            pytest.param(7, id="interval_7"),
+        ],
+    )
+    def test_all_model_checkpoints_have_unique_state_keys(self, tmp_path, checkpoint_interval):
+        """All ModelCheckpoint callbacks (including BestModelCallback) always have unique state keys."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=False, checkpoint_interval=checkpoint_interval), _mc())
+        all_mc_cbs = [cb for cb in trainer.callbacks if isinstance(cb, ModelCheckpoint)]
+        state_keys = [cb.state_key for cb in all_mc_cbs]
+        assert len(state_keys) == len(set(state_keys)), (
+            f"Duplicate state_key with checkpoint_interval={checkpoint_interval}: "
+            f"{[k for k in state_keys if state_keys.count(k) > 1]}"
+        )
+
+    def test_interval_checkpoint_uses_interval_from_config(self, tmp_path):
+        """Interval ModelCheckpoint receives checkpoint_interval=7 from TrainConfig."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=False, checkpoint_interval=7), _mc())
+        resume_cbs = _find_resume_checkpoints(trainer)
+        assert any(cb._every_n_epochs == 7 for cb in resume_cbs)
+
+    def test_checkpoint_interval_validation(self, tmp_path):
+        """TrainConfig(checkpoint_interval=0) raises ValidationError."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            _tc(tmp_path, checkpoint_interval=0)
 
     def test_ema_callback_when_use_ema_true(self, tmp_path):
         """RFDETREMACallback is added when use_ema=True."""

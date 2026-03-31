@@ -10,7 +10,7 @@ import warnings
 from typing import Any, ClassVar, Dict, List, Literal, Mapping, Optional, Union
 
 import torch
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 
@@ -69,7 +69,8 @@ class ModelConfig(BaseConfig):
     amp: bool = True
     num_classes: int = 90
     pretrain_weights: Optional[str] = None
-    device: Literal["cpu", "cuda", "mps"] = DEVICE
+    # torch.device values are accepted at validation time and normalized to string.
+    device: str = DEVICE
     resolution: int
     group_detr: int = 13
     gradient_checkpointing: bool = False
@@ -114,6 +115,32 @@ class ModelConfig(BaseConfig):
         if v is None:
             return v
         return os.path.realpath(os.path.expanduser(v))
+
+    @field_validator("device", mode="before")
+    @classmethod
+    def _normalize_device(cls, v: Any) -> str:
+        """Normalize supported device inputs to a canonical torch-style string.
+
+        Args:
+            v: Device specifier provided by callers. Supported values are
+                ``str`` (for example ``"cpu"``, ``"cuda"``, ``"cuda:1"``)
+                and ``torch.device``.
+
+        Returns:
+            Canonical string form of the parsed device (for example ``"cuda:1"``).
+
+        Raises:
+            ValueError: If a string value cannot be parsed as a valid torch device.
+            ValueError: If ``v`` is not a string or ``torch.device``.
+        """
+        if isinstance(v, torch.device):
+            return str(v)
+        if isinstance(v, str):
+            try:
+                return str(torch.device(v))
+            except (TypeError, ValueError, RuntimeError) as exc:
+                raise ValueError(f"Invalid device specifier: {v!r}.") from exc
+        raise ValueError("device must be a string or torch.device.")
 
 
 class RFDETRBaseConfig(ModelConfig):
@@ -345,7 +372,7 @@ class TrainConfig(BaseModel):
     ema_decay: float = 0.993
     ema_tau: int = 100
     lr_drop: int = 100
-    checkpoint_interval: int = 10
+    checkpoint_interval: int = Field(default=10, ge=1)
     warmup_epochs: float = 0.0
     lr_vit_layer_decay: float = 0.8
     lr_component_decay: float = 0.7

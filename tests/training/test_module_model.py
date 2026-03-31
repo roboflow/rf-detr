@@ -82,16 +82,16 @@ def _fake_postprocess():
 
 
 def _build_module(model_config=None, train_config=None, tmp_path=None):
-    """Construct RFDETRModelModule with build_model and build_criterion_and_postprocessors mocked."""
+    """Construct RFDETRModelModule with build_model_from_config and build_criterion_from_config mocked."""
     mc = model_config or _base_model_config()
     tc = train_config or _base_train_config(tmp_path)
     fake_model = _fake_model()
     fake_criterion = _fake_criterion()
     fake_postprocess = _fake_postprocess()
     with (
-        patch("rfdetr.training.module_model.build_model", return_value=fake_model),
+        patch("rfdetr.training.module_model.build_model_from_config", return_value=fake_model),
         patch(
-            "rfdetr.training.module_model.build_criterion_and_postprocessors",
+            "rfdetr.training.module_model.build_criterion_from_config",
             return_value=(fake_criterion, fake_postprocess),
         ),
     ):
@@ -220,7 +220,7 @@ class TestLoadPretrainWeights:
 
         module, _, _, _ = build_module(model_config=mc)
         module.model_config = module.model_config.model_copy(update={"pretrain_weights": "/fake/weights.pth"})
-        load_pretrain_weights(module.model, module.model_config, module.train_config)
+        load_pretrain_weights(module.model, module.model_config)
 
         mock_validate.assert_called_once_with("/fake/weights.pth", strict=False)
         module.model.load_state_dict.assert_called_once()
@@ -237,7 +237,7 @@ class TestLoadPretrainWeights:
 
         module, fake_model, _, _ = build_module(model_config=mc)
         module.model_config = module.model_config.model_copy(update={"pretrain_weights": "/fake/weights.pth"})
-        load_pretrain_weights(module.model, module.model_config, module.train_config)
+        load_pretrain_weights(module.model, module.model_config)
 
         # First call: expand to checkpoint size so load_state_dict shapes match.
         # Second call: trim back to configured num_classes + 1 (background class).
@@ -258,7 +258,7 @@ class TestLoadPretrainWeights:
 
         module, fake_model, _, _ = build_module(model_config=mc)
         module.model_config = module.model_config.model_copy(update={"pretrain_weights": "/fake/weights.pth"})
-        load_pretrain_weights(module.model, module.model_config, module.train_config)
+        load_pretrain_weights(module.model, module.model_config)
 
         fake_model.reinitialize_detection_head.assert_not_called()
 
@@ -287,7 +287,7 @@ class TestLoadPretrainWeights:
         mock_torch_load.return_value = checkpoint
 
         module.model_config = module.model_config.model_copy(update={"pretrain_weights": "/fake/weights.pth"})
-        load_pretrain_weights(module.model, module.model_config, module.train_config)
+        load_pretrain_weights(module.model, module.model_config)
 
         assert checkpoint["model"]["refpoint_embed.weight"].shape[0] == desired
         assert checkpoint["model"]["query_feat.weight"].shape[0] == desired
@@ -313,7 +313,7 @@ class TestLoadPretrainWeights:
             return checkpoint
 
         with patch("rfdetr.models.weights.torch.load", side_effect=fake_torch_load):
-            load_pretrain_weights(module.model, module.model_config, module.train_config)
+            load_pretrain_weights(module.model, module.model_config)
 
         # Verify a redownload with validate_md5=False was triggered after load failure.
         redownload_calls = [c for c in mock_download.call_args_list if c.kwargs.get("redownload") is True]
@@ -341,7 +341,7 @@ class TestLoadPretrainWeights:
 
         module, _, _, _ = build_module(model_config=mc)
         module.model_config = module.model_config.model_copy(update={"pretrain_weights": "/content/rf-detr-base.pth"})
-        load_pretrain_weights(module.model, module.model_config, module.train_config)
+        load_pretrain_weights(module.model, module.model_config)
 
         # download_pretrain_weights must have been called at least once before any load
         assert mock_download.call_count >= 1
@@ -366,7 +366,7 @@ class TestLoadPretrainWeights:
         )
 
         with pytest.raises(ValueError, match="segmentation head"):
-            load_pretrain_weights(module.model, module.model_config, module.train_config)
+            load_pretrain_weights(module.model, module.model_config)
 
     @patch("rfdetr.models.weights.torch.load")
     @patch("rfdetr.models.weights.validate_pretrain_weights")
@@ -386,7 +386,7 @@ class TestLoadPretrainWeights:
         )
 
         with pytest.raises(ValueError, match="segmentation head"):
-            load_pretrain_weights(module.model, module.model_config, module.train_config)
+            load_pretrain_weights(module.model, module.model_config)
 
     @patch("rfdetr.models.weights.torch.load")
     @patch("rfdetr.models.weights.validate_pretrain_weights")
@@ -404,7 +404,7 @@ class TestLoadPretrainWeights:
         )
 
         with pytest.raises(ValueError, match="patch_size"):
-            load_pretrain_weights(module.model, module.model_config, module.train_config)
+            load_pretrain_weights(module.model, module.model_config)
 
     @patch("rfdetr.models.weights.torch.load")
     @patch("rfdetr.models.weights.validate_pretrain_weights")
@@ -424,7 +424,7 @@ class TestLoadPretrainWeights:
         )
 
         # Should not raise.
-        load_pretrain_weights(module.model, module.model_config, module.train_config)
+        load_pretrain_weights(module.model, module.model_config)
 
 
 class TestApplyLora:
@@ -445,9 +445,9 @@ class TestApplyLora:
         fake_model.backbone.__getitem__ = MagicMock(return_value=fake_backbone_0)
 
         with (
-            patch("rfdetr.training.module_model.build_model", return_value=fake_model),
+            patch("rfdetr.training.module_model.build_model_from_config", return_value=fake_model),
             patch(
-                "rfdetr.training.module_model.build_criterion_and_postprocessors",
+                "rfdetr.training.module_model.build_criterion_from_config",
                 return_value=(_fake_criterion(), _fake_postprocess()),
             ),
         ):

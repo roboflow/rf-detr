@@ -44,11 +44,11 @@ The `export()` method accepts several parameters to customize the export process
 | --------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `output_dir`    | `"output"` | Directory where the exported ONNX model will be saved.                                                                 |
 | `infer_dir`     | `None`     | Path to an image file to use for tracing. If not provided, a random dummy image is generated.                          |
-| `simplify`      | `False`    | Whether to simplify the ONNX model using onnxsim for better compatibility and performance.                             |
+| `simplify`      | `False`    | Deprecated and ignored. ONNX simplification is no longer run by `export()`.                                            |
 | `backbone_only` | `False`    | Export only the backbone feature extractor instead of the full model.                                                  |
 | `opset_version` | `17`       | ONNX opset version to use for export. Higher versions support more operations.                                         |
 | `verbose`       | `True`     | Whether to print verbose export information.                                                                           |
-| `force`         | `False`    | Force re-export even if simplified model already exists.                                                               |
+| `force`         | `False`    | Deprecated and ignored.                                                                                                |
 | `shape`         | `None`     | Input shape as tuple `(height, width)`. Must be divisible by 14. If not provided, uses the model's default resolution. |
 | `batch_size`    | `1`        | Batch size for the exported model.                                                                                     |
 | `tensorrt`      | `False`    | When `True`, convert the ONNX model to a TensorRT `.engine` file. Requires TensorRT (`trtexec`) to be installed.       |
@@ -65,16 +65,16 @@ model = RFDETRMedium(pretrain_weights="<path/to/checkpoint.pth>")
 model.export(output_dir="exports/my_model")
 ```
 
-### Export with Simplification
+### Deprecated: Export with Simplification
 
-Simplifying the ONNX model can improve inference performance and compatibility with various runtimes:
+The `simplify` flag is deprecated and ignored:
 
 ```python
 from rfdetr import RFDETRMedium
 
 model = RFDETRMedium(pretrain_weights="<path/to/checkpoint.pth>")
 
-model.export(simplify=True)
+model.export(simplify=True)  # Deprecated: same result as model.export()
 ```
 
 ### Export with Custom Resolution
@@ -106,7 +106,6 @@ model.export(backbone_only=True)
 After running the export, you will find the following files in your output directory:
 
 - `inference_model.onnx` - The exported ONNX model (or `backbone_model.onnx` if `backbone_only=True`)
-- `inference_model.sim.onnx` - The simplified ONNX model (if `simplify=True`)
 
 ## Optional: Convert ONNX to TensorRT
 
@@ -118,7 +117,6 @@ If you want lower latency on NVIDIA GPUs, you can convert the exported ONNX mode
 ### Prerequisites
 
 - Install TensorRT (`trtexec` must be available in your `PATH`)
-- Install the `trt` extras: `pip install "rfdetr[trt]"`
 - Export an ONNX model first (for example: `output/inference_model.onnx`)
 
 ### Export Directly to TensorRT
@@ -135,9 +133,7 @@ model.export(tensorrt=True)
 
 This exports `output/inference_model.onnx` first and then produces `output/inference_model.engine`.
 
-### Manual Python API Conversion
-
-You can also convert an existing ONNX file to a TensorRT engine separately:
+### Python API Conversion
 
 ```python
 from argparse import Namespace
@@ -223,9 +219,9 @@ predictions = model(image)
 `AutoModel.from_pretrained` accepts `backend="onnx"`, `backend="torch"`, or
 `backend="trt"` to override automatic backend selection.
 
-## Using the Exported ONNX Model
+## Using the Exported Model
 
-Once exported, you can also use the ONNX model directly with ONNX Runtime:
+Once exported, you can use the ONNX model with various inference frameworks:
 
 ### ONNX Runtime
 
@@ -255,42 +251,6 @@ image_array = np.expand_dims(image_array, axis=0)
 outputs = session.run(None, {"input": image_array})
 boxes, labels = outputs
 ```
-
-### TensorRT Engine
-
-Load a `.engine` file and run inference using the `TRTInference` helper:
-
-```python
-import torch
-import numpy as np
-from PIL import Image
-
-from rfdetr.export.benchmark import TRTInference
-
-# Load the TensorRT engine
-trt_model = TRTInference("output/inference_model.engine", device="cuda:0")
-
-# Prepare input image (same preprocessing as ONNX Runtime)
-resolution = 560  # must match the resolution used during export
-image = Image.open("image.jpg").convert("RGB").resize((resolution, resolution))
-image_array = np.array(image).astype(np.float32) / 255.0
-
-mean = np.array([0.485, 0.456, 0.406])
-std = np.array([0.229, 0.224, 0.225])
-image_array = (image_array - mean) / std
-
-# Convert to NCHW tensor on GPU
-input_tensor = torch.from_numpy(image_array.transpose(2, 0, 1)).float().unsqueeze(0).cuda()
-
-# Run inference — returns {"dets": ..., "labels": ...}
-outputs = trt_model({"input": input_tensor})
-boxes = outputs["dets"]  # shape: [1, num_queries, 4]  (cx, cy, w, h normalised)
-labels = outputs["labels"]  # shape: [1, num_queries, num_classes]
-```
-
-> [!NOTE]
-> `TRTInference` requires TensorRT and (for async mode) `pycuda` to be installed.
-> Run inference on the same GPU family as the one used to build the engine.
 
 ## Next Steps
 

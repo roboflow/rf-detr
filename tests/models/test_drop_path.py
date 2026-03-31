@@ -13,7 +13,7 @@ import torch
 import torch.nn as nn
 
 import rfdetr.models.backbone.dinov2 as dinov2_module
-from rfdetr._namespace import build_namespace
+from rfdetr._namespace import _namespace_from_configs
 from rfdetr.config import RFDETRNanoConfig, TrainConfig
 from rfdetr.models import build_model
 from rfdetr.models.backbone.dinov2 import DinoV2
@@ -38,7 +38,7 @@ def model_with_drop_path(monkeypatch: pytest.MonkeyPatch) -> LWDETR:
         output_dir=".",
         drop_path=0.1,
     )
-    args = build_namespace(mc, tc)
+    args = _namespace_from_configs(mc, tc)
     return build_model(args)
 
 
@@ -56,7 +56,7 @@ def model_without_drop_path(monkeypatch: pytest.MonkeyPatch) -> LWDETR:
         output_dir=".",
         drop_path=0.0,
     )
-    args = build_namespace(mc, tc)
+    args = _namespace_from_configs(mc, tc)
     return build_model(args)
 
 

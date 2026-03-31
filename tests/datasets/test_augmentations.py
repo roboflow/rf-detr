@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader
 from torchvision.transforms.v2 import Compose
 
 from rfdetr.datasets._develop import _SimpleDataset
-from rfdetr.datasets.aug_config import AUG_CONFIG
+from rfdetr.datasets.aug_config import AUG_AGGRESSIVE, AUG_CONFIG
 from rfdetr.datasets.coco import make_coco_transforms, make_coco_transforms_square_div_64
 from rfdetr.datasets.transforms import AlbumentationsWrapper, _build_albu_transform
 from rfdetr.utilities import collate_fn
@@ -689,7 +689,7 @@ class TestAlbumentationsWrapperFromConfig:
         """Test building transforms with complex parameter structures."""
         config = {
             "Rotate": {"limit": (90, 90), "p": 0.5},
-            "Affine": {"scale": (0.9, 1.1), "translate_percent": (0.1, 0.1), "p": 0.3},
+            "Affine": {"scale": (0.9, 1.1), "translate_percent": (-0.1, 0.1), "p": 0.3},
         }
 
         transforms = AlbumentationsWrapper.from_config(config)
@@ -1524,5 +1524,26 @@ class TestMakeCocoTransformsAugConfig:
         """aug_config is ignored for test splits — only resize wrappers are present."""
         pipeline = make_transforms("test", 640, aug_config={"HorizontalFlip": {"p": 1.0}})
         wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
-
         assert len(wrappers) == expected_resize_wrappers
+
+
+class TestAugPresets:
+    """Regression tests for built-in augmentation presets."""
+
+    def test_aug_aggressive_translate_percent_is_bidirectional(self) -> None:
+        """AUG_AGGRESSIVE translate_percent must allow both positive and negative translations.
+
+        (0.1, 0.1) is a degenerate range that only shifts right/down;
+        the correct range is (-0.1, 0.1).
+        """
+        translate = AUG_AGGRESSIVE["Affine"]["translate_percent"]
+        lo, hi = translate
+        assert lo < 0, (
+            f"AUG_AGGRESSIVE translate_percent lower bound must be negative to allow "
+            f"left/up translation; got {translate!r}"
+        )
+        assert hi > 0, (
+            f"AUG_AGGRESSIVE translate_percent upper bound must be positive to allow "
+            f"right/down translation; got {translate!r}"
+        )
+        assert lo < hi, f"AUG_AGGRESSIVE translate_percent must be a non-degenerate range; got {translate!r}"
