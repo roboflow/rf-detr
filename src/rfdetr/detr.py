@@ -463,11 +463,7 @@ class RFDETR:
         # inside the module uses the correct (dataset-derived) class count.
         dataset_dir = getattr(config, "dataset_dir", None)
         if dataset_dir:
-            try:
-                self._align_num_classes_from_dataset(dataset_dir)
-            except (FileNotFoundError, ValueError, KeyError, OSError) as exc:
-                # Best-effort only; do not block training if detection fails.
-                logger.debug("Could not auto-detect num_classes from dataset '%s': %s", dataset_dir, exc)
+            self._align_num_classes_from_dataset(dataset_dir)
 
         module = RFDETRModelModule(self.model_config, config)
         datamodule = RFDETRDataModule(self.model_config, config)
@@ -762,7 +758,13 @@ class RFDETR:
         Args:
             dataset_dir: Path to the training dataset root directory.
         """
-        dataset_num_classes = RFDETR._detect_num_classes_for_training(dataset_dir)
+        try:
+            dataset_num_classes = RFDETR._detect_num_classes_for_training(dataset_dir)
+        except (FileNotFoundError, ValueError, KeyError, OSError) as exc:
+            # Best-effort only; do not block training if detection fails.
+            logger.debug("Could not auto-detect num_classes from dataset '%s': %s", dataset_dir, exc)
+            return
+
         model_num_classes = self.model_config.num_classes
 
         if dataset_num_classes == model_num_classes:
