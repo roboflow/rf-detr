@@ -109,7 +109,13 @@ tests = [
   "pytest-rerunfailures>=10,<15",
   "pytest-timeout>=2,<3",
   "tomli>=2.0; python_version < '3.11'",
-  "mypy>=1.0",
+]
+
+typing = [
+    "mypy>=1.0",
+    "types-PyYAML",
+    "types-requests",
+    "types-tqdm",
 ]
 
 docs = [
