@@ -153,7 +153,7 @@ class TestFromCheckpointEdgeCases:
         """Unrecognised pretrain_weights name raises a descriptive ValueError."""
         ckpt = _ns("/my/custom/finetuned.pth")
         with patch("rfdetr.detr.torch.load", return_value=ckpt):
-            with pytest.raises(ValueError, match="Could not infer model size"):
+            with pytest.raises(ValueError, match="Could not infer model class"):
                 RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
 
     def test_characterization_missing_args_key_raises_key_error(self, tmp_path: Path) -> None:
@@ -244,6 +244,7 @@ class TestFromCheckpointModelName:
             pytest.param("RFDETRLarge", "rfdetr.variants.RFDETRLarge", id="large"),
             pytest.param("RFDETRBase", "rfdetr.variants.RFDETRBase", id="base"),
             pytest.param("RFDETRSegNano", "rfdetr.variants.RFDETRSegNano", id="seg-nano"),
+            pytest.param("RFDETRSegPreview", "rfdetr.variants.RFDETRSegPreview", id="seg-preview"),
             pytest.param("RFDETRSegSmall", "rfdetr.variants.RFDETRSegSmall", id="seg-small"),
             pytest.param("RFDETRSegMedium", "rfdetr.variants.RFDETRSegMedium", id="seg-medium"),
             pytest.param("RFDETRSegLarge", "rfdetr.variants.RFDETRSegLarge", id="seg-large"),

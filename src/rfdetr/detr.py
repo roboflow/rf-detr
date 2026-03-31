@@ -260,15 +260,21 @@ class RFDETR:
             >>> model = RFDETRSmall.from_checkpoint("checkpoint_best_total.pth")  # doctest: +SKIP
         """
         # Local imports break the variants → detr import cycle.
+        import rfdetr.variants as variants
 
         _plus_available = False
+        _plus_symbols: dict[str, type[RFDETR]] = {}
         try:
-            from rfdetr.platform.models import RFDETR2XLarge, RFDETRXLarge
+            import rfdetr.platform.models as plus_models
 
             _plus_entries: list[tuple[str, type[RFDETR]]] = [
-                (name, cast("type[RFDETR]", locals()[class_symbol]))
+                (name, cast("type[RFDETR]", getattr(plus_models, class_symbol)))
                 for name, class_symbol in _CHECKPOINT_PLUS_MODEL_MAP_ENTRIES
             ]
+            _plus_symbols = {
+                class_symbol: cast("type[RFDETR]", getattr(plus_models, class_symbol))
+                for class_symbol in _CHECKPOINT_PLUS_MODEL_NAME_CLASS_SYMBOLS
+            }
             _plus_available = True
         except ImportError:
             _plus_entries = []
@@ -282,24 +288,20 @@ class RFDETR:
         # Ordered most-specific first so "seg-xxlarge"/"seg-2xlarge" match before
         # "seg-xlarge", "xxlarge" before "xlarge", and "seg-*" prefixes before
         # their bare counterparts.
+        _variant_symbols: dict[str, type[RFDETR]] = {
+            class_symbol: cast("type[RFDETR]", getattr(variants, class_symbol))
+            for class_symbol in _CHECKPOINT_MODEL_NAME_CLASS_SYMBOLS
+        }
         _model_map: list[tuple[str, type[RFDETR]]] = [
-            (name, cast("type[RFDETR]", locals()[class_symbol])) for name, class_symbol in _CHECKPOINT_MODEL_MAP_ENTRIES
+            (name, _variant_symbols[class_symbol]) for name, class_symbol in _CHECKPOINT_MODEL_MAP_ENTRIES
         ]
         _model_map[8:8] = _plus_entries
 
         # New checkpoints store model_name directly — use it when available.
-        _name_map: dict[str, type[RFDETR]] = {
-            class_symbol: cast("type[RFDETR]", locals()[class_symbol])
-            for class_symbol in _CHECKPOINT_MODEL_NAME_CLASS_SYMBOLS
-        }
+        _name_map: dict[str, type[RFDETR]] = dict(_variant_symbols)
         # Plus-model classes are resolved only when rfdetr_plus is installed.
         if _plus_available:
-            _name_map.update(
-                {
-                    class_symbol: cast("type[RFDETR]", locals()[class_symbol])
-                    for class_symbol in _CHECKPOINT_PLUS_MODEL_NAME_CLASS_SYMBOLS
-                }
-            )
+            _name_map.update(_plus_symbols)
         saved_model_name = ckpt.get("model_name")
         model_cls: type[RFDETR] | None = None
         if isinstance(saved_model_name, str):
