@@ -301,43 +301,37 @@ class RFDETR:
                 f"rfdetr_plus package. " + _INSTALL_MSG.format(name="platform model downloads")
             )
 
-        _name_map: dict[str, type[RFDETR]] = {
-            "rfdetrseg2xlarge": RFDETRSeg2XLarge,
-            "rfdetrsegxxlarge": RFDETRSeg2XLarge,  # alias
-            "rfdetrsegxlarge": RFDETRSegXLarge,
-            "rfdetrseglarge": RFDETRSegLarge,
-            "rfdetrsegmedium": RFDETRSegMedium,
-            "rfdetrsegsmall": RFDETRSegSmall,
-            "rfdetrsegnano": RFDETRSegNano,
-            "rfdetrsegpreview": RFDETRSegPreview,
-            "rfdetrlarge": RFDETRLarge,
-            "rfdetrmedium": RFDETRMedium,
-            "rfdetrsmall": RFDETRSmall,
-            "rfdetrnano": RFDETRNano,
-            "rfdetrbase": RFDETRBase,
-            # Robust aliases for serialized "size" labels.
-            "seg2xlarge": RFDETRSeg2XLarge,
-            "segxxlarge": RFDETRSeg2XLarge,
-            "segxlarge": RFDETRSegXLarge,
-            "seglarge": RFDETRSegLarge,
-            "segmedium": RFDETRSegMedium,
-            "segsmall": RFDETRSegSmall,
-            "segnano": RFDETRSegNano,
-            "segpreview": RFDETRSegPreview,
-            "large": RFDETRLarge,
-            "medium": RFDETRMedium,
-            "small": RFDETRSmall,
-            "nano": RFDETRNano,
-            "base": RFDETRBase,
-        }
+        _model_classes: list[type[RFDETR]] = [
+            RFDETRSeg2XLarge,
+            RFDETRSegXLarge,
+            RFDETRSegLarge,
+            RFDETRSegMedium,
+            RFDETRSegSmall,
+            RFDETRSegNano,
+            RFDETRSegPreview,
+            RFDETRLarge,
+            RFDETRMedium,
+            RFDETRSmall,
+            RFDETRNano,
+            RFDETRBase,
+        ]
         if _plus_available:
-            _name_map.update(
-                {
-                    "rfdetr2xlarge": RFDETR2XLarge,
-                    "rfdetrxxlarge": RFDETR2XLarge,  # alias
-                    "rfdetrxlarge": RFDETRXLarge,
-                }
-            )
+            _model_classes.extend([RFDETR2XLarge, RFDETRXLarge])
+
+        _name_map: dict[str, type[RFDETR]] = {}
+        for model_class in _model_classes:
+            model_class_name = getattr(model_class, "__name__", None) or getattr(model_class, "_mock_name", "")
+            class_token = _normalize_variant_token(str(model_class_name))
+            if not class_token:
+                continue
+            _name_map[class_token] = model_class
+            if class_token.startswith("rfdetr"):
+                _name_map[class_token.replace("rfdetr", "", 1)] = model_class
+
+        # Legacy aliases used by weight filenames / size labels.
+        _name_map["segxxlarge"] = RFDETRSeg2XLarge
+        if _plus_available:
+            _name_map["xxlarge"] = RFDETR2XLarge
 
         # Ordered most-specific first so "seg-xxlarge"/"seg-2xlarge" match before
         # "seg-xlarge", "xxlarge" before "xlarge", and "seg-*" prefixes before
