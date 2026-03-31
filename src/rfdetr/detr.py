@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 from __future__ import annotations
 
+import contextlib
 import functools
 import glob
 import importlib
@@ -502,32 +503,40 @@ class RFDETR:
                 logger.warning("Could not save training_config.json to %s: %s", config.output_dir, exc)
 
     def optimize_for_inference(self, compile=True, batch_size=1, dtype=torch.float32):
-        self.remove_optimized_model()
+        if isinstance(dtype, str):
+            dtype = getattr(torch, dtype)
+        if not isinstance(dtype, torch.dtype):
+            raise TypeError(f"dtype must be a torch.dtype or a string name of a dtype, got {type(dtype)!r}")
 
-        self.model.inference_model = deepcopy(self.model.model)
-        self.model.inference_model.eval()
-        self.model.inference_model.export()
+        device = self.model.device
+        cuda_ctx = torch.cuda.device(device) if device.type == "cuda" else contextlib.nullcontext()
+        with cuda_ctx:
+            self.remove_optimized_model()
 
-        self._optimized_resolution = self.model.resolution
-        self._is_optimized_for_inference = True
+            self.model.inference_model = deepcopy(self.model.model)
+            self.model.inference_model.eval()
+            self.model.inference_model.export()
 
-        self.model.inference_model = self.model.inference_model.to(dtype=dtype)
-        self._optimized_dtype = dtype
+            self._optimized_resolution = self.model.resolution
+            self._is_optimized_for_inference = True
 
-        if compile:
-            self.model.inference_model = torch.jit.trace(
-                self.model.inference_model,
-                torch.randn(
-                    batch_size,
-                    3,
-                    self.model.resolution,
-                    self.model.resolution,
-                    device=self.model.device,
-                    dtype=dtype,
-                ),
-            )
-            self._optimized_has_been_compiled = True
-            self._optimized_batch_size = batch_size
+            self.model.inference_model = self.model.inference_model.to(dtype=dtype)
+            self._optimized_dtype = dtype
+
+            if compile:
+                self.model.inference_model = torch.jit.trace(
+                    self.model.inference_model,
+                    torch.randn(
+                        batch_size,
+                        3,
+                        self.model.resolution,
+                        self.model.resolution,
+                        device=self.model.device,
+                        dtype=dtype,
+                    ),
+                )
+                self._optimized_has_been_compiled = True
+                self._optimized_batch_size = batch_size
 
     def remove_optimized_model(self):
         self.model.inference_model = None
