@@ -463,7 +463,11 @@ class RFDETR:
         # inside the module uses the correct (dataset-derived) class count.
         dataset_dir = getattr(config, "dataset_dir", None)
         if dataset_dir:
-            self._align_num_classes_from_dataset(dataset_dir)
+            try:
+                self._align_num_classes_from_dataset(dataset_dir)
+            except (FileNotFoundError, ValueError, KeyError, OSError) as exc:
+                # Best-effort only; do not block training if detection fails.
+                logger.debug("Could not auto-detect num_classes from dataset '%s': %s", dataset_dir, exc)
 
         module = RFDETRModelModule(self.model_config, config)
         datamodule = RFDETRDataModule(self.model_config, config)
@@ -758,48 +762,44 @@ class RFDETR:
         Args:
             dataset_dir: Path to the training dataset root directory.
         """
-        try:
-            dataset_num_classes = RFDETR._detect_num_classes_for_training(dataset_dir)
-            model_num_classes = self.model_config.num_classes
+        dataset_num_classes = RFDETR._detect_num_classes_for_training(dataset_dir)
+        model_num_classes = self.model_config.num_classes
 
-            if dataset_num_classes == model_num_classes:
-                return
+        if dataset_num_classes == model_num_classes:
+            return
 
-            # Determine whether the user explicitly overrode num_classes to a non-default value.
-            # "num_classes" in model_fields_set is True when the field was explicitly set at
-            # construction time; comparing against the class default filters out cases where the
-            # user passed the default value explicitly (treat those like "not set").
-            user_set = "num_classes" in getattr(self.model_config, "model_fields_set", set())
-            default_nc = type(self.model_config).model_fields["num_classes"].default
-            user_overrode = user_set and model_num_classes != default_nc
+        # Determine whether the user explicitly overrode num_classes to a non-default value.
+        # "num_classes" in model_fields_set is True when the field was explicitly set at
+        # construction time; comparing against the class default filters out cases where the
+        # user passed the default value explicitly (treat those like "not set").
+        user_set = "num_classes" in getattr(self.model_config, "model_fields_set", set())
+        default_nc = type(self.model_config).model_fields["num_classes"].default
+        user_overrode = user_set and model_num_classes != default_nc
 
-            if not user_overrode:
-                logger.debug(
-                    "Detected %d classes in dataset '%s'; auto-adjusting model num_classes from %d to %d.",
-                    dataset_num_classes,
-                    dataset_dir,
-                    model_num_classes,
-                    dataset_num_classes,
-                )
-                self.model_config.num_classes = dataset_num_classes
-                # Keep serialized checkpoint metadata in sync with the updated class count.
-                model_args = getattr(self.model, "args", None)
-                if model_args is not None:
-                    model_args.num_classes = dataset_num_classes
-            else:
-                logger.warning(
-                    "Dataset '%s' has %d classes but model was initialized with num_classes=%d. "
-                    "Using the model's configured value (%d). If this is unintentional, "
-                    "reinitialize the model with num_classes=%d.",
-                    dataset_dir,
-                    dataset_num_classes,
-                    model_num_classes,
-                    model_num_classes,
-                    dataset_num_classes,
-                )
-        except (FileNotFoundError, ValueError, KeyError, OSError) as exc:
-            # Best-effort only; do not block training if detection fails.
-            logger.debug("Could not auto-detect num_classes from dataset '%s': %s", dataset_dir, exc)
+        if not user_overrode:
+            logger.debug(
+                "Detected %d classes in dataset '%s'; auto-adjusting model num_classes from %d to %d.",
+                dataset_num_classes,
+                dataset_dir,
+                model_num_classes,
+                dataset_num_classes,
+            )
+            self.model_config.num_classes = dataset_num_classes
+            # Keep serialized checkpoint metadata in sync with the updated class count.
+            model_args = getattr(self.model, "args", None)
+            if model_args is not None:
+                model_args.num_classes = dataset_num_classes
+        else:
+            logger.warning(
+                "Dataset '%s' has %d classes but model was initialized with num_classes=%d. "
+                "Using the model's configured value (%d). If this is unintentional, "
+                "reinitialize the model with num_classes=%d.",
+                dataset_dir,
+                dataset_num_classes,
+                model_num_classes,
+                model_num_classes,
+                dataset_num_classes,
+            )
 
     def get_train_config(self, **kwargs) -> TrainConfig:
         """Retrieve the configuration parameters that will be used for training."""
