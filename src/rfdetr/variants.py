@@ -57,6 +57,15 @@ from rfdetr.utilities.logger import get_logger
 logger = get_logger()
 
 
+@deprecated(
+    target=None,
+    deprecated_in="1.7.0",
+    remove_in="2.0.0",
+    template_mgs=(
+        "`%(source_name)s` is deprecated since v%(deprecated_in)s and will be removed "
+        "in v%(remove_in)s. Use RFDETRNano, RFDETRSmall, RFDETRMedium, or RFDETRLarge instead."
+    ),
+)
 class RFDETRBase(RFDETR):
     """RF-DETR Base model — deprecated since v1.7.0.
 
@@ -67,26 +76,6 @@ class RFDETRBase(RFDETR):
 
     size = "rfdetr-base"
     _model_config_class = RFDETRBaseConfig
-
-    @deprecated(
-        target=None,
-        deprecated_in="1.7.0",
-        remove_in="2.0.0",
-        template_mgs=(
-            "`%(source_name)s` is deprecated since v%(deprecated_in)s and will be removed "
-            "in v%(remove_in)s. Use RFDETRNano, RFDETRSmall, RFDETRMedium, or RFDETRLarge instead."
-        ),
-    )
-    def __init__(self, **kwargs) -> None:
-        """Initialize a deprecated RFDETRBase instance.
-
-        Args:
-            **kwargs: Forwarded to :class:`~rfdetr.detr.RFDETR`.
-
-        Examples:
-            >>> RFDETRBase()  # doctest: +SKIP
-        """
-        super().__init__(**kwargs)
 
 
 class RFDETRNano(RFDETR):
@@ -203,6 +192,15 @@ class RFDETRSeg(RFDETR):
     _train_config_class = SegmentationTrainConfig
 
 
+@deprecated(
+    target=None,
+    deprecated_in="1.7.0",
+    remove_in="2.0.0",
+    template_mgs=(
+        "`%(source_name)s` is deprecated since v%(deprecated_in)s and will be removed "
+        "in v%(remove_in)s. Use RFDETRSegNano, RFDETRSegSmall, RFDETRSegMedium, or RFDETRSegLarge instead."
+    ),
+)
 class RFDETRSegPreview(RFDETRSeg):
     """RF-DETR Segmentation Preview model — deprecated since v1.7.0.
 
@@ -213,26 +211,6 @@ class RFDETRSegPreview(RFDETRSeg):
 
     size = "rfdetr-seg-preview"
     _model_config_class = RFDETRSegPreviewConfig
-
-    @deprecated(
-        target=None,
-        deprecated_in="1.7.0",
-        remove_in="2.0.0",
-        template_mgs=(
-            "`%(source_name)s` is deprecated since v%(deprecated_in)s and will be removed "
-            "in v%(remove_in)s. Use RFDETRSegNano, RFDETRSegSmall, RFDETRSegMedium, or RFDETRSegLarge instead."
-        ),
-    )
-    def __init__(self, **kwargs) -> None:
-        """Initialize a deprecated RFDETRSegPreview instance.
-
-        Args:
-            **kwargs: Forwarded to :class:`~rfdetr.variants.RFDETRSeg`.
-
-        Examples:
-            >>> RFDETRSegPreview()  # doctest: +SKIP
-        """
-        super().__init__(**kwargs)
 
 
 class RFDETRSegNano(RFDETRSeg):
