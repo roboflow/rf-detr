@@ -32,7 +32,7 @@ __all__ = [
 
 import warnings
 
-from deprecate import deprecated
+from deprecate import deprecated_class
 
 from rfdetr.config import (
     ModelConfig,
@@ -57,14 +57,10 @@ from rfdetr.utilities.logger import get_logger
 logger = get_logger()
 
 
-@deprecated(
+@deprecated_class(
     target=None,
     deprecated_in="1.7.0",
     remove_in="2.0.0",
-    template_mgs=(
-        "`%(source_name)s` is deprecated since v%(deprecated_in)s and will be removed "
-        "in v%(remove_in)s. Use RFDETRNano, RFDETRSmall, RFDETRMedium, or RFDETRLarge instead."
-    ),
 )
 class RFDETRBase(RFDETR):
     """RF-DETR Base model — deprecated since v1.7.0.
@@ -192,14 +188,10 @@ class RFDETRSeg(RFDETR):
     _train_config_class = SegmentationTrainConfig
 
 
-@deprecated(
+@deprecated_class(
     target=None,
     deprecated_in="1.7.0",
     remove_in="2.0.0",
-    template_mgs=(
-        "`%(source_name)s` is deprecated since v%(deprecated_in)s and will be removed "
-        "in v%(remove_in)s. Use RFDETRSegNano, RFDETRSegSmall, RFDETRSegMedium, or RFDETRSegLarge instead."
-    ),
 )
 class RFDETRSegPreview(RFDETRSeg):
     """RF-DETR Segmentation Preview model — deprecated since v1.7.0.
