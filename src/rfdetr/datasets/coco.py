@@ -68,11 +68,7 @@ def _is_rle(segmentation: Any) -> bool:
     Returns:
         ``True`` if the entry looks like an RLE dict, ``False`` otherwise.
     """
-    return (
-        isinstance(segmentation, dict)
-        and "counts" in segmentation
-        and "size" in segmentation
-    )
+    return isinstance(segmentation, dict) and "counts" in segmentation and "size" in segmentation
 
 
 def convert_coco_poly_to_mask(segmentations: List[Any], height: int, width: int) -> torch.Tensor:
