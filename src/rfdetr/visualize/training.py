@@ -60,12 +60,12 @@ def plot_metrics(
         raise ImportError("matplotlib is required for plot_metrics(). Install it with: pip install matplotlib") from exc
 
     try:
-        import pandas as pd
+        import pandas as pd  # type: ignore[import-untyped]
     except ImportError as exc:
         raise ImportError("pandas is required for plot_metrics(). Install it with: pip install pandas") from exc
 
     try:
-        import seaborn as sns
+        import seaborn as sns  # type: ignore[import-untyped]
     except ImportError as exc:
         raise ImportError("seaborn is required for plot_metrics(). Install it with: pip install seaborn") from exc
 
