@@ -55,15 +55,10 @@ from rfdetr.utilities.logger import get_logger
 logger = get_logger()
 
 
-def _raise_deprecated_class(msg: str, **_: object) -> None:
-    raise RuntimeError(msg)
-
-
 @deprecated_class(
     target=None,
     deprecated_in="1.7.0",
     remove_in="2.0.0",
-    stream=_raise_deprecated_class,
 )
 class RFDETRBase(RFDETR):
     """RF-DETR Base model — deprecated since v1.7.0.
@@ -108,7 +103,6 @@ class RFDETRMedium(RFDETR):
     target=None,
     deprecated_in="1.7.0",
     remove_in="2.0.0",
-    stream=_raise_deprecated_class,
 )
 class RFDETRLargeDeprecated(RFDETR):
     """RF-DETR Large model (legacy config) — deprecated since v1.7.0.
@@ -194,7 +188,6 @@ class RFDETRSeg(RFDETR):
     target=None,
     deprecated_in="1.7.0",
     remove_in="2.0.0",
-    stream=_raise_deprecated_class,
 )
 class RFDETRSegPreview(RFDETRSeg):
     """RF-DETR Segmentation Preview model — deprecated since v1.7.0.
