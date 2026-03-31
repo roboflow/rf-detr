@@ -40,6 +40,17 @@ repos:
       - id: ruff-format
         exclude: ^notebooks/.*\.py$
 
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.19.1
+    hooks:
+      - id: mypy
+        # --ignore-missing-imports: the hook runs in an isolated env without torch/torchvision/etc.
+        # Full strict checking (matching pyproject.toml) runs in CI via ci-typing.yml.
+        # args: ["--ignore-missing-imports"]
+        additional_dependencies:
+          - "types-PyYAML"
+          - "types-requests"
+
   - repo: https://github.com/executablebooks/mdformat
     rev: 1.0.0
     hooks:

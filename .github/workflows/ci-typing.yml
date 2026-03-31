@@ -1,0 +1,66 @@
+name: Mypy Type Check
+
+on:
+  push:
+    branches: ["main", "release/*", "develop"]
+  pull_request:
+
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+
+env:
+  # UV_TORCH_BACKEND only works with 'uv pip' commands, not 'uv sync'.
+  # Used by 'uv pip install torch torchvision' step to install CPU-only PyTorch.
+  UV_TORCH_BACKEND: "cpu"
+
+concurrency:
+  group: mypy-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  type-check:
+    name: Type Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 📥 Checkout the repository
+        uses: actions/checkout@v6.0.1
+
+      - name: 🐍 Install uv and set Python version
+        uses: astral-sh/setup-uv@v7.2.0
+        with:
+          python-version: "3.12"
+          activate-environment: true
+
+      - name: 🚀 Install Packages
+        timeout-minutes: 5
+        run: uv pip install -e ".[train,cli,visual]" --group typing
+
+      - name: 🔍 Run mypy
+        run: uv run --no-sync mypy src/rfdetr/ --no-error-summary
+
+      - name: Minimize uv cache
+        continue-on-error: true
+        run: uv cache prune --ci
+
+  type-check-guardian:
+    runs-on: ubuntu-latest
+    needs: type-check
+    if: always()
+    steps:
+      - name: 📋 Display type-check result
+        run: echo "${{ needs.type-check.result }}"
+      - name: ❌ Fail guardian on type-check failure
+        if: needs.type-check.result == 'failure'
+        run: exit 1
+      - name: ⚠️ cancelled or skipped...
+        if: contains(fromJSON('["cancelled", "skipped"]'), needs.type-check.result)
+        run: |
+          echo "type-check job result is '${{ needs.type-check.result }}'; failing explicitly."
+          exit 1
+      - name: ✅ type check succeeded
+        if: needs.type-check.result == 'success'
+        run: echo "All type checks passed in job 'type-check'."
