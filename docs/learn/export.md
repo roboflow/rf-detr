@@ -155,37 +155,73 @@ engine_path = trtexec("output/inference_model.onnx", args)
 
 `trtexec` returns the path to the generated `.engine` file. If `profile=True`, it also writes an Nsight Systems report (`.nsys-rep`).
 
-## Run Inference with a TensorRT Engine
+## Run Inference with `inference-models`
 
-Once you have a `.engine` file, load it for inference using `RFDETRTensorRT`:
+[`inference-models`](https://github.com/roboflow/inference/tree/main/inference_models) is the
+recommended library for running RF-DETR inference. It supports multiple backends — PyTorch,
+ONNX, and TensorRT — with automatic backend selection and a unified API.
+
+### Installation
+
+```bash
+# CPU / PyTorch only
+pip install inference-models
+
+# With TensorRT support (NVIDIA GPU required)
+pip install "inference-models[trt-cu12]"  # CUDA 12.x
+```
+
+See the [inference-models installation guide](https://inference-models.roboflow.com/getting-started/installation/)
+for all installation options including Jetson and CUDA 11.x.
+
+### Load a Pre-trained RF-DETR Model
 
 ```python
-from rfdetr.export.tensorrt import RFDETRTensorRT
+import cv2
+from inference_models import AutoModel
 
-detector = RFDETRTensorRT(
-    "output/inference_model.engine",
-    resolution=560,  # must match the resolution used during export
-    num_classes=80,  # number of classes in your model
-)
+# Automatically selects the best available backend for your environment
+model = AutoModel.from_pretrained("rfdetr-base")
 
-detections = detector.predict("image.jpg", threshold=0.5)
+image = cv2.imread("image.jpg")
+predictions = model(image)
+
+# Convert to supervision Detections
+detections = predictions[0].to_supervision()
 print(detections)
 ```
 
-`RFDETRTensorRT.predict()` accepts the same image formats as `RFDETR.predict()` —
-file paths, URLs, PIL Images, NumPy arrays, or `torch.Tensor` — and returns
-[`supervision.Detections`](https://supervision.roboflow.com/latest/detection/core/).
+### Load a Local RF-DETR Checkpoint
 
-### RFDETRTensorRT Parameters
+```python
+import cv2
+from inference_models import AutoModel
 
-| Parameter     | Default    | Description                                                                               |
-| ------------- | ---------- | ----------------------------------------------------------------------------------------- |
-| `engine_path` | —          | Path to the `.engine` file.                                                               |
-| `resolution`  | `560`      | Input resolution (square side length). Must match the resolution used during ONNX export. |
-| `num_classes` | `80`       | Number of output classes.                                                                 |
-| `num_select`  | `300`      | Number of top queries kept before threshold filtering.                                    |
-| `class_names` | `None`     | Optional list of class name strings (0-indexed).                                          |
-| `device`      | `"cuda:0"` | CUDA device string.                                                                       |
+# Load from a local .pth checkpoint (same file used by rfdetr for training)
+model = AutoModel.from_pretrained(
+    "/path/to/checkpoint.pth",
+    model_type="rfdetr-base",  # specify the architecture variant
+)
+
+image = cv2.imread("image.jpg")
+predictions = model(image)
+```
+
+### Force TensorRT Backend
+
+```python
+import cv2
+from inference_models import AutoModel, BackendType
+
+# Explicitly request TensorRT — requires TRT to be installed
+model = AutoModel.from_pretrained("rfdetr-base", backend=BackendType.TRT)
+
+image = cv2.imread("image.jpg")
+predictions = model(image)
+```
+
+`AutoModel.from_pretrained` accepts `backend="onnx"`, `backend="torch"`, or
+`backend="trt"` to override automatic backend selection.
 
 ## Using the Exported ONNX Model
 
@@ -261,5 +297,6 @@ labels = outputs["labels"]  # shape: [1, num_queries, num_classes]
 After exporting your model, you may want to:
 
 - [Deploy to Roboflow](deploy.md) for cloud-based inference and workflow integration
-- Use the TensorRT engine with `RFDETRTensorRT` for optimized GPU inference
+- Use [`inference-models`](https://github.com/roboflow/inference/tree/main/inference_models) for
+    multi-backend inference (PyTorch, ONNX, TensorRT) with automatic backend selection
 - Integrate with edge deployment frameworks like ONNX Runtime or OpenVINO
