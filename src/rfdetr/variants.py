@@ -32,6 +32,8 @@ __all__ = [
 
 import warnings
 
+from deprecate import deprecated_class
+
 from rfdetr.config import (
     ModelConfig,
     RFDETRBaseConfig,
@@ -55,9 +57,17 @@ from rfdetr.utilities.logger import get_logger
 logger = get_logger()
 
 
+@deprecated_class(
+    target=None,
+    deprecated_in="1.7.0",
+    remove_in="2.0.0",
+)
 class RFDETRBase(RFDETR):
-    """
-    Train an RF-DETR Base model (29M parameters).
+    """RF-DETR Base model — deprecated since v1.7.0.
+
+    .. deprecated:: 1.7.0
+        Use one of the supported variants: :class:`RFDETRNano`, :class:`RFDETRSmall`,
+        :class:`RFDETRMedium`, or :class:`RFDETRLarge`.
     """
 
     size = "rfdetr-base"
@@ -178,7 +188,19 @@ class RFDETRSeg(RFDETR):
     _train_config_class = SegmentationTrainConfig
 
 
+@deprecated_class(
+    target=None,
+    deprecated_in="1.7.0",
+    remove_in="2.0.0",
+)
 class RFDETRSegPreview(RFDETRSeg):
+    """RF-DETR Segmentation Preview model — deprecated since v1.7.0.
+
+    .. deprecated:: 1.7.0
+        Use one of the supported segmentation variants: :class:`RFDETRSegNano`, :class:`RFDETRSegSmall`,
+        :class:`RFDETRSegMedium`, or :class:`RFDETRSegLarge`.
+    """
+
     size = "rfdetr-seg-preview"
     _model_config_class = RFDETRSegPreviewConfig
 

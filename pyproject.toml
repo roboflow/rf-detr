@@ -42,7 +42,7 @@ dependencies = [
     "transformers>=5.1.0,<6.0.0",     # DINOv2 backbone loading
     "pydantic>=2.0,<3",               # ModelConfig / TrainConfig validation
     "supervision",                     # inference output (Detections, Masks)
-    "pyDeprecate>=0.3,<0.6",           # deprecation warnings for legacy APIs
+    "pyDeprecate>=0.6,<0.8",             # deprecation warnings for legacy APIs; >=0.6 for deprecated_class
 ]
 
 [project.optional-dependencies]
