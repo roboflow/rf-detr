@@ -220,6 +220,52 @@ class TestFromCheckpointEdgeCases:
 
 
 # ---------------------------------------------------------------------------
+# Deprecated class instantiation
+# ---------------------------------------------------------------------------
+
+
+class TestDeprecatedClassInstantiation:
+    """Deprecated model classes raise RuntimeError on instantiation."""
+
+    @pytest.mark.parametrize(
+        "cls_name, import_path",
+        [
+            pytest.param("RFDETRBase", "rfdetr.variants.RFDETRBase", id="base"),
+            pytest.param("RFDETRLargeDeprecated", "rfdetr.variants.RFDETRLargeDeprecated", id="large-deprecated"),
+            pytest.param("RFDETRSegPreview", "rfdetr.variants.RFDETRSegPreview", id="seg-preview"),
+        ],
+    )
+    def test_direct_instantiation_raises_runtime_error(self, cls_name: str, import_path: str) -> None:
+        """Direct instantiation of a deprecated class raises RuntimeError."""
+        import importlib
+
+        module_path, attr = import_path.rsplit(".", 1)
+        module = importlib.import_module(module_path)
+        cls = getattr(module, attr)
+        with pytest.raises(RuntimeError, match="deprecated"):
+            cls()
+
+    @pytest.mark.parametrize(
+        "pretrain_weights, patch_target",
+        [
+            pytest.param("rf-detr-base.pth", "rfdetr.variants.RFDETRBase", id="base"),
+            pytest.param("rf-detr-seg-preview.pt", "rfdetr.variants.RFDETRSegPreview", id="seg-preview"),
+        ],
+    )
+    def test_from_checkpoint_raises_for_deprecated_class(
+        self,
+        tmp_path: Path,
+        pretrain_weights: str,
+        patch_target: str,
+    ) -> None:
+        """from_checkpoint raises RuntimeError when the resolved class is deprecated."""
+        ckpt = _ns(pretrain_weights)
+        with patch("rfdetr.detr.torch.load", return_value=ckpt):
+            with pytest.raises(RuntimeError, match="deprecated"):
+                RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+
+
+# ---------------------------------------------------------------------------
 # model_name in checkpoint (#887)
 # ---------------------------------------------------------------------------
 

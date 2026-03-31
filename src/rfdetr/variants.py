@@ -61,7 +61,7 @@ logger = get_logger()
     remove_in="2.0.0",
 )
 class RFDETRBase(RFDETR):
-    """RF-DETR Base model — deprecated since v1.7.0.
+    """RF-DETR Base model — removed in v1.7.0.
 
     .. deprecated:: 1.7.0
         Use one of the supported variants: :class:`RFDETRNano`, :class:`RFDETRSmall`,
@@ -70,6 +70,12 @@ class RFDETRBase(RFDETR):
 
     size = "rfdetr-base"
     _model_config_class = RFDETRBaseConfig
+
+    def __init__(self, **kwargs: object) -> None:
+        raise RuntimeError(
+            "RFDETRBase was deprecated in v1.7.0 and is no longer supported. "
+            "Use RFDETRNano, RFDETRSmall, RFDETRMedium, or RFDETRLarge instead."
+        )
 
 
 class RFDETRNano(RFDETR):
@@ -105,7 +111,7 @@ class RFDETRMedium(RFDETR):
     remove_in="2.0.0",
 )
 class RFDETRLargeDeprecated(RFDETR):
-    """RF-DETR Large model (legacy config) — deprecated since v1.7.0.
+    """RF-DETR Large model (legacy config) — removed in v1.7.0.
 
     .. deprecated:: 1.7.0
         Use :class:`RFDETRLarge` instead.
@@ -113,6 +119,11 @@ class RFDETRLargeDeprecated(RFDETR):
 
     size = "rfdetr-large"
     _model_config_class = RFDETRLargeDeprecatedConfig
+
+    def __init__(self, **kwargs: object) -> None:
+        raise RuntimeError(
+            "RFDETRLargeDeprecated was deprecated in v1.7.0 and is no longer supported. Use RFDETRLarge instead."
+        )
 
 
 class RFDETRLarge(RFDETR):
@@ -190,7 +201,7 @@ class RFDETRSeg(RFDETR):
     remove_in="2.0.0",
 )
 class RFDETRSegPreview(RFDETRSeg):
-    """RF-DETR Segmentation Preview model — deprecated since v1.7.0.
+    """RF-DETR Segmentation Preview model — removed in v1.7.0.
 
     .. deprecated:: 1.7.0
         Use one of the supported segmentation variants: :class:`RFDETRSegNano`, :class:`RFDETRSegSmall`,
@@ -199,6 +210,12 @@ class RFDETRSegPreview(RFDETRSeg):
 
     size = "rfdetr-seg-preview"
     _model_config_class = RFDETRSegPreviewConfig
+
+    def __init__(self, **kwargs: object) -> None:
+        raise RuntimeError(
+            "RFDETRSegPreview was deprecated in v1.7.0 and is no longer supported. "
+            "Use RFDETRSegNano, RFDETRSegSmall, RFDETRSegMedium, or RFDETRSegLarge instead."
+        )
 
 
 class RFDETRSegNano(RFDETRSeg):
