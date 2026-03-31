@@ -10,8 +10,8 @@ import hashlib
 import os
 import shutil
 
-import requests  # type: ignore[import-untyped]
-from tqdm.auto import tqdm  # type: ignore[import-untyped]
+import requests
+from tqdm.auto import tqdm
 
 from rfdetr.utilities.logger import get_logger
 

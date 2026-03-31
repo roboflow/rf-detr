@@ -17,8 +17,6 @@
 
 """Utilities for bounding box manipulation and GIoU."""
 
-from typing import cast
-
 import torch
 import torch.nn.functional as F
 from torchvision.ops.boxes import box_area
@@ -128,8 +126,8 @@ def batch_dice_loss(inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor
     inputs = inputs.flatten(1)
     numerator = 2 * torch.einsum("nc,mc->nm", inputs, targets)
     denominator = inputs.sum(-1)[:, None] + targets.sum(-1)[None, :]
-    loss = 1 - (numerator + 1) / (denominator + 1)
-    return cast(torch.Tensor, loss)
+    loss: torch.Tensor = 1 - (numerator + 1) / (denominator + 1)
+    return loss
 
 
 batch_dice_loss_jit = torch.jit.script(batch_dice_loss)

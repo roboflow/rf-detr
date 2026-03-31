@@ -113,6 +113,8 @@ tests = [
 
 typing = [
     "mypy>=1.0",
+    # mypy 1.19.x can crash while processing NumPy 2.4 symbols in strict mode.
+    "numpy<2.4",
     "types-PyYAML",
     "types-requests",
     "types-tqdm",
@@ -205,6 +207,12 @@ overrides = [
     "pycocotools", "pycocotools.*",
     "timm", "timm.*",
     "einops", "einops.*",
+    "deprecate", "deprecate.*",
+    "matplotlib", "matplotlib.*",
+    "pandas", "pandas.*",
+    "requests", "requests.*",
+    "seaborn", "seaborn.*",
+    "tqdm", "tqdm.*",
   ], ignore_missing_imports = true },
   # Modules with pre-existing type errors — ignored until incrementally fixed.
   { module = [

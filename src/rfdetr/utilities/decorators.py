@@ -8,7 +8,7 @@
 
 import warnings
 
-from deprecate import deprecated, void  # type: ignore[import-untyped]
+from deprecate import deprecated, void
 
 __all__ = ["deprecated", "void"]
 

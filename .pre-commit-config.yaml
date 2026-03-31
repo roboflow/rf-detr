@@ -48,7 +48,6 @@ repos:
         # Full strict checking (matching pyproject.toml) runs in CI via ci-typing.yml.
         # args: ["--ignore-missing-imports"]
         additional_dependencies:
-          - "numpy>=2.0"
           - "types-PyYAML"
           - "types-requests"
 
