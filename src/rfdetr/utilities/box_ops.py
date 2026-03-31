@@ -17,8 +17,6 @@
 
 """Utilities for bounding box manipulation and GIoU."""
 
-from typing import Tuple
-
 import torch
 import torch.nn.functional as F
 from torchvision.ops.boxes import box_area
@@ -42,7 +40,7 @@ def box_xyxy_to_cxcywh(x: torch.Tensor) -> torch.Tensor:
 
 
 # modified from torchvision to also return the union
-def box_iou(boxes1: torch.Tensor, boxes2: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+def box_iou(boxes1: torch.Tensor, boxes2: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     """Compute pairwise IoU and union for two sets of boxes.
 
     Returns:
@@ -128,11 +126,11 @@ def batch_dice_loss(inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor
     inputs = inputs.flatten(1)
     numerator = 2 * torch.einsum("nc,mc->nm", inputs, targets)
     denominator = inputs.sum(-1)[:, None] + targets.sum(-1)[None, :]
-    loss = 1 - (numerator + 1) / (denominator + 1)
+    loss: torch.Tensor = 1 - (numerator + 1) / (denominator + 1)
     return loss
 
 
-batch_dice_loss_jit = torch.jit.script(batch_dice_loss)  # type: torch.jit.ScriptModule
+batch_dice_loss_jit = torch.jit.script(batch_dice_loss)
 
 
 def batch_sigmoid_ce_loss(inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
@@ -157,4 +155,4 @@ def batch_sigmoid_ce_loss(inputs: torch.Tensor, targets: torch.Tensor) -> torch.
     return loss / hw
 
 
-batch_sigmoid_ce_loss_jit = torch.jit.script(batch_sigmoid_ce_loss)  # type: torch.jit.ScriptModule
+batch_sigmoid_ce_loss_jit = torch.jit.script(batch_sigmoid_ce_loss)

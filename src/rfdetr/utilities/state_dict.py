@@ -9,7 +9,7 @@
 import os
 import tempfile
 from collections import OrderedDict
-from typing import Any, Dict, Optional
+from typing import Any
 
 from rfdetr.utilities.logger import get_logger
 
@@ -158,7 +158,7 @@ def strip_checkpoint(checkpoint: str | os.PathLike[str]) -> None:
             os.remove(tmp_path)
 
 
-def clean_state_dict(state_dict: Dict[str, Any]) -> OrderedDict[str, Any]:
+def clean_state_dict(state_dict: dict[str, Any]) -> OrderedDict[str, Any]:
     """Remove the ``module.`` prefix added by ``DataParallel`` / ``DistributedDataParallel``.
 
     Args:
@@ -175,7 +175,7 @@ def clean_state_dict(state_dict: Dict[str, Any]) -> OrderedDict[str, Any]:
     return new_state_dict
 
 
-def validate_checkpoint_compatibility(checkpoint: Dict[str, Any], model_args: Any) -> None:
+def validate_checkpoint_compatibility(checkpoint: dict[str, Any], model_args: Any) -> None:
     """Validate that a checkpoint is compatible with the model configuration.
 
     Checks for mismatches in ``segmentation_head`` and ``patch_size`` between
@@ -222,7 +222,7 @@ def validate_checkpoint_compatibility(checkpoint: Dict[str, Any], model_args: An
     ckpt_class_bias = checkpoint.get("model", {}).get("class_embed.bias", None)
     if ckpt_class_bias is not None:
         ckpt_num_classes = ckpt_class_bias.shape[0]
-        model_num_classes: Optional[int] = getattr(model_args, "num_classes", None)
+        model_num_classes: int | None = getattr(model_args, "num_classes", None)
         if model_num_classes is not None and ckpt_num_classes != model_num_classes + 1:
             if model_num_classes + 1 < ckpt_num_classes:
                 # Backbone pretrain scenario: checkpoint has more classes, head will be trimmed.
@@ -249,8 +249,8 @@ def validate_checkpoint_compatibility(checkpoint: Dict[str, Any], model_args: An
         return
 
     ckpt_args = checkpoint["args"]
-    ckpt_segmentation_head: Optional[bool] = _ckpt_args_get(ckpt_args, "segmentation_head")
-    model_segmentation_head: Optional[bool] = getattr(model_args, "segmentation_head", None)
+    ckpt_segmentation_head: bool | None = _ckpt_args_get(ckpt_args, "segmentation_head")
+    model_segmentation_head: bool | None = getattr(model_args, "segmentation_head", None)
 
     if ckpt_segmentation_head is not None and model_segmentation_head is not None:
         if ckpt_segmentation_head != model_segmentation_head:
@@ -265,8 +265,8 @@ def validate_checkpoint_compatibility(checkpoint: Dict[str, Any], model_args: An
                     "Load the weights into a detection model (e.g. RFDETRNano) instead of a segmentation model."
                 )
 
-    ckpt_patch_size: Optional[int] = _ckpt_args_get(ckpt_args, "patch_size")
-    model_patch_size: Optional[int] = getattr(model_args, "patch_size", None)
+    ckpt_patch_size: int | None = _ckpt_args_get(ckpt_args, "patch_size")
+    model_patch_size: int | None = getattr(model_args, "patch_size", None)
     if ckpt_patch_size is not None and model_patch_size is not None and ckpt_patch_size != model_patch_size:
         raise ValueError(
             f"The checkpoint was trained with patch_size={ckpt_patch_size}, but the current model uses "

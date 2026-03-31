@@ -111,6 +111,15 @@ tests = [
   "tomli>=2.0; python_version < '3.11'",
 ]
 
+typing = [
+    "mypy>=1.0",
+    # mypy 1.19.x can crash while processing NumPy 2.4 symbols in strict mode.
+    "numpy<2.4",
+    "types-PyYAML",
+    "types-requests",
+    "types-tqdm",
+]
+
 docs = [
     "mkdocs-material[imaging]>=9.7",
     "mkdocstrings>=0.25.2,<0.30.0",
@@ -178,3 +187,88 @@ filterwarnings = [
 
 [tool.codespell]
 skip = "*.pth"
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = false
+explicit_package_bases = true
+strict = true
+mypy_path = "src"
+overrides = [
+  { module = [
+    "tests.*",
+    "einops", "einops.*",
+    "matplotlib", "matplotlib.*",
+    "pandas", "pandas.*",
+    "seaborn", "seaborn.*",
+  ], ignore_errors = true },
+  { module = [
+    "torchvision", "torchvision.*",
+    "pycocotools", "pycocotools.*",
+    "timm", "timm.*",
+    "einops", "einops.*",
+    "deprecate", "deprecate.*",
+    "matplotlib", "matplotlib.*",
+    "pandas", "pandas.*",
+    "requests", "requests.*",
+    "seaborn", "seaborn.*",
+    "tqdm", "tqdm.*",
+  ], ignore_missing_imports = true },
+  # Modules with pre-existing type errors — ignored until incrementally fixed.
+  { module = [
+    "rfdetr",
+    "rfdetr._namespace",
+    "rfdetr.assets.model_weights",
+    "rfdetr.config",
+    "rfdetr.datasets._develop",
+    "rfdetr.datasets.coco",
+    "rfdetr.datasets.save_grids",
+    "rfdetr.datasets.synthetic",
+    "rfdetr.datasets.transforms",
+    "rfdetr.datasets.yolo",
+    "rfdetr.detr",
+    "rfdetr.evaluation.coco_eval",
+    "rfdetr.evaluation.matching",
+    "rfdetr.export._onnx.exporter",
+    "rfdetr.export._onnx.symbolic",
+    "rfdetr.export.benchmark",
+    "rfdetr.export.main",
+    "rfdetr.export.tensorrt",
+    "rfdetr.models.backbone",
+    "rfdetr.models.backbone.backbone",
+    "rfdetr.models.backbone.base",
+    "rfdetr.models.backbone.dinov2",
+    "rfdetr.models.backbone.dinov2_with_windowed_attn",
+    "rfdetr.models.backbone.projector",
+    "rfdetr.models.criterion",
+    "rfdetr.models.heads.detection",
+    "rfdetr.models.heads.segmentation",
+    "rfdetr.models.lwdetr",
+    "rfdetr.models.math",
+    "rfdetr.models.matcher",
+    "rfdetr.models.ops.functions.ms_deform_attn_func",
+    "rfdetr.models.ops.modules.ms_deform_attn",
+    "rfdetr.models.position_encoding",
+    "rfdetr.models.postprocess",
+    "rfdetr.models.transformer",
+    "rfdetr.models.weights",
+    "rfdetr.platform",
+    "rfdetr.platform.downloads",
+    "rfdetr.platform.models",
+    "rfdetr.training.callbacks.best_model",
+    "rfdetr.training.callbacks.coco_eval",
+    "rfdetr.training.callbacks.drop_schedule",
+    "rfdetr.training.callbacks.ema",
+    "rfdetr.training.cli",
+    "rfdetr.training.drop_schedule",
+    "rfdetr.training.model_ema",
+    "rfdetr.training.module_data",
+    "rfdetr.training.module_model",
+    "rfdetr.training.trainer",
+    "rfdetr.utilities.distributed",
+    "rfdetr.utilities.logger",
+    "rfdetr.utilities.state_dict",
+    "rfdetr.utilities.tensors",
+    "rfdetr.variants",
+  ], ignore_errors = true },
+]
