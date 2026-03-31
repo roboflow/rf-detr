@@ -53,9 +53,6 @@ def _encode_uncompressed_rle(mask: np.ndarray) -> dict:
             current_val = pixel
             run_length = 1
     counts.append(run_length)
-    # Uncompressed RLE always starts with a run of zeros
-    if flat[0] != 0:
-        counts.insert(0, 0)
     return {"counts": counts, "size": [_H, _W]}
 
 
