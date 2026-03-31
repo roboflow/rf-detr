@@ -179,7 +179,8 @@ class BestModelCallback(ModelCheckpoint):
         ):
             train_config = train_config.model_copy(update={"class_names": dataset_class_names})
         args_dict = train_config.model_dump() if hasattr(train_config, "model_dump") else train_config
-        _raw_name = getattr(pl_module.model_config, "model_name", None)
+        _cfg = getattr(pl_module, "model_config", None)
+        _raw_name = getattr(_cfg, "model_name", None) if _cfg is not None else None
         model_name = _raw_name if isinstance(_raw_name, str) else None
         torch.save(
             self._build_checkpoint_payload(model_state_dict, args_dict, trainer, model_name=model_name), pth_path
@@ -229,7 +230,8 @@ class BestModelCallback(ModelCheckpoint):
             ema_args_dict = (
                 ema_train_config.model_dump() if hasattr(ema_train_config, "model_dump") else ema_train_config
             )
-            _raw_ema_name = getattr(pl_module.model_config, "model_name", None)
+            _ema_cfg = getattr(pl_module, "model_config", None)
+            _raw_ema_name = getattr(_ema_cfg, "model_name", None) if _ema_cfg is not None else None
             ema_model_name = _raw_ema_name if isinstance(_raw_ema_name, str) else None
             torch.save(
                 self._build_checkpoint_payload(ema_state_dict, ema_args_dict, trainer, model_name=ema_model_name),
