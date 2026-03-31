@@ -56,12 +56,22 @@ logger = get_logger()
 
 
 class RFDETRBase(RFDETR):
-    """
-    Train an RF-DETR Base model (29M parameters).
+    """RF-DETR Base model — deprecated, raises on instantiation.
+
+    .. deprecated::
+        ``RFDETRBase`` is deprecated and will be removed in a future release.
+        Use one of the supported variants: :class:`RFDETRNano`, :class:`RFDETRSmall`,
+        :class:`RFDETRMedium`, or :class:`RFDETRLarge`.
     """
 
     size = "rfdetr-base"
     _model_config_class = RFDETRBaseConfig
+
+    def __init__(self, **kwargs) -> None:
+        raise RuntimeError(
+            "RFDETRBase is deprecated and will be removed in a future release. "
+            "Use one of the supported variants: RFDETRNano, RFDETRSmall, RFDETRMedium, or RFDETRLarge."
+        )
 
 
 class RFDETRNano(RFDETR):
@@ -179,8 +189,23 @@ class RFDETRSeg(RFDETR):
 
 
 class RFDETRSegPreview(RFDETRSeg):
+    """RF-DETR Segmentation Preview model — deprecated, raises on instantiation.
+
+    .. deprecated::
+        ``RFDETRSegPreview`` is deprecated and will be removed in a future release.
+        Use one of the supported segmentation variants: :class:`RFDETRSegNano`, :class:`RFDETRSegSmall`,
+        :class:`RFDETRSegMedium`, or :class:`RFDETRSegLarge`.
+    """
+
     size = "rfdetr-seg-preview"
     _model_config_class = RFDETRSegPreviewConfig
+
+    def __init__(self, **kwargs) -> None:
+        raise RuntimeError(
+            "RFDETRSegPreview is deprecated and will be removed in a future release. "
+            "Use one of the supported segmentation variants: RFDETRSegNano, RFDETRSegSmall, "
+            "RFDETRSegMedium, or RFDETRSegLarge."
+        )
 
 
 class RFDETRSegNano(RFDETRSeg):
