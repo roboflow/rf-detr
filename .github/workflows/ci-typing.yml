@@ -37,7 +37,7 @@ jobs:
 
       - name: 🚀 Install Packages
         timeout-minutes: 5
-        run: uv pip install -e ".[train,cli]" --group typing
+        run: uv pip install -e ".[train,cli,visual]" --group typing
 
       - name: 🔍 Run mypy
         run: uv run --no-sync mypy src/rfdetr/ --no-error-summary
