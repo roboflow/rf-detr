@@ -1498,6 +1498,12 @@ class TestRFDETRTrainNumClassesAutoDetect:
         mock.get_train_config.return_value = _make_train_config(tmp_path)
         return mock
 
+    def _write_coco_categories(self, dataset_dir: Path, categories: list[dict[str, Any]]) -> None:
+        """Write a minimal COCO annotation file with provided categories."""
+        (dataset_dir / "train").mkdir(parents=True, exist_ok=True)
+        with (dataset_dir / "train" / "_annotations.coco.json").open("w", encoding="utf-8") as f:
+            json.dump({"images": [], "annotations": [], "categories": categories}, f)
+
     def test_auto_adjusts_num_classes_when_not_overridden(self, tmp_path):
         """When user did not set num_classes, auto-adjust to the dataset class count.
 
@@ -1517,6 +1523,34 @@ class TestRFDETRTrainNumClassesAutoDetect:
             RFDETR.train(mock_self)
 
         assert mock_self.model_config.num_classes == 4
+
+    def test_coco_auto_detect_uses_full_category_mapping_not_leaf_only_names(self, tmp_path):
+        """COCO class-count detection must follow ``coco.cats`` semantics.
+
+        Regression test for hierarchical COCO datasets where leaf-only class
+        names can undercount categories relative to label remapping.
+        """
+        mock_self = self._make_mock_self(tmp_path)
+        dataset_dir = Path(mock_self.get_train_config.return_value.dataset_dir)
+        self._write_coco_categories(
+            dataset_dir,
+            categories=[
+                {"id": 1, "name": "animal", "supercategory": "none"},
+                {"id": 2, "name": "dog", "supercategory": "animal"},
+                {"id": 3, "name": "cat", "supercategory": "animal"},
+            ],
+        )
+
+        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        with (
+            p_mod,
+            p_dm,
+            p_bt,
+            patch.object(RFDETR, "_load_classes", return_value=["dog", "cat"]),
+        ):
+            RFDETR.train(mock_self)
+
+        assert mock_self.model_config.num_classes == 3
 
     def test_auto_adjusts_when_default_explicitly_passed(self, tmp_path):
         """Passing num_classes=<default> is treated the same as not setting it.
@@ -1559,6 +1593,23 @@ class TestRFDETRTrainNumClassesAutoDetect:
             RFDETR.train(mock_self)
 
         assert mock_self.model_config.num_classes == 10
+
+    def test_auto_adjust_syncs_model_args_num_classes(self, tmp_path):
+        """When auto-adjusting, keep ModelContext args.num_classes in sync."""
+        mock_self = self._make_mock_self(tmp_path)
+        mock_self.model.args = SimpleNamespace(num_classes=90)
+
+        p_mod, p_dm, p_bt, *_ = _patch_lit()
+        with (
+            p_mod,
+            p_dm,
+            p_bt,
+            patch.object(RFDETR, "_load_classes", return_value=self._FOUR_CLASS_NAMES),
+        ):
+            RFDETR.train(mock_self)
+
+        assert mock_self.model_config.num_classes == 4
+        assert mock_self.model.args.num_classes == 4
 
     def test_no_adjustment_when_num_classes_already_matches_dataset(self, tmp_path):
         """No adjustment when the model's num_classes already equals the dataset count.

@@ -464,8 +464,7 @@ class RFDETR:
         dataset_dir = getattr(config, "dataset_dir", None)
         if dataset_dir:
             try:
-                detected_class_names = RFDETR._load_classes(dataset_dir)
-                dataset_num_classes = len(detected_class_names)
+                dataset_num_classes = RFDETR._detect_num_classes_for_training(dataset_dir)
                 model_num_classes = self.model_config.num_classes
 
                 if dataset_num_classes != model_num_classes:
@@ -487,6 +486,11 @@ class RFDETR:
                             dataset_num_classes,
                         )
                         self.model_config.num_classes = dataset_num_classes
+                        # Keep serialized checkpoint metadata in sync with the
+                        # updated class count for round-trip correctness.
+                        model_args = getattr(self.model, "args", None)
+                        if model_args is not None:
+                            model_args.num_classes = dataset_num_classes
                     else:
                         logger.warning(
                             "Dataset '%s' has %d classes but model was initialized "
@@ -762,6 +766,25 @@ class RFDETR:
             f"Could not find class names in {dataset_dir}."
             " Checked for COCO (train/_annotations.coco.json) and YOLO (data.yaml, data.yml) styles.",
         )
+
+    @staticmethod
+    def _detect_num_classes_for_training(dataset_dir: str) -> int:
+        """Detect the class count using the same category basis as training labels.
+
+        For COCO-style datasets this counts all categories by ``id`` from
+        ``train/_annotations.coco.json`` (matching the remapping based on
+        ``coco.cats`` used by the training datamodule). For YOLO-style datasets
+        it falls back to ``_load_classes``.
+        """
+        if is_valid_coco_dataset(dataset_dir):
+            coco_path = os.path.join(dataset_dir, "train", "_annotations.coco.json")
+            with open(coco_path) as f:
+                anns = json.load(f)
+            categories = anns["categories"]
+            cat_by_id = {category["id"]: category for category in categories}
+            return len(cat_by_id)
+
+        return len(RFDETR._load_classes(dataset_dir))
 
     def get_train_config(self, **kwargs) -> TrainConfig:
         """Retrieve the configuration parameters that will be used for training."""
