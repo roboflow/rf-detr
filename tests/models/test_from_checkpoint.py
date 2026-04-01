@@ -302,7 +302,7 @@ class TestFromCheckpointModelName:
     """from_checkpoint uses model_name when present in checkpoint."""
 
     @pytest.mark.parametrize(
-        "model_name, patch_target",
+        ("model_name, patch_target"),
         [
             ("RFDETRNano", "rfdetr.variants.RFDETRNano"),
             ("RFDETRSmall", "rfdetr.variants.RFDETRSmall"),
@@ -316,21 +316,7 @@ class TestFromCheckpointModelName:
             ("RFDETRSegLarge", "rfdetr.variants.RFDETRSegLarge"),
             ("RFDETRSegXLarge", "rfdetr.variants.RFDETRSegXLarge"),
             ("RFDETRSeg2XLarge", "rfdetr.variants.RFDETRSeg2XLarge"),
-        ],
-        ids=[
-            "nano",
-            "small",
-            "medium",
-            "large",
-            "base",
-            "seg-nano",
-            "seg-preview",
-            "seg-small",
-            "seg-medium",
-            "seg-large",
-            "seg-xlarge",
-            "seg-2xlarge",
-        ],
+        ]
     )
     def test_model_name_resolves_correct_class(
         self,
