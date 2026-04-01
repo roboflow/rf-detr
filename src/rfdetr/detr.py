@@ -527,9 +527,8 @@ class RFDETR:
                 string that does not correspond to a valid ``torch.dtype`` attribute.
 
         Examples:
-            >>> model = RFDETRSmall()
-            >>> model.optimize_for_inference(compile=False, dtype="float16")
-            >>> model.optimize_for_inference(compile=True, batch_size=4)
+            >>> model = RFDETRNano()
+            >>> model.optimize_for_inference(compile=False, dtype="float16", batch_size=4)
         """
         if isinstance(dtype, str):
             try:
