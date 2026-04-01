@@ -264,25 +264,19 @@ class RFDETR:
 
         _plus_available = False
         _plus_symbols: dict[str, type[RFDETR]] = {}
+        _plus_entries: list[tuple[str, type[RFDETR]]] = []
         try:
             import rfdetr.platform.models as platform_models
 
-            _plus_symbols_by_name: dict[str, type[RFDETR]] = {
-                getattr(plus_obj, "__name__", symbol): plus_obj
-                for symbol in dir(platform_models)
-                if symbol.startswith("RFDETR")
-                for plus_obj in [getattr(platform_models, symbol)]
-            }
-            _plus_symbols = {
-                class_symbol: _plus_symbols_by_name[class_symbol]
-                for class_symbol in _CHECKPOINT_PLUS_MODEL_NAME_CLASS_SYMBOLS
-            }
-            _plus_entries: list[tuple[str, type[RFDETR]]] = [
+            for class_symbol in _CHECKPOINT_PLUS_MODEL_NAME_CLASS_SYMBOLS:
+                plus_obj = getattr(platform_models, class_symbol)
+                _plus_symbols[class_symbol] = plus_obj
+            _plus_entries = [
                 (name, _plus_symbols[class_symbol]) for name, class_symbol in _CHECKPOINT_PLUS_MODEL_MAP_ENTRIES
             ]
             _plus_available = True
-        except ImportError:
-            _plus_entries = []
+        except (ImportError, AttributeError):
+            _plus_symbols = {}
 
         # weights_only=False is required because legacy checkpoints embed
         # argparse.Namespace objects that cannot be deserialised with
