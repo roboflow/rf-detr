@@ -114,7 +114,8 @@ def convert_coco_poly_to_mask(segmentations: List[Any], height: int, width: int)
         if mask.ndim < 3:
             mask = mask[..., None]
         mask = torch.as_tensor(mask, dtype=torch.uint8)
-        mask = mask.any(dim=2)
+        # Keep return dtype stable across torch versions (any(...) may return bool).
+        mask = mask.any(dim=2).to(torch.uint8)
         masks.append(mask)
     if len(masks) == 0:
         return torch.zeros((0, height, width), dtype=torch.uint8)
