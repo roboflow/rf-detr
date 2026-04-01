@@ -86,7 +86,7 @@ class TestFromCheckpointNamespaceArgs:
             ("rf-detr-seg-xlarge.pt", "RFDETRSegXLarge"),
             ("rf-detr-seg-xxlarge.pt", "RFDETRSeg2XLarge"),
             ("rf-detr-seg-preview.pt", "RFDETRSegPreview"),
-        ]
+        ],
     )
     def test_characterization_infers_correct_class_namespace(
         self,
@@ -238,7 +238,6 @@ class TestDeprecatedClassInstantiation:
             ("RFDETRLargeDeprecated", "rfdetr.variants.RFDETRLargeDeprecated"),
             ("RFDETRSegPreview", "rfdetr.variants.RFDETRSegPreview"),
         ],
-        ids=["base", "large-deprecated", "seg-preview"],
     )
     def test_direct_instantiation_is_allowed(self, cls_name: str, import_path: str) -> None:
         """Direct instantiation of a deprecated class does not raise RuntimeError."""
@@ -251,14 +250,7 @@ class TestDeprecatedClassInstantiation:
             model = cls()
         assert model.__class__.__name__ == cls_name
 
-    @pytest.mark.parametrize(
-        "pretrain_weights",
-        [
-            "rf-detr-base.pth",
-            "rf-detr-seg-preview.pt",
-        ],
-        ids=["base", "seg-preview"],
-    )
+    @pytest.mark.parametrize("pretrain_weights", ["rf-detr-base.pth", "rf-detr-seg-preview.pt"])
     def test_from_checkpoint_resolves_deprecated_class(
         self,
         tmp_path: Path,
@@ -307,12 +299,7 @@ class TestFromCheckpointModelName:
             ("RFDETRSeg2XLarge", "RFDETRSeg2XLarge"),
         ],
     )
-    def test_model_name_resolves_correct_class(
-        self,
-        tmp_path: Path,
-        model_name: str,
-        patch_target: str,
-    ) -> None:
+    def test_model_name_resolves_correct_class(self, tmp_path: Path, model_name: str, patch_target: str) -> None:
         """model_name in checkpoint maps directly to the correct subclass."""
         result, mock_cls = _call_from_checkpoint(
             _ckpt_with_model_name(model_name), tmp_path / "ckpt.pth", f"rfdetr.variants.{patch_target}"
