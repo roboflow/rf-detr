@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+### Deprecated
+
+### Fixed
+
+- Fixed `RFDETR.optimize_for_inference()` leaking a CUDA context on multi-GPU setups: the deep-copy, export, and JIT-trace steps now run inside `torch.cuda.device(device)` to pin the context to the correct device. `optimize_for_inference()` also now accepts dtype as a string name (e.g. `"float16"`) in addition to a `torch.dtype` object, and all invalid dtype inputs uniformly raise `TypeError`. (#899)
+
 ---
 
 ## [1.6.2] — 2026-03-27

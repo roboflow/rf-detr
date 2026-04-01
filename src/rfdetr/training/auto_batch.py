@@ -334,7 +334,7 @@ def resolve_auto_batch_config(
     max_targets_per_image = getattr(train_config, "auto_batch_max_targets_per_image", 100)
 
     args = build_namespace(model_config, train_config)
-    criterion, _ = build_criterion_and_postprocessors(args)
+    criterion, _ = build_criterion_and_postprocessors(args)  # type: ignore[no-untyped-call]
     criterion = criterion.to(device)
 
     safe_micro_batch = probe_max_micro_batch(
