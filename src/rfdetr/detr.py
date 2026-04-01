@@ -259,41 +259,27 @@ class RFDETR:
             >>> model = RFDETR.from_checkpoint("checkpoint_best_total.pth")  # doctest: +SKIP
             >>> model = RFDETRSmall.from_checkpoint("checkpoint_best_total.pth")  # doctest: +SKIP
         """
-        # Local imports break the variants → detr import cycle.
-        from rfdetr.variants import (
-            RFDETRBase,
-            RFDETRLarge,
-            RFDETRMedium,
-            RFDETRNano,
-            RFDETRSeg2XLarge,
-            RFDETRSegLarge,
-            RFDETRSegMedium,
-            RFDETRSegNano,
-            RFDETRSegPreview,
-            RFDETRSegSmall,
-            RFDETRSegXLarge,
-            RFDETRSmall,
-        )
+        # Local import breaks the variants → detr import cycle.
+        import rfdetr.variants as rfdetr_variants
 
         _plus_available = False
         _plus_symbols: dict[str, type[RFDETR]] = {}
         try:
-            from rfdetr.platform.models import (
-                RFDETR2XLarge,
-                RFDETRXLarge,
-            )
+            import rfdetr.platform.models as platform_models
 
-            _plus_name_to_class: dict[str, type[RFDETR]] = {
-                "RFDETRXLarge": RFDETRXLarge,
-                "RFDETR2XLarge": RFDETR2XLarge,
+            _plus_symbols_by_name: dict[str, type[RFDETR]] = {
+                getattr(plus_obj, "__name__", symbol): plus_obj
+                for symbol in dir(platform_models)
+                if symbol.startswith("RFDETR")
+                for plus_obj in [getattr(platform_models, symbol)]
             }
-            _plus_entries: list[tuple[str, type[RFDETR]]] = [
-                (name, _plus_name_to_class[class_symbol]) for name, class_symbol in _CHECKPOINT_PLUS_MODEL_MAP_ENTRIES
-            ]
             _plus_symbols = {
-                class_symbol: _plus_name_to_class[class_symbol]
+                class_symbol: _plus_symbols_by_name[class_symbol]
                 for class_symbol in _CHECKPOINT_PLUS_MODEL_NAME_CLASS_SYMBOLS
             }
+            _plus_entries: list[tuple[str, type[RFDETR]]] = [
+                (name, _plus_symbols[class_symbol]) for name, class_symbol in _CHECKPOINT_PLUS_MODEL_MAP_ENTRIES
+            ]
             _plus_available = True
         except ImportError:
             _plus_entries = []
@@ -304,22 +290,11 @@ class RFDETR:
         ckpt: dict[str, Any] = torch.load(path, map_location="cpu", weights_only=False)
         args = ckpt["args"]
 
-        # Ordered most-specific first so "seg-xxlarge"/"seg-2xlarge" match before
-        # "seg-xlarge", "xxlarge" before "xlarge", and "seg-*" prefixes before
-        # their bare counterparts.
         _variant_name_to_class: dict[str, type[RFDETR]] = {
-            "RFDETRBase": RFDETRBase,
-            "RFDETRLarge": RFDETRLarge,
-            "RFDETRMedium": RFDETRMedium,
-            "RFDETRNano": RFDETRNano,
-            "RFDETRSeg2XLarge": RFDETRSeg2XLarge,
-            "RFDETRSegLarge": RFDETRSegLarge,
-            "RFDETRSegMedium": RFDETRSegMedium,
-            "RFDETRSegNano": RFDETRSegNano,
-            "RFDETRSegPreview": RFDETRSegPreview,
-            "RFDETRSegSmall": RFDETRSegSmall,
-            "RFDETRSegXLarge": RFDETRSegXLarge,
-            "RFDETRSmall": RFDETRSmall,
+            getattr(variant_obj, "__name__", symbol): variant_obj
+            for symbol in dir(rfdetr_variants)
+            if symbol.startswith("RFDETR")
+            for variant_obj in [getattr(rfdetr_variants, symbol)]
         }
         _variant_symbols: dict[str, type[RFDETR]] = {
             class_symbol: _variant_name_to_class[class_symbol] for class_symbol in _CHECKPOINT_MODEL_NAME_CLASS_SYMBOLS
