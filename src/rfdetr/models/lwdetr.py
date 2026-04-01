@@ -75,9 +75,14 @@ def _resize_linear(linear: nn.Linear, num_classes: int) -> nn.Linear:
     new_weight = linear.weight.data.repeat(num_repeats, 1)[:num_classes]
     new_bias = linear.bias.data.repeat(num_repeats)[:num_classes] if linear.bias is not None else None
     new_linear = nn.Linear(linear.in_features, num_classes, bias=new_bias is not None)
-    new_linear.weight = nn.Parameter(new_weight)
-    if new_bias is not None:
-        new_linear.bias = nn.Parameter(new_bias)
+    # Copy resized weights/bias into the new layer while preserving requires_grad flags.
+    with torch.no_grad():
+        new_linear.weight.copy_(new_weight)
+        if new_bias is not None and new_linear.bias is not None:
+            new_linear.bias.copy_(new_bias)
+    new_linear.weight.requires_grad = linear.weight.requires_grad
+    if linear.bias is not None and new_linear.bias is not None:
+        new_linear.bias.requires_grad = linear.bias.requires_grad
     return new_linear
 
 
