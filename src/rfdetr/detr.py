@@ -221,7 +221,9 @@ class RFDETR:
         available) or falls back to ``args.pretrain_weights``. Both legacy
         ``argparse.Namespace`` checkpoints (produced by ``engine.py``) and
         dict-style checkpoints (produced by the PTL training stack) are
-        supported.
+        supported.  Model size is inferred first from ``args.model_name``
+        (exact class name match), falling back to substring matching against
+        ``args.pretrain_weights``.
 
         Args:
             path: Path to a checkpoint file (e.g. ``checkpoint_best_total.pth``).
