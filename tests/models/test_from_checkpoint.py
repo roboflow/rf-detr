@@ -149,6 +149,9 @@ class TestFromCheckpointDictArgs:
         "model_name, patch_target",
         [
             pytest.param("RFDETRBase", "rfdetr.variants.RFDETRBase", id="base-classname"),
+            pytest.param("RFDETRSmall", "rfdetr.variants.RFDETRSmall", id="small-classname"),
+            pytest.param("RFDETRNano", "rfdetr.variants.RFDETRNano", id="nano-classname"),
+            pytest.param("RFDETRSegSmall", "rfdetr.variants.RFDETRSegSmall", id="seg-small-classname"),
             pytest.param("RFDETRSegPreview", "rfdetr.variants.RFDETRSegPreview", id="seg-preview-classname"),
         ],
     )
@@ -243,3 +246,22 @@ class TestFromCheckpointEdgeCases:
             with patch("rfdetr.detr.torch.load", return_value=ckpt):
                 with pytest.raises(ImportError):
                     RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+
+    @pytest.mark.skipif(HAS_PLUS, reason="rfdetr_plus is installed — guard not active")
+    @pytest.mark.parametrize(
+        "model_name",
+        [
+            pytest.param("RFDETRXLarge", id="xlarge"),
+            pytest.param("RFDETR2XLarge", id="2xlarge"),
+        ],
+    )
+    def test_characterization_plus_model_name_without_plus_raises_import_error(
+        self,
+        tmp_path: Path,
+        model_name: str,
+    ) -> None:
+        """model_name pointing to a plus-only class raises ImportError when rfdetr_plus is absent."""
+        ckpt = _dict_model_name(model_name)
+        with patch("rfdetr.detr.torch.load", return_value=ckpt):
+            with pytest.raises(ImportError):
+                RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
