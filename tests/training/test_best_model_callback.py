@@ -1046,18 +1046,12 @@ class TestCheckpointModelName:
         ckpt = torch.load(tmp_path / "checkpoint_best_ema.pth", weights_only=False)
         assert ckpt["model_name"] == "RFDETRMedium"
 
-    def test_deprecated_config_infers_canonical_class_name(self, tmp_path: Path) -> None:
-        """RFDETRLargeDeprecatedConfig resolves to 'RFDETRLarge', not 'RFDETRLargeDeprecated'.
-
-        Ensures consistency with the RFDETR.train() path which uses
-        type(self).__name__ (the user-facing class), not the config type name.
-        """
+    def test_deprecated_config_raises_runtime_error(self, tmp_path: Path) -> None:
+        """RFDETRLargeDeprecatedConfig raises RuntimeError — deprecated configs are unsupported."""
         cb = BestModelCallback(output_dir=str(tmp_path))
         trainer = _make_trainer({"val/mAP_50_95": 0.5})
         pl_module = _make_pl_module()
         pl_module.model_config = RFDETRLargeDeprecatedConfig(model_name=None)
 
-        cb.on_validation_end(trainer, pl_module)
-
-        ckpt = torch.load(tmp_path / "checkpoint_best_regular.pth", weights_only=False)
-        assert ckpt["model_name"] == "RFDETRLarge"
+        with pytest.raises(RuntimeError, match="Deprecated model config"):
+            cb.on_validation_end(trainer, pl_module)
