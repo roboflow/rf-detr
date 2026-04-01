@@ -17,9 +17,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ModelDefaults` dataclass — exposes the 35 hardcoded architectural constants previously buried inside `build_namespace()`. Pass a `dataclasses.replace(MODEL_DEFAULTS, ...)` override to the new config-native builders to customise individual constants. **Note:** fields may be promoted to `ModelConfig`/`TrainConfig` in future phases. Exported from `rfdetr.models`.
 - `MODEL_DEFAULTS` — the canonical `ModelDefaults` singleton with production defaults. Exported from `rfdetr.models`.
 
-### Changed
-
-- `RFDETRBase`, `RFDETRLargeDeprecated`, and `RFDETRSegPreview` now raise `RuntimeError` on instantiation. Previously `@deprecated_class` emitted a `FutureWarning` only; a `RuntimeError` is now also raised inside `__init__` to enforce the deprecation hard. Any code still constructing these classes directly will break at instantiation time. Migrate to `RFDETRLarge` (for `RFDETRBase` / `RFDETRLargeDeprecated`) or the appropriate current segmentation variant (for `RFDETRSegPreview`).
 
 ### Deprecated
 
