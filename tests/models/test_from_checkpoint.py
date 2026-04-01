@@ -334,14 +334,40 @@ class TestFromCheckpointModelName:
         _, mock_cls = _call_from_checkpoint(ckpt, tmp_path / "ckpt.pth", "rfdetr.variants.RFDETRSmall")
         mock_cls.assert_called_once()
 
+    def test_model_name_with_whitespace_is_stripped(self, tmp_path: Path) -> None:
+        """Leading/trailing whitespace in model_name is stripped before class resolution."""
+        ckpt = _ckpt_with_model_name("  RFDETRSmall  ")
+        _, mock_cls = _call_from_checkpoint(ckpt, tmp_path / "ckpt.pth", "rfdetr.variants.RFDETRSmall")
+        mock_cls.assert_called_once()
+
+    @pytest.mark.parametrize(
+        "model_name",
+        [
+            pytest.param("RFDETRBase", id="base"),
+            pytest.param("RFDETRSegPreview", id="seg-preview"),
+        ],
+    )
+    def test_model_name_deprecated_class_raises_runtime_error(self, tmp_path: Path, model_name: str) -> None:
+        """from_checkpoint raises RuntimeError when model_name resolves to a deprecated class (unmocked constructor)."""
+        ckpt = _ckpt_with_model_name(model_name)
+        with patch("rfdetr.detr.torch.load", return_value=ckpt):
+            with pytest.raises(RuntimeError, match="deprecated"):
+                RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+
     @pytest.mark.skipif(HAS_PLUS, reason="rfdetr_plus is installed — guard not active")
-    def test_plus_model_name_without_plus_raises_import_error(self, tmp_path: Path) -> None:
-        """Plus checkpoints using model_name still raise install guidance without rfdetr_plus."""
-        for model_name in ("RFDETRXLarge", "RFDETR2XLarge"):
-            ckpt = {
-                "args": {"pretrain_weights": "", "num_classes": 80},
-                "model_name": model_name,
-            }
-            with patch("rfdetr.detr.torch.load", return_value=ckpt):
-                with pytest.raises(ImportError, match="rfdetr_plus package"):
-                    RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+    @pytest.mark.parametrize(
+        "model_name",
+        [
+            pytest.param("RFDETRXLarge", id="xlarge"),
+            pytest.param("RFDETR2XLarge", id="2xlarge"),
+        ],
+    )
+    def test_plus_model_name_without_plus_raises_import_error(self, tmp_path: Path, model_name: str) -> None:
+        """Plus checkpoints using model_name raise install guidance without rfdetr_plus."""
+        ckpt = {
+            "args": {"pretrain_weights": "", "num_classes": 80},
+            "model_name": model_name,
+        }
+        with patch("rfdetr.detr.torch.load", return_value=ckpt):
+            with pytest.raises(ImportError, match="rfdetr_plus package"):
+                RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
