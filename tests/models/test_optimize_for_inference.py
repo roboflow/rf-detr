@@ -85,11 +85,11 @@ class TestOptimizeForInferenceDtype:
         with pytest.raises(TypeError, match="dtype must be a torch.dtype or a string name of a dtype"):
             rfdetr.optimize_for_inference(compile=False, dtype=42)  # type: ignore[arg-type]
 
-    def test_invalid_dtype_string_raises_attribute_error(self) -> None:
-        """Passing a non-existent dtype string should raise AttributeError."""
+    def test_invalid_dtype_string_raises_type_error(self) -> None:
+        """Passing a non-existent dtype string should raise TypeError with a descriptive message."""
         rfdetr = _FakeRFDETR()
 
-        with pytest.raises(AttributeError):
+        with pytest.raises(TypeError, match="dtype must be a torch.dtype or a string name of a dtype"):
             rfdetr.optimize_for_inference(compile=False, dtype="not_a_dtype")
 
 

@@ -504,7 +504,10 @@ class RFDETR:
 
     def optimize_for_inference(self, compile=True, batch_size=1, dtype=torch.float32):
         if isinstance(dtype, str):
-            dtype = getattr(torch, dtype)
+            try:
+                dtype = getattr(torch, dtype)
+            except AttributeError:
+                raise TypeError(f"dtype must be a torch.dtype or a string name of a dtype, got {dtype!r}") from None
         if not isinstance(dtype, torch.dtype):
             raise TypeError(f"dtype must be a torch.dtype or a string name of a dtype, got {type(dtype)!r}")
 
