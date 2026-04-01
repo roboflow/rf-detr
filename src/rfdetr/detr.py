@@ -516,7 +516,7 @@ class RFDETR:
                 self.model.class_names = dataset_class_names
 
     def optimize_for_inference(
-            self, compile: bool = True, batch_size: int = 1, dtype: torch.dtype | str = torch.float32
+        self, compile: bool = True, batch_size: int = 1, dtype: torch.dtype | str = torch.float32
     ) -> None:
         """Optimize the model for inference with optional JIT compilation and dtype casting.
 
@@ -554,7 +554,6 @@ class RFDETR:
         device = self.model.device
         cuda_ctx = torch.cuda.device(device) if device.type == "cuda" else contextlib.nullcontext()
         with cuda_ctx:
-
             self.model.inference_model = deepcopy(self.model.model)
             self.model.inference_model.eval()
             self.model.inference_model.export()
