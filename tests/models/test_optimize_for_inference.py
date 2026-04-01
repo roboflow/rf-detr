@@ -99,14 +99,7 @@ class TestOptimizeForInferenceDtype:
         with pytest.raises(TypeError, match="dtype must be a torch.dtype or a string name of a dtype"):
             rfdetr.optimize_for_inference(compile=False, dtype="Tensor")  # type: ignore[arg-type]
 
-    @pytest.mark.parametrize(
-        "dtype_str",
-        [
-            pytest.param("float32", id="float32"),
-            pytest.param("float16", id="float16"),
-            pytest.param("bfloat16", id="bfloat16"),
-        ],
-    )
+    @pytest.mark.parametrize("dtype_str", ["float32", "float16", "bfloat16"])
     def test_string_dtype_variants_are_accepted(self, dtype_str: str) -> None:
         """Common dtype string names should be accepted and coerced to the matching torch.dtype."""
         rfdetr = _FakeRFDETR()
