@@ -154,6 +154,27 @@ def _resolve_patch_size(patch_size: int | None, model_config: object, caller: st
     return patch_size
 
 
+def _normalize_variant_token(value: str) -> str:
+    """Normalise a variant name to a lowercase, alphanumeric-only token.
+
+    Used when building the name-map in :meth:`RFDETR.from_checkpoint` to allow
+    case-insensitive, punctuation-tolerant variant name matching.
+
+    Args:
+        value: The raw variant token (e.g. ``"RFDETRSmall"`` or ``"rfdetr-small"``).
+
+    Returns:
+        A lowercase string containing only alphanumeric characters (e.g. ``"rfdetrsmall"``).
+
+    Examples:
+        >>> _normalize_variant_token("RFDETRSmall")
+        'rfdetrsmall'
+        >>> _normalize_variant_token("rfdetr-seg-preview")
+        'rfdetrsegpreview'
+    """
+    return "".join(char for char in value.lower() if char.isalnum())
+
+
 class RFDETR:
     """The base RF-DETR class implements the core methods for training RF-DETR models,
     running inference on the models, optimising models, and uploading trained
@@ -270,9 +291,6 @@ class RFDETR:
             weights_name = str(getattr(args, "pretrain_weights", "")).lower()
             model_name = str(getattr(args, "model_name", ""))
 
-        def _normalize_variant_token(value: str) -> str:
-            return "".join(char for char in value.lower() if char.isalnum())
-
         model_name_token = _normalize_variant_token(model_name)
 
         # Guard: "xlarge"/"xxlarge" without a segmentation prefix are plus-only
@@ -320,7 +338,9 @@ class RFDETR:
 
         _name_map: dict[str, type[RFDETR]] = {}
         for model_class in _model_classes:
-            model_class_name = getattr(model_class, "__name__", None) or getattr(model_class, "_mock_name", "")
+            model_class_name = getattr(model_class, "__name__", None) or getattr(
+                model_class, "_mock_name", ""
+            )  # _mock_name: supports MagicMock in tests
             class_token = _normalize_variant_token(str(model_class_name))
             if not class_token:
                 continue
