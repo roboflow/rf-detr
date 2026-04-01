@@ -102,7 +102,7 @@ class TestOptimizeForInferenceCudaDeviceContext:
         # Simulate a CUDA device without actually requiring CUDA hardware
         rfdetr.model.device = torch.device("cuda", 0)
 
-        entered_devices: list = []
+        entered_devices: list[torch.device] = []
 
         class _CapturingDeviceCtx:
             def __init__(self, captured_device):
@@ -143,7 +143,7 @@ class TestOptimizeForInferenceCudaDeviceContext:
         expected_device = torch.device("cuda", 2)
         rfdetr.model.device = expected_device
 
-        captured: dict = {}
+        captured: dict[str, torch.device] = {}
 
         class _CapturingCtx:
             def __init__(self, captured_device):
