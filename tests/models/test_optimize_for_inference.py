@@ -55,7 +55,7 @@ class TestOptimizeForInferenceDtype:
         """Passing dtype='float32' (str) should be coerced to torch.float32."""
         rfdetr = _FakeRFDETR()
 
-        with patch.object(rfdetr.model.model, "export"):
+        with patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model):
             rfdetr.optimize_for_inference(compile=False, dtype="float32")
 
         assert rfdetr._optimized_dtype == torch.float32
@@ -64,7 +64,7 @@ class TestOptimizeForInferenceDtype:
         """Passing dtype='float16' (str) should be coerced to torch.float16."""
         rfdetr = _FakeRFDETR()
 
-        with patch.object(rfdetr.model.model, "export"):
+        with patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model):
             rfdetr.optimize_for_inference(compile=False, dtype="float16")
 
         assert rfdetr._optimized_dtype == torch.float16
@@ -73,7 +73,7 @@ class TestOptimizeForInferenceDtype:
         """Passing dtype=torch.float32 directly should work as before."""
         rfdetr = _FakeRFDETR()
 
-        with patch.object(rfdetr.model.model, "export"):
+        with patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model):
             rfdetr.optimize_for_inference(compile=False, dtype=torch.float32)
 
         assert rfdetr._optimized_dtype == torch.float32
@@ -105,7 +105,7 @@ class TestOptimizeForInferenceDtype:
         rfdetr = _FakeRFDETR()
         expected = getattr(torch, dtype_str)
 
-        with patch.object(rfdetr.model.model, "export"):
+        with patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model):
             rfdetr.optimize_for_inference(compile=False, dtype=dtype_str)
 
         assert rfdetr._optimized_dtype == expected
@@ -149,7 +149,7 @@ class TestOptimizeForInferenceCudaDeviceContext:
         # torch.cuda.device should NOT be called for CPU devices
         with (
             patch("torch.cuda.device") as mock_cuda_device,
-            patch.object(rfdetr.model.model, "export"),
+            patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
         ):
             rfdetr.optimize_for_inference(compile=False, dtype=torch.float32)
 
@@ -219,7 +219,7 @@ class TestOptimizeForInferenceCompile:
         rfdetr = _FakeRFDETR()
 
         with (
-            patch.object(rfdetr.model.model, "export"),
+            patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
             patch("torch.jit.trace") as mock_trace,
         ):
             rfdetr.optimize_for_inference(compile=False)
@@ -236,7 +236,7 @@ class TestOptimizeForInferenceState:
         """_is_optimized_for_inference should be True after optimization."""
         rfdetr = _FakeRFDETR()
 
-        with patch.object(rfdetr.model.model, "export"):
+        with patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model):
             rfdetr.optimize_for_inference(compile=False)
 
         assert rfdetr._is_optimized_for_inference is True
@@ -245,7 +245,7 @@ class TestOptimizeForInferenceState:
         """model.inference_model should be set after optimization."""
         rfdetr = _FakeRFDETR()
 
-        with patch.object(rfdetr.model.model, "export"):
+        with patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model):
             rfdetr.optimize_for_inference(compile=False)
 
         assert rfdetr.model.inference_model is not None
@@ -254,7 +254,7 @@ class TestOptimizeForInferenceState:
         """remove_optimized_model() should clear all optimization flags."""
         rfdetr = _FakeRFDETR()
 
-        with patch.object(rfdetr.model.model, "export"):
+        with patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model):
             rfdetr.optimize_for_inference(compile=False)
 
         rfdetr.remove_optimized_model()
