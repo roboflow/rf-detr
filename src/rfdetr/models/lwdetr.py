@@ -53,6 +53,39 @@ from rfdetr.models.transformer import build_transformer
 from rfdetr.utilities.tensors import NestedTensor, nested_tensor_from_tensor_list
 
 
+def _resize_linear(linear: nn.Linear, num_classes: int) -> nn.Linear:
+    """Return a new :class:`~torch.nn.Linear` resized to *num_classes* outputs.
+
+    Tiles the existing weight rows when *num_classes* is larger than the current
+    output size, or truncates them when smaller.  The returned module has
+    ``out_features == num_classes`` so that ``nn.Linear`` metadata stays
+    consistent with the actual weight shape — a requirement for correct ONNX
+    export and ``torch.jit.trace`` serialisation.
+
+    Args:
+        linear: Source linear layer whose weights are used as the starting point.
+        num_classes: Target number of output features.
+
+    Returns:
+        A new :class:`~torch.nn.Linear` with ``in_features`` unchanged and
+        ``out_features == num_classes``.
+    """
+    base = linear.weight.shape[0]
+    num_repeats = int(math.ceil(num_classes / base))
+    new_weight = linear.weight.data.repeat(num_repeats, 1)[:num_classes]
+    new_bias = linear.bias.data.repeat(num_repeats)[:num_classes] if linear.bias is not None else None
+    new_linear = nn.Linear(linear.in_features, num_classes, bias=new_bias is not None)
+    # Copy resized weights/bias into the new layer while preserving requires_grad flags.
+    with torch.no_grad():
+        new_linear.weight.copy_(new_weight)
+        if new_bias is not None and new_linear.bias is not None:
+            new_linear.bias.copy_(new_bias)
+    new_linear.weight.requires_grad = linear.weight.requires_grad
+    if linear.bias is not None and new_linear.bias is not None:
+        new_linear.bias.requires_grad = linear.bias.requires_grad
+    return new_linear
+
+
 class LWDETR(nn.Module):
     """This is the Group DETR v3 module that performs object detection"""
 
@@ -127,20 +160,26 @@ class LWDETR(nn.Module):
 
         self._export = False
 
-    def reinitialize_detection_head(self, num_classes):
-        base = self.class_embed.weight.shape[0]
-        num_repeats = int(math.ceil(num_classes / base))
-        self.class_embed.weight.data = self.class_embed.weight.data.repeat(num_repeats, 1)
-        self.class_embed.weight.data = self.class_embed.weight.data[:num_classes]
-        self.class_embed.bias.data = self.class_embed.bias.data.repeat(num_repeats)
-        self.class_embed.bias.data = self.class_embed.bias.data[:num_classes]
+    def reinitialize_detection_head(self, num_classes: int) -> None:
+        """Resize the detection classification head to *num_classes* outputs.
+
+        Replaces ``self.class_embed`` (and each ``enc_out_class_embed`` when the
+        model uses two-stage detection) with a new :class:`torch.nn.Linear` whose
+        ``out_features`` equals *num_classes*.  When *num_classes* is larger than
+        the current head the existing weights are tiled; when smaller they are
+        truncated.  Replacing the module (rather than mutating ``.data``) keeps
+        ``nn.Linear.out_features`` consistent with the actual weight shape, which
+        is required for correct ONNX export.
+
+        Args:
+            num_classes: Target number of output classes (including background).
+        """
+        self.class_embed = _resize_linear(self.class_embed, num_classes)
 
         if self.two_stage:
-            for enc_out_class_embed in self.transformer.enc_out_class_embed:
-                enc_out_class_embed.weight.data = enc_out_class_embed.weight.data.repeat(num_repeats, 1)
-                enc_out_class_embed.weight.data = enc_out_class_embed.weight.data[:num_classes]
-                enc_out_class_embed.bias.data = enc_out_class_embed.bias.data.repeat(num_repeats)
-                enc_out_class_embed.bias.data = enc_out_class_embed.bias.data[:num_classes]
+            self.transformer.enc_out_class_embed = nn.ModuleList(
+                [_resize_linear(m, num_classes) for m in self.transformer.enc_out_class_embed]
+            )
 
     def export(self):
         self._export = True
