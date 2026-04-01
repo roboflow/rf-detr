@@ -73,10 +73,11 @@ def _resize_linear(linear: nn.Linear, num_classes: int) -> nn.Linear:
     base = linear.weight.shape[0]
     num_repeats = int(math.ceil(num_classes / base))
     new_weight = linear.weight.data.repeat(num_repeats, 1)[:num_classes]
-    new_bias = linear.bias.data.repeat(num_repeats)[:num_classes]
-    new_linear = nn.Linear(linear.in_features, num_classes, bias=linear.bias is not None)
+    new_bias = linear.bias.data.repeat(num_repeats)[:num_classes] if linear.bias is not None else None
+    new_linear = nn.Linear(linear.in_features, num_classes, bias=new_bias is not None)
     new_linear.weight = nn.Parameter(new_weight)
-    new_linear.bias = nn.Parameter(new_bias)
+    if new_bias is not None:
+        new_linear.bias = nn.Parameter(new_bias)
     return new_linear
 
 
