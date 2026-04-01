@@ -237,8 +237,7 @@ class TestDeprecatedClassInstantiation:
             ("RFDETRBase", "rfdetr.variants.RFDETRBase"),
             ("RFDETRLargeDeprecated", "rfdetr.variants.RFDETRLargeDeprecated"),
             ("RFDETRSegPreview", "rfdetr.variants.RFDETRSegPreview"),
-        ],
-        ids=["base", "large-deprecated", "seg-preview"],
+        ]
     )
     def test_direct_instantiation_is_allowed(self, cls_name: str, import_path: str) -> None:
         """Direct instantiation of a deprecated class does not raise RuntimeError."""
@@ -255,9 +254,8 @@ class TestDeprecatedClassInstantiation:
         "pretrain_weights",
         [
             "rf-detr-base.pth",
-            "rf-detr-seg-preview.pt",
-        ],
-        ids=["base", "seg-preview"],
+            "rf-detr-seg-preview.pt"
+        ]
     )
     def test_from_checkpoint_resolves_deprecated_class(
         self,
@@ -311,7 +309,7 @@ class TestFromCheckpointModelName:
         self,
         tmp_path: Path,
         model_name: str,
-        patch_target: str,
+        patch_target: str
     ) -> None:
         """model_name in checkpoint maps directly to the correct subclass."""
         result, mock_cls = _call_from_checkpoint(
