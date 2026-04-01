@@ -155,8 +155,7 @@ class TestReinitializeDetectionHead:
             f"got {model.class_embed.out_features}"
         )
         assert model.class_embed.weight.shape == (num_outputs_including_background, 4), (
-            f"Expected weight ({num_outputs_including_background}, 4), "
-            f"got {model.class_embed.weight.shape}"
+            f"Expected weight ({num_outputs_including_background}, 4), got {model.class_embed.weight.shape}"
         )
 
     def test_two_stage_updates_enc_out_class_embed(self) -> None:
