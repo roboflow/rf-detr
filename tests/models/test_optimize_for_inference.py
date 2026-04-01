@@ -247,3 +247,51 @@ class TestOptimizeForInferenceState:
         assert rfdetr._optimized_resolution is None
         assert rfdetr._optimized_has_been_compiled is False
         assert rfdetr._optimized_batch_size is None
+
+
+class TestOptimizeForInferenceExceptionRecovery:
+    """Verify state consistency when optimization fails mid-execution."""
+
+    def test_deepcopy_failure_leaves_clean_state(self) -> None:
+        """If deepcopy raises, inference_model should be None and _is_optimized_for_inference False."""
+        rfdetr = _FakeRFDETR()
+        # Simulate a previously-optimized state to confirm remove_optimized_model ran
+        rfdetr._is_optimized_for_inference = True
+        rfdetr.model.inference_model = rfdetr.model.model
+
+        with (
+            patch("rfdetr.detr.deepcopy", side_effect=RuntimeError("deepcopy failed")),
+            pytest.raises(RuntimeError, match="deepcopy failed"),
+        ):
+            rfdetr.optimize_for_inference(compile=False)
+
+        assert rfdetr.model.inference_model is None
+        assert rfdetr._is_optimized_for_inference is False
+
+    def test_export_failure_leaves_is_optimized_false(self) -> None:
+        """If export() raises after deepcopy succeeds, _is_optimized_for_inference stays False."""
+        rfdetr = _FakeRFDETR()
+        fake_copy = _FakeModel()
+
+        with (
+            patch("rfdetr.detr.deepcopy", return_value=fake_copy),
+            patch.object(fake_copy, "export", side_effect=RuntimeError("export failed")),
+            pytest.raises(RuntimeError, match="export failed"),
+        ):
+            rfdetr.optimize_for_inference(compile=False)
+
+        assert rfdetr._is_optimized_for_inference is False
+
+    def test_jit_trace_failure_leaves_compiled_flags_false(self) -> None:
+        """If jit.trace raises, _optimized_has_been_compiled and _optimized_batch_size stay unset."""
+        rfdetr = _FakeRFDETR()
+
+        with (
+            patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
+            patch("torch.jit.trace", side_effect=RuntimeError("trace failed")),
+            pytest.raises(RuntimeError, match="trace failed"),
+        ):
+            rfdetr.optimize_for_inference(compile=True, batch_size=2)
+
+        assert rfdetr._optimized_has_been_compiled is False
+        assert rfdetr._optimized_batch_size is None
