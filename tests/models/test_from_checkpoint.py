@@ -86,7 +86,7 @@ class TestFromCheckpointNamespaceArgs:
             ("rf-detr-seg-xlarge.pt", "RFDETRSegXLarge"),
             ("rf-detr-seg-xxlarge.pt", "RFDETRSeg2XLarge"),
             ("rf-detr-seg-preview.pt", "RFDETRSegPreview"),
-        ]
+        ],
     )
     def test_characterization_infers_correct_class_namespace(
         self,
