@@ -340,10 +340,15 @@ class RFDETR:
 
         _name_map: dict[str, type[RFDETR]] = {}
         for model_class in _model_classes:
-            model_class_name = getattr(model_class, "__name__", None) or getattr(
-                model_class, "_mock_name", ""
-            )  # _mock_name: supports MagicMock in tests
-            class_token = _normalize_variant_token(str(model_class_name))
+            mock_name = getattr(model_class, "_mock_name", None)
+            if isinstance(mock_name, str) and mock_name:
+                model_class_name = mock_name
+            else:
+                model_class_name = getattr(model_class, "__name__", None)
+                # For unittest.mock.MagicMock, __name__ may be another Mock; only accept real strings.
+                if not isinstance(model_class_name, str):
+                    continue
+            class_token = _normalize_variant_token(model_class_name)
             if not class_token:
                 continue
             _name_map[class_token] = model_class
