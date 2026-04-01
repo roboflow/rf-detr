@@ -505,6 +505,32 @@ class RFDETR:
     def optimize_for_inference(
         self, compile: bool = True, batch_size: int = 1, dtype: torch.dtype | str = torch.float32
     ) -> None:
+        """Optimize the model for inference with optional JIT compilation and dtype casting.
+
+        Operations are wrapped in the correct CUDA device context to prevent context
+        leaks on multi-GPU setups. When ``compile=True`` the model is traced with
+        ``torch.jit.trace`` using a dummy input of ``batch_size`` images at the
+        model's current resolution.
+
+        Args:
+            compile: If ``True``, trace the model with ``torch.jit.trace`` to obtain
+                a JIT-compiled ``ScriptModule``. Set to ``False`` for broader
+                compatibility (e.g. models with dynamic control flow).
+            batch_size: Number of images the traced model will be optimised for.
+                Ignored when ``compile=False``.
+            dtype: Target floating-point dtype for the inference model. Accepts a
+                ``torch.dtype`` directly (e.g. ``torch.float16``) or its string name
+                (e.g. ``"float16"``). Defaults to ``torch.float32``.
+
+        Raises:
+            TypeError: If ``dtype`` is not a ``torch.dtype``, or if ``dtype`` is a
+                string that does not correspond to a valid ``torch.dtype`` attribute.
+
+        Examples:
+            >>> model = RFDETRSmall()
+            >>> model.optimize_for_inference(compile=False, dtype="float16")
+            >>> model.optimize_for_inference(compile=True, batch_size=4)
+        """
         if isinstance(dtype, str):
             try:
                 dtype = getattr(torch, dtype)
@@ -543,7 +569,19 @@ class RFDETR:
                 self._optimized_has_been_compiled = True
                 self._optimized_batch_size = batch_size
 
-    def remove_optimized_model(self):
+    def remove_optimized_model(self) -> None:
+        """Remove the optimized inference model and reset all optimization flags.
+
+        Clears ``model.inference_model`` and resets all internal state set by
+        :meth:`optimize_for_inference`. Safe to call even if the model has not
+        been optimized.
+
+        Examples:
+            >>> model = RFDETRSmall()
+            >>> model.optimize_for_inference(compile=False)
+            >>> model.remove_optimized_model()
+            >>> assert not model._is_optimized_for_inference
+        """
         self.model.inference_model = None
         self._is_optimized_for_inference = False
         self._optimized_has_been_compiled = False
