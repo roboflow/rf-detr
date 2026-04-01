@@ -260,7 +260,9 @@ class RFDETR:
             >>> model = RFDETRSmall.from_checkpoint("checkpoint_best_total.pth")  # doctest: +SKIP
         """
         # Local imports break the variants → detr import cycle.
-        # Module aliases are needed for dynamic getattr() resolution below.
+        # `import ... as` alias is an intentional exception to the project's direct-import
+        # convention (AGENTS.md) — the alias is required for the dynamic getattr() resolution
+        # in the _variant_symbols / _plus_symbols maps below.
         import rfdetr.variants as variants
 
         _plus_available = False
