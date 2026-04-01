@@ -589,10 +589,7 @@ class RFDETR:
     @deprecated(
         target=True,
         # `simplify` / `force` are retained for API compatibility and treated as no-op.
-        args_mapping={
-            "simplify": False,
-            "force": False,
-        },
+        args_mapping={"simplify": False, "force": False},
         deprecated_in="1.6",
         remove_in="1.8",
         num_warns=1,
