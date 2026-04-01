@@ -58,15 +58,7 @@ class TestResizeLinear:
     """Unit tests for _resize_linear() — verifies out_features, weight shape, and bias shape."""
 
     def test_shrink_out_features(self) -> None:
-        """Shrink: out_features equals the requested smaller class count.
-
-        Examples:
-            >>> from rfdetr.models.lwdetr import _resize_linear
-            >>> import torch.nn as nn
-            >>> result = _resize_linear(nn.Linear(256, 91), 8)
-            >>> result.out_features
-            8
-        """
+        """Shrink: out_features equals the requested smaller class count."""
         result = _resize_linear(nn.Linear(256, 91), 8)
         assert result.out_features == 8, f"Expected out_features=8, got {result.out_features}"
         assert result.weight.shape == (8, 256), f"Expected weight (8, 256), got {result.weight.shape}"
@@ -74,15 +66,7 @@ class TestResizeLinear:
         assert result.bias.shape == (8,), f"Expected bias (8,), got {result.bias.shape}"
 
     def test_expand_out_features(self) -> None:
-        """Expand: out_features equals the requested larger class count via tiling.
-
-        Examples:
-            >>> from rfdetr.models.lwdetr import _resize_linear
-            >>> import torch.nn as nn
-            >>> result = _resize_linear(nn.Linear(256, 10), 25)
-            >>> result.out_features
-            25
-        """
+        """Expand: out_features equals the requested larger class count via tiling."""
         result = _resize_linear(nn.Linear(256, 10), 25)
         assert result.out_features == 25, f"Expected out_features=25, got {result.out_features}"
         assert result.weight.shape == (25, 256), f"Expected weight (25, 256), got {result.weight.shape}"
@@ -90,16 +74,7 @@ class TestResizeLinear:
         assert result.bias.shape == (25,), f"Expected bias (25,), got {result.bias.shape}"
 
     def test_same_size_preserves_values(self) -> None:
-        """Same size: shapes and weight/bias values are preserved exactly.
-
-        Examples:
-            >>> from rfdetr.models.lwdetr import _resize_linear
-            >>> import torch.nn as nn
-            >>> linear = nn.Linear(256, 91)
-            >>> result = _resize_linear(linear, 91)
-            >>> result.out_features
-            91
-        """
+        """Same size: shapes and weight/bias values are preserved exactly."""
         linear = nn.Linear(256, 91)
         result = _resize_linear(linear, 91)
         assert result.out_features == 91
@@ -110,17 +85,7 @@ class TestResizeLinear:
         assert torch.allclose(result.bias.data, linear.bias.data)
 
     def test_no_bias_returns_no_bias(self) -> None:
-        """bias=False input: returned module has bias=None and out_features is correct.
-
-        Regression for the latent AttributeError when linear.bias is None.
-
-        Examples:
-            >>> from rfdetr.models.lwdetr import _resize_linear
-            >>> import torch.nn as nn
-            >>> result = _resize_linear(nn.Linear(256, 91, bias=False), 8)
-            >>> result.bias is None
-            True
-        """
+        """bias=False input: returned module has bias=None and out_features is correct."""
         linear = nn.Linear(256, 91, bias=False)
         result = _resize_linear(linear, 8)
         assert result.out_features == 8, f"Expected out_features=8, got {result.out_features}"
@@ -140,12 +105,6 @@ class TestReinitializeDetectionHead:
 
         The `num_outputs_including_background` argument represents the total number
         of classifier outputs (foreground classes plus background).
-
-        Examples:
-            >>> model = _make_minimal_lwdetr(num_classes=91)
-            >>> model.reinitialize_detection_head(8)  # 8 outputs including background
-            >>> model.class_embed.out_features
-            8
         """
         num_outputs_including_background = 8
         model = _make_minimal_lwdetr(num_classes=91)
@@ -163,12 +122,6 @@ class TestReinitializeDetectionHead:
 
         The `num_outputs_including_background` argument represents the total number
         of classifier outputs (foreground classes plus background).
-
-        Examples:
-            >>> model = _make_minimal_lwdetr(num_classes=91, two_stage=True)
-            >>> model.reinitialize_detection_head(8)  # 8 outputs including background
-            >>> all(e.out_features == 8 for e in model.transformer.enc_out_class_embed)
-            True
         """
         num_outputs_including_background = 8
         model = _make_minimal_lwdetr(num_classes=91, two_stage=True)
