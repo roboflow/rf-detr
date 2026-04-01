@@ -201,7 +201,7 @@ class RFDETRSeg(RFDETR):
     remove_in="2.0.0",
 )
 class RFDETRSegPreview(RFDETRSeg):
-    """RF-DETR Segmentation Preview model — removed in v1.7.0.
+    """RF-DETR Segmentation Preview model — deprecated in v1.7.0 and will be removed in v2.0.0.
 
     .. deprecated:: 1.7.0
         Use one of the supported segmentation variants: :class:`RFDETRSegNano`, :class:`RFDETRSegSmall`,
