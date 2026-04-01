@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 from __future__ import annotations
 
+import contextlib
 import functools
 import glob
 import importlib
@@ -501,35 +502,85 @@ class RFDETR:
             except OSError as exc:
                 logger.warning("Could not save training_config.json to %s: %s", config.output_dir, exc)
 
-    def optimize_for_inference(self, compile=True, batch_size=1, dtype=torch.float32):
-        self.remove_optimized_model()
+    def optimize_for_inference(
+        self, compile: bool = True, batch_size: int = 1, dtype: torch.dtype | str = torch.float32
+    ) -> None:
+        """Optimize the model for inference with optional JIT compilation and dtype casting.
 
-        self.model.inference_model = deepcopy(self.model.model)
-        self.model.inference_model.eval()
-        self.model.inference_model.export()
+        Operations are wrapped in the correct CUDA device context to prevent context
+        leaks on multi-GPU setups. When ``compile=True`` the model is traced with
+        ``torch.jit.trace`` using a dummy input of ``batch_size`` images at the
+        model's current resolution.
 
-        self._optimized_resolution = self.model.resolution
-        self._is_optimized_for_inference = True
+        Args:
+            compile: If ``True``, trace the model with ``torch.jit.trace`` to obtain
+                a JIT-compiled ``ScriptModule``. Set to ``False`` for broader
+                compatibility (e.g. models with dynamic control flow).
+            batch_size: Number of images the traced model will be optimized for.
+                Ignored when ``compile=False``.
+            dtype: Target floating-point dtype for the inference model. Accepts a
+                ``torch.dtype`` directly (e.g. ``torch.float16``) or its string name
+                (e.g. ``"float16"``). Defaults to ``torch.float32``.
 
-        self.model.inference_model = self.model.inference_model.to(dtype=dtype)
-        self._optimized_dtype = dtype
+        Raises:
+            TypeError: If ``dtype`` is not a ``torch.dtype``, or if ``dtype`` is a
+                string that does not correspond to a valid ``torch.dtype`` attribute.
 
-        if compile:
-            self.model.inference_model = torch.jit.trace(
-                self.model.inference_model,
-                torch.randn(
-                    batch_size,
-                    3,
-                    self.model.resolution,
-                    self.model.resolution,
-                    device=self.model.device,
-                    dtype=dtype,
-                ),
-            )
-            self._optimized_has_been_compiled = True
-            self._optimized_batch_size = batch_size
+        Examples:
+            >>> model = RFDETRNano()
+            >>> model.optimize_for_inference(compile=False, dtype="float16", batch_size=4)
+        """
+        if isinstance(dtype, str):
+            try:
+                dtype = getattr(torch, dtype)
+            except AttributeError:
+                raise TypeError(f"dtype must be a torch.dtype or a string name of a dtype, got {dtype!r}") from None
+        if not isinstance(dtype, torch.dtype):
+            raise TypeError(f"dtype must be a torch.dtype or a string name of a dtype, got {type(dtype)!r}")
 
-    def remove_optimized_model(self):
+        device = self.model.device
+        cuda_ctx = torch.cuda.device(device) if device.type == "cuda" else contextlib.nullcontext()
+        with cuda_ctx:
+            self.remove_optimized_model()
+
+            self.model.inference_model = deepcopy(self.model.model)
+            self.model.inference_model.eval()
+            self.model.inference_model.export()
+
+            self._optimized_resolution = self.model.resolution
+            self._is_optimized_for_inference = True
+
+            self.model.inference_model = self.model.inference_model.to(dtype=dtype)
+            self._optimized_dtype = dtype
+
+            if compile:
+                self.model.inference_model = torch.jit.trace(
+                    self.model.inference_model,
+                    torch.randn(
+                        batch_size,
+                        3,
+                        self.model.resolution,
+                        self.model.resolution,
+                        device=self.model.device,
+                        dtype=dtype,
+                    ),
+                )
+                self._optimized_has_been_compiled = True
+                self._optimized_batch_size = batch_size
+
+    def remove_optimized_model(self) -> None:
+        """Remove the optimized inference model and reset all optimization flags.
+
+        Clears ``model.inference_model`` and resets all internal state set by
+        :meth:`optimize_for_inference`. Safe to call even if the model has not
+        been optimized.
+
+        Examples:
+            >>> model = RFDETRSmall()
+            >>> model.optimize_for_inference(compile=False)
+            >>> model.remove_optimized_model()
+            >>> assert not model._is_optimized_for_inference
+        """
         self.model.inference_model = None
         self._is_optimized_for_inference = False
         self._optimized_has_been_compiled = False
