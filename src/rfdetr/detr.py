@@ -516,7 +516,7 @@ class RFDETR:
             compile: If ``True``, trace the model with ``torch.jit.trace`` to obtain
                 a JIT-compiled ``ScriptModule``. Set to ``False`` for broader
                 compatibility (e.g. models with dynamic control flow).
-            batch_size: Number of images the traced model will be optimised for.
+            batch_size: Number of images the traced model will be optimized for.
                 Ignored when ``compile=False``.
             dtype: Target floating-point dtype for the inference model. Accepts a
                 ``torch.dtype`` directly (e.g. ``torch.float16``) or its string name
