@@ -225,7 +225,7 @@ class RFDETR:
         The correct subclass is resolved in order of preference:
 
         1. ``model_name`` key in the checkpoint (written by the PTL training
-           stack since v1.7).
+           stack since v1.7.0).
         2. ``pretrain_weights`` field in the checkpoint's ``args`` entry
            (legacy fallback).
 
