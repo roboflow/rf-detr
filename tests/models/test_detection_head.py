@@ -138,34 +138,50 @@ class TestReinitializeDetectionHead:
     def test_updates_class_embed_out_features(self) -> None:
         """class_embed.out_features must reflect num_classes after reinitialize.
 
+        The `num_outputs_including_background` argument represents the total number
+        of classifier outputs (foreground classes plus background).
+
         Examples:
             >>> model = _make_minimal_lwdetr(num_classes=91)
-            >>> model.reinitialize_detection_head(8)
+            >>> model.reinitialize_detection_head(8)  # 8 outputs including background
             >>> model.class_embed.out_features
             8
         """
+        num_outputs_including_background = 8
         model = _make_minimal_lwdetr(num_classes=91)
-        model.reinitialize_detection_head(8)
-        assert model.class_embed.out_features == 8, (
-            f"Expected class_embed.out_features=8, got {model.class_embed.out_features}"
+        model.reinitialize_detection_head(num_outputs_including_background)
+        assert model.class_embed.out_features == num_outputs_including_background, (
+            f"Expected class_embed.out_features={num_outputs_including_background}, "
+            f"got {model.class_embed.out_features}"
         )
-        assert model.class_embed.weight.shape == (8, 4), f"Expected weight (8, 4), got {model.class_embed.weight.shape}"
+        assert model.class_embed.weight.shape == (num_outputs_including_background, 4), (
+            f"Expected weight ({num_outputs_including_background}, 4), "
+            f"got {model.class_embed.weight.shape}"
+        )
 
     def test_two_stage_updates_enc_out_class_embed(self) -> None:
         """enc_out_class_embed entries must also have updated out_features in two-stage mode.
 
+        The `num_outputs_including_background` argument represents the total number
+        of classifier outputs (foreground classes plus background).
+
         Examples:
             >>> model = _make_minimal_lwdetr(num_classes=91, two_stage=True)
-            >>> model.reinitialize_detection_head(8)
+            >>> model.reinitialize_detection_head(8)  # 8 outputs including background
             >>> all(e.out_features == 8 for e in model.transformer.enc_out_class_embed)
             True
         """
+        num_outputs_including_background = 8
         model = _make_minimal_lwdetr(num_classes=91, two_stage=True)
-        model.reinitialize_detection_head(8)
+        model.reinitialize_detection_head(num_outputs_including_background)
         enc_embeds = model.transformer.enc_out_class_embed
         assert len(enc_embeds) > 0, "enc_out_class_embed should be non-empty in two-stage mode"
         for i, embed in enumerate(enc_embeds):
-            assert embed.out_features == 8, f"enc_out_class_embed[{i}].out_features={embed.out_features}, expected 8"
-            assert embed.weight.shape == (8, 4), (
-                f"enc_out_class_embed[{i}].weight.shape={embed.weight.shape}, expected (8, 4)"
+            assert embed.out_features == num_outputs_including_background, (
+                f"enc_out_class_embed[{i}].out_features={embed.out_features}, "
+                f"expected {num_outputs_including_background}"
+            )
+            assert embed.weight.shape == (num_outputs_including_background, 4), (
+                f"enc_out_class_embed[{i}].weight.shape={embed.weight.shape}, "
+                f"expected ({num_outputs_including_background}, 4)"
             )
