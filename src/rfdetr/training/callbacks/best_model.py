@@ -148,6 +148,14 @@ class BestModelCallback(ModelCheckpoint):
         The CLI/PTL path does not call ``RFDETR.train()``, so
         ``model_config.model_name`` may be unset. In that case, infer the model
         class from concrete config names like ``RFDETRSmallConfig``.
+
+        Note:
+            The ``DeprecatedConfig`` ``RuntimeError`` guard is only reachable
+            from the CLI/PTL path. ``RFDETR.train()`` pre-populates
+            ``model_config.model_name`` before saving any checkpoint, so the
+            config type-name branch (and therefore the ``DeprecatedConfig``
+            guard) is never reached when training is started via
+            ``RFDETR.train()``.
         """
         model_config = getattr(pl_module, "model_config", None)
         configured_name = getattr(model_config, "model_name", None) if model_config is not None else None
