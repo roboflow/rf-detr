@@ -225,3 +225,31 @@ class TestConvertCocoClassWithRle:
         _, target = converter(_IMAGE, self._make_target([anno]))
 
         assert "masks" not in target
+
+
+class TestMalformedRle:
+    """Documents _is_rle behaviour for structurally malformed inputs.
+
+    Before this PR a bare ``except:`` in the polygon path silently swallowed
+    any pycocotools error.  These tests confirm that ``_is_rle`` is a
+    *structural* check only (it does not validate values inside the dict) and
+    that dicts missing required keys are correctly classified as non-RLE so
+    they are routed through the polygon path — where pycocotools will either
+    handle them or raise a descriptive error rather than silently falling back.
+    """
+
+    def test_missing_size_key_is_not_rle(self) -> None:
+        """Dict with 'counts' but no 'size' is not treated as RLE."""
+        assert _is_rle({"counts": [1, 2, 3]}) is False
+
+    def test_missing_counts_key_is_not_rle(self) -> None:
+        """Dict with 'size' but no 'counts' is not treated as RLE."""
+        assert _is_rle({"size": [100, 100]}) is False
+
+    def test_counts_none_is_classified_as_rle(self) -> None:
+        """_is_rle is a structural check: presence of both keys suffices regardless of value types."""
+        assert _is_rle({"counts": None, "size": [_H, _W]}) is True
+
+    def test_size_mismatch_is_still_classified_as_rle(self) -> None:
+        """Dicts with both keys are RLE even when the embedded size mismatches the image dimensions."""
+        assert _is_rle({"counts": [1, 2], "size": [50, 50]}) is True
