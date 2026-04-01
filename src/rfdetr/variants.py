@@ -105,8 +105,6 @@ class RFDETRLargeDeprecated(RFDETR):
     size = "rfdetr-large"
     _model_config_class = RFDETRLargeDeprecatedConfig
 
-        )
-
 
 class RFDETRLarge(RFDETR):
     size = "rfdetr-large"
