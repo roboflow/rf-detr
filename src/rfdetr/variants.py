@@ -61,7 +61,7 @@ logger = get_logger()
     remove_in="2.0.0",
 )
 class RFDETRBase(RFDETR):
-    """RF-DETR Base model — removed in v1.7.0.
+    """RF-DETR Base model — deprecated in v1.7.0, scheduled for removal in v2.0.0.
 
     .. deprecated:: 1.7.0
         Use one of the supported variants: :class:`RFDETRNano`, :class:`RFDETRSmall`,
@@ -111,7 +111,7 @@ class RFDETRMedium(RFDETR):
     remove_in="2.0.0",
 )
 class RFDETRLargeDeprecated(RFDETR):
-    """RF-DETR Large model (legacy config) — removed in v1.7.0.
+    """RF-DETR Large model (legacy config) — deprecated in v1.7.0, scheduled for removal in v2.0.0.
 
     .. deprecated:: 1.7.0
         Use :class:`RFDETRLarge` instead.
@@ -201,7 +201,7 @@ class RFDETRSeg(RFDETR):
     remove_in="2.0.0",
 )
 class RFDETRSegPreview(RFDETRSeg):
-    """RF-DETR Segmentation Preview model — removed in v1.7.0.
+    """RF-DETR Segmentation Preview model — deprecated in v1.7.0, scheduled for removal in v2.0.0.
 
     .. deprecated:: 1.7.0
         Use one of the supported segmentation variants: :class:`RFDETRSegNano`, :class:`RFDETRSegSmall`,

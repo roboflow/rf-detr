@@ -15,7 +15,7 @@ import warnings
 from collections import defaultdict
 from copy import deepcopy
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import requests
@@ -260,22 +260,38 @@ class RFDETR:
             >>> model = RFDETRSmall.from_checkpoint("checkpoint_best_total.pth")  # doctest: +SKIP
         """
         # Local imports break the variants → detr import cycle.
-        # `import ... as` alias is an intentional exception to the project's direct-import
-        # convention (AGENTS.md) — the alias is required for the dynamic getattr() resolution
-        # in the _variant_symbols / _plus_symbols maps below.
-        import rfdetr.variants as variants
+        from rfdetr.variants import (
+            RFDETRBase,
+            RFDETRLarge,
+            RFDETRMedium,
+            RFDETRNano,
+            RFDETRSeg2XLarge,
+            RFDETRSegLarge,
+            RFDETRSegMedium,
+            RFDETRSegNano,
+            RFDETRSegPreview,
+            RFDETRSegSmall,
+            RFDETRSegXLarge,
+            RFDETRSmall,
+        )
 
         _plus_available = False
         _plus_symbols: dict[str, type[RFDETR]] = {}
         try:
-            import rfdetr.platform.models as plus_models
+            from rfdetr.platform.models import (
+                RFDETR2XLarge,
+                RFDETRXLarge,
+            )
 
+            _plus_name_to_class: dict[str, type[RFDETR]] = {
+                "RFDETRXLarge": RFDETRXLarge,
+                "RFDETR2XLarge": RFDETR2XLarge,
+            }
             _plus_entries: list[tuple[str, type[RFDETR]]] = [
-                (name, cast("type[RFDETR]", getattr(plus_models, class_symbol)))
-                for name, class_symbol in _CHECKPOINT_PLUS_MODEL_MAP_ENTRIES
+                (name, _plus_name_to_class[class_symbol]) for name, class_symbol in _CHECKPOINT_PLUS_MODEL_MAP_ENTRIES
             ]
             _plus_symbols = {
-                class_symbol: cast("type[RFDETR]", getattr(plus_models, class_symbol))
+                class_symbol: _plus_name_to_class[class_symbol]
                 for class_symbol in _CHECKPOINT_PLUS_MODEL_NAME_CLASS_SYMBOLS
             }
             _plus_available = True
@@ -291,8 +307,22 @@ class RFDETR:
         # Ordered most-specific first so "seg-xxlarge"/"seg-2xlarge" match before
         # "seg-xlarge", "xxlarge" before "xlarge", and "seg-*" prefixes before
         # their bare counterparts.
+        _variant_name_to_class: dict[str, type[RFDETR]] = {
+            "RFDETRBase": RFDETRBase,
+            "RFDETRLarge": RFDETRLarge,
+            "RFDETRMedium": RFDETRMedium,
+            "RFDETRNano": RFDETRNano,
+            "RFDETRSeg2XLarge": RFDETRSeg2XLarge,
+            "RFDETRSegLarge": RFDETRSegLarge,
+            "RFDETRSegMedium": RFDETRSegMedium,
+            "RFDETRSegNano": RFDETRSegNano,
+            "RFDETRSegPreview": RFDETRSegPreview,
+            "RFDETRSegSmall": RFDETRSegSmall,
+            "RFDETRSegXLarge": RFDETRSegXLarge,
+            "RFDETRSmall": RFDETRSmall,
+        }
         _variant_symbols: dict[str, type[RFDETR]] = {
-            class_symbol: cast("type[RFDETR]", getattr(variants, class_symbol))
+            class_symbol: _variant_name_to_class[class_symbol]
             for class_symbol in _CHECKPOINT_MODEL_NAME_CLASS_SYMBOLS
         }
         # Build in three explicit segments: seg-* entries, then plus-model entries
