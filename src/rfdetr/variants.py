@@ -66,12 +66,6 @@ class RFDETRBase(RFDETR):
     size = "rfdetr-base"
     _model_config_class = RFDETRBaseConfig
 
-    def __init__(self, **kwargs: object) -> None:
-        raise RuntimeError(
-            "RFDETRBase was deprecated in v1.7.0 and is no longer supported. "
-            "Use RFDETRNano, RFDETRSmall, RFDETRMedium, or RFDETRLarge instead."
-        )
-
 
 class RFDETRNano(RFDETR):
     """
@@ -111,9 +105,6 @@ class RFDETRLargeDeprecated(RFDETR):
     size = "rfdetr-large"
     _model_config_class = RFDETRLargeDeprecatedConfig
 
-    def __init__(self, **kwargs: object) -> None:
-        raise RuntimeError(
-            "RFDETRLargeDeprecated was deprecated in v1.7.0 and is no longer supported. Use RFDETRLarge instead."
         )
 
 
@@ -196,12 +187,6 @@ class RFDETRSegPreview(RFDETRSeg):
 
     size = "rfdetr-seg-preview"
     _model_config_class = RFDETRSegPreviewConfig
-
-    def __init__(self, **kwargs: object) -> None:
-        raise RuntimeError(
-            "RFDETRSegPreview was deprecated in v1.7.0 and is no longer supported. "
-            "Use RFDETRSegNano, RFDETRSegSmall, RFDETRSegMedium, or RFDETRSegLarge instead."
-        )
 
 
 class RFDETRSegNano(RFDETRSeg):
