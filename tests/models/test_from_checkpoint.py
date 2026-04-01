@@ -316,7 +316,7 @@ class TestFromCheckpointModelName:
             ("RFDETRSegLarge", "rfdetr.variants.RFDETRSegLarge"),
             ("RFDETRSegXLarge", "rfdetr.variants.RFDETRSegXLarge"),
             ("RFDETRSeg2XLarge", "rfdetr.variants.RFDETRSeg2XLarge"),
-        ]
+        ],
     )
     def test_model_name_resolves_correct_class(
         self,
