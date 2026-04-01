@@ -72,7 +72,7 @@ class TestFromCheckpointNamespaceArgs:
     """from_checkpoint with argparse.Namespace args (legacy engine.py format)."""
 
     @pytest.mark.parametrize(
-        "pretrain_weights, patch_target",
+        ("pretrain_weights, patch_target"),
         [
             ("rf-detr-nano.pth", "RFDETRNano"),
             ("rf-detr-small.pth", "RFDETRSmall"),
@@ -86,21 +86,7 @@ class TestFromCheckpointNamespaceArgs:
             ("rf-detr-seg-xlarge.pt", "RFDETRSegXLarge"),
             ("rf-detr-seg-xxlarge.pt", "RFDETRSeg2XLarge"),
             ("rf-detr-seg-preview.pt", "RFDETRSegPreview"),
-        ],
-        ids=[
-            "nano",
-            "small",
-            "medium",
-            "large",
-            "base",
-            "seg-nano",
-            "seg-small",
-            "seg-medium",
-            "seg-large",
-            "seg-xlarge",
-            "seg-2xlarge",
-            "seg-preview",
-        ],
+        ]
     )
     def test_characterization_infers_correct_class_namespace(
         self,
