@@ -61,8 +61,7 @@ logger = get_logger()
     remove_in="2.0.0",
 )
 class RFDETRBase(RFDETR):
-    """RF-DETR Base model — deprecated in v1.7.0, scheduled for removal in v2.0.0.
-    """
+    """RF-DETR Base model — deprecated in v1.7.0, scheduled for removal in v2.0.0."""
 
     size = "rfdetr-base"
     _model_config_class = RFDETRBaseConfig
@@ -107,8 +106,7 @@ class RFDETRMedium(RFDETR):
     remove_in="2.0.0",
 )
 class RFDETRLargeDeprecated(RFDETR):
-    """RF-DETR Large model (legacy config) — deprecated in v1.7.0, scheduled for removal in v2.0.0.
-    """
+    """RF-DETR Large model (legacy config) — deprecated in v1.7.0, scheduled for removal in v2.0.0."""
 
     size = "rfdetr-large"
     _model_config_class = RFDETRLargeDeprecatedConfig
@@ -194,8 +192,7 @@ class RFDETRSeg(RFDETR):
     remove_in="2.0.0",
 )
 class RFDETRSegPreview(RFDETRSeg):
-    """RF-DETR Segmentation Preview model — deprecated in v1.7.0, scheduled for removal in v2.0.0.
-    """
+    """RF-DETR Segmentation Preview model — deprecated in v1.7.0, scheduled for removal in v2.0.0."""
 
     size = "rfdetr-seg-preview"
     _model_config_class = RFDETRSegPreviewConfig

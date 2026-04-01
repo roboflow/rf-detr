@@ -322,8 +322,7 @@ class RFDETR:
             "RFDETRSmall": RFDETRSmall,
         }
         _variant_symbols: dict[str, type[RFDETR]] = {
-            class_symbol: _variant_name_to_class[class_symbol]
-            for class_symbol in _CHECKPOINT_MODEL_NAME_CLASS_SYMBOLS
+            class_symbol: _variant_name_to_class[class_symbol] for class_symbol in _CHECKPOINT_MODEL_NAME_CLASS_SYMBOLS
         }
         # Build in three explicit segments: seg-* entries, then plus-model entries
         # (xlarge/2xlarge), then base entries — order determines lookup priority.
