@@ -502,7 +502,9 @@ class RFDETR:
             except OSError as exc:
                 logger.warning("Could not save training_config.json to %s: %s", config.output_dir, exc)
 
-    def optimize_for_inference(self, compile=True, batch_size=1, dtype=torch.float32):
+    def optimize_for_inference(
+        self, compile: bool = True, batch_size: int = 1, dtype: torch.dtype | str = torch.float32
+    ) -> None:
         if isinstance(dtype, str):
             try:
                 dtype = getattr(torch, dtype)
