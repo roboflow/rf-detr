@@ -164,6 +164,53 @@ class TestOptimizeForInferenceCudaDeviceContext:
         assert captured.get("device") == expected_device
 
 
+class TestOptimizeForInferenceCompile:
+    """Tests for the compile=True path (JIT trace)."""
+
+    def test_compile_true_calls_jit_trace(self) -> None:
+        """torch.jit.trace should be called with the model and a correctly-shaped dummy input."""
+        rfdetr = _FakeRFDETR()
+        mock_traced = rfdetr.model.model
+
+        with (
+            patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
+            patch("torch.jit.trace", return_value=mock_traced) as mock_trace,
+        ):
+            rfdetr.optimize_for_inference(compile=True, batch_size=2)
+
+        assert mock_trace.called
+        dummy_input: torch.Tensor = mock_trace.call_args.args[1]
+        resolution = rfdetr.model.resolution
+        assert dummy_input.shape == (2, 3, resolution, resolution)
+
+    def test_compile_true_sets_compiled_flags(self) -> None:
+        """_optimized_has_been_compiled=True and _optimized_batch_size should be set after compile=True."""
+        rfdetr = _FakeRFDETR()
+
+        with (
+            patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
+            patch("torch.jit.trace", return_value=rfdetr.model.model),
+        ):
+            rfdetr.optimize_for_inference(compile=True, batch_size=4)
+
+        assert rfdetr._optimized_has_been_compiled is True
+        assert rfdetr._optimized_batch_size == 4
+
+    def test_compile_false_skips_jit_trace(self) -> None:
+        """torch.jit.trace should NOT be called when compile=False."""
+        rfdetr = _FakeRFDETR()
+
+        with (
+            patch.object(rfdetr.model.model, "export"),
+            patch("torch.jit.trace") as mock_trace,
+        ):
+            rfdetr.optimize_for_inference(compile=False)
+
+        mock_trace.assert_not_called()
+        assert rfdetr._optimized_has_been_compiled is False
+        assert rfdetr._optimized_batch_size is None
+
+
 class TestOptimizeForInferenceState:
     """Verify that optimize_for_inference correctly sets internal state flags."""
 
