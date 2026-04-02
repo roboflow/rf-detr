@@ -12,6 +12,7 @@ import importlib
 import json
 import operator
 import os
+import tempfile
 import warnings
 from collections import defaultdict
 from copy import deepcopy
@@ -67,6 +68,32 @@ _VARIANT_EXPORTS = (
     "RFDETRSmall",
 )
 __all__ = ["RFDETR", "ModelContext", *_VARIANT_EXPORTS]
+
+_CHECKPOINT_MODEL_NAME_EXCLUDED_SYMBOLS = frozenset({"RFDETRLargeDeprecated", "RFDETRSeg"})
+_CHECKPOINT_MODEL_NAME_CLASS_SYMBOLS: tuple[str, ...] = tuple(
+    class_symbol for class_symbol in _VARIANT_EXPORTS if class_symbol not in _CHECKPOINT_MODEL_NAME_EXCLUDED_SYMBOLS
+)
+_CHECKPOINT_PLUS_MODEL_NAME_CLASS_SYMBOLS: tuple[str, ...] = ("RFDETRXLarge", "RFDETR2XLarge")
+_CHECKPOINT_MODEL_MAP_ENTRIES: tuple[tuple[str, str], ...] = (
+    ("seg-2xlarge", "RFDETRSeg2XLarge"),
+    ("seg-xxlarge", "RFDETRSeg2XLarge"),
+    ("seg-xlarge", "RFDETRSegXLarge"),
+    ("seg-large", "RFDETRSegLarge"),
+    ("seg-medium", "RFDETRSegMedium"),
+    ("seg-small", "RFDETRSegSmall"),
+    ("seg-nano", "RFDETRSegNano"),
+    ("seg-preview", "RFDETRSegPreview"),
+    ("large", "RFDETRLarge"),
+    ("medium", "RFDETRMedium"),
+    ("small", "RFDETRSmall"),
+    ("nano", "RFDETRNano"),
+    ("base", "RFDETRBase"),
+)
+_CHECKPOINT_PLUS_MODEL_MAP_ENTRIES: tuple[tuple[str, str], ...] = (
+    ("2xlarge", "RFDETR2XLarge"),
+    ("xxlarge", "RFDETR2XLarge"),
+    ("xlarge", "RFDETRXLarge"),
+)
 
 
 def _validate_shape_dims(
@@ -195,13 +222,18 @@ class RFDETR:
     @classmethod
     def from_checkpoint(cls, path: str | os.PathLike[str], **kwargs: Any) -> RFDETR:
         """Load an RF-DETR model from a training checkpoint, automatically
-        inferring the model size from the saved args.
+        inferring the model class.
 
-        The correct subclass is inferred from the ``pretrain_weights`` field
-        stored in the checkpoint's ``args`` entry.  Both legacy
-        ``argparse.Namespace`` checkpoints (produced by ``engine.py``) and
-        dict-style checkpoints (produced by the PTL training stack) are
-        supported.
+        The correct subclass is resolved in order of preference:
+
+        1. ``model_name`` key in the checkpoint (written by the PTL training
+           stack since v1.7.0).
+        2. ``pretrain_weights`` field in the checkpoint's ``args`` entry
+           (legacy fallback).
+
+        Both legacy ``argparse.Namespace`` checkpoints (produced by
+        ``engine.py``) and dict-style checkpoints (produced by the PTL
+        training stack) are supported.
 
         Args:
             path: Path to a checkpoint file (e.g. ``checkpoint_best_total.pth``).
@@ -222,41 +254,31 @@ class RFDETR:
             FileNotFoundError: If *path* does not exist.
             OSError: If *path* exists but cannot be read.
             KeyError: If the checkpoint does not contain an ``"args"`` key.
-            ValueError: If the model size cannot be inferred from the
-                ``pretrain_weights`` field in the saved args.
+            ValueError: If the model class cannot be inferred from
+                ``model_name`` or ``pretrain_weights``.
 
         Examples:
             >>> model = RFDETR.from_checkpoint("checkpoint_best_total.pth")  # doctest: +SKIP
             >>> model = RFDETRSmall.from_checkpoint("checkpoint_best_total.pth")  # doctest: +SKIP
         """
-        # Local imports break the variants → detr import cycle.
-        from rfdetr.variants import (
-            RFDETRBase,
-            RFDETRLarge,
-            RFDETRMedium,
-            RFDETRNano,
-            RFDETRSeg2XLarge,
-            RFDETRSegLarge,
-            RFDETRSegMedium,
-            RFDETRSegNano,
-            RFDETRSegPreview,
-            RFDETRSegSmall,
-            RFDETRSegXLarge,
-            RFDETRSmall,
-        )
+        # Local import breaks the variants → detr import cycle.
+        import rfdetr.variants as rfdetr_variants
 
         _plus_available = False
+        _plus_symbols: dict[str, type[RFDETR]] = {}
+        _plus_entries: list[tuple[str, type[RFDETR]]] = []
         try:
-            from rfdetr.platform.models import RFDETR2XLarge, RFDETRXLarge
+            import rfdetr.platform.models as platform_models
 
-            _plus_entries: list[tuple[str, type[RFDETR]]] = [
-                ("2xlarge", RFDETR2XLarge),  # alias for "rfdetr-2xlarge" size label (training ckpts)
-                ("xxlarge", RFDETR2XLarge),  # official weight filename "rf-detr-xxlarge.pth"
-                ("xlarge", RFDETRXLarge),
+            for class_symbol in _CHECKPOINT_PLUS_MODEL_NAME_CLASS_SYMBOLS:
+                plus_obj = getattr(platform_models, class_symbol)
+                _plus_symbols[class_symbol] = plus_obj
+            _plus_entries = [
+                (name, _plus_symbols[class_symbol]) for name, class_symbol in _CHECKPOINT_PLUS_MODEL_MAP_ENTRIES
             ]
             _plus_available = True
-        except ImportError:
-            _plus_entries = []
+        except (ImportError, AttributeError):
+            _plus_symbols = {}
 
         # weights_only=False is required because legacy checkpoints embed
         # argparse.Namespace objects that cannot be deserialised with
@@ -264,52 +286,73 @@ class RFDETR:
         ckpt: dict[str, Any] = torch.load(path, map_location="cpu", weights_only=False)
         args = ckpt["args"]
 
+        _variant_name_to_class: dict[str, type[RFDETR]] = {
+            getattr(variant_obj, "__name__", symbol): variant_obj
+            for symbol in dir(rfdetr_variants)
+            if symbol.startswith("RFDETR")
+            for variant_obj in [getattr(rfdetr_variants, symbol)]
+        }
+        _variant_symbols: dict[str, type[RFDETR]] = {
+            class_symbol: _variant_name_to_class[class_symbol] for class_symbol in _CHECKPOINT_MODEL_NAME_CLASS_SYMBOLS
+        }
+        # Build in three explicit segments: seg-* entries, then plus-model entries
+        # (xlarge/2xlarge), then base entries — order determines lookup priority.
+        _seg_map: list[tuple[str, type[RFDETR]]] = [
+            (name, _variant_symbols[class_symbol])
+            for name, class_symbol in _CHECKPOINT_MODEL_MAP_ENTRIES
+            if name.startswith("seg-")
+        ]
+        _base_map: list[tuple[str, type[RFDETR]]] = [
+            (name, _variant_symbols[class_symbol])
+            for name, class_symbol in _CHECKPOINT_MODEL_MAP_ENTRIES
+            if not name.startswith("seg-")
+        ]
+        _model_map: list[tuple[str, type[RFDETR]]] = _seg_map + _plus_entries + _base_map
+
+        # New checkpoints store model_name directly — use it when available.
+        _name_map: dict[str, type[RFDETR]] = dict(_variant_symbols)
+        # Plus-model classes are resolved only when rfdetr_plus is installed.
+        if _plus_available:
+            _name_map.update(_plus_symbols)
+        saved_model_name = ckpt.get("model_name")
+        model_cls: type[RFDETR] | None = None
+        if isinstance(saved_model_name, str):
+            normalized_name = saved_model_name.strip()
+            if normalized_name:
+                model_cls = _name_map.get(normalized_name)
+        else:
+            normalized_name = ""
+
+        # Fall back to pretrain_weights filename parsing for older checkpoints.
         if isinstance(args, dict):
             weights_name = str(args.get("pretrain_weights", "")).lower()
         else:
             weights_name = str(getattr(args, "pretrain_weights", "")).lower()
 
-        # Guard: "xlarge"/"xxlarge" without a "seg-" prefix are plus-only models.
-        # Without the plus package, "xlarge" would otherwise silently fall through
-        # to the generic "large" key and instantiate the wrong class.
-        if not _plus_available and "xlarge" in weights_name and "seg-" not in weights_name:
-            from rfdetr.platform import _INSTALL_MSG
+        if model_cls is None:
+            # Guard: plus-only checkpoints should raise an actionable install error
+            # when rfdetr_plus is missing, regardless of whether class inference
+            # relies on model_name (new format) or pretrain_weights (legacy format).
+            plus_by_model_name = normalized_name in _CHECKPOINT_PLUS_MODEL_NAME_CLASS_SYMBOLS
+            plus_by_weights_name = "xlarge" in weights_name and "seg-" not in weights_name
+            if not _plus_available and (plus_by_model_name or plus_by_weights_name):
+                from rfdetr.platform import _INSTALL_MSG
 
-            raise ImportError(
-                f"Checkpoint pretrain_weights={weights_name!r} requires the "
-                f"rfdetr_plus package. " + _INSTALL_MSG.format(name="platform model downloads")
-            )
+                raise ImportError(
+                    f"Checkpoint model_name={saved_model_name!r}, pretrain_weights={weights_name!r} requires the "
+                    f"rfdetr_plus package. " + _INSTALL_MSG.format(name="platform model downloads")
+                )
 
-        # Ordered most-specific first so "seg-xxlarge"/"seg-2xlarge" match before
-        # "seg-xlarge", "xxlarge" before "xlarge", and "seg-*" prefixes before
-        # their bare counterparts.
-        _model_map: list[tuple[str, type[RFDETR]]] = [
-            ("seg-2xlarge", RFDETRSeg2XLarge),  # alias for "rfdetr-seg-2xlarge" size label
-            ("seg-xxlarge", RFDETRSeg2XLarge),  # official weight filename "rf-detr-seg-xxlarge.pt"
-            ("seg-xlarge", RFDETRSegXLarge),
-            ("seg-large", RFDETRSegLarge),
-            ("seg-medium", RFDETRSegMedium),
-            ("seg-small", RFDETRSegSmall),
-            ("seg-nano", RFDETRSegNano),
-            ("seg-preview", RFDETRSegPreview),
-            *_plus_entries,
-            ("large", RFDETRLarge),
-            ("medium", RFDETRMedium),
-            ("small", RFDETRSmall),
-            ("nano", RFDETRNano),
-            ("base", RFDETRBase),
-        ]
-
-        model_cls: type[RFDETR] | None = None
-        for name, klass in _model_map:
-            if name in weights_name:
-                model_cls = klass
-                break
+            for name, klass in _model_map:
+                if name in weights_name:
+                    model_cls = klass
+                    break
 
         if model_cls is None:
             raise ValueError(
-                f"Could not infer model size from pretrain_weights={weights_name!r}. "
-                "Please instantiate the model class directly."
+                f"Could not infer model class from checkpoint at {path!r} "
+                f"(model_name={saved_model_name!r}, pretrain_weights={weights_name!r}). "
+                f"Please instantiate the model class directly."
             )
 
         if isinstance(args, dict):
@@ -458,6 +501,7 @@ class RFDETR:
                 config.grad_accum_steps,
                 auto_batch.effective_batch_size,
             )
+        self.model_config.model_name = type(self).__name__
 
         # Auto-detect num_classes from the training dataset and align model_config.
         # This must run before RFDETRModelModule is constructed so that weight loading
@@ -538,35 +582,44 @@ class RFDETR:
         if not isinstance(dtype, torch.dtype):
             raise TypeError(f"dtype must be a torch.dtype or a string name of a dtype, got {type(dtype)!r}")
 
+        # Clear any previously optimized state before starting a new optimization run.
+        self.remove_optimized_model()
+
         device = self.model.device
         cuda_ctx = torch.cuda.device(device) if device.type == "cuda" else contextlib.nullcontext()
-        with cuda_ctx:
-            self.remove_optimized_model()
 
-            self.model.inference_model = deepcopy(self.model.model)
-            self.model.inference_model.eval()
-            self.model.inference_model.export()
+        try:
+            with cuda_ctx:
+                self.model.inference_model = deepcopy(self.model.model)
+                self.model.inference_model.eval()
+                self.model.inference_model.export()
 
-            self._optimized_resolution = self.model.resolution
-            self._is_optimized_for_inference = True
+                self.model.inference_model = self.model.inference_model.to(dtype=dtype)
 
-            self.model.inference_model = self.model.inference_model.to(dtype=dtype)
-            self._optimized_dtype = dtype
+                if compile:
+                    self.model.inference_model = torch.jit.trace(
+                        self.model.inference_model,
+                        torch.randn(
+                            batch_size,
+                            3,
+                            self.model.resolution,
+                            self.model.resolution,
+                            device=self.model.device,
+                            dtype=dtype,
+                        ),
+                    )
+                    self._optimized_has_been_compiled = True
+                    self._optimized_batch_size = batch_size
 
-            if compile:
-                self.model.inference_model = torch.jit.trace(
-                    self.model.inference_model,
-                    torch.randn(
-                        batch_size,
-                        3,
-                        self.model.resolution,
-                        self.model.resolution,
-                        device=self.model.device,
-                        dtype=dtype,
-                    ),
-                )
-                self._optimized_has_been_compiled = True
-                self._optimized_batch_size = batch_size
+                # Set success flags only after all operations complete.
+                self._optimized_resolution = self.model.resolution
+                self._is_optimized_for_inference = True
+                self._optimized_dtype = dtype
+        except Exception:
+            # Ensure the object is left in a consistent, unoptimized state if optimization fails.
+            with contextlib.suppress(Exception):
+                self.remove_optimized_model()
+            raise
 
     def remove_optimized_model(self) -> None:
         """Remove the optimized inference model and reset all optimization flags.
@@ -591,10 +644,7 @@ class RFDETR:
     @deprecated(
         target=True,
         # `simplify` / `force` are retained for API compatibility and treated as no-op.
-        args_mapping={
-            "simplify": False,
-            "force": False,
-        },
+        args_mapping={"simplify": False, "force": False},
         deprecated_in="1.6",
         remove_in="1.8",
         num_warns=1,
@@ -892,6 +942,7 @@ class RFDETR:
         threshold: float = 0.5,
         shape: tuple[int, int] | None = None,
         patch_size: int | None = None,
+        include_source_image: bool = True,
         **kwargs,
     ) -> sv.Detections | list[sv.Detections]:
         """Performs object detection on the input images and returns bounding box
@@ -920,6 +971,10 @@ class RFDETR:
                 to ``model_config.patch_size`` (typically 14 for large models, 16 for
                 smaller ones). Divisibility is checked against
                 ``patch_size * num_windows``.
+            include_source_image:
+                Whether to attach the original image as ``source_image`` in
+                ``detections.data``. Defaults to ``True`` for backward compatibility.
+                Set to ``False`` to reduce memory use when source images are not needed.
             **kwargs:
                 Additional keyword arguments.
 
@@ -978,7 +1033,7 @@ class RFDETR:
 
         orig_sizes = []
         processed_images = []
-        source_images = []
+        source_images = [] if include_source_image else None
 
         for img in images:
             if isinstance(img, str):
@@ -987,12 +1042,13 @@ class RFDETR:
                 img = Image.open(img)
 
             if not isinstance(img, torch.Tensor):
-                src = np.array(img)
-                if src.dtype != np.uint8:
-                    src = (src * 255).clip(0, 255).astype(np.uint8)
-                source_images.append(src)
+                if include_source_image:
+                    src = np.array(img)
+                    if src.dtype != np.uint8:
+                        src = (src * 255).clip(0, 255).astype(np.uint8)
+                    source_images.append(src)
                 img = F.to_tensor(img)
-            else:
+            elif include_source_image:
                 source_images.append((img.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8))
 
             if (img > 1).any():
@@ -1087,7 +1143,8 @@ class RFDETR:
                     class_id=labels.cpu().numpy(),
                 )
 
-            detections.data["source_image"] = source_images[i]
+            if include_source_image:
+                detections.data["source_image"] = source_images[i]
             detections.data["source_shape"] = orig_sizes[i]
 
             # Attach class names so callers can map class_id → name without a
@@ -1135,8 +1192,6 @@ class RFDETR:
                 not set for custom architectures.
 
         """
-        import shutil
-
         from roboflow import Roboflow
 
         if api_key is None:
@@ -1151,9 +1206,7 @@ class RFDETR:
             raise ValueError("Must set size for custom architectures")
 
         size = self.size or size
-        tmp_out_dir = ".roboflow_temp_upload"
-        os.makedirs(tmp_out_dir, exist_ok=True)
-        try:
+        with tempfile.TemporaryDirectory(prefix="roboflow_upload_") as tmp_out_dir:
             # Write class_names.txt so the Roboflow upload pipeline can discover
             # the class labels without relying on args.class_names in the checkpoint.
             class_names_path = os.path.join(tmp_out_dir, "class_names.txt")
@@ -1174,8 +1227,6 @@ class RFDETR:
             project = workspace.project(project_id)
             project_version = project.version(version)
             project_version.deploy(model_type=size, model_path=tmp_out_dir, filename="weights.pt")
-        finally:
-            shutil.rmtree(tmp_out_dir, ignore_errors=True)
 
 
 def __getattr__(name: str):

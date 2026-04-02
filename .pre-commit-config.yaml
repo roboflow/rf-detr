@@ -44,9 +44,9 @@ repos:
     rev: v1.19.1
     hooks:
       - id: mypy
-        # --ignore-missing-imports: the hook runs in an isolated env without torch/torchvision/etc.
+        # The hook runs in an isolated env without torch/torchvision/etc.
         # Full strict checking (matching pyproject.toml) runs in CI via ci-typing.yml.
-        # args: ["--ignore-missing-imports"]
+        args: ["--ignore-missing-imports"]
         additional_dependencies:
           - "types-PyYAML"
           - "types-requests"
