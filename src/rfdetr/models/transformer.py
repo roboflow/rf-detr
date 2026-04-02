@@ -90,8 +90,14 @@ def gen_encoder_output_proposals(memory, memory_padding_mask, spatial_shapes, un
             valid_H = torch.sum(~mask_flatten_[:, :, 0, 0], 1)
             valid_W = torch.sum(~mask_flatten_[:, 0, :, 0], 1)
         else:
-            valid_H = torch.tensor([H_ for _ in range(N_)], device=memory.device)
-            valid_W = torch.tensor([W_ for _ in range(N_)], device=memory.device)
+            if isinstance(H_, torch.Tensor):
+                valid_H = H_.expand(N_).to(dtype=torch.long, device=memory.device)
+            else:
+                valid_H = torch.full((N_,), H_, dtype=torch.long, device=memory.device)
+            if isinstance(W_, torch.Tensor):
+                valid_W = W_.expand(N_).to(dtype=torch.long, device=memory.device)
+            else:
+                valid_W = torch.full((N_,), W_, dtype=torch.long, device=memory.device)
 
         grid_y, grid_x = torch.meshgrid(
             torch.linspace(0, H_ - 1, H_, dtype=torch.float32, device=memory.device),
@@ -224,12 +230,18 @@ class Transformer(nn.Module):
         src_flatten = []
         mask_flatten = [] if masks is not None else None
         lvl_pos_embed_flatten = []
-        spatial_shapes = []
+        # Build spatial_shapes as a tensor directly so that the ONNX tracer
+        # can track h/w symbolically instead of baking them in as constants.
+        spatial_shapes = torch.empty((len(srcs), 2), device=srcs[0].device, dtype=torch.long)
+        # Keep Python int pairs for gen_encoder_output_proposals — its loop uses h/w
+        # as slice indices and linspace steps, which require Python ints, not tensors.
+        spatial_shapes_hw: list[tuple[int, int]] = []
         valid_ratios = [] if masks is not None else None
         for lvl, (src, pos_embed) in enumerate(zip(srcs, pos_embeds)):
             bs, c, h, w = src.shape
-            spatial_shape = (h, w)
-            spatial_shapes.append(spatial_shape)
+            spatial_shapes[lvl, 0] = h
+            spatial_shapes[lvl, 1] = w
+            spatial_shapes_hw.append((h, w))
 
             src = src.flatten(2).transpose(1, 2)  # bs, hw, c
             pos_embed = pos_embed.flatten(2).transpose(1, 2)  # bs, hw, c
@@ -243,12 +255,6 @@ class Transformer(nn.Module):
             mask_flatten = torch.cat(mask_flatten, 1)  # bs, \sum{hxw}
             valid_ratios = torch.stack([self.get_valid_ratio(m) for m in masks], 1)
         lvl_pos_embed_flatten = torch.cat(lvl_pos_embed_flatten, 1)  # bs, \sum{hxw}, c
-        # Keep a plain Python list of (H, W) int pairs for gen_encoder_output_proposals.
-        # The tensor form is only needed by ms_deform_attn and level_start_index.
-        # Passing Python ints avoids .item() calls inside the function, which would
-        # cause torch.compile graph breaks on loop-accumulated slice indices.
-        spatial_shapes_hw = list(spatial_shapes)
-        spatial_shapes = torch.as_tensor(spatial_shapes, dtype=torch.long, device=memory.device)
         level_start_index = torch.cat((spatial_shapes.new_zeros((1,)), spatial_shapes.prod(1).cumsum(0)[:-1]))
 
         if self.two_stage:

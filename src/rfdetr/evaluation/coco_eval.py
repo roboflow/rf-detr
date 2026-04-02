@@ -25,7 +25,7 @@ https://github.com/pytorch/vision/blob/edfd5a7/references/detection/coco_eval.py
 import contextlib
 import copy
 import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 import pycocotools.mask as mask_util
@@ -49,27 +49,27 @@ def _xyxy_to_xywh(boxes: np.ndarray) -> np.ndarray:
 class CocoEvaluator:
     """COCO evaluator that works in distributed mode."""
 
-    def __init__(self, coco_gt: COCO, iou_types: List[str], max_dets: int = 100) -> None:
+    def __init__(self, coco_gt: COCO, iou_types: list[str], max_dets: int = 100) -> None:
         assert isinstance(iou_types, (list, tuple))
         coco_gt = copy.deepcopy(coco_gt)
         self.coco_gt = coco_gt
         self.max_dets = max_dets
         # label2cat maps contiguous model label indices back to original COCO category_ids.
         # Set by CocoDetection when cat2label remapping is active; None otherwise.
-        self.label2cat: Dict[int, int] | None = getattr(coco_gt, "label2cat", None)
+        self.label2cat: dict[int, int] | None = getattr(coco_gt, "label2cat", None)
 
         self.iou_types = iou_types
-        self.coco_eval: Dict[str, COCOeval] = {}
+        self.coco_eval: dict[str, COCOeval] = {}
         for iou_type in iou_types:
             self.coco_eval[iou_type] = COCOeval(coco_gt, iouType=iou_type)
             self.coco_eval[iou_type].params.maxDets = [1, 10, max_dets]
 
-        self.img_ids: List[int] = []
-        self.eval_imgs: Dict[str, List[Any]] = {k: [] for k in iou_types}
+        self.img_ids: list[int] = []
+        self.eval_imgs: dict[str, list[Any]] = {k: [] for k in iou_types}
         self.cat_ids = set(coco_gt.cats.keys())
         self._prefer_raw_category_ids = False
 
-    def _resolve_category_id(self, label: int, use_raw_category_ids: bool) -> Optional[int]:
+    def _resolve_category_id(self, label: int, use_raw_category_ids: bool) -> int | None:
         """Resolve a predicted label to a COCO category_id."""
         if use_raw_category_ids:
             return label if label in self.cat_ids else None
@@ -79,7 +79,7 @@ class CocoEvaluator:
             return label
         return None
 
-    def _should_use_raw_category_ids(self, labels: List[int]) -> bool:
+    def _should_use_raw_category_ids(self, labels: list[int]) -> bool:
         """Detect whether model predictions are already raw COCO category IDs."""
         if self.label2cat is None:
             return True
@@ -91,7 +91,7 @@ class CocoEvaluator:
             return True
         return False
 
-    def update(self, predictions: Dict[int, Any]) -> None:
+    def update(self, predictions: dict[int, Any]) -> None:
         """Accumulate per-image predictions."""
         img_ids = list(np.unique(list(predictions.keys())))
         self.img_ids.extend(img_ids)
@@ -127,7 +127,7 @@ class CocoEvaluator:
             logger.info("IoU metric: {}".format(iou_type))
             patched_pycocotools_summarize(coco_eval)
 
-    def prepare(self, predictions: Dict[int, Any], iou_type: str) -> List[Dict[str, Any]]:
+    def prepare(self, predictions: dict[int, Any], iou_type: str) -> list[dict[str, Any]]:
         """Convert predictions to COCO format for the given iou_type."""
         if iou_type == "bbox":
             return self.prepare_for_coco_detection(predictions)
@@ -138,7 +138,7 @@ class CocoEvaluator:
         else:
             raise ValueError("Unknown iou type {}".format(iou_type))
 
-    def prepare_for_coco_detection(self, predictions: Dict[int, Any]) -> List[Dict[str, Any]]:
+    def prepare_for_coco_detection(self, predictions: dict[int, Any]) -> list[dict[str, Any]]:
         """Format bounding-box predictions as COCO result dicts."""
         coco_results = []
         for original_id, prediction in predictions.items():
@@ -164,7 +164,7 @@ class CocoEvaluator:
                 )
         return coco_results
 
-    def prepare_for_coco_segmentation(self, predictions: Dict[int, Any]) -> List[Dict[str, Any]]:
+    def prepare_for_coco_segmentation(self, predictions: dict[int, Any]) -> list[dict[str, Any]]:
         """Format segmentation mask predictions as COCO result dicts."""
         coco_results = []
         for original_id, prediction in predictions.items():
@@ -202,7 +202,7 @@ class CocoEvaluator:
                 )
         return coco_results
 
-    def prepare_for_coco_keypoint(self, predictions: Dict[int, Any]) -> List[Dict[str, Any]]:
+    def prepare_for_coco_keypoint(self, predictions: dict[int, Any]) -> list[dict[str, Any]]:
         """Format keypoint predictions as COCO result dicts."""
         coco_results = []
         for original_id, prediction in predictions.items():
@@ -231,12 +231,12 @@ class CocoEvaluator:
         return coco_results
 
 
-def merge(img_ids: List[int], eval_imgs: Any) -> Tuple[np.ndarray, np.ndarray]:
+def merge(img_ids: list[int], eval_imgs: Any) -> tuple[np.ndarray, np.ndarray]:
     """Merge distributed per-image evaluation results."""
     all_img_ids = all_gather(img_ids)
     all_eval_imgs = all_gather(eval_imgs)
 
-    merged_img_ids: List[int] = []
+    merged_img_ids: list[int] = []
     for p in all_img_ids:
         merged_img_ids.extend(p)
 
@@ -254,7 +254,7 @@ def merge(img_ids: List[int], eval_imgs: Any) -> Tuple[np.ndarray, np.ndarray]:
     return merged_img_ids_arr, merged_eval_imgs_arr
 
 
-def create_common_coco_eval(coco_eval: COCOeval, img_ids: List[int], eval_imgs: Any) -> None:
+def create_common_coco_eval(coco_eval: COCOeval, img_ids: list[int], eval_imgs: Any) -> None:
     """Populate a COCOeval object with merged distributed results."""
     img_ids_arr, eval_imgs = merge(img_ids, eval_imgs)
     img_ids_list = list(img_ids_arr)
@@ -269,7 +269,7 @@ def create_common_coco_eval(coco_eval: COCOeval, img_ids: List[int], eval_imgs: 
 # From pycocotools, just removed the prints and fixed
 # a Python3 bug about unicode not defined
 #################################################################
-def evaluate(self: COCOeval) -> Tuple[List[int], np.ndarray]:
+def evaluate(self: COCOeval) -> tuple[list[int], np.ndarray]:
     """Run per-image evaluation and store results in self.evalImgs."""
     p = self.params
     if p.useSegm is not None:
@@ -307,7 +307,7 @@ def evaluate(self: COCOeval) -> Tuple[List[int], np.ndarray]:
 def patched_pycocotools_summarize(self: COCOeval) -> None:
     """Compute and display summary metrics for evaluation results."""
 
-    def _summarize(ap: int = 1, iouThr: Optional[float] = None, areaRng: str = "all", maxDets: int = 100) -> float:
+    def _summarize(ap: int = 1, iouThr: float | None = None, areaRng: str = "all", maxDets: int = 100) -> float:
         p = self.params
         iStr = " {:<18} {} @[ IoU={:<9} | area={:>6s} | maxDets={:>3d} ] = {:0.3f}"
         titleStr = "Average Precision" if ap == 1 else "Average Recall"

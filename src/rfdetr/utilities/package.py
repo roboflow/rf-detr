@@ -9,10 +9,9 @@
 import os
 import subprocess
 from importlib.metadata import PackageNotFoundError, version
-from typing import List, Optional
 
 
-def get_version(package_name: str = "rfdetr") -> Optional[str]:
+def get_version(package_name: str = "rfdetr") -> str | None:
     """Get the current version of the specified package.
 
     Args:
@@ -37,7 +36,7 @@ def get_sha() -> str:
     """
     cwd = os.path.dirname(os.path.abspath(__file__))
 
-    def _run(command: List[str]) -> str:
+    def _run(command: list[str]) -> str:
         return subprocess.check_output(command, cwd=cwd).decode("ascii").strip()
 
     try:

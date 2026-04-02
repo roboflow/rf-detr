@@ -310,6 +310,13 @@ class TestBuildModelContextCharacterization:
         ctx = _build_model_context(mc)
         assert ctx.device == torch.device("cpu")
 
+    def test_torch_device_cpu_from_config(self) -> None:
+        from rfdetr.detr import _build_model_context
+
+        mc = RFDETRBaseConfig(num_classes=80, pretrain_weights=None, device=torch.device("cpu"))
+        ctx = _build_model_context(mc)
+        assert ctx.device == torch.device("cpu")
+
     def test_class_names_none_without_pretrain(self) -> None:
         from rfdetr.detr import _build_model_context
 
