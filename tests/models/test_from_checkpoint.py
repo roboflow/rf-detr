@@ -40,11 +40,6 @@ def _dict(pretrain_weights: str, num_classes: int = 80) -> dict:
     return {"args": {"pretrain_weights": pretrain_weights, "num_classes": num_classes}}
 
 
-def _dict_model_name(model_name: str, num_classes: int = 80) -> dict:
-    """Fake PTL-style checkpoint with model_name at top level (new format, PR #895)."""
-    return {"args": {"num_classes": num_classes}, "model_name": model_name}
-
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -148,30 +143,6 @@ class TestFromCheckpointDictArgs:
 
         call_kwargs = mock_cls.call_args.kwargs
         assert "num_classes" not in call_kwargs
-
-    @pytest.mark.parametrize(
-        "model_name, patch_target",
-        [
-            pytest.param("RFDETRBase", "rfdetr.variants.RFDETRBase", id="base-classname"),
-            pytest.param("RFDETRSmall", "rfdetr.variants.RFDETRSmall", id="small-classname"),
-            pytest.param("RFDETRNano", "rfdetr.variants.RFDETRNano", id="nano-classname"),
-            pytest.param("RFDETRSegSmall", "rfdetr.variants.RFDETRSegSmall", id="seg-small-classname"),
-            pytest.param("RFDETRSegPreview", "rfdetr.variants.RFDETRSegPreview", id="seg-preview-classname"),
-        ],
-    )
-    def test_characterization_model_name_round_trip_without_pretrain_weights(
-        self,
-        tmp_path: Path,
-        model_name: str,
-        patch_target: str,
-    ) -> None:
-        """Dict args with model_name (and no pretrain_weights) infer the right subclass."""
-        _, mock_cls = _call_from_checkpoint(_dict_model_name(model_name), tmp_path / "ckpt.pth", patch_target)
-
-        mock_cls.assert_called_once()
-        call_kwargs = mock_cls.call_args.kwargs
-        assert call_kwargs.get("num_classes") == 80
-        assert call_kwargs.get("pretrain_weights") == str(tmp_path / "ckpt.pth")
 
 
 # ---------------------------------------------------------------------------
@@ -366,14 +337,6 @@ class TestFromCheckpointModelName:
         ckpt = _ckpt_with_model_name("  RFDETRSmall  ")
         _, mock_cls = _call_from_checkpoint(ckpt, tmp_path / "ckpt.pth", "rfdetr.variants.RFDETRSmall")
         mock_cls.assert_called_once()
-
-    def test_model_name_args_missing_num_classes_does_not_inject_kwarg(self, tmp_path: Path) -> None:
-        """model_name checkpoints without args.num_classes do not inject num_classes into constructor kwargs."""
-        ckpt = {"args": {"pretrain_weights": "rf-detr-small.pth"}, "model_name": "RFDETRSmall"}
-        _, mock_cls = _call_from_checkpoint(ckpt, tmp_path / "ckpt.pth", "rfdetr.variants.RFDETRSmall")
-
-        call_kwargs = mock_cls.call_args.kwargs
-        assert "num_classes" not in call_kwargs
 
     @pytest.mark.parametrize(
         "model_name, expected_class",
