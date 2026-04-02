@@ -551,11 +551,7 @@ class RFDETR:
                 self.model.inference_model.eval()
                 self.model.inference_model.export()
 
-                self._optimized_resolution = self.model.resolution
-                self._is_optimized_for_inference = True
-
                 self.model.inference_model = self.model.inference_model.to(dtype=dtype)
-                self._optimized_dtype = dtype
 
                 if compile:
                     self.model.inference_model = torch.jit.trace(
@@ -571,6 +567,11 @@ class RFDETR:
                     )
                     self._optimized_has_been_compiled = True
                     self._optimized_batch_size = batch_size
+
+                # Set success flags only after all operations complete.
+                self._optimized_resolution = self.model.resolution
+                self._is_optimized_for_inference = True
+                self._optimized_dtype = dtype
         except Exception:
             # Ensure the object is left in a consistent, unoptimized state if optimization fails.
             with contextlib.suppress(Exception):
