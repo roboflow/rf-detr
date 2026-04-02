@@ -166,6 +166,7 @@ def main(args):
         backbone_only=args.backbone_only,
         verbose=args.verbose,
         opset_version=args.opset_version,
+        variant_name=getattr(args, "variant_name", None),
     )
 
     if args.simplify:

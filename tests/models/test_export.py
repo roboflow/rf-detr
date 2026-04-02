@@ -742,3 +742,176 @@ def test_make_infer_image_produces_correct_rectangular_shape() -> None:
     h, w, b = 112, 224, 2
     tensor = make_infer_image(infer_dir=None, shape=(h, w), batch_size=b, device="cpu")
     assert tensor.shape == (b, 3, h, w), f"Expected shape ({b}, 3, {h}, {w}), got {tensor.shape}"
+
+
+# ---------------------------------------------------------------------------
+# ONNX export variant naming (#issue)
+# ---------------------------------------------------------------------------
+
+
+class TestExportOnnxVariantNaming:
+    """Verify that export_onnx uses variant_name in the output filename."""
+
+    def test_variant_name_in_filename(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """When variant_name is provided, the ONNX file is named after the variant."""
+        captured: dict = {}
+
+        def _fake_onnx_export(*args, **kwargs) -> None:
+            captured["output_file"] = args[2]  # 3rd positional arg is output_file
+
+        monkeypatch.setattr(_cli_export_module.torch.onnx, "export", _fake_onnx_export)
+
+        _cli_export_module.export_onnx(
+            output_dir=str(tmp_path),
+            model=torch.nn.Identity(),
+            input_names=["input"],
+            input_tensors=torch.randn(1, 3, 8, 8),
+            output_names=["dets"],
+            dynamic_axes=None,
+            verbose=False,
+            variant_name="rfdetr-medium",
+        )
+
+        assert captured["output_file"].endswith("rfdetr-medium.onnx")
+
+    def test_variant_name_with_backbone(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """backbone_only + variant_name produces '{variant}-backbone.onnx'."""
+        captured: dict = {}
+
+        def _fake_onnx_export(*args, **kwargs) -> None:
+            captured["output_file"] = args[2]
+
+        monkeypatch.setattr(_cli_export_module.torch.onnx, "export", _fake_onnx_export)
+
+        _cli_export_module.export_onnx(
+            output_dir=str(tmp_path),
+            model=torch.nn.Identity(),
+            input_names=["input"],
+            input_tensors=torch.randn(1, 3, 8, 8),
+            output_names=["features"],
+            dynamic_axes=None,
+            backbone_only=True,
+            verbose=False,
+            variant_name="rfdetr-nano",
+        )
+
+        assert captured["output_file"].endswith("rfdetr-nano-backbone.onnx")
+
+    def test_default_name_without_variant(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """Without variant_name, falls back to 'inference_model.onnx'."""
+        captured: dict = {}
+
+        def _fake_onnx_export(*args, **kwargs) -> None:
+            captured["output_file"] = args[2]
+
+        monkeypatch.setattr(_cli_export_module.torch.onnx, "export", _fake_onnx_export)
+
+        _cli_export_module.export_onnx(
+            output_dir=str(tmp_path),
+            model=torch.nn.Identity(),
+            input_names=["input"],
+            input_tensors=torch.randn(1, 3, 8, 8),
+            output_names=["dets"],
+            dynamic_axes=None,
+            verbose=False,
+        )
+
+        assert captured["output_file"].endswith("inference_model.onnx")
+
+    def test_default_backbone_name_without_variant(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """Without variant_name + backbone_only, falls back to 'backbone_model.onnx'."""
+        captured: dict = {}
+
+        def _fake_onnx_export(*args, **kwargs) -> None:
+            captured["output_file"] = args[2]
+
+        monkeypatch.setattr(_cli_export_module.torch.onnx, "export", _fake_onnx_export)
+
+        _cli_export_module.export_onnx(
+            output_dir=str(tmp_path),
+            model=torch.nn.Identity(),
+            input_names=["input"],
+            input_tensors=torch.randn(1, 3, 8, 8),
+            output_names=["features"],
+            dynamic_axes=None,
+            backbone_only=True,
+            verbose=False,
+        )
+
+        assert captured["output_file"].endswith("backbone_model.onnx")
+
+    def test_rfdetr_export_passes_variant_name(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """RFDETR.export() passes self.size as variant_name to export_onnx."""
+        captured: dict = {}
+
+        class _DummyCoreModel:
+            def to(self, *_args, **_kwargs):
+                return self
+
+            def eval(self):
+                return self
+
+            def cpu(self):
+                return self
+
+            def __call__(self, *_args, **_kwargs):
+                return {"pred_boxes": torch.zeros(1, 1, 4), "pred_logits": torch.zeros(1, 1, 2)}
+
+        model = types.SimpleNamespace(
+            model=types.SimpleNamespace(model=_DummyCoreModel(), device="cpu", resolution=14),
+            model_config=types.SimpleNamespace(segmentation_head=False),
+            size="rfdetr-medium",
+        )
+
+        def _fake_make_infer_image(*_args, **_kwargs):
+            return torch.zeros(1, 3, 14, 14)
+
+        def _fake_export_onnx(*_args, variant_name=None, **_kw):
+            captured["variant_name"] = variant_name
+            return str(tmp_path / "rfdetr-medium.onnx")
+
+        monkeypatch.setattr("rfdetr.export.main.make_infer_image", _fake_make_infer_image)
+        monkeypatch.setattr("rfdetr.export.main.export_onnx", _fake_export_onnx)
+        monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
+
+        _detr_module.RFDETR.export(model, output_dir=str(tmp_path), shape=(14, 14))
+
+        assert captured["variant_name"] == "rfdetr-medium"
+
+    def test_rfdetr_export_passes_none_when_size_not_set(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """Base RFDETR (size=None) passes None as variant_name."""
+        captured: dict = {}
+
+        class _DummyCoreModel:
+            def to(self, *_args, **_kwargs):
+                return self
+
+            def eval(self):
+                return self
+
+            def cpu(self):
+                return self
+
+            def __call__(self, *_args, **_kwargs):
+                return {"pred_boxes": torch.zeros(1, 1, 4), "pred_logits": torch.zeros(1, 1, 2)}
+
+        model = types.SimpleNamespace(
+            model=types.SimpleNamespace(model=_DummyCoreModel(), device="cpu", resolution=14),
+            model_config=types.SimpleNamespace(segmentation_head=False),
+            size=None,
+        )
+
+        def _fake_make_infer_image(*_args, **_kwargs):
+            return torch.zeros(1, 3, 14, 14)
+
+        def _fake_export_onnx(*_args, variant_name=None, **_kw):
+            captured["variant_name"] = variant_name
+            return str(tmp_path / "inference_model.onnx")
+
+        monkeypatch.setattr("rfdetr.export.main.make_infer_image", _fake_make_infer_image)
+        monkeypatch.setattr("rfdetr.export.main.export_onnx", _fake_export_onnx)
+        monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
+
+        _detr_module.RFDETR.export(model, output_dir=str(tmp_path), shape=(14, 14))
+
+        assert captured["variant_name"] is None

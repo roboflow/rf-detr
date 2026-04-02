@@ -721,6 +721,7 @@ class RFDETR:
             backbone_only=backbone_only,
             verbose=verbose,
             opset_version=opset_version,
+            variant_name=self.size,
         )
 
         logger.info(f"Successfully exported ONNX model to: {output_file}")
