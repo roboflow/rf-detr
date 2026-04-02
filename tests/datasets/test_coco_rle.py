@@ -13,6 +13,7 @@ formats — including mixed annotations within the same image.
 
 import numpy as np
 import pycocotools.mask as mask_util
+import pytest
 import torch
 from PIL import Image
 
@@ -161,6 +162,34 @@ class TestConvertCocoPolyToMaskRle:
         """No segmentations at all should return (0, H, W) tensor."""
         result = convert_coco_poly_to_mask([], _H, _W)
         assert result.shape == (0, _H, _W)
+
+    def test_rle_size_mismatch_behavior(self) -> None:
+        """Compressed RLE with mismatched embedded size should raise a decode error."""
+        ref_mask = _make_reference_mask()
+        rle = _encode_compressed_rle(ref_mask)
+        rle["size"] = [50, 50]
+
+        # Observed behavior: pycocotools rejects mismatched RLE metadata during decode.
+        with pytest.raises(ValueError, match="Invalid RLE mask representation"):
+            convert_coco_poly_to_mask([rle], _H, _W)
+
+    def test_compressed_rle_bytes_counts_decode(self) -> None:
+        """Compressed RLE with bytes counts should decode correctly."""
+        ref_mask = _make_reference_mask()
+        rle = mask_util.encode(np.asfortranarray(ref_mask))
+        rle["counts"] = rle["counts"].encode("utf-8") if isinstance(rle["counts"], str) else rle["counts"]
+        rle["size"] = list(rle["size"])
+
+        result = convert_coco_poly_to_mask([rle], _H, _W)
+
+        assert result.shape == (1, _H, _W)
+        assert result[0, 30, 50] == 1
+        assert result[0, 0, 0] == 0
+
+    def test_malformed_rle_counts_none_raises_value_error(self) -> None:
+        """Malformed RLE with counts=None should raise ValueError."""
+        with pytest.raises(ValueError, match="unsupported counts type"):
+            convert_coco_poly_to_mask([{"counts": None, "size": [_H, _W]}], _H, _W)
 
 
 class TestConvertCocoClassWithRle:

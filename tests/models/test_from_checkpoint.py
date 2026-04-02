@@ -367,6 +367,14 @@ class TestFromCheckpointModelName:
         _, mock_cls = _call_from_checkpoint(ckpt, tmp_path / "ckpt.pth", "rfdetr.variants.RFDETRSmall")
         mock_cls.assert_called_once()
 
+    def test_model_name_args_missing_num_classes_does_not_inject_kwarg(self, tmp_path: Path) -> None:
+        """model_name checkpoints without args.num_classes do not inject num_classes into constructor kwargs."""
+        ckpt = {"args": {"pretrain_weights": "rf-detr-small.pth"}, "model_name": "RFDETRSmall"}
+        _, mock_cls = _call_from_checkpoint(ckpt, tmp_path / "ckpt.pth", "rfdetr.variants.RFDETRSmall")
+
+        call_kwargs = mock_cls.call_args.kwargs
+        assert "num_classes" not in call_kwargs
+
     @pytest.mark.parametrize(
         "model_name, expected_class",
         [
