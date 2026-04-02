@@ -9,7 +9,6 @@
 import hashlib
 import os
 import tempfile
-from typing import Optional
 
 import requests
 from tqdm.auto import tqdm
