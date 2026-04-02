@@ -18,6 +18,7 @@ from pytorch_lightning import __version__ as ptl_version
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 
 from rfdetr.utilities.logger import get_logger
+from rfdetr.utilities.package import get_version
 from rfdetr.utilities.state_dict import _make_fit_loop_state, strip_checkpoint
 
 logger = get_logger()
@@ -111,6 +112,10 @@ class BestModelCallback(ModelCheckpoint):
         # so old-format and unresolved checkpoints are indistinguishable.
         if model_name is not None:
             payload["model_name"] = model_name
+        # Record the rfdetr package version for provenance / compatibility hints.
+        rfdetr_version = get_version()
+        if rfdetr_version is not None:
+            payload["rfdetr_version"] = rfdetr_version
         return payload
 
     @staticmethod

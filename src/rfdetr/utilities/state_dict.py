@@ -147,6 +147,9 @@ def strip_checkpoint(checkpoint: str | os.PathLike[str]) -> None:
     # Preserve model_name when present (#887).
     if "model_name" in state_dict:
         new_state_dict["model_name"] = state_dict["model_name"]
+    # Preserve rfdetr_version when present for provenance tracking.
+    if "rfdetr_version" in state_dict:
+        new_state_dict["rfdetr_version"] = state_dict["rfdetr_version"]
     # Preserve PTL-compatible keys when present (written by BestModelCallback).
     for key in _PTL_COMPAT_KEYS:
         if key in state_dict:
