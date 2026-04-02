@@ -125,4 +125,9 @@ def _download_file(
             logger.info(f"MD5 validation successful for {filename}")
 
     # Atomic replace in target directory.
-    os.replace(temp_filename, filename)
+    try:
+        os.replace(temp_filename, filename)
+    except Exception:
+        if os.path.exists(temp_filename):
+            os.remove(temp_filename)
+        raise
