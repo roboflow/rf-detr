@@ -121,7 +121,8 @@ def strip_checkpoint(checkpoint: str | os.PathLike[str]) -> None:
     """Strip a checkpoint file down to ``model``, ``args``, and PTL-compatible keys.
 
     Preserves ``model_name`` (when present) so that ``RFDETR.from_checkpoint()``
-    can still resolve the model class from the stripped file.
+    can still resolve the model class from the stripped file.  Also preserves
+    ``rfdetr_version`` (when present) for provenance tracking.
 
     Also preserves ``state_dict``, ``global_step``, ``pytorch-lightning_version``,
     ``loops``, ``optimizer_states``, and ``lr_schedulers`` when present so the

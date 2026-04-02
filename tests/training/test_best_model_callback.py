@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
@@ -1105,3 +1105,15 @@ class TestCheckpointRfdetrVersion:
         data = torch.load(total, map_location="cpu", weights_only=False)
         assert "rfdetr_version" in data
         assert isinstance(data["rfdetr_version"], str)
+
+    def test_rfdetr_version_absent_when_get_version_returns_none(self, tmp_path: Path) -> None:
+        """rfdetr_version must be omitted when get_version() cannot resolve the version."""
+        cb = BestModelCallback(output_dir=str(tmp_path))
+        trainer = _make_trainer({"val/mAP_50_95": 0.5})
+        pl_module = _make_pl_module()
+
+        with patch("rfdetr.training.callbacks.best_model.get_version", return_value=None):
+            cb.on_validation_end(trainer, pl_module)
+
+        ckpt = torch.load(tmp_path / "checkpoint_best_regular.pth", weights_only=False)
+        assert "rfdetr_version" not in ckpt

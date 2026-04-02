@@ -113,7 +113,11 @@ class BestModelCallback(ModelCheckpoint):
         if model_name is not None:
             payload["model_name"] = model_name
         # Record the rfdetr package version for provenance / compatibility hints.
-        payload["rfdetr_version"] = get_version()
+        # Omit the key when the version cannot be resolved (e.g. editable install
+        # without package metadata) so old-format checkpoints are indistinguishable.
+        version = get_version()
+        if version is not None:
+            payload["rfdetr_version"] = version
         return payload
 
     @staticmethod
