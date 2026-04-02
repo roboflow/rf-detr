@@ -949,7 +949,17 @@ class RFDETR:
 
         Returns:
             A single or multiple Detections objects, each containing bounding box
-            coordinates, confidence scores, and class IDs.
+            coordinates, confidence scores, and class IDs.  The ``data`` dict of
+            each :class:`~supervision.Detections` object contains:
+
+            * ``"class_name"`` – ``np.ndarray`` of string class names corresponding
+              to each detection (``class_names[class_id]``).  Class IDs are always
+              0-indexed; ``class_names[0]`` is the first class regardless of the
+              original dataset format (COCO category IDs are remapped to 0-based
+              indices during training).
+            * ``"source_image"`` – the original input image (only present when
+              ``include_source_image=True``, which is the default).
+            * ``"source_shape"`` – ``(height, width)`` tuple of the source image dimensions.
 
         Raises:
             ValueError: If ``shape`` cannot be unpacked as a two-element sequence,
@@ -1074,6 +1084,8 @@ class RFDETR:
             target_sizes = torch.tensor(orig_sizes, device=self.model.device)
             results = self.model.postprocess(predictions, target_sizes=target_sizes)
 
+        model_class_names = self.class_names
+        n = len(model_class_names)
         detections_list = []
         for i, result in enumerate(results):
             scores = result["scores"]
@@ -1104,6 +1116,23 @@ class RFDETR:
 
             detections.data["source_image"] = source_images[i]
             detections.data["source_shape"] = orig_sizes[i]
+
+            # Attach class names so callers can map class_id → name without a
+            # separate lookup.  class_id is always 0-indexed regardless of the
+            # original dataset format (COCO category IDs are remapped during
+            # training), so class_names[class_id] is the correct mapping.
+            # Always set data["class_name"] for a consistent interface.
+            class_ids = detections.class_id if detections.class_id is not None else np.array([], dtype=int)
+            oob_ids = [cid for cid in class_ids if not (0 <= cid < n)]
+            if oob_ids:
+                logger.warning_once(
+                    "predict() encountered class_id values out of range [0, %d): %s — mapping to empty string",
+                    n,
+                    oob_ids[:5],
+                )
+            detections.data["class_name"] = np.array(
+                [model_class_names[cid] if 0 <= cid < n else "" for cid in class_ids], dtype=object
+            )
 
             detections_list.append(detections)
 
