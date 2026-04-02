@@ -925,7 +925,16 @@ class RFDETR:
 
         Returns:
             A single or multiple Detections objects, each containing bounding box
-            coordinates, confidence scores, and class IDs.
+            coordinates, confidence scores, and class IDs.  The ``data`` dict of
+            each :class:`~supervision.Detections` object contains:
+
+            * ``"class_name"`` – ``np.ndarray`` of string class names corresponding
+              to each detection (``class_names[class_id]``).  Class IDs are always
+              0-indexed; ``class_names[0]`` is the first class regardless of the
+              original dataset format (COCO category IDs are remapped to 0-based
+              indices during training).
+            * ``"source_image"`` – the original input image.
+            * ``"source_shape"`` – ``(height, width)`` of the source image.
 
         Raises:
             ValueError: If ``shape`` cannot be unpacked as a two-element sequence,
@@ -1080,6 +1089,17 @@ class RFDETR:
 
             detections.data["source_image"] = source_images[i]
             detections.data["source_shape"] = orig_sizes[i]
+
+            # Attach class names so callers can map class_id → name without a
+            # separate lookup.  class_id is always 0-indexed regardless of the
+            # original dataset format (COCO category IDs are remapped during
+            # training), so class_names[class_id] is the correct mapping.
+            # Always set data["class_name"] for a consistent interface.
+            model_class_names = self.class_names
+            class_ids = detections.class_id if detections.class_id is not None else np.array([], dtype=int)
+            detections.data["class_name"] = np.array(
+                [model_class_names[cid] if 0 <= cid < len(model_class_names) else "" for cid in class_ids]
+            )
 
             detections_list.append(detections)
 
