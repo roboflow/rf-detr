@@ -236,7 +236,7 @@ class TestDownloadFile:
             _download_file("https://example.com/file.bin", str(target_path))
 
         assert not target_path.exists()
-        assert not (tmp_path / "weights.bin.tmp").exists()
+        assert not list(tmp_path.glob("weights.bin.*.tmp"))
 
     @patch("rfdetr.utilities.files.tqdm", _DummyTqdm)
     @patch("rfdetr.utilities.files.requests.get")
@@ -254,7 +254,7 @@ class TestDownloadFile:
             )
 
         assert not target_path.exists()
-        assert not (tmp_path / "weights.bin.tmp").exists()
+        assert not list(tmp_path.glob("weights.bin.*.tmp"))
 
     @patch("rfdetr.utilities.files.tqdm", _DummyTqdm)
     @patch("rfdetr.utilities.files.requests.get")
