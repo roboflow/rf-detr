@@ -902,7 +902,7 @@ class RFDETR:
         threshold: float = 0.5,
         shape: tuple[int, int] | None = None,
         patch_size: int | None = None,
-        include_source_image: bool = False,
+        include_source_image: bool = True,
         **kwargs,
     ) -> sv.Detections | list[sv.Detections]:
         """Performs object detection on the input images and returns bounding box
@@ -933,7 +933,8 @@ class RFDETR:
                 ``patch_size * num_windows``.
             include_source_image:
                 Whether to attach the original image as ``source_image`` in
-                ``detections.data``. Defaults to ``False`` to reduce memory use.
+                ``detections.data``. Defaults to ``True`` for backward compatibility.
+                Set to ``False`` to reduce memory use when source images are not needed.
             **kwargs:
                 Additional keyword arguments.
 

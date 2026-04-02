@@ -94,10 +94,9 @@ def _download_file(
         suffix=".tmp",
         dir=target_dir,
     )
-    os.close(fd)
     try:
         with (
-            open(temp_filename, "wb") as f,
+            os.fdopen(fd, "wb") as f,
             tqdm(
                 desc=filename,
                 total=total_size,

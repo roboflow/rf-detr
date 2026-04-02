@@ -98,19 +98,32 @@ def test_predict_accepts_image_url() -> None:
 class TestPredictSourceData:
     """Verify ``predict()`` source metadata behavior."""
 
-    def test_source_image_not_included_by_default(self) -> None:
-        """source_image is omitted by default to avoid large allocations."""
+    def test_source_image_included_by_default(self) -> None:
+        """source_image remains included by default for API compatibility."""
         img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
         model = _DummyRFDETR()
         detections = model.predict(img)
-        assert "source_image" not in detections.data
+        assert "source_image" in detections.data
+        assert isinstance(detections.data["source_image"], np.ndarray)
+        assert detections.data["source_image"].shape == (48, 64, 3)
         assert detections.data["source_shape"] == (48, 64)
 
-    def test_source_image_not_included_by_default_tensor(self) -> None:
-        """Tensor input also omits source_image by default (opt-in required)."""
+    def test_source_image_included_by_default_tensor(self) -> None:
+        """Tensor input keeps source_image by default for API compatibility."""
         tensor = torch.rand(3, 48, 64)
         model = _DummyRFDETR()
         detections = model.predict(tensor)
+        assert "source_image" in detections.data
+        assert isinstance(detections.data["source_image"], np.ndarray)
+        assert detections.data["source_image"].dtype == np.uint8
+        assert detections.data["source_image"].shape == (48, 64, 3)
+        assert detections.data["source_shape"] == (48, 64)
+
+    def test_source_image_can_be_disabled(self) -> None:
+        """include_source_image=False omits source_image for memory-sensitive paths."""
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+        model = _DummyRFDETR()
+        detections = model.predict(img, include_source_image=False)
         assert "source_image" not in detections.data
         assert detections.data["source_shape"] == (48, 64)
 
