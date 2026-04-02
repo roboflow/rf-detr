@@ -988,8 +988,9 @@ class RFDETR:
               0-indexed; ``class_names[0]`` is the first class regardless of the
               original dataset format (COCO category IDs are remapped to 0-based
               indices during training).
-            * ``"source_image"`` – the original input image.
-            * ``"source_shape"`` – ``(height, width)`` of the source image.
+            * ``"source_image"`` – the original input image (only present when
+              ``include_source_image=True``, which is the default).
+            * ``"source_shape"`` – ``(height, width)`` tuple of the source image dimensions.
 
         Raises:
             ValueError: If ``shape`` cannot be unpacked as a two-element sequence,
@@ -1115,6 +1116,8 @@ class RFDETR:
             target_sizes = torch.tensor(orig_sizes, device=self.model.device)
             results = self.model.postprocess(predictions, target_sizes=target_sizes)
 
+        model_class_names = self.class_names
+        n = len(model_class_names)
         detections_list = []
         for i, result in enumerate(results):
             scores = result["scores"]
@@ -1152,11 +1155,15 @@ class RFDETR:
             # original dataset format (COCO category IDs are remapped during
             # training), so class_names[class_id] is the correct mapping.
             # Always set data["class_name"] for a consistent interface.
-            model_class_names = self.class_names
             class_ids = detections.class_id if detections.class_id is not None else np.array([], dtype=int)
-            detections.data["class_name"] = np.array(
-                [model_class_names[cid] if 0 <= cid < len(model_class_names) else "" for cid in class_ids]
-            )
+            class_name_list = []
+            for cid in class_ids:
+                if 0 <= cid < n:
+                    class_name_list.append(model_class_names[cid])
+                else:
+                    logger.warning("class_id %d is out of range [0, %d) — mapping to empty string", cid, n)
+                    class_name_list.append("")
+            detections.data["class_name"] = np.array(class_name_list, dtype=object)
 
             detections_list.append(detections)
 
