@@ -541,33 +541,43 @@ class RFDETR:
         self.remove_optimized_model()
 
         device = self.model.device
+        # Clear any previously optimized state before starting a new optimization run.
+        self.remove_optimized_model()
+
+        device = self.model.device
         cuda_ctx = torch.cuda.device(device) if device.type == "cuda" else contextlib.nullcontext()
-        with cuda_ctx:
-            inference_model = deepcopy(self.model.model)
-            inference_model.eval()
-            inference_model.export()
-            inference_model = inference_model.to(dtype=dtype)
 
-            if compile:
-                inference_model = torch.jit.trace(
-                    inference_model,
-                    torch.randn(
-                        batch_size,
-                        3,
-                        self.model.resolution,
-                        self.model.resolution,
-                        device=self.model.device,
-                        dtype=dtype,
-                    ),
-                )
+        try:
+            with cuda_ctx:
+                self.model.inference_model = deepcopy(self.model.model)
+                self.model.inference_model.eval()
+                self.model.inference_model.export()
 
-            self.model.inference_model = inference_model
-            self._optimized_resolution = self.model.resolution
-            self._is_optimized_for_inference = True
-            self._optimized_dtype = dtype
-            if compile:
-                self._optimized_has_been_compiled = True
-                self._optimized_batch_size = batch_size
+                self._optimized_resolution = self.model.resolution
+                self._is_optimized_for_inference = True
+
+                self.model.inference_model = self.model.inference_model.to(dtype=dtype)
+                self._optimized_dtype = dtype
+
+                if compile:
+                    self.model.inference_model = torch.jit.trace(
+                        self.model.inference_model,
+                        torch.randn(
+                            batch_size,
+                            3,
+                            self.model.resolution,
+                            self.model.resolution,
+                            device=self.model.device,
+                            dtype=dtype,
+                        ),
+                    )
+                    self._optimized_has_been_compiled = True
+                    self._optimized_batch_size = batch_size
+        except Exception:
+            # Ensure the object is left in a consistent, unoptimized state if optimization fails.
+            with contextlib.suppress(Exception):
+                self.remove_optimized_model()
+            raise
 
     def remove_optimized_model(self) -> None:
         """Remove the optimized inference model and reset all optimization flags.

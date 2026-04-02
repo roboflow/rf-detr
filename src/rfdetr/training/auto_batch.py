@@ -127,11 +127,8 @@ def _probe_step(
             loss_dict = cast(dict[str, torch.Tensor], criterion(outputs, targets))
             weight_dict = cast(dict[str, float], getattr(criterion, "weight_dict"))
             weighted_losses = [loss_dict[name] * weight_dict[name] for name in loss_dict if name in weight_dict]
-            loss = (
-                torch.stack(weighted_losses).sum()
-                if weighted_losses
-                else torch.tensor(0.0, dtype=torch.float32, device=device)
-            )
+            base_loss = torch.zeros((), dtype=torch.float32, device=device, requires_grad=True)
+            loss = base_loss + torch.stack(weighted_losses).sum() if weighted_losses else base_loss
 
         if not torch.isfinite(loss):
             raise RuntimeError("auto-batch probe produced a non-finite training loss.")
