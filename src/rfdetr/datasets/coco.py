@@ -61,6 +61,9 @@ def _is_rle(segmentation: Any) -> bool:
 
     RLE annotations are dicts with ``"counts"`` and ``"size"`` keys, as opposed
     to polygon annotations which are lists of coordinate arrays.
+    This is a structural check only — it verifies key presence but does not
+    validate value types. A dict with counts=None will pass this check but fail
+    downstream in convert_coco_poly_to_mask.
 
     Args:
         segmentation: A single COCO segmentation annotation entry.
@@ -77,7 +80,8 @@ def convert_coco_poly_to_mask(segmentations: List[Any], height: int, width: int)
     Supports both polygon and RLE (Run-Length Encoding) annotation formats.
     Polygon annotations (lists of coordinate arrays) are rasterised via
     ``pycocotools.mask.frPyObjects``.  RLE annotations (dicts with
-    ``"counts"`` and ``"size"`` keys) are decoded directly, skipping the
+    ``"counts"`` and ``"size"`` keys; ``counts`` may be str or bytes for
+    compressed RLE, or list of ints for uncompressed RLE) are decoded directly, skipping the
     polygon-to-RLE conversion step.
 
     Args:
@@ -85,6 +89,8 @@ def convert_coco_poly_to_mask(segmentations: List[Any], height: int, width: int)
             either a polygon list (``[[x1, y1, x2, y2, ...], ...]``), an RLE
             dict (``{"counts": ..., "size": [H, W]}``), or ``None`` / empty
             for instances without a mask.
+            Dicts must be valid COCO RLE annotations with non-empty ``"counts"``
+            and ``"size"`` fields.
         height: Image height in pixels (used for polygon rasterisation).
         width: Image width in pixels (used for polygon rasterisation).
 
@@ -102,7 +108,13 @@ def convert_coco_poly_to_mask(segmentations: List[Any], height: int, width: int)
             masks.append(torch.zeros((height, width), dtype=torch.uint8))
             continue
         if _is_rle(segmentation):
-            if isinstance(segmentation["counts"], (str, bytes)):
+            counts = segmentation["counts"]
+            if not isinstance(counts, (str, bytes, list)):
+                raise ValueError(
+                    f"RLE segmentation has unsupported counts type {type(counts).__name__!r}; "
+                    "expected str, bytes, or list"
+                )
+            if isinstance(counts, (str, bytes)):
                 # Compressed RLE — decode directly, skip frPyObjects
                 rles = [segmentation]
             else:
