@@ -30,7 +30,7 @@ Perform inference on an image using either the `rfdetr` package or the `inferenc
 
     model = RFDETRMedium()
 
-    detections = model.predict("https://media.roboflow.com/dog.jpg", threshold=0.5)
+    detections = model.predict("https://media.roboflow.com/dog.jpg", threshold=0.5, include_source_image=True)
 
     labels = [f"{COCO_CLASSES[class_id]}" for class_id in detections.class_id]
 

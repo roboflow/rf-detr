@@ -12,6 +12,7 @@ import importlib
 import json
 import operator
 import os
+import tempfile
 import warnings
 from collections import defaultdict
 from copy import deepcopy
@@ -538,9 +539,6 @@ class RFDETR:
         if not isinstance(dtype, torch.dtype):
             raise TypeError(f"dtype must be a torch.dtype or a string name of a dtype, got {type(dtype)!r}")
 
-        self.remove_optimized_model()
-
-        device = self.model.device
         # Clear any previously optimized state before starting a new optimization run.
         self.remove_optimized_model()
 
@@ -903,6 +901,7 @@ class RFDETR:
         threshold: float = 0.5,
         shape: tuple[int, int] | None = None,
         patch_size: int | None = None,
+        include_source_image: bool = False,
         **kwargs,
     ) -> sv.Detections | list[sv.Detections]:
         """Performs object detection on the input images and returns bounding box
@@ -931,6 +930,9 @@ class RFDETR:
                 to ``model_config.patch_size`` (typically 14 for large models, 16 for
                 smaller ones). Divisibility is checked against
                 ``patch_size * num_windows``.
+            include_source_image:
+                Whether to attach the original image as ``source_image`` in
+                ``detections.data``. Defaults to ``False`` to reduce memory use.
             **kwargs:
                 Additional keyword arguments.
 
@@ -980,7 +982,7 @@ class RFDETR:
 
         orig_sizes = []
         processed_images = []
-        source_images = []
+        source_images = [] if include_source_image else None
 
         for img in images:
             if isinstance(img, str):
@@ -989,12 +991,13 @@ class RFDETR:
                 img = Image.open(img)
 
             if not isinstance(img, torch.Tensor):
-                src = np.array(img)
-                if src.dtype != np.uint8:
-                    src = (src * 255).clip(0, 255).astype(np.uint8)
-                source_images.append(src)
+                if include_source_image:
+                    src = np.array(img)
+                    if src.dtype != np.uint8:
+                        src = (src * 255).clip(0, 255).astype(np.uint8)
+                    source_images.append(src)
                 img = F.to_tensor(img)
-            else:
+            elif include_source_image:
                 source_images.append((img.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8))
 
             if (img > 1).any():
@@ -1089,7 +1092,8 @@ class RFDETR:
                     class_id=labels.cpu().numpy(),
                 )
 
-            detections.data["source_image"] = source_images[i]
+            if include_source_image:
+                detections.data["source_image"] = source_images[i]
             detections.data["source_shape"] = orig_sizes[i]
 
             detections_list.append(detections)
@@ -1126,8 +1130,6 @@ class RFDETR:
                 not set for custom architectures.
 
         """
-        import shutil
-
         from roboflow import Roboflow
 
         if api_key is None:
@@ -1142,9 +1144,7 @@ class RFDETR:
             raise ValueError("Must set size for custom architectures")
 
         size = self.size or size
-        tmp_out_dir = ".roboflow_temp_upload"
-        os.makedirs(tmp_out_dir, exist_ok=True)
-        try:
+        with tempfile.TemporaryDirectory(prefix="roboflow_upload_") as tmp_out_dir:
             # Write class_names.txt so the Roboflow upload pipeline can discover
             # the class labels without relying on args.class_names in the checkpoint.
             class_names_path = os.path.join(tmp_out_dir, "class_names.txt")
@@ -1165,8 +1165,6 @@ class RFDETR:
             project = workspace.project(project_id)
             project_version = project.version(version)
             project_version.deploy(model_type=size, model_path=tmp_out_dir, filename="weights.pt")
-        finally:
-            shutil.rmtree(tmp_out_dir, ignore_errors=True)
 
 
 def __getattr__(name: str):
