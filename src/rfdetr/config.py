@@ -176,6 +176,7 @@ class ModelConfig(BaseConfig):
     ia_bce_loss: bool = True
     cls_loss_coef: float = 1.0
     segmentation_head: bool = False
+    oriented: bool = False
     use_grouppose_keypoints: bool = False
     keypoint_cross_attn: bool = True
     inter_instance_kp_attn: bool = False
@@ -735,7 +736,7 @@ class TrainConfig(BaseConfig):
     keypoint_visible_loss_coef: float = 0
     keypoint_nll_loss_coef: float = 0
     keypoint_oks_sigmas: list[float] | None = None
-    dataset_file: Literal["coco", "o365", "roboflow", "yolo"] = "roboflow"
+    dataset_file: Literal["coco", "o365", "roboflow", "yolo", "dota"] = "roboflow"
     square_resize_div_64: bool = True
     dataset_dir: PathLikeStr | None
     output_dir: PathLikeStr = "output"

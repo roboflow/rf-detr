@@ -48,6 +48,7 @@ _MC_NAMESPACE_FIELDS = {
     "projector_scale",
     "resolution",
     "sa_nheads",
+    "oriented",
     "segmentation_head",
     "use_grouppose_keypoints",
     "keypoint_cross_attn",
