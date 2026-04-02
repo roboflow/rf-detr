@@ -131,11 +131,7 @@ from rfdetr.assets.coco_classes import COCO_CLASSES
 
 model = RFDETRMedium()
 
-detections = model.predict(
-    "https://media.roboflow.com/dog.jpg",
-    threshold=0.5,
-    include_source_image=True,  # Required for annotated visualization
-)
+detections = model.predict("https://media.roboflow.com/dog.jpg", threshold=0.5)
 
 labels = [f"{COCO_CLASSES[class_id]}" for class_id in detections.class_id]
 
@@ -190,11 +186,7 @@ from rfdetr.assets.coco_classes import COCO_CLASSES
 
 model = RFDETRSegMedium()
 
-detections = model.predict(
-    "https://media.roboflow.com/dog.jpg",
-    threshold=0.5,
-    include_source_image=True,  # Required for annotated visualization
-)
+detections = model.predict("https://media.roboflow.com/dog.jpg", threshold=0.5)
 
 labels = [f"{COCO_CLASSES[class_id]}" for class_id in detections.class_id]
 
