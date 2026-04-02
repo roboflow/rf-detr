@@ -9,14 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+### Changed
+
 ### Deprecated
 
 ### Fixed
 
-- Fixed `models/lwdetr.py`: `reinitialize_detection_head` now replaces `nn.Linear` modules instead of mutating `.data` tensors in-place, ensuring `out_features` metadata stays consistent with the actual weight shape. This prevents ONNX export and `torch.jit.trace` from emitting stale (pre-fine-tuning) class counts for fine-tuned models. (#904)
-- Fixed `RFDETR.optimize_for_inference()` leaking a CUDA context on multi-GPU setups: the deep-copy, export, and JIT-trace steps now run inside `torch.cuda.device(device)` to pin the context to the correct device. `optimize_for_inference()` also now accepts dtype as a string name (e.g. `"float16"`) in addition to a `torch.dtype` object, and all invalid dtype inputs uniformly raise `TypeError`. (#899)
-
 ---
+
+## [1.6.3] — 2026-04-02
+
+### Changed
+
+- `predict()` now stores the original image and its shape on returned `sv.Detections` objects — `detections.data["source_image"]` (NumPy array) and `detections.data["source_shape"]` (height, width) let you annotate results without loading the image separately. (#892)
+- `RFDETR.train()` auto-detects `num_classes` from the dataset directory when not explicitly set, reinitializing the detection head to the correct class count automatically. A warning is emitted when the configured value differs from the dataset count. (#893)
+- `optimize_for_inference()` now accepts dtype as a string name (e.g. `"float16"`) in addition to a `torch.dtype` object; invalid dtype inputs uniformly raise `TypeError`. (#899)
+
+### Fixed
+
+- Fixed `models/lwdetr.py`: `reinitialize_detection_head` now replaces `nn.Linear` modules instead of mutating `.data` tensors in-place, ensuring `out_features` metadata stays consistent with the actual weight shape. This prevents ONNX export and `torch.jit.trace` from emitting stale (pre-fine-tuning) class counts for fine-tuned models. (#904)
+- Fixed `RFDETR.optimize_for_inference()` leaking a CUDA context on multi-GPU setups: the deep-copy, export, and JIT-trace steps now run inside `torch.cuda.device(device)` to pin the context to the correct device. (#899)
+- Fixed `optimize_for_inference()` leaving inconsistent state on failure: prior optimized state is now reset and flags are committed only after a successful build/trace; temp download files use unique per-process paths to avoid parallel worker collisions.
+- Fixed `deploy_to_roboflow` failing with `FileNotFoundError` after PyTorch Lightning migration: `class_names.txt` is now written to the upload directory and `args.class_names` is populated before saving the checkpoint. (#890)
 
 ## [1.6.2] — 2026-03-27
 
@@ -33,8 +47,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed ONNX export ignoring an explicit `patch_size` argument: `export()` and `predict()` now resolve `patch_size` from `model_config` by default, validate it strictly (positive integer, not bool), and enforce that `(H, W)` dimensions are divisible by `patch_size × num_windows`. (#876)
 - Fixed ONNX export for models with dynamic batch dimensions — replaced `H_.expand(N_)` with `torch.full` for Python-int spatial dims to eliminate tracer failures. (#871)
 
----
-
 ## [1.6.1] — 2026-03-25
 
 ### Deprecated
@@ -49,8 +61,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed `BestModelCallback` and checkpoint monitor raising `MisconfigurationException` on non-eval epochs when `eval_interval > 1` — monitor key absence is now handled gracefully. (#848)
 - Fixed `protobuf` version constraint in the `loggers` extra to guard against TensorBoard descriptor crash (`TypeError: Descriptors cannot be created directly`) with protobuf ≥ 4. (#846)
 - Fixed duplicate `ModelCheckpoint` state keys when `checkpoint_interval=1`; `last.ckpt` is omitted in that configuration to avoid collision. (#859)
-
----
 
 ## [1.6.0] — 2026-03-20
 
@@ -93,6 +103,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed `ValueError: matrix entries are not finite` in `HungarianMatcher` when the cost matrix contains NaN or Inf — non-finite entries are replaced with a finite sentinel before `linear_sum_assignment`, warning emitted at most once per matcher instance. (#787, closes #784)
 - Fixed YOLO dataset validation rejecting `data.yml` — both `.yaml` and `.yml` are now accepted. (#777, closes #775)
 - Silently dropped degenerate bounding boxes (zero width or height) before Albumentations validation instead of raising `ValueError`. (#825)
+
+---
 
 ## [1.5.2] — 2026-03-04
 
@@ -159,3 +171,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed `np.argwhere` → `np.argmax` misuse. (#536)
 - Fixed COCO sparse category ID remapping for non-contiguous or offset category IDs. (#712)
 - Fixed segmentation mask filtering when using aggressive augmentations. (#717)
+
+---
+
+## [1.4.3] — 2026-02-16
+
+### Changed
+
+- Pretrained weight downloads now validate against an MD5 checksum to detect corrupted files. (#679)
+
+### Fixed
+
+- Fixed `deploy_to_roboflow` failing for segmentation model exports. (#578)
+- Fixed missing `info` key in COCO export format. (#681)
+
+## [1.4.2] — 2026-02-12
+
+### Added
+
+- Added `generate_coco_dataset()` utility for generating synthetic COCO-format datasets with configurable class counts, split ratios, and bounding box annotations. (#617)
+- Added `run_test=False` to `TrainConfig` — skip test-split evaluation when your dataset has no test set. (#628)
+
+### Changed
+
+- `model.predict()` now accepts image URLs directly — no need to download images before inference. (#629)
+- Plus models (`RFDETRXLarge`, `RFDETR2XLarge`) are now distributed as a separate `rfdetr_plus` package under the Roboflow Model License. (#645)
+
+### Fixed
+
+- Fixed segmentation ONNX export failure. (#626)
+
+## [1.4.1] — 2026-01-30
+
+### Added
+
+- Added native YOLO dataset format support alongside COCO. (#74)
+- Added `--print-freq` CLI argument to control training log frequency. (#603)
+
+### Changed
+
+- Pinned `transformers` to `<5.0.0` to prevent incompatibility with the transformers v5 API. (#599)
+
+### Fixed
+
+- Fixed class count mismatch in `train_from_config` for Roboflow-uploaded datasets. (#588)
+- Improved `num_classes` mismatch warning messages to be actionable rather than misleading. (#261)
+- Fixed CLI crash when specifying the `device` argument. (#246)
+
+## [1.4.0] — 2026-01-22
+
+Headline release introducing new pre-trained model sizes — L, XL, and 2XL for object detection, and the full N/S/M/L/XL/2XL range for instance segmentation. Also added YOLO format training support, simplified the dependency footprint by removing several heavy packages (`cython`, `fairscale`, `timm`, `einops`, and others), and fixed per-class precision/recall/F1 computation. Drops Python 3.9 support.
