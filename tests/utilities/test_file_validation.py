@@ -202,7 +202,7 @@ class TestDownloadFile:
 
         assert target_path.exists()
         assert target_path.read_bytes() == b"helloworld"
-        assert not (tmp_path / "weights.bin.tmp").exists()
+        assert not list(tmp_path.glob("weights.bin.*.tmp"))
         mock_get.assert_called_once_with("https://example.com/file.bin", stream=True, timeout=30.0)
 
     @patch("rfdetr.utilities.files.requests.get")
@@ -216,7 +216,7 @@ class TestDownloadFile:
             _download_file("https://example.com/file.bin", str(target_path))
 
         assert not target_path.exists()
-        assert not (tmp_path / "weights.bin.tmp").exists()
+        assert not list(tmp_path.glob("weights.bin.*.tmp"))
 
     @patch("rfdetr.utilities.files.tqdm", _DummyTqdm)
     @patch("rfdetr.utilities.files.requests.get")
