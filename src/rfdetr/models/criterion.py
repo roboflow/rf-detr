@@ -26,6 +26,7 @@ from rfdetr.models.heads.segmentation import (
 from rfdetr.models.math import accuracy
 from rfdetr.utilities import box_ops
 from rfdetr.utilities.distributed import get_world_size, is_dist_avail_and_initialized
+from rfdetr.utilities.rotated_box_ops import kld_loss, probiou
 
 
 def sigmoid_focal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: float = 2):
@@ -180,6 +181,7 @@ class SetCriterion(nn.Module):
         self.use_varifocal_loss = use_varifocal_loss
         self.use_position_supervised_loss = use_position_supervised_loss
         self.ia_bce_loss = ia_bce_loss
+        self.oriented = getattr(matcher, "oriented", False)
         self.mask_point_sample_ratio = mask_point_sample_ratio
         self.num_keypoints_per_class = num_keypoints_per_class or []
 
@@ -269,14 +271,18 @@ class SetCriterion(nn.Module):
             alpha = self.focal_alpha
             gamma = 2
             src_boxes = outputs["pred_boxes"][idx]
-            target_boxes = torch.cat([t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0)
+            tgt_key = "boxes_obb" if self.oriented else "boxes"
+            target_boxes = torch.cat([t[tgt_key][i] for t, (_, i) in zip(targets, indices)], dim=0)
 
-            iou_targets = torch.diag(
-                box_ops.box_iou(
-                    box_ops.box_cxcywh_to_xyxy(src_boxes.detach()),
-                    box_ops.box_cxcywh_to_xyxy(target_boxes),
-                )[0]
-            )
+            if self.oriented:
+                iou_targets = probiou(src_boxes.detach(), target_boxes)
+            else:
+                iou_targets = torch.diag(
+                    box_ops.box_iou(
+                        box_ops.box_cxcywh_to_xyxy(src_boxes.detach()),
+                        box_ops.box_cxcywh_to_xyxy(target_boxes),
+                    )[0]
+                )
             pos_ious = iou_targets.clone().detach()
             prob = src_logits.sigmoid()
             # init positive weights and negative weights
@@ -417,26 +423,34 @@ class SetCriterion(nn.Module):
         return losses
 
     def loss_boxes(self, outputs, targets, indices, num_boxes):
-        """Compute the losses related to the bounding boxes, the L1 regression loss and the GIoU loss targets dicts must
-        contain the key "boxes" containing a tensor of dim [nb_target_boxes, 4] The target boxes are expected in format
-        (center_x, center_y, w, h), normalized by the image size."""
+        """Compute the losses related to the bounding boxes, the L1 regression loss and the GIoU loss.
+
+        For oriented boxes, uses KLD loss instead of GIoU, and L1 on spatial dims only.
+        """
         assert "pred_boxes" in outputs
         idx = self._get_src_permutation_idx(indices)
         src_boxes = outputs["pred_boxes"][idx]
-        target_boxes = torch.cat([t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0)
-
-        loss_bbox = F.l1_loss(src_boxes, target_boxes, reduction="none")
+        tgt_key = "boxes_obb" if self.oriented else "boxes"
+        target_boxes = torch.cat([t[tgt_key][i] for t, (_, i) in zip(targets, indices)], dim=0)
 
         losses = {}
-        losses["loss_bbox"] = loss_bbox.sum() / num_boxes
 
-        loss_giou = 1 - torch.diag(
-            box_ops.generalized_box_iou(
-                box_ops.box_cxcywh_to_xyxy(src_boxes),
-                box_ops.box_cxcywh_to_xyxy(target_boxes),
+        if self.oriented:
+            loss_bbox = F.l1_loss(src_boxes[..., :4], target_boxes[..., :4], reduction="none")
+            losses["loss_bbox"] = loss_bbox.sum() / num_boxes
+            loss_kld = kld_loss(src_boxes, target_boxes)
+            losses["loss_giou"] = loss_kld.sum() / num_boxes
+        else:
+            loss_bbox = F.l1_loss(src_boxes, target_boxes, reduction="none")
+            losses["loss_bbox"] = loss_bbox.sum() / num_boxes
+            loss_giou = 1 - torch.diag(
+                box_ops.generalized_box_iou(
+                    box_ops.box_cxcywh_to_xyxy(src_boxes),
+                    box_ops.box_cxcywh_to_xyxy(target_boxes),
+                )
             )
-        )
-        losses["loss_giou"] = loss_giou.sum() / num_boxes
+            losses["loss_giou"] = loss_giou.sum() / num_boxes
+
         return losses
 
     def loss_masks(self, outputs, targets, indices, num_boxes):

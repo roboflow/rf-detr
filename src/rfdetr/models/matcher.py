@@ -29,6 +29,7 @@ from rfdetr.models.heads.keypoints import compute_keypoint_matching_cost
 from rfdetr.models.heads.segmentation import point_sample
 from rfdetr.utilities.box_ops import batch_dice_loss, batch_sigmoid_ce_loss, box_cxcywh_to_xyxy, generalized_box_iou
 from rfdetr.utilities.logger import get_logger
+from rfdetr.utilities.rotated_box_ops import gwd_pairwise
 
 logger = get_logger()
 _SANITIZED_COST_MARGIN = 1.0
@@ -63,6 +64,7 @@ class HungarianMatcher(nn.Module):
         keypoint_findable_loss_coef: float = 0.0,
         keypoint_visible_loss_coef: float = 0.0,
         keypoint_nll_loss_coef: float = 0.0,
+        oriented: bool = False,
     ):
         """Creates the matcher.
 
@@ -76,6 +78,7 @@ class HungarianMatcher(nn.Module):
             mask_point_sample_ratio: Downsampling ratio for mask point sampling.
             cost_mask_ce: Relative weight of the binary cross-entropy mask cost.
             cost_mask_dice: Relative weight of the Dice mask cost.
+            oriented: If ``True``, use GWD cost instead of GIoU for rotated boxes.
         """
         super().__init__()
         self.cost_class = cost_class
@@ -91,6 +94,7 @@ class HungarianMatcher(nn.Module):
         self.keypoint_findable_loss_coef = keypoint_findable_loss_coef
         self.keypoint_visible_loss_coef = keypoint_visible_loss_coef
         self.keypoint_nll_loss_coef = keypoint_nll_loss_coef
+        self.oriented = oriented
         self._warned_non_finite_costs = False
 
     @staticmethod
@@ -166,11 +170,12 @@ class HungarianMatcher(nn.Module):
         # We flatten to compute the cost matrices in a batch
         flat_pred_logits = outputs["pred_logits"].flatten(0, 1)
         out_prob = flat_pred_logits.sigmoid()  # [batch_size * num_queries, num_classes]
-        out_bbox = outputs["pred_boxes"].flatten(0, 1)  # [batch_size * num_queries, 4]
+        out_bbox = outputs["pred_boxes"].flatten(0, 1)  # [batch_size * num_queries, 4 or 5]
 
         # Also concat the target labels and boxes
         tgt_ids = torch.cat([v["labels"] for v in targets])
-        tgt_bbox = torch.cat([v["boxes"] for v in targets])
+        tgt_bbox_key = "boxes_obb" if self.oriented else "boxes"
+        tgt_bbox = torch.cat([v[tgt_bbox_key] for v in targets])
         tgt_keypoints = None
 
         masks_present = "masks" in targets[0]
@@ -178,9 +183,11 @@ class HungarianMatcher(nn.Module):
         if keypoints_present:
             tgt_keypoints = torch.cat([v["keypoints"] for v in targets], dim=0)
 
-        # Compute the giou cost between boxes
-        giou = generalized_box_iou(box_cxcywh_to_xyxy(out_bbox), box_cxcywh_to_xyxy(tgt_bbox))
-        cost_giou = -giou
+        if self.oriented:
+            cost_giou = gwd_pairwise(out_bbox, tgt_bbox)
+        else:
+            giou = generalized_box_iou(box_cxcywh_to_xyxy(out_bbox), box_cxcywh_to_xyxy(tgt_bbox))
+            cost_giou = -giou
 
         # Compute the classification cost.
         alpha = self.focal_alpha
@@ -193,8 +200,10 @@ class HungarianMatcher(nn.Module):
         pos_cost_class = alpha * ((1 - out_prob) ** gamma) * (-F.logsigmoid(flat_pred_logits))
         cost_class = pos_cost_class[:, tgt_ids] - neg_cost_class[:, tgt_ids]
 
-        # Compute the L1 cost between boxes
-        cost_bbox = torch.cdist(out_bbox, tgt_bbox, p=1)
+        # Compute the L1 cost between boxes (spatial dims only for oriented)
+        out_bbox_spatial = out_bbox[..., :4] if self.oriented else out_bbox
+        tgt_bbox_spatial = tgt_bbox[..., :4] if self.oriented else tgt_bbox
+        cost_bbox = torch.cdist(out_bbox_spatial, tgt_bbox_spatial, p=1)
 
         if masks_present:
             tgt_masks = torch.cat([v["masks"] for v in targets])
@@ -279,7 +288,7 @@ class HungarianMatcher(nn.Module):
                 self._warned_non_finite_costs = True
             cost_matrix = self._sanitize_cost_matrix(cost_matrix)
 
-        sizes = [len(v["boxes"]) for v in targets]
+        sizes = [len(v[tgt_bbox_key]) for v in targets]
         indices = []
         if num_queries % group_detr != 0:
             raise ValueError(f"num_queries ({num_queries}) must be divisible by group_detr ({group_detr})")
@@ -316,6 +325,7 @@ def build_matcher(args) -> HungarianMatcher:
         Configured HungarianMatcher instance.
     """
     # Detection-only matcher args may omit keypoint costs; zero defaults disable keypoint matching terms.
+    oriented = getattr(args, "oriented", False)
     common_kwargs = {
         "cost_class": args.set_cost_class,
         "cost_bbox": args.set_cost_bbox,
@@ -326,6 +336,7 @@ def build_matcher(args) -> HungarianMatcher:
         "keypoint_findable_loss_coef": getattr(args, "keypoint_findable_loss_coef", 0.0),
         "keypoint_visible_loss_coef": getattr(args, "keypoint_visible_loss_coef", 0.0),
         "keypoint_nll_loss_coef": getattr(args, "keypoint_nll_loss_coef", 0.0),
+        "oriented": oriented,
     }
     if args.segmentation_head:
         return HungarianMatcher(
