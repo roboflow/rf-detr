@@ -367,10 +367,9 @@ class TestPredictPatchSize:
 class TestPredictClassNameData:
     """Verify that ``predict()`` populates ``data["class_name"]`` in the returned Detections.
 
-    Regression tests for https://github.com/roboflow/rf-detr/issues/948 — class IDs
-    are always 0-indexed (COCO category IDs are remapped during training); including
-    the class name string in ``data`` lets callers read the class directly without a
-    separate lookup into ``model.class_names``.
+    class IDs are always 0-indexed (COCO category IDs are remapped during training);
+    including the class name string in ``data`` lets callers read the class directly
+    without a separate lookup into ``model.class_names``.
     """
 
     def _make_model_with_class_names(self, class_names: list[str], labels: list[int]) -> _DummyRFDETR:
@@ -433,6 +432,9 @@ class TestPredictClassNameData:
         detections = model.predict(img, threshold=1.1)
         assert "class_name" in detections.data
         assert len(detections.data["class_name"]) == 0, "class_name must be empty when no detections pass threshold"
+        assert detections.data["class_name"].dtype == object, (
+            "class_name dtype must be object even when the array is empty (not float64)"
+        )
 
     def test_class_name_out_of_bounds_class_id_returns_empty_string(self) -> None:
         """A class_id >= len(class_names) must map to an empty string (no IndexError)."""
@@ -448,3 +450,17 @@ class TestPredictClassNameData:
         img = PIL.Image.new("RGB", (28, 28))
         detections = model.predict(img)
         assert detections.data["class_name"][0] == "", "Negative class_id must produce empty string"
+
+    def test_class_name_populated_for_each_image_in_batch(self) -> None:
+        """class_name must be correctly populated for every Detections in a batch prediction."""
+        model = self._make_model_with_class_names(["cat", "dog"], labels=[0, 1])
+        img1 = PIL.Image.new("RGB", (28, 28))
+        img2 = PIL.Image.new("RGB", (28, 28))
+        results = model.predict([img1, img2])
+        assert isinstance(results, list), "batch predict must return a list"
+        assert len(results) == 2, "one Detections per input image"
+        for idx, det in enumerate(results):
+            assert "class_name" in det.data, f"image {idx}: class_name must be present"
+            assert list(det.data["class_name"]) == ["cat", "dog"], (
+                f"image {idx}: class_name must match class_names[class_id]"
+            )
