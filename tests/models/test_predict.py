@@ -106,6 +106,14 @@ class TestPredictSourceData:
         assert "source_image" not in detections.data
         assert detections.data["source_shape"] == (48, 64)
 
+    def test_source_image_not_included_by_default_tensor(self) -> None:
+        """Tensor input also omits source_image by default (opt-in required)."""
+        tensor = torch.rand(3, 48, 64)
+        model = _DummyRFDETR()
+        detections = model.predict(tensor)
+        assert "source_image" not in detections.data
+        assert detections.data["source_shape"] == (48, 64)
+
     def test_source_image_from_pil(self) -> None:
         """PIL input stores the original image as a numpy array."""
         img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
