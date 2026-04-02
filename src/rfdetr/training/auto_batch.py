@@ -127,11 +127,12 @@ def _probe_step(
             loss_dict = cast(dict[str, torch.Tensor], criterion(outputs, targets))
             weight_dict = cast(dict[str, float], getattr(criterion, "weight_dict"))
             weighted_losses = [loss_dict[name] * weight_dict[name] for name in loss_dict if name in weight_dict]
-            loss = (
-                torch.stack(weighted_losses).sum()
-                if weighted_losses
-                else torch.tensor(0.0, dtype=torch.float32, device=device)
-            )
+            if not weighted_losses:
+                raise RuntimeError(
+                    "auto-batch probe could not build weighted losses: no overlap between criterion loss_dict and "
+                    "weight_dict keys.",
+                )
+            loss = torch.stack(weighted_losses).sum()
 
         if not torch.isfinite(loss):
             raise RuntimeError("auto-batch probe produced a non-finite training loss.")

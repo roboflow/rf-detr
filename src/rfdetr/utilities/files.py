@@ -8,7 +8,7 @@
 
 import hashlib
 import os
-import shutil
+import tempfile
 
 import requests
 from tqdm.auto import tqdm
@@ -60,12 +60,6 @@ def _download_file(
 ) -> None:
     """Download a file from a URL with optional MD5 validation.
 
-    Uses a per-process temporary file (``filename.<pid>.tmp``) so that
-    concurrent calls from multiple processes (e.g. ``torchrun`` workers)
-    cannot corrupt each other's downloads.  The final rename is atomic on
-    POSIX systems, so even if several processes download the file at the
-    same time the result is always a complete, valid file.
-
     Args:
         url: URL to download from.
         filename: Path to save the file.
@@ -83,8 +77,6 @@ def _download_file(
         else:
             logger.warning(f"File {filename} exists but MD5 hash mismatch. Re-downloading...")
             os.remove(filename)
-    elif os.path.exists(filename):
-        return
 
     response = requests.get(url, stream=True, timeout=timeout)
     response.raise_for_status()
@@ -94,15 +86,17 @@ def _download_file(
     except (TypeError, ValueError):
         total_size = None
 
-    # Use a per-process unique temp filename to avoid concurrent-write
-    # corruption when multiple processes (e.g. torchrun workers) download
-    # the same file simultaneously.  Each process writes to its own temp
-    # file; the final shutil.move is atomic on POSIX, so whichever process
-    # finishes last wins but the content is identical.
-    temp_filename = f"{filename}.{os.getpid()}.tmp"
+    # Download to a unique temporary file in the destination directory first.
+    # This avoids collisions when multiple workers download the same weight file.
+    target_dir = os.path.dirname(filename) or "."
+    fd, temp_filename = tempfile.mkstemp(
+        prefix=f"{os.path.basename(filename)}.",
+        suffix=".tmp",
+        dir=target_dir,
+    )
     try:
         with (
-            open(temp_filename, "wb") as f,
+            os.fdopen(fd, "wb") as f,
             tqdm(
                 desc=filename,
                 total=total_size,
@@ -129,8 +123,10 @@ def _download_file(
         else:
             logger.info(f"MD5 validation successful for {filename}")
 
-    # shutil.move handles cross-device moves (e.g. tmpfs → ext4 on Colab).
-    # If the destination already exists (another process finished first),
-    # shutil.move still replaces it atomically, which is safe because the
-    # content is identical across all parallel downloads.
-    shutil.move(temp_filename, filename)
+    # Atomic replace in target directory.
+    try:
+        os.replace(temp_filename, filename)
+    except Exception:
+        if os.path.exists(temp_filename):
+            os.remove(temp_filename)
+        raise

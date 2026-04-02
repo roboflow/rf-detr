@@ -69,6 +69,42 @@ def test_probe_max_micro_batch_raises_if_one_is_not_safe():
         )
 
 
+def test_probe_step_raises_when_loss_keys_do_not_overlap_weight_keys():
+    """_probe_step must fail fast when weighted loss would be empty."""
+
+    class _DummyCriterion(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.weight_dict = {"loss_bbox": 1.0}
+
+        def forward(self, outputs, targets):
+            return {"loss_ce": torch.tensor(1.0)}
+
+    class _DummyModel(torch.nn.Module):
+        def forward(self, samples, targets):
+            return {}
+
+    model = _DummyModel()
+    criterion = _DummyCriterion()
+
+    with (
+        patch(
+            "rfdetr.training.auto_batch._make_synthetic_batch",
+            return_value=(MagicMock(), []),
+        ),
+        pytest.raises(RuntimeError, match="no overlap between criterion loss_dict and weight_dict keys"),
+    ):
+        auto_batch._probe_step(
+            model=model,
+            criterion=criterion,
+            micro_batch_size=1,
+            resolution=64,
+            device=torch.device("cpu"),
+            num_classes=5,
+            amp=False,
+        )
+
+
 def test_resolve_auto_batch_config_requires_cuda():
     model_context = SimpleNamespace(device=torch.device("cpu"), model=MagicMock())
     model_config = SimpleNamespace(resolution=64, num_classes=5, amp=False, segmentation_head=False)
