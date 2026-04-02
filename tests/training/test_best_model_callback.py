@@ -1097,14 +1097,19 @@ class TestCheckpointRfdetrVersion:
         cb = BestModelCallback(output_dir=str(tmp_path), run_test=False)
         trainer = _make_trainer({"val/mAP_50_95": 0.5})
         pl_module = _make_pl_module()
+        expected_version = "test-version"
 
-        cb.on_validation_end(trainer, pl_module)
-        cb.on_fit_end(trainer, pl_module)
+        with patch(
+            "rfdetr.training.callbacks.best_model.get_version",
+            return_value=expected_version,
+        ):
+            cb.on_validation_end(trainer, pl_module)
+            cb.on_fit_end(trainer, pl_module)
 
         total = tmp_path / "checkpoint_best_total.pth"
         data = torch.load(total, map_location="cpu", weights_only=False)
         assert "rfdetr_version" in data
-        assert isinstance(data["rfdetr_version"], str)
+        assert data["rfdetr_version"] == expected_version
 
     def test_rfdetr_version_absent_when_get_version_returns_none(self, tmp_path: Path) -> None:
         """rfdetr_version must be omitted when get_version() cannot resolve the version."""
