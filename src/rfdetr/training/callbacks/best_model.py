@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import Optional
 
 import torch
 from pytorch_lightning import LightningModule, Trainer
