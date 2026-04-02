@@ -1156,14 +1156,16 @@ class RFDETR:
             # training), so class_names[class_id] is the correct mapping.
             # Always set data["class_name"] for a consistent interface.
             class_ids = detections.class_id if detections.class_id is not None else np.array([], dtype=int)
-            class_name_list = []
-            for cid in class_ids:
-                if 0 <= cid < n:
-                    class_name_list.append(model_class_names[cid])
-                else:
-                    logger.warning("class_id %d is out of range [0, %d) — mapping to empty string", cid, n)
-                    class_name_list.append("")
-            detections.data["class_name"] = np.array(class_name_list, dtype=object)
+            oob_ids = [cid for cid in class_ids if not (0 <= cid < n)]
+            if oob_ids:
+                logger.warning_once(
+                    "predict() encountered class_id values out of range [0, %d): %s — mapping to empty string",
+                    n,
+                    oob_ids[:5],
+                )
+            detections.data["class_name"] = np.array(
+                [model_class_names[cid] if 0 <= cid < n else "" for cid in class_ids], dtype=object
+            )
 
             detections_list.append(detections)
 
