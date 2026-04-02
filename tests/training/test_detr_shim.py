@@ -1252,7 +1252,7 @@ class TestDeployToRoboflow:
 
         def deploy_side_effect(model_type, model_path, filename, **kwargs):
             # Inspect class_names.txt while the temp dir still exists (before cleanup).
-            f = (tmp_path / model_path / "class_names.txt").resolve()
+            f = (Path(model_path) / "class_names.txt").resolve()
             if f.exists():
                 captured["content"] = f.read_text()
 
@@ -1370,7 +1370,12 @@ class TestDeployToRoboflow:
 
         self._set_class_names(mock_self, ["cat"])
         mock_rf = MagicMock()
-        mock_rf.workspace.return_value.project.return_value.version.return_value.deploy.return_value = None
+        deployed_paths: list[Path] = []
+
+        def deploy_side_effect(model_type, model_path, filename, **kwargs):
+            deployed_paths.append(Path(model_path))
+
+        mock_rf.workspace.return_value.project.return_value.version.return_value.deploy.side_effect = deploy_side_effect
 
         with patch("roboflow.Roboflow", return_value=mock_rf):
             RFDETR.deploy_to_roboflow(
@@ -1381,7 +1386,9 @@ class TestDeployToRoboflow:
                 api_key="dummy-key",
             )
 
-        assert not (tmp_path / ".roboflow_temp_upload").exists(), "Temp upload dir must be removed after deploy"
+        assert deployed_paths, "deploy must receive a temporary model_path"
+        assert not deployed_paths[0].exists(), "Temporary upload dir must be removed after deploy"
+        assert not (tmp_path / ".roboflow_temp_upload").exists(), "Fixed-name temp dir must not be created"
 
     def test_temp_dir_cleaned_up_after_deploy_failure(self, tmp_path, monkeypatch, mock_self, patch_lit):
         """Temp upload dir must be removed even when deploy() raises an exception."""
@@ -1389,9 +1396,13 @@ class TestDeployToRoboflow:
 
         self._set_class_names(mock_self, ["cat"])
         mock_rf = MagicMock()
-        mock_rf.workspace.return_value.project.return_value.version.return_value.deploy.side_effect = RuntimeError(
-            "upload failed",
-        )
+        deployed_paths: list[Path] = []
+
+        def deploy_side_effect(model_type, model_path, filename, **kwargs):
+            deployed_paths.append(Path(model_path))
+            raise RuntimeError("upload failed")
+
+        mock_rf.workspace.return_value.project.return_value.version.return_value.deploy.side_effect = deploy_side_effect
 
         with patch("roboflow.Roboflow", return_value=mock_rf), pytest.raises(RuntimeError, match="upload failed"):
             RFDETR.deploy_to_roboflow(
@@ -1402,9 +1413,9 @@ class TestDeployToRoboflow:
                 api_key="dummy-key",
             )
 
-        assert not (tmp_path / ".roboflow_temp_upload").exists(), (
-            "Temp upload dir must be removed even after a failed deploy"
-        )
+        assert deployed_paths, "deploy must receive a temporary model_path"
+        assert not deployed_paths[0].exists(), "Temporary upload dir must be removed even after a failed deploy"
+        assert not (tmp_path / ".roboflow_temp_upload").exists(), "Fixed-name temp dir must not be created"
 
 
 # ---------------------------------------------------------------------------

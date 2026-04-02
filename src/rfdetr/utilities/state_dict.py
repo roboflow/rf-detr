@@ -120,7 +120,10 @@ def _make_fit_loop_state(epoch: int) -> dict:
 def strip_checkpoint(checkpoint: str | os.PathLike[str]) -> None:
     """Strip a checkpoint file down to ``model``, ``args``, and PTL-compatible keys.
 
-    Preserves ``state_dict``, ``global_step``, ``pytorch-lightning_version``,
+    Preserves ``model_name`` (when present) so that ``RFDETR.from_checkpoint()``
+    can still resolve the model class from the stripped file.
+
+    Also preserves ``state_dict``, ``global_step``, ``pytorch-lightning_version``,
     ``loops``, ``optimizer_states``, and ``lr_schedulers`` when present so the
     stripped checkpoint can still be used directly with
     ``trainer.fit(ckpt_path=...)``.
@@ -141,6 +144,9 @@ def strip_checkpoint(checkpoint: str | os.PathLike[str]) -> None:
         "model": state_dict["model"],
         "args": state_dict["args"],
     }
+    # Preserve model_name when present (#887).
+    if "model_name" in state_dict:
+        new_state_dict["model_name"] = state_dict["model_name"]
     # Preserve PTL-compatible keys when present (written by BestModelCallback).
     for key in _PTL_COMPAT_KEYS:
         if key in state_dict:

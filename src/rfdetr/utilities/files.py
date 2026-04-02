@@ -8,7 +8,7 @@
 
 import hashlib
 import os
-import shutil
+import tempfile
 
 import requests
 from tqdm.auto import tqdm
@@ -86,11 +86,17 @@ def _download_file(
     except (TypeError, ValueError):
         total_size = None
 
-    # Download to temporary file first
-    temp_filename = f"{filename}.tmp"
+    # Download to a unique temporary file in the destination directory first.
+    # This avoids collisions when multiple workers download the same weight file.
+    target_dir = os.path.dirname(filename) or "."
+    fd, temp_filename = tempfile.mkstemp(
+        prefix=f"{os.path.basename(filename)}.",
+        suffix=".tmp",
+        dir=target_dir,
+    )
     try:
         with (
-            open(temp_filename, "wb") as f,
+            os.fdopen(fd, "wb") as f,
             tqdm(
                 desc=filename,
                 total=total_size,
@@ -117,5 +123,10 @@ def _download_file(
         else:
             logger.info(f"MD5 validation successful for {filename}")
 
-    # shutil.move handles cross-device moves (e.g. tmpfs → ext4 on Colab).
-    shutil.move(temp_filename, filename)
+    # Atomic replace in target directory.
+    try:
+        os.replace(temp_filename, filename)
+    except Exception:
+        if os.path.exists(temp_filename):
+            os.remove(temp_filename)
+        raise

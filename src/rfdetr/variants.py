@@ -30,8 +30,6 @@ __all__ = [
     "RFDETRSeg2XLarge",
 ]
 
-import warnings
-
 from deprecate import deprecated_class
 
 from rfdetr.config import (
@@ -63,12 +61,7 @@ logger = get_logger()
     remove_in="2.0.0",
 )
 class RFDETRBase(RFDETR):
-    """RF-DETR Base model — deprecated since v1.7.0.
-
-    .. deprecated:: 1.7.0
-        Use one of the supported variants: :class:`RFDETRNano`, :class:`RFDETRSmall`,
-        :class:`RFDETRMedium`, or :class:`RFDETRLarge`.
-    """
+    """RF-DETR Base model — deprecated in v1.7.0, scheduled for removal in v2.0.0."""
 
     size = "rfdetr-base"
     _model_config_class = RFDETRBaseConfig
@@ -101,22 +94,16 @@ class RFDETRMedium(RFDETR):
     _model_config_class = RFDETRMediumConfig
 
 
+@deprecated_class(
+    target=None,
+    deprecated_in="1.7.0",
+    remove_in="2.0.0",
+)
 class RFDETRLargeDeprecated(RFDETR):
-    """
-    Train an RF-DETR Large model.
-    """
+    """RF-DETR Large model (legacy config) — deprecated in v1.7.0, scheduled for removal in v2.0.0."""
 
     size = "rfdetr-large"
     _model_config_class = RFDETRLargeDeprecatedConfig
-
-    def __init__(self, **kwargs):
-        warnings.warn(
-            "RFDETRLargeDeprecated is deprecated and will be removed in a future version."
-            " Please use RFDETRLarge instead.",
-            category=DeprecationWarning,
-            stacklevel=2,
-        )
-        super().__init__(**kwargs)
 
 
 class RFDETRLarge(RFDETR):
@@ -194,12 +181,7 @@ class RFDETRSeg(RFDETR):
     remove_in="2.0.0",
 )
 class RFDETRSegPreview(RFDETRSeg):
-    """RF-DETR Segmentation Preview model — deprecated since v1.7.0.
-
-    .. deprecated:: 1.7.0
-        Use one of the supported segmentation variants: :class:`RFDETRSegNano`, :class:`RFDETRSegSmall`,
-        :class:`RFDETRSegMedium`, or :class:`RFDETRSegLarge`.
-    """
+    """RF-DETR Segmentation Preview model — deprecated in v1.7.0, scheduled for removal in v2.0.0."""
 
     size = "rfdetr-seg-preview"
     _model_config_class = RFDETRSegPreviewConfig

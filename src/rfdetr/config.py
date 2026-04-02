@@ -84,6 +84,15 @@ class ModelConfig(BaseConfig):
     backbone_lora: bool = False
     freeze_encoder: bool = False
     license: str = "Apache-2.0"
+    model_name: Optional[str] = Field(
+        default=None,
+        description=(
+            'Name of the model class stored in training checkpoints (e.g. ``"RFDETRLarge"``). '
+            "Set automatically by ``RFDETR.train()`` before saving. "
+            "Used by ``RFDETR.from_checkpoint()`` to resolve the correct subclass directly "
+            "without inspecting ``pretrain_weights``."
+        ),
+    )
 
     @model_validator(mode="after")
     def _warn_deprecated_model_config_fields(self) -> "ModelConfig":
