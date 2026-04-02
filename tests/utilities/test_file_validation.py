@@ -202,7 +202,8 @@ class TestDownloadFile:
 
         assert target_path.exists()
         assert target_path.read_bytes() == b"helloworld"
-        assert not (tmp_path / "weights.bin.tmp").exists()
+        # No per-process or legacy .tmp file should remain after a successful download.
+        assert not list(tmp_path.glob("weights.bin*.tmp"))
         mock_get.assert_called_once_with("https://example.com/file.bin", stream=True, timeout=30.0)
 
     @patch("rfdetr.utilities.files.requests.get")
@@ -216,7 +217,7 @@ class TestDownloadFile:
             _download_file("https://example.com/file.bin", str(target_path))
 
         assert not target_path.exists()
-        assert not (tmp_path / "weights.bin.tmp").exists()
+        assert not list(tmp_path.glob("weights.bin*.tmp"))
 
     @patch("rfdetr.utilities.files.tqdm", _DummyTqdm)
     @patch("rfdetr.utilities.files.requests.get")
@@ -236,7 +237,7 @@ class TestDownloadFile:
             _download_file("https://example.com/file.bin", str(target_path))
 
         assert not target_path.exists()
-        assert not (tmp_path / "weights.bin.tmp").exists()
+        assert not list(tmp_path.glob("weights.bin*.tmp"))
 
     @patch("rfdetr.utilities.files.tqdm", _DummyTqdm)
     @patch("rfdetr.utilities.files.requests.get")
@@ -254,4 +255,36 @@ class TestDownloadFile:
             )
 
         assert not target_path.exists()
+        assert not list(tmp_path.glob("weights.bin*.tmp"))
+
+    @patch("rfdetr.utilities.files.tqdm", _DummyTqdm)
+    @patch("rfdetr.utilities.files.requests.get")
+    def test_download_file_uses_per_process_temp_filename(self, mock_get: Mock, tmp_path: Path):
+        """Download must use a per-process temp file (``<target>.<pid>.tmp``) to avoid
+        concurrent-write corruption when multiple torchrun workers share a filesystem."""
+        import os
+
+        target_path = tmp_path / "weights.bin"
+        response = _FakeResponse([b"hello"], headers={})
+        mock_get.return_value = response
+
+        _download_file("https://example.com/file.bin", str(target_path))
+
+        # No legacy shared temp file should have been used.
         assert not (tmp_path / "weights.bin.tmp").exists()
+        # The final file must be present.
+        assert target_path.exists()
+        # The per-process temp file must have been cleaned up.
+        expected_temp = tmp_path / f"weights.bin.{os.getpid()}.tmp"
+        assert not expected_temp.exists()
+
+    @patch("rfdetr.utilities.files.tqdm", _DummyTqdm)
+    @patch("rfdetr.utilities.files.requests.get")
+    def test_download_file_skips_when_file_exists_no_md5(self, mock_get: Mock, tmp_path: Path):
+        """Download is skipped if the target file already exists and no MD5 is provided."""
+        target_path = tmp_path / "weights.bin"
+        target_path.write_bytes(b"existing content")
+
+        _download_file("https://example.com/file.bin", str(target_path))
+
+        mock_get.assert_not_called()

@@ -165,6 +165,9 @@ class _LazyYoloSample:
 
         if len(self.class_id) == 0:
             return sv.Detections.empty()
+        if len(self.polygons) == 0:
+            # Detection-only path: no masks were computed, return bare boxes.
+            return sv.Detections(class_id=self.class_id, xyxy=self.xyxy)
         # TODO: once supervision v0.28 ships CompactMask, wrap the dense result:
         #   compact = sv.CompactMask.from_dense(mask, self.xyxy, (self.height, self.width))
         #   return sv.Detections(..., mask=compact)
@@ -278,6 +281,62 @@ def _parse_yolo_label_line(
     polygon_px[:, 0] = np.clip(polygon_px[:, 0], 0.0, float(width - 1))
     polygon_px[:, 1] = np.clip(polygon_px[:, 1], 0.0, float(height - 1))
     return cid, xyxy_px, polygon_px.astype(np.float32)
+
+
+def _build_lazy_yolo_detection_dataset(img_folder: str, lb_folder: str, data_file: str) -> _LazyYoloDetectionDataset:
+    """Build a YOLO detection dataset that stores bounding boxes lazily.
+
+    Unlike :func:`_build_lazy_yolo_segmentation_dataset`, this function does
+    not compute polygon coordinates or dense masks — only ``xyxy`` boxes are
+    stored, keeping peak memory proportional to the number of annotations.
+
+    Images without a matching ``.txt`` label file are included as
+    *background* samples with empty detections, so datasets that mix labelled
+    and unlabelled images are handled correctly.
+
+    Args:
+        img_folder: Path to the directory containing images.
+        lb_folder: Path to the directory containing YOLO ``.txt`` label files.
+        data_file: Path to the ``data.yaml`` / ``data.yml`` file with class names.
+
+    Returns:
+        A :class:`_LazyYoloDetectionDataset` whose ``__getitem__`` loads pixel
+        data on demand and returns ``sv.Detections`` without mask information.
+    """
+    classes = _extract_yolo_class_names(data_file)
+    samples: list[_LazyYoloSample] = []
+
+    for image_path in _list_yolo_image_paths(img_folder):
+        label_path = Path(lb_folder) / f"{Path(image_path).stem}.txt"
+        with Image.open(image_path) as image:
+            width, height = image.size
+
+        xyxy: list[np.ndarray] = []
+        class_id: list[int] = []
+        if label_path.exists():
+            with label_path.open(encoding="utf-8") as handle:
+                lines = [line.strip() for line in handle if line.strip()]
+            for i, line in enumerate(lines):
+                cid, xyxy_px, _polygon_px = _parse_yolo_label_line(
+                    line.split(), i + 1, label_path, len(classes), width, height
+                )
+                class_id.append(cid)
+                xyxy.append(xyxy_px)
+
+        samples.append(
+            _LazyYoloSample(
+                image_path=image_path,
+                width=width,
+                height=height,
+                xyxy=np.array(xyxy, dtype=np.float32).reshape(-1, 4),
+                class_id=np.array(class_id, dtype=np.int64),
+                # Detection-only path: polygons are not needed, leave empty so
+                # to_detections() returns sv.Detections without masks.
+                polygons=(),
+            )
+        )
+
+    return _LazyYoloDetectionDataset(classes=classes, samples=samples)
 
 
 def _build_lazy_yolo_segmentation_dataset(img_folder: str, lb_folder: str, data_file: str) -> _LazyYoloDetectionDataset:
@@ -729,14 +788,18 @@ class CocoLikeAPI:
 
 
 class YoloDetection(VisionDataset):
-    """YOLO format dataset with optional lazy segmentation mask loading.
+    """YOLO format dataset with lazy image loading and optional mask support.
 
-    For detection (``include_masks=False``) this delegates to
-    ``supervision.DetectionDataset.from_yolo()`` and loads every image eagerly.
-    For segmentation (``include_masks=True``) a lazy backend is used instead:
-    polygon coordinates are stored at construction time and dense H×W masks are
-    only rasterized on demand in ``__getitem__``, keeping RAM proportional to
-    the number of annotations rather than to (N × H × W).
+    Both detection (``include_masks=False``) and segmentation
+    (``include_masks=True``) paths use a lazy backend: image pixels are loaded
+    on demand inside ``__getitem__`` rather than at construction time, which
+    keeps peak RAM proportional to the number of annotations rather than to
+    ``N × H × W``.
+
+    Images without a matching ``.txt`` label file are treated as *background*
+    images and produce empty detections.  This ensures that datasets containing
+    a mix of annotated and unannotated images are handled correctly in both
+    single-GPU and multi-GPU training.
 
     This class provides a VisionDataset interface compatible with RF-DETR training,
     matching the API of CocoDetection.
@@ -747,8 +810,8 @@ class YoloDetection(VisionDataset):
         data_file: Path to data.yaml file containing class names and dataset info
         transforms: Optional transforms to apply to images and targets
         include_masks: Whether to load segmentation masks (for YOLO segmentation format).
-            When True the lazy polygon-based backend is used to avoid materialising
-            all masks into RAM during dataset initialisation.
+            When True polygons are parsed and rasterized on demand; when False only
+            bounding-box coordinates are stored.
     """
 
     def __init__(
@@ -767,15 +830,7 @@ class YoloDetection(VisionDataset):
         if include_masks:
             self.sv_dataset = _build_lazy_yolo_segmentation_dataset(img_folder, lb_folder, data_file)
         else:
-            import supervision as sv
-
-            # Load dataset using supervision's from_yolo method
-            self.sv_dataset = sv.DetectionDataset.from_yolo(
-                images_directory_path=img_folder,
-                annotations_directory_path=lb_folder,
-                data_yaml_path=data_file,
-                force_masks=False,
-            )
+            self.sv_dataset = _build_lazy_yolo_detection_dataset(img_folder, lb_folder, data_file)
 
         self.classes = self.sv_dataset.classes
         self.ids = list(range(len(self.sv_dataset)))
