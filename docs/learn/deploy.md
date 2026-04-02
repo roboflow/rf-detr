@@ -13,10 +13,10 @@ To deploy your model to Roboflow, run:
 
     x = RFDETRNano(pretrain_weights="<path/to/pretrain/weights/dir>")
     x.deploy_to_roboflow(
-      workspace="<your-workspace>",
-      project_id="<your-project-id>",
-      version=1,
-      api_key="<YOUR_API_KEY>"
+        workspace="<your-workspace>",
+        project_id="<your-project-id>",
+        version=1,
+        api_key="<YOUR_API_KEY>",
     )
     ```
 
@@ -27,10 +27,10 @@ To deploy your model to Roboflow, run:
 
     x = RFDETRSegMedium(pretrain_weights="<path/to/pretrain/weights/dir>")
     x.deploy_to_roboflow(
-      workspace="<your-workspace>",
-      project_id="<your-project-id>",
-      version=1,
-      api_key="<YOUR_API_KEY>"
+        workspace="<your-workspace>",
+        project_id="<your-project-id>",
+        version=1,
+        api_key="<YOUR_API_KEY>",
     )
     ```
 
@@ -40,7 +40,6 @@ Above, set your Roboflow Workspace ID, the ID of the project to which you want t
 - [Learn how to find your API key.](https://docs.roboflow.com/developer/authentication/find-your-roboflow-api-key)
 
 You can then run your model with Roboflow Inference:
-
 
 === "Object Detection"
 

@@ -4,16 +4,18 @@ RF-DETR is a real-time transformer architecture for object detection, built on a
 
 ## Pre-trained Checkpoints
 
-RF-DETR offers model sizes from Nano to 2XLarge, allowing trade-offs between accuracy, latency, and parameter count. All latency numbers were measured on an NVIDIA T4 using TensorRT, FP16, and batch size 1. Core models (Nano to Large) are licensed under Apache 2.0, while XLarge and 2XLarge use the Platform Model License 1.0 and require a Roboflow account.
+RF-DETR offers model sizes from Nano to 2XLarge, allowing trade-offs between accuracy, latency, and parameter count. All latency numbers were measured on an NVIDIA T4 using TensorRT, FP16, and batch size 1. Core models (Nano to Large) are licensed under Apache 2.0. XLarge and 2XLarge (marked with △) are provided by the [`rfdetr_plus`](https://github.com/roboflow/rf-detr-plus) extension (`pip install rfdetr[plus]`) under the Platform Model License 1.0 and require a Roboflow account.
 
-| Size | RF-DETR package class | Inference package alias | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub>   | Latency (ms) | Params (M) | Resolution |  License   |
-|:----:|:---------------------:|:------------------------|:--------------------:|:-------------------------:|:------------:|:----------:|:----------:|:----------:|
-| N    | `RFDETRNano`          | `rfdetr-nano`           | 67.6                 |           48.4            | 2.3          | 30.5       | 384x384    | Apache 2.0 |
-| S    | `RFDETRSmall`         | `rfdetr-small`          | 72.1                 |           53.0            | 3.5          | 32.1       | 512x512    | Apache 2.0 |
-| M    | `RFDETRMedium`        | `rfdetr-medium`         | 73.6                 |           54.7            | 4.4          | 33.7       | 576x576    | Apache 2.0 |
-| L    | `RFDETRLarge`         | `rfdetr-large`          | 75.1                 |           56.5            | 6.8          | 33.9       | 704x704    | Apache 2.0 |
-| XL   | `RFDETRXLarge`        | `rfdetr-xlarge`         | 77.4                 |           58.6            | 11.5         | 126.4      | 700x700    |  PML 1.0   |
-| 2XL  | `RFDETR2XLarge`       | `rfdetr-2xlarge`        | 78.5                 |           60.1            | 17.2         | 126.9      | 880x880    |  PML 1.0   |
+| Size | RF-DETR package class | Inference package alias | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |  License   |
+| :--: | :-------------------: | :---------------------- | :------------------: | :---------------------: | :----------: | :--------: | :--------: | :--------: |
+|  N   |     `RFDETRNano`      | `rfdetr-nano`           |         67.6         |          48.4           |     2.3      |    30.5    |  384x384   | Apache 2.0 |
+|  S   |     `RFDETRSmall`     | `rfdetr-small`          |         72.1         |          53.0           |     3.5      |    32.1    |  512x512   | Apache 2.0 |
+|  M   |    `RFDETRMedium`     | `rfdetr-medium`         |         73.6         |          54.7           |     4.4      |    33.7    |  576x576   | Apache 2.0 |
+|  L   |     `RFDETRLarge`     | `rfdetr-large`          |         75.1         |          56.5           |     6.8      |    33.9    |  704x704   | Apache 2.0 |
+|  XL  |   `RFDETRXLarge` △    | `rfdetr-xlarge`         |         77.4         |          58.6           |     11.5     |   126.4    |  700x700   |  PML 1.0   |
+| 2XL  |   `RFDETR2XLarge` △   | `rfdetr-2xlarge`        |         78.5         |          60.1           |     17.2     |   126.9    |  880x880   |  PML 1.0   |
+
+> △ Requires the `rfdetr_plus` extension: `pip install rfdetr[plus]`
 
 ## Run on an Image
 
@@ -22,24 +24,17 @@ Perform inference on an image using either the `rfdetr` package or the `inferenc
 === "rfdetr"
 
     ```python
-    import requests
     import supervision as sv
-    from PIL import Image
     from rfdetr import RFDETRMedium
-    from rfdetr.util.coco_classes import COCO_CLASSES
+    from rfdetr.assets.coco_classes import COCO_CLASSES
 
     model = RFDETRMedium()
 
-    image = Image.open(requests.get('https://media.roboflow.com/dog.jpg', stream=True).raw)
-    detections = model.predict(image, threshold=0.5)
+    detections = model.predict("https://media.roboflow.com/dog.jpg", threshold=0.5)
 
-    labels = [
-        f"{COCO_CLASSES[class_id]}"
-        for class_id
-        in detections.class_id
-    ]
+    labels = [f"{COCO_CLASSES[class_id]}" for class_id in detections.class_id]
 
-    annotated_image = sv.BoxAnnotator().annotate(image, detections)
+    annotated_image = sv.BoxAnnotator().annotate(detections.data["source_image"], detections)
     annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
     ```
 
@@ -53,7 +48,7 @@ Perform inference on an image using either the `rfdetr` package or the `inferenc
 
     model = get_model("rfdetr-medium")
 
-    image = Image.open(requests.get('https://media.roboflow.com/dog.jpg', stream=True).raw)
+    image = Image.open(requests.get("https://media.roboflow.com/dog.jpg", stream=True).raw)
     predictions = model.infer(image, confidence=0.5)[0]
     detections = sv.Detections.from_inference(predictions)
 
@@ -71,7 +66,7 @@ These examples use OpenCV for decoding and display. Replace `<SOURCE_VIDEO_PATH>
     import cv2
     import supervision as sv
     from rfdetr import RFDETRMedium
-    from rfdetr.util.coco_classes import COCO_CLASSES
+    from rfdetr.assets.coco_classes import COCO_CLASSES
 
     model = RFDETRMedium()
 
@@ -87,10 +82,7 @@ These examples use OpenCV for decoding and display. Replace `<SOURCE_VIDEO_PATH>
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         detections = model.predict(frame_rgb, threshold=0.5)
 
-        labels = [
-            COCO_CLASSES[class_id]
-            for class_id in detections.class_id
-        ]
+        labels = [COCO_CLASSES[class_id] for class_id in detections.class_id]
 
         annotated_frame = sv.BoxAnnotator().annotate(frame_bgr, detections)
         annotated_frame = sv.LabelAnnotator().annotate(annotated_frame, detections, labels)
@@ -109,11 +101,11 @@ These examples use OpenCV for decoding and display. Replace `<SOURCE_VIDEO_PATH>
     import cv2
     import supervision as sv
     from rfdetr import RFDETRMedium
-    from rfdetr.util.coco_classes import COCO_CLASSES
+    from rfdetr.assets.coco_classes import COCO_CLASSES
 
     model = RFDETRMedium()
 
-    video_capture = cv2.VideoCapture(<WEBCAM_INDEX>)
+    video_capture = cv2.VideoCapture("<WEBCAM_INDEX>")
     if not video_capture.isOpened():
         raise RuntimeError("Failed to open webcam: <WEBCAM_INDEX>")
 
@@ -125,10 +117,7 @@ These examples use OpenCV for decoding and display. Replace `<SOURCE_VIDEO_PATH>
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         detections = model.predict(frame_rgb, threshold=0.5)
 
-        labels = [
-            COCO_CLASSES[class_id]
-            for class_id in detections.class_id
-        ]
+        labels = [COCO_CLASSES[class_id] for class_id in detections.class_id]
 
         annotated_frame = sv.BoxAnnotator().annotate(frame_bgr, detections)
         annotated_frame = sv.LabelAnnotator().annotate(annotated_frame, detections, labels)
@@ -147,7 +136,7 @@ These examples use OpenCV for decoding and display. Replace `<SOURCE_VIDEO_PATH>
     import cv2
     import supervision as sv
     from rfdetr import RFDETRMedium
-    from rfdetr.util.coco_classes import COCO_CLASSES
+    from rfdetr.assets.coco_classes import COCO_CLASSES
 
     model = RFDETRMedium()
 
@@ -163,10 +152,7 @@ These examples use OpenCV for decoding and display. Replace `<SOURCE_VIDEO_PATH>
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         detections = model.predict(frame_rgb, threshold=0.5)
 
-        labels = [
-            COCO_CLASSES[class_id]
-            for class_id in detections.class_id
-        ]
+        labels = [COCO_CLASSES[class_id] for class_id in detections.class_id]
 
         annotated_frame = sv.BoxAnnotator().annotate(frame_bgr, detections)
         annotated_frame = sv.LabelAnnotator().annotate(annotated_frame, detections, labels)

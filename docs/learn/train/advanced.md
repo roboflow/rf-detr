@@ -1,12 +1,17 @@
 # Advanced Training
 
-This page covers advanced training topics including resuming training, early stopping, multi-GPU training, and logging with external services.
+This page covers advanced training topics including resuming training, early stopping, multi-GPU training, and memory optimization techniques.
+
+!!! tip "PTL API for deeper customisation"
+
+    All examples on this page use the `RFDETR.train()` high-level API. For custom callbacks, non-default loggers, and fine-grained distributed training control, see the [Custom Training API](customization.md) guide.
 
 ## Resume Training
 
 You can resume training from a previously saved checkpoint by passing the path to the `checkpoint.pth` file using the `resume` argument. This is useful when training is interrupted or you want to continue fine-tuning an already partially trained model.
 
 The training loop will automatically load:
+
 - Model weights
 - Optimizer state
 - Learning rate scheduler state
@@ -26,7 +31,7 @@ The training loop will automatically load:
         grad_accum_steps=4,
         lr=1e-4,
         output_dir="output",
-        resume="output/checkpoint.pth"
+        resume="output/checkpoint.pth",
     )
     ```
 
@@ -44,11 +49,12 @@ The training loop will automatically load:
         grad_accum_steps=4,
         lr=1e-4,
         output_dir="output",
-        resume="output/checkpoint.pth"
+        resume="output/checkpoint.pth",
     )
     ```
 
 !!! tip "Resume vs Pretrain Weights"
+
     - Use `resume="checkpoint.pth"` to continue training with optimizer state
     - Use `pretrain_weights="checkpoint_best_total.pth"` when initializing a model to start fresh training from those weights
 
@@ -74,7 +80,7 @@ Early stopping monitors validation mAP and halts training if improvements remain
         grad_accum_steps=4,
         lr=1e-4,
         output_dir="output",
-        early_stopping=True
+        early_stopping=True,
     )
     ```
 
@@ -92,17 +98,17 @@ Early stopping monitors validation mAP and halts training if improvements remain
         grad_accum_steps=4,
         lr=1e-4,
         output_dir="output",
-        early_stopping=True
+        early_stopping=True,
     )
     ```
 
 ### Configuration Options
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `early_stopping_patience` | 10 | Number of epochs without improvement before stopping |
-| `early_stopping_min_delta` | 0.001 | Minimum mAP change to count as improvement |
-| `early_stopping_use_ema` | False | Use EMA model's mAP for comparisons |
+| Parameter                  | Default | Description                                          |
+| -------------------------- | ------- | ---------------------------------------------------- |
+| `early_stopping_patience`  | 10      | Number of epochs without improvement before stopping |
+| `early_stopping_min_delta` | 0.001   | Minimum mAP change to count as improvement           |
+| `early_stopping_use_ema`   | False   | Use EMA model's mAP for comparisons                  |
 
 ### Advanced Example
 
@@ -111,9 +117,9 @@ model.train(
     dataset_dir="path/to/dataset",
     epochs=200,
     early_stopping=True,
-    early_stopping_patience=15,      # Wait 15 epochs before stopping
+    early_stopping_patience=15,  # Wait 15 epochs before stopping
     early_stopping_min_delta=0.005,  # Require 0.5% mAP improvement
-    early_stopping_use_ema=True      # Track EMA model performance
+    early_stopping_use_ema=True,  # Track EMA model performance
 )
 ```
 
@@ -138,34 +144,53 @@ Epoch 22: mAP = 0.452 (best: 0.455) - counter: 10 → STOP
 
 ## Multi-GPU Training
 
-You can fine-tune RF-DETR on multiple GPUs using PyTorch's Distributed Data Parallel (DDP). This splits the workload across GPUs for faster training.
+RF-DETR's training stack is built on PyTorch Lightning, so multi-GPU and multi-node training use the Lightning `Trainer` strategies directly. You can start multi-GPU runs through the high-level API or by using the Lightning primitives explicitly.
 
-### Setup
+### Using RFDETR.train() with multiple GPUs
 
-1. Create a training script (`main.py`):
+Create a training script and launch it with `torchrun`:
+
+```python
+# train.py
+from rfdetr import RFDETRMedium
+
+model = RFDETRMedium()
+
+model.train(
+    dataset_dir="path/to/dataset",
+    epochs=100,
+    batch_size=4,  # per-GPU batch size
+    grad_accum_steps=1,
+    lr=1e-4,
+    output_dir="output",
+    devices="auto",  # required — see note below
+)
+```
+
+```bash
+torchrun --nproc_per_node=4 train.py
+```
+
+!!! warning "Pass `devices=` explicitly"
+
+    `build_trainer()` defaults to `devices=1`. Without overriding this, training silently
+    runs on a single GPU even when `torchrun` launches multiple processes.
+
+    Pass `devices="auto"` to use all GPUs visible to the process, or pass an explicit
+    integer (e.g. `devices=4`). These values are forwarded to `build_trainer` via
+    `**trainer_kwargs`:
 
     ```python
-    from rfdetr import RFDETRMedium
-
-    model = RFDETRMedium()
-
     model.train(
         dataset_dir="path/to/dataset",
         epochs=100,
         batch_size=4,
         grad_accum_steps=1,
         lr=1e-4,
-        output_dir="output"
+        output_dir="output",
+        devices="auto",  # or devices=4
     )
     ```
-
-2. Run with `torch.distributed.launch`:
-
-    ```bash
-    python -m torch.distributed.launch --nproc_per_node=8 --use_env main.py
-    ```
-
-Replace `8` with the number of GPUs you want to use.
 
 ### Batch Size with Multiple GPUs
 
@@ -178,18 +203,19 @@ effective_batch_size = batch_size × grad_accum_steps × num_gpus
 **Example configurations for effective batch size of 16:**
 
 | GPUs | `batch_size` | `grad_accum_steps` | Effective |
-|------|--------------|-------------------|-----------|
-| 1 | 4 | 4 | 16 |
-| 2 | 4 | 2 | 16 |
-| 4 | 4 | 1 | 16 |
-| 8 | 2 | 1 | 16 |
+| ---- | ------------ | ------------------ | --------- |
+| 1    | 4            | 4                  | 16        |
+| 2    | 4            | 2                  | 16        |
+| 4    | 4            | 1                  | 16        |
+| 8    | 2            | 1                  | 16        |
 
 !!! warning "Adjust for GPU count"
+
     When switching between single and multi-GPU training, remember to adjust `batch_size` and `grad_accum_steps` to maintain the same effective batch size.
 
 ### Multi-Node Training
 
-For training across multiple machines, use `torchrun`:
+For training across multiple machines, pass the standard `torchrun` flags:
 
 ```bash
 torchrun \
@@ -198,143 +224,61 @@ torchrun \
     --node_rank=0 \
     --master_addr="192.168.1.1" \
     --master_port=1234 \
-    main.py
+    train.py
 ```
 
 Run this command on each node, changing `--node_rank` accordingly.
 
----
+### Advanced multi-GPU options (PTL API)
 
-## Logging with TensorBoard
+For fine-grained control over strategy, sync batch norm, precision, and other distributed settings, use the Lightning API directly.
 
-[TensorBoard](https://www.tensorflow.org/tensorboard) is a powerful toolkit for visualizing and tracking training metrics.
-
-### Setup
-
-1. Install the required packages:
-
-    ```bash
-    pip install "rfdetr[metrics]"
-    ```
-
-2. Enable TensorBoard logging in your training:
-
-    ```python
-    from rfdetr import RFDETRMedium
-
-    model = RFDETRMedium()
-
-    model.train(
-        dataset_dir="path/to/dataset",
-        epochs=100,
-        batch_size=4,
-        grad_accum_steps=4,
-        lr=1e-4,
-        output_dir="output",
-        tensorboard=True
-    )
-    ```
-
-### Viewing Logs
-
-**Local environment:**
-
-```bash
-tensorboard --logdir output
-```
-
-Then open `http://localhost:6006/` in your browser.
-
-**Google Colab:**
-
-```python
-%load_ext tensorboard
-%tensorboard --logdir output
-```
-
-### Logged Metrics
-
-TensorBoard will track:
-
-- Training loss (total and per-component)
-- Validation mAP
-- Learning rate schedule
-- EMA model metrics (when enabled)
+→ **[Multi-GPU with the PTL API](customization.md#multi-gpu-training)**
 
 ---
 
-## Logging with Weights and Biases
+## Custom Augmentations
 
-[Weights and Biases (W&B)](https://www.wandb.ai) is a cloud-based platform for experiment tracking and visualization.
+RF-DETR supports advanced data augmentations using the [Albumentations](https://albumentations.ai/) library, providing access to over 70 different image transformations optimized for object detection.
 
-### Setup
+→ **[Complete Augmentation Guide](augmentations.md)** - Configuration examples, best practices, troubleshooting, and advanced topics.
 
-1. Install the required packages:
+### Quick Start
 
-    ```bash
-    pip install "rfdetr[metrics]"
-    ```
-
-2. Log in to W&B:
-
-    ```bash
-    wandb login
-    ```
-
-    You can retrieve your API key at [wandb.ai/authorize](https://wandb.ai/authorize).
-
-3. Enable W&B logging in your training:
-
-    ```python
-    from rfdetr import RFDETRMedium
-
-    model = RFDETRMedium()
-
-    model.train(
-        dataset_dir="path/to/dataset",
-        epochs=100,
-        batch_size=4,
-        grad_accum_steps=4,
-        lr=1e-4,
-        output_dir="output",
-        wandb=True,
-        project="my-detection-project",
-        run="experiment-001"
-    )
-    ```
-
-### W&B Organization
-
-| Parameter | Description |
-|-----------|-------------|
-| `project` | Groups related experiments together |
-| `run` | Identifies individual training sessions |
-
-If you don't specify a run name, W&B assigns a random one automatically.
-
-### Viewing Results
-
-Access your runs at [wandb.ai](https://wandb.ai). W&B provides:
-
-- Real-time metric visualization
-- Experiment comparison
-- Hyperparameter tracking
-- System metrics (GPU usage, memory)
-- Training config logging
-
-### Using Both TensorBoard and W&B
-
-You can enable both logging systems simultaneously:
+Pass an `aug_config` dictionary to `model.train()`. Each key is an Albumentations transform name; the value is a dict of keyword arguments for that transform:
 
 ```python
+from rfdetr import RFDETRMedium
+
+model = RFDETRMedium()
+
 model.train(
     dataset_dir="path/to/dataset",
     epochs=100,
-    tensorboard=True,
-    wandb=True,
-    project="my-project",
-    run="experiment-001"
+    batch_size=4,
+    grad_accum_steps=4,
+    lr=1e-4,
+    output_dir="output",
+    aug_config={
+        "HorizontalFlip": {"p": 0.5},
+        "VerticalFlip": {"p": 0.5},
+        "Rotate": {"limit": 45, "p": 0.5},
+    },
 )
+```
+
+Use a built-in preset by importing it from `rfdetr.datasets.aug_config`:
+
+```python
+from rfdetr.datasets.aug_config import AUG_CONSERVATIVE, AUG_AGGRESSIVE, AUG_AERIAL, AUG_INDUSTRIAL
+
+model.train(dataset_dir="path/to/dataset", aug_config=AUG_AGGRESSIVE)
+```
+
+To disable all augmentations, pass an empty dict:
+
+```python
+model.train(dataset_dir="path/to/dataset", aug_config={})
 ```
 
 ---
@@ -357,13 +301,13 @@ This re-computes activations during the backward pass instead of storing them, r
 
 ### Memory-Efficient Configurations
 
-| Memory Level | Configuration |
-|--------------|---------------|
-| Very Low (8GB) | `batch_size=1`, `grad_accum_steps=16`, `gradient_checkpointing=True`, `resolution=560` |
-| Low (12GB) | `batch_size=2`, `grad_accum_steps=8`, `gradient_checkpointing=True` |
-| Medium (16GB) | `batch_size=4`, `grad_accum_steps=4` |
-| High (24GB) | `batch_size=8`, `grad_accum_steps=2` |
-| Very High (40GB+) | `batch_size=16`, `grad_accum_steps=1`, `resolution=784` |
+| Memory Level      | Configuration                                                                          |
+| ----------------- | -------------------------------------------------------------------------------------- |
+| Very Low (8GB)    | `batch_size=1`, `grad_accum_steps=16`, `gradient_checkpointing=True`, `resolution=560` |
+| Low (12GB)        | `batch_size=2`, `grad_accum_steps=8`, `gradient_checkpointing=True`                    |
+| Medium (16GB)     | `batch_size=4`, `grad_accum_steps=4`                                                   |
+| High (24GB)       | `batch_size=8`, `grad_accum_steps=2`                                                   |
+| Very High (40GB+) | `batch_size=16`, `grad_accum_steps=1`, `resolution=784`                                |
 
 ---
 
@@ -372,17 +316,17 @@ This re-computes activations during the backward pass instead of storing them, r
 ### Learning Rate Tuning
 
 - **Fine-tuning from COCO weights (default):** Use default learning rates (`lr=1e-4`, `lr_encoder=1.5e-4`)
-- **Small dataset (<1000 images):** Consider lower `lr` (e.g., `5e-5`) to prevent overfitting
+- **Small dataset (\<1000 images):** Consider lower `lr` (e.g., `5e-5`) to prevent overfitting
 - **Large dataset (>10000 images):** May benefit from higher `lr` (e.g., `2e-4`)
 
 ### Epoch Count
 
-| Dataset Size | Recommended Epochs |
-|--------------|-------------------|
-| < 500 images | 100-200 |
-| 500-2000 images | 50-100 |
-| 2000-10000 images | 30-50 |
-| > 10000 images | 20-30 |
+| Dataset Size      | Recommended Epochs |
+| ----------------- | ------------------ |
+| < 500 images      | 100-200            |
+| 500-2000 images   | 50-100             |
+| 2000-10000 images | 30-50              |
+| > 10000 images    | 20-30              |
 
 Use early stopping to automatically determine the optimal stopping point.
 

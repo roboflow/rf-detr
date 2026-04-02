@@ -1,0 +1,72 @@
+name: GPU tests Workflow
+
+on:
+  push:
+    branches: ["main", "release/*", "develop"]
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+
+env:
+  PYTHON_VERSION: "3.12"
+  # UV_TORCH_BACKEND only works with 'uv pip' commands, not 'uv sync'.
+  # Set to "auto" for GPU workflow (auto-detects CUDA version).
+  UV_TORCH_BACKEND: "auto"
+
+concurrency:
+  group: pytest-gpu-test-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  run-gpu-tests:
+    name: Testing
+    if: github.event_name == 'push' || !github.event.pull_request.draft
+    timeout-minutes: 35
+    runs-on: Roboflow-GPU-VM-Runner
+    steps:
+      - name: 🖥️ Print GPU information
+        run: nvidia-smi
+      - name: 🧰 Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake
+      - name: 📥 Checkout the repository
+        uses: actions/checkout@v6.0.1
+
+      - name: 🐍 Install uv and set Python version
+        uses: astral-sh/setup-uv@v7.2.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          activate-environment: true
+
+      - name: 🚀 Install Packages
+        timeout-minutes: 5
+        run: uv sync --group tests --group ci-gpu-pin --extra onnx --extra plus --extra train --extra visual
+
+      - name: 🧪 Run the Test
+        run: |
+          uv run --no-sync pytest tests/ \
+          -m gpu \
+          -n 3 \
+          --reruns 1 --only-rerun "OutOfMemoryError" \
+          --cov=rfdetr --cov-report=xml \
+          --timeout=600 \
+          --durations=20
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: "coverage.xml"
+          flags: gpu,${{ runner.os }},py${{ env.PYTHON_VERSION }}
+          env_vars: OS,PYTHON
+          name: codecov-umbrella
+          fail_ci_if_error: false
+
+      - name: Minimize uv cache
+        run: uv cache prune --ci

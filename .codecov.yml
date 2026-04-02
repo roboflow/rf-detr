@@ -37,7 +37,6 @@ coverage:
 github_checks:
   annotations: false
 
-
 comment:
   layout: header, diff
   require_changes: false
