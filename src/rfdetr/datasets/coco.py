@@ -56,27 +56,78 @@ def compute_multi_scale_scales(
     return proposed_scales
 
 
+def _is_rle(segmentation: Any) -> bool:
+    """Check whether a COCO segmentation entry is in RLE format.
+
+    RLE annotations are dicts with ``"counts"`` and ``"size"`` keys, as opposed
+    to polygon annotations which are lists of coordinate arrays.
+    This is a structural check only — it verifies key presence but does not
+    validate value types. A dict with counts=None will pass this check but fail
+    downstream in convert_coco_poly_to_mask.
+
+    Args:
+        segmentation: A single COCO segmentation annotation entry.
+
+    Returns:
+        ``True`` if the entry looks like an RLE dict, ``False`` otherwise.
+    """
+    return isinstance(segmentation, dict) and "counts" in segmentation and "size" in segmentation
+
+
 def convert_coco_poly_to_mask(segmentations: List[Any], height: int, width: int) -> torch.Tensor:
-    """Convert polygon segmentation to a binary mask tensor of shape [N, H, W].
-    Requires pycocotools.
+    """Convert COCO segmentation annotations to a binary mask tensor of shape ``[N, H, W]``.
+
+    Supports both polygon and RLE (Run-Length Encoding) annotation formats.
+    Polygon annotations (lists of coordinate arrays) are rasterised via
+    ``pycocotools.mask.frPyObjects``.  RLE annotations (dicts with
+    ``"counts"`` and ``"size"`` keys; ``counts`` may be str or bytes for
+    compressed RLE, or list of ints for uncompressed RLE) are decoded directly, skipping the
+    polygon-to-RLE conversion step.
+
+    Args:
+        segmentations: Per-instance segmentation annotations.  Each element is
+            either a polygon list (``[[x1, y1, x2, y2, ...], ...]``), an RLE
+            dict (``{"counts": ..., "size": [H, W]}``), or ``None`` / empty
+            for instances without a mask.
+            Dicts must be valid COCO RLE annotations with non-empty ``"counts"``
+            and ``"size"`` fields.
+        height: Image height in pixels (used for polygon rasterisation).
+        width: Image width in pixels (used for polygon rasterisation).
+
+    Returns:
+        A ``uint8`` tensor of shape ``(N, H, W)`` where each slice is a binary
+        mask for one instance.  Returns a ``(0, H, W)`` tensor when
+        *segmentations* is empty.
     """
     import pycocotools.mask as coco_mask
 
     masks = []
-    for polygons in segmentations:
-        if polygons is None or len(polygons) == 0:
+    for segmentation in segmentations:
+        if segmentation is None or (not isinstance(segmentation, dict) and len(segmentation) == 0):
             # empty segmentation for this instance
             masks.append(torch.zeros((height, width), dtype=torch.uint8))
             continue
-        try:
-            rles = coco_mask.frPyObjects(polygons, height, width)
-        except:
-            rles = polygons
+        if _is_rle(segmentation):
+            counts = segmentation["counts"]
+            if not isinstance(counts, (str, bytes, list)):
+                raise ValueError(
+                    f"RLE segmentation has unsupported counts type {type(counts).__name__!r}; "
+                    "expected str, bytes, or list"
+                )
+            if isinstance(counts, (str, bytes)):
+                # Compressed RLE — decode directly, skip frPyObjects
+                rles = [segmentation]
+            else:
+                # Uncompressed RLE (counts is a list of ints) — compress first
+                rles = [coco_mask.frPyObjects(segmentation, height, width)]
+        else:
+            rles = coco_mask.frPyObjects(segmentation, height, width)
         mask = coco_mask.decode(rles)
         if mask.ndim < 3:
             mask = mask[..., None]
         mask = torch.as_tensor(mask, dtype=torch.uint8)
-        mask = mask.any(dim=2)
+        # Keep return dtype stable across torch versions (any(...) may return bool).
+        mask = mask.any(dim=2).to(torch.uint8)
         masks.append(mask)
     if len(masks) == 0:
         return torch.zeros((0, height, width), dtype=torch.uint8)
@@ -175,8 +226,9 @@ class ConvertCoco(object):
     after clamping to image boundaries) are filtered out.
 
     Args:
-        include_masks: If ``True``, decode polygon segmentation annotations into
-            binary masks and include them in the returned target dict.
+        include_masks: If ``True``, decode segmentation annotations (polygon or
+            RLE format) into binary masks and include them in the returned
+            target dict.
         cat2label: Optional mapping from COCO ``category_id`` values to contiguous
             0-based label indices.  When ``None`` (default) the raw
             ``category_id`` values are used as labels directly, which is correct
