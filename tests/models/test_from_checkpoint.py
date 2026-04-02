@@ -41,8 +41,8 @@ def _dict(pretrain_weights: str, num_classes: int = 80) -> dict:
 
 
 def _dict_model_name(model_name: str, num_classes: int = 80) -> dict:
-    """Fake PTL-style checkpoint with dict args using explicit model_name."""
-    return {"args": {"model_name": model_name, "num_classes": num_classes}}
+    """Fake PTL-style checkpoint with model_name at top level (new format, PR #895)."""
+    return {"args": {"num_classes": num_classes}, "model_name": model_name}
 
 
 # ---------------------------------------------------------------------------

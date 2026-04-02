@@ -182,27 +182,6 @@ def _resolve_patch_size(patch_size: int | None, model_config: object, caller: st
     return patch_size
 
 
-def _normalize_variant_token(value: str) -> str:
-    """Normalise a variant name to a lowercase, alphanumeric-only token.
-
-    Used when building the name-map in :meth:`RFDETR.from_checkpoint` to allow
-    case-insensitive, punctuation-tolerant variant name matching.
-
-    Args:
-        value: The raw variant token (e.g. ``"RFDETRSmall"`` or ``"rfdetr-small"``).
-
-    Returns:
-        A lowercase string containing only alphanumeric characters (e.g. ``"rfdetrsmall"``).
-
-    Examples:
-        >>> _normalize_variant_token("RFDETRSmall")
-        'rfdetrsmall'
-        >>> _normalize_variant_token("rfdetr-seg-preview")
-        'rfdetrsegpreview'
-    """
-    return "".join(char for char in value.lower() if char.isalnum())
-
-
 class RFDETR:
     """The base RF-DETR class implements the core methods for training RF-DETR models,
     running inference on the models, optimising models, and uploading trained
