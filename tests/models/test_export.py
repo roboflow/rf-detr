@@ -150,6 +150,7 @@ def _detr_export_scaffold(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
             resolution=14,
         ),
         model_config=types.SimpleNamespace(segmentation_head=False),
+        size=None,
     )
 
     export_called: dict[str, bool] = {"value": False}
@@ -208,6 +209,7 @@ def test_rfdetr_export_dynamic_batch_forwards_dynamic_axes(
     model = types.SimpleNamespace(
         model=types.SimpleNamespace(model=_DummyCoreModel(), device="cpu", resolution=14),
         model_config=types.SimpleNamespace(segmentation_head=segmentation_head),
+        size=None,
     )
 
     captured: dict = {}
@@ -610,6 +612,7 @@ class TestExportPatchSize:
                 patch_size=patch_size,
                 num_windows=num_windows,
             ),
+            size=None,
         )
 
         def _fake_make_infer_image(*_a, **_kw):
