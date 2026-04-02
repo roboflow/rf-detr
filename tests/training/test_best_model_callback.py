@@ -1070,12 +1070,17 @@ class TestCheckpointRfdetrVersion:
         cb = BestModelCallback(output_dir=str(tmp_path))
         trainer = _make_trainer({"val/mAP_50_95": 0.5})
         pl_module = _make_pl_module()
+        expected_version = "test-version"
 
-        cb.on_validation_end(trainer, pl_module)
+        with patch(
+            "rfdetr.training.callbacks.best_model.get_version",
+            return_value=expected_version,
+        ):
+            cb.on_validation_end(trainer, pl_module)
 
         ckpt = torch.load(tmp_path / "checkpoint_best_regular.pth", weights_only=False)
         assert "rfdetr_version" in ckpt
-        assert isinstance(ckpt["rfdetr_version"], str)
+        assert ckpt["rfdetr_version"] == expected_version
 
     def test_ema_checkpoint_contains_rfdetr_version(self, tmp_path: Path) -> None:
         """EMA checkpoint also includes rfdetr_version."""
@@ -1085,12 +1090,17 @@ class TestCheckpointRfdetrVersion:
         )
         trainer = _make_trainer({"val/mAP_50_95": 0.4, "val/ema_mAP_50_95": 0.6})
         pl_module = _make_pl_module()
+        expected_version = "test-version"
 
-        cb.on_validation_end(trainer, pl_module)
+        with patch(
+            "rfdetr.training.callbacks.best_model.get_version",
+            return_value=expected_version,
+        ):
+            cb.on_validation_end(trainer, pl_module)
 
         ckpt = torch.load(tmp_path / "checkpoint_best_ema.pth", weights_only=False)
         assert "rfdetr_version" in ckpt
-        assert isinstance(ckpt["rfdetr_version"], str)
+        assert ckpt["rfdetr_version"] == expected_version
 
     def test_best_total_preserves_rfdetr_version_after_strip(self, tmp_path: Path) -> None:
         """strip_checkpoint must preserve rfdetr_version in the final checkpoint."""
