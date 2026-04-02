@@ -210,7 +210,9 @@ def _parse_yolo_label_line(
     num_classes: int,
     width: int,
     height: int,
-) -> tuple[int, np.ndarray, np.ndarray]:
+    *,
+    parse_polygons: bool = True,
+) -> tuple[int, np.ndarray, np.ndarray | None]:
     """Parse one YOLO label line and return ``(class_id, xyxy_px, polygon_px)``.
 
     Args:
@@ -220,10 +222,14 @@ def _parse_yolo_label_line(
         num_classes: Total number of classes in the dataset (used for range check).
         width: Image width in pixels.
         height: Image height in pixels.
+        parse_polygons: When ``False`` the pixel-space polygon array is not
+            computed or returned (``polygon_px`` will be ``None``).  Set to
+            ``False`` on the detection-only path to avoid allocating polygon
+            arrays that would immediately be discarded.
 
     Returns:
         Tuple of ``(class_id, xyxy_px, polygon_px)`` where coordinates are in
-        pixel space.
+        pixel space.  ``polygon_px`` is ``None`` when ``parse_polygons=False``.
 
     Raises:
         ValueError: If the line is malformed or the class ID is out of range.
@@ -258,10 +264,11 @@ def _parse_yolo_label_line(
         )
     if len(values) == 5:
         box = _parse_yolo_box(values[1:])
-        polygon = _box_to_polygon(box)
+        # Skip polygon creation on the detection path — only the bbox is needed.
+        polygon: np.ndarray | None = _box_to_polygon(box) if parse_polygons else None
     else:
         try:
-            polygon = _parse_yolo_polygon(values[1:])
+            _raw_polygon = _parse_yolo_polygon(values[1:])
         except ValueError as exc:
             raise ValueError(
                 f"Malformed polygon in {str(label_path)!r} at line {line_num}: "
@@ -269,14 +276,19 @@ def _parse_yolo_label_line(
             ) from exc
         box = np.array(
             [
-                np.min(polygon[:, 0]),
-                np.min(polygon[:, 1]),
-                np.max(polygon[:, 0]),
-                np.max(polygon[:, 1]),
+                np.min(_raw_polygon[:, 0]),
+                np.min(_raw_polygon[:, 1]),
+                np.max(_raw_polygon[:, 0]),
+                np.max(_raw_polygon[:, 1]),
             ],
             dtype=np.float32,
         )
+        # On the detection path, _raw_polygon was only needed for bbox extraction;
+        # skip the pixel-space conversion to avoid a redundant allocation.
+        polygon = _raw_polygon if parse_polygons else None
     xyxy_px = box * np.array([width, height, width, height], dtype=np.float32)
+    if polygon is None:
+        return cid, xyxy_px, None
     polygon_px = polygon * np.array([width, height], dtype=np.float32)
     polygon_px[:, 0] = np.clip(polygon_px[:, 0], 0.0, float(width - 1))
     polygon_px[:, 1] = np.clip(polygon_px[:, 1], 0.0, float(height - 1))
@@ -327,11 +339,17 @@ def _build_yolo_samples(
                 lines = [line.strip() for line in handle if line.strip()]
             for i, line in enumerate(lines):
                 cid, xyxy_px, polygon_px = _parse_yolo_label_line(
-                    line.split(), i + 1, label_path, len(classes), width, height
+                    line.split(),
+                    i + 1,
+                    label_path,
+                    len(classes),
+                    width,
+                    height,
+                    parse_polygons=include_polygons,
                 )
                 class_id.append(cid)
                 xyxy.append(xyxy_px)
-                if include_polygons:
+                if include_polygons and polygon_px is not None:
                     polygons.append(polygon_px)
 
         samples.append(
