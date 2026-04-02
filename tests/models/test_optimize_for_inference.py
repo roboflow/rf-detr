@@ -313,3 +313,17 @@ class TestOptimizeForInferenceExceptionRecovery:
 
         assert rfdetr._optimized_has_been_compiled is False
         assert rfdetr._optimized_batch_size is None
+
+    def test_jit_trace_failure_leaves_model_fully_unoptimized(self) -> None:
+        """jit.trace failure leaves both _is_optimized_for_inference=False and inference_model=None."""
+        rfdetr = _FakeRFDETR()
+
+        with (
+            patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
+            patch("torch.jit.trace", side_effect=RuntimeError("trace failed")),
+            pytest.raises(RuntimeError, match="trace failed"),
+        ):
+            rfdetr.optimize_for_inference(compile=True)
+
+        assert rfdetr._is_optimized_for_inference is False
+        assert rfdetr.model.inference_model is None

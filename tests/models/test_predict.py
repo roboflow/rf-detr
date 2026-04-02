@@ -96,13 +96,42 @@ def test_predict_accepts_image_url() -> None:
 
 
 class TestPredictSourceData:
-    """Verify that ``predict()`` populates ``source_image`` and ``source_shape``."""
+    """Verify ``predict()`` source metadata behavior."""
+
+    def test_source_image_included_by_default(self) -> None:
+        """source_image remains included by default for API compatibility."""
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+        model = _DummyRFDETR()
+        detections = model.predict(img)
+        assert "source_image" in detections.data
+        assert isinstance(detections.data["source_image"], np.ndarray)
+        assert detections.data["source_image"].shape == (48, 64, 3)
+        assert detections.data["source_shape"] == (48, 64)
+
+    def test_source_image_included_by_default_tensor(self) -> None:
+        """Tensor input keeps source_image by default for API compatibility."""
+        tensor = torch.rand(3, 48, 64)
+        model = _DummyRFDETR()
+        detections = model.predict(tensor)
+        assert "source_image" in detections.data
+        assert isinstance(detections.data["source_image"], np.ndarray)
+        assert detections.data["source_image"].dtype == np.uint8
+        assert detections.data["source_image"].shape == (48, 64, 3)
+        assert detections.data["source_shape"] == (48, 64)
+
+    def test_source_image_can_be_disabled(self) -> None:
+        """include_source_image=False omits source_image for memory-sensitive paths."""
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+        model = _DummyRFDETR()
+        detections = model.predict(img, include_source_image=False)
+        assert "source_image" not in detections.data
+        assert detections.data["source_shape"] == (48, 64)
 
     def test_source_image_from_pil(self) -> None:
         """PIL input stores the original image as a numpy array."""
         img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
         model = _DummyRFDETR()
-        detections = model.predict(img)
+        detections = model.predict(img, include_source_image=True)
         assert "source_image" in detections.data
         assert isinstance(detections.data["source_image"], np.ndarray)
         assert detections.data["source_image"].shape == (48, 64, 3)
@@ -119,7 +148,7 @@ class TestPredictSourceData:
         """Tensor input stores the original image as a uint8 numpy array."""
         tensor = torch.rand(3, 48, 64)
         model = _DummyRFDETR()
-        detections = model.predict(tensor)
+        detections = model.predict(tensor, include_source_image=True)
         assert "source_image" in detections.data
         assert isinstance(detections.data["source_image"], np.ndarray)
         assert detections.data["source_image"].dtype == np.uint8
@@ -137,7 +166,7 @@ class TestPredictSourceData:
         img1 = PIL.Image.new("RGB", (64, 48), color=(100, 100, 100))
         img2 = PIL.Image.new("RGB", (32, 24), color=(200, 200, 200))
         model = _DummyRFDETR()
-        detections_list = model.predict([img1, img2])
+        detections_list = model.predict([img1, img2], include_source_image=True)
         assert isinstance(detections_list, list)
         assert detections_list[0].data["source_image"].shape == (48, 64, 3)
         assert detections_list[1].data["source_image"].shape == (24, 32, 3)

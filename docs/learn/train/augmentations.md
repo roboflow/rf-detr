@@ -123,7 +123,7 @@ Any Albumentations transform works by name. If your custom transform is geometri
 
 ```python
 GEOMETRIC_TRANSFORMS = {
-    ...
+    ...,
     "YourCustomTransform",
 }
 ```

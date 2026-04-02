@@ -12,6 +12,7 @@ import importlib
 import json
 import operator
 import os
+import tempfile
 import warnings
 from collections import defaultdict
 from copy import deepcopy
@@ -581,35 +582,44 @@ class RFDETR:
         if not isinstance(dtype, torch.dtype):
             raise TypeError(f"dtype must be a torch.dtype or a string name of a dtype, got {type(dtype)!r}")
 
+        # Clear any previously optimized state before starting a new optimization run.
+        self.remove_optimized_model()
+
         device = self.model.device
         cuda_ctx = torch.cuda.device(device) if device.type == "cuda" else contextlib.nullcontext()
-        with cuda_ctx:
-            self.remove_optimized_model()
 
-            self.model.inference_model = deepcopy(self.model.model)
-            self.model.inference_model.eval()
-            self.model.inference_model.export()
+        try:
+            with cuda_ctx:
+                self.model.inference_model = deepcopy(self.model.model)
+                self.model.inference_model.eval()
+                self.model.inference_model.export()
 
-            self._optimized_resolution = self.model.resolution
-            self._is_optimized_for_inference = True
+                self.model.inference_model = self.model.inference_model.to(dtype=dtype)
 
-            self.model.inference_model = self.model.inference_model.to(dtype=dtype)
-            self._optimized_dtype = dtype
+                if compile:
+                    self.model.inference_model = torch.jit.trace(
+                        self.model.inference_model,
+                        torch.randn(
+                            batch_size,
+                            3,
+                            self.model.resolution,
+                            self.model.resolution,
+                            device=self.model.device,
+                            dtype=dtype,
+                        ),
+                    )
+                    self._optimized_has_been_compiled = True
+                    self._optimized_batch_size = batch_size
 
-            if compile:
-                self.model.inference_model = torch.jit.trace(
-                    self.model.inference_model,
-                    torch.randn(
-                        batch_size,
-                        3,
-                        self.model.resolution,
-                        self.model.resolution,
-                        device=self.model.device,
-                        dtype=dtype,
-                    ),
-                )
-                self._optimized_has_been_compiled = True
-                self._optimized_batch_size = batch_size
+                # Set success flags only after all operations complete.
+                self._optimized_resolution = self.model.resolution
+                self._is_optimized_for_inference = True
+                self._optimized_dtype = dtype
+        except Exception:
+            # Ensure the object is left in a consistent, unoptimized state if optimization fails.
+            with contextlib.suppress(Exception):
+                self.remove_optimized_model()
+            raise
 
     def remove_optimized_model(self) -> None:
         """Remove the optimized inference model and reset all optimization flags.
@@ -932,6 +942,7 @@ class RFDETR:
         threshold: float = 0.5,
         shape: tuple[int, int] | None = None,
         patch_size: int | None = None,
+        include_source_image: bool = True,
         **kwargs,
     ) -> sv.Detections | list[sv.Detections]:
         """Performs object detection on the input images and returns bounding box
@@ -960,6 +971,10 @@ class RFDETR:
                 to ``model_config.patch_size`` (typically 14 for large models, 16 for
                 smaller ones). Divisibility is checked against
                 ``patch_size * num_windows``.
+            include_source_image:
+                Whether to attach the original image as ``source_image`` in
+                ``detections.data``. Defaults to ``True`` for backward compatibility.
+                Set to ``False`` to reduce memory use when source images are not needed.
             **kwargs:
                 Additional keyword arguments.
 
@@ -1009,7 +1024,7 @@ class RFDETR:
 
         orig_sizes = []
         processed_images = []
-        source_images = []
+        source_images = [] if include_source_image else None
 
         for img in images:
             if isinstance(img, str):
@@ -1018,12 +1033,13 @@ class RFDETR:
                 img = Image.open(img)
 
             if not isinstance(img, torch.Tensor):
-                src = np.array(img)
-                if src.dtype != np.uint8:
-                    src = (src * 255).clip(0, 255).astype(np.uint8)
-                source_images.append(src)
+                if include_source_image:
+                    src = np.array(img)
+                    if src.dtype != np.uint8:
+                        src = (src * 255).clip(0, 255).astype(np.uint8)
+                    source_images.append(src)
                 img = F.to_tensor(img)
-            else:
+            elif include_source_image:
                 source_images.append((img.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8))
 
             if (img > 1).any():
@@ -1118,7 +1134,8 @@ class RFDETR:
                     class_id=labels.cpu().numpy(),
                 )
 
-            detections.data["source_image"] = source_images[i]
+            if include_source_image:
+                detections.data["source_image"] = source_images[i]
             detections.data["source_shape"] = orig_sizes[i]
 
             detections_list.append(detections)
@@ -1155,8 +1172,6 @@ class RFDETR:
                 not set for custom architectures.
 
         """
-        import shutil
-
         from roboflow import Roboflow
 
         if api_key is None:
@@ -1171,9 +1186,7 @@ class RFDETR:
             raise ValueError("Must set size for custom architectures")
 
         size = self.size or size
-        tmp_out_dir = ".roboflow_temp_upload"
-        os.makedirs(tmp_out_dir, exist_ok=True)
-        try:
+        with tempfile.TemporaryDirectory(prefix="roboflow_upload_") as tmp_out_dir:
             # Write class_names.txt so the Roboflow upload pipeline can discover
             # the class labels without relying on args.class_names in the checkpoint.
             class_names_path = os.path.join(tmp_out_dir, "class_names.txt")
@@ -1194,8 +1207,6 @@ class RFDETR:
             project = workspace.project(project_id)
             project_version = project.version(version)
             project_version.deploy(model_type=size, model_path=tmp_out_dir, filename="weights.pt")
-        finally:
-            shutil.rmtree(tmp_out_dir, ignore_errors=True)
 
 
 def __getattr__(name: str):
