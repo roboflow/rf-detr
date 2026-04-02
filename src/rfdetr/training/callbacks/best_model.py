@@ -54,7 +54,7 @@ class BestModelCallback(ModelCheckpoint):
         self,
         output_dir: str,
         monitor_regular: str = "val/mAP_50_95",
-        monitor_ema: Optional[str] = None,
+        monitor_ema: str | None = None,
         run_test: bool = True,
     ) -> None:
         super().__init__(
@@ -73,7 +73,7 @@ class BestModelCallback(ModelCheckpoint):
         self._best_ema: float = 0.0
         self._output_dir = Path(output_dir)
         # Stash current pl_module so _save_checkpoint (no pl_module param) can access it.
-        self._current_pl_module: Optional[LightningModule] = None
+        self._current_pl_module: LightningModule | None = None
 
     @staticmethod
     def _build_checkpoint_payload(
@@ -404,8 +404,8 @@ class RFDETREarlyStopping(EarlyStopping):
         regular_tensor = metrics.get(self._monitor_regular)
         ema_tensor = metrics.get(self._monitor_ema)
 
-        regular_val: Optional[float] = regular_tensor.item() if regular_tensor is not None else None
-        ema_val: Optional[float] = ema_tensor.item() if ema_tensor is not None else None
+        regular_val: float | None = regular_tensor.item() if regular_tensor is not None else None
+        ema_val: float | None = ema_tensor.item() if ema_tensor is not None else None
 
         if regular_val is None and ema_val is None:
             return  # No metrics available — skip (matches legacy noop behaviour).

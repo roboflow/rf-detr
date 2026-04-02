@@ -932,7 +932,7 @@ class TestRFDETREarlyStopping:
         assert trainer.should_stop is False
 
     @pytest.mark.parametrize(
-        "use_ema, maps, patience, min_delta, expected_stop_epoch",
+        ("use_ema", "maps", "patience", "min_delta", "expected_stop_epoch"),
         [
             pytest.param(
                 False,

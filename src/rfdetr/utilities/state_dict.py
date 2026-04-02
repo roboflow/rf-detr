@@ -262,18 +262,21 @@ def validate_checkpoint_compatibility(checkpoint: dict[str, Any], model_args: An
     ckpt_segmentation_head: bool | None = _ckpt_args_get(ckpt_args, "segmentation_head")
     model_segmentation_head: bool | None = getattr(model_args, "segmentation_head", None)
 
-    if ckpt_segmentation_head is not None and model_segmentation_head is not None:
-        if ckpt_segmentation_head != model_segmentation_head:
-            if ckpt_segmentation_head:
-                raise ValueError(
-                    "The checkpoint was trained with a segmentation head, but the current model does not have one. "
-                    "Load the weights into a segmentation model (e.g. RFDETRSegNano) instead of a detection model."
-                )
-            else:
-                raise ValueError(
-                    "The current model has a segmentation head, but the checkpoint was trained without one. "
-                    "Load the weights into a detection model (e.g. RFDETRNano) instead of a segmentation model."
-                )
+    if (
+        ckpt_segmentation_head is not None
+        and model_segmentation_head is not None
+        and ckpt_segmentation_head != model_segmentation_head
+    ):
+        if ckpt_segmentation_head:
+            raise ValueError(
+                "The checkpoint was trained with a segmentation head, but the current model does not have one. "
+                "Load the weights into a segmentation model (e.g. RFDETRSegNano) instead of a detection model."
+            )
+        else:
+            raise ValueError(
+                "The current model has a segmentation head, but the checkpoint was trained without one. "
+                "Load the weights into a detection model (e.g. RFDETRNano) instead of a segmentation model."
+            )
 
     ckpt_patch_size: int | None = _ckpt_args_get(ckpt_args, "patch_size")
     model_patch_size: int | None = getattr(model_args, "patch_size", None)
