@@ -706,6 +706,7 @@ class TestYoloDetectionLazyMasks:
         assert set(target["labels"].tolist()) == {0, 1}
 
     def test_lazy_getitem_cv2_returns_none_raises_value_error(self, tmp_path: Path) -> None:
+        """Lazy mask loading should raise ValueError when cv2.imread cannot read the image."""
         image_dir, label_dir, data_file = _write_yolo_segmentation_dataset(tmp_path)
         dataset = YoloDetection(
             img_folder=str(image_dir),
