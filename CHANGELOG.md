@@ -31,6 +31,10 @@ The following fields are duplicated between `ModelConfig` and `TrainConfig`; cle
 
 These fields will be **removed** in v1.9 after a full release cycle.
 
+### Changed
+
+- **Breaking**: `RFDETR.predict()` no longer includes the source image in `detections.data` by default. Code that accesses `detections.data["source_image"]` must now pass `include_source_image=True` explicitly. This opt-in default reduces memory usage when the image is not needed for annotation. Migration: add `include_source_image=True` to any `predict()` call that reads `detections.data["source_image"]`.
+
 ### Fixed
 
 - Fixed `models/lwdetr.py`: `reinitialize_detection_head` now replaces `nn.Linear` modules instead of mutating `.data` tensors in-place, ensuring `out_features` metadata stays consistent with the actual weight shape. This prevents ONNX export and `torch.jit.trace` from emitting stale (pre-fine-tuning) class counts for fine-tuned models. (#904)
