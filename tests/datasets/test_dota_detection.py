@@ -15,7 +15,9 @@ from rfdetr.datasets.dota_detection import (
     DOTA_V1_CLASSES,
     DotaDetection,
     DotaNormalize,
+    build_dota,
     corners_list_to_tensor,
+    make_dota_transforms,
     parse_dota_annotation,
 )
 
@@ -167,3 +169,30 @@ class TestDotaNormalize:
         target = {"corners": torch.zeros(0, 4, 2), "boxes_obb": torch.zeros(0, 5)}
         _, target_out = normalize(image, target)
         assert target_out["boxes_obb"].shape == (0, 5)
+
+
+class TestMakeDotaTransforms:
+    def test_train_returns_compose(self) -> None:
+        transforms = make_dota_transforms("train", 512)
+        assert transforms is not None
+
+    def test_val_returns_compose(self) -> None:
+        transforms = make_dota_transforms("val", 512)
+        assert transforms is not None
+
+
+class TestBuildDota:
+    def test_builds_dataset(self, dota_root: Path) -> None:
+        import types
+
+        args = types.SimpleNamespace(dataset_dir=str(dota_root.parent))
+        root_with_split = dota_root.parent / "train"
+        root_with_split.mkdir(exist_ok=True)
+        (root_with_split / "images").mkdir(exist_ok=True)
+        (root_with_split / "labelTxt").mkdir(exist_ok=True)
+        img = Image.new("RGB", (50, 50), color="blue")
+        img.save(root_with_split / "images" / "test.png")
+        (root_with_split / "labelTxt" / "test.txt").write_text("")
+        args.dataset_dir = str(dota_root.parent)
+        dataset = build_dota("train", args, 256)
+        assert isinstance(dataset, DotaDetection)
