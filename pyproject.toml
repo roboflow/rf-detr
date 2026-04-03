@@ -239,6 +239,7 @@ filterwarnings = [
 
 [tool.codespell]
 skip = "*.pth"
+ignore-words-list = "dota"
 
 [tool.mypy]
 python_version = "3.10"
