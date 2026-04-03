@@ -11,7 +11,7 @@ import pytest
 import torch
 from PIL import Image
 
-from rfdetr.datasets.dota import (
+from rfdetr.datasets.dota_detection import (
     DOTA_V1_CLASSES,
     DotaDetection,
     DotaNormalize,

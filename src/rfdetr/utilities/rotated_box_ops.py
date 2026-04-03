@@ -102,6 +102,8 @@ def _obb_to_gaussian(
     cos_a = torch.cos(angle)
     sin_a = torch.sin(angle)
 
+    w = w.clamp(min=1e-6)
+    h = h.clamp(min=1e-6)
     var_w = (w * w) / 4
     var_h = (h * h) / 4
 
@@ -144,7 +146,7 @@ def gwd_loss(pred: torch.Tensor, target: torch.Tensor, tau: float = 1.0) -> torc
     det_sqrt = (det_p.clamp(min=1e-8) * det_t.clamp(min=1e-8)).sqrt()
     trace_sqrt = (trace_product + 2 * det_sqrt).clamp(min=1e-8).sqrt()
 
-    w2 = term_center + trace_p + trace_t - 2 * trace_sqrt
+    w2 = (term_center + trace_p + trace_t - 2 * trace_sqrt).clamp(min=0)
 
     return 1 - 1 / (tau + torch.log1p(w2))
 
@@ -252,6 +254,6 @@ def gwd_pairwise(boxes1: torch.Tensor, boxes2: torch.Tensor, tau: float = 1.0) -
     det_sqrt = (det_p[:, None] * det_t[None, :]).sqrt()
     trace_sqrt = (trace_product + 2 * det_sqrt).clamp(min=1e-8).sqrt()
 
-    w2 = term_center + trace_p[:, None] + trace_t[None, :] - 2 * trace_sqrt
+    w2 = (term_center + trace_p[:, None] + trace_t[None, :] - 2 * trace_sqrt).clamp(min=0)
 
     return 1 - 1 / (tau + torch.log1p(w2))

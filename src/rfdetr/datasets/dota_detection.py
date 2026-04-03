@@ -66,7 +66,10 @@ def parse_dota_annotation(ann_path: Path) -> list[dict[str, Any]]:
             except ValueError:
                 continue
             category = parts[8]
-            difficulty = int(parts[9]) if len(parts) > 9 else 0
+            try:
+                difficulty = int(parts[9]) if len(parts) > 9 else 0
+            except ValueError:
+                difficulty = 0
             annotations.append(
                 {
                     "corners": coords,
