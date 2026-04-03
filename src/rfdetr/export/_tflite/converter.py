@@ -114,11 +114,11 @@ def _numpy_allow_pickle() -> Generator[None, None, None]:
         kwargs.setdefault("allow_pickle", True)
         return _original_load(*args, **kwargs)
 
-    np.load = _patched_load  # type: ignore[assignment]
+    np.load = _patched_load  # type: ignore[assignment,unused-ignore]
     try:
         yield
     finally:
-        np.load = _original_load  # type: ignore[assignment]
+        np.load = _original_load  # type: ignore[assignment,unused-ignore]
 
 
 @contextlib.contextmanager
@@ -159,8 +159,8 @@ def _patch_validation_download(npy_path: str) -> Generator[None, None, None]:
     for mod_name in modules:
         mod = sys.modules.get(mod_name)
         if mod and hasattr(mod, "download_test_image_data"):
-            originals[mod_name] = mod.download_test_image_data
-            mod.download_test_image_data = _replacement
+            originals[mod_name] = getattr(mod, "download_test_image_data")
+            setattr(mod, "download_test_image_data", _replacement)
 
     try:
         yield
@@ -168,7 +168,7 @@ def _patch_validation_download(npy_path: str) -> Generator[None, None, None]:
         for mod_name, original in originals.items():
             mod = sys.modules.get(mod_name)
             if mod:
-                mod.download_test_image_data = original
+                setattr(mod, "download_test_image_data", original)
 
 
 def _load_calibration_images(
