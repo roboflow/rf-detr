@@ -1,13 +1,17 @@
-# Export RF-DETR Model to ONNX
+# Export RF-DETR Model
 
-RF-DETR supports exporting models to the ONNX format, which enables interoperability with various inference frameworks and can improve deployment efficiency.
+RF-DETR supports exporting models to ONNX and TFLite formats, enabling deployment across a wide range of inference frameworks, edge devices, and hardware accelerators.
 
 ## Installation
 
-To export your model, first install the `onnxexport` extension:
+Install the export dependencies you need:
 
 ```bash
+# ONNX export only
 pip install "rfdetr[onnx]"
+
+# TFLite export (includes ONNX dependency)
+pip install "rfdetr[onnx,tflite]"
 ```
 
 ## Basic Export
@@ -40,17 +44,21 @@ This command saves the ONNX model to the `output` directory by default.
 
 The `export()` method accepts several parameters to customize the export process:
 
-| Parameter       | Default    | Description                                                                                                            |
-| --------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `output_dir`    | `"output"` | Directory where the exported ONNX model will be saved.                                                                 |
-| `infer_dir`     | `None`     | Path to an image file to use for tracing. If not provided, a random dummy image is generated.                          |
-| `simplify`      | `False`    | Deprecated and ignored. ONNX simplification is no longer run by `export()`.                                            |
-| `backbone_only` | `False`    | Export only the backbone feature extractor instead of the full model.                                                  |
-| `opset_version` | `17`       | ONNX opset version to use for export. Higher versions support more operations.                                         |
-| `verbose`       | `True`     | Whether to print verbose export information.                                                                           |
-| `force`         | `False`    | Deprecated and ignored.                                                                                                |
-| `shape`         | `None`     | Input shape as tuple `(height, width)`. Must be divisible by 14. If not provided, uses the model's default resolution. |
-| `batch_size`    | `1`        | Batch size for the exported model.                                                                                     |
+| Parameter          | Default    | Description                                                                                                                             |
+| ------------------ | ---------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `output_dir`       | `"output"` | Directory where the exported model will be saved.                                                                                       |
+| `format`           | `"onnx"`   | Export format: `"onnx"` or `"tflite"`.                                                                                                  |
+| `quantization`     | `None`     | TFLite quantization mode: `None`/`"fp32"`, `"fp16"`, or `"int8"`. Only used when `format="tflite"`.                                     |
+| `calibration_data` | `None`     | Calibration data for TFLite export. Image directory, `.npy` file path, NumPy array, or `None`. See [TFLite Export](#tflite-export).     |
+| `max_images`       | `100`      | Maximum number of images to load from a calibration directory for TFLite INT8 quantization. Ignored for other calibration data formats. |
+| `infer_dir`        | `None`     | Path to an image file to use for tracing. If not provided, a random dummy image is generated.                                           |
+| `simplify`         | `False`    | Deprecated and ignored. ONNX simplification is no longer run by `export()`.                                                             |
+| `backbone_only`    | `False`    | Export only the backbone feature extractor instead of the full model.                                                                   |
+| `opset_version`    | `17`       | ONNX opset version to use for export. Higher versions support more operations.                                                          |
+| `verbose`          | `True`     | Whether to print verbose export information.                                                                                            |
+| `force`            | `False`    | Deprecated and ignored.                                                                                                                 |
+| `shape`            | `None`     | Input shape as tuple `(height, width)`. Must be divisible by 14. If not provided, uses the model's default resolution.                  |
+| `batch_size`       | `1`        | Batch size for the exported model.                                                                                                      |
 
 ## Advanced Export Examples
 
@@ -136,6 +144,180 @@ trtexec("output/inference_model.onnx", args)
 
 This produces `output/inference_model.engine`. If `profile=True`, it also writes an Nsight Systems report (`.nsys-rep`).
 
+## TFLite Export
+
+Export your model to TFLite for deployment on mobile devices, microcontrollers, and edge hardware via TensorFlow Lite. The TFLite export pipeline converts ONNX → TensorFlow → TFLite using [onnx2tf](https://github.com/PINTO0309/onnx2tf).
+
+### Prerequisites
+
+```bash
+pip install "rfdetr[onnx,tflite]"
+```
+
+### Basic TFLite Export (FP32)
+
+=== "Object Detection"
+
+    ```python
+    from rfdetr import RFDETRBase
+
+    model = RFDETRBase()
+
+    model.export(format="tflite", output_dir="output")
+    ```
+
+=== "Image Segmentation"
+
+    ```python
+    from rfdetr import RFDETRSegNano
+
+    model = RFDETRSegNano()
+
+    model.export(format="tflite", output_dir="output")
+    ```
+
+This produces both `output/inference_model_float32.tflite` and `output/inference_model_float16.tflite`.
+
+### INT8 Quantization with Calibration Data
+
+For INT8 quantization, provide representative images from your dataset as calibration data. This is **critical** for preserving model accuracy — without real calibration data, the quantizer uses random noise and accuracy will be poor.
+
+#### Option 1: Point to an Image Directory (Recommended)
+
+The simplest approach — just point `calibration_data` to a directory containing JPEG/PNG images. The converter automatically loads, resizes, and prepares the images:
+
+```python
+from rfdetr import RFDETRNano
+
+model = RFDETRNano()
+model.export(
+    format="tflite",
+    quantization="int8",
+    calibration_data="path/to/val2017/",  # directory of images
+    output_dir="output",
+)
+```
+
+The converter loads up to 100 images from the directory by default, resizes them to the model's input resolution, and uses them for both output validation and INT8 calibration. Supported formats: JPEG, PNG, BMP, WebP.
+
+You can control how many images are loaded with the `max_images` parameter:
+
+```python
+model.export(
+    format="tflite",
+    quantization="int8",
+    calibration_data="path/to/val2017/",
+    max_images=200,  # load up to 200 images (default: 100)
+    output_dir="output",
+)
+```
+
+#### Option 2: NumPy `.npy` File
+
+Prepare calibration data as a NumPy array and save it to a `.npy` file:
+
+- Shape: `(N, H, W, 3)` — NHWC format with 3 color channels
+- Data type: `float32`
+- Value range: `[0, 1]` (divide by 255, but do **not** apply ImageNet normalization — the converter handles that automatically)
+- Recommended: 20–100 representative images from your dataset
+
+```python
+import numpy as np
+from PIL import Image
+from rfdetr import RFDETRBase
+
+# Load representative images from your dataset
+images = []
+for path in image_paths[:50]:  # 50 representative samples
+    img = Image.open(path).convert("RGB").resize((560, 560))
+    images.append(np.array(img, dtype=np.float32) / 255.0)
+
+calibration_data = np.stack(images)  # shape: (50, 560, 560, 3)
+
+# Save to .npy for reuse
+np.save("calibration_data.npy", calibration_data)
+
+# Export with INT8 quantization
+model = RFDETRBase()
+model.export(
+    format="tflite",
+    quantization="int8",
+    calibration_data="calibration_data.npy",
+    output_dir="output",
+)
+```
+
+#### Option 3: NumPy Array Directly
+
+You can also pass the NumPy array directly without saving to disk:
+
+```python
+model.export(
+    format="tflite",
+    quantization="int8",
+    calibration_data=calibration_data,  # np.ndarray
+    output_dir="output",
+)
+```
+
+### FP16 Export
+
+FP16 models are always produced alongside FP32. You can explicitly request FP16 mode:
+
+```python
+model.export(format="tflite", quantization="fp16", output_dir="output")
+```
+
+### TFLite Output Files
+
+The `onnx2tf` converter **always** produces both FP32 and FP16 TFLite files, regardless of the requested quantization mode. When `quantization="int8"` is specified, it additionally produces the INT8-quantized model.
+
+| File                                   | Description                             |
+| -------------------------------------- | --------------------------------------- |
+| `inference_model_float32.tflite`       | FP32 model (always produced)            |
+| `inference_model_float16.tflite`       | FP16 model (always produced)            |
+| `inference_model_integer_quant.tflite` | INT8 model (when `quantization="int8"`) |
+
+!!! note
+
+    Segmentation models produce TFLite files with three outputs: `dets` (bounding boxes), `labels` (class scores), and `masks` (per-instance segmentation masks).
+
+### TFLite Inference Example
+
+```python
+import numpy as np
+from PIL import Image
+
+# pip install tflite-runtime  (or use tensorflow.lite)
+import tflite_runtime.interpreter as tflite
+
+# Load model
+interpreter = tflite.Interpreter(model_path="output/inference_model_float32.tflite")
+interpreter.allocate_tensors()
+
+input_details = interpreter.get_input_details()
+output_details = interpreter.get_output_details()
+
+# Prepare input — TFLite model expects NHWC, ImageNet-normalized
+image = Image.open("image.jpg").convert("RGB").resize((560, 560))
+image_array = np.array(image, dtype=np.float32) / 255.0
+
+# Apply ImageNet normalization
+mean = np.array([0.485, 0.456, 0.406])
+std = np.array([0.229, 0.224, 0.225])
+image_array = (image_array - mean) / std
+
+# Add batch dimension: (1, 560, 560, 3)
+image_array = np.expand_dims(image_array, axis=0).astype(np.float32)
+
+# Run inference
+interpreter.set_tensor(input_details[0]["index"], image_array)
+interpreter.invoke()
+
+boxes = interpreter.get_tensor(output_details[0]["index"])
+labels = interpreter.get_tensor(output_details[1]["index"])
+```
+
 ## Using the Exported Model
 
 Once exported, you can use the ONNX model with various inference frameworks:
@@ -175,4 +357,5 @@ After exporting your model, you may want to:
 
 - [Deploy to Roboflow](deploy.md) for cloud-based inference and workflow integration
 - Use the ONNX model with TensorRT for optimized GPU inference
+- Deploy TFLite models on mobile/edge devices with TensorFlow Lite
 - Integrate with edge deployment frameworks like ONNX Runtime or OpenVINO

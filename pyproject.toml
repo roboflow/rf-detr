@@ -73,6 +73,10 @@ trt = [
     "tensorrt>=8.6.1",
     "polygraphy",
 ]
+tflite = [
+    "onnx2tf>=1.25.0,<3.0.0",
+    "flatbuffers>=23.5.26",
+]
 loggers = [
     "tensorboard>=2.13.0",
     "protobuf>=3.20.0,<4.0.0",  # Pins protobuf below 4.x to avoid TensorBoard descriptor crash with protobuf>=4 (see #844)
@@ -168,7 +172,8 @@ addopts = [
 pythonpath = ["src"]
 markers = [
     "gpu: tests that require GPU or are slow on CPU",
-    "flaky: tests that may fail due to nondeterminism"
+    "flaky: tests that may fail due to nondeterminism",
+    "tflite: tests requiring onnx2tf and TFLite dependencies",
 ]
 filterwarnings = [
     # pytest-xdist workers close their channel before teardown completes;

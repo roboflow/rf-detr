@@ -403,15 +403,19 @@ class RFDETR:
         batch_size: int = 1,
         dynamic_batch: bool = False,
         patch_size: int | None = None,
+        format: str = "onnx",
+        quantization: str | None = None,
+        calibration_data: str | np.ndarray | None = None,
+        max_images: int = 100,
         **kwargs,
     ) -> None:
-        """Export the trained model to ONNX format.
+        """Export the trained model to ONNX or TFLite format.
 
         See the `ONNX export documentation <https://rfdetr.roboflow.com/learn/export/>`_
         for more information.
 
         Args:
-            output_dir: Directory to write the ONNX file to.
+            output_dir: Directory to write the exported model to.
             infer_dir: Optional directory of sample images for dynamic-axes inference.
             simplify: Deprecated and ignored. Simplification is no longer run.
             backbone_only: Export only the backbone (feature extractor).
@@ -427,10 +431,39 @@ class RFDETR:
                 ``model_config.patch_size`` (typically 14 or 16). When provided
                 explicitly it must match the instantiated model's patch size.
                 Shape divisibility is validated against ``patch_size * num_windows``.
+            format: Export format — ``"onnx"`` (default) or ``"tflite"``.
+                When ``"tflite"`` is selected the model is first exported to ONNX
+                then converted to TFLite via ``onnx2tf``.  Requires
+                ``pip install rfdetr[onnx,tflite]``.
+            quantization: TFLite quantization mode (ignored when
+                ``format="onnx"``).  One of ``None``, ``"fp32"``, ``"fp16"``,
+                ``"int8"``.  ``None`` / ``"fp32"`` / ``"fp16"`` produce FP32 +
+                FP16 ``.tflite`` files; ``"int8"`` additionally produces an
+                INT8-quantized model.
+            calibration_data: Representative images for INT8 calibration
+                and ``onnx2tf`` output validation.  Accepts:
+
+                * ``None`` — auto-generate random data (sufficient for
+                  fp32/fp16; warns for int8).
+                * A **directory path** (``str``) containing JPEG/PNG
+                  images — the converter automatically loads, resizes, and
+                  prepares them.  This is the simplest approach.
+                * A path (``str``) to a ``.npy`` file of shape
+                  ``(N, H, W, 3)``, dtype float32, values in ``[0, 1]``.
+                * A :class:`numpy.ndarray` with the same format.
+
+                For INT8 quantization, provide 20–100 representative
+                images from your training/validation set for best accuracy.
+            max_images: Maximum number of images to load from a
+                calibration directory.  Defaults to ``100``.  Only used
+                when *calibration_data* is a directory path.
             **kwargs: Additional keyword arguments forwarded to export_onnx.
 
         """
         logger.info("Exporting model to ONNX format")
+        _valid_formats = ("onnx", "tflite")
+        if format not in _valid_formats:
+            raise ValueError(f"Unsupported export format {format!r}. Choose from: {_valid_formats}")
         try:
             from rfdetr.export.main import export_onnx, make_infer_image
         except ImportError:
@@ -515,7 +548,27 @@ class RFDETR:
 
         logger.info(f"Successfully exported ONNX model to: {output_file}")
 
-        logger.info("ONNX export completed successfully")
+        if format == "tflite":
+            try:
+                from rfdetr.export._tflite.converter import export_tflite
+            except ImportError:
+                logger.error(
+                    "It seems some dependencies for TFLite export are missing."
+                    " Please run `pip install rfdetr[onnx,tflite]` and try again.",
+                )
+                raise
+
+            tflite_path = export_tflite(
+                onnx_path=output_file,
+                output_dir=str(output_dir_path),
+                quantization=quantization,
+                calibration_data=calibration_data,
+                verbosity="info" if verbose else "error",
+                max_images=max_images,
+            )
+            logger.info(f"Successfully exported TFLite model to: {tflite_path}")
+
+        logger.info("Export completed successfully")
         self.model.model = self.model.model.to(device)
 
     @staticmethod

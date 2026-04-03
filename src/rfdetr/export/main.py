@@ -175,3 +175,14 @@ def main(args):
 
     if args.tensorrt:
         output_file = trtexec(output_file, args)
+
+    if getattr(args, "tflite", False):
+        from rfdetr.export._tflite.converter import export_tflite
+
+        export_tflite(
+            onnx_path=output_file,
+            output_dir=args.output_dir,
+            quantization=getattr(args, "quantization", None),
+            calibration_data=getattr(args, "calibration_data", None),
+            verbosity="info" if args.verbose else "error",
+        )
