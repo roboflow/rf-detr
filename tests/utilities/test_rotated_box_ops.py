@@ -228,3 +228,37 @@ class TestGwdPairwise:
         )
         cost = gwd_pairwise(boxes, boxes)
         assert torch.allclose(torch.diag(cost), torch.zeros(2), atol=0.01)
+
+
+class TestEdgeCases:
+    def test_zero_size_box_gwd_no_crash(self) -> None:
+        pred = torch.tensor([[5.0, 5.0, 0.0, 0.0, 0.5]])
+        target = torch.tensor([[5.0, 5.0, 3.0, 2.0, 0.5]])
+        loss = gwd_loss(pred, target)
+        assert torch.isfinite(loss).all()
+
+    def test_zero_size_box_kld_no_crash(self) -> None:
+        pred = torch.tensor([[5.0, 5.0, 0.0, 0.0, 0.5]])
+        target = torch.tensor([[5.0, 5.0, 3.0, 2.0, 0.5]])
+        loss = kld_loss(pred, target)
+        assert torch.isfinite(loss).all()
+
+    def test_zero_size_box_probiou_no_crash(self) -> None:
+        pred = torch.tensor([[5.0, 5.0, 0.0, 0.0, 0.5]])
+        target = torch.tensor([[5.0, 5.0, 3.0, 2.0, 0.5]])
+        score = probiou(pred, target)
+        assert torch.isfinite(score).all()
+
+    def test_very_large_boxes(self) -> None:
+        pred = torch.tensor([[500.0, 500.0, 1000.0, 800.0, 0.5]])
+        target = torch.tensor([[500.0, 500.0, 1000.0, 800.0, 0.5]])
+        assert gwd_loss(pred, target).item() < 0.01
+        assert kld_loss(pred, target).item() < 0.01
+        assert probiou(pred, target).item() > 0.99
+
+    def test_single_element_tensors(self) -> None:
+        pred = torch.tensor([5.0, 5.0, 3.0, 2.0, 0.5]).unsqueeze(0)
+        target = torch.tensor([5.0, 5.0, 3.0, 2.0, 0.5]).unsqueeze(0)
+        assert gwd_loss(pred, target).shape == (1,)
+        assert kld_loss(pred, target).shape == (1,)
+        assert probiou(pred, target).shape == (1,)

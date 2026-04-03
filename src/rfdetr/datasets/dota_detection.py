@@ -254,10 +254,8 @@ class DotaNormalize:
         if "corners" in target and len(target["corners"]) > 0:
             corners = target["corners"]
             boxes_obb = corners_to_cxcywha(corners)
-            boxes_obb[..., 0] /= w
-            boxes_obb[..., 1] /= h
-            boxes_obb[..., 2] /= w
-            boxes_obb[..., 3] /= h
+            scale = torch.tensor([w, h, w, h, 1.0], dtype=boxes_obb.dtype)
+            boxes_obb = boxes_obb / scale
             target["boxes_obb"] = boxes_obb
 
         return image, target
