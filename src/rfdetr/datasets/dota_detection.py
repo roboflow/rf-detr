@@ -92,7 +92,7 @@ def corners_list_to_tensor(corners: list[float]) -> torch.Tensor:
     return torch.tensor(corners, dtype=torch.float32).reshape(4, 2)
 
 
-class DotaDetection(Dataset[tuple[Any, dict[str, Any]]]):
+class DotaDetection(Dataset):
     """DOTA v1.0 dataset for oriented object detection.
 
     Expects the standard DOTA directory layout::
