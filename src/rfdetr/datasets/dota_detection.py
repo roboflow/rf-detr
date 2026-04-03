@@ -146,7 +146,7 @@ class DotaDetection(Dataset):
     def __len__(self) -> int:
         return len(self.image_files)
 
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, dict[str, Any]]:
+    def __getitem__(self, idx: int) -> tuple[Any, dict[str, Any]]:
         img_path = self.image_files[idx]
         ann_path = self.labels_dir / f"{img_path.stem}.txt"
 

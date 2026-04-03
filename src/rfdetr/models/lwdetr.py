@@ -210,6 +210,10 @@ class LWDETR(nn.Module):
         nn.init.constant_(self.bbox_embed.layers[-1].weight.data, 0)
         nn.init.constant_(self.bbox_embed.layers[-1].bias.data, 0)
 
+        if self.angle_embed is not None:
+            nn.init.constant_(self.angle_embed.layers[-1].weight.data, 0)
+            nn.init.constant_(self.angle_embed.layers[-1].bias.data, 0)
+
         # two_stage
         self.two_stage = two_stage
         if self.two_stage:
