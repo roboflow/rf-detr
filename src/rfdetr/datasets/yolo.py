@@ -165,6 +165,9 @@ class _LazyYoloSample:
 
         if len(self.class_id) == 0:
             return sv.Detections.empty()
+        if len(self.polygons) == 0:
+            # Detection-only path: no masks were computed, return bare boxes.
+            return sv.Detections(class_id=self.class_id, xyxy=self.xyxy)
         # TODO: once supervision v0.28 ships CompactMask, wrap the dense result:
         #   compact = sv.CompactMask.from_dense(mask, self.xyxy, (self.height, self.width))
         #   return sv.Detections(..., mask=compact)
@@ -207,7 +210,9 @@ def _parse_yolo_label_line(
     num_classes: int,
     width: int,
     height: int,
-) -> tuple[int, np.ndarray, np.ndarray]:
+    *,
+    parse_polygons: bool = True,
+) -> tuple[int, np.ndarray, np.ndarray | None]:
     """Parse one YOLO label line and return ``(class_id, xyxy_px, polygon_px)``.
 
     Args:
@@ -217,10 +222,14 @@ def _parse_yolo_label_line(
         num_classes: Total number of classes in the dataset (used for range check).
         width: Image width in pixels.
         height: Image height in pixels.
+        parse_polygons: When ``False`` the pixel-space polygon array is not
+            computed or returned (``polygon_px`` will be ``None``).  Set to
+            ``False`` on the detection-only path to avoid allocating polygon
+            arrays that would immediately be discarded.
 
     Returns:
         Tuple of ``(class_id, xyxy_px, polygon_px)`` where coordinates are in
-        pixel space.
+        pixel space.  ``polygon_px`` is ``None`` when ``parse_polygons=False``.
 
     Raises:
         ValueError: If the line is malformed or the class ID is out of range.
@@ -255,10 +264,11 @@ def _parse_yolo_label_line(
         )
     if len(values) == 5:
         box = _parse_yolo_box(values[1:])
-        polygon = _box_to_polygon(box)
+        # Skip polygon creation on the detection path — only the bbox is needed.
+        polygon: np.ndarray | None = _box_to_polygon(box) if parse_polygons else None
     else:
         try:
-            polygon = _parse_yolo_polygon(values[1:])
+            _raw_polygon = _parse_yolo_polygon(values[1:])
         except ValueError as exc:
             raise ValueError(
                 f"Malformed polygon in {str(label_path)!r} at line {line_num}: "
@@ -266,22 +276,53 @@ def _parse_yolo_label_line(
             ) from exc
         box = np.array(
             [
-                np.min(polygon[:, 0]),
-                np.min(polygon[:, 1]),
-                np.max(polygon[:, 0]),
-                np.max(polygon[:, 1]),
+                np.min(_raw_polygon[:, 0]),
+                np.min(_raw_polygon[:, 1]),
+                np.max(_raw_polygon[:, 0]),
+                np.max(_raw_polygon[:, 1]),
             ],
             dtype=np.float32,
         )
+        # On the detection path, _raw_polygon was only needed for bbox extraction;
+        # skip the pixel-space conversion to avoid a redundant allocation.
+        polygon = _raw_polygon if parse_polygons else None
     xyxy_px = box * np.array([width, height, width, height], dtype=np.float32)
+    if polygon is None:
+        return cid, xyxy_px, None
     polygon_px = polygon * np.array([width, height], dtype=np.float32)
     polygon_px[:, 0] = np.clip(polygon_px[:, 0], 0.0, float(width - 1))
     polygon_px[:, 1] = np.clip(polygon_px[:, 1], 0.0, float(height - 1))
     return cid, xyxy_px, polygon_px.astype(np.float32)
 
 
-def _build_lazy_yolo_segmentation_dataset(img_folder: str, lb_folder: str, data_file: str) -> _LazyYoloDetectionDataset:
-    """Build a YOLO dataset that stores polygons and rasterizes masks on demand."""
+def _build_yolo_samples(
+    img_folder: str, lb_folder: str, data_file: str, *, include_polygons: bool
+) -> tuple[list[str], list[_LazyYoloSample]]:
+    """Build the class list and sample list shared by both YOLO builder functions.
+
+    Iterates over every image in ``img_folder``, reads image dimensions via PIL
+    (header-only, no full decode), and parses the matching ``.txt`` label file
+    when present.  Images without a label file are included as *background*
+    samples with empty detections.
+
+    Args:
+        img_folder: Path to the directory containing images.
+        lb_folder: Path to the directory containing YOLO ``.txt`` label files.
+        data_file: Path to the ``data.yaml`` / ``data.yml`` file with class names.
+        include_polygons: When ``True`` polygon coordinates are stored in each
+            :class:`_LazyYoloSample` (segmentation path).  When ``False``
+            polygon coordinates returned by :func:`_parse_yolo_label_line` are
+            discarded and ``polygons=()`` is stored instead (detection-only path).
+
+    Returns:
+        A ``(classes, samples)`` tuple where ``classes`` is the ordered list of
+        class names and ``samples`` is a list of :class:`_LazyYoloSample` objects.
+
+    Examples:
+        >>> # Used internally by _build_lazy_yolo_detection_dataset and
+        >>> # _build_lazy_yolo_segmentation_dataset — not part of the public API.
+        >>> pass
+    """
     classes = _extract_yolo_class_names(data_file)
     samples: list[_LazyYoloSample] = []
 
@@ -298,11 +339,18 @@ def _build_lazy_yolo_segmentation_dataset(img_folder: str, lb_folder: str, data_
                 lines = [line.strip() for line in handle if line.strip()]
             for i, line in enumerate(lines):
                 cid, xyxy_px, polygon_px = _parse_yolo_label_line(
-                    line.split(), i + 1, label_path, len(classes), width, height
+                    line.split(),
+                    i + 1,
+                    label_path,
+                    len(classes),
+                    width,
+                    height,
+                    parse_polygons=include_polygons,
                 )
                 class_id.append(cid)
                 xyxy.append(xyxy_px)
-                polygons.append(polygon_px)
+                if include_polygons and polygon_px is not None:
+                    polygons.append(polygon_px)
 
         samples.append(
             _LazyYoloSample(
@@ -315,6 +363,46 @@ def _build_lazy_yolo_segmentation_dataset(img_folder: str, lb_folder: str, data_
             )
         )
 
+    return classes, samples
+
+
+def _build_lazy_yolo_detection_dataset(img_folder: str, lb_folder: str, data_file: str) -> _LazyYoloDetectionDataset:
+    """Build a YOLO detection dataset that stores bounding boxes lazily.
+
+    Unlike :func:`_build_lazy_yolo_segmentation_dataset`, this function does
+    not store polygon coordinates or dense masks — only ``xyxy`` boxes are
+    retained, keeping peak memory proportional to the number of annotations.
+
+    Images without a matching ``.txt`` label file are included as
+    *background* samples with empty detections, so datasets that mix labelled
+    and unlabelled images are handled correctly.
+
+    Args:
+        img_folder: Path to the directory containing images.
+        lb_folder: Path to the directory containing YOLO ``.txt`` label files.
+        data_file: Path to the ``data.yaml`` / ``data.yml`` file with class names.
+
+    Returns:
+        A :class:`_LazyYoloDetectionDataset` whose ``__getitem__`` loads pixel
+        data on demand and returns ``sv.Detections`` without mask information.
+    """
+    classes, samples = _build_yolo_samples(img_folder, lb_folder, data_file, include_polygons=False)
+    return _LazyYoloDetectionDataset(classes=classes, samples=samples)
+
+
+def _build_lazy_yolo_segmentation_dataset(img_folder: str, lb_folder: str, data_file: str) -> _LazyYoloDetectionDataset:
+    """Build a YOLO dataset that stores polygons and rasterizes masks on demand.
+
+    Args:
+        img_folder: Path to the directory containing images.
+        lb_folder: Path to the directory containing YOLO ``.txt`` label files.
+        data_file: Path to the ``data.yaml`` / ``data.yml`` file with class names.
+
+    Returns:
+        A :class:`_LazyYoloDetectionDataset` whose ``__getitem__`` loads pixel
+        data on demand and rasterizes polygon masks into dense boolean tensors.
+    """
+    classes, samples = _build_yolo_samples(img_folder, lb_folder, data_file, include_polygons=True)
     return _LazyYoloDetectionDataset(classes=classes, samples=samples)
 
 
@@ -729,14 +817,18 @@ class CocoLikeAPI:
 
 
 class YoloDetection(VisionDataset):
-    """YOLO format dataset with optional lazy segmentation mask loading.
+    """YOLO format dataset with lazy image loading and optional mask support.
 
-    For detection (``include_masks=False``) this delegates to
-    ``supervision.DetectionDataset.from_yolo()`` and loads every image eagerly.
-    For segmentation (``include_masks=True``) a lazy backend is used instead:
-    polygon coordinates are stored at construction time and dense H×W masks are
-    only rasterized on demand in ``__getitem__``, keeping RAM proportional to
-    the number of annotations rather than to (N × H × W).
+    Both detection (``include_masks=False``) and segmentation
+    (``include_masks=True``) paths use a lazy backend: image pixels are loaded
+    on demand inside ``__getitem__`` rather than at construction time, which
+    keeps peak RAM proportional to the number of annotations rather than to
+    ``N × H × W``.
+
+    Images without a matching ``.txt`` label file are treated as *background*
+    images and produce empty detections.  This ensures that datasets containing
+    a mix of annotated and unannotated images are handled correctly in both
+    single-GPU and multi-GPU training.
 
     This class provides a VisionDataset interface compatible with RF-DETR training,
     matching the API of CocoDetection.
@@ -747,8 +839,8 @@ class YoloDetection(VisionDataset):
         data_file: Path to data.yaml file containing class names and dataset info
         transforms: Optional transforms to apply to images and targets
         include_masks: Whether to load segmentation masks (for YOLO segmentation format).
-            When True the lazy polygon-based backend is used to avoid materialising
-            all masks into RAM during dataset initialisation.
+            When True polygons are parsed and rasterized on demand; when False only
+            bounding-box coordinates are stored.
     """
 
     def __init__(
@@ -767,15 +859,7 @@ class YoloDetection(VisionDataset):
         if include_masks:
             self.sv_dataset = _build_lazy_yolo_segmentation_dataset(img_folder, lb_folder, data_file)
         else:
-            import supervision as sv
-
-            # Load dataset using supervision's from_yolo method
-            self.sv_dataset = sv.DetectionDataset.from_yolo(
-                images_directory_path=img_folder,
-                annotations_directory_path=lb_folder,
-                data_yaml_path=data_file,
-                force_masks=False,
-            )
+            self.sv_dataset = _build_lazy_yolo_detection_dataset(img_folder, lb_folder, data_file)
 
         self.classes = self.sv_dataset.classes
         self.ids = list(range(len(self.sv_dataset)))

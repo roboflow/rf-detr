@@ -516,8 +516,9 @@ class TestYoloDetectionLazyMasks:
             ),
         ],
     )
+    @pytest.mark.parametrize("include_masks", [True, False], ids=["masks", "no_masks"])
     def test_malformed_label_line_raises_clear_error(
-        self, tmp_path: Path, label_content: str, match_pattern: str
+        self, tmp_path: Path, label_content: str, match_pattern: str, include_masks: bool
     ) -> None:
         """Malformed label lines should raise a descriptive ValueError with file context."""
         image_dir = tmp_path / "images"
@@ -535,7 +536,7 @@ class TestYoloDetectionLazyMasks:
                 lb_folder=str(label_dir),
                 data_file=str(data_file),
                 transforms=None,
-                include_masks=True,
+                include_masks=include_masks,
             )
 
     def test_lazy_dataset_polygon_storage_is_smaller_than_eager_masks(self, tmp_path: Path) -> None:
@@ -577,7 +578,8 @@ class TestYoloDetectionLazyMasks:
             f"Lazy storage ({lazy_bytes} B) should be at least 10× smaller than eager mask cost ({eager_mask_bytes} B)."
         )
 
-    def test_out_of_range_class_id_raises_clear_error(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("include_masks", [True, False], ids=["masks", "no_masks"])
+    def test_out_of_range_class_id_raises_clear_error(self, tmp_path: Path, include_masks: bool) -> None:
         """A label with a class ID beyond the class count should raise ValueError at init."""
         image_dir = tmp_path / "images"
         label_dir = tmp_path / "labels"
@@ -595,11 +597,11 @@ class TestYoloDetectionLazyMasks:
                 lb_folder=str(label_dir),
                 data_file=str(data_file),
                 transforms=None,
-                include_masks=True,
+                include_masks=include_masks,
             )
 
-    def test_include_masks_false_uses_supervision_dataset_path(self, tmp_path: Path) -> None:
-        """include_masks=False must use supervision's DetectionDataset, not the lazy path."""
+    def test_include_masks_false_uses_lazy_detection_dataset(self, tmp_path: Path) -> None:
+        """include_masks=False must use the lazy detection backend (not supervision's DetectionDataset)."""
         image_dir = tmp_path / "images"
         label_dir = tmp_path / "labels"
         image_dir.mkdir()
@@ -617,14 +619,94 @@ class TestYoloDetectionLazyMasks:
             include_masks=False,
         )
 
-        assert not isinstance(dataset.sv_dataset, _LazyYoloDetectionDataset)
+        assert isinstance(dataset.sv_dataset, _LazyYoloDetectionDataset)
         assert len(dataset) == 1
         _, target = dataset[0]
         assert "boxes" in target
         assert "masks" not in target
 
+    def test_detection_image_with_no_label_produces_empty_sample(self, tmp_path: Path) -> None:
+        """Detection path: image without a .txt label file should produce an empty sample (background image)."""
+        image_dir = tmp_path / "images"
+        label_dir = tmp_path / "labels"
+        image_dir.mkdir()
+        label_dir.mkdir()
+        Image.new("RGB", (8, 6), color=(255, 255, 255)).save(image_dir / "unlabeled.png")
+        data_file = tmp_path / "data.yaml"
+        data_file.write_text("names:\n  - carton\n", encoding="utf-8")
+
+        dataset = YoloDetection(
+            img_folder=str(image_dir),
+            lb_folder=str(label_dir),
+            data_file=str(data_file),
+            transforms=None,
+            include_masks=False,
+        )
+
+        assert len(dataset) == 1
+        sample = dataset.sv_dataset.get_image_info(0)
+        assert sample.xyxy.shape == (0, 4)
+        assert sample.class_id.shape == (0,)
+
+        _, target = dataset[0]
+        assert target["boxes"].shape == (0, 4)
+        assert "masks" not in target
+
+    def test_detection_background_and_labeled_images_counted_together(self, tmp_path: Path) -> None:
+        """Detection path: dataset length includes both labeled and background images."""
+        image_dir = tmp_path / "images"
+        label_dir = tmp_path / "labels"
+        image_dir.mkdir()
+        label_dir.mkdir()
+        Image.new("RGB", (8, 6), color=(255, 255, 255)).save(image_dir / "labeled.png")
+        Image.new("RGB", (8, 6), color=(0, 0, 0)).save(image_dir / "unlabeled.png")
+        (label_dir / "labeled.txt").write_text("0 0.5 0.5 0.5 0.5\n", encoding="utf-8")
+        data_file = tmp_path / "data.yaml"
+        data_file.write_text("names:\n  - carton\n", encoding="utf-8")
+
+        dataset = YoloDetection(
+            img_folder=str(image_dir),
+            lb_folder=str(label_dir),
+            data_file=str(data_file),
+            transforms=None,
+            include_masks=False,
+        )
+
+        assert len(dataset) == 2
+
+        targets = [dataset[i][1] for i in range(2)]
+        box_counts = sorted(t["boxes"].shape[0] for t in targets)
+        assert box_counts == [0, 1], f"Expected one background and one annotated sample, got: {box_counts}"
+
+    def test_detection_multi_instance_boxes_stack_correctly(self, tmp_path: Path) -> None:
+        """Two bbox annotations per image should produce a (2, 4) boxes tensor with correct class IDs."""
+        image_dir = tmp_path / "images"
+        label_dir = tmp_path / "labels"
+        image_dir.mkdir()
+        label_dir.mkdir()
+        Image.new("RGB", (8, 6), color=(255, 255, 255)).save(image_dir / "two_boxes.png")
+        # Two distinct non-overlapping bounding boxes
+        (label_dir / "two_boxes.txt").write_text(
+            "0 0.2 0.3 0.2 0.2\n1 0.7 0.7 0.2 0.2\n",
+            encoding="utf-8",
+        )
+        data_file = tmp_path / "data.yaml"
+        data_file.write_text("names:\n  - cat\n  - dog\n", encoding="utf-8")
+
+        dataset = YoloDetection(
+            img_folder=str(image_dir),
+            lb_folder=str(label_dir),
+            data_file=str(data_file),
+            transforms=None,
+            include_masks=False,
+        )
+
+        _, target = dataset[0]
+        assert target["boxes"].shape == (2, 4), f"Expected (2, 4), got {target['boxes'].shape}"
+        assert set(target["labels"].tolist()) == {0, 1}
+
     def test_lazy_getitem_cv2_returns_none_raises_value_error(self, tmp_path: Path) -> None:
-        """When cv2.imread returns None (missing/corrupted file), __getitem__ must raise ValueError."""
+        """Lazy mask loading should raise ValueError when cv2.imread cannot read the image."""
         image_dir, label_dir, data_file = _write_yolo_segmentation_dataset(tmp_path)
         dataset = YoloDetection(
             img_folder=str(image_dir),

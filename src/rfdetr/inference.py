@@ -9,7 +9,7 @@ from __future__ import annotations
 
 __all__ = ["ModelContext"]
 
-from typing import TYPE_CHECKING, Any, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, List, Optional, cast
 
 import torch
 
@@ -59,7 +59,8 @@ class ModelContext:
         Args:
             num_classes: New number of output classes (including background).
         """
-        self.model.reinitialize_detection_head(num_classes)
+        reinitialize_head = cast(Callable[[int], None], getattr(self.model, "reinitialize_detection_head"))
+        reinitialize_head(num_classes)
         self.args.num_classes = num_classes
 
 

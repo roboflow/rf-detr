@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
@@ -18,6 +18,7 @@ from pytorch_lightning import __version__ as ptl_version
 from pytorch_lightning.trainer.states import TrainerFn
 from torch.utils.data import DataLoader, TensorDataset
 
+from rfdetr.config import RFDETRLargeDeprecatedConfig, RFDETRMediumConfig
 from rfdetr.training.callbacks.best_model import BestModelCallback, RFDETREarlyStopping
 
 # ---------------------------------------------------------------------------
@@ -931,7 +932,7 @@ class TestRFDETREarlyStopping:
         assert trainer.should_stop is False
 
     @pytest.mark.parametrize(
-        "use_ema, maps, patience, min_delta, expected_stop_epoch",
+        ("use_ema", "maps", "patience", "min_delta", "expected_stop_epoch"),
         [
             pytest.param(
                 False,
@@ -983,3 +984,151 @@ class TestRFDETREarlyStopping:
                 break
 
         assert new_stop_epoch == expected_stop_epoch
+
+
+# ---------------------------------------------------------------------------
+# model_name in checkpoint payload (#887)
+# ---------------------------------------------------------------------------
+
+
+class TestCheckpointModelName:
+    """Verify model_name is stored in checkpoint payloads."""
+
+    def test_regular_checkpoint_contains_model_name(self, tmp_path: Path) -> None:
+        """Regular checkpoint includes model_name from model_config."""
+        cb = BestModelCallback(output_dir=str(tmp_path))
+        trainer = _make_trainer({"val/mAP_50_95": 0.5})
+        pl_module = _make_pl_module()
+        pl_module.model_config = MagicMock()
+        pl_module.model_config.model_name = "RFDETRLarge"
+
+        cb.on_validation_end(trainer, pl_module)
+
+        ckpt = torch.load(tmp_path / "checkpoint_best_regular.pth", weights_only=False)
+        assert ckpt["model_name"] == "RFDETRLarge"
+
+    def test_regular_checkpoint_model_name_absent_when_not_set(self, tmp_path: Path) -> None:
+        """model_name key is absent when model_config has no model_name attribute."""
+        cb = BestModelCallback(output_dir=str(tmp_path))
+        trainer = _make_trainer({"val/mAP_50_95": 0.5})
+        pl_module = _make_pl_module()
+
+        cb.on_validation_end(trainer, pl_module)
+
+        ckpt = torch.load(tmp_path / "checkpoint_best_regular.pth", weights_only=False)
+        assert "model_name" not in ckpt
+
+    def test_regular_checkpoint_infers_model_name_from_model_config_type(self, tmp_path: Path) -> None:
+        """When model_name is unset, infer class name from concrete ModelConfig type."""
+        cb = BestModelCallback(output_dir=str(tmp_path))
+        trainer = _make_trainer({"val/mAP_50_95": 0.5})
+        pl_module = _make_pl_module()
+        pl_module.model_config = RFDETRMediumConfig(model_name=None)
+
+        cb.on_validation_end(trainer, pl_module)
+
+        ckpt = torch.load(tmp_path / "checkpoint_best_regular.pth", weights_only=False)
+        assert ckpt["model_name"] == "RFDETRMedium"
+
+    def test_ema_checkpoint_contains_model_name(self, tmp_path: Path) -> None:
+        """EMA checkpoint also includes model_name."""
+        cb = BestModelCallback(
+            output_dir=str(tmp_path),
+            monitor_ema="val/ema_mAP_50_95",
+        )
+        trainer = _make_trainer({"val/mAP_50_95": 0.4, "val/ema_mAP_50_95": 0.6})
+        pl_module = _make_pl_module()
+        pl_module.model_config = MagicMock()
+        pl_module.model_config.model_name = "RFDETRMedium"
+
+        cb.on_validation_end(trainer, pl_module)
+
+        ckpt = torch.load(tmp_path / "checkpoint_best_ema.pth", weights_only=False)
+        assert ckpt["model_name"] == "RFDETRMedium"
+
+    def test_deprecated_config_raises_runtime_error(self, tmp_path: Path) -> None:
+        """RFDETRLargeDeprecatedConfig raises RuntimeError — deprecated configs are unsupported."""
+        cb = BestModelCallback(output_dir=str(tmp_path))
+        trainer = _make_trainer({"val/mAP_50_95": 0.5})
+        pl_module = _make_pl_module()
+        pl_module.model_config = RFDETRLargeDeprecatedConfig(model_name=None)
+
+        with pytest.raises(RuntimeError, match="Deprecated model config"):
+            cb.on_validation_end(trainer, pl_module)
+
+
+# ---------------------------------------------------------------------------
+# rfdetr_version in checkpoint payload
+# ---------------------------------------------------------------------------
+
+
+class TestCheckpointRfdetrVersion:
+    """Verify rfdetr_version is stored in checkpoint payloads."""
+
+    def test_regular_checkpoint_contains_rfdetr_version(self, tmp_path: Path) -> None:
+        """Regular checkpoint includes rfdetr_version string."""
+        cb = BestModelCallback(output_dir=str(tmp_path))
+        trainer = _make_trainer({"val/mAP_50_95": 0.5})
+        pl_module = _make_pl_module()
+        expected_version = "test-version"
+
+        with patch(
+            "rfdetr.training.callbacks.best_model.get_version",
+            return_value=expected_version,
+        ):
+            cb.on_validation_end(trainer, pl_module)
+
+        ckpt = torch.load(tmp_path / "checkpoint_best_regular.pth", weights_only=False)
+        assert "rfdetr_version" in ckpt
+        assert ckpt["rfdetr_version"] == expected_version
+
+    def test_ema_checkpoint_contains_rfdetr_version(self, tmp_path: Path) -> None:
+        """EMA checkpoint also includes rfdetr_version."""
+        cb = BestModelCallback(
+            output_dir=str(tmp_path),
+            monitor_ema="val/ema_mAP_50_95",
+        )
+        trainer = _make_trainer({"val/mAP_50_95": 0.4, "val/ema_mAP_50_95": 0.6})
+        pl_module = _make_pl_module()
+        expected_version = "test-version"
+
+        with patch(
+            "rfdetr.training.callbacks.best_model.get_version",
+            return_value=expected_version,
+        ):
+            cb.on_validation_end(trainer, pl_module)
+
+        ckpt = torch.load(tmp_path / "checkpoint_best_ema.pth", weights_only=False)
+        assert "rfdetr_version" in ckpt
+        assert ckpt["rfdetr_version"] == expected_version
+
+    def test_best_total_preserves_rfdetr_version_after_strip(self, tmp_path: Path) -> None:
+        """strip_checkpoint must preserve rfdetr_version in the final checkpoint."""
+        cb = BestModelCallback(output_dir=str(tmp_path), run_test=False)
+        trainer = _make_trainer({"val/mAP_50_95": 0.5})
+        pl_module = _make_pl_module()
+        expected_version = "test-version"
+
+        with patch(
+            "rfdetr.training.callbacks.best_model.get_version",
+            return_value=expected_version,
+        ):
+            cb.on_validation_end(trainer, pl_module)
+            cb.on_fit_end(trainer, pl_module)
+
+        total = tmp_path / "checkpoint_best_total.pth"
+        data = torch.load(total, map_location="cpu", weights_only=False)
+        assert "rfdetr_version" in data
+        assert data["rfdetr_version"] == expected_version
+
+    def test_rfdetr_version_absent_when_get_version_returns_none(self, tmp_path: Path) -> None:
+        """rfdetr_version must be omitted when get_version() cannot resolve the version."""
+        cb = BestModelCallback(output_dir=str(tmp_path))
+        trainer = _make_trainer({"val/mAP_50_95": 0.5})
+        pl_module = _make_pl_module()
+
+        with patch("rfdetr.training.callbacks.best_model.get_version", return_value=None):
+            cb.on_validation_end(trainer, pl_module)
+
+        ckpt = torch.load(tmp_path / "checkpoint_best_regular.pth", weights_only=False)
+        assert "rfdetr_version" not in ckpt
