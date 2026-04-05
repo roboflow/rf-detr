@@ -99,7 +99,11 @@ def _build_model_context(model_config: ModelConfig) -> ModelContext:
         apply_lora(nn_model)
 
     device = torch.device(args.device)
-    nn_model = nn_model.to(device)
+    # Keep the model on CPU here; predict() / export() / optimize_for_inference()
+    # will lazily move it to the target device on first use.  Eagerly calling
+    # .to("cuda") would initialise the CUDA runtime during __init__(), which
+    # prevents DDP strategies (ddp_notebook, ddp_spawn) from forking/spawning
+    # child processes in notebook environments.
     postprocess = PostProcess(num_select=args.num_select)
 
     return ModelContext(

@@ -182,6 +182,28 @@ def _resolve_patch_size(patch_size: int | None, model_config: object, caller: st
     return patch_size
 
 
+def _ensure_model_on_device(model_ctx) -> None:
+    """Move model weights to the target device recorded in *model_ctx*.
+
+    ``_build_model_context`` intentionally keeps the ``nn.Module`` on CPU so
+    that ``RFDETR.__init__`` does not initialise CUDA (which would prevent DDP
+    strategies from forking in notebook environments).  This helper performs
+    the deferred ``.to(device)`` on first use.
+
+    It is safe to call on duck-typed stand-ins (e.g. ``SimpleNamespace``); the
+    function silently returns when the expected attributes are missing.
+    """
+    target = getattr(model_ctx, "device", None)
+    inner = getattr(model_ctx, "model", None)
+    if target is None or inner is None or not hasattr(inner, "parameters"):
+        return
+    if isinstance(target, str):
+        target = torch.device(target)
+    first_param = next(inner.parameters(), None)
+    if first_param is not None and first_param.device != target:
+        model_ctx.model = inner.to(target)
+
+
 class RFDETR:
     """The base RF-DETR class implements the core methods for training RF-DETR models,
     running inference on the models, optimising models, and uploading trained
@@ -585,6 +607,7 @@ class RFDETR:
         # Clear any previously optimized state before starting a new optimization run.
         self.remove_optimized_model()
 
+        _ensure_model_on_device(self.model)
         device = self.model.device
         cuda_ctx = torch.cuda.device(device) if device.type == "cuda" else contextlib.nullcontext()
 
@@ -700,6 +723,7 @@ class RFDETR:
             )
             raise
 
+        _ensure_model_on_device(self.model)
         device = self.model.device
         model = deepcopy(self.model.model.to("cpu"))
         model.to(device)
@@ -1002,6 +1026,8 @@ class RFDETR:
 
         """
         import supervision as sv
+
+        _ensure_model_on_device(self.model)
 
         patch_size = _resolve_patch_size(patch_size, self.model_config, "predict")
         num_windows = getattr(self.model_config, "num_windows", 1)
