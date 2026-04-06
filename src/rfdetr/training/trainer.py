@@ -111,14 +111,11 @@ def build_trainer(
     def _resolve_precision() -> str:
         if not model_config.amp:
             return "32-true"
-        # ``ddp_notebook`` uses fork-based multiprocessing.  ANY CUDA API
-        # call — even ``torch.cuda.is_available()`` — creates a CUDA driver
-        # context that makes ``_is_in_bad_fork()`` return True in the child,
-        # crashing with "Cannot re-initialize CUDA in forked subprocess".
-        # Return bf16-mixed immediately without touching the CUDA runtime;
-        # pre-Ampere GPUs emulate bf16 transparently.
-        if tc.strategy in ("ddp_notebook", "ddp_spawn"):
-            return "bf16-mixed"
+        # Ampere+ GPUs support bf16-mixed which is scaler-free —
+        # no GradScaler.scale/unscale/update overhead per optimizer step.
+        # BF16 is safe for fine-tuning (pretrained weights loaded by default).
+        # Training from random init with very small LR may underflow; callers
+        # can override via trainer_kwargs(precision="16-mixed") if needed.
         if torch.cuda.is_available():
             if torch.cuda.is_bf16_supported():
                 return "bf16-mixed"

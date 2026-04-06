@@ -270,12 +270,13 @@ class TestBuildTrainerPrecision:
             build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=True))
         assert captured["precision"] == "bf16-mixed"
 
-    def test_amp_true_ddp_notebook_skips_bf16_check(self, tmp_path):
-        """ddp_notebook strategy must not call is_bf16_supported() (CUDA init).
+    def test_amp_true_ddp_notebook_probes_bf16_normally(self, tmp_path):
+        """ddp_notebook uses standard precision probing (spawn makes CUDA init safe).
 
-        ``torch.cuda.is_bf16_supported()`` initialises the CUDA runtime which
-        prevents fork-based DDP from working in notebooks.  When strategy is
-        ``ddp_notebook`` we default to ``bf16-mixed`` without probing hardware.
+        With spawn-based DDP, child processes start fresh — CUDA init in the
+        parent does not propagate.  So ``is_bf16_supported()`` is safe to call
+        and pre-Ampere GPUs correctly get ``16-mixed`` instead of the slower
+        bf16 emulation path.
         """
         import unittest.mock as mock
 
@@ -285,18 +286,17 @@ class TestBuildTrainerPrecision:
             captured.update(kwargs)
             return mock.MagicMock()
 
-        bf16_mock = mock.patch("torch.cuda.is_bf16_supported")
+        # Simulate pre-Ampere GPU: CUDA available but bf16 NOT supported.
         with (
             mock.patch("torch.cuda.is_available", return_value=True),
-            bf16_mock as m_bf16,
+            mock.patch("torch.cuda.is_bf16_supported", return_value=False),
             mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
         ):
             build_trainer(
                 _tc(tmp_path, use_ema=False, strategy="ddp_notebook"),
                 _mc(amp=True),
             )
-        m_bf16.assert_not_called()
-        assert captured["precision"] == "bf16-mixed"
+        assert captured["precision"] == "16-mixed"
 
     @pytest.mark.parametrize("strategy_name", ["ddp_notebook", "ddp_spawn"])
     def test_ddp_notebook_and_spawn_use_interactive_spawn(self, tmp_path, strategy_name):

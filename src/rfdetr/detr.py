@@ -510,6 +510,10 @@ class RFDETR:
 
         config = self.get_train_config(**kwargs)
         if config.batch_size == "auto":
+            # Auto-batch probing runs forward/backward on the actual model, which
+            # must be on the target device (typically CUDA).  Lazy placement keeps
+            # the model on CPU until first use — move it now.
+            _ensure_model_on_device(self.model)
             auto_batch = resolve_auto_batch_config(
                 model_context=self.model,
                 model_config=self.model_config,
