@@ -70,11 +70,14 @@ def build_trainer(
         if not model_config.amp:
             return "32-true"
         if torch.cuda.is_available():
-            # Ampere+ GPUs support bf16-mixed which is scaler-free —
-            # no GradScaler.scale/unscale/update overhead per optimizer step.
-            # BF16 is safe for fine-tuning (pretrained weights loaded by default).
-            # Training from random init with very small LR may underflow; callers
-            # can override via trainer_kwargs(precision="16-mixed") if needed.
+            # ``ddp_notebook`` uses fork-based multiprocessing.  Calling
+            # ``torch.cuda.is_bf16_supported()`` initialises the CUDA runtime
+            # in the parent process which makes the subsequent fork fail with
+            # "Cannot re-initialize CUDA in forked subprocess".  In that case
+            # we default to bf16-mixed (pre-Ampere GPUs emulate it
+            # transparently) and let PTL validate inside the child process.
+            if tc.strategy == "ddp_notebook":
+                return "bf16-mixed"
             if torch.cuda.is_bf16_supported():
                 return "bf16-mixed"
             return "16-mixed"

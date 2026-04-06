@@ -235,13 +235,7 @@ class TestBuildTrainerPrecision:
         assert trainer.precision == "32-true"
 
     def test_amp_true_cuda_no_bf16_gives_16_mixed(self, tmp_path):
-        """amp=True with CUDA but no bf16 support must produce '16-mixed'.
-
-        We mock the Trainer constructor to capture the precision kwarg rather
-        than inspecting trainer.precision after construction: PTL may re-detect
-        hardware bf16 support during __init__ and normalise the precision string
-        on machines that happen to have a bf16-capable GPU.
-        """
+        """amp=True with CUDA but no bf16 support must produce '16-mixed'."""
         import unittest.mock as mock
 
         captured: dict = {}
@@ -259,12 +253,7 @@ class TestBuildTrainerPrecision:
         assert captured["precision"] == "16-mixed"
 
     def test_amp_true_cuda_bf16_supported_gives_bf16_mixed(self, tmp_path):
-        """amp=True with CUDA + bf16 hardware produces 'bf16-mixed' (scaler-free).
-
-        On Ampere+ GPUs (bf16 supported) we select bf16-mixed to eliminate
-        GradScaler overhead.  Fine-tuning from pretrained weights is safe with
-        BF16; callers training from scratch can override via trainer_kwargs.
-        """
+        """amp=True with CUDA + bf16 hardware produces 'bf16-mixed'."""
         import unittest.mock as mock
 
         captured: dict = {}
@@ -279,6 +268,34 @@ class TestBuildTrainerPrecision:
             mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
         ):
             build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=True))
+        assert captured["precision"] == "bf16-mixed"
+
+    def test_amp_true_ddp_notebook_skips_bf16_check(self, tmp_path):
+        """ddp_notebook strategy must not call is_bf16_supported() (CUDA init).
+
+        ``torch.cuda.is_bf16_supported()`` initialises the CUDA runtime which
+        prevents fork-based DDP from working in notebooks.  When strategy is
+        ``ddp_notebook`` we default to ``bf16-mixed`` without probing hardware.
+        """
+        import unittest.mock as mock
+
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        bf16_mock = mock.patch("torch.cuda.is_bf16_supported")
+        with (
+            mock.patch("torch.cuda.is_available", return_value=True),
+            bf16_mock as m_bf16,
+            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
+        ):
+            build_trainer(
+                _tc(tmp_path, use_ema=False, strategy="ddp_notebook"),
+                _mc(amp=True),
+            )
+        m_bf16.assert_not_called()
         assert captured["precision"] == "bf16-mixed"
 
 
