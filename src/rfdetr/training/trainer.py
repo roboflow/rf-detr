@@ -69,15 +69,15 @@ def build_trainer(
     def _resolve_precision() -> str:
         if not model_config.amp:
             return "32-true"
+        # ``ddp_notebook`` uses fork-based multiprocessing.  ANY CUDA API
+        # call — even ``torch.cuda.is_available()`` — creates a CUDA driver
+        # context that makes ``_is_in_bad_fork()`` return True in the child,
+        # crashing with "Cannot re-initialize CUDA in forked subprocess".
+        # Return bf16-mixed immediately without touching the CUDA runtime;
+        # pre-Ampere GPUs emulate bf16 transparently.
+        if tc.strategy == "ddp_notebook":
+            return "bf16-mixed"
         if torch.cuda.is_available():
-            # ``ddp_notebook`` uses fork-based multiprocessing.  Calling
-            # ``torch.cuda.is_bf16_supported()`` initialises the CUDA runtime
-            # in the parent process which makes the subsequent fork fail with
-            # "Cannot re-initialize CUDA in forked subprocess".  In that case
-            # we default to bf16-mixed (pre-Ampere GPUs emulate it
-            # transparently) and let PTL validate inside the child process.
-            if tc.strategy == "ddp_notebook":
-                return "bf16-mixed"
             if torch.cuda.is_bf16_supported():
                 return "bf16-mixed"
             return "16-mixed"

@@ -42,8 +42,12 @@ class RFDETRDataModule(LightningDataModule):
         self._dataset_test: Optional[torch.utils.data.Dataset] = None
 
         num_workers = self.train_config.num_workers
+        # Use the fork-safe DEVICE constant instead of torch.cuda.is_available(),
+        # which creates a CUDA driver context that breaks fork-based DDP.
+        from rfdetr.config import DEVICE
+
         self._pin_memory: bool = (
-            torch.cuda.is_available() if self.train_config.pin_memory is None else bool(self.train_config.pin_memory)
+            (DEVICE == "cuda") if self.train_config.pin_memory is None else bool(self.train_config.pin_memory)
         )
         self._persistent_workers: bool = (
             num_workers > 0

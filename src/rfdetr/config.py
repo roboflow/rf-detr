@@ -12,7 +12,32 @@ from typing import Any, ClassVar, Dict, List, Literal, Mapping, Optional, Union
 import torch
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+
+def _detect_device() -> str:
+    """Detect the best available device **without** initialising the CUDA runtime.
+
+    ``torch.cuda.is_available()`` creates a CUDA driver context that makes
+    ``_is_in_bad_fork()`` return ``True`` in child processes.  This breaks
+    fork-based DDP strategies (e.g. ``ddp_notebook``) in notebook environments.
+
+    We defer to :func:`torch.accelerator.current_accelerator` (PyTorch ≥ 2.4)
+    when available — it queries the driver through NVML without creating a
+    primary context.  On older builds we fall back to ``torch.cuda.is_available()``.
+    """
+    if hasattr(torch.accelerator, "current_accelerator"):
+        try:
+            return str(torch.accelerator.current_accelerator())
+        except RuntimeError:
+            return "cpu"
+    # Fallback for PyTorch < 2.4 — this DOES create a CUDA driver context.
+    if torch.cuda.is_available():
+        return "cuda"
+    if torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
+DEVICE: str = _detect_device()
 
 
 class BaseConfig(BaseModel):
