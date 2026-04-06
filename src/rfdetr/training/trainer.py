@@ -87,6 +87,21 @@ def build_trainer(
 
     # --- Strategy + EMA sharding guard ---
     strategy = tc.strategy
+
+    # ``ddp_notebook`` maps to fork-based DDP which is fundamentally unsafe:
+    # PyTorch's OpenMP thread pool (created during model construction) cannot
+    # survive fork() — the worker threads become zombie handles, causing
+    # "Invalid thread pool!" SIGABRT when the autograd engine initialises in
+    # the forked child.  Use spawn-based DDP instead: children start as clean
+    # processes with their own OpenMP thread pools.
+    if strategy == "ddp_notebook":
+        from pytorch_lightning.strategies import DDPStrategy
+
+        strategy = DDPStrategy(start_method="spawn")
+        _logger.info(
+            "ddp_notebook: using spawn-based DDP to avoid OpenMP thread pool "
+            "corruption after fork."
+        )
     sharded = any(s in str(strategy).lower() for s in ("fsdp", "deepspeed"))
     enable_ema = bool(tc.use_ema) and not sharded
     if tc.use_ema and sharded:
