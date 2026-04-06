@@ -28,6 +28,48 @@ from rfdetr.utilities.logger import get_logger
 _logger = get_logger()
 
 
+# ---------------------------------------------------------------------------
+# Notebook-safe spawn-based DDP
+# ---------------------------------------------------------------------------
+# ``ddp_notebook`` maps to fork-based DDP which is fundamentally unsafe:
+# PyTorch's OpenMP thread pool (created during model construction) cannot
+# survive fork() — the worker threads become zombie handles, causing
+# "Invalid thread pool!" SIGABRT when the autograd engine initialises in
+# the forked child.
+#
+# PTL considers ``start_method="spawn"`` incompatible with interactive
+# environments and raises ``MisconfigurationException`` if used in Jupyter.
+# However, PTL's own ``_wrapping_function`` is the entry-point for spawned
+# children — no ``if __name__ == "__main__"`` guard is required — so spawn
+# is perfectly safe here.
+#
+# Classes MUST live at module level (not inside a function) so that Python's
+# pickle can serialise them for the spawned child processes.
+
+from pytorch_lightning.strategies import DDPStrategy as _DDPStrategy
+from pytorch_lightning.strategies.launchers.multiprocessing import (
+    _MultiProcessingLauncher,
+)
+
+
+class _InteractiveSpawnLauncher(_MultiProcessingLauncher):
+    """Spawn launcher that reports itself as interactive-compatible."""
+
+    @property
+    def is_interactive_compatible(self) -> bool:  # type: ignore[override]
+        return True
+
+
+class _NotebookSpawnDDPStrategy(_DDPStrategy):
+    """Spawn-based DDP strategy that works inside Jupyter / Kaggle notebooks."""
+
+    def _configure_launcher(self) -> None:
+        assert self.cluster_environment is not None
+        self._launcher = _InteractiveSpawnLauncher(
+            self, start_method=self._start_method
+        )
+
+
 def build_trainer(
     train_config: TrainConfig,
     model_config: ModelConfig,
@@ -75,7 +117,7 @@ def build_trainer(
         # crashing with "Cannot re-initialize CUDA in forked subprocess".
         # Return bf16-mixed immediately without touching the CUDA runtime;
         # pre-Ampere GPUs emulate bf16 transparently.
-        if tc.strategy == "ddp_notebook":
+        if tc.strategy in ("ddp_notebook", "ddp_spawn"):
             return "bf16-mixed"
         if torch.cuda.is_available():
             if torch.cuda.is_bf16_supported():
@@ -92,13 +134,19 @@ def build_trainer(
     # PyTorch's OpenMP thread pool (created during model construction) cannot
     # survive fork() — the worker threads become zombie handles, causing
     # "Invalid thread pool!" SIGABRT when the autograd engine initialises in
-    # the forked child.  Use ``ddp_spawn`` instead: children start as clean
-    # processes with their own OpenMP thread pools.
-    if strategy == "ddp_notebook":
-        strategy = "ddp_spawn"
+    # the forked child.  ``ddp_spawn`` is safe but PTL blocks it in notebooks.
+    #
+    # Both are replaced with a spawn-based strategy whose launcher is marked
+    # interactive-compatible.  PTL's ``_wrapping_function`` is the entry-point
+    # for spawned children, so no ``if __name__ == "__main__"`` guard is needed.
+    if strategy in ("ddp_notebook", "ddp_spawn"):
+        strategy = _NotebookSpawnDDPStrategy(
+            start_method="spawn", find_unused_parameters=True,
+        )
         _logger.info(
-            "ddp_notebook → ddp_spawn: using spawn-based DDP to avoid "
-            "OpenMP thread pool corruption after fork."
+            "%s → spawn-based DDP to avoid OpenMP thread pool "
+            "corruption after fork.",
+            tc.strategy,
         )
     sharded = any(s in str(strategy).lower() for s in ("fsdp", "deepspeed"))
     enable_ema = bool(tc.use_ema) and not sharded

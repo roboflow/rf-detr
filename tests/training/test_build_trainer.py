@@ -298,13 +298,17 @@ class TestBuildTrainerPrecision:
         m_bf16.assert_not_called()
         assert captured["precision"] == "bf16-mixed"
 
-    def test_ddp_notebook_uses_spawn_strategy(self, tmp_path):
-        """ddp_notebook must be replaced with ddp_spawn strategy.
+    @pytest.mark.parametrize("strategy_name", ["ddp_notebook", "ddp_spawn"])
+    def test_ddp_notebook_and_spawn_use_interactive_spawn(self, tmp_path, strategy_name):
+        """ddp_notebook and ddp_spawn must be replaced with interactive spawn DDPStrategy.
 
         Fork-based DDP inherits the parent's OpenMP thread pool which is
         invalid after fork, causing SIGABRT in the autograd engine.
+        ddp_spawn is blocked by PTL in notebooks without the override.
         """
         import unittest.mock as mock
+
+        from pytorch_lightning.strategies import DDPStrategy
 
         captured: dict = {}
 
@@ -314,10 +318,13 @@ class TestBuildTrainerPrecision:
 
         with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
             build_trainer(
-                _tc(tmp_path, use_ema=False, strategy="ddp_notebook"),
+                _tc(tmp_path, use_ema=False, strategy=strategy_name),
                 _mc(amp=True),
             )
-        assert captured["strategy"] == "ddp_spawn"
+        strat = captured["strategy"]
+        assert isinstance(strat, DDPStrategy)
+        assert strat._start_method == "spawn"
+        assert strat._ddp_kwargs.get("find_unused_parameters") is True
 
 
 class TestBuildTrainerEMAShardingGuard:
