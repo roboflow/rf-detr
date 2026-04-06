@@ -41,21 +41,7 @@ class RFDETRDataModule(LightningDataModule):
         self._dataset_val: Optional[torch.utils.data.Dataset] = None
         self._dataset_test: Optional[torch.utils.data.Dataset] = None
 
-        num_workers = self.train_config.num_workers
-        # ``ddp_notebook`` uses fork-based multiprocessing.  DataLoader workers
-        # forked from a CUDA-initialised DDP child inherit the CUDA driver
-        # context, which can cause hangs or "Cannot re-initialize CUDA in forked
-        # subprocess" errors.  Force num_workers=0 for safety.
-        if self.train_config.strategy == "ddp_notebook" and num_workers > 0:
-            logger.warning(
-                "Overriding num_workers=%d → 0 for ddp_notebook strategy.  "
-                "Fork-based DDP + multi-process DataLoader can deadlock "
-                "because DataLoader sub-forks inherit the CUDA driver context.",
-                num_workers,
-            )
-            num_workers = 0
-
-        self._num_workers: int = num_workers
+        self._num_workers: int = self.train_config.num_workers
 
         # Use the fork-safe DEVICE constant instead of torch.cuda.is_available(),
         # which creates a CUDA driver context that breaks fork-based DDP.
@@ -65,11 +51,11 @@ class RFDETRDataModule(LightningDataModule):
             (DEVICE == "cuda") if self.train_config.pin_memory is None else bool(self.train_config.pin_memory)
         )
         self._persistent_workers: bool = (
-            num_workers > 0
+            self._num_workers > 0
             if self.train_config.persistent_workers is None
             else bool(self.train_config.persistent_workers)
         )
-        if num_workers > 0:
+        if self._num_workers > 0:
             self._prefetch_factor = (
                 self.train_config.prefetch_factor if self.train_config.prefetch_factor is not None else 2
             )
