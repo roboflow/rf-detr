@@ -538,7 +538,20 @@ class RFDETR:
         if _devices is not None:
             trainer_kwargs["devices"] = _devices
         trainer = build_trainer(config, self.model_config, **trainer_kwargs)
+
+        # Fork-based DDP (``ddp_notebook``) inherits the parent's thread state.
+        # OpenMP/MKL threads and HuggingFace tokenizer parallelism become zombie
+        # locks in forked children, causing silent hangs during DDP setup.
+        _restore_num_threads = None
+        if config.strategy == "ddp_notebook":
+            _restore_num_threads = torch.get_num_threads()
+            torch.set_num_threads(1)
+            os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
         trainer.fit(module, datamodule, ckpt_path=config.resume or None)
+
+        if _restore_num_threads is not None:
+            torch.set_num_threads(_restore_num_threads)
 
         # Sync the trained weights back so predict() / export() see the updated model.
         self.model.model = module.model
