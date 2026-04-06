@@ -14,6 +14,10 @@ from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint, RichProgressBar, TQDMProgressBar
 from pytorch_lightning.callbacks.progress.rich_progress import RichProgressBarTheme
 from pytorch_lightning.loggers import CSVLogger, MLFlowLogger, TensorBoardLogger, WandbLogger
+from pytorch_lightning.strategies import DDPStrategy as _DDPStrategy
+from pytorch_lightning.strategies.launchers.multiprocessing import (
+    _MultiProcessingLauncher,
+)
 
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.training.callbacks import (
@@ -45,11 +49,6 @@ _logger = get_logger()
 #
 # Classes MUST live at module level (not inside a function) so that Python's
 # pickle can serialise them for the spawned child processes.
-
-from pytorch_lightning.strategies import DDPStrategy as _DDPStrategy
-from pytorch_lightning.strategies.launchers.multiprocessing import (
-    _MultiProcessingLauncher,
-)
 
 
 class _InteractiveSpawnLauncher(_MultiProcessingLauncher):

@@ -321,10 +321,10 @@ class TestBuildTrainerPrecision:
                 _tc(tmp_path, use_ema=False, strategy=strategy_name),
                 _mc(amp=True),
             )
-        strat = captured["strategy"]
-        assert isinstance(strat, DDPStrategy)
-        assert strat._start_method == "spawn"
-        assert strat._ddp_kwargs.get("find_unused_parameters") is True
+        strategy_obj = captured["strategy"]
+        assert isinstance(strategy_obj, DDPStrategy)
+        assert strategy_obj._start_method == "spawn"
+        assert strategy_obj._ddp_kwargs.get("find_unused_parameters") is True
 
 
 class TestBuildTrainerEMAShardingGuard:
