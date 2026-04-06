@@ -184,6 +184,20 @@ class TestInit:
         dm = build_datamodule(train_config=tc)
         assert dm._persistent_workers is False
 
+    def test_ddp_notebook_forces_num_workers_zero(self, build_datamodule, base_train_config):
+        """ddp_notebook overrides num_workers to 0 to avoid nested-fork deadlocks."""
+        tc = base_train_config(num_workers=4, strategy="ddp_notebook")
+        dm = build_datamodule(train_config=tc)
+        assert dm._num_workers == 0
+        assert dm._prefetch_factor is None
+
+    def test_non_ddp_notebook_preserves_num_workers(self, build_datamodule, base_train_config):
+        """Non-ddp_notebook strategies keep num_workers as configured."""
+        tc = base_train_config(num_workers=4, strategy="ddp")
+        dm = build_datamodule(train_config=tc)
+        assert dm._num_workers == 4
+        assert dm._prefetch_factor == 2  # default prefetch_factor for num_workers>0
+
 
 class TestSetup:
     """setup(stage) builds the correct dataset(s) for each PTL stage."""
