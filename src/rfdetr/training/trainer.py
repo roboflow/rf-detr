@@ -65,9 +65,7 @@ class _NotebookSpawnDDPStrategy(_DDPStrategy):
 
     def _configure_launcher(self) -> None:
         assert self.cluster_environment is not None
-        self._launcher = _InteractiveSpawnLauncher(
-            self, start_method=self._start_method
-        )
+        self._launcher = _InteractiveSpawnLauncher(self, start_method=self._start_method)
 
 
 def build_trainer(
@@ -138,11 +136,11 @@ def build_trainer(
     # for spawned children, so no ``if __name__ == "__main__"`` guard is needed.
     if strategy in ("ddp_notebook", "ddp_spawn"):
         strategy = _NotebookSpawnDDPStrategy(
-            start_method="spawn", find_unused_parameters=True,
+            start_method="spawn",
+            find_unused_parameters=True,
         )
         _logger.info(
-            "%s → spawn-based DDP to avoid OpenMP thread pool "
-            "corruption after fork.",
+            "%s → spawn-based DDP to avoid OpenMP thread pool corruption after fork.",
             tc.strategy,
         )
     sharded = any(s in str(strategy).lower() for s in ("fsdp", "deepspeed"))
