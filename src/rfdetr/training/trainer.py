@@ -92,15 +92,13 @@ def build_trainer(
     # PyTorch's OpenMP thread pool (created during model construction) cannot
     # survive fork() — the worker threads become zombie handles, causing
     # "Invalid thread pool!" SIGABRT when the autograd engine initialises in
-    # the forked child.  Use spawn-based DDP instead: children start as clean
+    # the forked child.  Use ``ddp_spawn`` instead: children start as clean
     # processes with their own OpenMP thread pools.
     if strategy == "ddp_notebook":
-        from pytorch_lightning.strategies import DDPStrategy
-
-        strategy = DDPStrategy(start_method="spawn")
+        strategy = "ddp_spawn"
         _logger.info(
-            "ddp_notebook: using spawn-based DDP to avoid OpenMP thread pool "
-            "corruption after fork."
+            "ddp_notebook → ddp_spawn: using spawn-based DDP to avoid "
+            "OpenMP thread pool corruption after fork."
         )
     sharded = any(s in str(strategy).lower() for s in ("fsdp", "deepspeed"))
     enable_ema = bool(tc.use_ema) and not sharded
