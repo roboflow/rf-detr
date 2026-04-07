@@ -185,7 +185,7 @@ class TestInit:
         mc = _base_model_config(compile=True)
         tc = _base_train_config(tmp_path, multi_scale=False)
         with (
-            patch("torch.cuda.is_available", return_value=True),
+            patch("rfdetr.config.DEVICE", "cuda"),
             patch("rfdetr.training.module_model.torch.compile", side_effect=lambda m, **_: m) as mock_compile,
         ):
             _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)

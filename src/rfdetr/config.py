@@ -26,7 +26,10 @@ def _detect_device() -> str:
     """
     if hasattr(torch.accelerator, "current_accelerator"):
         try:
-            return str(torch.accelerator.current_accelerator())
+            accel = torch.accelerator.current_accelerator()
+            if accel is not None:
+                return str(accel)
+            return "cpu"
         except RuntimeError:
             return "cpu"
     # Fallback for PyTorch < 2.4 — this DOES create a CUDA driver context.
