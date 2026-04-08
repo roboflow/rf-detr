@@ -727,7 +727,6 @@ class RFDETR:
             )
             raise
 
-        _ensure_model_on_device(self.model)
         device = self.model.device
         model = deepcopy(self.model.model.to("cpu"))
         model.to(device)
