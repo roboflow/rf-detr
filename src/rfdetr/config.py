@@ -24,7 +24,7 @@ def _detect_device() -> str:
     when available — it queries the driver through NVML without creating a
     primary context.  On older builds we fall back to ``torch.cuda.is_available()``.
     """
-    if hasattr(torch.accelerator, "current_accelerator"):
+    if hasattr(torch, "accelerator") and hasattr(torch.accelerator, "current_accelerator"):
         try:
             accel = torch.accelerator.current_accelerator()
             if accel is not None:
