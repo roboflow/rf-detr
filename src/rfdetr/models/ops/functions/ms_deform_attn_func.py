@@ -23,12 +23,12 @@ from rfdetr.utilities.tensors import _bilinear_grid_sample
 
 
 def ms_deform_attn_core_pytorch(
-    value,
-    value_spatial_shapes,
-    sampling_locations,
-    attention_weights,
+    value: torch.Tensor,
+    value_spatial_shapes: torch.Tensor,
+    sampling_locations: torch.Tensor,
+    attention_weights: torch.Tensor,
     value_spatial_shapes_hw: list[tuple[int, int]] | None = None,
-):
+) -> torch.Tensor:
     """For debug and test only, need to use cuda version instead."""
     # B, n_heads, head_dim, N
     B, n_heads, head_dim, _ = value.shape
