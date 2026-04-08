@@ -112,9 +112,7 @@ class TestMSDeformAttnCorePytorch:
         """Baseline: passing only the tensor spatial_shapes still works."""
         value, spatial_shapes_tensor, sampling_locations, attention_weights, _ = self._make_inputs()
 
-        output = ms_deform_attn_core_pytorch(
-            value, spatial_shapes_tensor, sampling_locations, attention_weights
-        )
+        output = ms_deform_attn_core_pytorch(value, spatial_shapes_tensor, sampling_locations, attention_weights)
 
         B, n_heads, head_dim, _ = value.shape
         Len_q = sampling_locations.shape[1]
@@ -161,9 +159,7 @@ class TestMSDeformAttnCorePytorch:
 
     def test_single_level(self) -> None:
         """Single-level case with Python int pair path must not crash."""
-        value, spatial_shapes_tensor, sampling_locations, attention_weights, levels = self._make_inputs(
-            levels=[(8, 8)]
-        )
+        value, spatial_shapes_tensor, sampling_locations, attention_weights, levels = self._make_inputs(levels=[(8, 8)])
 
         output = ms_deform_attn_core_pytorch(
             value,
@@ -174,4 +170,3 @@ class TestMSDeformAttnCorePytorch:
         )
 
         assert output.shape[0] == 1
-
