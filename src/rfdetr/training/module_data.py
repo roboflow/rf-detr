@@ -57,20 +57,23 @@ class GradAccumAlignedDataset(torch.utils.data.Dataset):
         world_size: int = 1,
     ) -> None:
         self._dataset = dataset
-        n = len(dataset)  # type: ignore[arg-type]
+        self._dataset_length = len(dataset)  # type: ignore[arg-type]
         pad_unit = effective_batch_size * world_size
-        remainder = n % pad_unit
+        remainder = self._dataset_length % pad_unit
         pad_count = (pad_unit - remainder) % pad_unit
-        pad_indices: list[int] = torch.randint(0, n, (pad_count,)).tolist() if pad_count > 0 else []
-        self._indices: list[int] = list(range(n)) + pad_indices
+        self._pad_indices: list[int] = (
+            torch.randint(0, self._dataset_length, (pad_count,)).tolist() if pad_count > 0 else []
+        )
+        self._length = self._dataset_length + pad_count
 
     def __len__(self) -> int:
         """Return the padded dataset length (always a multiple of the alignment unit)."""
-        return len(self._indices)
+        return self._length
 
     def __getitem__(self, idx: int):
         """Return the item at the (possibly remapped) index."""
-        return self._dataset[self._indices[idx]]
+        dataset_idx = idx if idx < self._dataset_length else self._pad_indices[idx - self._dataset_length]
+        return self._dataset[dataset_idx]
 
 
 class RFDETRDataModule(LightningDataModule):
