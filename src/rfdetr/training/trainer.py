@@ -139,15 +139,8 @@ def build_trainer(
     # --- Strategy + EMA sharding guard ---
     strategy = tc.strategy
 
-    # ``ddp_notebook`` maps to fork-based DDP which is fundamentally unsafe:
-    # PyTorch's OpenMP thread pool (created during model construction) cannot
-    # survive fork() — the worker threads become zombie handles, causing
-    # "Invalid thread pool!" SIGABRT when the autograd engine initialises in
-    # the forked child.  ``ddp_spawn`` is safe but PTL blocks it in notebooks.
-    #
-    # Both are replaced with a spawn-based strategy whose launcher is marked
-    # interactive-compatible.  PTL's ``_wrapping_function`` is the entry-point
-    # for spawned children, so no ``if __name__ == "__main__"`` guard is needed.
+    # Transparently replace fork-based DDP with spawn-based DDP — see the
+    # module-level comment block above _InteractiveSpawnLauncher for rationale.
     if strategy in ("ddp_notebook", "ddp_spawn"):
         strategy = _NotebookSpawnDDPStrategy(
             start_method="spawn",
