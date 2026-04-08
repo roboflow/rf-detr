@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `download_pretrain_weights()` no longer overwrites fine-tuned checkpoints that share a filename with a registry model (e.g. `rf-detr-nano.pth`). Previously, an MD5 mismatch would fall through to `_download_file()` and silently replace the user's weights with the original COCO checkpoint. The function now returns early whenever the file exists and `redownload=False`, regardless of MD5 status — a warning is emitted when the hash differs. Pass `redownload=True` to force a fresh download. (#935)
 - `WindowedDinov2WithRegistersEmbeddings.forward()` now raises `ValueError` (instead of silently failing under `-O`) when input spatial dimensions are not divisible by `patch_size * num_windows`, with a clear message identifying the divisor and actual shape. (#167)
 - Fixed `_namespace.py`: `num_select` in the builder namespace now always reads from `ModelConfig`, eliminating a regression where `TrainConfig.num_select` (default 300) silently overrode model-specific values of 100–200 for segmentation variants (`RFDETRSegNano`, `RFDETRSegSmall`, `RFDETRSegMedium`, `RFDETRSegLarge`, `RFDETRSegPreview`). Post-processing now uses the correct top-k count for each model. (#841)
 - Fixed `models/weights.py`: `load_pretrain_weights` now correctly auto-aligns the model head when the checkpoint has fewer classes than the configured default, preventing a silent mismatch when `num_classes` was not explicitly set by the caller. (#845)
