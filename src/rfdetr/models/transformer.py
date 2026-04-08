@@ -332,6 +332,7 @@ class Transformer(nn.Module):
                 level_start_index=level_start_index,
                 spatial_shapes=spatial_shapes,
                 valid_ratios=valid_ratios.to(memory.dtype) if valid_ratios is not None else valid_ratios,
+                spatial_shapes_hw=spatial_shapes_hw,
             )
         else:
             assert self.two_stage, "if not using decoder, two_stage must be True"
@@ -398,6 +399,7 @@ class TransformerDecoder(nn.Module):
         level_start_index: Optional[Tensor] = None,  # num_levels
         spatial_shapes: Optional[Tensor] = None,  # bs, num_levels, 2
         valid_ratios: Optional[Tensor] = None,
+        spatial_shapes_hw=None,
     ):
         output = tgt
 
@@ -457,6 +459,7 @@ class TransformerDecoder(nn.Module):
                 reference_points=refpoints_input,
                 spatial_shapes=spatial_shapes,
                 level_start_index=level_start_index,
+                spatial_shapes_hw=spatial_shapes_hw,
             )
 
             if not self.lite_refpoint_refine:
@@ -556,6 +559,7 @@ class TransformerDecoderLayer(nn.Module):
         reference_points=None,
         spatial_shapes=None,
         level_start_index=None,
+        spatial_shapes_hw=None,
     ):
         bs, num_queries, _ = tgt.shape
 
@@ -586,6 +590,7 @@ class TransformerDecoderLayer(nn.Module):
             spatial_shapes,
             level_start_index,
             memory_key_padding_mask,
+            input_spatial_shapes_hw=spatial_shapes_hw,
         )
         # ========== End of Cross-Attention =============
 
@@ -611,6 +616,7 @@ class TransformerDecoderLayer(nn.Module):
         reference_points=None,
         spatial_shapes=None,
         level_start_index=None,
+        spatial_shapes_hw=None,
     ):
         return self.forward_post(
             tgt,
@@ -626,6 +632,7 @@ class TransformerDecoderLayer(nn.Module):
             reference_points,
             spatial_shapes,
             level_start_index,
+            spatial_shapes_hw=spatial_shapes_hw,
         )
 
 

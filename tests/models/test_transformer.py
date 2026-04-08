@@ -6,6 +6,7 @@
 
 import torch
 
+from rfdetr.models.ops.functions import ms_deform_attn_core_pytorch
 from rfdetr.models.transformer import gen_encoder_output_proposals
 
 
@@ -58,3 +59,113 @@ def test_gen_encoder_output_proposals_accepts_int_tuple_spatial_shapes() -> None
 
     assert output_memory.shape == memory.shape
     assert output_proposals.shape == (batch, h * w, 4)
+
+
+class TestMSDeformAttnCorePytorch:
+    """Tests for ms_deform_attn_core_pytorch with Python int pair spatial shapes.
+
+    Regression suite for torch.export.export compatibility: iterating over a
+    spatial_shapes tensor yields FakeTensor scalars during FakeTensor tracing,
+    which cannot be used as Python int split/view sizes.  The function now
+    accepts an optional ``value_spatial_shapes_hw`` list of Python int pairs
+    that bypasses tensor iteration.
+    """
+
+    def _make_inputs(self, B=1, n_heads=2, head_dim=4, levels=None):
+        """Build minimal valid inputs for ms_deform_attn_core_pytorch.
+
+        Args:
+            B: Batch size.
+            n_heads: Number of attention heads.
+            head_dim: Dimension per head.
+            levels: List of (H, W) int pairs; defaults to [(4, 4), (2, 2)].
+
+        Returns:
+            Tuple of (value, spatial_shapes_tensor, sampling_locations,
+                      attention_weights, spatial_shapes_hw).
+        """
+        if levels is None:
+            levels = [(4, 4), (2, 2)]
+        L = len(levels)
+        P = 1
+        Len_q = 3
+
+        total_hw = sum(H * W for H, W in levels)
+
+        spatial_shapes_tensor = torch.tensor(levels, dtype=torch.long)
+
+        value = torch.randn(B, n_heads, head_dim, total_hw)
+        # sampling_locations: (B, Len_q, n_heads, L, P, 2) in [0, 1]
+        sampling_locations = torch.rand(B, Len_q, n_heads, L, P, 2)
+        # attention_weights: (B, Len_q, n_heads, L * P)
+        attention_weights = torch.softmax(torch.randn(B, Len_q, n_heads, L * P), dim=-1)
+
+        return value, spatial_shapes_tensor, sampling_locations, attention_weights, levels
+
+    def test_with_tensor_spatial_shapes(self) -> None:
+        """Baseline: passing only the tensor spatial_shapes still works."""
+        value, spatial_shapes_tensor, sampling_locations, attention_weights, _ = self._make_inputs()
+
+        output = ms_deform_attn_core_pytorch(
+            value, spatial_shapes_tensor, sampling_locations, attention_weights
+        )
+
+        B, Len_q, _ = 1, sampling_locations.shape[1], None
+        n_heads, head_dim = 2, 4
+        assert output.shape == (B, Len_q, n_heads * head_dim)
+
+    def test_with_python_int_pair_spatial_shapes(self) -> None:
+        """Regression: value_spatial_shapes_hw list of Python int pairs must be accepted.
+
+        This is the torch.export.export-compatible code path: tensor scalar values
+        (from iterating over a FakeTensor) cannot be used as split/view sizes, so the
+        caller passes explicit Python int pairs via value_spatial_shapes_hw instead.
+        """
+        value, spatial_shapes_tensor, sampling_locations, attention_weights, levels = self._make_inputs()
+
+        output = ms_deform_attn_core_pytorch(
+            value,
+            spatial_shapes_tensor,
+            sampling_locations,
+            attention_weights,
+            value_spatial_shapes_hw=levels,
+        )
+
+        B, Len_q = 1, sampling_locations.shape[1]
+        n_heads, head_dim = 2, 4
+        assert output.shape == (B, Len_q, n_heads * head_dim)
+
+    def test_tensor_and_hw_paths_produce_identical_outputs(self) -> None:
+        """Python int pair path and tensor iteration path must produce the same result."""
+        torch.manual_seed(42)
+        value, spatial_shapes_tensor, sampling_locations, attention_weights, levels = self._make_inputs()
+
+        out_tensor_path = ms_deform_attn_core_pytorch(
+            value, spatial_shapes_tensor, sampling_locations, attention_weights
+        )
+        out_hw_path = ms_deform_attn_core_pytorch(
+            value,
+            spatial_shapes_tensor,
+            sampling_locations,
+            attention_weights,
+            value_spatial_shapes_hw=levels,
+        )
+
+        torch.testing.assert_close(out_tensor_path, out_hw_path)
+
+    def test_single_level(self) -> None:
+        """Single-level case with Python int pair path must not crash."""
+        value, spatial_shapes_tensor, sampling_locations, attention_weights, levels = self._make_inputs(
+            levels=[(8, 8)]
+        )
+
+        output = ms_deform_attn_core_pytorch(
+            value,
+            spatial_shapes_tensor,
+            sampling_locations,
+            attention_weights,
+            value_spatial_shapes_hw=levels,
+        )
+
+        assert output.shape[0] == 1
+

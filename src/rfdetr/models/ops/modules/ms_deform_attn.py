@@ -105,6 +105,7 @@ class MSDeformAttn(nn.Module):
         input_spatial_shapes,
         input_level_start_index,
         input_padding_mask=None,
+        input_spatial_shapes_hw=None,
     ):
         r"""
         :param query                       (N, Length_{query}, C)
@@ -119,12 +120,22 @@ class MSDeformAttn(nn.Module):
                                            H_0*W_0+H_1*W_1+...+H_{L-1}*W_{L-1}]
         :param input_padding_mask          (N, \sum_{l=0}^{L-1} H_l \cdot W_l), True for padding
                                            elements, False for non-padding elements
+        :param input_spatial_shapes_hw     list of (H, W) int pairs, same ordering as
+                                           input_spatial_shapes; when provided, these Python ints
+                                           are used for tensor split/view operations inside
+                                           ms_deform_attn_core_pytorch so that the function is
+                                           compatible with torch.export.export (FakeTensor tracing
+                                           cannot extract concrete values from a tensor).
 
         :return output                     (N, Length_{query}, C)
         """
         N, Len_q, _ = query.shape
         N, Len_in, _ = input_flatten.shape
-        assert (input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum() == Len_in
+        # Skip the sanity-check during export tracing: evaluating a tensor comparison
+        # inside Python assert calls bool() on a FakeTensor which raises
+        # "data is not allocated yet" during torch.export.export.
+        if not self._export:
+            assert (input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum() == Len_in
 
         value = self.value_proj(input_flatten)
         if input_padding_mask is not None:
@@ -152,6 +163,12 @@ class MSDeformAttn(nn.Module):
         attention_weights = F.softmax(attention_weights, -1)
 
         value = value.transpose(1, 2).contiguous().view(N, self.n_heads, self.d_model // self.n_heads, Len_in)
-        output = ms_deform_attn_core_pytorch(value, input_spatial_shapes, sampling_locations, attention_weights)
+        output = ms_deform_attn_core_pytorch(
+            value,
+            input_spatial_shapes,
+            sampling_locations,
+            attention_weights,
+            value_spatial_shapes_hw=input_spatial_shapes_hw,
+        )
         output = self.output_proj(output)
         return output
