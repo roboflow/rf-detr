@@ -7,6 +7,7 @@
 """Tests for build_trainer() — PTL Ch3/T5 (callbacks) and Ch4/T1 (precision, loggers, trainer kwargs)."""
 
 import warnings
+from unittest.mock import MagicMock, patch
 
 import pytest
 from pytorch_lightning.callbacks import ModelCheckpoint
@@ -270,32 +271,30 @@ class TestBuildTrainerPrecision:
             build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=True))
         assert captured["precision"] == "bf16-mixed"
 
-    def test_amp_true_ddp_notebook_probes_bf16_normally(self, tmp_path):
+    @patch("torch.cuda.is_available", return_value=True)
+    @patch("torch.cuda.is_bf16_supported", return_value=False)
+    @patch("rfdetr.training.trainer.Trainer")
+    def test_amp_true_ddp_notebook_probes_bf16_normally(
+        self, mock_trainer: MagicMock, _mock_bf16: MagicMock, _mock_cuda: MagicMock, tmp_path
+    ):
         """ddp_notebook uses standard precision probing (spawn makes CUDA init safe).
 
         With spawn-based DDP, child processes start fresh — CUDA init in the
         parent does not propagate.  So ``is_bf16_supported()`` is safe to call
         and pre-Ampere GPUs correctly get ``16-mixed`` instead of the slower
-        bf16 emulation path.
+        bf16 emulation path.  Simulates pre-Ampere GPU: CUDA available, bf16 NOT supported.
         """
-        import unittest.mock as mock
-
         captured: dict = {}
 
         def _fake_trainer(**kwargs):
             captured.update(kwargs)
-            return mock.MagicMock()
+            return MagicMock()
 
-        # Simulate pre-Ampere GPU: CUDA available but bf16 NOT supported.
-        with (
-            mock.patch("torch.cuda.is_available", return_value=True),
-            mock.patch("torch.cuda.is_bf16_supported", return_value=False),
-            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
-        ):
-            build_trainer(
-                _tc(tmp_path, use_ema=False, strategy="ddp_notebook"),
-                _mc(amp=True),
-            )
+        mock_trainer.side_effect = _fake_trainer
+        build_trainer(
+            _tc(tmp_path, use_ema=False, strategy="ddp_notebook"),
+            _mc(amp=True),
+        )
         assert captured["precision"] == "16-mixed"
 
     @pytest.mark.parametrize("strategy_name", ["ddp_notebook", "ddp_spawn"])
