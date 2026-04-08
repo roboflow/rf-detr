@@ -25,7 +25,7 @@ _MIN_TRAIN_BATCHES = 5
 
 
 class GradAccumAlignedDataset(torch.utils.data.Dataset):
-    """Dataset wrapper that pads length to a multiple of ``effective_batch_size``.
+    """Dataset wrapper that pads length to a multiple of ``effective_batch_size * world_size``.
 
     Workaround for https://github.com/Lightning-AI/pytorch-lightning/issues/19987:
     PTL fires the optimizer on partial accumulation windows at the tail of the
