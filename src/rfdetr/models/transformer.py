@@ -71,7 +71,7 @@ def gen_sineembed_for_position(pos_tensor, dim=128):
     return pos
 
 
-def gen_encoder_output_proposals(memory, memory_padding_mask, spatial_shapes, unsigmoid=True):
+def gen_encoder_output_proposals(memory, memory_padding_mask=None, spatial_shapes=None, unsigmoid=True):
     r"""
     Input:
         - memory: bs, \sum{hw}, d_model
