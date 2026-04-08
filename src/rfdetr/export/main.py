@@ -21,7 +21,7 @@ from PIL import Image
 from torchvision.transforms.v2 import Compose, Resize, ToDtype, ToImage
 
 from rfdetr.datasets.transforms import Normalize
-from rfdetr.export._onnx.exporter import export_onnx, onnx_simplify
+from rfdetr.export._onnx.exporter import export_onnx
 from rfdetr.export.tensorrt import trtexec
 from rfdetr.models import build_model
 from rfdetr.utilities.distributed import get_rank
@@ -40,7 +40,7 @@ def make_infer_image(infer_dir, shape, batch_size, device="cuda"):
 
     transforms = Compose(
         [
-            Resize((shape[0], shape[0])),
+            Resize((shape[0], shape[1])),
             ToImage(),
             ToDtype(torch.float32, scale=True),
             Normalize(),
@@ -118,7 +118,10 @@ def main(args):
         output_names = ["dets", "labels", "masks"]
     else:
         output_names = ["dets", "labels"]
-    dynamic_axes = None
+    if getattr(args, "dynamic_batch", False):
+        dynamic_axes = {name: {0: "batch"} for name in input_names + output_names}
+    else:
+        dynamic_axes = None
     # Run model inference in pytorch mode
     model.eval().to("cuda")
     input_tensors = input_tensors.to("cuda")
@@ -166,7 +169,9 @@ def main(args):
     )
 
     if args.simplify:
-        output_file = onnx_simplify(output_file, input_names, input_tensors, args)
+        logger.warning(
+            "The simplify flag is deprecated and ignored. RF-DETR no longer runs ONNX simplification automatically."
+        )
 
     if args.tensorrt:
         output_file = trtexec(output_file, args)

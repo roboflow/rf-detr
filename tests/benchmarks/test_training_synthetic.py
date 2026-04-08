@@ -24,7 +24,7 @@ import torch
 from pytorch_lightning import LightningModule
 
 from rfdetr import RFDETRNano
-from rfdetr.config import RFDETRBaseConfig, RFDETRSegNanoConfig, SegmentationTrainConfig, TrainConfig
+from rfdetr.config import RFDETRBaseConfig, RFDETRNanoConfig, RFDETRSegNanoConfig, SegmentationTrainConfig, TrainConfig
 from rfdetr.detr import RFDETR
 from rfdetr.training import RFDETRDataModule, RFDETRModelModule, build_trainer
 
@@ -84,7 +84,7 @@ def test_train_fast_dev_run(
     with open(synthetic_shape_dataset_dir / "train" / "_annotations.coco.json") as f:
         num_classes = len(json.load(f)["categories"])
 
-    mc = RFDETRBaseConfig(num_classes=num_classes, pretrain_weights=None)
+    mc = RFDETRNanoConfig(num_classes=num_classes, pretrain_weights=None, amp=False)
     tc = TrainConfig(
         dataset_dir=str(synthetic_shape_dataset_dir),
         output_dir=str(output_dir),
