@@ -1,0 +1,22 @@
+# RF-DETR Large — example training configuration (resolution 704, patch 16).
+# Usage:
+#   rfdetr fit --config configs/rfdetr_large.yaml
+#   rfdetr fit --config configs/rfdetr_large.yaml \
+#     --model.train_config.init_args.dataset_dir /data/my_dataset \
+#     --trainer.devices 4
+
+model:
+  model_config:
+    class_path: rfdetr.config.RFDETRLargeConfig
+    init_args:
+      num_classes: 80 # set to your dataset class count
+  train_config:
+    class_path: rfdetr.config.TrainConfig
+    init_args:
+      dataset_dir: /data/coco # required: path to your COCO-format dataset
+      output_dir: output/rfdetr_large
+      epochs: 100
+      batch_size: 2
+      grad_accum_steps: 8 # effective batch size 16
+      num_workers: 4
+      tensorboard: true

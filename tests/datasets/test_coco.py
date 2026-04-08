@@ -4,23 +4,22 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-"""Regression tests for sparse COCO category ID remapping in ConvertCoco.
+"""Regression tests for COCO dataset handling.
 
-COCO category IDs are sparse (1–90 with gaps). Without remapping they are used
-directly as tensor indices, causing out-of-bounds errors during training when
-the model has only 80 classes.  ConvertCoco must remap them to contiguous
-0-indexed labels via the ``cat2label`` mapping built from the annotation file.
+Tests cover:
+- Sparse COCO category ID remapping in ``ConvertCoco``
+- ``_load_classes`` hierarchy detection (GitHub #609)
 """
 
+import json
+from pathlib import Path
 from typing import Dict, List
 
-import pytest
 import torch
 from PIL import Image
-from pycocotools.coco import COCO
 
 from rfdetr.datasets.coco import ConvertCoco
-from rfdetr.datasets.coco_eval import CocoEvaluator
+from rfdetr.detr import RFDETR
 
 # Minimal image shared across all tests
 _IMAGE = Image.new("RGB", (100, 100))
@@ -40,30 +39,6 @@ _CAT2LABEL = {cat_id: i for i, cat_id in enumerate(sorted(_SPARSE_CAT_IDS))}
 
 def _make_target(annotations=_ANNOTATIONS):
     return {"image_id": 1, "annotations": annotations}
-
-
-@pytest.fixture
-def coco_gt() -> COCO:
-    coco = COCO()
-    coco.dataset = {
-        "images": [{"id": 1, "width": 10, "height": 10}],
-        "annotations": [],
-        "categories": [
-            {"id": 1, "name": "cat_1"},
-            {"id": 3, "name": "cat_3"},
-        ],
-    }
-    coco.createIndex()
-    setattr(coco, "label2cat", {0: 1, 1: 3})
-    return coco
-
-
-@pytest.fixture
-def base_prediction() -> Dict[str, torch.Tensor]:
-    return {
-        "boxes": torch.tensor([[0.0, 0.0, 1.0, 1.0], [1.0, 1.0, 2.0, 2.0]], dtype=torch.float32),
-        "scores": torch.tensor([0.9, 0.8], dtype=torch.float32),
-    }
 
 
 class TestConvertCocoWithoutMapping:
@@ -118,27 +93,127 @@ class TestConvertCocoWithMapping:
         assert target["labels"].dtype == torch.int64
 
 
-class TestCocoEvaluatorCategoryResolution:
-    @pytest.mark.parametrize(
-        ("labels", "expected_category_ids"),
-        [
-            pytest.param([0, 1], [1, 3], id="contiguous-labels"),
-            pytest.param([1, 3], [1, 3], id="raw-coco-category-ids"),
-        ],
-    )
-    def test_prepare_detection_resolves_category_ids(
-        self,
-        coco_gt: COCO,
-        base_prediction: Dict[str, torch.Tensor],
-        labels: List[int],
-        expected_category_ids: List[int],
-    ) -> None:
-        evaluator = CocoEvaluator(coco_gt, ["bbox"])
-        predictions = {
-            1: {
-                **base_prediction,
-                "labels": torch.tensor(labels, dtype=torch.int64),
-            }
-        }
-        results = evaluator.prepare_for_coco_detection(predictions)
-        assert [result["category_id"] for result in results] == expected_category_ids
+def _write_coco_json(path: Path, categories: List[Dict]) -> None:
+    """Write a minimal valid COCO annotation file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = {"images": [], "annotations": [], "categories": categories}
+    path.write_text(json.dumps(data))
+
+
+class TestLoadClassesHierarchy:
+    """Regression tests for ``_load_classes`` supercategory filtering (#609).
+
+    When all categories have ``supercategory: "none"`` (flat COCO datasets),
+    ``_load_classes`` previously returned an empty list. It should only filter
+    when a Roboflow hierarchical export is detected.
+    """
+
+    def test_roboflow_hierarchy_filters_parent(self, tmp_path: Path) -> None:
+        """Roboflow exports include a parent node — only leaf categories kept."""
+        categories = [
+            {"id": 0, "name": "annotations", "supercategory": "none"},
+            {"id": 1, "name": "dog", "supercategory": "annotations"},
+            {"id": 2, "name": "cat", "supercategory": "annotations"},
+        ]
+        _write_coco_json(tmp_path / "train" / "_annotations.coco.json", categories)
+        result = RFDETR._load_classes(str(tmp_path))
+        assert result == ["dog", "cat"]
+
+    def test_flat_none_supercategory_keeps_all(self, tmp_path: Path) -> None:
+        """Flat datasets where every category has supercategory 'none' (#609)."""
+        categories = [
+            {"id": 1, "name": "dog", "supercategory": "none"},
+            {"id": 2, "name": "cat", "supercategory": "none"},
+        ]
+        _write_coco_json(tmp_path / "train" / "_annotations.coco.json", categories)
+        result = RFDETR._load_classes(str(tmp_path))
+        assert result == ["dog", "cat"]
+
+    def test_mixed_supercategories_keeps_all(self, tmp_path: Path) -> None:
+        """Mix of 'none' and non-'none' supercategories where no category is a parent of another.
+
+        'animal' appears as a supercategory but is not itself a category name, so
+        ``has_children`` is empty and all categories pass the ``name not in has_children``
+        filter — both 'dog' and 'cat' are returned.
+        """
+        categories = [
+            {"id": 1, "name": "dog", "supercategory": "none"},
+            {"id": 2, "name": "cat", "supercategory": "animal"},
+        ]
+        _write_coco_json(tmp_path / "train" / "_annotations.coco.json", categories)
+        result = RFDETR._load_classes(str(tmp_path))
+        assert result == ["dog", "cat"]
+
+    def test_category_named_none_does_not_empty_list(self, tmp_path: Path) -> None:
+        """If a category is literally named 'none' and all supercategories
+        are placeholders, the loader must return all class names instead of [].
+        """
+        categories = [
+            {"id": 1, "name": "none", "supercategory": "none"},
+            {"id": 2, "name": "dog", "supercategory": "none"},
+            {"id": 3, "name": "cat", "supercategory": "none"},
+        ]
+        _write_coco_json(tmp_path / "train" / "_annotations.coco.json", categories)
+        result = RFDETR._load_classes(str(tmp_path))
+        assert result == ["none", "dog", "cat"]
+
+    def test_mixed_hierarchy_leaf_and_standalone_forwarding(self, tmp_path: Path) -> None:
+        """Mixed hierarchy: only leaf classes + standalone top-level categories
+        should be forwarded. Parent/grouping nodes are dropped.
+        """
+        categories = [
+            {"id": 1, "name": "animals", "supercategory": "none"},
+            {"id": 2, "name": "mammal", "supercategory": "animals"},
+            {"id": 3, "name": "dog", "supercategory": "mammal"},
+            {"id": 4, "name": "cat", "supercategory": "mammal"},
+            {"id": 5, "name": "bird", "supercategory": "animals"},
+            {"id": 6, "name": "eagle", "supercategory": "bird"},
+            {"id": 7, "name": "pigeon", "supercategory": "bird"},
+            {"id": 8, "name": "objects", "supercategory": "none"},
+            {"id": 9, "name": "vehicle", "supercategory": "objects"},
+            {"id": 10, "name": "car", "supercategory": "vehicle"},
+            {"id": 11, "name": "truck", "supercategory": "vehicle"},
+            {"id": 12, "name": "appliance", "supercategory": "objects"},
+            {"id": 13, "name": "toaster", "supercategory": "appliance"},
+            {"id": 14, "name": "microwave", "supercategory": "appliance"},
+            {"id": 15, "name": "person", "supercategory": "none"},
+        ]
+        _write_coco_json(tmp_path / "train" / "_annotations.coco.json", categories)
+        result = RFDETR._load_classes(str(tmp_path))
+        expected = [
+            "dog",
+            "cat",
+            "eagle",
+            "pigeon",
+            "car",
+            "truck",
+            "toaster",
+            "microwave",
+            "person",
+        ]
+        assert result == expected
+
+    def test_placeholder_values_treated_as_no_parent(self, tmp_path: Path) -> None:
+        """Placeholders like None, '', and 'null' should be treated the same
+        as 'none'.
+        """
+        categories = [
+            {"id": 1, "name": "dog", "supercategory": None},
+            {"id": 2, "name": "cat", "supercategory": ""},
+            {"id": 3, "name": "elephant", "supercategory": "null"},
+        ]
+        _write_coco_json(tmp_path / "train" / "_annotations.coco.json", categories)
+        result = RFDETR._load_classes(str(tmp_path))
+        assert result == ["dog", "cat", "elephant"]
+
+    def test_unsorted_category_ids_return_id_sorted_class_order(self, tmp_path: Path) -> None:
+        """Returned class names must follow category-ID order for stable index mapping."""
+        categories = [
+            {"id": 30, "name": "truck", "supercategory": "vehicle"},
+            {"id": 10, "name": "vehicle", "supercategory": "none"},
+            {"id": 20, "name": "car", "supercategory": "vehicle"},
+            {"id": 40, "name": "person", "supercategory": "none"},
+        ]
+        _write_coco_json(tmp_path / "train" / "_annotations.coco.json", categories)
+        result = RFDETR._load_classes(str(tmp_path))
+        assert result == ["car", "truck", "person"]

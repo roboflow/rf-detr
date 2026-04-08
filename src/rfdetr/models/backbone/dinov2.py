@@ -18,7 +18,7 @@ from rfdetr.models.backbone.dinov2_with_windowed_attn import (
     WindowedDinov2WithRegistersBackbone,
     WindowedDinov2WithRegistersConfig,
 )
-from rfdetr.util.logger import get_logger
+from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
@@ -65,6 +65,7 @@ class DinoV2(nn.Module):
         patch_size=14,
         num_windows=4,
         positional_encoding_size=37,
+        drop_path_rate=0.0,
     ):
         super().__init__()
 
@@ -79,6 +80,11 @@ class DinoV2(nn.Module):
         if not use_windowed_attn:
             assert not gradient_checkpointing, "Gradient checkpointing is not supported for non-windowed attention"
             assert load_dinov2_weights, "Using non-windowed attention requires loading dinov2 weights from hub"
+            if drop_path_rate > 0.0:
+                logger.warning(
+                    "drop_path_rate > 0.0 is not supported for non-windowed DinoV2 backbones."
+                    " drop_path will be ignored."
+                )
             self.encoder = AutoBackbone.from_pretrained(
                 name,
                 out_features=[f"stage{i}" for i in out_feature_indexes],
@@ -93,19 +99,24 @@ class DinoV2(nn.Module):
 
             dino_config["return_dict"] = False
             dino_config["out_features"] = [f"stage{i}" for i in out_feature_indexes]
+            dino_config["drop_path_rate"] = drop_path_rate
 
             implied_resolution = positional_encoding_size * patch_size
 
             if implied_resolution != dino_config["image_size"]:
                 logger.warning(
-                    "Using a different number of positional encodings than DINOv2, which means we're not loading DINOv2 backbone weights. This is not a problem if finetuning a pretrained RF-DETR model."
+                    "Using a different number of positional encodings than DINOv2, which means"
+                    " we're not loading DINOv2 backbone weights. This is not a problem if"
+                    " finetuning a pretrained RF-DETR model."
                 )
                 dino_config["image_size"] = implied_resolution
                 load_dinov2_weights = False
 
             if patch_size != 14:
                 logger.warning(
-                    f"Using patch size {patch_size} instead of 14, which means we're not loading DINOv2 backbone weights. This is not a problem if finetuning a pretrained RF-DETR model."
+                    f"Using patch size {patch_size} instead of 14, which means we're not loading"
+                    " DINOv2 backbone weights. This is not a problem if finetuning a pretrained"
+                    " RF-DETR model."
                 )
                 dino_config["patch_size"] = patch_size
                 load_dinov2_weights = False
@@ -159,13 +170,13 @@ class DinoV2(nn.Module):
             )
             patch_pos_embed = patch_pos_embed.permute(0, 3, 1, 2)
 
-            # Use bilinear interpolation without antialias
+            # Use bicubic interpolation, disabling antialias only on MPS devices
             patch_pos_embed = F.interpolate(
                 patch_pos_embed,
                 size=(height, width),
                 mode="bicubic",
                 align_corners=False,
-                antialias=True,
+                antialias=patch_pos_embed.device.type != "mps",
             )
 
             # Reshape back

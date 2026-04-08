@@ -69,13 +69,13 @@ uv sync --all-groups
 See `pyproject.toml` for complete dependency specifications:
 
 - **Core:** PyTorch, torchvision, transformers, pycocotools, supervision, peft, pydantic
-- **Optional:** `[plus]` (Plus models), `[onnxexport]` (ONNX export), `[metrics]` (tensorboard, wandb)
+- **Optional:** `[plus]` (Plus models), `[onnx]` (ONNX export), `[loggers]` (tensorboard, wandb)
 - **Development:** `tests`, `docs`, `build` groups
 
 **Important version constraints:**
 
-- PyTorch: >=1.13.0, \<=2.8.0 (2.9.0+ excluded due to known issues)
-- Transformers: >4.0.0, \<5.0.0
+- PyTorch: >=2.2.0, \<3.0.0
+- Transformers: >=5.0.0, \<6.0.0
 
 ## Testing
 
@@ -156,14 +156,14 @@ pre-commit run --all-files
 ### Building Docs
 
 ```bash
-# Install docs dependencies
-uv sync --group docs
+# Full install (matches CI — required for XLarge/2XLarge model pages)
+uv pip install -e ".[plus]" --group docs
 
 # Serve locally (live reload)
-mkdocs serve
+uv run mkdocs serve
 
 # Build static site
-mkdocs build
+uv run mkdocs build
 ```
 
 **Documentation Structure:**

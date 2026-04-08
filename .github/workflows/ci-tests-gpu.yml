@@ -4,7 +4,6 @@ on:
   push:
     branches: ["main", "release/*", "develop"]
   pull_request:
-    branches: ["main", "release/*", "develop"]
     types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
@@ -27,7 +26,7 @@ jobs:
   run-gpu-tests:
     name: Testing
     if: github.event_name == 'push' || !github.event.pull_request.draft
-    timeout-minutes: 20
+    timeout-minutes: 35
     runs-on: Roboflow-GPU-VM-Runner
     steps:
       - name: 🖥️ Print GPU information
@@ -46,14 +45,18 @@ jobs:
           activate-environment: true
 
       - name: 🚀 Install Packages
-        run: uv sync --group tests --extra onnxexport --extra plus
+        timeout-minutes: 5
+        run: uv sync --group tests --group ci-gpu-pin --extra onnx --extra plus --extra train --extra visual
 
       - name: 🧪 Run the Test
         run: |
           uv run --no-sync pytest tests/ \
           -m gpu \
           -n 3 \
-          --cov=rfdetr --cov-report=xml
+          --reruns 1 --only-rerun "OutOfMemoryError" \
+          --cov=rfdetr --cov-report=xml \
+          --timeout=600 \
+          --durations=20
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5

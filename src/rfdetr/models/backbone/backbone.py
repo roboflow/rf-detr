@@ -19,13 +19,12 @@ Backbone modules.
 
 import torch
 import torch.nn.functional as F
-from peft import PeftModel
 
 from rfdetr.models.backbone.base import BackboneBase
 from rfdetr.models.backbone.dinov2 import DinoV2
 from rfdetr.models.backbone.projector import MultiScaleProjector
-from rfdetr.util.logger import get_logger
-from rfdetr.util.misc import NestedTensor
+from rfdetr.utilities.logger import get_logger
+from rfdetr.utilities.tensors import NestedTensor
 
 logger = get_logger()
 
@@ -87,6 +86,7 @@ class Backbone(BackboneBase):
             patch_size=patch_size,
             num_windows=num_windows,
             positional_encoding_size=positional_encoding_size,
+            drop_path_rate=drop_path,
         )
         # build encoder + projector as backbone module
         if freeze_encoder:
@@ -117,9 +117,21 @@ class Backbone(BackboneBase):
         self._forward_origin = self.forward
         self.forward = self.forward_export
 
+        if not hasattr(self.encoder, "merge_and_unload"):
+            return
+
+        try:
+            from peft import PeftModel
+        except ModuleNotFoundError:
+            logger.warning("peft is not installed; skipping LoRA weight merging during export.")
+            return
+        except ImportError as exc:
+            logger.warning("Failed to import PeftModel from peft during export: %s", exc)
+            raise
+
         if isinstance(self.encoder, PeftModel):
             logger.info("Merging and unloading LoRA weights")
-            self.encoder.merge_and_unload()
+            self.encoder = self.encoder.merge_and_unload()
 
     def forward(self, tensor_list: NestedTensor):
         """ """
@@ -172,16 +184,17 @@ class Backbone(BackboneBase):
         return named_param_lr_pairs
 
 
-def get_dinov2_lr_decay_rate(name, lr_decay_rate=1.0, num_layers=12):
+def get_dinov2_lr_decay_rate(name: str, lr_decay_rate: float = 1.0, num_layers: int = 12) -> float:
     """
     Calculate lr decay rate for different ViT blocks.
 
     Args:
-        name (string): parameter name.
-        lr_decay_rate (float): base lr decay rate.
-        num_layers (int): number of ViT blocks.
+        name: Parameter name.
+        lr_decay_rate: Base lr decay rate.
+        num_layers: Number of ViT blocks.
+
     Returns:
-        lr decay rate for the given parameter.
+        Lr decay rate for the given parameter.
     """
     layer_id = num_layers + 1
     if name.startswith("backbone"):

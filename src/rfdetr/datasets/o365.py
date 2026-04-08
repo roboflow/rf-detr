@@ -20,7 +20,7 @@ Image.MAX_IMAGE_PIXELS = None
 
 
 def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
-    root = Path(args.coco_path)
+    root = Path(getattr(args, "dataset_dir", None) or args.coco_path)
     PATHS = {
         "train": (root, root / "zhiyuan_objv2_train_val_wo_5k.json"),
         "val": (root, root / "zhiyuan_objv2_minival5k.json"),

@@ -24,20 +24,17 @@ Perform inference on an image using either the `rfdetr` package or the `inferenc
 === "rfdetr"
 
     ```python
-    import requests
     import supervision as sv
-    from PIL import Image
     from rfdetr import RFDETRMedium
-    from rfdetr.util.coco_classes import COCO_CLASSES
+    from rfdetr.assets.coco_classes import COCO_CLASSES
 
     model = RFDETRMedium()
 
-    image = Image.open(requests.get("https://media.roboflow.com/dog.jpg", stream=True).raw)
-    detections = model.predict(image, threshold=0.5)
+    detections = model.predict("https://media.roboflow.com/dog.jpg", threshold=0.5)
 
     labels = [f"{COCO_CLASSES[class_id]}" for class_id in detections.class_id]
 
-    annotated_image = sv.BoxAnnotator().annotate(image, detections)
+    annotated_image = sv.BoxAnnotator().annotate(detections.data["source_image"], detections)
     annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
     ```
 
@@ -69,7 +66,7 @@ These examples use OpenCV for decoding and display. Replace `<SOURCE_VIDEO_PATH>
     import cv2
     import supervision as sv
     from rfdetr import RFDETRMedium
-    from rfdetr.util.coco_classes import COCO_CLASSES
+    from rfdetr.assets.coco_classes import COCO_CLASSES
 
     model = RFDETRMedium()
 
@@ -104,7 +101,7 @@ These examples use OpenCV for decoding and display. Replace `<SOURCE_VIDEO_PATH>
     import cv2
     import supervision as sv
     from rfdetr import RFDETRMedium
-    from rfdetr.util.coco_classes import COCO_CLASSES
+    from rfdetr.assets.coco_classes import COCO_CLASSES
 
     model = RFDETRMedium()
 
@@ -139,7 +136,7 @@ These examples use OpenCV for decoding and display. Replace `<SOURCE_VIDEO_PATH>
     import cv2
     import supervision as sv
     from rfdetr import RFDETRMedium
-    from rfdetr.util.coco_classes import COCO_CLASSES
+    from rfdetr.assets.coco_classes import COCO_CLASSES
 
     model = RFDETRMedium()
 

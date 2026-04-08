@@ -70,6 +70,7 @@ instance/
 
 # Sphinx documentation
 docs/_build/
+docs/adr/
 
 # PyBuilder
 .pybuilder/
@@ -187,8 +188,18 @@ test_visualizations/
 
 # datasets
 data/
+datasets/
 
 debugging/
 
 # AI assistant
 .claude/
+
+# Local docs development (versions.json is managed by mike on gh-pages in production)
+docs/versions.json
+
+# do not upload python version or notebooks
+notebooks/*.py
+
+# tracking work in progress
+tasks/

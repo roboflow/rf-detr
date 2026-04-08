@@ -22,16 +22,15 @@ Mostly copy-paste from https://github.com/pytorch/vision/blob/13b35ff/references
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-import pycocotools.mask as coco_mask
 import torch
 import torch.utils.data
 import torchvision
 from PIL import Image
+from torchvision.transforms.v2 import Compose, ToDtype, ToImage
 
-import rfdetr.datasets.transforms as T
 from rfdetr.datasets.aug_config import AUG_CONFIG
-from rfdetr.datasets.transforms import AlbumentationsWrapper, ComposeAugmentations
-from rfdetr.util.logger import get_logger
+from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize
+from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
@@ -57,25 +56,78 @@ def compute_multi_scale_scales(
     return proposed_scales
 
 
-def convert_coco_poly_to_mask(segmentations: List[Any], height: int, width: int) -> torch.Tensor:
-    """Convert polygon segmentation to a binary mask tensor of shape [N, H, W].
-    Requires pycocotools.
+def _is_rle(segmentation: Any) -> bool:
+    """Check whether a COCO segmentation entry is in RLE format.
+
+    RLE annotations are dicts with ``"counts"`` and ``"size"`` keys, as opposed
+    to polygon annotations which are lists of coordinate arrays.
+    This is a structural check only — it verifies key presence but does not
+    validate value types. A dict with counts=None will pass this check but fail
+    downstream in convert_coco_poly_to_mask.
+
+    Args:
+        segmentation: A single COCO segmentation annotation entry.
+
+    Returns:
+        ``True`` if the entry looks like an RLE dict, ``False`` otherwise.
     """
+    return isinstance(segmentation, dict) and "counts" in segmentation and "size" in segmentation
+
+
+def convert_coco_poly_to_mask(segmentations: List[Any], height: int, width: int) -> torch.Tensor:
+    """Convert COCO segmentation annotations to a binary mask tensor of shape ``[N, H, W]``.
+
+    Supports both polygon and RLE (Run-Length Encoding) annotation formats.
+    Polygon annotations (lists of coordinate arrays) are rasterised via
+    ``pycocotools.mask.frPyObjects``.  RLE annotations (dicts with
+    ``"counts"`` and ``"size"`` keys; ``counts`` may be str or bytes for
+    compressed RLE, or list of ints for uncompressed RLE) are decoded directly, skipping the
+    polygon-to-RLE conversion step.
+
+    Args:
+        segmentations: Per-instance segmentation annotations.  Each element is
+            either a polygon list (``[[x1, y1, x2, y2, ...], ...]``), an RLE
+            dict (``{"counts": ..., "size": [H, W]}``), or ``None`` / empty
+            for instances without a mask.
+            Dicts must be valid COCO RLE annotations with non-empty ``"counts"``
+            and ``"size"`` fields.
+        height: Image height in pixels (used for polygon rasterisation).
+        width: Image width in pixels (used for polygon rasterisation).
+
+    Returns:
+        A ``uint8`` tensor of shape ``(N, H, W)`` where each slice is a binary
+        mask for one instance.  Returns a ``(0, H, W)`` tensor when
+        *segmentations* is empty.
+    """
+    import pycocotools.mask as coco_mask
+
     masks = []
-    for polygons in segmentations:
-        if polygons is None or len(polygons) == 0:
+    for segmentation in segmentations:
+        if segmentation is None or (not isinstance(segmentation, dict) and len(segmentation) == 0):
             # empty segmentation for this instance
             masks.append(torch.zeros((height, width), dtype=torch.uint8))
             continue
-        try:
-            rles = coco_mask.frPyObjects(polygons, height, width)
-        except:
-            rles = polygons
+        if _is_rle(segmentation):
+            counts = segmentation["counts"]
+            if not isinstance(counts, (str, bytes, list)):
+                raise ValueError(
+                    f"RLE segmentation has unsupported counts type {type(counts).__name__!r}; "
+                    "expected str, bytes, or list"
+                )
+            if isinstance(counts, (str, bytes)):
+                # Compressed RLE — decode directly, skip frPyObjects
+                rles = [segmentation]
+            else:
+                # Uncompressed RLE (counts is a list of ints) — compress first
+                rles = [coco_mask.frPyObjects(segmentation, height, width)]
+        else:
+            rles = coco_mask.frPyObjects(segmentation, height, width)
         mask = coco_mask.decode(rles)
         if mask.ndim < 3:
             mask = mask[..., None]
         mask = torch.as_tensor(mask, dtype=torch.uint8)
-        mask = mask.any(dim=2)
+        # Keep return dtype stable across torch versions (any(...) may return bool).
+        mask = mask.any(dim=2).to(torch.uint8)
         masks.append(mask)
     if len(masks) == 0:
         return torch.zeros((0, height, width), dtype=torch.uint8)
@@ -149,9 +201,9 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         target = {"image_id": image_id, "annotations": target}
         img, target = self.prepare(img, target)
         if self._transforms is not None:
-            img, target = self._transforms(
-                img, target
-            )  # boxes are absolute [x_min, y_min, x_max, y_max]; conversion to normalized [cx, cy, w, h] occurs inside T.Normalize
+            # boxes are absolute [x_min, y_min, x_max, y_max]; conversion to
+            # normalized [cx, cy, w, h] occurs inside Normalize
+            img, target = self._transforms(img, target)
         return img, target
 
 
@@ -174,8 +226,9 @@ class ConvertCoco(object):
     after clamping to image boundaries) are filtered out.
 
     Args:
-        include_masks: If ``True``, decode polygon segmentation annotations into
-            binary masks and include them in the returned target dict.
+        include_masks: If ``True``, decode segmentation annotations (polygon or
+            RLE format) into binary masks and include them in the returned
+            target dict.
         cat2label: Optional mapping from COCO ``category_id`` values to contiguous
             0-based label indices.  When ``None`` (default) the raw
             ``category_id`` values are used as labels directly, which is correct
@@ -254,6 +307,82 @@ class ConvertCoco(object):
         return image, target
 
 
+def _build_train_resize_config(
+    scales: List[int],
+    *,
+    square: bool,
+    max_size: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    """Build the training resize pipeline as an Albumentations config list.
+
+    Expresses the ``RandomSelect(resize_a, Compose([resize_b1, crop, resize_b2]))``
+    pattern as a config-driven ``OneOf``/``Sequential`` for use with
+    :meth:`AlbumentationsWrapper.from_config`.
+
+    Two branches are selected with equal probability:
+
+    - **Option A** – direct resize to the target scale(s).
+    - **Option B** – resize to an intermediate scale (400/500/600 px), crop,
+      then resize to the target scale.
+
+    Args:
+        scales: Target resize scales in pixels.
+        square: If ``True``, produce square output using ``A.Resize``
+            (one random scale from *scales*).  If ``False``, preserve aspect
+            ratio using ``A.SmallestMaxSize`` with an optional long-side cap.
+        max_size: Maximum long-side size for non-square resizes.  Defaults to
+            ``1333`` when *square* is ``False``.
+
+    Returns:
+        A single-element list containing a ``OneOf`` config entry.
+    """
+    if square:
+        option_a: Dict[str, Any] = {
+            "OneOf": {
+                "transforms": [{"Resize": {"height": s, "width": s}} for s in scales],
+            }
+        }
+        option_b: Dict[str, Any] = {
+            "Sequential": {
+                "transforms": [
+                    {"SmallestMaxSize": {"max_size": [400, 500, 600]}},
+                    {
+                        "OneOf": {
+                            "transforms": [
+                                {"RandomSizedCrop": {"min_max_height": [384, 600], "height": s, "width": s}}
+                                for s in scales
+                            ],
+                        }
+                    },
+                ]
+            }
+        }
+    else:
+        cap = max_size or 1333
+        # SmallestMaxSize accepts a list and picks randomly — no OneOf needed
+        size_param: Any = scales[0] if len(scales) == 1 else scales
+        option_a = {
+            "Sequential": {
+                "transforms": [
+                    {"SmallestMaxSize": {"max_size": size_param}},
+                    {"LongestMaxSize": {"max_size": cap}},
+                ]
+            }
+        }
+        option_b = {
+            "Sequential": {
+                "transforms": [
+                    {"SmallestMaxSize": {"max_size": [400, 500, 600]}},
+                    {"RandomCrop": {"height": 384, "width": 384}},
+                    {"SmallestMaxSize": {"max_size": size_param}},
+                    {"LongestMaxSize": {"max_size": cap}},
+                ]
+            }
+        }
+
+    return [{"OneOf": {"transforms": [option_a, option_b]}}]
+
+
 def make_coco_transforms(
     image_set: str,
     resolution: int,
@@ -263,21 +392,22 @@ def make_coco_transforms(
     patch_size: int = 16,
     num_windows: int = 4,
     aug_config: Optional[Dict[str, Dict[str, Any]]] = None,
-) -> T.Compose:
+) -> Compose:
     """Build the standard COCO transform pipeline for a given dataset split.
 
     Returns a composed transform that resizes images to the target ``resolution``
     (with optional multi-scale jitter), applies Albumentations-based augmentations
     during training, and normalises pixel values with ImageNet statistics.
 
-    For the ``"train"`` split the pipeline uses a two-branch random select between
-    a simple random resize and a resize → random-crop → resize sequence, followed
-    by the augmentation stack and normalisation.  For ``"val"`` and ``"val_speed"``
-    only resize and normalisation are applied.
+    For the ``"train"`` split the pipeline uses a two-branch ``OneOf`` between a
+    direct resize and a resize → random-crop → resize sequence (built via
+    :func:`_build_train_resize_config`), followed by the augmentation stack and
+    normalisation.  For ``"val"``, ``"test"``, and ``"val_speed"`` only resize and
+    normalisation are applied — no augmentation.
 
     Args:
-        image_set: Dataset split identifier — ``"train"``, ``"val"``, or
-            ``"val_speed"``.
+        image_set: Dataset split identifier — ``"train"``, ``"val"``, ``"test"``,
+            or ``"val_speed"``.
         resolution: Target short-side resolution in pixels.  During validation the
             longest side is capped at 1333 px to preserve aspect ratio.
         multi_scale: If ``True``, sample the resize target from a range of scales
@@ -297,13 +427,15 @@ def make_coco_transforms(
             ``None``.
 
     Returns:
-        A :class:`~rfdetr.datasets.transforms.Compose` pipeline ready to be passed
+        A :class:`torchvision.transforms.v2.Compose` pipeline ready to be passed
         to :class:`CocoDetection`.
 
     Raises:
         ValueError: If ``image_set`` is not one of the recognised split names.
     """
-    normalize = T.Compose([T.ToTensor(), T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
+    to_image = ToImage()
+    to_float = ToDtype(torch.float32, scale=True)
+    normalize = Normalize()
 
     scales = [resolution]
     if multi_scale:
@@ -315,37 +447,23 @@ def make_coco_transforms(
 
     if image_set == "train":
         resolved_aug_config = aug_config if aug_config is not None else AUG_CONFIG
-        return T.Compose(
-            [
-                T.RandomSelect(
-                    T.RandomResize(scales, max_size=1333),
-                    T.Compose(
-                        [
-                            T.RandomResize([400, 500, 600]),
-                            T.RandomSizeCrop(384, 600),
-                            T.RandomResize(scales, max_size=1333),
-                        ]
-                    ),
-                ),
-                ComposeAugmentations(AlbumentationsWrapper.from_config(resolved_aug_config)),
-                normalize,
-            ]
+        resize_wrappers = AlbumentationsWrapper.from_config(
+            _build_train_resize_config(scales, square=False, max_size=1333)
         )
+        aug_wrappers = AlbumentationsWrapper.from_config(resolved_aug_config)
+        return Compose([*resize_wrappers, *aug_wrappers, to_image, to_float, normalize])
 
-    if image_set == "val":
-        return T.Compose(
+    if image_set in ("val", "test"):
+        resize_wrappers = AlbumentationsWrapper.from_config(
             [
-                T.RandomResize([resolution], max_size=1333),
-                normalize,
+                {"SmallestMaxSize": {"max_size": resolution}},
+                {"LongestMaxSize": {"max_size": 1333}},
             ]
         )
+        return Compose([*resize_wrappers, to_image, to_float, normalize])
     if image_set == "val_speed":
-        return T.Compose(
-            [
-                T.SquareResize([resolution]),
-                normalize,
-            ]
-        )
+        resize_wrappers = AlbumentationsWrapper.from_config([{"Resize": {"height": resolution, "width": resolution}}])
+        return Compose([*resize_wrappers, to_image, to_float, normalize])
 
     raise ValueError(f"unknown {image_set}")
 
@@ -358,8 +476,8 @@ def make_coco_transforms_square_div_64(
     skip_random_resize: bool = False,
     patch_size: int = 16,
     num_windows: int = 4,
-    aug_config=None,
-) -> T.Compose:
+    aug_config: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> Compose:
     """
     Create COCO transforms with square resizing where the output size is divisible by 64.
 
@@ -390,10 +508,12 @@ def make_coco_transforms_square_div_64(
             the default :data:`~rfdetr.datasets.aug_config.AUG_CONFIG` is used.
 
     Returns:
-        A ``T.Compose`` object containing the composed image transforms appropriate
+        A ``Compose`` object containing the composed image transforms appropriate
         for the specified ``image_set``.
     """
-    normalize = T.Compose([T.ToTensor(), T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
+    to_image = ToImage()
+    to_float = ToDtype(torch.float32, scale=True)
+    normalize = Normalize()
 
     scales = [resolution]
     if multi_scale:
@@ -405,50 +525,19 @@ def make_coco_transforms_square_div_64(
 
     if image_set == "train":
         resolved_aug_config = aug_config if aug_config is not None else AUG_CONFIG
-        return T.Compose(
-            [
-                T.RandomSelect(
-                    T.SquareResize(scales),
-                    T.Compose(
-                        [
-                            T.RandomResize([400, 500, 600]),
-                            T.RandomSizeCrop(384, 600),
-                            T.SquareResize(scales),
-                        ]
-                    ),
-                ),
-                ComposeAugmentations(AlbumentationsWrapper.from_config(resolved_aug_config)),
-                normalize,
-            ]
-        )
+        resize_wrappers = AlbumentationsWrapper.from_config(_build_train_resize_config(scales, square=True))
+        aug_wrappers = AlbumentationsWrapper.from_config(resolved_aug_config)
+        return Compose([*resize_wrappers, *aug_wrappers, to_image, to_float, normalize])
 
-    if image_set == "val":
-        return T.Compose(
-            [
-                T.SquareResize([resolution]),
-                normalize,
-            ]
-        )
-    if image_set == "test":
-        return T.Compose(
-            [
-                T.SquareResize([resolution]),
-                normalize,
-            ]
-        )
-    if image_set == "val_speed":
-        return T.Compose(
-            [
-                T.SquareResize([resolution]),
-                normalize,
-            ]
-        )
+    if image_set in ("val", "test", "val_speed"):
+        resize_wrappers = AlbumentationsWrapper.from_config([{"Resize": {"height": resolution, "width": resolution}}])
+        return Compose([*resize_wrappers, to_image, to_float, normalize])
 
     raise ValueError(f"unknown {image_set}")
 
 
 def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
-    root = Path(args.coco_path)
+    root = Path(getattr(args, "dataset_dir", None) or args.coco_path)
     if not root.exists():
         logger.error(f"COCO path {root} does not exist")
         raise FileNotFoundError(f"COCO path {root} does not exist")

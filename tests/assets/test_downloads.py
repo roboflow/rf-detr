@@ -72,9 +72,7 @@ class TestDownloadPretrainWeights:
 
         with (
             patch("rfdetr.assets.model_weights.ModelWeights.from_filename", return_value=None),
-            patch.dict(
-                "sys.modules", {"rfdetr.platform": Mock(), "rfdetr.platform.platform_downloads": mock_platform_module}
-            ),
+            patch.dict("sys.modules", {"rfdetr.platform": Mock(), "rfdetr.platform.downloads": mock_platform_module}),
         ):
             download_pretrain_weights("legacy-model.pth")
 
@@ -94,15 +92,24 @@ class TestDownloadPretrainWeights:
         # Should not download if file exists with correct hash
         mock_file_operations["download"].assert_not_called()
 
-    def test_file_exists_with_incorrect_md5_redownloads(self, mock_file_operations):
-        """Test that file is re-downloaded if MD5 is incorrect."""
+    def test_file_exists_with_incorrect_md5_warns_and_skips(self, mock_file_operations):
+        """Test that file is NOT re-downloaded when MD5 is incorrect and redownload=False.
+
+        This protects fine-tuned checkpoints that share the same filename as a
+        registry model (e.g. rf-detr-nano.pth) from being silently overwritten.
+        """
         mock_file_operations["exists"].return_value = True
         mock_file_operations["validate"].return_value = False  # Incorrect MD5
 
-        download_pretrain_weights("rf-detr-base.pth")
+        with patch("rfdetr.assets.model_weights.logger.warning") as mock_warning:
+            download_pretrain_weights("rf-detr-base.pth")
 
-        # Should re-download due to incorrect MD5
-        mock_file_operations["download"].assert_called_once()
+        # Should NOT re-download — the user's file must be preserved
+        mock_file_operations["download"].assert_not_called()
+        mock_warning.assert_called_once()
+        warning_msg = mock_warning.call_args[0][0]
+        assert "incorrect MD5 hash" in warning_msg
+        assert "skipping re-download to avoid overwriting it" in warning_msg
 
     def test_redownload_flag_forces_download(self, mock_file_operations):
         """Test that redownload=True forces re-download even if file exists."""
@@ -112,6 +119,20 @@ class TestDownloadPretrainWeights:
         download_pretrain_weights("rf-detr-base.pth", redownload=True)
 
         # Should download despite file existing
+        mock_file_operations["download"].assert_called_once()
+
+    def test_redownload_flag_forces_download_despite_incorrect_md5(self, mock_file_operations):
+        """Test that redownload=True triggers download even when MD5 is incorrect.
+
+        Verifies the force-redownload path where the user explicitly wants to overwrite
+        an existing file (e.g. a fine-tuned checkpoint) with the original registry weights.
+        """
+        mock_file_operations["exists"].return_value = True
+        mock_file_operations["validate"].return_value = False  # Incorrect MD5
+
+        download_pretrain_weights("rf-detr-base.pth", redownload=True)
+
+        # Should download because redownload=True overrides the skip-on-existing-file guard
         mock_file_operations["download"].assert_called_once()
 
     def test_validate_md5_disabled(self, mock_file_operations):
@@ -254,7 +275,7 @@ class TestDownloadErrorHandling:
     @patch("rfdetr.assets.model_weights.os.path.exists")
     @patch("rfdetr.assets.model_weights.logger")
     def test_logs_warning_on_incorrect_md5(self, mock_logger, mock_exists, mock_validate, mock_download):
-        """Test that warning is logged when MD5 is incorrect."""
+        """Test that warning is logged when MD5 is incorrect and no re-download occurs."""
         mock_exists.return_value = True
         mock_validate.return_value = False
 
@@ -264,3 +285,37 @@ class TestDownloadErrorHandling:
         mock_logger.warning.assert_called()
         warning_message = mock_logger.warning.call_args[0][0]
         assert "incorrect MD5 hash" in warning_message
+
+        # Must NOT re-download — fine-tuned checkpoints should be preserved
+        mock_download.assert_not_called()
+
+    @patch("rfdetr.assets.model_weights._download_file")
+    @patch("rfdetr.assets.model_weights.os.path.exists")
+    def test_absolute_path_resolves_to_known_model(self, mock_exists, mock_download):
+        """Absolute paths like /content/rf-detr-base.pth must still match the registry.
+
+        Regression test: previously ModelWeights.from_filename received the full
+        path instead of the basename, so it returned None and the download was
+        silently skipped.
+        """
+        mock_exists.return_value = False
+
+        download_pretrain_weights("/content/rf-detr-base.pth")
+
+        # Must have attempted a download — not silently returned
+        mock_download.assert_called_once()
+        call_kwargs = mock_download.call_args[1]
+        assert call_kwargs["filename"] == "/content/rf-detr-base.pth"
+        assert "rf-detr-base-coco.pth" in call_kwargs["url"]
+
+    @patch("rfdetr.assets.model_weights._download_file")
+    @patch("rfdetr.assets.model_weights.os.path.exists")
+    def test_nested_absolute_path_resolves_to_known_model(self, mock_exists, mock_download):
+        """Nested paths like /workspace/models/rf-detr-base.pth also resolve."""
+        mock_exists.return_value = False
+
+        download_pretrain_weights("/workspace/models/rf-detr-base.pth")
+
+        mock_download.assert_called_once()
+        call_kwargs = mock_download.call_args[1]
+        assert call_kwargs["filename"] == "/workspace/models/rf-detr-base.pth"

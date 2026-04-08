@@ -1,6 +1,6 @@
 ci:
   autofix_prs: true
-  autoupdate_schedule: weekly
+  autoupdate_schedule: monthly
   autofix_commit_msg: "fix(pre-commit): 🎨 auto format pre-commit hooks"
   autoupdate_commit_msg: "chore(pre-commit): ⬆ pre_commit autoupdate"
 
@@ -12,12 +12,14 @@ repos:
       - id: check-yaml
         exclude: mkdocs.yaml
       - id: check-executables-have-shebangs
+      - id: check-json
       - id: check-toml
       - id: check-case-conflict
       - id: check-added-large-files
       - id: detect-private-key
       - id: pretty-format-json
         args: ["--autofix", "--no-sort-keys", "--indent=4"]
+        exclude: \.ipynb$
       - id: end-of-file-fixer
       - id: mixed-line-ending
 
@@ -30,11 +32,24 @@ repos:
         args: ["--print-width=120"]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.1
+    rev: v0.15.9
     hooks:
       - id: ruff-check
-        args: [--fix]
+        args: ["--exit-non-zero-on-fix"]
+        exclude: ^notebooks/.*\.py$
       - id: ruff-format
+        exclude: ^notebooks/.*\.py$
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.20.0
+    hooks:
+      - id: mypy
+        # The hook runs in an isolated env without torch/torchvision/etc.
+        # Full strict checking (matching pyproject.toml) runs in CI via ci-typing.yml.
+        args: ["--ignore-missing-imports"]
+        additional_dependencies:
+          - "types-PyYAML"
+          - "types-requests"
 
   - repo: https://github.com/executablebooks/mdformat
     rev: 1.0.0
@@ -47,18 +62,26 @@ repos:
         args: ["--number"]
 
   - repo: https://github.com/codespell-project/codespell
-    rev: v2.4.1
+    rev: v2.4.2
     hooks:
       - id: codespell
         # args: [--write-changes]
         additional_dependencies:
           - tomli
 
+  #- repo: https://github.com/mwouts/jupytext
+  #  rev: v1.16.4
+  #  hooks:
+  #    - id: jupytext
+  #      args: [--update, --to, notebook]
+  #      files: ^notebooks/.*\.py$
+
   - repo: https://github.com/Lucas-C/pre-commit-hooks
     rev: v1.5.6
     hooks:
       - id: insert-license
         files: \.py$
+        exclude: ^notebooks/
         args:
           - --license-filepath
           - .github/LICENSE_HEADER.txt
