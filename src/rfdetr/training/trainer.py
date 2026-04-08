@@ -63,7 +63,11 @@ class _NotebookSpawnDDPStrategy(_DDPStrategy):
     """Spawn-based DDP strategy that works inside Jupyter / Kaggle notebooks."""
 
     def _configure_launcher(self) -> None:
-        assert self.cluster_environment is not None
+        if self.cluster_environment is None:
+            raise RuntimeError(
+                "_NotebookSpawnDDPStrategy requires a cluster environment; "
+                "ensure the strategy is initialised through PTL's Trainer."
+            )
         self._launcher = _InteractiveSpawnLauncher(self, start_method=self._start_method)
 
 
