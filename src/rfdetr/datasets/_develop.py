@@ -21,6 +21,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Generator, Optional, Tuple
 from urllib.request import urlretrieve
 
+import numpy as np
+import torch
+from PIL import Image
+
 from rfdetr.util.logger import get_logger
 
 logger = get_logger()
@@ -70,10 +74,6 @@ class _SimpleDataset:
         return self.num_samples
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, dict]:
-        import numpy as np
-        import torch
-        from PIL import Image
-
         # Create synthetic image
         image = Image.new("RGB", (640, 480))
 
