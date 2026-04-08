@@ -24,6 +24,55 @@ logger = get_logger()
 _MIN_TRAIN_BATCHES = 5
 
 
+class GradAccumAlignedDataset(torch.utils.data.Dataset):
+    """Dataset wrapper that pads length to a multiple of ``effective_batch_size``.
+
+    Workaround for https://github.com/Lightning-AI/pytorch-lightning/issues/19987:
+    PTL fires the optimizer on partial accumulation windows at the tail of the
+    dataset, causing the last optimizer step to be under-scaled.  Padding the
+    dataset to a multiple of ``effective_batch_size * world_size`` ensures that
+    ``drop_last=True`` on the DataLoader becomes a true no-op — every
+    accumulation window is always complete.
+
+    Padding indices are drawn randomly from the original dataset.  Because RF-DETR
+    uses online augmentation, each padded sample receives a fresh random
+    augmentation at ``__getitem__`` time, so it behaves like a new training
+    example rather than a true duplicate.
+
+    This wrapper can be removed once the upstream PTL issue is resolved.
+
+    Args:
+        dataset: The underlying dataset to wrap.
+        effective_batch_size: ``batch_size * grad_accum_steps``.
+        world_size: Number of DDP processes (default 1 for single-GPU/CPU).
+            The alignment unit is ``effective_batch_size * world_size`` so that
+            after PTL's ``DistributedSampler`` splits samples across ranks each
+            rank still receives an exact multiple of ``effective_batch_size``.
+    """
+
+    def __init__(
+        self,
+        dataset: torch.utils.data.Dataset,
+        effective_batch_size: int,
+        world_size: int = 1,
+    ) -> None:
+        self._dataset = dataset
+        n = len(dataset)  # type: ignore[arg-type]
+        pad_unit = effective_batch_size * world_size
+        remainder = n % pad_unit
+        pad_count = (pad_unit - remainder) % pad_unit
+        pad_indices: list[int] = torch.randint(0, n, (pad_count,)).tolist() if pad_count > 0 else []
+        self._indices: list[int] = list(range(n)) + pad_indices
+
+    def __len__(self) -> int:
+        """Return the padded dataset length (always a multiple of the alignment unit)."""
+        return len(self._indices)
+
+    def __getitem__(self, idx: int):
+        """Return the item at the (possibly remapped) index."""
+        return self._dataset[self._indices[idx]]
+
+
 class RFDETRDataModule(LightningDataModule):
     """LightningDataModule wrapping RF-DETR dataset construction and data loading.
 
@@ -104,8 +153,12 @@ class RFDETRDataModule(LightningDataModule):
 
         Uses a replacement sampler when the dataset is too small to fill
         ``_MIN_TRAIN_BATCHES`` effective batches (matching legacy behaviour in
-        ``main.py``).  Otherwise uses ``shuffle=True, drop_last=True`` so that
-        PTL can auto-inject ``DistributedSampler`` in DDP mode.
+        ``main.py``).  Otherwise wraps the dataset with
+        :class:`GradAccumAlignedDataset` to ensure its length is an exact
+        multiple of ``effective_batch_size * world_size`` (workaround for
+        https://github.com/Lightning-AI/pytorch-lightning/issues/19987) and
+        then uses ``shuffle=True, drop_last=True`` so that PTL can
+        auto-inject ``DistributedSampler`` in DDP mode.
 
         Returns:
             DataLoader for the training dataset.
@@ -137,11 +190,18 @@ class RFDETRDataModule(LightningDataModule):
                 prefetch_factor=self._prefetch_factor,
             )
 
+        # Pad the dataset to a multiple of effective_batch_size * world_size so
+        # that drop_last=True below becomes a true no-op and PTL never fires the
+        # optimizer on a partial accumulation window.
+        # See https://github.com/Lightning-AI/pytorch-lightning/issues/19987
+        world_size: int = getattr(self.trainer, "world_size", 1) if self.trainer is not None else 1
+        dataset = GradAccumAlignedDataset(dataset, effective_batch_size, world_size)
+
         return DataLoader(
             dataset,
             batch_size=batch_size,
             shuffle=True,
-            drop_last=True,
+            drop_last=True,  # no-op after alignment, but keeps intent explicit
             collate_fn=collate_fn,
             num_workers=num_workers,
             pin_memory=self._pin_memory,
