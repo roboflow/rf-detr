@@ -121,6 +121,13 @@ def build_trainer(
         # BF16 is safe for fine-tuning (pretrained weights loaded by default).
         # Training from random init with very small LR may underflow; callers
         # can override via trainer_kwargs(precision="16-mixed") if needed.
+        #
+        # Note: torch.cuda.is_available() and torch.cuda.is_bf16_supported() both
+        # create a CUDA driver context in the parent process.  This is intentional
+        # and safe: all DDP paths use spawn-based strategies (see _NotebookSpawnDDPStrategy
+        # above) so spawned children start with a fresh CUDA state regardless of
+        # what the parent has initialised.  If a fork-based path is ever added,
+        # this precision check must be moved into the child process.
         if torch.cuda.is_available():
             if torch.cuda.is_bf16_supported():
                 return "bf16-mixed"
