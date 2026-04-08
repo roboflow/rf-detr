@@ -131,11 +131,12 @@ class MSDeformAttn(nn.Module):
         """
         N, Len_q, _ = query.shape
         N, Len_in, _ = input_flatten.shape
-        # Skip the sanity-check during export tracing: evaluating a tensor comparison
-        # inside Python assert calls bool() on a FakeTensor which raises
-        # "data is not allocated yet" during torch.export.export.
-        if not self._export:
-            assert (input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum() == Len_in
+        expected_len_in = (input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum()
+        error_msg = "input_spatial_shapes must match the flattened input length"
+        if self._export:
+            torch._assert(expected_len_in == Len_in, error_msg)
+        else:
+            assert expected_len_in == Len_in, error_msg
 
         value = self.value_proj(input_flatten)
         if input_padding_mask is not None:

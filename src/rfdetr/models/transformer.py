@@ -397,7 +397,7 @@ class TransformerDecoder(nn.Module):
         refpoints_unsigmoid: Optional[Tensor] = None,
         # for memory
         level_start_index: Optional[Tensor] = None,  # num_levels
-        spatial_shapes: Optional[Tensor] = None,  # bs, num_levels, 2
+        spatial_shapes: Optional[Tensor] = None,  # num_levels, 2
         valid_ratios: Optional[Tensor] = None,
         spatial_shapes_hw: list[tuple[int, int]] | None = None,
     ):
