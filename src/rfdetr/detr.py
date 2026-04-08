@@ -415,15 +415,17 @@ class RFDETR:
         a :class:`~rfdetr.config.TrainConfig`.  Several kwargs are absorbed and
         handled specially so that existing call-sites do not break:
 
-        * ``resolution`` — overrides the model's input resolution for this
-          training run.  The value is applied directly to
-          :attr:`model_config.resolution` (and
+        * ``resolution`` — updates the model's input resolution by mutating
+          :attr:`model_config.resolution` in place (and
           :attr:`model_config.positional_encoding_size` is updated accordingly)
-          before the train config is built.  The resolution must be divisible
-          by ``patch_size × num_windows`` for the model variant; a
-          :class:`ValueError` is raised otherwise.  This is the correct way to
-          change the training resolution instead of setting it at construction
-          time.
+          before the train config is built. This change persists on
+          :attr:`model_config` after :meth:`train` returns unless it is changed
+          again. The resolution must be divisible by
+          ``patch_size × num_windows`` for the model variant; a
+          :class:`ValueError` is raised otherwise. Passing ``resolution`` here
+          is a supported way to update the training resolution, and configuring
+          it when constructing :class:`~rfdetr.config.ModelConfig` is also
+          valid.
         * ``device`` — normalized via :class:`torch.device` and mapped to PyTorch
           Lightning trainer arguments. ``"cpu"`` becomes ``accelerator="cpu"``;
           ``"cuda"`` and ``"cuda:N"`` become ``accelerator="gpu"`` and optionally
@@ -510,9 +512,21 @@ class RFDETR:
                     f"({self.model_config.num_windows}) = {block_size}. "
                     f"Choose a resolution that is a multiple of {block_size}."
                 )
+            positional_encoding_size = _resolution // self.model_config.patch_size
             self.model_config.resolution = _resolution
-            self.model_config.positional_encoding_size = _resolution // self.model_config.patch_size
+            self.model_config.positional_encoding_size = positional_encoding_size
 
+            # Keep the cached inference/export context in sync with model_config so
+            # predict()/export()/deployment all see the same resolution metadata.
+            if hasattr(self, "model") and self.model is not None:
+                if hasattr(self.model, "resolution"):
+                    self.model.resolution = _resolution
+                model_args = getattr(self.model, "args", None)
+                if model_args is not None:
+                    if hasattr(model_args, "resolution"):
+                        model_args.resolution = _resolution
+                    if hasattr(model_args, "positional_encoding_size"):
+                        model_args.positional_encoding_size = positional_encoding_size
         config = self.get_train_config(**kwargs)
         if config.batch_size == "auto":
             auto_batch = resolve_auto_batch_config(

@@ -537,15 +537,16 @@ class TestRFDETRTrainPTLAbsorption:
             RFDETR.train(mock_self, resolution=560)
         assert mock_self.model_config.resolution == 560
 
-    def test_resolution_kwarg_updates_positional_encoding_size(self, tmp_path, patch_lit):
-        """resolution kwarg updates positional_encoding_size to resolution // patch_size."""
+    def test_resolution_kwarg_does_not_implicitly_update_positional_encoding_size(self, tmp_path, patch_lit):
+        """resolution kwarg does not implicitly rewrite pretrained-compatible positional encoding size."""
         mock_self = _make_rfdetr_self(tmp_path)
-        # RFDETRBaseConfig: patch_size=14, num_windows=4 → block_size=56; 560 // 56 = 10 (valid).
-        # positional_encoding_size should become 560 // 14 = 40.
+        original_positional_encoding_size = mock_self.model_config.positional_encoding_size
+        # RFDETRBaseConfig intentionally does not require
+        # positional_encoding_size == resolution // patch_size for pretrained compatibility.
         p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self, resolution=560)
-        assert mock_self.model_config.positional_encoding_size == 560 // mock_self.model_config.patch_size
+        assert mock_self.model_config.positional_encoding_size == original_positional_encoding_size
 
     def test_resolution_kwarg_does_not_reach_get_train_config(self, tmp_path, patch_lit):
         """resolution kwarg is popped before get_train_config is called."""
