@@ -194,7 +194,7 @@ class RFDETRDataModule(LightningDataModule):
         # that drop_last=True below becomes a true no-op and PTL never fires the
         # optimizer on a partial accumulation window.
         # See https://github.com/Lightning-AI/pytorch-lightning/issues/19987
-        world_size: int = getattr(self.trainer, "world_size", 1) if self.trainer is not None else 1
+        world_size: int = getattr(self.trainer, "world_size", 1) if self.trainer else 1
         dataset = GradAccumAlignedDataset(dataset, effective_batch_size, world_size)
 
         return DataLoader(
