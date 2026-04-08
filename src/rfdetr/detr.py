@@ -504,6 +504,14 @@ class RFDETR:
         # here to avoid it being silently ignored by TrainConfig.
         _resolution = kwargs.pop("resolution", None)
         if _resolution is not None:
+            if isinstance(_resolution, bool):
+                raise ValueError("resolution must be a positive integer")
+            try:
+                _resolution = operator.index(_resolution)
+            except TypeError as error:
+                raise ValueError("resolution must be a positive integer") from error
+            if _resolution <= 0:
+                raise ValueError("resolution must be a positive integer")
             # Reject bool explicitly: bool is a subclass of int so isinstance checks
             # pass, but True/False are not valid resolution values.
             if isinstance(_resolution, bool):
