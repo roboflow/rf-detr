@@ -92,15 +92,19 @@ class TestDownloadPretrainWeights:
         # Should not download if file exists with correct hash
         mock_file_operations["download"].assert_not_called()
 
-    def test_file_exists_with_incorrect_md5_redownloads(self, mock_file_operations):
-        """Test that file is re-downloaded if MD5 is incorrect."""
+    def test_file_exists_with_incorrect_md5_warns_and_skips(self, mock_file_operations):
+        """Test that file is NOT re-downloaded when MD5 is incorrect and redownload=False.
+
+        This protects fine-tuned checkpoints that share the same filename as a
+        registry model (e.g. rf-detr-nano.pth) from being silently overwritten.
+        """
         mock_file_operations["exists"].return_value = True
         mock_file_operations["validate"].return_value = False  # Incorrect MD5
 
         download_pretrain_weights("rf-detr-base.pth")
 
-        # Should re-download due to incorrect MD5
-        mock_file_operations["download"].assert_called_once()
+        # Should NOT re-download — the user's file must be preserved
+        mock_file_operations["download"].assert_not_called()
 
     def test_redownload_flag_forces_download(self, mock_file_operations):
         """Test that redownload=True forces re-download even if file exists."""
@@ -252,7 +256,7 @@ class TestDownloadErrorHandling:
     @patch("rfdetr.assets.model_weights.os.path.exists")
     @patch("rfdetr.assets.model_weights.logger")
     def test_logs_warning_on_incorrect_md5(self, mock_logger, mock_exists, mock_validate, mock_download):
-        """Test that warning is logged when MD5 is incorrect."""
+        """Test that warning is logged when MD5 is incorrect and no re-download occurs."""
         mock_exists.return_value = True
         mock_validate.return_value = False
 
@@ -262,6 +266,9 @@ class TestDownloadErrorHandling:
         mock_logger.warning.assert_called()
         warning_message = mock_logger.warning.call_args[0][0]
         assert "incorrect MD5 hash" in warning_message
+
+        # Must NOT re-download — fine-tuned checkpoints should be preserved
+        mock_download.assert_not_called()
 
     @patch("rfdetr.assets.model_weights._download_file")
     @patch("rfdetr.assets.model_weights.os.path.exists")
