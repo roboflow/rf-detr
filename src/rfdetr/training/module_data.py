@@ -6,7 +6,7 @@
 
 """LightningDataModule for RF-DETR dataset construction and loaders."""
 
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 import torch
 import torch.utils.data
@@ -70,8 +70,10 @@ class GradAccumAlignedDataset(torch.utils.data.Dataset):
         """Return the padded dataset length (always a multiple of the alignment unit)."""
         return self._length
 
-    def __getitem__(self, idx: int):
+    def __getitem__(self, idx: int) -> Any:
         """Return the item at the (possibly remapped) index."""
+        # pad_indices are fixed at __init__ time; same indices reused every epoch
+        # (different augmentations per epoch due to online augmentation)
         dataset_idx = idx if idx < self._dataset_length else self._pad_indices[idx - self._dataset_length]
         return self._dataset[dataset_idx]
 
