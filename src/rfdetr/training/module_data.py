@@ -41,16 +41,25 @@ class RFDETRDataModule(LightningDataModule):
         self._dataset_val: Optional[torch.utils.data.Dataset] = None
         self._dataset_test: Optional[torch.utils.data.Dataset] = None
 
-        num_workers = self.train_config.num_workers
+        self._num_workers: int = self.train_config.num_workers
+
+        # Use the fork-safe DEVICE constant instead of torch.cuda.is_available(),
+        # which creates a CUDA driver context that breaks fork-based DDP.
+        from rfdetr.config import DEVICE
+
+        accelerator = str(self.train_config.accelerator).lower()
+        uses_cuda_accelerator = accelerator in {"auto", "gpu", "cuda"}
         self._pin_memory: bool = (
-            torch.cuda.is_available() if self.train_config.pin_memory is None else bool(self.train_config.pin_memory)
+            (DEVICE == "cuda" and uses_cuda_accelerator)
+            if self.train_config.pin_memory is None
+            else bool(self.train_config.pin_memory)
         )
         self._persistent_workers: bool = (
-            num_workers > 0
+            self._num_workers > 0
             if self.train_config.persistent_workers is None
             else bool(self.train_config.persistent_workers)
         )
-        if num_workers > 0:
+        if self._num_workers > 0:
             self._prefetch_factor = (
                 self.train_config.prefetch_factor if self.train_config.prefetch_factor is not None else 2
             )
@@ -104,7 +113,7 @@ class RFDETRDataModule(LightningDataModule):
         dataset = self._dataset_train
         batch_size = self.train_config.batch_size
         effective_batch_size = batch_size * self.train_config.grad_accum_steps
-        num_workers = self.train_config.num_workers
+        num_workers = self._num_workers
 
         if len(dataset) < effective_batch_size * _MIN_TRAIN_BATCHES:
             logger.info(
@@ -152,7 +161,7 @@ class RFDETRDataModule(LightningDataModule):
             sampler=torch.utils.data.SequentialSampler(self._dataset_val),
             drop_last=False,
             collate_fn=collate_fn,
-            num_workers=self.train_config.num_workers,
+            num_workers=self._num_workers,
             pin_memory=self._pin_memory,
             persistent_workers=self._persistent_workers,
             prefetch_factor=self._prefetch_factor,
@@ -170,7 +179,7 @@ class RFDETRDataModule(LightningDataModule):
             sampler=torch.utils.data.SequentialSampler(self._dataset_test),
             drop_last=False,
             collate_fn=collate_fn,
-            num_workers=self.train_config.num_workers,
+            num_workers=self._num_workers,
             pin_memory=self._pin_memory,
             persistent_workers=self._persistent_workers,
             prefetch_factor=self._prefetch_factor,
@@ -188,7 +197,7 @@ class RFDETRDataModule(LightningDataModule):
             sampler=torch.utils.data.SequentialSampler(self._dataset_val),
             drop_last=False,
             collate_fn=collate_fn,
-            num_workers=self.train_config.num_workers,
+            num_workers=self._num_workers,
             pin_memory=self._pin_memory,
             persistent_workers=self._persistent_workers,
             prefetch_factor=self._prefetch_factor,

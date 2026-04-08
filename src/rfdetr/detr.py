@@ -192,17 +192,23 @@ def _apply_lora_to(nn_model: torch.nn.Module) -> None:
     nn_model.backbone[0].encoder = get_peft_model(nn_model.backbone[0].encoder, lora_config)
 
 
-def _build_model_context(model_config: ModelConfig) -> "ModelContext":
+def _build_model_context(model_config: ModelConfig) -> ModelContext:
     """Build a ModelContext from ModelConfig without using legacy main.py:Model.
 
     Replicates ``Model.__init__`` logic: builds the nn.Module, optionally loads
-    pretrain weights and applies LoRA, then moves the model to the target device.
+    pretrain weights and applies LoRA.  The model is intentionally kept on CPU;
+    :func:`_ensure_model_on_device` in ``detr.py`` performs the deferred
+    ``.to(device)`` on the first ``predict()`` / ``export()`` /
+    ``optimize_for_inference()`` call.  Keeping construction CPU-only prevents
+    CUDA initialisation during ``__init__``, which would block DDP strategies
+    (``ddp_notebook``, ``ddp_spawn``) from spawning child processes in notebook
+    environments.
 
     Args:
         model_config: Architecture configuration.
 
     Returns:
-        Fully initialised ModelContext ready for inference or training.
+        ModelContext with the model on CPU, ready for lazy device placement.
     """
     from rfdetr._namespace import build_namespace
 
@@ -219,7 +225,11 @@ def _build_model_context(model_config: ModelConfig) -> "ModelContext":
         _apply_lora_to(nn_model)
 
     device = torch.device(args.device)
-    nn_model = nn_model.to(device)
+    # Keep the model on CPU here; predict() / export() / optimize_for_inference()
+    # will lazily move it to the target device on first use.  Eagerly calling
+    # .to("cuda") would initialise the CUDA runtime during __init__(), which
+    # prevents DDP strategies (ddp_notebook, ddp_spawn) from forking/spawning
+    # child processes in notebook environments.
     postprocess = PostProcess(num_select=args.num_select)
 
     return ModelContext(
@@ -316,6 +326,28 @@ def _resolve_patch_size(patch_size: int | None, model_config: object, caller: st
     if isinstance(patch_size, bool) or not isinstance(patch_size, int) or patch_size <= 0:
         raise ValueError(f"patch_size must be a positive integer, got {patch_size!r}")
     return patch_size
+
+
+def _ensure_model_on_device(model_ctx: Any) -> None:
+    """Move model weights to the target device recorded in *model_ctx*.
+
+    ``_build_model_context`` intentionally keeps the ``nn.Module`` on CPU so
+    that ``RFDETR.__init__`` does not initialise CUDA (which would prevent DDP
+    strategies from forking in notebook environments).  This helper performs
+    the deferred ``.to(device)`` on first use.
+
+    It is safe to call on duck-typed stand-ins (e.g. ``SimpleNamespace``); the
+    function silently returns when the expected attributes are missing.
+    """
+    target = getattr(model_ctx, "device", None)
+    inner = getattr(model_ctx, "model", None)
+    if target is None or inner is None or not hasattr(inner, "parameters"):
+        return
+    if isinstance(target, str):
+        target = torch.device(target)
+    first_param = next(inner.parameters(), None)
+    if first_param is not None and first_param.device != target:
+        model_ctx.model = inner.to(target)
 
 
 class RFDETR:
@@ -475,6 +507,10 @@ class RFDETR:
 
         config = self.get_train_config(**kwargs)
         if config.batch_size == "auto":
+            # Auto-batch probing runs forward/backward on the actual model, which
+            # must be on the target device (typically CUDA).  Lazy placement keeps
+            # the model on CPU until first use — move it now.
+            _ensure_model_on_device(self.model)
             auto_batch = resolve_auto_batch_config(
                 model_context=self.model,
                 model_config=self.model_config,
@@ -557,6 +593,7 @@ class RFDETR:
         # Clear any previously optimized state before starting a new optimization run.
         self.remove_optimized_model()
 
+        _ensure_model_on_device(self.model)
         device = self.model.device
         cuda_ctx = torch.cuda.device(device) if device.type == "cuda" else contextlib.nullcontext()
 
@@ -971,6 +1008,8 @@ class RFDETR:
 
         """
         import supervision as sv
+
+        _ensure_model_on_device(self.model)
 
         patch_size = _resolve_patch_size(patch_size, self.model_config, "predict")
         num_windows = getattr(self.model_config, "num_windows", 1)
