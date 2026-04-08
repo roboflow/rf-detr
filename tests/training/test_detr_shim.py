@@ -540,7 +540,7 @@ class TestRFDETRTrainPTLAbsorption:
     def test_resolution_kwarg_updates_positional_encoding_size(self, tmp_path, patch_lit):
         """resolution kwarg updates positional_encoding_size to resolution // patch_size."""
         mock_self = _make_rfdetr_self(tmp_path)
-        # RFDETRBaseConfig: patch_size=14, block_size=56; 560 // 56 = 10 (valid).
+        # RFDETRBaseConfig: patch_size=14, num_windows=4 → block_size=56; 560 // 56 = 10 (valid).
         # positional_encoding_size should become 560 // 14 = 40.
         p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt:
