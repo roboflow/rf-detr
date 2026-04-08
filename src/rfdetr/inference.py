@@ -71,13 +71,19 @@ def _build_model_context(model_config: ModelConfig) -> ModelContext:
     """Build a ModelContext from ModelConfig without using legacy main.py:Model.
 
     Replicates ``Model.__init__`` logic: builds the nn.Module, optionally loads
-    pretrain weights and applies LoRA, then moves the model to the target device.
+    pretrain weights and applies LoRA.  The model is intentionally kept on CPU;
+    :func:`_ensure_model_on_device` in ``detr.py`` performs the deferred
+    ``.to(device)`` on the first ``predict()`` / ``export()`` /
+    ``optimize_for_inference()`` call.  Keeping construction CPU-only prevents
+    CUDA initialisation during ``__init__``, which would block DDP strategies
+    (``ddp_notebook``, ``ddp_spawn``) from spawning child processes in notebook
+    environments.
 
     Args:
         model_config: Architecture configuration.
 
     Returns:
-        Fully initialised ModelContext ready for inference or training.
+        ModelContext with the model on CPU, ready for lazy device placement.
     """
     from rfdetr._namespace import _namespace_from_configs
 
@@ -99,7 +105,11 @@ def _build_model_context(model_config: ModelConfig) -> ModelContext:
         apply_lora(nn_model)
 
     device = torch.device(args.device)
-    nn_model = nn_model.to(device)
+    # Keep the model on CPU here; predict() / export() / optimize_for_inference()
+    # will lazily move it to the target device on first use.  Eagerly calling
+    # .to("cuda") would initialise the CUDA runtime during __init__(), which
+    # prevents DDP strategies (ddp_notebook, ddp_spawn) from forking/spawning
+    # child processes in notebook environments.
     postprocess = PostProcess(num_select=args.num_select)
 
     return ModelContext(

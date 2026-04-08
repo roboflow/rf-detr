@@ -185,11 +185,20 @@ class TestInit:
         mc = _base_model_config(compile=True)
         tc = _base_train_config(tmp_path, multi_scale=False)
         with (
-            patch("torch.cuda.is_available", return_value=True),
+            patch("rfdetr.config.DEVICE", "cuda"),
             patch("rfdetr.training.module_model.torch.compile", side_effect=lambda m, **_: m) as mock_compile,
         ):
             _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
         mock_compile.assert_called_once()
+
+    @patch("rfdetr.training.module_model.torch.compile")
+    @patch("rfdetr.config.DEVICE", "cuda")
+    def test_compile_disabled_when_train_accelerator_is_cpu(self, _mock_compile: MagicMock, tmp_path):
+        """compile stays disabled when training is explicitly forced to CPU."""
+        mc = _base_model_config(compile=True)
+        tc = _base_train_config(tmp_path, multi_scale=False, accelerator="cpu")
+        _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
+        _mock_compile.assert_not_called()
 
 
 class TestLoadPretrainWeights:

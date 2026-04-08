@@ -14,6 +14,15 @@ from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint, RichProgressBar, TQDMProgressBar
 from pytorch_lightning.callbacks.progress.rich_progress import RichProgressBarTheme
 from pytorch_lightning.loggers import CSVLogger, MLFlowLogger, TensorBoardLogger, WandbLogger
+from pytorch_lightning.strategies import DDPStrategy as _DDPStrategy
+
+# _MultiProcessingLauncher is a private PTL API (leading underscore) that may change
+# in minor PTL releases within the >=2.6,<3 range.  No public equivalent exists in
+# PTL 2.x.  Monitor PTL changelogs when bumping the lower bound.
+try:
+    from pytorch_lightning.strategies.launchers.multiprocessing import _MultiProcessingLauncher
+except ImportError:  # pragma: no cover - exercised in unit tests via monkeypatch
+    _MultiProcessingLauncher = None  # type: ignore[assignment]
 
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.training.callbacks import (
@@ -26,6 +35,57 @@ from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
 from rfdetr.utilities.logger import get_logger
 
 _logger = get_logger()
+
+
+# ---------------------------------------------------------------------------
+# Notebook-safe spawn-based DDP
+# ---------------------------------------------------------------------------
+# ``ddp_notebook`` maps to fork-based DDP which is fundamentally unsafe:
+# PyTorch's OpenMP thread pool (created during model construction) cannot
+# survive fork() — the worker threads become zombie handles, causing
+# "Invalid thread pool!" SIGABRT when the autograd engine initialises in
+# the forked child.
+#
+# PTL considers ``start_method="spawn"`` incompatible with interactive
+# environments and raises ``MisconfigurationException`` if used in Jupyter.
+# However, PTL's own ``_wrapping_function`` is the entry-point for spawned
+# children — no ``if __name__ == "__main__"`` guard is required — so spawn
+# is perfectly safe here.
+#
+# Classes MUST live at module level (not inside a function) so that Python's
+# pickle can serialise them for the spawned child processes.
+
+
+if _MultiProcessingLauncher is not None:
+
+    class _InteractiveSpawnLauncher(_MultiProcessingLauncher):
+        """Spawn launcher that reports itself as interactive-compatible."""
+
+        @property
+        def is_interactive_compatible(self) -> bool:  # type: ignore[override]
+            return True
+
+else:
+    _InteractiveSpawnLauncher = None
+
+
+class _NotebookSpawnDDPStrategy(_DDPStrategy):
+    """Spawn-based DDP strategy that works inside Jupyter / Kaggle notebooks."""
+
+    def _configure_launcher(self) -> None:
+        if self.cluster_environment is None:
+            raise RuntimeError(
+                "_NotebookSpawnDDPStrategy requires a cluster environment; "
+                "ensure the strategy is initialised through PTL's Trainer."
+            )
+        if _InteractiveSpawnLauncher is None:
+            raise RuntimeError(
+                "Notebook spawn strategy requires "
+                "pytorch_lightning.strategies.launchers.multiprocessing._MultiProcessingLauncher. "
+                "Your installed PyTorch Lightning version changed this private API; "
+                "pin/upgrade PTL to a compatible version in the supported >=2.6,<3 range."
+            )
+        self._launcher = _InteractiveSpawnLauncher(self, start_method=self._start_method)
 
 
 def build_trainer(
@@ -69,12 +129,21 @@ def build_trainer(
     def _resolve_precision() -> str:
         if not model_config.amp:
             return "32-true"
+        # Ampere+ GPUs support bf16-mixed which is scaler-free —
+        # no GradScaler.scale/unscale/update overhead per optimizer step.
+        # BF16 is safe for fine-tuning (pretrained weights loaded by default).
+        # Training from random init with very small LR may underflow; callers
+        # can override via trainer_kwargs(precision="16-mixed") if needed.
+        #
+        # Note: torch.cuda.is_available() and torch.cuda.is_bf16_supported() both
+        # create a CUDA driver context in the parent process.  This is intentional
+        # and safe for the multi-process launch modes we rely on here because we
+        # avoid fork-based launching in notebook contexts (see
+        # _NotebookSpawnDDPStrategy above), and spawn/subprocess-based launchers
+        # start child processes with a fresh CUDA state regardless of what the
+        # parent has initialised. If a fork-based path is ever added, this
+        # precision check must be moved into the child process.
         if torch.cuda.is_available():
-            # Ampere+ GPUs support bf16-mixed which is scaler-free —
-            # no GradScaler.scale/unscale/update overhead per optimizer step.
-            # BF16 is safe for fine-tuning (pretrained weights loaded by default).
-            # Training from random init with very small LR may underflow; callers
-            # can override via trainer_kwargs(precision="16-mixed") if needed.
             if torch.cuda.is_bf16_supported():
                 return "bf16-mixed"
             return "16-mixed"
@@ -84,6 +153,15 @@ def build_trainer(
 
     # --- Strategy + EMA sharding guard ---
     strategy = tc.strategy
+
+    # Transparently replace fork-based DDP with spawn-based DDP — see the
+    # module-level comment block above _InteractiveSpawnLauncher for rationale.
+    if strategy in ("ddp_notebook", "ddp_spawn"):
+        strategy = _NotebookSpawnDDPStrategy(start_method="spawn", find_unused_parameters=True)
+        _logger.info(
+            "%s → spawn-based DDP to avoid OpenMP thread pool corruption after fork.",
+            tc.strategy,
+        )
     sharded = any(s in str(strategy).lower() for s in ("fsdp", "deepspeed"))
     enable_ema = bool(tc.use_ema) and not sharded
     if tc.use_ema and sharded:
