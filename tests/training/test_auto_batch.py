@@ -140,7 +140,34 @@ def test_resolve_auto_batch_config_returns_expected_values():
     assert result.device_name == "Fake GPU"
 
 
-def test_train_auto_batch_ensures_model_on_device_before_resolve(tmp_path):
+@patch("rfdetr.detr.is_main_process", return_value=False)
+@patch("rfdetr.training.auto_batch.resolve_auto_batch_config")
+@patch("rfdetr.training.build_trainer")
+@patch("rfdetr.training.RFDETRDataModule")
+@patch("rfdetr.training.RFDETRModelModule")
+@patch("rfdetr.detr._ensure_model_on_device")
+def test_train_auto_batch_ensures_model_on_device_before_resolve(
+    mock_ensure: MagicMock,
+    _mock_module: MagicMock,
+    _mock_data_module: MagicMock,
+    _mock_build_trainer: MagicMock,
+    mock_resolve: MagicMock,
+    _mock_is_main: MagicMock,
+) -> None:
+    """_ensure_model_on_device must be called before resolve_auto_batch_config when batch_size='auto'."""
+    auto_result = SimpleNamespace(safe_micro_batch=4, recommended_grad_accum_steps=1, effective_batch_size=4)
+    call_order: list[str] = []
+
+    def _ensure_side_effect(model: object) -> None:
+        call_order.append("ensure")
+
+    def _resolve_side_effect(**_kwargs: object) -> object:
+        call_order.append("resolve")
+        return auto_result
+
+    mock_ensure.side_effect = _ensure_side_effect
+    mock_resolve.side_effect = _resolve_side_effect
+
     train_config = SimpleNamespace(
         batch_size="auto",
         grad_accum_steps=99,
@@ -149,36 +176,15 @@ def test_train_auto_batch_ensures_model_on_device_before_resolve(tmp_path):
         class_names=None,
     )
     mock_self = MagicMock()
-    mock_self.model = MagicMock()
     mock_self.model_config = SimpleNamespace(model_name=None)
     mock_self.get_train_config.return_value = train_config
 
-    auto_result = SimpleNamespace(
-        safe_micro_batch=4,
-        recommended_grad_accum_steps=1,
-        effective_batch_size=4,
-    )
-    call_order = []
-    mock_ensure_model_on_device = MagicMock(side_effect=lambda *_args, **_kwargs: call_order.append("ensure"))
-    mock_resolve_auto_batch_config = MagicMock(
-        side_effect=lambda **_kwargs: call_order.append("resolve") or auto_result,
-    )
-
-    with (
-        patch("rfdetr.training.RFDETRModelModule"),
-        patch("rfdetr.training.RFDETRDataModule"),
-        patch("rfdetr.training.build_trainer"),
-        patch("rfdetr.detr.is_main_process", return_value=False),
-        patch("rfdetr.detr._ensure_model_on_device", mock_ensure_model_on_device),
-        patch("rfdetr.training.auto_batch.resolve_auto_batch_config", mock_resolve_auto_batch_config),
-        patch("rfdetr.detr.resolve_auto_batch_config", mock_resolve_auto_batch_config, create=True),
-    ):
-        RFDETR.train(mock_self)
+    RFDETR.train(mock_self)
 
     assert train_config.batch_size == 4
     assert train_config.grad_accum_steps == 1
-    mock_ensure_model_on_device.assert_called_once_with(mock_self.model)
-    mock_resolve_auto_batch_config.assert_called_once_with(
+    mock_ensure.assert_called_once_with(mock_self.model)
+    mock_resolve.assert_called_once_with(
         model_context=mock_self.model,
         model_config=mock_self.model_config,
         train_config=train_config,

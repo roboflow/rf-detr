@@ -4,7 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
@@ -373,29 +373,27 @@ class TestDeprecatedModelConfigClsLossCoef:
         assert not depr_warnings, f"Unexpected DeprecationWarning: {depr_warnings}"
 
 
-def test_detect_device_falls_back_when_torch_accelerator_absent() -> None:
-    mock_torch = Mock(spec=["cuda", "backends"])
-    mock_torch.cuda.is_available.return_value = True
-    mock_torch.backends.mps.is_available.return_value = False
+class TestDetectDevice:
+    """Tests for _detect_device() covering PyTorch accelerator detection paths."""
 
-    with patch("rfdetr.config.torch", mock_torch):
+    @patch("rfdetr.config.torch")
+    def test_falls_back_to_cuda_when_accelerator_module_absent(self, mock_torch: MagicMock) -> None:
+        """Returns 'cuda' via legacy fallback when torch.accelerator lacks current_accelerator (PyTorch < 2.4)."""
+        mock_torch.accelerator = MagicMock(spec=[])  # no current_accelerator → hasattr returns False → fallback
+        mock_torch.cuda.is_available.return_value = True
+        mock_torch.backends.mps.is_available.return_value = False
         assert _detect_device() == "cuda"
 
-
-def test_detect_device_falls_back_when_current_accelerator_raises() -> None:
-    mock_torch = Mock(spec=["accelerator", "cuda", "backends"])
-    mock_torch.accelerator.current_accelerator.side_effect = RuntimeError("boom")
-    mock_torch.cuda.is_available.return_value = True
-    mock_torch.backends.mps.is_available.return_value = False
-
-    with patch("rfdetr.config.torch", mock_torch):
+    @patch("rfdetr.config.torch")
+    def test_returns_cpu_when_current_accelerator_raises(self, mock_torch: MagicMock) -> None:
+        """Returns 'cpu' directly from the except handler when current_accelerator() raises RuntimeError."""
+        mock_torch.accelerator.current_accelerator.side_effect = RuntimeError("no device")
         assert _detect_device() == "cpu"
 
-
-def test_detect_device_returns_cpu_when_no_gpu() -> None:
-    mock_torch = Mock(spec=["cuda", "backends"])
-    mock_torch.cuda.is_available.return_value = False
-    mock_torch.backends.mps.is_available.return_value = False
-
-    with patch("rfdetr.config.torch", mock_torch):
+    @patch("rfdetr.config.torch")
+    def test_returns_cpu_when_no_gpu_available(self, mock_torch: MagicMock) -> None:
+        """Returns 'cpu' when accelerator is absent and neither CUDA nor MPS is available."""
+        mock_torch.accelerator = MagicMock(spec=[])  # no current_accelerator → fallback branch
+        mock_torch.cuda.is_available.return_value = False
+        mock_torch.backends.mps.is_available.return_value = False
         assert _detect_device() == "cpu"
