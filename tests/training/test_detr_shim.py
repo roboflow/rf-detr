@@ -527,6 +527,52 @@ class TestRFDETRTrainPTLAbsorption:
         depr = [x for x in w if issubclass(x.category, DeprecationWarning)]
         assert any("do_benchmark" in str(d.message) or "rfdetr benchmark" in str(d.message) for d in depr)
 
+    def test_resolution_kwarg_updates_model_config_resolution(self, tmp_path, patch_lit):
+        """resolution kwarg is applied to model_config.resolution before training."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        # RFDETRBaseConfig has patch_size=14, num_windows=4 → block_size=56.
+        # 560 is divisible by 56.
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self, resolution=560)
+        assert mock_self.model_config.resolution == 560
+
+    def test_resolution_kwarg_updates_positional_encoding_size(self, tmp_path, patch_lit):
+        """resolution kwarg updates positional_encoding_size to resolution // patch_size."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        # RFDETRBaseConfig: patch_size=14, block_size=56; 560 // 56 = 10 (valid).
+        # positional_encoding_size should become 560 // 14 = 40.
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self, resolution=560)
+        assert mock_self.model_config.positional_encoding_size == 560 // mock_self.model_config.patch_size
+
+    def test_resolution_kwarg_does_not_reach_get_train_config(self, tmp_path, patch_lit):
+        """resolution kwarg is popped before get_train_config is called."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self, resolution=560)
+        assert "resolution" not in mock_self.get_train_config.call_args.kwargs
+
+    def test_resolution_indivisible_raises_value_error(self, tmp_path, patch_lit):
+        """resolution not divisible by patch_size × num_windows raises ValueError."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        # RFDETRBaseConfig: patch_size=14, num_windows=4 → block_size=56.
+        # 570 % 56 != 0, so this should raise.
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt, pytest.raises(ValueError, match="resolution=570"):
+            RFDETR.train(mock_self, resolution=570)
+
+    def test_resolution_none_leaves_model_config_unchanged(self, tmp_path, patch_lit):
+        """Omitting resolution leaves model_config.resolution unchanged."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        original_resolution = mock_self.model_config.resolution
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self)
+        assert mock_self.model_config.resolution == original_resolution
+
     def test_returns_none(self, tmp_path, patch_lit):
         """RFDETR.train() returns None."""
         mock_self = _make_rfdetr_self(tmp_path)

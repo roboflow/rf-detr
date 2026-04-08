@@ -412,9 +412,18 @@ class RFDETR:
         """Train an RF-DETR model via the PyTorch Lightning stack.
 
         All keyword arguments are forwarded to :meth:`get_train_config` to build
-        a :class:`~rfdetr.config.TrainConfig`.  Several legacy kwargs are absorbed
-        so existing call-sites do not break:
+        a :class:`~rfdetr.config.TrainConfig`.  Several kwargs are absorbed and
+        handled specially so that existing call-sites do not break:
 
+        * ``resolution`` — overrides the model's input resolution for this
+          training run.  The value is applied directly to
+          :attr:`model_config.resolution` (and
+          :attr:`model_config.positional_encoding_size` is updated accordingly)
+          before the train config is built.  The resolution must be divisible
+          by ``patch_size × num_windows`` for the model variant; a
+          :class:`ValueError` is raised otherwise.  This is the correct way to
+          change the training resolution instead of setting it at construction
+          time.
         * ``device`` — normalized via :class:`torch.device` and mapped to PyTorch
           Lightning trainer arguments. ``"cpu"`` becomes ``accelerator="cpu"``;
           ``"cuda"`` and ``"cuda:N"`` become ``accelerator="gpu"`` and optionally
@@ -435,6 +444,8 @@ class RFDETR:
         Raises:
             ImportError: If training dependencies are not installed. Install with
                 ``pip install "rfdetr[train,loggers]"``.
+            ValueError: If ``resolution`` is not divisible by
+                ``patch_size × num_windows`` for the model variant.
 
         """
         # Both imports are grouped in a single try block because they both live in
@@ -485,6 +496,22 @@ class RFDETR:
                 DeprecationWarning,
                 stacklevel=2,
             )
+
+        # Apply resolution override to model_config before building the train config.
+        # resolution is a ModelConfig field, not a TrainConfig field, so we pop it
+        # here to avoid it being silently ignored by TrainConfig.
+        _resolution = kwargs.pop("resolution", None)
+        if _resolution is not None:
+            block_size = self.model_config.patch_size * self.model_config.num_windows
+            if _resolution % block_size != 0:
+                raise ValueError(
+                    f"resolution={_resolution} is not divisible by "
+                    f"patch_size ({self.model_config.patch_size}) × num_windows "
+                    f"({self.model_config.num_windows}) = {block_size}. "
+                    f"Choose a resolution that is a multiple of {block_size}."
+                )
+            self.model_config.resolution = _resolution
+            self.model_config.positional_encoding_size = _resolution // self.model_config.patch_size
 
         config = self.get_train_config(**kwargs)
         if config.batch_size == "auto":
