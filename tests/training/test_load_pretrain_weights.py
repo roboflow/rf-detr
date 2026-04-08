@@ -185,6 +185,38 @@ class TestLoadPretrainWeightsSecondReinit:
         assert calls == [call(91), call(94)], f"Expected reinit to [91, 94] (load then expand), got {calls}"
         assert mc.num_classes == 93, "Explicitly configured num_classes must not be overwritten."
 
+    def test_eight_class_finetune_checkpoint_no_out_of_range_class_ids(self, monkeypatch):
+        """Regression test for issue: model returns class IDs outside dataset range.
+
+        Scenario (from user bug report): user trains on 8 categories (IDs 0–7).
+        The checkpoint stores ``class_embed.bias`` with shape [9] (8 user classes
+        + 1 background).  Loading without specifying ``num_classes`` must NOT
+        trigger a second reinit to 91, which would produce a random COCO-sized
+        head that could output class IDs like 73 instead of [0, 7].
+
+        After the fix the loader auto-aligns ``mc.num_classes`` to 8 (9 - 1)
+        and fires exactly one reinit call — to 9 (the checkpoint size).
+        """
+        from rfdetr.models.weights import load_pretrain_weights
+
+        # 8 dataset categories → training builds a model with 8+1=9 logits.
+        checkpoint = _make_checkpoint(num_classes=9)
+        mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu")
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+
+        fake_model = MagicMock()
+        load_pretrain_weights(fake_model, mc)
+
+        calls = fake_model.reinitialize_detection_head.call_args_list
+        assert len(calls) == 1, (
+            f"Expected exactly 1 reinit call (to checkpoint size 9), but got {len(calls)}: "
+            f"{calls}. A second reinit to 91 would produce OOB class IDs like 73."
+        )
+        assert calls[0] == call(9), f"Reinit must resize to checkpoint's 9 logits, got {calls[0]}"
+        assert mc.num_classes == 8, (
+            f"mc.num_classes must be auto-aligned to 8 (checkpoint_logits - 1), got {mc.num_classes}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Deprecation: train_config argument
