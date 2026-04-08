@@ -412,7 +412,7 @@ class TrainConfig(BaseModel):
     clearml: bool = False  # Not yet implemented — reserved for future use.
     project: Optional[str] = None
     run: Optional[str] = None
-    class_names: List[str] = None
+    class_names: Optional[List[str]] = None
     run_test: bool = False
     segmentation_head: bool = False
     eval_max_dets: int = 500
