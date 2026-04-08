@@ -66,8 +66,17 @@ class GradAccumAlignedDataset(torch.utils.data.Dataset):
         pad_unit = effective_batch_size * world_size
         remainder = self._dataset_length % pad_unit
         pad_count = (pad_unit - remainder) % pad_unit
+        pad_index_generator = torch.Generator()
+        pad_index_generator.manual_seed(0)
         self._pad_indices: list[int] = (
-            torch.randint(0, self._dataset_length, (pad_count,)).tolist() if pad_count > 0 else []
+            torch.randint(
+                0,
+                self._dataset_length,
+                (pad_count,),
+                generator=pad_index_generator,
+            ).tolist()
+            if pad_count > 0
+            else []
         )
         self._length = self._dataset_length + pad_count
 
