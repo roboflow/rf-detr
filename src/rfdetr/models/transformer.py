@@ -399,7 +399,7 @@ class TransformerDecoder(nn.Module):
         level_start_index: Optional[Tensor] = None,  # num_levels
         spatial_shapes: Optional[Tensor] = None,  # bs, num_levels, 2
         valid_ratios: Optional[Tensor] = None,
-        spatial_shapes_hw=None,
+        spatial_shapes_hw: list[tuple[int, int]] | None = None,
     ):
         output = tgt
 
@@ -559,7 +559,7 @@ class TransformerDecoderLayer(nn.Module):
         reference_points=None,
         spatial_shapes=None,
         level_start_index=None,
-        spatial_shapes_hw=None,
+        spatial_shapes_hw: list[tuple[int, int]] | None = None,
     ):
         bs, num_queries, _ = tgt.shape
 
@@ -616,7 +616,7 @@ class TransformerDecoderLayer(nn.Module):
         reference_points=None,
         spatial_shapes=None,
         level_start_index=None,
-        spatial_shapes_hw=None,
+        spatial_shapes_hw: list[tuple[int, int]] | None = None,
     ):
         return self.forward_post(
             tgt,

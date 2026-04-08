@@ -27,9 +27,9 @@ def ms_deform_attn_core_pytorch(
     value_spatial_shapes,
     sampling_locations,
     attention_weights,
-    value_spatial_shapes_hw=None,
+    value_spatial_shapes_hw: list[tuple[int, int]] | None = None,
 ):
-    """ "for debug and test only, need to use cuda version instead"""
+    """For debug and test only, need to use cuda version instead."""
     # B, n_heads, head_dim, N
     B, n_heads, head_dim, _ = value.shape
     _, Len_q, n_heads, L, P, _ = sampling_locations.shape

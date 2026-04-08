@@ -105,7 +105,7 @@ class MSDeformAttn(nn.Module):
         input_spatial_shapes,
         input_level_start_index,
         input_padding_mask=None,
-        input_spatial_shapes_hw=None,
+        input_spatial_shapes_hw: list[tuple[int, int]] | None = None,
     ):
         r"""
         :param query                       (N, Length_{query}, C)

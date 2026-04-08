@@ -71,7 +71,13 @@ class TestMSDeformAttnCorePytorch:
     that bypasses tensor iteration.
     """
 
-    def _make_inputs(self, B=1, n_heads=2, head_dim=4, levels=None):
+    def _make_inputs(
+        self,
+        B: int = 1,
+        n_heads: int = 2,
+        head_dim: int = 4,
+        levels: list[tuple[int, int]] | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, list[tuple[int, int]]]:
         """Build minimal valid inputs for ms_deform_attn_core_pytorch.
 
         Args:
@@ -110,8 +116,8 @@ class TestMSDeformAttnCorePytorch:
             value, spatial_shapes_tensor, sampling_locations, attention_weights
         )
 
-        B, Len_q, _ = 1, sampling_locations.shape[1], None
-        n_heads, head_dim = 2, 4
+        B, n_heads, head_dim, _ = value.shape
+        Len_q = sampling_locations.shape[1]
         assert output.shape == (B, Len_q, n_heads * head_dim)
 
     def test_with_python_int_pair_spatial_shapes(self) -> None:
@@ -131,8 +137,8 @@ class TestMSDeformAttnCorePytorch:
             value_spatial_shapes_hw=levels,
         )
 
-        B, Len_q = 1, sampling_locations.shape[1]
-        n_heads, head_dim = 2, 4
+        B, n_heads, head_dim, _ = value.shape
+        Len_q = sampling_locations.shape[1]
         assert output.shape == (B, Len_q, n_heads * head_dim)
 
     def test_tensor_and_hw_paths_produce_identical_outputs(self) -> None:
