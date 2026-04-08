@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import Optional
 
 import torch
 from pytorch_lightning import LightningModule, Trainer
@@ -18,6 +17,7 @@ from pytorch_lightning import __version__ as ptl_version
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 
 from rfdetr.utilities.logger import get_logger
+from rfdetr.utilities.package import get_version
 from rfdetr.utilities.state_dict import _make_fit_loop_state, strip_checkpoint
 
 logger = get_logger()
@@ -53,7 +53,7 @@ class BestModelCallback(ModelCheckpoint):
         self,
         output_dir: str,
         monitor_regular: str = "val/mAP_50_95",
-        monitor_ema: Optional[str] = None,
+        monitor_ema: str | None = None,
         run_test: bool = True,
     ) -> None:
         super().__init__(
@@ -72,7 +72,7 @@ class BestModelCallback(ModelCheckpoint):
         self._best_ema: float = 0.0
         self._output_dir = Path(output_dir)
         # Stash current pl_module so _save_checkpoint (no pl_module param) can access it.
-        self._current_pl_module: Optional[LightningModule] = None
+        self._current_pl_module: LightningModule | None = None
 
     @staticmethod
     def _build_checkpoint_payload(
@@ -111,6 +111,12 @@ class BestModelCallback(ModelCheckpoint):
         # so old-format and unresolved checkpoints are indistinguishable.
         if model_name is not None:
             payload["model_name"] = model_name
+        # Record the rfdetr package version for provenance / compatibility hints.
+        # Omit the key when the version cannot be resolved (e.g. editable install
+        # without package metadata) so old-format checkpoints are indistinguishable.
+        version = get_version()
+        if version is not None:
+            payload["rfdetr_version"] = version
         return payload
 
     @staticmethod
@@ -397,8 +403,8 @@ class RFDETREarlyStopping(EarlyStopping):
         regular_tensor = metrics.get(self._monitor_regular)
         ema_tensor = metrics.get(self._monitor_ema)
 
-        regular_val: Optional[float] = regular_tensor.item() if regular_tensor is not None else None
-        ema_val: Optional[float] = ema_tensor.item() if ema_tensor is not None else None
+        regular_val: float | None = regular_tensor.item() if regular_tensor is not None else None
+        ema_val: float | None = ema_tensor.item() if ema_tensor is not None else None
 
         if regular_val is None and ema_val is None:
             return  # No metrics available — skip (matches legacy noop behaviour).

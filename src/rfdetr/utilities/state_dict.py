@@ -121,7 +121,8 @@ def strip_checkpoint(checkpoint: str | os.PathLike[str]) -> None:
     """Strip a checkpoint file down to ``model``, ``args``, and PTL-compatible keys.
 
     Preserves ``model_name`` (when present) so that ``RFDETR.from_checkpoint()``
-    can still resolve the model class from the stripped file.
+    can still resolve the model class from the stripped file.  Also preserves
+    ``rfdetr_version`` (when present) for provenance tracking.
 
     Also preserves ``state_dict``, ``global_step``, ``pytorch-lightning_version``,
     ``loops``, ``optimizer_states``, and ``lr_schedulers`` when present so the
@@ -147,6 +148,9 @@ def strip_checkpoint(checkpoint: str | os.PathLike[str]) -> None:
     # Preserve model_name when present (#887).
     if "model_name" in state_dict:
         new_state_dict["model_name"] = state_dict["model_name"]
+    # Preserve rfdetr_version when present for provenance tracking.
+    if "rfdetr_version" in state_dict:
+        new_state_dict["rfdetr_version"] = state_dict["rfdetr_version"]
     # Preserve PTL-compatible keys when present (written by BestModelCallback).
     for key in _PTL_COMPAT_KEYS:
         if key in state_dict:
@@ -258,18 +262,21 @@ def validate_checkpoint_compatibility(checkpoint: dict[str, Any], model_args: An
     ckpt_segmentation_head: bool | None = _ckpt_args_get(ckpt_args, "segmentation_head")
     model_segmentation_head: bool | None = getattr(model_args, "segmentation_head", None)
 
-    if ckpt_segmentation_head is not None and model_segmentation_head is not None:
-        if ckpt_segmentation_head != model_segmentation_head:
-            if ckpt_segmentation_head:
-                raise ValueError(
-                    "The checkpoint was trained with a segmentation head, but the current model does not have one. "
-                    "Load the weights into a segmentation model (e.g. RFDETRSegNano) instead of a detection model."
-                )
-            else:
-                raise ValueError(
-                    "The current model has a segmentation head, but the checkpoint was trained without one. "
-                    "Load the weights into a detection model (e.g. RFDETRNano) instead of a segmentation model."
-                )
+    if (
+        ckpt_segmentation_head is not None
+        and model_segmentation_head is not None
+        and ckpt_segmentation_head != model_segmentation_head
+    ):
+        if ckpt_segmentation_head:
+            raise ValueError(
+                "The checkpoint was trained with a segmentation head, but the current model does not have one. "
+                "Load the weights into a segmentation model (e.g. RFDETRSegNano) instead of a detection model."
+            )
+        else:
+            raise ValueError(
+                "The current model has a segmentation head, but the checkpoint was trained without one. "
+                "Load the weights into a detection model (e.g. RFDETRNano) instead of a segmentation model."
+            )
 
     ckpt_patch_size: int | None = _ckpt_args_get(ckpt_args, "patch_size")
     model_patch_size: int | None = getattr(model_args, "patch_size", None)
