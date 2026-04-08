@@ -71,7 +71,11 @@ class RFDETRModelModule(LightningModule):
         # which creates a CUDA driver context that breaks fork-based DDP.
         from rfdetr.config import DEVICE
 
-        compile_enabled = model_config.compile and DEVICE == "cuda" and not train_config.multi_scale
+        accelerator = str(train_config.accelerator).lower()
+        uses_cuda_accelerator = accelerator in {"auto", "gpu", "cuda"}
+        compile_enabled = (
+            model_config.compile and DEVICE == "cuda" and uses_cuda_accelerator and not train_config.multi_scale
+        )
         if model_config.compile and train_config.multi_scale:
             logger.info("Disabling torch.compile because multi_scale=True introduces dynamic input shapes.")
         if compile_enabled:

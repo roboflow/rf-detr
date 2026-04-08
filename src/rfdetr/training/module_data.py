@@ -47,8 +47,12 @@ class RFDETRDataModule(LightningDataModule):
         # which creates a CUDA driver context that breaks fork-based DDP.
         from rfdetr.config import DEVICE
 
+        accelerator = str(self.train_config.accelerator).lower()
+        uses_cuda_accelerator = accelerator in {"auto", "gpu", "cuda"}
         self._pin_memory: bool = (
-            (DEVICE == "cuda") if self.train_config.pin_memory is None else bool(self.train_config.pin_memory)
+            (DEVICE == "cuda" and uses_cuda_accelerator)
+            if self.train_config.pin_memory is None
+            else bool(self.train_config.pin_memory)
         )
         self._persistent_workers: bool = (
             self._num_workers > 0

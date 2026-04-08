@@ -325,6 +325,26 @@ class TestBuildTrainerPrecision:
         assert strategy_obj._start_method == "spawn"
         assert strategy_obj._ddp_kwargs.get("find_unused_parameters") is True
 
+    @patch("rfdetr.training.trainer._InteractiveSpawnLauncher", None)
+    def test_ddp_notebook_raises_clear_error_when_private_launcher_is_missing(self, tmp_path):
+        """Missing private PTL launcher should raise a targeted compatibility error."""
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        with patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
+            build_trainer(
+                _tc(tmp_path, use_ema=False, strategy="ddp_notebook"),
+                _mc(amp=True),
+            )
+
+        strategy = captured["strategy"]
+        strategy.cluster_environment = object()
+        with pytest.raises(RuntimeError, match="private API"):
+            strategy._configure_launcher()
+
 
 class TestBuildTrainerEMAShardingGuard:
     """EMA must be disabled and a UserWarning emitted for sharded strategies.

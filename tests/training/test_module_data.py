@@ -178,6 +178,13 @@ class TestInit:
         dm = build_datamodule(train_config=tc)
         assert dm._pin_memory is False
 
+    @patch("rfdetr.config.DEVICE", "cuda")
+    def test_pin_memory_defaults_to_false_when_accelerator_is_cpu(self, build_datamodule, base_train_config):
+        """Default pin_memory stays off when training is explicitly CPU-only."""
+        tc = base_train_config(pin_memory=None, accelerator="cpu")
+        dm = build_datamodule(train_config=tc)
+        assert dm._pin_memory is False
+
     def test_persistent_workers_override_is_respected(self, build_datamodule, base_train_config):
         """persistent_workers can be explicitly overridden from TrainConfig."""
         tc = base_train_config(num_workers=2, persistent_workers=False)

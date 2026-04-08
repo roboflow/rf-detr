@@ -19,7 +19,10 @@ from pytorch_lightning.strategies import DDPStrategy as _DDPStrategy
 # _MultiProcessingLauncher is a private PTL API (leading underscore) that may change
 # in minor PTL releases within the >=2.6,<3 range.  No public equivalent exists in
 # PTL 2.x.  Monitor PTL changelogs when bumping the lower bound.
-from pytorch_lightning.strategies.launchers.multiprocessing import _MultiProcessingLauncher
+try:
+    from pytorch_lightning.strategies.launchers.multiprocessing import _MultiProcessingLauncher
+except ImportError:  # pragma: no cover - exercised in unit tests via monkeypatch
+    _MultiProcessingLauncher = None  # type: ignore[assignment]
 
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.training.callbacks import (
@@ -53,12 +56,17 @@ _logger = get_logger()
 # pickle can serialise them for the spawned child processes.
 
 
-class _InteractiveSpawnLauncher(_MultiProcessingLauncher):
-    """Spawn launcher that reports itself as interactive-compatible."""
+if _MultiProcessingLauncher is not None:
 
-    @property
-    def is_interactive_compatible(self) -> bool:  # type: ignore[override]
-        return True
+    class _InteractiveSpawnLauncher(_MultiProcessingLauncher):
+        """Spawn launcher that reports itself as interactive-compatible."""
+
+        @property
+        def is_interactive_compatible(self) -> bool:  # type: ignore[override]
+            return True
+
+else:
+    _InteractiveSpawnLauncher = None
 
 
 class _NotebookSpawnDDPStrategy(_DDPStrategy):
@@ -69,6 +77,13 @@ class _NotebookSpawnDDPStrategy(_DDPStrategy):
             raise RuntimeError(
                 "_NotebookSpawnDDPStrategy requires a cluster environment; "
                 "ensure the strategy is initialised through PTL's Trainer."
+            )
+        if _InteractiveSpawnLauncher is None:
+            raise RuntimeError(
+                "Notebook spawn strategy requires "
+                "pytorch_lightning.strategies.launchers.multiprocessing._MultiProcessingLauncher. "
+                "Your installed PyTorch Lightning version changed this private API; "
+                "pin/upgrade PTL to a compatible version in the supported >=2.6,<3 range."
             )
         self._launcher = _InteractiveSpawnLauncher(self, start_method=self._start_method)
 
