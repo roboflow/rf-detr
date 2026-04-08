@@ -56,6 +56,11 @@ class GradAccumAlignedDataset(torch.utils.data.Dataset):
         effective_batch_size: int,
         world_size: int = 1,
     ) -> None:
+        if effective_batch_size < 1:
+            raise ValueError(f"effective_batch_size must be >= 1, got {effective_batch_size}")
+        if world_size < 1:
+            raise ValueError(f"world_size must be >= 1, got {world_size}")
+
         self._dataset = dataset
         self._dataset_length = len(dataset)  # type: ignore[arg-type]
         pad_unit = effective_batch_size * world_size

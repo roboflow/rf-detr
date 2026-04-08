@@ -423,6 +423,21 @@ class TestTrainDataloader:
             f"len(loader)={len(loader)} is not a multiple of grad_accum_steps={grad_accum_steps}"
         )
 
+    def test_train_dataloader_respects_trainer_world_size(self, tmp_path):
+        """Large-dataset path aligns wrapped dataset length to effective_batch_size * world_size."""
+        dm = self._setup_dm_with_train(
+            tmp_path,
+            dataset_length=101,
+            batch_size=2,
+            grad_accum_steps=4,
+        )
+        dm.trainer = MagicMock(world_size=3)
+
+        loader = dm.train_dataloader()
+
+        assert len(loader.dataset) % (2 * 4 * 3) == 0
+        assert len(loader.dataset) == 120
+
 
 class TestGradAccumAlignedDataset:
     """Unit tests for the GradAccumAlignedDataset wrapper."""
@@ -492,6 +507,27 @@ class TestGradAccumAlignedDataset:
         ds = self._make_dataset(n)
         wrapped = GradAccumAlignedDataset(ds, effective_batch_size=eff_bs, world_size=world_size)
         assert len(wrapped) % (eff_bs * world_size) == 0
+
+    @pytest.mark.parametrize(
+        "effective_batch_size, world_size",
+        [
+            pytest.param(0, 1, id="zero_effective_batch_size"),
+            pytest.param(-1, 1, id="negative_effective_batch_size"),
+            pytest.param(2, 0, id="zero_world_size"),
+            pytest.param(2, -1, id="negative_world_size"),
+        ],
+    )
+    def test_raises_for_non_positive_alignment_inputs(self, effective_batch_size, world_size):
+        """Non-positive alignment inputs fail with a clear ValueError."""
+        from rfdetr.training.module_data import GradAccumAlignedDataset
+
+        ds = self._make_dataset(10)
+        with pytest.raises(ValueError, match="must be >= 1"):
+            GradAccumAlignedDataset(
+                ds,
+                effective_batch_size=effective_batch_size,
+                world_size=world_size,
+            )
 
 
 class TestValDataloader:
