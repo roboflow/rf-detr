@@ -340,16 +340,19 @@ def download_pretrain_weights(
         except (ImportError, KeyError):
             return
 
-    # Check if file exists with correct hash
+    # Skip download when file already exists and redownload is disabled
     if os.path.exists(pretrain_weights) and not redownload:
         if expected_md5 and validate_md5:
             if not _validate_file_md5(pretrain_weights, expected_md5):
-                logger.warning(f"Existing file {pretrain_weights} has incorrect MD5 hash. Re-downloading...")
+                logger.warning(
+                    f"Existing file {pretrain_weights} has incorrect MD5 hash. "
+                    "It may be a user-provided checkpoint or a corrupted/tampered file — "
+                    "skipping re-download to avoid overwriting it. "
+                    "To force a fresh download of the original weights, pass redownload=True."
+                )
             else:
                 logger.info(f"File {pretrain_weights} already exists with correct MD5 hash.")
-                return
-        else:
-            return
+        return
 
     logger.info(f"Downloading pretrained weights for {pretrain_weights}")
     _download_file(
