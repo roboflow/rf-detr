@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 
+from rfdetr.detr import RFDETR
 from rfdetr.training import auto_batch
 from rfdetr.training.auto_batch import AutoBatchResult
 
@@ -137,6 +138,52 @@ def test_resolve_auto_batch_config_returns_expected_values():
     assert result.recommended_grad_accum_steps == 4
     assert result.effective_batch_size == 20
     assert result.device_name == "Fake GPU"
+
+
+def test_train_auto_batch_ensures_model_on_device_before_resolve(tmp_path):
+    train_config = SimpleNamespace(
+        batch_size="auto",
+        grad_accum_steps=99,
+        dataset_dir=None,
+        resume=None,
+        class_names=None,
+    )
+    mock_self = MagicMock()
+    mock_self.model = MagicMock()
+    mock_self.model_config = SimpleNamespace(model_name=None)
+    mock_self.get_train_config.return_value = train_config
+
+    auto_result = SimpleNamespace(
+        safe_micro_batch=4,
+        recommended_grad_accum_steps=1,
+        effective_batch_size=4,
+    )
+    call_order = []
+    mock_ensure_model_on_device = MagicMock(side_effect=lambda *_args, **_kwargs: call_order.append("ensure"))
+    mock_resolve_auto_batch_config = MagicMock(
+        side_effect=lambda **_kwargs: call_order.append("resolve") or auto_result,
+    )
+
+    with (
+        patch("rfdetr.training.RFDETRModelModule"),
+        patch("rfdetr.training.RFDETRDataModule"),
+        patch("rfdetr.training.build_trainer"),
+        patch("rfdetr.detr.is_main_process", return_value=False),
+        patch("rfdetr.detr._ensure_model_on_device", mock_ensure_model_on_device),
+        patch("rfdetr.training.auto_batch.resolve_auto_batch_config", mock_resolve_auto_batch_config),
+        patch("rfdetr.detr.resolve_auto_batch_config", mock_resolve_auto_batch_config, create=True),
+    ):
+        RFDETR.train(mock_self)
+
+    assert train_config.batch_size == 4
+    assert train_config.grad_accum_steps == 1
+    mock_ensure_model_on_device.assert_called_once_with(mock_self.model)
+    mock_resolve_auto_batch_config.assert_called_once_with(
+        model_context=mock_self.model,
+        model_config=mock_self.model_config,
+        train_config=train_config,
+    )
+    assert call_order == ["ensure", "resolve"]
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for segmentation probe")

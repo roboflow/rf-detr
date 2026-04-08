@@ -7,6 +7,7 @@
 import pytest
 import torch
 from pydantic import ValidationError
+from unittest.mock import Mock, patch
 
 from rfdetr.config import (
     ModelConfig,
@@ -19,6 +20,7 @@ from rfdetr.config import (
     RFDETRSegXLargeConfig,
     SegmentationTrainConfig,
     TrainConfig,
+    _detect_device,
 )
 
 
@@ -368,3 +370,31 @@ class TestDeprecatedModelConfigClsLossCoef:
         RFDETRBaseConfig(pretrain_weights=None, device="cpu")
         depr_warnings = [w for w in recwarn.list if issubclass(w.category, DeprecationWarning)]
         assert not depr_warnings, f"Unexpected DeprecationWarning: {depr_warnings}"
+
+
+def test_detect_device_falls_back_when_torch_accelerator_absent() -> None:
+    mock_torch = Mock(spec=["cuda", "backends"])
+    mock_torch.cuda.is_available.return_value = True
+    mock_torch.backends.mps.is_available.return_value = False
+
+    with patch("rfdetr.config.torch", mock_torch):
+        assert _detect_device() == "cuda"
+
+
+def test_detect_device_falls_back_when_current_accelerator_raises() -> None:
+    mock_torch = Mock(spec=["accelerator", "cuda", "backends"])
+    mock_torch.accelerator.current_accelerator.side_effect = RuntimeError("boom")
+    mock_torch.cuda.is_available.return_value = True
+    mock_torch.backends.mps.is_available.return_value = False
+
+    with patch("rfdetr.config.torch", mock_torch):
+        assert _detect_device() == "cpu"
+
+
+def test_detect_device_returns_cpu_when_no_gpu() -> None:
+    mock_torch = Mock(spec=["cuda", "backends"])
+    mock_torch.cuda.is_available.return_value = False
+    mock_torch.backends.mps.is_available.return_value = False
+
+    with patch("rfdetr.config.torch", mock_torch):
+        assert _detect_device() == "cpu"
