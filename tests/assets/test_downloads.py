@@ -116,6 +116,20 @@ class TestDownloadPretrainWeights:
         # Should download despite file existing
         mock_file_operations["download"].assert_called_once()
 
+    def test_redownload_flag_forces_download_despite_incorrect_md5(self, mock_file_operations):
+        """Test that redownload=True triggers download even when MD5 is incorrect.
+
+        Verifies the force-redownload path where the user explicitly wants to overwrite
+        an existing file (e.g. a fine-tuned checkpoint) with the original registry weights.
+        """
+        mock_file_operations["exists"].return_value = True
+        mock_file_operations["validate"].return_value = False  # Incorrect MD5
+
+        download_pretrain_weights("rf-detr-base.pth", redownload=True)
+
+        # Should download because redownload=True overrides the skip-on-existing-file guard
+        mock_file_operations["download"].assert_called_once()
+
     def test_validate_md5_disabled(self, mock_file_operations):
         """Test that MD5 validation can be disabled."""
         download_pretrain_weights("rf-detr-base.pth", validate_md5=False)
