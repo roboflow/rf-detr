@@ -182,7 +182,7 @@ def _resolve_patch_size(patch_size: int | None, model_config: object, caller: st
     return patch_size
 
 
-def _ensure_model_on_device(model_ctx) -> None:
+def _ensure_model_on_device(model_ctx: Any) -> None:
     """Move model weights to the target device recorded in *model_ctx*.
 
     ``_build_model_context`` intentionally keeps the ``nn.Module`` on CPU so
