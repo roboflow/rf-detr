@@ -346,7 +346,8 @@ def download_pretrain_weights(
             if not _validate_file_md5(pretrain_weights, expected_md5):
                 logger.warning(
                     f"Existing file {pretrain_weights} has incorrect MD5 hash. "
-                    "Assuming it is a fine-tuned checkpoint — skipping re-download. "
+                    "It may be a user-provided checkpoint or a corrupted/tampered file — "
+                    "skipping re-download to avoid overwriting it. "
                     "To force a fresh download of the original weights, pass redownload=True."
                 )
             else:
