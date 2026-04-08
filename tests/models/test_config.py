@@ -4,10 +4,11 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+from unittest.mock import Mock, patch
+
 import pytest
 import torch
 from pydantic import ValidationError
-from unittest.mock import Mock, patch
 
 from rfdetr.config import (
     ModelConfig,
