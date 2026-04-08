@@ -416,16 +416,16 @@ class RFDETR:
         handled specially so that existing call-sites do not break:
 
         * ``resolution`` — updates the model's input resolution by mutating
-          :attr:`model_config.resolution` in place (and
-          :attr:`model_config.positional_encoding_size` is updated accordingly)
-          before the train config is built. This change persists on
-          :attr:`model_config` after :meth:`train` returns unless it is changed
-          again. The resolution must be divisible by
-          ``patch_size × num_windows`` for the model variant; a
-          :class:`ValueError` is raised otherwise. Passing ``resolution`` here
-          is a supported way to update the training resolution, and configuring
-          it when constructing :class:`~rfdetr.config.ModelConfig` is also
-          valid.
+          :attr:`model_config.resolution` in place before the train config is
+          built. This change persists on :attr:`model_config` after
+          :meth:`train` returns. The value must be a positive integer divisible
+          by ``patch_size * num_windows`` for the model variant; a
+          :class:`ValueError` is raised otherwise.
+          :attr:`model_config.positional_encoding_size` is also updated when
+          the config derives it formulaically (``PE == resolution //
+          patch_size``); configs with a pretrained-specific PE value (e.g.
+          ``RFDETRBase`` uses DINOv2's PE=37 at 560 px) are left unchanged to
+          preserve checkpoint compatibility.
         * ``device`` — normalized via :class:`torch.device` and mapped to PyTorch
           Lightning trainer arguments. ``"cpu"`` becomes ``accelerator="cpu"``;
           ``"cuda"`` and ``"cuda:N"`` become ``accelerator="gpu"`` and optionally
@@ -446,8 +446,8 @@ class RFDETR:
         Raises:
             ImportError: If training dependencies are not installed. Install with
                 ``pip install "rfdetr[train,loggers]"``.
-            ValueError: If ``resolution`` is not divisible by
-                ``patch_size × num_windows`` for the model variant.
+            ValueError: If ``resolution`` is not a positive integer or is not
+                divisible by ``patch_size * num_windows`` for the model variant.
 
         """
         # Both imports are grouped in a single try block because they both live in
@@ -504,17 +504,41 @@ class RFDETR:
         # here to avoid it being silently ignored by TrainConfig.
         _resolution = kwargs.pop("resolution", None)
         if _resolution is not None:
+            # Reject bool explicitly: bool is a subclass of int so isinstance checks
+            # pass, but True/False are not valid resolution values.
+            if isinstance(_resolution, bool):
+                raise ValueError(f"resolution must be a positive integer, got {_resolution!r}.")
+            # operator.index() accepts int and int-like types (e.g. numpy integer
+            # types) and raises TypeError for floats/strings, giving a clear error.
+            try:
+                _resolution = operator.index(_resolution)
+            except TypeError as exc:
+                raise ValueError(f"resolution must be a positive integer, got {_resolution!r}.") from exc
+            if _resolution <= 0:
+                raise ValueError(f"resolution must be a positive integer, got {_resolution!r}.")
             block_size = self.model_config.patch_size * self.model_config.num_windows
             if _resolution % block_size != 0:
                 raise ValueError(
                     f"resolution={_resolution} is not divisible by "
-                    f"patch_size ({self.model_config.patch_size}) × num_windows "
+                    f"patch_size ({self.model_config.patch_size}) * num_windows "
                     f"({self.model_config.num_windows}) = {block_size}. "
                     f"Choose a resolution that is a multiple of {block_size}."
                 )
-            positional_encoding_size = _resolution // self.model_config.patch_size
+            # Smart PE update: only recompute positional_encoding_size when the
+            # current config derives it formulaically (PE == resolution // patch_size).
+            # Configs with a pretrained-specific PE (e.g. RFDETRBase uses DINOv2's
+            # PE=37 at 518 px, training at 560 px) must not have PE silently changed
+            # — doing so causes shape mismatches when loading pretrained checkpoints.
+            _current_pe = self.model_config.positional_encoding_size
+            _derived_pe = self.model_config.resolution // self.model_config.patch_size
+            if _current_pe == _derived_pe:
+                # Formula-derived: update PE proportionally to the new resolution.
+                new_pe = _resolution // self.model_config.patch_size
+                self.model_config.positional_encoding_size = new_pe
+            else:
+                # Pretrained-specific PE; leave it unchanged.
+                new_pe = _current_pe
             self.model_config.resolution = _resolution
-            self.model_config.positional_encoding_size = positional_encoding_size
 
             # Keep the cached inference/export context in sync with model_config so
             # predict()/export()/deployment all see the same resolution metadata.
@@ -526,7 +550,7 @@ class RFDETR:
                     if hasattr(model_args, "resolution"):
                         model_args.resolution = _resolution
                     if hasattr(model_args, "positional_encoding_size"):
-                        model_args.positional_encoding_size = positional_encoding_size
+                        model_args.positional_encoding_size = new_pe
         config = self.get_train_config(**kwargs)
         if config.batch_size == "auto":
             auto_batch = resolve_auto_batch_config(
