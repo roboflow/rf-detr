@@ -340,7 +340,7 @@ def download_pretrain_weights(
         except (ImportError, KeyError):
             return
 
-    # Check if file exists with correct hash
+    # Skip download when file already exists and redownload is disabled
     if os.path.exists(pretrain_weights) and not redownload:
         if expected_md5 and validate_md5:
             if not _validate_file_md5(pretrain_weights, expected_md5):
