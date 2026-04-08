@@ -531,7 +531,7 @@ class TestRFDETRTrainPTLAbsorption:
         """resolution kwarg is applied to model_config.resolution before training."""
         mock_self = _make_rfdetr_self(tmp_path)
         block_size = mock_self.model_config.patch_size * mock_self.model_config.num_windows
-        valid_resolution = block_size * 10  # guaranteed divisible
+        valid_resolution = block_size * 11  # guaranteed divisible and different from default
         p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(mock_self, resolution=valid_resolution)
@@ -544,9 +544,10 @@ class TestRFDETRTrainPTLAbsorption:
         # PE != resolution // patch_size, so the smart PE guard leaves PE unchanged.
         original_pe = mock_self.model_config.positional_encoding_size
         block_size = mock_self.model_config.patch_size * mock_self.model_config.num_windows
+        valid_override_resolution = block_size * 11  # different from default 560
         p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt:
-            RFDETR.train(mock_self, resolution=block_size * 10)
+            RFDETR.train(mock_self, resolution=valid_override_resolution)
         assert mock_self.model_config.positional_encoding_size == original_pe
 
     def test_resolution_kwarg_updates_positional_encoding_size_for_formula_derived_config(self, tmp_path, patch_lit):

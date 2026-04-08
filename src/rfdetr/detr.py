@@ -512,18 +512,6 @@ class RFDETR:
                 raise ValueError("resolution must be a positive integer") from error
             if _resolution <= 0:
                 raise ValueError("resolution must be a positive integer")
-            # Reject bool explicitly: bool is a subclass of int so isinstance checks
-            # pass, but True/False are not valid resolution values.
-            if isinstance(_resolution, bool):
-                raise ValueError(f"resolution must be a positive integer, got {_resolution!r}.")
-            # operator.index() accepts int and int-like types (e.g. numpy integer
-            # types) and raises TypeError for floats/strings, giving a clear error.
-            try:
-                _resolution = operator.index(_resolution)
-            except TypeError as exc:
-                raise ValueError(f"resolution must be a positive integer, got {_resolution!r}.") from exc
-            if _resolution <= 0:
-                raise ValueError(f"resolution must be a positive integer, got {_resolution!r}.")
             block_size = self.model_config.patch_size * self.model_config.num_windows
             if _resolution % block_size != 0:
                 raise ValueError(
