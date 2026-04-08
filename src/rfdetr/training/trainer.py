@@ -19,9 +19,7 @@ from pytorch_lightning.strategies import DDPStrategy as _DDPStrategy
 # _MultiProcessingLauncher is a private PTL API (leading underscore) that may change
 # in minor PTL releases within the >=2.6,<3 range.  No public equivalent exists in
 # PTL 2.x.  Monitor PTL changelogs when bumping the lower bound.
-from pytorch_lightning.strategies.launchers.multiprocessing import (
-    _MultiProcessingLauncher,
-)
+from pytorch_lightning.strategies.launchers.multiprocessing import _MultiProcessingLauncher
 
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.training.callbacks import (
@@ -144,7 +142,7 @@ def build_trainer(
     if strategy in ("ddp_notebook", "ddp_spawn"):
         strategy = _NotebookSpawnDDPStrategy(
             start_method="spawn",
-            find_unused_parameters=True,
+            find_unused_parameters=True
         )
         _logger.info(
             "%s → spawn-based DDP to avoid OpenMP thread pool corruption after fork.",
