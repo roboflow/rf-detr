@@ -101,10 +101,15 @@ class TestDownloadPretrainWeights:
         mock_file_operations["exists"].return_value = True
         mock_file_operations["validate"].return_value = False  # Incorrect MD5
 
-        download_pretrain_weights("rf-detr-base.pth")
+        with patch("rfdetr.assets.model_weights.logger.warning") as mock_warning:
+            download_pretrain_weights("rf-detr-base.pth")
 
         # Should NOT re-download — the user's file must be preserved
         mock_file_operations["download"].assert_not_called()
+        mock_warning.assert_called_once()
+        warning_msg = mock_warning.call_args[0][0]
+        assert "incorrect MD5 hash" in warning_msg
+        assert "skipping re-download to avoid overwriting it" in warning_msg
 
     def test_redownload_flag_forces_download(self, mock_file_operations):
         """Test that redownload=True forces re-download even if file exists."""
