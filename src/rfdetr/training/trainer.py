@@ -64,9 +64,7 @@ class _NotebookSpawnDDPStrategy(_DDPStrategy):
 
     def _configure_launcher(self) -> None:
         if self.cluster_environment is None:
-            raise RuntimeError(
-                "Cluster environment must be configured before creating the DDP launcher."
-            )
+            raise RuntimeError("Cluster environment must be configured before creating the DDP launcher.")
         self._launcher = _InteractiveSpawnLauncher(self, start_method=self._start_method)
 
 
