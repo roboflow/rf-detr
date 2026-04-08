@@ -483,16 +483,12 @@ class TestGradAccumAlignedDataset:
             pytest.param(101, 4, 1, id="unaligned_single_gpu"),
             pytest.param(100, 4, 2, id="aligned_ddp2"),
             pytest.param(97, 4, 2, id="unaligned_ddp2"),
-            pytest.param(0, 4, 1, id="empty_dataset"),
         ],
     )
     def test_length_always_multiple_of_pad_unit(self, n, eff_bs, world_size):
         """len(wrapped) % (eff_bs * world_size) == 0 for all inputs."""
         from rfdetr.training.module_data import GradAccumAlignedDataset
 
-        if n == 0:
-            # Empty dataset: randint(0, 0) is invalid; skip padding for size-0 input
-            return
         ds = self._make_dataset(n)
         wrapped = GradAccumAlignedDataset(ds, effective_batch_size=eff_bs, world_size=world_size)
         assert len(wrapped) % (eff_bs * world_size) == 0
