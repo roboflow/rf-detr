@@ -434,9 +434,20 @@ class RFDETR:
         """Train an RF-DETR model via the PyTorch Lightning stack.
 
         All keyword arguments are forwarded to :meth:`get_train_config` to build
-        a :class:`~rfdetr.config.TrainConfig`.  Several legacy kwargs are absorbed
-        so existing call-sites do not break:
+        a :class:`~rfdetr.config.TrainConfig`.  Several kwargs are absorbed and
+        handled specially so that existing call-sites do not break:
 
+        * ``resolution`` — updates the model's input resolution by mutating
+          :attr:`model_config.resolution` in place before the train config is
+          built. This change persists on :attr:`model_config` after
+          :meth:`train` returns. The value must be a positive integer divisible
+          by ``patch_size * num_windows`` for the model variant; a
+          :class:`ValueError` is raised otherwise.
+          :attr:`model_config.positional_encoding_size` is also updated when
+          the config derives it formulaically (``PE == resolution //
+          patch_size``); configs with a pretrained-specific PE value (e.g.
+          ``RFDETRBase`` uses DINOv2's PE=37 at 560 px) are left unchanged to
+          preserve checkpoint compatibility.
         * ``device`` — normalized via :class:`torch.device` and mapped to PyTorch
           Lightning trainer arguments. ``"cpu"`` becomes ``accelerator="cpu"``;
           ``"cuda"`` and ``"cuda:N"`` become ``accelerator="gpu"`` and optionally
@@ -457,6 +468,8 @@ class RFDETR:
         Raises:
             ImportError: If training dependencies are not installed. Install with
                 ``pip install "rfdetr[train,loggers]"``.
+            ValueError: If ``resolution`` is not a positive integer or is not
+                divisible by ``patch_size * num_windows`` for the model variant.
 
         """
         # Both imports are grouped in a single try block because they both live in
@@ -508,6 +521,54 @@ class RFDETR:
                 stacklevel=2,
             )
 
+        # Apply resolution override to model_config before building the train config.
+        # resolution is a ModelConfig field, not a TrainConfig field, so we pop it
+        # here to avoid it being silently ignored by TrainConfig.
+        _resolution = kwargs.pop("resolution", None)
+        if _resolution is not None:
+            if isinstance(_resolution, bool):
+                raise ValueError("resolution must be a positive integer")
+            try:
+                _resolution = operator.index(_resolution)
+            except TypeError as error:
+                raise ValueError("resolution must be a positive integer") from error
+            if _resolution <= 0:
+                raise ValueError("resolution must be a positive integer")
+            block_size = self.model_config.patch_size * self.model_config.num_windows
+            if _resolution % block_size != 0:
+                raise ValueError(
+                    f"resolution={_resolution} is not divisible by "
+                    f"patch_size ({self.model_config.patch_size}) * num_windows "
+                    f"({self.model_config.num_windows}) = {block_size}. "
+                    f"Choose a resolution that is a multiple of {block_size}."
+                )
+            # Smart PE update: only recompute positional_encoding_size when the
+            # current config derives it formulaically (PE == resolution // patch_size).
+            # Configs with a pretrained-specific PE (e.g. RFDETRBase uses DINOv2's
+            # PE=37 at 518 px, training at 560 px) must not have PE silently changed
+            # — doing so causes shape mismatches when loading pretrained checkpoints.
+            _current_pe = self.model_config.positional_encoding_size
+            _derived_pe = self.model_config.resolution // self.model_config.patch_size
+            if _current_pe == _derived_pe:
+                # Formula-derived: update PE proportionally to the new resolution.
+                new_pe = _resolution // self.model_config.patch_size
+                self.model_config.positional_encoding_size = new_pe
+            else:
+                # Pretrained-specific PE; leave it unchanged.
+                new_pe = _current_pe
+            self.model_config.resolution = _resolution
+
+            # Keep the cached inference/export context in sync with model_config so
+            # predict()/export()/deployment all see the same resolution metadata.
+            if hasattr(self, "model") and self.model is not None:
+                if hasattr(self.model, "resolution"):
+                    self.model.resolution = _resolution
+                model_args = getattr(self.model, "args", None)
+                if model_args is not None:
+                    if hasattr(model_args, "resolution"):
+                        model_args.resolution = _resolution
+                    if hasattr(model_args, "positional_encoding_size"):
+                        model_args.positional_encoding_size = new_pe
         config = self.get_train_config(**kwargs)
         if config.batch_size == "auto":
             # Auto-batch probing runs forward/backward on the actual model, which
