@@ -140,10 +140,7 @@ def build_trainer(
     # Transparently replace fork-based DDP with spawn-based DDP — see the
     # module-level comment block above _InteractiveSpawnLauncher for rationale.
     if strategy in ("ddp_notebook", "ddp_spawn"):
-        strategy = _NotebookSpawnDDPStrategy(
-            start_method="spawn",
-            find_unused_parameters=True
-        )
+        strategy = _NotebookSpawnDDPStrategy(start_method="spawn", find_unused_parameters=True)
         _logger.info(
             "%s → spawn-based DDP to avoid OpenMP thread pool corruption after fork.",
             tc.strategy,
