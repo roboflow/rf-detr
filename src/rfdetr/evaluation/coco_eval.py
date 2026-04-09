@@ -282,22 +282,25 @@ def evaluate(self: COCOeval) -> tuple[list[int], np.ndarray]:
     self.params = p
 
     self._prepare()
-    catIds = p.catIds if p.useCats else [-1]
+    category_ids = p.catIds if p.useCats else [-1]
 
     if p.iouType == "segm" or p.iouType == "bbox":
-        computeIoU = self.computeIoU
+        compute_iou = self.computeIoU
     elif p.iouType == "keypoints":
-        computeIoU = self.computeOks
-    self.ious = {(imgId, catId): computeIoU(imgId, catId) for imgId in p.imgIds for catId in catIds}
+        compute_iou = self.computeOks
+    self.ious = {(imgId, catId): compute_iou(imgId, catId) for imgId in p.imgIds for catId in category_ids}
 
-    evaluateImg = self.evaluateImg
-    maxDet = p.maxDets[-1]
-    evalImgs = [
-        evaluateImg(imgId, catId, areaRng, maxDet) for catId in catIds for areaRng in p.areaRng for imgId in p.imgIds
+    evaluate_image = self.evaluateImg
+    max_det = p.maxDets[-1]
+    eval_images = [
+        evaluate_image(imgId, catId, areaRng, max_det)
+        for catId in category_ids
+        for areaRng in p.areaRng
+        for imgId in p.imgIds
     ]
-    evalImgs = np.asarray(evalImgs).reshape(len(catIds), len(p.areaRng), len(p.imgIds))
+    eval_images = np.asarray(eval_images).reshape(len(category_ids), len(p.areaRng), len(p.imgIds))
     self._paramsEval = copy.deepcopy(self.params)
-    return p.imgIds, evalImgs
+    return p.imgIds, eval_images
 
 
 #################################################################
@@ -307,66 +310,68 @@ def evaluate(self: COCOeval) -> tuple[list[int], np.ndarray]:
 def patched_pycocotools_summarize(self: COCOeval) -> None:
     """Compute and display summary metrics for evaluation results."""
 
-    def _summarize(ap: int = 1, iouThr: float | None = None, areaRng: str = "all", maxDets: int = 100) -> float:
+    def _summarize(ap: int = 1, iou_thr: float | None = None, area_rng: str = "all", max_dets: int = 100) -> float:
         p = self.params
-        iStr = " {:<18} {} @[ IoU={:<9} | area={:>6s} | maxDets={:>3d} ] = {:0.3f}"
-        titleStr = "Average Precision" if ap == 1 else "Average Recall"
-        typeStr = "(AP)" if ap == 1 else "(AR)"
-        iouStr = "{:0.2f}:{:0.2f}".format(p.iouThrs[0], p.iouThrs[-1]) if iouThr is None else "{:0.2f}".format(iouThr)
+        log_template = " {:<18} {} @[ IoU={:<9} | area={:>6s} | maxDets={:>3d} ] = {:0.3f}"
+        title_str = "Average Precision" if ap == 1 else "Average Recall"
+        type_str = "(AP)" if ap == 1 else "(AR)"
+        iou_str = (
+            "{:0.2f}:{:0.2f}".format(p.iouThrs[0], p.iouThrs[-1]) if iou_thr is None else "{:0.2f}".format(iou_thr)
+        )
 
-        aind = [i for i, aRng in enumerate(p.areaRngLbl) if aRng == areaRng]
-        mind = [i for i, mDet in enumerate(p.maxDets) if mDet == maxDets]
+        aind = [i for i, aRng in enumerate(p.areaRngLbl) if aRng == area_rng]
+        mind = [i for i, mDet in enumerate(p.maxDets) if mDet == max_dets]
         if ap == 1:
             s = self.eval["precision"]
-            if iouThr is not None:
-                t = np.where(iouThr == p.iouThrs)[0]
+            if iou_thr is not None:
+                t = np.where(iou_thr == p.iouThrs)[0]
                 s = s[t]
             s = s[:, :, :, aind, mind]
         else:
             s = self.eval["recall"]
-            if iouThr is not None:
-                t = np.where(iouThr == p.iouThrs)[0]
+            if iou_thr is not None:
+                t = np.where(iou_thr == p.iouThrs)[0]
                 s = s[t]
             s = s[:, :, aind, mind]
         mean_s = -1 if len(s[s > -1]) == 0 else float(np.mean(s[s > -1]))
-        logger.info(iStr.format(titleStr, typeStr, iouStr, areaRng, maxDets, mean_s))
+        logger.info(log_template.format(title_str, type_str, iou_str, area_rng, max_dets, mean_s))
         return mean_s
 
-    def _summarizeDets() -> np.ndarray:
+    def _summarizeDets() -> np.ndarray:  # noqa: N802
         stats = np.zeros((12,))
-        stats[0] = _summarize(1, maxDets=self.params.maxDets[2])
-        stats[1] = _summarize(1, iouThr=0.5, maxDets=self.params.maxDets[2])
-        stats[2] = _summarize(1, iouThr=0.75, maxDets=self.params.maxDets[2])
-        stats[3] = _summarize(1, areaRng="small", maxDets=self.params.maxDets[2])
-        stats[4] = _summarize(1, areaRng="medium", maxDets=self.params.maxDets[2])
-        stats[5] = _summarize(1, areaRng="large", maxDets=self.params.maxDets[2])
-        stats[6] = _summarize(0, maxDets=self.params.maxDets[0])
-        stats[7] = _summarize(0, maxDets=self.params.maxDets[1])
-        stats[8] = _summarize(0, maxDets=self.params.maxDets[2])
-        stats[9] = _summarize(0, areaRng="small", maxDets=self.params.maxDets[2])
-        stats[10] = _summarize(0, areaRng="medium", maxDets=self.params.maxDets[2])
-        stats[11] = _summarize(0, areaRng="large", maxDets=self.params.maxDets[2])
+        stats[0] = _summarize(1, max_dets=self.params.maxDets[2])
+        stats[1] = _summarize(1, iou_thr=0.5, max_dets=self.params.maxDets[2])
+        stats[2] = _summarize(1, iou_thr=0.75, max_dets=self.params.maxDets[2])
+        stats[3] = _summarize(1, area_rng="small", max_dets=self.params.maxDets[2])
+        stats[4] = _summarize(1, area_rng="medium", max_dets=self.params.maxDets[2])
+        stats[5] = _summarize(1, area_rng="large", max_dets=self.params.maxDets[2])
+        stats[6] = _summarize(0, max_dets=self.params.maxDets[0])
+        stats[7] = _summarize(0, max_dets=self.params.maxDets[1])
+        stats[8] = _summarize(0, max_dets=self.params.maxDets[2])
+        stats[9] = _summarize(0, area_rng="small", max_dets=self.params.maxDets[2])
+        stats[10] = _summarize(0, area_rng="medium", max_dets=self.params.maxDets[2])
+        stats[11] = _summarize(0, area_rng="large", max_dets=self.params.maxDets[2])
         return stats
 
-    def _summarizeKps() -> np.ndarray:
+    def _summarizeKps() -> np.ndarray:  # noqa: N802
         stats = np.zeros((10,))
-        stats[0] = _summarize(1, maxDets=20)
-        stats[1] = _summarize(1, maxDets=20, iouThr=0.5)
-        stats[2] = _summarize(1, maxDets=20, iouThr=0.75)
-        stats[3] = _summarize(1, maxDets=20, areaRng="medium")
-        stats[4] = _summarize(1, maxDets=20, areaRng="large")
-        stats[5] = _summarize(0, maxDets=20)
-        stats[6] = _summarize(0, maxDets=20, iouThr=0.5)
-        stats[7] = _summarize(0, maxDets=20, iouThr=0.75)
-        stats[8] = _summarize(0, maxDets=20, areaRng="medium")
-        stats[9] = _summarize(0, maxDets=20, areaRng="large")
+        stats[0] = _summarize(1, max_dets=20)
+        stats[1] = _summarize(1, max_dets=20, iou_thr=0.5)
+        stats[2] = _summarize(1, max_dets=20, iou_thr=0.75)
+        stats[3] = _summarize(1, max_dets=20, area_rng="medium")
+        stats[4] = _summarize(1, max_dets=20, area_rng="large")
+        stats[5] = _summarize(0, max_dets=20)
+        stats[6] = _summarize(0, max_dets=20, iou_thr=0.5)
+        stats[7] = _summarize(0, max_dets=20, iou_thr=0.75)
+        stats[8] = _summarize(0, max_dets=20, area_rng="medium")
+        stats[9] = _summarize(0, max_dets=20, area_rng="large")
         return stats
 
     if not self.eval:
         raise Exception("Please run accumulate() first")
-    iouType = self.params.iouType
-    if iouType == "segm" or iouType == "bbox":
+    iou_type = self.params.iouType
+    if iou_type == "segm" or iou_type == "bbox":
         summarize = _summarizeDets
-    elif iouType == "keypoints":
+    elif iou_type == "keypoints":
         summarize = _summarizeKps
     self.stats = summarize()

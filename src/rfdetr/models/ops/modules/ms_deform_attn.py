@@ -122,16 +122,20 @@ class MSDeformAttn(nn.Module):
 
         :return output                     (N, Length_{query}, C)
         """
-        N, Len_q, _ = query.shape
-        N, Len_in, _ = input_flatten.shape
-        assert (input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum() == Len_in
+        batch_size, query_length, _ = query.shape
+        batch_size, input_length, _ = input_flatten.shape
+        assert (input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum() == input_length
 
         value = self.value_proj(input_flatten)
         if input_padding_mask is not None:
             value = value.masked_fill(input_padding_mask[..., None], float(0))
 
-        sampling_offsets = self.sampling_offsets(query).view(N, Len_q, self.n_heads, self.n_levels, self.n_points, 2)
-        attention_weights = self.attention_weights(query).view(N, Len_q, self.n_heads, self.n_levels * self.n_points)
+        sampling_offsets = self.sampling_offsets(query).view(
+            batch_size, query_length, self.n_heads, self.n_levels, self.n_points, 2
+        )
+        attention_weights = self.attention_weights(query).view(
+            batch_size, query_length, self.n_heads, self.n_levels * self.n_points
+        )
 
         # N, Len_q, n_heads, n_levels, n_points, 2
         if reference_points.shape[-1] == 2:
@@ -151,7 +155,11 @@ class MSDeformAttn(nn.Module):
             )
         attention_weights = F.softmax(attention_weights, -1)
 
-        value = value.transpose(1, 2).contiguous().view(N, self.n_heads, self.d_model // self.n_heads, Len_in)
+        value = (
+            value.transpose(1, 2)
+            .contiguous()
+            .view(batch_size, self.n_heads, self.d_model // self.n_heads, input_length)
+        )
         output = ms_deform_attn_core_pytorch(value, input_spatial_shapes, sampling_locations, attention_weights)
         output = self.output_proj(output)
         return output

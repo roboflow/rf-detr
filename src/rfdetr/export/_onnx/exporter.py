@@ -257,7 +257,7 @@ class OnnxOptimizer:
                 Shape->Slice----^     subgraph to the graph to extract the shape of the output tensor.
         This fix is required for the dynamic shape support.
         """
-        mResizeNodes = 0
+        resized_node_count = 0
         for node in self.graph.nodes:
             if node.op == "Resize" and len(node.inputs) == 3:
                 name = node.name + "/"
@@ -319,26 +319,26 @@ class OnnxOptimizer:
                 node.inputs = []
                 node.outputs = []
 
-                mResizeNodes += 1
+                resized_node_count += 1
 
         self.cleanup()
-        return mResizeNodes
+        return resized_node_count
 
-    def adjustAddNode(self):
-        nAdjustAddNode = 0
+    def adjustAddNode(self):  # noqa: N802
+        adjusted_add_node_count = 0
         for node in self.graph.nodes:
             # Change the bias const to the second input to allow Gemm+BiasAdd fusion in TRT.
             if node.op in ["Add"] and isinstance(node.inputs[0], gs.ir.tensor.Constant):
                 tensor = node.inputs[1]
                 bias = node.inputs[0]
                 node.inputs = [tensor, bias]
-                nAdjustAddNode += 1
+                adjusted_add_node_count += 1
 
         self.cleanup()
-        return nAdjustAddNode
+        return adjusted_add_node_count
 
     def decompose_instancenorms(self):
-        nRemoveInstanceNorm = 0
+        removed_instance_norm_count = 0
         for node in self.graph.nodes:
             if node.op == "InstanceNormalization":
                 name = node.name + "/"
@@ -388,33 +388,33 @@ class OnnxOptimizer:
                 div_node = gs.Node(
                     op="Div", name=name + "div_node", attrs={}, inputs=[sub_out, sqrt_out], outputs=[div_out]
                 )
-                constantScale = gs.Constant(
-                    "InstanceNormScaleV-" + str(nRemoveInstanceNorm),
+                constant_scale = gs.Constant(
+                    "InstanceNormScaleV-" + str(removed_instance_norm_count),
                     np.ascontiguousarray(node.inputs[1].inputs[0].attrs["value"].values.reshape(1, 32, 1)),
                 )
-                constantBias = gs.Constant(
-                    "InstanceBiasV-" + str(nRemoveInstanceNorm),
+                constant_bias = gs.Constant(
+                    "InstanceBiasV-" + str(removed_instance_norm_count),
                     np.ascontiguousarray(node.inputs[2].inputs[0].attrs["value"].values.reshape(1, 32, 1)),
                 )
                 mul_out = gs.Variable(name=name + "mul_out")
                 mul_node = gs.Node(
-                    op="Mul", name=name + "mul_node", attrs={}, inputs=[div_out, constantScale], outputs=[mul_out]
+                    op="Mul", name=name + "mul_node", attrs={}, inputs=[div_out, constant_scale], outputs=[mul_out]
                 )
                 add_node = gs.Node(
-                    op="Add", name=name + "add_node", attrs={}, inputs=[mul_out, constantBias], outputs=[output_tensor]
+                    op="Add", name=name + "add_node", attrs={}, inputs=[mul_out, constant_bias], outputs=[output_tensor]
                 )
                 self.graph.nodes.extend(
                     [mean_node, sub_node, pow_node, mean2_node, epsilon_node, sqrt_node, div_node, mul_node, add_node]
                 )
                 node.inputs = []
                 node.outputs = []
-                nRemoveInstanceNorm += 1
+                removed_instance_norm_count += 1
 
         self.cleanup()
-        return nRemoveInstanceNorm
+        return removed_instance_norm_count
 
     def insert_groupnorm_plugin(self):
-        nGroupNormPlugin = 0
+        group_norm_plugin_count = 0
         for node in self.graph.nodes:
             if (
                 node.op == "Reshape"
@@ -428,57 +428,59 @@ class OnnxOptimizer:
             ):
                 # "node.outputs != []" is added for VAE
 
-                inputTensor = node.inputs[0]
+                input_tensor = node.inputs[0]
 
-                gammaNode = node.o().o().o().o().o().o().o().o().o().o().o()
-                index = [isinstance(inp, gs.ir.tensor.Constant) for inp in gammaNode.inputs].index(True)
-                gamma = np.array(deepcopy(gammaNode.inputs[index].values.tolist()), dtype=np.float32)
-                constantGamma = gs.Constant(
-                    "groupNormGamma-" + str(nGroupNormPlugin), np.ascontiguousarray(gamma.reshape(-1))
+                gamma_node = node.o().o().o().o().o().o().o().o().o().o().o()
+                index = [isinstance(inp, gs.ir.tensor.Constant) for inp in gamma_node.inputs].index(True)
+                gamma = np.array(deepcopy(gamma_node.inputs[index].values.tolist()), dtype=np.float32)
+                constant_gamma = gs.Constant(
+                    "groupNormGamma-" + str(group_norm_plugin_count), np.ascontiguousarray(gamma.reshape(-1))
                 )  # MUST use np.ascontiguousarray, or TRT will regard the shape of this Constant as (0) !!!
 
-                betaNode = gammaNode.o()
-                index = [isinstance(inp, gs.ir.tensor.Constant) for inp in betaNode.inputs].index(True)
-                beta = np.array(deepcopy(betaNode.inputs[index].values.tolist()), dtype=np.float32)
-                constantBeta = gs.Constant(
-                    "groupNormBeta-" + str(nGroupNormPlugin), np.ascontiguousarray(beta.reshape(-1))
+                beta_node = gamma_node.o()
+                index = [isinstance(inp, gs.ir.tensor.Constant) for inp in beta_node.inputs].index(True)
+                beta = np.array(deepcopy(beta_node.inputs[index].values.tolist()), dtype=np.float32)
+                constant_beta = gs.Constant(
+                    "groupNormBeta-" + str(group_norm_plugin_count), np.ascontiguousarray(beta.reshape(-1))
                 )
 
                 epsilon = node.o().o().o().o().o().inputs[1].values.tolist()[0]
 
-                if betaNode.o().op == "Sigmoid":  # need Swish
-                    bSwish = True
-                    lastNode = betaNode.o().o()  # Mul node of Swish
+                if beta_node.o().op == "Sigmoid":  # need Swish
+                    use_swish = True
+                    last_node = beta_node.o().o()  # Mul node of Swish
                 else:
-                    bSwish = False
-                    lastNode = betaNode  # Cast node after Group Norm
+                    use_swish = False
+                    last_node = beta_node  # Cast node after Group Norm
 
-                if lastNode.o().op == "Cast":
-                    lastNode = lastNode.o()
-                inputList = [inputTensor, constantGamma, constantBeta]
-                groupNormV = gs.Variable("GroupNormV-" + str(nGroupNormPlugin), np.dtype(np.float16), inputTensor.shape)
-                groupNormN = gs.Node(
-                    "GroupNorm",
-                    "GroupNormN-" + str(nGroupNormPlugin),
-                    inputs=inputList,
-                    outputs=[groupNormV],
-                    attrs=OrderedDict([("epsilon", epsilon), ("bSwish", int(bSwish))]),
+                if last_node.o().op == "Cast":
+                    last_node = last_node.o()
+                input_list = [input_tensor, constant_gamma, constant_beta]
+                group_norm_v = gs.Variable(
+                    "GroupNormV-" + str(group_norm_plugin_count), np.dtype(np.float16), input_tensor.shape
                 )
-                self.graph.nodes.append(groupNormN)
+                group_norm_n = gs.Node(
+                    "GroupNorm",
+                    "GroupNormN-" + str(group_norm_plugin_count),
+                    inputs=input_list,
+                    outputs=[group_norm_v],
+                    attrs=OrderedDict([("epsilon", epsilon), ("bSwish", int(use_swish))]),
+                )
+                self.graph.nodes.append(group_norm_n)
 
-                for subNode in self.graph.nodes:
-                    if lastNode.outputs[0] in subNode.inputs:
-                        index = subNode.inputs.index(lastNode.outputs[0])
-                        subNode.inputs[index] = groupNormV
+                for sub_node in self.graph.nodes:
+                    if last_node.outputs[0] in sub_node.inputs:
+                        index = sub_node.inputs.index(last_node.outputs[0])
+                        sub_node.inputs[index] = group_norm_v
                 node.inputs = []
-                lastNode.outputs = []
-                nGroupNormPlugin += 1
+                last_node.outputs = []
+                group_norm_plugin_count += 1
 
         self.cleanup()
-        return nGroupNormPlugin
+        return group_norm_plugin_count
 
     def insert_layernorm_plugin(self):
-        nLayerNormPlugin = 0
+        layer_norm_plugin_count = 0
         for node in self.graph.nodes:
             if (
                 node.op == "ReduceMean"
@@ -496,52 +498,54 @@ class OnnxOptimizer:
                 and len(node.o().o(0).o().o().o().o().o().inputs[1].values.shape) == 1
             ):
                 if node.i().op == "Add":
-                    inputTensor = node.inputs[0]  # CLIP
+                    input_tensor = node.inputs[0]  # CLIP
                 else:
-                    inputTensor = node.i().inputs[0]  # UNet and VAE
+                    input_tensor = node.i().inputs[0]  # UNet and VAE
 
-                gammaNode = node.o().o().o().o().o().o().o()
-                index = [isinstance(inp, gs.ir.tensor.Constant) for inp in gammaNode.inputs].index(True)
-                gamma = np.array(deepcopy(gammaNode.inputs[index].values.tolist()), dtype=np.float32)
-                constantGamma = gs.Constant(
-                    "LayerNormGamma-" + str(nLayerNormPlugin), np.ascontiguousarray(gamma.reshape(-1))
+                gamma_node = node.o().o().o().o().o().o().o()
+                index = [isinstance(inp, gs.ir.tensor.Constant) for inp in gamma_node.inputs].index(True)
+                gamma = np.array(deepcopy(gamma_node.inputs[index].values.tolist()), dtype=np.float32)
+                constant_gamma = gs.Constant(
+                    "LayerNormGamma-" + str(layer_norm_plugin_count), np.ascontiguousarray(gamma.reshape(-1))
                 )  # MUST use np.ascontiguousarray, or TRT will regard the shape of this Constant as (0) !!!
 
-                betaNode = gammaNode.o()
-                index = [isinstance(inp, gs.ir.tensor.Constant) for inp in betaNode.inputs].index(True)
-                beta = np.array(deepcopy(betaNode.inputs[index].values.tolist()), dtype=np.float32)
-                constantBeta = gs.Constant(
-                    "LayerNormBeta-" + str(nLayerNormPlugin), np.ascontiguousarray(beta.reshape(-1))
+                beta_node = gamma_node.o()
+                index = [isinstance(inp, gs.ir.tensor.Constant) for inp in beta_node.inputs].index(True)
+                beta = np.array(deepcopy(beta_node.inputs[index].values.tolist()), dtype=np.float32)
+                constant_beta = gs.Constant(
+                    "LayerNormBeta-" + str(layer_norm_plugin_count), np.ascontiguousarray(beta.reshape(-1))
                 )
 
-                inputList = [inputTensor, constantGamma, constantBeta]
-                layerNormV = gs.Variable("LayerNormV-" + str(nLayerNormPlugin), np.dtype(np.float32), inputTensor.shape)
-                layerNormN = gs.Node(
+                input_list = [input_tensor, constant_gamma, constant_beta]
+                layer_norm_v = gs.Variable(
+                    "LayerNormV-" + str(layer_norm_plugin_count), np.dtype(np.float32), input_tensor.shape
+                )
+                layer_norm_n = gs.Node(
                     "LayerNorm",
-                    "LayerNormN-" + str(nLayerNormPlugin),
-                    inputs=inputList,
+                    "LayerNormN-" + str(layer_norm_plugin_count),
+                    inputs=input_list,
                     attrs=OrderedDict([("epsilon", 1.0e-5)]),
-                    outputs=[layerNormV],
+                    outputs=[layer_norm_v],
                 )
-                self.graph.nodes.append(layerNormN)
-                nLayerNormPlugin += 1
+                self.graph.nodes.append(layer_norm_n)
+                layer_norm_plugin_count += 1
 
-                if betaNode.outputs[0] in self.graph.outputs:
-                    index = self.graph.outputs.index(betaNode.outputs[0])
-                    self.graph.outputs[index] = layerNormV
+                if beta_node.outputs[0] in self.graph.outputs:
+                    index = self.graph.outputs.index(beta_node.outputs[0])
+                    self.graph.outputs[index] = layer_norm_v
                 else:
-                    if betaNode.o().op == "Cast":
-                        lastNode = betaNode.o()
+                    if beta_node.o().op == "Cast":
+                        last_node = beta_node.o()
                     else:
-                        lastNode = betaNode
-                    for subNode in self.graph.nodes:
-                        if lastNode.outputs[0] in subNode.inputs:
-                            index = subNode.inputs.index(lastNode.outputs[0])
-                            subNode.inputs[index] = layerNormV
-                    lastNode.outputs = []
+                        last_node = beta_node
+                    for sub_node in self.graph.nodes:
+                        if last_node.outputs[0] in sub_node.inputs:
+                            index = sub_node.inputs.index(last_node.outputs[0])
+                            sub_node.inputs[index] = layer_norm_v
+                    last_node.outputs = []
 
         self.cleanup()
-        return nLayerNormPlugin
+        return layer_norm_plugin_count
 
     def fuse_kv(self, node_k, node_v, fused_kv_idx, heads, num_dynamic=0):
         # Get weights of K
@@ -549,14 +553,19 @@ class OnnxOptimizer:
         # Get weights of V
         weights_v = node_v.inputs[1].values
         # Input number of channels to K and V
-        C = weights_k.shape[0]
+        channel_count = weights_k.shape[0]
         # Number of heads
-        H = heads
+        num_heads = heads
         # Dimension per head
-        D = weights_k.shape[1] // H
+        head_dim = weights_k.shape[1] // num_heads
 
         # Concat and interleave weights such that the output of fused KV GEMM has [b, s_kv, h, 2, d] shape
-        weights_kv = np.dstack([weights_k.reshape(C, H, D), weights_v.reshape(C, H, D)]).reshape(C, 2 * H * D)
+        weights_kv = np.dstack(
+            [
+                weights_k.reshape(channel_count, num_heads, head_dim),
+                weights_v.reshape(channel_count, num_heads, head_dim),
+            ]
+        ).reshape(channel_count, 2 * num_heads * head_dim)
 
         # K and V have the same input
         input_tensor = node_k.inputs[0]
@@ -661,16 +670,20 @@ class OnnxOptimizer:
         weights_v = node_v.inputs[1].values
 
         # Input number of channels to Q, K and V
-        C = weights_k.shape[0]
+        channel_count = weights_k.shape[0]
         # Number of heads
-        H = heads
+        num_heads = heads
         # Hidden dimension per head
-        D = weights_k.shape[1] // H
+        head_dim = weights_k.shape[1] // num_heads
 
         # Concat and interleave weights such that the output of fused QKV GEMM has [b, s, h, 3, d] shape
         weights_qkv = np.dstack(
-            [weights_q.reshape(C, H, D), weights_k.reshape(C, H, D), weights_v.reshape(C, H, D)]
-        ).reshape(C, 3 * H * D)
+            [
+                weights_q.reshape(channel_count, num_heads, head_dim),
+                weights_k.reshape(channel_count, num_heads, head_dim),
+                weights_v.reshape(channel_count, num_heads, head_dim),
+            ]
+        ).reshape(channel_count, 3 * num_heads * head_dim)
 
         input_tensor = node_k.inputs[0]  # K and V have the same input
         # Q, K and V must have the same output which we feed into fmha plugin
