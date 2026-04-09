@@ -287,16 +287,16 @@ def collate_boxes(
 
     box_counts = [t["boxes"].shape[0] for t in targets]
     n_max = max(box_counts) if box_counts else 0
-    B = len(targets)
+    batch_size = len(targets)
 
     if n_max == 0:
         return (
-            torch.zeros(B, 0, 4, device=device),
-            torch.zeros(B, 0, dtype=torch.bool, device=device),
+            torch.zeros(batch_size, 0, 4, device=device),
+            torch.zeros(batch_size, 0, dtype=torch.bool, device=device),
         )
 
-    boxes_padded = torch.zeros(B, n_max, 4, device=device)
-    valid_mask = torch.zeros(B, n_max, dtype=torch.bool, device=device)
+    boxes_padded = torch.zeros(batch_size, n_max, 4, device=device)
+    valid_mask = torch.zeros(batch_size, n_max, dtype=torch.bool, device=device)
 
     for i, t in enumerate(targets):
         n = t["boxes"].shape[0]
@@ -311,8 +311,8 @@ def unpack_boxes(
     boxes_aug: Tensor,
     valid: Tensor,
     targets: List[Dict[str, Any]],
-    H: int,
-    W: int,
+    image_height: int,
+    image_width: int,
 ) -> List[Dict[str, Any]]:
     """Unpack augmented boxes, clamp to image bounds, and remove zero-area boxes.
 
@@ -326,8 +326,8 @@ def unpack_boxes(
         valid: Boolean mask ``[B, N_max]`` from :func:`collate_boxes`.
         targets: Original target dicts; each dict is shallow-copied before
             modification — the input list itself is not mutated.
-        H: Image height in pixels (for clamping).
-        W: Image width in pixels (for clamping).
+        image_height: Image height in pixels (for clamping).
+        image_width: Image width in pixels (for clamping).
 
     Returns:
         A new list of target dicts with updated ``boxes``, ``labels``,
@@ -348,10 +348,10 @@ def unpack_boxes(
 
         # Clamp to image boundaries
         boxes_i = boxes_i.clone()
-        boxes_i[:, 0].clamp_(min=0, max=W)
-        boxes_i[:, 1].clamp_(min=0, max=H)
-        boxes_i[:, 2].clamp_(min=0, max=W)
-        boxes_i[:, 3].clamp_(min=0, max=H)
+        boxes_i[:, 0].clamp_(min=0, max=image_width)
+        boxes_i[:, 1].clamp_(min=0, max=image_height)
+        boxes_i[:, 2].clamp_(min=0, max=image_width)
+        boxes_i[:, 3].clamp_(min=0, max=image_height)
 
         # Remove zero-area boxes (after clamping)
         widths = boxes_i[:, 2] - boxes_i[:, 0]

@@ -39,7 +39,7 @@ def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
         has_cuda = bool(torch.cuda.is_available())
         if has_cuda:
             try:
-                import kornia.augmentation  # type: ignore[import-not-found]
+                import kornia.augmentation
 
                 resolved_backend = "gpu"
             except ImportError:

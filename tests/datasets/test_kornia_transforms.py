@@ -167,11 +167,18 @@ class TestUnpackBoxes:
     def _require_kornia(self):
         pytest.importorskip("kornia")
 
-    def _make_inputs(self, boxes_aug, valid_mask, original_targets, H=100, W=100):
+    def _make_inputs(
+        self,
+        boxes_aug,
+        valid_mask,
+        original_targets,
+        image_height=100,
+        image_width=100,
+    ):
         """Return tensors suitable for unpack_boxes."""
         boxes_tensor = torch.tensor(boxes_aug, dtype=torch.float32)
         valid_tensor = torch.tensor(valid_mask, dtype=torch.bool)
-        return boxes_tensor, valid_tensor, original_targets, H, W
+        return boxes_tensor, valid_tensor, original_targets, image_height, image_width
 
     def test_all_boxes_removed_after_aug(self):
         """When all augmented boxes are zero-area, output targets have empty boxes."""
@@ -188,8 +195,8 @@ class TestUnpackBoxes:
                 "iscrowd": torch.tensor([0, 0]),
             }
         ]
-        boxes_t, valid_t, tgts, H, W = self._make_inputs(boxes_aug, valid, targets)
-        result = unpack_boxes(boxes_t, valid_t, tgts, H, W)
+        boxes_t, valid_t, tgts, image_height, image_width = self._make_inputs(boxes_aug, valid, targets)
+        result = unpack_boxes(boxes_t, valid_t, tgts, image_height, image_width)
 
         assert result[0]["boxes"].shape[0] == 0, (
             f"Expected 0 boxes after zero-area removal, got {result[0]['boxes'].shape[0]}"
@@ -211,8 +218,8 @@ class TestUnpackBoxes:
                 "iscrowd": torch.tensor([0, 1]),
             }
         ]
-        boxes_t, valid_t, tgts, H, W = self._make_inputs(boxes_aug, valid, targets)
-        result = unpack_boxes(boxes_t, valid_t, tgts, H, W)
+        boxes_t, valid_t, tgts, image_height, image_width = self._make_inputs(boxes_aug, valid, targets)
+        result = unpack_boxes(boxes_t, valid_t, tgts, image_height, image_width)
 
         assert result[0]["boxes"].shape[0] == 1, f"Expected 1 surviving box, got {result[0]['boxes'].shape[0]}"
         assert result[0]["labels"].tolist() == [1]
@@ -232,8 +239,8 @@ class TestUnpackBoxes:
                 "iscrowd": torch.tensor([0, 1]),
             }
         ]
-        boxes_t, valid_t, tgts, H, W = self._make_inputs(boxes_aug, valid, targets)
-        result = unpack_boxes(boxes_t, valid_t, tgts, H, W)
+        boxes_t, valid_t, tgts, image_height, image_width = self._make_inputs(boxes_aug, valid, targets)
+        result = unpack_boxes(boxes_t, valid_t, tgts, image_height, image_width)
 
         assert result[0]["labels"].tolist() == [9], (
             f"Expected label [9] after removal of box 0, got {result[0]['labels'].tolist()}"
@@ -256,17 +263,23 @@ class TestUnpackBoxes:
                 "iscrowd": torch.tensor([0]),
             }
         ]
-        H, W = 100, 100
-        boxes_t, valid_t, tgts, H, W = self._make_inputs(boxes_aug, valid, targets, H, W)
-        result = unpack_boxes(boxes_t, valid_t, tgts, H, W)
+        image_height, image_width = 100, 100
+        boxes_t, valid_t, tgts, image_height, image_width = self._make_inputs(
+            boxes_aug,
+            valid,
+            targets,
+            image_height,
+            image_width,
+        )
+        result = unpack_boxes(boxes_t, valid_t, tgts, image_height, image_width)
 
         result_boxes = result[0]["boxes"]
         assert result_boxes.shape[0] == 1, "Clamped box should survive (non-zero area)"
         # Verify clamping: x1>=0, y1>=0, x2<=W, y2<=H
         assert result_boxes[0, 0].item() >= 0.0, "x1 not clamped to >= 0"
         assert result_boxes[0, 1].item() >= 0.0, "y1 not clamped to >= 0"
-        assert result_boxes[0, 2].item() <= W, f"x2 not clamped to <= {W}"
-        assert result_boxes[0, 3].item() <= H, f"y2 not clamped to <= {H}"
+        assert result_boxes[0, 2].item() <= image_width, f"x2 not clamped to <= {image_width}"
+        assert result_boxes[0, 3].item() <= image_height, f"y2 not clamped to <= {image_height}"
 
 
 # ---------------------------------------------------------------------------
@@ -291,9 +304,11 @@ class TestRotateFactory:
         assert pipeline is not None
 
         # Inspect the pipeline's children to find the RandomRotation and check degrees
-        import kornia.augmentation as K
+        import kornia.augmentation as kornia_augmentation
 
-        rotation_augs = [child for child in pipeline.children() if isinstance(child, K.RandomRotation)]
+        rotation_augs = [
+            child for child in pipeline.children() if isinstance(child, kornia_augmentation.RandomRotation)
+        ]
         assert len(rotation_augs) == 1, f"Expected exactly 1 RandomRotation, found {len(rotation_augs)}"
         degrees = rotation_augs[0].flags["degrees"]
         # degrees should be a tensor representing (-45, 45)
@@ -307,9 +322,11 @@ class TestRotateFactory:
         pipeline = build_kornia_pipeline({"Rotate": {"limit": (90, 90), "p": 1.0}}, 560)
         assert pipeline is not None
 
-        import kornia.augmentation as K
+        import kornia.augmentation as kornia_augmentation
 
-        rotation_augs = [child for child in pipeline.children() if isinstance(child, K.RandomRotation)]
+        rotation_augs = [
+            child for child in pipeline.children() if isinstance(child, kornia_augmentation.RandomRotation)
+        ]
         assert len(rotation_augs) == 1
         degrees = rotation_augs[0].flags["degrees"]
         assert float(degrees[0]) == pytest.approx(90.0, abs=0.1)
@@ -402,9 +419,9 @@ class TestGaussianBlurMinKernel:
         pipeline = build_kornia_pipeline({"GaussianBlur": {"blur_limit": blur_limit, "p": 1.0}}, 560)
         assert pipeline is not None
 
-        import kornia.augmentation as K
+        import kornia.augmentation as kornia_augmentation
 
-        blur_augs = [c for c in pipeline.children() if isinstance(c, K.RandomGaussianBlur)]
+        blur_augs = [c for c in pipeline.children() if isinstance(c, kornia_augmentation.RandomGaussianBlur)]
         assert len(blur_augs) == 1
         ks = blur_augs[0].flags["kernel_size"]
         assert int(ks[0]) >= 3, f"kernel_size[0]={int(ks[0])} must be >= 3"
@@ -415,9 +432,9 @@ class TestGaussianBlurMinKernel:
         from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
 
         pipeline = build_kornia_pipeline({"GaussianBlur": {"blur_limit": 3, "p": 1.0}}, 560)
-        import kornia.augmentation as K
+        import kornia.augmentation as kornia_augmentation
 
-        blur_augs = [c for c in pipeline.children() if isinstance(c, K.RandomGaussianBlur)]
+        blur_augs = [c for c in pipeline.children() if isinstance(c, kornia_augmentation.RandomGaussianBlur)]
         ks = blur_augs[0].flags["kernel_size"]
         assert int(ks[0]) == 3
         assert int(ks[1]) == 3
@@ -442,15 +459,17 @@ class TestKorniaPipelineForwardPass:
 
         pipeline = build_kornia_pipeline({"HorizontalFlip": {"p": 1.0}}, resolution=64)
 
-        B, C, H, W = 2, 3, 64, 64
-        img = torch.rand(B, C, H, W)
+        batch_size, channels, image_height, image_width = 2, 3, 64, 64
+        img = torch.rand(batch_size, channels, image_height, image_width)
         boxes = torch.tensor([[[0.0, 0.0, 32.0, 32.0]], [[10.0, 10.0, 50.0, 50.0]]], dtype=torch.float32)
 
         img_out, boxes_out = pipeline(img, boxes)
 
-        assert img_out.shape == (B, C, H, W), f"Image shape changed: {img_out.shape}"
+        assert img_out.shape == (batch_size, channels, image_height, image_width), (
+            f"Image shape changed: {img_out.shape}"
+        )
         assert img_out.dtype == torch.float32
-        assert boxes_out.shape == (B, 1, 4), f"Boxes shape wrong: {boxes_out.shape}"
+        assert boxes_out.shape == (batch_size, 1, 4), f"Boxes shape wrong: {boxes_out.shape}"
 
     def test_forward_pass_empty_boxes(self):
         """Pipeline handles a batch where N_max=0 (no boxes) without error."""
@@ -458,12 +477,12 @@ class TestKorniaPipelineForwardPass:
 
         pipeline = build_kornia_pipeline({"HorizontalFlip": {"p": 1.0}}, resolution=32)
 
-        B, C, H, W = 2, 3, 32, 32
-        img = torch.rand(B, C, H, W)
+        batch_size, channels, image_height, image_width = 2, 3, 32, 32
+        img = torch.rand(batch_size, channels, image_height, image_width)
         # [B, 0, 4] — no boxes
-        boxes = torch.zeros(B, 0, 4, dtype=torch.float32)
+        boxes = torch.zeros(batch_size, 0, 4, dtype=torch.float32)
 
         img_out, boxes_out = pipeline(img, boxes)
 
-        assert img_out.shape == (B, C, H, W)
-        assert boxes_out.shape == (B, 0, 4)
+        assert img_out.shape == (batch_size, channels, image_height, image_width)
+        assert boxes_out.shape == (batch_size, 0, 4)
