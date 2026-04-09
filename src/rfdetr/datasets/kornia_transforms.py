@@ -85,6 +85,7 @@ def resolve_augmentation_backend(backend: str) -> str:
     Raises:
         RuntimeError: When *backend* is ``"gpu"`` and no CUDA device is found.
         ImportError: When *backend* is ``"gpu"`` and kornia is not installed.
+        ValueError: When *backend* is not one of ``"cpu"``, ``"auto"``, or ``"gpu"``.
 
     Examples:
         >>> resolve_augmentation_backend("cpu")
@@ -105,7 +106,7 @@ def resolve_augmentation_backend(backend: str) -> str:
             raise RuntimeError("augmentation_backend='gpu' requires a CUDA device")
         _require_kornia()
         return "gpu"
-    return backend
+    raise ValueError(f"Unknown augmentation_backend {backend!r}; expected 'cpu', 'auto', or 'gpu'.")
 
 
 def _require_kornia() -> None:
@@ -152,12 +153,29 @@ def _make_rotate(params: dict[str, Any]) -> Any:
 
 
 def _make_affine(params: dict[str, Any]) -> Any:
-    """Build a ``K.RandomAffine`` from aug_config params."""
+    """Build a ``K.RandomAffine`` from aug_config params.
+
+    Albumentations ``translate_percent`` is a ``(min, max)`` signed range
+    (e.g. ``(-0.1, 0.1)``).  Kornia ``translate`` is a non-negative
+    per-axis max fraction ``(tx, ty)`` where translation is sampled from
+    ``[-tx, tx]``.  The conversion takes ``max(|min|, |max|)`` for each
+    axis, producing a symmetric range that matches the intent.
+    """
     from kornia.augmentation import RandomAffine
+
+    translate_percent = params.get("translate_percent")
+    if translate_percent is not None:
+        if isinstance(translate_percent, (list, tuple)) and len(translate_percent) == 2:
+            t = max(abs(translate_percent[0]), abs(translate_percent[1]))
+            translate: float | tuple[float, float] | None = (t, t)
+        else:
+            translate = translate_percent
+    else:
+        translate = None
 
     return RandomAffine(
         degrees=params.get("rotate", (-15, 15)),
-        translate=params.get("translate_percent"),
+        translate=translate,
         scale=params.get("scale"),
         shear=params.get("shear"),
         p=params.get("p", 0.5),
