@@ -599,6 +599,25 @@ class RFDETR:
 
         module = RFDETRModelModule(self.model_config, config)
         datamodule = RFDETRDataModule(self.model_config, config)
+
+        # Guard with LOCAL_RANK env var rather than is_main_process() because torch.distributed
+        # is not yet initialized here (it is set up inside trainer.fit()).  In Lightning DDP
+        # subprocesses, LOCAL_RANK is set by the launcher before the subprocess calls train(),
+        # so this correctly identifies rank 0 even before dist.init_process_group() runs.
+        if config.save_dataset_grids and os.environ.get("LOCAL_RANK", "0") == "0":
+            try:
+                from rfdetr.datasets.save_grids import DatasetGridSaver
+
+                datamodule.setup("fit")
+                grids_output_dir = Path(config.output_dir) / "dataset_grids"
+                DatasetGridSaver(datamodule.train_dataloader(), grids_output_dir, dataset_type="train").save_grid()
+                DatasetGridSaver(datamodule.val_dataloader(), grids_output_dir, dataset_type="val").save_grid()
+            except Exception:
+                logger.warning(
+                    "Failed to save dataset grids; training will continue without them.",
+                    exc_info=True,
+                )
+
         trainer_kwargs = {"accelerator": _accelerator}
         if _devices is not None:
             trainer_kwargs["devices"] = _devices
