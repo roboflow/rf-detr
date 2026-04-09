@@ -584,8 +584,6 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             "forcing augmentation_backend='cpu' to retain CPU transforms and normalization."
         )
         resolved_augmentation_backend = "cpu"
-        if hasattr(args, "augmentation_backend"):
-            setattr(args, "augmentation_backend", "cpu")
     if resolved_augmentation_backend == "auto":
         resolved_augmentation_backend = _resolve_runtime_augmentation_backend(resolved_augmentation_backend)
         if resolved_augmentation_backend == "cpu":
@@ -593,8 +591,6 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
                 "augmentation_backend='auto' resolved to 'cpu' because CUDA or kornia is unavailable; "
                 "disabling GPU postprocess transforms and retaining CPU normalization."
             )
-            if hasattr(args, "augmentation_backend"):
-                setattr(args, "augmentation_backend", "cpu")
     gpu_postprocess = resolved_augmentation_backend != "cpu" and not include_masks
 
     if square_resize_div_64:
