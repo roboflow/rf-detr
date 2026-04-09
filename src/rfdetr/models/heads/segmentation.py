@@ -8,7 +8,7 @@ from typing import Any, Callable
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+import torch.nn.functional as F  # noqa: N812
 
 from rfdetr.utilities.tensors import _bilinear_grid_sample
 

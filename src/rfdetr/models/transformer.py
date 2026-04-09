@@ -21,7 +21,7 @@ import math
 from typing import Optional
 
 import torch
-import torch.nn.functional as F
+import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
 from rfdetr.models.ops.modules import MSDeformAttn
@@ -71,7 +71,7 @@ def gen_sineembed_for_position(pos_tensor, dim=128):
     return pos
 
 
-def gen_encoder_output_proposals(memory, memory_padding_mask, spatial_shapes, unsigmoid=True):
+def gen_encoder_output_proposals(memory, memory_padding_mask=None, spatial_shapes=None, unsigmoid=True):
     r"""
     Input:
         - memory: bs, \sum{hw}, d_model
@@ -81,13 +81,14 @@ def gen_encoder_output_proposals(memory, memory_padding_mask, spatial_shapes, un
         - output_memory: bs, \sum{hw}, d_model
         - output_proposals: bs, \sum{hw}, 4
     """
-    N_, S_, C_ = memory.shape
+    batch_size, _, _ = memory.shape
     proposals = []
     _cur = 0
-    for lvl, (H_, W_) in enumerate(spatial_shapes):
+    for lvl, (height, width) in enumerate(spatial_shapes):
         if memory_padding_mask is not None:
             # reshape(-1, ...) infers batch dynamically in ONNX instead of constant N_
-            mask_flatten_ = memory_padding_mask[:, _cur : (_cur + H_ * W_)].reshape(-1, H_, W_, 1)
+            mask_flatten_ = memory_padding_mask[:, _cur : (_cur + height * width)].view(-1, height, width, 1)
+
             valid_H = torch.sum(~mask_flatten_[:, :, 0, 0], 1)
             valid_W = torch.sum(~mask_flatten_[:, 0, :, 0], 1)
         else:
@@ -97,11 +98,11 @@ def gen_encoder_output_proposals(memory, memory_padding_mask, spatial_shapes, un
             valid_W = torch.zeros_like(memory[:, 0, 0]).long() + W_
 
         grid_y, grid_x = torch.meshgrid(
-            torch.linspace(0, H_ - 1, H_, dtype=torch.float32, device=memory.device),
-            torch.linspace(0, W_ - 1, W_, dtype=torch.float32, device=memory.device),
+            torch.linspace(0, height - 1, height, dtype=torch.float32, device=memory.device),
+            torch.linspace(0, width - 1, width, dtype=torch.float32, device=memory.device),
             indexing="ij",
         )
-        grid = torch.cat([grid_x.unsqueeze(-1), grid_y.unsqueeze(-1)], -1)  # H_, W_, 2
+        grid = torch.cat([grid_x.unsqueeze(-1), grid_y.unsqueeze(-1)], -1)  # height, width, 2
 
         # reshape(-1, ...) and unsqueeze(0) broadcasting avoid hardcoding N_ in ONNX
         scale = torch.cat([valid_W.unsqueeze(-1), valid_H.unsqueeze(-1)], 1).reshape(-1, 1, 1, 2)
@@ -111,7 +112,7 @@ def gen_encoder_output_proposals(memory, memory_padding_mask, spatial_shapes, un
 
         proposal = torch.cat((grid, wh), -1).reshape(-1, H_ * W_, 4)  # -1 infers N_ dynamically
         proposals.append(proposal)
-        _cur += H_ * W_
+        _cur += height * width
 
     output_proposals = torch.cat(proposals, 1)
     output_proposals_valid = ((output_proposals > 0.01) & (output_proposals < 0.99)).all(-1, keepdim=True)
@@ -216,11 +217,11 @@ class Transformer(nn.Module):
                 m._reset_parameters()
 
     def get_valid_ratio(self, mask):
-        _, H, W = mask.shape
-        valid_H = torch.sum(~mask[:, :, 0], 1)
-        valid_W = torch.sum(~mask[:, 0, :], 1)
-        valid_ratio_h = valid_H.float() / H
-        valid_ratio_w = valid_W.float() / W
+        _, height, width = mask.shape
+        valid_height = torch.sum(~mask[:, :, 0], 1)
+        valid_width = torch.sum(~mask[:, 0, :], 1)
+        valid_ratio_h = valid_height.float() / height
+        valid_ratio_w = valid_width.float() / width
         valid_ratio = torch.stack([valid_ratio_w, valid_ratio_h], -1)
         return valid_ratio
 
@@ -334,6 +335,7 @@ class Transformer(nn.Module):
                 level_start_index=level_start_index,
                 spatial_shapes=spatial_shapes,
                 valid_ratios=valid_ratios.to(memory.dtype) if valid_ratios is not None else valid_ratios,
+                spatial_shapes_hw=spatial_shapes_hw,
             )
         else:
             assert self.two_stage, "if not using decoder, two_stage must be True"
@@ -398,8 +400,9 @@ class TransformerDecoder(nn.Module):
         refpoints_unsigmoid: Optional[Tensor] = None,
         # for memory
         level_start_index: Optional[Tensor] = None,  # num_levels
-        spatial_shapes: Optional[Tensor] = None,  # bs, num_levels, 2
+        spatial_shapes: Optional[Tensor] = None,  # num_levels, 2
         valid_ratios: Optional[Tensor] = None,
+        spatial_shapes_hw: list[tuple[int, int]] | None = None,
     ):
         output = tgt
 
@@ -459,6 +462,7 @@ class TransformerDecoder(nn.Module):
                 reference_points=refpoints_input,
                 spatial_shapes=spatial_shapes,
                 level_start_index=level_start_index,
+                spatial_shapes_hw=spatial_shapes_hw,
             )
 
             if not self.lite_refpoint_refine:
@@ -558,6 +562,7 @@ class TransformerDecoderLayer(nn.Module):
         reference_points=None,
         spatial_shapes=None,
         level_start_index=None,
+        spatial_shapes_hw: list[tuple[int, int]] | None = None,
     ):
         bs, num_queries, _ = tgt.shape
 
@@ -588,6 +593,7 @@ class TransformerDecoderLayer(nn.Module):
             spatial_shapes,
             level_start_index,
             memory_key_padding_mask,
+            input_spatial_shapes_hw=spatial_shapes_hw,
         )
         # ========== End of Cross-Attention =============
 
@@ -613,6 +619,7 @@ class TransformerDecoderLayer(nn.Module):
         reference_points=None,
         spatial_shapes=None,
         level_start_index=None,
+        spatial_shapes_hw: list[tuple[int, int]] | None = None,
     ):
         return self.forward_post(
             tgt,
@@ -628,11 +635,12 @@ class TransformerDecoderLayer(nn.Module):
             reference_points,
             spatial_shapes,
             level_start_index,
+            spatial_shapes_hw=spatial_shapes_hw,
         )
 
 
-def _get_clones(module, N):
-    return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
+def _get_clones(module, num_layers):
+    return nn.ModuleList([copy.deepcopy(module) for i in range(num_layers)])
 
 
 def build_transformer(args):

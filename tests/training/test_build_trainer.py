@@ -7,6 +7,7 @@
 """Tests for build_trainer() — PTL Ch3/T5 (callbacks) and Ch4/T1 (precision, loggers, trainer kwargs)."""
 
 import warnings
+from unittest.mock import MagicMock, patch
 
 import pytest
 from pytorch_lightning.callbacks import ModelCheckpoint
@@ -235,13 +236,7 @@ class TestBuildTrainerPrecision:
         assert trainer.precision == "32-true"
 
     def test_amp_true_cuda_no_bf16_gives_16_mixed(self, tmp_path):
-        """amp=True with CUDA but no bf16 support must produce '16-mixed'.
-
-        We mock the Trainer constructor to capture the precision kwarg rather
-        than inspecting trainer.precision after construction: PTL may re-detect
-        hardware bf16 support during __init__ and normalise the precision string
-        on machines that happen to have a bf16-capable GPU.
-        """
+        """amp=True with CUDA but no bf16 support must produce '16-mixed'."""
         import unittest.mock as mock
 
         captured: dict = {}
@@ -259,12 +254,7 @@ class TestBuildTrainerPrecision:
         assert captured["precision"] == "16-mixed"
 
     def test_amp_true_cuda_bf16_supported_gives_bf16_mixed(self, tmp_path):
-        """amp=True with CUDA + bf16 hardware produces 'bf16-mixed' (scaler-free).
-
-        On Ampere+ GPUs (bf16 supported) we select bf16-mixed to eliminate
-        GradScaler overhead.  Fine-tuning from pretrained weights is safe with
-        BF16; callers training from scratch can override via trainer_kwargs.
-        """
+        """amp=True with CUDA + bf16 hardware produces 'bf16-mixed'."""
         import unittest.mock as mock
 
         captured: dict = {}
@@ -280,6 +270,80 @@ class TestBuildTrainerPrecision:
         ):
             build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=True))
         assert captured["precision"] == "bf16-mixed"
+
+    @patch("torch.cuda.is_available", return_value=True)
+    @patch("torch.cuda.is_bf16_supported", return_value=False)
+    @patch("rfdetr.training.trainer.Trainer")
+    def test_amp_true_ddp_notebook_probes_bf16_normally(
+        self, mock_trainer: MagicMock, _mock_bf16: MagicMock, _mock_cuda: MagicMock, tmp_path
+    ):
+        """ddp_notebook uses standard precision probing (spawn makes CUDA init safe).
+
+        With spawn-based DDP, child processes start fresh — CUDA init in the
+        parent does not propagate.  So ``is_bf16_supported()`` is safe to call
+        and pre-Ampere GPUs correctly get ``16-mixed`` instead of the slower
+        bf16 emulation path.  Simulates pre-Ampere GPU: CUDA available, bf16 NOT supported.
+        """
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        mock_trainer.side_effect = _fake_trainer
+        build_trainer(
+            _tc(tmp_path, use_ema=False, strategy="ddp_notebook"),
+            _mc(amp=True),
+        )
+        assert captured["precision"] == "16-mixed"
+
+    @pytest.mark.parametrize("strategy_name", ["ddp_notebook", "ddp_spawn"])
+    def test_ddp_notebook_and_spawn_use_interactive_spawn(self, tmp_path, strategy_name):
+        """ddp_notebook and ddp_spawn must be replaced with interactive spawn DDPStrategy.
+
+        Fork-based DDP inherits the parent's OpenMP thread pool which is
+        invalid after fork, causing SIGABRT in the autograd engine.
+        ddp_spawn is blocked by PTL in notebooks without the override.
+        """
+        import unittest.mock as mock
+
+        from pytorch_lightning.strategies import DDPStrategy
+
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
+            build_trainer(
+                _tc(tmp_path, use_ema=False, strategy=strategy_name),
+                _mc(amp=True),
+            )
+        strategy_obj = captured["strategy"]
+        assert isinstance(strategy_obj, DDPStrategy)
+        assert strategy_obj._start_method == "spawn"
+        assert strategy_obj._ddp_kwargs.get("find_unused_parameters") is True
+
+    @patch("rfdetr.training.trainer._InteractiveSpawnLauncher", None)
+    def test_ddp_notebook_raises_clear_error_when_private_launcher_is_missing(self, tmp_path):
+        """Missing private PTL launcher should raise a targeted compatibility error."""
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        with patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
+            build_trainer(
+                _tc(tmp_path, use_ema=False, strategy="ddp_notebook"),
+                _mc(amp=True),
+            )
+
+        strategy = captured["strategy"]
+        strategy.cluster_environment = object()
+        with pytest.raises(RuntimeError, match="private API"):
+            strategy._configure_launcher()
 
 
 class TestBuildTrainerEMAShardingGuard:
