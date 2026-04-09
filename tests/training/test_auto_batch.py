@@ -174,6 +174,7 @@ def test_train_auto_batch_ensures_model_on_device_before_resolve(
         dataset_dir=None,
         resume=None,
         class_names=None,
+        save_dataset_grids=False,
     )
     mock_self = MagicMock()
     mock_self.model_config = SimpleNamespace(model_name=None)
