@@ -960,8 +960,58 @@ class TestConfigureOptimizers:
         # At the final step, cosine schedule must end at lr_min_factor.
         assert lr_lambda(1000) == pytest.approx(0.2)
 
+    @patch("rfdetr.training.module_model.get_param_dict")
+    @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
+    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
+    def test_fused_optimizer_disabled_when_precision_not_bf16(
+        self,
+        mock_cuda_available,
+        mock_bf16_supported,
+        mock_get_param_dict,
+        tmp_path,
+    ):
+        """Fused AdamW must be disabled when trainer precision is not bf16-mixed.
 
-class TestPredictStep:
+        On Ampere+ GPUs torch.cuda.is_bf16_supported() is True even when the
+        trainer is configured for 32-true precision.  The old code always enabled
+        fused AdamW based on GPU capability alone, crashing with
+        ``params, grads, exp_avgs, and exp_avg_sqs must have same dtype, device,
+        and layout`` when DDP gradient bucket views had non-matching strides.
+        The fix checks ``trainer.precision`` before enabling fused.
+        """
+        module, param_dicts = self._setup_module(tmp_path)
+        mock_get_param_dict.return_value = param_dicts
+        # Simulate trainer configured for full FP32 precision.
+        module._trainer.precision = "32-true"
+
+        optimizer = module.configure_optimizers()["optimizer"]
+
+        assert optimizer.defaults.get("fused") is False or optimizer.defaults.get("fused") is None
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
+    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
+    def test_fused_optimizer_enabled_when_precision_is_bf16_mixed(
+        self,
+        mock_cuda_available,
+        mock_bf16_supported,
+        mock_get_param_dict,
+        tmp_path,
+    ):
+        """Fused AdamW must be enabled when both GPU supports BF16 and trainer uses bf16-mixed.
+
+        The fused path is beneficial (and safe) only when training precision is
+        actually BF16: parameters, gradients, and optimizer state all stay in
+        the same dtype/layout, satisfying the fused kernel requirements.
+        """
+        module, param_dicts = self._setup_module(tmp_path)
+        mock_get_param_dict.return_value = param_dicts
+        # Simulate trainer configured for BF16 mixed precision.
+        module._trainer.precision = "bf16-mixed"
+
+        optimizer = module.configure_optimizers()["optimizer"]
+
+        assert optimizer.defaults.get("fused") is True
     """Tests for predict_step() — verifies that only samples (not targets) are passed
     to the model, that postprocess receives the correct original sizes, and that the
     postprocessor output is returned directly to the caller."""

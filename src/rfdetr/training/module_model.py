@@ -238,7 +238,12 @@ class RFDETRModelModule(LightningModule):
         model_for_params = getattr(self.model, "_orig_mod", self.model)
         param_dicts = get_param_dict(ns, model_for_params)
         param_dicts = [p for p in param_dicts if p["params"].requires_grad]
-        use_fused = self.model_config.fused_optimizer and torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+        use_fused = (
+            self.model_config.fused_optimizer
+            and torch.cuda.is_available()
+            and torch.cuda.is_bf16_supported()
+            and str(self.trainer.precision) in {"bf16-mixed", "bf16", "bf16-true"}
+        )
         optimizer = torch.optim.AdamW(
             param_dicts,
             lr=tc.lr,
@@ -288,7 +293,12 @@ class RFDETRModelModule(LightningModule):
             gradient_clip_algorithm: Clipping algorithm; forwarded to super()
                 for the non-fused path.
         """
-        use_fused = self.model_config.fused_optimizer and torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+        use_fused = (
+            self.model_config.fused_optimizer
+            and torch.cuda.is_available()
+            and torch.cuda.is_bf16_supported()
+            and str(self.trainer.precision) in {"bf16-mixed", "bf16", "bf16-true"}
+        )
         if use_fused:
             if gradient_clip_val and gradient_clip_val > 0:
                 torch.nn.utils.clip_grad_norm_(self.parameters(), gradient_clip_val)
