@@ -21,7 +21,7 @@ import math
 from typing import Optional
 
 import torch
-import torch.nn.functional as F
+import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
 from rfdetr.models.ops.modules import MSDeformAttn

@@ -187,7 +187,7 @@ def _bilinear_grid_sample(
     Returns:
         Sampled tensor of shape ``(N, C, Hg, Wg)``.
     """
-    import torch.nn.functional as F
+    import torch.nn.functional as F  # noqa: N812
 
     if input.device.type != "mps":
         return F.grid_sample(input, grid, mode="bilinear", padding_mode=padding_mode, align_corners=align_corners)

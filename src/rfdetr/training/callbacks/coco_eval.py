@@ -11,7 +11,7 @@ from typing import Any
 
 import numpy as np
 import torch
-import torch.nn.functional as F
+import torch.nn.functional as F  # noqa: N812
 from pytorch_lightning import Callback
 from torchmetrics.detection import MeanAveragePrecision
 

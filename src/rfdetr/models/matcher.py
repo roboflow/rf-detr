@@ -22,7 +22,7 @@ Modules to compute the matching cost and solve the corresponding LSAP.
 
 import numpy as np
 import torch
-import torch.nn.functional as F
+import torch.nn.functional as F  # noqa: N812
 from scipy.optimize import linear_sum_assignment
 from torch import nn
 

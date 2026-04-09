@@ -21,7 +21,7 @@ import math
 import warnings
 
 import torch
-import torch.nn.functional as F
+import torch.nn.functional as F  # noqa: N812
 from torch import nn
 from torch.nn.init import constant_, xavier_uniform_
 

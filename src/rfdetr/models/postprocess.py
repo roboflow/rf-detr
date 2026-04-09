@@ -11,7 +11,7 @@
 """Post-processing module for converting model outputs to COCO API format."""
 
 import torch
-import torch.nn.functional as F
+import torch.nn.functional as F  # noqa: N812
 from torch import nn
 
 from rfdetr.utilities import box_ops
