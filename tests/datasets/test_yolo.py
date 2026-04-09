@@ -114,11 +114,12 @@ class TestBuildRoboflowFromYoloAugConfig:
     def test_auto_no_cuda_sets_gpu_postprocess_false(self) -> None:
         """auto + no CUDA must keep CPU normalize by passing gpu_postprocess=False."""
         args = self._make_args(square_resize_div_64=False, aug_config=None)
+        args.augmentation_backend = "auto"
         with (
             patch("rfdetr.datasets.yolo.Path") as mock_path,
             patch("rfdetr.datasets.yolo.make_coco_transforms") as mock_transform,
             patch("rfdetr.datasets.yolo.YoloDetection") as mock_dataset,
-            patch("torch.cuda.is_available", return_value=False),
+            patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=False),
         ):
             mock_path.return_value.exists.return_value = True
             mock_transform.return_value = MagicMock()
