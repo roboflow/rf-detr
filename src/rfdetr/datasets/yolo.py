@@ -691,7 +691,7 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
     assert root.exists(), f"provided Roboflow path {root} does not exist"
 
     # YOLO format uses images/ and labels/ subdirectories
-    PATHS = {
+    PATHS = {  # noqa: N806
         "train": (root / "train" / "images", root / "train" / "labels"),
         "val": (root / "valid" / "images", root / "valid" / "labels"),
         "test": (root / "test" / "images", root / "test" / "labels"),

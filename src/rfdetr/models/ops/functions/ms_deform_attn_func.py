@@ -30,27 +30,33 @@ def ms_deform_attn_core_pytorch(
     value_spatial_shapes_hw: list[tuple[int, int]] | None = None,
 ) -> torch.Tensor:
     """For debug and test only, need to use cuda version instead."""
-    # B, n_heads, head_dim, N
-    B, n_heads, head_dim, _ = value.shape
-    _, Len_q, n_heads, L, P, _ = sampling_locations.shape
+    # batch_size, n_heads, head_dim, spatial_size
+    batch_size, n_heads, head_dim, _ = value.shape
+    _, len_query, n_heads, num_levels, num_points, _ = sampling_locations.shape
     # Use Python int pairs when available (required for torch.export compatibility,
     # since iterating over a tensor and using scalar elements as split/view sizes
     # fails during FakeTensor tracing).
     shapes = value_spatial_shapes_hw if value_spatial_shapes_hw is not None else value_spatial_shapes
-    value_list = value.split([H * W for H, W in shapes], dim=3)
+    value_list = value.split([height * width for height, width in shapes], dim=3)
     sampling_grids = 2 * sampling_locations - 1
     sampling_value_list = []
-    for lid_, (H, W) in enumerate(shapes):
-        # B, n_heads, head_dim, H, W
-        value_l_ = value_list[lid_].view(B * n_heads, head_dim, H, W)
-        # B, Len_q, n_heads, P, 2 -> B, n_heads, Len_q, P, 2 -> B*n_heads, Len_q, P, 2
-        sampling_grid_l_ = sampling_grids[:, :, :, lid_].transpose(1, 2).flatten(0, 1)
-        # B*n_heads, head_dim, Len_q, P
+    for level_index, (height, width) in enumerate(shapes):
+        # batch_size, n_heads, head_dim, height, width
+        value_l_ = value_list[level_index].view(batch_size * n_heads, head_dim, height, width)
+        # batch_size, len_query, n_heads, num_points, 2
+        # -> batch_size, n_heads, len_query, num_points, 2
+        # -> batch_size*n_heads, len_query, num_points, 2
+        sampling_grid_l_ = sampling_grids[:, :, :, level_index].transpose(1, 2).flatten(0, 1)
+        # batch_size*n_heads, head_dim, len_query, num_points
         sampling_value_l_ = _bilinear_grid_sample(value_l_, sampling_grid_l_, padding_mode="zeros", align_corners=False)
         sampling_value_list.append(sampling_value_l_)
-    # (B, Len_q, n_heads, L * P) -> (B, n_heads, Len_q, L, P) -> (B*n_heads, 1, Len_q, L*P)
-    attention_weights = attention_weights.transpose(1, 2).reshape(B * n_heads, 1, Len_q, L * P)
-    # B*n_heads, head_dim, Len_q, L*P
+    # (batch_size, len_query, n_heads, num_levels * num_points)
+    # -> (batch_size, n_heads, len_query, num_levels, num_points)
+    # -> (batch_size*n_heads, 1, len_query, num_levels*num_points)
+    attention_weights = attention_weights.transpose(1, 2).reshape(
+        batch_size * n_heads, 1, len_query, num_levels * num_points
+    )
+    # batch_size*n_heads, head_dim, len_query, num_levels*num_points
     sampling_value_list = torch.stack(sampling_value_list, dim=-2).flatten(-2)
-    output = (sampling_value_list * attention_weights).sum(-1).view(B, n_heads * head_dim, Len_q)
+    output = (sampling_value_list * attention_weights).sum(-1).view(batch_size, n_heads * head_dim, len_query)
     return output.transpose(1, 2).contiguous()

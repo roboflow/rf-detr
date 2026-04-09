@@ -14,7 +14,7 @@ import warnings
 from typing import Any, Dict, Optional, Tuple
 
 import torch
-import torch.nn.functional as F
+import torch.nn.functional as F  # noqa: N812
 from pytorch_lightning import LightningModule, seed_everything
 
 from rfdetr._namespace import _namespace_from_configs

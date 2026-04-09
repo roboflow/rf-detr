@@ -21,7 +21,7 @@ import math
 import warnings
 
 import torch
-import torch.nn.functional as F
+import torch.nn.functional as F  # noqa: N812
 from torch import nn
 from torch.nn.init import constant_, xavier_uniform_
 
@@ -129,21 +129,25 @@ class MSDeformAttn(nn.Module):
         Returns:
             Output tensor of shape (N, Length_{query}, C).
         """
-        N, Len_q, _ = query.shape
-        N, Len_in, _ = input_flatten.shape
+        batch_size, len_query, _ = query.shape
+        batch_size, len_input, _ = input_flatten.shape
         expected_len_in = (input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum()
         error_msg = "input_spatial_shapes must match the flattened input length"
         if self._export:
-            torch._assert(expected_len_in == Len_in, error_msg)
+            torch._assert(expected_len_in == len_input, error_msg)
         else:
-            assert expected_len_in == Len_in, error_msg
+            assert expected_len_in == len_input, error_msg
 
         value = self.value_proj(input_flatten)
         if input_padding_mask is not None:
             value = value.masked_fill(input_padding_mask[..., None], float(0))
 
-        sampling_offsets = self.sampling_offsets(query).view(N, Len_q, self.n_heads, self.n_levels, self.n_points, 2)
-        attention_weights = self.attention_weights(query).view(N, Len_q, self.n_heads, self.n_levels * self.n_points)
+        sampling_offsets = self.sampling_offsets(query).view(
+            batch_size, len_query, self.n_heads, self.n_levels, self.n_points, 2
+        )
+        attention_weights = self.attention_weights(query).view(
+            batch_size, len_query, self.n_heads, self.n_levels * self.n_points
+        )
 
         # N, Len_q, n_heads, n_levels, n_points, 2
         if reference_points.shape[-1] == 2:
@@ -163,7 +167,9 @@ class MSDeformAttn(nn.Module):
             )
         attention_weights = F.softmax(attention_weights, -1)
 
-        value = value.transpose(1, 2).contiguous().view(N, self.n_heads, self.d_model // self.n_heads, Len_in)
+        value = (
+            value.transpose(1, 2).contiguous().view(batch_size, self.n_heads, self.d_model // self.n_heads, len_input)
+        )
         output = ms_deform_attn_core_pytorch(
             value,
             input_spatial_shapes,
