@@ -594,7 +594,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             "forcing augmentation_backend='cpu' to retain CPU transforms and normalization."
         )
         resolved_augmentation_backend = "cpu"
-    if resolved_augmentation_backend == "auto":
+    if resolved_augmentation_backend != "cpu":
         resolved_augmentation_backend = _resolve_runtime_augmentation_backend(resolved_augmentation_backend)
         if resolved_augmentation_backend == "cpu":
             logger.warning(
