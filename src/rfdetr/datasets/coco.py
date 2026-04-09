@@ -406,6 +406,11 @@ def make_coco_transforms(
     normalisation.  For ``"val"``, ``"test"``, and ``"val_speed"`` only resize and
     normalisation are applied — no augmentation.
 
+    When *gpu_postprocess* is ``True``, both the Albumentations augmentation
+    wrappers and the ``Normalize`` step are omitted from the ``"train"`` pipeline.
+    The ``RFDETRDataModule`` then applies augmentation and normalization on the
+    device in ``on_after_batch_transfer`` instead.
+
     Args:
         image_set: Dataset split identifier — ``"train"``, ``"val"``, ``"test"``,
             or ``"val_speed"``.
@@ -497,6 +502,11 @@ def make_coco_transforms_square_div_64(
     resizes them to square shapes suitable for models that require spatial dimensions
     divisible by 64. It supports multi-scale training and optional random resizing and
     cropping for the training split.
+
+    When *gpu_postprocess* is ``True``, both the Albumentations augmentation
+    wrappers and the ``Normalize`` step are omitted from the ``"train"`` pipeline.
+    The ``RFDETRDataModule`` then applies augmentation and normalization on the
+    device in ``on_after_batch_transfer`` instead.
 
     Args:
         image_set: Dataset split identifier. Expected values are "train", "val",
