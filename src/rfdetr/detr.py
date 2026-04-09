@@ -605,12 +605,8 @@ class RFDETR:
 
             datamodule.setup("fit")
             grids_output_dir = Path(config.output_dir) / "dataset_grids"
-            DatasetGridSaver(
-                datamodule.train_dataloader(), grids_output_dir, dataset_type="train"
-            ).save_grid()
-            DatasetGridSaver(
-                datamodule.val_dataloader(), grids_output_dir, dataset_type="val"
-            ).save_grid()
+            DatasetGridSaver(datamodule.train_dataloader(), grids_output_dir, dataset_type="train").save_grid()
+            DatasetGridSaver(datamodule.val_dataloader(), grids_output_dir, dataset_type="val").save_grid()
 
         trainer_kwargs = {"accelerator": _accelerator}
         if _devices is not None:
