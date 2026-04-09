@@ -37,22 +37,26 @@ def test_gen_encoder_output_proposals_passes_ij_indexing_to_meshgrid(monkeypatch
 
 
 def test_gen_encoder_output_proposals_rejects_non_square_ij_indexing(monkeypatch) -> None:
-    """`gen_encoder_output_proposals` must raise when `torch.meshgrid` is called without ij indexing."""
+    """Wrong meshgrid indexing (xy vs ij) produces different proposals for non-square spatial shapes."""
     original_meshgrid = torch.meshgrid
 
     def _meshgrid_wrong_indexing(*args, **kwargs):
         kwargs["indexing"] = "xy"
         return original_meshgrid(*args, **kwargs)
 
+    # Use non-square spatial shapes so that ij vs xy indexing produces observably different outputs.
+    memory = torch.randn(1, 8, 8)
+    spatial_shapes = torch.tensor([[2, 4]], dtype=torch.long)
+
+    correct_memory, correct_proposals = gen_encoder_output_proposals(memory, spatial_shapes=spatial_shapes)
+
     monkeypatch.setattr(torch, "meshgrid", _meshgrid_wrong_indexing)
 
-    memory = torch.randn(1, 4, 8)
-    spatial_shapes = torch.tensor([[2, 2]], dtype=torch.long)
+    wrong_memory, wrong_proposals = gen_encoder_output_proposals(memory, spatial_shapes=spatial_shapes)
 
-    try:
-        gen_encoder_output_proposals(memory, spatial_shapes=spatial_shapes)
-    except Exception:
-        pass  # Expected: wrong indexing leads to shape mismatch downstream
+    assert not torch.allclose(correct_proposals, wrong_proposals), (
+        "xy indexing must produce different proposals than ij indexing for non-square spatial shapes"
+    )
 
 
 def test_gen_encoder_output_proposals_accepts_int_tuple_spatial_shapes() -> None:
@@ -64,6 +68,26 @@ def test_gen_encoder_output_proposals_accepts_int_tuple_spatial_shapes() -> None
 
     output_memory, output_proposals = gen_encoder_output_proposals(
         memory,
+        spatial_shapes=spatial_shapes,
+    )
+
+    assert output_memory.shape == memory.shape
+    assert output_proposals.shape == (batch, h * w, 4)
+
+
+def test_gen_encoder_output_proposals_accepts_python_int_pair_spatial_shapes() -> None:
+    """`gen_encoder_output_proposals` must accept `spatial_shapes` as `list[tuple[int, int]]` with no padding mask.
+
+    Regression: `Transformer.forward` passes Python int pairs derived from `src.shape`, so the
+    export-driven call path uses `list[tuple[int, int]]` rather than a tensor.
+    """
+    batch, h, w, d = 2, 4, 4, 8
+    memory = torch.randn(batch, h * w, d)
+    spatial_shapes = [(h, w)]  # Python int pairs, as produced by Transformer.forward()
+
+    output_memory, output_proposals = gen_encoder_output_proposals(
+        memory,
+        memory_padding_mask=None,
         spatial_shapes=spatial_shapes,
     )
 
