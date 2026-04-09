@@ -29,6 +29,7 @@ import pytest
 import torch
 
 from rfdetr.config import (
+    RFDETRBaseConfig,
     RFDETRLargeConfig,
     RFDETRMediumConfig,
     RFDETRNanoConfig,
