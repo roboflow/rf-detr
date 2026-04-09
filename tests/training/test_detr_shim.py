@@ -673,6 +673,24 @@ class TestRFDETRTrainPTLAbsorption:
         called_dirs = [call.args[1] for call in mock_saver_cls.call_args_list]
         assert all(d == expected_output_dir for d in called_dirs)
 
+    def test_save_dataset_grids_failure_does_not_abort_training(self, tmp_path, patch_lit):
+        """A save_grid() failure must not abort training — trainer.fit() must still be called."""
+        mock_self = _make_rfdetr_self(tmp_path, save_dataset_grids=True)
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
+        mock_saver_cls = MagicMock(name="DatasetGridSaver")
+        mock_saver_cls.return_value.save_grid.side_effect = OSError("disk full")
+        with (
+            p_mod,
+            p_dm,
+            p_bt,
+            patch("rfdetr.datasets.save_grids.DatasetGridSaver", mock_saver_cls),
+        ):
+            # Must not raise even though save_grid() fails
+            RFDETR.train(mock_self)
+
+        # Training must proceed regardless of the grid-save failure
+        mock_bt.return_value.fit.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # 3. convert_legacy_checkpoint
