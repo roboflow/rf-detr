@@ -450,6 +450,7 @@ class TrainConfig(BaseModel):
     log_per_class_metrics: bool = True
     aug_config: Optional[Dict[str, Any]] = None
     augmentation_backend: Literal["cpu", "auto", "gpu"] = "cpu"
+    save_dataset_grids: bool = False
 
     @model_validator(mode="after")
     def _warn_deprecated_train_config_fields(self) -> "TrainConfig":
