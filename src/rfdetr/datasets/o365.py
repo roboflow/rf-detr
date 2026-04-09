@@ -24,7 +24,7 @@ logger = get_logger()
 
 def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
     root = Path(getattr(args, "dataset_dir", None) or args.coco_path)
-    PATHS = {
+    PATHS = {  # noqa: N806
         "train": (root, root / "zhiyuan_objv2_train_val_wo_5k.json"),
         "val": (root, root / "zhiyuan_objv2_minival5k.json"),
     }

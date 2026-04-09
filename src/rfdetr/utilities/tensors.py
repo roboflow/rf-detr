@@ -187,7 +187,7 @@ def _bilinear_grid_sample(
     Returns:
         Sampled tensor of shape ``(N, C, Hg, Wg)``.
     """
-    import torch.nn.functional as F
+    import torch.nn.functional as F  # noqa: N812
 
     if input.device.type != "mps":
         return F.grid_sample(input, grid, mode="bilinear", padding_mode=padding_mode, align_corners=align_corners)
@@ -199,16 +199,16 @@ def _bilinear_grid_sample(
         )
         raise ValueError(msg)
 
-    N, C, H, W = input.shape
-    Hg, Wg = grid.shape[1], grid.shape[2]
+    batch_size, channels, height, width = input.shape
+    grid_height, grid_width = grid.shape[1], grid.shape[2]
 
     # Unnormalize [-1, 1] → floating-point pixel coordinates
     if align_corners:
-        ix = (grid[..., 0] + 1) * (W - 1) / 2  # [N, Hg, Wg]
-        iy = (grid[..., 1] + 1) * (H - 1) / 2
+        ix = (grid[..., 0] + 1) * (width - 1) / 2  # [batch_size, grid_height, grid_width]
+        iy = (grid[..., 1] + 1) * (height - 1) / 2
     else:
-        ix = (grid[..., 0] + 1) * W / 2 - 0.5
-        iy = (grid[..., 1] + 1) * H / 2 - 0.5
+        ix = (grid[..., 0] + 1) * width / 2 - 0.5
+        iy = (grid[..., 1] + 1) * height / 2 - 0.5
 
     ix0 = ix.floor().long()  # top-left corner
     iy0 = iy.floor().long()
@@ -224,25 +224,25 @@ def _bilinear_grid_sample(
     wy0 = one - wy1
 
     if padding_mode == "border":
-        ix0 = ix0.clamp(0, W - 1)
-        iy0 = iy0.clamp(0, H - 1)
-        ix1 = ix1.clamp(0, W - 1)
-        iy1 = iy1.clamp(0, H - 1)
+        ix0 = ix0.clamp(0, width - 1)
+        iy0 = iy0.clamp(0, height - 1)
+        ix1 = ix1.clamp(0, width - 1)
+        iy1 = iy1.clamp(0, height - 1)
     else:  # zeros: record which corners fall inside the image before clamping
-        in_x0 = (ix0 >= 0) & (ix0 < W)  # [N, Hg, Wg]
-        in_x1 = (ix1 >= 0) & (ix1 < W)
-        in_y0 = (iy0 >= 0) & (iy0 < H)
-        in_y1 = (iy1 >= 0) & (iy1 < H)
-        ix0 = ix0.clamp(0, W - 1)
-        iy0 = iy0.clamp(0, H - 1)
-        ix1 = ix1.clamp(0, W - 1)
-        iy1 = iy1.clamp(0, H - 1)
+        in_x0 = (ix0 >= 0) & (ix0 < width)  # [batch_size, grid_height, grid_width]
+        in_x1 = (ix1 >= 0) & (ix1 < width)
+        in_y0 = (iy0 >= 0) & (iy0 < height)
+        in_y1 = (iy1 >= 0) & (iy1 < height)
+        ix0 = ix0.clamp(0, width - 1)
+        iy0 = iy0.clamp(0, height - 1)
+        ix1 = ix1.clamp(0, width - 1)
+        iy1 = iy1.clamp(0, height - 1)
 
-    flat = input.flatten(2)  # [N, C, H*W]
+    flat = input.flatten(2)  # [batch_size, channels, height*width]
 
     def _gather(iy_: torch.Tensor, ix_: torch.Tensor) -> torch.Tensor:
-        idx = (iy_ * W + ix_).flatten(1).unsqueeze(1).expand(N, C, -1)  # [N, C, Hg*Wg]
-        return flat.gather(2, idx).view(N, C, Hg, Wg)
+        idx = (iy_ * width + ix_).flatten(1).unsqueeze(1).expand(batch_size, channels, -1)
+        return flat.gather(2, idx).view(batch_size, channels, grid_height, grid_width)
 
     v00 = _gather(iy0, ix0)  # top-left
     v10 = _gather(iy0, ix1)  # top-right

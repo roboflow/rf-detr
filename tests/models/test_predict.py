@@ -186,7 +186,7 @@ class TestPredictShape:
         """Without ``shape=``, resize uses ``(resolution, resolution)``."""
         from unittest.mock import patch
 
-        import torchvision.transforms.functional as F
+        import torchvision.transforms.functional as F  # noqa: N812
 
         model = _DummyRFDETR()
         img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
@@ -201,7 +201,7 @@ class TestPredictShape:
         # Regression test for #682
         from unittest.mock import patch
 
-        import torchvision.transforms.functional as F
+        import torchvision.transforms.functional as F  # noqa: N812
 
         model = _DummyRFDETR()
         img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
@@ -220,7 +220,7 @@ class TestPredictShape:
         # Regression test for #682 — square shape different from model resolution.
         from unittest.mock import patch
 
-        import torchvision.transforms.functional as F
+        import torchvision.transforms.functional as F  # noqa: N812
 
         model = _DummyRFDETR()
         img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
@@ -247,7 +247,7 @@ class TestPredictShape:
         """predict() accepts integer-like types (numpy, torch) via the __index__ protocol."""
         from unittest.mock import patch
 
-        import torchvision.transforms.functional as F
+        import torchvision.transforms.functional as F  # noqa: N812
 
         model = _DummyRFDETR()
         img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))

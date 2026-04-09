@@ -307,10 +307,10 @@ class TRTInference(object):
         """Takes an ONNX file and creates a TensorRT engine to run inference with
         http://gitlab.baidu.com/paddle-inference/benchmark/blob/main/backend_trt.py#L57
         """
-        EXPLICIT_BATCH = 1 << (int)(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH)
+        explicit_batch_flag = 1 << (int)(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH)
         with (
             trt.Builder(self.logger) as builder,
-            builder.create_network(EXPLICIT_BATCH) as network,
+            builder.create_network(explicit_batch_flag) as network,
             trt.OnnxParser(network, self.logger) as parser,
             builder.create_builder_config() as config,
         ):

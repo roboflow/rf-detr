@@ -21,7 +21,7 @@ import math
 from typing import Optional
 
 import torch
-import torch.nn.functional as F
+import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
 from rfdetr.models.ops.modules import MSDeformAttn
@@ -81,39 +81,39 @@ def gen_encoder_output_proposals(memory, memory_padding_mask=None, spatial_shape
         - output_memory: bs, \sum{hw}, d_model
         - output_proposals: bs, \sum{hw}, 4
     """
-    N_, S_, C_ = memory.shape
+    batch_size, _, _ = memory.shape
     proposals = []
     _cur = 0
-    for lvl, (H_, W_) in enumerate(spatial_shapes):
+    for lvl, (height, width) in enumerate(spatial_shapes):
         if memory_padding_mask is not None:
-            mask_flatten_ = memory_padding_mask[:, _cur : (_cur + H_ * W_)].view(N_, H_, W_, 1)
-            valid_H = torch.sum(~mask_flatten_[:, :, 0, 0], 1)
-            valid_W = torch.sum(~mask_flatten_[:, 0, :, 0], 1)
+            mask_flatten_ = memory_padding_mask[:, _cur : (_cur + height * width)].view(batch_size, height, width, 1)
+            valid_height = torch.sum(~mask_flatten_[:, :, 0, 0], 1)
+            valid_width = torch.sum(~mask_flatten_[:, 0, :, 0], 1)
         else:
-            if isinstance(H_, torch.Tensor):
-                valid_H = H_.expand(N_).to(dtype=torch.long, device=memory.device)
+            if isinstance(height, torch.Tensor):
+                valid_height = height.expand(batch_size).to(dtype=torch.long, device=memory.device)
             else:
-                valid_H = torch.full((N_,), H_, dtype=torch.long, device=memory.device)
-            if isinstance(W_, torch.Tensor):
-                valid_W = W_.expand(N_).to(dtype=torch.long, device=memory.device)
+                valid_height = torch.full((batch_size,), height, dtype=torch.long, device=memory.device)
+            if isinstance(width, torch.Tensor):
+                valid_width = width.expand(batch_size).to(dtype=torch.long, device=memory.device)
             else:
-                valid_W = torch.full((N_,), W_, dtype=torch.long, device=memory.device)
+                valid_width = torch.full((batch_size,), width, dtype=torch.long, device=memory.device)
 
         grid_y, grid_x = torch.meshgrid(
-            torch.linspace(0, H_ - 1, H_, dtype=torch.float32, device=memory.device),
-            torch.linspace(0, W_ - 1, W_, dtype=torch.float32, device=memory.device),
+            torch.linspace(0, height - 1, height, dtype=torch.float32, device=memory.device),
+            torch.linspace(0, width - 1, width, dtype=torch.float32, device=memory.device),
             indexing="ij",
         )
-        grid = torch.cat([grid_x.unsqueeze(-1), grid_y.unsqueeze(-1)], -1)  # H_, W_, 2
+        grid = torch.cat([grid_x.unsqueeze(-1), grid_y.unsqueeze(-1)], -1)  # height, width, 2
 
-        scale = torch.cat([valid_W.unsqueeze(-1), valid_H.unsqueeze(-1)], 1).view(N_, 1, 1, 2)
-        grid = (grid.unsqueeze(0).expand(N_, -1, -1, -1) + 0.5) / scale
+        scale = torch.cat([valid_width.unsqueeze(-1), valid_height.unsqueeze(-1)], 1).view(batch_size, 1, 1, 2)
+        grid = (grid.unsqueeze(0).expand(batch_size, -1, -1, -1) + 0.5) / scale
 
         wh = torch.ones_like(grid) * 0.05 * (2.0**lvl)
 
-        proposal = torch.cat((grid, wh), -1).view(N_, -1, 4)
+        proposal = torch.cat((grid, wh), -1).view(batch_size, -1, 4)
         proposals.append(proposal)
-        _cur += H_ * W_
+        _cur += height * width
 
     output_proposals = torch.cat(proposals, 1)
     output_proposals_valid = ((output_proposals > 0.01) & (output_proposals < 0.99)).all(-1, keepdim=True)
@@ -218,11 +218,11 @@ class Transformer(nn.Module):
                 m._reset_parameters()
 
     def get_valid_ratio(self, mask):
-        _, H, W = mask.shape
-        valid_H = torch.sum(~mask[:, :, 0], 1)
-        valid_W = torch.sum(~mask[:, 0, :], 1)
-        valid_ratio_h = valid_H.float() / H
-        valid_ratio_w = valid_W.float() / W
+        _, height, width = mask.shape
+        valid_height = torch.sum(~mask[:, :, 0], 1)
+        valid_width = torch.sum(~mask[:, 0, :], 1)
+        valid_ratio_h = valid_height.float() / height
+        valid_ratio_w = valid_width.float() / width
         valid_ratio = torch.stack([valid_ratio_w, valid_ratio_h], -1)
         return valid_ratio
 
@@ -636,8 +636,8 @@ class TransformerDecoderLayer(nn.Module):
         )
 
 
-def _get_clones(module, N):
-    return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
+def _get_clones(module, num_layers):
+    return nn.ModuleList([copy.deepcopy(module) for i in range(num_layers)])
 
 
 def build_transformer(args):

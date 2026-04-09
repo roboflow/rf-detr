@@ -132,24 +132,24 @@ class TestDetectionMetricsCSV:
         value equals the raw weighted criterion output so both losses are on the
         same scale.
         """
-        FIXED_LOSS = 5.0
-        GRAD_ACCUM = 4
+        fixed_loss_value = 5.0
+        grad_accum_steps = 4
 
         class _FixedCriterion:
             weight_dict = {"loss_ce": 1.0}
 
             def __call__(self, outputs, targets):
-                # Loss is always FIXED_LOSS, connected to model params for gradient.
+                # Loss is always fixed_loss_value, connected to model params for gradient.
                 dummy = outputs.get("dummy", torch.zeros(1))
-                return {"loss_ce": dummy.mean() * 0 + FIXED_LOSS}
+                return {"loss_ce": dummy.mean() * 0 + fixed_loss_value}
 
         mc = base_model_config()
-        tc = base_train_config(use_ema=False, run_test=False, grad_accum_steps=GRAD_ACCUM)
+        tc = base_train_config(use_ema=False, run_test=False, grad_accum_steps=grad_accum_steps)
         df = _fit_and_read_csv(mc, tc, criterion=_FixedCriterion())
 
         logged = df["train/loss"].dropna().mean()
-        expected_unscaled = FIXED_LOSS
-        expected_if_divided = FIXED_LOSS / GRAD_ACCUM
+        expected_unscaled = fixed_loss_value
+        expected_if_divided = fixed_loss_value / grad_accum_steps
 
         assert abs(logged - expected_unscaled) < abs(logged - expected_if_divided), (
             f"train/loss={logged:.4f} is closer to the grad-accum-divided value "

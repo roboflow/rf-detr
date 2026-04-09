@@ -18,7 +18,7 @@
 """Utilities for bounding box manipulation and GIoU."""
 
 import torch
-import torch.nn.functional as F
+import torch.nn.functional as F  # noqa: N812
 from torchvision.ops.boxes import box_area
 
 
