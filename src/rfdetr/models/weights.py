@@ -113,6 +113,7 @@ def load_pretrain_weights(
     # "model." (matching the attribute path inside RFDETRModelModule).  Legacy and
     # BestModelCallback checkpoints already have a top-level "model" key.
     if "model" not in checkpoint and "state_dict" in checkpoint:
+        logger.debug("Normalizing PTL .ckpt checkpoint format (state_dict -> model)")
         prefix = "model."
         model_state = {k[len(prefix) :]: v for k, v in checkpoint["state_dict"].items() if k.startswith(prefix)}
         if not model_state:
