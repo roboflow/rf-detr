@@ -239,6 +239,145 @@ class TestLoadPretrainWeightsClassNames:
 
 
 # ---------------------------------------------------------------------------
+# load_pretrain_weights — PTL .ckpt format
+# ---------------------------------------------------------------------------
+
+
+class TestLoadPretrainWeightsPTLCkptFormat:
+    """Verify that PTL-native .ckpt checkpoints (state_dict, no model key) are handled."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_io(self, monkeypatch):
+        """Suppress all download, file-existence, and validation side effects."""
+        monkeypatch.setattr("rfdetr.models.weights.download_pretrain_weights", lambda *a, **kw: None)
+        monkeypatch.setattr("rfdetr.models.weights.validate_pretrain_weights", lambda *a, **kw: None)
+        monkeypatch.setattr("rfdetr.models.weights.validate_checkpoint_compatibility", lambda *a, **kw: None)
+        monkeypatch.setattr("rfdetr.models.weights.os.path.isfile", lambda _: True)
+
+    def _make_ptl_checkpoint(
+        self,
+        num_classes: int = 91,
+        num_queries: int = 300,
+        group_detr: int = 13,
+    ) -> dict:
+        """Build a fake PTL-native checkpoint with state_dict keys prefixed by 'model.'.
+
+        Args:
+            num_classes: Total classes including background (bias shape).
+            num_queries: Number of object queries per group.
+            group_detr: Number of groups.
+        """
+        total_queries = num_queries * group_detr
+        raw_state = {
+            "class_embed.weight": torch.randn(num_classes, 256),
+            "class_embed.bias": torch.randn(num_classes),
+            "refpoint_embed.weight": torch.randn(total_queries, 4),
+            "query_feat.weight": torch.randn(total_queries, 256),
+            "other_layer.weight": torch.randn(10, 10),
+        }
+        return {
+            "state_dict": {f"model.{k}": v for k, v in raw_state.items()},
+            "epoch": 10,
+            "global_step": 1000,
+        }
+
+    def test_ptl_ckpt_loads_successfully(self, monkeypatch):
+        """PTL .ckpt checkpoints (state_dict without model key) must load without KeyError."""
+        from rfdetr.models.weights import load_pretrain_weights
+
+        mc = RFDETRBaseConfig(pretrain_weights="/fake/last.ckpt", device="cpu", num_classes=90)
+        checkpoint = self._make_ptl_checkpoint(num_classes=91)
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+
+        nn_model = _fake_nn_model()
+        result = load_pretrain_weights(nn_model, mc)
+
+        nn_model.load_state_dict.assert_called_once()
+        assert result == [], f"Expected [] (no args/class_names in checkpoint), got {result!r}"
+
+    def test_ptl_ckpt_model_prefix_stripped_before_load_state_dict(self, monkeypatch):
+        """Model weights passed to load_state_dict must not carry the 'model.' prefix."""
+        from rfdetr.models.weights import load_pretrain_weights
+
+        mc = RFDETRBaseConfig(pretrain_weights="/fake/last.ckpt", device="cpu", num_classes=90)
+        checkpoint = self._make_ptl_checkpoint(num_classes=91)
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+
+        nn_model = _fake_nn_model()
+        load_pretrain_weights(nn_model, mc)
+
+        loaded_state = nn_model.load_state_dict.call_args[0][0]
+        assert all(not k.startswith("model.") for k in loaded_state), (
+            f"Keys passed to load_state_dict must not have 'model.' prefix, got: {list(loaded_state.keys())[:5]}"
+        )
+
+    def test_ptl_ckpt_no_model_prefix_in_state_dict_raises_value_error(self, monkeypatch):
+        """A checkpoint with state_dict but no 'model.'-prefixed keys raises ValueError."""
+        from rfdetr.models.weights import load_pretrain_weights
+
+        mc = RFDETRBaseConfig(pretrain_weights="/fake/last.ckpt", device="cpu", num_classes=90)
+        checkpoint = {"state_dict": {"some_other.key": torch.zeros(1)}, "epoch": 10}
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+
+        nn_model = _fake_nn_model()
+        with pytest.raises(ValueError, match="model\\."):
+            load_pretrain_weights(nn_model, mc)
+
+    def test_ptl_ckpt_class_names_from_hyper_parameters(self, monkeypatch):
+        """Class names stored in hyper_parameters are returned when args key is absent."""
+        from rfdetr.models.weights import load_pretrain_weights
+
+        mc = RFDETRBaseConfig(pretrain_weights="/fake/last.ckpt", device="cpu", num_classes=90)
+        checkpoint = self._make_ptl_checkpoint(num_classes=91)
+        checkpoint["hyper_parameters"] = {"class_names": ["cat", "dog"]}
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+
+        nn_model = _fake_nn_model()
+        result = load_pretrain_weights(nn_model, mc)
+
+        assert result == ["cat", "dog"], f"Expected class names from hyper_parameters, got {result!r}"
+
+    def test_ptl_ckpt_args_takes_precedence_over_hyper_parameters(self, monkeypatch):
+        """When both args and hyper_parameters are present, args takes precedence."""
+        from rfdetr.models.weights import load_pretrain_weights
+
+        mc = RFDETRBaseConfig(pretrain_weights="/fake/last.ckpt", device="cpu", num_classes=90)
+        checkpoint = self._make_ptl_checkpoint(num_classes=91)
+        checkpoint["args"] = {"class_names": ["from_args"]}
+        checkpoint["hyper_parameters"] = {"class_names": ["from_hyper_params"]}
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+
+        nn_model = _fake_nn_model()
+        result = load_pretrain_weights(nn_model, mc)
+
+        assert result == ["from_args"], f"args must take precedence over hyper_parameters, got {result!r}"
+
+    def test_best_model_callback_format_with_both_model_and_state_dict_still_works(self, monkeypatch):
+        """Checkpoints with both 'model' and 'state_dict' (BestModelCallback format) must still load."""
+        from rfdetr.models.weights import load_pretrain_weights
+
+        mc = RFDETRBaseConfig(pretrain_weights="/fake/checkpoint_best_total.pth", device="cpu", num_classes=90)
+        # BestModelCallback writes both "model" (raw keys) and "state_dict" (prefixed keys).
+        raw_state = {
+            "class_embed.weight": torch.randn(91, 256),
+            "class_embed.bias": torch.randn(91),
+            "refpoint_embed.weight": torch.randn(300 * 13, 4),
+            "query_feat.weight": torch.randn(300 * 13, 256),
+        }
+        checkpoint = {
+            "model": raw_state,
+            "state_dict": {f"model.{k}": v for k, v in raw_state.items()},
+            "epoch": 5,
+        }
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+
+        nn_model = _fake_nn_model()
+        load_pretrain_weights(nn_model, mc)
+
+        nn_model.load_state_dict.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
 # apply_lora
 # ---------------------------------------------------------------------------
 

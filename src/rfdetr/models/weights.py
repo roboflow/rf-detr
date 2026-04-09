@@ -108,6 +108,27 @@ def load_pretrain_weights(
         download_pretrain_weights(pretrain_weights, redownload=True, validate_md5=False)
         checkpoint = torch.load(pretrain_weights, map_location="cpu", weights_only=False)
 
+    # Normalize PyTorch Lightning native .ckpt format to the expected {"model": {...}}
+    # structure.  PTL stores model weights in "state_dict" with keys prefixed by
+    # "model." (matching the attribute path inside RFDETRModelModule).  Legacy and
+    # BestModelCallback checkpoints already have a top-level "model" key.
+    if "model" not in checkpoint and "state_dict" in checkpoint:
+        _prefix = "model."
+        _model_state = {k[len(_prefix) :]: v for k, v in checkpoint["state_dict"].items() if k.startswith(_prefix)}
+        if not _model_state:
+            raise ValueError(
+                f"The checkpoint at {pretrain_weights!r} appears to be in PyTorch Lightning "
+                "format ('state_dict' key present, 'model' key absent), but 'state_dict' "
+                "contains no keys with the expected 'model.' prefix. "
+                "The checkpoint may be corrupt or in an unsupported format."
+            )
+        checkpoint["model"] = _model_state
+        # PTL stores training hyper-parameters under "hyper_parameters".  Map them
+        # to the "args" key expected by class-name extraction and compatibility checks
+        # (only when "args" is not already present).
+        if "args" not in checkpoint and "hyper_parameters" in checkpoint:
+            checkpoint["args"] = checkpoint["hyper_parameters"]
+
     # Extract class_names from the checkpoint if available (ported from detr.py).
     if "args" in checkpoint:
         raw_class_names = _ckpt_args_get(checkpoint["args"], "class_names")
