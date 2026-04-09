@@ -28,11 +28,42 @@ from unittest.mock import MagicMock, call
 import pytest
 import torch
 
-from rfdetr.config import RFDETRBaseConfig, TrainConfig
+from rfdetr.config import (
+    RFDETRBaseConfig,
+    RFDETRLargeConfig,
+    RFDETRMediumConfig,
+    RFDETRNanoConfig,
+    RFDETRSeg2XLargeConfig,
+    RFDETRSegLargeConfig,
+    RFDETRSegMediumConfig,
+    RFDETRSegNanoConfig,
+    RFDETRSegPreviewConfig,
+    RFDETRSegSmallConfig,
+    RFDETRSegXLargeConfig,
+    RFDETRSmallConfig,
+    TrainConfig,
+)
 
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
+
+# All non-deprecated model configs (RFDETRLargeDeprecatedConfig and
+# RFDETRBaseConfig are excluded; the former is deprecated, the latter
+# serves as the base class for the concrete variants below).
+_NON_DEPRECATED_CONFIGS = [
+    pytest.param(RFDETRNanoConfig, id="nano"),
+    pytest.param(RFDETRSmallConfig, id="small"),
+    pytest.param(RFDETRMediumConfig, id="medium"),
+    pytest.param(RFDETRLargeConfig, id="large"),
+    pytest.param(RFDETRSegPreviewConfig, id="seg_preview"),
+    pytest.param(RFDETRSegNanoConfig, id="seg_nano"),
+    pytest.param(RFDETRSegSmallConfig, id="seg_small"),
+    pytest.param(RFDETRSegMediumConfig, id="seg_medium"),
+    pytest.param(RFDETRSegLargeConfig, id="seg_large"),
+    pytest.param(RFDETRSegXLargeConfig, id="seg_xlarge"),
+    pytest.param(RFDETRSeg2XLargeConfig, id="seg_2xlarge"),
+]
 
 
 def _make_checkpoint(num_classes=91, num_queries=300, group_detr=13):
@@ -188,7 +219,8 @@ class TestLoadPretrainWeightsSecondReinit:
         assert calls == [call(91), call(94)], f"Expected reinit to [91, 94] (load then expand), got {calls}"
         assert mc.num_classes == 93, "Explicitly configured num_classes must not be overwritten."
 
-    def test_eight_class_finetune_checkpoint_auto_aligns_num_classes_and_reinits_once(self, monkeypatch):
+    @pytest.mark.parametrize("config_cls", _NON_DEPRECATED_CONFIGS)
+    def test_eight_class_finetune_checkpoint_auto_aligns_num_classes_and_reinits_once(self, monkeypatch, config_cls):
         """Auto-align ``mc.num_classes`` and avoid a second reinit for 8-class checkpoints.
 
         Scenario (from user bug report): user trains on 8 categories (IDs 0–7).
@@ -204,7 +236,7 @@ class TestLoadPretrainWeightsSecondReinit:
 
         # 8 dataset categories → training builds a model with 8+1=9 logits.
         checkpoint = _make_checkpoint(num_classes=9)
-        mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu")
+        mc = config_cls(pretrain_weights="/fake/weights.pth", device="cpu")
         monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
 
         fake_model = MagicMock()
