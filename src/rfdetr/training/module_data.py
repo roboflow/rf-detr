@@ -407,7 +407,7 @@ class RFDETRDataModule(LightningDataModule):
         Returns:
             The (possibly augmented) batch.
         """
-        if self.trainer.training and self._kornia_pipeline is not None:
+        if self.trainer is not None and self.trainer.training and self._kornia_pipeline is not None:
             if self.model_config.segmentation_head:
                 logger.warning_once("Kornia GPU augmentation skipped for segmentation models (phase 2)")
                 return batch
