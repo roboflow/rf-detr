@@ -153,7 +153,6 @@ class RFDETRDataModule(LightningDataModule):
         # setup("fit") calls (e.g. during validation loops in some PTL strategies).
         self._kornia_setup_done: bool = False
 
-        num_workers = self.train_config.num_workers
         self._num_workers: int = self.train_config.num_workers
 
         # Use the fork-safe DEVICE constant instead of torch.cuda.is_available(),

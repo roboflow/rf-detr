@@ -56,7 +56,7 @@ def _require_kornia() -> None:
         ImportError: When ``kornia`` is not installed, with an install hint.
     """
     try:
-        import kornia.augmentation  # noqa: F401
+        import kornia.augmentation  # noqa: F401 # type: ignore[import-not-found]
     except ImportError as e:
         raise ImportError("GPU augmentation requires kornia. Install with: pip install 'rfdetr[kornia]'") from e
 

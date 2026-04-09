@@ -200,11 +200,10 @@ strict = true
 mypy_path = "src"
 overrides = [
   { module = [
-    "tests.*",
-    "einops", "einops.*",
+    "einops",
     "matplotlib", "matplotlib.*",
     "pandas", "pandas.*",
-    "seaborn", "seaborn.*",
+    "seaborn",
   ], ignore_errors = true },
   { module = [
     "torchvision", "torchvision.*",
@@ -217,6 +216,7 @@ overrides = [
     "requests", "requests.*",
     "seaborn", "seaborn.*",
     "tqdm", "tqdm.*",
+    "kornia", "kornia.*",
   ], ignore_missing_imports = true },
   # Modules with pre-existing type errors — ignored until incrementally fixed.
   { module = [
