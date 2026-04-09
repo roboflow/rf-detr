@@ -4,6 +4,8 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 import torch
 from pydantic import ValidationError
@@ -19,6 +21,7 @@ from rfdetr.config import (
     RFDETRSegXLargeConfig,
     SegmentationTrainConfig,
     TrainConfig,
+    _detect_device,
 )
 
 
@@ -368,3 +371,29 @@ class TestDeprecatedModelConfigClsLossCoef:
         RFDETRBaseConfig(pretrain_weights=None, device="cpu")
         depr_warnings = [w for w in recwarn.list if issubclass(w.category, DeprecationWarning)]
         assert not depr_warnings, f"Unexpected DeprecationWarning: {depr_warnings}"
+
+
+class TestDetectDevice:
+    """Tests for _detect_device() covering PyTorch accelerator detection paths."""
+
+    @patch("rfdetr.config.torch")
+    def test_falls_back_to_cuda_when_accelerator_module_absent(self, mock_torch: MagicMock) -> None:
+        """Returns 'cuda' via legacy fallback when torch.accelerator lacks current_accelerator (PyTorch < 2.4)."""
+        mock_torch.accelerator = MagicMock(spec=[])  # no current_accelerator → hasattr returns False → fallback
+        mock_torch.cuda.is_available.return_value = True
+        mock_torch.backends.mps.is_available.return_value = False
+        assert _detect_device() == "cuda"
+
+    @patch("rfdetr.config.torch")
+    def test_returns_cpu_when_current_accelerator_raises(self, mock_torch: MagicMock) -> None:
+        """Returns 'cpu' directly from the except handler when current_accelerator() raises RuntimeError."""
+        mock_torch.accelerator.current_accelerator.side_effect = RuntimeError("no device")
+        assert _detect_device() == "cpu"
+
+    @patch("rfdetr.config.torch")
+    def test_returns_cpu_when_no_gpu_available(self, mock_torch: MagicMock) -> None:
+        """Returns 'cpu' when accelerator is absent and neither CUDA nor MPS is available."""
+        mock_torch.accelerator = MagicMock(spec=[])  # no current_accelerator → fallback branch
+        mock_torch.cuda.is_available.return_value = False
+        mock_torch.backends.mps.is_available.return_value = False
+        assert _detect_device() == "cpu"

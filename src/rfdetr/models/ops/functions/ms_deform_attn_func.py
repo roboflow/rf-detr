@@ -22,15 +22,25 @@ import torch
 from rfdetr.utilities.tensors import _bilinear_grid_sample
 
 
-def ms_deform_attn_core_pytorch(value, value_spatial_shapes, sampling_locations, attention_weights):
-    """ "for debug and test only, need to use cuda version instead"""
+def ms_deform_attn_core_pytorch(
+    value: torch.Tensor,
+    value_spatial_shapes: torch.Tensor,
+    sampling_locations: torch.Tensor,
+    attention_weights: torch.Tensor,
+    value_spatial_shapes_hw: list[tuple[int, int]] | None = None,
+) -> torch.Tensor:
+    """For debug and test only, need to use cuda version instead."""
     # B, n_heads, head_dim, N
     B, n_heads, head_dim, _ = value.shape
     _, Len_q, n_heads, L, P, _ = sampling_locations.shape
-    value_list = value.split([H * W for H, W in value_spatial_shapes], dim=3)
+    # Use Python int pairs when available (required for torch.export compatibility,
+    # since iterating over a tensor and using scalar elements as split/view sizes
+    # fails during FakeTensor tracing).
+    shapes = value_spatial_shapes_hw if value_spatial_shapes_hw is not None else value_spatial_shapes
+    value_list = value.split([H * W for H, W in shapes], dim=3)
     sampling_grids = 2 * sampling_locations - 1
     sampling_value_list = []
-    for lid_, (H, W) in enumerate(value_spatial_shapes):
+    for lid_, (H, W) in enumerate(shapes):
         # B, n_heads, head_dim, H, W
         value_l_ = value_list[lid_].view(B * n_heads, head_dim, H, W)
         # B, Len_q, n_heads, P, 2 -> B, n_heads, Len_q, P, 2 -> B*n_heads, Len_q, P, 2
