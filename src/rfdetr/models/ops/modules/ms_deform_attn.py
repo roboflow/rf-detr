@@ -167,8 +167,8 @@ class MSDeformAttn(nn.Module):
             )
         attention_weights = F.softmax(attention_weights, -1)
 
-        value = value.transpose(1, 2).contiguous().view(
-            batch_size, self.n_heads, self.d_model // self.n_heads, len_input
+        value = (
+            value.transpose(1, 2).contiguous().view(batch_size, self.n_heads, self.d_model // self.n_heads, len_input)
         )
         output = ms_deform_attn_core_pytorch(
             value,

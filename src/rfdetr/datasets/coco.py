@@ -543,7 +543,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
         raise FileNotFoundError(f"COCO path {root} does not exist")
 
     mode = "instances"
-    PATHS = {
+    PATHS = {  # noqa: N806
         "train": (root / "train2017", root / "annotations" / f"{mode}_train2017.json"),
         "val": (root / "val2017", root / "annotations" / f"{mode}_val2017.json"),
         "test": (root / "test2017", root / "annotations" / "image_info_test-dev2017.json"),
@@ -603,7 +603,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
         logger.error(f"Roboflow dataset path {root} does not exist")
         raise FileNotFoundError(f"Roboflow dataset path {root} does not exist")
 
-    PATHS = {
+    PATHS = {  # noqa: N806
         "train": (root / "train", root / "train" / "_annotations.coco.json"),
         "val": (root / "valid", root / "valid" / "_annotations.coco.json"),
         "test": (root / "test", root / "test" / "_annotations.coco.json"),

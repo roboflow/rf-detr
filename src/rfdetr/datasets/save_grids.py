@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import supervision as sv
 import torch
-import torchvision.transforms as T
+import torchvision.transforms as T  # noqa: N812
 from matplotlib.axes import Axes
 from torch.utils.data import DataLoader
 
