@@ -10,37 +10,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `augmentation_backend` field on `TrainConfig` (`"cpu"` / `"auto"` / `"gpu"`): opt-in GPU-side augmentation via [Kornia](https://kornia.readthedocs.io) applied in `RFDETRDataModule.on_after_batch_transfer` after the batch is resident on the GPU. CPU path is unchanged and remains the default. Install with `pip install 'rfdetr[kornia]'`. Phase 1 supports detection only; segmentation mask support is planned for Phase 2.
-- `RFDETR.predict(shape=...)` — optional `(height, width)` tuple overrides the default inference resolution; useful for matching the resolution used when exporting the model. Both dimensions must be positive integers divisible by 14. (closes #682)
-- `BuilderArgs` — a `@runtime_checkable` `typing.Protocol` documenting the minimum attribute set consumed by `build_model()`, `build_backbone()`, `build_transformer()`, and `build_criterion_and_postprocessors()`. Enables static type-checker support for custom builder integrations. Exported from `rfdetr.models`.
-- `build_model_from_config(model_config, train_config=None, defaults=MODEL_DEFAULTS)` — config-native alternative to `build_model(build_namespace(mc, tc))`; accepts Pydantic config objects directly and constructs the internal namespace automatically. Exported from `rfdetr.models`.
-- `build_criterion_from_config(model_config, train_config, defaults=MODEL_DEFAULTS)` — config-native alternative to `build_criterion_and_postprocessors(build_namespace(mc, tc))`; returns a `(SetCriterion, PostProcess)` tuple. Exported from `rfdetr.models`.
-- `ModelDefaults` dataclass — exposes the 35 hardcoded architectural constants previously buried inside `build_namespace()`. Pass a `dataclasses.replace(MODEL_DEFAULTS, ...)` override to the new config-native builders to customise individual constants. **Note:** fields may be promoted to `ModelConfig`/`TrainConfig` in future phases. Exported from `rfdetr.models`.
-- `MODEL_DEFAULTS` — the canonical `ModelDefaults` singleton with production defaults. Exported from `rfdetr.models`.
+- `BuilderArgs` — a `@runtime_checkable` `typing.Protocol` documenting the minimum attribute set consumed by `build_model()`, `build_backbone()`, `build_transformer()`, and `build_criterion_and_postprocessors()`. Enables static type-checker support for custom builder integrations. Exported from `rfdetr.models`. (#841)
+- `build_model_from_config(model_config, train_config=None, defaults=MODEL_DEFAULTS)` — config-native alternative to `build_model(build_namespace(mc, tc))`; accepts Pydantic config objects directly and constructs the internal namespace automatically. Exported from `rfdetr.models`. (#845)
+- `build_criterion_from_config(model_config, train_config, defaults=MODEL_DEFAULTS)` — config-native alternative to `build_criterion_and_postprocessors(build_namespace(mc, tc))`; returns a `(SetCriterion, PostProcess)` tuple. Exported from `rfdetr.models`. (#845)
+- `ModelDefaults` dataclass — exposes the 35 hardcoded architectural constants previously buried inside `build_namespace()`. Pass a `dataclasses.replace(MODEL_DEFAULTS, ...)` override to the new config-native builders to customise individual constants. **Note:** fields may be promoted to `ModelConfig`/`TrainConfig` in future phases. Exported from `rfdetr.models`. (#845)
+- `MODEL_DEFAULTS` — the canonical `ModelDefaults` singleton with production defaults. Exported from `rfdetr.models`. (#845)
+- `RFDETR.predict(include_source_image=...)` — opt-out flag (default `True`) to skip storing the source image in `detections.data["source_image"]`; set to `False` to reduce memory use when the image is not needed for annotation. (#912)
+- `model_name` is now stored in checkpoint files during training so that `RFDETR.from_checkpoint()` can resolve the correct model class directly from the checkpoint, without requiring the caller to know or pass a class hint. `strip_checkpoint()` preserves this key. Backward-compatible: checkpoints without `model_name` continue to resolve via `pretrain_weights` filename matching. (#895)
+- `rfdetr_version` is now stored in checkpoint files during training for provenance tracking and compatibility hints. `strip_checkpoint()` preserves this key. The key is omitted gracefully when the package version cannot be resolved (e.g. editable install without metadata). Backward-compatible: checkpoints without `rfdetr_version` continue to load normally. (#918)
 
 ### Deprecated
 
-- `build_namespace(model_config, train_config)` — no longer used internally and deprecated in this release; use `build_model_from_config`, `build_criterion_from_config`, or `_namespace_from_configs` directly. It will be removed in v1.9 and currently emits a `DeprecationWarning` on use.
-- `load_pretrain_weights(nn_model, model_config, train_config)` — the `train_config` positional argument is deprecated and will be removed in v1.9; it is no longer used internally. Omit it: `load_pretrain_weights(nn_model, model_config)`. Passing a non-`None` value emits a `DeprecationWarning`.
+- `build_namespace(model_config, train_config)` — no longer used internally and deprecated in this release; use `build_model_from_config`, `build_criterion_from_config`, or `_namespace_from_configs` directly. It will be removed in v1.9 and currently emits a `DeprecationWarning` on use. (#845)
 
-The following fields are duplicated between `ModelConfig` and `TrainConfig`; clear ownership is being established for v1.9. Each field now emits `DeprecationWarning` when set on the wrong config object. The fields continue to work as before — this is a warning-only Phase A change.
+- `load_pretrain_weights(nn_model, model_config, train_config)` — the `train_config` positional argument is deprecated and will be removed in v1.9; it is no longer used internally. Omit it: `load_pretrain_weights(nn_model, model_config)`. Passing a non-`None` value emits a `DeprecationWarning`. (#845)
 
-- `TrainConfig.group_detr` — architecture decision; set on `ModelConfig` instead.
-- `TrainConfig.ia_bce_loss` — loss type tied to architecture family; set on `ModelConfig` instead.
-- `TrainConfig.segmentation_head` — architecture flag; set on `ModelConfig` instead.
-- `TrainConfig.num_select` — postprocessor count is an architecture decision; set on `ModelConfig` instead. `SegmentationTrainConfig` users: remove the `num_select` override — the model config value is always used.
-- `ModelConfig.cls_loss_coef` — training hyperparameter; set on `TrainConfig` instead.
+- `TrainConfig.group_detr`, `TrainConfig.ia_bce_loss`, `TrainConfig.segmentation_head`, `TrainConfig.num_select`, `ModelConfig.cls_loss_coef` — fields duplicated between `ModelConfig` and `TrainConfig`; each now emits `DeprecationWarning` when set on the wrong config object. Fields continue to work as before (warning-only Phase A change) and will be **removed** in v1.9. (#841)
 
-These fields will be **removed** in v1.9 after a full release cycle.
+    - `TrainConfig.group_detr` — architecture decision; set on `ModelConfig` instead.
+    - `TrainConfig.ia_bce_loss` — loss type tied to architecture family; set on `ModelConfig` instead.
+    - `TrainConfig.segmentation_head` — architecture flag; set on `ModelConfig` instead.
+    - `TrainConfig.num_select` — postprocessor count is an architecture decision; set on `ModelConfig` instead. `SegmentationTrainConfig` users: remove the `num_select` override — the model config value is always used.
+    - `ModelConfig.cls_loss_coef` — training hyperparameter; set on `TrainConfig` instead.
 
 ### Fixed
 
-- `WindowedDinov2WithRegistersEmbeddings.forward()` now raises `ValueError` (instead of silently failing under `-O`) when input spatial dimensions are not divisible by `patch_size * num_windows`, with a clear message identifying the divisor and actual shape.
-- Fixed `_namespace.py`: `num_select` in the builder namespace now always reads from `ModelConfig`, eliminating a regression where `TrainConfig.num_select` (default 300) silently overrode model-specific values of 100–200 for segmentation variants (`RFDETRSegNano`, `RFDETRSegSmall`, `RFDETRSegMedium`, `RFDETRSegLarge`, `RFDETRSegPreview`). Post-processing now uses the correct top-k count for each model.
-- Fixed `models/weights.py`: `load_pretrain_weights` now correctly auto-aligns the model head when the checkpoint has fewer classes than the configured default, preventing a silent mismatch when `num_classes` was not explicitly set by the caller.
-- Fixed YOLO segmentation training on large datasets hitting OS out-of-memory: `supervision.DetectionDataset.from_yolo(force_masks=True)` was eager-rasterising H×W boolean masks for every image at dataset construction time (≈1 GB/1 000 images at 1024 px). A new `_LazyYoloDetectionDataset` stores polygon coordinates only and defers dense mask rasterisation to `__getitem__`, keeping RAM proportional to annotation count rather than (N × H × W). (#851, closes #820, closes #733)
-- Fixed `ModelConfig.device` validation to raise `pydantic.ValidationError` consistently for invalid non-string inputs by converting the pre-validator fallback from `TypeError` to `ValueError`. `ModelConfig.device` now accepts `torch.device` objects and indexed device strings, normalizes them to canonical torch-style strings, and `RFDETR.train()` now warns when a valid but unmapped device type is left to PyTorch Lightning auto-detection.
+- `download_pretrain_weights()` no longer overwrites fine-tuned checkpoints that share a filename with a registry model (e.g. `rf-detr-nano.pth`). Previously, an MD5 mismatch would fall through to `_download_file()` and silently replace the user's weights with the original COCO checkpoint. The function now returns early whenever the file exists and `redownload=False`, regardless of MD5 status — a warning is emitted when the hash differs. Pass `redownload=True` to force a fresh download. (#935)
+- `WindowedDinov2WithRegistersEmbeddings.forward()` now raises `ValueError` (instead of silently failing under `-O`) when input spatial dimensions are not divisible by `patch_size * num_windows`, with a clear message identifying the divisor and actual shape. (#167)
+- Fixed `_namespace.py`: `num_select` in the builder namespace now always reads from `ModelConfig`, eliminating a regression where `TrainConfig.num_select` (default 300) silently overrode model-specific values of 100–200 for segmentation variants (`RFDETRSegNano`, `RFDETRSegSmall`, `RFDETRSegMedium`, `RFDETRSegLarge`, `RFDETRSegPreview`). Post-processing now uses the correct top-k count for each model. (#841)
+- Fixed `models/weights.py`: `load_pretrain_weights` now correctly auto-aligns the model head when the checkpoint has fewer classes than the configured default, preventing a silent mismatch when `num_classes` was not explicitly set by the caller. (#845)
+- Fixed YOLO segmentation training on large datasets hitting OS out-of-memory: `supervision.DetectionDataset.from_yolo(force_masks=True)` was eager-rasterising H×W boolean masks for every image at dataset construction time (≈1 GB/1 000 images at 1024 px). A new `_LazyYoloDetectionDataset` stores polygon coordinates only and defers dense mask rasterisation to `__getitem__`, keeping RAM proportional to annotation count rather than (N × H × W). (#851)
 
 ---
+
+## [1.6.3] — 2026-04-02
+
+### Changed
+
+- `predict()` now stores the original image and its shape on returned `sv.Detections` objects — `detections.data["source_image"]` (NumPy array) and `detections.data["source_shape"]` (height, width) let you annotate results without loading the image separately. (#892)
+- `RFDETR.train()` auto-detects `num_classes` from the dataset directory when not explicitly set, reinitializing the detection head to the correct class count automatically. A warning is emitted when the configured value differs from the dataset count. (#893)
+- `optimize_for_inference()` now accepts dtype as a string name (e.g. `"float16"`) in addition to a `torch.dtype` object; invalid dtype inputs uniformly raise `TypeError`. (#899)
+
+### Fixed
+
+- Fixed `models/lwdetr.py`: `reinitialize_detection_head` now replaces `nn.Linear` modules instead of mutating `.data` tensors in-place, ensuring `out_features` metadata stays consistent with the actual weight shape. This prevents ONNX export and `torch.jit.trace` from emitting stale (pre-fine-tuning) class counts for fine-tuned models. (#904)
+- Fixed `RFDETR.optimize_for_inference()` leaking a CUDA context on multi-GPU setups: the deep-copy, export, and JIT-trace steps now run inside `torch.cuda.device(device)` to pin the context to the correct device. (#899)
+- Fixed `optimize_for_inference()` leaving inconsistent state on failure: prior optimized state is now reset and flags are committed only after a successful build/trace; temp download files use unique per-process paths to avoid parallel worker collisions.
+- Fixed `deploy_to_roboflow` failing with `FileNotFoundError` after PyTorch Lightning migration: `class_names.txt` is now written to the upload directory and `args.class_names` is populated before saving the checkpoint. (#890)
+
+## [1.6.2] — 2026-03-27
+
+### Added
+
+- `RFDETR.predict(shape=...)` — optional `(height, width)` tuple overrides the default square inference resolution; useful when matching a non-square ONNX export. Both dimensions must be positive integers divisible by `patch_size × num_windows` as determined by the model configuration. (#866)
+
+### Changed
+
+- `ModelConfig.device` and `RFDETR.train(device=...)` now accept `torch.device` objects and indexed device strings such as `"cuda:0"`. Values are normalized to canonical torch-style strings. `RFDETR.train()` warns when an unmapped device type is passed to PyTorch Lightning auto-detection. (#872)
+
+### Fixed
+
+- Fixed ONNX export ignoring an explicit `patch_size` argument: `export()` and `predict()` now resolve `patch_size` from `model_config` by default, validate it strictly (positive integer, not bool), and enforce that `(H, W)` dimensions are divisible by `patch_size × num_windows`. (#876)
+- Fixed ONNX export for models with dynamic batch dimensions — replaced `H_.expand(N_)` with `torch.full` for Python-int spatial dims to eliminate tracer failures. (#871)
 
 ## [1.6.1] — 2026-03-25
 
@@ -56,8 +87,6 @@ These fields will be **removed** in v1.9 after a full release cycle.
 - Fixed `BestModelCallback` and checkpoint monitor raising `MisconfigurationException` on non-eval epochs when `eval_interval > 1` — monitor key absence is now handled gracefully. (#848)
 - Fixed `protobuf` version constraint in the `loggers` extra to guard against TensorBoard descriptor crash (`TypeError: Descriptors cannot be created directly`) with protobuf ≥ 4. (#846)
 - Fixed duplicate `ModelCheckpoint` state keys when `checkpoint_interval=1`; `last.ckpt` is omitted in that configuration to avoid collision. (#859)
-
----
 
 ## [1.6.0] — 2026-03-20
 
@@ -100,6 +129,8 @@ These fields will be **removed** in v1.9 after a full release cycle.
 - Fixed `ValueError: matrix entries are not finite` in `HungarianMatcher` when the cost matrix contains NaN or Inf — non-finite entries are replaced with a finite sentinel before `linear_sum_assignment`, warning emitted at most once per matcher instance. (#787, closes #784)
 - Fixed YOLO dataset validation rejecting `data.yml` — both `.yaml` and `.yml` are now accepted. (#777, closes #775)
 - Silently dropped degenerate bounding boxes (zero width or height) before Albumentations validation instead of raising `ValueError`. (#825)
+
+---
 
 ## [1.5.2] — 2026-03-04
 
@@ -166,3 +197,53 @@ These fields will be **removed** in v1.9 after a full release cycle.
 - Fixed `np.argwhere` → `np.argmax` misuse. (#536)
 - Fixed COCO sparse category ID remapping for non-contiguous or offset category IDs. (#712)
 - Fixed segmentation mask filtering when using aggressive augmentations. (#717)
+
+---
+
+## [1.4.3] — 2026-02-16
+
+### Changed
+
+- Pretrained weight downloads now validate against an MD5 checksum to detect corrupted files. (#679)
+
+### Fixed
+
+- Fixed `deploy_to_roboflow` failing for segmentation model exports. (#578)
+- Fixed missing `info` key in COCO export format. (#681)
+
+## [1.4.2] — 2026-02-12
+
+### Added
+
+- Added `generate_coco_dataset()` utility for generating synthetic COCO-format datasets with configurable class counts, split ratios, and bounding box annotations. (#617)
+- Added `run_test=False` to `TrainConfig` — skip test-split evaluation when your dataset has no test set. (#628)
+
+### Changed
+
+- `model.predict()` now accepts image URLs directly — no need to download images before inference. (#629)
+- Plus models (`RFDETRXLarge`, `RFDETR2XLarge`) are now distributed as a separate `rfdetr_plus` package under the Roboflow Model License. (#645)
+
+### Fixed
+
+- Fixed segmentation ONNX export failure. (#626)
+
+## [1.4.1] — 2026-01-30
+
+### Added
+
+- Added native YOLO dataset format support alongside COCO. (#74)
+- Added `--print-freq` CLI argument to control training log frequency. (#603)
+
+### Changed
+
+- Pinned `transformers` to `<5.0.0` to prevent incompatibility with the transformers v5 API. (#599)
+
+### Fixed
+
+- Fixed class count mismatch in `train_from_config` for Roboflow-uploaded datasets. (#588)
+- Improved `num_classes` mismatch warning messages to be actionable rather than misleading. (#261)
+- Fixed CLI crash when specifying the `device` argument. (#246)
+
+## [1.4.0] — 2026-01-22
+
+Headline release introducing new pre-trained model sizes — L, XL, and 2XL for object detection, and the full N/S/M/L/XL/2XL range for instance segmentation. Also added YOLO format training support, simplified the dependency footprint by removing several heavy packages (`cython`, `fairscale`, `timm`, `einops`, and others), and fixed per-class precision/recall/F1 computation. Drops Python 3.9 support.

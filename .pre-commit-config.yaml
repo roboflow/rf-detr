@@ -32,13 +32,24 @@ repos:
         args: ["--print-width=120"]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.6
+    rev: v0.15.9
     hooks:
       - id: ruff-check
         args: ["--exit-non-zero-on-fix"]
         exclude: ^notebooks/.*\.py$
       - id: ruff-format
         exclude: ^notebooks/.*\.py$
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.20.0
+    hooks:
+      - id: mypy
+        # The hook runs in an isolated env without torch/torchvision/etc.
+        # Full strict checking (matching pyproject.toml) runs in CI via ci-typing.yml.
+        args: ["--ignore-missing-imports"]
+        additional_dependencies:
+          - "types-PyYAML"
+          - "types-requests"
 
   - repo: https://github.com/executablebooks/mdformat
     rev: 1.0.0

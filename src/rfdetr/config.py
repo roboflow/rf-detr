@@ -12,7 +12,37 @@ from typing import Any, ClassVar, Dict, List, Literal, Mapping, Optional, Union
 import torch
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+
+def _detect_device() -> str:
+    """Detect the best available device **without** initialising the CUDA runtime.
+
+    ``torch.cuda.is_available()`` creates a CUDA driver context that makes
+    ``_is_in_bad_fork()`` return ``True`` in child processes.  This breaks
+    fork-based DDP strategies (e.g. ``ddp_notebook``) in notebook environments.
+
+    We defer to :func:`torch.accelerator.current_accelerator` (PyTorch ≥ 2.4)
+    when available — it queries the driver through NVML without creating a
+    primary context.  On older builds we fall back to ``torch.cuda.is_available()``.
+    """
+    accelerator = getattr(torch, "accelerator", None)
+    current_accelerator = getattr(accelerator, "current_accelerator", None)
+    if current_accelerator is not None:
+        try:
+            accel = current_accelerator()
+            if accel is not None:
+                return str(accel)
+            return "cpu"
+        except RuntimeError:
+            return "cpu"
+    # Fallback for PyTorch < 2.4 — this DOES create a CUDA driver context.
+    if torch.cuda.is_available():
+        return "cuda"
+    if torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
+DEVICE: str = _detect_device()
 
 
 class BaseConfig(BaseModel):
@@ -84,6 +114,15 @@ class ModelConfig(BaseConfig):
     backbone_lora: bool = False
     freeze_encoder: bool = False
     license: str = "Apache-2.0"
+    model_name: Optional[str] = Field(
+        default=None,
+        description=(
+            'Name of the model class stored in training checkpoints (e.g. ``"RFDETRLarge"``). '
+            "Set automatically by ``RFDETR.train()`` before saving. "
+            "Used by ``RFDETR.from_checkpoint()`` to resolve the correct subclass directly "
+            "without inspecting ``pretrain_weights``."
+        ),
+    )
 
     @model_validator(mode="after")
     def _warn_deprecated_model_config_fields(self) -> "ModelConfig":
@@ -403,7 +442,7 @@ class TrainConfig(BaseModel):
     clearml: bool = False  # Not yet implemented — reserved for future use.
     project: Optional[str] = None
     run: Optional[str] = None
-    class_names: List[str] = None
+    class_names: Optional[List[str]] = None
     run_test: bool = False
     segmentation_head: bool = False
     eval_max_dets: int = 500
