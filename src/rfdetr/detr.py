@@ -26,7 +26,7 @@ import torch
 if TYPE_CHECKING:
     import supervision as sv
 
-import torchvision.transforms.functional as F
+import torchvision.transforms.functional as F  # noqa: N812
 import yaml
 from PIL import Image
 

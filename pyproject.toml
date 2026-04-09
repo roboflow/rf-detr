@@ -157,6 +157,7 @@ select = [
     "W",  # pycodestyle warnings
     "F",  # pyflakes
     "I",  # isort
+    "N",  # pep8-naming: lowercase variables (N806) and arguments (N803)
 ]
 extend-select = [
     "RUF100",  # yesqa
