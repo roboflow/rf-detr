@@ -134,12 +134,12 @@ def _is_geometric_transform(transform: alb.BasicTransform) -> bool:
         ``True`` if the transform modifies spatial layout; ``False`` otherwise.
 
     Examples:
-        >>> import albumentations as A
-        >>> _is_geometric_transform(A.HorizontalFlip())
+        >>> from albumentations import GaussianBlur, HorizontalFlip, OneOf
+        >>> _is_geometric_transform(HorizontalFlip())
         True
-        >>> _is_geometric_transform(A.GaussianBlur())
+        >>> _is_geometric_transform(GaussianBlur())
         False
-        >>> _is_geometric_transform(A.OneOf([A.HorizontalFlip(), A.GaussianBlur()]))
+        >>> _is_geometric_transform(OneOf([HorizontalFlip(), GaussianBlur()]))
         True
     """
     if type(transform).__name__ in GEOMETRIC_TRANSFORMS:
@@ -175,15 +175,15 @@ def _build_albu_transform(name: str, params: Dict[str, Any]) -> alb.BasicTransfo
         ValueError: If ``name`` is unknown or ``params`` is malformed.
 
     Examples:
-        >>> import albumentations as A
+        >>> from albumentations import HorizontalFlip, OneOf
         >>> t = _build_albu_transform("HorizontalFlip", {"p": 0.5})
-        >>> isinstance(t, A.HorizontalFlip)
+        >>> isinstance(t, HorizontalFlip)
         True
         >>> container = _build_albu_transform(
         ...     "OneOf",
         ...     {"transforms": [{"HorizontalFlip": {"p": 1.0}}, {"VerticalFlip": {"p": 1.0}}]},
         ... )
-        >>> isinstance(container, A.OneOf)
+        >>> isinstance(container, OneOf)
         True
     """
     if name in ALBUMENTATIONS_CONTAINERS:
@@ -353,12 +353,12 @@ class AlbumentationsWrapper:
     invalid boxes.
 
     Args:
-        transform: Albumentations transform to apply (e.g., A.HorizontalFlip, A.GaussianBlur).
+        transform: Albumentations transform to apply (e.g., alb.HorizontalFlip, alb.GaussianBlur).
 
     Examples:
-        >>> import albumentations as A
+        >>> from albumentations import HorizontalFlip
         >>> # Geometric transform - automatically transforms boxes
-        >>> wrapper = AlbumentationsWrapper(A.HorizontalFlip(p=1.0))
+        >>> wrapper = AlbumentationsWrapper(HorizontalFlip(p=1.0))
         >>> image = Image.new("RGB", (300, 400))
         >>> target = {"boxes": torch.tensor([[10, 20, 100, 200]]), "labels": torch.tensor([1])}
         >>> aug_image, aug_target = wrapper(image, target)
@@ -495,9 +495,9 @@ class AlbumentationsWrapper:
         Returns:
             Tuple of (transformed PIL Image, transformed target dict).
 
-        >>> import albumentations as A
         >>> import torch
-        >>> wrapper = AlbumentationsWrapper(A.HorizontalFlip(p=1.0))
+        >>> from albumentations import HorizontalFlip
+        >>> wrapper = AlbumentationsWrapper(HorizontalFlip(p=1.0))
         >>> img = np.ones((100, 100, 3), dtype=np.uint8)
         >>> tgt = {"boxes": torch.tensor([[10, 20, 30, 40]]), "labels": torch.tensor([1])}
         >>> img_out, tgt_out = wrapper._apply_geometric_transform(img, tgt, [1])
@@ -605,7 +605,8 @@ class AlbumentationsWrapper:
             ValueError: If boxes don't have shape (N, 4).
 
         Examples:
-            >>> wrapper = AlbumentationsWrapper(A.HorizontalFlip(p=1.0))
+            >>> from albumentations import HorizontalFlip
+            >>> wrapper = AlbumentationsWrapper(HorizontalFlip(p=1.0))
             >>> image = Image.new('RGB', (100, 100))
             >>> target = {"boxes": torch.tensor([[10, 20, 90, 80]]), "labels": torch.tensor([1])}
             >>> aug_image, aug_target = wrapper(image, target)

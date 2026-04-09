@@ -6,6 +6,8 @@
 
 """Tests for Albumentations augmentation wrappers."""
 
+from unittest import mock
+
 import albumentations as alb
 import numpy as np
 import pytest
@@ -19,6 +21,25 @@ from rfdetr.datasets.aug_config import AUG_AGGRESSIVE, AUG_CONFIG
 from rfdetr.datasets.coco import make_coco_transforms, make_coco_transforms_square_div_64
 from rfdetr.datasets.transforms import AlbumentationsWrapper, _build_albu_transform
 from rfdetr.utilities import collate_fn
+
+
+class _FakeRandomSizedCropV2:
+    """Test double for Albumentations 2.x-style RandomSizedCrop API."""
+
+    def __init__(self, *, min_max_height, size, p=1.0):
+        self.min_max_height = min_max_height
+        self.size = size
+        self.p = p
+
+
+class _FakeRandomSizedCropV1:
+    """Test double for Albumentations 1.x-style RandomSizedCrop API."""
+
+    def __init__(self, *, min_max_height, height, width, p=1.0):
+        self.min_max_height = min_max_height
+        self.height = height
+        self.width = width
+        self.p = p
 
 
 class TestAlbumentationsWrapper:
@@ -731,13 +752,8 @@ class TestRandomSizedCropCompat:
             ),
         ],
     )
-    def test_errors_on_partial_hw_with_v2_api(self, monkeypatch, params, expected_missing):
-        class FakeV2:
-            def __init__(self, *, min_max_height, size, p=1.0):
-                pass
-
-        monkeypatch.setattr("rfdetr.datasets.transforms.A.RandomSizedCrop", FakeV2)
-
+    @mock.patch("rfdetr.datasets.transforms.alb.RandomSizedCrop", new=_FakeRandomSizedCropV2)
+    def test_errors_on_partial_hw_with_v2_api(self, params, expected_missing):
         with pytest.raises(ValueError, match=f"missing '{expected_missing}'"):
             _build_albu_transform("RandomSizedCrop", params)
 
@@ -763,25 +779,14 @@ class TestRandomSizedCropCompat:
             ),
         ],
     )
-    def test_size_takes_precedence_over_hw_on_v2_api(self, monkeypatch, params):
-        class FakeV2:
-            def __init__(self, *, min_max_height, size, p=1.0):
-                self.size = size
-
-        monkeypatch.setattr("rfdetr.datasets.transforms.A.RandomSizedCrop", FakeV2)
-
+    @mock.patch("rfdetr.datasets.transforms.alb.RandomSizedCrop", new=_FakeRandomSizedCropV2)
+    def test_size_takes_precedence_over_hw_on_v2_api(self, params):
         # No TypeError means height/width were correctly dropped before instantiation
         transform = _build_albu_transform("RandomSizedCrop", params)
         assert transform.size == (256, 256)
 
-    def test_scalar_size_passes_through_on_v1_legacy_path(self, monkeypatch):
-        class FakeV1:
-            def __init__(self, *, min_max_height, height, width, p=1.0):
-                self.height = height
-                self.width = width
-
-        monkeypatch.setattr("rfdetr.datasets.transforms.A.RandomSizedCrop", FakeV1)
-
+    @mock.patch("rfdetr.datasets.transforms.alb.RandomSizedCrop", new=_FakeRandomSizedCropV1)
+    def test_scalar_size_passes_through_on_v1_legacy_path(self):
         # Scalar size=640 does not match isinstance(size, Sequence), so the v1
         # legacy branch leaves it in the params dict. FakeV1 does not accept
         # ``size`` so this should raise a TypeError from the constructor — our
@@ -792,61 +797,41 @@ class TestRandomSizedCropCompat:
                 {"min_max_height": [100, 200], "size": 640},
             )
 
-    def test_adapts_height_width_for_v2_api(self, monkeypatch):
+    @mock.patch("rfdetr.datasets.transforms.alb.RandomSizedCrop", new=_FakeRandomSizedCropV2)
+    def test_adapts_height_width_for_v2_api(self):
         """RandomSizedCrop config with height/width is adapted to the Albumentations 2.x size API."""
-
-        class FakeV2:
-            def __init__(self, *, min_max_height, size, p=1.0):
-                self.min_max_height = min_max_height
-                self.size = size
-                self.p = p
-
-        monkeypatch.setattr("rfdetr.datasets.transforms.A.RandomSizedCrop", FakeV2)
 
         transform = _build_albu_transform(
             "RandomSizedCrop",
             {"min_max_height": [384, 600], "height": 640, "width": 640},
         )
 
-        assert isinstance(transform, FakeV2)
+        assert isinstance(transform, _FakeRandomSizedCropV2)
         assert transform.min_max_height == [384, 600]
         assert transform.size == (640, 640)
 
-    def test_adapts_size_for_v1_api(self, monkeypatch):
+    @mock.patch("rfdetr.datasets.transforms.alb.RandomSizedCrop", new=_FakeRandomSizedCropV1)
+    def test_adapts_size_for_v1_api(self):
         """RandomSizedCrop config with size is adapted to the Albumentations 1.x height/width API."""
-
-        class FakeV1:
-            def __init__(self, *, min_max_height, height, width, p=1.0):
-                self.min_max_height = min_max_height
-                self.height = height
-                self.width = width
-                self.p = p
-
-        monkeypatch.setattr("rfdetr.datasets.transforms.A.RandomSizedCrop", FakeV1)
 
         transform = _build_albu_transform(
             "RandomSizedCrop",
             {"min_max_height": [384, 600], "size": (640, 640)},
         )
 
-        assert isinstance(transform, FakeV1)
+        assert isinstance(transform, _FakeRandomSizedCropV1)
         assert transform.min_max_height == [384, 600]
         assert transform.height == 640
         assert transform.width == 640
 
-    def test_from_config_partial_height_is_silently_skipped(self, monkeypatch):
+    @mock.patch("rfdetr.datasets.transforms.alb.RandomSizedCrop", new=_FakeRandomSizedCropV2)
+    def test_from_config_partial_height_is_silently_skipped(self):
         """from_config swallows the ValueError for partial height-only config and skips the transform.
 
         This documents the intentional silent-skip behavior: from_config wraps
         _build_albu_transform in a broad except clause so bad configs produce a
         warning rather than an exception.
         """
-
-        class FakeV2:
-            def __init__(self, *, min_max_height, size, p=1.0):
-                pass
-
-        monkeypatch.setattr("rfdetr.datasets.transforms.A.RandomSizedCrop", FakeV2)
 
         config = {
             "HorizontalFlip": {"p": 0.5},
