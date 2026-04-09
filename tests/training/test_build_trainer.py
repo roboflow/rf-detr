@@ -647,3 +647,99 @@ class TestBuildTrainerDDPFields:
         tc = _tc(tmp_path, use_ema=False, devices="auto")
         # Should not raise during config construction.
         assert tc.devices == "auto"
+
+
+class TestBuildTrainerSegmentationDDP:
+    """build_trainer() must enable find_unused_parameters when segmentation_head=True + strategy='ddp'."""
+
+    def test_ddp_segmentation_enables_find_unused_parameters(self, tmp_path):
+        """strategy='ddp' + segmentation_head=True must produce DDPStrategy(find_unused_parameters=True).
+
+        The segmentation head's sparse_forward() leaves parameters unused on some
+        forward steps.  Plain DDP raises RuntimeError unless find_unused_parameters
+        is enabled.
+        """
+        import unittest.mock as mock
+
+        from pytorch_lightning.strategies import DDPStrategy
+
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        tc = _tc(tmp_path, use_ema=False, strategy="ddp")
+        mc = _mc(segmentation_head=True)
+        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
+            build_trainer(tc, mc)
+
+        strategy_obj = captured["strategy"]
+        assert isinstance(strategy_obj, DDPStrategy)
+        assert strategy_obj._ddp_kwargs.get("find_unused_parameters") is True
+
+    def test_ddp_no_segmentation_strategy_unchanged(self, tmp_path):
+        """strategy='ddp' without segmentation_head must pass the string through unchanged.
+
+        Only the segmentation path needs find_unused_parameters; standard detection
+        DDP must not be wrapped unnecessarily to avoid the autograd-graph traversal
+        overhead on every backward pass.
+        """
+        import unittest.mock as mock
+
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        tc = _tc(tmp_path, use_ema=False, strategy="ddp")
+        mc = _mc(segmentation_head=False)
+        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
+            build_trainer(tc, mc)
+
+        assert captured["strategy"] == "ddp"
+
+    def test_ddp_spawn_segmentation_preserves_find_unused_parameters(self, tmp_path):
+        """strategy='ddp_spawn' + segmentation_head=True must keep find_unused_parameters=True.
+
+        ddp_spawn is already replaced with an interactive-spawn DDPStrategy that has
+        find_unused_parameters=True for notebook compatibility.  Segmentation must not
+        accidentally drop that flag when the ddp_spawn path is taken instead of the
+        plain 'ddp' path.
+        """
+        import unittest.mock as mock
+
+        from pytorch_lightning.strategies import DDPStrategy
+
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        tc = _tc(tmp_path, use_ema=False, strategy="ddp_spawn")
+        mc = _mc(segmentation_head=True)
+        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
+            build_trainer(tc, mc)
+
+        strategy_obj = captured["strategy"]
+        assert isinstance(strategy_obj, DDPStrategy)
+        assert strategy_obj._ddp_kwargs.get("find_unused_parameters") is True
+
+    def test_non_ddp_strategy_with_segmentation_is_unchanged(self, tmp_path):
+        """Strategies other than 'ddp' must not be wrapped even when segmentation is on."""
+        import unittest.mock as mock
+
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        tc = _tc(tmp_path, use_ema=False, strategy="auto")
+        mc = _mc(segmentation_head=True)
+        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
+            build_trainer(tc, mc)
+
+        assert captured["strategy"] == "auto"
