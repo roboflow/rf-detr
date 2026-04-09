@@ -370,7 +370,7 @@ class RFDETRDataModule(LightningDataModule):
                 logger.warning("augmentation_backend='auto': no CUDA, falling back to CPU augmentation")
                 return
             try:
-                import kornia.augmentation
+                import kornia.augmentation  # type: ignore[import-not-found]
             except ImportError:
                 logger.warning("augmentation_backend='auto': kornia not installed, using CPU augmentation")
                 return
@@ -378,7 +378,7 @@ class RFDETRDataModule(LightningDataModule):
             if not _has_cuda_device():
                 raise RuntimeError("augmentation_backend='gpu' requires a CUDA device")
             try:
-                import kornia.augmentation  # noqa: F401
+                import kornia.augmentation  # noqa: F401 # type: ignore[import-not-found]
             except ImportError as e:
                 raise ImportError("GPU augmentation requires kornia. Install with: pip install 'rfdetr[kornia]'") from e
 
