@@ -3,12 +3,26 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
+"""Tests for transformer utilities, MS deformable attention core, and MSDeformAttn module."""
 
+from collections.abc import Callable
+
+import pytest
 import torch
 
 from rfdetr.models.ops.functions import ms_deform_attn_core_pytorch
 from rfdetr.models.ops.modules.ms_deform_attn import MSDeformAttn
 from rfdetr.models.transformer import gen_encoder_output_proposals
+
+
+@pytest.fixture(autouse=True)
+def _reset_random_seeds() -> None:
+    """Ensure reproducible random state for every test."""
+    torch.manual_seed(42)
+    torch.cuda.manual_seed_all(42)
+
+
+_MSDeformInputs = tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, list[tuple[int, int]]]
 
 
 def test_gen_encoder_output_proposals_passes_ij_indexing_to_meshgrid(monkeypatch) -> None:
@@ -105,46 +119,44 @@ class TestMSDeformAttnCorePytorch:
     that bypasses tensor iteration.
     """
 
-    def _make_inputs(
-        self,
-        B: int = 1,
-        n_heads: int = 2,
-        head_dim: int = 4,
-        levels: list[tuple[int, int]] | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, list[tuple[int, int]]]:
-        """Build minimal valid inputs for ms_deform_attn_core_pytorch.
-
-        Args:
-            B: Batch size.
-            n_heads: Number of attention heads.
-            head_dim: Dimension per head.
-            levels: List of (H, W) int pairs; defaults to [(4, 4), (2, 2)].
+    @pytest.fixture
+    def make_inputs(self) -> Callable[..., _MSDeformInputs]:
+        """Return a factory that builds minimal valid inputs for ms_deform_attn_core_pytorch.
 
         Returns:
-            Tuple of (value, spatial_shapes_tensor, sampling_locations,
-                      attention_weights, spatial_shapes_hw).
+            A callable accepting optional keyword arguments ``B``, ``n_heads``,
+            ``head_dim``, and ``levels``, and returning a 5-tuple of
+            ``(value, spatial_shapes_tensor, sampling_locations,
+            attention_weights, spatial_shapes_hw)``.
         """
-        if levels is None:
-            levels = [(4, 4), (2, 2)]
-        L = len(levels)
-        P = 1
-        Len_q = 3
 
-        total_hw = sum(H * W for H, W in levels)
+        def _factory(
+            B: int = 1,
+            n_heads: int = 2,
+            head_dim: int = 4,
+            levels: list[tuple[int, int]] | None = None,
+        ) -> _MSDeformInputs:
+            if levels is None:
+                levels = [(4, 4), (2, 2)]
+            L = len(levels)
+            P = 1
+            Len_q = 3
 
-        spatial_shapes_tensor = torch.tensor(levels, dtype=torch.long)
+            total_hw = sum(H * W for H, W in levels)
+            spatial_shapes_tensor = torch.tensor(levels, dtype=torch.long)
+            value = torch.randn(B, n_heads, head_dim, total_hw)
+            # sampling_locations: (B, Len_q, n_heads, L, P, 2) in [0, 1]
+            sampling_locations = torch.rand(B, Len_q, n_heads, L, P, 2)
+            # attention_weights: (B, Len_q, n_heads, L * P)
+            attention_weights = torch.softmax(torch.randn(B, Len_q, n_heads, L * P), dim=-1)
 
-        value = torch.randn(B, n_heads, head_dim, total_hw)
-        # sampling_locations: (B, Len_q, n_heads, L, P, 2) in [0, 1]
-        sampling_locations = torch.rand(B, Len_q, n_heads, L, P, 2)
-        # attention_weights: (B, Len_q, n_heads, L * P)
-        attention_weights = torch.softmax(torch.randn(B, Len_q, n_heads, L * P), dim=-1)
+            return value, spatial_shapes_tensor, sampling_locations, attention_weights, levels
 
-        return value, spatial_shapes_tensor, sampling_locations, attention_weights, levels
+        return _factory
 
-    def test_with_tensor_spatial_shapes(self) -> None:
+    def test_with_tensor_spatial_shapes(self, make_inputs: Callable[..., _MSDeformInputs]) -> None:
         """Baseline: passing only the tensor spatial_shapes still works."""
-        value, spatial_shapes_tensor, sampling_locations, attention_weights, _ = self._make_inputs()
+        value, spatial_shapes_tensor, sampling_locations, attention_weights, _ = make_inputs()
 
         output = ms_deform_attn_core_pytorch(value, spatial_shapes_tensor, sampling_locations, attention_weights)
 
@@ -152,14 +164,14 @@ class TestMSDeformAttnCorePytorch:
         Len_q = sampling_locations.shape[1]
         assert output.shape == (B, Len_q, n_heads * head_dim)
 
-    def test_with_python_int_pair_spatial_shapes(self) -> None:
+    def test_with_python_int_pair_spatial_shapes(self, make_inputs: Callable[..., _MSDeformInputs]) -> None:
         """Regression: value_spatial_shapes_hw list of Python int pairs must be accepted.
 
         This is the torch.export.export-compatible code path: tensor scalar values
         (from iterating over a FakeTensor) cannot be used as split/view sizes, so the
         caller passes explicit Python int pairs via value_spatial_shapes_hw instead.
         """
-        value, spatial_shapes_tensor, sampling_locations, attention_weights, levels = self._make_inputs()
+        value, spatial_shapes_tensor, sampling_locations, attention_weights, levels = make_inputs()
 
         output = ms_deform_attn_core_pytorch(
             value,
@@ -173,10 +185,9 @@ class TestMSDeformAttnCorePytorch:
         Len_q = sampling_locations.shape[1]
         assert output.shape == (B, Len_q, n_heads * head_dim)
 
-    def test_tensor_and_hw_paths_produce_identical_outputs(self) -> None:
+    def test_tensor_and_hw_paths_produce_identical_outputs(self, make_inputs: Callable[..., _MSDeformInputs]) -> None:
         """Python int pair path and tensor iteration path must produce the same result."""
-        torch.manual_seed(42)
-        value, spatial_shapes_tensor, sampling_locations, attention_weights, levels = self._make_inputs()
+        value, spatial_shapes_tensor, sampling_locations, attention_weights, levels = make_inputs()
 
         out_tensor_path = ms_deform_attn_core_pytorch(
             value, spatial_shapes_tensor, sampling_locations, attention_weights
@@ -191,9 +202,9 @@ class TestMSDeformAttnCorePytorch:
 
         torch.testing.assert_close(out_tensor_path, out_hw_path)
 
-    def test_single_level(self) -> None:
+    def test_single_level(self, make_inputs: Callable[..., _MSDeformInputs]) -> None:
         """Single-level case with Python int pair path must not crash."""
-        value, spatial_shapes_tensor, sampling_locations, attention_weights, levels = self._make_inputs(levels=[(8, 8)])
+        value, spatial_shapes_tensor, sampling_locations, attention_weights, levels = make_inputs(levels=[(8, 8)])
 
         output = ms_deform_attn_core_pytorch(
             value,
