@@ -34,7 +34,8 @@ Usage::
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Tuple
+from collections.abc import Callable
+from typing import Any
 
 import torch
 from torch import Tensor
@@ -114,7 +115,7 @@ def _require_kornia() -> None:
         ImportError: When ``kornia`` is not installed, with an install hint.
     """
     try:
-        import kornia.augmentation  # noqa: F401 # type: ignore[import-not-found]
+        import kornia.augmentation  # noqa: F401
     except ImportError as e:
         raise ImportError("GPU augmentation requires kornia. Install with: pip install 'rfdetr[kornia]'") from e
 
@@ -124,21 +125,21 @@ def _require_kornia() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _make_horizontal_flip(params: Dict[str, Any]) -> Any:
+def _make_horizontal_flip(params: dict[str, Any]) -> Any:
     """Build a ``K.RandomHorizontalFlip`` from aug_config params."""
     from kornia.augmentation import RandomHorizontalFlip
 
     return RandomHorizontalFlip(p=params.get("p", 0.5))
 
 
-def _make_vertical_flip(params: Dict[str, Any]) -> Any:
+def _make_vertical_flip(params: dict[str, Any]) -> Any:
     """Build a ``K.RandomVerticalFlip`` from aug_config params."""
     from kornia.augmentation import RandomVerticalFlip
 
     return RandomVerticalFlip(p=params.get("p", 0.5))
 
 
-def _make_rotate(params: Dict[str, Any]) -> Any:
+def _make_rotate(params: dict[str, Any]) -> Any:
     """Build a ``K.RandomRotation`` from aug_config params.
 
     The ``limit`` parameter may be a scalar (symmetric range) or a tuple.
@@ -146,27 +147,24 @@ def _make_rotate(params: Dict[str, Any]) -> Any:
     from kornia.augmentation import RandomRotation
 
     limit = params.get("limit", 15)
-    if isinstance(limit, (list, tuple)):
-        degrees = tuple(limit)
-    else:
-        degrees = (-limit, limit)
+    degrees = tuple(limit) if isinstance(limit, (list, tuple)) else (-limit, limit)
     return RandomRotation(degrees=degrees, p=params.get("p", 0.5))
 
 
-def _make_affine(params: Dict[str, Any]) -> Any:
+def _make_affine(params: dict[str, Any]) -> Any:
     """Build a ``K.RandomAffine`` from aug_config params."""
     from kornia.augmentation import RandomAffine
 
     return RandomAffine(
         degrees=params.get("rotate", (-15, 15)),
-        translate=params.get("translate_percent", None),
-        scale=params.get("scale", None),
-        shear=params.get("shear", None),
+        translate=params.get("translate_percent"),
+        scale=params.get("scale"),
+        shear=params.get("shear"),
         p=params.get("p", 0.5),
     )
 
 
-def _make_color_jitter(params: Dict[str, Any]) -> Any:
+def _make_color_jitter(params: dict[str, Any]) -> Any:
     """Build a ``K.ColorJiggle`` from aug_config ``ColorJitter`` params.
 
     Note: Kornia >=0.7 uses ``ColorJiggle``; the ``ColorJitter`` alias was
@@ -183,7 +181,7 @@ def _make_color_jitter(params: Dict[str, Any]) -> Any:
     )
 
 
-def _make_random_brightness_contrast(params: Dict[str, Any]) -> Any:
+def _make_random_brightness_contrast(params: dict[str, Any]) -> Any:
     """Build a ``K.ColorJiggle`` from ``RandomBrightnessContrast`` params."""
     from kornia.augmentation import ColorJiggle
 
@@ -194,7 +192,7 @@ def _make_random_brightness_contrast(params: Dict[str, Any]) -> Any:
     )
 
 
-def _make_gaussian_blur(params: Dict[str, Any]) -> Any:
+def _make_gaussian_blur(params: dict[str, Any]) -> Any:
     """Build a ``K.RandomGaussianBlur`` from aug_config params.
 
     ``blur_limit`` is rounded up to an odd number for the kernel size.
@@ -213,7 +211,7 @@ def _make_gaussian_blur(params: Dict[str, Any]) -> Any:
     )
 
 
-def _make_gauss_noise(params: Dict[str, Any]) -> Any:
+def _make_gauss_noise(params: dict[str, Any]) -> Any:
     """Build a ``K.RandomGaussianNoise`` from aug_config params.
 
     Kornia takes a single ``std`` value; we use the upper bound of
@@ -228,7 +226,7 @@ def _make_gauss_noise(params: Dict[str, Any]) -> Any:
     )
 
 
-_REGISTRY: Dict[str, Callable[[Dict[str, Any]], Any]] = {
+_REGISTRY: dict[str, Callable[[dict[str, Any]], Any]] = {
     "HorizontalFlip": _make_horizontal_flip,
     "VerticalFlip": _make_vertical_flip,
     "Rotate": _make_rotate,
@@ -246,7 +244,7 @@ _REGISTRY: Dict[str, Callable[[Dict[str, Any]], Any]] = {
 
 
 def build_kornia_pipeline(
-    aug_config: Dict[str, Dict[str, Any]],
+    aug_config: dict[str, dict[str, Any]],
     resolution: int,
 ) -> Any:
     """Build a Kornia ``AugmentationSequential`` from an aug_config dict.
@@ -271,7 +269,7 @@ def build_kornia_pipeline(
     _require_kornia()
     from kornia.augmentation import AugmentationSequential
 
-    transforms: List[Any] = []
+    transforms: list[Any] = []
     for name, params in aug_config.items():
         factory = _REGISTRY.get(name)
         if factory is None:
@@ -287,8 +285,8 @@ def build_kornia_pipeline(
 
 
 def build_normalize(
-    mean: Tuple[float, ...] = IMAGENET_MEAN,
-    std: Tuple[float, ...] = IMAGENET_STD,
+    mean: tuple[float, ...] = IMAGENET_MEAN,
+    std: tuple[float, ...] = IMAGENET_STD,
 ) -> Any:
     """Build a Kornia ``Normalize`` transform for GPU-side normalization.
 
@@ -315,9 +313,9 @@ def build_normalize(
 
 
 def collate_boxes(
-    targets: List[Dict[str, Any]],
+    targets: list[dict[str, Any]],
     device: torch.device,
-) -> Tuple[Tensor, Tensor]:
+) -> tuple[Tensor, Tensor]:
     """Pack variable-length xyxy boxes into a padded tensor and valid mask.
 
     Kornia ``AugmentationSequential`` expects boxes as ``[B, N_max, 4]``.
@@ -368,10 +366,10 @@ def collate_boxes(
 def unpack_boxes(
     boxes_aug: Tensor,
     valid: Tensor,
-    targets: List[Dict[str, Any]],
+    targets: list[dict[str, Any]],
     image_height: int,
     image_width: int,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Unpack augmented boxes, clamp to image bounds, and remove zero-area boxes.
 
     After Kornia augmentation the padded ``[B, N_max, 4]`` tensor is unpacked
@@ -391,7 +389,7 @@ def unpack_boxes(
         A new list of target dicts with updated ``boxes``, ``labels``,
         ``area``, and ``iscrowd`` entries.
     """
-    new_targets: List[Dict[str, Any]] = []
+    new_targets: list[dict[str, Any]] = []
     for i, t in enumerate(targets):
         t = t.copy()
         n_orig = t["boxes"].shape[0]

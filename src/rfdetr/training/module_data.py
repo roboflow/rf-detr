@@ -6,7 +6,7 @@
 
 """LightningDataModule for RF-DETR dataset construction and loaders."""
 
-from typing import Any, List, Optional, Tuple
+from typing import Any
 
 import torch
 import torch.utils.data
@@ -134,7 +134,7 @@ def _resolve_augmentation_backend(backend: str) -> str:
     if not _has_cuda_device():
         return "cpu"
     try:
-        import kornia.augmentation  # noqa: F401
+        import kornia.augmentation  # noqa: F401 # type: ignore[import-not-found]
 
         return "gpu"
     except ImportError:
@@ -154,13 +154,13 @@ class RFDETRDataModule(LightningDataModule):
         self.model_config = model_config
         self.train_config = train_config
 
-        self._dataset_train: Optional[torch.utils.data.Dataset] = None
-        self._dataset_val: Optional[torch.utils.data.Dataset] = None
-        self._dataset_test: Optional[torch.utils.data.Dataset] = None
+        self._dataset_train: torch.utils.data.Dataset | None = None
+        self._dataset_val: torch.utils.data.Dataset | None = None
+        self._dataset_test: torch.utils.data.Dataset | None = None
 
         # GPU augmentation pipeline (Kornia); built lazily in setup("fit").
-        self._kornia_pipeline: Optional[Any] = None
-        self._kornia_normalize: Optional[Any] = None
+        self._kornia_pipeline: Any | None = None
+        self._kornia_normalize: Any | None = None
         # Sentinel: True once _setup_kornia_pipeline has run (even on fallback paths
         # where _kornia_pipeline stays None), preventing redundant re-runs on repeated
         # setup("fit") calls (e.g. during validation loops in some PTL strategies).
@@ -391,7 +391,7 @@ class RFDETRDataModule(LightningDataModule):
         self._kornia_normalize = build_normalize()
         logger.info("Kornia GPU augmentation pipeline built (backend=%s)", backend)
 
-    def on_after_batch_transfer(self, batch: Tuple, dataloader_idx: int) -> Tuple:
+    def on_after_batch_transfer(self, batch: tuple, dataloader_idx: int) -> tuple:
         """Apply Kornia GPU augmentation after the batch is transferred to device.
 
         When ``_kornia_pipeline`` is set and the trainer is in training mode,
@@ -440,7 +440,7 @@ class RFDETRDataModule(LightningDataModule):
     # ------------------------------------------------------------------
 
     @property
-    def class_names(self) -> Optional[List[str]]:
+    def class_names(self) -> list[str] | None:
         """Class names from the training or validation dataset annotation file.
 
         Reads category names from the first available COCO-style dataset.
@@ -458,7 +458,7 @@ class RFDETRDataModule(LightningDataModule):
                 return [coco.cats[k]["name"] for k in sorted(coco.cats.keys())]
         return None
 
-    def transfer_batch_to_device(self, batch: Tuple, device: torch.device, dataloader_idx: int) -> Tuple:
+    def transfer_batch_to_device(self, batch: tuple, device: torch.device, dataloader_idx: int) -> tuple:
         """Move a ``(NestedTensor, targets)`` batch to *device*.
 
         PTL's default iterates tuple elements and calls ``.to(device)``; that

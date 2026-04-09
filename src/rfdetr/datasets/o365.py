@@ -78,4 +78,4 @@ def build_o365(image_set: str, args: Any, resolution: int) -> CocoDetection:
     if image_set == "val":
         val_ds = build_o365_raw("val", args, resolution=resolution)
         return val_ds
-    raise ValueError("Unknown image_set: {}".format(image_set))
+    raise ValueError(f"Unknown image_set: {image_set}")
