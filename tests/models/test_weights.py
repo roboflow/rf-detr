@@ -352,6 +352,32 @@ class TestLoadPretrainWeightsPTLCkptFormat:
 
         assert result == ["from_args"], f"args must take precedence over hyper_parameters, got {result!r}"
 
+    def test_ptl_ckpt_non_model_keys_in_state_dict_are_excluded(self, monkeypatch):
+        """Non-model. keys in state_dict (optimizer, lr_scheduler) must not appear in checkpoint['model'].
+
+        Real PTL checkpoints contain keys like 'optimizer.param_groups' and
+        'lr_scheduler.last_epoch' alongside the 'model.*' weights.  The loader must
+        exclude these non-model keys so they do not pollute the state dict passed to
+        load_state_dict and do not cause KeyError or unexpected parameter names.
+        """
+        from rfdetr.models.weights import load_pretrain_weights
+
+        mc = RFDETRBaseConfig(pretrain_weights="/fake/last.ckpt", device="cpu", num_classes=90)
+        checkpoint = self._make_ptl_checkpoint(num_classes=91)
+        # Inject non-model keys that a real PTL checkpoint would contain
+        checkpoint["state_dict"]["optimizer.param_groups"] = torch.zeros(1)
+        checkpoint["state_dict"]["lr_scheduler.last_epoch"] = torch.tensor(10)
+        checkpoint["state_dict"]["callback_states.ema.shadow_params"] = torch.zeros(4)
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+
+        nn_model = _fake_nn_model()
+        load_pretrain_weights(nn_model, mc)
+
+        nn_model.load_state_dict.assert_called_once()
+        loaded_state = nn_model.load_state_dict.call_args[0][0]
+        non_model_keys = [k for k in loaded_state if k.startswith(("optimizer.", "lr_scheduler.", "callback_states."))]
+        assert not non_model_keys, f"Non-model keys must be excluded from loaded state; found: {non_model_keys}"
+
     def test_ptl_ckpt_torch_compile_orig_mod_prefix_stripped(self, monkeypatch):
         """PTL .ckpt from a torch.compile-wrapped model must load without KeyError.
 
