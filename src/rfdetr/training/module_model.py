@@ -236,6 +236,9 @@ class RFDETRModelModule(LightningModule):
 
         Examples:
             >>> # Fused is disabled when trainer precision is 32-true
+            >>> module = RFDETRModelModule.__new__(RFDETRModelModule)
+            >>> module.model_config = type("Cfg", (), {"fused_optimizer": True})()
+            >>> module._trainer = type("Trainer", (), {"precision": "32-true"})()
             >>> module._trainer.precision = "32-true"
             >>> module._use_fused_optimizer
             False
