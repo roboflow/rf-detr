@@ -5378,8 +5378,12 @@ only constructed once even if <code>setup</code> is called multiple times.</p>
         <p>Return the training DataLoader.</p>
 <p>Uses a replacement sampler when the dataset is too small to fill
 <code>_MIN_TRAIN_BATCHES</code> effective batches (matching legacy behaviour in
-<code>main.py</code>).  Otherwise uses <code>shuffle=True, drop_last=True</code> so that
-PTL can auto-inject <code>DistributedSampler</code> in DDP mode.</p>
+<code>main.py</code>).  Otherwise wraps the dataset with
+:class:<code>GradAccumAlignedDataset</code> to ensure its length is an exact
+multiple of <code>effective_batch_size * world_size</code> (workaround for
+https://github.com/Lightning-AI/pytorch-lightning/issues/19987) and
+then uses <code>shuffle=True, drop_last=True</code> so that PTL can
+auto-inject <code>DistributedSampler</code> in DDP mode.</p>
 
 
     <p><span class="doc-section-title">Returns:</span></p>
