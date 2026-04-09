@@ -986,7 +986,7 @@ class TestConfigureOptimizers:
 
         optimizer = module.configure_optimizers()["optimizer"]
 
-        assert optimizer.defaults.get("fused") is False or optimizer.defaults.get("fused") is None
+        assert not optimizer.defaults.get("fused")
 
     @patch("rfdetr.training.module_model.get_param_dict")
     @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
@@ -1012,6 +1012,9 @@ class TestConfigureOptimizers:
         optimizer = module.configure_optimizers()["optimizer"]
 
         assert optimizer.defaults.get("fused") is True
+
+
+class TestPredictStep:
     """Tests for predict_step() — verifies that only samples (not targets) are passed
     to the model, that postprocess receives the correct original sizes, and that the
     postprocessor output is returned directly to the caller."""
