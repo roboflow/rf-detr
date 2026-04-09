@@ -157,12 +157,14 @@ select = [
     "W",  # pycodestyle warnings
     "F",  # pyflakes
     "I",  # isort
+    "N",  # pep8-naming: lowercase variables (N806) and arguments (N803)
 ]
 extend-select = [
     "RUF100",  # yesqa
 ]
 ignore = [
     "E722",  # todo: Do not use bare `except`
+    "N812",  # torch convention: `import torch.nn.functional as F`
 ]
 
 [tool.ruff.lint.per-file-ignores]
