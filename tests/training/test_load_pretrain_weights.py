@@ -128,6 +128,9 @@ class TestLoadPretrainWeightsSecondReinit:
             f"Expected exactly 1 reinit call (to checkpoint size), but got {len(calls)}: "
             f"{calls}. The second reinit to 91 destroys loaded weights."
         )
+        assert mc.num_classes == 2, (
+            f"mc.num_classes must be auto-aligned to 2 (checkpoint_logits - 1), got {mc.num_classes}"
+        )
 
     def test_no_mismatch_no_reinit(self, monkeypatch):
         """Checkpoint class count matches config — no reinit at all.
