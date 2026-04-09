@@ -28,8 +28,6 @@ from unittest.mock import MagicMock, call
 import pytest
 import torch
 
-
-from rfdetr.models.weights import load_pretrain_weights
 from rfdetr.config import (
     RFDETRLargeConfig,
     RFDETRMediumConfig,
@@ -43,6 +41,7 @@ from rfdetr.config import (
     RFDETRSmallConfig,
     TrainConfig,
 )
+from rfdetr.models.weights import load_pretrain_weights
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -205,18 +204,21 @@ class TestLoadPretrainWeightsSecondReinit:
     # All non-deprecated model configs (RFDETRLargeDeprecatedConfig and
     # RFDETRBaseConfig are excluded; the former is deprecated, the latter
     # serves as the base class for the concrete variants below).
-    @pytest.mark.parametrize("config_cls", [
-    pytest.param(RFDETRNanoConfig, id="nano"),
-    pytest.param(RFDETRSmallConfig, id="small"),
-    pytest.param(RFDETRMediumConfig, id="medium"),
-    pytest.param(RFDETRLargeConfig, id="large"),
-    pytest.param(RFDETRSegNanoConfig, id="seg_nano"),
-    pytest.param(RFDETRSegSmallConfig, id="seg_small"),
-    pytest.param(RFDETRSegMediumConfig, id="seg_medium"),
-    pytest.param(RFDETRSegLargeConfig, id="seg_large"),
-    pytest.param(RFDETRSegXLargeConfig, id="seg_xlarge"),
-    pytest.param(RFDETRSeg2XLargeConfig, id="seg_2xlarge"),
-])
+    @pytest.mark.parametrize(
+        "config_cls",
+        [
+            pytest.param(RFDETRNanoConfig, id="nano"),
+            pytest.param(RFDETRSmallConfig, id="small"),
+            pytest.param(RFDETRMediumConfig, id="medium"),
+            pytest.param(RFDETRLargeConfig, id="large"),
+            pytest.param(RFDETRSegNanoConfig, id="seg_nano"),
+            pytest.param(RFDETRSegSmallConfig, id="seg_small"),
+            pytest.param(RFDETRSegMediumConfig, id="seg_medium"),
+            pytest.param(RFDETRSegLargeConfig, id="seg_large"),
+            pytest.param(RFDETRSegXLargeConfig, id="seg_xlarge"),
+            pytest.param(RFDETRSeg2XLargeConfig, id="seg_2xlarge"),
+        ],
+    )
     def test_eight_class_finetune_checkpoint_auto_aligns_num_classes_and_reinits_once(self, monkeypatch, config_cls):
         """Auto-align ``mc.num_classes`` and avoid a second reinit for 8-class checkpoints.
 
