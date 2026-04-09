@@ -587,18 +587,12 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
         if hasattr(args, "augmentation_backend"):
             setattr(args, "augmentation_backend", "cpu")
     if resolved_augmentation_backend == "auto":
-        gpu_available = torch.cuda.is_available()
-        if gpu_available:
-            try:
-                import kornia  # type: ignore[import-not-found]
-            except ImportError:
-                gpu_available = False
-        if not gpu_available:
+        resolved_augmentation_backend = _resolve_runtime_augmentation_backend(resolved_augmentation_backend)
+        if resolved_augmentation_backend == "cpu":
             logger.warning(
                 "augmentation_backend='auto' resolved to 'cpu' because CUDA or kornia is unavailable; "
                 "disabling GPU postprocess transforms and retaining CPU normalization."
             )
-            resolved_augmentation_backend = "cpu"
             if hasattr(args, "augmentation_backend"):
                 setattr(args, "augmentation_backend", "cpu")
     gpu_postprocess = resolved_augmentation_backend != "cpu" and not include_masks
@@ -642,6 +636,23 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
     return dataset
 
 
+def _resolve_runtime_augmentation_backend(backend: str) -> str:
+    """Resolve ``augmentation_backend`` at runtime for dataset builders.
+
+    ``"auto"`` becomes ``"gpu"`` only when CUDA and Kornia are both available,
+    otherwise ``"cpu"``. Explicit ``"cpu"``/``"gpu"`` values pass through.
+    """
+    if backend != "auto":
+        return backend
+    if not torch.cuda.is_available():
+        return "cpu"
+    try:
+        import kornia.augmentation  # noqa: F401 # type: ignore[import-not-found]
+    except ImportError:
+        return "cpu"
+    return "gpu"
+
+
 def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
     """Build a Roboflow COCO-format dataset.
 
@@ -668,7 +679,8 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
     patch_size = getattr(args, "patch_size", 16)
     num_windows = getattr(args, "num_windows", 4)
     aug_config = getattr(args, "aug_config", None)
-    gpu_postprocess = getattr(args, "augmentation_backend", "cpu") != "cpu" and not include_masks
+    resolved_augmentation_backend = _resolve_runtime_augmentation_backend(getattr(args, "augmentation_backend", "cpu"))
+    gpu_postprocess = resolved_augmentation_backend != "cpu" and not include_masks
 
     if square_resize_div_64:
         logger.info(f"Building Roboflow {image_set} dataset with square resize at resolution {resolution}")

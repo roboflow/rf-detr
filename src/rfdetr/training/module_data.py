@@ -17,12 +17,25 @@ from rfdetr._namespace import _namespace_from_configs
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.datasets import build_dataset
 from rfdetr.datasets.aug_config import AUG_CONFIG
+from rfdetr.utilities.box_ops import box_xyxy_to_cxcywh
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.tensors import collate_fn
 
 logger = get_logger()
 
 _MIN_TRAIN_BATCHES = 5
+
+
+def _has_cuda_device() -> bool:
+    """Return ``True`` when the runtime has a CUDA accelerator available.
+
+    Uses the fork-safe global ``DEVICE`` constant instead of direct
+    ``torch.cuda.is_available()`` calls to avoid creating a CUDA context in
+    fork-based notebook/DDP workflows.
+    """
+    from rfdetr.config import DEVICE
+
+    return str(DEVICE).startswith("cuda")
 
 
 class GradAccumAlignedDataset(torch.utils.data.Dataset):
@@ -118,7 +131,7 @@ def _resolve_augmentation_backend(backend: str) -> str:
     """
     if backend != "auto":
         return backend
-    if not torch.cuda.is_available():
+    if not _has_cuda_device():
         return "cpu"
     try:
         import kornia.augmentation  # noqa: F401
@@ -353,7 +366,7 @@ class RFDETRDataModule(LightningDataModule):
             return
 
         if backend == "auto":
-            if not torch.cuda.is_available():
+            if not _has_cuda_device():
                 logger.warning("augmentation_backend='auto': no CUDA, falling back to CPU augmentation")
                 return
             try:
@@ -362,7 +375,7 @@ class RFDETRDataModule(LightningDataModule):
                 logger.warning("augmentation_backend='auto': kornia not installed, using CPU augmentation")
                 return
         elif backend == "gpu":
-            if not torch.cuda.is_available():
+            if not _has_cuda_device():
                 raise RuntimeError("augmentation_backend='gpu' requires a CUDA device")
             try:
                 import kornia.augmentation  # noqa: F401
@@ -412,6 +425,13 @@ class RFDETRDataModule(LightningDataModule):
             img_aug, boxes_aug = self._kornia_pipeline(img, boxes_padded)
             img_aug = self._kornia_normalize(img_aug)
             targets = unpack_boxes(boxes_aug, valid, targets, *img_aug.shape[-2:])
+            height, width = img_aug.shape[-2:]
+            for target in targets:
+                boxes = target["boxes"]
+                if boxes.numel() == 0:
+                    continue
+                scale = boxes.new_tensor([width, height, width, height])
+                target["boxes"] = box_xyxy_to_cxcywh(boxes) / scale
             batch = (NestedTensor(img_aug, samples.mask), targets)
         return batch
 

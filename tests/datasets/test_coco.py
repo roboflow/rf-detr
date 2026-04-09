@@ -12,9 +12,11 @@ Tests cover:
 """
 
 import json
+import types
 from pathlib import Path
 from typing import Dict, List
 
+import pytest
 import torch
 from PIL import Image
 
@@ -326,3 +328,64 @@ class TestBuildO365RawGpuBackend:
         _, mock_transform, mock_sq_transform = self._call_build_o365_raw("cpu", square_resize_div_64=True)
         mock_sq_transform.assert_called_once()
         mock_transform.assert_not_called()
+
+    def test_gpu_backend_no_cuda_raises_runtime_error(self):
+        """gpu backend must fail fast when CUDA is unavailable."""
+        from unittest.mock import patch
+
+        with (
+            patch("torch.cuda.is_available", return_value=False),
+            pytest.raises(RuntimeError, match="CUDA"),
+        ):
+            self._call_build_o365_raw("gpu")
+
+    def test_gpu_backend_no_kornia_raises_import_error(self):
+        """gpu backend must raise with install hint when kornia is missing."""
+        from unittest.mock import patch
+
+        original_import = __builtins__.__import__ if hasattr(__builtins__, "__import__") else __import__
+
+        def _mock_import(name, *args, **kwargs):
+            if name == "kornia" or name.startswith("kornia."):
+                raise ImportError("No module named 'kornia'")
+            return original_import(name, *args, **kwargs)
+
+        with (
+            patch("torch.cuda.is_available", return_value=True),
+            patch("builtins.__import__", side_effect=_mock_import),
+            pytest.raises(ImportError, match="rfdetr\\[kornia\\]"),
+        ):
+            self._call_build_o365_raw("gpu")
+
+
+class TestBuildRoboflowFromCocoBackendResolution:
+    """Roboflow COCO builder should resolve backend for gpu_postprocess consistently."""
+
+    def test_auto_no_cuda_keeps_cpu_normalize(self):
+        """auto + no CUDA must set gpu_postprocess=False."""
+        from unittest.mock import MagicMock, patch
+
+        from rfdetr.datasets.coco import build_roboflow_from_coco
+
+        args = types.SimpleNamespace(
+            dataset_dir="/fake/dataset",
+            augmentation_backend="auto",
+            square_resize_div_64=False,
+            segmentation_head=False,
+            multi_scale=False,
+            expanded_scales=False,
+            do_random_resize_via_padding=False,
+            patch_size=16,
+            num_windows=4,
+            aug_config=None,
+        )
+        with (
+            patch("rfdetr.datasets.coco.Path") as mock_path,
+            patch("rfdetr.datasets.coco.make_coco_transforms") as mock_transforms,
+            patch("rfdetr.datasets.coco.CocoDetection", return_value=MagicMock()),
+            patch("torch.cuda.is_available", return_value=False),
+        ):
+            mock_path.return_value.exists.return_value = True
+            mock_transforms.return_value = MagicMock()
+            build_roboflow_from_coco("train", args, resolution=640)
+        assert mock_transforms.call_args.kwargs["gpu_postprocess"] is False

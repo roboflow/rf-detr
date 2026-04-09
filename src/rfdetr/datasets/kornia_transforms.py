@@ -68,16 +68,16 @@ def _require_kornia() -> None:
 
 def _make_horizontal_flip(params: Dict[str, Any]) -> Any:
     """Build a ``K.RandomHorizontalFlip`` from aug_config params."""
-    import kornia.augmentation as K
+    from kornia.augmentation import RandomHorizontalFlip
 
-    return K.RandomHorizontalFlip(p=params.get("p", 0.5))
+    return RandomHorizontalFlip(p=params.get("p", 0.5))
 
 
 def _make_vertical_flip(params: Dict[str, Any]) -> Any:
     """Build a ``K.RandomVerticalFlip`` from aug_config params."""
-    import kornia.augmentation as K
+    from kornia.augmentation import RandomVerticalFlip
 
-    return K.RandomVerticalFlip(p=params.get("p", 0.5))
+    return RandomVerticalFlip(p=params.get("p", 0.5))
 
 
 def _make_rotate(params: Dict[str, Any]) -> Any:
@@ -85,21 +85,21 @@ def _make_rotate(params: Dict[str, Any]) -> Any:
 
     The ``limit`` parameter may be a scalar (symmetric range) or a tuple.
     """
-    import kornia.augmentation as K
+    from kornia.augmentation import RandomRotation
 
     limit = params.get("limit", 15)
     if isinstance(limit, (list, tuple)):
         degrees = tuple(limit)
     else:
         degrees = (-limit, limit)
-    return K.RandomRotation(degrees=degrees, p=params.get("p", 0.5))
+    return RandomRotation(degrees=degrees, p=params.get("p", 0.5))
 
 
 def _make_affine(params: Dict[str, Any]) -> Any:
     """Build a ``K.RandomAffine`` from aug_config params."""
-    import kornia.augmentation as K
+    from kornia.augmentation import RandomAffine
 
-    return K.RandomAffine(
+    return RandomAffine(
         degrees=params.get("rotate", (-15, 15)),
         translate=params.get("translate_percent", None),
         scale=params.get("scale", None),
@@ -114,9 +114,9 @@ def _make_color_jitter(params: Dict[str, Any]) -> Any:
     Note: Kornia >=0.7 uses ``ColorJiggle``; the ``ColorJitter`` alias was
     added in later versions.  We use ``ColorJiggle`` for broad compatibility.
     """
-    import kornia.augmentation as K
+    from kornia.augmentation import ColorJiggle
 
-    return K.ColorJiggle(
+    return ColorJiggle(
         brightness=params.get("brightness", 0.0),
         contrast=params.get("contrast", 0.0),
         saturation=params.get("saturation", 0.0),
@@ -127,9 +127,9 @@ def _make_color_jitter(params: Dict[str, Any]) -> Any:
 
 def _make_random_brightness_contrast(params: Dict[str, Any]) -> Any:
     """Build a ``K.ColorJiggle`` from ``RandomBrightnessContrast`` params."""
-    import kornia.augmentation as K
+    from kornia.augmentation import ColorJiggle
 
-    return K.ColorJiggle(
+    return ColorJiggle(
         brightness=params.get("brightness_limit", 0.2),
         contrast=params.get("contrast_limit", 0.2),
         p=params.get("p", 0.5),
@@ -141,14 +141,14 @@ def _make_gaussian_blur(params: Dict[str, Any]) -> Any:
 
     ``blur_limit`` is rounded up to an odd number for the kernel size.
     """
-    import kornia.augmentation as K
+    from kornia.augmentation import RandomGaussianBlur
 
     blur_limit = params.get("blur_limit", 3)
     # Ensure blur_limit is odd and at least 3 (Kornia requires kernel_size >= 3)
     if blur_limit % 2 == 0:
         blur_limit = blur_limit + 1
     blur_limit = max(3, blur_limit)
-    return K.RandomGaussianBlur(
+    return RandomGaussianBlur(
         kernel_size=(blur_limit, blur_limit),
         sigma=(0.1, 2.0),
         p=params.get("p", 0.5),
@@ -161,10 +161,10 @@ def _make_gauss_noise(params: Dict[str, Any]) -> Any:
     Kornia takes a single ``std`` value; we use the upper bound of
     ``std_range`` as an acceptable approximation.
     """
-    import kornia.augmentation as K
+    from kornia.augmentation import RandomGaussianNoise
 
     std_range = params.get("std_range", (0.01, 0.05))
-    return K.RandomGaussianNoise(
+    return RandomGaussianNoise(
         std=std_range[1],
         p=params.get("p", 0.5),
     )
@@ -211,7 +211,7 @@ def build_kornia_pipeline(
         ValueError: If *aug_config* contains an unsupported augmentation key.
     """
     _require_kornia()
-    import kornia.augmentation as K
+    from kornia.augmentation import AugmentationSequential
 
     transforms: List[Any] = []
     for name, params in aug_config.items():
@@ -222,7 +222,7 @@ def build_kornia_pipeline(
             )
         transforms.append(factory(params))
 
-    return K.AugmentationSequential(
+    return AugmentationSequential(
         *transforms,
         data_keys=["input", "bbox_xyxy"],
     )
@@ -243,9 +243,9 @@ def build_normalize(
         A ``kornia.augmentation.Normalize`` instance.
     """
     _require_kornia()
-    import kornia.augmentation as K
+    from kornia.augmentation import Normalize
 
-    return K.Normalize(
+    return Normalize(
         mean=mean,
         std=std,
     )

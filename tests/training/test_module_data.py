@@ -789,7 +789,7 @@ class TestTransferBatchToDevice:
 class TestBackendResolution:
     """Backend resolution selects Kornia, CPU, or raises depending on environment.
 
-    All tests run on CPU CI by mocking ``torch.cuda.is_available`` and the
+    All tests run on CPU CI by mocking fork-safe CUDA detection and the
     ``kornia`` import as needed.
     """
 
@@ -816,7 +816,7 @@ class TestBackendResolution:
     def test_auto_no_cuda_falls_back_to_cpu(self, tmp_path):
         """auto + no CUDA: _kornia_pipeline stays None, no error."""
         dm = self._build_dm_with_backend(tmp_path, "auto")
-        with patch("torch.cuda.is_available", return_value=False):
+        with patch("rfdetr.training.module_data._has_cuda_device", return_value=False):
             dm = self._setup_with_mock_build(dm)
         assert getattr(dm, "_kornia_pipeline", None) is None, (
             "auto backend with no CUDA must not build a Kornia pipeline"
@@ -834,7 +834,7 @@ class TestBackendResolution:
             return original_import(name, *args, **kwargs)
 
         with (
-            patch("torch.cuda.is_available", return_value=True),
+            patch("rfdetr.training.module_data._has_cuda_device", return_value=True),
             patch("builtins.__import__", side_effect=_mock_import),
         ):
             dm = self._setup_with_mock_build(dm)
@@ -847,7 +847,7 @@ class TestBackendResolution:
         """gpu + no CUDA: must raise RuntimeError."""
         dm = self._build_dm_with_backend(tmp_path, "gpu")
         with (
-            patch("torch.cuda.is_available", return_value=False),
+            patch("rfdetr.training.module_data._has_cuda_device", return_value=False),
             pytest.raises(RuntimeError, match="CUDA"),
         ):
             self._setup_with_mock_build(dm)
@@ -864,7 +864,7 @@ class TestBackendResolution:
             return original_import(name, *args, **kwargs)
 
         with (
-            patch("torch.cuda.is_available", return_value=True),
+            patch("rfdetr.training.module_data._has_cuda_device", return_value=True),
             patch("builtins.__import__", side_effect=_mock_import),
             pytest.raises(ImportError, match="rfdetr\\[kornia\\]"),
         ):
@@ -893,7 +893,7 @@ class TestBackendResolution:
             return MagicMock()
 
         with (
-            patch("torch.cuda.is_available", return_value=True),
+            patch("rfdetr.training.module_data._has_cuda_device", return_value=True),
             patch("rfdetr.training.module_data.build_dataset", side_effect=lambda *a, **k: _fake_dataset(10)),
             patch.dict(sys.modules, {"kornia": MagicMock(), "kornia.augmentation": MagicMock()}),
             patch("rfdetr.datasets.kornia_transforms.build_kornia_pipeline", side_effect=_fake_build_kornia),
@@ -915,7 +915,7 @@ class TestBackendResolution:
             return _fake_dataset(10)
 
         with (
-            patch("torch.cuda.is_available", return_value=False),
+            patch("rfdetr.training.module_data._has_cuda_device", return_value=False),
             patch("rfdetr.training.module_data.build_dataset", side_effect=_spy_build),
         ):
             dm.setup("fit")
@@ -930,7 +930,7 @@ class TestBackendResolution:
         """_resolve_augmentation_backend returns 'cpu' for auto when CUDA is absent."""
         from rfdetr.training.module_data import _resolve_augmentation_backend
 
-        with patch("torch.cuda.is_available", return_value=False):
+        with patch("rfdetr.training.module_data._has_cuda_device", return_value=False):
             assert _resolve_augmentation_backend("auto") == "cpu"
 
     def test_resolve_augmentation_backend_cpu_passthrough(self):
@@ -994,7 +994,7 @@ class TestOnAfterBatchTransfer:
         return samples, targets
 
     def test_training_true_applies_augmentation(self, tmp_path):
-        """When training=True and _kornia_pipeline is set, augmentation is applied."""
+        """When training=True and _kornia_pipeline is set, image/box outputs match CPU Normalize contract."""
         dm = self._build_dm(tmp_path)
         dm = self._attach_mock_trainer(dm, training=True)
 
@@ -1005,15 +1005,23 @@ class TestOnAfterBatchTransfer:
         mock_pipeline = MagicMock(return_value=(img_aug, boxes_padded))
         dm._kornia_pipeline = mock_pipeline
 
-        # Mock normalize to be a passthrough
-        dm._kornia_normalize = MagicMock(side_effect=lambda x: x)
+        # Normalize adds +1 so we can assert the normalization step is applied.
+        dm._kornia_normalize = MagicMock(side_effect=lambda x: x + 1.0)
 
-        result = dm.on_after_batch_transfer((samples, targets), dataloader_idx=0)
+        result_samples, result_targets = dm.on_after_batch_transfer((samples, targets), dataloader_idx=0)
 
         mock_pipeline.assert_called_once()
         dm._kornia_normalize.assert_called_once()
-        assert isinstance(result, tuple)
-        assert len(result) == 2
+        assert torch.allclose(result_samples.tensors, img_aug + 1.0)
+        assert len(result_targets) == 2
+        for target in result_targets:
+            boxes = target["boxes"]
+            assert boxes.shape == (1, 4)
+            assert torch.all(boxes >= 0.0)
+            assert torch.all(boxes <= 1.0)
+            torch.testing.assert_close(
+                boxes[0], torch.tensor([0.375, 0.375, 0.5, 0.5], dtype=torch.float32), rtol=1e-4, atol=1e-6
+            )
 
     def test_training_false_skips_augmentation(self, tmp_path):
         """When training=False, batch is returned unchanged."""
@@ -1088,7 +1096,7 @@ class TestKorniaSetupDoneSentinel:
 
         with (
             patch("rfdetr.training.module_data.build_dataset", side_effect=_build),
-            patch("torch.cuda.is_available", return_value=False),
+            patch("rfdetr.training.module_data._has_cuda_device", return_value=False),
         ):
             dm.setup("fit")
         return dm
@@ -1125,7 +1133,7 @@ class TestKorniaSetupDoneSentinel:
 
         with (
             patch("rfdetr.training.module_data.build_dataset", side_effect=_build),
-            patch("torch.cuda.is_available", return_value=False),
+            patch("rfdetr.training.module_data._has_cuda_device", return_value=False),
         ):
             dm.setup("fit")
             dm.setup("fit")

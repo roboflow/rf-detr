@@ -12,6 +12,7 @@
 from pathlib import Path
 from typing import Any
 
+import torch
 from PIL import Image
 
 from rfdetr.datasets.coco import CocoDetection, make_coco_transforms, make_coco_transforms_square_div_64
@@ -35,27 +36,24 @@ def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
     resolved_backend = augmentation_backend
 
     if augmentation_backend == "auto":
-        # Resolve 'auto' based on CUDA and kornia availability
-        has_cuda = False
-        has_kornia = False
-        try:
-            import torch
+        has_cuda = bool(torch.cuda.is_available())
+        if has_cuda:
+            try:
+                import kornia.augmentation  # type: ignore[import-not-found]
 
-            has_cuda = bool(torch.cuda.is_available())
-        except Exception:
-            has_cuda = False
-
-        try:
-            import kornia.augmentation  # noqa: F401 # type: ignore[import-not-found]
-
-            has_kornia = True
-        except Exception:
-            has_kornia = False
-
-        if has_cuda and has_kornia:
-            resolved_backend = "gpu"
+                resolved_backend = "gpu"
+            except ImportError:
+                resolved_backend = "cpu"
         else:
             resolved_backend = "cpu"
+    elif augmentation_backend == "gpu":
+        if not torch.cuda.is_available():
+            raise RuntimeError("augmentation_backend='gpu' requires a CUDA device")
+        try:
+            import kornia.augmentation  # noqa: F401 # type: ignore[import-not-found]
+        except ImportError as e:
+            raise ImportError("GPU augmentation requires kornia. Install with: pip install 'rfdetr[kornia]'") from e
+        resolved_backend = "gpu"
 
     if resolved_backend != "cpu":
         logger.warning(
