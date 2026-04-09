@@ -105,37 +105,45 @@ class MSDeformAttn(nn.Module):
         input_spatial_shapes,
         input_level_start_index,
         input_padding_mask=None,
+        input_spatial_shapes_hw: list[tuple[int, int]] | None = None,
     ):
-        r"""
-        :param query                       (N, Length_{query}, C)
-        :param reference_points            (N, Length_{query}, n_levels, 2), range in [0, 1],
-                                           top-left (0,0), bottom-right (1, 1), including padding area
-                                           or (N, Length_{query}, n_levels, 4), add additional (w, h)
-                                           to form reference boxes
-        :param input_flatten               (N, \sum_{l=0}^{L-1} H_l \cdot W_l, C)
-        :param input_spatial_shapes        (n_levels, 2), [(H_0, W_0), (H_1, W_1), ..., (H_{L-1}, W_{L-1})]
-        :param input_level_start_index     (n_levels, ), [0, H_0*W_0, H_0*W_0+H_1*W_1,
-                                           H_0*W_0+H_1*W_1+H_2*W_2, ...,
-                                           H_0*W_0+H_1*W_1+...+H_{L-1}*W_{L-1}]
-        :param input_padding_mask          (N, \sum_{l=0}^{L-1} H_l \cdot W_l), True for padding
-                                           elements, False for non-padding elements
+        """Forward pass of MSDeformAttn.
 
-        :return output                     (N, Length_{query}, C)
+        Args:
+            query: (N, Length_{query}, C)
+            reference_points: (N, Length_{query}, n_levels, 2) with range in [0, 1],
+                top-left (0,0), bottom-right (1, 1), including padding area; or
+                (N, Length_{query}, n_levels, 4) adding additional (w, h) to form reference boxes.
+            input_flatten: (N, sum_{l=0}^{L-1} H_l * W_l, C)
+            input_spatial_shapes: (n_levels, 2), [(H_0, W_0), (H_1, W_1), ..., (H_{L-1}, W_{L-1})]
+            input_level_start_index: (n_levels,), [0, H_0*W_0, H_0*W_0+H_1*W_1, ...,
+                H_0*W_0+H_1*W_1+...+H_{L-1}*W_{L-1}]
+            input_padding_mask: (N, sum_{l=0}^{L-1} H_l * W_l), True for padding elements,
+                False for non-padding elements.
+            input_spatial_shapes_hw: List of (H, W) int pairs, same ordering as
+                input_spatial_shapes. When provided, these Python ints are used for tensor
+                split/view operations inside ms_deform_attn_core_pytorch so that the function
+                is compatible with torch.export.export (FakeTensor tracing cannot extract
+                concrete values from a tensor).
+
+        Returns:
+            Output tensor of shape (N, Length_{query}, C).
         """
-        batch_size, query_length, _ = query.shape
-        batch_size, input_length, _ = input_flatten.shape
-        assert (input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum() == input_length
+        N, Len_q, _ = query.shape
+        N, Len_in, _ = input_flatten.shape
+        expected_len_in = (input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum()
+        error_msg = "input_spatial_shapes must match the flattened input length"
+        if self._export:
+            torch._assert(expected_len_in == Len_in, error_msg)
+        else:
+            assert expected_len_in == Len_in, error_msg
 
         value = self.value_proj(input_flatten)
         if input_padding_mask is not None:
             value = value.masked_fill(input_padding_mask[..., None], float(0))
 
-        sampling_offsets = self.sampling_offsets(query).view(
-            batch_size, query_length, self.n_heads, self.n_levels, self.n_points, 2
-        )
-        attention_weights = self.attention_weights(query).view(
-            batch_size, query_length, self.n_heads, self.n_levels * self.n_points
-        )
+        sampling_offsets = self.sampling_offsets(query).view(N, Len_q, self.n_heads, self.n_levels, self.n_points, 2)
+        attention_weights = self.attention_weights(query).view(N, Len_q, self.n_heads, self.n_levels * self.n_points)
 
         # N, Len_q, n_heads, n_levels, n_points, 2
         if reference_points.shape[-1] == 2:
@@ -155,11 +163,13 @@ class MSDeformAttn(nn.Module):
             )
         attention_weights = F.softmax(attention_weights, -1)
 
-        value = (
-            value.transpose(1, 2)
-            .contiguous()
-            .view(batch_size, self.n_heads, self.d_model // self.n_heads, input_length)
+        value = value.transpose(1, 2).contiguous().view(N, self.n_heads, self.d_model // self.n_heads, Len_in)
+        output = ms_deform_attn_core_pytorch(
+            value,
+            input_spatial_shapes,
+            sampling_locations,
+            attention_weights,
+            value_spatial_shapes_hw=input_spatial_shapes_hw,
         )
-        output = ms_deform_attn_core_pytorch(value, input_spatial_shapes, sampling_locations, attention_weights)
         output = self.output_proj(output)
         return output
