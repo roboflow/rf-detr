@@ -419,6 +419,7 @@ class TrainConfig(BaseModel):
     eval_interval: int = 1
     log_per_class_metrics: bool = True
     aug_config: Optional[Dict[str, Any]] = None
+    save_dataset_grids: bool = False
 
     @field_validator("progress_bar", mode="before")
     @classmethod
