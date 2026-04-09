@@ -260,7 +260,7 @@ class TestLoadPretrainWeightsPTLCkptFormat:
         num_queries: int = 300,
         group_detr: int = 13,
     ) -> dict:
-        """Build a fake PTL-native checkpoint with state_dict keys prefixed by 'model.'.
+        """Build a fake PyTorch Lightning (PTL) native checkpoint with state_dict keys prefixed by 'model.'.
 
         Args:
             num_classes: Total classes including background (bias shape).
