@@ -164,6 +164,7 @@ extend-select = [
 ]
 ignore = [
     "E722",  # todo: Do not use bare `except`
+    "N806",  # allow conventional uppercase local tensor-shape variables (e.g. N, C, H, W)
     "N812",  # torch convention: `import torch.nn.functional as F`
 ]
 
