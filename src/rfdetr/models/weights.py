@@ -115,7 +115,17 @@ def load_pretrain_weights(
     if "model" not in checkpoint and "state_dict" in checkpoint:
         logger.debug("Normalizing PTL .ckpt checkpoint format (state_dict -> model)")
         prefix = "model."
-        model_state = {k[len(prefix) :]: v for k, v in checkpoint["state_dict"].items() if k.startswith(prefix)}
+        # When the model was wrapped with torch.compile, PTL stores weights with keys
+        # like "model._orig_mod.<param>".  Strip the extra "_orig_mod." segment so the
+        # resulting keys match the expected bare parameter names.
+        compile_prefix = "_orig_mod."
+        model_state = {}
+        for k, v in checkpoint["state_dict"].items():
+            if k.startswith(prefix):
+                stripped = k[len(prefix) :]
+                if stripped.startswith(compile_prefix):
+                    stripped = stripped[len(compile_prefix) :]
+                model_state[stripped] = v
         if not model_state:
             raise ValueError(
                 f"The checkpoint at {pretrain_weights!r} appears to be in PyTorch Lightning "

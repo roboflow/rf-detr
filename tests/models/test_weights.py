@@ -352,6 +352,39 @@ class TestLoadPretrainWeightsPTLCkptFormat:
 
         assert result == ["from_args"], f"args must take precedence over hyper_parameters, got {result!r}"
 
+    def test_ptl_ckpt_torch_compile_orig_mod_prefix_stripped(self, monkeypatch):
+        """PTL .ckpt from a torch.compile-wrapped model must load without KeyError.
+
+        When a model is wrapped with torch.compile before training, PTL records weights
+        under keys like "model._orig_mod.class_embed.bias".  The loader must strip both
+        the "model." and the subsequent "_orig_mod." segment so the resulting keys match
+        the bare parameter names expected by load_state_dict.
+        """
+        from rfdetr.models.weights import load_pretrain_weights
+
+        mc = RFDETRBaseConfig(pretrain_weights="/fake/last.ckpt", device="cpu", num_classes=90)
+        raw_state = {
+            "class_embed.weight": torch.randn(91, 256),
+            "class_embed.bias": torch.randn(91),
+            "refpoint_embed.weight": torch.randn(300 * 13, 4),
+            "query_feat.weight": torch.randn(300 * 13, 256),
+        }
+        # Simulate torch.compile: keys are prefixed with "model._orig_mod."
+        checkpoint = {
+            "state_dict": {f"model._orig_mod.{k}": v for k, v in raw_state.items()},
+            "epoch": 5,
+        }
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+
+        nn_model = _fake_nn_model()
+        load_pretrain_weights(nn_model, mc)
+
+        nn_model.load_state_dict.assert_called_once()
+        loaded_state = nn_model.load_state_dict.call_args[0][0]
+        assert all(not k.startswith(("model.", "_orig_mod.")) for k in loaded_state), (
+            f"Keys must have both 'model.' and '_orig_mod.' stripped; got: {list(loaded_state.keys())[:5]}"
+        )
+
     def test_best_model_callback_format_with_both_model_and_state_dict_still_works(self, monkeypatch):
         """Checkpoints with both 'model' and 'state_dict' (BestModelCallback format) must still load."""
         from rfdetr.models.weights import load_pretrain_weights
