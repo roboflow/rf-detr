@@ -115,10 +115,7 @@ def test_gen_encoder_output_proposals_accepts_int_tuple_spatial_shapes() -> None
     memory = torch.randn(batch, ht * wd, 8)
     spatial_shapes = torch.tensor([[ht, wd]], dtype=torch.long)
 
-    output_memory, output_proposals = gen_encoder_output_proposals(
-        memory,
-        spatial_shapes=spatial_shapes
-    )
+    output_memory, output_proposals = gen_encoder_output_proposals(memory, spatial_shapes=spatial_shapes)
 
     assert output_memory.shape == memory.shape
     assert output_proposals.shape == (batch, ht * wd, 4)
