@@ -49,6 +49,64 @@ IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
 
 
+def _has_cuda_device() -> bool:
+    """Return ``True`` when the runtime has a CUDA accelerator available.
+
+    Uses the fork-safe global ``DEVICE`` constant from ``rfdetr.config`` so that
+    the CUDA driver context is not created in the main process before forking
+    (fork-based DDP and some notebook environments).
+
+    Returns:
+        ``True`` if at least one CUDA device is reachable; ``False`` otherwise.
+
+    Examples:
+        >>> _has_cuda_device()  # doctest: +SKIP
+        False
+    """
+    from rfdetr.config import DEVICE
+
+    return str(DEVICE).startswith("cuda")
+
+
+def resolve_augmentation_backend(backend: str) -> str:
+    """Resolve an ``augmentation_backend`` value to a concrete ``"cpu"`` or ``"gpu"``.
+
+    ``"auto"`` resolves to ``"gpu"`` only when both CUDA and Kornia are available;
+    otherwise it falls back to ``"cpu"``.  Explicit ``"cpu"`` and ``"gpu"`` values
+    pass through unchanged; ``"gpu"`` is validated (CUDA + kornia presence).
+
+    Args:
+        backend: One of ``"cpu"``, ``"auto"``, or ``"gpu"``.
+
+    Returns:
+        ``"cpu"`` or ``"gpu"``.
+
+    Raises:
+        RuntimeError: When *backend* is ``"gpu"`` and no CUDA device is found.
+        ImportError: When *backend* is ``"gpu"`` and kornia is not installed.
+
+    Examples:
+        >>> resolve_augmentation_backend("cpu")
+        'cpu'
+    """
+    if backend == "cpu":
+        return "cpu"
+    if backend == "auto":
+        if not _has_cuda_device():
+            return "cpu"
+        try:
+            import kornia.augmentation  # noqa: F401 # type: ignore[import-not-found]
+        except ImportError:
+            return "cpu"
+        return "gpu"
+    if backend == "gpu":
+        if not _has_cuda_device():
+            raise RuntimeError("augmentation_backend='gpu' requires a CUDA device")
+        _require_kornia()
+        return "gpu"
+    return backend
+
+
 def _require_kornia() -> None:
     """Verify that Kornia is importable, raising a clear error if not.
 

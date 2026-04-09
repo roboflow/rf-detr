@@ -639,18 +639,15 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
 def _resolve_runtime_augmentation_backend(backend: str) -> str:
     """Resolve ``augmentation_backend`` at runtime for dataset builders.
 
+    Thin wrapper around :func:`rfdetr.datasets.kornia_transforms.resolve_augmentation_backend`
+    kept for backward-compatibility with callers in ``yolo.py``.
+
     ``"auto"`` becomes ``"gpu"`` only when CUDA and Kornia are both available,
     otherwise ``"cpu"``. Explicit ``"cpu"``/``"gpu"`` values pass through.
     """
-    if backend != "auto":
-        return backend
-    if not torch.cuda.is_available():
-        return "cpu"
-    try:
-        import kornia.augmentation  # noqa: F401 # type: ignore[import-not-found]
-    except ImportError:
-        return "cpu"
-    return "gpu"
+    from rfdetr.datasets.kornia_transforms import resolve_augmentation_backend
+
+    return resolve_augmentation_backend(backend)
 
 
 def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
