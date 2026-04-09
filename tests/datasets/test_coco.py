@@ -275,7 +275,7 @@ class TestBuildO365RawGpuBackend:
         from unittest.mock import MagicMock, patch
 
         with (
-            patch("torch.cuda.is_available", return_value=True),
+            patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=True),
             patch.dict(sys.modules, {"kornia": MagicMock(), "kornia.augmentation": MagicMock()}),
             patch("rfdetr.datasets.o365.logger") as mock_logger,
         ):
@@ -288,7 +288,7 @@ class TestBuildO365RawGpuBackend:
         from unittest.mock import patch
 
         with (
-            patch("torch.cuda.is_available", return_value=False),
+            patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=False),
             patch("rfdetr.datasets.o365.logger") as mock_logger,
         ):
             self._call_build_o365_raw("auto")
@@ -307,7 +307,7 @@ class TestBuildO365RawGpuBackend:
         from unittest.mock import MagicMock, patch
 
         with (
-            patch("torch.cuda.is_available", return_value=True),
+            patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=True),
             patch.dict(sys.modules, {"kornia": MagicMock(), "kornia.augmentation": MagicMock()}),
         ):
             _, mock_transform, _ = self._call_build_o365_raw("auto")
@@ -318,7 +318,7 @@ class TestBuildO365RawGpuBackend:
         """auto + no CUDA: gpu_postprocess=False so CPU Normalize is retained."""
         from unittest.mock import patch
 
-        with patch("torch.cuda.is_available", return_value=False):
+        with patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=False):
             _, mock_transform, _ = self._call_build_o365_raw("auto")
         call_kwargs = mock_transform.call_args.kwargs if mock_transform.call_args else {}
         assert call_kwargs.get("gpu_postprocess", False) is False, "auto + no CUDA must not strip CPU Normalize"
@@ -334,7 +334,7 @@ class TestBuildO365RawGpuBackend:
         from unittest.mock import patch
 
         with (
-            patch("torch.cuda.is_available", return_value=False),
+            patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=False),
             pytest.raises(RuntimeError, match="CUDA"),
         ):
             self._call_build_o365_raw("gpu")
@@ -351,7 +351,7 @@ class TestBuildO365RawGpuBackend:
             return original_import(name, *args, **kwargs)
 
         with (
-            patch("torch.cuda.is_available", return_value=True),
+            patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=True),
             patch("builtins.__import__", side_effect=_mock_import),
             pytest.raises(ImportError, match="rfdetr\\[kornia\\]"),
         ):
@@ -383,7 +383,7 @@ class TestBuildRoboflowFromCocoBackendResolution:
             patch("rfdetr.datasets.coco.Path") as mock_path,
             patch("rfdetr.datasets.coco.make_coco_transforms") as mock_transforms,
             patch("rfdetr.datasets.coco.CocoDetection", return_value=MagicMock()),
-            patch("torch.cuda.is_available", return_value=False),
+            patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=False),
         ):
             mock_path.return_value.exists.return_value = True
             mock_transforms.return_value = MagicMock()
