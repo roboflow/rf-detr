@@ -28,6 +28,8 @@ from unittest.mock import MagicMock, call
 import pytest
 import torch
 
+
+from rfdetr.models.weights import load_pretrain_weights
 from rfdetr.config import (
     RFDETRLargeConfig,
     RFDETRMediumConfig,
@@ -227,8 +229,6 @@ class TestLoadPretrainWeightsSecondReinit:
         This test asserts the loader auto-aligns ``mc.num_classes`` to 8 (9 - 1)
         and fires exactly one reinit call — to 9 (the checkpoint size).
         """
-        from rfdetr.models.weights import load_pretrain_weights
-
         # 8 dataset categories → training builds a model with 8+1=9 logits.
         checkpoint = _make_checkpoint(num_classes=9)
         mc = config_cls(pretrain_weights="/fake/weights.pth", device="cpu")
