@@ -391,6 +391,144 @@ class TestTrainDataloader:
         loader = dm.train_dataloader()
         assert isinstance(loader.batch_sampler, torch.utils.data.BatchSampler)
 
+    @pytest.mark.parametrize(
+        "dataset_length, batch_size, grad_accum_steps",
+        [
+            pytest.param(100, 2, 1, id="already_aligned_ga1"),
+            pytest.param(96, 2, 4, id="already_aligned_ga4"),
+            pytest.param(101, 2, 4, id="unaligned_one_extra"),
+            pytest.param(50, 2, 8, id="unaligned_ga8"),
+            pytest.param(59143, 2, 8, id="large_unaligned_coco_like"),
+            pytest.param(100, 3, 3, id="non_power_of_two_ga"),
+        ],
+    )
+    def test_train_dataloader_length_is_multiple_of_grad_accum(
+        self, tmp_path, dataset_length, batch_size, grad_accum_steps
+    ):
+        """len(train_dataloader()) is always a multiple of grad_accum_steps.
+
+        Verifies the workaround for
+        https://github.com/Lightning-AI/pytorch-lightning/issues/19987:
+        the training DataLoader must never present a partial accumulation
+        window to PTL.
+        """
+        dm = self._setup_dm_with_train(
+            tmp_path,
+            dataset_length=dataset_length,
+            batch_size=batch_size,
+            grad_accum_steps=grad_accum_steps,
+        )
+        loader = dm.train_dataloader()
+        assert len(loader) % grad_accum_steps == 0, (
+            f"len(loader)={len(loader)} is not a multiple of grad_accum_steps={grad_accum_steps}"
+        )
+
+    def test_train_dataloader_respects_trainer_world_size(self, tmp_path):
+        """Large-dataset path aligns wrapped dataset length to effective_batch_size * world_size."""
+        dm = self._setup_dm_with_train(
+            tmp_path,
+            dataset_length=101,
+            batch_size=2,
+            grad_accum_steps=4,
+        )
+        dm.trainer = MagicMock(world_size=3)
+
+        loader = dm.train_dataloader()
+
+        assert len(loader.dataset) % (2 * 4 * 3) == 0
+        assert len(loader.dataset) == 120
+
+
+class TestGradAccumAlignedDataset:
+    """Unit tests for the GradAccumAlignedDataset wrapper."""
+
+    def _make_dataset(self, length: int) -> torch.utils.data.TensorDataset:
+        """Return a simple TensorDataset of given length."""
+        return torch.utils.data.TensorDataset(torch.arange(length))
+
+    def test_aligned_length_is_multiple_of_pad_unit(self):
+        """Padded length is always a multiple of effective_batch_size * world_size."""
+        from rfdetr.training.module_data import GradAccumAlignedDataset
+
+        ds = self._make_dataset(50)
+        wrapped = GradAccumAlignedDataset(ds, effective_batch_size=16, world_size=1)
+        assert len(wrapped) % 16 == 0
+
+    def test_no_padding_needed_when_already_aligned(self):
+        """If len(dataset) % pad_unit == 0, length is unchanged."""
+        from rfdetr.training.module_data import GradAccumAlignedDataset
+
+        ds = self._make_dataset(64)
+        wrapped = GradAccumAlignedDataset(ds, effective_batch_size=16, world_size=1)
+        assert len(wrapped) == 64
+
+    def test_padding_adds_correct_count(self):
+        """Exactly (pad_unit - remainder) % pad_unit samples are added."""
+        from rfdetr.training.module_data import GradAccumAlignedDataset
+
+        ds = self._make_dataset(50)  # 50 % 16 = 2 → pad 14
+        wrapped = GradAccumAlignedDataset(ds, effective_batch_size=16, world_size=1)
+        assert len(wrapped) == 64
+
+    def test_getitem_forwards_to_original_dataset(self):
+        """Items in the original range map directly to the underlying dataset."""
+        from rfdetr.training.module_data import GradAccumAlignedDataset
+
+        ds = self._make_dataset(10)
+        wrapped = GradAccumAlignedDataset(ds, effective_batch_size=4, world_size=1)
+        for i in range(10):
+            (val,) = wrapped[i]
+            assert val.item() == i
+
+    def test_padded_indices_are_valid(self):
+        """All padded indices point to valid positions in the original dataset."""
+        from rfdetr.training.module_data import GradAccumAlignedDataset
+
+        n = 10
+        ds = self._make_dataset(n)
+        wrapped = GradAccumAlignedDataset(ds, effective_batch_size=4, world_size=1)
+        for i in range(len(wrapped)):
+            (val,) = wrapped[i]
+            assert 0 <= val.item() < n
+
+    @pytest.mark.parametrize(
+        "n, eff_bs, world_size",
+        [
+            pytest.param(100, 4, 1, id="aligned_single_gpu"),
+            pytest.param(101, 4, 1, id="unaligned_single_gpu"),
+            pytest.param(100, 4, 2, id="aligned_ddp2"),
+            pytest.param(97, 4, 2, id="unaligned_ddp2"),
+        ],
+    )
+    def test_length_always_multiple_of_pad_unit(self, n, eff_bs, world_size):
+        """len(wrapped) % (eff_bs * world_size) == 0 for all inputs."""
+        from rfdetr.training.module_data import GradAccumAlignedDataset
+
+        ds = self._make_dataset(n)
+        wrapped = GradAccumAlignedDataset(ds, effective_batch_size=eff_bs, world_size=world_size)
+        assert len(wrapped) % (eff_bs * world_size) == 0
+
+    @pytest.mark.parametrize(
+        "effective_batch_size, world_size",
+        [
+            pytest.param(0, 1, id="zero_effective_batch_size"),
+            pytest.param(-1, 1, id="negative_effective_batch_size"),
+            pytest.param(2, 0, id="zero_world_size"),
+            pytest.param(2, -1, id="negative_world_size"),
+        ],
+    )
+    def test_raises_for_non_positive_alignment_inputs(self, effective_batch_size, world_size):
+        """Non-positive alignment inputs fail with a clear ValueError."""
+        from rfdetr.training.module_data import GradAccumAlignedDataset
+
+        ds = self._make_dataset(10)
+        with pytest.raises(ValueError, match="must be >= 1"):
+            GradAccumAlignedDataset(
+                ds,
+                effective_batch_size=effective_batch_size,
+                world_size=world_size,
+            )
+
 
 class TestValDataloader:
     """val_dataloader() returns a SequentialSampler with drop_last=False."""
