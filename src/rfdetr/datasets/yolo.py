@@ -406,6 +406,74 @@ def _build_lazy_yolo_segmentation_dataset(img_folder: str, lb_folder: str, data_
     return _LazyYoloDetectionDataset(classes=classes, samples=samples)
 
 
+def _build_coco_api_from_samples(classes: list[str], dataset: Any) -> Any:
+    """Build an in-memory ``pycocotools.COCO`` object from YOLO lazy samples.
+
+    Args:
+        classes: Ordered class names where index is the YOLO class ID.
+        dataset: Lazy YOLO backend exposing ``__len__`` and either
+            ``get_image_info(idx)`` or ``__getitem__(idx)``.
+
+    Returns:
+        Initialized ``pycocotools.COCO`` object with ``dataset`` and indexes.
+    """
+    from pycocotools.coco import COCO
+
+    images: list[dict[str, Any]] = []
+    annotations: list[dict[str, Any]] = []
+    categories: list[dict[str, Any]] = [
+        {"id": idx, "name": class_name, "supercategory": "none"} for idx, class_name in enumerate(classes)
+    ]
+
+    use_lazy_path = hasattr(dataset, "get_image_info")
+    ann_id = 0
+    for img_id in range(len(dataset)):
+        if use_lazy_path:
+            sample = dataset.get_image_info(img_id)
+            image_path = sample.image_path
+            height, width = sample.height, sample.width
+            xyxy = sample.xyxy
+            class_id = sample.class_id
+            has_masks = len(sample.polygons) > 0
+        else:
+            image_path, cv2_image, detections = dataset[img_id]
+            height, width = cv2_image.shape[:2]
+            xyxy = detections.xyxy
+            class_id = detections.class_id
+            has_masks = detections.mask is not None
+
+        images.append({"id": img_id, "file_name": str(image_path), "height": int(height), "width": int(width)})
+
+        for i in range(len(xyxy)):
+            x1, y1, x2, y2 = xyxy[i]
+            bbox_x, bbox_y = float(x1), float(y1)
+            bbox_w, bbox_h = float(x2 - x1), float(y2 - y1)
+            ann = {
+                "id": ann_id,
+                "image_id": img_id,
+                "category_id": int(class_id[i]),
+                "bbox": [bbox_x, bbox_y, bbox_w, bbox_h],
+                "area": float(bbox_w * bbox_h),
+                "iscrowd": 0,
+            }
+            if has_masks:
+                # Keep bbox evaluation compatible without eager mask encoding at init.
+                ann["segmentation"] = []
+            annotations.append(ann)
+            ann_id += 1
+
+    coco_dataset = {
+        "info": {"description": "RF-DETR YOLO dataset"},
+        "images": images,
+        "annotations": annotations,
+        "categories": categories,
+    }
+    coco = COCO()
+    coco.dataset = coco_dataset
+    coco.createIndex()
+    return coco
+
+
 def is_valid_yolo_dataset(dataset_dir: str) -> bool:
     """
     Checks if the specified dataset directory is in yolo format.
@@ -575,7 +643,7 @@ class YoloDetection(VisionDataset):
         self.ids = list(range(len(self.sv_dataset)))
 
         # Create COCO-compatible API for evaluation
-        self.coco = CocoLikeAPI(self.classes, self.sv_dataset)
+        self.coco = _build_coco_api_from_samples(self.classes, self.sv_dataset)
 
     def __len__(self) -> int:
         return len(self.sv_dataset)

@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 import torch
 from PIL import Image
+from pycocotools.coco import COCO
 
 from rfdetr.datasets.yolo import (
     YoloDetection,
@@ -172,6 +173,31 @@ class TestYoloDetectionLazyMasks:
             {"id": 0, "file_name": str(image_dir / "sample.png"), "height": 6, "width": 8}
         ]
         assert dataset.coco.dataset["annotations"][0]["segmentation"] == []
+        assert isinstance(dataset.coco, COCO)
+
+    def test_detection_init_exposes_real_coco_api_indexes(self, tmp_path: Path) -> None:
+        """`dataset.coco` should be a real pycocotools.COCO object with working indexes."""
+        image_dir = tmp_path / "images"
+        label_dir = tmp_path / "labels"
+        image_dir.mkdir()
+        label_dir.mkdir()
+        Image.new("RGB", (8, 6), color=(255, 255, 255)).save(image_dir / "sample.png")
+        (label_dir / "sample.txt").write_text("0 0.5 0.5 0.5 0.5\n", encoding="utf-8")
+        data_file = tmp_path / "data.yaml"
+        data_file.write_text("names:\n  - carton\n", encoding="utf-8")
+
+        dataset = YoloDetection(
+            img_folder=str(image_dir),
+            lb_folder=str(label_dir),
+            data_file=str(data_file),
+            transforms=None,
+            include_masks=False,
+        )
+
+        assert isinstance(dataset.coco, COCO)
+        assert dataset.coco.getCatIds() == [0]
+        assert dataset.coco.getImgIds() == [0]
+        assert dataset.coco.getAnnIds(imgIds=[0], catIds=[0]) == [0]
 
     def test_segmentation_masks_are_materialized_per_sample_fetch(self, tmp_path: Path) -> None:
         """Fetching a sample should create the dense boolean mask tensor expected downstream."""
