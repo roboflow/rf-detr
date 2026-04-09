@@ -67,7 +67,15 @@ class RFDETRModelModule(LightningModule):
 
         # torch.compile is opt-in: set model_config.compile=True to enable.
         # Only enabled on CUDA; MPS and CPU do not benefit from compilation.
-        compile_enabled = model_config.compile and torch.cuda.is_available() and not train_config.multi_scale
+        # Use the fork-safe DEVICE constant instead of torch.cuda.is_available(),
+        # which creates a CUDA driver context that breaks fork-based DDP.
+        from rfdetr.config import DEVICE
+
+        accelerator = str(train_config.accelerator).lower()
+        uses_cuda_accelerator = accelerator in {"auto", "gpu", "cuda"}
+        compile_enabled = (
+            model_config.compile and DEVICE == "cuda" and uses_cuda_accelerator and not train_config.multi_scale
+        )
         if model_config.compile and train_config.multi_scale:
             logger.info("Disabling torch.compile because multi_scale=True introduces dynamic input shapes.")
         if compile_enabled:
