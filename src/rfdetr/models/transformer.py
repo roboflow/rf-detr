@@ -86,18 +86,15 @@ def gen_encoder_output_proposals(memory, memory_padding_mask, spatial_shapes, un
     _cur = 0
     for lvl, (H_, W_) in enumerate(spatial_shapes):
         if memory_padding_mask is not None:
-            mask_flatten_ = memory_padding_mask[:, _cur : (_cur + H_ * W_)].view(N_, H_, W_, 1)
+            # reshape(-1, ...) infers batch dynamically in ONNX instead of constant N_
+            mask_flatten_ = memory_padding_mask[:, _cur : (_cur + H_ * W_)].reshape(-1, H_, W_, 1)
             valid_H = torch.sum(~mask_flatten_[:, :, 0, 0], 1)
             valid_W = torch.sum(~mask_flatten_[:, 0, :, 0], 1)
         else:
-            if isinstance(H_, torch.Tensor):
-                valid_H = H_.expand(N_).to(dtype=torch.long, device=memory.device)
-            else:
-                valid_H = torch.full((N_,), H_, dtype=torch.long, device=memory.device)
-            if isinstance(W_, torch.Tensor):
-                valid_W = W_.expand(N_).to(dtype=torch.long, device=memory.device)
-            else:
-                valid_W = torch.full((N_,), W_, dtype=torch.long, device=memory.device)
+            # Derive batch-sized tensors from memory so ONNX traces them as symbolic
+            # (torch.full((N_,), ...) bakes N_=8 as a constant; zeros_like is dynamic)
+            valid_H = torch.zeros_like(memory[:, 0, 0]).long() + H_
+            valid_W = torch.zeros_like(memory[:, 0, 0]).long() + W_
 
         grid_y, grid_x = torch.meshgrid(
             torch.linspace(0, H_ - 1, H_, dtype=torch.float32, device=memory.device),
@@ -106,12 +103,13 @@ def gen_encoder_output_proposals(memory, memory_padding_mask, spatial_shapes, un
         )
         grid = torch.cat([grid_x.unsqueeze(-1), grid_y.unsqueeze(-1)], -1)  # H_, W_, 2
 
-        scale = torch.cat([valid_W.unsqueeze(-1), valid_H.unsqueeze(-1)], 1).view(N_, 1, 1, 2)
-        grid = (grid.unsqueeze(0).expand(N_, -1, -1, -1) + 0.5) / scale
+        # reshape(-1, ...) and unsqueeze(0) broadcasting avoid hardcoding N_ in ONNX
+        scale = torch.cat([valid_W.unsqueeze(-1), valid_H.unsqueeze(-1)], 1).reshape(-1, 1, 1, 2)
+        grid = (grid.unsqueeze(0) + 0.5) / scale.float()  # [1, H_, W_, 2] / [N_, 1, 1, 2] → [N_, H_, W_, 2]
 
         wh = torch.ones_like(grid) * 0.05 * (2.0**lvl)
 
-        proposal = torch.cat((grid, wh), -1).view(N_, -1, 4)
+        proposal = torch.cat((grid, wh), -1).reshape(-1, H_ * W_, 4)  # -1 infers N_ dynamically
         proposals.append(proposal)
         _cur += H_ * W_
 
@@ -306,8 +304,12 @@ class Transformer(nn.Module):
             boxes_ts = torch.cat(boxes_ts, dim=1)  # .transpose(0, 1)
 
         if self.dec_layers > 0:
-            tgt = query_feat.unsqueeze(0).repeat(bs, 1, 1)
-            refpoint_embed = refpoint_embed.unsqueeze(0).repeat(bs, 1, 1)
+            # Use memory.shape[0] (traced as a symbolic Shape+Gather node in ONNX)
+            # instead of the Python-int `bs` (which bakes batch=8 as a constant Tile op).
+            # expand().contiguous() is functionally identical to repeat() but produces
+            # a dynamic Expand op that TRT can handle with variable batch sizes.
+            tgt = query_feat.unsqueeze(0).expand(memory.shape[0], -1, -1).contiguous()
+            refpoint_embed = refpoint_embed.unsqueeze(0).expand(memory.shape[0], -1, -1).contiguous()
             if self.two_stage:
                 ts_len = refpoint_embed_ts.shape[-2]
                 refpoint_embed_ts_subset = refpoint_embed[..., :ts_len, :]
