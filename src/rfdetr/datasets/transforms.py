@@ -356,7 +356,7 @@ class AlbumentationsWrapper:
         transform: Albumentations transform to apply (e.g., alb.HorizontalFlip, alb.GaussianBlur).
 
     Examples:
-        >>> from albumentations import HorizontalFlip
+        >>> from albumentations import GaussianBlur, HorizontalFlip
         >>> # Geometric transform - automatically transforms boxes
         >>> wrapper = AlbumentationsWrapper(HorizontalFlip(p=1.0))
         >>> image = Image.new("RGB", (300, 400))
@@ -364,7 +364,7 @@ class AlbumentationsWrapper:
         >>> aug_image, aug_target = wrapper(image, target)
 
         >>> # Pixel-level transform - automatically preserves boxes
-        >>> wrapper = AlbumentationsWrapper(A.GaussianBlur(p=1.0))
+        >>> wrapper = AlbumentationsWrapper(GaussianBlur(p=1.0))
         >>> aug_image, aug_target = wrapper(image, target)
 
     Note:
