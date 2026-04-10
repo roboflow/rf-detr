@@ -76,6 +76,8 @@ trt = [
 tflite = [
     "onnx2tf>=1.25.0,<3.0.0",
     "flatbuffers>=23.5.26",
+kornia = [
+    "kornia>=0.7,<1",              # GPU-side augmentation via on_after_batch_transfer
 ]
 loggers = [
     "tensorboard>=2.13.0",
@@ -161,6 +163,7 @@ select = [
     "W",  # pycodestyle warnings
     "F",  # pyflakes
     "I",  # isort
+    "N",  # pep8-naming: lowercase variables (N806) and arguments (N803)
 ]
 extend-select = [
     "RUF100",  # yesqa
@@ -218,6 +221,7 @@ overrides = [
     "requests", "requests.*",
     "seaborn", "seaborn.*",
     "tqdm", "tqdm.*",
+    "kornia", "kornia.*",
   ], ignore_missing_imports = true },
   # Modules with pre-existing type errors — ignored until incrementally fixed.
   { module = [

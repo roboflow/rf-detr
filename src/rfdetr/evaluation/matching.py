@@ -20,7 +20,7 @@ from typing import Any
 
 import numpy as np
 import torch
-import torch.nn.functional as F
+import torch.nn.functional as F  # noqa: N812
 from torchvision.ops import box_iou
 
 from rfdetr.utilities import all_gather
