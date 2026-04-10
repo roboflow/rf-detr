@@ -12,9 +12,11 @@ Tests cover:
 """
 
 import json
+import types
 from pathlib import Path
 from typing import Dict, List
 
+import pytest
 import torch
 from PIL import Image
 
@@ -217,3 +219,173 @@ class TestLoadClassesHierarchy:
         _write_coco_json(tmp_path / "train" / "_annotations.coco.json", categories)
         result = RFDETR._load_classes(str(tmp_path))
         assert result == ["car", "truck", "person"]
+
+
+# ---------------------------------------------------------------------------
+# TestBuildO365RawGpuBackend — validates that build_o365_raw emits a WARNING
+# and passes gpu_postprocess when augmentation_backend != 'cpu'.
+# ---------------------------------------------------------------------------
+
+
+class TestBuildO365RawGpuBackend:
+    """build_o365_raw warns and wires gpu_postprocess for non-cpu backends."""
+
+    class _FakeArgs:
+        """Minimal args stub for build_o365_raw."""
+
+        def __init__(self, augmentation_backend="cpu", square_resize_div_64=False):
+            self.augmentation_backend = augmentation_backend
+            self.square_resize_div_64 = square_resize_div_64
+            self.multi_scale = False
+            self.expanded_scales = False
+            self.dataset_dir = "/nonexistent/o365"
+            self.coco_path = "/nonexistent/o365"
+
+    def _call_build_o365_raw(self, augmentation_backend, square_resize_div_64=False):
+        """Call build_o365_raw with mocked CocoDetection and transform builders."""
+        from unittest.mock import MagicMock, patch
+
+        from rfdetr.datasets.o365 import build_o365_raw
+
+        args = self._FakeArgs(augmentation_backend=augmentation_backend, square_resize_div_64=square_resize_div_64)
+        fake_dataset = MagicMock()
+
+        with (
+            patch("rfdetr.datasets.o365.CocoDetection", return_value=fake_dataset),
+            patch("rfdetr.datasets.o365.make_coco_transforms") as mock_transform,
+            patch("rfdetr.datasets.o365.make_coco_transforms_square_div_64") as mock_sq_transform,
+        ):
+            mock_transform.return_value = MagicMock()
+            mock_sq_transform.return_value = MagicMock()
+            result = build_o365_raw("train", args, resolution=640)
+            return result, mock_transform, mock_sq_transform
+
+    def test_cpu_backend_no_warning(self):
+        """cpu backend does not call logger.warning with O365 content."""
+        from unittest.mock import patch
+
+        with patch("rfdetr.datasets.o365.logger") as mock_logger:
+            self._call_build_o365_raw("cpu")
+        o365_warns = [c for c in mock_logger.warning.call_args_list if "O365" in str(c)]
+        assert len(o365_warns) == 0, "cpu backend must not warn about O365 GPU augmentation"
+
+    def test_auto_backend_emits_warning(self):
+        """auto + CUDA + kornia available: logger.warning about O365 Phase 1 limitation."""
+        import sys
+        from unittest.mock import MagicMock, patch
+
+        with (
+            patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=True),
+            patch.dict(sys.modules, {"kornia": MagicMock(), "kornia.augmentation": MagicMock()}),
+            patch("rfdetr.datasets.o365.logger") as mock_logger,
+        ):
+            self._call_build_o365_raw("auto")
+        o365_warns = [c for c in mock_logger.warning.call_args_list if "O365" in str(c)]
+        assert len(o365_warns) >= 1, "auto backend must warn about O365 GPU aug limitation"
+
+    def test_auto_backend_no_cuda_no_warning(self):
+        """auto + no CUDA: resolves to cpu, no O365 warning emitted."""
+        from unittest.mock import patch
+
+        with (
+            patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=False),
+            patch("rfdetr.datasets.o365.logger") as mock_logger,
+        ):
+            self._call_build_o365_raw("auto")
+        o365_warns = [c for c in mock_logger.warning.call_args_list if "O365" in str(c)]
+        assert len(o365_warns) == 0, "auto + no CUDA must not warn about O365 GPU aug"
+
+    def test_gpu_postprocess_false_for_cpu_backend(self):
+        """cpu backend passes gpu_postprocess=False (or omits it) to make_coco_transforms."""
+        _, mock_transform, _ = self._call_build_o365_raw("cpu")
+        call_kwargs = mock_transform.call_args.kwargs if mock_transform.call_args else {}
+        assert call_kwargs.get("gpu_postprocess", False) is False
+
+    def test_gpu_postprocess_true_for_auto_backend(self):
+        """auto + CUDA + kornia available: gpu_postprocess=True passed to make_coco_transforms."""
+        import sys
+        from unittest.mock import MagicMock, patch
+
+        with (
+            patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=True),
+            patch.dict(sys.modules, {"kornia": MagicMock(), "kornia.augmentation": MagicMock()}),
+        ):
+            _, mock_transform, _ = self._call_build_o365_raw("auto")
+        call_kwargs = mock_transform.call_args.kwargs if mock_transform.call_args else {}
+        assert call_kwargs.get("gpu_postprocess", False) is True
+
+    def test_gpu_postprocess_false_for_auto_no_cuda(self):
+        """auto + no CUDA: gpu_postprocess=False so CPU Normalize is retained."""
+        from unittest.mock import patch
+
+        with patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=False):
+            _, mock_transform, _ = self._call_build_o365_raw("auto")
+        call_kwargs = mock_transform.call_args.kwargs if mock_transform.call_args else {}
+        assert call_kwargs.get("gpu_postprocess", False) is False, "auto + no CUDA must not strip CPU Normalize"
+
+    def test_square_resize_uses_square_transform(self):
+        """square_resize_div_64=True delegates to make_coco_transforms_square_div_64."""
+        _, mock_transform, mock_sq_transform = self._call_build_o365_raw("cpu", square_resize_div_64=True)
+        mock_sq_transform.assert_called_once()
+        mock_transform.assert_not_called()
+
+    def test_gpu_backend_no_cuda_raises_runtime_error(self):
+        """gpu backend must fail fast when CUDA is unavailable."""
+        from unittest.mock import patch
+
+        with (
+            patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=False),
+            pytest.raises(RuntimeError, match="CUDA"),
+        ):
+            self._call_build_o365_raw("gpu")
+
+    def test_gpu_backend_no_kornia_raises_import_error(self):
+        """gpu backend must raise with install hint when kornia is missing."""
+        from unittest.mock import patch
+
+        original_import = __builtins__.__import__ if hasattr(__builtins__, "__import__") else __import__
+
+        def _mock_import(name, *args, **kwargs):
+            if name == "kornia" or name.startswith("kornia."):
+                raise ImportError("No module named 'kornia'")
+            return original_import(name, *args, **kwargs)
+
+        with (
+            patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=True),
+            patch("builtins.__import__", side_effect=_mock_import),
+            pytest.raises(ImportError, match="rfdetr\\[kornia\\]"),
+        ):
+            self._call_build_o365_raw("gpu")
+
+
+class TestBuildRoboflowFromCocoBackendResolution:
+    """Roboflow COCO builder should resolve backend for gpu_postprocess consistently."""
+
+    def test_auto_no_cuda_keeps_cpu_normalize(self):
+        """auto + no CUDA must set gpu_postprocess=False."""
+        from unittest.mock import MagicMock, patch
+
+        from rfdetr.datasets.coco import build_roboflow_from_coco
+
+        args = types.SimpleNamespace(
+            dataset_dir="/fake/dataset",
+            augmentation_backend="auto",
+            square_resize_div_64=False,
+            segmentation_head=False,
+            multi_scale=False,
+            expanded_scales=False,
+            do_random_resize_via_padding=False,
+            patch_size=16,
+            num_windows=4,
+            aug_config=None,
+        )
+        with (
+            patch("rfdetr.datasets.coco.Path") as mock_path,
+            patch("rfdetr.datasets.coco.make_coco_transforms") as mock_transforms,
+            patch("rfdetr.datasets.coco.CocoDetection", return_value=MagicMock()),
+            patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=False),
+        ):
+            mock_path.return_value.exists.return_value = True
+            mock_transforms.return_value = MagicMock()
+            build_roboflow_from_coco("train", args, resolution=640)
+        assert mock_transforms.call_args.kwargs["gpu_postprocess"] is False

@@ -16,12 +16,26 @@ from torch.utils.data import DataLoader
 from rfdetr._namespace import _namespace_from_configs
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.datasets import build_dataset
+from rfdetr.datasets.aug_config import AUG_CONFIG
+from rfdetr.utilities.box_ops import box_xyxy_to_cxcywh
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.tensors import collate_fn
 
 logger = get_logger()
 
 _MIN_TRAIN_BATCHES = 5
+
+
+def _has_cuda_device() -> bool:
+    """Return ``True`` when the runtime has a CUDA accelerator available.
+
+    Uses the fork-safe global ``DEVICE`` constant instead of direct
+    ``torch.cuda.is_available()`` calls to avoid creating a CUDA context in
+    fork-based notebook/DDP workflows.
+    """
+    from rfdetr.config import DEVICE
+
+    return str(DEVICE).startswith("cuda")
 
 
 class GradAccumAlignedDataset(torch.utils.data.Dataset):
@@ -92,6 +106,41 @@ class GradAccumAlignedDataset(torch.utils.data.Dataset):
         return self._dataset[dataset_idx]
 
 
+def _resolve_augmentation_backend(backend: str) -> str:
+    """Resolve ``"auto"`` to ``"cpu"`` or ``"gpu"`` based on runtime availability.
+
+    For ``"cpu"`` and ``"gpu"`` the value is returned unchanged.  For
+    ``"auto"`` the function checks CUDA and kornia availability and returns
+    ``"gpu"`` only when both are present; otherwise ``"cpu"``.
+
+    Called before dataset construction so that ``gpu_postprocess`` in the
+    dataset builders always matches what the DataModule will actually do in
+    ``on_after_batch_transfer``.
+
+    Args:
+        backend: Value of ``TrainConfig.augmentation_backend``.
+
+    Returns:
+        Resolved backend string, either ``"cpu"`` or ``"gpu"``.
+
+    Examples:
+        >>> _resolve_augmentation_backend("cpu")
+        'cpu'
+        >>> _resolve_augmentation_backend("gpu")
+        'gpu'
+    """
+    if backend != "auto":
+        return backend
+    if not _has_cuda_device():
+        return "cpu"
+    try:
+        import kornia.augmentation  # noqa: F401 # type: ignore[import-not-found]
+
+        return "gpu"
+    except ImportError:
+        return "cpu"
+
+
 class RFDETRDataModule(LightningDataModule):
     """LightningDataModule wrapping RF-DETR dataset construction and data loading.
 
@@ -108,6 +157,14 @@ class RFDETRDataModule(LightningDataModule):
         self._dataset_train: Optional[torch.utils.data.Dataset] = None
         self._dataset_val: Optional[torch.utils.data.Dataset] = None
         self._dataset_test: Optional[torch.utils.data.Dataset] = None
+
+        # GPU augmentation pipeline (Kornia); built lazily in setup("fit").
+        self._kornia_pipeline: Any | None = None
+        self._kornia_normalize: Any | None = None
+        # Sentinel: True once _setup_kornia_pipeline has run (even on fallback paths
+        # where _kornia_pipeline stays None), preventing redundant re-runs on repeated
+        # setup("fit") calls (e.g. during validation loops in some PTL strategies).
+        self._kornia_setup_done: bool = False
 
         self._num_workers: int = self.train_config.num_workers
 
@@ -152,10 +209,24 @@ class RFDETRDataModule(LightningDataModule):
         resolution = self.model_config.resolution
         ns = _namespace_from_configs(self.model_config, self.train_config)
         if stage == "fit":
+            # Resolve 'auto' to an actual backend before building datasets so that
+            # gpu_postprocess in dataset builders always matches what the DataModule
+            # will actually do in on_after_batch_transfer.  Without this, 'auto' on
+            # a machine without CUDA/kornia would strip CPU Normalize from datasets
+            # while _kornia_pipeline stays None, leaving training inputs unnormalized.
+            resolved = _resolve_augmentation_backend(self.train_config.augmentation_backend)
+            if resolved != self.train_config.augmentation_backend:
+                ns.augmentation_backend = resolved
             if self._dataset_train is None:
                 self._dataset_train = build_dataset("train", ns, resolution)
             if self._dataset_val is None:
                 self._dataset_val = build_dataset("val", ns, resolution)
+            # Build Kornia GPU augmentation pipeline (once).
+            # Use _kornia_setup_done (not _kornia_pipeline is None) so that fallback
+            # paths — where the pipeline stays None — do not re-run on every setup("fit").
+            if not self._kornia_setup_done:
+                self._setup_kornia_pipeline()
+                self._kornia_setup_done = True
         elif stage == "validate":
             if self._dataset_val is None:
                 self._dataset_val = build_dataset("val", ns, resolution)
@@ -281,6 +352,92 @@ class RFDETRDataModule(LightningDataModule):
             persistent_workers=self._persistent_workers,
             prefetch_factor=self._prefetch_factor,
         )
+
+    def _setup_kornia_pipeline(self) -> None:
+        """Resolve augmentation backend and build the Kornia pipeline if applicable.
+
+        Called once during ``setup("fit")``.  When ``augmentation_backend``
+        is ``"cpu"`` this is a no-op.  For ``"auto"`` the method falls back
+        silently when CUDA or Kornia are unavailable.  For ``"gpu"`` missing
+        requirements raise hard errors.
+        """
+        backend = self.train_config.augmentation_backend
+        if backend == "cpu":
+            return
+
+        if backend == "auto":
+            if not _has_cuda_device():
+                logger.warning("augmentation_backend='auto': no CUDA, falling back to CPU augmentation")
+                return
+            try:
+                import kornia.augmentation  # type: ignore[import-not-found]
+            except ImportError:
+                logger.warning("augmentation_backend='auto': kornia not installed, using CPU augmentation")
+                return
+        elif backend == "gpu":
+            if not _has_cuda_device():
+                raise RuntimeError("augmentation_backend='gpu' requires a CUDA device")
+            try:
+                import kornia.augmentation  # noqa: F401 # type: ignore[import-not-found]
+            except ImportError as err:
+                raise ImportError(
+                    "GPU augmentation requires kornia. Install with: pip install 'rfdetr[kornia]'"
+                ) from err
+
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline, build_normalize
+
+        self._kornia_pipeline = build_kornia_pipeline(
+            self.train_config.aug_config if self.train_config.aug_config is not None else AUG_CONFIG,
+            self.model_config.resolution,
+        )
+        self._kornia_normalize = build_normalize()
+        logger.info("Kornia GPU augmentation pipeline built (backend=%s)", backend)
+
+    def on_after_batch_transfer(self, batch: Tuple, dataloader_idx: int) -> Tuple:
+        """Apply Kornia GPU augmentation after the batch is transferred to device.
+
+        When ``_kornia_pipeline`` is set and the trainer is in training mode,
+        augmentation and normalization are applied on the GPU.  Validation
+        and test batches pass through unchanged.
+
+        Segmentation models skip GPU augmentation in phase 1 with a warning.
+
+        Args:
+            batch: Tuple of ``(NestedTensor, list[dict])`` already on device.
+            dataloader_idx: Index of the current dataloader.
+
+        Returns:
+            The (possibly augmented) batch.
+        """
+        if self.trainer is None or not self.trainer.training or self._kornia_pipeline is None:
+            return batch
+
+        if self.model_config.segmentation_head:
+            logger.warning_once("Kornia GPU augmentation skipped for segmentation models (phase 2)")
+            return batch
+
+        from rfdetr.datasets.kornia_transforms import collate_boxes, unpack_boxes
+        from rfdetr.utilities.tensors import NestedTensor
+
+        samples, targets = batch
+        img = samples.tensors  # [B, C, H, W]
+        # Move Kornia modules to the batch device (no-op if already there).
+        # nn.Module.to() is in-place; no reassignment needed.
+        self._kornia_pipeline.to(img.device)
+        self._kornia_normalize.to(img.device)
+        boxes_padded, valid = collate_boxes(targets, img.device)
+        img_aug, boxes_aug = self._kornia_pipeline(img, boxes_padded)
+        img_aug = self._kornia_normalize(img_aug)
+        targets = unpack_boxes(boxes_aug, valid, targets, *img_aug.shape[-2:])
+        height, width = img_aug.shape[-2:]
+        for target in targets:
+            boxes = target["boxes"]
+            if boxes.numel() == 0:
+                continue
+            scale = boxes.new_tensor([width, height, width, height])
+            target["boxes"] = box_xyxy_to_cxcywh(boxes) / scale
+        batch = (NestedTensor(img_aug, samples.mask), targets)
+        return batch
 
     # ------------------------------------------------------------------
     # Properties

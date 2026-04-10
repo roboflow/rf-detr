@@ -61,6 +61,27 @@ GEOMETRIC_TRANSFORMS = {
     "YourCustomTransform",  # Add here
 }
 ```
+
+## Kornia GPU Backend
+
+When ``augmentation_backend="auto"`` or ``"gpu"`` is set in ``TrainConfig``, augmentations
+run on the GPU via Kornia instead of Albumentations.
+
+**Supported transforms** (all presets):
+
+| Preset key | Kornia equivalent | Notes |
+|---|---|---|
+| ``HorizontalFlip`` | ``K.RandomHorizontalFlip`` | Direct |
+| ``VerticalFlip`` | ``K.RandomVerticalFlip`` | Direct |
+| ``Rotate`` | ``K.RandomRotation`` | ``limit`` may be scalar or tuple |
+| ``Affine`` | ``K.RandomAffine`` | ``translate_percent`` treated as fraction |
+| ``ColorJitter`` | ``K.ColorJiggle`` | Same multiplicative semantics |
+| ``RandomBrightnessContrast`` | ``K.ColorJiggle`` | ``brightness_limit`` / ``contrast_limit`` direct |
+| ``GaussianBlur`` | ``K.RandomGaussianBlur`` | ``blur_limit`` rounded up to odd; ``sigma=(0.1, 2.0)`` |
+| ``GaussNoise`` | ``K.RandomGaussianNoise`` | Upper bound of ``std_range`` used as fixed std |
+
+**Phase 1 limitation**: Segmentation models (``segmentation_head=True``) skip GPU augmentation;
+CPU Albumentations are used instead. Mask support is planned for Phase 2.
 """
 
 # ---------------------------------------------------------------------------

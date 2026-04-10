@@ -111,6 +111,27 @@ class TestBuildRoboflowFromYoloAugConfig:
         _, kwargs = mock_dataset.call_args
         assert kwargs["data_file"] == str(tmp_path / "data.yml")
 
+    def test_auto_no_cuda_sets_gpu_postprocess_false(self) -> None:
+        """auto + no CUDA must keep CPU normalize by passing gpu_postprocess=False."""
+        args = self._make_args(square_resize_div_64=False, aug_config=None)
+        args.augmentation_backend = "auto"
+        with (
+            patch("rfdetr.datasets.yolo.Path") as mock_path,
+            patch("rfdetr.datasets.yolo.make_coco_transforms") as mock_transform,
+            patch("rfdetr.datasets.yolo.YoloDetection") as mock_dataset,
+            patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=False),
+        ):
+            mock_path.return_value.exists.return_value = True
+            mock_transform.return_value = MagicMock()
+            mock_dataset.return_value = MagicMock()
+
+            from rfdetr.datasets.yolo import build_roboflow_from_yolo
+
+            build_roboflow_from_yolo("train", args, resolution=640)
+
+        _, kwargs = mock_transform.call_args
+        assert kwargs["gpu_postprocess"] is False
+
 
 class TestIsValidYoloDataset:
     """Tests for the is_valid_yolo_dataset function."""

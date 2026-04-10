@@ -20,6 +20,7 @@ from PIL import Image, ImageDraw
 from torchvision.datasets import VisionDataset
 
 from rfdetr.datasets.coco import (
+    _resolve_runtime_augmentation_backend,
     make_coco_transforms,
     make_coco_transforms_square_div_64,
 )
@@ -708,6 +709,8 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
     patch_size = getattr(args, "patch_size", None)
     num_windows = getattr(args, "num_windows", None)
     aug_config = getattr(args, "aug_config", None)
+    resolved_augmentation_backend = _resolve_runtime_augmentation_backend(getattr(args, "augmentation_backend", "cpu"))
+    gpu_postprocess = resolved_augmentation_backend != "cpu" and not include_masks
 
     if square_resize_div_64:
         dataset = YoloDetection(
@@ -723,6 +726,7 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
                 patch_size=patch_size,
                 num_windows=num_windows,
                 aug_config=aug_config,
+                gpu_postprocess=gpu_postprocess,
             ),
             include_masks=include_masks,
         )
@@ -740,6 +744,7 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
                 patch_size=patch_size,
                 num_windows=num_windows,
                 aug_config=aug_config,
+                gpu_postprocess=gpu_postprocess,
             ),
             include_masks=include_masks,
         )

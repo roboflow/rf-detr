@@ -73,6 +73,9 @@ trt = [
     "tensorrt>=8.6.1",
     "polygraphy",
 ]
+kornia = [
+    "kornia>=0.7,<1",              # GPU-side augmentation via on_after_batch_transfer
+]
 loggers = [
     "tensorboard>=2.13.0",
     "protobuf>=3.20.0,<4.0.0",  # Pins protobuf below 4.x to avoid TensorBoard descriptor crash with protobuf>=4 (see #844)
@@ -214,6 +217,7 @@ overrides = [
     "requests", "requests.*",
     "seaborn", "seaborn.*",
     "tqdm", "tqdm.*",
+    "kornia", "kornia.*",
   ], ignore_missing_imports = true },
   # Modules with pre-existing type errors — ignored until incrementally fixed.
   { module = [

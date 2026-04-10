@@ -392,6 +392,7 @@ def make_coco_transforms(
     patch_size: int = 16,
     num_windows: int = 4,
     aug_config: Optional[Dict[str, Dict[str, Any]]] = None,
+    gpu_postprocess: bool = False,
 ) -> Compose:
     """Build the standard COCO transform pipeline for a given dataset split.
 
@@ -404,6 +405,11 @@ def make_coco_transforms(
     :func:`_build_train_resize_config`), followed by the augmentation stack and
     normalisation.  For ``"val"``, ``"test"``, and ``"val_speed"`` only resize and
     normalisation are applied — no augmentation.
+
+    When *gpu_postprocess* is ``True``, both the Albumentations augmentation
+    wrappers and the ``Normalize`` step are omitted from the ``"train"`` pipeline.
+    The ``RFDETRDataModule`` then applies augmentation and normalization on the
+    device in ``on_after_batch_transfer`` instead.
 
     Args:
         image_set: Dataset split identifier — ``"train"``, ``"val"``, ``"test"``,
@@ -425,6 +431,10 @@ def make_coco_transforms(
             :class:`~rfdetr.datasets.transforms.AlbumentationsWrapper`.  Falls back
             to the default :data:`~rfdetr.datasets.aug_config.AUG_CONFIG` when
             ``None``.
+        gpu_postprocess: When ``True``, skip Albumentations augmentation wrappers and
+            ``Normalize`` from the CPU pipeline.  The ``RFDETRDataModule`` then applies
+            both augmentation and normalization on the GPU in
+            ``on_after_batch_transfer``.  Has no effect on val/test splits.
 
     Returns:
         A :class:`torchvision.transforms.v2.Compose` pipeline ready to be passed
@@ -450,8 +460,14 @@ def make_coco_transforms(
         resize_wrappers = AlbumentationsWrapper.from_config(
             _build_train_resize_config(scales, square=False, max_size=1333)
         )
-        aug_wrappers = AlbumentationsWrapper.from_config(resolved_aug_config)
-        return Compose([*resize_wrappers, *aug_wrappers, to_image, to_float, normalize])
+        pipeline = [*resize_wrappers]
+        if not gpu_postprocess:
+            aug_wrappers = AlbumentationsWrapper.from_config(resolved_aug_config)
+            pipeline += [*aug_wrappers]
+        pipeline += [to_image, to_float]
+        if not gpu_postprocess:
+            pipeline += [normalize]
+        return Compose(pipeline)
 
     if image_set in ("val", "test"):
         resize_wrappers = AlbumentationsWrapper.from_config(
@@ -477,6 +493,7 @@ def make_coco_transforms_square_div_64(
     patch_size: int = 16,
     num_windows: int = 4,
     aug_config: Optional[Dict[str, Dict[str, Any]]] = None,
+    gpu_postprocess: bool = False,
 ) -> Compose:
     """
     Create COCO transforms with square resizing where the output size is divisible by 64.
@@ -485,6 +502,11 @@ def make_coco_transforms_square_div_64(
     resizes them to square shapes suitable for models that require spatial dimensions
     divisible by 64. It supports multi-scale training and optional random resizing and
     cropping for the training split.
+
+    When *gpu_postprocess* is ``True``, both the Albumentations augmentation
+    wrappers and the ``Normalize`` step are omitted from the ``"train"`` pipeline.
+    The ``RFDETRDataModule`` then applies augmentation and normalization on the
+    device in ``on_after_batch_transfer`` instead.
 
     Args:
         image_set: Dataset split identifier. Expected values are "train", "val",
@@ -506,6 +528,10 @@ def make_coco_transforms_square_div_64(
         aug_config: Augmentation configuration dictionary compatible with
             :class:`~rfdetr.datasets.transforms.AlbumentationsWrapper`. If ``None``,
             the default :data:`~rfdetr.datasets.aug_config.AUG_CONFIG` is used.
+        gpu_postprocess: When ``True``, skip Albumentations augmentation wrappers and
+            ``Normalize`` from the CPU pipeline.  The ``RFDETRDataModule`` then applies
+            both augmentation and normalization on the GPU in
+            ``on_after_batch_transfer``.  Has no effect on val/test splits.
 
     Returns:
         A ``Compose`` object containing the composed image transforms appropriate
@@ -526,8 +552,14 @@ def make_coco_transforms_square_div_64(
     if image_set == "train":
         resolved_aug_config = aug_config if aug_config is not None else AUG_CONFIG
         resize_wrappers = AlbumentationsWrapper.from_config(_build_train_resize_config(scales, square=True))
-        aug_wrappers = AlbumentationsWrapper.from_config(resolved_aug_config)
-        return Compose([*resize_wrappers, *aug_wrappers, to_image, to_float, normalize])
+        pipeline = [*resize_wrappers]
+        if not gpu_postprocess:
+            aug_wrappers = AlbumentationsWrapper.from_config(resolved_aug_config)
+            pipeline += [*aug_wrappers]
+        pipeline += [to_image, to_float]
+        if not gpu_postprocess:
+            pipeline += [normalize]
+        return Compose(pipeline)
 
     if image_set in ("val", "test", "val_speed"):
         resize_wrappers = AlbumentationsWrapper.from_config([{"Resize": {"height": resolution, "width": resolution}}])
@@ -554,6 +586,22 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
     square_resize_div_64 = getattr(args, "square_resize_div_64", False)
     include_masks = getattr(args, "segmentation_head", False)
     aug_config = getattr(args, "aug_config", None)
+    augmentation_backend = getattr(args, "augmentation_backend", "cpu")
+    resolved_augmentation_backend = augmentation_backend
+    if include_masks and augmentation_backend != "cpu":
+        logger.warning(
+            "Segmentation training does not currently support GPU postprocess transforms; "
+            "forcing augmentation_backend='cpu' to retain CPU transforms and normalization."
+        )
+        resolved_augmentation_backend = "cpu"
+    if resolved_augmentation_backend != "cpu":
+        resolved_augmentation_backend = _resolve_runtime_augmentation_backend(resolved_augmentation_backend)
+        if resolved_augmentation_backend == "cpu":
+            logger.warning(
+                "augmentation_backend='auto' resolved to 'cpu' because CUDA or kornia is unavailable; "
+                "disabling GPU postprocess transforms and retaining CPU normalization."
+            )
+    gpu_postprocess = resolved_augmentation_backend != "cpu" and not include_masks
 
     if square_resize_div_64:
         logger.info(f"Building COCO {image_set} dataset with square resize at resolution {resolution}")
@@ -569,6 +617,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
                 patch_size=args.patch_size,
                 num_windows=args.num_windows,
                 aug_config=aug_config,
+                gpu_postprocess=gpu_postprocess,
             ),
             include_masks=include_masks,
         )
@@ -586,10 +635,25 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
                 patch_size=args.patch_size,
                 num_windows=args.num_windows,
                 aug_config=aug_config,
+                gpu_postprocess=gpu_postprocess,
             ),
             include_masks=include_masks,
         )
     return dataset
+
+
+def _resolve_runtime_augmentation_backend(backend: str) -> str:
+    """Resolve ``augmentation_backend`` at runtime for dataset builders.
+
+    Thin wrapper around :func:`rfdetr.datasets.kornia_transforms.resolve_augmentation_backend`
+    kept for backward-compatibility with callers in ``yolo.py``.
+
+    ``"auto"`` becomes ``"gpu"`` only when CUDA and Kornia are both available,
+    otherwise ``"cpu"``. Explicit ``"cpu"``/``"gpu"`` values pass through.
+    """
+    from rfdetr.datasets.kornia_transforms import resolve_augmentation_backend
+
+    return resolve_augmentation_backend(backend)
 
 
 def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
@@ -618,6 +682,8 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
     patch_size = getattr(args, "patch_size", 16)
     num_windows = getattr(args, "num_windows", 4)
     aug_config = getattr(args, "aug_config", None)
+    resolved_augmentation_backend = _resolve_runtime_augmentation_backend(getattr(args, "augmentation_backend", "cpu"))
+    gpu_postprocess = resolved_augmentation_backend != "cpu" and not include_masks
 
     if square_resize_div_64:
         logger.info(f"Building Roboflow {image_set} dataset with square resize at resolution {resolution}")
@@ -633,6 +699,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
                 patch_size=patch_size,
                 num_windows=num_windows,
                 aug_config=aug_config,
+                gpu_postprocess=gpu_postprocess,
             ),
             include_masks=include_masks,
             remap_category_ids=True,
@@ -651,6 +718,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
                 patch_size=patch_size,
                 num_windows=num_windows,
                 aug_config=aug_config,
+                gpu_postprocess=gpu_postprocess,
             ),
             include_masks=include_masks,
             remap_category_ids=True,
