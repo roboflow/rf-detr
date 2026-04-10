@@ -17,7 +17,8 @@ from rfdetr.models.transformer import gen_encoder_output_proposals
 def _reset_random_seeds() -> None:
     """Ensure reproducible random state for every test."""
     torch.manual_seed(42)
-    torch.cuda.manual_seed_all(42)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(42)
 
 
 _MSDeformInputs = tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, list[tuple[int, int]]]

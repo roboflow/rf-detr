@@ -53,7 +53,13 @@ from rfdetr.models.weights import load_pretrain_weights
 # ---------------------------------------------------------------------------
 
 
-def _make_checkpoint(num_classes=91, num_queries=300, group_detr=13):
+def _make_checkpoint(
+    num_classes=91,
+    num_queries=300,
+    group_detr=13,
+    segmentation_head=False,
+    patch_size=14,
+):
     """Build a minimal checkpoint dict with the given class count.
 
     Args:
@@ -69,11 +75,7 @@ def _make_checkpoint(num_classes=91, num_queries=300, group_detr=13):
         "query_feat.weight": torch.randn(total_queries, 256),
         "other_layer.weight": torch.randn(10, 10),
     }
-    ckpt_args = SimpleNamespace(
-        segmentation_head=False,
-        patch_size=14,
-        class_names=[],
-    )
+    ckpt_args = SimpleNamespace(segmentation_head=segmentation_head, patch_size=patch_size, class_names=[])
     return {"model": state, "args": ckpt_args}
 
 
@@ -136,8 +138,8 @@ class TestLoadPretrainWeightsIntoSecondReinit:
             f"Expected exactly 1 reinit call (to checkpoint size), but got {len(calls)}: "
             f"{calls}. The second reinit to {args.num_classes + 1} destroys loaded weights."
         )
-        assert mc.num_classes == 2, (
-            f"mc.num_classes must be auto-aligned to 2 (checkpoint_logits - 1), got {mc.num_classes}"
+        assert args.num_classes == 2, (
+            f"args.num_classes must be auto-aligned to 2 (checkpoint_logits - 1), got {args.num_classes}"
         )
 
     def test_no_mismatch_no_reinit(self, monkeypatch):
@@ -365,8 +367,12 @@ class TestModuleLoadPretrainWeightsSecondReinit:
         and fires exactly one reinit call — to 9 (the checkpoint size).
         """
         # 8 dataset categories → training builds a model with 8+1=9 logits.
-        checkpoint = _make_checkpoint(num_classes=9)
         mc = config_cls(pretrain_weights="/fake/weights.pth", device="cpu")
+        checkpoint = _make_checkpoint(
+            num_classes=9,
+            segmentation_head=mc.segmentation_head,
+            patch_size=mc.patch_size,
+        )
         monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
 
         fake_model = MagicMock()

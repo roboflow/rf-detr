@@ -142,8 +142,19 @@ def _load_pretrain_weights_into(nn_model: torch.nn.Module, args: Any) -> List[st
 
     validate_checkpoint_compatibility(checkpoint, args)
 
+    user_set_num_classes = "num_classes" in getattr(args, "model_fields_set", set())
+    default_num_classes = getattr(type(args), "model_fields", {}).get("num_classes")
+    default_num_classes = getattr(default_num_classes, "default", 90)
+    num_classes = args.num_classes
+    user_overrode_default_num_classes = user_set_num_classes and num_classes != default_num_classes
+
     checkpoint_num_classes = checkpoint["model"]["class_embed.bias"].shape[0]
-    if checkpoint_num_classes != args.num_classes + 1:
+    configured_num_classes_plus_bg = num_classes + 1
+    if checkpoint_num_classes != configured_num_classes_plus_bg:
+        if checkpoint_num_classes < configured_num_classes_plus_bg and not user_overrode_default_num_classes:
+            num_classes = checkpoint_num_classes - 1
+            configured_num_classes_plus_bg = checkpoint_num_classes
+            args.num_classes = num_classes
         # Temporarily align the detection head size with the checkpoint so
         # that state_dict loading succeeds even when the configured
         # num_classes differs from the checkpoint.
@@ -159,8 +170,11 @@ def _load_pretrain_weights_into(nn_model: torch.nn.Module, args: Any) -> List[st
 
     # Only reinitialize back to configured size when intentionally reducing a
     # larger pretrain checkpoint to fewer task-specific classes.
-    if args.num_classes + 1 < checkpoint_num_classes:
-        nn_model.reinitialize_detection_head(args.num_classes + 1)
+    if checkpoint_num_classes < configured_num_classes_plus_bg and user_overrode_default_num_classes:
+        nn_model.reinitialize_detection_head(configured_num_classes_plus_bg)
+
+    if num_classes + 1 < checkpoint_num_classes:
+        nn_model.reinitialize_detection_head(num_classes + 1)
 
     return class_names
 
