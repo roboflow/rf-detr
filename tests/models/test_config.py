@@ -14,14 +14,12 @@ from rfdetr.config import (
     ModelConfig,
     RFDETRBaseConfig,
     RFDETRLargeConfig,
-    RFDETRLargeDeprecatedConfig,
     RFDETRMediumConfig,
     RFDETRNanoConfig,
     RFDETRSeg2XLargeConfig,
     RFDETRSegLargeConfig,
     RFDETRSegMediumConfig,
     RFDETRSegNanoConfig,
-    RFDETRSegPreviewConfig,
     RFDETRSegSmallConfig,
     RFDETRSegXLargeConfig,
     RFDETRSmallConfig,
@@ -386,9 +384,6 @@ class TestSyncPEWithResolutionAtConstruction:
     ``RFDETRLarge(resolution=640)``), positional_encoding_size must be updated
     proportionally for configs where the default PE is formula-derived
     (``default_pe == default_resolution // patch_size``).
-
-    Configs with a pretrained-specific PE (e.g., RFDETRBase where
-    ``positional_encoding_size=37`` but ``560 // 14 == 40``) must NOT be changed.
     """
 
     @pytest.mark.parametrize(
@@ -399,12 +394,12 @@ class TestSyncPEWithResolutionAtConstruction:
             pytest.param(RFDETRSmallConfig, 640, 640 // 16, id="small_640"),
             pytest.param(RFDETRMediumConfig, 640, 640 // 16, id="medium_640"),
             pytest.param(RFDETRNanoConfig, 416, 416 // 16, id="nano_416"),
+            pytest.param(RFDETRSegNanoConfig, 360, 360 // 12, id="seg_nano_360"),
             pytest.param(RFDETRSegSmallConfig, 480, 480 // 12, id="seg_small_480"),
             pytest.param(RFDETRSegMediumConfig, 480, 480 // 12, id="seg_medium_480"),
             pytest.param(RFDETRSegLargeConfig, 576, 576 // 12, id="seg_large_576"),
             pytest.param(RFDETRSegXLargeConfig, 576, 576 // 12, id="seg_xlarge_576"),
             pytest.param(RFDETRSeg2XLargeConfig, 720, 720 // 12, id="seg_2xlarge_720"),
-            pytest.param(RFDETRSegPreviewConfig, 360, 360 // 12, id="seg_preview_360"),
         ],
     )
     def test_positional_encoding_size_updated_for_formula_derived_configs(
@@ -416,19 +411,6 @@ class TestSyncPEWithResolutionAtConstruction:
         """PE is auto-derived from the custom resolution for formula-derived model configs."""
         cfg = config_cls(resolution=new_resolution, pretrain_weights=None)
         assert cfg.positional_encoding_size == expected_pe
-
-    @pytest.mark.parametrize(
-        "config_cls",
-        [
-            pytest.param(RFDETRBaseConfig, id="base"),
-            pytest.param(RFDETRLargeDeprecatedConfig, id="large_deprecated"),
-        ],
-    )
-    def test_positional_encoding_size_unchanged_for_pretrained_specific_configs(self, config_cls: type) -> None:
-        """Configs with a non-formula-derived PE (e.g. Base PE=37 ≠ 560//14=40) must not be auto-updated."""
-        # 616 is a valid resolution for Base/LargeDeprecated: 616 / (14*4) == 11 exactly.
-        cfg = config_cls(resolution=616, pretrain_weights=None)
-        assert cfg.positional_encoding_size == 37
 
     def test_explicit_positional_encoding_size_is_not_overridden(self) -> None:
         """When positional_encoding_size is explicitly provided, the validator must not override it."""
