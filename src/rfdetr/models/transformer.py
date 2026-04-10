@@ -87,7 +87,7 @@ def gen_encoder_output_proposals(memory, memory_padding_mask=None, spatial_shape
     for lvl, (height, width) in enumerate(spatial_shapes):
         if memory_padding_mask is not None:
             # reshape(-1, ...) infers batch dynamically in ONNX instead of constant N_
-            mask_flatten_ = memory_padding_mask[:, _cur : (_cur + height * width)].view(-1, height, width, 1)
+            mask_flatten_ = memory_padding_mask[:, _cur : (_cur + height * width)].reshape(-1, height, width, 1)
 
             valid_height = torch.sum(~mask_flatten_[:, :, 0, 0], 1)
             valid_width = torch.sum(~mask_flatten_[:, 0, :, 0], 1)
