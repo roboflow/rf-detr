@@ -14,12 +14,14 @@ from rfdetr.config import (
     ModelConfig,
     RFDETRBaseConfig,
     RFDETRLargeConfig,
+    RFDETRLargeDeprecatedConfig,
     RFDETRMediumConfig,
     RFDETRNanoConfig,
     RFDETRSeg2XLargeConfig,
     RFDETRSegLargeConfig,
     RFDETRSegMediumConfig,
     RFDETRSegNanoConfig,
+    RFDETRSegPreviewConfig,
     RFDETRSegSmallConfig,
     RFDETRSegXLargeConfig,
     RFDETRSmallConfig,
@@ -402,6 +404,7 @@ class TestSyncPEWithResolutionAtConstruction:
             pytest.param(RFDETRSegLargeConfig, 576, 576 // 12, id="seg_large_576"),
             pytest.param(RFDETRSegXLargeConfig, 576, 576 // 12, id="seg_xlarge_576"),
             pytest.param(RFDETRSeg2XLargeConfig, 720, 720 // 12, id="seg_2xlarge_720"),
+            pytest.param(RFDETRSegPreviewConfig, 360, 360 // 12, id="seg_preview_360"),
         ],
     )
     def test_positional_encoding_size_updated_for_formula_derived_configs(
@@ -414,10 +417,17 @@ class TestSyncPEWithResolutionAtConstruction:
         cfg = config_cls(resolution=new_resolution, pretrain_weights=None)
         assert cfg.positional_encoding_size == expected_pe
 
-    def test_positional_encoding_size_unchanged_for_pretrained_specific_base_config(self) -> None:
-        """RFDETRBaseConfig (PE=37, not formula-derived from 560//14=40) must not be auto-updated."""
-        # 616 is a valid Base resolution: 616 / (14*4) == 11 exactly.
-        cfg = RFDETRBaseConfig(resolution=616, pretrain_weights=None)
+    @pytest.mark.parametrize(
+        "config_cls",
+        [
+            pytest.param(RFDETRBaseConfig, id="base"),
+            pytest.param(RFDETRLargeDeprecatedConfig, id="large_deprecated"),
+        ],
+    )
+    def test_positional_encoding_size_unchanged_for_pretrained_specific_configs(self, config_cls: type) -> None:
+        """Configs with a non-formula-derived PE (e.g. Base PE=37 ≠ 560//14=40) must not be auto-updated."""
+        # 616 is a valid resolution for Base/LargeDeprecated: 616 / (14*4) == 11 exactly.
+        cfg = config_cls(resolution=616, pretrain_weights=None)
         assert cfg.positional_encoding_size == 37
 
     def test_explicit_positional_encoding_size_is_not_overridden(self) -> None:
