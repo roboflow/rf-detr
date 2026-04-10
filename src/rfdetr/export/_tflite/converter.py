@@ -93,8 +93,12 @@ def _check_onnx2tf_available() -> None:
     """
     try:
         import onnx2tf  # noqa: F401
-    except ImportError:
-        raise ImportError("onnx2tf is not installed. Install it with:  pip install rfdetr[tflite]")
+    except ImportError as exc:
+        raise ImportError(
+            "onnx2tf is not installed. TFLite export requires both ONNX and "
+            "TFLite export dependencies. Install them with: "
+            "pip install rfdetr[onnx,tflite]"
+        ) from exc
 
 
 @contextlib.contextmanager
