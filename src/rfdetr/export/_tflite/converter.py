@@ -240,7 +240,7 @@ def _get_onnx_input_info(onnx_path: Path) -> tuple[str, list[int]]:
 
     Returns:
         A ``(name, dims)`` tuple where *dims* is the NCHW shape list,
-        e.g. ``["input", [1, 3, 560, 560]]``.
+        e.g. ``("input", [1, 3, 560, 560])``.
     """
     import onnx
 
@@ -388,6 +388,15 @@ def export_tflite(
         ImportError: If ``onnx2tf`` is not installed.
         ValueError: If *quantization* is not a recognized mode.
         RuntimeError: If the conversion fails.
+
+    Note:
+        This function is **not thread-safe**.  It globally monkey-patches
+        :func:`numpy.load` (via :func:`_numpy_allow_pickle`) and
+        ``onnx2tf.download_test_image_data`` (via
+        :func:`_patch_validation_download`) for the duration of the
+        conversion.  Concurrent calls from multiple threads will interfere
+        with each other.  Run conversion in a subprocess if isolation is
+        required.
     """
     onnx_path = Path(onnx_path)
     output_dir = Path(output_dir)
