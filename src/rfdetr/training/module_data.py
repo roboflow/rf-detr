@@ -379,8 +379,10 @@ class RFDETRDataModule(LightningDataModule):
                 raise RuntimeError("augmentation_backend='gpu' requires a CUDA device")
             try:
                 import kornia.augmentation  # noqa: F401 # type: ignore[import-not-found]
-            except ImportError as e:
-                raise ImportError("GPU augmentation requires kornia. Install with: pip install 'rfdetr[kornia]'") from e
+            except ImportError as err:
+                raise ImportError(
+                    "GPU augmentation requires kornia. Install with: pip install 'rfdetr[kornia]'"
+                ) from err
 
         from rfdetr.datasets.kornia_transforms import build_kornia_pipeline, build_normalize
 
@@ -407,32 +409,34 @@ class RFDETRDataModule(LightningDataModule):
         Returns:
             The (possibly augmented) batch.
         """
-        if self.trainer is not None and self.trainer.training and self._kornia_pipeline is not None:
-            if self.model_config.segmentation_head:
-                logger.warning_once("Kornia GPU augmentation skipped for segmentation models (phase 2)")
-                return batch
+        if self.trainer is None or not self.trainer.training or self._kornia_pipeline is None:
+            return batch
 
-            from rfdetr.datasets.kornia_transforms import collate_boxes, unpack_boxes
-            from rfdetr.utilities.tensors import NestedTensor
+        if self.model_config.segmentation_head:
+            logger.warning_once("Kornia GPU augmentation skipped for segmentation models (phase 2)")
+            return batch
 
-            samples, targets = batch
-            img = samples.tensors  # [B, C, H, W]
-            # Move Kornia modules to the batch device (no-op if already there).
-            # nn.Module.to() is in-place; no reassignment needed.
-            self._kornia_pipeline.to(img.device)
-            self._kornia_normalize.to(img.device)
-            boxes_padded, valid = collate_boxes(targets, img.device)
-            img_aug, boxes_aug = self._kornia_pipeline(img, boxes_padded)
-            img_aug = self._kornia_normalize(img_aug)
-            targets = unpack_boxes(boxes_aug, valid, targets, *img_aug.shape[-2:])
-            height, width = img_aug.shape[-2:]
-            for target in targets:
-                boxes = target["boxes"]
-                if boxes.numel() == 0:
-                    continue
-                scale = boxes.new_tensor([width, height, width, height])
-                target["boxes"] = box_xyxy_to_cxcywh(boxes) / scale
-            batch = (NestedTensor(img_aug, samples.mask), targets)
+        from rfdetr.datasets.kornia_transforms import collate_boxes, unpack_boxes
+        from rfdetr.utilities.tensors import NestedTensor
+
+        samples, targets = batch
+        img = samples.tensors  # [B, C, H, W]
+        # Move Kornia modules to the batch device (no-op if already there).
+        # nn.Module.to() is in-place; no reassignment needed.
+        self._kornia_pipeline.to(img.device)
+        self._kornia_normalize.to(img.device)
+        boxes_padded, valid = collate_boxes(targets, img.device)
+        img_aug, boxes_aug = self._kornia_pipeline(img, boxes_padded)
+        img_aug = self._kornia_normalize(img_aug)
+        targets = unpack_boxes(boxes_aug, valid, targets, *img_aug.shape[-2:])
+        height, width = img_aug.shape[-2:]
+        for target in targets:
+            boxes = target["boxes"]
+            if boxes.numel() == 0:
+                continue
+            scale = boxes.new_tensor([width, height, width, height])
+            target["boxes"] = box_xyxy_to_cxcywh(boxes) / scale
+        batch = (NestedTensor(img_aug, samples.mask), targets)
         return batch
 
     # ------------------------------------------------------------------
