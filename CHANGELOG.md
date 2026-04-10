@@ -15,11 +15,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+---
+
+## [1.6.4] — 2026-04-10
+
+### Changed
+
+- `predict()` now includes `class_name` in `detections.data`, mapping each detection's 0-indexed class ID to its human-readable name. (#914)
+
+### Fixed
+
 - Fixed segmentation multi-GPU DDP training crash: `build_trainer()` now wraps `strategy="ddp"` with `DDPStrategy(find_unused_parameters=True)` when `segmentation_head=True`. The segmentation head's `sparse_forward()` leaves parameters unused on some forward steps; plain `"ddp"` raised `RuntimeError: It looks like your LightningModule has parameters that were not used in producing the loss`. Non-segmentation DDP and other strategies are unchanged. (#942, #947)
 - Fixed fused AdamW crash under FP32 multi-GPU training: `configure_optimizers()` and `clip_gradients()` now gate fused AdamW on the trainer's actual precision (requiring a BF16 variant) rather than GPU capability alone. On Ampere+ hardware `torch.cuda.is_bf16_supported()` is always `True`, so the old code enabled fused AdamW even with `precision="32-true"`, causing `RuntimeError: params, grads, exp_avgs, and exp_avg_sqs must have same dtype, device, and layout` from DDP gradient bucket view stride mismatches. (#942, #947)
+- Fixed multi-GPU DDP training crashing in Jupyter notebooks and Kaggle: replaced fork-based `ddp_notebook` strategy with a spawn-based DDP strategy that avoids OpenMP thread pool corruption after `fork()`. (#928)
+- Fixed `RFDETR.train(resolution=...)` being silently ignored — the kwarg is now applied to `model_config` before training begins, with validation that the value is divisible by `patch_size * num_windows`. (#933)
+- Fixed `save_dataset_grids` being silently a no-op — `DatasetGridSaver` is now wired into the training loop, saving sample grids to `{output_dir}/dataset_grids/` when enabled. Grid save failures are caught without interrupting training. (#946)
+- Fixed partial gradient-accumulation windows at the tail of training epochs: the training dataset is now padded to an exact multiple of `effective_batch_size * world_size`, ensuring every optimizer step uses a full gradient window. Workaround for [pytorch-lightning#19987](https://github.com/Lightning-AI/pytorch-lightning/issues/19987). (#937)
+- Fixed `torch.export.export` failing on the transformer decoder by threading `spatial_shapes_hw` through all decoder layers. (#936)
 - `download_pretrain_weights()` no longer overwrites fine-tuned checkpoints that share a filename with a registry model (e.g. `rf-detr-nano.pth`). Previously, an MD5 mismatch would fall through to `_download_file()` and silently replace the user's weights with the original COCO checkpoint. The function now returns early whenever the file exists and `redownload=False`, regardless of MD5 status — a warning is emitted when the hash differs. Pass `redownload=True` to force a fresh download. (#935)
-
----
 
 ## [1.6.3] — 2026-04-02
 
