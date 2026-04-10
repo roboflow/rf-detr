@@ -778,7 +778,7 @@ class RFDETR:
     ) -> None:
         """Export the trained model to ONNX or TFLite format.
 
-        See the `ONNX export documentation <https://rfdetr.roboflow.com/learn/export/>`_
+        See the `export documentation <https://rfdetr.roboflow.com/learn/export/>`_
         for more information.
 
         Args:
