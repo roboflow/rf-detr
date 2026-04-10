@@ -374,6 +374,37 @@ class TestGenEncoderOutputProposalsDynamicBatch:
 
         torch.testing.assert_close(proposals_single.expand(4, -1, -1), proposals_multi)
 
+    @pytest.mark.parametrize(
+        "batch_size",
+        [
+            pytest.param(1, id="batch=1"),
+            pytest.param(4, id="batch=4"),
+        ],
+    )
+    def test_output_shape_invariant_with_padding_mask(self, batch_size: int) -> None:
+        """Output shapes must be correct when memory_padding_mask is provided with varying batch sizes.
+
+        Regression for PR #950 / issue #949: the masked branch used .reshape(-1, h, w, 1) to
+        infer the batch dimension dynamically; this test verifies the branch handles varying
+        batch sizes without error.
+
+        Args:
+            batch_size: Number of images in the batch.
+        """
+        ht, wd, dim = 4, 4, 8
+        total_hw = ht * wd
+        memory = torch.randn(batch_size, total_hw, dim)
+        # Mask shape: (batch, sum_hw) — True means padding (invalid position)
+        memory_padding_mask = torch.zeros(batch_size, total_hw, dtype=torch.bool)
+        spatial_shapes = [(ht, wd)]
+
+        output_memory, output_proposals = gen_encoder_output_proposals(
+            memory, memory_padding_mask=memory_padding_mask, spatial_shapes=spatial_shapes
+        )
+
+        assert output_memory.shape == (batch_size, total_hw, dim)
+        assert output_proposals.shape == (batch_size, total_hw, 4)
+
     def test_onnx_export_with_dynamic_batch_axis(self) -> None:
         """ONNX export with dynamic batch axis must run inference for batch sizes other than the trace batch.
 
