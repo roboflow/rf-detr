@@ -184,5 +184,6 @@ def main(args):
             output_dir=args.output_dir,
             quantization=getattr(args, "quantization", None),
             calibration_data=getattr(args, "calibration_data", None),
+            max_images=getattr(args, "max_images", 100),
             verbosity="info" if args.verbose else "error",
         )
