@@ -163,14 +163,21 @@ class ModelConfig(BaseConfig):
         cls = type(self)
         default_resolution = cls.model_fields["resolution"].default
         default_pe = cls.model_fields["positional_encoding_size"].default
+        default_patch_size = cls.model_fields["patch_size"].default
 
-        # Skip when either default is not a concrete integer (abstract base class
-        # fields have no defaults; required fields use PydanticUndefined, not int).
-        if not isinstance(default_resolution, int) or not isinstance(default_pe, int):
+        # Skip when any relevant default is not a concrete integer (abstract base
+        # class fields have no defaults; required fields use PydanticUndefined,
+        # not int).
+        if (
+            not isinstance(default_resolution, int)
+            or not isinstance(default_pe, int)
+            or not isinstance(default_patch_size, int)
+        ):
             return self
 
-        # Only update PE when the class default is formula-derived from the default resolution.
-        if default_pe == default_resolution // self.patch_size:
+        # Only update PE when the class default is formula-derived from the class
+        # default resolution and patch size.
+        if default_pe == default_resolution // default_patch_size:
             self.positional_encoding_size = self.resolution // self.patch_size
 
         return self
