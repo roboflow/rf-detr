@@ -20,7 +20,7 @@ Mostly copy-paste from https://github.com/pytorch/vision/blob/13b35ff/references
 """
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.utils.data
@@ -44,7 +44,7 @@ def compute_multi_scale_scales(
     expanded_scales: bool = False,
     patch_size: int = 16,
     num_windows: int = 4,
-) -> list[int]:
+) -> List[int]:
     # round to the nearest multiple of 4*patch_size to enable both patching and windowing
     base_num_patches_per_window = resolution // (patch_size * num_windows)
     offsets = [-3, -2, -1, 0, 1, 2, 3, 4] if not expanded_scales else [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5]
@@ -74,7 +74,7 @@ def _is_rle(segmentation: Any) -> bool:
     return isinstance(segmentation, dict) and "counts" in segmentation and "size" in segmentation
 
 
-def convert_coco_poly_to_mask(segmentations: list[Any], height: int, width: int) -> torch.Tensor:
+def convert_coco_poly_to_mask(segmentations: List[Any], height: int, width: int) -> torch.Tensor:
     """Convert COCO segmentation annotations to a binary mask tensor of shape ``[N, H, W]``.
 
     Supports both polygon and RLE (Run-Length Encoding) annotation formats.
@@ -174,13 +174,13 @@ class CocoDetection(torchvision.datasets.CocoDetection):
 
     def __init__(
         self,
-        img_folder: str | Path,
-        ann_file: str | Path,
-        transforms: Any | None,
+        img_folder: Union[str, Path],
+        ann_file: Union[str, Path],
+        transforms: Optional[Any],
         include_masks: bool = False,
         remap_category_ids: bool = False,
     ) -> None:
-        super().__init__(img_folder, ann_file)
+        super(CocoDetection, self).__init__(img_folder, ann_file)
         self._transforms = transforms
         self.include_masks = include_masks
         if remap_category_ids:
@@ -189,14 +189,14 @@ class CocoDetection(torchvision.datasets.CocoDetection):
             # Reverse mapping from contiguous label indices back to COCO category_id
             self.label2cat = {label: cat_id for cat_id, label in self.cat2label.items()}
             # Expose label-to-category mapping on the underlying COCO API object for evaluators
-            self.coco.label2cat = self.label2cat
+            setattr(self.coco, "label2cat", self.label2cat)
         else:
             self.cat2label = None
             self.label2cat = None
         self.prepare = ConvertCoco(include_masks=include_masks, cat2label=self.cat2label)
 
-    def __getitem__(self, idx: int) -> tuple[Any, Any]:
-        img, target = super().__getitem__(idx)
+    def __getitem__(self, idx: int) -> Tuple[Any, Any]:
+        img, target = super(CocoDetection, self).__getitem__(idx)
         image_id = self.ids[idx]
         target = {"image_id": image_id, "annotations": target}
         img, target = self.prepare(img, target)
@@ -207,7 +207,7 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         return img, target
 
 
-class ConvertCoco:
+class ConvertCoco(object):
     """Convert a raw COCO annotation dict into model-ready tensors.
 
     Accepts the ``(image, target)`` pair produced by
@@ -237,11 +237,11 @@ class ConvertCoco:
             that labels stay within the model's output range.
     """
 
-    def __init__(self, include_masks: bool = False, cat2label: dict[int, int] | None = None) -> None:
+    def __init__(self, include_masks: bool = False, cat2label: Optional[Dict[int, int]] = None) -> None:
         self.include_masks = include_masks
         self.cat2label = cat2label
 
-    def __call__(self, image: Image.Image, target: dict[str, Any]) -> tuple[Image.Image, dict[str, Any]]:
+    def __call__(self, image: Image.Image, target: Dict[str, Any]) -> Tuple[Image.Image, Dict[str, Any]]:
         w, h = image.size
 
         image_id = target["image_id"]
@@ -258,7 +258,7 @@ class ConvertCoco:
         boxes[:, 0::2].clamp_(min=0, max=w)
         boxes[:, 1::2].clamp_(min=0, max=h)
 
-        classes: list[int] = []
+        classes: List[int] = []
         for obj in anno:
             category_id = obj["category_id"]
             if getattr(self, "cat2label", None) is not None:
@@ -283,7 +283,7 @@ class ConvertCoco:
 
         # for conversion to coco api
         area = torch.tensor([obj["area"] for obj in anno])
-        iscrowd = torch.tensor([obj.get("iscrowd", 0) for obj in anno])
+        iscrowd = torch.tensor([obj["iscrowd"] if "iscrowd" in obj else 0 for obj in anno])
         target["area"] = area[keep]
         target["iscrowd"] = iscrowd[keep]
 
@@ -308,11 +308,11 @@ class ConvertCoco:
 
 
 def _build_train_resize_config(
-    scales: list[int],
+    scales: List[int],
     *,
     square: bool,
-    max_size: int | None = None,
-) -> list[dict[str, Any]]:
+    max_size: Optional[int] = None,
+) -> List[Dict[str, Any]]:
     """Build the training resize pipeline as an Albumentations config list.
 
     Expresses the ``RandomSelect(resize_a, Compose([resize_b1, crop, resize_b2]))``
@@ -337,12 +337,12 @@ def _build_train_resize_config(
         A single-element list containing a ``OneOf`` config entry.
     """
     if square:
-        option_a: dict[str, Any] = {
+        option_a: Dict[str, Any] = {
             "OneOf": {
                 "transforms": [{"Resize": {"height": s, "width": s}} for s in scales],
             }
         }
-        option_b: dict[str, Any] = {
+        option_b: Dict[str, Any] = {
             "Sequential": {
                 "transforms": [
                     {"SmallestMaxSize": {"max_size": [400, 500, 600]}},
@@ -391,7 +391,7 @@ def make_coco_transforms(
     skip_random_resize: bool = False,
     patch_size: int = 16,
     num_windows: int = 4,
-    aug_config: dict[str, dict[str, Any]] | None = None,
+    aug_config: Optional[Dict[str, Dict[str, Any]]] = None,
     gpu_postprocess: bool = False,
 ) -> Compose:
     """Build the standard COCO transform pipeline for a given dataset split.
@@ -492,7 +492,7 @@ def make_coco_transforms_square_div_64(
     skip_random_resize: bool = False,
     patch_size: int = 16,
     num_windows: int = 4,
-    aug_config: dict[str, dict[str, Any]] | None = None,
+    aug_config: Optional[Dict[str, Dict[str, Any]]] = None,
     gpu_postprocess: bool = False,
 ) -> Compose:
     """
