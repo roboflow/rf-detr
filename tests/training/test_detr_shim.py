@@ -139,6 +139,7 @@ class TestRFDETRTrainPTL:
         mock_config = MagicMock(spec=TrainConfig)
         mock_config.resume = ""
         mock_config.batch_size = 4  # int so auto-batch branch is not taken
+        mock_config.save_dataset_grids = False
         mock_self.get_train_config.return_value = mock_config
 
         p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit

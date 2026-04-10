@@ -4,8 +4,8 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-
 import os
+import warnings
 from typing import Any, ClassVar, Dict, List, Literal, Mapping, Optional, Union
 
 import torch
@@ -523,3 +523,15 @@ class SegmentationTrainConfig(TrainConfig):
     mask_dice_loss_coef: float = 5.0
     cls_loss_coef: float = 5.0
     segmentation_head: bool = True
+
+    @model_validator(mode="after")
+    def warn_deprecated_num_select(self) -> "SegmentationTrainConfig":
+        """Warn when callers explicitly set the deprecated train-time ``num_select`` field."""
+        if "num_select" in self.model_fields_set and self.num_select is not None:
+            warnings.warn(
+                "TrainConfig.num_select is deprecated and ignored by "
+                "PTL/inference; set ModelConfig.num_select instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        return self

@@ -105,7 +105,6 @@ def test_resolve_auto_batch_config_returns_expected_values():
     assert result.device_name == "Fake GPU"
 
 
-@patch("rfdetr.detr.is_main_process", return_value=False)
 @patch("rfdetr.training.auto_batch.resolve_auto_batch_config")
 @patch("rfdetr.training.build_trainer")
 @patch("rfdetr.training.RFDETRDataModule")
@@ -117,7 +116,6 @@ def test_train_auto_batch_ensures_model_on_device_before_resolve(
     _mock_data_module: MagicMock,
     _mock_build_trainer: MagicMock,
     mock_resolve: MagicMock,
-    _mock_is_main: MagicMock,
 ) -> None:
     """_ensure_model_on_device must be called before resolve_auto_batch_config when batch_size='auto'."""
     auto_result = SimpleNamespace(safe_micro_batch=4, recommended_grad_accum_steps=1, effective_batch_size=4)
