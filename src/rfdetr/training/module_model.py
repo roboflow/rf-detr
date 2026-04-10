@@ -219,6 +219,37 @@ class RFDETRModelModule(LightningModule):
         results = self.postprocess(outputs, orig_sizes)
         return {"results": results, "targets": targets}
 
+    @property
+    def _use_fused_optimizer(self) -> bool:
+        """Return whether fused AdamW should be used for the current training configuration.
+
+        Fused AdamW is only safe when the trainer's actual precision is a BF16
+        variant.  Checking GPU capability alone (``is_bf16_supported()``) is
+        insufficient: on Ampere+ hardware that flag is always ``True`` even when
+        the trainer is configured for ``32-true``, which causes a
+        ``params, grads, exp_avgs, and exp_avg_sqs must have same dtype, device,
+        and layout`` crash in DDP because gradient bucket views have non-matching
+        strides in FP32.
+
+        Returns:
+            ``True`` when fused AdamW is both requested and safe to use.
+
+        Examples:
+            >>> # Fused is disabled when trainer precision is 32-true
+            >>> module = RFDETRModelModule.__new__(RFDETRModelModule)
+            >>> module.model_config = type("Cfg", (), {"fused_optimizer": True})()
+            >>> module._trainer = type("Trainer", (), {"precision": "32-true"})()
+            >>> module._trainer.precision = "32-true"
+            >>> module._use_fused_optimizer
+            False
+        """
+        return (
+            self.model_config.fused_optimizer
+            and torch.cuda.is_available()
+            and torch.cuda.is_bf16_supported()
+            and str(self.trainer.precision) in {"bf16-mixed", "bf16", "bf16-true"}
+        )
+
     def configure_optimizers(self) -> Dict[str, Any]:
         """Build AdamW optimizer with layer-wise LR decay and LambdaLR scheduler.
 
@@ -238,12 +269,11 @@ class RFDETRModelModule(LightningModule):
         model_for_params = getattr(self.model, "_orig_mod", self.model)
         param_dicts = get_param_dict(ns, model_for_params)
         param_dicts = [p for p in param_dicts if p["params"].requires_grad]
-        use_fused = self.model_config.fused_optimizer and torch.cuda.is_available() and torch.cuda.is_bf16_supported()
         optimizer = torch.optim.AdamW(
             param_dicts,
             lr=tc.lr,
             weight_decay=tc.weight_decay,
-            fused=use_fused,
+            fused=self._use_fused_optimizer,
         )
 
         total_steps = int(self.trainer.estimated_stepping_batches)
@@ -288,8 +318,7 @@ class RFDETRModelModule(LightningModule):
             gradient_clip_algorithm: Clipping algorithm; forwarded to super()
                 for the non-fused path.
         """
-        use_fused = self.model_config.fused_optimizer and torch.cuda.is_available() and torch.cuda.is_bf16_supported()
-        if use_fused:
+        if self._use_fused_optimizer:
             if gradient_clip_val and gradient_clip_val > 0:
                 torch.nn.utils.clip_grad_norm_(self.parameters(), gradient_clip_val)
         else:
