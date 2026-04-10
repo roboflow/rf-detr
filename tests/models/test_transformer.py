@@ -6,9 +6,10 @@
 """Tests for transformer utilities, MS deformable attention core, and MSDeformAttn module."""
 
 import io
+
+import numpy as np
 import pytest
 import torch
-import numpy as np
 
 from rfdetr.models.ops.functions import ms_deform_attn_core_pytorch
 from rfdetr.models.ops.modules.ms_deform_attn import MSDeformAttn
@@ -330,10 +331,7 @@ class TestGenEncoderOutputProposalsDynamicBatch:
     batch sizes.
     """
 
-    @pytest.mark.parametrize(
-        "batch_size",
-        [1, 2, 4, 8]
-    )
+    @pytest.mark.parametrize("batch_size", [1, 2, 4, 8])
     def test_output_shape_invariant_across_batch_sizes(self, batch_size: int) -> None:
         """Output shapes must scale correctly with batch size, with no baked constants.
 
@@ -371,9 +369,7 @@ class TestGenEncoderOutputProposalsDynamicBatch:
 
         torch.testing.assert_close(proposals_single.expand(4, -1, -1), proposals_multi)
 
-    @pytest.mark.parametrize(
-        "batch_size", [1, 4]
-    )
+    @pytest.mark.parametrize("batch_size", [1, 4])
     def test_output_shape_invariant_with_padding_mask(self, batch_size: int) -> None:
         """Output shapes must be correct when memory_padding_mask is provided with varying batch sizes.
 
@@ -398,10 +394,8 @@ class TestGenEncoderOutputProposalsDynamicBatch:
         assert output_memory.shape == (batch_size, total_hw, dim)
         assert output_proposals.shape == (batch_size, total_hw, 4)
 
-    @pytest.mark.parametrize(
-        "batch_size", [1, 4, 8]
-    )
-    def test_onnx_export_with_dynamic_batch_axis(self, batch_size:int) -> None:
+    @pytest.mark.parametrize("batch_size", [1, 4, 8])
+    def test_onnx_export_with_dynamic_batch_axis(self, batch_size: int) -> None:
         """ONNX export with dynamic batch axis must run inference for batch sizes other than the trace batch.
 
         Regression for issue #949: exporting with a fixed trace batch baked `Reshape([8,...])` as
