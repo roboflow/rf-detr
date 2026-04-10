@@ -5,8 +5,10 @@
 # ------------------------------------------------------------------------
 """Tests for transformer utilities, MS deformable attention core, and MSDeformAttn module."""
 
+import io
 import pytest
 import torch
+import numpy as np
 
 from rfdetr.models.ops.functions import ms_deform_attn_core_pytorch
 from rfdetr.models.ops.modules.ms_deform_attn import MSDeformAttn
@@ -330,12 +332,7 @@ class TestGenEncoderOutputProposalsDynamicBatch:
 
     @pytest.mark.parametrize(
         "batch_size",
-        [
-            pytest.param(1, id="batch=1"),
-            pytest.param(2, id="batch=2"),
-            pytest.param(4, id="batch=4"),
-            pytest.param(8, id="batch=8"),
-        ],
+        [1, 2, 4, 8]
     )
     def test_output_shape_invariant_across_batch_sizes(self, batch_size: int) -> None:
         """Output shapes must scale correctly with batch size, with no baked constants.
@@ -375,11 +372,7 @@ class TestGenEncoderOutputProposalsDynamicBatch:
         torch.testing.assert_close(proposals_single.expand(4, -1, -1), proposals_multi)
 
     @pytest.mark.parametrize(
-        "batch_size",
-        [
-            pytest.param(1, id="batch=1"),
-            pytest.param(4, id="batch=4"),
-        ],
+        "batch_size", [1, 4]
     )
     def test_output_shape_invariant_with_padding_mask(self, batch_size: int) -> None:
         """Output shapes must be correct when memory_padding_mask is provided with varying batch sizes.
@@ -405,14 +398,16 @@ class TestGenEncoderOutputProposalsDynamicBatch:
         assert output_memory.shape == (batch_size, total_hw, dim)
         assert output_proposals.shape == (batch_size, total_hw, 4)
 
-    def test_onnx_export_with_dynamic_batch_axis(self) -> None:
+    @pytest.mark.parametrize(
+        "batch_size", [1, 4, 8]
+    )
+    def test_onnx_export_with_dynamic_batch_axis(self, batch_size:int) -> None:
         """ONNX export with dynamic batch axis must run inference for batch sizes other than the trace batch.
 
         Regression for issue #949: exporting with a fixed trace batch baked `Reshape([8,...])` as
         a constant ONNX node, causing TRT engines to fail at inference for any batch != 8.
         Skipped when onnx or onnxruntime is not installed.
         """
-        import io
 
         pytest.importorskip("onnx")
         onnxruntime = pytest.importorskip("onnxruntime")
@@ -446,14 +441,10 @@ class TestGenEncoderOutputProposalsDynamicBatch:
         onnx_bytes = buf.read()
 
         session = onnxruntime.InferenceSession(onnx_bytes, providers=["CPUExecutionProvider"])
-
-        for batch_size in [1, 4, 8]:
-            import numpy as np
-
-            memory_np = np.random.randn(batch_size, ht * wd, dim).astype(np.float32)
-            out_memory, out_proposals = session.run(None, {"memory": memory_np})
-            assert out_memory.shape == (batch_size, ht * wd, dim), f"wrong memory shape for batch={batch_size}"
-            assert out_proposals.shape == (batch_size, ht * wd, 4), f"wrong proposals shape for batch={batch_size}"
+        memory_np = np.random.randn(batch_size, ht * wd, dim).astype(np.float32)
+        out_memory, out_proposals = session.run(None, {"memory": memory_np})
+        assert out_memory.shape == (batch_size, ht * wd, dim), f"wrong memory shape for batch={batch_size}"
+        assert out_proposals.shape == (batch_size, ht * wd, 4), f"wrong proposals shape for batch={batch_size}"
 
 
 def test_ms_deform_attn_core_pytorch_export_compatible() -> None:
