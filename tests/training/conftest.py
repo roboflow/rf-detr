@@ -117,3 +117,22 @@ def _restore_rfdetr_module_trainer_property():
 
     if "trainer" in RFDETRModelModule.__dict__:
         delattr(RFDETRModelModule, "trainer")
+
+
+@pytest.fixture(autouse=True)
+def _restore_rfdetr_datamodule_trainer_property():
+    """Restore RFDETRDataModule.trainer to the LightningDataModule parent property after each test.
+
+    Tests that mock the ``trainer`` property on ``RFDETRDataModule`` (e.g. for
+    ``on_after_batch_transfer`` tests) patch it at the class level.  Without
+    cleanup this mutates the class for the remainder of the session.
+
+    This fixture deletes any class-level override from ``RFDETRDataModule.__dict__``
+    after every test, mirroring the ``_restore_rfdetr_module_trainer_property``
+    pattern above.
+    """
+    yield
+    from rfdetr.training.module_data import RFDETRDataModule
+
+    if "trainer" in RFDETRDataModule.__dict__:
+        delattr(RFDETRDataModule, "trainer")

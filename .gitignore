@@ -202,4 +202,10 @@ docs/versions.json
 notebooks/*.py
 
 # tracking work in progress
+.codex/logs
+.reports/
+.temp/
+cache-gh/
+checkpoints/
+releases/
 tasks/

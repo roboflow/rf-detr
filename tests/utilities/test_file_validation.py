@@ -85,6 +85,11 @@ class _FakeResponse:
             yield chunk
 
 
+def _assert_no_download_temp_files(tmp_path: Path, filename: str = "weights.bin") -> None:
+    """Assert that randomized temporary download files were cleaned up."""
+    assert not list(tmp_path.glob(f"{filename}.*.tmp"))
+
+
 class TestFileMD5Validation:
     """Test MD5 hash computation and validation."""
 
@@ -202,7 +207,7 @@ class TestDownloadFile:
 
         assert target_path.exists()
         assert target_path.read_bytes() == b"helloworld"
-        assert not (tmp_path / "weights.bin.tmp").exists()
+        _assert_no_download_temp_files(tmp_path)
         mock_get.assert_called_once_with("https://example.com/file.bin", stream=True, timeout=30.0)
 
     @patch("rfdetr.utilities.files.requests.get")
@@ -216,7 +221,7 @@ class TestDownloadFile:
             _download_file("https://example.com/file.bin", str(target_path))
 
         assert not target_path.exists()
-        assert not (tmp_path / "weights.bin.tmp").exists()
+        _assert_no_download_temp_files(tmp_path)
 
     @patch("rfdetr.utilities.files.tqdm", _DummyTqdm)
     @patch("rfdetr.utilities.files.requests.get")
@@ -236,7 +241,7 @@ class TestDownloadFile:
             _download_file("https://example.com/file.bin", str(target_path))
 
         assert not target_path.exists()
-        assert not (tmp_path / "weights.bin.tmp").exists()
+        _assert_no_download_temp_files(tmp_path)
 
     @patch("rfdetr.utilities.files.tqdm", _DummyTqdm)
     @patch("rfdetr.utilities.files.requests.get")
@@ -254,4 +259,42 @@ class TestDownloadFile:
             )
 
         assert not target_path.exists()
-        assert not (tmp_path / "weights.bin.tmp").exists()
+        _assert_no_download_temp_files(tmp_path)
+
+    @patch("rfdetr.utilities.files.tqdm", _DummyTqdm)
+    @patch("rfdetr.utilities.files.requests.get")
+    def test_download_file_replace_failure_cleans_temp(self, mock_get: Mock, tmp_path: Path):
+        """Replace failure removes temp file and target is not created."""
+        target_path = tmp_path / "weights.bin"
+        response = _FakeResponse([b"data"], headers={"content-length": "4"})
+        mock_get.return_value = response
+
+        with (
+            patch("rfdetr.utilities.files.os.replace", side_effect=PermissionError("replace denied")),
+            pytest.raises(PermissionError, match="replace denied"),
+        ):
+            _download_file("https://example.com/file.bin", str(target_path))
+
+        assert not target_path.exists()
+        _assert_no_download_temp_files(tmp_path)
+
+    @patch("rfdetr.utilities.files.tqdm", _DummyTqdm)
+    @patch("rfdetr.utilities.files.open", side_effect=AssertionError("must not reopen temp filename"))
+    @patch("rfdetr.utilities.files.requests.get")
+    def test_download_file_uses_fdopen_without_reopen(
+        self,
+        mock_get: Mock,
+        mock_open: Mock,
+        tmp_path: Path,
+    ) -> None:
+        """Download writes through mkstemp file descriptor to avoid TOCTOU reopen."""
+        target_path = tmp_path / "weights.bin"
+        response = _FakeResponse([b"data"], headers={"content-length": "4"})
+        mock_get.return_value = response
+
+        _download_file("https://example.com/file.bin", str(target_path))
+
+        assert target_path.exists()
+        assert target_path.read_bytes() == b"data"
+        _assert_no_download_temp_files(tmp_path)
+        mock_open.assert_not_called()

@@ -752,9 +752,11 @@ class WindowedDinov2WithRegistersLayer(nn.Module):
         shortcut = hidden_states
         if run_full_attention:
             # reshape x to remove windows
-            B, HW, C = hidden_states.shape
+            batch_windows, tokens_per_window, channels = hidden_states.shape
             num_windows_squared = self.num_windows**2
-            hidden_states = hidden_states.view(B // num_windows_squared, num_windows_squared * HW, C)
+            hidden_states = hidden_states.view(
+                batch_windows // num_windows_squared, num_windows_squared * tokens_per_window, channels
+            )
 
         self_attention_outputs = self.attention(
             self.norm1(hidden_states),  # in Dinov2WithRegisters, layernorm is applied before self-attention
@@ -764,10 +766,12 @@ class WindowedDinov2WithRegistersLayer(nn.Module):
 
         if run_full_attention:
             # reshape x to add windows back
-            B, HW, C = hidden_states.shape
+            batch_windows, tokens_per_window, channels = hidden_states.shape
             num_windows_squared = self.num_windows**2
             # hidden_states = hidden_states.view(B * num_windows_squared, HW // num_windows_squared, C)
-            attention_output = attention_output.view(B * num_windows_squared, HW // num_windows_squared, C)
+            attention_output = attention_output.view(
+                batch_windows * num_windows_squared, tokens_per_window // num_windows_squared, channels
+            )
 
         attention_output = self.layer_scale1(attention_output)
         outputs = self_attention_outputs[1:]  # add self attentions if we output attention weights
@@ -1281,16 +1285,20 @@ class WindowedDinov2WithRegistersBackbone(WindowedDinov2WithRegistersPreTrainedM
                     if self.config.num_windows > 1:
                         # undo windowing
                         num_windows_squared = self.config.num_windows**2
-                        B, HW, C = hidden_state.shape
+                        batch_windows, tokens_per_window, channels = hidden_state.shape
                         num_h_patches_per_window = num_h_patches // self.config.num_windows
                         num_w_patches_per_window = num_w_patches // self.config.num_windows
-                        hidden_state = hidden_state.reshape(B // num_windows_squared, num_windows_squared * HW, C)
                         hidden_state = hidden_state.reshape(
-                            (B // num_windows_squared) * self.config.num_windows,
+                            batch_windows // num_windows_squared,
+                            num_windows_squared * tokens_per_window,
+                            channels,
+                        )
+                        hidden_state = hidden_state.reshape(
+                            (batch_windows // num_windows_squared) * self.config.num_windows,
                             self.config.num_windows,
                             num_h_patches_per_window,
                             num_w_patches_per_window,
-                            C,
+                            channels,
                         )
                         hidden_state = hidden_state.permute(0, 2, 1, 3, 4)
 

@@ -4,6 +4,8 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 import torch
 from pydantic import ValidationError
@@ -11,14 +13,19 @@ from pydantic import ValidationError
 from rfdetr.config import (
     ModelConfig,
     RFDETRBaseConfig,
+    RFDETRLargeConfig,
+    RFDETRMediumConfig,
+    RFDETRNanoConfig,
     RFDETRSeg2XLargeConfig,
     RFDETRSegLargeConfig,
     RFDETRSegMediumConfig,
     RFDETRSegNanoConfig,
     RFDETRSegSmallConfig,
     RFDETRSegXLargeConfig,
+    RFDETRSmallConfig,
     SegmentationTrainConfig,
     TrainConfig,
+    _detect_device,
 )
 
 
@@ -368,3 +375,76 @@ class TestDeprecatedModelConfigClsLossCoef:
         RFDETRBaseConfig(pretrain_weights=None, device="cpu")
         depr_warnings = [w for w in recwarn.list if issubclass(w.category, DeprecationWarning)]
         assert not depr_warnings, f"Unexpected DeprecationWarning: {depr_warnings}"
+
+
+class TestSyncPEWithResolutionAtConstruction:
+    """Tests for the _sync_pe_with_resolution model_validator.
+
+    When a user provides a custom resolution at construction time (e.g.,
+    ``RFDETRLarge(resolution=640)``), positional_encoding_size must be updated
+    proportionally for configs where the default PE is formula-derived
+    (``default_pe == default_resolution // patch_size``).
+    """
+
+    @pytest.mark.parametrize(
+        "config_cls, new_resolution, expected_pe",
+        [
+            pytest.param(RFDETRLargeConfig, 640, 640 // 16, id="large_640"),
+            pytest.param(RFDETRLargeConfig, 576, 576 // 16, id="large_576"),
+            pytest.param(RFDETRSmallConfig, 640, 640 // 16, id="small_640"),
+            pytest.param(RFDETRMediumConfig, 640, 640 // 16, id="medium_640"),
+            pytest.param(RFDETRNanoConfig, 416, 416 // 16, id="nano_416"),
+            pytest.param(RFDETRSegNanoConfig, 360, 360 // 12, id="seg_nano_360"),
+            pytest.param(RFDETRSegSmallConfig, 480, 480 // 12, id="seg_small_480"),
+            pytest.param(RFDETRSegMediumConfig, 480, 480 // 12, id="seg_medium_480"),
+            pytest.param(RFDETRSegLargeConfig, 576, 576 // 12, id="seg_large_576"),
+            pytest.param(RFDETRSegXLargeConfig, 576, 576 // 12, id="seg_xlarge_576"),
+            pytest.param(RFDETRSeg2XLargeConfig, 720, 720 // 12, id="seg_2xlarge_720"),
+        ],
+    )
+    def test_positional_encoding_size_updated_for_formula_derived_configs(
+        self,
+        config_cls: type,
+        new_resolution: int,
+        expected_pe: int,
+    ) -> None:
+        """PE is auto-derived from the custom resolution for formula-derived model configs."""
+        cfg = config_cls(resolution=new_resolution, pretrain_weights=None)
+        assert cfg.positional_encoding_size == expected_pe
+
+    def test_explicit_positional_encoding_size_is_not_overridden(self) -> None:
+        """When positional_encoding_size is explicitly provided, the validator must not override it."""
+        cfg = RFDETRLargeConfig(resolution=640, positional_encoding_size=50, pretrain_weights=None)
+        assert cfg.positional_encoding_size == 50
+
+    def test_default_resolution_preserves_default_pe(self) -> None:
+        """Constructing with default resolution (no explicit resolution) must not change PE."""
+        cfg = RFDETRLargeConfig(pretrain_weights=None)
+        assert cfg.resolution == 704
+        assert cfg.positional_encoding_size == 44  # 704 // 16
+
+
+class TestDetectDevice:
+    """Tests for _detect_device() covering PyTorch accelerator detection paths."""
+
+    @patch("rfdetr.config.torch")
+    def test_falls_back_to_cuda_when_accelerator_module_absent(self, mock_torch: MagicMock) -> None:
+        """Returns 'cuda' via legacy fallback when torch.accelerator lacks current_accelerator (PyTorch < 2.4)."""
+        mock_torch.accelerator = MagicMock(spec=[])  # no current_accelerator → hasattr returns False → fallback
+        mock_torch.cuda.is_available.return_value = True
+        mock_torch.backends.mps.is_available.return_value = False
+        assert _detect_device() == "cuda"
+
+    @patch("rfdetr.config.torch")
+    def test_returns_cpu_when_current_accelerator_raises(self, mock_torch: MagicMock) -> None:
+        """Returns 'cpu' directly from the except handler when current_accelerator() raises RuntimeError."""
+        mock_torch.accelerator.current_accelerator.side_effect = RuntimeError("no device")
+        assert _detect_device() == "cpu"
+
+    @patch("rfdetr.config.torch")
+    def test_returns_cpu_when_no_gpu_available(self, mock_torch: MagicMock) -> None:
+        """Returns 'cpu' when accelerator is absent and neither CUDA nor MPS is available."""
+        mock_torch.accelerator = MagicMock(spec=[])  # no current_accelerator → fallback branch
+        mock_torch.cuda.is_available.return_value = False
+        mock_torch.backends.mps.is_available.return_value = False
+        assert _detect_device() == "cpu"

@@ -29,7 +29,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 
-from rfdetr.config import RFDETRBaseConfig, TrainConfig
+from rfdetr.config import RFDETRBaseConfig, RFDETRSmallConfig, TrainConfig
 from rfdetr.detr import RFDETR, RFDETRLarge
 from rfdetr.detr import logger as detr_logger
 from rfdetr.training.auto_batch import AutoBatchResult
@@ -527,6 +527,88 @@ class TestRFDETRTrainPTLAbsorption:
         depr = [x for x in w if issubclass(x.category, DeprecationWarning)]
         assert any("do_benchmark" in str(d.message) or "rfdetr benchmark" in str(d.message) for d in depr)
 
+    def test_resolution_kwarg_updates_model_config_resolution(self, tmp_path, patch_lit):
+        """resolution kwarg is applied to model_config.resolution before training."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        block_size = mock_self.model_config.patch_size * mock_self.model_config.num_windows
+        valid_resolution = block_size * 11  # guaranteed divisible and different from default
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self, resolution=valid_resolution)
+        assert mock_self.model_config.resolution == valid_resolution
+
+    def test_resolution_kwarg_does_not_implicitly_update_positional_encoding_size(self, tmp_path, patch_lit):
+        """Pretrained-specific PE (RFDETRBase DINOv2=37) is preserved when resolution is overridden."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        # RFDETRBaseConfig: PE=37 (DINOv2 native 518//14), resolution=560, patch_size=14.
+        # PE != resolution // patch_size, so the smart PE guard leaves PE unchanged.
+        original_pe = mock_self.model_config.positional_encoding_size
+        block_size = mock_self.model_config.patch_size * mock_self.model_config.num_windows
+        valid_override_resolution = block_size * 11  # different from default 560
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self, resolution=valid_override_resolution)
+        assert mock_self.model_config.positional_encoding_size == original_pe
+
+    def test_resolution_kwarg_updates_positional_encoding_size_for_formula_derived_config(self, tmp_path, patch_lit):
+        """For configs where PE == resolution // patch_size, resolution override updates PE."""
+        # RFDETRSmallConfig: patch_size=16, num_windows=2, resolution=512, PE=32=512//16.
+        mock_self = _make_rfdetr_self(tmp_path)
+        mock_self.model_config = RFDETRSmallConfig(pretrain_weights=None, num_classes=3, device="cpu")
+        block_size = mock_self.model_config.patch_size * mock_self.model_config.num_windows
+        new_resolution = block_size * 21  # 672 for Small — valid and different from default 512
+        expected_pe = new_resolution // mock_self.model_config.patch_size
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self, resolution=new_resolution)
+        assert mock_self.model_config.positional_encoding_size == expected_pe
+
+    def test_resolution_kwarg_does_not_reach_get_train_config(self, tmp_path, patch_lit):
+        """resolution kwarg is popped before get_train_config is called."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        block_size = mock_self.model_config.patch_size * mock_self.model_config.num_windows
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self, resolution=block_size * 10)
+        assert "resolution" not in mock_self.get_train_config.call_args.kwargs
+
+    def test_resolution_indivisible_raises_value_error(self, tmp_path, patch_lit):
+        """resolution not divisible by patch_size * num_windows raises ValueError."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        block_size = mock_self.model_config.patch_size * mock_self.model_config.num_windows
+        indivisible = block_size * 10 + 1  # guaranteed not divisible by block_size
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt, pytest.raises(ValueError, match=f"resolution={indivisible}"):
+            RFDETR.train(mock_self, resolution=indivisible)
+
+    def test_resolution_none_leaves_model_config_unchanged(self, tmp_path, patch_lit):
+        """Omitting resolution leaves model_config.resolution unchanged."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        original_resolution = mock_self.model_config.resolution
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self)
+        assert mock_self.model_config.resolution == original_resolution
+
+    @pytest.mark.parametrize(
+        "bad_resolution",
+        [
+            pytest.param(0, id="zero"),
+            pytest.param(-56, id="negative"),
+            pytest.param(True, id="bool_true"),
+            pytest.param(False, id="bool_false"),
+            pytest.param(1.5, id="non_integer_float"),
+            pytest.param(560.0, id="whole_number_float"),
+            pytest.param("560", id="string"),
+        ],
+    )
+    def test_resolution_invalid_type_or_value_raises_value_error(self, tmp_path, patch_lit, bad_resolution):
+        """Non-positive, bool, or non-integer resolution raises ValueError before divisibility check."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt, pytest.raises(ValueError, match="resolution must be a positive integer"):
+            RFDETR.train(mock_self, resolution=bad_resolution)
+
     def test_returns_none(self, tmp_path, patch_lit):
         """RFDETR.train() returns None."""
         mock_self = _make_rfdetr_self(tmp_path)
@@ -534,6 +616,80 @@ class TestRFDETRTrainPTLAbsorption:
         with p_mod, p_dm, p_bt:
             result = RFDETR.train(mock_self)
         assert result is None
+
+    def test_save_dataset_grids_true_calls_grid_saver(self, tmp_path, patch_lit):
+        """save_dataset_grids=True triggers DatasetGridSaver.save_grid() for train and val."""
+        mock_self = _make_rfdetr_self(tmp_path, save_dataset_grids=True)
+        p_mod, p_dm, p_bt, _mcls, _dmcls, _mock_bt = patch_lit
+        mock_saver_cls = MagicMock(name="DatasetGridSaver")
+        with (
+            p_mod,
+            p_dm,
+            p_bt,
+            patch("rfdetr.datasets.save_grids.DatasetGridSaver", mock_saver_cls),
+        ):
+            RFDETR.train(mock_self)
+
+        # DatasetGridSaver must be constructed twice (train + val) and save_grid called on each
+        assert mock_saver_cls.call_count == 2
+        assert mock_saver_cls.return_value.save_grid.call_count == 2
+
+        # setup("fit") must be called on the datamodule before training
+        dm_instance = _dmcls.return_value
+        dm_instance.setup.assert_called_with("fit")
+
+    def test_save_dataset_grids_false_skips_grid_saver(self, tmp_path, patch_lit):
+        """save_dataset_grids=False (default) must not call DatasetGridSaver at all."""
+        mock_self = _make_rfdetr_self(tmp_path)  # default save_dataset_grids=False
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        mock_saver_cls = MagicMock(name="DatasetGridSaver")
+        with (
+            p_mod,
+            p_dm,
+            p_bt,
+            patch("rfdetr.datasets.save_grids.DatasetGridSaver", mock_saver_cls),
+        ):
+            RFDETR.train(mock_self)
+
+        mock_saver_cls.assert_not_called()
+
+    def test_save_dataset_grids_uses_output_dir_subdir(self, tmp_path, patch_lit):
+        """Grid images are saved to <output_dir>/dataset_grids."""
+        from pathlib import Path
+
+        mock_self = _make_rfdetr_self(tmp_path, save_dataset_grids=True)
+        config = mock_self.get_train_config.return_value
+        p_mod, p_dm, p_bt, _mcls, _dmcls, _mock_bt = patch_lit
+        mock_saver_cls = MagicMock(name="DatasetGridSaver")
+        with (
+            p_mod,
+            p_dm,
+            p_bt,
+            patch("rfdetr.datasets.save_grids.DatasetGridSaver", mock_saver_cls),
+        ):
+            RFDETR.train(mock_self)
+
+        expected_output_dir = Path(config.output_dir) / "dataset_grids"
+        called_dirs = [call.args[1] for call in mock_saver_cls.call_args_list]
+        assert all(d == expected_output_dir for d in called_dirs)
+
+    def test_save_dataset_grids_failure_does_not_abort_training(self, tmp_path, patch_lit):
+        """A save_grid() failure must not abort training — trainer.fit() must still be called."""
+        mock_self = _make_rfdetr_self(tmp_path, save_dataset_grids=True)
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
+        mock_saver_cls = MagicMock(name="DatasetGridSaver")
+        mock_saver_cls.return_value.save_grid.side_effect = OSError("disk full")
+        with (
+            p_mod,
+            p_dm,
+            p_bt,
+            patch("rfdetr.datasets.save_grids.DatasetGridSaver", mock_saver_cls),
+        ):
+            # Must not raise even though save_grid() fails
+            RFDETR.train(mock_self)
+
+        # Training must proceed regardless of the grid-save failure
+        mock_bt.return_value.fit.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -1252,7 +1408,7 @@ class TestDeployToRoboflow:
 
         def deploy_side_effect(model_type, model_path, filename, **kwargs):
             # Inspect class_names.txt while the temp dir still exists (before cleanup).
-            f = (tmp_path / model_path / "class_names.txt").resolve()
+            f = (Path(model_path) / "class_names.txt").resolve()
             if f.exists():
                 captured["content"] = f.read_text()
 
@@ -1370,7 +1526,12 @@ class TestDeployToRoboflow:
 
         self._set_class_names(mock_self, ["cat"])
         mock_rf = MagicMock()
-        mock_rf.workspace.return_value.project.return_value.version.return_value.deploy.return_value = None
+        deployed_paths: list[Path] = []
+
+        def deploy_side_effect(model_type, model_path, filename, **kwargs):
+            deployed_paths.append(Path(model_path))
+
+        mock_rf.workspace.return_value.project.return_value.version.return_value.deploy.side_effect = deploy_side_effect
 
         with patch("roboflow.Roboflow", return_value=mock_rf):
             RFDETR.deploy_to_roboflow(
@@ -1381,7 +1542,9 @@ class TestDeployToRoboflow:
                 api_key="dummy-key",
             )
 
-        assert not (tmp_path / ".roboflow_temp_upload").exists(), "Temp upload dir must be removed after deploy"
+        assert deployed_paths, "deploy must receive a temporary model_path"
+        assert not deployed_paths[0].exists(), "Temporary upload dir must be removed after deploy"
+        assert not (tmp_path / ".roboflow_temp_upload").exists(), "Fixed-name temp dir must not be created"
 
     def test_temp_dir_cleaned_up_after_deploy_failure(self, tmp_path, monkeypatch, mock_self, patch_lit):
         """Temp upload dir must be removed even when deploy() raises an exception."""
@@ -1389,9 +1552,13 @@ class TestDeployToRoboflow:
 
         self._set_class_names(mock_self, ["cat"])
         mock_rf = MagicMock()
-        mock_rf.workspace.return_value.project.return_value.version.return_value.deploy.side_effect = RuntimeError(
-            "upload failed",
-        )
+        deployed_paths: list[Path] = []
+
+        def deploy_side_effect(model_type, model_path, filename, **kwargs):
+            deployed_paths.append(Path(model_path))
+            raise RuntimeError("upload failed")
+
+        mock_rf.workspace.return_value.project.return_value.version.return_value.deploy.side_effect = deploy_side_effect
 
         with patch("roboflow.Roboflow", return_value=mock_rf), pytest.raises(RuntimeError, match="upload failed"):
             RFDETR.deploy_to_roboflow(
@@ -1402,9 +1569,9 @@ class TestDeployToRoboflow:
                 api_key="dummy-key",
             )
 
-        assert not (tmp_path / ".roboflow_temp_upload").exists(), (
-            "Temp upload dir must be removed even after a failed deploy"
-        )
+        assert deployed_paths, "deploy must receive a temporary model_path"
+        assert not deployed_paths[0].exists(), "Temporary upload dir must be removed even after a failed deploy"
+        assert not (tmp_path / ".roboflow_temp_upload").exists(), "Fixed-name temp dir must not be created"
 
 
 # ---------------------------------------------------------------------------

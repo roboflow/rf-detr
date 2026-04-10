@@ -11,7 +11,7 @@
 """Loss functions and criterion for RF-DETR training."""
 
 import torch
-import torch.nn.functional as F
+import torch.nn.functional as F  # noqa: N812
 from torch import nn
 
 from rfdetr.models.heads.segmentation import (

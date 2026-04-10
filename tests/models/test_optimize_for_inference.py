@@ -114,11 +114,20 @@ class TestOptimizeForInferenceDtype:
 class TestOptimizeForInferenceCudaDeviceContext:
     """Verify that optimize_for_inference wraps operations in the correct device context."""
 
-    def test_cuda_device_context_manager_is_used_for_cuda_device(self) -> None:
+    @patch("rfdetr.detr._ensure_model_on_device")
+    @patch("rfdetr.detr.deepcopy")
+    @patch("torch.cuda.device")
+    def test_cuda_device_context_manager_is_used_for_cuda_device(
+        self,
+        mock_cuda_device,
+        mock_deepcopy,
+        _mock_ensure_model_on_device,
+    ) -> None:
         """torch.cuda.device() context should be entered when model is on CUDA."""
         rfdetr = _FakeRFDETR()
         # Simulate a CUDA device without actually requiring CUDA hardware
         rfdetr.model.device = torch.device("cuda", 0)
+        mock_deepcopy.return_value = rfdetr.model.model
 
         entered_devices: list[torch.device] = []
 
@@ -132,11 +141,8 @@ class TestOptimizeForInferenceCudaDeviceContext:
             def __exit__(self, *args):
                 pass
 
-        with (
-            patch("torch.cuda.device", side_effect=_CapturingDeviceCtx),
-            patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
-        ):
-            rfdetr.optimize_for_inference(compile=False, dtype=torch.float32)
+        mock_cuda_device.side_effect = _CapturingDeviceCtx
+        rfdetr.optimize_for_inference(compile=False, dtype=torch.float32)
 
         assert len(entered_devices) == 1
         assert entered_devices[0] == torch.device("cuda", 0)
@@ -155,11 +161,20 @@ class TestOptimizeForInferenceCudaDeviceContext:
 
         mock_cuda_device.assert_not_called()
 
-    def test_cuda_device_context_uses_model_device(self) -> None:
+    @patch("rfdetr.detr._ensure_model_on_device")
+    @patch("rfdetr.detr.deepcopy")
+    @patch("torch.cuda.device")
+    def test_cuda_device_context_uses_model_device(
+        self,
+        mock_cuda_device,
+        mock_deepcopy,
+        _mock_ensure_model_on_device,
+    ) -> None:
         """The device passed to torch.cuda.device() should match self.model.device."""
         rfdetr = _FakeRFDETR()
         expected_device = torch.device("cuda", 2)
         rfdetr.model.device = expected_device
+        mock_deepcopy.return_value = rfdetr.model.model
 
         captured: dict[str, torch.device] = {}
 
@@ -173,11 +188,8 @@ class TestOptimizeForInferenceCudaDeviceContext:
             def __exit__(self, *args):
                 pass
 
-        with (
-            patch("torch.cuda.device", side_effect=_CapturingCtx),
-            patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
-        ):
-            rfdetr.optimize_for_inference(compile=False)
+        mock_cuda_device.side_effect = _CapturingCtx
+        rfdetr.optimize_for_inference(compile=False)
 
         assert captured.get("device") == expected_device
 
@@ -313,3 +325,17 @@ class TestOptimizeForInferenceExceptionRecovery:
 
         assert rfdetr._optimized_has_been_compiled is False
         assert rfdetr._optimized_batch_size is None
+
+    def test_jit_trace_failure_leaves_model_fully_unoptimized(self) -> None:
+        """jit.trace failure leaves both _is_optimized_for_inference=False and inference_model=None."""
+        rfdetr = _FakeRFDETR()
+
+        with (
+            patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
+            patch("torch.jit.trace", side_effect=RuntimeError("trace failed")),
+            pytest.raises(RuntimeError, match="trace failed"),
+        ):
+            rfdetr.optimize_for_inference(compile=True)
+
+        assert rfdetr._is_optimized_for_inference is False
+        assert rfdetr.model.inference_model is None

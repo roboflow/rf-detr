@@ -178,11 +178,34 @@ class TestInit:
         dm = build_datamodule(train_config=tc)
         assert dm._pin_memory is False
 
+    @patch("rfdetr.config.DEVICE", "cuda")
+    def test_pin_memory_defaults_to_false_when_accelerator_is_cpu(self, build_datamodule, base_train_config):
+        """Default pin_memory stays off when training is explicitly CPU-only."""
+        tc = base_train_config(pin_memory=None, accelerator="cpu")
+        dm = build_datamodule(train_config=tc)
+        assert dm._pin_memory is False
+
     def test_persistent_workers_override_is_respected(self, build_datamodule, base_train_config):
         """persistent_workers can be explicitly overridden from TrainConfig."""
         tc = base_train_config(num_workers=2, persistent_workers=False)
         dm = build_datamodule(train_config=tc)
         assert dm._persistent_workers is False
+
+    def test_ddp_notebook_preserves_num_workers(self, build_datamodule, base_train_config):
+        """ddp_notebook keeps num_workers as configured (spawn-based DDP
+        children initialise CUDA fresh; DataLoader fork workers are CPU-only
+        and never touch CUDA, so nested forks are safe)."""
+        tc = base_train_config(num_workers=4, strategy="ddp_notebook")
+        dm = build_datamodule(train_config=tc)
+        assert dm._num_workers == 4
+        assert dm._prefetch_factor == 2
+
+    def test_other_strategy_preserves_num_workers(self, build_datamodule, base_train_config):
+        """Non-ddp_notebook strategies also keep num_workers as configured."""
+        tc = base_train_config(num_workers=4, strategy="ddp")
+        dm = build_datamodule(train_config=tc)
+        assert dm._num_workers == 4
+        assert dm._prefetch_factor == 2  # default prefetch_factor for num_workers>0
 
 
 class TestSetup:
@@ -367,6 +390,144 @@ class TestTrainDataloader:
         dm = self._setup_dm_with_train(tmp_path, dataset_length=length, batch_size=batch_size)
         loader = dm.train_dataloader()
         assert isinstance(loader.batch_sampler, torch.utils.data.BatchSampler)
+
+    @pytest.mark.parametrize(
+        "dataset_length, batch_size, grad_accum_steps",
+        [
+            pytest.param(100, 2, 1, id="already_aligned_ga1"),
+            pytest.param(96, 2, 4, id="already_aligned_ga4"),
+            pytest.param(101, 2, 4, id="unaligned_one_extra"),
+            pytest.param(50, 2, 8, id="unaligned_ga8"),
+            pytest.param(59143, 2, 8, id="large_unaligned_coco_like"),
+            pytest.param(100, 3, 3, id="non_power_of_two_ga"),
+        ],
+    )
+    def test_train_dataloader_length_is_multiple_of_grad_accum(
+        self, tmp_path, dataset_length, batch_size, grad_accum_steps
+    ):
+        """len(train_dataloader()) is always a multiple of grad_accum_steps.
+
+        Verifies the workaround for
+        https://github.com/Lightning-AI/pytorch-lightning/issues/19987:
+        the training DataLoader must never present a partial accumulation
+        window to PTL.
+        """
+        dm = self._setup_dm_with_train(
+            tmp_path,
+            dataset_length=dataset_length,
+            batch_size=batch_size,
+            grad_accum_steps=grad_accum_steps,
+        )
+        loader = dm.train_dataloader()
+        assert len(loader) % grad_accum_steps == 0, (
+            f"len(loader)={len(loader)} is not a multiple of grad_accum_steps={grad_accum_steps}"
+        )
+
+    def test_train_dataloader_respects_trainer_world_size(self, tmp_path):
+        """Large-dataset path aligns wrapped dataset length to effective_batch_size * world_size."""
+        dm = self._setup_dm_with_train(
+            tmp_path,
+            dataset_length=101,
+            batch_size=2,
+            grad_accum_steps=4,
+        )
+        dm.trainer = MagicMock(world_size=3)
+
+        loader = dm.train_dataloader()
+
+        assert len(loader.dataset) % (2 * 4 * 3) == 0
+        assert len(loader.dataset) == 120
+
+
+class TestGradAccumAlignedDataset:
+    """Unit tests for the GradAccumAlignedDataset wrapper."""
+
+    def _make_dataset(self, length: int) -> torch.utils.data.TensorDataset:
+        """Return a simple TensorDataset of given length."""
+        return torch.utils.data.TensorDataset(torch.arange(length))
+
+    def test_aligned_length_is_multiple_of_pad_unit(self):
+        """Padded length is always a multiple of effective_batch_size * world_size."""
+        from rfdetr.training.module_data import GradAccumAlignedDataset
+
+        ds = self._make_dataset(50)
+        wrapped = GradAccumAlignedDataset(ds, effective_batch_size=16, world_size=1)
+        assert len(wrapped) % 16 == 0
+
+    def test_no_padding_needed_when_already_aligned(self):
+        """If len(dataset) % pad_unit == 0, length is unchanged."""
+        from rfdetr.training.module_data import GradAccumAlignedDataset
+
+        ds = self._make_dataset(64)
+        wrapped = GradAccumAlignedDataset(ds, effective_batch_size=16, world_size=1)
+        assert len(wrapped) == 64
+
+    def test_padding_adds_correct_count(self):
+        """Exactly (pad_unit - remainder) % pad_unit samples are added."""
+        from rfdetr.training.module_data import GradAccumAlignedDataset
+
+        ds = self._make_dataset(50)  # 50 % 16 = 2 → pad 14
+        wrapped = GradAccumAlignedDataset(ds, effective_batch_size=16, world_size=1)
+        assert len(wrapped) == 64
+
+    def test_getitem_forwards_to_original_dataset(self):
+        """Items in the original range map directly to the underlying dataset."""
+        from rfdetr.training.module_data import GradAccumAlignedDataset
+
+        ds = self._make_dataset(10)
+        wrapped = GradAccumAlignedDataset(ds, effective_batch_size=4, world_size=1)
+        for i in range(10):
+            (val,) = wrapped[i]
+            assert val.item() == i
+
+    def test_padded_indices_are_valid(self):
+        """All padded indices point to valid positions in the original dataset."""
+        from rfdetr.training.module_data import GradAccumAlignedDataset
+
+        n = 10
+        ds = self._make_dataset(n)
+        wrapped = GradAccumAlignedDataset(ds, effective_batch_size=4, world_size=1)
+        for i in range(len(wrapped)):
+            (val,) = wrapped[i]
+            assert 0 <= val.item() < n
+
+    @pytest.mark.parametrize(
+        "n, eff_bs, world_size",
+        [
+            pytest.param(100, 4, 1, id="aligned_single_gpu"),
+            pytest.param(101, 4, 1, id="unaligned_single_gpu"),
+            pytest.param(100, 4, 2, id="aligned_ddp2"),
+            pytest.param(97, 4, 2, id="unaligned_ddp2"),
+        ],
+    )
+    def test_length_always_multiple_of_pad_unit(self, n, eff_bs, world_size):
+        """len(wrapped) % (eff_bs * world_size) == 0 for all inputs."""
+        from rfdetr.training.module_data import GradAccumAlignedDataset
+
+        ds = self._make_dataset(n)
+        wrapped = GradAccumAlignedDataset(ds, effective_batch_size=eff_bs, world_size=world_size)
+        assert len(wrapped) % (eff_bs * world_size) == 0
+
+    @pytest.mark.parametrize(
+        "effective_batch_size, world_size",
+        [
+            pytest.param(0, 1, id="zero_effective_batch_size"),
+            pytest.param(-1, 1, id="negative_effective_batch_size"),
+            pytest.param(2, 0, id="zero_world_size"),
+            pytest.param(2, -1, id="negative_world_size"),
+        ],
+    )
+    def test_raises_for_non_positive_alignment_inputs(self, effective_batch_size, world_size):
+        """Non-positive alignment inputs fail with a clear ValueError."""
+        from rfdetr.training.module_data import GradAccumAlignedDataset
+
+        ds = self._make_dataset(10)
+        with pytest.raises(ValueError, match="must be >= 1"):
+            GradAccumAlignedDataset(
+                ds,
+                effective_batch_size=effective_batch_size,
+                world_size=world_size,
+            )
 
 
 class TestValDataloader:
@@ -618,3 +779,363 @@ class TestTransferBatchToDevice:
         result_samples, _ = dm.transfer_batch_to_device((samples, targets), torch.device("cpu"), dataloader_idx=0)
 
         assert isinstance(result_samples, NestedTensor)
+
+
+# ---------------------------------------------------------------------------
+# TestBackendResolution — validates augmentation_backend logic in setup("fit")
+# ---------------------------------------------------------------------------
+
+
+class TestBackendResolution:
+    """Backend resolution selects Kornia, CPU, or raises depending on environment.
+
+    All tests run on CPU CI by mocking fork-safe CUDA detection and the
+    ``kornia`` import as needed.
+    """
+
+    def _build_dm_with_backend(self, tmp_path, augmentation_backend="cpu"):
+        """Construct a DataModule with the given augmentation_backend."""
+        mc = _base_model_config()
+        tc = _base_train_config(tmp_path, augmentation_backend=augmentation_backend)
+        from rfdetr.training.module_data import RFDETRDataModule
+
+        return RFDETRDataModule(mc, tc)
+
+    def _setup_with_mock_build(self, dm):
+        """Call setup('fit') with build_dataset mocked to avoid real I/O."""
+        fake_train = _fake_dataset(100)
+        fake_val = _fake_dataset(20)
+
+        def _build(image_set, args, resolution):
+            return fake_train if image_set == "train" else fake_val
+
+        with patch("rfdetr.training.module_data.build_dataset", side_effect=_build):
+            dm.setup("fit")
+        return dm
+
+    def test_auto_no_cuda_falls_back_to_cpu(self, tmp_path):
+        """auto + no CUDA: _kornia_pipeline stays None, no error."""
+        dm = self._build_dm_with_backend(tmp_path, "auto")
+        with patch("rfdetr.training.module_data._has_cuda_device", return_value=False):
+            dm = self._setup_with_mock_build(dm)
+        assert getattr(dm, "_kornia_pipeline", None) is None, (
+            "auto backend with no CUDA must not build a Kornia pipeline"
+        )
+
+    def test_auto_no_kornia_falls_back_to_cpu(self, tmp_path):
+        """auto + CUDA available but kornia not installed: fallback to CPU."""
+        dm = self._build_dm_with_backend(tmp_path, "auto")
+
+        original_import = __builtins__.__import__ if hasattr(__builtins__, "__import__") else __import__
+
+        def _mock_import(name, *args, **kwargs):
+            if name == "kornia" or name.startswith("kornia."):
+                raise ImportError("No module named 'kornia'")
+            return original_import(name, *args, **kwargs)
+
+        with (
+            patch("rfdetr.training.module_data._has_cuda_device", return_value=True),
+            patch("builtins.__import__", side_effect=_mock_import),
+        ):
+            dm = self._setup_with_mock_build(dm)
+
+        assert getattr(dm, "_kornia_pipeline", None) is None, (
+            "auto backend with kornia missing must fall back to CPU (pipeline=None)"
+        )
+
+    def test_gpu_no_cuda_raises_runtime_error(self, tmp_path):
+        """gpu + no CUDA: must raise RuntimeError."""
+        dm = self._build_dm_with_backend(tmp_path, "gpu")
+        with (
+            patch("rfdetr.training.module_data._has_cuda_device", return_value=False),
+            pytest.raises(RuntimeError, match="CUDA"),
+        ):
+            self._setup_with_mock_build(dm)
+
+    def test_gpu_no_kornia_raises_import_error(self, tmp_path):
+        """gpu + CUDA but no kornia: must raise ImportError with install hint."""
+        dm = self._build_dm_with_backend(tmp_path, "gpu")
+
+        original_import = __builtins__.__import__ if hasattr(__builtins__, "__import__") else __import__
+
+        def _mock_import(name, *args, **kwargs):
+            if name == "kornia" or name.startswith("kornia."):
+                raise ImportError("No module named 'kornia'")
+            return original_import(name, *args, **kwargs)
+
+        with (
+            patch("rfdetr.training.module_data._has_cuda_device", return_value=True),
+            patch("builtins.__import__", side_effect=_mock_import),
+            pytest.raises(ImportError, match="rfdetr\\[kornia\\]"),
+        ):
+            self._setup_with_mock_build(dm)
+
+    def test_cpu_backend_builds_no_pipeline(self, tmp_path):
+        """Default cpu backend: _kornia_pipeline stays None."""
+        dm = self._build_dm_with_backend(tmp_path, "cpu")
+        dm = self._setup_with_mock_build(dm)
+        assert getattr(dm, "_kornia_pipeline", None) is None, "cpu backend must never build a Kornia pipeline"
+
+    def test_gpu_path_uses_aug_config_fallback(self, tmp_path):
+        """When aug_config=None (default), GPU path passes AUG_CONFIG to build_kornia_pipeline."""
+        import sys
+        from unittest.mock import MagicMock, patch
+
+        from rfdetr.datasets.aug_config import AUG_CONFIG
+
+        dm = self._build_dm_with_backend(tmp_path, "auto")
+        assert dm.train_config.aug_config is None, "precondition: aug_config must be None for this test"
+
+        captured = {}
+
+        def _fake_build_kornia(aug_cfg, resolution):
+            captured["aug_config"] = aug_cfg
+            return MagicMock()
+
+        with (
+            patch("rfdetr.training.module_data._has_cuda_device", return_value=True),
+            patch("rfdetr.training.module_data.build_dataset", side_effect=lambda *a, **k: _fake_dataset(10)),
+            patch.dict(sys.modules, {"kornia": MagicMock(), "kornia.augmentation": MagicMock()}),
+            patch("rfdetr.datasets.kornia_transforms.build_kornia_pipeline", side_effect=_fake_build_kornia),
+            patch("rfdetr.datasets.kornia_transforms.build_normalize", return_value=MagicMock()),
+        ):
+            dm.setup("fit")
+
+        assert captured.get("aug_config") is AUG_CONFIG, (
+            "GPU path must fall back to AUG_CONFIG when train_config.aug_config is None"
+        )
+
+    def test_auto_no_cuda_does_not_strip_cpu_normalize(self, tmp_path):
+        """auto + no CUDA: gpu_postprocess must be False so CPU Normalize is retained."""
+        dm = self._build_dm_with_backend(tmp_path, "auto")
+        captured_gpu_postprocess = {}
+
+        def _spy_build(image_set, args, resolution):
+            captured_gpu_postprocess[image_set] = getattr(args, "augmentation_backend", "cpu")
+            return _fake_dataset(10)
+
+        with (
+            patch("rfdetr.training.module_data._has_cuda_device", return_value=False),
+            patch("rfdetr.training.module_data.build_dataset", side_effect=_spy_build),
+        ):
+            dm.setup("fit")
+
+        # When CUDA is unavailable, resolved backend must be 'cpu' so datasets are
+        # built with gpu_postprocess=False and CPU Normalize is not stripped.
+        assert captured_gpu_postprocess.get("train") == "cpu", (
+            "auto + no CUDA must resolve to cpu before dataset build to preserve CPU Normalize"
+        )
+
+    def test_resolve_augmentation_backend_auto_no_cuda(self):
+        """_resolve_augmentation_backend returns 'cpu' for auto when CUDA is absent."""
+        from rfdetr.training.module_data import _resolve_augmentation_backend
+
+        with patch("rfdetr.training.module_data._has_cuda_device", return_value=False):
+            assert _resolve_augmentation_backend("auto") == "cpu"
+
+    def test_resolve_augmentation_backend_cpu_passthrough(self):
+        """_resolve_augmentation_backend passes 'cpu' through unchanged."""
+        from rfdetr.training.module_data import _resolve_augmentation_backend
+
+        assert _resolve_augmentation_backend("cpu") == "cpu"
+
+    def test_resolve_augmentation_backend_gpu_passthrough(self):
+        """_resolve_augmentation_backend passes 'gpu' through unchanged."""
+        from rfdetr.training.module_data import _resolve_augmentation_backend
+
+        assert _resolve_augmentation_backend("gpu") == "gpu"
+
+
+# ---------------------------------------------------------------------------
+# TestOnAfterBatchTransfer — validates GPU-side augmentation hook
+# ---------------------------------------------------------------------------
+
+
+class TestOnAfterBatchTransfer:
+    """on_after_batch_transfer applies Kornia augmentation only during training.
+
+    Uses CPU tensors with a mocked pipeline — no real GPU or Kornia needed.
+    """
+
+    def _build_dm(self, tmp_path, segmentation_head=False):
+        """Construct a DataModule for on_after_batch_transfer tests."""
+        mc = _base_model_config(segmentation_head=segmentation_head)
+        tc = _base_train_config(tmp_path)
+        from rfdetr.training.module_data import RFDETRDataModule
+
+        return RFDETRDataModule(mc, tc)
+
+    def _attach_mock_trainer(self, dm, training=True):
+        """Attach a mock trainer with the given training state to the DataModule."""
+        mock_trainer = MagicMock(training=training)
+        type(dm).trainer = property(lambda self: mock_trainer)
+        return dm
+
+    def _make_kornia_batch(self, batch_size=2, h=16, w=16):
+        """Build a batch with xyxy boxes suitable for on_after_batch_transfer.
+
+        Returns (NestedTensor, targets) where boxes are in absolute xyxy format
+        and pixel values are in [0, 1] (pre-normalization).
+        """
+        tensors = torch.rand(batch_size, 3, h, w)  # [0, 1] range
+        mask = torch.zeros(batch_size, h, w, dtype=torch.bool)
+        samples = NestedTensor(tensors, mask)
+        targets = [
+            {
+                "boxes": torch.tensor([[2.0, 2.0, 10.0, 10.0]], dtype=torch.float32),
+                "labels": torch.tensor([1]),
+                "area": torch.tensor([64.0]),
+                "iscrowd": torch.tensor([0]),
+                "image_id": torch.tensor(i),
+                "orig_size": torch.tensor([h, w]),
+            }
+            for i in range(batch_size)
+        ]
+        return samples, targets
+
+    def test_training_true_applies_augmentation(self, tmp_path):
+        """When training=True and _kornia_pipeline is set, image/box outputs match CPU Normalize contract."""
+        dm = self._build_dm(tmp_path)
+        dm = self._attach_mock_trainer(dm, training=True)
+
+        samples, targets = self._make_kornia_batch()
+        img_aug = samples.tensors.clone()
+        # Mock pipeline returns (augmented_images, augmented_boxes)
+        boxes_padded = torch.tensor([[[2.0, 2.0, 10.0, 10.0]]] * 2)
+        mock_pipeline = MagicMock(return_value=(img_aug, boxes_padded))
+        dm._kornia_pipeline = mock_pipeline
+
+        # Normalize adds +1 so we can assert the normalization step is applied.
+        dm._kornia_normalize = MagicMock(side_effect=lambda x: x + 1.0)
+
+        result_samples, result_targets = dm.on_after_batch_transfer((samples, targets), dataloader_idx=0)
+
+        mock_pipeline.assert_called_once()
+        dm._kornia_normalize.assert_called_once()
+        assert torch.allclose(result_samples.tensors, img_aug + 1.0)
+        assert len(result_targets) == 2
+        for target in result_targets:
+            boxes = target["boxes"]
+            assert boxes.shape == (1, 4)
+            assert torch.all(boxes >= 0.0)
+            assert torch.all(boxes <= 1.0)
+            torch.testing.assert_close(
+                boxes[0], torch.tensor([0.375, 0.375, 0.5, 0.5], dtype=torch.float32), rtol=1e-4, atol=1e-6
+            )
+
+    def test_training_false_skips_augmentation(self, tmp_path):
+        """When training=False, batch is returned unchanged."""
+        dm = self._build_dm(tmp_path)
+        dm = self._attach_mock_trainer(dm, training=False)
+
+        samples, targets = self._make_kornia_batch()
+        mock_pipeline = MagicMock()
+        dm._kornia_pipeline = mock_pipeline
+        dm._kornia_normalize = MagicMock()
+
+        result = dm.on_after_batch_transfer((samples, targets), dataloader_idx=0)
+
+        mock_pipeline.assert_not_called()
+        # Batch returned as-is
+        result_samples, result_targets = result
+        assert result_samples is samples
+        assert result_targets is targets
+
+    def test_segmentation_model_skips_augmentation(self, tmp_path):
+        """When segmentation_head=True, pipeline is not called even during training."""
+        dm = self._build_dm(tmp_path, segmentation_head=True)
+        dm = self._attach_mock_trainer(dm, training=True)
+
+        samples, targets = self._make_kornia_batch()
+        mock_pipeline = MagicMock()
+        dm._kornia_pipeline = mock_pipeline
+        dm._kornia_normalize = MagicMock()
+
+        dm.on_after_batch_transfer((samples, targets), dataloader_idx=0)
+
+        mock_pipeline.assert_not_called()
+
+    def test_returns_nested_tensor_in_batch(self, tmp_path):
+        """Output batch still has NestedTensor as first element after augmentation."""
+        dm = self._build_dm(tmp_path)
+        dm = self._attach_mock_trainer(dm, training=True)
+
+        samples, targets = self._make_kornia_batch()
+        img_aug = samples.tensors.clone()
+        boxes_padded = torch.tensor([[[2.0, 2.0, 10.0, 10.0]]] * 2)
+        dm._kornia_pipeline = MagicMock(return_value=(img_aug, boxes_padded))
+        dm._kornia_normalize = MagicMock(side_effect=lambda x: x)
+
+        result_samples, _ = dm.on_after_batch_transfer((samples, targets), dataloader_idx=0)
+
+        assert isinstance(result_samples, NestedTensor), f"Expected NestedTensor, got {type(result_samples).__name__}"
+
+
+# ---------------------------------------------------------------------------
+# TestKorniaSetupDoneSentinel — validates the _kornia_setup_done guard
+# ---------------------------------------------------------------------------
+
+
+class TestKorniaSetupDoneSentinel:
+    """_kornia_setup_done prevents _setup_kornia_pipeline re-running on repeated setup('fit') calls."""
+
+    def _build_dm(self, tmp_path, augmentation_backend="auto"):
+        mc = _base_model_config()
+        tc = _base_train_config(tmp_path, augmentation_backend=augmentation_backend)
+        from rfdetr.training.module_data import RFDETRDataModule
+
+        return RFDETRDataModule(mc, tc)
+
+    def _setup_fit_with_mocks(self, dm):
+        """Call setup('fit') with build_dataset and cuda mocked (no CUDA → fallback)."""
+        fake_train = _fake_dataset(100)
+        fake_val = _fake_dataset(20)
+
+        def _build(image_set, args, resolution):
+            return fake_train if image_set == "train" else fake_val
+
+        with (
+            patch("rfdetr.training.module_data.build_dataset", side_effect=_build),
+            patch("rfdetr.training.module_data._has_cuda_device", return_value=False),
+        ):
+            dm.setup("fit")
+        return dm
+
+    def test_sentinel_starts_false(self, tmp_path):
+        """_kornia_setup_done is False immediately after __init__."""
+        dm = self._build_dm(tmp_path)
+        assert dm._kornia_setup_done is False
+
+    def test_sentinel_set_after_fit(self, tmp_path):
+        """_kornia_setup_done becomes True after the first setup('fit')."""
+        dm = self._build_dm(tmp_path)
+        dm = self._setup_fit_with_mocks(dm)
+        assert dm._kornia_setup_done is True
+
+    def test_setup_kornia_pipeline_not_called_twice(self, tmp_path):
+        """Calling setup('fit') twice only calls _setup_kornia_pipeline once."""
+        dm = self._build_dm(tmp_path)
+        call_count = 0
+        original_setup = dm._setup_kornia_pipeline
+
+        def _counting_setup():
+            nonlocal call_count
+            call_count += 1
+            original_setup()
+
+        dm._setup_kornia_pipeline = _counting_setup
+
+        fake_train = _fake_dataset(100)
+        fake_val = _fake_dataset(20)
+
+        def _build(image_set, args, resolution):
+            return fake_train if image_set == "train" else fake_val
+
+        with (
+            patch("rfdetr.training.module_data.build_dataset", side_effect=_build),
+            patch("rfdetr.training.module_data._has_cuda_device", return_value=False),
+        ):
+            dm.setup("fit")
+            dm.setup("fit")
+
+        assert call_count == 1, f"_setup_kornia_pipeline called {call_count} times; expected exactly 1"
