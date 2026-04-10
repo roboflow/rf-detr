@@ -600,8 +600,8 @@ class TestGetOnnxInputInfo:
 
     def test_reads_input_name_and_shape(self, tmp_path: Path) -> None:
         """Build a minimal ONNX model and verify we read back its metadata."""
-        import onnx
-        from onnx import TensorProto, helper
+        onnx = pytest.importorskip("onnx", reason="onnx not installed")
+        TensorProto, helper = onnx.TensorProto, onnx.helper  # noqa: N806
 
         inp = helper.make_tensor_value_info("images", TensorProto.FLOAT, [1, 3, 560, 560])
         out = helper.make_tensor_value_info("output", TensorProto.FLOAT, [1, 100, 4])
@@ -617,8 +617,8 @@ class TestGetOnnxInputInfo:
 
     def test_different_input_shape(self, tmp_path: Path) -> None:
         """Verify non-square resolution reads correctly."""
-        import onnx
-        from onnx import TensorProto, helper
+        onnx = pytest.importorskip("onnx", reason="onnx not installed")
+        TensorProto, helper = onnx.TensorProto, onnx.helper  # noqa: N806
 
         inp = helper.make_tensor_value_info("input", TensorProto.FLOAT, [1, 3, 448, 640])
         out = helper.make_tensor_value_info("output", TensorProto.FLOAT, [1, 10, 4])
