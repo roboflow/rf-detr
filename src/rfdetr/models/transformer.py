@@ -236,7 +236,7 @@ class Transformer(nn.Module):
         spatial_shapes_hw: list[tuple[int, int]] = []
         valid_ratios = [] if masks is not None else None
         for lvl, (src, pos_embed) in enumerate(zip(srcs, pos_embeds)):
-            bs, c, h, w = src.shape
+            _, c, h, w = src.shape
             spatial_shapes[lvl, 0] = h
             spatial_shapes[lvl, 1] = w
             spatial_shapes_hw.append((h, w))
