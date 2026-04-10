@@ -81,7 +81,6 @@ def gen_encoder_output_proposals(memory, memory_padding_mask=None, spatial_shape
         - output_memory: bs, \sum{hw}, d_model
         - output_proposals: bs, \sum{hw}, 4
     """
-    batch_size, _, _ = memory.shape
     proposals = []
     _cur = 0
     for lvl, (height, width) in enumerate(spatial_shapes):
