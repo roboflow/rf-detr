@@ -164,8 +164,8 @@ class ModelConfig(BaseConfig):
         default_resolution = cls.model_fields["resolution"].default
         default_pe = cls.model_fields["positional_encoding_size"].default
 
-        # Skip when either default is not a concrete integer (i.e., required fields
-        # on the abstract ModelConfig base class that have no default value).
+        # Skip when either default is not a concrete integer (abstract base class
+        # fields have no defaults; required fields use PydanticUndefined, not int).
         if not isinstance(default_resolution, int) or not isinstance(default_pe, int):
             return self
 
