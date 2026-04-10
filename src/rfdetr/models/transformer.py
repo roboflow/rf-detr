@@ -89,13 +89,13 @@ def gen_encoder_output_proposals(memory, memory_padding_mask=None, spatial_shape
             # reshape(-1, ...) infers batch dynamically in ONNX instead of constant N_
             mask_flatten_ = memory_padding_mask[:, _cur : (_cur + height * width)].view(-1, height, width, 1)
 
-            valid_H = torch.sum(~mask_flatten_[:, :, 0, 0], 1)
-            valid_W = torch.sum(~mask_flatten_[:, 0, :, 0], 1)
+            valid_height = torch.sum(~mask_flatten_[:, :, 0, 0], 1)
+            valid_width = torch.sum(~mask_flatten_[:, 0, :, 0], 1)
         else:
             # Derive batch-sized tensors from memory so ONNX traces them as symbolic
             # (torch.full((N_,), ...) bakes N_=8 as a constant; zeros_like is dynamic)
-            valid_H = torch.zeros_like(memory[:, 0, 0]).long() + H_
-            valid_W = torch.zeros_like(memory[:, 0, 0]).long() + W_
+            valid_height = torch.zeros_like(memory[:, 0, 0]).long() + height
+            valid_width = torch.zeros_like(memory[:, 0, 0]).long() + width
 
         grid_y, grid_x = torch.meshgrid(
             torch.linspace(0, height - 1, height, dtype=torch.float32, device=memory.device),
@@ -105,12 +105,12 @@ def gen_encoder_output_proposals(memory, memory_padding_mask=None, spatial_shape
         grid = torch.cat([grid_x.unsqueeze(-1), grid_y.unsqueeze(-1)], -1)  # height, width, 2
 
         # reshape(-1, ...) and unsqueeze(0) broadcasting avoid hardcoding N_ in ONNX
-        scale = torch.cat([valid_W.unsqueeze(-1), valid_H.unsqueeze(-1)], 1).reshape(-1, 1, 1, 2)
+        scale = torch.cat([valid_width.unsqueeze(-1), valid_height.unsqueeze(-1)], 1).reshape(-1, 1, 1, 2)
         grid = (grid.unsqueeze(0) + 0.5) / scale.float()  # [1, H_, W_, 2] / [N_, 1, 1, 2] → [N_, H_, W_, 2]
 
         wh = torch.ones_like(grid) * 0.05 * (2.0**lvl)
 
-        proposal = torch.cat((grid, wh), -1).reshape(-1, H_ * W_, 4)  # -1 infers N_ dynamically
+        proposal = torch.cat((grid, wh), -1).reshape(-1, height * width, 4)  # -1 infers N_ dynamically
         proposals.append(proposal)
         _cur += height * width
 
