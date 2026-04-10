@@ -64,9 +64,10 @@ import contextlib
 import os
 import sys
 from pathlib import Path
-from typing import Any, Generator
+from typing import Any, Generator, cast
 
 import numpy as np
+from numpy.typing import NDArray
 
 from rfdetr.utilities.logger import get_logger
 
@@ -152,8 +153,8 @@ def _patch_validation_download(npy_path: str) -> Generator[None, None, None]:
             NHWC format.
     """
 
-    def _replacement() -> np.ndarray:
-        return np.load(npy_path)
+    def _replacement() -> NDArray[Any]:
+        return cast(NDArray[Any], np.load(npy_path, allow_pickle=True))
 
     originals: dict[str, Any] = {}
     modules = [
@@ -180,7 +181,7 @@ def _load_calibration_images(
     height: int,
     width: int,
     max_images: int = _DEFAULT_DIR_CALIB_SAMPLES,
-) -> np.ndarray:
+) -> NDArray[np.float32]:
     """Load images from a directory and prepare them for calibration.
 
     Images are loaded, resized to ``(height, width)``, converted to
@@ -216,11 +217,13 @@ def _load_calibration_images(
     image_paths = image_paths[:max_images]
     logger.info(f"Loading {len(image_paths)} calibration images from {image_dir} (resizing to {height}x{width})")
 
-    arrays: list[np.ndarray] = []
+    arrays: list[NDArray[np.float32]] = []
     for img_path in image_paths:
         try:
             img = Image.open(img_path).convert("RGB").resize((width, height))
-            arrays.append(np.array(img, dtype=np.float32) / 255.0)
+            image_array = np.asarray(img, dtype=np.float32)
+            image_array /= np.float32(255.0)
+            arrays.append(image_array)
         except Exception:
             logger.debug(f"Skipping unreadable image: {img_path}")
             continue
@@ -229,7 +232,7 @@ def _load_calibration_images(
         raise FileNotFoundError(f"No readable images found in {image_dir}")
 
     logger.info(f"Loaded {len(arrays)} calibration images")
-    return np.stack(arrays)
+    return np.stack(arrays).astype(np.float32, copy=False)
 
 
 def _get_onnx_input_info(onnx_path: Path) -> tuple[str, list[int]]:
@@ -242,7 +245,14 @@ def _get_onnx_input_info(onnx_path: Path) -> tuple[str, list[int]]:
         A ``(name, dims)`` tuple where *dims* is the NCHW shape list,
         e.g. ``("input", [1, 3, 560, 560])``.
     """
-    import onnx
+    try:
+        import onnx
+    except ImportError as exc:
+        raise ImportError(
+            "onnx is not installed. TFLite export requires both ONNX and "
+            "TFLite export dependencies. Install them with: "
+            "pip install rfdetr[onnx,tflite]"
+        ) from exc
 
     model = onnx.load(str(onnx_path))
     inp = model.graph.input[0]

@@ -225,6 +225,8 @@ overrides = [
     "seaborn", "seaborn.*",
     "tqdm", "tqdm.*",
     "kornia", "kornia.*",
+    "onnx", "onnx.*",
+    "onnx2tf", "onnx2tf.*",
   ], ignore_missing_imports = true },
   # Modules with pre-existing type errors — ignored until incrementally fixed.
   { module = [
