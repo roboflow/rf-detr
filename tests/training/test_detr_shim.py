@@ -8,6 +8,7 @@
 
 1. ``TestRFDETRTrainPTL``           — RFDETR.train() delegates to PTL build_trainer().fit()
 2. ``TestRFDETRTrainPTLAbsorption`` — Legacy kwargs absorbed by RFDETR.train()
+2b. ``TestResolutionKwarg``         — resolution= kwarg validation, sync, and PE update
 3. ``TestConvertLegacyCheckpoint``  — convert_legacy_checkpoint() round-trip
 4. ``TestOnLoadCheckpoint``         — RFDETRModule.on_load_checkpoint() auto-detect
 5. ``TestPublicAPIExports``         — rfdetr.__init__ exports RFDETRModule/DataModule/build_trainer
@@ -527,88 +528,6 @@ class TestRFDETRTrainPTLAbsorption:
         depr = [x for x in w if issubclass(x.category, DeprecationWarning)]
         assert any("do_benchmark" in str(d.message) or "rfdetr benchmark" in str(d.message) for d in depr)
 
-    def test_resolution_kwarg_updates_model_config_resolution(self, tmp_path, patch_lit):
-        """resolution kwarg is applied to model_config.resolution before training."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        block_size = mock_self.model_config.patch_size * mock_self.model_config.num_windows
-        valid_resolution = block_size * 11  # guaranteed divisible and different from default
-        p_mod, p_dm, p_bt, *_ = patch_lit
-        with p_mod, p_dm, p_bt:
-            RFDETR.train(mock_self, resolution=valid_resolution)
-        assert mock_self.model_config.resolution == valid_resolution
-
-    def test_resolution_kwarg_does_not_implicitly_update_positional_encoding_size(self, tmp_path, patch_lit):
-        """Pretrained-specific PE (RFDETRBase DINOv2=37) is preserved when resolution is overridden."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        # RFDETRBaseConfig: PE=37 (DINOv2 native 518//14), resolution=560, patch_size=14.
-        # PE != resolution // patch_size, so the smart PE guard leaves PE unchanged.
-        original_pe = mock_self.model_config.positional_encoding_size
-        block_size = mock_self.model_config.patch_size * mock_self.model_config.num_windows
-        valid_override_resolution = block_size * 11  # different from default 560
-        p_mod, p_dm, p_bt, *_ = patch_lit
-        with p_mod, p_dm, p_bt:
-            RFDETR.train(mock_self, resolution=valid_override_resolution)
-        assert mock_self.model_config.positional_encoding_size == original_pe
-
-    def test_resolution_kwarg_updates_positional_encoding_size_for_formula_derived_config(self, tmp_path, patch_lit):
-        """For configs where PE == resolution // patch_size, resolution override updates PE."""
-        # RFDETRSmallConfig: patch_size=16, num_windows=2, resolution=512, PE=32=512//16.
-        mock_self = _make_rfdetr_self(tmp_path)
-        mock_self.model_config = RFDETRSmallConfig(pretrain_weights=None, num_classes=3, device="cpu")
-        block_size = mock_self.model_config.patch_size * mock_self.model_config.num_windows
-        new_resolution = block_size * 21  # 672 for Small — valid and different from default 512
-        expected_pe = new_resolution // mock_self.model_config.patch_size
-        p_mod, p_dm, p_bt, *_ = patch_lit
-        with p_mod, p_dm, p_bt:
-            RFDETR.train(mock_self, resolution=new_resolution)
-        assert mock_self.model_config.positional_encoding_size == expected_pe
-
-    def test_resolution_kwarg_does_not_reach_get_train_config(self, tmp_path, patch_lit):
-        """resolution kwarg is popped before get_train_config is called."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        block_size = mock_self.model_config.patch_size * mock_self.model_config.num_windows
-        p_mod, p_dm, p_bt, *_ = patch_lit
-        with p_mod, p_dm, p_bt:
-            RFDETR.train(mock_self, resolution=block_size * 10)
-        assert "resolution" not in mock_self.get_train_config.call_args.kwargs
-
-    def test_resolution_indivisible_raises_value_error(self, tmp_path, patch_lit):
-        """resolution not divisible by patch_size * num_windows raises ValueError."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        block_size = mock_self.model_config.patch_size * mock_self.model_config.num_windows
-        indivisible = block_size * 10 + 1  # guaranteed not divisible by block_size
-        p_mod, p_dm, p_bt, *_ = patch_lit
-        with p_mod, p_dm, p_bt, pytest.raises(ValueError, match=f"resolution={indivisible}"):
-            RFDETR.train(mock_self, resolution=indivisible)
-
-    def test_resolution_none_leaves_model_config_unchanged(self, tmp_path, patch_lit):
-        """Omitting resolution leaves model_config.resolution unchanged."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        original_resolution = mock_self.model_config.resolution
-        p_mod, p_dm, p_bt, *_ = patch_lit
-        with p_mod, p_dm, p_bt:
-            RFDETR.train(mock_self)
-        assert mock_self.model_config.resolution == original_resolution
-
-    @pytest.mark.parametrize(
-        "bad_resolution",
-        [
-            pytest.param(0, id="zero"),
-            pytest.param(-56, id="negative"),
-            pytest.param(True, id="bool_true"),
-            pytest.param(False, id="bool_false"),
-            pytest.param(1.5, id="non_integer_float"),
-            pytest.param(560.0, id="whole_number_float"),
-            pytest.param("560", id="string"),
-        ],
-    )
-    def test_resolution_invalid_type_or_value_raises_value_error(self, tmp_path, patch_lit, bad_resolution):
-        """Non-positive, bool, or non-integer resolution raises ValueError before divisibility check."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = patch_lit
-        with p_mod, p_dm, p_bt, pytest.raises(ValueError, match="resolution must be a positive integer"):
-            RFDETR.train(mock_self, resolution=bad_resolution)
-
     def test_returns_none(self, tmp_path, patch_lit):
         """RFDETR.train() returns None."""
         mock_self = _make_rfdetr_self(tmp_path)
@@ -690,6 +609,130 @@ class TestRFDETRTrainPTLAbsorption:
 
         # Training must proceed regardless of the grid-save failure
         mock_bt.return_value.fit.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# 2b. resolution= kwarg handling
+# ---------------------------------------------------------------------------
+
+
+class TestResolutionKwarg:
+    """RFDETR.train(resolution=...) applies, validates, and syncs the resolution override."""
+
+    def test_updates_model_config_resolution(self, tmp_path, patch_lit):
+        """resolution kwarg is applied to model_config.resolution before training."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        block_size = mock_self.model_config.patch_size * mock_self.model_config.num_windows
+        valid_resolution = block_size * 11  # guaranteed divisible and different from default
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self, resolution=valid_resolution)
+        assert mock_self.model_config.resolution == valid_resolution
+
+    def test_does_not_implicitly_update_positional_encoding_size(self, tmp_path, patch_lit):
+        """Pretrained-specific PE (RFDETRBase DINOv2=37) is preserved when resolution is overridden."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        # RFDETRBaseConfig: PE=37 (DINOv2 native 518//14), resolution=560, patch_size=14.
+        # PE != resolution // patch_size, so the smart PE guard leaves PE unchanged.
+        original_pe = mock_self.model_config.positional_encoding_size
+        block_size = mock_self.model_config.patch_size * mock_self.model_config.num_windows
+        valid_override_resolution = block_size * 11  # different from default 560
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self, resolution=valid_override_resolution)
+        assert mock_self.model_config.positional_encoding_size == original_pe
+
+    def test_updates_positional_encoding_size_for_formula_derived_config(self, tmp_path, patch_lit):
+        """For configs where PE == resolution // patch_size, resolution override updates PE."""
+        # RFDETRSmallConfig: patch_size=16, num_windows=2, resolution=512, PE=32=512//16.
+        mock_self = _make_rfdetr_self(tmp_path)
+        mock_self.model_config = RFDETRSmallConfig(pretrain_weights=None, num_classes=3, device="cpu")
+        block_size = mock_self.model_config.patch_size * mock_self.model_config.num_windows
+        new_resolution = block_size * 21  # 672 for Small — valid and different from default 512
+        expected_pe = new_resolution // mock_self.model_config.patch_size
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self, resolution=new_resolution)
+        assert mock_self.model_config.positional_encoding_size == expected_pe
+
+    def test_does_not_reach_get_train_config(self, tmp_path, patch_lit):
+        """resolution kwarg is popped before get_train_config is called."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        block_size = mock_self.model_config.patch_size * mock_self.model_config.num_windows
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self, resolution=block_size * 10)
+        assert "resolution" not in mock_self.get_train_config.call_args.kwargs
+
+    def test_indivisible_raises_value_error(self, tmp_path, patch_lit):
+        """resolution not divisible by patch_size * num_windows raises ValueError."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        block_size = mock_self.model_config.patch_size * mock_self.model_config.num_windows
+        indivisible = block_size * 10 + 1  # guaranteed not divisible by block_size
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt, pytest.raises(ValueError, match=f"resolution={indivisible}"):
+            RFDETR.train(mock_self, resolution=indivisible)
+
+    def test_none_leaves_model_config_unchanged(self, tmp_path, patch_lit):
+        """Omitting resolution leaves model_config.resolution unchanged."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        original_resolution = mock_self.model_config.resolution
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self)
+        assert mock_self.model_config.resolution == original_resolution
+
+    @pytest.mark.parametrize(
+        "bad_resolution",
+        [
+            pytest.param(0, id="zero"),
+            pytest.param(-56, id="negative"),
+            pytest.param(True, id="bool_true"),
+            pytest.param(False, id="bool_false"),
+            pytest.param(1.5, id="non_integer_float"),
+            pytest.param(560.0, id="whole_number_float"),
+            pytest.param("560", id="string"),
+        ],
+    )
+    def test_invalid_type_or_value_raises_value_error(self, tmp_path, patch_lit, bad_resolution):
+        """Non-positive, bool, or non-integer resolution raises ValueError before divisibility check."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt, pytest.raises(ValueError, match="resolution must be a positive integer"):
+            RFDETR.train(mock_self, resolution=bad_resolution)
+
+    def test_syncs_model_resolution_attribute(self, tmp_path, patch_lit):
+        """resolution kwarg sets model.resolution so predict()/export() see the new resolution.
+
+        Regression test for #952 — keeps the cached inference/export context in sync after
+        a resolution override in train().
+        """
+        mock_self = _make_rfdetr_self(tmp_path)
+        block_size = mock_self.model_config.patch_size * mock_self.model_config.num_windows
+        new_resolution = block_size * 11
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self, resolution=new_resolution)
+        assert mock_self.model.resolution == new_resolution
+
+    def test_syncs_model_args_resolution_and_pe(self, tmp_path, patch_lit):
+        """resolution kwarg updates model.args.resolution and model.args.positional_encoding_size.
+
+        For formula-derived configs (PE == resolution // patch_size), both fields in model.args
+        must be kept consistent with model_config so export/deployment pipelines use the
+        correct values.  Regression test for #952.
+        """
+        mock_self = _make_rfdetr_self(tmp_path)
+        # RFDETRSmallConfig: formula-derived PE (512 // 16 == 32), so PE updates with resolution.
+        mock_self.model_config = RFDETRSmallConfig(pretrain_weights=None, num_classes=3, device="cpu")
+        block_size = mock_self.model_config.patch_size * mock_self.model_config.num_windows
+        new_resolution = block_size * 21  # 672 for Small — valid, different from default 512
+        expected_pe = new_resolution // mock_self.model_config.patch_size
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self, resolution=new_resolution)
+        assert mock_self.model.args.resolution == new_resolution
+        assert mock_self.model.args.positional_encoding_size == expected_pe
 
 
 # ---------------------------------------------------------------------------
