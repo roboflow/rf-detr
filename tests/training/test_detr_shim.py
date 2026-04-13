@@ -8,7 +8,7 @@
 
 1. ``TestRFDETRTrainPTL``           — RFDETR.train() delegates to PTL build_trainer().fit()
 2. ``TestRFDETRTrainPTLAbsorption`` — Legacy kwargs absorbed by RFDETR.train()
-2b.``TestResolutionKwarg``          — resolution= kwarg validation, sync, and PE update
+2b. ``TestResolutionKwarg``         — resolution= kwarg validation, sync, and PE update
 3. ``TestConvertLegacyCheckpoint``  — convert_legacy_checkpoint() round-trip
 4. ``TestOnLoadCheckpoint``         — RFDETRModule.on_load_checkpoint() auto-detect
 5. ``TestPublicAPIExports``         — rfdetr.__init__ exports RFDETRModule/DataModule/build_trainer
