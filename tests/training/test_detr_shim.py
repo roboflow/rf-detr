@@ -1259,6 +1259,36 @@ class TestRFDETRLargeFallback:
         assert call_count == 2
         warn_spy.assert_called_once()
 
+    def test_pe_size_mismatch_with_custom_resolution_does_not_retry(self, monkeypatch, patch_lit):
+        """Custom resolution= must not trigger deprecated-config fallback on PE size mismatch.
+
+        Regression for #960: when ``resolution=`` is explicitly passed, a positional
+        embedding size mismatch is caused by the resolution change — not by deprecated
+        weights.  The fallback must be suppressed so the error surfaces to the caller
+        rather than silently loading the wrong model architecture.
+        """
+        call_count = 0
+
+        def _raise_pe_mismatch(self, **kwargs):
+            del self
+            nonlocal call_count
+            call_count += 1
+            raise RuntimeError(
+                "Error(s) in loading state_dict for LWDETR:\n\t"
+                "size mismatch for backbone.0.encoder.encoder.embeddings.position_embeddings: "
+                "copying a param with shape torch.Size([1, 577, 384]) from checkpoint, "
+                "the shape in current model is torch.Size([1, 1601, 384])."
+            )
+
+        monkeypatch.setattr(RFDETR, "__init__", _raise_pe_mismatch)
+
+        with pytest.raises(RuntimeError, match="size mismatch"):
+            RFDETRLarge(resolution=640)
+
+        assert call_count == 1, (
+            f"Expected no deprecated-config retry when resolution= is set, but __init__ was called {call_count} times."
+        )
+
 
 # ---------------------------------------------------------------------------
 # 7. _load_pretrain_weights_into — detr.py path (the non-PTL scenario from #806)
