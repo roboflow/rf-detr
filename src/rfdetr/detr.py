@@ -770,7 +770,6 @@ class RFDETR:
         batch_size: int = 1,
         dynamic_batch: bool = False,
         patch_size: int | None = None,
-        **kwargs,
     ) -> None:
         """Export the trained model to ONNX format.
 
@@ -794,8 +793,6 @@ class RFDETR:
                 ``model_config.patch_size`` (typically 14 or 16). When provided
                 explicitly it must match the instantiated model's patch size.
                 Shape divisibility is validated against ``patch_size * num_windows``.
-            **kwargs: Additional keyword arguments forwarded to export_onnx.
-
         """
         logger.info("Exporting model to ONNX format")
         try:
