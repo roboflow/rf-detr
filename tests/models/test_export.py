@@ -44,6 +44,32 @@ def ignore_tracer_warnings() -> Iterator[None]:
         yield
 
 
+class _DummyCoreModel:
+    """Minimal torch.nn.Module stub shared across export tests.
+
+    Avoids real forward passes; returns synthetic detection (and optionally
+    segmentation) outputs matching the shapes expected by RFDETR.export().
+    """
+
+    def __init__(self, *, segmentation_head: bool = False) -> None:
+        self._segmentation_head = segmentation_head
+
+    def to(self, *_args, **_kwargs):
+        return self
+
+    def eval(self):
+        return self
+
+    def cpu(self):
+        return self
+
+    def __call__(self, *_args, **_kwargs):
+        out = {"pred_boxes": torch.zeros(1, 1, 4), "pred_logits": torch.zeros(1, 1, 2)}
+        if self._segmentation_head:
+            out["pred_masks"] = torch.zeros(1, 1, 2, 2)
+        return out
+
+
 def test_export_onnx_uses_legacy_exporter_when_dynamo_flag_exists(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -126,23 +152,6 @@ def test_export_does_not_change_original_training_state(tmp_path: Path) -> None:
 def _detr_export_scaffold(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Shared scaffold for RFDETR.export() deprecated-argument tests."""
 
-    class _DummyCoreModel:
-        def to(self, *_args, **_kwargs):
-            return self
-
-        def eval(self):
-            return self
-
-        def cpu(self):
-            return self
-
-        def __call__(self, *_args, **_kwargs):
-            return {
-                "pred_boxes": torch.zeros(1, 1, 4),
-                "pred_logits": torch.zeros(1, 1, 2),
-                "pred_masks": torch.zeros(1, 1, 2, 2),
-            }
-
     model = types.SimpleNamespace(
         model=types.SimpleNamespace(
             model=_DummyCoreModel(),
@@ -187,27 +196,10 @@ def test_rfdetr_export_dynamic_batch_forwards_dynamic_axes(
     to `export_onnx`; `dynamic_batch=False` must pass `None`.
     """
 
-    class _DummyCoreModel:
-        def to(self, *_args, **_kwargs):
-            return self
-
-        def eval(self):
-            return self
-
-        def cpu(self):
-            return self
-
-        def __call__(self, *_args, **_kwargs):
-            if segmentation_head:
-                return {
-                    "pred_boxes": torch.zeros(1, 1, 4),
-                    "pred_logits": torch.zeros(1, 1, 2),
-                    "pred_masks": torch.zeros(1, 1, 2, 2),
-                }
-            return {"pred_boxes": torch.zeros(1, 1, 4), "pred_logits": torch.zeros(1, 1, 2)}
-
     model = types.SimpleNamespace(
-        model=types.SimpleNamespace(model=_DummyCoreModel(), device="cpu", resolution=14),
+        model=types.SimpleNamespace(
+            model=_DummyCoreModel(segmentation_head=segmentation_head), device="cpu", resolution=14
+        ),
         model_config=types.SimpleNamespace(segmentation_head=segmentation_head),
         size=None,
     )
@@ -588,19 +580,6 @@ class TestExportPatchSize:
     ) -> types.SimpleNamespace:
         """Build a minimal RFDETR-like namespace with controllable patch_size/num_windows."""
 
-        class _DummyCoreModel:
-            def to(self, *_a, **_kw):
-                return self
-
-            def eval(self):
-                return self
-
-            def cpu(self):
-                return self
-
-            def __call__(self, *_a, **_kw):
-                return {"pred_boxes": torch.zeros(1, 1, 4), "pred_logits": torch.zeros(1, 1, 2)}
-
         model = types.SimpleNamespace(
             model=types.SimpleNamespace(
                 model=_DummyCoreModel(),
@@ -847,19 +826,6 @@ class TestExportOnnxVariantNaming:
         """RFDETR.export() passes self.size as variant_name to export_onnx."""
         captured: dict = {}
 
-        class _DummyCoreModel:
-            def to(self, *_args, **_kwargs):
-                return self
-
-            def eval(self):
-                return self
-
-            def cpu(self):
-                return self
-
-            def __call__(self, *_args, **_kwargs):
-                return {"pred_boxes": torch.zeros(1, 1, 4), "pred_logits": torch.zeros(1, 1, 2)}
-
         model = types.SimpleNamespace(
             model=types.SimpleNamespace(model=_DummyCoreModel(), device="cpu", resolution=14),
             model_config=types.SimpleNamespace(segmentation_head=False),
@@ -884,19 +850,6 @@ class TestExportOnnxVariantNaming:
     def test_rfdetr_export_passes_none_when_size_not_set(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """Base RFDETR (size=None) passes None as variant_name."""
         captured: dict = {}
-
-        class _DummyCoreModel:
-            def to(self, *_args, **_kwargs):
-                return self
-
-            def eval(self):
-                return self
-
-            def cpu(self):
-                return self
-
-            def __call__(self, *_args, **_kwargs):
-                return {"pred_boxes": torch.zeros(1, 1, 4), "pred_logits": torch.zeros(1, 1, 2)}
 
         model = types.SimpleNamespace(
             model=types.SimpleNamespace(model=_DummyCoreModel(), device="cpu", resolution=14),
