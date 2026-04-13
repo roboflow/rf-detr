@@ -918,3 +918,39 @@ class TestExportOnnxVariantNaming:
         _detr_module.RFDETR.export(model, output_dir=str(tmp_path), shape=(14, 14))
 
         assert captured["variant_name"] is None
+
+    @pytest.mark.parametrize(
+        "variant_name, expected_suffix",
+        [
+            pytest.param("", "inference_model.onnx", id="empty_string_falls_back_to_default"),
+            pytest.param("foo/bar", "bar.onnx", id="path_separator_stripped_to_basename"),
+            pytest.param("/tmp/x", "x.onnx", id="absolute_path_stripped_to_basename"),
+        ],
+    )
+    def test_variant_name_sanitization(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        variant_name: str,
+        expected_suffix: str,
+    ) -> None:
+        """variant_name edge cases: empty string falls back to default; path separators are stripped."""
+        captured: dict = {}
+
+        def _fake_onnx_export(*args, **kwargs) -> None:
+            captured["output_file"] = args[2]
+
+        monkeypatch.setattr(_cli_export_module.torch.onnx, "export", _fake_onnx_export)
+
+        _cli_export_module.export_onnx(
+            output_dir=str(tmp_path),
+            model=torch.nn.Identity(),
+            input_names=["input"],
+            input_tensors=torch.randn(1, 3, 8, 8),
+            output_names=["dets"],
+            dynamic_axes=None,
+            verbose=False,
+            variant_name=variant_name or None,
+        )
+
+        assert captured["output_file"].endswith(expected_suffix)
