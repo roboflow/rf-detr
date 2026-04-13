@@ -748,7 +748,7 @@ def test_make_infer_image_produces_correct_rectangular_shape() -> None:
 
 
 # ---------------------------------------------------------------------------
-# ONNX export variant naming (#issue)
+# ONNX export variant naming
 # ---------------------------------------------------------------------------
 
 
