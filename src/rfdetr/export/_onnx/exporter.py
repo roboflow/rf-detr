@@ -84,6 +84,8 @@ def export_onnx(
         Path to the exported ONNX model.
     """
     if variant_name:
+        # Sanitize against path traversal (e.g. "foo/bar" → "bar", "/tmp/x" → "x")
+        variant_name = os.path.splitext(os.path.basename(variant_name))[0]
         export_name = f"{variant_name}-backbone" if backbone_only else variant_name
     else:
         export_name = "backbone_model" if backbone_only else "inference_model"
