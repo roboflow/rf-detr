@@ -76,8 +76,9 @@ def export_onnx(
         verbose: Whether ONNX exporter should emit verbose logs.
         opset_version: ONNX opset version.
         variant_name: Model variant identifier (e.g. ``"rfdetr-medium"``).
-            When provided, the exported file is named ``{variant_name}.onnx``
-            instead of the generic ``inference_model.onnx``.
+            When provided, the exported file is named ``{variant_name}.onnx`` or
+            ``{variant_name}-backbone.onnx`` (when ``backbone_only=True``) instead
+            of the generic ``inference_model.onnx`` or ``backbone_model.onnx``.
 
     Returns:
         Path to the exported ONNX model.
