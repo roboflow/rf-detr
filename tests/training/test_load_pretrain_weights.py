@@ -368,6 +368,36 @@ class TestLoadPretrainWeightsPEInterpolation:
             "BaseConfig's non-formula-derived PE must be the interpolation target."
         )
 
+    def test_non_square_source_pe_logs_warning_and_is_not_modified(self, monkeypatch):
+        """Non-square source PE grids are skipped with a warning and left unchanged.
+
+        When ``n_source`` is not a perfect square the interpolation is skipped to
+        avoid producing malformed embeddings.  The tensor must remain untouched and
+        a warning must be emitted via the weights module logger.
+        """
+        mc = RFDETRNanoConfig(pretrain_weights="/fake/weights.pth", device="cpu")
+        # positional_encoding_size=24 → n_target=576 (perfect square, so the
+        # target-side guard does not trigger; only the source-side guard fires)
+
+        dim = 384
+        # 17 is not a perfect square: isqrt(17)=4, 4*4=16 ≠ 17
+        non_square_n_source = 17
+        original_pe = torch.randn(1, non_square_n_source + 1, dim)
+        checkpoint = _make_checkpoint(num_classes=91)
+        checkpoint["model"][PE_KEY] = original_pe.clone()
+
+        warning_calls: list[tuple] = []
+        monkeypatch.setattr("rfdetr.models.weights.logger.warning", lambda *a, **kw: warning_calls.append(a))
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+        fake_model = MagicMock()
+        load_pretrain_weights(fake_model, mc)
+
+        pe = checkpoint["model"][PE_KEY]
+        assert torch.equal(pe, original_pe), "Non-square source PE must not be modified."
+        assert any("not a perfect square" in str(args) for args in warning_calls), (
+            f"Expected a 'not a perfect square' warning; got calls: {warning_calls}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Deprecation: train_config argument
