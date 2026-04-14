@@ -339,6 +339,34 @@ class TestLoadPretrainWeightsPEInterpolation:
         assert pe.shape == torch.Size([1, 577, dim]), "Matching PE shape must not be modified."
         assert torch.equal(pe, original_pe), "Matching PE tensor values must not be modified."
 
+    def test_base_config_non_formula_pe_is_interpolated_from_smaller_checkpoint(self, monkeypatch):
+        """RFDETRBaseConfig PE=37 (not formula-derived) is interpolated when checkpoint differs.
+
+        RFDETRBaseConfig.positional_encoding_size=37 is not updated by
+        ``_sync_pe_with_resolution`` because 37 ≠ 560//16=35 (not formula-derived).
+        Loading a checkpoint with a smaller PE grid (e.g., 24×24) must still
+        trigger interpolation to the model's fixed PE=37×37 target.
+        """
+        mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu")
+        assert mc.positional_encoding_size == 37, "RFDETRBaseConfig PE must remain 37 (not formula-derived)"
+
+        dim = 384
+        src_pe_size = 24
+        src_n = src_pe_size * src_pe_size + 1
+        checkpoint = _make_checkpoint(num_classes=91)
+        checkpoint["model"][PE_KEY] = torch.randn(1, src_n, dim)
+
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+        fake_model = MagicMock()
+        load_pretrain_weights(fake_model, mc)
+
+        pe = checkpoint["model"][PE_KEY]
+        expected_n = 37 * 37 + 1
+        assert pe.shape == torch.Size([1, expected_n, dim]), (
+            f"Expected PE shape [1, {expected_n}, {dim}] (37×37 grid), got {tuple(pe.shape)}. "
+            "BaseConfig's non-formula-derived PE must be the interpolation target."
+        )
+
 
 # ---------------------------------------------------------------------------
 # Deprecation: train_config argument
