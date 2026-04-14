@@ -337,6 +337,7 @@ class TestLoadPretrainWeightsPEInterpolation:
 
         pe = checkpoint["model"][PE_KEY]
         assert pe.shape == torch.Size([1, 577, dim]), "Matching PE shape must not be modified."
+        assert torch.equal(pe, original_pe), "Matching PE tensor values must not be modified."
 
 
 # ---------------------------------------------------------------------------
