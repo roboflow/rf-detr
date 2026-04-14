@@ -108,7 +108,7 @@ class TestPredictSourceData:
         assert "source_image" in detections.data
         assert isinstance(detections.data["source_image"], np.ndarray)
         assert detections.data["source_image"].shape == (48, 64, 3)
-        assert detections.data["source_shape"] == (48, 64)
+        assert np.array_equal(detections.data["source_shape"], np.array([[48, 64]]))
 
     def test_source_image_included_by_default_tensor(self) -> None:
         """Tensor input keeps source_image by default for API compatibility."""
@@ -119,7 +119,7 @@ class TestPredictSourceData:
         assert isinstance(detections.data["source_image"], np.ndarray)
         assert detections.data["source_image"].dtype == np.uint8
         assert detections.data["source_image"].shape == (48, 64, 3)
-        assert detections.data["source_shape"] == (48, 64)
+        assert np.array_equal(detections.data["source_shape"], np.array([[48, 64]]))
 
     def test_source_image_can_be_disabled(self) -> None:
         """include_source_image=False omits source_image for memory-sensitive paths."""
@@ -127,7 +127,7 @@ class TestPredictSourceData:
         model = _DummyRFDETR()
         detections = model.predict(img, include_source_image=False)
         assert "source_image" not in detections.data
-        assert detections.data["source_shape"] == (48, 64)
+        assert np.array_equal(detections.data["source_shape"], np.array([[48, 64]]))
 
     def test_source_image_from_pil(self) -> None:
         """PIL input stores the original image as a numpy array."""
@@ -139,12 +139,15 @@ class TestPredictSourceData:
         assert detections.data["source_image"].shape == (48, 64, 3)
 
     def test_source_shape_from_pil(self) -> None:
-        """PIL input stores the original (height, width) tuple."""
+        """PIL input stores source_shape as a per-detection numpy array."""
         img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
         model = _DummyRFDETR()
         detections = model.predict(img)
         assert "source_shape" in detections.data
-        assert detections.data["source_shape"] == (48, 64)
+        assert isinstance(detections.data["source_shape"], np.ndarray)
+        assert detections.data["source_shape"].dtype == np.int64
+        assert detections.data["source_shape"].shape == (len(detections), 2)
+        assert np.array_equal(detections.data["source_shape"][0], [48, 64])
 
     def test_source_image_from_tensor(self) -> None:
         """Tensor input stores the original image as a uint8 numpy array."""
@@ -172,8 +175,83 @@ class TestPredictSourceData:
         assert isinstance(detections_list, list)
         assert detections_list[0].data["source_image"].shape == (48, 64, 3)
         assert detections_list[1].data["source_image"].shape == (24, 32, 3)
-        assert detections_list[0].data["source_shape"] == (48, 64)
-        assert detections_list[1].data["source_shape"] == (24, 32)
+        assert np.array_equal(detections_list[0].data["source_shape"], np.array([[48, 64]]))
+        assert np.array_equal(detections_list[1].data["source_shape"], np.array([[24, 32]]))
+
+    def test_source_shape_survives_detections_iteration(self) -> None:
+        """Iterating sv.Detections must not raise TypeError and must yield correct values.
+
+        Regression test for https://github.com/roboflow/rf-detr/issues/963.
+        supervision's Detections.__iter__ calls get_data_item() on every data value,
+        which requires array-like types — storing source_shape as a Python tuple
+        raised TypeError: Unsupported data type for key 'source_shape': <class 'tuple'>.
+        """
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+        model = _DummyRFDETR()
+        detections = model.predict(img)
+
+        # sv.Detections.__iter__ yields (xyxy, mask, confidence, class_id, tracker_id, data)
+        iterated = list(detections)
+        assert len(iterated) == len(detections)
+        # Each iterated element's data dict must contain a 1-D [h, w] array
+        for det_tuple in iterated:
+            data = det_tuple[-1]
+            assert np.array_equal(data["source_shape"], [48, 64])
+
+    def test_source_shape_survives_detections_indexing(self) -> None:
+        """Integer and boolean-mask indexing of sv.Detections must work correctly.
+
+        Regression test for https://github.com/roboflow/rf-detr/issues/963.
+        MeanAveragePrecision.compute() uses __getitem__ (not just __iter__) on
+        Detections objects — both paths go through get_data_item() and would have
+        crashed on the old tuple format.
+
+        include_source_image=False avoids the pre-existing source_image indexing bug
+        (source_image is a per-image array, not per-detection; tracked separately).
+        """
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+        model = _DummyRFDETR()
+        model.model = _DummyModel(labels=[0, 1])  # 2 detections
+        detections = model.predict(img, include_source_image=False)
+
+        # Integer indexing: detections[i] returns a Detections with 1 element
+        single = detections[0]
+        assert np.array_equal(single.data["source_shape"], np.array([[48, 64]]))
+
+        # Boolean-mask indexing: used by supervision metrics to filter detections
+        mask = detections.confidence > 0.5
+        filtered = detections[mask]
+        assert filtered.data["source_shape"].shape == (int(mask.sum()), 2)
+        assert np.all(filtered.data["source_shape"] == np.array([48, 64]))
+
+    def test_source_shape_correct_for_zero_detections(self) -> None:
+        """source_shape must have shape (0, 2) when threshold filters all detections.
+
+        Regression test for https://github.com/roboflow/rf-detr/issues/963.
+        The zero-detection path must not raise and must produce an empty array, not a
+        scalar or a (1, 2) array.
+        """
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+        model = _DummyRFDETR()
+        # confidence=0.9 < 1.1 → all detections filtered
+        detections = model.predict(img, threshold=1.1)
+        assert "source_shape" in detections.data
+        assert isinstance(detections.data["source_shape"], np.ndarray)
+        assert detections.data["source_shape"].shape == (0, 2)
+
+    def test_source_shape_correct_for_multiple_detections(self) -> None:
+        """source_shape must have shape (N, 2) for N detections, each row [height, width].
+
+        Regression test for https://github.com/roboflow/rf-detr/issues/963.
+        """
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+        model = _DummyRFDETR()
+        model.model = _DummyModel(labels=[0, 1])  # 2 detections
+        detections = model.predict(img)
+        assert "source_shape" in detections.data
+        assert isinstance(detections.data["source_shape"], np.ndarray)
+        assert detections.data["source_shape"].shape == (2, 2)
+        assert np.all(detections.data["source_shape"] == np.array([48, 64]))
 
 
 class TestPredictShape:
