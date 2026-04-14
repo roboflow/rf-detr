@@ -1099,9 +1099,9 @@ class RFDETR:
               ``int64``, where each row is ``[height, width]`` of the source image.
               ``N`` equals the number of detections (0 when threshold filters all
               results) so that iteration over ``sv.Detections`` works correctly.
-              **Changed in v1.6.5**: was a ``(height, width)`` Python ``tuple`` before
-              this release; callers using ``isinstance(v, tuple)`` or
-              ``v == (H, W)`` must be updated.
+              Changed: this was previously a ``(height, width)`` Python ``tuple``;
+              callers using ``isinstance(v, tuple)`` or ``v == (H, W)`` must be
+              updated.
 
         Raises:
             ValueError: If ``shape`` cannot be unpacked as a two-element sequence,
