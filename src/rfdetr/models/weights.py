@@ -83,7 +83,7 @@ def _interpolate_position_embeddings(
             continue
 
         dim = ckpt_pe.shape[-1]
-        class_token = ckpt_pe[:, 0]  # [1, dim]
+        class_token = ckpt_pe[:, :1]  # [1, 1, dim] — keeps the sequence dimension
         patch_pe = ckpt_pe[:, 1:]  # [1, N_src, dim]
 
         patch_pe = patch_pe.reshape(1, h_src, h_src, dim).permute(0, 3, 1, 2)  # [1, dim, H, W]
@@ -96,7 +96,7 @@ def _interpolate_position_embeddings(
         ).to(ckpt_pe.dtype)
         patch_pe = patch_pe.permute(0, 2, 3, 1).reshape(1, n_target, dim)  # [1, N_tgt, dim]
 
-        checkpoint_state[key] = torch.cat([class_token.unsqueeze(0), patch_pe], dim=1)
+        checkpoint_state[key] = torch.cat([class_token, patch_pe], dim=1)
         logger.debug(
             "Interpolated positional embeddings %s: %s → %s.",
             key,
