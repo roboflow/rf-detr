@@ -42,9 +42,9 @@ _PE_KEY_SUFFIX = "embeddings.position_embeddings"
 
 def _interpolate_position_embeddings(
     checkpoint_state: dict,
-    model_config: ModelConfig,
+    pe_size: int,
 ) -> None:
-    """Interpolate DINOv2 positional embeddings in *checkpoint_state* to match *model_config*.
+    """Interpolate DINOv2 positional embeddings in *checkpoint_state* to match *pe_size*.
 
     When the model is configured with a custom ``resolution`` that differs from the
     checkpoint's training resolution, the DINOv2 backbone's ``position_embeddings``
@@ -52,16 +52,15 @@ def _interpolate_position_embeddings(
     skip shape mismatches on matching keys — it raises ``RuntimeError``.
 
     This function bicubic-interpolates every PE tensor in the checkpoint whose shape
-    differs from the target grid derived from ``model_config.positional_encoding_size``,
-    modifying *checkpoint_state* in-place before ``load_state_dict`` is called.
+    differs from the target grid, modifying *checkpoint_state* in-place before
+    ``load_state_dict`` is called.
 
     Args:
         checkpoint_state: The ``"model"`` sub-dict from a loaded checkpoint.
-        model_config: The model configuration used to derive the target PE size.
-            ``model_config.positional_encoding_size`` gives the target grid side length
-            (number of patches per spatial dimension, assuming a square grid).
+        pe_size: Target grid side length in patches (number of patches per spatial
+            dimension, assuming a square grid).  Typically
+            ``model_config.positional_encoding_size``.
     """
-    pe_size = model_config.positional_encoding_size
     n_target = pe_size * pe_size  # target number of patch tokens
 
     pe_keys = [k for k in checkpoint_state if k.endswith(_PE_KEY_SUFFIX)]
@@ -75,10 +74,8 @@ def _interpolate_position_embeddings(
         h_tgt = int(math.isqrt(n_target))
         if h_src * h_src != n_source or h_tgt * h_tgt != n_target:
             logger.warning(
-                "Skipping PE interpolation for %s: grid size is not a perfect square (source %d, target %d).",
-                key,
-                n_source,
-                n_target,
+                f"Skipping PE interpolation for {key}:"
+                f" grid size is not a perfect square (source {n_source}, target {n_target}).",
             )
             continue
 
@@ -262,7 +259,7 @@ def load_pretrain_weights(
         if any(name.endswith(x) for x in query_param_names):
             checkpoint["model"][name] = checkpoint["model"][name][:num_desired_queries]
 
-    _interpolate_position_embeddings(checkpoint["model"], mc)
+    _interpolate_position_embeddings(checkpoint["model"], mc.positional_encoding_size)
     nn_model.load_state_dict(checkpoint["model"], strict=False)
 
     # If the user explicitly set a class count larger than the checkpoint,
