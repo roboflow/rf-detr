@@ -303,7 +303,7 @@ class TestLoadPretrainWeightsPEInterpolation:
         dim = 384
         src_n = src_pe_size * src_pe_size + 1  # patches + class token
         checkpoint = _make_checkpoint(num_classes=91)
-        checkpoint["model"][PE_KEY] = torch.randn(1, src_n, dim)
+        checkpoint["model"][PE_KEY] = torch.randn(1, src_n, dim).half()  # float16 to verify dtype round-trip
 
         monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
         fake_model = MagicMock()
@@ -316,6 +316,7 @@ class TestLoadPretrainWeightsPEInterpolation:
             f"PE was not interpolated from {src_pe_size}x{src_pe_size} "
             f"to {expected_tgt_pe_size}x{expected_tgt_pe_size}."
         )
+        assert pe.dtype == torch.float16, f"Dtype must be preserved after interpolation, got {pe.dtype}"
 
     def test_matching_pe_shape_is_not_modified(self, monkeypatch):
         """When checkpoint PE matches model expectations, the tensor is not changed.
