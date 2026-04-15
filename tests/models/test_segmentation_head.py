@@ -188,15 +188,18 @@ def test_depthwise_conv_no_cudnn_bias_none() -> None:
     from rfdetr.models.heads.segmentation import _DepthwiseConvNoCuDNN
 
     dim = 8
-    weight = torch.randn(dim, 1, 3, 3)
+    weight = torch.randn(dim, 1, 3, 3, requires_grad=True)
     x = torch.randn(1, dim, 4, 4, requires_grad=True)
     y = _DepthwiseConvNoCuDNN.apply(x, weight, None, (1, 1), (1, 1), (1, 1), dim)
-    y_ref = torch.nn.functional.conv2d(x.detach(), weight, None, stride=1, padding=1, dilation=1, groups=dim)
+    y_ref = torch.nn.functional.conv2d(x.detach(), weight.detach(), None, stride=1, padding=1, dilation=1, groups=dim)
     assert torch.allclose(y.detach(), y_ref, atol=1e-6)
     y.sum().backward()
     assert x.grad is not None
     assert x.grad.shape == x.shape
     assert torch.isfinite(x.grad).all()
+    assert weight.grad is not None
+    assert weight.grad.shape == weight.shape
+    assert torch.isfinite(weight.grad).all()
 
 
 @pytest.mark.parametrize("layer_scale_init_value", [0, 1e-6], ids=["no_gamma", "with_gamma"])
