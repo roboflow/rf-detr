@@ -1248,7 +1248,7 @@ class RFDETR:
                 )
 
             detections.data["source_image"] = source_images[i]
-            detections.data["source_shape"] = orig_sizes[i]
+            detections.data["source_shape"] = np.tile(np.array(orig_sizes[i], dtype=np.int64), (len(detections), 1))
 
             # Attach class names so callers can map class_id → name without a
             # separate lookup.  class_id is always 0-indexed regardless of the
