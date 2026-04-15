@@ -82,6 +82,13 @@ class _DepthwiseConvNoCuDNN(torch.autograd.Function):
 
         Returns:
             Gradients for each ``forward`` input.  Non-tensor inputs get ``None``.
+
+        Note:
+            Under AMP (``"16-mixed"``), ``grad_output`` arrives as ``fp16`` while
+            the saved ``weight`` stays ``fp32``.  Both tensors are upcast to
+            ``weight.dtype`` before calling ``conv2d_input`` / ``conv2d_weight``.
+            ``grad_input`` is then cast back to the original input dtype so
+            downstream gradient accumulation uses the expected dtype.
         """
         saved = ctx.saved_tensors
         x, weight = saved[0], saved[1]
