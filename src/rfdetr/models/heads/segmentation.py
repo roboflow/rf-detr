@@ -62,6 +62,10 @@ class _DepthwiseConvNoCuDNN(torch.autograd.Function):
         ctx.padding = padding
         ctx.dilation = dilation
         ctx.groups = groups
+        # Note: torch.backends.cudnn.flags() is process-global state, not op-local.
+        # Safe under DDP (separate processes per rank), but concurrent backward passes
+        # in the same process (DataParallel, user threads) could briefly observe the
+        # wrong cuDNN setting.  For DDP-only training this is not a concern.
         with torch.backends.cudnn.flags(enabled=False):
             return F.conv2d(x, weight, bias, stride=stride, padding=padding, dilation=dilation, groups=groups)
 
@@ -88,6 +92,7 @@ class _DepthwiseConvNoCuDNN(torch.autograd.Function):
         input_dtype = x.dtype
         grad_output = grad_output.to(dtype=weight.dtype)
         x = x.to(dtype=weight.dtype)
+        # Same process-global caveat as forward: safe under DDP, not under DataParallel.
         with torch.backends.cudnn.flags(enabled=False):
             grad_input = torch.nn.grad.conv2d_input(
                 x.shape,
