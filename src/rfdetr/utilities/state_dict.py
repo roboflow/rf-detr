@@ -208,14 +208,25 @@ def validate_checkpoint_compatibility(checkpoint: dict[str, Any], model_args: An
 
     Raises:
         ValueError: If ``segmentation_head`` or ``patch_size`` in the checkpoint
-            args do not match those of the model.
+            args do not match those of the model, or if the ``patch_size`` inferred
+            from the DINOv2 projection weight shape differs from
+            ``model_args.patch_size`` when no explicit ``args.patch_size`` is present.
 
     Note:
         This helper does not mutate ``model_args``. It emits ``logger.warning``
         (not an exception) for class-count mismatches so that callers can still
         proceed with reinitialization or weight loading.
 
-        Two scenarios are distinguished:
+        When ``"args"`` is absent or ``args.patch_size`` is not set, a fallback
+        infers ``patch_size`` from the DINOv2 patch-embedding projection weight
+        shape (key ``backbone.0.encoder.encoder.embeddings.patch_embeddings.projection.weight``).
+        This fallback **can raise** :class:`ValueError` on a mismatch, providing a
+        clear error before the cryptic :class:`RuntimeError` from
+        :meth:`~torch.nn.Module.load_state_dict` would otherwise fire.
+        For all other attributes (e.g. ``segmentation_head``), if either side is
+        missing, that check is skipped silently — preserving backward compatibility.
+
+        Two class-count scenarios are distinguished:
 
         * Backbone pretrain: the checkpoint head was trained with more classes
           than the current ``model_args.num_classes``. In this case the detection
