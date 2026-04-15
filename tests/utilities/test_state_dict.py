@@ -176,6 +176,90 @@ class TestValidateCheckpointCompatibility:
             validate_checkpoint_compatibility(checkpoint, model_args)
 
     # ------------------------------------------------------------------
+    # patch_size inferred from projection weight (no "args" key)
+    # ------------------------------------------------------------------
+
+    @pytest.mark.parametrize(
+        "ckpt_patch_size,model_patch_size,should_raise",
+        [
+            pytest.param(16, 12, True, id="ckpt_16_model_12_raises"),
+            pytest.param(14, 16, True, id="ckpt_14_model_16_raises"),
+            pytest.param(16, 16, False, id="matching_16_no_raise"),
+        ],
+    )
+    def test_patch_size_inferred_from_projection_weight(
+        self, ckpt_patch_size: int, model_patch_size: int, should_raise: bool
+    ) -> None:
+        """Projection weight shape used to infer ckpt patch_size when 'args' key absent.
+
+        Regression test for #965 — pretrained COCO weights lack 'args', so the
+        shape-based fallback must fire before load_state_dict raises a cryptic RuntimeError.
+        """
+        proj_key = "backbone.0.encoder.encoder.embeddings.patch_embeddings.projection.weight"
+        proj_weight = torch.zeros(384, 3, ckpt_patch_size, ckpt_patch_size)
+        checkpoint = {"model": {proj_key: proj_weight}}  # no "args" key
+        model_args = SimpleNamespace(patch_size=model_patch_size)
+
+        if should_raise:
+            with pytest.raises(
+                ValueError,
+                match=rf"patch_size={ckpt_patch_size}.*patch_size={model_patch_size}"
+                rf"|patch_size={model_patch_size}.*patch_size={ckpt_patch_size}",
+            ):
+                validate_checkpoint_compatibility(checkpoint, model_args)
+        else:
+            validate_checkpoint_compatibility(checkpoint, model_args)  # must not raise
+
+    @pytest.mark.parametrize(
+        "checkpoint,model_args_kwargs",
+        [
+            pytest.param(
+                {},
+                {"patch_size": 16},
+                id="no_model_key_skips",
+            ),
+            pytest.param(
+                {"model": {}},
+                {"patch_size": 16},
+                id="no_projection_key_skips",
+            ),
+            pytest.param(
+                {
+                    "model": {
+                        "backbone.0.encoder.encoder.embeddings.patch_embeddings.projection.weight": torch.zeros(
+                            384, 3, 16, 16
+                        )
+                    }
+                },
+                {},
+                id="model_no_patch_size_attr_skips",
+            ),
+        ],
+    )
+    def test_projection_inference_silently_skips_when_incomplete(
+        self, checkpoint: dict, model_args_kwargs: dict
+    ) -> None:
+        """Shape-based patch_size check is skipped when key or attribute is absent.
+
+        Verifies backward compatibility: missing projection key, missing model key,
+        or model_args without patch_size attribute must all be handled without error.
+        """
+        model_args = SimpleNamespace(**model_args_kwargs)
+        validate_checkpoint_compatibility(checkpoint, model_args)  # must not raise
+
+    def test_non_square_projection_kernel_skips_check(self) -> None:
+        """Non-square patch projection kernel is skipped — patch_size cannot be inferred reliably.
+
+        Guards against hypothetical future backbones with non-square Conv2d kernels
+        where shape[-1] would not equal patch_size.
+        """
+        proj_key = "backbone.0.encoder.encoder.embeddings.patch_embeddings.projection.weight"
+        proj_weight = torch.zeros(384, 3, 16, 14)  # non-square: h=16, w=14
+        checkpoint = {"model": {proj_key: proj_weight}}
+        model_args = SimpleNamespace(patch_size=16)
+        validate_checkpoint_compatibility(checkpoint, model_args)  # must not raise
+
+    # ------------------------------------------------------------------
     # class-count mismatch warnings
     # ------------------------------------------------------------------
 

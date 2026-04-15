@@ -255,6 +255,26 @@ def validate_checkpoint_compatibility(checkpoint: dict[str, Any], model_args: An
                     ckpt_num_classes - 1,
                 )
 
+    # Infer patch_size from the patch-embedding projection weight when the checkpoint
+    # has no "args" key (e.g., COCO pretrained release weights that only store "model").
+    # Conv2d projection shape is [out_channels, in_channels, kernel_h, kernel_w];
+    # kernel_h == patch_size for square kernels.  Raises before load_state_dict fires,
+    # replacing the otherwise-cryptic "size mismatch" RuntimeError. Regression: #965.
+    # NOTE: key path is DINOv2-specific; non-DINOv2 backbones simply won't have this key
+    # and the check is silently skipped, preserving backward compatibility.
+    _patch_proj_key = "backbone.0.encoder.encoder.embeddings.patch_embeddings.projection.weight"
+    _ckpt_proj_w = checkpoint.get("model", {}).get(_patch_proj_key)
+    if _ckpt_proj_w is not None and _ckpt_proj_w.shape[2] == _ckpt_proj_w.shape[3]:
+        _inferred_ps = int(_ckpt_proj_w.shape[-1])
+        _model_ps: int | None = getattr(model_args, "patch_size", None)
+        if _model_ps is not None and _inferred_ps != _model_ps:
+            raise ValueError(
+                f"The checkpoint was trained with patch_size={_inferred_ps}, but the current model uses "
+                f"patch_size={_model_ps}. The checkpoint is incompatible with this model architecture. "
+                "To resolve this, either instantiate/configure the model with the checkpoint's patch_size or "
+                "use a checkpoint that was trained with the same patch_size as the current model."
+            )
+
     if "args" not in checkpoint:
         return
 
