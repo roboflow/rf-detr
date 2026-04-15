@@ -27,6 +27,24 @@ _PTL_COMPAT_KEYS = (
 )
 
 
+def _raise_patch_size_mismatch(ckpt_patch_size: int, model_patch_size: int) -> None:
+    """Raise a descriptive ValueError for a patch_size incompatibility.
+
+    Args:
+        ckpt_patch_size: patch_size recorded in (or inferred from) the checkpoint.
+        model_patch_size: patch_size the current model is configured with.
+
+    Raises:
+        ValueError: Always — describes the mismatch and how to resolve it.
+    """
+    raise ValueError(
+        f"The checkpoint was trained with patch_size={ckpt_patch_size}, but the current model uses "
+        f"patch_size={model_patch_size}. The checkpoint is incompatible with this model architecture. "
+        "To resolve this, either instantiate/configure the model with the checkpoint's patch_size or "
+        "use a checkpoint that was trained with the same patch_size as the current model."
+    )
+
+
 def _ckpt_args_get(args: Any, field: str, default: Any = None) -> Any:
     """Get a field from checkpoint ``"args"``, handling both dict and attribute access.
 
@@ -287,12 +305,7 @@ def validate_checkpoint_compatibility(checkpoint: dict[str, Any], model_args: An
             _inferred_ps = int(_ckpt_proj_shape[-1])
             _model_ps: int | None = getattr(model_args, "patch_size", None)
             if _model_ps is not None and _inferred_ps != _model_ps:
-                raise ValueError(
-                    f"The checkpoint was trained with patch_size={_inferred_ps}, but the current model uses "
-                    f"patch_size={_model_ps}. The checkpoint is incompatible with this model architecture. "
-                    "To resolve this, either instantiate/configure the model with the checkpoint's patch_size or "
-                    "use a checkpoint that was trained with the same patch_size as the current model."
-                )
+                _raise_patch_size_mismatch(_inferred_ps, _model_ps)
     if "args" not in checkpoint:
         return
 
@@ -319,9 +332,4 @@ def validate_checkpoint_compatibility(checkpoint: dict[str, Any], model_args: An
     ckpt_patch_size: int | None = _ckpt_args_get(ckpt_args, "patch_size")
     model_patch_size: int | None = getattr(model_args, "patch_size", None)
     if ckpt_patch_size is not None and model_patch_size is not None and ckpt_patch_size != model_patch_size:
-        raise ValueError(
-            f"The checkpoint was trained with patch_size={ckpt_patch_size}, but the current model uses "
-            f"patch_size={model_patch_size}. The checkpoint is incompatible with this model architecture. "
-            "To resolve this, either instantiate/configure the model with the checkpoint's patch_size or "
-            "use a checkpoint that was trained with the same patch_size as the current model."
-        )
+        _raise_patch_size_mismatch(ckpt_patch_size, model_patch_size)
