@@ -1092,6 +1092,17 @@ class RFDETR:
               ``include_source_image=True``, which is the default).
             * ``"source_shape"`` – ``(height, width)`` tuple of the source image dimensions.
 
+            The ``metadata`` dict of each :class:`~supervision.Detections` object
+            contains:
+
+            * ``"source_image"`` – the original input image as a ``uint8`` numpy
+              array of shape ``(H, W, 3)`` (only present when
+              ``include_source_image=True``, which is the default).  Stored in
+              ``metadata`` rather than ``data`` so that boolean and integer indexing
+              of :class:`~supervision.Detections` works correctly — supervision
+              indexes every value in ``data`` by the detection mask, but passes
+              ``metadata`` through unchanged.
+
         Raises:
             ValueError: If ``shape`` cannot be unpacked as a two-element sequence,
                 if either dimension does not support the ``__index__`` protocol
@@ -1247,7 +1258,7 @@ class RFDETR:
                     class_id=labels.cpu().numpy(),
                 )
 
-            detections.data["source_image"] = source_images[i]
+            detections.metadata["source_image"] = source_images[i]
             detections.data["source_shape"] = np.tile(np.array(orig_sizes[i], dtype=np.int64), (len(detections), 1))
 
             # Attach class names so callers can map class_id → name without a

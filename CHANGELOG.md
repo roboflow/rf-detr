@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Fixed `predict()` storing `detections.data["source_shape"]` as a Python `tuple`, which caused `TypeError: Unsupported data type for key 'source_shape': <class 'tuple'>` whenever `sv.Detections` was iterated (e.g. `list(detections)`, `for d in detections`, `MeanAveragePrecision.compute()`). The value is now an `np.ndarray` of shape `(N, 2)` and dtype `int64`, with one `[height, width]` row per detection. ([#963](https://github.com/roboflow/rf-detr/issues/963))
 - Fixed `predict()` emitting a misleading "class_id out of range" warning when the model predicts the background/no-object class (class index `num_classes`). RF-DETR uses `num_classes + 1` outputs internally; the last class is the background class and is expected behaviour, not an error. Background-class detections now map `data["class_name"]` to `"__background__"` without any warning.
+- Fixed `predict()` raising `IndexError` when boolean- or integer-indexing `sv.Detections` with `include_source_image=True` (the default). `source_image` is now stored in `detections.metadata["source_image"]` instead of `detections.data["source_image"]`. **Migration**: update any code that reads `detections.data["source_image"]` to `detections.metadata["source_image"]`. ([#972](https://github.com/roboflow/rf-detr/pull/972), closes [#968](https://github.com/roboflow/rf-detr/issues/968))
 
 ---
 
