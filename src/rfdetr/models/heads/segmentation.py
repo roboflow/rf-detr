@@ -56,10 +56,7 @@ class _DepthwiseConvNoCuDNN(torch.autograd.Function):
         Returns:
             Output feature map ``(N, C, H, W)``.
         """
-        tensors_to_save: list[torch.Tensor] = [x, weight]
-        if bias is not None:
-            tensors_to_save.append(bias)
-        ctx.save_for_backward(*tensors_to_save)
+        ctx.save_for_backward(x, weight)
         ctx.has_bias = bias is not None
         ctx.stride = stride
         ctx.padding = padding
