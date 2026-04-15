@@ -283,7 +283,7 @@ def validate_checkpoint_compatibility(checkpoint: dict[str, Any], model_args: An
         _patch_proj_key = "backbone.0.encoder.encoder.embeddings.patch_embeddings.projection.weight"
         _ckpt_proj_w = checkpoint.get("model", {}).get(_patch_proj_key)
         _ckpt_proj_shape = getattr(_ckpt_proj_w, "shape", None)
-        if _ckpt_proj_shape is not None and len(_ckpt_proj_shape) >= 4 and _ckpt_proj_shape[2] == _ckpt_proj_shape[3]:
+        if _ckpt_proj_shape is not None and len(_ckpt_proj_shape) == 4 and _ckpt_proj_shape[2] == _ckpt_proj_shape[3]:
             _inferred_ps = int(_ckpt_proj_shape[-1])
             _model_ps: int | None = getattr(model_args, "patch_size", None)
             if _model_ps is not None and _inferred_ps != _model_ps:
