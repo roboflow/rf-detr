@@ -5799,6 +5799,10 @@ state is stripped via :func:<code>rfdetr.util.misc.strip_checkpoint</code>.</p>
 <p>Checkpoints are only updated on validation epochs where the monitor metric
 is actually logged.  On non-eval epochs (when <code>eval_interval &gt; 1</code> causes
 COCO evaluation to be skipped) the callback is a no-op.</p>
+<p><code>state_dict()</code> and <code>load_state_dict()</code> are overridden to persist
+<code>_best_ema</code> in the Lightning callback state, ensuring that
+<code>trainer.fit(ckpt_path=...)</code> resumes EMA high-water-mark tracking
+from the correct value.</p>
 
 
 <p><span class="doc-section-title">Parameters:</span></p>
