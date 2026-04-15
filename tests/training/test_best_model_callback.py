@@ -1261,3 +1261,34 @@ class TestBestEmaStatePersistence:
             "on_fit_end must select EMA (epoch 3, best=0.8) over regular (epoch 1, best=0.6); "
             f"got epoch_completed={completed} — _best_ema not restored from state_dict"
         )
+
+    @pytest.mark.parametrize(
+        ("mutate_state", "expected_best_ema"),
+        [
+            pytest.param(
+                lambda state: state.pop("_best_ema"),
+                0.0,
+                id="missing_key",
+            ),
+            pytest.param(
+                lambda state: state.__setitem__("_best_ema", int(1)),
+                1.0,
+                id="int_coercion",
+            ),
+            pytest.param(
+                lambda state: state.__setitem__("_best_ema", str("0.75")),
+                0.75,
+                id="string_coercion",
+            ),
+        ],
+    )
+    def test_load_state_dict_backward_compat(self, tmp_path: Path, mutate_state, expected_best_ema: float) -> None:
+        """load_state_dict() keeps backward-compatible _best_ema restoration behavior."""
+        cb = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95")
+        state = cb.state_dict()
+        mutate_state(state)
+
+        cb.load_state_dict(state)
+
+        assert isinstance(cb._best_ema, float)
+        assert cb._best_ema == expected_best_ema
