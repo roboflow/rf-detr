@@ -562,31 +562,50 @@ class TestPredictClassNameData:
             "Background class (class_id == num_classes) must map to '__background__', not empty string"
         )
 
-    def test_background_class_id_does_not_emit_oob_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_background_class_id_does_not_emit_oob_warning(self) -> None:
         """Predicting the background class must not emit an out-of-range warning.
 
         The background class (class_id == num_classes) is expected DETR behaviour,
         not a model error. Warning on it misleads users into thinking something is wrong.
 
+        Uses _warned_once state (not caplog) because the RF-DETR logger has propagate=False,
+        which prevents caplog from capturing records via the root-logger handler.
+
         Regression / contract test for https://github.com/roboflow/rf-detr/pull/966
         post-merge issue reported by @Alarmod.
         """
-        import logging
+        from rfdetr.utilities.logger import get_logger
+
+        # Reset warning_once state so this test is not affected by earlier tests that may
+        # have already triggered the same message template, masking a reintroduced warning.
+        logger = get_logger()
+        logger._warned_once.clear()
 
         model = self._make_model_with_class_names(["cat", "dog"], labels=[2])
         img = PIL.Image.new("RGB", (28, 28))
-        with caplog.at_level(logging.WARNING, logger="rf-detr"):
-            model.predict(img)
-        oob_warnings = [r for r in caplog.records if r.levelno >= logging.WARNING and "out of range" in r.getMessage()]
+        model.predict(img)
+        oob_warnings = [msg for msg in logger._warned_once if "out of range" in msg]
         assert not oob_warnings, "Background class (class_id == num_classes) must not trigger an out-of-range warning"
 
-    def test_truly_oob_class_id_still_maps_to_empty_string(self) -> None:
-        """A class_id strictly above num_classes (not the background class) still maps to empty string.
+    def test_truly_oob_class_id_still_maps_to_empty_string_and_warns(self) -> None:
+        """A class_id strictly above num_classes still maps to empty string AND emits a warning.
 
-        class_id == n is background; class_id > n is truly unexpected and must still produce ''.
+        class_id == n is background (no warning); class_id > n is truly unexpected — must
+        produce '' AND trigger the out-of-range warning so the caller knows something is wrong.
+
+        Uses _warned_once state (not caplog) because the RF-DETR logger has propagate=False,
+        which prevents caplog from capturing records via the root-logger handler.
         """
+        from rfdetr.utilities.logger import get_logger
+
+        # Reset warning_once state so this test is not affected by deduplication from earlier tests.
+        logger = get_logger()
+        logger._warned_once.clear()
+
         # n=2, background is class_id=2; class_id=5 is truly OOB (> n)
         model = self._make_model_with_class_names(["cat", "dog"], labels=[5])
         img = PIL.Image.new("RGB", (28, 28))
         detections = model.predict(img)
         assert detections.data["class_name"][0] == "", "Truly OOB class_id (> num_classes) must produce empty string"
+        oob_warnings = [msg for msg in logger._warned_once if "out of range" in msg]
+        assert oob_warnings, "Truly OOB class_id (> num_classes) must trigger an out-of-range warning"
