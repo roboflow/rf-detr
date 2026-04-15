@@ -73,7 +73,7 @@ class _DepthwiseConvWithoutCuDNN(torch.autograd.Function):
     def backward(
         ctx: torch.autograd.function.FunctionCtx,
         grad_output: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None, None, None, None, None]:
+    ) -> tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None, None, None, None, None]:
         """Compute gradients with cuDNN disabled.
 
         Args:
@@ -81,7 +81,9 @@ class _DepthwiseConvWithoutCuDNN(torch.autograd.Function):
             grad_output: Upstream gradient ``(N, C, H, W)``.
 
         Returns:
-            Gradients for each ``forward`` input.  Non-tensor inputs get ``None``.
+            Gradients for each ``forward`` input.  Inputs that do not require
+            gradients (``ctx.needs_input_grad[i]`` is ``False``) get ``None``.
+            Non-tensor inputs always get ``None``.
 
         Note:
             Under AMP (``"16-mixed"``), ``grad_output`` arrives as ``fp16`` while
@@ -90,37 +92,49 @@ class _DepthwiseConvWithoutCuDNN(torch.autograd.Function):
             ``grad_input`` is then cast back to the original input dtype so
             downstream gradient accumulation uses the expected dtype.
         """
-        saved = ctx.saved_tensors
-        x, weight = saved[0], saved[1]
-        # Under AMP ("16-mixed" on T4/P100), grad_output arrives as fp16 while
-        # weight stays fp32.  conv2d_input requires both to share a dtype, so
-        # upcast to weight.dtype (fp32) for the gradient computation, then cast
-        # grad_input back to the original input dtype for correct accumulation.
+        x, weight = ctx.saved_tensors
         input_dtype = x.dtype
-        grad_output = grad_output.to(dtype=weight.dtype)
-        x = x.to(dtype=weight.dtype)
-        # Same process-global caveat as forward: safe under DDP, not under DataParallel.
-        with torch.backends.cudnn.flags(enabled=False):
-            grad_input = torch.nn.grad.conv2d_input(
-                x.shape,
-                weight,
-                grad_output,
-                stride=ctx.stride,
-                padding=ctx.padding,
-                dilation=ctx.dilation,
-                groups=ctx.groups,
-            )
-            grad_weight = torch.nn.grad.conv2d_weight(
-                x,
-                weight.shape,
-                grad_output,
-                stride=ctx.stride,
-                padding=ctx.padding,
-                dilation=ctx.dilation,
-                groups=ctx.groups,
-            )
-        grad_bias = grad_output.sum(dim=(0, 2, 3)) if ctx.has_bias else None
-        return grad_input.to(dtype=input_dtype), grad_weight, grad_bias, None, None, None, None
+
+        needs_x_grad = ctx.needs_input_grad[0]
+        needs_w_grad = ctx.needs_input_grad[1]
+        needs_b_grad = ctx.has_bias and ctx.needs_input_grad[2]
+
+        grad_input = None
+        grad_weight = None
+        grad_bias = None
+
+        if needs_x_grad or needs_w_grad:
+            # Under AMP ("16-mixed" on T4/P100), grad_output arrives as fp16 while
+            # weight stays fp32.  conv2d_input/conv2d_weight require matching dtypes,
+            # so upcast to weight.dtype (fp32); cast grad_input back afterward.
+            grad_output_cast = grad_output.to(dtype=weight.dtype)
+            # Same process-global caveat as forward: safe under DDP, not under DataParallel.
+            with torch.backends.cudnn.flags(enabled=False):
+                if needs_x_grad:
+                    grad_input = torch.nn.grad.conv2d_input(
+                        x.shape,
+                        weight,
+                        grad_output_cast,
+                        stride=ctx.stride,
+                        padding=ctx.padding,
+                        dilation=ctx.dilation,
+                        groups=ctx.groups,
+                    ).to(dtype=input_dtype)
+                if needs_w_grad:
+                    grad_weight = torch.nn.grad.conv2d_weight(
+                        x.to(dtype=weight.dtype),
+                        weight.shape,
+                        grad_output_cast,
+                        stride=ctx.stride,
+                        padding=ctx.padding,
+                        dilation=ctx.dilation,
+                        groups=ctx.groups,
+                    )
+
+        if needs_b_grad:
+            grad_bias = grad_output.to(dtype=weight.dtype).sum(dim=(0, 2, 3))
+
+        return grad_input, grad_weight, grad_bias, None, None, None, None
 
 
 class DepthwiseConvBlock(nn.Module):
