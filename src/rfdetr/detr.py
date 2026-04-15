@@ -1255,16 +1255,25 @@ class RFDETR:
             # original dataset format (COCO category IDs are remapped during
             # training), so class_names[class_id] is the correct mapping.
             # Always set data["class_name"] for a consistent interface.
+            #
+            # RF-DETR uses num_classes + 1 logits internally; class index n is the
+            # background/no-object class and is expected — map it to "__background__"
+            # without warning.  Indices outside [0, n] are genuinely unexpected and
+            # still produce an empty string with a one-time warning.
             class_ids = detections.class_id if detections.class_id is not None else np.array([], dtype=int)
-            oob_ids = [cid for cid in class_ids if not (0 <= cid < n)]
-            if oob_ids:
+            truly_oob = [cid for cid in class_ids if not (0 <= cid <= n)]
+            if truly_oob:
                 logger.warning_once(
-                    "predict() encountered class_id values out of range [0, %d): %s — mapping to empty string",
+                    "predict() encountered class_id values out of range [0, %d]: %s — mapping to empty string",
                     n,
-                    oob_ids[:5],
+                    truly_oob[:5],
                 )
             detections.data["class_name"] = np.array(
-                [model_class_names[cid] if 0 <= cid < n else "" for cid in class_ids], dtype=object
+                [
+                    model_class_names[cid] if 0 <= cid < n else ("__background__" if cid == n else "")
+                    for cid in class_ids
+                ],
+                dtype=object,
             )
 
             detections_list.append(detections)
