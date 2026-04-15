@@ -105,9 +105,9 @@ class TestPredictSourceData:
         img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
         model = _DummyRFDETR()
         detections = model.predict(img)
-        assert "source_image" in detections.data
-        assert isinstance(detections.data["source_image"], np.ndarray)
-        assert detections.data["source_image"].shape == (48, 64, 3)
+        assert "source_image" in detections.metadata
+        assert isinstance(detections.metadata["source_image"], np.ndarray)
+        assert detections.metadata["source_image"].shape == (48, 64, 3)
         assert np.array_equal(detections.data["source_shape"], np.array([[48, 64]]))
 
     def test_source_image_included_by_default_tensor(self) -> None:
@@ -115,10 +115,10 @@ class TestPredictSourceData:
         tensor = torch.rand(3, 48, 64)
         model = _DummyRFDETR()
         detections = model.predict(tensor)
-        assert "source_image" in detections.data
-        assert isinstance(detections.data["source_image"], np.ndarray)
-        assert detections.data["source_image"].dtype == np.uint8
-        assert detections.data["source_image"].shape == (48, 64, 3)
+        assert "source_image" in detections.metadata
+        assert isinstance(detections.metadata["source_image"], np.ndarray)
+        assert detections.metadata["source_image"].dtype == np.uint8
+        assert detections.metadata["source_image"].shape == (48, 64, 3)
         assert np.array_equal(detections.data["source_shape"], np.array([[48, 64]]))
 
     def test_source_image_can_be_disabled(self) -> None:
@@ -126,7 +126,7 @@ class TestPredictSourceData:
         img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
         model = _DummyRFDETR()
         detections = model.predict(img, include_source_image=False)
-        assert "source_image" not in detections.data
+        assert "source_image" not in detections.metadata
         assert np.array_equal(detections.data["source_shape"], np.array([[48, 64]]))
 
     def test_source_image_from_pil(self) -> None:
@@ -134,9 +134,9 @@ class TestPredictSourceData:
         img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
         model = _DummyRFDETR()
         detections = model.predict(img, include_source_image=True)
-        assert "source_image" in detections.data
-        assert isinstance(detections.data["source_image"], np.ndarray)
-        assert detections.data["source_image"].shape == (48, 64, 3)
+        assert "source_image" in detections.metadata
+        assert isinstance(detections.metadata["source_image"], np.ndarray)
+        assert detections.metadata["source_image"].shape == (48, 64, 3)
 
     def test_source_shape_from_pil(self) -> None:
         """PIL input stores source_shape as a per-detection numpy array."""
@@ -154,10 +154,10 @@ class TestPredictSourceData:
         tensor = torch.rand(3, 48, 64)
         model = _DummyRFDETR()
         detections = model.predict(tensor, include_source_image=True)
-        assert "source_image" in detections.data
-        assert isinstance(detections.data["source_image"], np.ndarray)
-        assert detections.data["source_image"].dtype == np.uint8
-        assert detections.data["source_image"].shape == (48, 64, 3)
+        assert "source_image" in detections.metadata
+        assert isinstance(detections.metadata["source_image"], np.ndarray)
+        assert detections.metadata["source_image"].dtype == np.uint8
+        assert detections.metadata["source_image"].shape == (48, 64, 3)
 
     def test_tensor_with_negative_values_raises(self) -> None:
         """Tensor with negative pixel values raises ValueError."""
@@ -173,8 +173,8 @@ class TestPredictSourceData:
         model = _DummyRFDETR()
         detections_list = model.predict([img1, img2], include_source_image=True)
         assert isinstance(detections_list, list)
-        assert detections_list[0].data["source_image"].shape == (48, 64, 3)
-        assert detections_list[1].data["source_image"].shape == (24, 32, 3)
+        assert detections_list[0].metadata["source_image"].shape == (48, 64, 3)
+        assert detections_list[1].metadata["source_image"].shape == (24, 32, 3)
         assert np.array_equal(detections_list[0].data["source_shape"], np.array([[48, 64]]))
         assert np.array_equal(detections_list[1].data["source_shape"], np.array([[24, 32]]))
 
@@ -198,6 +198,57 @@ class TestPredictSourceData:
             data = det_tuple[-1]
             assert np.array_equal(data["source_shape"], [48, 64])
 
+    def test_source_image_survives_boolean_index(self) -> None:
+        """Boolean-mask indexing must not raise IndexError when source_image is present.
+
+        Regression test for https://github.com/roboflow/rf-detr/issues/968.
+        source_image was stored as (H, W, C) in detections.data; supervision's
+        __getitem__ tried to index it with a per-detection boolean mask, raising
+        IndexError because H != N.
+        """
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+        model = _DummyRFDETR()
+        model.model = _DummyModel(labels=[0, 1])  # 2 detections
+        detections = model.predict(img)  # include_source_image=True by default
+
+        # Boolean-mask filtering — the pattern from issue #968
+        mask = detections.confidence > 0.5
+        filtered = detections[mask]
+        assert len(filtered) == int(mask.sum())
+        # source_image must survive the index operation unchanged (not dropped, not sliced)
+        assert "source_image" in filtered.metadata
+        assert filtered.metadata["source_image"].shape == (48, 64, 3)
+
+    def test_source_image_survives_class_id_boolean_index(self) -> None:
+        """Boolean index on class_id must not raise IndexError — exact issue #968 pattern.
+
+        The reporter used ``detections.class_id == 1`` to filter by class, producing a
+        partial boolean mask (1 of 2 detections).  This is the primary reproduction path
+        from the original bug report.
+        """
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+        model = _DummyRFDETR()
+        model.model = _DummyModel(labels=[0, 1])  # class_id 0 and 1
+        detections = model.predict(img)
+
+        # Exact pattern from issue #968: filter by class_id
+        mask = detections.class_id == 1  # partial mask — 1 of 2 detections
+        filtered = detections[mask]
+        assert len(filtered) == 1
+        assert "source_image" in filtered.metadata
+        assert filtered.metadata["source_image"].shape == (48, 64, 3)
+
+    def test_source_image_survives_integer_index(self) -> None:
+        """Integer indexing must pass metadata["source_image"] through unchanged."""
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+        model = _DummyRFDETR()
+        model.model = _DummyModel(labels=[0, 1])  # 2 detections
+        detections = model.predict(img)
+
+        single = detections[0]
+        assert "source_image" in single.metadata
+        assert single.metadata["source_image"].shape == (48, 64, 3)
+
     def test_source_shape_survives_detections_indexing(self) -> None:
         """Integer and boolean-mask indexing of sv.Detections must work correctly.
 
@@ -205,14 +256,11 @@ class TestPredictSourceData:
         MeanAveragePrecision.compute() uses __getitem__ (not just __iter__) on
         Detections objects — both paths go through get_data_item() and would have
         crashed on the old tuple format.
-
-        include_source_image=False avoids the pre-existing source_image indexing bug
-        (source_image is a per-image array, not per-detection; tracked separately).
         """
         img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
         model = _DummyRFDETR()
         model.model = _DummyModel(labels=[0, 1])  # 2 detections
-        detections = model.predict(img, include_source_image=False)
+        detections = model.predict(img)
 
         # Integer indexing: detections[i] returns a Detections with 1 element
         single = detections[0]

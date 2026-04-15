@@ -1078,8 +1078,12 @@ class RFDETR:
                 ``patch_size * num_windows``.
             include_source_image:
                 Whether to attach the original image as ``source_image`` in
-                ``detections.data``. Defaults to ``True`` for backward compatibility.
-                Set to ``False`` to reduce memory use when source images are not needed.
+                ``detections.metadata``. Defaults to ``True``.  Set to ``False``
+                to reduce memory use when source images are not needed.
+                **Note**: ``source_image`` moved from ``detections.data`` to
+                ``detections.metadata`` — update callers reading
+                ``detections.data["source_image"]`` to use
+                ``detections.metadata["source_image"]``.
             **kwargs:
                 Additional keyword arguments.
 
@@ -1093,15 +1097,26 @@ class RFDETR:
               0-indexed; ``class_names[0]`` is the first class regardless of the
               original dataset format (COCO category IDs are remapped to 0-based
               indices during training).
-            * ``"source_image"`` – the original input image (only present when
-              ``include_source_image=True``, which is the default).
             * ``"source_shape"`` – ``np.ndarray`` of shape ``(N, 2)`` and dtype
               ``int64``, where each row is ``[height, width]`` of the source image.
               ``N`` equals the number of detections (0 when threshold filters all
               results) so that iteration over ``sv.Detections`` works correctly.
+              Stored in ``data`` (not ``metadata``) because each row maps to exactly
+              one detection, so supervision's per-detection indexing works correctly.
               Changed: this was previously a ``(height, width)`` Python ``tuple``;
               callers using ``isinstance(v, tuple)`` or ``v == (H, W)`` must be
               updated.
+
+            The ``metadata`` dict of each :class:`~supervision.Detections` object
+            contains:
+
+            * ``"source_image"`` – the original input image as a ``uint8`` numpy
+              array of shape ``(H, W, 3)`` (only present when
+              ``include_source_image=True``, which is the default).  Stored in
+              ``metadata`` rather than ``data`` so that boolean and integer indexing
+              of :class:`~supervision.Detections` works correctly — supervision
+              indexes every value in ``data`` by the detection mask, but passes
+              ``metadata`` through unchanged.
 
         Raises:
             ValueError: If ``shape`` cannot be unpacked as a two-element sequence,
@@ -1260,7 +1275,7 @@ class RFDETR:
                 )
 
             if include_source_image:
-                detections.data["source_image"] = source_images[i]
+                detections.metadata["source_image"] = source_images[i]
             detections.data["source_shape"] = np.tile(np.array(orig_sizes[i], dtype=np.int64), (len(detections), 1))
 
             # Attach class names so callers can map class_id → name without a
