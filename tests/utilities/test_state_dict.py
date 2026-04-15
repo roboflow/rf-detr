@@ -234,6 +234,52 @@ class TestValidateCheckpointCompatibility:
                 {},
                 id="model_no_patch_size_attr_skips",
             ),
+            pytest.param(
+                {
+                    "model": {
+                        "backbone.0.encoder.encoder.embeddings.patch_embeddings.projection.weight": torch.zeros(
+                            384, 3
+                        )  # 2D — not a Conv2d weight; rank guard must skip cleanly
+                    }
+                },
+                {"patch_size": 16},
+                id="proj_weight_2d_skips",
+            ),
+            pytest.param(
+                {
+                    "model": {
+                        "backbone.0.encoder.encoder.embeddings.patch_embeddings.projection.weight": torch.zeros(
+                            384, 3, 16
+                        )  # 3D — not a Conv2d weight; rank guard must skip cleanly
+                    }
+                },
+                {"patch_size": 16},
+                id="proj_weight_3d_skips",
+            ),
+            pytest.param(
+                {
+                    "args": SimpleNamespace(patch_size=14),
+                    "model": {
+                        "backbone.0.encoder.encoder.embeddings.patch_embeddings.projection.weight": torch.zeros(
+                            384, 3, 16, 16
+                        )  # projection suggests 16, but args.patch_size=14 takes precedence
+                    },
+                },
+                {"patch_size": 14},
+                id="args_patch_size_suppresses_projection_inference",
+            ),
+            pytest.param(
+                {
+                    "args": {"patch_size": 14},  # PTL-style dict args (not SimpleNamespace)
+                    "model": {
+                        "backbone.0.encoder.encoder.embeddings.patch_embeddings.projection.weight": torch.zeros(
+                            384, 3, 16, 16
+                        )  # projection suggests 16, but dict args["patch_size"]=14 takes precedence
+                    },
+                },
+                {"patch_size": 14},
+                id="dict_args_patch_size_suppresses_projection_inference",
+            ),
         ],
     )
     def test_projection_inference_silently_skips_when_incomplete(
@@ -242,7 +288,8 @@ class TestValidateCheckpointCompatibility:
         """Shape-based patch_size check is skipped when key or attribute is absent.
 
         Verifies backward compatibility: missing projection key, missing model key,
-        or model_args without patch_size attribute must all be handled without error.
+        model_args without patch_size attribute, non-4D projection weights, or an
+        explicit args.patch_size (SimpleNamespace or dict) must all be handled without error.
         """
         model_args = SimpleNamespace(**model_args_kwargs)
         validate_checkpoint_compatibility(checkpoint, model_args)  # must not raise
