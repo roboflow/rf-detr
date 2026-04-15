@@ -1292,3 +1292,22 @@ class TestBestEmaStatePersistence:
 
         assert isinstance(cb._best_ema, float)
         assert cb._best_ema == expected_best_ema
+
+    @pytest.mark.parametrize(
+        "bad_value",
+        [
+            pytest.param(float("nan"), id="nan"),
+            pytest.param(float("inf"), id="inf"),
+            pytest.param(float("-inf"), id="neg_inf"),
+        ],
+    )
+    def test_load_state_dict_non_finite_values(self, bad_value) -> None:
+        """load_state_dict() resets non-finite persisted _best_ema values to 0.0."""
+        cb = BestModelCallback(output_dir=".")
+        cb._best_ema = 999.0
+        state = cb.state_dict()
+        state["_best_ema"] = bad_value
+
+        cb.load_state_dict(state)
+
+        assert cb._best_ema == 0.0

@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import math
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -213,6 +214,8 @@ class BestModelCallback(ModelCheckpoint):
         # Copy to avoid mutating the caller's dict — PTL may reuse it.
         state = dict(state_dict)
         self._best_ema = float(state.pop("_best_ema", 0.0))
+        if not math.isfinite(self._best_ema):
+            self._best_ema = 0.0
         super().load_state_dict(state)
 
     def _save_checkpoint(self, trainer: Trainer, filepath: str) -> None:
