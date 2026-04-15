@@ -215,6 +215,9 @@ class TestPredictSourceData:
         mask = detections.confidence > 0.5
         filtered = detections[mask]
         assert len(filtered) == int(mask.sum())
+        # source_image must survive the index operation unchanged (not dropped, not sliced)
+        assert "source_image" in filtered.metadata
+        assert filtered.metadata["source_image"].shape == (48, 64, 3)
 
     def test_source_shape_survives_detections_indexing(self) -> None:
         """Integer and boolean-mask indexing of sv.Detections must work correctly.
