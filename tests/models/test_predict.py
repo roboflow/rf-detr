@@ -219,6 +219,36 @@ class TestPredictSourceData:
         assert "source_image" in filtered.metadata
         assert filtered.metadata["source_image"].shape == (48, 64, 3)
 
+    def test_source_image_survives_class_id_boolean_index(self) -> None:
+        """Boolean index on class_id must not raise IndexError — exact issue #968 pattern.
+
+        The reporter used ``detections.class_id == 1`` to filter by class, producing a
+        partial boolean mask (1 of 2 detections).  This is the primary reproduction path
+        from the original bug report.
+        """
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+        model = _DummyRFDETR()
+        model.model = _DummyModel(labels=[0, 1])  # class_id 0 and 1
+        detections = model.predict(img)
+
+        # Exact pattern from issue #968: filter by class_id
+        mask = detections.class_id == 1  # partial mask — 1 of 2 detections
+        filtered = detections[mask]
+        assert len(filtered) == 1
+        assert "source_image" in filtered.metadata
+        assert filtered.metadata["source_image"].shape == (48, 64, 3)
+
+    def test_source_image_survives_integer_index(self) -> None:
+        """Integer indexing must pass metadata["source_image"] through unchanged."""
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+        model = _DummyRFDETR()
+        model.model = _DummyModel(labels=[0, 1])  # 2 detections
+        detections = model.predict(img)
+
+        single = detections[0]
+        assert "source_image" in single.metadata
+        assert single.metadata["source_image"].shape == (48, 64, 3)
+
     def test_source_shape_survives_detections_indexing(self) -> None:
         """Integer and boolean-mask indexing of sv.Detections must work correctly.
 
