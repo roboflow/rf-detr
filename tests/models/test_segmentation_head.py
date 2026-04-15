@@ -185,12 +185,12 @@ def test_depthwise_conv_no_cudnn_bias_none() -> None:
     Exercises the ctx.has_bias=False branch in forward and the grad_bias=None
     return in backward — never reached via DepthwiseConvBlock (always has bias).
     """
-    from rfdetr.models.heads.segmentation import _DepthwiseConvNoCuDNN
+    from rfdetr.models.heads.segmentation import _DepthwiseConvWithoutCuDNN
 
     dim = 8
     weight = torch.randn(dim, 1, 3, 3, requires_grad=True)
     x = torch.randn(1, dim, 4, 4, requires_grad=True)
-    y = _DepthwiseConvNoCuDNN.apply(x, weight, None, (1, 1), (1, 1), (1, 1), dim)
+    y = _DepthwiseConvWithoutCuDNN.apply(x, weight, None, (1, 1), (1, 1), (1, 1), dim)
     y_ref = torch.nn.functional.conv2d(x.detach(), weight.detach(), None, stride=1, padding=1, dilation=1, groups=dim)
     assert torch.allclose(y.detach(), y_ref, atol=1e-6)
     y.sum().backward()

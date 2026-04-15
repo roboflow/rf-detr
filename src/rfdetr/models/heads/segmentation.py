@@ -13,7 +13,7 @@ import torch.nn.functional as F  # noqa: N812
 from rfdetr.utilities.tensors import _bilinear_grid_sample
 
 
-class _DepthwiseConvNoCuDNN(torch.autograd.Function):
+class _DepthwiseConvWithoutCuDNN(torch.autograd.Function):
     """Depthwise conv2d with cuDNN disabled in both forward and backward.
 
     ``torch.backends.cudnn.flags(enabled=False)`` as a context manager only
@@ -143,7 +143,7 @@ class DepthwiseConvBlock(nn.Module):
         # backward.  A plain context-manager only covers forward; the backward
         # for nn.Conv2d runs outside that scope and re-enables cuDNN,
         # triggering RuntimeError on T4/P100 GPUs (issue #731).
-        return _DepthwiseConvNoCuDNN.apply(
+        return _DepthwiseConvWithoutCuDNN.apply(
             x,
             self.dwconv.weight,
             self.dwconv.bias,
