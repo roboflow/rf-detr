@@ -1095,7 +1095,13 @@ class RFDETR:
               indices during training).
             * ``"source_image"`` – the original input image (only present when
               ``include_source_image=True``, which is the default).
-            * ``"source_shape"`` – ``(height, width)`` tuple of the source image dimensions.
+            * ``"source_shape"`` – ``np.ndarray`` of shape ``(N, 2)`` and dtype
+              ``int64``, where each row is ``[height, width]`` of the source image.
+              ``N`` equals the number of detections (0 when threshold filters all
+              results) so that iteration over ``sv.Detections`` works correctly.
+              Changed: this was previously a ``(height, width)`` Python ``tuple``;
+              callers using ``isinstance(v, tuple)`` or ``v == (H, W)`` must be
+              updated.
 
         Raises:
             ValueError: If ``shape`` cannot be unpacked as a two-element sequence,
@@ -1255,7 +1261,7 @@ class RFDETR:
 
             if include_source_image:
                 detections.data["source_image"] = source_images[i]
-            detections.data["source_shape"] = orig_sizes[i]
+            detections.data["source_shape"] = np.tile(np.array(orig_sizes[i], dtype=np.int64), (len(detections), 1))
 
             # Attach class names so callers can map class_id → name without a
             # separate lookup.  class_id is always 0-indexed regardless of the
