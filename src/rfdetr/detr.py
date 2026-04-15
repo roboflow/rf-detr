@@ -1097,6 +1097,15 @@ class RFDETR:
               0-indexed; ``class_names[0]`` is the first class regardless of the
               original dataset format (COCO category IDs are remapped to 0-based
               indices during training).
+            * ``"source_shape"`` – ``np.ndarray`` of shape ``(N, 2)`` and dtype
+              ``int64``, where each row is ``[height, width]`` of the source image.
+              ``N`` equals the number of detections (0 when threshold filters all
+              results) so that iteration over ``sv.Detections`` works correctly.
+              Stored in ``data`` (not ``metadata``) because each row maps to exactly
+              one detection, so supervision's per-detection indexing works correctly.
+              Changed: this was previously a ``(height, width)`` Python ``tuple``;
+              callers using ``isinstance(v, tuple)`` or ``v == (H, W)`` must be
+              updated.
 
             The ``metadata`` dict of each :class:`~supervision.Detections` object
             contains:
@@ -1108,13 +1117,6 @@ class RFDETR:
               of :class:`~supervision.Detections` works correctly — supervision
               indexes every value in ``data`` by the detection mask, but passes
               ``metadata`` through unchanged.
-            * ``"source_shape"`` – ``np.ndarray`` of shape ``(N, 2)`` and dtype
-              ``int64``, where each row is ``[height, width]`` of the source image.
-              ``N`` equals the number of detections (0 when threshold filters all
-              results) so that iteration over ``sv.Detections`` works correctly.
-              Changed: this was previously a ``(height, width)`` Python ``tuple``;
-              callers using ``isinstance(v, tuple)`` or ``v == (H, W)`` must be
-              updated.
 
         Raises:
             ValueError: If ``shape`` cannot be unpacked as a two-element sequence,
