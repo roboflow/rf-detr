@@ -4,12 +4,20 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+"""Tests for DepthwiseConvBlock and _DepthwiseConvNoCuDNN (segmentation head)."""
+
 from contextlib import contextmanager
 
 import pytest
 import torch
 
 from rfdetr.models.heads.segmentation import DepthwiseConvBlock
+
+
+@pytest.fixture(autouse=True)
+def _reset_random_seeds() -> None:
+    """Reset random seeds before each test for reproducibility."""
+    torch.manual_seed(42)
 
 
 @pytest.mark.parametrize(
@@ -169,3 +177,42 @@ def test_depthwise_conv_backward_fp16_grad_output() -> None:
     assert x.grad is not None
     assert x.grad.dtype == torch.float32
     assert torch.isfinite(x.grad).all()
+
+
+def test_depthwise_conv_no_cudnn_bias_none() -> None:
+    """_DepthwiseConvNoCuDNN forward and backward work correctly with bias=None.
+
+    Exercises the ctx.has_bias=False branch in forward and the grad_bias=None
+    return in backward — never reached via DepthwiseConvBlock (always has bias).
+    """
+    from rfdetr.models.heads.segmentation import _DepthwiseConvNoCuDNN
+
+    dim = 8
+    weight = torch.randn(dim, 1, 3, 3)
+    x = torch.randn(1, dim, 4, 4, requires_grad=True)
+    y = _DepthwiseConvNoCuDNN.apply(x, weight, None, (1, 1), (1, 1), (1, 1), dim)
+    y_ref = torch.nn.functional.conv2d(x.detach(), weight, None, stride=1, padding=1, dilation=1, groups=dim)
+    assert torch.allclose(y.detach(), y_ref, atol=1e-6)
+    y.sum().backward()
+    assert x.grad is not None
+    assert x.grad.shape == x.shape
+    assert torch.isfinite(x.grad).all()
+
+
+@pytest.mark.parametrize("layer_scale_init_value", [0, 1e-6], ids=["no_gamma", "with_gamma"])
+def test_depthwise_conv_block_layer_scale(layer_scale_init_value: float) -> None:
+    """DepthwiseConvBlock with and without layer scaling produces valid output and gradients.
+
+    Exercises the gamma=None (layer_scale_init_value=0) and gamma!=None
+    (layer_scale_init_value>0) branches in DepthwiseConvBlock.forward().
+    """
+    block = DepthwiseConvBlock(dim=8, layer_scale_init_value=layer_scale_init_value)
+    x = torch.randn(1, 8, 4, 4, requires_grad=True)
+    y = block(x)
+    assert y.shape == x.shape
+    y.sum().backward()
+    assert x.grad is not None
+    assert torch.isfinite(x.grad).all()
+    if layer_scale_init_value > 0:
+        assert block.gamma is not None
+        assert block.gamma.grad is not None
