@@ -258,6 +258,17 @@ class TestValidateCheckpointCompatibility:
             ),
             pytest.param(
                 {
+                    "model": {
+                        "backbone.0.encoder.encoder.embeddings.patch_embeddings.projection.weight": torch.zeros(
+                            384, 3, 16, 16, 16
+                        )  # 5D — Conv3d-like; rank guard (== 4) must skip cleanly
+                    }
+                },
+                {"patch_size": 8},
+                id="proj_weight_5d_skips",
+            ),
+            pytest.param(
+                {
                     "args": SimpleNamespace(patch_size=14),
                     "model": {
                         "backbone.0.encoder.encoder.embeddings.patch_embeddings.projection.weight": torch.zeros(
