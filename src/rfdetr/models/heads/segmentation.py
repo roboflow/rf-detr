@@ -13,6 +13,130 @@ import torch.nn.functional as F
 from rfdetr.utilities.tensors import _bilinear_grid_sample
 
 
+class _DepthwiseConvWithoutCuDNN(torch.autograd.Function):
+    """Depthwise conv2d with cuDNN disabled in both forward and backward.
+
+    ``torch.backends.cudnn.flags(enabled=False)`` as a context manager only
+    covers operations executed within its scope.  ``nn.Conv2d`` records the
+    forward op in the autograd graph; the corresponding backward kernels run
+    later, **outside** that scope, with cuDNN re-enabled.  On some CUDA stacks
+    (T4 / P100 on Kaggle / Colab) cuDNN fails engine selection for depthwise
+    conv backward, raising::
+
+        RuntimeError: GET was unable to find an engine to execute this computation
+
+    This ``Function`` disables cuDNN in ``backward`` as well, fixing the crash.
+
+    See: https://github.com/roboflow/rf-detr/issues/731
+    """
+
+    @staticmethod
+    def forward(
+        ctx: torch.autograd.function.FunctionCtx,
+        x: torch.Tensor,
+        weight: torch.Tensor,
+        bias: torch.Tensor | None,
+        stride: tuple[int, ...],
+        padding: tuple[int, ...],
+        dilation: tuple[int, ...],
+        groups: int,
+    ) -> torch.Tensor:
+        """Run depthwise conv2d forward with cuDNN disabled.
+
+        Args:
+            ctx: Autograd context.
+            x: Input feature map ``(N, C, H, W)``.
+            weight: Convolution weight tensor.
+            bias: Optional convolution bias tensor.
+            stride: Convolution stride.
+            padding: Convolution padding.
+            dilation: Convolution dilation.
+            groups: Number of groups (equals ``C`` for depthwise).
+
+        Returns:
+            Output feature map ``(N, C, H, W)``.
+        """
+        ctx.save_for_backward(x, weight)
+        ctx.has_bias = bias is not None
+        ctx.stride = stride
+        ctx.padding = padding
+        ctx.dilation = dilation
+        ctx.groups = groups
+        # Note: torch.backends.cudnn.flags() is process-global state, not op-local.
+        # Safe under DDP (separate processes per rank), but concurrent backward passes
+        # in the same process (DataParallel, user threads) could briefly observe the
+        # wrong cuDNN setting.  For DDP-only training this is not a concern.
+        with torch.backends.cudnn.flags(enabled=False):
+            return F.conv2d(x, weight, bias, stride=stride, padding=padding, dilation=dilation, groups=groups)
+
+    @staticmethod
+    def backward(
+        ctx: torch.autograd.function.FunctionCtx,
+        grad_output: torch.Tensor,
+    ) -> tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None, None, None, None, None]:
+        """Compute gradients with cuDNN disabled.
+
+        Args:
+            ctx: Autograd context with saved tensors and conv parameters.
+            grad_output: Upstream gradient ``(N, C, H, W)``.
+
+        Returns:
+            Gradients for each ``forward`` input.  Inputs that do not require
+            gradients (``ctx.needs_input_grad[i]`` is ``False``) get ``None``.
+            Non-tensor inputs always get ``None``.
+
+        Note:
+            Under AMP (``"16-mixed"``), ``grad_output`` arrives as ``fp16`` while
+            the saved ``weight`` stays ``fp32``.  Both tensors are upcast to
+            ``weight.dtype`` before calling ``conv2d_input`` / ``conv2d_weight``.
+            ``grad_input`` is then cast back to the original input dtype so
+            downstream gradient accumulation uses the expected dtype.
+        """
+        x, weight = ctx.saved_tensors
+        input_dtype = x.dtype
+
+        needs_x_grad = ctx.needs_input_grad[0]
+        needs_w_grad = ctx.needs_input_grad[1]
+        needs_b_grad = ctx.has_bias and ctx.needs_input_grad[2]
+
+        grad_input = None
+        grad_weight = None
+        grad_bias = None
+
+        if needs_x_grad or needs_w_grad:
+            # Under AMP ("16-mixed" on T4/P100), grad_output arrives as fp16 while
+            # weight stays fp32.  conv2d_input/conv2d_weight require matching dtypes,
+            # so upcast to weight.dtype (fp32); cast grad_input back afterward.
+            grad_output_cast = grad_output.to(dtype=weight.dtype)
+            # Same process-global caveat as forward: safe under DDP, not under DataParallel.
+            with torch.backends.cudnn.flags(enabled=False):
+                if needs_x_grad:
+                    grad_input = torch.nn.grad.conv2d_input(
+                        x.shape,
+                        weight,
+                        grad_output_cast,
+                        stride=ctx.stride,
+                        padding=ctx.padding,
+                        dilation=ctx.dilation,
+                        groups=ctx.groups,
+                    ).to(dtype=input_dtype)
+                if needs_w_grad:
+                    grad_weight = torch.nn.grad.conv2d_weight(
+                        x.to(dtype=weight.dtype),
+                        weight.shape,
+                        grad_output_cast,
+                        stride=ctx.stride,
+                        padding=ctx.padding,
+                        dilation=ctx.dilation,
+                        groups=ctx.groups,
+                    )
+
+        if needs_b_grad:
+            grad_bias = grad_output.to(dtype=weight.dtype).sum(dim=(0, 2, 3))
+
+        return grad_input, grad_weight, grad_bias, None, None, None, None
+
+
 class DepthwiseConvBlock(nn.Module):
     r"""Simplified ConvNeXt block without the MLP subnet"""
 
@@ -29,10 +153,19 @@ class DepthwiseConvBlock(nn.Module):
         )
 
     def _depthwise_conv(self, x: torch.Tensor) -> torch.Tensor:
-        # Always run this depthwise conv with cuDNN disabled to avoid
-        # backend engine selection failures on some CUDA stacks (e.g. T4/Colab).
-        with torch.backends.cudnn.flags(enabled=False):
-            return self.dwconv(x)
+        # Custom autograd Function so cuDNN is disabled in both forward AND
+        # backward.  A plain context-manager only covers forward; the backward
+        # for nn.Conv2d runs outside that scope and re-enables cuDNN,
+        # triggering RuntimeError on T4/P100 GPUs (issue #731).
+        return _DepthwiseConvWithoutCuDNN.apply(
+            x,
+            self.dwconv.weight,
+            self.dwconv.bias,
+            self.dwconv.stride,
+            self.dwconv.padding,
+            self.dwconv.dilation,
+            self.dwconv.groups,
+        )
 
     def forward(self, x):
         input = x
