@@ -203,7 +203,7 @@ class BestModelCallback(ModelCheckpoint):
     def load_state_dict(self, state_dict: dict[str, Any]) -> None:
         """Restore callback state from a Lightning checkpoint.
 
-        Pops ``"_best_ema"`` from *state_dict* before delegating to the parent
+        Pops ``"_best_ema"`` from a shallow copy of *state_dict* before delegating to the parent
         so the parent does not receive an unexpected key.  Defaults to ``0.0``
         when the key is absent (e.g. checkpoints saved before this fix).
 
