@@ -127,7 +127,7 @@ def test_depthwise_conv_backward_produces_correct_gradients(device: str) -> None
 def test_depthwise_conv_gradients_match_reference() -> None:
     """Custom autograd Function gradients match nn.Conv2d gradients.
 
-    Verifies that _DepthwiseConvNoCuDNN produces the same gradients as
+    Verifies that _DepthwiseConvWithoutCuDNN produces the same gradients as
     a standard nn.Conv2d forward+backward (run with cuDNN disabled globally).
     """
     torch.manual_seed(42)
@@ -180,7 +180,7 @@ def test_depthwise_conv_backward_fp16_grad_output() -> None:
 
 
 def test_depthwise_conv_no_cudnn_bias_none() -> None:
-    """_DepthwiseConvNoCuDNN forward and backward work correctly with bias=None.
+    """_DepthwiseConvWithoutCuDNN forward and backward work correctly with bias=None.
 
     Exercises the ctx.has_bias=False branch in forward and the grad_bias=None
     return in backward — never reached via DepthwiseConvBlock (always has bias).
