@@ -43,7 +43,10 @@ class BestModelCallback(ModelCheckpoint):
     is actually logged.  On non-eval epochs (when ``eval_interval > 1`` causes
     COCO evaluation to be skipped) the callback is a no-op.
 
-    ``state_dict()`` and ``load_state_dict()`` are overridden to persist ``_best_ema`` in the Lightning callback state, ensuring that ``trainer.fit(ckpt_path=...)`` resumes EMA high-water-mark tracking from the correct value.
+    ``state_dict()`` and ``load_state_dict()`` are overridden to persist
+    ``_best_ema`` in the Lightning callback state, ensuring that
+    ``trainer.fit(ckpt_path=...)`` resumes EMA high-water-mark tracking
+    from the correct value.
 
     Args:
         output_dir: Directory where checkpoint files are written.

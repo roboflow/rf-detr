@@ -1311,3 +1311,29 @@ class TestBestEmaStatePersistence:
         cb.load_state_dict(state)
 
         assert cb._best_ema == 0.0
+
+    def test_load_state_dict_does_not_mutate_caller_dict(self, tmp_path: Path) -> None:
+        """load_state_dict must not pop or mutate the caller-supplied dict."""
+        cb1 = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95")
+        cb1._best_ema = 0.75
+        original_sd = cb1.state_dict()
+        saved = dict(original_sd)
+
+        cb2 = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95")
+        cb2.load_state_dict(original_sd)
+
+        assert original_sd["_best_ema"] == 0.75
+        assert original_sd == saved
+
+    def test_state_dict_roundtrip_initial_zero(self, tmp_path: Path) -> None:
+        """state_dict/load_state_dict round-trips the default _best_ema=0.0 correctly."""
+        cb1 = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95")
+        sd = cb1.state_dict()
+
+        assert "_best_ema" in sd
+        assert sd["_best_ema"] == 0.0
+
+        cb2 = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95")
+        cb2.load_state_dict(sd)
+
+        assert cb2._best_ema == 0.0
