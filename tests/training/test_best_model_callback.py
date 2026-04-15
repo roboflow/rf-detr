@@ -1192,12 +1192,15 @@ class TestBestEmaStatePersistence:
         # --- Pre-resume phase: establish EMA best of 0.75 ---
         cb_pre = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95")
         pl_module = _make_pl_module()
-        trainer_pre = _make_trainer({"val/mAP_50_95": 0.4, "val/ema_mAP_50_95": 0.75})
+        trainer_pre = _make_trainer(
+            {"val/mAP_50_95": 0.4, "val/ema_mAP_50_95": 0.75},
+            current_epoch=5,
+        )
         cb_pre.on_validation_end(trainer_pre, pl_module)
 
         ema_path = tmp_path / "checkpoint_best_ema.pth"
         assert ema_path.exists()
-        mtime_before = ema_path.stat().st_mtime_ns
+        baseline_epoch = torch.load(ema_path, map_location="cpu", weights_only=False)["epoch"]
         saved_state = cb_pre.state_dict()
 
         # --- Resume phase: fresh callback loaded from saved state ---
@@ -1205,10 +1208,13 @@ class TestBestEmaStatePersistence:
         cb_resumed.load_state_dict(saved_state)
 
         # Post-resume validation reports EMA=0.5 — worse than pre-resume best (0.75).
-        trainer_post = _make_trainer({"val/mAP_50_95": 0.45, "val/ema_mAP_50_95": 0.5})
+        trainer_post = _make_trainer(
+            {"val/mAP_50_95": 0.45, "val/ema_mAP_50_95": 0.5},
+            current_epoch=7,
+        )
         cb_resumed.on_validation_end(trainer_post, pl_module)
 
-        assert ema_path.stat().st_mtime_ns == mtime_before, (
+        assert torch.load(ema_path, map_location="cpu", weights_only=False)["epoch"] == baseline_epoch, (
             "checkpoint_best_ema.pth must not be overwritten by an inferior post-resume EMA value"
         )
 
