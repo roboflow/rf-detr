@@ -133,6 +133,8 @@ def test_depthwise_conv_gradients_match_reference() -> None:
     y_ref.sum().backward()
 
     x_ref_grad = x_ref.grad.clone()
+    weight_ref_grad = block.dwconv.weight.grad.clone()
+    bias_ref_grad = block.dwconv.bias.grad.clone()
 
     # Our implementation via _depthwise_conv.  zero_grad() so that the second
     # backward does not accumulate into weight.grad from the first run.
@@ -143,6 +145,8 @@ def test_depthwise_conv_gradients_match_reference() -> None:
 
     assert torch.allclose(y_ref, y_test, atol=1e-6)
     assert torch.allclose(x_ref_grad, x_test.grad, atol=1e-6)
+    assert torch.allclose(weight_ref_grad, block.dwconv.weight.grad, atol=1e-6)
+    assert torch.allclose(bias_ref_grad, block.dwconv.bias.grad, atol=1e-6)
 
 
 def test_depthwise_conv_backward_fp16_grad_output() -> None:
