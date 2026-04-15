@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fixed `predict()` storing `detections.data["source_shape"]` as a Python `tuple`, which caused `TypeError: Unsupported data type for key 'source_shape': <class 'tuple'>` whenever `sv.Detections` was iterated (e.g. `list(detections)`, `for d in detections`, `MeanAveragePrecision.compute()`). The value is now an `np.ndarray` of shape `(N, 2)` and dtype `int64`, with one `[height, width]` row per detection. ([#963](https://github.com/roboflow/rf-detr/issues/963))
+
 ---
 
 ## [1.6.4] — 2026-04-10
