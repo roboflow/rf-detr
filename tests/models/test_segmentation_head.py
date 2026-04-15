@@ -54,6 +54,7 @@ def test_depthwise_conv_forward_disables_cudnn(monkeypatch) -> None:
     x = torch.randn(1, 8, 4, 4)
     y = block(x)
     assert y.shape == x.shape
+    assert enabled_calls, "torch.backends.cudnn.flags was never called"
     assert all(not e for e in enabled_calls)
 
 
