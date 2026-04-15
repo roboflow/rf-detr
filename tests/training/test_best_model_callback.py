@@ -1132,3 +1132,126 @@ class TestCheckpointRfdetrVersion:
 
         ckpt = torch.load(tmp_path / "checkpoint_best_regular.pth", weights_only=False)
         assert "rfdetr_version" not in ckpt
+
+
+# ---------------------------------------------------------------------------
+# _best_ema state persistence across resume (#969)
+# ---------------------------------------------------------------------------
+
+
+class TestBestEmaStatePersistence:
+    """Regression tests for _best_ema not surviving Lightning checkpoint resume.
+
+    Before the fix, BestModelCallback did not override state_dict() /
+    load_state_dict(), so _best_ema was never included in the Lightning callback
+    state bundle.  On resume via trainer.fit(ckpt_path=...) the callback was
+    reconstructed fresh with _best_ema=0.0, causing any positive post-resume EMA
+    value to trivially overwrite checkpoint_best_ema.pth with inferior weights.
+
+    Regression tests for GitHub issue #969.
+    """
+
+    def test_state_dict_includes_best_ema(self, tmp_path: Path) -> None:
+        """state_dict() must include _best_ema so it survives Lightning checkpointing."""
+        cb = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95")
+        pl_module = _make_pl_module()
+
+        # Drive _best_ema to 0.75 via a validation pass.
+        trainer = _make_trainer({"val/mAP_50_95": 0.4, "val/ema_mAP_50_95": 0.75})
+        cb.on_validation_end(trainer, pl_module)
+
+        state = cb.state_dict()
+
+        assert "_best_ema" in state, "_best_ema must be present in state_dict() output"
+        assert state["_best_ema"] == pytest.approx(0.75)
+
+    def test_load_state_dict_restores_best_ema(self, tmp_path: Path) -> None:
+        """load_state_dict() must restore _best_ema from the persisted state."""
+        # First callback: train to _best_ema=0.75.
+        cb_first = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95")
+        pl_module = _make_pl_module()
+        trainer = _make_trainer({"val/mAP_50_95": 0.4, "val/ema_mAP_50_95": 0.75})
+        cb_first.on_validation_end(trainer, pl_module)
+        saved_state = cb_first.state_dict()
+
+        # Second callback: simulate a fresh resume by loading the saved state.
+        cb_resumed = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95")
+        cb_resumed.load_state_dict(saved_state)
+
+        assert cb_resumed._best_ema == pytest.approx(0.75), (
+            "load_state_dict() must restore _best_ema; without fix it stays 0.0"
+        )
+
+    def test_resume_does_not_clobber_ema_checkpoint_with_inferior_weights(self, tmp_path: Path) -> None:
+        """After resume, inferior post-resume EMA must not overwrite checkpoint_best_ema.pth.
+
+        Without the fix: _best_ema resets to 0.0 on resume, so any positive EMA
+        metric (0.5) trivially satisfies ema_val > _best_ema and overwrites the
+        checkpoint saved pre-resume (0.75).
+        """
+        # --- Pre-resume phase: establish EMA best of 0.75 ---
+        cb_pre = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95")
+        pl_module = _make_pl_module()
+        trainer_pre = _make_trainer({"val/mAP_50_95": 0.4, "val/ema_mAP_50_95": 0.75})
+        cb_pre.on_validation_end(trainer_pre, pl_module)
+
+        ema_path = tmp_path / "checkpoint_best_ema.pth"
+        assert ema_path.exists()
+        mtime_before = ema_path.stat().st_mtime_ns
+        saved_state = cb_pre.state_dict()
+
+        # --- Resume phase: fresh callback loaded from saved state ---
+        cb_resumed = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95")
+        cb_resumed.load_state_dict(saved_state)
+
+        # Post-resume validation reports EMA=0.5 — worse than pre-resume best (0.75).
+        trainer_post = _make_trainer({"val/mAP_50_95": 0.45, "val/ema_mAP_50_95": 0.5})
+        cb_resumed.on_validation_end(trainer_post, pl_module)
+
+        assert ema_path.stat().st_mtime_ns == mtime_before, (
+            "checkpoint_best_ema.pth must not be overwritten by an inferior post-resume EMA value"
+        )
+
+    def test_on_fit_end_selects_ema_winner_after_resume(self, tmp_path: Path) -> None:
+        """on_fit_end picks EMA winner correctly when _best_ema is properly restored.
+
+        Without the fix: _best_ema=0.0 after resume, so regular (0.6) wins over
+        the true EMA best (0.8) — checkpoint_best_total.pth is built from the
+        wrong source.  Use epoch number as a distinguisher: pre-resume EMA was
+        saved at epoch 3; regular was saved at epoch 1; total epoch must be 3
+        (EMA epoch) when EMA correctly wins.
+        """
+        # Pre-resume epoch 1: regular best=0.6.
+        cb_pre = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95", run_test=False)
+        pl_module = _make_pl_module()
+        trainer_ep1 = _make_trainer({"val/mAP_50_95": 0.6, "val/ema_mAP_50_95": 0.5}, current_epoch=1)
+        cb_pre.on_validation_end(trainer_ep1, pl_module)
+
+        # Pre-resume epoch 3: EMA best=0.8 (better than epoch-1 EMA=0.5).
+        trainer_ep3 = _make_trainer({"val/mAP_50_95": 0.55, "val/ema_mAP_50_95": 0.8}, current_epoch=3)
+        cb_pre.on_validation_end(trainer_ep3, pl_module)
+
+        saved_state = cb_pre.state_dict()
+
+        # Resume: fresh callback, load state, run fit_end.
+        cb_resumed = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95", run_test=False)
+        cb_resumed.load_state_dict(saved_state)
+
+        # fit_end uses _best_ema to decide EMA vs regular winner.
+        # trainer_ep3 carries best_model_score=0.6 (regular) and _best_ema=0.8 (EMA wins).
+        cb_resumed.on_fit_end(trainer_ep3, pl_module)
+
+        total = tmp_path / "checkpoint_best_total.pth"
+        assert total.exists()
+        total_data = torch.load(total, map_location="cpu", weights_only=False)
+        # strip_checkpoint preserves the `loops` key.
+        # epoch_progress.current.completed == trainer.current_epoch + 1 at save time.
+        # EMA checkpoint was saved at epoch 3 → completed=4.
+        # Regular checkpoint was saved at epoch 1 → completed=2.
+        # If _best_ema was NOT restored (bug), regular wins → completed=2.
+        # If _best_ema IS restored (fix), EMA wins → completed=4.
+        completed = total_data["loops"]["fit_loop"]["epoch_progress"]["current"]["completed"]
+        assert completed == 4, (
+            "on_fit_end must select EMA (epoch 3, best=0.8) over regular (epoch 1, best=0.6); "
+            f"got epoch_completed={completed} — _best_ema not restored from state_dict"
+        )

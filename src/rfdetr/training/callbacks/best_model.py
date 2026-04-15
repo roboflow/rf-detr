@@ -10,6 +10,10 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from typing import Any
 
 import torch
 from pytorch_lightning import LightningModule, Trainer
@@ -180,6 +184,36 @@ class BestModelCallback(ModelCheckpoint):
         if config_type_name.startswith("RFDETR") and config_type_name.endswith("Config"):
             return config_type_name.removesuffix("Config")
         return None
+
+    def state_dict(self) -> dict[str, Any]:
+        """Return callback state including ``_best_ema`` for Lightning checkpointing.
+
+        Extends the parent :class:`~pytorch_lightning.callbacks.ModelCheckpoint`
+        state dict with ``_best_ema`` so that ``trainer.fit(ckpt_path=...)``
+        resumes EMA tracking from the correct high-water mark rather than
+        resetting to ``0.0``.
+
+        Returns:
+            State dict with all parent fields plus ``"_best_ema"``.
+        """
+        state = super().state_dict()
+        state["_best_ema"] = self._best_ema
+        return state
+
+    def load_state_dict(self, state_dict: dict[str, Any]) -> None:
+        """Restore callback state from a Lightning checkpoint.
+
+        Pops ``"_best_ema"`` from *state_dict* before delegating to the parent
+        so the parent does not receive an unexpected key.  Defaults to ``0.0``
+        when the key is absent (e.g. checkpoints saved before this fix).
+
+        Args:
+            state_dict: Callback state dict as produced by :meth:`state_dict`.
+        """
+        # Copy to avoid mutating the caller's dict — PTL may reuse it.
+        state = dict(state_dict)
+        self._best_ema = float(state.pop("_best_ema", 0.0))
+        super().load_state_dict(state)
 
     def _save_checkpoint(self, trainer: Trainer, filepath: str) -> None:
         """Save stripped ``.pth`` format instead of a full ``.ckpt``.
