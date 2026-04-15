@@ -8,9 +8,10 @@
 
 from __future__ import annotations
 
+import math
 import shutil
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
 
 import torch
 from pytorch_lightning import LightningModule, Trainer
@@ -37,6 +38,11 @@ class BestModelCallback(ModelCheckpoint):
     Checkpoints are only updated on validation epochs where the monitor metric
     is actually logged.  On non-eval epochs (when ``eval_interval > 1`` causes
     COCO evaluation to be skipped) the callback is a no-op.
+
+    ``state_dict()`` and ``load_state_dict()`` are overridden to persist
+    ``_best_ema`` in the Lightning callback state, ensuring that
+    ``trainer.fit(ckpt_path=...)`` resumes EMA high-water-mark tracking
+    from the correct value.
 
     Args:
         output_dir: Directory where checkpoint files are written.
@@ -133,6 +139,38 @@ class BestModelCallback(ModelCheckpoint):
         _orig = getattr(pl_module.model, "_orig_mod", None)
         raw = _orig if isinstance(_orig, torch.nn.Module) else pl_module.model
         return raw.state_dict()
+
+    def state_dict(self) -> dict[str, Any]:
+        """Return callback state including ``_best_ema`` for Lightning checkpointing.
+
+        Extends the parent :class:`~pytorch_lightning.callbacks.ModelCheckpoint`
+        state dict with ``_best_ema`` so that ``trainer.fit(ckpt_path=...)``
+        resumes EMA tracking from the correct high-water mark rather than
+        resetting to ``0.0``.
+
+        Returns:
+            State dict with all parent fields plus ``"_best_ema"``.
+        """
+        state = super().state_dict()
+        state["_best_ema"] = self._best_ema
+        return state
+
+    def load_state_dict(self, state_dict: dict[str, Any]) -> None:
+        """Restore callback state from a Lightning checkpoint.
+
+        Pops ``"_best_ema"`` from a shallow copy of *state_dict* before delegating to the parent
+        so the parent does not receive an unexpected key.  Defaults to ``0.0``
+        when the key is absent (e.g. checkpoints saved before this fix).
+
+        Args:
+            state_dict: Callback state dict as produced by :meth:`state_dict`.
+        """
+        # Copy to avoid mutating the caller's dict — PTL may reuse it.
+        state = dict(state_dict)
+        self._best_ema = float(state.pop("_best_ema", 0.0))
+        if not math.isfinite(self._best_ema):
+            self._best_ema = 0.0
+        super().load_state_dict(state)
 
     def _save_checkpoint(self, trainer: Trainer, filepath: str) -> None:
         """Save stripped ``.pth`` format instead of a full ``.ckpt``.
