@@ -542,3 +542,51 @@ class TestPredictClassNameData:
             assert list(det.data["class_name"]) == ["cat", "dog"], (
                 f"image {idx}: class_name must match class_names[class_id]"
             )
+
+    def test_background_class_id_maps_to_background_label(self) -> None:
+        """DETR's background/no-object class (class_id == n) must map to '__background__'.
+
+        RF-DETR internally allocates num_classes + 1 outputs; the extra class at
+        index n is the background/no-object class. Returning it as '__background__'
+        is unambiguous, whereas the previous empty string was indistinguishable from
+        a genuine OOB error.
+
+        Regression / contract test for https://github.com/roboflow/rf-detr/pull/966
+        post-merge issue reported by @Alarmod.
+        """
+        # class_names has 2 entries (n=2); background class is label index 2
+        model = self._make_model_with_class_names(["cat", "dog"], labels=[2])
+        img = PIL.Image.new("RGB", (28, 28))
+        detections = model.predict(img)
+        assert detections.data["class_name"][0] == "__background__", (
+            "Background class (class_id == num_classes) must map to '__background__', not empty string"
+        )
+
+    def test_background_class_id_does_not_emit_oob_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Predicting the background class must not emit an out-of-range warning.
+
+        The background class (class_id == num_classes) is expected DETR behaviour,
+        not a model error. Warning on it misleads users into thinking something is wrong.
+
+        Regression / contract test for https://github.com/roboflow/rf-detr/pull/966
+        post-merge issue reported by @Alarmod.
+        """
+        import logging
+
+        model = self._make_model_with_class_names(["cat", "dog"], labels=[2])
+        img = PIL.Image.new("RGB", (28, 28))
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            model.predict(img)
+        oob_warnings = [r for r in caplog.records if r.levelno >= logging.WARNING and "out of range" in r.getMessage()]
+        assert not oob_warnings, "Background class (class_id == num_classes) must not trigger an out-of-range warning"
+
+    def test_truly_oob_class_id_still_maps_to_empty_string(self) -> None:
+        """A class_id strictly above num_classes (not the background class) still maps to empty string.
+
+        class_id == n is background; class_id > n is truly unexpected and must still produce ''.
+        """
+        # n=2, background is class_id=2; class_id=5 is truly OOB (> n)
+        model = self._make_model_with_class_names(["cat", "dog"], labels=[5])
+        img = PIL.Image.new("RGB", (28, 28))
+        detections = model.predict(img)
+        assert detections.data["class_name"][0] == "", "Truly OOB class_id (> num_classes) must produce empty string"
