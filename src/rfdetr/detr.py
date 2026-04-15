@@ -1078,8 +1078,12 @@ class RFDETR:
                 ``patch_size * num_windows``.
             include_source_image:
                 Whether to attach the original image as ``source_image`` in
-                ``detections.metadata``. Defaults to ``True`` for backward compatibility.
-                Set to ``False`` to reduce memory use when source images are not needed.
+                ``detections.metadata``. Defaults to ``True``.  Set to ``False``
+                to reduce memory use when source images are not needed.
+                **Note**: ``source_image`` moved from ``detections.data`` to
+                ``detections.metadata`` — update callers reading
+                ``detections.data["source_image"]`` to use
+                ``detections.metadata["source_image"]``.
             **kwargs:
                 Additional keyword arguments.
 

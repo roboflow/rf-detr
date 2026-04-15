@@ -135,7 +135,7 @@ detections = model.predict("https://media.roboflow.com/dog.jpg", threshold=0.5)
 
 labels = [f"{COCO_CLASSES[class_id]}" for class_id in detections.class_id]
 
-annotated_image = sv.BoxAnnotator().annotate(detections.data["source_image"], detections)
+annotated_image = sv.BoxAnnotator().annotate(detections.metadata["source_image"], detections)
 annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
 ```
 
@@ -190,7 +190,7 @@ detections = model.predict("https://media.roboflow.com/dog.jpg", threshold=0.5)
 
 labels = [f"{COCO_CLASSES[class_id]}" for class_id in detections.class_id]
 
-annotated_image = sv.MaskAnnotator().annotate(detections.data["source_image"], detections)
+annotated_image = sv.MaskAnnotator().annotate(detections.metadata["source_image"], detections)
 annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
 ```
 

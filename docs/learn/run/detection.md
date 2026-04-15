@@ -34,7 +34,7 @@ Perform inference on an image using either the `rfdetr` package or the `inferenc
 
     labels = [f"{COCO_CLASSES[class_id]}" for class_id in detections.class_id]
 
-    annotated_image = sv.BoxAnnotator().annotate(detections.data["source_image"], detections)
+    annotated_image = sv.BoxAnnotator().annotate(detections.metadata["source_image"], detections)
     annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
     ```
 
