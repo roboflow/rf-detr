@@ -144,6 +144,44 @@ class ModelConfig(BaseConfig):
             )
         return self
 
+    @model_validator(mode="after")
+    def _sync_pe_with_resolution(self) -> "ModelConfig":
+        """Auto-update positional_encoding_size when resolution is explicitly provided.
+
+        When a user provides a custom ``resolution`` at construction time (e.g.,
+        ``RFDETRLarge(resolution=640)``), ``positional_encoding_size`` is updated
+        proportionally, provided the class-default PE is formula-derived
+        (``default_pe == default_resolution // patch_size``).
+
+        Configs with a pretrained-specific PE (e.g., ``RFDETRBaseConfig`` with
+        ``positional_encoding_size=37`` for DINOv2's native 518 px grid, while
+        ``resolution=560``) are left unchanged.
+        """
+        if "resolution" not in self.model_fields_set or "positional_encoding_size" in self.model_fields_set:
+            return self
+
+        cls = type(self)
+        default_resolution = cls.model_fields["resolution"].default
+        default_pe = cls.model_fields["positional_encoding_size"].default
+        default_patch_size = cls.model_fields["patch_size"].default
+
+        # Skip when any relevant default is not a concrete integer (abstract base
+        # class fields have no defaults; required fields use PydanticUndefined,
+        # not int).
+        if (
+            not isinstance(default_resolution, int)
+            or not isinstance(default_pe, int)
+            or not isinstance(default_patch_size, int)
+        ):
+            return self
+
+        # Only update PE when the class default is formula-derived from the class
+        # default resolution and patch size.
+        if default_pe == default_resolution // default_patch_size:
+            self.positional_encoding_size = self.resolution // self.patch_size
+
+        return self
+
     @field_validator("pretrain_weights", mode="after")
     @classmethod
     def expand_path(cls, v: Optional[str]) -> Optional[str]:

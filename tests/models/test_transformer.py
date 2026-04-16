@@ -5,6 +5,9 @@
 # ------------------------------------------------------------------------
 """Tests for transformer utilities, MS deformable attention core, and MSDeformAttn module."""
 
+import io
+
+import numpy as np
 import pytest
 import torch
 
@@ -318,6 +321,124 @@ class TestMSDeformAttnModule:
         module.export()
 
         assert module._export
+
+
+class TestGenEncoderOutputProposalsDynamicBatch:
+    """Regression tests for dynamic batch support in gen_encoder_output_proposals.
+
+    Ensures that the ONNX-symbolic refactoring (PR #950 / issue #949) does not bake a
+    fixed batch dimension into proposals and that output shapes are correct for varying
+    batch sizes.
+    """
+
+    @pytest.mark.parametrize("batch_size", [1, 2, 4, 8])
+    def test_output_shape_invariant_across_batch_sizes(self, batch_size: int) -> None:
+        """Output shapes must scale correctly with batch size, with no baked constants.
+
+        Args:
+            batch_size: Number of images in the batch.
+        """
+        ht, wd, dim = 4, 4, 8
+        memory = torch.randn(batch_size, ht * wd, dim)
+        spatial_shapes = [(ht, wd)]
+
+        output_memory, output_proposals = gen_encoder_output_proposals(
+            memory, memory_padding_mask=None, spatial_shapes=spatial_shapes
+        )
+
+        assert output_memory.shape == (batch_size, ht * wd, dim)
+        assert output_proposals.shape == (batch_size, ht * wd, 4)
+
+    def test_proposals_semantically_equivalent_across_batch_sizes(self) -> None:
+        """Proposals for batch=1 and batch=4 must be identical per image.
+
+        Regression: if batch_size were baked as a constant, repeating the same image
+        N times would produce different proposals for each copy.
+        """
+        ht, wd, dim = 4, 4, 8
+        memory_single = torch.randn(1, ht * wd, dim)
+        memory_multi = memory_single.expand(4, -1, -1).contiguous()
+        spatial_shapes = [(ht, wd)]
+
+        _, proposals_single = gen_encoder_output_proposals(
+            memory_single, memory_padding_mask=None, spatial_shapes=spatial_shapes
+        )
+        _, proposals_multi = gen_encoder_output_proposals(
+            memory_multi, memory_padding_mask=None, spatial_shapes=spatial_shapes
+        )
+
+        torch.testing.assert_close(proposals_single.expand(4, -1, -1), proposals_multi)
+
+    @pytest.mark.parametrize("batch_size", [1, 4])
+    def test_output_shape_invariant_with_padding_mask(self, batch_size: int) -> None:
+        """Output shapes must be correct when memory_padding_mask is provided with varying batch sizes.
+
+        Regression for PR #950 / issue #949: the masked branch used .reshape(-1, h, w, 1) to
+        infer the batch dimension dynamically; this test verifies the branch handles varying
+        batch sizes without error.
+
+        Args:
+            batch_size: Number of images in the batch.
+        """
+        ht, wd, dim = 4, 4, 8
+        total_hw = ht * wd
+        memory = torch.randn(batch_size, total_hw, dim)
+        # Mask shape: (batch, sum_hw) — True means padding (invalid position)
+        memory_padding_mask = torch.zeros(batch_size, total_hw, dtype=torch.bool)
+        spatial_shapes = [(ht, wd)]
+
+        output_memory, output_proposals = gen_encoder_output_proposals(
+            memory, memory_padding_mask=memory_padding_mask, spatial_shapes=spatial_shapes
+        )
+
+        assert output_memory.shape == (batch_size, total_hw, dim)
+        assert output_proposals.shape == (batch_size, total_hw, 4)
+
+    @pytest.mark.parametrize("batch_size", [1, 4, 8])
+    def test_onnx_export_with_dynamic_batch_axis(self, batch_size: int) -> None:
+        """ONNX export with dynamic batch axis must run inference for batch sizes other than the trace batch.
+
+        Regression for issue #949: exporting with a fixed trace batch baked `Reshape([8,...])` as
+        a constant ONNX node, causing TRT engines to fail at inference for any batch != 8.
+        Skipped when onnx or onnxruntime is not installed.
+        """
+
+        pytest.importorskip("onnx")
+        onnxruntime = pytest.importorskip("onnxruntime")
+
+        ht, wd, dim = 4, 4, 8
+        spatial_shapes_list = [(ht, wd)]
+
+        class _ProposalModule(torch.nn.Module):
+            """Thin wrapper to export gen_encoder_output_proposals via torch.onnx."""
+
+            def forward(self, memory: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+                """Forward pass delegating to gen_encoder_output_proposals."""
+                return gen_encoder_output_proposals(
+                    memory, memory_padding_mask=None, spatial_shapes=spatial_shapes_list
+                )
+
+        module = _ProposalModule()
+        trace_memory = torch.randn(2, ht * wd, dim)
+
+        buf = io.BytesIO()
+        torch.onnx.export(
+            module,
+            (trace_memory,),
+            buf,
+            input_names=["memory"],
+            output_names=["output_memory", "output_proposals"],
+            dynamic_axes={"memory": {0: "batch"}},
+            opset_version=17,
+        )
+        buf.seek(0)
+        onnx_bytes = buf.read()
+
+        session = onnxruntime.InferenceSession(onnx_bytes, providers=["CPUExecutionProvider"])
+        memory_np = np.random.randn(batch_size, ht * wd, dim).astype(np.float32)
+        out_memory, out_proposals = session.run(None, {"memory": memory_np})
+        assert out_memory.shape == (batch_size, ht * wd, dim), f"wrong memory shape for batch={batch_size}"
+        assert out_proposals.shape == (batch_size, ht * wd, 4), f"wrong proposals shape for batch={batch_size}"
 
 
 def test_ms_deform_attn_core_pytorch_export_compatible() -> None:

@@ -774,58 +774,55 @@ class RFDETR:
         quantization: str | None = None,
         calibration_data: str | np.ndarray | None = None,
         max_images: int = 100,
-        **kwargs,
     ) -> None:
         """Export the trained model to ONNX or TFLite format.
 
-        See the `export documentation <https://rfdetr.roboflow.com/learn/export/>`_
-        for more information.
+            See the `export documentation <https://rfdetr.roboflow.com/learn/export/>`_
+            for more information.
 
-        Args:
-            output_dir: Directory to write the exported model to.
-            infer_dir: Optional directory of sample images for dynamic-axes inference.
-            simplify: Deprecated and ignored. Simplification is no longer run.
-            backbone_only: Export only the backbone (feature extractor).
-            opset_version: ONNX opset version to target.
-            verbose: Print export progress information.
-            force: Deprecated and ignored.
-            shape: ``(height, width)`` tuple; defaults to square at model resolution.
-                Both dimensions must be divisible by ``patch_size * num_windows``.
-            batch_size: Static batch size to bake into the ONNX graph.
-            dynamic_batch: If True, export with a dynamic batch dimension
-                so the ONNX model accepts variable batch sizes at runtime.
-            patch_size: Backbone patch size. Defaults to the value stored in
-                ``model_config.patch_size`` (typically 14 or 16). When provided
-                explicitly it must match the instantiated model's patch size.
-                Shape divisibility is validated against ``patch_size * num_windows``.
-            format: Export format — ``"onnx"`` (default) or ``"tflite"``.
-                When ``"tflite"`` is selected the model is first exported to ONNX
-                then converted to TFLite via ``onnx2tf``.  Requires
-                ``pip install rfdetr[onnx,tflite]``.
-            quantization: TFLite quantization mode (ignored when
-                ``format="onnx"``).  One of ``None``, ``"fp32"``, ``"fp16"``,
-                ``"int8"``.  ``None`` / ``"fp32"`` / ``"fp16"`` produce FP32 +
-                FP16 ``.tflite`` files; ``"int8"`` additionally produces an
-                INT8-quantized model.
-            calibration_data: Representative images for INT8 calibration
-                and ``onnx2tf`` output validation.  Accepts:
+            Args:
+                output_dir: Directory to write the exported model to.
+                infer_dir: Optional directory of sample images for dynamic-axes inference.
+                simplify: Deprecated and ignored. Simplification is no longer run.
+                backbone_only: Export only the backbone (feature extractor).
+                opset_version: ONNX opset version to target.
+                verbose: Print export progress information.
+                force: Deprecated and ignored.
+                shape: ``(height, width)`` tuple; defaults to square at model resolution.
+                    Both dimensions must be divisible by ``patch_size * num_windows``.
+                batch_size: Static batch size to bake into the ONNX graph.
+                dynamic_batch: If True, export with a dynamic batch dimension
+                    so the ONNX model accepts variable batch sizes at runtime.
+                patch_size: Backbone patch size. Defaults to the value stored in
+                    ``model_config.patch_size`` (typically 14 or 16). When provided
+                    explicitly it must match the instantiated model's patch size.
+                    Shape divisibility is validated against ``patch_size * num_windows``.
+        format: Export format — ``"onnx"`` (default) or ``"tflite"``.
+            When ``"tflite"`` is selected the model is first exported to ONNX
+            then converted to TFLite via ``onnx2tf``.  Requires
+            ``pip install rfdetr[onnx,tflite]``.
+        quantization: TFLite quantization mode (ignored when
+            ``format="onnx"``).  One of ``None``, ``"fp32"``, ``"fp16"``,
+            ``"int8"``.  ``None`` / ``"fp32"`` / ``"fp16"`` produce FP32 +
+            FP16 ``.tflite`` files; ``"int8"`` additionally produces an
+            INT8-quantized model.
+        calibration_data: Representative images for INT8 calibration
+            and ``onnx2tf`` output validation.  Accepts:
 
-                * ``None`` — auto-generate random data (sufficient for
-                  fp32/fp16; warns for int8).
-                * A **directory path** (``str``) containing JPEG/PNG
-                  images — the converter automatically loads, resizes, and
-                  prepares them.  This is the simplest approach.
-                * A path (``str``) to a ``.npy`` file of shape
-                  ``(N, H, W, 3)``, dtype float32, values in ``[0, 1]``.
-                * A :class:`numpy.ndarray` with the same format.
+            * ``None`` — auto-generate random data (sufficient for
+              fp32/fp16; warns for int8).
+            * A **directory path** (``str``) containing JPEG/PNG
+              images — the converter automatically loads, resizes, and
+              prepares them.  This is the simplest approach.
+            * A path (``str``) to a ``.npy`` file of shape
+              ``(N, H, W, 3)``, dtype float32, values in ``[0, 1]``.
+            * A :class:`numpy.ndarray` with the same format.
 
-                For INT8 quantization, provide 20–100 representative
-                images from your training/validation set for best accuracy.
-            max_images: Maximum number of images to load from a
-                calibration directory.  Defaults to ``100``.  Only used
-                when *calibration_data* is a directory path.
-            **kwargs: Additional keyword arguments forwarded to export_onnx.
-
+            For INT8 quantization, provide 20–100 representative
+            images from your training/validation set for best accuracy.
+        max_images: Maximum number of images to load from a
+            calibration directory.  Defaults to ``100``.  Only used
+            when *calibration_data* is a directory path.
         """
         logger.info("Exporting model to ONNX format")
         _valid_formats = ("onnx", "tflite")
@@ -911,6 +908,7 @@ class RFDETR:
             backbone_only=backbone_only,
             verbose=verbose,
             opset_version=opset_version,
+            variant_name=getattr(self, "size", None),
         )
 
         logger.info(f"Successfully exported ONNX model to: {output_file}")
@@ -1133,8 +1131,12 @@ class RFDETR:
                 ``patch_size * num_windows``.
             include_source_image:
                 Whether to attach the original image as ``source_image`` in
-                ``detections.data``. Defaults to ``True`` for backward compatibility.
-                Set to ``False`` to reduce memory use when source images are not needed.
+                ``detections.metadata``. Defaults to ``True``.  Set to ``False``
+                to reduce memory use when source images are not needed.
+                **Note**: ``source_image`` moved from ``detections.data`` to
+                ``detections.metadata`` — update callers reading
+                ``detections.data["source_image"]`` to use
+                ``detections.metadata["source_image"]``.
             **kwargs:
                 Additional keyword arguments.
 
@@ -1148,9 +1150,26 @@ class RFDETR:
               0-indexed; ``class_names[0]`` is the first class regardless of the
               original dataset format (COCO category IDs are remapped to 0-based
               indices during training).
-            * ``"source_image"`` – the original input image (only present when
-              ``include_source_image=True``, which is the default).
-            * ``"source_shape"`` – ``(height, width)`` tuple of the source image dimensions.
+            * ``"source_shape"`` – ``np.ndarray`` of shape ``(N, 2)`` and dtype
+              ``int64``, where each row is ``[height, width]`` of the source image.
+              ``N`` equals the number of detections (0 when threshold filters all
+              results) so that iteration over ``sv.Detections`` works correctly.
+              Stored in ``data`` (not ``metadata``) because each row maps to exactly
+              one detection, so supervision's per-detection indexing works correctly.
+              Changed: this was previously a ``(height, width)`` Python ``tuple``;
+              callers using ``isinstance(v, tuple)`` or ``v == (H, W)`` must be
+              updated.
+
+            The ``metadata`` dict of each :class:`~supervision.Detections` object
+            contains:
+
+            * ``"source_image"`` – the original input image as a ``uint8`` numpy
+              array of shape ``(H, W, 3)`` (only present when
+              ``include_source_image=True``, which is the default).  Stored in
+              ``metadata`` rather than ``data`` so that boolean and integer indexing
+              of :class:`~supervision.Detections` works correctly — supervision
+              indexes every value in ``data`` by the detection mask, but passes
+              ``metadata`` through unchanged.
 
         Raises:
             ValueError: If ``shape`` cannot be unpacked as a two-element sequence,
@@ -1309,24 +1328,33 @@ class RFDETR:
                 )
 
             if include_source_image:
-                detections.data["source_image"] = source_images[i]
-            detections.data["source_shape"] = orig_sizes[i]
+                detections.metadata["source_image"] = source_images[i]
+            detections.data["source_shape"] = np.tile(np.array(orig_sizes[i], dtype=np.int64), (len(detections), 1))
 
             # Attach class names so callers can map class_id → name without a
             # separate lookup.  class_id is always 0-indexed regardless of the
             # original dataset format (COCO category IDs are remapped during
             # training), so class_names[class_id] is the correct mapping.
             # Always set data["class_name"] for a consistent interface.
+            #
+            # RF-DETR uses num_classes + 1 logits internally; class index n is the
+            # background/no-object class and is expected — map it to "__background__"
+            # without warning.  Indices outside [0, n] are genuinely unexpected and
+            # still produce an empty string with a one-time warning.
             class_ids = detections.class_id if detections.class_id is not None else np.array([], dtype=int)
-            oob_ids = [cid for cid in class_ids if not (0 <= cid < n)]
-            if oob_ids:
+            truly_oob = [cid for cid in class_ids if not (0 <= cid <= n)]
+            if truly_oob:
                 logger.warning_once(
-                    "predict() encountered class_id values out of range [0, %d): %s — mapping to empty string",
+                    "predict() encountered class_id values out of range [0, %d]: %s — mapping to empty string",
                     n,
-                    oob_ids[:5],
+                    truly_oob[:5],
                 )
             detections.data["class_name"] = np.array(
-                [model_class_names[cid] if 0 <= cid < n else "" for cid in class_ids], dtype=object
+                [
+                    model_class_names[cid] if 0 <= cid < n else ("__background__" if cid == n else "")
+                    for cid in class_ids
+                ],
+                dtype=object,
             )
 
             detections_list.append(detections)

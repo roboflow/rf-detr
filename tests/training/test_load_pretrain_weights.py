@@ -252,6 +252,154 @@ class TestLoadPretrainWeightsSecondReinit:
 
 
 # ---------------------------------------------------------------------------
+# Regression #960: PE interpolation for custom resolution
+# ---------------------------------------------------------------------------
+
+PE_KEY = "backbone.0.encoder.encoder.embeddings.position_embeddings"
+
+
+class TestLoadPretrainWeightsPEInterpolation:
+    """Regression tests for #960 — PE must be interpolated when resolution changes.
+
+    ``load_pretrain_weights`` must bicubic-interpolate the checkpoint's DINOv2
+    positional embeddings to match the model's ``positional_encoding_size`` before
+    calling ``load_state_dict``.  Without this, any custom ``resolution`` that
+    changes the PE grid size causes a ``RuntimeError: size mismatch``.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _patch_download(self, monkeypatch):
+        """Suppress all download and file-existence side effects."""
+        monkeypatch.setattr("rfdetr.models.weights.download_pretrain_weights", lambda *a, **kw: None)
+        monkeypatch.setattr("rfdetr.models.weights.validate_pretrain_weights", lambda *a, **kw: None)
+        monkeypatch.setattr("rfdetr.models.weights.validate_checkpoint_compatibility", lambda *a, **kw: None)
+        monkeypatch.setattr("rfdetr.models.weights.os.path.isfile", lambda _: True)
+
+    @pytest.mark.parametrize(
+        "src_pe_size, tgt_resolution, patch_size, expected_tgt_pe_size",
+        [
+            pytest.param(24, 640, 16, 40, id="nano_24x24_upscale_to_40x40"),
+            pytest.param(40, 384, 16, 24, id="nano_40x40_downscale_to_24x24"),
+            pytest.param(32, 640, 16, 40, id="small_32x32_upscale_to_40x40"),
+        ],
+    )
+    def test_pe_in_checkpoint_is_interpolated_to_model_resolution(
+        self, monkeypatch, src_pe_size, tgt_resolution, patch_size, expected_tgt_pe_size
+    ):
+        """Checkpoint PE is bicubic-interpolated to match model_config.positional_encoding_size.
+
+        Regression for #960: ``load_pretrain_weights`` must not raise ``RuntimeError``
+        when model resolution differs from checkpoint resolution.  The PE tensor in the
+        checkpoint must be resized in-place before ``load_state_dict`` is called.
+        """
+        mc = RFDETRNanoConfig(
+            pretrain_weights="/fake/weights.pth",
+            device="cpu",
+            resolution=tgt_resolution,
+            patch_size=patch_size,
+        )
+        assert mc.positional_encoding_size == tgt_resolution // patch_size
+
+        dim = 384
+        src_n = src_pe_size * src_pe_size + 1  # patches + class token
+        checkpoint = _make_checkpoint(num_classes=91)
+        checkpoint["model"][PE_KEY] = torch.randn(1, src_n, dim).half()  # float16 to verify dtype round-trip
+
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+        fake_model = MagicMock()
+        load_pretrain_weights(fake_model, mc)
+
+        pe = checkpoint["model"][PE_KEY]
+        expected_n = expected_tgt_pe_size * expected_tgt_pe_size + 1
+        assert pe.shape == torch.Size([1, expected_n, dim]), (
+            f"Expected PE shape [1, {expected_n}, {dim}], got {tuple(pe.shape)}. "
+            f"PE was not interpolated from {src_pe_size}x{src_pe_size} "
+            f"to {expected_tgt_pe_size}x{expected_tgt_pe_size}."
+        )
+        assert pe.dtype == torch.float16, f"Dtype must be preserved after interpolation, got {pe.dtype}"
+
+    def test_matching_pe_shape_is_not_modified(self, monkeypatch):
+        """When checkpoint PE matches model expectations, the tensor is not changed.
+
+        Ensures PE interpolation is a no-op for same-resolution checkpoints so that
+        normal weight loading is unaffected.
+        """
+        mc = RFDETRNanoConfig(pretrain_weights="/fake/weights.pth", device="cpu")
+        # Default: positional_encoding_size=24 → PE = [1, 24*24+1, 384] = [1, 577, 384]
+
+        dim = 384
+        original_pe = torch.randn(1, 577, dim)
+        checkpoint = _make_checkpoint(num_classes=91)
+        checkpoint["model"][PE_KEY] = original_pe.clone()
+
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+        fake_model = MagicMock()
+        load_pretrain_weights(fake_model, mc)
+
+        pe = checkpoint["model"][PE_KEY]
+        assert pe.shape == torch.Size([1, 577, dim]), "Matching PE shape must not be modified."
+        assert torch.equal(pe, original_pe), "Matching PE tensor values must not be modified."
+
+    def test_base_config_non_formula_pe_is_interpolated_from_smaller_checkpoint(self, monkeypatch):
+        """RFDETRBaseConfig PE=37 (not formula-derived) is interpolated when checkpoint differs.
+
+        RFDETRBaseConfig.positional_encoding_size=37 is not updated by
+        ``_sync_pe_with_resolution`` because 37 ≠ 560//16=35 (not formula-derived).
+        Loading a checkpoint with a smaller PE grid (e.g., 24×24) must still
+        trigger interpolation to the model's fixed PE=37×37 target.
+        """
+        mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu")
+        assert mc.positional_encoding_size == 37, "RFDETRBaseConfig PE must remain 37 (not formula-derived)"
+
+        dim = 384
+        src_pe_size = 24
+        src_n = src_pe_size * src_pe_size + 1
+        checkpoint = _make_checkpoint(num_classes=91)
+        checkpoint["model"][PE_KEY] = torch.randn(1, src_n, dim)
+
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+        fake_model = MagicMock()
+        load_pretrain_weights(fake_model, mc)
+
+        pe = checkpoint["model"][PE_KEY]
+        expected_n = 37 * 37 + 1
+        assert pe.shape == torch.Size([1, expected_n, dim]), (
+            f"Expected PE shape [1, {expected_n}, {dim}] (37×37 grid), got {tuple(pe.shape)}. "
+            "BaseConfig's non-formula-derived PE must be the interpolation target."
+        )
+
+    def test_non_square_source_pe_logs_warning_and_is_not_modified(self, monkeypatch):
+        """Non-square source PE grids are skipped with a warning and left unchanged.
+
+        When ``n_source`` is not a perfect square the interpolation is skipped to
+        avoid producing malformed embeddings.  The tensor must remain untouched and
+        a warning must be emitted via the weights module logger.
+        """
+        mc = RFDETRNanoConfig(pretrain_weights="/fake/weights.pth", device="cpu")
+        # positional_encoding_size=24 → n_target=576 (perfect square, so the
+        # target-side guard does not trigger; only the source-side guard fires)
+
+        dim = 384
+        # 17 is not a perfect square: isqrt(17)=4, 4*4=16 ≠ 17
+        non_square_n_source = 17
+        original_pe = torch.randn(1, non_square_n_source + 1, dim)
+        checkpoint = _make_checkpoint(num_classes=91)
+        checkpoint["model"][PE_KEY] = original_pe.clone()
+
+        warning_calls: list[tuple] = []
+        monkeypatch.setattr("rfdetr.models.weights.logger.warning", lambda *a, **kw: warning_calls.append(a))
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+        fake_model = MagicMock()
+        load_pretrain_weights(fake_model, mc)
+
+        pe = checkpoint["model"][PE_KEY]
+        assert torch.equal(pe, original_pe), "Non-square source PE must not be modified."
+        assert any("not a perfect square" in str(args) for args in warning_calls), (
+            f"Expected a 'not a perfect square' warning; got calls: {warning_calls}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Deprecation: train_config argument
 # ---------------------------------------------------------------------------
 

@@ -141,10 +141,18 @@ class RFDETRLarge(RFDETR):
     def __init__(self, **kwargs):
         self.init_error = None
         self.is_deprecated = False
+        # When the user explicitly sets a custom resolution, a PE size mismatch
+        # is caused by the resolution change — not by deprecated weights.  Guard
+        # against the fallback heuristic misclassifying it as deprecated weights.
+        # Only suppress the fallback when the provided resolution genuinely differs
+        # from the class default; passing resolution=<default> explicitly (e.g. from
+        # a serialised config round-trip) must still allow the deprecated-weights retry.
+        _default_resolution = RFDETRLargeConfig.model_fields["resolution"].default
+        _custom_resolution = "resolution" in kwargs and kwargs.get("resolution") != _default_resolution
         try:
             super().__init__(**kwargs)
         except (ValueError, RuntimeError) as exc:
-            if not self._should_fallback_to_deprecated_config(exc):
+            if _custom_resolution or not self._should_fallback_to_deprecated_config(exc):
                 raise
             self.init_error = exc
             self.is_deprecated = True

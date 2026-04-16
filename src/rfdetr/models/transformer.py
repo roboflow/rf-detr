@@ -81,23 +81,20 @@ def gen_encoder_output_proposals(memory, memory_padding_mask=None, spatial_shape
         - output_memory: bs, \sum{hw}, d_model
         - output_proposals: bs, \sum{hw}, 4
     """
-    batch_size, _, _ = memory.shape
     proposals = []
     _cur = 0
     for lvl, (height, width) in enumerate(spatial_shapes):
         if memory_padding_mask is not None:
-            mask_flatten_ = memory_padding_mask[:, _cur : (_cur + height * width)].view(batch_size, height, width, 1)
+            # reshape(-1, ...) infers batch dynamically in ONNX instead of constant N_
+            mask_flatten_ = memory_padding_mask[:, _cur : (_cur + height * width)].reshape(-1, height, width, 1)
+
             valid_height = torch.sum(~mask_flatten_[:, :, 0, 0], 1)
             valid_width = torch.sum(~mask_flatten_[:, 0, :, 0], 1)
         else:
-            if isinstance(height, torch.Tensor):
-                valid_height = height.expand(batch_size).to(dtype=torch.long, device=memory.device)
-            else:
-                valid_height = torch.full((batch_size,), height, dtype=torch.long, device=memory.device)
-            if isinstance(width, torch.Tensor):
-                valid_width = width.expand(batch_size).to(dtype=torch.long, device=memory.device)
-            else:
-                valid_width = torch.full((batch_size,), width, dtype=torch.long, device=memory.device)
+            # Derive batch-sized tensors from memory so ONNX traces them as symbolic
+            # (torch.full((N_,), ...) bakes N_=8 as a constant; zeros_like is dynamic)
+            valid_height = torch.zeros_like(memory[:, 0, 0]).long() + height
+            valid_width = torch.zeros_like(memory[:, 0, 0]).long() + width
 
         grid_y, grid_x = torch.meshgrid(
             torch.linspace(0, height - 1, height, dtype=torch.float32, device=memory.device),
@@ -106,12 +103,13 @@ def gen_encoder_output_proposals(memory, memory_padding_mask=None, spatial_shape
         )
         grid = torch.cat([grid_x.unsqueeze(-1), grid_y.unsqueeze(-1)], -1)  # height, width, 2
 
-        scale = torch.cat([valid_width.unsqueeze(-1), valid_height.unsqueeze(-1)], 1).view(batch_size, 1, 1, 2)
-        grid = (grid.unsqueeze(0).expand(batch_size, -1, -1, -1) + 0.5) / scale
+        # reshape(-1, ...) and unsqueeze(0) broadcasting avoid hardcoding N_ in ONNX
+        scale = torch.cat([valid_width.unsqueeze(-1), valid_height.unsqueeze(-1)], 1).reshape(-1, 1, 1, 2)
+        grid = (grid.unsqueeze(0) + 0.5) / scale.float()  # [1, H_, W_, 2] / [N_, 1, 1, 2] → [N_, H_, W_, 2]
 
         wh = torch.ones_like(grid) * 0.05 * (2.0**lvl)
 
-        proposal = torch.cat((grid, wh), -1).view(batch_size, -1, 4)
+        proposal = torch.cat((grid, wh), -1).reshape(-1, height * width, 4)  # -1 infers N_ dynamically
         proposals.append(proposal)
         _cur += height * width
 
@@ -238,7 +236,7 @@ class Transformer(nn.Module):
         spatial_shapes_hw: list[tuple[int, int]] = []
         valid_ratios = [] if masks is not None else None
         for lvl, (src, pos_embed) in enumerate(zip(srcs, pos_embeds)):
-            bs, c, h, w = src.shape
+            _, c, h, w = src.shape
             spatial_shapes[lvl, 0] = h
             spatial_shapes[lvl, 1] = w
             spatial_shapes_hw.append((h, w))
@@ -306,8 +304,12 @@ class Transformer(nn.Module):
             boxes_ts = torch.cat(boxes_ts, dim=1)  # .transpose(0, 1)
 
         if self.dec_layers > 0:
-            tgt = query_feat.unsqueeze(0).repeat(bs, 1, 1)
-            refpoint_embed = refpoint_embed.unsqueeze(0).repeat(bs, 1, 1)
+            # Use memory.shape[0] (traced as a symbolic Shape+Gather node in ONNX)
+            # instead of the Python-int `bs` (which bakes batch=8 as a constant Tile op).
+            # expand().contiguous() is functionally identical to repeat() but produces
+            # a dynamic Expand op that TRT can handle with variable batch sizes.
+            tgt = query_feat.unsqueeze(0).expand(memory.shape[0], -1, -1).contiguous()
+            refpoint_embed = refpoint_embed.unsqueeze(0).expand(memory.shape[0], -1, -1).contiguous()
             if self.two_stage:
                 ts_len = refpoint_embed_ts.shape[-2]
                 refpoint_embed_ts_subset = refpoint_embed[..., :ts_len, :]

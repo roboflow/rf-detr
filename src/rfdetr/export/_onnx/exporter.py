@@ -61,6 +61,7 @@ def export_onnx(
     backbone_only: bool = False,
     verbose: bool = True,
     opset_version: int = 17,
+    variant_name: str | None = None,
 ) -> str:
     """Export a model to ONNX.
 
@@ -74,11 +75,20 @@ def export_onnx(
         backbone_only: Whether to export backbone-only graph naming.
         verbose: Whether ONNX exporter should emit verbose logs.
         opset_version: ONNX opset version.
+        variant_name: Model variant identifier (e.g. ``"rfdetr-medium"``).
+            When provided, the exported file is named ``{variant_name}.onnx`` or
+            ``{variant_name}-backbone.onnx`` (when ``backbone_only=True``) instead
+            of the generic ``inference_model.onnx`` or ``backbone_model.onnx``.
 
     Returns:
         Path to the exported ONNX model.
     """
-    export_name = "backbone_model" if backbone_only else "inference_model"
+    if variant_name:
+        # Sanitize against path traversal (e.g. "foo/bar" → "bar", "/tmp/x" → "x")
+        variant_name = os.path.splitext(os.path.basename(variant_name))[0]
+        export_name = f"{variant_name}-backbone" if backbone_only else variant_name
+    else:
+        export_name = "backbone_model" if backbone_only else "inference_model"
     output_file = os.path.join(output_dir, f"{export_name}.onnx")
 
     # Prepare model for export

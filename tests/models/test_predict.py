@@ -105,56 +105,59 @@ class TestPredictSourceData:
         img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
         model = _DummyRFDETR()
         detections = model.predict(img)
-        assert "source_image" in detections.data
-        assert isinstance(detections.data["source_image"], np.ndarray)
-        assert detections.data["source_image"].shape == (48, 64, 3)
-        assert detections.data["source_shape"] == (48, 64)
+        assert "source_image" in detections.metadata
+        assert isinstance(detections.metadata["source_image"], np.ndarray)
+        assert detections.metadata["source_image"].shape == (48, 64, 3)
+        assert np.array_equal(detections.data["source_shape"], np.array([[48, 64]]))
 
     def test_source_image_included_by_default_tensor(self) -> None:
         """Tensor input keeps source_image by default for API compatibility."""
         tensor = torch.rand(3, 48, 64)
         model = _DummyRFDETR()
         detections = model.predict(tensor)
-        assert "source_image" in detections.data
-        assert isinstance(detections.data["source_image"], np.ndarray)
-        assert detections.data["source_image"].dtype == np.uint8
-        assert detections.data["source_image"].shape == (48, 64, 3)
-        assert detections.data["source_shape"] == (48, 64)
+        assert "source_image" in detections.metadata
+        assert isinstance(detections.metadata["source_image"], np.ndarray)
+        assert detections.metadata["source_image"].dtype == np.uint8
+        assert detections.metadata["source_image"].shape == (48, 64, 3)
+        assert np.array_equal(detections.data["source_shape"], np.array([[48, 64]]))
 
     def test_source_image_can_be_disabled(self) -> None:
         """include_source_image=False omits source_image for memory-sensitive paths."""
         img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
         model = _DummyRFDETR()
         detections = model.predict(img, include_source_image=False)
-        assert "source_image" not in detections.data
-        assert detections.data["source_shape"] == (48, 64)
+        assert "source_image" not in detections.metadata
+        assert np.array_equal(detections.data["source_shape"], np.array([[48, 64]]))
 
     def test_source_image_from_pil(self) -> None:
         """PIL input stores the original image as a numpy array."""
         img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
         model = _DummyRFDETR()
         detections = model.predict(img, include_source_image=True)
-        assert "source_image" in detections.data
-        assert isinstance(detections.data["source_image"], np.ndarray)
-        assert detections.data["source_image"].shape == (48, 64, 3)
+        assert "source_image" in detections.metadata
+        assert isinstance(detections.metadata["source_image"], np.ndarray)
+        assert detections.metadata["source_image"].shape == (48, 64, 3)
 
     def test_source_shape_from_pil(self) -> None:
-        """PIL input stores the original (height, width) tuple."""
+        """PIL input stores source_shape as a per-detection numpy array."""
         img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
         model = _DummyRFDETR()
         detections = model.predict(img)
         assert "source_shape" in detections.data
-        assert detections.data["source_shape"] == (48, 64)
+        assert isinstance(detections.data["source_shape"], np.ndarray)
+        assert detections.data["source_shape"].dtype == np.int64
+        assert detections.data["source_shape"].shape == (len(detections), 2)
+        assert np.array_equal(detections.data["source_shape"][0], [48, 64])
 
     def test_source_image_from_tensor(self) -> None:
         """Tensor input stores the original image as a uint8 numpy array."""
         tensor = torch.rand(3, 48, 64)
         model = _DummyRFDETR()
         detections = model.predict(tensor, include_source_image=True)
-        assert "source_image" in detections.data
-        assert isinstance(detections.data["source_image"], np.ndarray)
-        assert detections.data["source_image"].dtype == np.uint8
-        assert detections.data["source_image"].shape == (48, 64, 3)
+        assert "source_image" in detections.metadata
+        assert isinstance(detections.metadata["source_image"], np.ndarray)
+        assert detections.metadata["source_image"].dtype == np.uint8
+        assert detections.metadata["source_image"].shape == (48, 64, 3)
 
     def test_tensor_with_negative_values_raises(self) -> None:
         """Tensor with negative pixel values raises ValueError."""
@@ -170,10 +173,133 @@ class TestPredictSourceData:
         model = _DummyRFDETR()
         detections_list = model.predict([img1, img2], include_source_image=True)
         assert isinstance(detections_list, list)
-        assert detections_list[0].data["source_image"].shape == (48, 64, 3)
-        assert detections_list[1].data["source_image"].shape == (24, 32, 3)
-        assert detections_list[0].data["source_shape"] == (48, 64)
-        assert detections_list[1].data["source_shape"] == (24, 32)
+        assert detections_list[0].metadata["source_image"].shape == (48, 64, 3)
+        assert detections_list[1].metadata["source_image"].shape == (24, 32, 3)
+        assert np.array_equal(detections_list[0].data["source_shape"], np.array([[48, 64]]))
+        assert np.array_equal(detections_list[1].data["source_shape"], np.array([[24, 32]]))
+
+    def test_source_shape_survives_detections_iteration(self) -> None:
+        """Iterating sv.Detections must not raise TypeError and must yield correct values.
+
+        Regression test for https://github.com/roboflow/rf-detr/issues/963.
+        supervision's Detections.__iter__ calls get_data_item() on every data value,
+        which requires array-like types — storing source_shape as a Python tuple
+        raised TypeError: Unsupported data type for key 'source_shape': <class 'tuple'>.
+        """
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+        model = _DummyRFDETR()
+        detections = model.predict(img)
+
+        # sv.Detections.__iter__ yields (xyxy, mask, confidence, class_id, tracker_id, data)
+        iterated = list(detections)
+        assert len(iterated) == len(detections)
+        # Each iterated element's data dict must contain a 1-D [h, w] array
+        for det_tuple in iterated:
+            data = det_tuple[-1]
+            assert np.array_equal(data["source_shape"], [48, 64])
+
+    def test_source_image_survives_boolean_index(self) -> None:
+        """Boolean-mask indexing must not raise IndexError when source_image is present.
+
+        Regression test for https://github.com/roboflow/rf-detr/issues/968.
+        source_image was stored as (H, W, C) in detections.data; supervision's
+        __getitem__ tried to index it with a per-detection boolean mask, raising
+        IndexError because H != N.
+        """
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+        model = _DummyRFDETR()
+        model.model = _DummyModel(labels=[0, 1])  # 2 detections
+        detections = model.predict(img)  # include_source_image=True by default
+
+        # Boolean-mask filtering — the pattern from issue #968
+        mask = detections.confidence > 0.5
+        filtered = detections[mask]
+        assert len(filtered) == int(mask.sum())
+        # source_image must survive the index operation unchanged (not dropped, not sliced)
+        assert "source_image" in filtered.metadata
+        assert filtered.metadata["source_image"].shape == (48, 64, 3)
+
+    def test_source_image_survives_class_id_boolean_index(self) -> None:
+        """Boolean index on class_id must not raise IndexError — exact issue #968 pattern.
+
+        The reporter used ``detections.class_id == 1`` to filter by class, producing a
+        partial boolean mask (1 of 2 detections).  This is the primary reproduction path
+        from the original bug report.
+        """
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+        model = _DummyRFDETR()
+        model.model = _DummyModel(labels=[0, 1])  # class_id 0 and 1
+        detections = model.predict(img)
+
+        # Exact pattern from issue #968: filter by class_id
+        mask = detections.class_id == 1  # partial mask — 1 of 2 detections
+        filtered = detections[mask]
+        assert len(filtered) == 1
+        assert "source_image" in filtered.metadata
+        assert filtered.metadata["source_image"].shape == (48, 64, 3)
+
+    def test_source_image_survives_integer_index(self) -> None:
+        """Integer indexing must pass metadata["source_image"] through unchanged."""
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+        model = _DummyRFDETR()
+        model.model = _DummyModel(labels=[0, 1])  # 2 detections
+        detections = model.predict(img)
+
+        single = detections[0]
+        assert "source_image" in single.metadata
+        assert single.metadata["source_image"].shape == (48, 64, 3)
+
+    def test_source_shape_survives_detections_indexing(self) -> None:
+        """Integer and boolean-mask indexing of sv.Detections must work correctly.
+
+        Regression test for https://github.com/roboflow/rf-detr/issues/963.
+        MeanAveragePrecision.compute() uses __getitem__ (not just __iter__) on
+        Detections objects — both paths go through get_data_item() and would have
+        crashed on the old tuple format.
+        """
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+        model = _DummyRFDETR()
+        model.model = _DummyModel(labels=[0, 1])  # 2 detections
+        detections = model.predict(img)
+
+        # Integer indexing: detections[i] returns a Detections with 1 element
+        single = detections[0]
+        assert np.array_equal(single.data["source_shape"], np.array([[48, 64]]))
+
+        # Boolean-mask indexing: used by supervision metrics to filter detections
+        mask = detections.confidence > 0.5
+        filtered = detections[mask]
+        assert filtered.data["source_shape"].shape == (int(mask.sum()), 2)
+        assert np.all(filtered.data["source_shape"] == np.array([48, 64]))
+
+    def test_source_shape_correct_for_zero_detections(self) -> None:
+        """source_shape must have shape (0, 2) when threshold filters all detections.
+
+        Regression test for https://github.com/roboflow/rf-detr/issues/963.
+        The zero-detection path must not raise and must produce an empty array, not a
+        scalar or a (1, 2) array.
+        """
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+        model = _DummyRFDETR()
+        # confidence=0.9 < 1.1 → all detections filtered
+        detections = model.predict(img, threshold=1.1)
+        assert "source_shape" in detections.data
+        assert isinstance(detections.data["source_shape"], np.ndarray)
+        assert detections.data["source_shape"].shape == (0, 2)
+
+    def test_source_shape_correct_for_multiple_detections(self) -> None:
+        """source_shape must have shape (N, 2) for N detections, each row [height, width].
+
+        Regression test for https://github.com/roboflow/rf-detr/issues/963.
+        """
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+        model = _DummyRFDETR()
+        model.model = _DummyModel(labels=[0, 1])  # 2 detections
+        detections = model.predict(img)
+        assert "source_shape" in detections.data
+        assert isinstance(detections.data["source_shape"], np.ndarray)
+        assert detections.data["source_shape"].shape == (2, 2)
+        assert np.all(detections.data["source_shape"] == np.array([48, 64]))
 
 
 class TestPredictShape:
@@ -464,3 +590,70 @@ class TestPredictClassNameData:
             assert list(det.data["class_name"]) == ["cat", "dog"], (
                 f"image {idx}: class_name must match class_names[class_id]"
             )
+
+    def test_background_class_id_maps_to_background_label(self) -> None:
+        """DETR's background/no-object class (class_id == n) must map to '__background__'.
+
+        RF-DETR internally allocates num_classes + 1 outputs; the extra class at
+        index n is the background/no-object class. Returning it as '__background__'
+        is unambiguous, whereas the previous empty string was indistinguishable from
+        a genuine OOB error.
+
+        Regression / contract test for https://github.com/roboflow/rf-detr/pull/966
+        post-merge issue reported by @Alarmod.
+        """
+        # class_names has 2 entries (n=2); background class is label index 2
+        model = self._make_model_with_class_names(["cat", "dog"], labels=[2])
+        img = PIL.Image.new("RGB", (28, 28))
+        detections = model.predict(img)
+        assert detections.data["class_name"][0] == "__background__", (
+            "Background class (class_id == num_classes) must map to '__background__', not empty string"
+        )
+
+    def test_background_class_id_does_not_emit_oob_warning(self) -> None:
+        """Predicting the background class must not emit an out-of-range warning.
+
+        The background class (class_id == num_classes) is expected DETR behaviour,
+        not a model error. Warning on it misleads users into thinking something is wrong.
+
+        Uses _warned_once state (not caplog) because the RF-DETR logger has propagate=False,
+        which prevents caplog from capturing records via the root-logger handler.
+
+        Regression / contract test for https://github.com/roboflow/rf-detr/pull/966
+        post-merge issue reported by @Alarmod.
+        """
+        from rfdetr.utilities.logger import get_logger
+
+        # Reset warning_once state so this test is not affected by earlier tests that may
+        # have already triggered the same message template, masking a reintroduced warning.
+        logger = get_logger()
+        logger._warned_once.clear()
+
+        model = self._make_model_with_class_names(["cat", "dog"], labels=[2])
+        img = PIL.Image.new("RGB", (28, 28))
+        model.predict(img)
+        oob_warnings = [msg for msg in logger._warned_once if "out of range" in msg]
+        assert not oob_warnings, "Background class (class_id == num_classes) must not trigger an out-of-range warning"
+
+    def test_truly_oob_class_id_still_maps_to_empty_string_and_warns(self) -> None:
+        """A class_id strictly above num_classes still maps to empty string AND emits a warning.
+
+        class_id == n is background (no warning); class_id > n is truly unexpected — must
+        produce '' AND trigger the out-of-range warning so the caller knows something is wrong.
+
+        Uses _warned_once state (not caplog) because the RF-DETR logger has propagate=False,
+        which prevents caplog from capturing records via the root-logger handler.
+        """
+        from rfdetr.utilities.logger import get_logger
+
+        # Reset warning_once state so this test is not affected by deduplication from earlier tests.
+        logger = get_logger()
+        logger._warned_once.clear()
+
+        # n=2, background is class_id=2; class_id=5 is truly OOB (> n)
+        model = self._make_model_with_class_names(["cat", "dog"], labels=[5])
+        img = PIL.Image.new("RGB", (28, 28))
+        detections = model.predict(img)
+        assert detections.data["class_name"][0] == "", "Truly OOB class_id (> num_classes) must produce empty string"
+        oob_warnings = [msg for msg in logger._warned_once if "out of range" in msg]
+        assert oob_warnings, "Truly OOB class_id (> num_classes) must trigger an out-of-range warning"
