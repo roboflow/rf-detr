@@ -4,4 +4,8 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-"""Model export utilities — ONNX, TensorRT, and TFLite."""
+"""TFLite export: ONNX → TFLite conversion via onnx2tf."""
+
+from rfdetr.export._tflite.converter import export_tflite
+
+__all__ = ["export_tflite"]

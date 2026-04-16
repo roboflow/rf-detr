@@ -73,6 +73,13 @@ trt = [
     "tensorrt>=8.6.1",
     "polygraphy",
 ]
+tflite = [
+    "onnx2tf>=1.26.0,<2.0.0",
+    "flatbuffers>=23.5.26",
+    "onnx>=1.16.0,<1.20",
+    "tf-keras>=2.16.0",
+    "tensorflow>=2.16.0",
+]
 kornia = [
     "kornia>=0.7,<1",              # GPU-side augmentation via on_after_batch_transfer
 ]
@@ -181,7 +188,8 @@ addopts = [
 pythonpath = ["src"]
 markers = [
     "gpu: tests that require GPU or are slow on CPU",
-    "flaky: tests that may fail due to nondeterminism"
+    "flaky: tests that may fail due to nondeterminism",
+    "tflite: tests requiring onnx2tf and TFLite dependencies",
 ]
 filterwarnings = [
     # pytest-xdist workers close their channel before teardown completes;
@@ -218,6 +226,8 @@ overrides = [
     "seaborn", "seaborn.*",
     "tqdm", "tqdm.*",
     "kornia", "kornia.*",
+    "onnx", "onnx.*",
+    "onnx2tf", "onnx2tf.*",
   ], ignore_missing_imports = true },
   # Modules with pre-existing type errors — ignored until incrementally fixed.
   { module = [
