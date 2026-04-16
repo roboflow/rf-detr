@@ -174,5 +174,11 @@ def main(args):
             "The simplify flag is deprecated and ignored. RF-DETR no longer runs ONNX simplification automatically."
         )
 
+    onnx_path = output_file  # preserve ONNX path before any post-processing step overwrites it
+
     if args.tensorrt:
-        output_file = trtexec(output_file, args)
+        output_file = trtexec(onnx_path, args)
+
+    # TODO: register --tflite, --quantization, --calibration-data, --max-images in the
+    # argparser to enable TFLite export via CLI.  Until then, use RFDETR.export(format="tflite").
+    _ = onnx_path  # referenced above; suppress unused-variable warning until CLI is wired up
