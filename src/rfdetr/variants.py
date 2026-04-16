@@ -168,7 +168,7 @@ class RFDETRLarge(RFDETR):
                     "=" * 100 + "\n"
                 )
             except Exception:
-                raise self.init_error
+                raise self.init_error from None
 
     def get_model_config(self, **kwargs) -> ModelConfig:
         if not self.is_deprecated:

@@ -1289,6 +1289,27 @@ class TestRFDETRLargeFallback:
             f"Expected no deprecated-config retry when resolution= is set, but __init__ was called {call_count} times."
         )
 
+    def test_patch_size_mismatch_retry_surfaces_only_original_error(self, monkeypatch, patch_lit):
+        """When both attempts fail, re-raise only the first compatibility error without chaining output."""
+        call_count = 0
+
+        def _raise_patch_size_mismatch(self, **kwargs):
+            del self, kwargs
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise ValueError("The checkpoint was trained with patch_size=14, but the current model uses patch_size=12.")
+            raise ValueError("The checkpoint was trained with patch_size=16, but the current model uses patch_size=12.")
+
+        monkeypatch.setattr(RFDETR, "__init__", _raise_patch_size_mismatch)
+
+        with pytest.raises(ValueError, match=r"patch_size=14.*patch_size=12") as exc_info:
+            RFDETRLarge(resolution=704)
+
+        assert call_count == 2
+        assert "patch_size=16" not in str(exc_info.value)
+        assert exc_info.value.__suppress_context__ is True
+
 
 # ---------------------------------------------------------------------------
 # 7. _load_pretrain_weights_into — detr.py path (the non-PTL scenario from #806)
