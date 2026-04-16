@@ -1293,8 +1293,7 @@ class TestRFDETRLargeFallback:
         """When both attempts fail, re-raise only the first compatibility error without chaining output."""
         call_count = 0
 
-        def _raise_patch_size_mismatch(self, **kwargs):
-            del self, kwargs
+        def _raise_patch_size_mismatch(_self, **_kwargs):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
