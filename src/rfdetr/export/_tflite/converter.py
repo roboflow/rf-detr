@@ -154,7 +154,11 @@ def _patch_validation_download(npy_path: str) -> Generator[None, None, None]:
     """
 
     def _replacement() -> NDArray[Any]:
-        return cast(NDArray[Any], np.load(npy_path, allow_pickle=True))
+        # Calibration data prepared by _prepare_calibration_data() is always
+        # a plain float32 ndarray — never pickled.  allow_pickle=False is
+        # intentional here; allow_pickle=True is handled by _numpy_allow_pickle()
+        # for onnx2tf's own internal np.load calls.
+        return cast(NDArray[Any], np.load(npy_path, allow_pickle=False))
 
     originals: dict[str, Any] = {}
     modules = [
@@ -422,6 +426,15 @@ def export_tflite(
 
     _check_onnx2tf_available()
 
+    # Force-import onnx2tf submodules so that _patch_validation_download()
+    # can patch them.  onnx2tf's __init__.py may not import all submodules
+    # eagerly in all versions, so we ensure they are in sys.modules before
+    # entering the patching context manager.
+    import onnx2tf.onnx2tf as _onnx2tf_mod
+    import onnx2tf.utils.common_functions as _onnx2tf_common
+
+    del _onnx2tf_mod, _onnx2tf_common  # imported for side-effect only
+
     output_dir.mkdir(parents=True, exist_ok=True)
 
     calib_npy_path = _prepare_calibration_data(
@@ -475,13 +488,17 @@ def export_tflite(
     primary = output_dir / f"{model_stem}_float32.tflite"
 
     if not primary.is_file():
-        # Fallback: look for any .tflite file in the output directory.
-        tflite_files = sorted(output_dir.glob("*.tflite"))
+        # Fallback: look for any .tflite file produced from this specific ONNX stem.
+        # Scoped to {stem}_*.tflite to avoid returning a stale artifact from a
+        # previous export in a reused output directory (review C2).
+        tflite_files = sorted(output_dir.glob(f"{model_stem}_*.tflite"))
         if tflite_files:
             primary = tflite_files[0]
             logger.info(f"Expected {model_stem}_float32.tflite not found; using {primary.name} instead.")
         else:
-            raise RuntimeError(f"onnx2tf completed but no .tflite files found in {output_dir}")
+            raise RuntimeError(
+                f"onnx2tf completed but no .tflite file matching '{model_stem}_*.tflite' was found in {output_dir}"
+            )
 
     logger.info(f"TFLite model exported to: {primary}")
     return primary
