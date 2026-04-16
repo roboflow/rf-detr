@@ -1297,7 +1297,9 @@ class TestRFDETRLargeFallback:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                raise ValueError("The checkpoint was trained with patch_size=14, but the current model uses patch_size=12.")
+                raise ValueError(
+                    "The checkpoint was trained with patch_size=14, but the current model uses patch_size=12."
+                )
             raise ValueError("The checkpoint was trained with patch_size=16, but the current model uses patch_size=12.")
 
         monkeypatch.setattr(RFDETR, "__init__", _raise_patch_size_mismatch)
