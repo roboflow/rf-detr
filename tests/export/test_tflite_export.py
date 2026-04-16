@@ -53,17 +53,33 @@ class _FakeOnnx2tfModule:
         self.convert = mock.MagicMock()
 
 
-def _install_fake_onnx2tf() -> tuple[_FakeOnnx2tfModule, mock.MagicMock]:
+_ONNX2TF_KEYS = ("onnx2tf", "onnx2tf.onnx2tf", "onnx2tf.utils", "onnx2tf.utils.common_functions")
+
+
+def _install_fake_onnx2tf() -> tuple[_FakeOnnx2tfModule, mock.MagicMock, dict[str, object]]:
     """Insert a fake ``onnx2tf`` package into ``sys.modules``.
 
+    Saves any pre-existing real modules under the same keys so they can be
+    restored by ``_remove_fake_onnx2tf`` (Copilot: do not silently clobber
+    real modules that a prior test may have imported).
+
     Returns:
-        Tuple of (fake_module, convert_mock).
+        Tuple of (fake_module, convert_mock, saved_originals).
     """
+    # Snapshot originals before overwriting (None means the key was absent).
+    saved: dict[str, object] = {k: sys.modules.get(k) for k in _ONNX2TF_KEYS}
+
     fake = _FakeOnnx2tfModule()
     pkg = types.ModuleType("onnx2tf")
     pkg.convert = fake.convert  # type: ignore[attr-defined]
 
-    # Also create onnx2tf.utils and onnx2tf.utils.common_functions
+    # onnx2tf.onnx2tf — force-imported by export_tflite() before patching
+    inner_mod = types.ModuleType("onnx2tf.onnx2tf")
+    inner_mod.download_test_image_data = mock.MagicMock(  # type: ignore[attr-defined]
+        return_value=np.zeros((20, 128, 128, 3), dtype=np.float32),
+    )
+
+    # onnx2tf.utils and onnx2tf.utils.common_functions
     utils_mod = types.ModuleType("onnx2tf.utils")
     cf_mod = types.ModuleType("onnx2tf.utils.common_functions")
     cf_mod.download_test_image_data = mock.MagicMock(  # type: ignore[attr-defined]
@@ -71,20 +87,37 @@ def _install_fake_onnx2tf() -> tuple[_FakeOnnx2tfModule, mock.MagicMock]:
     )
 
     # Wire up module hierarchy
+    pkg.onnx2tf = inner_mod  # type: ignore[attr-defined]
     pkg.utils = utils_mod  # type: ignore[attr-defined]
     utils_mod.common_functions = cf_mod  # type: ignore[attr-defined]
 
     sys.modules["onnx2tf"] = pkg
+    sys.modules["onnx2tf.onnx2tf"] = inner_mod
     sys.modules["onnx2tf.utils"] = utils_mod
     sys.modules["onnx2tf.utils.common_functions"] = cf_mod
-    return fake, fake.convert
+    return fake, fake.convert, saved
 
 
-def _remove_fake_onnx2tf() -> None:
-    """Remove fake ``onnx2tf`` entries from ``sys.modules``."""
-    for key in list(sys.modules):
-        if key == "onnx2tf" or key.startswith("onnx2tf."):
-            del sys.modules[key]
+def _remove_fake_onnx2tf(saved: dict[str, object] | None = None) -> None:
+    """Remove fake ``onnx2tf`` entries from ``sys.modules`` and restore originals.
+
+    Args:
+        saved: Snapshot returned by ``_install_fake_onnx2tf``.  If a key was
+            present before installation its original value is restored; if it
+            was absent it is deleted.  When *saved* is ``None`` all
+            ``onnx2tf*`` keys are simply deleted (legacy behaviour).
+    """
+    if saved is not None:
+        for key in _ONNX2TF_KEYS:
+            original = saved.get(key)
+            if original is None:
+                sys.modules.pop(key, None)
+            else:
+                sys.modules[key] = original  # type: ignore[assignment]
+    else:
+        for key in list(sys.modules):
+            if key == "onnx2tf" or key.startswith("onnx2tf."):
+                del sys.modules[key]
 
 
 # ---------------------------------------------------------------------------
@@ -95,9 +128,9 @@ def _remove_fake_onnx2tf() -> None:
 @pytest.fixture()
 def fake_onnx2tf():
     """Provide a fake ``onnx2tf`` that records *convert()* calls."""
-    fake, convert_mock = _install_fake_onnx2tf()
+    fake, convert_mock, saved = _install_fake_onnx2tf()
     yield fake, convert_mock
-    _remove_fake_onnx2tf()
+    _remove_fake_onnx2tf(saved)
 
 
 @pytest.fixture()
@@ -271,11 +304,28 @@ class TestExportTfliteConverter:
         fake_onnx2tf: Any,
         mock_prepare_calib: Any,
     ) -> None:
+        """Fallback returns a stem-scoped file when the primary *_float32.tflite is absent."""
         out = tmp_path / "out"
         out.mkdir()
-        (out / "other_model.tflite").write_bytes(b"fb")
+        # Scoped fallback: must match {stem}_*.tflite (stem == "model" here).
+        (out / "model_float16.tflite").write_bytes(b"fb")
         result = export_tflite(onnx_model, out)
-        assert result.name == "other_model.tflite"
+        assert result.name == "model_float16.tflite"
+
+    def test_fallback_does_not_return_unrelated_tflite(
+        self,
+        onnx_model: Path,
+        tmp_path: Path,
+        fake_onnx2tf: Any,
+        mock_prepare_calib: Any,
+    ) -> None:
+        """Stale artifacts from a different export are never returned as fallback."""
+        out = tmp_path / "out"
+        out.mkdir()
+        # Unrelated file — does NOT match model_*.tflite.
+        (out / "other_model.tflite").write_bytes(b"stale")
+        with pytest.raises(RuntimeError, match="no .tflite file matching"):
+            export_tflite(onnx_model, out)
 
     def test_no_tflite_output_raises_runtime_error(
         self,
@@ -284,9 +334,10 @@ class TestExportTfliteConverter:
         fake_onnx2tf: Any,
         mock_prepare_calib: Any,
     ) -> None:
+        """Empty output directory raises RuntimeError after conversion."""
         out = tmp_path / "empty_out"
         out.mkdir()
-        with pytest.raises(RuntimeError, match="no .tflite files found"):
+        with pytest.raises(RuntimeError, match="no .tflite file matching"):
             export_tflite(onnx_model, out)
 
     def test_returns_path_object(
