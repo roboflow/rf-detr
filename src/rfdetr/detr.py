@@ -777,52 +777,52 @@ class RFDETR:
     ) -> None:
         """Export the trained model to ONNX or TFLite format.
 
-            See the `export documentation <https://rfdetr.roboflow.com/learn/export/>`_
-            for more information.
+        See the `export documentation <https://rfdetr.roboflow.com/learn/export/>`_
+        for more information.
 
-            Args:
-                output_dir: Directory to write the exported model to.
-                infer_dir: Optional directory of sample images for dynamic-axes inference.
-                simplify: Deprecated and ignored. Simplification is no longer run.
-                backbone_only: Export only the backbone (feature extractor).
-                opset_version: ONNX opset version to target.
-                verbose: Print export progress information.
-                force: Deprecated and ignored.
-                shape: ``(height, width)`` tuple; defaults to square at model resolution.
-                    Both dimensions must be divisible by ``patch_size * num_windows``.
-                batch_size: Static batch size to bake into the ONNX graph.
-                dynamic_batch: If True, export with a dynamic batch dimension
-                    so the ONNX model accepts variable batch sizes at runtime.
-                patch_size: Backbone patch size. Defaults to the value stored in
-                    ``model_config.patch_size`` (typically 14 or 16). When provided
-                    explicitly it must match the instantiated model's patch size.
-                    Shape divisibility is validated against ``patch_size * num_windows``.
-        format: Export format — ``"onnx"`` (default) or ``"tflite"``.
-            When ``"tflite"`` is selected the model is first exported to ONNX
-            then converted to TFLite via ``onnx2tf``.  Requires
-            ``pip install rfdetr[onnx,tflite]``.
-        quantization: TFLite quantization mode (ignored when
-            ``format="onnx"``).  One of ``None``, ``"fp32"``, ``"fp16"``,
-            ``"int8"``.  ``None`` / ``"fp32"`` / ``"fp16"`` produce FP32 +
-            FP16 ``.tflite`` files; ``"int8"`` additionally produces an
-            INT8-quantized model.
-        calibration_data: Representative images for INT8 calibration
-            and ``onnx2tf`` output validation.  Accepts:
+        Args:
+            output_dir: Directory to write the exported model to.
+            infer_dir: Optional directory of sample images for dynamic-axes inference.
+            simplify: Deprecated and ignored. Simplification is no longer run.
+            backbone_only: Export only the backbone (feature extractor).
+            opset_version: ONNX opset version to target.
+            verbose: Print export progress information.
+            force: Deprecated and ignored.
+            shape: ``(height, width)`` tuple; defaults to square at model resolution.
+                Both dimensions must be divisible by ``patch_size * num_windows``.
+            batch_size: Static batch size to bake into the ONNX graph.
+            dynamic_batch: If True, export with a dynamic batch dimension
+                so the ONNX model accepts variable batch sizes at runtime.
+            patch_size: Backbone patch size. Defaults to the value stored in
+                ``model_config.patch_size`` (typically 14 or 16). When provided
+                explicitly it must match the instantiated model's patch size.
+                Shape divisibility is validated against ``patch_size * num_windows``.
+            format: Export format — ``"onnx"`` (default) or ``"tflite"``.
+                When ``"tflite"`` is selected the model is first exported to ONNX
+                then converted to TFLite via ``onnx2tf``.  Requires
+                ``pip install rfdetr[onnx,tflite]``.
+            quantization: TFLite quantization mode (ignored when
+                ``format="onnx"``).  One of ``None``, ``"fp32"``, ``"fp16"``,
+                ``"int8"``.  ``None`` / ``"fp32"`` / ``"fp16"`` produce FP32 +
+                FP16 ``.tflite`` files; ``"int8"`` additionally produces an
+                INT8-quantized model.
+            calibration_data: Representative images for INT8 calibration
+                and ``onnx2tf`` output validation.  Accepts:
 
-            * ``None`` — auto-generate random data (sufficient for
-              fp32/fp16; warns for int8).
-            * A **directory path** (``str``) containing JPEG/PNG
-              images — the converter automatically loads, resizes, and
-              prepares them.  This is the simplest approach.
-            * A path (``str``) to a ``.npy`` file of shape
-              ``(N, H, W, 3)``, dtype float32, values in ``[0, 1]``.
-            * A :class:`numpy.ndarray` with the same format.
+                * ``None`` — auto-generate random data (sufficient for
+                  fp32/fp16; warns for int8).
+                * A **directory path** (``str``) containing JPEG/PNG
+                  images — the converter automatically loads, resizes, and
+                  prepares them.  This is the simplest approach.
+                * A path (``str``) to a ``.npy`` file of shape
+                  ``(N, H, W, 3)``, dtype float32, values in ``[0, 1]``.
+                * A :class:`numpy.ndarray` with the same format.
 
-            For INT8 quantization, provide 20–100 representative
-            images from your training/validation set for best accuracy.
-        max_images: Maximum number of images to load from a
-            calibration directory.  Defaults to ``100``.  Only used
-            when *calibration_data* is a directory path.
+                For INT8 quantization, provide 20–100 representative
+                images from your training/validation set for best accuracy.
+            max_images: Maximum number of images to load from a
+                calibration directory.  Defaults to ``100``.  Only used
+                when *calibration_data* is a directory path.
         """
         logger.info("Exporting model to ONNX format")
         _valid_formats = ("onnx", "tflite")
