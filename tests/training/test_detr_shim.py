@@ -1289,8 +1289,8 @@ class TestRFDETRLargeFallback:
             f"Expected no deprecated-config retry when resolution= is set, but __init__ was called {call_count} times."
         )
 
-    def test_patch_size_mismatch_retry_surfaces_only_original_error(self, monkeypatch, patch_lit):
-        """When both attempts fail, re-raise only the first compatibility error without chaining output."""
+    def test_retry_reraises_only_first_error(self, monkeypatch, patch_lit):
+        """When both attempts fail, re-raise only the first compatibility error without exception chaining."""
         call_count = 0
 
         def _raise_patch_size_mismatch(_self, **_kwargs):
