@@ -838,103 +838,108 @@ class RFDETR:
             raise
 
         device = self.model.device
+        # deepcopy(self.model.model.to("cpu")) moves the live model to CPU as a
+        # side-effect before copying.  The finally block guarantees the original
+        # model is restored to its original device even if export or conversion
+        # raises an exception (review H1).
         model = deepcopy(self.model.model.to("cpu"))
         model.to(device)
-
-        os.makedirs(output_dir, exist_ok=True)
-        output_dir_path = Path(output_dir)
-        patch_size = _resolve_patch_size(patch_size, self.model_config, "export")
-        num_windows = getattr(self.model_config, "num_windows", 1)
-        if isinstance(num_windows, bool) or not isinstance(num_windows, int) or num_windows <= 0:
-            raise ValueError(f"num_windows must be a positive integer, got {num_windows!r}")
-        block_size = patch_size * num_windows
-        if shape is None:
-            shape = (self.model.resolution, self.model.resolution)
-            if shape[0] % block_size != 0:
-                raise ValueError(
-                    f"Model's default resolution ({self.model.resolution}) is not divisible by "
-                    f"block_size={block_size} (patch_size={patch_size} * num_windows={num_windows}). "
-                    f"Provide an explicit shape divisible by {block_size}.",
-                )
-        else:
-            shape = _validate_shape_dims(shape, block_size, patch_size, num_windows)
-
-        input_tensors = make_infer_image(infer_dir, shape, batch_size, device).to(device)
-        input_names = ["input"]
-        if backbone_only:
-            output_names = ["features"]
-        elif self.model_config.segmentation_head:
-            output_names = ["dets", "labels", "masks"]
-        else:
-            output_names = ["dets", "labels"]
-
-        if dynamic_batch:
-            dynamic_axes = {name: {0: "batch"} for name in input_names + output_names}
-        else:
-            dynamic_axes = None
-        model.eval()
-        with torch.no_grad():
-            if backbone_only:
-                features = model(input_tensors)
-                logger.debug(f"PyTorch inference output shape: {features.shape}")
-            elif self.model_config.segmentation_head:
-                outputs = model(input_tensors)
-                dets = outputs["pred_boxes"]
-                labels = outputs["pred_logits"]
-                masks = outputs["pred_masks"]
-                if isinstance(masks, torch.Tensor):
-                    logger.debug(
-                        f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}, "
-                        f"Masks: {masks.shape}",
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+            output_dir_path = Path(output_dir)
+            patch_size = _resolve_patch_size(patch_size, self.model_config, "export")
+            num_windows = getattr(self.model_config, "num_windows", 1)
+            if isinstance(num_windows, bool) or not isinstance(num_windows, int) or num_windows <= 0:
+                raise ValueError(f"num_windows must be a positive integer, got {num_windows!r}")
+            block_size = patch_size * num_windows
+            if shape is None:
+                shape = (self.model.resolution, self.model.resolution)
+                if shape[0] % block_size != 0:
+                    raise ValueError(
+                        f"Model's default resolution ({self.model.resolution}) is not divisible by "
+                        f"block_size={block_size} (patch_size={patch_size} * num_windows={num_windows}). "
+                        f"Provide an explicit shape divisible by {block_size}.",
                     )
-                else:
-                    logger.debug(f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}")
             else:
-                outputs = model(input_tensors)
-                dets = outputs["pred_boxes"]
-                labels = outputs["pred_logits"]
-                logger.debug(f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}")
+                shape = _validate_shape_dims(shape, block_size, patch_size, num_windows)
 
-        model.cpu()
-        input_tensors = input_tensors.cpu()
+            input_tensors = make_infer_image(infer_dir, shape, batch_size, device).to(device)
+            input_names = ["input"]
+            if backbone_only:
+                output_names = ["features"]
+            elif self.model_config.segmentation_head:
+                output_names = ["dets", "labels", "masks"]
+            else:
+                output_names = ["dets", "labels"]
 
-        output_file = export_onnx(
-            output_dir=str(output_dir_path),
-            model=model,
-            input_names=input_names,
-            input_tensors=input_tensors,
-            output_names=output_names,
-            dynamic_axes=dynamic_axes,
-            backbone_only=backbone_only,
-            verbose=verbose,
-            opset_version=opset_version,
-            variant_name=getattr(self, "size", None),
-        )
+            if dynamic_batch:
+                dynamic_axes = {name: {0: "batch"} for name in input_names + output_names}
+            else:
+                dynamic_axes = None
+            model.eval()
+            with torch.no_grad():
+                if backbone_only:
+                    features = model(input_tensors)
+                    logger.debug(f"PyTorch inference output shape: {features.shape}")
+                elif self.model_config.segmentation_head:
+                    outputs = model(input_tensors)
+                    dets = outputs["pred_boxes"]
+                    labels = outputs["pred_logits"]
+                    masks = outputs["pred_masks"]
+                    if isinstance(masks, torch.Tensor):
+                        logger.debug(
+                            f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}, "
+                            f"Masks: {masks.shape}",
+                        )
+                    else:
+                        logger.debug(f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}")
+                else:
+                    outputs = model(input_tensors)
+                    dets = outputs["pred_boxes"]
+                    labels = outputs["pred_logits"]
+                    logger.debug(f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}")
 
-        logger.info(f"Successfully exported ONNX model to: {output_file}")
+            model.cpu()
+            input_tensors = input_tensors.cpu()
 
-        if format == "tflite":
-            try:
-                from rfdetr.export._tflite.converter import export_tflite
-            except ImportError:
-                logger.error(
-                    "It seems some dependencies for TFLite export are missing."
-                    " Please run `pip install rfdetr[onnx,tflite]` and try again.",
-                )
-                raise
-
-            tflite_path = export_tflite(
-                onnx_path=output_file,
+            output_file = export_onnx(
                 output_dir=str(output_dir_path),
-                quantization=quantization,
-                calibration_data=calibration_data,
-                verbosity="info" if verbose else "error",
-                max_images=max_images,
+                model=model,
+                input_names=input_names,
+                input_tensors=input_tensors,
+                output_names=output_names,
+                dynamic_axes=dynamic_axes,
+                backbone_only=backbone_only,
+                verbose=verbose,
+                opset_version=opset_version,
+                variant_name=getattr(self, "size", None),
             )
-            logger.info(f"Successfully exported TFLite model to: {tflite_path}")
 
-        logger.info("Export completed successfully")
-        self.model.model = self.model.model.to(device)
+            logger.info(f"Successfully exported ONNX model to: {output_file}")
+
+            if format == "tflite":
+                try:
+                    from rfdetr.export._tflite.converter import export_tflite
+                except ImportError:
+                    logger.error(
+                        "It seems some dependencies for TFLite export are missing."
+                        " Please run `pip install rfdetr[onnx,tflite]` and try again.",
+                    )
+                    raise
+
+                tflite_path = export_tflite(
+                    onnx_path=output_file,
+                    output_dir=str(output_dir_path),
+                    quantization=quantization,
+                    calibration_data=calibration_data,
+                    verbosity="info" if verbose else "error",
+                    max_images=max_images,
+                )
+                logger.info(f"Successfully exported TFLite model to: {tflite_path}")
+
+            logger.info("Export completed successfully")
+        finally:
+            self.model.model = self.model.model.to(device)
 
     @staticmethod
     def _load_classes(dataset_dir: str) -> list[str]:
