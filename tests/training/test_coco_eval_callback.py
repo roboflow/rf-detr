@@ -513,6 +513,38 @@ class TestOnValidationEpochEnd:
         assert "val/ema_mAP_50" in trainer.callback_metrics
         assert "val/ema_mAR" in trainer.callback_metrics
 
+    def test_ema_segm_metrics_use_ema_values_not_base(self) -> None:
+        """EMA segmentation metrics must come from map_metric_ema, not the
+        base map_metric.  Regression test for #978."""
+        cb = COCOEvalCallback(max_dets=500, segmentation=True)
+        trainer = _make_trainer()
+        trainer.callback_metrics = {}
+        cb.setup(trainer, _make_pl_module(), stage="fit")
+
+        # Base metrics: segm_map=0.35
+        base_metrics = _minimal_metrics(pfx="bbox_")
+        base_metrics["segm_map"] = torch.tensor(0.35)
+        base_metrics["segm_map_50"] = torch.tensor(0.55)
+        cb.map_metric = MagicMock(name="map_metric")
+        cb.map_metric.compute.return_value = base_metrics
+
+        # EMA metrics: segm_map=0.45 (deliberately different)
+        ema_metrics = _minimal_metrics(pfx="bbox_")
+        ema_metrics["segm_map"] = torch.tensor(0.45)
+        ema_metrics["segm_map_50"] = torch.tensor(0.65)
+        cb.map_metric_ema = MagicMock(name="map_metric_ema")
+        cb.map_metric_ema.compute.return_value = ema_metrics
+        module = _make_pl_module()
+
+        cb.on_validation_epoch_end(trainer, module)
+
+        # EMA segm values must differ from base
+        assert trainer.callback_metrics["val/ema_segm_mAP_50_95"].item() == pytest.approx(0.45)
+        assert trainer.callback_metrics["val/ema_segm_mAP_50"].item() == pytest.approx(0.65)
+        # Base segm values unchanged
+        assert trainer.callback_metrics["val/segm_mAP_50_95"].item() == pytest.approx(0.35)
+        assert trainer.callback_metrics["val/segm_mAP_50"].item() == pytest.approx(0.55)
+
     def test_ghost_class_with_negative_ar_sentinel_is_filtered(self) -> None:
         """A class where both ap=-1 and ar=-1 (negative sentinels, not NaN) must
         be excluded from the per-class table.  The old filter checked for NaN

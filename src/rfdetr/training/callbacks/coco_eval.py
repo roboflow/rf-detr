@@ -315,11 +315,11 @@ class COCOEvalCallback(Callback):
             pl_module.log(f"{split}/segm_mAP_50", metrics["segm_map_50"])
             trainer.callback_metrics[f"{split}/segm_mAP_50_95"] = metrics["segm_map"].detach().cpu()
             trainer.callback_metrics[f"{split}/segm_mAP_50"] = metrics["segm_map_50"].detach().cpu()
-            if self._has_ema_callback(trainer):
-                pl_module.log(f"{split}/ema_segm_mAP_50_95", metrics["segm_map"])
-                pl_module.log(f"{split}/ema_segm_mAP_50", metrics["segm_map_50"])
-                trainer.callback_metrics[f"{split}/ema_segm_mAP_50_95"] = metrics["segm_map"].detach().cpu()
-                trainer.callback_metrics[f"{split}/ema_segm_mAP_50"] = metrics["segm_map_50"].detach().cpu()
+            if self.map_metric_ema is not None:
+                pl_module.log(f"{split}/ema_segm_mAP_50_95", ema_metrics["segm_map"])
+                pl_module.log(f"{split}/ema_segm_mAP_50", ema_metrics["segm_map_50"])
+                trainer.callback_metrics[f"{split}/ema_segm_mAP_50_95"] = ema_metrics["segm_map"].detach().cpu()
+                trainer.callback_metrics[f"{split}/ema_segm_mAP_50"] = ema_metrics["segm_map_50"].detach().cpu()
 
         # F1 sweep — run first so per-class F1/prec/rec are available when
         # building the unified per-class table rows below.
