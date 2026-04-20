@@ -44,21 +44,21 @@ This command saves the ONNX model to the `output` directory by default.
 
 The `export()` method accepts several parameters to customize the export process:
 
-| Parameter          | Default    | Description                                                                                                                             |
-| ------------------ | ---------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `output_dir`       | `"output"` | Directory where the exported model will be saved.                                                                                       |
-| `format`           | `"onnx"`   | Export format: `"onnx"` or `"tflite"`.                                                                                                  |
-| `quantization`     | `None`     | TFLite quantization mode: `None`/`"fp32"`, `"fp16"`, or `"int8"`. Only used when `format="tflite"`.                                     |
-| `calibration_data` | `None`     | Calibration data for TFLite export. Image directory, `.npy` file path, NumPy array, or `None`. See [TFLite Export](#tflite-export).     |
-| `max_images`       | `100`      | Maximum number of images to load from a calibration directory for TFLite INT8 quantization. Ignored for other calibration data formats. |
-| `infer_dir`        | `None`     | Path to an image file to use for tracing. If not provided, a random dummy image is generated.                                           |
-| `simplify`         | `False`    | Deprecated and ignored. ONNX simplification is no longer run by `export()`.                                                             |
-| `backbone_only`    | `False`    | Export only the backbone feature extractor instead of the full model.                                                                   |
-| `opset_version`    | `17`       | ONNX opset version to use for export. Higher versions support more operations.                                                          |
-| `verbose`          | `True`     | Whether to print verbose export information.                                                                                            |
-| `force`            | `False`    | Deprecated and ignored.                                                                                                                 |
-| `shape`            | `None`     | Input shape as tuple `(height, width)`. Must be divisible by 14. If not provided, uses the model's default resolution.                  |
-| `batch_size`       | `1`        | Batch size for the exported model.                                                                                                      |
+| Parameter          | Default    | Description                                                                                                                                                                                     |
+| ------------------ | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `output_dir`       | `"output"` | Directory where the exported model will be saved.                                                                                                                                               |
+| `format`           | `"onnx"`   | Export format: `"onnx"` or `"tflite"`.                                                                                                                                                          |
+| `quantization`     | `None`     | TFLite quantization mode: `None`/`"fp32"`, `"fp16"`, or `"int8"`. Only used when `format="tflite"`.                                                                                             |
+| `calibration_data` | `None`     | Calibration data for TFLite export. Image directory, `.npy` file path, NumPy array, or `None`. See [TFLite Export](#tflite-export).                                                             |
+| `max_images`       | `100`      | Maximum number of images to load from a calibration directory for TFLite INT8 quantization. Ignored for other calibration data formats.                                                         |
+| `infer_dir`        | `None`     | Path to an image file to use for tracing. If not provided, a random dummy image is generated.                                                                                                   |
+| `simplify`         | `False`    | Deprecated and ignored. ONNX simplification is no longer run by `export()`.                                                                                                                     |
+| `backbone_only`    | `False`    | Export only the backbone feature extractor instead of the full model.                                                                                                                           |
+| `opset_version`    | `17`       | ONNX opset version to use for export. Higher versions support more operations.                                                                                                                  |
+| `verbose`          | `True`     | Whether to print verbose export information.                                                                                                                                                    |
+| `force`            | `False`    | Deprecated and ignored.                                                                                                                                                                         |
+| `shape`            | `None`     | Input shape as tuple `(height, width)`. Each dimension must be divisible by the selected model's block size (`patch_size * num_windows`). If not provided, uses the model's default resolution. |
+| `batch_size`       | `1`        | Batch size for the exported model.                                                                                                                                                              |
 
 ## Advanced Export Examples
 
@@ -86,14 +86,14 @@ model.export(simplify=True)  # Deprecated: same result as model.export()
 
 ### Export with Custom Resolution
 
-Export the model with a specific input resolution (must be divisible by 14):
+Export the model with a specific input resolution. For example, `RFDETRMedium` expects dimensions divisible by `32` (`patch_size=16`, `num_windows=2`):
 
 ```python
 from rfdetr import RFDETRMedium
 
 model = RFDETRMedium(pretrain_weights="<path/to/checkpoint.pth>")
 
-model.export(shape=(560, 560))
+model.export(shape=(608, 608))
 ```
 
 ### Export Backbone Only
@@ -226,19 +226,21 @@ import numpy as np
 from PIL import Image
 from rfdetr import RFDETRBase
 
+model = RFDETRBase()
+target_resolution = model.resolution
+
 # Load representative images from your dataset
 images = []
 for path in image_paths[:50]:  # 50 representative samples
-    img = Image.open(path).convert("RGB").resize((560, 560))
+    img = Image.open(path).convert("RGB").resize((target_resolution, target_resolution))
     images.append(np.array(img, dtype=np.float32) / 255.0)
 
-calibration_data = np.stack(images)  # shape: (50, 560, 560, 3)
+calibration_data = np.stack(images)  # shape: (50, H, W, 3)
 
 # Save to .npy for reuse
 np.save("calibration_data.npy", calibration_data)
 
 # Export with INT8 quantization
-model = RFDETRBase()
 model.export(
     format="tflite",
     quantization="int8",
@@ -299,7 +301,8 @@ input_details = interpreter.get_input_details()
 output_details = interpreter.get_output_details()
 
 # Prepare input — TFLite model expects NHWC, ImageNet-normalized
-image = Image.open("image.jpg").convert("RGB").resize((560, 560))
+input_height, input_width = input_details[0]["shape"][1:3]
+image = Image.open("image.jpg").convert("RGB").resize((input_width, input_height))
 image_array = np.array(image, dtype=np.float32) / 255.0
 
 # Apply ImageNet normalization
@@ -307,7 +310,7 @@ mean = np.array([0.485, 0.456, 0.406])
 std = np.array([0.229, 0.224, 0.225])
 image_array = (image_array - mean) / std
 
-# Add batch dimension: (1, 560, 560, 3)
+# Add batch dimension: (1, H, W, 3)
 image_array = np.expand_dims(image_array, axis=0).astype(np.float32)
 
 # Run inference
@@ -333,8 +336,9 @@ from PIL import Image
 session = ort.InferenceSession("output/inference_model.onnx")
 
 # Prepare input image
+input_height, input_width = session.get_inputs()[0].shape[2:4]
 image = Image.open("image.jpg").convert("RGB")
-image = image.resize((560, 560))  # Resize to model's input resolution
+image = image.resize((input_width, input_height))  # Resize to the exported model shape
 image_array = np.array(image).astype(np.float32) / 255.0
 
 # Normalize
