@@ -167,7 +167,14 @@ class RFDETRLarge(RFDETR):
                     " Please retrain your model with the new weights and configuration.\n"
                     "=" * 100 + "\n"
                 )
-            except Exception:
+            except Exception as retry_exc:
+                logger.exception(
+                    "Retry with deprecated RF-DETR Large configuration failed; "
+                    "re-raising the original initialization error for compatibility. "
+                    "Original error: %s",
+                    self.init_error,
+                    exc_info=retry_exc,
+                )
                 raise self.init_error from None
 
     def get_model_config(self, **kwargs) -> ModelConfig:
