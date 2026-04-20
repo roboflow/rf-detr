@@ -130,8 +130,8 @@
   {
     "@context": "https://schema.org",
     "@type": "TechArticle",
-    "headline": "{{ page.title }}",
-    "description": "{{ page.meta.description | default(config.site_description) }}",
+    "headline": {{ page.title | tojson }},
+    "description": {{ page.meta.description | default(config.site_description) | tojson }},
     "url": "{{ page.canonical_url }}",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"}
