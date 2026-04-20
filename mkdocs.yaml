@@ -8,6 +8,7 @@ edit_uri: https://github.com/roboflow/rf-detr/tree/main/docs
 copyright: Roboflow 2025. All rights reserved.
 
 extra:
+  og_image: https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/roboflow

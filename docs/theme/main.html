@@ -4,20 +4,20 @@
   {{ super() }}
 
   {% if page %}
-  {% set og_image_url = 'assets/og-image.png' | url %}
+  {% set og_image_url = page.meta.image | default(config.extra.og_image | default('')) %}
   {# Open Graph — all pages #}
   <meta property="og:title" content="{{ page.title }} - {{ config.site_name }}">
   <meta property="og:description" content="{{ page.meta.description | default(config.site_description) }}">
   <meta property="og:type" content="{% if page.is_homepage %}website{% else %}article{% endif %}">
   <meta property="og:url" content="{{ page.canonical_url }}">
-  <meta property="og:image" content="{{ og_image_url }}">
+  {% if og_image_url %}<meta property="og:image" content="{{ og_image_url }}">{% endif %}
 
   {# Twitter Card — all pages #}
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:site" content="@roboflow">
   <meta name="twitter:title" content="{{ page.title }} - {{ config.site_name }}">
   <meta name="twitter:description" content="{{ page.meta.description | default(config.site_description) }}">
-  <meta name="twitter:image" content="{{ og_image_url }}">
+  {% if og_image_url %}<meta name="twitter:image" content="{{ og_image_url }}">{% endif %}
 
   {# JSON-LD: Organization + SoftwareApplication — homepage only #}
   {% if page.is_homepage %}
