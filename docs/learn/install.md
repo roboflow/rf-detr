@@ -1,3 +1,7 @@
+---
+description: Install RF-DETR via pip, uv, or from source. Set up a development environment for contributing to Roboflow's real-time detection transformer.
+---
+
 # Installation
 
 Welcome to RF-DETR! This guide will help you install and set up RF-DETR for your projects. Whether you're a developer looking to contribute or an end-user ready to start using RF-DETR, we've got you covered.

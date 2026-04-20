@@ -1,4 +1,16 @@
+---
+description: RF-DETR benchmark results on COCO and RF100-VL for detection and segmentation. Compare accuracy and latency against YOLO, D-FINE, and LW-DETR.
+---
+
 # Benchmarks
+
+!!! tip "Key Takeaways"
+
+    - RF-DETR-2XL achieves 60.1 AP50:95 on COCO detection at 17.2 ms latency (T4, TensorRT FP16)
+    - RF-DETR-L outperforms YOLOv11x (56.5 vs 54.7 AP50:95) at lower latency (6.8 vs 10.5 ms)
+    - Segmentation models range from 40.3 AP (Nano, 3.4 ms) to 49.9 AP (2XL, 21.8 ms) on COCO
+    - All latency measured on NVIDIA T4 with TensorRT 10.4, CUDA 12.4, FP16, batch size 1
+    - RF100-VL results demonstrate strong domain-shift generalization across 100 diverse datasets
 
 This page reports RF-DETR benchmark results for object detection and instance segmentation on Microsoft COCO and RF100-VL. All benchmark numbers and plots match the latest released checkpoints and tables shown below. Latency values are measured on an NVIDIA T4 with TensorRT in FP16 at batch size 1. For full methodology details and architectural context, see the RF-DETR paper.
 
