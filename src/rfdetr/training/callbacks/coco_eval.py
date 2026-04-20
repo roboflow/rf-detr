@@ -385,10 +385,6 @@ class COCOEvalCallback(Callback):
         self.map_metric.reset()
         self._f1_local = init_matching_accumulator()
 
-    def _has_ema_callback(self, trainer: Any) -> bool:
-        """Return whether an EMA callback is present in the Trainer."""
-        return self._get_ema_callback(trainer) is not None
-
     def _get_ema_callback(self, trainer: Any) -> Any:
         """Return the EMA callback instance, or ``None`` if not present."""
         for callback in getattr(trainer, "callbacks", []):
