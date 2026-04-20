@@ -299,13 +299,17 @@ class COCOEvalCallback(Callback):
         # in on_validation_batch_end, so base and EMA values are independent.
         if self.map_metric_ema is not None:
             ema_metrics = self.map_metric_ema.compute()
-            ema_mar_key = f"{pfx}mar_{self._max_dets}"
             pl_module.log(f"{split}/ema_mAP_50_95", ema_metrics[f"{pfx}map"], prog_bar=True)
             pl_module.log(f"{split}/ema_mAP_50", ema_metrics[f"{pfx}map_50"])
-            pl_module.log(f"{split}/ema_mAR", ema_metrics[ema_mar_key])
+            pl_module.log(f"{split}/ema_mAR", ema_metrics[mar_key])
             trainer.callback_metrics[f"{split}/ema_mAP_50_95"] = ema_metrics[f"{pfx}map"].detach().cpu()
             trainer.callback_metrics[f"{split}/ema_mAP_50"] = ema_metrics[f"{pfx}map_50"].detach().cpu()
-            trainer.callback_metrics[f"{split}/ema_mAR"] = ema_metrics[ema_mar_key].detach().cpu()
+            trainer.callback_metrics[f"{split}/ema_mAR"] = ema_metrics[mar_key].detach().cpu()
+            if self._segmentation:
+                pl_module.log(f"{split}/ema_segm_mAP_50_95", ema_metrics["segm_map"])
+                pl_module.log(f"{split}/ema_segm_mAP_50", ema_metrics["segm_map_50"])
+                trainer.callback_metrics[f"{split}/ema_segm_mAP_50_95"] = ema_metrics["segm_map"].detach().cpu()
+                trainer.callback_metrics[f"{split}/ema_segm_mAP_50"] = ema_metrics["segm_map_50"].detach().cpu()
             self.map_metric_ema.reset()
 
         if self._segmentation:
@@ -315,11 +319,6 @@ class COCOEvalCallback(Callback):
             pl_module.log(f"{split}/segm_mAP_50", metrics["segm_map_50"])
             trainer.callback_metrics[f"{split}/segm_mAP_50_95"] = metrics["segm_map"].detach().cpu()
             trainer.callback_metrics[f"{split}/segm_mAP_50"] = metrics["segm_map_50"].detach().cpu()
-            if self.map_metric_ema is not None:
-                pl_module.log(f"{split}/ema_segm_mAP_50_95", ema_metrics["segm_map"])
-                pl_module.log(f"{split}/ema_segm_mAP_50", ema_metrics["segm_map_50"])
-                trainer.callback_metrics[f"{split}/ema_segm_mAP_50_95"] = ema_metrics["segm_map"].detach().cpu()
-                trainer.callback_metrics[f"{split}/ema_segm_mAP_50"] = ema_metrics["segm_map_50"].detach().cpu()
 
         # F1 sweep — run first so per-class F1/prec/rec are available when
         # building the unified per-class table rows below.
