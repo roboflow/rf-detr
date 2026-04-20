@@ -4,7 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-"""Unit tests for COCOEvalCallback (PTL Ch3/T3)."""
+"""Unit tests for COCOEvalCallback."""
 
 from unittest.mock import MagicMock, patch
 
