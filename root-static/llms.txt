@@ -15,8 +15,8 @@
 
 ## API Reference
 - [RFDETR base class](https://rfdetr.roboflow.com/latest/reference/rfdetr/): train(), predict(), export(), deploy_to_roboflow()
-- [Detection models](https://rfdetr.roboflow.com/latest/reference/base/): RFDETRNano through RFDETR2XLarge
-- [Segmentation models](https://rfdetr.roboflow.com/latest/reference/medium/): RFDETRSegNano through RFDETRSeg2XLarge
+- [Detection models](https://rfdetr.roboflow.com/latest/reference/nano/): RFDETRNano through RFDETR2XLarge
+- [Segmentation models](https://rfdetr.roboflow.com/latest/reference/seg_nano/): RFDETRSegNano through RFDETRSeg2XLarge
 
 ## Optional
 - [GitHub](https://github.com/roboflow/rf-detr): 6.4k stars, Apache 2.0
