@@ -66,8 +66,8 @@ jobs:
         run: |
           cp root-static/robots.txt /tmp/robots.txt
           cp root-static/llms.txt /tmp/llms.txt
-          git fetch origin gh-pages
-          git checkout gh-pages
+          git fetch origin gh-pages:refs/remotes/origin/gh-pages
+          git checkout -B gh-pages origin/gh-pages
           cp /tmp/robots.txt robots.txt
           cp /tmp/llms.txt llms.txt
           git add robots.txt llms.txt
