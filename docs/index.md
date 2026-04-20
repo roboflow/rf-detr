@@ -1,4 +1,5 @@
 ---
+description: RF-DETR is a real-time transformer for object detection and instance segmentation by Roboflow. DINOv2 backbone, SOTA on COCO (60.1 AP50:95). Apache 2.0.
 hide:
   - navigation
 ---
@@ -76,7 +77,7 @@ You can install and use `rfdetr` in a [**Python>=3.10**](https://www.python.org/
 
     ---
 
-    ![](https://i.ytimg.com/vi/-OvpdLAElFA/maxresdefault.jpg)
+    ![Train RF-DETR on a Custom Dataset](https://i.ytimg.com/vi/-OvpdLAElFA/maxresdefault.jpg){ width="1280" height="720" loading="lazy" }
 
     End to end walkthrough of training RF-DETR on a custom dataset.
 
@@ -86,7 +87,7 @@ You can install and use `rfdetr` in a [**Python>=3.10**](https://www.python.org/
 
     ---
 
-    ![](https://blog.roboflow.com/content/images/size/w1000/format/webp/2025/06/inst-3-.png)
+    ![Deploy RF-DETR to NVIDIA Jetson](https://blog.roboflow.com/content/images/size/w1000/format/webp/2025/06/inst-3-.png){ width="1000" height="563" loading="lazy" }
 
     Instructions for deploying RF-DETR on NVIDIA Jetson with Roboflow Inference.
 
@@ -96,7 +97,7 @@ You can install and use `rfdetr` in a [**Python>=3.10**](https://www.python.org/
 
     ---
 
-    ![](https://blog.roboflow.com/content/images/size/w1000/format/webp/2025/03/img-blog-nycerebro-2.png)
+    ![Train and Deploy RF-DETR with Roboflow](https://blog.roboflow.com/content/images/size/w1000/format/webp/2025/03/img-blog-nycerebro-2.png){ width="1000" height="563" loading="lazy" }
 
     Cloud training and hardware deployment workflow using Roboflow.
 

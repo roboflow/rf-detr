@@ -10,6 +10,13 @@ Latency is measured as single-image inference latency rather than sustained thro
 
 Accuracy and latency are always measured using the same model artifact and the same numerical precision. This avoids reporting FP32 accuracy together with FP16 latency, which can lead to misleading comparisons because naive FP16 conversion can significantly degrade accuracy for some models.
 
+!!! info "Metric definitions"
+
+    **AP50**: Detection accuracy at IoU threshold >= 0.50.
+    **AP50:95**: Mean accuracy averaged over IoU thresholds 0.50 to 0.95 (step 0.05) — the primary COCO metric.
+    Latency measured on NVIDIA T4, TensorRT 10.4, CUDA 12.4, FP16, batch size 1,
+    with 200 ms thermal buffer between passes to reduce GPU thermal variance.
+
 ## Detection
 
 <img alt="rf_detr_1-4_latency_accuracy_object_detection" src="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png" />

@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+
+{% block extrahead %}
+  {{ super() }}
+
+  {% if page %}
+  {# Open Graph — all pages #}
+  <meta property="og:title" content="{{ page.title }} - {{ config.site_name }}">
+  <meta property="og:description" content="{{ page.meta.description | default(config.site_description) }}">
+  <meta property="og:type" content="{% if page.is_homepage %}website{% else %}article{% endif %}">
+  <meta property="og:url" content="{{ page.canonical_url }}">
+  <meta property="og:image" content="{{ config.site_url }}assets/og-image.png">
+
+  {# Twitter Card — all pages #}
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:site" content="@roboflow">
+  <meta name="twitter:title" content="{{ page.title }} - {{ config.site_name }}">
+  <meta name="twitter:description" content="{{ page.meta.description | default(config.site_description) }}">
+  <meta name="twitter:image" content="{{ config.site_url }}assets/og-image.png">
+
+  {# JSON-LD: Organization + SoftwareApplication — homepage only #}
+  {% if page.is_homepage %}
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Organization",
+        "name": "Roboflow",
+        "url": "https://roboflow.com",
+        "sameAs": [
+          "https://github.com/roboflow",
+          "https://www.linkedin.com/company/roboflow-ai/",
+          "https://twitter.com/roboflow",
+          "https://www.youtube.com/@Roboflow",
+          "https://pypi.org/project/rfdetr/"
+        ]
+      },
+      {
+        "@type": "SoftwareApplication",
+        "name": "RF-DETR",
+        "alternateName": "rfdetr",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "Linux, macOS, Windows",
+        "url": "{{ config.site_url }}",
+        "downloadUrl": "https://pypi.org/project/rfdetr/",
+        "description": "RF-DETR is a real-time transformer architecture for object detection and instance segmentation by Roboflow. DINOv2 backbone, SOTA on COCO. ICLR 2026.",
+        "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
+        "license": "https://www.apache.org/licenses/LICENSE-2.0",
+        "codeRepository": "https://github.com/roboflow/rf-detr",
+        "programmingLanguage": "Python",
+        "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"},
+        "sameAs": [
+          "https://github.com/roboflow/rf-detr",
+          "https://pypi.org/project/rfdetr/",
+          "https://arxiv.org/abs/2511.09554"
+        ]
+      }
+    ]
+  }
+  </script>
+  {% else %}
+  {# JSON-LD: TechArticle — content pages #}
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "{{ page.title }}",
+    "description": "{{ page.meta.description | default(config.site_description) }}",
+    "url": "{{ page.canonical_url }}",
+    "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
+    "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"}
+  }
+  </script>
+  {% endif %}
+  {% endif %}
+{% endblock %}
