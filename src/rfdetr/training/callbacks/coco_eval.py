@@ -261,7 +261,10 @@ class COCOEvalCallback(Callback):
 
         Computes mAP (via ``self.map_metric``), runs the F1 confidence-threshold
         sweep, logs all scalar metrics via ``pl_module.log``, prints two summary
-        tables to the terminal, and resets internal accumulators.
+        tables to the terminal, and resets internal accumulators.  When
+        ``self.map_metric_ema`` is set, EMA variants of all metrics (including
+        ``ema_segm_mAP_50_95`` and ``ema_segm_mAP_50`` for segmentation models)
+        are logged under the same ``split/`` namespace.
 
         Args:
             trainer: The PTL Trainer.
