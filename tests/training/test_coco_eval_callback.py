@@ -544,6 +544,10 @@ class TestOnValidationEpochEnd:
         # Base segm values unchanged
         assert trainer.callback_metrics["val/segm_mAP_50_95"].item() == pytest.approx(0.35)
         assert trainer.callback_metrics["val/segm_mAP_50"].item() == pytest.approx(0.55)
+        # pl_module.log() must also receive EMA values (covers both changed code paths)
+        logged = {c.args[0]: c.args[1] for c in module.log.call_args_list if len(c.args) >= 2}
+        assert logged["val/ema_segm_mAP_50_95"].item() == pytest.approx(0.45)
+        assert logged["val/ema_segm_mAP_50"].item() == pytest.approx(0.65)
 
     def test_ghost_class_with_negative_ar_sentinel_is_filtered(self) -> None:
         """A class where both ap=-1 and ar=-1 (negative sentinels, not NaN) must
