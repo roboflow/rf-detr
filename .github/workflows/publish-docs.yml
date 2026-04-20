@@ -72,7 +72,7 @@ jobs:
           cp /tmp/llms.txt llms.txt
           git add robots.txt llms.txt
           git diff --staged --quiet || git commit -m "chore: update root static files (robots.txt, llms.txt)"
-          git push origin gh-pages
+          git push origin gh-pages || (git pull --rebase origin gh-pages && git push origin gh-pages)
 
       # IndexNow: replace bing-indexnow-key-placeholder with actual key from https://www.bing.com/indexnow
       - name: Notify IndexNow (Bing)
