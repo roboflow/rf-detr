@@ -1,3 +1,7 @@
+---
+description: Configure RF-DETR data augmentations with Albumentations. Built-in presets for aerial, industrial, and small datasets plus custom transforms.
+---
+
 # Augmentations
 
 RF-DETR supports custom data augmentations via [Albumentations](https://albumentations.ai/), with automatic bounding box and mask handling for geometric transforms. Albumentations 1.4.24+ and 2.x are supported.

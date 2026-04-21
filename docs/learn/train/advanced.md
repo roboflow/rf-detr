@@ -1,3 +1,7 @@
+---
+description: Advanced RF-DETR training with resume, early stopping, multi-GPU DDP, gradient checkpointing, and memory optimization for large models.
+---
+
 # Advanced Training
 
 This page covers advanced training topics including resuming training, early stopping, multi-GPU training, and memory optimization techniques.
@@ -303,11 +307,11 @@ This re-computes activations during the backward pass instead of storing them, r
 
 | Memory Level      | Configuration                                                                          |
 | ----------------- | -------------------------------------------------------------------------------------- |
-| Very Low (8GB)    | `batch_size=1`, `grad_accum_steps=16`, `gradient_checkpointing=True`, `resolution=560` |
+| Very Low (8GB)    | `batch_size=1`, `grad_accum_steps=16`, `gradient_checkpointing=True`, `resolution=576` |
 | Low (12GB)        | `batch_size=2`, `grad_accum_steps=8`, `gradient_checkpointing=True`                    |
 | Medium (16GB)     | `batch_size=4`, `grad_accum_steps=4`                                                   |
 | High (24GB)       | `batch_size=8`, `grad_accum_steps=2`                                                   |
-| Very High (40GB+) | `batch_size=16`, `grad_accum_steps=1`, `resolution=784`                                |
+| Very High (40GB+) | `batch_size=16`, `grad_accum_steps=1`, `resolution=768`                                |
 
 ---
 

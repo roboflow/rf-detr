@@ -1,3 +1,7 @@
+---
+description: Run RF-DETR object detection on images, video, and streams. Nano to 2XLarge models with 2.3-17.2 ms latency and up to 60.1 AP on COCO.
+---
+
 # Run an RF-DETR Object Detection Model
 
 RF-DETR is a real-time transformer architecture for object detection, built on a DINOv2 vision transformer backbone. The base models are trained on the Microsoft COCO dataset and achieve state-of-the-art accuracy and latency trade-offs.

@@ -1,3 +1,7 @@
+---
+description: Run pre-trained RF-DETR models (Nano to 2XLarge) on images, video, webcam, and RTSP streams. COCO-trained with real-time DINOv2 backbone.
+---
+
 You can run any of the four supported RF-DETR base models -- Nano, Small, Medium, Large -- with [Inference](https://github.com/roboflow/inference), an open source computer vision inference server. The base models are trained on the [Microsoft COCO dataset](https://universe.roboflow.com/microsoft/coco). XLarge and 2XLarge detection models are also available via `pip install rfdetr[plus]` and are provided under the PML 1.0 license.
 
 === "Run on an Image"
