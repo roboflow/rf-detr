@@ -66,17 +66,20 @@ jobs:
         run: |
           cp root-static/robots.txt /tmp/robots.txt
           cp root-static/llms.txt /tmp/llms.txt
+          cp root-static/cace9ef287cb8d641db90d4295fcb1e1.txt /tmp/indexnow.txt
           git fetch origin gh-pages:refs/remotes/origin/gh-pages
           git checkout -B gh-pages origin/gh-pages
           cp /tmp/robots.txt robots.txt
           cp /tmp/llms.txt llms.txt
-          git add robots.txt llms.txt
+          cp /tmp/indexnow.txt cace9ef287cb8d641db90d4295fcb1e1.txt
+          git add robots.txt llms.txt cace9ef287cb8d641db90d4295fcb1e1.txt
           git diff --staged --quiet || git commit -m "chore: update root static files (robots.txt, llms.txt)"
           git push origin gh-pages || (git pull --rebase origin gh-pages && git push origin gh-pages)
 
-      # IndexNow: replace INDEXNOW_KEY_PLACEHOLDER with the actual key from https://www.bing.com/indexnow
-      # The key file must also be deployed to the site root (root-static/<key>.txt) and
-      # injected into gh-pages via the "Deploy root static files" step above.
+      # IndexNow key: cace9ef287cb8d641db90d4295fcb1e1
+      # Key file served at https://rfdetr.roboflow.com/cace9ef287cb8d641db90d4295fcb1e1.txt
+      # (deployed via "Deploy root static files" step above).
+      # To rotate: generate new key, update root-static/<key>.txt, replace key string here.
       - name: 📡 Notify IndexNow (Bing)
         if: (github.event_name == 'push' && github.ref == 'refs/heads/develop') || github.event_name == 'workflow_dispatch' || (github.event_name == 'release' && github.event.action == 'published')
         run: |
@@ -84,8 +87,8 @@ jobs:
             -H "Content-Type: application/json; charset=utf-8" \
             -d '{
               "host": "rfdetr.roboflow.com",
-              "key": "INDEXNOW_KEY_PLACEHOLDER",
-              "keyLocation": "https://rfdetr.roboflow.com/INDEXNOW_KEY_PLACEHOLDER.txt",
+              "key": "cace9ef287cb8d641db90d4295fcb1e1",
+              "keyLocation": "https://rfdetr.roboflow.com/cace9ef287cb8d641db90d4295fcb1e1.txt",
               "urlList": [
                 "https://rfdetr.roboflow.com/",
                 "https://rfdetr.roboflow.com/latest/",
