@@ -1,4 +1,16 @@
+---
+description: RF-DETR benchmark results on COCO and RF100-VL for detection and segmentation. Compare accuracy and latency against YOLO, D-FINE, and LW-DETR.
+---
+
 # Benchmarks
+
+!!! tip "Key Takeaways"
+
+    - RF-DETR-2XL achieves 60.1 AP50:95 on COCO detection at 17.2 ms latency (T4, TensorRT FP16)
+    - RF-DETR-L outperforms YOLOv11x (56.5 vs 54.7 AP50:95) at lower latency (6.8 vs 10.5 ms)
+    - Segmentation models range from 40.3 AP (Nano, 3.4 ms) to 49.9 AP (2XL, 21.8 ms) on COCO
+    - All latency measured on NVIDIA T4 with TensorRT 10.4, CUDA 12.4, FP16, batch size 1
+    - RF100-VL results demonstrate strong domain-shift generalization across 100 diverse datasets
 
 This page reports RF-DETR benchmark results for object detection and instance segmentation on Microsoft COCO and RF100-VL. All benchmark numbers and plots match the latest released checkpoints and tables shown below. Latency values are measured on an NVIDIA T4 with TensorRT in FP16 at batch size 1. For full methodology details and architectural context, see the RF-DETR paper.
 
@@ -9,6 +21,13 @@ Accuracy is reported using standard COCO metrics computed with pycocotools. For 
 Latency is measured as single-image inference latency rather than sustained throughput. All latency numbers are obtained on an NVIDIA T4 GPU using TensorRT 10.4 and CUDA 12.4 with FP16 inference and batch size 1. To reduce variance caused by GPU power throttling and thermal effects, a 200 ms buffer is inserted between consecutive forward passes. This procedure improves reproducibility of latency measurements but is not intended to measure maximum throughput.
 
 Accuracy and latency are always measured using the same model artifact and the same numerical precision. This avoids reporting FP32 accuracy together with FP16 latency, which can lead to misleading comparisons because naive FP16 conversion can significantly degrade accuracy for some models.
+
+!!! info "Metric definitions"
+
+    **AP50**: Detection accuracy at IoU threshold >= 0.50.
+    **AP50:95**: Mean accuracy averaged over IoU thresholds 0.50 to 0.95 (step 0.05) — the primary COCO metric.
+    Latency measured on NVIDIA T4, TensorRT 10.4, CUDA 12.4, FP16, batch size 1,
+    with 200 ms thermal buffer between passes to reduce GPU thermal variance.
 
 ## Detection
 

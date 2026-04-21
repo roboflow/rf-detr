@@ -1,3 +1,7 @@
+---
+description: Complete RF-DETR training parameter reference. Learning rate, batch size, EMA, early stopping, resolution, and hardware configuration.
+---
+
 # Training Parameters
 
 This page provides a complete reference of all parameters available when training RF-DETR models.
