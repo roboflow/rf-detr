@@ -2697,42 +2697,16 @@
 <td><code>resolution</code></td>
 <td><code>int</code></td>
 <td>Model-dependent</td>
-<td>Input image resolution. Higher values can improve accuracy but require more memory. <strong>Must be divisible by 14.</strong></td>
+<td>Input image resolution. Higher values can improve accuracy but require more memory. Each model has its own valid block size: current standard detection checkpoints use multiples of 32, current segmentation checkpoints use multiples of 24 (most variants) or 12 (<code>RFDETRSegNano</code>), and the definitive rule is that the resolution must be divisible by <code>patch_size * num_windows</code> for the selected model.</td>
 </tr>
 </tbody>
 </table>
-<p>Common resolution values:</p>
-<table>
-<thead>
-<tr>
-<th>Resolution</th>
-<th>Memory Usage</th>
-<th>Use Case</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>560</td>
-<td>Low</td>
-<td>Small objects, limited GPU memory</td>
-</tr>
-<tr>
-<td>672</td>
-<td>Medium</td>
-<td>Balanced (default for many models)</td>
-</tr>
-<tr>
-<td>784</td>
-<td>High</td>
-<td>High accuracy requirements</td>
-</tr>
-<tr>
-<td>896</td>
-<td>Very High</td>
-<td>Maximum quality (requires large GPU)</td>
-</tr>
-</tbody>
-</table>
+<p>Common resolution values for currently documented checkpoints:</p>
+<ul>
+<li>Detection: <code>384</code>, <code>512</code>, <code>576</code>, <code>704</code></li>
+<li>Segmentation: <code>312</code>, <code>384</code>, <code>432</code>, <code>504</code>, <code>624</code>, <code>768</code></li>
+</ul>
+<p>For example, <code>RFDETRSegXLarge</code> uses <code>624x624</code>, which is valid because <code>624</code> is divisible by <code>24</code>.</p>
 <h2 id="regularization-parameters">Regularization Parameters<a class="headerlink" href="#regularization-parameters" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -3158,7 +3132,7 @@
 <td><code>resolution</code></td>
 <td>int</td>
 <td>Model-specific</td>
-<td>Input image size (must be divisible by 14).</td>
+<td>Input image size (must be divisible by the selected model's <code>patch_size * num_windows</code>).</td>
 </tr>
 <tr>
 <td><code>weight_decay</code></td>
@@ -3362,7 +3336,7 @@
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="April 21, 2026 10:10:10 UTC">April 21, 2026</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="April 21, 2026 10:57:53 UTC">April 21, 2026</span>
   </span>
 
     
