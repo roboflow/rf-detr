@@ -1,4 +1,16 @@
+---
+description: Export RF-DETR models to ONNX, TensorRT, and TFLite (FP32/FP16/INT8) for high-performance inference on GPUs, mobile, and edge devices.
+---
+
 # Export RF-DETR Model
+
+!!! tip "Key Takeaways"
+
+    - Export to ONNX for cross-platform inference with ONNX Runtime, OpenVINO, or TensorRT
+    - Export to TFLite (FP32, FP16, INT8) for mobile and edge deployment
+    - TensorRT conversion delivers lowest latency on NVIDIA GPUs (2.3 ms for Nano)
+    - INT8 quantization requires calibration data from your dataset for accurate results
+    - Custom input resolutions supported (must be divisible by 14)
 
 RF-DETR supports exporting models to ONNX and TFLite formats, enabling deployment across a wide range of inference frameworks, edge devices, and hardware accelerators.
 

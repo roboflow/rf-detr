@@ -1,3 +1,7 @@
+---
+description: Advanced RF-DETR training with resume, early stopping, multi-GPU DDP, gradient checkpointing, and memory optimization for large models.
+---
+
 # Advanced Training
 
 This page covers advanced training topics including resuming training, early stopping, multi-GPU training, and memory optimization techniques.

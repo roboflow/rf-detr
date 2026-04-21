@@ -1,3 +1,7 @@
+---
+description: Customize RF-DETR training with PyTorch Lightning primitives. Direct access to RFDETRModelModule, RFDETRDataModule, and build_trainer.
+---
+
 # Custom Training API
 
 The high-level `RFDETR.train()` method is the quickest path to fine-tuning, but the underlying training primitives are fully public and are the **recommended path for any customisation**: custom callbacks, alternative loggers, mixed-precision overrides, multi-GPU strategies, or integration with external training frameworks.

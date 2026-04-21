@@ -1,3 +1,7 @@
+---
+description: RF-DETR migration guide for deprecated module paths. Update imports from rfdetr.util and rfdetr.deploy to their canonical replacements.
+---
+
 # Deprecated APIs
 
 RF-DETR has reorganised its internal package layout. A set of backward-compatibility

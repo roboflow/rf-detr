@@ -1,3 +1,7 @@
+---
+description: RF-DETR dataset format guide for COCO JSON and YOLO. Auto-detection, directory structure, annotation schemas, and format conversion.
+---
+
 # Dataset Formats
 
 RF-DETR supports training on datasets in two popular formats: **COCO** and **YOLO**. The format is automatically detected based on your dataset's directory structure—simply pass your dataset directory to the `train()` method.

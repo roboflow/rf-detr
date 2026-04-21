@@ -1,13 +1,14 @@
 site_name: RF-DETR
 site_url: https://rfdetr.roboflow.com/
 site_author: Roboflow
-site_description: "SOTA Real-Time Object Detection Model"
+site_description: "Real-time transformer for object detection and instance segmentation. DINOv2 backbone, SOTA on COCO (60.1 AP50:95). Apache 2.0. Works with Python ≥3.10."
 repo_name: roboflow/rf-detr
 repo_url: https://github.com/roboflow/rf-detr
 edit_uri: https://github.com/roboflow/rf-detr/tree/main/docs
 copyright: Roboflow 2025. All rights reserved.
 
 extra:
+  og_image: https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/roboflow
@@ -103,6 +104,9 @@ theme:
 
 plugins:
   - search
+  - git-revision-date-localized:
+      enable_creation_date: false
+      type: date
   - mkdocstrings:
       default_handler: python
       handlers:
