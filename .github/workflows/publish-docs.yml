@@ -74,13 +74,31 @@ jobs:
           git diff --staged --quiet || git commit -m "chore: update root static files (robots.txt, llms.txt)"
           git push origin gh-pages || (git pull --rebase origin gh-pages && git push origin gh-pages)
 
-      # IndexNow: replace bing-indexnow-key-placeholder with actual key from https://www.bing.com/indexnow
-      - name: Notify IndexNow (Bing)
+      # IndexNow: replace INDEXNOW_KEY_PLACEHOLDER with the actual key from https://www.bing.com/indexnow
+      # The key file must also be deployed to the site root (root-static/<key>.txt) and
+      # injected into gh-pages via the "Deploy root static files" step above.
+      - name: 📡 Notify IndexNow (Bing)
         if: (github.event_name == 'push' && github.ref == 'refs/heads/develop') || github.event_name == 'workflow_dispatch' || (github.event_name == 'release' && github.event.action == 'published')
         run: |
-          curl -s -o /dev/null -w "%{http_code}" \
-            "https://api.indexnow.org/indexnow?url=https://rfdetr.roboflow.com/latest/sitemap.xml&key=bing-indexnow-key-placeholder" \
-            -H "Content-Type: application/json" || true
+          curl -s -o /dev/null -w "%{http_code}" -X POST "https://api.indexnow.org/IndexNow" \
+            -H "Content-Type: application/json; charset=utf-8" \
+            -d '{
+              "host": "rfdetr.roboflow.com",
+              "key": "INDEXNOW_KEY_PLACEHOLDER",
+              "keyLocation": "https://rfdetr.roboflow.com/INDEXNOW_KEY_PLACEHOLDER.txt",
+              "urlList": [
+                "https://rfdetr.roboflow.com/",
+                "https://rfdetr.roboflow.com/latest/",
+                "https://rfdetr.roboflow.com/latest/learn/install/",
+                "https://rfdetr.roboflow.com/latest/learn/pretrained/",
+                "https://rfdetr.roboflow.com/latest/learn/run/detection/",
+                "https://rfdetr.roboflow.com/latest/learn/run/segmentation/",
+                "https://rfdetr.roboflow.com/latest/learn/train/",
+                "https://rfdetr.roboflow.com/latest/learn/export/",
+                "https://rfdetr.roboflow.com/latest/learn/deploy/",
+                "https://rfdetr.roboflow.com/latest/learn/benchmarks/"
+              ]
+            }' || true
 
       - name: Minimize uv cache
         run: uv cache prune --ci
