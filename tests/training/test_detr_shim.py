@@ -1303,6 +1303,10 @@ class TestRFDETRLargeFallback:
             raise ValueError("The checkpoint was trained with patch_size=16, but the current model uses patch_size=12.")
 
         monkeypatch.setattr(RFDETR, "__init__", _raise_patch_size_mismatch)
+        warn_spy = MagicMock()
+        exception_spy = MagicMock()
+        monkeypatch.setattr("rfdetr.variants.logger.warning", warn_spy)
+        monkeypatch.setattr("rfdetr.variants.logger.exception", exception_spy)
 
         with pytest.raises(ValueError, match=r"patch_size=14.*patch_size=12") as exc_info:
             RFDETRLarge(resolution=704)
@@ -1310,6 +1314,8 @@ class TestRFDETRLargeFallback:
         assert call_count == 2
         assert "patch_size=16" not in str(exc_info.value)
         assert exc_info.value.__suppress_context__ is True
+        warn_spy.assert_not_called()
+        exception_spy.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
