@@ -71,7 +71,7 @@ Recommended configurations for different GPUs (targeting effective batch size of
 
 Common resolution values for currently documented checkpoints:
 
-- Detection: `512`, `576`, `704`, `880`
+- Detection: `384`, `512`, `576`, `704`
 - Segmentation: `384`, `432`, `504`, `624`, `768`
 
 For example, `RFDETRSegXLarge` uses `624x624`, which is valid because `624` is divisible by `24`.
