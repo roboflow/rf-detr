@@ -69,14 +69,14 @@ Recommended configurations for different GPUs (targeting effective batch size of
 
 ## Resolution Parameters
 
-| Parameter    | Type  | Default         | Description                                                                                                                                                                                                                                                                                                                                                                      |
-| ------------ | ----- | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `resolution` | `int` | Model-dependent | Input image resolution. Higher values can improve accuracy but require more memory. Each model has its own valid block size: current detection checkpoints typically use multiples of 32, current segmentation checkpoints typically use multiples of 24, and the definitive rule is that the resolution must be divisible by `patch_size * num_windows` for the selected model. |
+| Parameter    | Type  | Default         | Description                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ------------ | ----- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `resolution` | `int` | Model-dependent | Input image resolution. Higher values can improve accuracy but require more memory. Each model has its own valid block size: current standard detection checkpoints use multiples of 32, current segmentation checkpoints use multiples of 24 (most variants) or 12 (`RFDETRSegNano`), and the definitive rule is that the resolution must be divisible by `patch_size * num_windows` for the selected model. |
 
 Common resolution values for currently documented checkpoints:
 
 - Detection: `384`, `512`, `576`, `704`
-- Segmentation: `384`, `432`, `504`, `624`, `768`
+- Segmentation: `312`, `384`, `432`, `504`, `624`, `768`
 
 For example, `RFDETRSegXLarge` uses `624x624`, which is valid because `624` is divisible by `24`.
 
