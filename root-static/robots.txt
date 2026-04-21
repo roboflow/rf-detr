@@ -1,5 +1,17 @@
 User-agent: *
 Allow: /
+# Block numeric-versioned paths (/0.x/, /1.x/, etc.) — canonical URL is /latest/
+# robots.txt has no character classes, so one Disallow per leading digit is required.
+Disallow: /0.*/
+Disallow: /1.*/
+Disallow: /2.*/
+Disallow: /3.*/
+Disallow: /4.*/
+Disallow: /5.*/
+Disallow: /6.*/
+Disallow: /7.*/
+Disallow: /8.*/
+Disallow: /9.*/
 
 User-agent: GPTBot
 Allow: /
@@ -14,6 +26,12 @@ User-agent: CCBot
 Allow: /
 
 User-agent: Google-Extended
+Allow: /
+
+User-agent: Bytespider
+Allow: /
+
+User-agent: GoogleOther
 Allow: /
 
 Sitemap: https://rfdetr.roboflow.com/latest/sitemap.xml
