@@ -1,3 +1,7 @@
+---
+description: Track RF-DETR training with TensorBoard, Weights and Biases, ClearML, and MLflow. Configure multiple experiment loggers simultaneously.
+---
+
 # Training Loggers
 
 RF-DETR supports integration with popular experiment tracking and visualization platforms. You can enable one or more loggers to monitor your training runs, compare experiments, and track metrics over time.

@@ -1,4 +1,16 @@
+---
+description: Train RF-DETR detection and segmentation models on custom datasets. Supports COCO and YOLO formats with one-line Python API and PyTorch Lightning.
+---
+
 # Train an RF-DETR Model
+
+!!! tip "Key Takeaways"
+
+    - Train detection or segmentation models with a single `model.train(dataset_dir=...)` call
+    - Supports both COCO JSON and YOLO dataset formats with automatic detection
+    - Fine-tune from COCO-pretrained checkpoints (Nano to 2XLarge) for fastest convergence
+    - Built on PyTorch Lightning — use the high-level API or access PTL primitives directly for full control
+    - EMA weights, early stopping, and best-model checkpointing are included by default
 
 You can train RF-DETR object detection and segmentation models on a custom dataset using the `rfdetr` Python package, or in the cloud using Roboflow.
 
