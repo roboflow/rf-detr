@@ -194,6 +194,11 @@ debugging/
 
 # AI assistant
 .claude/
+.codex/
+.plans/
+.reports/
+.temp/
+cache-gh/
 
 # Local docs development (versions.json is managed by mike on gh-pages in production)
 docs/versions.json

@@ -105,9 +105,9 @@ class TestPredictSourceData:
         img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
         model = _DummyRFDETR()
         detections = model.predict(img)
-        assert "source_image" in detections.data
-        assert isinstance(detections.data["source_image"], np.ndarray)
-        assert detections.data["source_image"].shape == (48, 64, 3)
+        assert "source_image" in detections.metadata
+        assert isinstance(detections.metadata["source_image"], np.ndarray)
+        assert detections.metadata["source_image"].shape == (48, 64, 3)
 
     def test_source_shape_from_pil(self) -> None:
         """PIL input stores source_shape as a per-detection numpy array."""
@@ -125,10 +125,10 @@ class TestPredictSourceData:
         tensor = torch.rand(3, 48, 64)
         model = _DummyRFDETR()
         detections = model.predict(tensor)
-        assert "source_image" in detections.data
-        assert isinstance(detections.data["source_image"], np.ndarray)
-        assert detections.data["source_image"].dtype == np.uint8
-        assert detections.data["source_image"].shape == (48, 64, 3)
+        assert "source_image" in detections.metadata
+        assert isinstance(detections.metadata["source_image"], np.ndarray)
+        assert detections.metadata["source_image"].dtype == np.uint8
+        assert detections.metadata["source_image"].shape == (48, 64, 3)
 
     def test_tensor_with_negative_values_raises(self) -> None:
         """Tensor with negative pixel values raises ValueError."""

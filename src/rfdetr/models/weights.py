@@ -13,13 +13,12 @@ legacy namespace used by ``rfdetr.detr``.
 
 from __future__ import annotations
 
-import functools
 import math
 import os
 from typing import List
 
 import torch
-import torch.nn.functional as F  # noqa: N812
+import torch.nn.functional as F
 
 from rfdetr.assets.model_weights import download_pretrain_weights, validate_pretrain_weights
 from rfdetr.config import ModelConfig
@@ -34,8 +33,8 @@ _PE_KEY_SUFFIX = "embeddings.position_embeddings"
 
 
 def _interpolate_position_embeddings(
-        checkpoint_state: dict,
-        pe_size: int,
+    checkpoint_state: dict,
+    pe_size: int,
 ) -> None:
     """Interpolate DINOv2 positional embeddings in *checkpoint_state* to match *pe_size*.
 
@@ -151,6 +150,7 @@ def load_pretrain_weights(nn_model: torch.nn.Module, model_config: ModelConfig) 
         if any(name.endswith(param_name) for param_name in query_param_names):
             checkpoint["model"][name] = checkpoint["model"][name][:num_desired_queries]
 
+    _interpolate_position_embeddings(checkpoint["model"], model_config.positional_encoding_size)
     nn_model.load_state_dict(checkpoint["model"], strict=False)
 
     if checkpoint_num_classes < configured_num_classes_plus_bg and user_overrode_default_num_classes:
