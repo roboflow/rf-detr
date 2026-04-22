@@ -32,11 +32,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed `models/weights.py`: `load_pretrain_weights` now correctly auto-aligns the model head when the checkpoint has fewer classes than the configured default, preventing a silent mismatch when `num_classes` was not explicitly set by the caller. ([#845](https://github.com/roboflow/rf-detr/pull/845))
 - Fixed YOLO segmentation training on large datasets hitting OS out-of-memory: `supervision.DetectionDataset.from_yolo(force_masks=True)` was eager-rasterising H×W boolean masks for every image at dataset construction time (≈1 GB/1 000 images at 1024 px). A new `_LazyYoloDetectionDataset` stores polygon coordinates only and defers dense mask rasterisation to `__getitem__`, keeping RAM proportional to annotation count rather than (N × H × W). ([#851](https://github.com/roboflow/rf-detr/pull/851))
 - Fixed ONNX/TRT dynamic batch inference: `gen_encoder_output_proposals` and `Transformer.forward` extracted the batch size as a Python int and passed it to `torch.full`, `.view(N_, ...)`, `.expand(N_, ...)`, and `.repeat(bs, ...)`, causing the ONNX tracer to bake the training batch size (e.g. 8) as a compile-time constant. TRT engines built with `--minShapes` smaller than the trace batch would fail at inference with `Reshape: reshaping failed`. All six call sites are now replaced with ONNX-symbolic equivalents (`zeros_like`, `-1` reshapes, `expand(memory.shape[0], ...)`), keeping the batch dimension fully dynamic. ([#950](https://github.com/roboflow/rf-detr/pull/950), closes [#949](https://github.com/roboflow/rf-detr/issues/949))
-- Fixed `predict()` storing `detections.data["source_shape"]` as a Python `tuple`, which caused `TypeError: Unsupported data type for key 'source_shape': <class 'tuple'>` whenever `sv.Detections` was iterated (e.g. `list(detections)`, `for d in detections`, `MeanAveragePrecision.compute()`). The value is now an `np.ndarray` of shape `(N, 2)` and dtype `int64`, with one `[height, width]` row per detection. ([#963](https://github.com/roboflow/rf-detr/issues/963))
-- Fixed `predict()` emitting a misleading "class_id out of range" warning when the model predicts the background/no-object class (class index `num_classes`). RF-DETR uses `num_classes + 1` outputs internally; the last class is the background class and is expected behaviour, not an error. Background-class detections now map `data["class_name"]` to `"__background__"` without any warning.
-- Fixed `predict()` raising `IndexError` when boolean- or integer-indexing `sv.Detections` with `include_source_image=True` (the default). `source_image` is now stored in `detections.metadata["source_image"]` instead of `detections.data["source_image"]`. **Migration**: update any code that reads `detections.data["source_image"]` to `detections.metadata["source_image"]`. ([#972](https://github.com/roboflow/rf-detr/pull/972), closes [#968](https://github.com/roboflow/rf-detr/issues/968))
 
 ---
+
+## [1.6.5] — 2026-04-22
+
+### Breaking Changes
+
+- `predict()` now stores the source image in `detections.metadata["source_image"]` instead of `detections.data["source_image"]`. supervision indexes every value in `data` by the detection mask; `source_image` is per-image, not per-detection, so boolean/integer indexing raised `IndexError`. Moving it to `metadata` (passed through unchanged) fixes the issue. Update any code that reads `detections.data["source_image"]`. ([#972](https://github.com/roboflow/rf-detr/pull/972), [#968](https://github.com/roboflow/rf-detr/issues/968))
+
+### Fixed
+
+- Fixed segmentation training crash on T4 and P100 GPUs: cuDNN engine selection fails for depthwise convolution backward on some CUDA stacks (Kaggle, Colab). A custom `autograd.Function` now disables cuDNN in both forward and backward passes. ([#967](https://github.com/roboflow/rf-detr/pull/967))
+- Fixed `ema_segm_mAP_50_95` and `ema_segm_mAP_50` being computed from the base (non-EMA) metric accumulator instead of the EMA accumulator, producing misleading validation scores for segmentation models. ([#980](https://github.com/roboflow/rf-detr/pull/980))
+- Fixed `BestModelCallback` losing the best EMA score on training resume because `_best_ema` was not persisted in `state_dict()`. ([#973](https://github.com/roboflow/rf-detr/pull/973))
+- Fixed `positional_encoding_size` not updating when `resolution` is set at construction time (e.g. `RFDETRLarge(resolution=640)`), causing shape mismatches during forward. A model validator now auto-syncs PE size. ([#956](https://github.com/roboflow/rf-detr/pull/956))
+- Fixed pretrained weight loading crash with custom resolution: DINOv2 positional embeddings are now bicubic-interpolated to match the target grid before `load_state_dict`. ([#964](https://github.com/roboflow/rf-detr/pull/964))
+- Fixed `validate_checkpoint_compatibility` producing a cryptic `RuntimeError` on `patch_size` mismatch when checkpoint lacks explicit `args.patch_size`. The function now infers `patch_size` from the DINOv2 projection weight shape and raises a descriptive `ValueError`. ([#971](https://github.com/roboflow/rf-detr/pull/971))
+- Fixed `predict()` storing `detections.data["source_shape"]` as a Python `tuple`, which caused `TypeError` whenever `sv.Detections` was iterated. The value is now an `np.ndarray` of shape `(N, 2)` and dtype `int64`. ([#966](https://github.com/roboflow/rf-detr/pull/966), [#963](https://github.com/roboflow/rf-detr/issues/963))
+- Fixed `predict()` emitting a misleading "class_id out of range" warning for the background/no-object class (class index `num_classes`). Background-class detections now map `data["class_name"]` to `"__background__"` without any warning. ([#970](https://github.com/roboflow/rf-detr/issues/970))
+
 
 ## [1.6.4] — 2026-04-10
 
