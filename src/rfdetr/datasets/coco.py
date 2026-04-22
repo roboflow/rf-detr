@@ -308,10 +308,19 @@ class ConvertCoco(object):
 
 
 def _pad_to_divisor_config(divisor: int) -> Dict[str, Any]:
-    """Albumentations ``PadIfNeeded`` config padding up to the next multiple of *divisor*.
+    """Build an Albumentations ``PadIfNeeded`` config that rounds H and W up to a multiple of *divisor*.
 
-    ``min_height``/``min_width`` default to 1024 in Albumentations 2.x and conflict
-    with the divisor parameters; we pass ``None`` explicitly to disable them.
+    ``min_height``/``min_width`` default to ``1024`` in Albumentations 2.x and conflict
+    with the ``pad_*_divisor`` parameters, so they are set to ``None`` explicitly.
+
+    Args:
+        divisor: Target divisor for both spatial dimensions.  The output image is
+            zero-padded on the bottom/right edges so ``H % divisor == 0`` and
+            ``W % divisor == 0``.
+
+    Returns:
+        A single-transform config dict suitable for
+        :meth:`AlbumentationsWrapper.from_config`.
     """
     return {
         "PadIfNeeded": {
