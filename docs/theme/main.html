@@ -176,7 +176,7 @@
         "name": "How do I export RF-DETR to ONNX or TensorRT?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "Call model.export(type='onnx') or model.export(type='tensorrt') after training or loading a checkpoint. ONNX export works on CPU and produces a single .onnx file compatible with ONNX Runtime and OpenCV DNN. TensorRT export requires TensorRT and a CUDA GPU."
+          "text": "Call model.export(format='onnx') or model.export(format='tflite') after training or loading a checkpoint. ONNX export produces a single .onnx file compatible with runtimes such as ONNX Runtime, and TFLite export is available for edge deployment."
         }
       },
       {
@@ -184,15 +184,15 @@
         "name": "Which RF-DETR model size should I use?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "RF-DETR-Nano (2.3\u00a0ms, 63\u00a0AP50 on COCO) is best for edge and real-time applications. RF-DETR-Large (6.8\u00a0ms, 56.5\u00a0AP50:95) offers the best accuracy-latency trade-off for server deployment. RF-DETR-2XLarge (17.2\u00a0ms, 60.1\u00a0AP50:95) maximizes accuracy when latency allows."
+          "text": "RF-DETR-Nano (2.3\u00a0ms, 67.6\u00a0AP50 on COCO) is best for edge and real-time applications. RF-DETR-Large (6.8\u00a0ms, 56.5\u00a0AP50:95) offers the best accuracy-latency trade-off for server deployment. RF-DETR-2XLarge (17.2\u00a0ms, 60.1\u00a0AP50:95) maximizes accuracy when latency allows."
         }
       }
     ]
   }
   </script>
   {% else %}
-  {# article:modified_time — content pages only #}
-  {% if page.meta.git_revision_date_localized %}<meta property="article:modified_time" content="{{ page.meta.git_revision_date_localized }}">{% endif %}
+  {# article:modified_time — content pages only; emit only when a full ISO-8601 date-time is available #}
+  {% if page.meta.git_revision_date_localized and "T" in page.meta.git_revision_date_localized %}<meta property="article:modified_time" content="{{ page.meta.git_revision_date_localized }}">{% endif %}
   {# JSON-LD: TechArticle — content pages #}
   <script type="application/ld+json">
   {
