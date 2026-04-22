@@ -34,4 +34,10 @@ Allow: /
 User-agent: GoogleOther
 Allow: /
 
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
 Sitemap: https://rfdetr.roboflow.com/latest/sitemap.xml

@@ -106,7 +106,7 @@ plugins:
   - search
   - git-revision-date-localized:
       enable_creation_date: false
-      type: date
+      type: iso_date
   - mkdocstrings:
       default_handler: python
       handlers:
