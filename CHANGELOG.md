@@ -52,7 +52,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed `predict()` storing `detections.data["source_shape"]` as a Python `tuple`, which caused `TypeError` whenever `sv.Detections` was iterated. The value is now an `np.ndarray` of shape `(N, 2)` and dtype `int64`. ([#966](https://github.com/roboflow/rf-detr/pull/966), [#963](https://github.com/roboflow/rf-detr/issues/963))
 - Fixed `predict()` emitting a misleading "class_id out of range" warning for the background/no-object class (class index `num_classes`). Background-class detections now map `data["class_name"]` to `"__background__"` without any warning. ([#970](https://github.com/roboflow/rf-detr/issues/970))
 
-
 ## [1.6.4] — 2026-04-10
 
 ### Changed
