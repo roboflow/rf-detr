@@ -35,6 +35,7 @@
     "@graph": [
       {
         "@type": "Organization",
+        "@id": "https://roboflow.com/#organization",
         "name": "Roboflow",
         "url": "https://roboflow.com",
         "logo": {
@@ -54,6 +55,7 @@
       },
       {
         "@type": "SoftwareApplication",
+        "@id": "{{ config.site_url }}#software",
         "name": "RF-DETR",
         "alternateName": "rfdetr",
         "applicationCategory": "DeveloperApplication",
@@ -91,6 +93,7 @@
       },
       {
         "@type": "WebSite",
+        "@id": "{{ config.site_url }}#website",
         "name": "RF-DETR Documentation",
         "url": "{{ config.site_url }}",
         "description": {{ config.site_description | tojson }},
@@ -188,9 +191,8 @@
   }
   </script>
   {% else %}
-  {# Derive parent URL by removing the last path segment from the canonical URL #}
-  {% set _canon_parts = page.canonical_url.rstrip('/').split('/') %}
-  {% set _parent_url = (_canon_parts[:-1] | join('/')) + '/' %}
+  {# article:modified_time — content pages only #}
+  {% if page.meta.git_revision_date_localized %}<meta property="article:modified_time" content="{{ page.meta.git_revision_date_localized }}">{% endif %}
   {# JSON-LD: TechArticle — content pages #}
   <script type="application/ld+json">
   {
@@ -200,7 +202,7 @@
     "description": {{ (page.meta.description | default(config.site_description)) | tojson }},
     "url": "{{ page.canonical_url }}",
     {% if page.meta.git_revision_date_localized %}"dateModified": {{ page.meta.git_revision_date_localized | tojson }},
-    {% endif %}{% if og_image_url %}"image": {{ og_image_url | tojson }},
+    {% endif %}{% if page.meta.image %}"image": {{ page.meta.image | tojson }},
     {% endif %}"author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "mainEntityOfPage": {"@type": "WebPage", "@id": "{{ page.canonical_url }}"},
@@ -210,7 +212,7 @@
     }
   }
   </script>
-  {# JSON-LD: BreadcrumbList — content pages #}
+  {# JSON-LD: BreadcrumbList — content pages (2-level: root -> page) #}
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
@@ -221,25 +223,13 @@
         "position": 1,
         "name": "RF-DETR",
         "item": "{{ config.site_url }}"
-      }{% if page.parent %},
-      {
-        "@type": "ListItem",
-        "position": 2,
-        "name": {{ page.parent.title | tojson }},
-        "item": "{{ _parent_url }}"
       },
       {
         "@type": "ListItem",
-        "position": 3,
-        "name": {{ page.title | tojson }},
-        "item": "{{ page.canonical_url }}"
-      }{% else %},
-      {
-        "@type": "ListItem",
         "position": 2,
         "name": {{ page.title | tojson }},
         "item": "{{ page.canonical_url }}"
-      }{% endif %}
+      }
     ]
   }
   </script>
