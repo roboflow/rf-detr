@@ -1088,8 +1088,6 @@ class RFDETR:
               0-indexed; ``class_names[0]`` is the first class regardless of the
               original dataset format (COCO category IDs are remapped to 0-based
               indices during training).
-            * ``"source_image"`` – the original input image (only present when
-              ``include_source_image=True``, which is the default).
             * ``"source_shape"`` – ``(height, width)`` tuple of the source image dimensions.
 
             The ``metadata`` dict of each :class:`~supervision.Detections` object
