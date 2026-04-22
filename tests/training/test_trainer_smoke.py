@@ -357,9 +357,9 @@ class TestMultiScaleHookPropagation:
         fake_dataset = _FakeDataset(length=20)
 
         with (
-            patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel()),
+            patch("rfdetr.training.module_model.build_model", return_value=_TinyModel()),
             patch(
-                "rfdetr.training.module_model.build_criterion_from_config",
+                "rfdetr.training.module_model.build_criterion_and_postprocessors",
                 return_value=(_FakeCriterion(), _FakePostProcess()),
             ),
             patch("rfdetr.training.module_data.build_dataset", return_value=fake_dataset),
@@ -423,9 +423,9 @@ def test_ddp_spawn_multi_scale_mutation_propagates(base_model_config, base_train
     fake_dataset = _FakeDataset(length=20)
 
     with (
-        patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel()),
+        patch("rfdetr.training.module_model.build_model", return_value=_TinyModel()),
         patch(
-            "rfdetr.training.module_model.build_criterion_from_config",
+            "rfdetr.training.module_model.build_criterion_and_postprocessors",
             return_value=(_FakeCriterion(), _FakePostProcess()),
         ),
     ):

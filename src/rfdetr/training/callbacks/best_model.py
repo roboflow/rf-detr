@@ -11,7 +11,7 @@ from __future__ import annotations
 import math
 import shutil
 from pathlib import Path
-from typing import Optional, Any
+from typing import Any, Optional
 
 import torch
 from pytorch_lightning import LightningModule, Trainer
