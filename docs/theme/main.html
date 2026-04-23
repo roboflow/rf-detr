@@ -62,7 +62,7 @@
         "operatingSystem": "Linux, macOS, Windows",
         "url": "{{ config.site_url }}",
         "downloadUrl": "https://pypi.org/project/rfdetr/",
-        "softwareVersion": "1.6.5",
+        "softwareVersion": {{ config.extra.software_version | tojson }},
         "releaseNotes": "https://github.com/roboflow/rf-detr/blob/main/CHANGELOG.md",
         "description": "RF-DETR is a real-time transformer architecture for object detection and instance segmentation by Roboflow. DINOv2 backbone, SOTA on COCO (60.1 AP50:95). ICLR 2026. Apache 2.0.",
         "featureList": [
@@ -176,7 +176,7 @@
         "name": "How do I export RF-DETR to ONNX or TensorRT?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "Call model.export(format='onnx') or model.export(format='tflite') after training or loading a checkpoint. ONNX export produces a single .onnx file compatible with runtimes such as ONNX Runtime, and TFLite export is available for edge deployment."
+          "text": "Call model.export(format='onnx') after training or loading a checkpoint. ONNX export works on CPU and produces a single .onnx file compatible with ONNX Runtime and OpenCV DNN. For TensorRT deployment, first export to ONNX and then convert the .onnx model with TensorRT tooling such as trtexec; this requires TensorRT and a CUDA GPU."
         }
       },
       {

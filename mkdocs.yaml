@@ -123,6 +123,9 @@ plugins:
             show_symbol_type_toc: true
             show_category_heading: true
 
+hooks:
+  - docs/hooks/package_version.py
+
 markdown_extensions:
   - admonition
   - pymdownx.details
