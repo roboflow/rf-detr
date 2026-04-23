@@ -41,6 +41,10 @@ def make_infer_image(infer_dir, shape, batch_size, device="cuda", num_channels: 
             inps = torch.rand(batch_size, num_channels, shape[0], shape[1], device=device)
             return inps
     else:
+        if num_channels != 3:
+            raise ValueError(
+                "Providing `infer_dir` is only supported for RGB models (num_channels=3). For non-RGB models, omit `infer_dir` to use a synthetic dummy input."
+            )
         image = Image.open(infer_dir).convert("RGB")
 
     transforms = Compose(
