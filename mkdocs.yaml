@@ -63,7 +63,9 @@ nav:
       - Lightning Training:
           - Training Primitives: reference/training.md
   - Tutorials: tutorials/index.md
-  - Changelog: https://github.com/roboflow/rf-detr/releases
+  - Architecture:
+      - DDP Compatibility ADR: adr/ADR-001-ddp-compatibility.md
+  - Changelog: changelog.md
 
 theme:
   name: "material"

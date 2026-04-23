@@ -27,4 +27,4 @@ User-agent: OAI-SearchBot
 User-agent: ChatGPT-User
 Allow: /
 
-Sitemap: https://rfdetr.roboflow.com/latest/sitemap.xml
+Sitemap: https://rfdetr.roboflow.com/sitemap.xml

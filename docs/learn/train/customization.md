@@ -372,8 +372,8 @@ All logged keys (`train/loss`, `val/mAP_50_95`, `val/F1`, `val/ema_mAP_50_95`, e
 
 ## See also
 
-- [RFDETR.train() — high-level API](../index.md#quick-start) — the one-liner training path
-- [Training parameters](../training-parameters.md) — all `TrainConfig` fields
-- [Training loggers](../loggers.md) — TensorBoard, WandB, MLflow setup
-- [Advanced training](../advanced.md) — checkpointing, early stopping, memory optimisation
+- [RFDETR.train() — high-level API](index.md#quick-start) — the one-liner training path
+- [Training parameters](training-parameters.md) — all `TrainConfig` fields
+- [Training loggers](loggers.md) — TensorBoard, WandB, MLflow setup
+- [Advanced training](advanced.md) — checkpointing, early stopping, memory optimisation
 - [PTL primitives API reference](../../reference/training.md) — full docstring reference

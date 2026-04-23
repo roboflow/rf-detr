@@ -73,6 +73,13 @@ jobs:
           cp /tmp/llms.txt llms.txt
           cp /tmp/indexnow.txt cace9ef287cb8d641db90d4295fcb1e1.txt
           git add robots.txt llms.txt cace9ef287cb8d641db90d4295fcb1e1.txt
+          if [ -f latest/sitemap.xml ]; then
+            cp latest/sitemap.xml sitemap.xml
+            git add sitemap.xml
+          elif [ -f develop/sitemap.xml ]; then
+            cp develop/sitemap.xml sitemap.xml
+            git add sitemap.xml
+          fi
           git diff --staged --quiet || git commit -m "chore: update root static files (robots.txt, llms.txt)"
           git push origin gh-pages || (git pull --rebase origin gh-pages && git push origin gh-pages)
 

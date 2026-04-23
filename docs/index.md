@@ -12,7 +12,7 @@ RF-DETR uses a DINOv2 vision transformer backbone and supports both detection an
 
 ## Install
 
-You can install and use `rfdetr` in a [**Python>=3.10**](https://www.python.org/) environment. For detailed installation instructions, including installing from source, and setting up a local development environment, check out our [install](learn/install/) page.
+You can install and use `rfdetr` in a [**Python>=3.10**](https://www.python.org/) environment. For detailed installation instructions, including installing from source, and setting up a local development environment, check out our [install](learn/install.md) page.
 
 !!! example "Installation"
 
@@ -49,7 +49,7 @@ You can install and use `rfdetr` in a [**Python>=3.10**](https://www.python.org/
 
     Load and run pre-trained RF-DETR detection models.
 
-    [:octicons-arrow-right-24: Tutorial](learn/run/detection/)
+    [:octicons-arrow-right-24: Tutorial](learn/run/detection.md)
 
 - **Run Segmentation Models**
 
@@ -57,7 +57,7 @@ You can install and use `rfdetr` in a [**Python>=3.10**](https://www.python.org/
 
     Load and run pre-trained RF-DETR-Seg segmentation models.
 
-    [:octicons-arrow-right-24: Tutorial](learn/run/segmentation/)
+    [:octicons-arrow-right-24: Tutorial](learn/run/segmentation.md)
 
 - **Train Models**
 
@@ -65,7 +65,7 @@ You can install and use `rfdetr` in a [**Python>=3.10**](https://www.python.org/
 
     Learn how to fine-tune RF-DETR models for detection and segmentation.
 
-    [:octicons-arrow-right-24: Tutorial](/learn/train/)
+    [:octicons-arrow-right-24: Tutorial](learn/train/index.md)
 
 </div>
 
@@ -107,7 +107,7 @@ You can install and use `rfdetr` in a [**Python>=3.10**](https://www.python.org/
 
 ## Benchmarks
 
-RF-DETR achieves the best accuracy–latency trade-off among real-time object detection and instance segmentation models — both on COCO and on the more demanding RF100-VL benchmark (domain adaptability). For detailed benchmark tables and methodology, check out our [benchmarks](learn/benchmarks/) page.
+RF-DETR achieves the best accuracy–latency trade-off among real-time object detection and instance segmentation models — both on COCO and on the more demanding RF100-VL benchmark (domain adaptability). For detailed benchmark tables and methodology, check out our [benchmarks](learn/benchmarks.md) page.
 
 ### Detection
 

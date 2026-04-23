@@ -1,3 +1,7 @@
+---
+description: RF-DETR Lightning training API reference for RFDETRModelModule, RFDETRDataModule, build_trainer, callbacks, and training primitives.
+---
+
 # Training API Reference
 
 This page documents the training primitives that power RF-DETR. For a narrative guide with runnable examples, see [Custom Training API](../learn/train/customization.md).
