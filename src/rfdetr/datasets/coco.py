@@ -307,11 +307,39 @@ class ConvertCoco(object):
         return image, target
 
 
+def _pad_to_divisor_config(divisor: int) -> Dict[str, Any]:
+    """Build an Albumentations ``PadIfNeeded`` config that rounds H and W up to a multiple of *divisor*.
+
+    ``min_height``/``min_width`` default to ``1024`` in Albumentations 2.x and conflict
+    with the ``pad_*_divisor`` parameters, so they are set to ``None`` explicitly.
+
+    Args:
+        divisor: Target divisor for both spatial dimensions.  The output image is
+            padded (position determined by Albumentations default) so that
+            ``H % divisor == 0`` and ``W % divisor == 0``.
+
+    Returns:
+        A single-transform config dict suitable for
+        :meth:`AlbumentationsWrapper.from_config`.
+    """
+    return {
+        "PadIfNeeded": {
+            "min_height": None,
+            "min_width": None,
+            "pad_height_divisor": divisor,
+            "pad_width_divisor": divisor,
+            "border_mode": 0,
+            "fill": 0,
+        }
+    }
+
+
 def _build_train_resize_config(
     scales: List[int],
     *,
     square: bool,
     max_size: Optional[int] = None,
+    divisor: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """Build the training resize pipeline as an Albumentations config list.
 
@@ -332,6 +360,10 @@ def _build_train_resize_config(
             ratio using ``A.SmallestMaxSize`` with an optional long-side cap.
         max_size: Maximum long-side size for non-square resizes.  Defaults to
             ``1333`` when *square* is ``False``.
+        divisor: When set and ``square`` is ``False``, append ``PadIfNeeded`` so
+            both spatial dimensions are rounded up to the next multiple of this
+            value.  Required for backbones that assert divisibility by
+            ``patch_size * num_windows``; see :issue:`983`.
 
     Returns:
         A single-element list containing a ``OneOf`` config entry.
@@ -361,24 +393,21 @@ def _build_train_resize_config(
         cap = max_size or 1333
         # SmallestMaxSize accepts a list and picks randomly — no OneOf needed
         size_param: Any = scales[0] if len(scales) == 1 else scales
-        option_a = {
-            "Sequential": {
-                "transforms": [
-                    {"SmallestMaxSize": {"max_size": size_param}},
-                    {"LongestMaxSize": {"max_size": cap}},
-                ]
-            }
-        }
-        option_b = {
-            "Sequential": {
-                "transforms": [
-                    {"SmallestMaxSize": {"max_size": [400, 500, 600]}},
-                    {"RandomCrop": {"height": 384, "width": 384}},
-                    {"SmallestMaxSize": {"max_size": size_param}},
-                    {"LongestMaxSize": {"max_size": cap}},
-                ]
-            }
-        }
+        option_a_transforms: List[Dict[str, Any]] = [
+            {"SmallestMaxSize": {"max_size": size_param}},
+            {"LongestMaxSize": {"max_size": cap}},
+        ]
+        option_b_transforms: List[Dict[str, Any]] = [
+            {"SmallestMaxSize": {"max_size": [400, 500, 600]}},
+            {"RandomCrop": {"height": 384, "width": 384}},
+            {"SmallestMaxSize": {"max_size": size_param}},
+            {"LongestMaxSize": {"max_size": cap}},
+        ]
+        if divisor is not None:
+            option_a_transforms.append(_pad_to_divisor_config(divisor))
+            option_b_transforms.append(_pad_to_divisor_config(divisor))
+        option_a = {"Sequential": {"transforms": option_a_transforms}}
+        option_b = {"Sequential": {"transforms": option_b_transforms}}
 
     return [{"OneOf": {"transforms": [option_a, option_b]}}]
 
@@ -415,7 +444,9 @@ def make_coco_transforms(
         image_set: Dataset split identifier — ``"train"``, ``"val"``, ``"test"``,
             or ``"val_speed"``.
         resolution: Target short-side resolution in pixels.  During validation the
-            longest side is capped at 1333 px to preserve aspect ratio.
+            longest side is capped at 1333 px before divisor padding (final
+            dimensions may exceed 1333 by up to ``patch_size * num_windows - 1``
+            pixels after padding).
         multi_scale: If ``True``, sample the resize target from a range of scales
             computed by :func:`compute_multi_scale_scales` instead of using a
             single fixed size.
@@ -455,10 +486,14 @@ def make_coco_transforms(
             scales = [scales[-1]]
         logger.info(f"Using multi-scale training with scales: {scales}")
 
+    # Backbones with windowed attention require H and W divisible by this block size;
+    # see dinov2_with_windowed_attn.py. Pad resize outputs to satisfy it.
+    block_size = patch_size * num_windows
+
     if image_set == "train":
         resolved_aug_config = aug_config if aug_config is not None else AUG_CONFIG
         resize_wrappers = AlbumentationsWrapper.from_config(
-            _build_train_resize_config(scales, square=False, max_size=1333)
+            _build_train_resize_config(scales, square=False, max_size=1333, divisor=block_size)
         )
         pipeline = [*resize_wrappers]
         if not gpu_postprocess:
@@ -474,6 +509,7 @@ def make_coco_transforms(
             [
                 {"SmallestMaxSize": {"max_size": resolution}},
                 {"LongestMaxSize": {"max_size": 1333}},
+                _pad_to_divisor_config(block_size),
             ]
         )
         return Compose([*resize_wrappers, to_image, to_float, normalize])
