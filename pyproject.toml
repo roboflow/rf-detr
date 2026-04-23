@@ -137,7 +137,8 @@ docs = [
     "mike>=2.0.0",
     "mkdocs-jupyter>=0.24.3",
     "mkdocs-git-committers-plugin-2>=2.4.1",
-    "mkdocs-git-revision-date-localized-plugin>=1.2.4"
+    "mkdocs-git-revision-date-localized-plugin>=1.2.4",
+    "tomli>=2.0; python_version < '3.11'",
 ]
 
 [project.urls]
