@@ -207,6 +207,9 @@ ignore_missing_imports = false
 explicit_package_bases = true
 strict = true
 mypy_path = "src"
+exclude = [
+  "^docs/(hooks|scripts)/",
+]
 overrides = [
   { module = [
     "tests.*",
