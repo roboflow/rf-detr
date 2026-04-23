@@ -158,8 +158,15 @@ class RFDETRDataModule(LightningDataModule):
         # have H and W divisible by patch_size * num_windows. The collate_fn
         # below rounds batch-max H/W up to this value so the mask accurately
         # marks every pad pixel.
+        block_size = model_config.patch_size * model_config.num_windows
+        if block_size <= 0:
+            raise ValueError(
+                "Computed collate block_size must be > 0, got "
+                f"{block_size} from patch_size={model_config.patch_size} "
+                f"and num_windows={model_config.num_windows}."
+            )
         self._collate_fn = make_collate_fn(
-            block_size=model_config.patch_size * model_config.num_windows,
+            block_size=block_size,
         )
 
         self._dataset_train: Optional[torch.utils.data.Dataset] = None
