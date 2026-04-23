@@ -42,5 +42,6 @@ from rfdetr.utilities.state_dict import strip_checkpoint  # noqa: F401, E402
 from rfdetr.utilities.tensors import (  # noqa: E402, F401
     NestedTensor,
     collate_fn,
+    make_collate_fn,
     nested_tensor_from_tensor_list,
 )
