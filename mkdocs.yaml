@@ -65,8 +65,6 @@ nav:
       - Lightning Training:
           - Training Primitives: reference/training.md
   - Tutorials: tutorials/index.md
-  - Architecture:
-      - DDP Compatibility ADR: adr/ADR-001-ddp-compatibility.md
   - Changelog: changelog.md
 
 theme:
