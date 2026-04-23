@@ -315,8 +315,8 @@ def _pad_to_divisor_config(divisor: int) -> Dict[str, Any]:
 
     Args:
         divisor: Target divisor for both spatial dimensions.  The output image is
-            zero-padded on the bottom/right edges so ``H % divisor == 0`` and
-            ``W % divisor == 0``.
+            padded (position determined by Albumentations default) so that
+            ``H % divisor == 0`` and ``W % divisor == 0``.
 
     Returns:
         A single-transform config dict suitable for
@@ -444,7 +444,9 @@ def make_coco_transforms(
         image_set: Dataset split identifier — ``"train"``, ``"val"``, ``"test"``,
             or ``"val_speed"``.
         resolution: Target short-side resolution in pixels.  During validation the
-            longest side is capped at 1333 px to preserve aspect ratio.
+            longest side is capped at 1333 px before divisor padding (final
+            dimensions may exceed 1333 by up to ``patch_size * num_windows - 1``
+            pixels after padding).
         multi_scale: If ``True``, sample the resize target from a range of scales
             computed by :func:`compute_multi_scale_scales` instead of using a
             single fixed size.
