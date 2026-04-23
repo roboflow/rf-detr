@@ -1239,8 +1239,9 @@ class RFDETR:
                 )
             if img.shape[0] != self.model_config.num_channels:
                 raise ValueError(
-                    f"Invalid image shape. Expected {self.model_config.num_channels} channels, but got "
-                    f"{img.shape[0]} channels."
+                    "Invalid tensor image shape. Tensor inputs to `predict()` must be in (C, H, W) format "
+                    f"with C matching the model configuration ({self.model_config.num_channels} channels). "
+                    f"Received tensor with shape {tuple(img.shape)}."
                 )
             img_tensor = img
 
