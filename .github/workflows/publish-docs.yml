@@ -80,7 +80,7 @@ jobs:
             cp develop/sitemap.xml sitemap.xml
             git add sitemap.xml
           fi
-          git diff --staged --quiet || git commit -m "chore: update root static files (robots.txt, llms.txt)"
+          git diff --staged --quiet || git commit -m "chore: update root static files and sitemap"
           git push origin gh-pages || (git pull --rebase origin gh-pages && git push origin gh-pages)
 
       # IndexNow key: cace9ef287cb8d641db90d4295fcb1e1
