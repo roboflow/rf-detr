@@ -47,6 +47,7 @@ repos:
         # The hook runs in an isolated env without torch/torchvision/etc.
         # Full strict checking (matching pyproject.toml) runs in CI via ci-typing.yml.
         args: ["--ignore-missing-imports"]
+        exclude: ^docs/(hooks|scripts)/.*\.py$
         additional_dependencies:
           - "types-PyYAML"
           - "types-requests"

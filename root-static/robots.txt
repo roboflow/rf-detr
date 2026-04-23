@@ -13,25 +13,18 @@ Disallow: /7.*/
 Disallow: /8.*/
 Disallow: /9.*/
 
+# AI crawlers — explicitly allow all paths including numeric-versioned ones.
+# Named groups are independent of User-agent: * — they do NOT inherit its Disallow rules.
+# Listing Allow: / here is sufficient; no Disallow needed.
 User-agent: GPTBot
-Allow: /
-
 User-agent: ClaudeBot
-Allow: /
-
 User-agent: PerplexityBot
-Allow: /
-
 User-agent: CCBot
-Allow: /
-
 User-agent: Google-Extended
-Allow: /
-
 User-agent: Bytespider
-Allow: /
-
 User-agent: GoogleOther
+User-agent: OAI-SearchBot
+User-agent: ChatGPT-User
 Allow: /
 
 Sitemap: https://rfdetr.roboflow.com/latest/sitemap.xml

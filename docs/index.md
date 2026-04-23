@@ -138,7 +138,7 @@ RF-DETR achieves the best accuracy–latency trade-off among real-time object de
 ## Frequently Asked Questions
 
 **What is RF-DETR?**
-RF-DETR (Roboflow Detection Transformer) is a real-time object detection and instance segmentation model from Roboflow. It uses a DINOv2 vision transformer backbone and achieves state-of-the-art accuracy–latency trade-offs on COCO and RF100-VL.
+RF-DETR (Roboflow Detection Transformer) is a real-time object detection and instance segmentation model from Roboflow, accepted at ICLR 2026. It uses a DINOv2 vision transformer backbone and achieves state-of-the-art accuracy–latency trade-offs on COCO (60.1 AP50:95 for RF-DETR-2XL) and RF100-VL.
 
 **How does RF-DETR compare to YOLOv11?**
 RF-DETR-L achieves 56.5 AP50:95 on COCO at 6.8 ms latency on an NVIDIA T4, outperforming YOLOv11x (54.7 AP) at lower latency. The DINOv2 backbone gives RF-DETR stronger performance on domain-shift benchmarks such as RF100-VL.
@@ -147,7 +147,7 @@ RF-DETR-L achieves 56.5 AP50:95 on COCO at 6.8 ms latency on an NVIDIA T4, outpe
 A CUDA-capable GPU with at least 8 GB VRAM (e.g., NVIDIA RTX 3060, T4, A10) is recommended for fine-tuning. Smaller models (RF-DETR-N and RF-DETR-S) can fit in 6 GB VRAM with reduced batch size. CPU inference is supported for evaluation.
 
 **Which dataset formats does RF-DETR support?**
-RF-DETR supports COCO JSON and YOLO-format datasets (with `dataset_type: "yolo"`). Roboflow datasets export directly to both formats. Detection and segmentation datasets use the same format — the model variant determines the task.
+RF-DETR supports COCO JSON and YOLO-format datasets (with `dataset_file: "yolo"`). Roboflow datasets export directly to both formats. Detection and segmentation datasets use the same format — the model variant determines the task.
 
 **Can RF-DETR run in real time?**
 Yes. RF-DETR-N runs at 2.3 ms per frame on a T4 GPU (TensorRT FP16, batch 1), and RF-DETR-L at 6.8 ms — both well within real-time thresholds. ONNX and TFLite exports are available for edge deployment.
@@ -157,3 +157,12 @@ Detection models (e.g., `RFDETRLarge`) output bounding boxes. Segmentation model
 
 **Is RF-DETR open source?**
 Yes. Core models (Nano through Large) and all training/inference code are released under the Apache 2.0 license. XLarge and 2XLarge models require the `rfdetr[plus]` package (PML 1.0 license).
+
+**How do I fine-tune RF-DETR on a custom dataset?**
+Instantiate a model and call `model.train(...)` with your dataset directory in COCO JSON or YOLO format. Example: `model = RFDETRLarge(); model.train(dataset_dir='./dataset', epochs=50, batch_size=4)`. The model downloads pretrained weights automatically and resumes from the best checkpoint.
+
+**How do I export RF-DETR to ONNX or TensorRT?**
+Call `model.export(format="onnx")` after training or loading a checkpoint. ONNX export works on CPU and produces a single `.onnx` file compatible with ONNX Runtime and OpenCV DNN. For TensorRT deployment, first export to ONNX and then convert the `.onnx` model with TensorRT tooling or helpers such as `trtexec`; this requires TensorRT and a CUDA GPU.
+
+**Which RF-DETR model size should I use?**
+RF-DETR-Nano (2.3 ms, 67.6 AP50 on COCO) is best for edge and real-time applications. RF-DETR-Large (6.8 ms, 56.5 AP50:95) offers the best accuracy–latency trade-off for server deployment. RF-DETR-2XLarge (17.2 ms, 60.1 AP50:95) maximizes accuracy when latency allows.

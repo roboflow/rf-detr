@@ -106,7 +106,7 @@ plugins:
   - search
   - git-revision-date-localized:
       enable_creation_date: false
-      type: date
+      type: iso_date
   - mkdocstrings:
       default_handler: python
       handlers:
@@ -122,6 +122,9 @@ plugins:
             show_symbol_type_heading: true
             show_symbol_type_toc: true
             show_category_heading: true
+
+hooks:
+  - docs/hooks/package_version.py
 
 markdown_extensions:
   - admonition
