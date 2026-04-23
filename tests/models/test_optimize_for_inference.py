@@ -42,7 +42,7 @@ class _FakeRFDETR(RFDETR):
         return None
 
     def get_model_config(self, **kwargs) -> SimpleNamespace:
-        return SimpleNamespace()
+        return SimpleNamespace(num_channels=3)
 
     def get_model(self, config: SimpleNamespace) -> _FakeModelContext:
         return _FakeModelContext()

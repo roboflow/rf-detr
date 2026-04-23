@@ -222,6 +222,13 @@ class RFDETR:
         self.model = self.get_model(self.model_config)
         self.callbacks = defaultdict(list)
 
+        # repeat means and stds for non-rgb images
+        if self.model_config.num_channels != 3:
+            from itertools import cycle
+
+            self.means = [val for _, val in zip(range(self.model_config.num_channels), cycle(self.means))]
+            self.stds = [val for _, val in zip(range(self.model_config.num_channels), cycle(self.stds))]
+
         self.model.inference_model = None
         self._is_optimized_for_inference = False
         self._has_warned_about_not_being_optimized_for_inference = False
@@ -708,7 +715,7 @@ class RFDETR:
                         self.model.inference_model,
                         torch.randn(
                             batch_size,
-                            3,
+                            self.model_config.num_channels,
                             self.model.resolution,
                             self.model.resolution,
                             device=self.model.device,
@@ -863,7 +870,9 @@ class RFDETR:
             else:
                 shape = _validate_shape_dims(shape, block_size, patch_size, num_windows)
 
-            input_tensors = make_infer_image(infer_dir, shape, batch_size, device).to(device)
+            input_tensors = make_infer_image(
+                infer_dir, shape, batch_size, device, num_channels=self.model_config.num_channels
+            ).to(device)
             input_names = ["input"]
             if backbone_only:
                 output_names = ["features"]
@@ -1228,8 +1237,12 @@ class RFDETR:
                 raise ValueError(
                     "Image has pixel values below 0. Please ensure the image is normalized (scaled to [0, 1]).",
                 )
-            if img.shape[0] != 3:
-                raise ValueError(f"Invalid image shape. Expected 3 channels (RGB), but got {img.shape[0]} channels.")
+            if img.shape[0] != self.model_config.num_channels:
+                raise ValueError(
+                    "Invalid tensor image shape. Tensor inputs to `predict()` must be in (C, H, W) format "
+                    f"with C matching the model configuration ({self.model_config.num_channels} channels). "
+                    f"Received tensor with shape {tuple(img.shape)}."
+                )
             img_tensor = img
 
             h, w = img_tensor.shape[1:]

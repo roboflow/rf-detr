@@ -97,6 +97,7 @@ class ModelConfig(BaseConfig):
     lite_refpoint_refine: bool = True
     layer_norm: bool = True
     amp: bool = True
+    num_channels: int = Field(default=3, ge=1)
     num_classes: int = 90
     pretrain_weights: Optional[str] = None
     # torch.device values are accepted at validation time and normalized to string.
