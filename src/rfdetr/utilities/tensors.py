@@ -319,7 +319,7 @@ def _collate_with_block_size(
             :func:`nested_tensor_from_tensor_list`.
 
     Returns:
-        Tuple of ``(NestedTensor_of_images, list_of_targets)``.
+        Tuple of ``(NestedTensor_of_images, tuple_of_targets)``.
     """
     batch = list(zip(*batch))
     batch[0] = nested_tensor_from_tensor_list(batch[0], block_size=block_size)
@@ -338,7 +338,7 @@ def collate_fn(batch: list[tuple[Any, ...]]) -> tuple[Any, ...]:
         batch: List of ``(image, target)`` pairs from a dataset.
 
     Returns:
-        Tuple of ``(NestedTensor_of_images, list_of_targets)``.
+        Tuple of ``(NestedTensor_of_images, tuple_of_targets)``.
     """
     return _collate_with_block_size(batch, block_size=None)
 
