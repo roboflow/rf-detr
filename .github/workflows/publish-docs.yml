@@ -64,22 +64,29 @@ jobs:
       - name: Deploy root static files to gh-pages
         if: (github.event_name == 'push' && github.ref == 'refs/heads/develop') || github.event_name == 'workflow_dispatch' || (github.event_name == 'release' && github.event.action == 'published')
         run: |
-          cp root-static/robots.txt /tmp/robots.txt
-          cp root-static/llms.txt /tmp/llms.txt
-          cp root-static/cace9ef287cb8d641db90d4295fcb1e1.txt /tmp/indexnow.txt
+          cp docs/root-static/robots.txt /tmp/robots.txt
+          cp docs/root-static/llms.txt /tmp/llms.txt
+          cp docs/root-static/cace9ef287cb8d641db90d4295fcb1e1.txt /tmp/indexnow.txt
           git fetch origin gh-pages:refs/remotes/origin/gh-pages
           git checkout -B gh-pages origin/gh-pages
           cp /tmp/robots.txt robots.txt
           cp /tmp/llms.txt llms.txt
           cp /tmp/indexnow.txt cace9ef287cb8d641db90d4295fcb1e1.txt
           git add robots.txt llms.txt cace9ef287cb8d641db90d4295fcb1e1.txt
-          git diff --staged --quiet || git commit -m "chore: update root static files (robots.txt, llms.txt)"
+          if [ -f latest/sitemap.xml ]; then
+            cp latest/sitemap.xml sitemap.xml
+            git add sitemap.xml
+          elif [ -f develop/sitemap.xml ]; then
+            cp develop/sitemap.xml sitemap.xml
+            git add sitemap.xml
+          fi
+          git diff --staged --quiet || git commit -m "chore: update root static files and sitemap"
           git push origin gh-pages || (git pull --rebase origin gh-pages && git push origin gh-pages)
 
       # IndexNow key: cace9ef287cb8d641db90d4295fcb1e1
       # Key file served at https://rfdetr.roboflow.com/cace9ef287cb8d641db90d4295fcb1e1.txt
       # (deployed via "Deploy root static files" step above).
-      # To rotate: generate new key, update root-static/<key>.txt, replace key string here.
+      # To rotate: generate new key, update docs/root-static/<key>.txt, replace key string here.
       - name: 📡 Notify IndexNow (Bing)
         if: (github.event_name == 'push' && github.ref == 'refs/heads/develop') || github.event_name == 'workflow_dispatch' || (github.event_name == 'release' && github.event.action == 'published')
         run: |

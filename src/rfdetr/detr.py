@@ -1106,7 +1106,7 @@ class RFDETR:
         shape: tuple[int, int] | None = None,
         patch_size: int | None = None,
         include_source_image: bool = True,
-        **kwargs,
+        **kwargs: Any,
     ) -> sv.Detections | list[sv.Detections]:
         """Performs object detection on the input images and returns bounding box
         predictions.
@@ -1147,34 +1147,16 @@ class RFDETR:
 
         Returns:
             A single or multiple Detections objects, each containing bounding box
-            coordinates, confidence scores, and class IDs.  The ``data`` dict of
-            each :class:`~supervision.Detections` object contains:
-
-            * ``"class_name"`` – ``np.ndarray`` of string class names corresponding
-              to each detection (``class_names[class_id]``).  Class IDs are always
-              0-indexed; ``class_names[0]`` is the first class regardless of the
-              original dataset format (COCO category IDs are remapped to 0-based
-              indices during training).
-            * ``"source_shape"`` – ``np.ndarray`` of shape ``(N, 2)`` and dtype
-              ``int64``, where each row is ``[height, width]`` of the source image.
-              ``N`` equals the number of detections (0 when threshold filters all
-              results) so that iteration over ``sv.Detections`` works correctly.
-              Stored in ``data`` (not ``metadata``) because each row maps to exactly
-              one detection, so supervision's per-detection indexing works correctly.
-              Changed: this was previously a ``(height, width)`` Python ``tuple``;
-              callers using ``isinstance(v, tuple)`` or ``v == (H, W)`` must be
-              updated.
-
-            The ``metadata`` dict of each :class:`~supervision.Detections` object
-            contains:
-
-            * ``"source_image"`` – the original input image as a ``uint8`` numpy
-              array of shape ``(H, W, 3)`` (only present when
-              ``include_source_image=True``, which is the default).  Stored in
-              ``metadata`` rather than ``data`` so that boolean and integer indexing
-              of :class:`~supervision.Detections` works correctly — supervision
-              indexes every value in ``data`` by the detection mask, but passes
-              ``metadata`` through unchanged.
+            coordinates, confidence scores, and class IDs. The ``data`` dict of
+            each :class:`~supervision.Detections` object contains ``class_name``
+            as a string array corresponding to each detection and ``source_shape``
+            as an ``int64`` array of shape ``(N, 2)`` with ``[height, width]`` rows.
+            ``source_shape`` is stored per detection so supervision indexing works
+            correctly. It was previously a ``(height, width)`` Python ``tuple``;
+            callers using ``isinstance(v, tuple)`` or ``v == (H, W)`` must be
+            updated. The ``metadata`` dict contains ``source_image`` as the original
+            ``uint8`` image array of shape ``(H, W, 3)`` when
+            ``include_source_image=True``.
 
         Raises:
             ValueError: If ``shape`` cannot be unpacked as a two-element sequence,

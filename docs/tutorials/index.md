@@ -1,4 +1,5 @@
 ---
+description: RF-DETR tutorials for training, deploying, and running detection and segmentation models across cloud, edge, iOS, Jetson, and Lightning workflows.
 hide:
   - toc
   - navigation
