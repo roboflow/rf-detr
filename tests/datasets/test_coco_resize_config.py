@@ -6,6 +6,7 @@
 
 """Characterization tests for _build_train_resize_config."""
 
+import albumentations as alb
 import numpy as np
 import pytest
 import torch
@@ -256,6 +257,13 @@ class TestNonSquareResizeDivisibilityRegression:
     the windowed-attention backbone rejects the input.
     """
 
+    @pytest.fixture(autouse=True)
+    def reset_rng(self):
+        """Reset global RNG state before each test to prevent cross-test leakage."""
+        np.random.seed(42)
+        torch.manual_seed(42)
+        yield
+
     @pytest.mark.parametrize(
         "img_h,img_w",
         [
@@ -284,19 +292,13 @@ class TestNonSquareResizeDivisibilityRegression:
             "labels": torch.zeros((0,), dtype=torch.long),
         }
 
-        np_state = np.random.get_state()
-        torch_state = torch.get_rng_state()
-        try:
-            for seed in range(40):
-                np.random.seed(seed)
-                torch.manual_seed(seed)
-                aug_image, _ = wrapper(image, target)
-                w, h = aug_image.size
-                assert h % divisor == 0, f"seed={seed} input=({img_h},{img_w}) output_h={h} not divisible by {divisor}"
-                assert w % divisor == 0, f"seed={seed} input=({img_h},{img_w}) output_w={w} not divisible by {divisor}"
-        finally:
-            np.random.set_state(np_state)
-            torch.set_rng_state(torch_state)
+        for seed in range(40):
+            np.random.seed(seed)
+            torch.manual_seed(seed)
+            aug_image, _ = wrapper(image, target)
+            w, h = aug_image.size
+            assert h % divisor == 0, f"seed={seed} input=({img_h},{img_w}) output_h={h} not divisible by {divisor}"
+            assert w % divisor == 0, f"seed={seed} input=({img_h},{img_w}) output_w={w} not divisible by {divisor}"
 
     def test_make_coco_transforms_train_passes_divisor(self) -> None:
         """End-to-end: make_coco_transforms(train) with patch_size=16, num_windows=2 produces dims divisible by 32."""
@@ -319,20 +321,14 @@ class TestNonSquareResizeDivisibilityRegression:
             "size": torch.tensor([1024, 768]),
         }
 
-        np_state = np.random.get_state()
-        torch_state = torch.get_rng_state()
-        try:
-            for seed in range(20):
-                np.random.seed(seed)
-                torch.manual_seed(seed)
-                out_image, _ = transform(image, target)
-                # After ToImage + ToDtype the tensor is CHW
-                _, h, w = out_image.shape
-                assert h % divisor == 0, f"seed={seed} output_h={h} not divisible by {divisor}"
-                assert w % divisor == 0, f"seed={seed} output_w={w} not divisible by {divisor}"
-        finally:
-            np.random.set_state(np_state)
-            torch.set_rng_state(torch_state)
+        for seed in range(20):
+            np.random.seed(seed)
+            torch.manual_seed(seed)
+            out_image, _ = transform(image, target)
+            # After ToImage + ToDtype the tensor is CHW
+            _, h, w = out_image.shape
+            assert h % divisor == 0, f"seed={seed} output_h={h} not divisible by {divisor}"
+            assert w % divisor == 0, f"seed={seed} output_w={w} not divisible by {divisor}"
 
     def test_make_coco_transforms_val_produces_divisible_dims(self) -> None:
         """Val pipeline must also produce dims divisible by patch_size * num_windows."""
@@ -362,7 +358,6 @@ class TestNonSquareResizeDivisibilityRegression:
 
     def test_val_pipeline_structural_contains_pad_if_needed(self) -> None:
         """Val/test resize pipeline third wrapper must be PadIfNeeded with correct divisor."""
-        import albumentations as alb
 
         patch_size, num_windows = 16, 2
         block_size = patch_size * num_windows
@@ -376,8 +371,6 @@ class TestNonSquareResizeDivisibilityRegression:
         )
 
         # Third transform in the Compose must be the divisor-padding wrapper
-        from rfdetr.datasets.transforms import AlbumentationsWrapper
-
         wrapper = compose.transforms[2]
         assert isinstance(wrapper, AlbumentationsWrapper), (
             f"Expected AlbumentationsWrapper at index 2, got {type(wrapper).__name__}"
