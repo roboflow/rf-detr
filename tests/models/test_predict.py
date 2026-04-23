@@ -56,7 +56,7 @@ class _DummyRFDETR(RFDETR):
         return None
 
     def get_model_config(self, **kwargs) -> SimpleNamespace:
-        return SimpleNamespace()
+        return SimpleNamespace(num_channels=3)
 
     def get_model(self, config: SimpleNamespace) -> _DummyModel:
         return _DummyModel()
@@ -428,7 +428,7 @@ class TestPredictPatchSize:
         from types import SimpleNamespace
 
         model = _DummyRFDETR()
-        model.model_config = SimpleNamespace(patch_size=patch_size, num_windows=num_windows)
+        model.model_config = SimpleNamespace(patch_size=patch_size, num_windows=num_windows, num_channels=3)
         return model
 
     def test_predict_defaults_patch_size_from_model_config(self) -> None:

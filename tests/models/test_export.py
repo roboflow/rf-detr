@@ -158,7 +158,7 @@ def _detr_export_scaffold(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
             device="cpu",
             resolution=14,
         ),
-        model_config=types.SimpleNamespace(segmentation_head=False),
+        model_config=types.SimpleNamespace(segmentation_head=False, num_channels=3),
         size=None,
     )
 
@@ -200,7 +200,7 @@ def test_rfdetr_export_dynamic_batch_forwards_dynamic_axes(
         model=types.SimpleNamespace(
             model=_DummyCoreModel(segmentation_head=segmentation_head), device="cpu", resolution=14
         ),
-        model_config=types.SimpleNamespace(segmentation_head=segmentation_head),
+        model_config=types.SimpleNamespace(segmentation_head=segmentation_head, num_channels=3),
         size=None,
     )
 
@@ -590,6 +590,7 @@ class TestExportPatchSize:
                 segmentation_head=False,
                 patch_size=patch_size,
                 num_windows=num_windows,
+                num_channels=3,
             ),
             size=None,
         )
@@ -828,7 +829,7 @@ class TestExportOnnxVariantNaming:
 
         model = types.SimpleNamespace(
             model=types.SimpleNamespace(model=_DummyCoreModel(), device="cpu", resolution=14),
-            model_config=types.SimpleNamespace(segmentation_head=False),
+            model_config=types.SimpleNamespace(segmentation_head=False, num_channels=3),
             size="rfdetr-medium",
         )
 
@@ -853,7 +854,7 @@ class TestExportOnnxVariantNaming:
 
         model = types.SimpleNamespace(
             model=types.SimpleNamespace(model=_DummyCoreModel(), device="cpu", resolution=14),
-            model_config=types.SimpleNamespace(segmentation_head=False),
+            model_config=types.SimpleNamespace(segmentation_head=False, num_channels=3),
             size=None,
         )
 

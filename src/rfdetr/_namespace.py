@@ -37,6 +37,7 @@ _MC_NAMESPACE_FIELDS = {
     "layer_norm",
     "lite_refpoint_refine",
     "mask_downsample_ratio",
+    "num_channels",
     "num_classes",
     "num_queries",
     "num_select",
