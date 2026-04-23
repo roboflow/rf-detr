@@ -76,6 +76,38 @@ class TestModelConfigValidation:
         with pytest.raises(ValidationError, match="Invalid device specifier: 'notadevice'\\."):
             ModelConfig(**sample_model_config, device="notadevice")
 
+    @pytest.mark.parametrize(
+        "encoder",
+        [
+            pytest.param("dinov2_windowed_small", id="windowed_small"),
+            pytest.param("dinov2_windowed_base", id="windowed_base"),
+            pytest.param("dinov2_registers_windowed_small", id="registers_windowed_small"),
+        ],
+    )
+    def test_accepts_valid_encoder(self, sample_model_config, encoder: str) -> None:
+        """ModelConfig accepts every value in the EncoderName Literal."""
+        config = ModelConfig(**{**sample_model_config, "encoder": encoder})
+        assert config.encoder == encoder
+
+    def test_rejects_invalid_encoder(self, sample_model_config) -> None:
+        """ModelConfig raises ValidationError for encoder strings outside the Literal."""
+        with pytest.raises(ValidationError):
+            ModelConfig(**{**sample_model_config, "encoder": "dinov2_invalid_backbone"})
+
+
+class TestRFDETRBaseConfigEncoder:
+    """Encoder field validation on RFDETRBaseConfig (no fixture needed — has defaults)."""
+
+    def test_accepts_registers_windowed_small(self) -> None:
+        """RFDETRBaseConfig accepts the new dinov2_registers_windowed_small encoder."""
+        config = RFDETRBaseConfig(encoder="dinov2_registers_windowed_small", pretrain_weights=None)
+        assert config.encoder == "dinov2_registers_windowed_small"
+
+    def test_rejects_invalid_encoder(self) -> None:
+        """RFDETRBaseConfig raises ValidationError for unknown encoder strings."""
+        with pytest.raises(ValidationError):
+            RFDETRBaseConfig(encoder="not_a_real_encoder", pretrain_weights=None)
+
 
 class TestSegmentationTrainConfigNumSelect:
     """Unit tests for SegmentationTrainConfig.num_select default and per-model values."""
