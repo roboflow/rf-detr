@@ -70,7 +70,7 @@ _ModelContext = ModelContext  # backward-compat alias
 def _adapt_input_conv(num_channels: int, conv_weight: torch.Tensor) -> torch.Tensor:
     """Adapt a 3-channel pretrained conv weight tensor to *num_channels* input channels.
 
-    When ``num_channels == 1``: sums weights across the original 3 channels.
+    When ``num_channels == 1``: averages weights across the original 3 channels.
     When ``num_channels > 3``: tiles the 3-channel pattern and scales to preserve magnitude.
     When ``num_channels == 3``: returns the weight unchanged.
 
@@ -84,7 +84,7 @@ def _adapt_input_conv(num_channels: int, conv_weight: torch.Tensor) -> torch.Ten
     if num_channels == 3:
         return conv_weight
     if num_channels == 1:
-        return conv_weight.sum(dim=1, keepdim=True)
+        return conv_weight.mean(dim=1, keepdim=True)
     # General case: tile and scale
     repeats = (num_channels + 2) // 3
     weight_out = torch.cat([conv_weight] * repeats, dim=1)[:, :num_channels]
