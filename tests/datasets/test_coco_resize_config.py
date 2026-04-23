@@ -284,13 +284,19 @@ class TestNonSquareResizeDivisibilityRegression:
             "labels": torch.zeros((0,), dtype=torch.long),
         }
 
-        for seed in range(40):
-            np.random.seed(seed)
-            torch.manual_seed(seed)
-            aug_image, _ = wrapper(image, target)
-            w, h = aug_image.size
-            assert h % divisor == 0, f"seed={seed} input=({img_h},{img_w}) output_h={h} not divisible by {divisor}"
-            assert w % divisor == 0, f"seed={seed} input=({img_h},{img_w}) output_w={w} not divisible by {divisor}"
+        np_state = np.random.get_state()
+        torch_state = torch.get_rng_state()
+        try:
+            for seed in range(40):
+                np.random.seed(seed)
+                torch.manual_seed(seed)
+                aug_image, _ = wrapper(image, target)
+                w, h = aug_image.size
+                assert h % divisor == 0, f"seed={seed} input=({img_h},{img_w}) output_h={h} not divisible by {divisor}"
+                assert w % divisor == 0, f"seed={seed} input=({img_h},{img_w}) output_w={w} not divisible by {divisor}"
+        finally:
+            np.random.set_state(np_state)
+            torch.set_rng_state(torch_state)
 
     def test_make_coco_transforms_train_passes_divisor(self) -> None:
         """End-to-end: make_coco_transforms(train) with patch_size=16, num_windows=2 produces dims divisible by 32."""
@@ -313,14 +319,20 @@ class TestNonSquareResizeDivisibilityRegression:
             "size": torch.tensor([1024, 768]),
         }
 
-        for seed in range(20):
-            np.random.seed(seed)
-            torch.manual_seed(seed)
-            out_image, _ = transform(image, target)
-            # After ToImage + ToDtype the tensor is CHW
-            _, h, w = out_image.shape
-            assert h % divisor == 0, f"seed={seed} output_h={h} not divisible by {divisor}"
-            assert w % divisor == 0, f"seed={seed} output_w={w} not divisible by {divisor}"
+        np_state = np.random.get_state()
+        torch_state = torch.get_rng_state()
+        try:
+            for seed in range(20):
+                np.random.seed(seed)
+                torch.manual_seed(seed)
+                out_image, _ = transform(image, target)
+                # After ToImage + ToDtype the tensor is CHW
+                _, h, w = out_image.shape
+                assert h % divisor == 0, f"seed={seed} output_h={h} not divisible by {divisor}"
+                assert w % divisor == 0, f"seed={seed} output_w={w} not divisible by {divisor}"
+        finally:
+            np.random.set_state(np_state)
+            torch.set_rng_state(torch_state)
 
     def test_make_coco_transforms_val_produces_divisible_dims(self) -> None:
         """Val pipeline must also produce dims divisible by patch_size * num_windows."""
@@ -347,3 +359,30 @@ class TestNonSquareResizeDivisibilityRegression:
         _, h, w = out_image.shape
         assert h % divisor == 0, f"val output_h={h} not divisible by {divisor}"
         assert w % divisor == 0, f"val output_w={w} not divisible by {divisor}"
+
+    def test_val_pipeline_structural_contains_pad_if_needed(self) -> None:
+        """Val/test resize pipeline third wrapper must be PadIfNeeded with correct divisor."""
+        import albumentations as alb
+
+        patch_size, num_windows = 16, 2
+        block_size = patch_size * num_windows
+
+        compose = make_coco_transforms(
+            image_set="val",
+            resolution=896,
+            multi_scale=False,
+            patch_size=patch_size,
+            num_windows=num_windows,
+        )
+
+        # Third transform in the Compose must be the divisor-padding wrapper
+        from rfdetr.datasets.transforms import AlbumentationsWrapper
+
+        wrapper = compose.transforms[2]
+        assert isinstance(wrapper, AlbumentationsWrapper), (
+            f"Expected AlbumentationsWrapper at index 2, got {type(wrapper).__name__}"
+        )
+        inner = wrapper.transform.transforms[0]
+        assert isinstance(inner, alb.PadIfNeeded), f"Expected PadIfNeeded inside wrapper, got {type(inner).__name__}"
+        assert inner.pad_height_divisor == block_size
+        assert inner.pad_width_divisor == block_size
