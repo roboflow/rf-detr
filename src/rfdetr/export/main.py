@@ -31,10 +31,15 @@ from rfdetr.utilities.package import get_sha, get_version
 logger = get_logger()
 
 
-def make_infer_image(infer_dir, shape, batch_size, device="cuda"):
+def make_infer_image(infer_dir, shape, batch_size, device="cuda", num_channels: int = 3):
     if infer_dir is None:
-        dummy = np.random.randint(0, 256, (shape[0], shape[1], 3), dtype=np.uint8)
-        image = Image.fromarray(dummy, mode="RGB")
+        if num_channels == 3:
+            dummy = np.random.randint(0, 256, (shape[0], shape[1], 3), dtype=np.uint8)
+            image = Image.fromarray(dummy, mode="RGB")
+        else:
+            # Non-RGB: build a random float tensor directly, bypassing PIL
+            inps = torch.rand(batch_size, num_channels, shape[0], shape[1], device=device)
+            return inps
     else:
         image = Image.open(infer_dir).convert("RGB")
 

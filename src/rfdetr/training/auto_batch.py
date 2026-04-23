@@ -63,6 +63,7 @@ def _make_synthetic_batch(
     num_classes: int,
     segmentation_head: bool = False,
     max_targets_per_image: int = 1,
+    num_channels: int = 3,
 ) -> tuple[NestedTensor, list[dict[str, torch.Tensor]]]:
     """Build a minimal (samples, targets) batch for probing.
 
@@ -70,7 +71,7 @@ def _make_synthetic_batch(
     matcher and loss. When segmentation_head is True, each target dict includes
     "masks" of shape (max_targets_per_image, resolution, resolution).
     """
-    tensors = torch.randn(micro_batch_size, 3, resolution, resolution, device=device)
+    tensors = torch.randn(micro_batch_size, num_channels, resolution, resolution, device=device)
     mask = torch.zeros(micro_batch_size, resolution, resolution, dtype=torch.bool, device=device)
     samples = NestedTensor(tensors, mask)
 
@@ -108,6 +109,7 @@ def _probe_step(
     amp: bool,
     segmentation_head: bool = False,
     max_targets_per_image: int = 1,
+    num_channels: int = 3,
 ) -> bool:
     """Run one forward + loss + backward; return True if successful, False on OOM."""
     try:
@@ -120,6 +122,7 @@ def _probe_step(
             num_classes=num_classes,
             segmentation_head=segmentation_head,
             max_targets_per_image=max_targets_per_image,
+            num_channels=num_channels,
         )
 
         with torch.autocast(device_type="cuda", enabled=amp):
@@ -159,6 +162,7 @@ def probe_max_micro_batch(
     max_targets_per_image: int = 1,
     safety_margin: float = 0.9,
     max_micro_batch: int = 128,
+    num_channels: int = 3,
 ) -> int:
     """Find the largest per-device batch size that fits in memory for one train step.
 
@@ -178,6 +182,7 @@ def probe_max_micro_batch(
         max_targets_per_image: Number of synthetic targets per image (worst-case memory).
         safety_margin: Fraction of max batch to return (0 < safety_margin <= 1).
         max_micro_batch: Cap on batch size to try.
+        num_channels: Number of input image channels (for synthetic probe images).
 
     Returns:
         Safe micro-batch size (>= 1).
@@ -214,6 +219,7 @@ def probe_max_micro_batch(
                 amp,
                 segmentation_head,
                 max_targets_per_image,
+                num_channels,
             ):
                 lower_ok = candidate
                 candidate *= 2
@@ -244,6 +250,7 @@ def probe_max_micro_batch(
                 amp,
                 segmentation_head,
                 max_targets_per_image,
+                num_channels,
             ):
                 lower_ok = mid
                 lo = mid + 1
@@ -347,6 +354,7 @@ def resolve_auto_batch_config(
         max_targets_per_image=max_targets_per_image,
         safety_margin=safety_margin,
         max_micro_batch=max_micro_batch,
+        num_channels=getattr(model_config, "num_channels", 3),
     )
 
     use_ema = getattr(train_config, "use_ema", False)

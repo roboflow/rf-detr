@@ -715,7 +715,7 @@ class RFDETR:
                         self.model.inference_model,
                         torch.randn(
                             batch_size,
-                            3,
+                            self.model_config.num_channels,
                             self.model.resolution,
                             self.model.resolution,
                             device=self.model.device,
@@ -870,7 +870,9 @@ class RFDETR:
             else:
                 shape = _validate_shape_dims(shape, block_size, patch_size, num_windows)
 
-            input_tensors = make_infer_image(infer_dir, shape, batch_size, device).to(device)
+            input_tensors = make_infer_image(
+                infer_dir, shape, batch_size, device, num_channels=self.model_config.num_channels
+            ).to(device)
             input_names = ["input"]
             if backbone_only:
                 output_names = ["features"]
