@@ -3,10 +3,18 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
+"""Unit tests for rfdetr.inference weight-adaptation helpers."""
+
 import pytest
 import torch
 
 from rfdetr.inference import _adapt_input_conv
+
+
+@pytest.fixture(autouse=True)
+def reset_random_seeds():
+    """Ensure reproducible random state for every test in this module."""
+    torch.manual_seed(0)
 
 
 class TestAdaptInputConv:
@@ -36,7 +44,7 @@ class TestAdaptInputConv:
         ],
     )
     def test_adapt_input_conv(self, num_channels, expected_shape, expected_builder):
-        torch.manual_seed(0)
+        """Verify shape and values for each _adapt_input_conv branch."""
         conv_weight = torch.randn(8, 3, 3, 3)
 
         adapted_weight = _adapt_input_conv(num_channels, conv_weight)

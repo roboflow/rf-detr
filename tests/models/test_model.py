@@ -10,11 +10,14 @@ import torch
 from rfdetr import RFDETRBase, RFDETRLarge
 
 
-def _get_patch_embed_projection(model: torch.nn.Module) -> torch.nn.Conv2d:
+def _get_patch_embed_projection(model) -> torch.nn.Conv2d:
     """Return the patch-embedding projection layer for an RF-DETR model.
 
+    RFDETR wrappers are not nn.Module; the underlying PyTorch module lives at
+    ``model.model.model``.  Walk named_modules() on that object.
+
     Args:
-        model: Instantiated RF-DETR model.
+        model: Instantiated RF-DETR wrapper (RFDETRBase / RFDETRLarge).
 
     Returns:
         The convolution used to project image channels into patch embeddings.
@@ -22,22 +25,15 @@ def _get_patch_embed_projection(model: torch.nn.Module) -> torch.nn.Conv2d:
     Raises:
         AssertionError: If the patch-embedding projection cannot be located.
     """
-    for attr_chain in (
-        ("model", "backbone", "patch_embed", "proj"),
-        ("backbone", "patch_embed", "proj"),
-        ("patch_embed", "proj"),
-    ):
-        current = model
-        for attr in attr_chain:
-            if not hasattr(current, attr):
-                break
-            current = getattr(current, attr)
-        else:
-            if isinstance(current, torch.nn.Conv2d):
-                return current
+    # model.model → rfdetr.main.Model; model.model.model → nn.Module
+    nn_model = model.model.model
+    proj = nn_model.backbone[0].encoder.encoder.embeddings.patch_embeddings.projection
+    if isinstance(proj, torch.nn.Conv2d):
+        return proj
 
-    for name, module in model.named_modules():
-        if name.endswith("patch_embed.proj") and isinstance(module, torch.nn.Conv2d):
+    # Fallback: scan named_modules on the underlying nn.Module
+    for name, module in nn_model.named_modules():
+        if "patch_embeddings" in name and "projection" in name and isinstance(module, torch.nn.Conv2d):
             return module
 
     msg = "Could not find patch embedding projection on model"
