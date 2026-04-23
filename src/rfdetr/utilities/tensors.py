@@ -31,7 +31,14 @@ def _round_up_to_multiple(value: int, multiple: int) -> int:
     Returns:
         The smallest integer greater than or equal to *value* that is an exact
         multiple of *multiple*.
+
+    Raises:
+        ValueError: If ``value`` is negative or ``multiple`` is not positive.
     """
+    if value < 0:
+        raise ValueError(f"value must be non-negative, got {value}")
+    if multiple <= 0:
+        raise ValueError(f"multiple must be a positive integer, got {multiple}")
     return ((value + multiple - 1) // multiple) * multiple
 
 
