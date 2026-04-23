@@ -236,7 +236,6 @@ class RFDETRBaseConfig(ModelConfig):
     dec_n_points: int = 2
     num_queries: int = 300
     num_select: int = 300
-    num_channels: int = Field(default=3, ge=1)
     projector_scale: List[Literal["P3", "P4", "P5"]] = ["P4"]
     out_feature_indexes: List[int] = [2, 5, 8, 11]
     pretrain_weights: Optional[str] = "rf-detr-base.pth"
@@ -312,7 +311,6 @@ class RFDETRLargeConfig(ModelConfig):
     patch_size: int = 16
     projector_scale: List[Literal["P4",]] = ["P4"]
     out_feature_indexes: List[int] = [3, 6, 9, 12]
-    num_channels: int = Field(default=3, ge=1)
     num_classes: int = 90
     positional_encoding_size: int = 704 // 16
     pretrain_weights: Optional[str] = "rf-detr-large-2026.pth"
