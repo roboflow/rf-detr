@@ -168,7 +168,7 @@
         "name": "How do I fine-tune RF-DETR on a custom dataset?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "Call RFDETR.train() with your dataset directory in COCO JSON or YOLO format. Example: model = RFDETRLarge(); model.train(dataset_dir='./dataset', epochs=50, batch_size=4). The model downloads pretrained weights automatically and resumes from the best checkpoint."
+          "text": "Instantiate a model and call model.train(...) with your dataset directory in COCO JSON or YOLO format. Example: model = RFDETRLarge(); model.train(dataset_dir='./dataset', epochs=50, batch_size=4). The model downloads pretrained weights automatically and resumes from the best checkpoint."
         }
       },
       {
