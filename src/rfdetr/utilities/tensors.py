@@ -13,11 +13,33 @@
 
 """Tensor utilities: NestedTensor, collate_fn, and helpers."""
 
-from typing import Any
+from functools import partial
+from typing import Any, Callable
 
 import torch
 import torchvision
 from torch import Tensor
+
+
+def _round_up_to_multiple(value: int, multiple: int) -> int:
+    """Round *value* up to the next multiple of *multiple*.
+
+    Args:
+        value: Non-negative integer to round.
+        multiple: Positive integer divisor.
+
+    Returns:
+        The smallest integer greater than or equal to *value* that is an exact
+        multiple of *multiple*.
+
+    Raises:
+        ValueError: If ``value`` is negative or ``multiple`` is not positive.
+    """
+    if value < 0:
+        raise ValueError(f"value must be non-negative, got {value}")
+    if multiple <= 0:
+        raise ValueError(f"multiple must be a positive integer, got {multiple}")
+    return ((value + multiple - 1) // multiple) * multiple
 
 
 def _max_by_axis(the_list: list[list[int]]) -> list[int]:
@@ -88,24 +110,36 @@ class NestedTensor:
         return str(self.tensors)
 
 
-def nested_tensor_from_tensor_list(tensor_list: list[Tensor]) -> NestedTensor:
+def nested_tensor_from_tensor_list(
+    tensor_list: list[Tensor],
+    block_size: int | None = None,
+) -> NestedTensor:
     """Pad a list of variable-size tensors into a single NestedTensor.
 
     Args:
         tensor_list: List of 3-D tensors (C, H, W) with possibly different H, W.
+        block_size: When set, round the padded ``H`` and ``W`` up to the next
+            multiple of *block_size* before allocating the batch tensor.  Used to
+            satisfy backbone divisibility requirements (e.g. windowed-attention
+            backbones require ``H % (patch_size * num_windows) == 0``).  The
+            rounded-up strip is explicitly tracked in the ``mask`` as padding.
 
     Returns:
-        NestedTensor with all images padded to the maximum spatial dimensions.
+        NestedTensor with all images padded to the maximum spatial dimensions
+        (rounded up to *block_size* when provided).
     """
     # TODO make this more general
     if tensor_list[0].ndim == 3:
         if torchvision._is_tracing():
             # nested_tensor_from_tensor_list() does not export well to ONNX
             # call _onnx_nested_tensor_from_tensor_list() instead
-            return _onnx_nested_tensor_from_tensor_list(tensor_list)
+            return _onnx_nested_tensor_from_tensor_list(tensor_list, block_size=block_size)
 
         # TODO make it support different-sized images
         max_size = _max_by_axis([list(img.shape) for img in tensor_list])
+        if block_size is not None:
+            max_size[1] = _round_up_to_multiple(max_size[1], block_size)
+            max_size[2] = _round_up_to_multiple(max_size[2], block_size)
         # min_size = tuple(min(s) for s in zip(*[img.shape for img in tensor_list]))
         batch_shape = [len(tensor_list)] + max_size
         b, c, h, w = batch_shape
@@ -124,11 +158,16 @@ def nested_tensor_from_tensor_list(tensor_list: list[Tensor]) -> NestedTensor:
 # _onnx_nested_tensor_from_tensor_list() is an implementation of
 # nested_tensor_from_tensor_list() that is supported by ONNX tracing.
 @torch.jit.unused
-def _onnx_nested_tensor_from_tensor_list(tensor_list: list[Tensor]) -> NestedTensor:
+def _onnx_nested_tensor_from_tensor_list(
+    tensor_list: list[Tensor],
+    block_size: int | None = None,
+) -> NestedTensor:
     """ONNX-tracing-compatible variant of ``nested_tensor_from_tensor_list``.
 
     Args:
         tensor_list: List of 3-D tensors (C, H, W).
+        block_size: When set, round ``H`` and ``W`` up to the next multiple of
+            this value before padding.  See :func:`nested_tensor_from_tensor_list`.
 
     Returns:
         Padded NestedTensor suitable for ONNX export.
@@ -137,6 +176,11 @@ def _onnx_nested_tensor_from_tensor_list(tensor_list: list[Tensor]) -> NestedTen
     for i in range(tensor_list[0].dim()):
         max_size_i = torch.max(torch.stack([img.shape[i] for img in tensor_list]).to(torch.float32)).to(torch.int64)
         max_size.append(max_size_i)
+    if block_size is not None:
+        # Spatial dimensions are indices 1 (H) and 2 (W); index 0 is channels.
+        bs = torch.as_tensor(block_size, dtype=torch.int64)
+        max_size[1] = ((max_size[1] + bs - 1) // bs) * bs
+        max_size[2] = ((max_size[2] + bs - 1) // bs) * bs
     max_size = tuple(max_size)
 
     # work around for
@@ -258,15 +302,66 @@ def _bilinear_grid_sample(
     return wx0 * wy0 * v00 + wx1 * wy0 * v10 + wx0 * wy1 * v01 + wx1 * wy1 * v11
 
 
+def _collate_with_block_size(
+    batch: list[tuple[Any, ...]],
+    block_size: int | None = None,
+) -> tuple[Any, ...]:
+    """Module-level collate helper used as the base for :func:`make_collate_fn`.
+
+    Defined at module scope (rather than as a closure inside
+    :func:`make_collate_fn`) so that the resulting :class:`functools.partial` is
+    picklable for multi-process DataLoaders and DDP spawn workers.
+
+    Args:
+        batch: List of ``(image, target)`` pairs from a dataset.
+        block_size: When set, round batch ``H`` and ``W`` up to the next multiple
+            of this value before padding.  See
+            :func:`nested_tensor_from_tensor_list`.
+
+    Returns:
+        Tuple of ``(NestedTensor_of_images, tuple_of_targets)``.
+    """
+    batch = list(zip(*batch))
+    batch[0] = nested_tensor_from_tensor_list(batch[0], block_size=block_size)
+    return tuple(batch)
+
+
 def collate_fn(batch: list[tuple[Any, ...]]) -> tuple[Any, ...]:
     """Collate a list of (image, target) pairs into a batched NestedTensor.
+
+    Uses :func:`nested_tensor_from_tensor_list` with no ``block_size`` rounding.
+    For DataLoaders that need backbone-aware rounding (e.g. windowed attention
+    requires divisibility by ``patch_size * num_windows``), use
+    :func:`make_collate_fn` instead to obtain a parameterised collate callable.
 
     Args:
         batch: List of ``(image, target)`` pairs from a dataset.
 
     Returns:
-        Tuple of ``(NestedTensor_of_images, list_of_targets)``.
+        Tuple of ``(NestedTensor_of_images, tuple_of_targets)``.
     """
-    batch = list(zip(*batch))
-    batch[0] = nested_tensor_from_tensor_list(batch[0])
-    return tuple(batch)
+    return _collate_with_block_size(batch, block_size=None)
+
+
+def make_collate_fn(
+    block_size: int | None = None,
+) -> Callable[[list[tuple[Any, ...]]], tuple[Any, ...]]:
+    """Build a collate function that rounds batch ``H``/``W`` up to *block_size*.
+
+    Used by the training DataModule to ensure that batched inputs satisfy the
+    backbone's spatial divisibility requirement (``patch_size * num_windows``).
+    Passing ``block_size=None`` produces a callable equivalent to :func:`collate_fn`.
+
+    The returned callable is a :class:`functools.partial`, not a closure, so it
+    is picklable and safe to use with multi-process DataLoaders (``num_workers > 0``)
+    and DDP spawn workers.
+
+    Args:
+        block_size: When set, batch ``H`` and ``W`` are rounded up to the next
+            multiple of this value before padding.  The rounded-up strip is
+            marked as padding in the NestedTensor mask.
+
+    Returns:
+        A collate callable suitable for ``torch.utils.data.DataLoader``.
+    """
+    return partial(_collate_with_block_size, block_size=block_size)

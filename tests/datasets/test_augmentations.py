@@ -1469,8 +1469,8 @@ class TestMakeCocoTransformsAugConfig:
     @pytest.mark.parametrize(
         "make_transforms,expected_resize_wrappers",
         [
-            # make_coco_transforms val: SmallestMaxSize + LongestMaxSize + PadIfNeeded = 3 wrappers
-            pytest.param(make_coco_transforms, 3, id="make_coco_transforms"),
+            # make_coco_transforms val: SmallestMaxSize + LongestMaxSize = 2 wrappers
+            pytest.param(make_coco_transforms, 2, id="make_coco_transforms"),
             # make_coco_transforms_square_div_64 val: Resize = 1 wrapper
             pytest.param(make_coco_transforms_square_div_64, 1, id="make_coco_transforms_square_div_64"),
         ],
@@ -1499,8 +1499,8 @@ class TestMakeCocoTransformsAugConfig:
     @pytest.mark.parametrize(
         "make_transforms,expected_resize_wrappers",
         [
-            # make_coco_transforms test: SmallestMaxSize + LongestMaxSize + PadIfNeeded = 3 wrappers
-            pytest.param(make_coco_transforms, 3, id="make_coco_transforms"),
+            # make_coco_transforms test: SmallestMaxSize + LongestMaxSize = 2 wrappers
+            pytest.param(make_coco_transforms, 2, id="make_coco_transforms"),
             # make_coco_transforms_square_div_64 test: Resize = 1 wrapper
             pytest.param(make_coco_transforms_square_div_64, 1, id="make_coco_transforms_square_div_64"),
         ],

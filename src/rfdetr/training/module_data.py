@@ -19,7 +19,7 @@ from rfdetr.datasets import build_dataset
 from rfdetr.datasets.aug_config import AUG_CONFIG
 from rfdetr.utilities.box_ops import box_xyxy_to_cxcywh
 from rfdetr.utilities.logger import get_logger
-from rfdetr.utilities.tensors import collate_fn
+from rfdetr.utilities.tensors import make_collate_fn
 
 logger = get_logger()
 
@@ -154,6 +154,21 @@ class RFDETRDataModule(LightningDataModule):
         self.model_config = model_config
         self.train_config = train_config
 
+        # Backbone divisibility requirement: inputs with windowed attention must
+        # have H and W divisible by patch_size * num_windows. The collate_fn
+        # below rounds batch-max H/W up to this value so the mask accurately
+        # marks every pad pixel.
+        block_size = model_config.patch_size * model_config.num_windows
+        if block_size <= 0:
+            raise ValueError(
+                "Computed collate block_size must be > 0, got "
+                f"{block_size} from patch_size={model_config.patch_size} "
+                f"and num_windows={model_config.num_windows}."
+            )
+        self._collate_fn = make_collate_fn(
+            block_size=block_size,
+        )
+
         self._dataset_train: Optional[torch.utils.data.Dataset] = None
         self._dataset_val: Optional[torch.utils.data.Dataset] = None
         self._dataset_test: Optional[torch.utils.data.Dataset] = None
@@ -273,7 +288,7 @@ class RFDETRDataModule(LightningDataModule):
                 dataset,
                 batch_size=batch_size,
                 sampler=sampler,
-                collate_fn=collate_fn,
+                collate_fn=self._collate_fn,
                 num_workers=num_workers,
                 pin_memory=self._pin_memory,
                 persistent_workers=self._persistent_workers,
@@ -292,7 +307,7 @@ class RFDETRDataModule(LightningDataModule):
             batch_size=batch_size,
             shuffle=True,
             drop_last=True,  # no-op after alignment, but keeps intent explicit
-            collate_fn=collate_fn,
+            collate_fn=self._collate_fn,
             num_workers=num_workers,
             pin_memory=self._pin_memory,
             persistent_workers=self._persistent_workers,
@@ -310,7 +325,7 @@ class RFDETRDataModule(LightningDataModule):
             batch_size=self.train_config.batch_size,
             sampler=torch.utils.data.SequentialSampler(self._dataset_val),
             drop_last=False,
-            collate_fn=collate_fn,
+            collate_fn=self._collate_fn,
             num_workers=self._num_workers,
             pin_memory=self._pin_memory,
             persistent_workers=self._persistent_workers,
@@ -328,7 +343,7 @@ class RFDETRDataModule(LightningDataModule):
             batch_size=self.train_config.batch_size,
             sampler=torch.utils.data.SequentialSampler(self._dataset_test),
             drop_last=False,
-            collate_fn=collate_fn,
+            collate_fn=self._collate_fn,
             num_workers=self._num_workers,
             pin_memory=self._pin_memory,
             persistent_workers=self._persistent_workers,
@@ -346,7 +361,7 @@ class RFDETRDataModule(LightningDataModule):
             batch_size=self.train_config.batch_size,
             sampler=torch.utils.data.SequentialSampler(self._dataset_val),
             drop_last=False,
-            collate_fn=collate_fn,
+            collate_fn=self._collate_fn,
             num_workers=self._num_workers,
             pin_memory=self._pin_memory,
             persistent_workers=self._persistent_workers,

@@ -23,6 +23,7 @@ from rfdetr.utilities.state_dict import clean_state_dict, strip_checkpoint
 from rfdetr.utilities.tensors import (
     NestedTensor,
     collate_fn,
+    make_collate_fn,
     nested_tensor_from_tensor_list,
 )
 
@@ -38,6 +39,7 @@ __all__ = [
     # tensors
     "NestedTensor",
     "collate_fn",
+    "make_collate_fn",
     "nested_tensor_from_tensor_list",
     # box_ops (submodule)
     "box_ops",
