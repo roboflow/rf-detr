@@ -182,12 +182,42 @@ def _get_aligned_output_features_output_indices(
     return out_features, out_indices
 
 
+def _init_backbone_shim(self: Any, config: Any) -> None:
+    """Compatibility shim for ``BackboneMixin._init_backbone`` removed in transformers v5.
+
+    RF-DETR 1.4's ``WindowedDinov2WithRegistersBackbone.__init__`` calls
+    ``super()._init_backbone(config)`` explicitly.  Transformers v5 removed that
+    method from ``BackboneMixin`` (replacing it with cooperative-MRO
+    ``__init__`` → ``_init_transformers_backbone``).  This shim reinstates the
+    v4 behaviour: populate ``stage_names``, ``_out_features``, ``_out_indices``,
+    and ``num_features`` from *config*.
+
+    Args:
+        config: Backbone configuration object.  Expected to carry
+            ``stage_names``, ``out_features``, and ``out_indices`` attributes.
+    """
+    self.stage_names = list(getattr(config, "stage_names", None) or [])
+    out_features = getattr(config, "out_features", None)
+    out_indices = getattr(config, "out_indices", None)
+    aligned_features, aligned_indices = _get_aligned_output_features_output_indices(
+        out_features=list(out_features) if out_features is not None else None,
+        out_indices=list(out_indices) if out_indices is not None else None,
+        stage_names=self.stage_names,
+    )
+    self._out_features = aligned_features
+    self._out_indices = aligned_indices
+    # num_features is immediately overridden by the subclass; set sentinel here.
+    if not hasattr(self, "num_features"):
+        self.num_features = None
+
+
 def _install_transformers_compat() -> None:
     """Install transformers compatibility shims required by old RF-DETR.
 
     RF-DETR 1.4 imports helpers from transformer modules where newer
-    transformers releases no longer expose them.  These shims are intentionally
-    scoped to this legacy generator process.
+    transformers releases no longer expose them, and calls
+    ``BackboneMixin._init_backbone`` which was removed in transformers v5.
+    These shims are intentionally scoped to this legacy generator process.
     """
     pytorch_utils = importlib.import_module("transformers.pytorch_utils")
     if not hasattr(pytorch_utils, "find_pruneable_heads_and_indices"):
@@ -202,6 +232,13 @@ def _install_transformers_compat() -> None:
         backbone_utils = importlib.import_module("transformers.utils.backbone_utils")
     if not hasattr(backbone_utils, "get_aligned_output_features_output_indices"):
         backbone_utils.get_aligned_output_features_output_indices = _get_aligned_output_features_output_indices
+
+    # RF-DETR 1.4's WindowedDinov2WithRegistersBackbone calls super()._init_backbone(config)
+    # explicitly.  Transformers v5 removed this method from BackboneMixin.
+    backbone_module = importlib.import_module("transformers.backbone_utils")
+    backbone_mixin_cls = getattr(backbone_module, "BackboneMixin", None)
+    if backbone_mixin_cls is not None and not hasattr(backbone_mixin_cls, "_init_backbone"):
+        backbone_mixin_cls._init_backbone = _init_backbone_shim
 
 
 def _build_model(preferred_class: str, num_classes: int, device: str) -> Any:

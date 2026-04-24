@@ -19,6 +19,7 @@ import warnings
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -88,6 +89,42 @@ def test_transformers_compat_installs_missing_backbone_alignment_helper(monkeypa
 
     assert features == ["layer1", "layer2"]
     assert indices == [1, 2]
+
+
+def test_transformers_compat_installs_init_backbone_on_backbone_mixin(monkeypatch: pytest.MonkeyPatch) -> None:
+    """RF-DETR 1.4 calls super()._init_backbone(config) on its DINOv2 backbone.
+
+    Transformers v5 removed BackboneMixin._init_backbone; the shim must restore
+    it and populate stage_names, _out_features, _out_indices on the instance.
+
+    Args:
+        monkeypatch: Pytest fixture used to simulate transformers v5 removing
+            _init_backbone from BackboneMixin.
+    """
+    backbone_module = importlib.import_module("transformers.backbone_utils")
+    backbone_mixin_cls = getattr(backbone_module, "BackboneMixin", None)
+    if backbone_mixin_cls is None:
+        pytest.skip("BackboneMixin not available in installed transformers")
+
+    monkeypatch.delattr(backbone_mixin_cls, "_init_backbone", raising=False)
+    assert not hasattr(backbone_mixin_cls, "_init_backbone"), "precondition: method removed"
+
+    _install_transformers_compat()
+
+    assert hasattr(backbone_mixin_cls, "_init_backbone"), "shim must add _init_backbone to BackboneMixin"
+
+    stage_names = ["stem", "stage1", "stage2"]
+    config = SimpleNamespace(
+        stage_names=stage_names,
+        out_features=["stage1", "stage2"],
+        out_indices=[1, 2],
+    )
+    obj: Any = object.__new__(backbone_mixin_cls)
+    backbone_mixin_cls._init_backbone(obj, config)
+
+    assert obj.stage_names == stage_names
+    assert obj._out_features == ["stage1", "stage2"]
+    assert obj._out_indices == [1, 2]
 
 
 # ---------------------------------------------------------------------------
