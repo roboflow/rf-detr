@@ -1,0 +1,166 @@
+name: Checkpoint Backward-Compatibility
+
+# Verify that the current codebase can load checkpoints produced by every past
+# stable minor release listed in tests/legacy/checkpoint_versions.txt.
+#
+# Flow:
+#   get-versions  →  generate (matrix, one job per version)  →  test-compat
+#
+# Each "generate" job installs a specific released rfdetr version, runs
+# tests/legacy/generate_checkpoint.py, and uploads the .pth file as a
+# workflow artifact.  The final "test-compat" job downloads all artifacts,
+# installs the current (dev) code, and runs the parametrized compat test suite.
+
+on:
+  push:
+    branches: ["main", "develop", "release/*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: checkpoint-compat-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# ---------------------------------------------------------------------------
+# Job 1 — read versions file and expose as matrix
+# ---------------------------------------------------------------------------
+jobs:
+  get-versions:
+    name: Read versions file
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.parse.outputs.matrix }}
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 📋 Parse checkpoint_versions.txt
+        id: parse
+        run: |
+          # Strip comment lines and blank lines, then build a JSON array.
+          matrix=$(
+            grep -v '^\s*#' tests/legacy/checkpoint_versions.txt \
+            | grep -v '^\s*$' \
+            | jq -R . \
+            | jq -sc .
+          )
+          echo "matrix=${matrix}" >> "${GITHUB_OUTPUT}"
+          echo "Versions to test: ${matrix}"
+
+  # ---------------------------------------------------------------------------
+  # Job 2 — generate one checkpoint per released version (parallel matrix)
+  # ---------------------------------------------------------------------------
+  generate:
+    name: Generate checkpoint (rfdetr ${{ matrix.version }})
+    needs: get-versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ${{ fromJson(needs.get-versions.outputs.matrix) }}
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python + uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+          activate-environment: true
+
+      - name: 📦 Install rfdetr ${{ matrix.version }} (CPU-only torch)
+        env:
+          UV_TORCH_BACKEND: cpu
+        # Install a pinned released version of rfdetr so the generate script
+        # uses that version's model API and checkpoint format.  The torch
+        # extras flag keeps the install CPU-only and fast.
+        run: |
+          uv pip install "rfdetr==${{ matrix.version }}" \
+            --extra-index-url https://download.pytorch.org/whl/cpu
+
+      - name: 🏗️ Generate checkpoint
+        run: |
+          python tests/legacy/generate_checkpoint.py \
+            --output "checkpoints/checkpoint_v${{ matrix.version }}.pth" \
+            --num-classes 2
+
+      - name: 📤 Upload checkpoint artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkpoint-v${{ matrix.version }}
+          path: checkpoints/checkpoint_v${{ matrix.version }}.pth
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Job 3 — download all checkpoints and run compat tests with current code
+  # ---------------------------------------------------------------------------
+  test-compat:
+    name: Test checkpoint loading compatibility
+    needs: generate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python + uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+          activate-environment: true
+
+      - name: 📦 Install current rfdetr from source (CPU-only torch)
+        env:
+          UV_TORCH_BACKEND: cpu
+        run: uv pip install -e ".[train,cli]" --group tests
+
+      - name: 📥 Download all checkpoint artifacts
+        uses: actions/download-artifact@v4
+        with:
+          # Download every artifact whose name starts with "checkpoint-v"
+          # into tests/legacy/checkpoints/ so the test knows where to look.
+          pattern: checkpoint-v*
+          path: tests/legacy/checkpoints
+          merge-multiple: true
+
+      - name: 🗂️ List downloaded checkpoints
+        run: ls -lh tests/legacy/checkpoints/
+
+      - name: 🧪 Run checkpoint compatibility tests
+        run: |
+          uv run --no-sync pytest \
+            tests/legacy/test_checkpoint_compat.py \
+            -v \
+            --tb=short \
+            --timeout=120
+
+  # ---------------------------------------------------------------------------
+  # Guardian — fail fast if any required job did not succeed
+  # ---------------------------------------------------------------------------
+  compat-guardian:
+    name: Compat test guardian
+    runs-on: ubuntu-latest
+    needs: test-compat
+    if: always()
+    steps:
+      - name: ❌ Fail on test failure
+        if: needs.test-compat.result == 'failure'
+        run: exit 1
+      - name: ⚠️ Fail on cancelled/skipped
+        if: contains(fromJSON('["cancelled", "skipped"]'), needs.test-compat.result)
+        run: |
+          echo "test-compat result is '${{ needs.test-compat.result }}'; failing."
+          exit 1
+      - name: ✅ All tests passed
+        if: needs.test-compat.result == 'success'
+        run: echo "Checkpoint compatibility tests passed."

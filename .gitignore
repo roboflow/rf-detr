@@ -203,6 +203,7 @@ notebooks/*.py
 
 # tracking work in progress
 .codex/logs
+.developments/
 .plans/
 .reports/
 .temp/
