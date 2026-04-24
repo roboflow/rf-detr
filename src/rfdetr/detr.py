@@ -31,7 +31,7 @@ import yaml
 from PIL import Image
 
 from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
-from rfdetr.assets.model_weights import download_pretrain_weights
+from rfdetr.assets.model_weights import download_pretrain_weights, get_model_cache_dir
 from rfdetr.config import (
     ModelConfig,
     TrainConfig,
@@ -238,10 +238,26 @@ class RFDETR:
         self._optimized_dtype = None
 
     def maybe_download_pretrain_weights(self):
-        """Download pre-trained weights if they are not already downloaded."""
+        """Download pre-trained weights if they are not already downloaded.
+
+        Bare filenames (no directory component, e.g. ``rf-detr-base.pth``) are
+        resolved relative to the model cache directory returned by
+        :func:`~rfdetr.assets.model_weights.get_model_cache_dir`.  Set the
+        ``RF_HOME`` environment variable to override the cache location
+        (default: ``~/.roboflow/models``).
+
+        Paths that already contain a directory separator are used as-is, which
+        allows loading user-provided checkpoints from arbitrary locations.
+        """
         pretrain_weights = self.model_config.pretrain_weights
         if pretrain_weights is None:
             return
+        # Bare filename → resolve to model cache dir so weights land in a
+        # stable, predictable location rather than the current working directory.
+        if not os.path.dirname(pretrain_weights):
+            cache_dir = get_model_cache_dir()
+            os.makedirs(cache_dir, exist_ok=True)
+            pretrain_weights = os.path.join(cache_dir, pretrain_weights)
         download_pretrain_weights(pretrain_weights)
 
     def get_model_config(self, **kwargs) -> ModelConfig:
