@@ -19,7 +19,8 @@ class TestGetModelCacheDir:
     def test_default_when_rf_home_not_set(self, monkeypatch):
         """Returns ~/.roboflow/models when RF_HOME env var is absent."""
         monkeypatch.delenv("RF_HOME", raising=False)
-        assert get_model_cache_dir() == os.path.expanduser("~/.roboflow/models")
+        expected = os.path.normpath(os.path.expanduser("~/.roboflow/models"))
+        assert get_model_cache_dir() == expected
 
     def test_custom_rf_home_absolute_path(self, monkeypatch, tmp_path):
         """Returns exact RF_HOME value when set to an absolute path."""
@@ -30,7 +31,7 @@ class TestGetModelCacheDir:
         """Tilde in RF_HOME is expanded; result contains no literal tilde."""
         monkeypatch.setenv("RF_HOME", "~/custom_rfdetr_cache")
         result = get_model_cache_dir()
-        assert result == os.path.expanduser("~/custom_rfdetr_cache")
+        assert result == os.path.normpath(os.path.expanduser("~/custom_rfdetr_cache"))
         assert "~" not in result
 
     def test_returns_string(self, monkeypatch):
