@@ -405,7 +405,7 @@ class TestLoadPretrainWeightsPEInterpolation:
 
 
 class TestL1FacadePEInterpolationEndToEnd:
-    """Regression for #990 — instantiating an RF-DETR L1 facade variant with a
+    """Regression for instantiating an RF-DETR L1 facade variant with a
     custom ``resolution`` and a checkpoint trained at the variant's default
     resolution must not raise ``RuntimeError`` from a PE shape mismatch.
 
