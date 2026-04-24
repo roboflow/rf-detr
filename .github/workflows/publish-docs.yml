@@ -1,0 +1,144 @@
+# Build and deploy MkDocs documentation to GitHub Pages (https://rfdetr.roboflow.com/)
+# using mike for versioned docs.
+#
+# Deploy matrix:
+#   push develop            → mike deploy develop          (rfdetr.roboflow.com/develop/)
+#   push release/latest     → mike deploy latest            (rfdetr.roboflow.com/latest/)
+#   release published        → mike deploy <tag>             (rfdetr.roboflow.com/<tag>/ only — does not move /latest/)
+#
+# Every deploy also:
+#   - Copies robots.txt, llms.txt, llms-full.txt to gh-pages root
+#   - Regenerates sitemap.xml normalising versioned paths to /latest/
+#   - Pings IndexNow (Bing) with canonical /latest/ URLs
+
+name: Build and Publish Docs
+
+on:
+  push:
+    branches: ["release/latest", "develop"]
+  release:
+    types: [published]
+
+# Ensure only one concurrent deployment
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.ref}}
+  cancel-in-progress: true
+
+# Restrict permissions by default
+permissions:
+  contents: write # Required for committing to gh-pages
+  pages: write # Required for deploying to Pages
+  pull-requests: write # Required for PR comments
+
+jobs:
+  doc-deploy:
+    name: Publish Docs
+    runs-on: ubuntu-latest
+    environment:
+      name: documentation-deployment
+      url: https://rfdetr.roboflow.com/
+    timeout-minutes: 10
+    steps:
+      - name: 📥 Checkout the repository
+        uses: actions/checkout@v6.0.1
+        with:
+          fetch-depth: 0
+
+      - name: 🐍 Install uv and set Python
+        uses: astral-sh/setup-uv@v7.2.0
+        with:
+          python-version: "3.10"
+          activate-environment: true
+
+      - name: 🏗️ Install dependencies
+        # Install PyTorch CPU-only first (UV_TORCH_BACKEND=cpu works with 'uv pip')
+        run: uv pip install -e ".[plus]" --group docs
+
+      - name: ⚙️ Configure git for github-actions
+        run: |
+          git config --global user.name "${{ github.actor }}"
+          git config --global user.email "${{ github.actor }}@users.noreply.github.com"
+
+      - name: 🚀 Deploy Development Docs
+        if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+        env:
+          MKDOCS_GIT_COMMITTERS_APIKEY: ${{ secrets.GITHUB_TOKEN }}
+        run: uv run mike deploy --push develop
+
+      - name: 🚀 Deploy Latest Branch Docs
+        if: github.event_name == 'push' && github.ref == 'refs/heads/release/latest'
+        env:
+          MKDOCS_GIT_COMMITTERS_APIKEY: ${{ secrets.GITHUB_TOKEN }}
+        run: uv run mike deploy --push --update-aliases latest
+
+      - name: 🚀 Deploy Release Docs
+        if: github.event_name == 'release' && github.event.action == 'published'
+        env:
+          MKDOCS_GIT_COMMITTERS_APIKEY: ${{ secrets.GITHUB_TOKEN }}
+        run: uv run mike deploy --push ${{ github.event.release.tag_name }}
+
+      - name: Deploy root static files to gh-pages
+        if: >-
+          (github.event_name == 'push' &&
+           (github.ref == 'refs/heads/develop' ||
+            github.ref == 'refs/heads/release/latest')) ||
+          (github.event_name == 'release' &&
+           github.event.action == 'published')
+        run: |
+          cp docs/root-static/robots.txt /tmp/robots.txt
+          cp docs/root-static/llms.txt /tmp/llms.txt
+          cp docs/root-static/llms-full.txt /tmp/llms-full.txt
+          cp docs/root-static/cace9ef287cb8d641db90d4295fcb1e1.txt /tmp/indexnow.txt
+          git fetch origin gh-pages:refs/remotes/origin/gh-pages
+          git checkout -B gh-pages origin/gh-pages
+          cp /tmp/robots.txt robots.txt
+          cp /tmp/llms.txt llms.txt
+          cp /tmp/llms-full.txt llms-full.txt
+          cp /tmp/indexnow.txt cace9ef287cb8d641db90d4295fcb1e1.txt
+          git add robots.txt llms.txt llms-full.txt cace9ef287cb8d641db90d4295fcb1e1.txt
+          if [ -f latest/sitemap.xml ]; then
+            # Normalize versioned paths (/X.Y.Z/) to /latest/ so sitemap URLs are
+            # not blocked by the User-agent: * Disallow rules in robots.txt.
+            sed 's|rfdetr\.roboflow\.com/[0-9][^/]*/|rfdetr.roboflow.com/latest/|g' latest/sitemap.xml > sitemap.xml
+            git add sitemap.xml
+          elif [ -f develop/sitemap.xml ]; then
+            sed 's|rfdetr\.roboflow\.com/develop/|rfdetr.roboflow.com/latest/|g' develop/sitemap.xml > sitemap.xml
+            git add sitemap.xml
+          fi
+          git diff --staged --quiet || git commit -m "chore: update root static files and sitemap"
+          git push origin gh-pages || (git pull --rebase origin gh-pages && git push origin gh-pages)
+
+      # IndexNow key: cace9ef287cb8d641db90d4295fcb1e1
+      # Key file served at https://rfdetr.roboflow.com/cace9ef287cb8d641db90d4295fcb1e1.txt
+      # (deployed via "Deploy root static files" step above).
+      # To rotate: generate new key, update docs/root-static/<key>.txt, replace key string here.
+      - name: 📡 Notify IndexNow (Bing)
+        if: >-
+          (github.event_name == 'push' &&
+           (github.ref == 'refs/heads/develop' ||
+            github.ref == 'refs/heads/release/latest')) ||
+          (github.event_name == 'release' &&
+           github.event.action == 'published')
+        run: |
+          curl -s -o /dev/null -w "%{http_code}" -X POST "https://api.indexnow.org/IndexNow" \
+            -H "Content-Type: application/json; charset=utf-8" \
+            -d '{
+              "host": "rfdetr.roboflow.com",
+              "key": "cace9ef287cb8d641db90d4295fcb1e1",
+              "keyLocation": "https://rfdetr.roboflow.com/cace9ef287cb8d641db90d4295fcb1e1.txt",
+              "urlList": [
+                "https://rfdetr.roboflow.com/",
+                "https://rfdetr.roboflow.com/latest/",
+                "https://rfdetr.roboflow.com/latest/learn/install/",
+                "https://rfdetr.roboflow.com/latest/learn/pretrained/",
+                "https://rfdetr.roboflow.com/latest/learn/run/detection/",
+                "https://rfdetr.roboflow.com/latest/learn/run/segmentation/",
+                "https://rfdetr.roboflow.com/latest/learn/train/",
+                "https://rfdetr.roboflow.com/latest/learn/export/",
+                "https://rfdetr.roboflow.com/latest/learn/deploy/",
+                "https://rfdetr.roboflow.com/latest/learn/benchmarks/"
+              ]
+            }' || true
+
+      - name: Minimize uv cache
+        run: uv cache prune --ci

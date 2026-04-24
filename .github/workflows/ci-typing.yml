@@ -1,0 +1,47 @@
+name: Mypy Type Check
+
+on:
+  push:
+    branches: ["main", "release/*", "develop"]
+  pull_request:
+
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+
+env:
+  # UV_TORCH_BACKEND only works with 'uv pip' commands, not 'uv sync'.
+  # Used by 'uv pip install torch torchvision' step to install CPU-only PyTorch.
+  UV_TORCH_BACKEND: "cpu"
+
+concurrency:
+  group: mypy-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  type-check:
+    name: Type Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 📥 Checkout the repository
+        uses: actions/checkout@v6.0.1
+
+      - name: 🐍 Install uv and set Python version
+        uses: astral-sh/setup-uv@v7.2.0
+        with:
+          python-version: "3.12"
+          activate-environment: true
+
+      - name: 🚀 Install Packages
+        timeout-minutes: 5
+        run: uv pip install -e ".[train,cli,visual]" --group typing
+
+      - name: 🔍 Run mypy
+        run: uv run --no-sync mypy src/rfdetr/ --no-error-summary
+
+      - name: Minimize uv cache
+        continue-on-error: true
+        run: uv cache prune --ci
