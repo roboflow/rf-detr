@@ -4,9 +4,39 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+
+import os
+
 import pytest
 
 from rfdetr.assets import ModelWeightAsset, ModelWeights, ModelWeightsBase
+from rfdetr.assets.model_weights import get_model_cache_dir
+
+
+class TestGetModelCacheDir:
+    """Verify get_model_cache_dir reads RF_HOME with correct default."""
+
+    def test_default_when_rf_home_not_set(self, monkeypatch):
+        """Returns ~/.roboflow/models when RF_HOME env var is absent."""
+        monkeypatch.delenv("RF_HOME", raising=False)
+        assert get_model_cache_dir() == os.path.expanduser("~/.roboflow/models")
+
+    def test_custom_rf_home_absolute_path(self, monkeypatch, tmp_path):
+        """Returns exact RF_HOME value when set to an absolute path."""
+        monkeypatch.setenv("RF_HOME", str(tmp_path))
+        assert get_model_cache_dir() == str(tmp_path)
+
+    def test_tilde_in_rf_home_is_expanded(self, monkeypatch):
+        """Tilde in RF_HOME is expanded; result contains no literal tilde."""
+        monkeypatch.setenv("RF_HOME", "~/custom_rfdetr_cache")
+        result = get_model_cache_dir()
+        assert result == os.path.expanduser("~/custom_rfdetr_cache")
+        assert "~" not in result
+
+    def test_returns_string(self, monkeypatch):
+        """Return value is always a str, not a Path."""
+        monkeypatch.delenv("RF_HOME", raising=False)
+        assert isinstance(get_model_cache_dir(), str)
 
 
 def test_from_filename_found():
