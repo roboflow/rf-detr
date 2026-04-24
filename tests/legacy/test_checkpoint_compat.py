@@ -23,6 +23,7 @@ The list of versions under test is authoritative in
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -35,17 +36,25 @@ import torch
 _VERSIONS_FILE = Path(__file__).parent / "checkpoint_versions.txt"
 _CHECKPOINTS_DIR = Path(__file__).parent / "checkpoints"
 
+# True when running inside GitHub Actions (or any CI that sets CI=true).
+_IN_CI: bool = os.environ.get("CI", "").lower() == "true"
 
-def _read_versions() -> list[str]:
-    """Parse ``checkpoint_versions.txt`` and return a list of version strings.
+
+def _read_versions(versions_file: Path | None = None) -> list[str]:
+    """Parse a versions file and return a list of version strings.
+
+    Args:
+        versions_file: Path to the versions file.  Defaults to
+            ``_VERSIONS_FILE`` (``tests/legacy/checkpoint_versions.txt``).
 
     Returns:
         Ordered list of version strings (comment lines and blank lines skipped).
     """
-    if not _VERSIONS_FILE.is_file():
+    path = versions_file if versions_file is not None else _VERSIONS_FILE
+    if not path.is_file():
         return []
     versions: list[str] = []
-    for line in _VERSIONS_FILE.read_text().splitlines():
+    for line in path.read_text().splitlines():
         stripped = line.strip()
         if stripped and not stripped.startswith("#"):
             versions.append(stripped)
@@ -67,8 +76,11 @@ def _checkpoint_path(version: str) -> Path:
 def _pytest_params() -> list[pytest.param]:
     """Build parametrize entries — one per version in the versions file.
 
-    A version with no corresponding checkpoint file on disk gets a ``skip``
-    mark so the test is visible in the report but does not fail locally.
+    Locally, a version with no checkpoint file is *skipped* so the suite runs
+    without pre-generated files.  In CI (``CI=true``) a missing checkpoint is
+    **not** skipped — the test runs and the ``assert ckpt_path.is_file()``
+    assertion fails, catching artifact download failures that would otherwise
+    silently pass as skipped.
 
     Returns:
         List of :class:`pytest.param` objects for ``@pytest.mark.parametrize``.
@@ -76,7 +88,10 @@ def _pytest_params() -> list[pytest.param]:
     params: list[pytest.param] = []
     for version in _read_versions():
         ckpt = _checkpoint_path(version)
-        marks = [] if ckpt.is_file() else [pytest.mark.skip(reason=f"checkpoint not found: {ckpt}")]
+        if ckpt.is_file() or _IN_CI:
+            marks: list = []
+        else:
+            marks = [pytest.mark.skip(reason=f"checkpoint not found: {ckpt}")]
         params.append(pytest.param(version, marks=marks, id=f"v{version}"))
     if not params:
         # Fallback so parametrize does not produce an empty collection error.
@@ -192,3 +207,38 @@ class TestCheckpointBackwardCompat:
         assert bias.ndim == 1 and bias.shape[0] >= 2, (
             f"v{version} 'class_embed.bias' must be 1-D with ≥ 2 entries, got shape {tuple(bias.shape)}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Unit tests for _read_versions()
+# ---------------------------------------------------------------------------
+
+
+class TestReadVersions:
+    """Unit tests for _read_versions() — parsing logic for checkpoint_versions.txt."""
+
+    @staticmethod
+    def _write(tmp_path: Path, content: str) -> Path:
+        f = tmp_path / "versions.txt"
+        f.write_text(content)
+        return f
+
+    def test_ignores_blank_lines(self, tmp_path: Path) -> None:
+        """Blank lines are silently skipped."""
+        assert _read_versions(self._write(tmp_path, "\n1.5.0\n\n1.6.0\n")) == ["1.5.0", "1.6.0"]
+
+    def test_ignores_comment_lines(self, tmp_path: Path) -> None:
+        """Lines beginning with # are treated as comments and skipped."""
+        assert _read_versions(self._write(tmp_path, "# disabled\n1.4.0\n# another\n")) == ["1.4.0"]
+
+    def test_strips_surrounding_whitespace(self, tmp_path: Path) -> None:
+        """Leading and trailing whitespace on version lines is stripped."""
+        assert _read_versions(self._write(tmp_path, "  1.5.0  \n\t1.6.0\t\n")) == ["1.5.0", "1.6.0"]
+
+    def test_empty_file_returns_empty_list(self, tmp_path: Path) -> None:
+        """An empty file returns an empty list without raising."""
+        assert _read_versions(self._write(tmp_path, "")) == []
+
+    def test_missing_file_returns_empty_list(self, tmp_path: Path) -> None:
+        """A non-existent file path returns an empty list without raising."""
+        assert _read_versions(tmp_path / "nonexistent.txt") == []
