@@ -400,6 +400,82 @@ class TestLoadPretrainWeightsPEInterpolation:
 
 
 # ---------------------------------------------------------------------------
+# Regression #990: L1 facade end-to-end PE interpolation on custom resolution
+# ---------------------------------------------------------------------------
+
+
+class TestL1FacadePEInterpolationEndToEnd:
+    """Regression for #990 — instantiating an RF-DETR L1 facade variant with a
+    custom ``resolution`` and a checkpoint trained at the variant's default
+    resolution must not raise ``RuntimeError`` from a PE shape mismatch.
+
+    In v1.6.5 the L1 facade (``RFDETRLarge``, ``RFDETRNano``, ...) used a
+    private ``_load_pretrain_weights_into`` helper in ``detr.py`` that bypassed
+    the PE bicubic-interpolation added to ``models.weights.load_pretrain_weights``
+    in #964.  Code that wired the L1 facade through the unified loader landed
+    later (``inference._build_model_context`` calling ``load_pretrain_weights``
+    from ``models.weights``).  This test pins that wiring so a future refactor
+    cannot reintroduce a divergent loader path that silently skips PE
+    interpolation.
+    """
+
+    def test_rfdetr_nano_loads_default_pe_checkpoint_at_custom_resolution(self, tmp_path):
+        """Saving an RFDETRNano state_dict at default resolution and loading at
+        a higher resolution must succeed via PE interpolation in the L1 facade.
+
+        Mirrors the user-reported scenario in
+        https://github.com/roboflow/rf-detr/issues/990 (PE size mismatch
+        ``[1, 1937, 384]`` vs ``[1, 6401, 384]`` raised from
+        ``LWDETR.load_state_dict``), reduced to RFDETRNano for test speed.
+        """
+        from rfdetr import RFDETRNano
+
+        # 1. Build a default-resolution RFDETRNano (no pretrain, on CPU) so that
+        #    it produces a state_dict with the variant's native PE grid.
+        default_model = RFDETRNano(pretrain_weights=None, num_classes=2, device="cpu")
+        default_pe_grid = default_model.model_config.positional_encoding_size
+        assert default_pe_grid == 24, "RFDETRNano default PE grid must be 24×24"
+        default_state = default_model.model.model.state_dict()
+        default_pe = default_state[PE_KEY]
+        assert default_pe.shape == torch.Size([1, default_pe_grid * default_pe_grid + 1, 384])
+
+        # 2. Persist as a checkpoint that mimics what `model.train()` saves —
+        #    a top-level "model" key plus a SimpleNamespace "args" block.
+        ckpt_path = tmp_path / "user_finetuned.pth"
+        torch.save(
+            {
+                "model": dict(default_state),
+                "args": SimpleNamespace(class_names=["a", "b"], patch_size=16),
+            },
+            ckpt_path,
+        )
+
+        # 3. Re-instantiate at a NEW resolution.  Without PE interpolation in
+        #    the L1 facade path this raises ``RuntimeError: size mismatch for
+        #    backbone.0.encoder.encoder.embeddings.position_embeddings`` from
+        #    LWDETR.load_state_dict — exactly the user-reported failure.
+        new_resolution = 640
+        loaded = RFDETRNano(
+            pretrain_weights=str(ckpt_path),
+            resolution=new_resolution,
+            num_classes=2,
+            device="cpu",
+        )
+
+        # 4. The model_config validator must update PE proportionally to the
+        #    new resolution, and the loaded backbone PE parameter must have the
+        #    interpolated target shape (40 × 40 + 1 = 1601 tokens).
+        expected_pe_grid = new_resolution // 16
+        assert expected_pe_grid == 40
+        assert loaded.model_config.positional_encoding_size == expected_pe_grid
+        loaded_pe = loaded.model.model.state_dict()[PE_KEY]
+        assert loaded_pe.shape == torch.Size([1, expected_pe_grid * expected_pe_grid + 1, 384]), (
+            f"Backbone PE was not interpolated to the requested resolution; "
+            f"got shape {tuple(loaded_pe.shape)}, expected [1, {expected_pe_grid**2 + 1}, 384]."
+        )
+
+
+# ---------------------------------------------------------------------------
 # Deprecation: train_config argument
 # ---------------------------------------------------------------------------
 
