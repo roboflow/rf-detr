@@ -1,9 +1,16 @@
 # RF-DETR versions to include in backward-compatibility checkpoint matrix.
 # One version per line. Comment lines (#) and blank lines are ignored.
 # Add new minor-version milestones here; patch releases are optional.
+#
+# 1.1.0–1.3.0 disabled: the rfdetr package was not yet stable enough to
+# generate checkpoints via the CLI used here (pretrain_weights=None was not
+# supported until 1.4.0).
 #1.1.0
 #1.2.0
 #1.3.0
 1.4.0
 1.5.0
 1.6.0
+# 1.6.5 is included because it was reported broken in issue #990 (PE shape
+# mismatch caused by a missing cherry-pick of the interpolation fix).
+1.6.5
