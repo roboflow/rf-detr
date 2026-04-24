@@ -110,7 +110,7 @@ Track your experiments with popular logging platforms:
 
 - [TensorBoard](loggers.md#tensorboard) for local visualization
 - [Weights and Biases](loggers.md#weights-and-biases) for cloud-based tracking
-- [ClearML](loggers.md#clearml) for MLOps automation
+- [ClearML](loggers.md#clearml) workaround for SDK auto-binding
 - [MLflow](loggers.md#mlflow) for experiment lifecycle management
 
 → **[Learn more about training loggers](loggers.md)**
