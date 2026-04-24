@@ -12,6 +12,7 @@ Covers:
 - ``make_collate_fn`` factory.
 """
 
+import pickle
 from unittest.mock import patch
 
 import pytest
@@ -556,3 +557,8 @@ class TestMakeCollateFn:
         assert mask_b[:200, :100].any().item() is False
         assert mask_b[200:, :].all().item() is True
         assert mask_b[:, 100:].all().item() is True
+
+    def test_make_collate_fn_is_picklable(self) -> None:
+        """make_collate_fn returns a functools.partial picklable for num_workers > 0."""
+        collate = make_collate_fn(block_size=32)
+        assert pickle.dumps(collate) is not None
