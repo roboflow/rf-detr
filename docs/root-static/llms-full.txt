@@ -307,8 +307,6 @@ RF-DETR-Nano (2.3 ms, 67.6 AP50) is best for edge/real-time. RF-DETR-Large (6.8 
 All model classes inherit from `RFDETR` and share these methods:
 
 - `predict(image, threshold=0.5)` — run inference on a single image (path, URL, numpy array, or PIL Image)
-- `predict_video(source, output_path, threshold=0.5)` — run inference on video file
-- `predict_webcam(threshold=0.5)` — run inference on webcam stream
 - `train(dataset_dir, epochs, batch_size, ...)` — fine-tune on custom dataset
 - `export(format)` — export to ONNX, TFLite, or TensorRT
 - `deploy_to_roboflow(dataset_id, api_key)` — deploy model to Roboflow hosted inference
