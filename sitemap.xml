@@ -1,147 +1,147 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
-         <loc>https://rfdetr.roboflow.com/1.6.5/</loc>
+         <loc>https://rfdetr.roboflow.com/latest/</loc>
          <lastmod>2026-04-22</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/1.6.5/learn/benchmarks/</loc>
+         <loc>https://rfdetr.roboflow.com/latest/learn/benchmarks/</loc>
          <lastmod>2026-04-22</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/1.6.5/learn/deploy/</loc>
+         <loc>https://rfdetr.roboflow.com/latest/learn/deploy/</loc>
          <lastmod>2026-04-22</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/1.6.5/learn/export/</loc>
+         <loc>https://rfdetr.roboflow.com/latest/learn/export/</loc>
          <lastmod>2026-04-22</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/1.6.5/learn/install/</loc>
+         <loc>https://rfdetr.roboflow.com/latest/learn/install/</loc>
          <lastmod>2026-04-22</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/1.6.5/learn/migration/</loc>
+         <loc>https://rfdetr.roboflow.com/latest/learn/migration/</loc>
          <lastmod>2026-04-22</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/1.6.5/learn/pretrained/</loc>
+         <loc>https://rfdetr.roboflow.com/latest/learn/pretrained/</loc>
          <lastmod>2026-04-22</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/1.6.5/learn/run/detection/</loc>
+         <loc>https://rfdetr.roboflow.com/latest/learn/run/detection/</loc>
          <lastmod>2026-04-22</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/1.6.5/learn/run/segmentation/</loc>
+         <loc>https://rfdetr.roboflow.com/latest/learn/run/segmentation/</loc>
          <lastmod>2026-04-22</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/1.6.5/learn/train/</loc>
+         <loc>https://rfdetr.roboflow.com/latest/learn/train/</loc>
          <lastmod>2026-04-22</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/1.6.5/learn/train/advanced/</loc>
+         <loc>https://rfdetr.roboflow.com/latest/learn/train/advanced/</loc>
          <lastmod>2026-04-22</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/1.6.5/learn/train/augmentations/</loc>
+         <loc>https://rfdetr.roboflow.com/latest/learn/train/augmentations/</loc>
          <lastmod>2026-04-22</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/1.6.5/learn/train/customization/</loc>
+         <loc>https://rfdetr.roboflow.com/latest/learn/train/customization/</loc>
          <lastmod>2026-04-22</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/1.6.5/learn/train/dataset-formats/</loc>
+         <loc>https://rfdetr.roboflow.com/latest/learn/train/dataset-formats/</loc>
          <lastmod>2026-04-22</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/1.6.5/learn/train/loggers/</loc>
+         <loc>https://rfdetr.roboflow.com/latest/learn/train/loggers/</loc>
          <lastmod>2026-04-22</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/1.6.5/learn/train/training-parameters/</loc>
+         <loc>https://rfdetr.roboflow.com/latest/learn/train/training-parameters/</loc>
          <lastmod>2026-04-22</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/1.6.5/reference/2xlarge/</loc>
+         <loc>https://rfdetr.roboflow.com/latest/reference/2xlarge/</loc>
          <lastmod>2026-04-22</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/1.6.5/reference/base/</loc>
+         <loc>https://rfdetr.roboflow.com/latest/reference/base/</loc>
          <lastmod>2026-04-22</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/1.6.5/reference/large/</loc>
+         <loc>https://rfdetr.roboflow.com/latest/reference/large/</loc>
          <lastmod>2026-04-22</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/1.6.5/reference/large_deprecated/</loc>
+         <loc>https://rfdetr.roboflow.com/latest/reference/large_deprecated/</loc>
          <lastmod>2026-04-22</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/1.6.5/reference/medium/</loc>
+         <loc>https://rfdetr.roboflow.com/latest/reference/medium/</loc>
          <lastmod>2026-04-22</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/1.6.5/reference/nano/</loc>
+         <loc>https://rfdetr.roboflow.com/latest/reference/nano/</loc>
          <lastmod>2026-04-22</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/1.6.5/reference/rfdetr/</loc>
+         <loc>https://rfdetr.roboflow.com/latest/reference/rfdetr/</loc>
          <lastmod>2026-04-22</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/1.6.5/reference/seg_2xlarge/</loc>
+         <loc>https://rfdetr.roboflow.com/latest/reference/seg_2xlarge/</loc>
          <lastmod>2026-04-22</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/1.6.5/reference/seg_large/</loc>
+         <loc>https://rfdetr.roboflow.com/latest/reference/seg_large/</loc>
          <lastmod>2026-04-22</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/1.6.5/reference/seg_medium/</loc>
+         <loc>https://rfdetr.roboflow.com/latest/reference/seg_medium/</loc>
          <lastmod>2026-04-22</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/1.6.5/reference/seg_nano/</loc>
+         <loc>https://rfdetr.roboflow.com/latest/reference/seg_nano/</loc>
          <lastmod>2026-04-22</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/1.6.5/reference/seg_preview/</loc>
+         <loc>https://rfdetr.roboflow.com/latest/reference/seg_preview/</loc>
          <lastmod>2026-04-22</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/1.6.5/reference/seg_small/</loc>
+         <loc>https://rfdetr.roboflow.com/latest/reference/seg_small/</loc>
          <lastmod>2026-04-22</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/1.6.5/reference/seg_xlarge/</loc>
+         <loc>https://rfdetr.roboflow.com/latest/reference/seg_xlarge/</loc>
          <lastmod>2026-04-22</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/1.6.5/reference/segmentation_train_config/</loc>
+         <loc>https://rfdetr.roboflow.com/latest/reference/segmentation_train_config/</loc>
          <lastmod>2026-04-22</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/1.6.5/reference/small/</loc>
+         <loc>https://rfdetr.roboflow.com/latest/reference/small/</loc>
          <lastmod>2026-04-22</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/1.6.5/reference/train_config/</loc>
+         <loc>https://rfdetr.roboflow.com/latest/reference/train_config/</loc>
          <lastmod>2026-04-22</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/1.6.5/reference/training/</loc>
+         <loc>https://rfdetr.roboflow.com/latest/reference/training/</loc>
          <lastmod>2026-04-22</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/1.6.5/reference/xlarge/</loc>
+         <loc>https://rfdetr.roboflow.com/latest/reference/xlarge/</loc>
          <lastmod>2026-04-22</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/1.6.5/tutorials/</loc>
+         <loc>https://rfdetr.roboflow.com/latest/tutorials/</loc>
          <lastmod>2026-04-22</lastmod>
     </url>
 </urlset>
