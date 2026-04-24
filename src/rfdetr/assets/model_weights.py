@@ -293,7 +293,7 @@ def get_model_cache_dir() -> str:
 
     Examples:
         >>> import os
-        >>> os.environ.pop("RF_HOME", None) and None  # ensure default
+        >>> _ = os.environ.pop("RF_HOME", None)  # ensure default
         >>> get_model_cache_dir()  # doctest: +ELLIPSIS
         '.../.roboflow/models'
         >>> os.environ["RF_HOME"] = "/tmp/rfdetr_cache"
