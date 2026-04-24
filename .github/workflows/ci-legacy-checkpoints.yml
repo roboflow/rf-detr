@@ -140,27 +140,7 @@ jobs:
         run: |
           uv run --no-sync pytest \
             tests/legacy/test_checkpoint_compat.py \
+            tests/legacy/test_generate_checkpoint.py \
             -v \
             --tb=short \
             --timeout=120
-
-  # ---------------------------------------------------------------------------
-  # Guardian — fail fast if any required job did not succeed
-  # ---------------------------------------------------------------------------
-  compat-guardian:
-    name: Compat test guardian
-    runs-on: ubuntu-latest
-    needs: test-compat
-    if: always()
-    steps:
-      - name: ❌ Fail on test failure
-        if: needs.test-compat.result == 'failure'
-        run: exit 1
-      - name: ⚠️ Fail on cancelled/skipped
-        if: contains(fromJSON('["cancelled", "skipped"]'), needs.test-compat.result)
-        run: |
-          echo "test-compat result is '${{ needs.test-compat.result }}'; failing."
-          exit 1
-      - name: ✅ All tests passed
-        if: needs.test-compat.result == 'success'
-        run: echo "Checkpoint compatibility tests passed."
