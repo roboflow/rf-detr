@@ -399,11 +399,6 @@ class TestLoadPretrainWeightsPEInterpolation:
         )
 
 
-# ---------------------------------------------------------------------------
-# Regression #990: L1 facade end-to-end PE interpolation on custom resolution
-# ---------------------------------------------------------------------------
-
-
 class TestL1FacadePEInterpolationEndToEnd:
     """Regression for instantiating an RF-DETR L1 facade variant with a
     custom ``resolution`` and a checkpoint trained at the variant's default
@@ -412,7 +407,7 @@ class TestL1FacadePEInterpolationEndToEnd:
     In v1.6.5 the L1 facade (``RFDETRLarge``, ``RFDETRNano``, ...) used a
     private ``_load_pretrain_weights_into`` helper in ``detr.py`` that bypassed
     the PE bicubic-interpolation added to ``models.weights.load_pretrain_weights``
-    in #964.  Code that wired the L1 facade through the unified loader landed
+    Code that wired the L1 facade through the unified loader landed
     later (``inference._build_model_context`` calling ``load_pretrain_weights``
     from ``models.weights``).  This test pins that wiring so a future refactor
     cannot reintroduce a divergent loader path that silently skips PE
