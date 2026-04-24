@@ -286,10 +286,10 @@ This ensures your changes work across all supported platforms and Python version
 uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --ignore=tests/try_instantiate_all_models.py --timeout=240 --durations=50
 
 # Run a specific test file
-uv run --no-sync pytest tests/test_model.py
+uv run --no-sync pytest tests/models/test_model.py
 
 # Run a specific test
-uv run --no-sync pytest tests/test_model.py::test_model_loading
+uv run --no-sync pytest tests/models/test_model.py::test_model_loading
 ```
 
 ## Code Quality and Linting
