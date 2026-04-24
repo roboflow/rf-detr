@@ -294,11 +294,13 @@ def get_model_cache_dir() -> str:
     Examples:
         >>> import os
         >>> _ = os.environ.pop("RF_HOME", None)  # ensure default
-        >>> get_model_cache_dir().replace("\\\\", "/")  # doctest: +ELLIPSIS
-        '.../.roboflow/models'
-        >>> os.environ["RF_HOME"] = "/tmp/rfdetr_cache"
-        >>> get_model_cache_dir().replace("\\\\", "/")
-        '/tmp/rfdetr_cache'
+        >>> expected = os.path.normpath(os.path.expanduser("~/.roboflow/models"))
+        >>> get_model_cache_dir() == expected
+        True
+        >>> os.environ["RF_HOME"] = "~/rfdetr_cache"
+        >>> expected = os.path.normpath(os.path.expanduser("~/rfdetr_cache"))
+        >>> get_model_cache_dir() == expected
+        True
         >>> del os.environ["RF_HOME"]
     """
     cache_dir = os.environ.get(_RF_HOME_ENV_VAR, _DEFAULT_CACHE_DIR)
