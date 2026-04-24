@@ -14,7 +14,7 @@
 """Tensor utilities: NestedTensor, collate_fn, and helpers."""
 
 from functools import partial
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 import torch
 import torchvision
@@ -112,7 +112,7 @@ class NestedTensor:
 
 def nested_tensor_from_tensor_list(
     tensor_list: list[Tensor],
-    block_size: Optional[int] = None,
+    block_size: int | None = None,
 ) -> NestedTensor:
     """Pad a list of variable-size tensors into a single NestedTensor.
 
@@ -160,7 +160,7 @@ def nested_tensor_from_tensor_list(
 @torch.jit.unused
 def _onnx_nested_tensor_from_tensor_list(
     tensor_list: list[Tensor],
-    block_size: Optional[int] = None,
+    block_size: int | None = None,
 ) -> NestedTensor:
     """ONNX-tracing-compatible variant of ``nested_tensor_from_tensor_list``.
 
@@ -304,7 +304,7 @@ def _bilinear_grid_sample(
 
 def _collate_with_block_size(
     batch: list[tuple[Any, ...]],
-    block_size: Optional[int] = None,
+    block_size: int | None = None,
 ) -> tuple[Any, ...]:
     """Module-level collate helper used as the base for :func:`make_collate_fn`.
 
@@ -344,7 +344,7 @@ def collate_fn(batch: list[tuple[Any, ...]]) -> tuple[Any, ...]:
 
 
 def make_collate_fn(
-    block_size: Optional[int] = None,
+    block_size: int | None = None,
 ) -> Callable[[list[tuple[Any, ...]]], tuple[Any, ...]]:
     """Build a collate function that rounds batch ``H``/``W`` up to *block_size*.
 
