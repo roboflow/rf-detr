@@ -14,7 +14,7 @@ in the format that version would save during training, which the
 Usage::
 
     pip install rfdetr==1.5.0
-    python tests/training/generate_checkpoint.py --output checkpoint_v1.5.0.pth
+    python tests/legacy/generate_checkpoint.py --output checkpoint_v1.5.0.pth
 
 Arguments
 ---------

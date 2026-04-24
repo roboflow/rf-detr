@@ -46,8 +46,8 @@ jobs:
         run: |
           # Strip comment lines and blank lines, then build a JSON array.
           matrix=$(
-            grep -v '^\s*#' tests/legacy/checkpoint_versions.txt \
-            | grep -v '^\s*$' \
+            grep -Ev '^[[:space:]]*#' tests/legacy/checkpoint_versions.txt \
+            | grep -Ev '^[[:space:]]*$' \
             | jq -R . \
             | jq -sc .
           )
