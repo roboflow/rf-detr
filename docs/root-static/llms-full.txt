@@ -179,6 +179,7 @@ model.train(dataset_dir="./dataset", resume="output/checkpoint_epoch_20.pth")
 torchrun --nproc_per_node=4 train.py
 ```
 
+Here, `train.py` refers to your own PyTorch distributed training entrypoint. In this standalone reference, it should be a script that initializes RF-DETR and calls `model.train(...)` with your dataset and training arguments, so `torchrun` can launch one process per GPU.
 **Gradient checkpointing** (reduces VRAM at cost of speed):
 ```python
 model.train(dataset_dir="./dataset", gradient_checkpointing=True)
