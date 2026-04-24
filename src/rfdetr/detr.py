@@ -31,7 +31,7 @@ import yaml
 from PIL import Image
 
 from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
-from rfdetr.assets.model_weights import download_pretrain_weights
+from rfdetr.assets.model_weights import download_pretrain_weights, get_model_cache_dir
 from rfdetr.config import (
     ModelConfig,
     TrainConfig,
@@ -240,18 +240,26 @@ class RFDETR:
     def maybe_download_pretrain_weights(self):
         """Download pre-trained weights if they are not already downloaded.
 
-        Bare filenames (e.g. ``rf-detr-base.pth``) are resolved to the model
-        cache directory during ``ModelConfig`` validation — set the ``RF_HOME``
-        environment variable to override the location (default:
-        ``~/.roboflow/models``).
+        Bare filenames (no directory component, e.g. ``rf-detr-base.pth``) are
+        resolved to the model cache directory — set the ``RF_HOME`` environment
+        variable to override the location (default: ``~/.roboflow/models``).
+        Resolution happens in ``ModelConfig.expand_path`` for explicitly-provided
+        values, and here as a fallback for field defaults (which Pydantic does not
+        validate by default).
 
-        For paths that already contain a directory component the parent
-        directory is created if it does not yet exist.
+        Paths that already contain a directory component are used as-is; the
+        parent directory is created if it does not yet exist.
         """
         pretrain_weights = self.model_config.pretrain_weights
         if pretrain_weights is None:
             return
-        os.makedirs(os.path.dirname(pretrain_weights), exist_ok=True)
+        if not os.path.dirname(pretrain_weights):
+            # Field default was not processed by expand_path — resolve to cache dir.
+            cache_dir = get_model_cache_dir()
+            os.makedirs(cache_dir, exist_ok=True)
+            pretrain_weights = os.path.join(cache_dir, pretrain_weights)
+        else:
+            os.makedirs(os.path.dirname(pretrain_weights), exist_ok=True)
         self.model_config.pretrain_weights = pretrain_weights
         download_pretrain_weights(self.model_config.pretrain_weights)
 
