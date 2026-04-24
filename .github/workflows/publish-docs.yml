@@ -1,9 +1,21 @@
+# Build and deploy MkDocs documentation to GitHub Pages (https://rfdetr.roboflow.com/)
+# using mike for versioned docs.
+#
+# Deploy matrix:
+#   push develop            → mike deploy develop          (rfdetr.roboflow.com/develop/)
+#   push release/latest     → mike deploy latest            (rfdetr.roboflow.com/latest/)
+#   release published        → mike deploy <tag>             (rfdetr.roboflow.com/<tag>/ only — does not move /latest/)
+#
+# Every deploy also:
+#   - Copies robots.txt, llms.txt, llms-full.txt to gh-pages root
+#   - Regenerates sitemap.xml normalising versioned paths to /latest/
+#   - Pings IndexNow (Bing) with canonical /latest/ URLs
+
 name: Build and Publish Docs
 
 on:
   push:
-    branches: ["main", "release/*", "develop"]
-  workflow_dispatch: {}
+    branches: ["release/latest", "develop"]
   release:
     types: [published]
 
@@ -48,36 +60,49 @@ jobs:
           git config --global user.email "${{ github.actor }}@users.noreply.github.com"
 
       - name: 🚀 Deploy Development Docs
-        if: (github.event_name == 'push' && github.ref == 'refs/heads/develop') || github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
         env:
           MKDOCS_GIT_COMMITTERS_APIKEY: ${{ secrets.GITHUB_TOKEN }}
         run: uv run mike deploy --push develop
+
+      - name: 🚀 Deploy Latest Branch Docs
+        if: github.event_name == 'push' && github.ref == 'refs/heads/release/latest'
+        env:
+          MKDOCS_GIT_COMMITTERS_APIKEY: ${{ secrets.GITHUB_TOKEN }}
+        run: uv run mike deploy --push --update-aliases latest
 
       - name: 🚀 Deploy Release Docs
         if: github.event_name == 'release' && github.event.action == 'published'
         env:
           MKDOCS_GIT_COMMITTERS_APIKEY: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          latest_tag=$(git describe --tags `git rev-list --tags --max-count=1`)
-          uv run mike deploy --push --update-aliases $latest_tag latest
+        run: uv run mike deploy --push ${{ github.event.release.tag_name }}
 
       - name: Deploy root static files to gh-pages
-        if: (github.event_name == 'push' && github.ref == 'refs/heads/develop') || github.event_name == 'workflow_dispatch' || (github.event_name == 'release' && github.event.action == 'published')
+        if: >-
+          (github.event_name == 'push' &&
+           (github.ref == 'refs/heads/develop' ||
+            github.ref == 'refs/heads/release/latest')) ||
+          (github.event_name == 'release' &&
+           github.event.action == 'published')
         run: |
           cp docs/root-static/robots.txt /tmp/robots.txt
           cp docs/root-static/llms.txt /tmp/llms.txt
+          cp docs/root-static/llms-full.txt /tmp/llms-full.txt
           cp docs/root-static/cace9ef287cb8d641db90d4295fcb1e1.txt /tmp/indexnow.txt
           git fetch origin gh-pages:refs/remotes/origin/gh-pages
           git checkout -B gh-pages origin/gh-pages
           cp /tmp/robots.txt robots.txt
           cp /tmp/llms.txt llms.txt
+          cp /tmp/llms-full.txt llms-full.txt
           cp /tmp/indexnow.txt cace9ef287cb8d641db90d4295fcb1e1.txt
-          git add robots.txt llms.txt cace9ef287cb8d641db90d4295fcb1e1.txt
+          git add robots.txt llms.txt llms-full.txt cace9ef287cb8d641db90d4295fcb1e1.txt
           if [ -f latest/sitemap.xml ]; then
-            cp latest/sitemap.xml sitemap.xml
+            # Normalize versioned paths (/X.Y.Z/) to /latest/ so sitemap URLs are
+            # not blocked by the User-agent: * Disallow rules in robots.txt.
+            sed 's|rfdetr\.roboflow\.com/[0-9][^/]*/|rfdetr.roboflow.com/latest/|g' latest/sitemap.xml > sitemap.xml
             git add sitemap.xml
           elif [ -f develop/sitemap.xml ]; then
-            cp develop/sitemap.xml sitemap.xml
+            sed 's|rfdetr\.roboflow\.com/develop/|rfdetr.roboflow.com/latest/|g' develop/sitemap.xml > sitemap.xml
             git add sitemap.xml
           fi
           git diff --staged --quiet || git commit -m "chore: update root static files and sitemap"
@@ -88,7 +113,12 @@ jobs:
       # (deployed via "Deploy root static files" step above).
       # To rotate: generate new key, update docs/root-static/<key>.txt, replace key string here.
       - name: 📡 Notify IndexNow (Bing)
-        if: (github.event_name == 'push' && github.ref == 'refs/heads/develop') || github.event_name == 'workflow_dispatch' || (github.event_name == 'release' && github.event.action == 'published')
+        if: >-
+          (github.event_name == 'push' &&
+           (github.ref == 'refs/heads/develop' ||
+            github.ref == 'refs/heads/release/latest')) ||
+          (github.event_name == 'release' &&
+           github.event.action == 'published')
         run: |
           curl -s -o /dev/null -w "%{http_code}" -X POST "https://api.indexnow.org/IndexNow" \
             -H "Content-Type: application/json; charset=utf-8" \
