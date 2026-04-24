@@ -330,17 +330,16 @@ class TestMaybeDownloadPretrainWeightsCacheDir:
     """Verify that RFDETR.maybe_download_pretrain_weights resolves paths via RF_HOME."""
 
     def _make_rfdetr(self, pretrain_weights):
-        """Return an RFDETR shell with model_config.pretrain_weights set, bypassing __init__.
+        """Return an RFDETR shell with a validated ModelConfig.
 
         Args:
             pretrain_weights: Value to assign to model_config.pretrain_weights.
         """
-        from types import SimpleNamespace
-
+        from rfdetr.config import ModelConfig
         from rfdetr.detr import RFDETR
 
         model = object.__new__(RFDETR)
-        model.model_config = SimpleNamespace(pretrain_weights=pretrain_weights)
+        model.model_config = ModelConfig(pretrain_weights=pretrain_weights)
         return model
 
     def test_bare_filename_resolved_to_rf_home(self, monkeypatch, tmp_path):
