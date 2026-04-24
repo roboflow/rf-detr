@@ -258,8 +258,9 @@ class RFDETR:
             cache_dir = get_model_cache_dir()
             os.makedirs(cache_dir, exist_ok=True)
             pretrain_weights = os.path.join(cache_dir, pretrain_weights)
-        download_pretrain_weights(pretrain_weights)
 
+        self.model_config.pretrain_weights = pretrain_weights
+        download_pretrain_weights(self.model_config.pretrain_weights)
     def get_model_config(self, **kwargs) -> ModelConfig:
         """Retrieve the configuration parameters used by the model."""
         return self._model_config_class(**kwargs)
