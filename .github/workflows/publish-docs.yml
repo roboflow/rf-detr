@@ -15,7 +15,7 @@ name: Build and Publish Docs
 
 on:
   push:
-    branches: ["main", "release/latest", "develop"]
+    branches: ["release/latest", "develop"]
   release:
     types: [published]
 
