@@ -10,6 +10,7 @@
 
 {% block extrahead %}
   {{ super() }}
+  <link rel="preconnect" href="https://storage.googleapis.com">
 
   {% if page %}
   {% set og_image_url = page.meta.image | default(config.extra.og_image | default('')) %}
@@ -18,7 +19,9 @@
   <meta property="og:description" content="{{ page.meta.description | default(config.site_description) }}">
   <meta property="og:type" content="{% if page.is_homepage %}website{% else %}article{% endif %}">
   <meta property="og:url" content="{{ page.canonical_url }}">
-  {% if og_image_url %}<meta property="og:image" content="{{ og_image_url }}">{% endif %}
+  {% if og_image_url %}<meta property="og:image" content="{{ og_image_url }}">
+  {% if og_image_url == config.extra.og_image %}<meta property="og:image:width" content="840">
+  <meta property="og:image:height" content="630">{% endif %}{% endif %}
 
   {# Twitter Card — all pages #}
   <meta name="twitter:card" content="summary_large_image">
@@ -50,7 +53,8 @@
           "https://www.linkedin.com/company/roboflow-ai/",
           "https://twitter.com/roboflow",
           "https://www.youtube.com/@Roboflow",
-          "https://en.wikipedia.org/wiki/Roboflow"
+          "https://en.wikipedia.org/wiki/Roboflow",
+          "https://huggingface.co/roboflow"
         ]
       },
       {
@@ -192,7 +196,7 @@
   </script>
   {% else %}
   {# article:modified_time — content pages only; emit only when a full ISO-8601 date-time is available #}
-  {% if page.meta.git_revision_date_localized and "T" in page.meta.git_revision_date_localized %}<meta property="article:modified_time" content="{{ page.meta.git_revision_date_localized }}">{% endif %}
+  {% if page.meta.git_revision_date_localized %}<meta property="article:modified_time" content="{{ page.meta.git_revision_date_localized | replace(' ', 'T') + '+00:00' }}">{% endif %}
   {# JSON-LD: TechArticle — content pages #}
   <script type="application/ld+json">
   {
@@ -201,7 +205,7 @@
     "headline": {{ page.title | tojson }},
     "description": {{ (page.meta.description | default(config.site_description)) | tojson }},
     "url": "{{ page.canonical_url }}",
-    {% if page.meta.git_revision_date_localized %}"dateModified": {{ page.meta.git_revision_date_localized | tojson }},
+    {% if page.meta.git_revision_date_localized %}"dateModified": {{ (page.meta.git_revision_date_localized | replace(' ', 'T') + '+00:00') | tojson }},
     {% endif %}{% if page.meta.image %}"image": {{ page.meta.image | tojson }},
     {% endif %}"author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},

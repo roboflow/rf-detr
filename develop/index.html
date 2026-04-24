@@ -61,6 +61,7 @@
     
     
   
+  <link rel="preconnect" href="https://storage.googleapis.com">
 
   
   
@@ -70,6 +71,8 @@
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://rfdetr.roboflow.com/develop/">
   <meta property="og:image" content="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png">
+  <meta property="og:image:width" content="840">
+  <meta property="og:image:height" content="630">
 
   
   <meta name="twitter:card" content="summary_large_image">
@@ -101,7 +104,8 @@
           "https://www.linkedin.com/company/roboflow-ai/",
           "https://twitter.com/roboflow",
           "https://www.youtube.com/@Roboflow",
-          "https://en.wikipedia.org/wiki/Roboflow"
+          "https://en.wikipedia.org/wiki/Roboflow",
+          "https://huggingface.co/roboflow"
         ]
       },
       {
@@ -2326,7 +2330,7 @@
 
 
 <h1 id="rf-detr-real-time-sota-detection-and-segmentation-model">RF-DETR: Real-Time SOTA Detection and Segmentation Model<a class="headerlink" href="#rf-detr-real-time-sota-detection-and-segmentation-model" title="Permanent link">&para;</a></h1>
-<p>RF-DETR is a real-time transformer architecture for object detection and instance segmentation developed by Roboflow. Built on a DINOv2 vision transformer backbone, RF-DETR delivers state-of-the-art accuracy and latency trade-offs on Microsoft COCO and RF100-VL.</p>
+<p>RF-DETR is a real-time transformer architecture for object detection and instance segmentation developed by Roboflow. Built on a DINOv2 vision transformer backbone, RF-DETR achieves state-of-the-art accuracy–latency trade-offs: RF-DETR-L reaches 56.5 AP50:95 on COCO at 6.8 ms (NVIDIA T4, TensorRT FP16), and RF-DETR-2XL achieves 60.1 AP50:95 — the first real-time model to exceed 60 AP on COCO. Accepted at <a href="https://arxiv.org/abs/2511.09554">ICLR 2026</a>.</p>
 <p>RF-DETR uses a DINOv2 vision transformer backbone and supports both detection and instance segmentation in a single, consistent API. Core models (Nano through Large) and all code are released under the Apache 2.0 license; XL and 2XLarge detection models require <code>rfdetr[plus]</code> and are provided under PML 1.0.</p>
 <h2 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h2>
 <p>You can install and use <code>rfdetr</code> in a <a href="https://www.python.org/"><strong>Python&gt;=3.10</strong></a> environment. For detailed installation instructions, including installing from source, and setting up a local development environment, check out our <a href="learn/install/">install</a> page.</p>
@@ -2404,7 +2408,7 @@
 <h2 id="benchmarks">Benchmarks<a class="headerlink" href="#benchmarks" title="Permanent link">&para;</a></h2>
 <p>RF-DETR achieves the best accuracy–latency trade-off among real-time object detection and instance segmentation models — both on COCO and on the more demanding RF100-VL benchmark (domain adaptability). For detailed benchmark tables and methodology, check out our <a href="learn/benchmarks/">benchmarks</a> page.</p>
 <h3 id="detection">Detection<a class="headerlink" href="#detection" title="Permanent link">&para;</a></h3>
-<p><img alt="Pareto front – detection" src="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png" style="max-width: 840px; height: auto;" /></p>
+<p><img alt="Pareto front — detection accuracy vs latency: RF-DETR-2XL achieves 78.5 COCO AP50 (60.1 AP50:95) at 17.2 ms; RF-DETR-L achieves 75.1 AP50 at 6.8 ms, outperforming YOLO11x at comparable latency" src="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png" width="840" height="630" style="max-width: 840px; height: auto;" /></p>
 <table>
 <thead>
 <tr>
@@ -2482,7 +2486,7 @@
 </tbody>
 </table>
 <h3 id="segmentation">Segmentation<a class="headerlink" href="#segmentation" title="Permanent link">&para;</a></h3>
-<p><img alt="Pareto front – segmentation" src="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_instance_segmentation.png" style="max-width: 840px; height: auto;" /></p>
+<p><img alt="Pareto front — segmentation accuracy vs latency: RF-DETR-Seg-2XL achieves 73.1 COCO AP50 (49.9 AP50:95) at 21.8 ms; RF-DETR-Seg-L achieves 70.5 AP50 at 8.8 ms" src="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_instance_segmentation.png" width="840" height="630" style="max-width: 840px; height: auto;" /></p>
 <table>
 <thead>
 <tr>
@@ -2586,7 +2590,7 @@ RF-DETR-Nano (2.3 ms, 67.6 AP50 on COCO) is best for edge and real-time applic
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="April 23, 2026 15:22:59 UTC">2026-04-23</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="April 24, 2026 19:47:38 UTC">2026-04-24 19:47:38</span>
   </span>
 
     
