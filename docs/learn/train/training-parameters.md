@@ -172,12 +172,12 @@ model.train(
 
 ## Evaluation Parameters
 
-| Parameter               | Type                  | Default | Description                                                                                                        |
-| ----------------------- | --------------------- | ------- | ------------------------------------------------------------------------------------------------------------------ |
-| `eval_max_dets`         | `int`                 | `500`   | Maximum number of detections per image considered during COCO evaluation. Lower values speed up evaluation.        |
-| `eval_interval`         | `int`                 | `1`     | Run COCO evaluation every N epochs. Set to a higher value to reduce evaluation overhead during long training runs. |
-| `log_per_class_metrics` | `bool`                | `True`  | Log per-class AP metrics to the console and loggers. Disable to reduce log verbosity when there are many classes.  |
-| `progress_bar`          | `str \| bool \| None` | `None`  | Progress bar style: `"tqdm"`, `"rich"`, or `None`. Legacy booleans are still accepted.                             |
+| Parameter               | Type                | Default | Description                                                                                                        |
+| ----------------------- | ------------------- | ------- | ------------------------------------------------------------------------------------------------------------------ |
+| `eval_max_dets`         | `int`               | `500`   | Maximum number of detections per image considered during COCO evaluation. Lower values speed up evaluation.        |
+| `eval_interval`         | `int`               | `1`     | Run COCO evaluation every N epochs. Set to a higher value to reduce evaluation overhead during long training runs. |
+| `log_per_class_metrics` | `bool`              | `True`  | Log per-class AP metrics to the console and loggers. Disable to reduce log verbosity when there are many classes.  |
+| `progress_bar`          | `str | bool | None` | `None`  | Progress bar style: `"tqdm"`, `"rich"`, or `None`. Legacy booleans are still accepted.                             |
 
 ## Advanced Parameters
 
