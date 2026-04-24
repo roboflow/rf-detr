@@ -101,10 +101,10 @@ from rfdetr.visualize.data import save_gt_predictions_visualization
 
 ```python
 # Before (deprecated)
-from rfdetr.deploy import export_onnx
+import rfdetr.deploy
 
 # After
-from rfdetr.export import export_onnx
+import rfdetr.export
 ```
 
 ### `rfdetr.models.segmentation_head`

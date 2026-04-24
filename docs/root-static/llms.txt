@@ -16,7 +16,7 @@
 - [Advanced Training](https://rfdetr.roboflow.com/latest/learn/train/advanced/): Resume, early stopping, multi-GPU DDP, and memory optimization
 - [Custom Training API](https://rfdetr.roboflow.com/latest/learn/train/customization/): PyTorch Lightning training primitives
 - [Augmentations](https://rfdetr.roboflow.com/latest/learn/train/augmentations/): Albumentations presets and custom transforms
-- [Training Loggers](https://rfdetr.roboflow.com/latest/learn/train/loggers/): TensorBoard, Weights and Biases, ClearML, and MLflow
+- [Training Loggers](https://rfdetr.roboflow.com/latest/learn/train/loggers/): TensorBoard, Weights and Biases, MLflow, and a ClearML workaround
 
 ## Export and Deploy
 - [Export](https://rfdetr.roboflow.com/latest/learn/export/): ONNX, TFLite, TensorRT

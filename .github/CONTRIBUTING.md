@@ -101,7 +101,7 @@ rf-detr/
 
 - **`.pre-commit-config.yaml`** - Defines pre-commit hooks for code quality
 
-- **`mkdocs.yml`** - Documentation site configuration
+- **`mkdocs.yaml`** - Documentation site configuration
 
 > [!TIP]
 > When contributing, focus on the relevant directory for your change:
@@ -143,11 +143,11 @@ uv sync --group build      # Build tools only
 > **CI Workflows as Source of Truth:** See `.github/workflows/ci-tests-cpu.yml` and `.github/workflows/ci-tests-gpu.yml` for the exact commands used in continuous integration.
 
 ```bash
-# Run CPU tests (default for local development)
-uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --cov=rfdetr --cov-report=xml
+# Run CPU tests (default for local development; mirrors CI)
+uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --ignore=tests/try_instantiate_all_models.py --cov=rfdetr --cov-report=xml --timeout=240 --durations=50
 
-# Run GPU tests (requires GPU)
-uv run --no-sync pytest src/ tests/ -n 2 -m gpu
+# Run GPU tests (requires GPU; mirrors CI)
+uv run --no-sync pytest tests/ -m gpu -n 3 --reruns 1 --only-rerun "OutOfMemoryError" --cov=rfdetr --cov-report=xml --timeout=600 --durations=20
 ```
 
 **Development vs. PR Requirements:**
@@ -283,7 +283,7 @@ This ensures your changes work across all supported platforms and Python version
 
 ```bash
 # Run tests with parallel execution (recommended)
-uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu"
+uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --ignore=tests/try_instantiate_all_models.py --timeout=240 --durations=50
 
 # Run a specific test file
 uv run --no-sync pytest tests/test_model.py

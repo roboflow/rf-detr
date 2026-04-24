@@ -25,7 +25,7 @@ def _get_patch_embed_projection(model) -> torch.nn.Conv2d:
     Raises:
         AssertionError: If the patch-embedding projection cannot be located.
     """
-    # model.model → rfdetr.main.Model; model.model.model → nn.Module
+    # model.model → model context; model.model.model → nn.Module
     nn_model = model.model.model
     proj = nn_model.backbone[0].encoder.encoder.embeddings.patch_embeddings.projection
     if isinstance(proj, torch.nn.Conv2d):

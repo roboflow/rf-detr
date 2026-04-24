@@ -176,7 +176,7 @@ model.train(dataset_dir="./dataset", resume="output/checkpoint_epoch_20.pth")
 
 **Multi-GPU DDP training:**
 ```bash
-torchrun --nproc_per_node=4 -m rfdetr.train --dataset_dir ./dataset --batch_size 4
+torchrun --nproc_per_node=4 train.py
 ```
 
 **Gradient checkpointing** (reduces VRAM at cost of speed):
@@ -193,8 +193,9 @@ model.train(dataset_dir="./dataset", tensorboard=True)
 # Weights and Biases
 model.train(dataset_dir="./dataset", wandb=True)
 
-# ClearML
-model.train(dataset_dir="./dataset", clearml=True)
+# ClearML is not yet integrated as a native RF-DETR logger.
+# Do not pass clearml=True; that flag raises NotImplementedError
+# when the trainer is built.
 
 # MLflow
 model.train(dataset_dir="./dataset", mlflow=True)
@@ -334,8 +335,8 @@ Key fields for detection training configuration:
 If upgrading from rfdetr < 1.4.0, update these imports:
 
 ```python
-# Old (deprecated)
-from rfdetr.main import RFDETRBase
+# Old model class (deprecated)
+from rfdetr import RFDETRBase
 # New
 from rfdetr import RFDETRLarge
 

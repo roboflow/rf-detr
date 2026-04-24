@@ -1147,10 +1147,6 @@ class RFDETR:
                 Whether to attach the original image as ``source_image`` in
                 ``detections.metadata``. Defaults to ``True``.  Set to ``False``
                 to reduce memory use when source images are not needed.
-                **Note**: ``source_image`` moved from ``detections.data`` to
-                ``detections.metadata`` — update callers reading
-                ``detections.data["source_image"]`` to use
-                ``detections.metadata["source_image"]``.
             **kwargs:
                 Additional keyword arguments.
 
@@ -1166,6 +1162,12 @@ class RFDETR:
             updated. The ``metadata`` dict contains ``source_image`` as the original
             ``uint8`` image array of shape ``(H, W, 3)`` when
             ``include_source_image=True``.
+
+        Note:
+            ``source_image`` moved from ``detections.data`` to
+            ``detections.metadata``. Update callers reading
+            ``detections.data["source_image"]`` to use
+            ``detections.metadata["source_image"]``.
 
         Raises:
             ValueError: If ``shape`` cannot be unpacked as a two-element sequence,
