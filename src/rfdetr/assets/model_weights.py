@@ -301,7 +301,8 @@ def get_model_cache_dir() -> str:
         '/tmp/rfdetr_cache'
         >>> del os.environ["RF_HOME"]
     """
-    return os.path.expanduser(os.environ.get(_RF_HOME_ENV_VAR, _DEFAULT_CACHE_DIR))
+    cache_dir = os.environ.get(_RF_HOME_ENV_VAR, _DEFAULT_CACHE_DIR)
+    return os.path.abspath(os.path.expanduser(cache_dir))
 
 
 def download_pretrain_weights(
