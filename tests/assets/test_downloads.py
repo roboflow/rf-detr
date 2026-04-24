@@ -330,16 +330,20 @@ class TestMaybeDownloadPretrainWeightsCacheDir:
     """Verify that RFDETR.maybe_download_pretrain_weights resolves paths via RF_HOME."""
 
     def _make_rfdetr(self, pretrain_weights):
-        """Return an RFDETR shell with a validated ModelConfig.
+        """Return an RFDETR shell backed by a fully validated RFDETRBaseConfig.
+
+        Uses RFDETRBaseConfig (which supplies required field defaults) so the
+        expand_path field validator on pretrain_weights is exercised end-to-end.
 
         Args:
-            pretrain_weights: Value to assign to model_config.pretrain_weights.
+            pretrain_weights: Raw value to pass to RFDETRBaseConfig; the pydantic
+                validator resolves it before assigning to model_config.pretrain_weights.
         """
-        from rfdetr.config import ModelConfig
+        from rfdetr.config import RFDETRBaseConfig
         from rfdetr.detr import RFDETR
 
         model = object.__new__(RFDETR)
-        model.model_config = ModelConfig(pretrain_weights=pretrain_weights)
+        model.model_config = RFDETRBaseConfig(pretrain_weights=pretrain_weights)
         return model
 
     def test_bare_filename_resolved_to_rf_home(self, monkeypatch, tmp_path):
