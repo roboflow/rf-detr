@@ -435,9 +435,11 @@ class TestL1FacadePEInterpolationEndToEnd:
         default_model = RFDETRNano(pretrain_weights=None, num_classes=2, device="cpu")
         default_pe_grid = default_model.model_config.positional_encoding_size
         assert default_pe_grid == 24, "RFDETRNano default PE grid must be 24×24"
+        patch_size = default_model.model_config.patch_size
         default_state = default_model.model.model.state_dict()
         default_pe = default_state[PE_KEY]
-        assert default_pe.shape == torch.Size([1, default_pe_grid * default_pe_grid + 1, 384])
+        pe_dim = default_pe.shape[-1]
+        assert default_pe.shape == torch.Size([1, default_pe_grid * default_pe_grid + 1, pe_dim])
 
         # 2. Persist as a checkpoint that mimics what `model.train()` saves —
         #    a top-level "model" key plus a SimpleNamespace "args" block.
@@ -445,7 +447,7 @@ class TestL1FacadePEInterpolationEndToEnd:
         torch.save(
             {
                 "model": dict(default_state),
-                "args": SimpleNamespace(class_names=["a", "b"], patch_size=16),
+                "args": SimpleNamespace(class_names=["a", "b"], patch_size=patch_size),
             },
             ckpt_path,
         )
@@ -465,13 +467,13 @@ class TestL1FacadePEInterpolationEndToEnd:
         # 4. The model_config validator must update PE proportionally to the
         #    new resolution, and the loaded backbone PE parameter must have the
         #    interpolated target shape (40 × 40 + 1 = 1601 tokens).
-        expected_pe_grid = new_resolution // 16
+        expected_pe_grid = new_resolution // patch_size
         assert expected_pe_grid == 40
         assert loaded.model_config.positional_encoding_size == expected_pe_grid
         loaded_pe = loaded.model.model.state_dict()[PE_KEY]
-        assert loaded_pe.shape == torch.Size([1, expected_pe_grid * expected_pe_grid + 1, 384]), (
+        assert loaded_pe.shape == torch.Size([1, expected_pe_grid * expected_pe_grid + 1, pe_dim]), (
             f"Backbone PE was not interpolated to the requested resolution; "
-            f"got shape {tuple(loaded_pe.shape)}, expected [1, {expected_pe_grid**2 + 1}, 384]."
+            f"got shape {tuple(loaded_pe.shape)}, expected [1, {expected_pe_grid**2 + 1}, {pe_dim}]."
         )
 
 
