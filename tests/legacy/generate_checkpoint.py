@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import importlib
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -92,6 +93,48 @@ def _get_patch_size(model: Any) -> int:
     return 16
 
 
+def _find_pruneable_heads_and_indices(
+    heads: set[int], n_heads: int, head_size: int, already_pruned_heads: set[int]
+) -> tuple[set[int], torch.LongTensor]:
+    """Return pruneable heads and the flattened index mask.
+
+    Mirrors the helper that older RF-DETR releases imported from
+    ``transformers.pytorch_utils`` before transformers v5 removed that public
+    export.
+
+    Args:
+        heads: Attention head indices requested for pruning.
+        n_heads: Number of heads currently present in the layer.
+        head_size: Width of each attention head.
+        already_pruned_heads: Heads removed by previous pruning calls.
+
+    Returns:
+        Adjusted pruneable head indices and a tensor selecting retained rows.
+    """
+    mask = torch.ones(n_heads, head_size)
+    heads = set(heads) - already_pruned_heads
+    for head in heads:
+        head -= sum(1 if pruned_head < head else 0 for pruned_head in already_pruned_heads)
+        mask[head] = 0
+    mask = mask.view(-1).contiguous().eq(1)
+    index = torch.arange(len(mask))[mask].long()
+    return heads, index
+
+
+def _install_transformers_pytorch_utils_compat() -> None:
+    """Install transformers compatibility shims required by old RF-DETR.
+
+    RF-DETR 1.4 imports ``find_pruneable_heads_and_indices`` from
+    ``transformers.pytorch_utils``.  Newer transformers releases no longer
+    expose that helper, so checkpoint generation fails before the old package
+    can be imported.  This shim is intentionally scoped to this legacy
+    generator process.
+    """
+    pytorch_utils = importlib.import_module("transformers.pytorch_utils")
+    if not hasattr(pytorch_utils, "find_pruneable_heads_and_indices"):
+        pytorch_utils.find_pruneable_heads_and_indices = _find_pruneable_heads_and_indices
+
+
 def _build_model(preferred_class: str, num_classes: int, device: str) -> Any:
     """Instantiate an rfdetr model, falling back through available classes.
 
@@ -150,9 +193,11 @@ def generate_checkpoint(
         num_classes: Number of foreground classes to store in the checkpoint.
         preferred_class: rfdetr facade class to attempt first.
     """
-    import rfdetr as _rfdetr_pkg
+    _install_transformers_pytorch_utils_compat()
 
-    installed_version: str = getattr(_rfdetr_pkg, "__version__", "unknown")
+    import rfdetr
+
+    installed_version: str = getattr(rfdetr, "__version__", "unknown")
     print(f"[generate_checkpoint] rfdetr {installed_version} installed")
 
     model = _build_model(preferred_class, num_classes, device="cpu")
