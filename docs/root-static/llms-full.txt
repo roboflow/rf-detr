@@ -229,7 +229,9 @@ trtexec --onnx=model.onnx --saveEngine=model.trt --fp16
 
 ```python
 model.deploy_to_roboflow(
-    dataset_id="my-dataset",
+    workspace="your-workspace",
+    project_id="your-project-id",
+    version=1,
     api_key="YOUR_API_KEY"
 )
 ```
