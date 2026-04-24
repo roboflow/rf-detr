@@ -66,18 +66,22 @@ jobs:
         run: |
           cp docs/root-static/robots.txt /tmp/robots.txt
           cp docs/root-static/llms.txt /tmp/llms.txt
+          cp docs/root-static/llms-full.txt /tmp/llms-full.txt
           cp docs/root-static/cace9ef287cb8d641db90d4295fcb1e1.txt /tmp/indexnow.txt
           git fetch origin gh-pages:refs/remotes/origin/gh-pages
           git checkout -B gh-pages origin/gh-pages
           cp /tmp/robots.txt robots.txt
           cp /tmp/llms.txt llms.txt
+          cp /tmp/llms-full.txt llms-full.txt
           cp /tmp/indexnow.txt cace9ef287cb8d641db90d4295fcb1e1.txt
-          git add robots.txt llms.txt cace9ef287cb8d641db90d4295fcb1e1.txt
+          git add robots.txt llms.txt llms-full.txt cace9ef287cb8d641db90d4295fcb1e1.txt
           if [ -f latest/sitemap.xml ]; then
-            cp latest/sitemap.xml sitemap.xml
+            # Normalize versioned paths (/X.Y.Z/) to /latest/ so sitemap URLs are
+            # not blocked by the User-agent: * Disallow rules in robots.txt.
+            sed 's|rfdetr\.roboflow\.com/[0-9][^/]*/|rfdetr.roboflow.com/latest/|g' latest/sitemap.xml > sitemap.xml
             git add sitemap.xml
           elif [ -f develop/sitemap.xml ]; then
-            cp develop/sitemap.xml sitemap.xml
+            sed 's|rfdetr\.roboflow\.com/develop/|rfdetr.roboflow.com/latest/|g' develop/sitemap.xml > sitemap.xml
             git add sitemap.xml
           fi
           git diff --staged --quiet || git commit -m "chore: update root static files and sitemap"
