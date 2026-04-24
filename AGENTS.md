@@ -24,7 +24,7 @@ As an AI agent contributing to RF-DETR, you are responsible for:
 
     - Run `pre-commit run --all-files` before every commit
     - Follow type hint and docstring requirements
-    - Use direct imports (not `import ... as` pattern)
+    - Prefer direct project imports; conventional third-party aliases are allowed
 
 3. **Maintaining agentic documentation**
 
@@ -68,8 +68,8 @@ uv sync --all-groups
 
 See `pyproject.toml` for complete dependency specifications:
 
-- **Core:** PyTorch, torchvision, transformers, pycocotools, supervision, peft, pydantic
-- **Optional:** `[plus]` (Plus models), `[onnx]` (ONNX export), `[loggers]` (tensorboard, wandb)
+- **Core:** PyTorch, torchvision, transformers, supervision, pydantic, pyDeprecate
+- **Optional:** `[train]` (training, including peft and pycocotools), `[lora]` (LoRA fine-tuning), `[plus]` (Plus models), `[onnx]` (ONNX export), `[loggers]` (tensorboard, wandb, mlflow, clearml)
 - **Development:** `tests`, `docs`, `build` groups
 
 **Important version constraints:**
@@ -87,11 +87,11 @@ See `pyproject.toml` for complete dependency specifications:
 ### Commands
 
 ```bash
-# CPU tests (default for local development) - matches CI
-uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --cov=rfdetr --cov-report=xml
+# CPU tests (default for local development; mirrors CI)
+uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --ignore=tests/try_instantiate_all_models.py --cov=rfdetr --cov-report=xml --timeout=240 --durations=50
 
-# GPU tests (requires GPU)
-uv run --no-sync pytest src/ tests/ -n 2 -m gpu
+# GPU tests (requires GPU; mirrors CI)
+uv run --no-sync pytest tests/ -m gpu -n 3 --reruns 1 --only-rerun "OutOfMemoryError" --cov=rfdetr --cov-report=xml --timeout=600 --durations=20
 
 # Pre-commit checks (ALWAYS run before committing)
 pre-commit run --all-files
@@ -172,7 +172,7 @@ uv run mkdocs build
 - **Config:** `mkdocs.yaml` (uses custom YAML tags: `!!python/name`)
 - **Deployment:** GitHub Actions publishes to GitHub Pages
 
-**Note:** `mkdocs.yaml` is excluded from `check-yaml` pre-commit hook due to custom YAML tags.
+**Note:** `mkdocs.yaml` is checked by the `check-yaml` pre-commit hook with `--unsafe` so custom YAML tags such as `!!python/name` are accepted.
 
 ## Package Building
 
@@ -207,14 +207,15 @@ uv run twine check --strict dist/*
 
 **Model Architecture:**
 
-- RFDETR wrappers: `self.model` is `rfdetr.main.Model` instance
+- RFDETR wrappers: `self.model` is the model context returned by `get_model()`
 - Underlying PyTorch module: `self.model.model`
 - Segmentation models return `pred_masks` as `torch.Tensor` or dict with keys `['spatial_features', 'query_features', 'bias']`
 
 **Imports:**
 
 ```python
-# Always use direct imports (NOT import ... as pattern)
+# Prefer direct project imports. Standard aliases such as `numpy as np`,
+# `torch.nn.functional as F`, and lazy module aliases are allowed when conventional.
 from rfdetr.util.misc import get_rank, get_world_size, is_main_process, save_on_master
 from rfdetr.util.logger import get_logger
 
@@ -280,7 +281,7 @@ result = subprocess.run(
 4. **Testing:**
     - Bug fixes: Write test first, then fix
     - Features: Test all major use cases
-    - Run: `uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu"`
+    - Run: `uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --ignore=tests/try_instantiate_all_models.py --timeout=240 --durations=50`
 5. **Quality checks:** `pre-commit run --all-files`
 6. **Build (if needed):** `uv build`
 7. **Commit:** Pre-commit hooks run automatically
