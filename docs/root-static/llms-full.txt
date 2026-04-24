@@ -60,16 +60,6 @@ print(detections)
 
 All latency figures: NVIDIA T4, TensorRT FP16, batch size 1.
 
-**Run on video:**
-```python
-model.predict_video("video.mp4", output_path="output.mp4", threshold=0.5)
-```
-
-**Run on webcam:**
-```python
-model.predict_webcam(threshold=0.5)
-```
-
 **Load fine-tuned checkpoint:**
 ```python
 model = RFDETRLarge(pretrain_weights="path/to/checkpoint_best_total.pth")
