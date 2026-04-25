@@ -34,6 +34,9 @@ from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
+_RF_HOME_ENV_VAR = "RF_HOME"
+_DEFAULT_CACHE_DIR = "~/.roboflow/models"
+
 
 @dataclass(frozen=True)
 class ModelWeightAsset:
@@ -267,6 +270,41 @@ class ModelWeights(ModelWeightsBase):
         "040bc3412af840fa8a47e0ff69b552ba",
     )
     # All methods inherited from ModelWeightsBase
+
+
+def get_model_cache_dir() -> str:
+    """Return the directory where RF-DETR caches downloaded model weights.
+
+    Reads the ``RF_HOME`` environment variable; defaults to ``~/.roboflow/models``
+    when the variable is not set.
+
+    Set ``RF_HOME`` to override the cache location for all RF-DETR models:
+
+    .. code-block:: bash
+
+        export RF_HOME=/mnt/shared/models
+
+    Args: None
+
+    Returns:
+        Absolute, user-expanded path to the model cache directory.  The directory
+        is *not* created by this function — callers that need it to exist should
+        call ``os.makedirs(get_model_cache_dir(), exist_ok=True)`` themselves.
+
+    Examples:
+        >>> import os
+        >>> _ = os.environ.pop("RF_HOME", None)  # ensure default
+        >>> expected = os.path.normpath(os.path.expanduser("~/.roboflow/models"))
+        >>> get_model_cache_dir() == expected
+        True
+        >>> os.environ["RF_HOME"] = "~/rfdetr_cache"
+        >>> expected = os.path.normpath(os.path.expanduser("~/rfdetr_cache"))
+        >>> get_model_cache_dir() == expected
+        True
+        >>> del os.environ["RF_HOME"]
+    """
+    cache_dir = os.environ.get(_RF_HOME_ENV_VAR, _DEFAULT_CACHE_DIR)
+    return os.path.abspath(os.path.expanduser(cache_dir))
 
 
 def download_pretrain_weights(

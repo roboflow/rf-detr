@@ -319,3 +319,69 @@ class TestDownloadErrorHandling:
         mock_download.assert_called_once()
         call_kwargs = mock_download.call_args[1]
         assert call_kwargs["filename"] == "/workspace/models/rf-detr-base.pth"
+
+
+# ---------------------------------------------------------------------------
+# maybe_download_pretrain_weights — RF_HOME cache-dir path resolution
+# ---------------------------------------------------------------------------
+
+
+class TestMaybeDownloadPretrainWeightsCacheDir:
+    """Verify that RFDETR.maybe_download_pretrain_weights resolves paths via RF_HOME."""
+
+    def _make_rfdetr(self, pretrain_weights):
+        """Return an RFDETR shell backed by a fully validated RFDETRBaseConfig.
+
+        Uses RFDETRBaseConfig (which supplies required field defaults) so the
+        expand_path field validator on pretrain_weights is exercised end-to-end.
+
+        Args:
+            pretrain_weights: Raw value to pass to RFDETRBaseConfig; the pydantic
+                validator resolves it before assigning to model_config.pretrain_weights.
+        """
+        from rfdetr.config import RFDETRBaseConfig
+        from rfdetr.detr import RFDETR
+
+        model = object.__new__(RFDETR)
+        model.model_config = RFDETRBaseConfig(pretrain_weights=pretrain_weights)
+        return model
+
+    def test_bare_filename_resolved_to_rf_home(self, monkeypatch, tmp_path):
+        """Bare filename (no directory separator) is joined with RF_HOME before download."""
+        monkeypatch.setenv("RF_HOME", str(tmp_path))
+        downloaded = []
+        monkeypatch.setattr("rfdetr.detr.download_pretrain_weights", lambda p, **kw: downloaded.append(p))
+
+        self._make_rfdetr("rf-detr-base.pth").maybe_download_pretrain_weights()
+
+        assert downloaded == [str(tmp_path / "rf-detr-base.pth")]
+
+    def test_path_with_directory_used_as_is(self, monkeypatch, tmp_path):
+        """Path containing a directory separator is not modified by RF_HOME."""
+        monkeypatch.setenv("RF_HOME", str(tmp_path / "should_not_be_used"))
+        downloaded = []
+        monkeypatch.setattr("rfdetr.detr.download_pretrain_weights", lambda p, **kw: downloaded.append(p))
+
+        explicit = str(tmp_path / "custom" / "my_weights.pth")
+        self._make_rfdetr(explicit).maybe_download_pretrain_weights()
+
+        assert downloaded == [explicit]
+
+    def test_none_pretrain_weights_skips_download(self, monkeypatch):
+        """None pretrain_weights returns without calling download."""
+        called = []
+        monkeypatch.setattr("rfdetr.detr.download_pretrain_weights", lambda *a, **kw: called.append(True))
+
+        self._make_rfdetr(None).maybe_download_pretrain_weights()
+
+        assert called == []
+
+    def test_cache_dir_created_when_absent(self, monkeypatch, tmp_path):
+        """RF_HOME directory is created if it does not already exist."""
+        cache_dir = tmp_path / "new_cache"
+        monkeypatch.setenv("RF_HOME", str(cache_dir))
+        monkeypatch.setattr("rfdetr.detr.download_pretrain_weights", lambda *a, **kw: None)
+
+        self._make_rfdetr("rf-detr-base.pth").maybe_download_pretrain_weights()
+
+        assert cache_dir.is_dir()

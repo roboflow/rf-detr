@@ -188,13 +188,26 @@ class ModelConfig(BaseConfig):
     @field_validator("pretrain_weights", mode="after")
     @classmethod
     def expand_path(cls, v: Optional[str]) -> Optional[str]:
-        """
-        Expand user paths (e.g., '~' or paths with separators) but leave simple filenames
-        (like 'rf-detr-base.pth') unchanged so they can match hosted model keys.
+        """Expand and resolve the pretrain_weights path.
+
+        Bare filenames (no directory component, e.g. ``rf-detr-base.pth``) are
+        resolved to the model cache directory so weights land in a stable,
+        user-configurable location (``~/.roboflow/models`` by default, or the
+        path set via the ``RF_HOME`` environment variable) instead of CWD.
+
+        Paths that already contain a directory separator (e.g. ``~/models/x.pth``,
+        ``/abs/path/x.pth``, ``models/x.pth``) are normalised with
+        ``os.path.realpath`` as before.
         """
         if v is None:
             return v
-        return os.path.realpath(os.path.expanduser(v))
+        expanded = os.path.expanduser(v)
+        if not os.path.dirname(expanded):
+            # Bare filename → use model cache dir so weights don't land in CWD.
+            from rfdetr.assets.model_weights import get_model_cache_dir
+
+            return os.path.join(get_model_cache_dir(), expanded)
+        return os.path.realpath(expanded)
 
     @field_validator("device", mode="before")
     @classmethod
