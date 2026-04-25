@@ -14,7 +14,7 @@ import supervision as sv
 import torch
 
 from rfdetr import RFDETRNano, RFDETRSegNano
-from rfdetr.detr import RFDETR
+from rfdetr.detr import RFDETR, _attach_detection_metadata
 
 _HTTP_IMAGE_URL = "http://images.cocodataset.org/val2017/000000397133.jpg"
 _HTTP_HOST = "images.cocodataset.org"
@@ -99,6 +99,15 @@ def test_predict_accepts_image_url() -> None:
 
 class TestPredictSourceData:
     """Verify ``predict()`` source metadata behavior."""
+
+    def test_attach_detection_metadata_handles_legacy_detections(self) -> None:
+        """Metadata attachment works when the Supervision object lacks metadata."""
+        detections = SimpleNamespace()
+        source_image = np.zeros((48, 64, 3), dtype=np.uint8)
+
+        _attach_detection_metadata(detections, "source_image", source_image)
+
+        assert detections.metadata["source_image"] is source_image
 
     def test_source_image_included_by_default(self) -> None:
         """source_image remains included by default for API compatibility."""

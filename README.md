@@ -26,6 +26,12 @@ To install RF-DETR, install the `rfdetr` package in a [**Python>=3.10**](https:/
 pip install rfdetr
 ```
 
+For Linux server or Docker inference images that should avoid GUI OpenCV system libraries, install the headless extra in a clean environment:
+
+```bash
+pip install "rfdetr[headless]"
+```
+
 <details>
 <summary>Install from source</summary>
 

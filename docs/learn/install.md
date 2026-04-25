@@ -34,6 +34,20 @@ RF-DETR supports several installation methods. Choose the option which best fits
         uv add rfdetr
         ```
 
+    === "Headless"
+
+        For Linux server or Docker inference environments where GUI OpenCV system libraries are not available, install the headless extra in a clean environment:
+
+        ```bash
+        pip install "rfdetr[headless]"
+        ```
+
+        With `uv`, use:
+
+        ```bash
+        uv pip install "rfdetr[headless]"
+        ```
+
     === "Source Archive"
 
         To install the latest development version of RF-DETR from source without cloning the full repository, run the command below.

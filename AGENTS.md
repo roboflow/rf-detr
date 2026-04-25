@@ -69,13 +69,14 @@ uv sync --all-groups
 See `pyproject.toml` for complete dependency specifications:
 
 - **Core:** PyTorch, torchvision, transformers, supervision, pydantic, pyDeprecate
-- **Optional:** `[train]` (training, including peft and pycocotools), `[lora]` (LoRA fine-tuning), `[plus]` (Plus models), `[onnx]` (ONNX export), `[loggers]` (tensorboard, wandb, mlflow, clearml)
+- **Optional:** `[headless]` (Linux server inference with headless OpenCV), `[train]` (training, including peft and pycocotools), `[lora]` (LoRA fine-tuning), `[plus]` (Plus models), `[onnx]` (ONNX export), `[loggers]` (tensorboard, wandb, mlflow, clearml)
 - **Development:** `tests`, `docs`, `build` groups
 
 **Important version constraints:**
 
 - PyTorch: >=2.2.0, \<3.0.0
 - Transformers: >=5.0.0, \<6.0.0
+- Headless inference: `rfdetr[headless]` constrains Supervision to the headless-OpenCV-compatible line and should be installed in a clean environment so only one `cv2` provider is present
 
 ## Testing
 

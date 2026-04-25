@@ -182,6 +182,21 @@ def _resolve_patch_size(patch_size: int | None, model_config: object, caller: st
     return patch_size
 
 
+def _attach_detection_metadata(detections: Any, key: str, value: Any) -> None:
+    """Attach metadata to Supervision Detections across supported versions.
+
+    Args:
+        detections: A Supervision Detections object.
+        key: Metadata key to set.
+        value: Metadata value to attach.
+    """
+    metadata = getattr(detections, "metadata", None)
+    if metadata is None:
+        metadata = {}
+        setattr(detections, "metadata", metadata)
+    metadata[key] = value
+
+
 def _ensure_model_on_device(model_ctx: Any) -> None:
     """Move model weights to the target device recorded in *model_ctx*.
 
@@ -1349,7 +1364,7 @@ class RFDETR:
                 )
 
             if include_source_image:
-                detections.metadata["source_image"] = source_images[i]
+                _attach_detection_metadata(detections, "source_image", source_images[i])
             detections.data["source_shape"] = np.tile(np.array(orig_sizes[i], dtype=np.int64), (len(detections), 1))
 
             # Attach class names so callers can map class_id → name without a
