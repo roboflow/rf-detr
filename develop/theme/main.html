@@ -43,7 +43,7 @@
         "url": "https://roboflow.com",
         "logo": {
           "@type": "ImageObject",
-          "url": "{{ page.canonical_url }}assets/roboflow-logo.svg",
+          "url": "https://rfdetr.roboflow.com/latest/assets/roboflow-logo.svg",
           "width": 400,
           "height": 400
         },
@@ -54,7 +54,8 @@
           "https://twitter.com/roboflow",
           "https://www.youtube.com/@Roboflow",
           "https://en.wikipedia.org/wiki/Roboflow",
-          "https://huggingface.co/roboflow"
+          "https://huggingface.co/roboflow",
+          "https://www.crunchbase.com/organization/roboflow"
         ]
       },
       {
@@ -112,7 +113,15 @@
         "name": "RF-DETR Documentation",
         "url": "{{ config.site_url }}",
         "description": {{ config.site_description | tojson }},
-        "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"}
+        "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
+        "potentialAction": {
+          "@type": "SearchAction",
+          "target": {
+            "@type": "EntryPoint",
+            "urlTemplate": "https://rfdetr.roboflow.com/latest/?q={search_term_string}"
+          },
+          "query-input": "required name=search_term_string"
+        }
       }
     ]
   }
@@ -221,9 +230,10 @@
     "proficiencyLevel": "Beginner to advanced",
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
+    "datePublished": "2025-03-01",
     {% if page.meta.git_revision_date_localized %}"dateModified": {{ (page.meta.git_revision_date_localized | replace(' ', 'T') + '+00:00') | tojson }},
-    {% endif %}{% if page.meta.image %}"image": {{ page.meta.image | tojson }},
-    {% endif %}"author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
+    {% endif %}"image": {{ (page.meta.image | default(config.extra.og_image | default('https://rfdetr.roboflow.com/latest/assets/roboflow-logo.svg'))) | tojson }},
+    "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "mainEntityOfPage": {"@type": "WebPage", "@id": "{{ page.canonical_url }}"},
     "speakable": {
@@ -232,7 +242,7 @@
     }
   }
   </script>
-  {# JSON-LD: BreadcrumbList — content pages (2-level: root -> page) #}
+  {# JSON-LD: BreadcrumbList — content pages; 3-level for pages inside a section #}
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
@@ -243,13 +253,27 @@
         "position": 1,
         "name": "RF-DETR",
         "item": "{{ config.site_url }}"
+      }{% if page.parent %},
+      {
+        "@type": "ListItem",
+        "position": 2,
+        "name": {{ page.parent.title | tojson }},
+        "item": "{% if page.parent.children and page.parent.children[0].canonical_url %}{{ page.parent.children[0].canonical_url }}{% else %}{{ config.site_url }}{% endif %}"
       },
+      {
+        "@type": "ListItem",
+        "position": 3,
+        "name": {{ page.title | tojson }},
+        "item": "{{ page.canonical_url }}"
+      }
+      {% else %},
       {
         "@type": "ListItem",
         "position": 2,
         "name": {{ page.title | tojson }},
         "item": "{{ page.canonical_url }}"
       }
+      {% endif %}
     ]
   }
   </script>
