@@ -42,11 +42,11 @@
 - Segmentation model range: RF-DETR-Seg-Nano 3.4 ms and 40.3 COCO AP50:95 through RF-DETR-Seg-2XLarge 21.8 ms and 49.9 COCO AP50:95
 
 ## Model Selection Answers
-- Use RF-DETR-Nano for the lowest latency edge detection workloads.
-- Use RF-DETR-Small or RF-DETR-Medium when latency is tight but accuracy must improve over Nano.
-- Use RF-DETR-Large for the best open Apache 2.0 accuracy-latency trade-off.
-- Use RF-DETR-XLarge or RF-DETR-2XLarge when maximum detection accuracy matters and the PML 1.0 plus package is acceptable.
-- Use RF-DETR-Seg models when instance masks are required; detection-only models return bounding boxes.
+- Use RF-DETR-Nano for lowest latency edge detection: 2.3 ms on T4 TensorRT FP16, 48.4 AP50:95 on COCO, 30.5 M params.
+- Use RF-DETR-Small (3.5 ms, 53.0 AP50:95) or RF-DETR-Medium (4.4 ms, 54.7 AP50:95) when latency is tight but accuracy must improve over Nano.
+- Use RF-DETR-Large for the best open Apache 2.0 accuracy-latency trade-off: 6.8 ms, 56.5 AP50:95 on COCO.
+- Use RF-DETR-XLarge (11.5 ms, 58.6 AP50:95) or RF-DETR-2XLarge (17.2 ms, 60.1 AP50:95) when maximum accuracy matters; requires rfdetr[plus] and PML 1.0 license.
+- Use RF-DETR-Seg-Large (8.8 ms, 47.1 AP50:95) or RF-DETR-Seg-2XLarge (21.8 ms, 49.9 AP50:95) when instance masks are required; detection-only models return bounding boxes only.
 
 ## API Reference
 - [RFDETR base class](https://rfdetr.roboflow.com/latest/reference/rfdetr/): train(), predict(), export(), deploy_to_roboflow()
