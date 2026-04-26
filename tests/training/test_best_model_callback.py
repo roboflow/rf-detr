@@ -134,6 +134,50 @@ class _ResumeProbeCallback(Callback):
 class TestBestModelCallback:
     """Verify best-model checkpoint saving and selection."""
 
+    def test_skip_best_epochs_defers_regular_checkpoint_until_threshold(self, tmp_path: Path) -> None:
+        """Best checkpoint tracking should ignore metrics before skip_best_epochs."""
+        cb = BestModelCallback(output_dir=str(tmp_path), skip_best_epochs=2)
+        pl_module = _make_pl_module()
+
+        trainer_epoch0 = _make_trainer({"val/mAP_50_95": 0.9}, current_epoch=0)
+        cb.on_validation_end(trainer_epoch0, pl_module)
+
+        trainer_epoch1 = _make_trainer({"val/mAP_50_95": 0.8}, current_epoch=1)
+        cb.on_validation_end(trainer_epoch1, pl_module)
+
+        assert not (tmp_path / "checkpoint_best_regular.pth").exists()
+        assert cb.best_model_score is None
+
+        trainer_epoch2 = _make_trainer({"val/mAP_50_95": 0.7}, current_epoch=2)
+        cb.on_validation_end(trainer_epoch2, pl_module)
+
+        assert (tmp_path / "checkpoint_best_regular.pth").exists()
+        assert cb.best_model_score.item() == pytest.approx(0.7)
+
+    def test_skip_best_epochs_defers_ema_checkpoint_until_threshold(self, tmp_path: Path) -> None:
+        """EMA best tracking should ignore metrics before skip_best_epochs."""
+        cb = BestModelCallback(
+            output_dir=str(tmp_path),
+            monitor_ema="val/ema_mAP_50_95",
+            skip_best_epochs=2,
+        )
+        pl_module = _make_pl_module()
+
+        trainer_epoch0 = _make_trainer({"val/mAP_50_95": 0.5, "val/ema_mAP_50_95": 0.9}, current_epoch=0)
+        cb.on_validation_end(trainer_epoch0, pl_module)
+
+        trainer_epoch1 = _make_trainer({"val/mAP_50_95": 0.5, "val/ema_mAP_50_95": 0.8}, current_epoch=1)
+        cb.on_validation_end(trainer_epoch1, pl_module)
+
+        assert not (tmp_path / "checkpoint_best_ema.pth").exists()
+        assert cb._best_ema == pytest.approx(0.0)
+
+        trainer_epoch2 = _make_trainer({"val/mAP_50_95": 0.5, "val/ema_mAP_50_95": 0.7}, current_epoch=2)
+        cb.on_validation_end(trainer_epoch2, pl_module)
+
+        assert (tmp_path / "checkpoint_best_ema.pth").exists()
+        assert cb._best_ema == pytest.approx(0.7)
+
     def test_regular_checkpoint_saved_on_improvement(self, tmp_path: Path) -> None:
         """Metric 0.5 > initial 0.0 causes checkpoint_best_regular.pth to be saved."""
         cb = BestModelCallback(output_dir=str(tmp_path))
@@ -347,6 +391,27 @@ class TestBestModelCallback:
         cb.on_validation_end(trainer, pl_module)
         cb.on_fit_end(trainer, pl_module)
 
+        trainer.test.assert_not_called()
+
+    def test_run_test_true_without_best_checkpoint_skips_trainer_test(self, tmp_path: Path) -> None:
+        """run_test=True must not test final weights when no best checkpoint was produced."""
+        from pytorch_lightning import LightningModule
+
+        class _ModuleWithTestStep(LightningModule):
+            def test_step(self, batch: object, batch_idx: int) -> None: ...
+
+        pl_module = _ModuleWithTestStep()
+        pl_module.model = MagicMock()
+        pl_module.model.state_dict.return_value = {"w": torch.zeros(1)}
+        pl_module.train_config = {"lr": 0.001}
+
+        cb = BestModelCallback(output_dir=str(tmp_path), run_test=True, skip_best_epochs=2)
+        trainer = _make_trainer({"val/mAP_50_95": 0.5}, current_epoch=0)
+
+        cb.on_validation_end(trainer, pl_module)
+        cb.on_fit_end(trainer, pl_module)
+
+        assert not (tmp_path / "checkpoint_best_total.pth").exists()
         trainer.test.assert_not_called()
 
     def test_run_test_loads_best_weights_before_test(self, tmp_path: Path) -> None:
@@ -808,6 +873,44 @@ class TestBestModelCallback:
 
 class TestRFDETREarlyStopping:
     """Verify early stopping logic mirrors legacy EarlyStoppingCallback."""
+
+    def test_skip_best_epochs_ignores_patience_before_threshold(self) -> None:
+        """Patience counting should start only after skip_best_epochs is reached."""
+        cb = RFDETREarlyStopping(patience=1, min_delta=0.001, skip_best_epochs=2)
+        pl_module = _make_pl_module()
+
+        trainer_epoch0 = _make_trainer({"val/mAP_50_95": 0.9}, current_epoch=0)
+        cb.on_validation_end(trainer_epoch0, pl_module)
+        trainer_epoch1 = _make_trainer({"val/mAP_50_95": 0.8}, current_epoch=1)
+        cb.on_validation_end(trainer_epoch1, pl_module)
+
+        assert cb.wait_count == 0
+        assert trainer_epoch1.should_stop is False
+
+        trainer_epoch2 = _make_trainer({"val/mAP_50_95": 0.7}, current_epoch=2)
+        cb.on_validation_end(trainer_epoch2, pl_module)
+        assert cb.best_score.item() == pytest.approx(0.7)
+        assert cb.wait_count == 0
+
+        trainer_epoch3 = _make_trainer({"val/mAP_50_95": 0.7}, current_epoch=3)
+        cb.on_validation_end(trainer_epoch3, pl_module)
+        assert trainer_epoch3.should_stop is True
+
+    def test_skip_best_epochs_uses_first_eligible_epoch_as_baseline(self) -> None:
+        """A stronger skipped epoch must not block the first eligible epoch from becoming best."""
+        cb = RFDETREarlyStopping(patience=2, min_delta=0.001, skip_best_epochs=2)
+        pl_module = _make_pl_module()
+
+        trainer_epoch0 = _make_trainer({"val/mAP_50_95": 0.95}, current_epoch=0)
+        cb.on_validation_end(trainer_epoch0, pl_module)
+        trainer_epoch1 = _make_trainer({"val/mAP_50_95": 0.85}, current_epoch=1)
+        cb.on_validation_end(trainer_epoch1, pl_module)
+
+        trainer_epoch2 = _make_trainer({"val/mAP_50_95": 0.40}, current_epoch=2)
+        cb.on_validation_end(trainer_epoch2, pl_module)
+
+        assert cb.best_score.item() == pytest.approx(0.40)
+        assert cb.wait_count == 0
 
     def test_no_stop_within_patience(self) -> None:
         """3 epochs with no improvement, patience=5 -- training continues."""

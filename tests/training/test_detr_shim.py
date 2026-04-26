@@ -376,6 +376,15 @@ class TestRFDETRTrainPTL:
         # get_train_config must have been called without device=
         assert "device" not in mock_self.get_train_config.call_args.kwargs
 
+    def test_skip_best_epochs_forwarded_to_get_train_config(self, tmp_path, patch_lit):
+        """Non-absorbed training kwargs must reach get_train_config unchanged."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self, skip_best_epochs=3)
+
+        mock_self.get_train_config.assert_called_once_with(skip_best_epochs=3)
+
     def test_batch_size_auto_resolved_before_module_and_datamodule_build(self, tmp_path, patch_lit):
         """batch_size='auto' is resolved to ints before module/datamodule init."""
         mock_self = _make_rfdetr_self(tmp_path, batch_size="auto", grad_accum_steps=99)
