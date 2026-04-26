@@ -466,6 +466,7 @@ class TrainConfig(BaseModel):
     ema_tau: int = 100
     lr_drop: int = 100
     checkpoint_interval: int = Field(default=10, ge=1)
+    skip_best_epochs: int = Field(default=0, ge=0)
     warmup_epochs: float = 0.0
     lr_vit_layer_decay: float = 0.8
     lr_component_decay: float = 0.7
