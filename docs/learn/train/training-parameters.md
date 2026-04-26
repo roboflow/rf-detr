@@ -105,9 +105,9 @@ For example, `RFDETRSegXLarge` uses `624x624`, which is valid because `624` is d
 
 ## Checkpoint Parameters
 
-| Parameter             | Type  | Default | Description                                                                                                                       |
-| --------------------- | ----- | ------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `checkpoint_interval` | `int` | `10`    | Frequency (in epochs) at which model checkpoints are saved. More frequent saves provide better coverage but consume more storage. |
+| Parameter             | Type  | Default | Description                                                                                                                            |
+| --------------------- | ----- | ------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `checkpoint_interval` | `int` | `10`    | Frequency (in epochs) at which model checkpoints are saved. More frequent saves provide better coverage but consume more storage.      |
 | `skip_best_epochs`    | `int` | `0`     | Ignore the first N epochs when tracking best checkpoints and early-stopping patience. Useful when fine-tuning from a prior checkpoint. |
 
 ### Checkpoint Files
@@ -124,12 +124,12 @@ During training, multiple checkpoints are saved:
 
 ## Early Stopping Parameters
 
-| Parameter                  | Type    | Default | Description                                            |
-| -------------------------- | ------- | ------- | ------------------------------------------------------ |
-| `early_stopping`           | `bool`  | `False` | Enable early stopping based on validation mAP.         |
-| `early_stopping_patience`  | `int`   | `10`    | Number of epochs without improvement before stopping.  |
-| `early_stopping_min_delta` | `float` | `0.001` | Minimum change in mAP to qualify as an improvement.    |
-| `early_stopping_use_ema`   | `bool`  | `False` | Whether to track improvements using EMA model metrics. |
+| Parameter                  | Type    | Default | Description                                                           |
+| -------------------------- | ------- | ------- | --------------------------------------------------------------------- |
+| `early_stopping`           | `bool`  | `False` | Enable early stopping based on validation mAP.                        |
+| `early_stopping_patience`  | `int`   | `10`    | Number of epochs without improvement before stopping.                 |
+| `early_stopping_min_delta` | `float` | `0.001` | Minimum change in mAP to qualify as an improvement.                   |
+| `early_stopping_use_ema`   | `bool`  | `False` | Whether to track improvements using EMA model metrics.                |
 | `skip_best_epochs`         | `int`   | `0`     | Delay best-model selection and early-stopping patience until epoch N. |
 
 ### Early Stopping Example
