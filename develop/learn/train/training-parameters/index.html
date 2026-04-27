@@ -90,7 +90,7 @@
   
   
   
-  <meta property="article:modified_time" content="<spanTclass="git-revision-date-localized-pluginTgit-revision-date-localized-plugin-iso_datetime"Ttitle="AprilT24,T2026T21:56:09TUTC">2026-04-24T21:56:09</span>+00:00">
+  <meta property="article:modified_time" content="<spanTclass="git-revision-date-localized-pluginTgit-revision-date-localized-plugin-iso_datetime"Ttitle="AprilT27,T2026T11:19:00TUTC">2026-04-27T11:19:00</span>+00:00">
   
   <script type="application/ld+json">
   {
@@ -105,7 +105,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "\u003cspanTclass=\"git-revision-date-localized-pluginTgit-revision-date-localized-plugin-iso_datetime\"Ttitle=\"AprilT24,T2026T21:56:09TUTC\"\u003e2026-04-24T21:56:09\u003c/span\u003e+00:00",
+    "dateModified": "\u003cspanTclass=\"git-revision-date-localized-pluginTgit-revision-date-localized-plugin-iso_datetime\"Ttitle=\"AprilT27,T2026T11:19:00TUTC\"\u003e2026-04-27T11:19:00\u003c/span\u003e+00:00",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -2814,6 +2814,12 @@
 <td><code>10</code></td>
 <td>Frequency (in epochs) at which model checkpoints are saved. More frequent saves provide better coverage but consume more storage.</td>
 </tr>
+<tr>
+<td><code>skip_best_epochs</code></td>
+<td><code>int</code></td>
+<td><code>0</code></td>
+<td>Ignore the first N epochs when tracking best checkpoints and early-stopping patience. Useful when fine-tuning from a prior checkpoint.</td>
+</tr>
 </tbody>
 </table>
 <h3 id="checkpoint-files">Checkpoint Files<a class="headerlink" href="#checkpoint-files" title="Permanent link">&para;</a></h3>
@@ -2883,6 +2889,12 @@
 <td><code>False</code></td>
 <td>Whether to track improvements using EMA model metrics.</td>
 </tr>
+<tr>
+<td><code>skip_best_epochs</code></td>
+<td><code>int</code></td>
+<td><code>0</code></td>
+<td>Ignore the first N epochs (0..N-1) for best-model selection and early-stopping patience.</td>
+</tr>
 </tbody>
 </table>
 <h3 id="early-stopping-example">Early Stopping Example<a class="headerlink" href="#early-stopping-example" title="Permanent link">&para;</a></h3>
@@ -2893,13 +2905,23 @@
 </span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">early_stopping</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
 </span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">early_stopping_patience</span><span class="o">=</span><span class="mi">15</span><span class="p">,</span>
 </span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="n">early_stopping_min_delta</span><span class="o">=</span><span class="mf">0.005</span><span class="p">,</span>
-</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="p">)</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>    <span class="n">skip_best_epochs</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="p">)</span>
 </span></code></pre></div>
 <p>This configuration will:</p>
 <ul>
 <li>Train for up to 200 epochs</li>
+<li>Ignore epochs 0-2 for best-checkpoint tracking and patience counting</li>
 <li>Stop early if mAP doesn't improve by at least 0.005 for 15 consecutive epochs</li>
 </ul>
+<div class="admonition note">
+<p class="admonition-title">Transfer learning with <code>pretrain_weights</code></p>
+<p>When fine-tuning from <code>pretrain_weights</code>, the pretrained model's epoch-0 validation mAP
+can be artificially high relative to the training trajectory on the new dataset. This causes
+<code>checkpoint_best_total.pth</code> to always contain the untrained pretrained weights and may
+trigger early stopping prematurely. Use <code>skip_best_epochs</code> to defer best-checkpoint
+selection and patience counting until the model has had time to adapt.</p>
+</div>
 <h2 id="logging-parameters">Logging Parameters<a class="headerlink" href="#logging-parameters" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -3359,7 +3381,7 @@
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="April 24, 2026 21:56:09 UTC">2026-04-24 21:56:09</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="April 27, 2026 11:19:00 UTC">2026-04-27 11:19:00</span>
   </span>
 
     
