@@ -97,7 +97,11 @@ class BestModelCallback(ModelCheckpoint):
         self._run_test = run_test
         self._best_ema: float = 0.0
         self._output_dir = Path(output_dir)
-        self._skip_best_epochs = max(0, int(skip_best_epochs))
+        if isinstance(skip_best_epochs, bool) or not isinstance(skip_best_epochs, int):
+            raise ValueError("skip_best_epochs must be a non-negative integer")
+        if skip_best_epochs < 0:
+            raise ValueError("skip_best_epochs must be greater than or equal to 0")
+        self._skip_best_epochs = skip_best_epochs
         # Stash current pl_module so _save_checkpoint (no pl_module param) can access it.
         self._current_pl_module: LightningModule | None = None
 
