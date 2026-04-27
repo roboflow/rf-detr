@@ -48,7 +48,7 @@ dependencies = [
 [project.optional-dependencies]
 headless = [
     "opencv-python-headless",          # OpenCV without GUI system libraries for Linux server images
-    "supervision>=0.20.0,<0.21.0",     # last Supervision line that depends on opencv-python-headless
+    "supervision>=0.20.0,<0.21.0",     # TODO: last Supervision line that depends on opencv-python-headless
 ]
 lora = [
     "peft",                            # LoRA backbone fine-tuning
