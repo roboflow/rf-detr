@@ -55,8 +55,21 @@ class BestModelCallback(ModelCheckpoint):
             EMA tracking.
         run_test: If ``True``, run ``trainer.test()`` on the best model at
             the end of training.
-        skip_best_epochs: Ignore validation metrics before this epoch when
-            tracking best regular and EMA checkpoints.
+        skip_best_epochs: Ignore the first N epochs (0..N-1) when tracking
+            best regular and EMA checkpoints.  Useful when fine-tuning from
+            ``pretrain_weights``: the pretrained model's epoch-0 mAP can
+            artificially dominate best-checkpoint selection before training
+            adapts to the new dataset.
+
+    Examples:
+        Skip the first 3 epochs so pretrained weights do not dominate:
+
+        >>> import tempfile
+        >>> from rfdetr.training.callbacks.best_model import BestModelCallback
+        >>> with tempfile.TemporaryDirectory() as tmp:
+        ...     cb = BestModelCallback(output_dir=tmp, skip_best_epochs=3)
+        ...     cb._skip_best_epochs
+        3
     """
 
     FILE_EXTENSION = ".pth"
@@ -415,8 +428,18 @@ class RFDETREarlyStopping(EarlyStopping):
         monitor_regular: Metric key for the regular model mAP.
         monitor_ema: Metric key for the EMA model mAP.
         verbose: If ``True``, log early stopping status each epoch.
-        skip_best_epochs: Ignore validation metrics before this epoch when
-            evaluating patience and best-score baselines.
+        skip_best_epochs: Ignore the first N epochs (0..N-1) when evaluating
+            patience and best-score baselines.  Set this when fine-tuning from
+            ``pretrain_weights`` to avoid premature stopping before the model
+            adapts to the new dataset.
+
+    Examples:
+        Fine-tuning from pretrained weights — skip first 3 epochs:
+
+        >>> from rfdetr.training.callbacks.best_model import RFDETREarlyStopping
+        >>> cb = RFDETREarlyStopping(patience=10, skip_best_epochs=3)
+        >>> cb._skip_best_epochs
+        3
     """
 
     _SYNTHETIC_MONITOR: str = "__rfdetr_effective_map__"

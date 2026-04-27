@@ -152,6 +152,14 @@ This configuration will:
 - Ignore epochs 0-2 for best-checkpoint tracking and patience counting
 - Stop early if mAP doesn't improve by at least 0.005 for 15 consecutive epochs
 
+!!! note "Transfer learning with `pretrain_weights`"
+
+    When fine-tuning from `pretrain_weights`, the pretrained model's epoch-0 validation mAP
+    can be artificially high relative to the training trajectory on the new dataset. This causes
+    `checkpoint_best_total.pth` to always contain the untrained pretrained weights and may
+    trigger early stopping prematurely. Use `skip_best_epochs` to defer best-checkpoint
+    selection and patience counting until the model has had time to adapt.
+
 ## Logging Parameters
 
 | Parameter     | Type   | Default | Description                                                                                                                                                                                                 |

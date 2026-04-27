@@ -178,6 +178,36 @@ class TestBestModelCallback:
         assert (tmp_path / "checkpoint_best_ema.pth").exists()
         assert cb._best_ema == pytest.approx(0.7)
 
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            pytest.param({}, id="default"),
+            pytest.param({"skip_best_epochs": 0}, id="explicit_zero"),
+        ],
+    )
+    def test_skip_best_epochs_zero_does_not_defer_epoch_zero(self, tmp_path: Path, kwargs: dict) -> None:
+        """skip_best_epochs=0 (explicit or default) makes epoch 0 eligible for checkpoint."""
+        cb = BestModelCallback(output_dir=str(tmp_path), **kwargs)
+        trainer = _make_trainer({"val/mAP_50_95": 0.5}, current_epoch=0)
+        pl_module = _make_pl_module()
+
+        cb.on_validation_end(trainer, pl_module)
+
+        assert (tmp_path / "checkpoint_best_regular.pth").exists()
+        assert cb.best_model_score is not None
+
+    def test_skip_best_epochs_exceeds_total_epochs_produces_no_checkpoint(self, tmp_path: Path) -> None:
+        """No checkpoint when skip_best_epochs >= total epochs (all epochs skipped)."""
+        cb = BestModelCallback(output_dir=str(tmp_path), skip_best_epochs=3)
+        pl_module = _make_pl_module()
+
+        for epoch in range(2):
+            trainer = _make_trainer({"val/mAP_50_95": 0.9}, current_epoch=epoch)
+            cb.on_validation_end(trainer, pl_module)
+
+        assert not (tmp_path / "checkpoint_best_regular.pth").exists()
+        assert cb.best_model_score is None
+
     def test_regular_checkpoint_saved_on_improvement(self, tmp_path: Path) -> None:
         """Metric 0.5 > initial 0.0 causes checkpoint_best_regular.pth to be saved."""
         cb = BestModelCallback(output_dir=str(tmp_path))
@@ -911,6 +941,24 @@ class TestRFDETREarlyStopping:
 
         assert cb.best_score.item() == pytest.approx(0.40)
         assert cb.wait_count == 0
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            pytest.param({}, id="default"),
+            pytest.param({"skip_best_epochs": 0}, id="explicit_zero"),
+        ],
+    )
+    def test_skip_best_epochs_zero_does_not_defer_epoch_zero(self, kwargs: dict) -> None:
+        """skip_best_epochs=0 (explicit or default) makes epoch 0 eligible for patience tracking."""
+        cb = RFDETREarlyStopping(patience=5, min_delta=0.001, **kwargs)
+        pl_module = _make_pl_module()
+
+        trainer = _make_trainer({"val/mAP_50_95": 0.5}, current_epoch=0)
+        cb.on_validation_end(trainer, pl_module)
+
+        assert cb.best_score is not None
+        assert cb.best_score.item() == pytest.approx(0.5)
 
     def test_no_stop_within_patience(self) -> None:
         """3 epochs with no improvement, patience=5 -- training continues."""
