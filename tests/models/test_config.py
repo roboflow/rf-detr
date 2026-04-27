@@ -195,6 +195,10 @@ class TestTrainConfigT42PromotedFields:
         """eval_interval defaults to 1 (evaluate each epoch)."""
         assert self._tc(tmp_path).eval_interval == 1
 
+    def test_skip_best_epochs_default_is_zero(self, tmp_path):
+        """skip_best_epochs defaults to 0 for backward compatibility."""
+        assert self._tc(tmp_path).skip_best_epochs == 0
+
     def test_ema_update_interval_default_is_one(self, tmp_path):
         """ema_update_interval defaults to 1 (update every step)."""
         assert self._tc(tmp_path).ema_update_interval == 1
@@ -221,6 +225,7 @@ class TestTrainConfigT42PromotedFields:
             pytest.param("dont_save_weights", True, id="dont_save_weights"),
             pytest.param("run_test", True, id="run_test"),
             pytest.param("eval_interval", 3, id="eval_interval"),
+            pytest.param("skip_best_epochs", 3, id="skip_best_epochs"),
             pytest.param("ema_update_interval", 4, id="ema_update_interval"),
             pytest.param("compute_val_loss", False, id="compute_val_loss"),
             pytest.param("compute_test_loss", False, id="compute_test_loss"),
@@ -246,6 +251,7 @@ class TestTrainConfigT42PromotedFields:
         ("field", "value"),
         [
             pytest.param("eval_interval", 0, id="eval_interval_zero"),
+            pytest.param("skip_best_epochs", -1, id="skip_best_epochs_negative"),
             pytest.param("ema_update_interval", 0, id="ema_update_interval_zero"),
             pytest.param("prefetch_factor", 0, id="prefetch_factor_zero"),
         ],

@@ -90,6 +90,12 @@ class TestBuildTrainerCallbacks:
         types = [type(cb) for cb in trainer.callbacks]
         assert BestModelCallback in types
 
+    def test_skip_best_epochs_forwarded_to_best_model_callback(self, tmp_path):
+        """BestModelCallback receives skip_best_epochs from TrainConfig."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=False, skip_best_epochs=3), _mc())
+        best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
+        assert best_cb._skip_best_epochs == 3
+
     def test_latest_model_checkpoint_present(self, tmp_path):
         """A ModelCheckpoint (not BestModelCallback) with every_n_epochs==1 is included when checkpoint_interval > 1."""
         trainer = build_trainer(_tc(tmp_path, use_ema=False, checkpoint_interval=2), _mc())
@@ -192,6 +198,12 @@ class TestBuildTrainerCallbacks:
         trainer = build_trainer(_tc(tmp_path, early_stopping=True), _mc())
         types = [type(cb) for cb in trainer.callbacks]
         assert RFDETREarlyStopping in types
+
+    def test_skip_best_epochs_forwarded_to_early_stopping(self, tmp_path):
+        """RFDETREarlyStopping receives skip_best_epochs from TrainConfig."""
+        trainer = build_trainer(_tc(tmp_path, early_stopping=True, skip_best_epochs=4), _mc())
+        early_stop_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RFDETREarlyStopping))
+        assert early_stop_cb._skip_best_epochs == 4
 
     def test_no_early_stopping_when_disabled(self, tmp_path):
         """RFDETREarlyStopping is absent when early_stopping=False."""

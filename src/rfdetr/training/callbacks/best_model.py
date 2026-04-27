@@ -55,6 +55,21 @@ class BestModelCallback(ModelCheckpoint):
             EMA tracking.
         run_test: If ``True``, run ``trainer.test()`` on the best model at
             the end of training.
+        skip_best_epochs: Ignore the first N epochs (0..N-1) when tracking
+            best regular and EMA checkpoints.  Useful when fine-tuning from
+            ``pretrain_weights``: the pretrained model's epoch-0 mAP can
+            artificially dominate best-checkpoint selection before training
+            adapts to the new dataset.
+
+    Examples:
+        Skip the first 3 epochs so pretrained weights do not dominate:
+
+        >>> import tempfile
+        >>> from rfdetr.training.callbacks.best_model import BestModelCallback
+        >>> with tempfile.TemporaryDirectory() as tmp:
+        ...     cb = BestModelCallback(output_dir=tmp, skip_best_epochs=3)
+        ...     cb._skip_best_epochs
+        3
     """
 
     FILE_EXTENSION = ".pth"
@@ -65,6 +80,7 @@ class BestModelCallback(ModelCheckpoint):
         monitor_regular: str = "val/mAP_50_95",
         monitor_ema: str | None = None,
         run_test: bool = True,
+        skip_best_epochs: int = 0,
     ) -> None:
         super().__init__(
             dirpath=output_dir,
@@ -81,6 +97,11 @@ class BestModelCallback(ModelCheckpoint):
         self._run_test = run_test
         self._best_ema: float = 0.0
         self._output_dir = Path(output_dir)
+        if isinstance(skip_best_epochs, bool) or not isinstance(skip_best_epochs, int):
+            raise TypeError("skip_best_epochs must be a non-negative integer")
+        if skip_best_epochs < 0:
+            raise ValueError("skip_best_epochs must be greater than or equal to 0")
+        self._skip_best_epochs = skip_best_epochs
         # Stash current pl_module so _save_checkpoint (no pl_module param) can access it.
         self._current_pl_module: LightningModule | None = None
 
@@ -284,8 +305,11 @@ class BestModelCallback(ModelCheckpoint):
             trainer: The Lightning Trainer instance.
             pl_module: The ``RFDETRModelModule`` being trained.
         """
-        # Stash for use inside _save_checkpoint (which has no pl_module param).
+        # Stash before the skip guard — eligible epochs still need this reference
+        # inside _save_checkpoint (which receives no pl_module param).
         self._current_pl_module = pl_module
+        if trainer.current_epoch < self._skip_best_epochs:
+            return
         # Guard: only run checkpoint logic when the monitored metric was actually
         # logged this epoch (non-eval epochs with eval_interval > 1 skip COCO eval
         # so the key is absent from callback_metrics).
@@ -363,15 +387,22 @@ class BestModelCallback(ModelCheckpoint):
             cls_test_step = getattr(type(pl_module), "test_step", None)
             has_test_step = cls_test_step is not None and cls_test_step is not LightningModule.test_step
             if has_test_step:
+                if not total_path.exists():
+                    logger.warning(
+                        "Skipping trainer.test() because no best checkpoint was produced. "
+                        "Ensure the monitored metric is logged on evaluation epochs, that evaluation "
+                        "runs often enough, and that skip_best_epochs is smaller than the number of "
+                        "training epochs."
+                    )
+                    return
                 # Load best weights before test — mirrors legacy main.py:602-609.
-                if total_path.exists():
-                    ckpt = torch.load(total_path, map_location="cpu", weights_only=False)
-                    # Checkpoints always store plain keys; load into the unwrapped module
-                    # so compiled (OptimizedModule) and non-compiled models both work.
-                    _orig = getattr(pl_module.model, "_orig_mod", None)
-                    raw = _orig if isinstance(_orig, torch.nn.Module) else pl_module.model
-                    raw.load_state_dict(ckpt["model"], strict=True)
-                    logger.info("Loaded best weights from %s for test evaluation.", total_path)
+                ckpt = torch.load(total_path, map_location="cpu", weights_only=False)
+                # Checkpoints always store plain keys; load into the unwrapped module
+                # so compiled (OptimizedModule) and non-compiled models both work.
+                _orig = getattr(pl_module.model, "_orig_mod", None)
+                raw = _orig if isinstance(_orig, torch.nn.Module) else pl_module.model
+                raw.load_state_dict(ckpt["model"], strict=True)
+                logger.info("Loaded best weights from %s for test evaluation.", total_path)
                 trainer.test(pl_module, datamodule=trainer.datamodule, verbose=False)
 
 
@@ -401,6 +432,18 @@ class RFDETREarlyStopping(EarlyStopping):
         monitor_regular: Metric key for the regular model mAP.
         monitor_ema: Metric key for the EMA model mAP.
         verbose: If ``True``, log early stopping status each epoch.
+        skip_best_epochs: Ignore the first N epochs (0..N-1) when evaluating
+            patience and best-score baselines.  Set this when fine-tuning from
+            ``pretrain_weights`` to avoid premature stopping before the model
+            adapts to the new dataset.
+
+    Examples:
+        Fine-tuning from pretrained weights — skip first 3 epochs:
+
+        >>> from rfdetr.training.callbacks.best_model import RFDETREarlyStopping
+        >>> cb = RFDETREarlyStopping(patience=10, skip_best_epochs=3)
+        >>> cb._skip_best_epochs
+        3
     """
 
     _SYNTHETIC_MONITOR: str = "__rfdetr_effective_map__"
@@ -413,6 +456,7 @@ class RFDETREarlyStopping(EarlyStopping):
         monitor_regular: str = "val/mAP_50_95",
         monitor_ema: str = "val/ema_mAP_50_95",
         verbose: bool = True,
+        skip_best_epochs: int = 0,
     ) -> None:
         super().__init__(
             monitor=self._SYNTHETIC_MONITOR,
@@ -425,9 +469,15 @@ class RFDETREarlyStopping(EarlyStopping):
             strict=False,  # We inject the key ourselves; don't crash if temporarily absent.
             log_rank_zero_only=True,
         )
+        if isinstance(skip_best_epochs, bool) or not isinstance(skip_best_epochs, int):
+            raise TypeError("skip_best_epochs must be a non-negative integer")
+        if skip_best_epochs < 0:
+            raise ValueError("skip_best_epochs must be greater than or equal to 0")
+
         self._monitor_regular = monitor_regular
         self._monitor_ema = monitor_ema
         self._use_ema = use_ema
+        self._skip_best_epochs = skip_best_epochs
 
     def on_validation_end(self, trainer: Trainer, pl_module: LightningModule) -> None:
         """Compute effective mAP and delegate to parent stopping logic.
@@ -441,6 +491,9 @@ class RFDETREarlyStopping(EarlyStopping):
             trainer: The Lightning Trainer instance.
             pl_module: The ``RFDETRModelModule`` being trained.
         """
+        if trainer.current_epoch < self._skip_best_epochs:
+            return
+
         metrics = trainer.callback_metrics
         regular_tensor = metrics.get(self._monitor_regular)
         ema_tensor = metrics.get(self._monitor_ema)

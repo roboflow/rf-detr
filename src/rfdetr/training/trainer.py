@@ -248,6 +248,7 @@ def build_trainer(
             output_dir=tc.output_dir,
             monitor_ema="val/ema_mAP_50_95" if enable_ema else None,
             run_test=tc.run_test,
+            skip_best_epochs=tc.skip_best_epochs,
         )
     )
 
@@ -258,6 +259,7 @@ def build_trainer(
                 patience=tc.early_stopping_patience,
                 min_delta=tc.early_stopping_min_delta,
                 use_ema=tc.early_stopping_use_ema,
+                skip_best_epochs=tc.skip_best_epochs,
             )
         )
 
