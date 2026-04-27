@@ -288,7 +288,8 @@ class BestModelCallback(ModelCheckpoint):
             trainer: The Lightning Trainer instance.
             pl_module: The ``RFDETRModelModule`` being trained.
         """
-        # Stash for use inside _save_checkpoint (which has no pl_module param).
+        # Stash before the skip guard — eligible epochs still need this reference
+        # inside _save_checkpoint (which receives no pl_module param).
         self._current_pl_module = pl_module
         if trainer.current_epoch < self._skip_best_epochs:
             return
@@ -372,7 +373,9 @@ class BestModelCallback(ModelCheckpoint):
                 if not total_path.exists():
                     logger.warning(
                         "Skipping trainer.test() because no best checkpoint was produced. "
-                        "Reduce skip_best_epochs or train for more epochs to enable best-model evaluation."
+                        "Ensure the monitored metric is logged on evaluation epochs, that evaluation "
+                        "runs often enough, and that skip_best_epochs is smaller than the number of "
+                        "training epochs."
                     )
                     return
                 # Load best weights before test — mirrors legacy main.py:602-609.

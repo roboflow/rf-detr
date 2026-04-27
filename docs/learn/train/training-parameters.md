@@ -124,13 +124,13 @@ During training, multiple checkpoints are saved:
 
 ## Early Stopping Parameters
 
-| Parameter                  | Type    | Default | Description                                                           |
-| -------------------------- | ------- | ------- | --------------------------------------------------------------------- |
-| `early_stopping`           | `bool`  | `False` | Enable early stopping based on validation mAP.                        |
-| `early_stopping_patience`  | `int`   | `10`    | Number of epochs without improvement before stopping.                 |
-| `early_stopping_min_delta` | `float` | `0.001` | Minimum change in mAP to qualify as an improvement.                   |
-| `early_stopping_use_ema`   | `bool`  | `False` | Whether to track improvements using EMA model metrics.                |
-| `skip_best_epochs`         | `int`   | `0`     | Delay best-model selection and early-stopping patience until epoch N. |
+| Parameter                  | Type    | Default | Description                                                                              |
+| -------------------------- | ------- | ------- | ---------------------------------------------------------------------------------------- |
+| `early_stopping`           | `bool`  | `False` | Enable early stopping based on validation mAP.                                           |
+| `early_stopping_patience`  | `int`   | `10`    | Number of epochs without improvement before stopping.                                    |
+| `early_stopping_min_delta` | `float` | `0.001` | Minimum change in mAP to qualify as an improvement.                                      |
+| `early_stopping_use_ema`   | `bool`  | `False` | Whether to track improvements using EMA model metrics.                                   |
+| `skip_best_epochs`         | `int`   | `0`     | Ignore the first N epochs (0..N-1) for best-model selection and early-stopping patience. |
 
 ### Early Stopping Example
 
