@@ -105,9 +105,10 @@ For example, `RFDETRSegXLarge` uses `624x624`, which is valid because `624` is d
 
 ## Checkpoint Parameters
 
-| Parameter             | Type  | Default | Description                                                                                                                       |
-| --------------------- | ----- | ------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `checkpoint_interval` | `int` | `10`    | Frequency (in epochs) at which model checkpoints are saved. More frequent saves provide better coverage but consume more storage. |
+| Parameter             | Type  | Default | Description                                                                                                                            |
+| --------------------- | ----- | ------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `checkpoint_interval` | `int` | `10`    | Frequency (in epochs) at which model checkpoints are saved. More frequent saves provide better coverage but consume more storage.      |
+| `skip_best_epochs`    | `int` | `0`     | Ignore the first N epochs when tracking best checkpoints and early-stopping patience. Useful when fine-tuning from a prior checkpoint. |
 
 ### Checkpoint Files
 
@@ -123,12 +124,13 @@ During training, multiple checkpoints are saved:
 
 ## Early Stopping Parameters
 
-| Parameter                  | Type    | Default | Description                                            |
-| -------------------------- | ------- | ------- | ------------------------------------------------------ |
-| `early_stopping`           | `bool`  | `False` | Enable early stopping based on validation mAP.         |
-| `early_stopping_patience`  | `int`   | `10`    | Number of epochs without improvement before stopping.  |
-| `early_stopping_min_delta` | `float` | `0.001` | Minimum change in mAP to qualify as an improvement.    |
-| `early_stopping_use_ema`   | `bool`  | `False` | Whether to track improvements using EMA model metrics. |
+| Parameter                  | Type    | Default | Description                                                                              |
+| -------------------------- | ------- | ------- | ---------------------------------------------------------------------------------------- |
+| `early_stopping`           | `bool`  | `False` | Enable early stopping based on validation mAP.                                           |
+| `early_stopping_patience`  | `int`   | `10`    | Number of epochs without improvement before stopping.                                    |
+| `early_stopping_min_delta` | `float` | `0.001` | Minimum change in mAP to qualify as an improvement.                                      |
+| `early_stopping_use_ema`   | `bool`  | `False` | Whether to track improvements using EMA model metrics.                                   |
+| `skip_best_epochs`         | `int`   | `0`     | Ignore the first N epochs (0..N-1) for best-model selection and early-stopping patience. |
 
 ### Early Stopping Example
 
@@ -140,13 +142,23 @@ model.train(
     early_stopping=True,
     early_stopping_patience=15,
     early_stopping_min_delta=0.005,
+    skip_best_epochs=3,
 )
 ```
 
 This configuration will:
 
 - Train for up to 200 epochs
+- Ignore epochs 0-2 for best-checkpoint tracking and patience counting
 - Stop early if mAP doesn't improve by at least 0.005 for 15 consecutive epochs
+
+!!! note "Transfer learning with `pretrain_weights`"
+
+    When fine-tuning from `pretrain_weights`, the pretrained model's epoch-0 validation mAP
+    can be artificially high relative to the training trajectory on the new dataset. This causes
+    `checkpoint_best_total.pth` to always contain the untrained pretrained weights and may
+    trigger early stopping prematurely. Use `skip_best_epochs` to defer best-checkpoint
+    selection and patience counting until the model has had time to adapt.
 
 ## Logging Parameters
 
