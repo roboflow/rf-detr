@@ -98,7 +98,7 @@ class BestModelCallback(ModelCheckpoint):
         self._best_ema: float = 0.0
         self._output_dir = Path(output_dir)
         if isinstance(skip_best_epochs, bool) or not isinstance(skip_best_epochs, int):
-            raise ValueError("skip_best_epochs must be a non-negative integer")
+            raise TypeError("skip_best_epochs must be a non-negative integer")
         if skip_best_epochs < 0:
             raise ValueError("skip_best_epochs must be greater than or equal to 0")
         self._skip_best_epochs = skip_best_epochs

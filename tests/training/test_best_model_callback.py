@@ -221,6 +221,22 @@ class TestBestModelCallback:
         assert not (tmp_path / "checkpoint_best_regular.pth").exists()
         assert cb.best_model_score is None
 
+    @pytest.mark.parametrize(
+        "invalid_value, exc_type",
+        [
+            pytest.param(True, TypeError, id="bool_true"),
+            pytest.param(2.5, TypeError, id="float"),
+            pytest.param("3", TypeError, id="string"),
+            pytest.param(-1, ValueError, id="negative"),
+        ],
+    )
+    def test_skip_best_epochs_invalid_input_raises(
+        self, tmp_path: Path, invalid_value: object, exc_type: type[Exception]
+    ) -> None:
+        """BestModelCallback raises TypeError for non-int and ValueError for negative skip_best_epochs."""
+        with pytest.raises(exc_type):
+            BestModelCallback(output_dir=str(tmp_path), skip_best_epochs=invalid_value)  # type: ignore[arg-type]
+
     def test_regular_checkpoint_saved_on_improvement(self, tmp_path: Path) -> None:
         """Metric 0.5 > initial 0.0 causes checkpoint_best_regular.pth to be saved."""
         cb = BestModelCallback(output_dir=str(tmp_path))
@@ -981,6 +997,20 @@ class TestRFDETREarlyStopping:
 
         assert cb.best_score is not None
         assert cb.best_score.item() == pytest.approx(0.5)
+
+    @pytest.mark.parametrize(
+        "invalid_value, exc_type",
+        [
+            pytest.param(True, TypeError, id="bool_true"),
+            pytest.param(2.5, TypeError, id="float"),
+            pytest.param("3", TypeError, id="string"),
+            pytest.param(-1, ValueError, id="negative"),
+        ],
+    )
+    def test_skip_best_epochs_invalid_input_raises(self, invalid_value: object, exc_type: type[Exception]) -> None:
+        """RFDETREarlyStopping raises TypeError for non-int and ValueError for negative skip_best_epochs."""
+        with pytest.raises(exc_type):
+            RFDETREarlyStopping(patience=5, skip_best_epochs=invalid_value)  # type: ignore[arg-type]
 
     def test_no_stop_within_patience(self) -> None:
         """3 epochs with no improvement, patience=5 -- training continues."""
