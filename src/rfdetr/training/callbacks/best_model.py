@@ -465,10 +465,15 @@ class RFDETREarlyStopping(EarlyStopping):
             strict=False,  # We inject the key ourselves; don't crash if temporarily absent.
             log_rank_zero_only=True,
         )
+        if isinstance(skip_best_epochs, bool) or not isinstance(skip_best_epochs, int):
+            raise TypeError("skip_best_epochs must be a non-negative integer")
+        if skip_best_epochs < 0:
+            raise ValueError("skip_best_epochs must be greater than or equal to 0")
+
         self._monitor_regular = monitor_regular
         self._monitor_ema = monitor_ema
         self._use_ema = use_ema
-        self._skip_best_epochs = max(0, int(skip_best_epochs))
+        self._skip_best_epochs = skip_best_epochs
 
     def on_validation_end(self, trainer: Trainer, pl_module: LightningModule) -> None:
         """Compute effective mAP and delegate to parent stopping logic.
