@@ -1154,3 +1154,120 @@ class TestReinitializeDetectionHead:
         module.reinitialize_detection_head(num_classes=num_classes)
 
         fake_model.reinitialize_detection_head.assert_called_once_with(num_classes)
+
+
+class TestOnLoadCheckpoint:
+    """Tests for on_load_checkpoint() — covers legacy .pth normalisation and
+    positional-embedding interpolation for custom-resolution PTL checkpoints.
+
+    Regression: issue #998 — resume with custom resolution crashed because
+    on_load_checkpoint did not interpolate PE before PTL applied the state dict.
+    """
+
+    _PE_KEY = "model.backbone.0.encoder.encoder.embeddings.position_embeddings"
+
+    def _make_ptl_checkpoint(self, pe_size_src: int, _pe_size_tgt: int, dim: int = 16) -> dict:
+        """Build a minimal PTL checkpoint with mismatched PE shape.
+
+        Args:
+            pe_size_src: Source grid side length (checkpoint was saved with this PE).
+            _pe_size_tgt: Target grid side length (model was built with this PE),
+                accepted for test readability but intentionally unused here.
+            dim: Embedding dimension (small value for fast tests).
+
+        Returns:
+            Checkpoint dict in PTL format with ``state_dict`` key.
+        """
+        n_src = pe_size_src * pe_size_src + 1  # +1 for class token
+        return {
+            "state_dict": {
+                self._PE_KEY: torch.randn(1, n_src, dim),
+                "model.other_layer.weight": torch.randn(4, 4),
+            },
+            "epoch": 44,
+            "global_step": 1000,
+        }
+
+    def _make_legacy_pth_checkpoint(self, pe_size_src: int, dim: int = 16) -> dict:
+        """Build a minimal legacy .pth checkpoint (no ``state_dict`` key).
+
+        Args:
+            pe_size_src: Source grid side length.
+            dim: Embedding dimension.
+
+        Returns:
+            Checkpoint dict in legacy format with ``model`` key only.
+        """
+        n_src = pe_size_src * pe_size_src + 1
+        pe_key_no_prefix = self._PE_KEY[len("model.") :]
+        return {
+            "model": {
+                pe_key_no_prefix: torch.randn(1, n_src, dim),
+                "other_layer.weight": torch.randn(4, 4),
+            }
+        }
+
+    @pytest.mark.parametrize(
+        "pe_src,pe_tgt",
+        [
+            pytest.param(36, 56, id="pe_interpolated_in_ptl_checkpoint"),
+            pytest.param(36, 36, id="pe_unchanged_when_shapes_match"),
+        ],
+    )
+    def test_ptl_checkpoint_pe_shape(self, pe_src, pe_tgt, build_module):
+        """on_load_checkpoint must produce PE with tokens matching the model's positional_encoding_size.
+
+        Regression for #998: resume from .ckpt with custom resolution crashed because
+        PTL applied the checkpoint state dict before PE shapes were reconciled.
+        """
+        checkpoint = self._make_ptl_checkpoint(pe_size_src=pe_src, _pe_size_tgt=pe_tgt)
+
+        module, _, _, _ = build_module(model_config=_base_model_config(positional_encoding_size=pe_tgt))
+        module.on_load_checkpoint(checkpoint)
+
+        pe_after = checkpoint["state_dict"][self._PE_KEY]
+        expected_tokens = pe_tgt * pe_tgt + 1
+        assert pe_after.shape == (1, expected_tokens, 16), (
+            f"PE should have {expected_tokens} tokens, got shape {tuple(pe_after.shape)}"
+        )
+
+    def test_legacy_pth_normalised_and_pe_interpolated(self, build_module):
+        """Legacy .pth checkpoint (no state_dict key) must be normalised and PE interpolated.
+
+        on_load_checkpoint converts the raw "model" dict to PTL format and must
+        also interpolate PE so that PTL's subsequent load_state_dict does not crash.
+        """
+        pe_src, pe_tgt = 36, 56
+        checkpoint = self._make_legacy_pth_checkpoint(pe_size_src=pe_src)
+
+        module, _, _, _ = build_module(model_config=_base_model_config(positional_encoding_size=pe_tgt))
+        module.on_load_checkpoint(checkpoint)
+
+        assert "state_dict" in checkpoint, "Legacy checkpoint must be normalised to PTL format."
+        pe_after = checkpoint["state_dict"][self._PE_KEY]
+        expected_tokens = pe_tgt * pe_tgt + 1
+        assert pe_after.shape == (1, expected_tokens, 16)
+
+    def test_non_pe_tensors_not_modified(self, build_module):
+        """on_load_checkpoint must not alter non-PE tensors in the state dict."""
+        pe_src, pe_tgt = 36, 56
+        checkpoint = self._make_ptl_checkpoint(pe_size_src=pe_src, _pe_size_tgt=pe_tgt)
+        original_other = checkpoint["state_dict"]["model.other_layer.weight"].clone()
+
+        module, _, _, _ = build_module(model_config=_base_model_config(positional_encoding_size=pe_tgt))
+        module.on_load_checkpoint(checkpoint)
+
+        assert torch.equal(checkpoint["state_dict"]["model.other_layer.weight"], original_other)
+
+    def test_no_pe_keys_in_state_dict_is_noop(self, build_module):
+        """on_load_checkpoint must not raise when state_dict contains no PE keys."""
+        checkpoint = {
+            "state_dict": {"model.some_layer.weight": torch.randn(4, 4)},
+            "epoch": 1,
+        }
+        original_keys = set(checkpoint["state_dict"].keys())
+
+        module, _, _, _ = build_module(model_config=_base_model_config(positional_encoding_size=36))
+        module.on_load_checkpoint(checkpoint)
+
+        assert set(checkpoint["state_dict"].keys()) == original_keys
