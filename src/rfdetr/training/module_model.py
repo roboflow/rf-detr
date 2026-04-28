@@ -127,6 +127,8 @@ def _load_python_optimizer(optimizer_path: str) -> type[torch.optim.Optimizer]:
     try:
         module = importlib.import_module(module_name)
     except ModuleNotFoundError as exc:
+        if exc.name != module_name:
+            raise
         raise ImportError(
             f"Could not import optimizer module {module_name!r} for optimizer={optimizer_path!r}."
         ) from exc
