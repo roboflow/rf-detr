@@ -69,6 +69,28 @@ module = RFDETRModelModule(model_config, train_config)
 
 The raw `nn.Module` is `module.model`. After training completes, `RFDETR.train()` syncs it back onto `self.model.model` so `predict()` and `export()` continue to work.
 
+### Custom optimizer
+
+`TrainConfig.optimizer` selects the optimizer used in `configure_optimizers`. The default is `"adamw"` (RF-DETR's built-in fused `torch.optim.AdamW` path). Any name from the [`pytorch-optimizer`](https://kozistr.tech/pytorch_optimizer/) library can be used directly — for example `"lion"`, `"adabelief"`, or `"sophia"`. The explicit `pytorch_optimizer:` prefix selects an optimizer by its exact library name.
+
+```python
+train_config = TrainConfig(
+    ...,
+    optimizer="lion",
+    optimizer_kwargs={"weight_decouple": True},
+)
+```
+
+See [Training parameters — optimizer](training-parameters.md) for the full parameter reference and examples.
+
+!!! warning "Wrapping optimizers are not compatible with PTL `automatic_optimization`"
+
+    `pytorch-optimizer` ships several *wrapping* optimizers that change the semantics of `optimizer.step()`: **SAM** (sharpness-aware minimisation — requires two forward/backward passes per step), **Lookahead** and **Ranger** / **Ranger21** (slow-weights bookkeeping across inner steps), **PCGrad**, and **GradientCentralization**.
+
+    PyTorch Lightning's default `automatic_optimization=True` calls `optimizer.step()` once per backward pass, which is **incorrect** for SAM and fragile for Lookahead. These optimizers also expect a base optimizer as their first positional argument (not `params`), so RF-DETR's `_instantiate_optimizer` will raise a `TypeError` at training start.
+
+    Use standard non-wrapping optimizers (`lion`, `adabelief`, `sophia`, `adan`, `ranger_qh`, etc.) with `TrainConfig.optimizer`. If you need SAM or Lookahead, override `configure_optimizers` and set `self.automatic_optimization = False` in `RFDETRModelModule.__init__`.
+
 ---
 
 ## RFDETRDataModule
