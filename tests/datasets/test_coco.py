@@ -389,3 +389,63 @@ class TestBuildRoboflowFromCocoBackendResolution:
             mock_transforms.return_value = MagicMock()
             build_roboflow_from_coco("train", args, resolution=640)
         assert mock_transforms.call_args.kwargs["gpu_postprocess"] is False
+
+
+class TestBuilderGpuPostprocess:
+    """Verify Roboflow COCO builder sets gpu_postprocess for segmentation models."""
+
+    @pytest.mark.parametrize(
+        "segmentation_head, augmentation_backend, resolved_backend, expected_gpu_postprocess",
+        [
+            pytest.param(False, "cpu", "cpu", False, id="cpu_backend_no_seg"),
+            pytest.param(True, "cpu", "cpu", False, id="cpu_backend_with_seg"),
+            pytest.param(False, "gpu", "gpu", True, id="gpu_backend_no_seg"),
+            pytest.param(True, "gpu", "gpu", True, id="gpu_backend_with_seg"),
+            pytest.param(True, "auto", "gpu", True, id="auto_resolved_gpu_with_seg"),
+            pytest.param(True, "auto", "cpu", False, id="auto_resolved_cpu_with_seg"),
+        ],
+    )
+    def test_gpu_postprocess_flag(
+        self,
+        tmp_path,
+        segmentation_head,
+        augmentation_backend,
+        resolved_backend,
+        expected_gpu_postprocess,
+    ):
+        """Build Roboflow COCO datasets and assert the GPU postprocess flag passed to transforms."""
+        from unittest.mock import MagicMock, patch
+
+        from rfdetr.datasets.coco import build_roboflow_from_coco
+
+        annotations_dir = tmp_path / "train"
+        annotations_dir.mkdir()
+        (annotations_dir / "_annotations.coco.json").write_text(
+            json.dumps({"images": [], "annotations": [], "categories": []}),
+            encoding="utf-8",
+        )
+        args = types.SimpleNamespace(
+            dataset_dir=str(tmp_path),
+            segmentation_head=segmentation_head,
+            augmentation_backend=augmentation_backend,
+            square_resize_div_64=False,
+            multi_scale=False,
+            expanded_scales=False,
+            do_random_resize_via_padding=False,
+            patch_size=16,
+            num_windows=4,
+            aug_config=None,
+        )
+
+        with (
+            patch("rfdetr.datasets.coco._resolve_runtime_augmentation_backend", return_value=resolved_backend),
+            patch("rfdetr.datasets.coco.make_coco_transforms") as mock_transforms,
+            patch("rfdetr.datasets.coco.CocoDetection") as mock_coco,
+        ):
+            mock_transforms.return_value = MagicMock()
+            mock_coco.return_value = MagicMock()
+
+            build_roboflow_from_coco("train", args, resolution=640)
+
+        call_kwargs = mock_transforms.call_args.kwargs if mock_transforms.call_args else mock_transforms.call_args[1]
+        assert call_kwargs["gpu_postprocess"] is expected_gpu_postprocess

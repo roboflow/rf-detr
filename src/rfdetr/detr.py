@@ -703,8 +703,36 @@ class RFDETR:
                 string that does not correspond to a valid ``torch.dtype`` attribute.
 
         Examples:
-            >>> model = RFDETRNano()
-            >>> model.optimize_for_inference(compile=False, dtype="float16", batch_size=4)
+            >>> from types import SimpleNamespace
+            >>> import torch
+            >>> class _TinyModel(torch.nn.Module):
+            ...     def __init__(self):
+            ...         super().__init__()
+            ...         self.linear = torch.nn.Linear(1, 1)
+            ...     def forward(self, x):
+            ...         return {"pred_boxes": self.linear(x[:, :1, :1, :1].squeeze(-1).squeeze(-1))}
+            ...     def export(self):
+            ...         return None
+            >>> class _TinyContext:
+            ...     def __init__(self):
+            ...         self.device = torch.device("cpu")
+            ...         self.resolution = 28
+            ...         self.model = _TinyModel()
+            ...         self.inference_model = None
+            >>> model = object.__new__(RFDETR)
+            >>> model.model_config = SimpleNamespace(num_channels=3)
+            >>> model.model = _TinyContext()
+            >>> model._is_optimized_for_inference = False
+            >>> model._has_warned_about_not_being_optimized_for_inference = False
+            >>> model._optimized_has_been_compiled = False
+            >>> model._optimized_batch_size = None
+            >>> model._optimized_resolution = None
+            >>> model._optimized_dtype = None
+            >>> model.optimize_for_inference(compile=False, dtype="float16")
+            >>> model._is_optimized_for_inference
+            True
+            >>> model._optimized_dtype
+            torch.float16
         """
         if isinstance(dtype, str):
             try:
@@ -762,10 +790,35 @@ class RFDETR:
         been optimized.
 
         Examples:
-            >>> model = RFDETRSmall()
+            >>> from types import SimpleNamespace
+            >>> import torch
+            >>> class _TinyModel(torch.nn.Module):
+            ...     def __init__(self):
+            ...         super().__init__()
+            ...         self.linear = torch.nn.Linear(1, 1)
+            ...     def forward(self, x):
+            ...         return {"pred_boxes": self.linear(x[:, :1, :1, :1].squeeze(-1).squeeze(-1))}
+            ...     def export(self):
+            ...         return None
+            >>> class _TinyContext:
+            ...     def __init__(self):
+            ...         self.device = torch.device("cpu")
+            ...         self.resolution = 28
+            ...         self.model = _TinyModel()
+            ...         self.inference_model = None
+            >>> model = object.__new__(RFDETR)
+            >>> model.model_config = SimpleNamespace(num_channels=3)
+            >>> model.model = _TinyContext()
+            >>> model._is_optimized_for_inference = False
+            >>> model._has_warned_about_not_being_optimized_for_inference = False
+            >>> model._optimized_has_been_compiled = False
+            >>> model._optimized_batch_size = None
+            >>> model._optimized_resolution = None
+            >>> model._optimized_dtype = None
             >>> model.optimize_for_inference(compile=False)
             >>> model.remove_optimized_model()
-            >>> assert not model._is_optimized_for_inference
+            >>> model._is_optimized_for_inference
+            False
         """
         self.model.inference_model = None
         self._is_optimized_for_inference = False

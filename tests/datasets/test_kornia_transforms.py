@@ -332,6 +332,22 @@ class TestRotateFactory:
         assert float(degrees[0]) == pytest.approx(90.0, abs=0.1)
         assert float(degrees[1]) == pytest.approx(90.0, abs=0.1)
 
+    def test_flags_include_degrees(self):
+        """Rotate factory keeps a legacy degrees entry in Kornia flags for compatibility."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({"Rotate": {"limit": 30, "p": 1.0}}, 560)
+        assert pipeline is not None
+
+        import kornia.augmentation as kornia_augmentation
+
+        rotation_augs = [
+            child for child in pipeline.children() if isinstance(child, kornia_augmentation.RandomRotation)
+        ]
+        assert len(rotation_augs) == 1
+        assert "degrees" in rotation_augs[0].flags
+        assert rotation_augs[0].flags["degrees"] == (-30, 30)
+
 
 # ---------------------------------------------------------------------------
 # TestGpuPostprocessFlag — validates that make_coco_transforms respects the
@@ -486,3 +502,184 @@ class TestKorniaPipelineForwardPass:
 
         assert img_out.shape == (batch_size, channels, image_height, image_width)
         assert boxes_out.shape == (batch_size, 0, 4)
+
+
+# ---------------------------------------------------------------------------
+# TestCollateMasks — validates packing of variable-length per-image masks
+# into a zero-padded [B, N_max, H, W] float32 tensor.
+# ---------------------------------------------------------------------------
+
+
+class TestCollateMasks:
+    """collate_masks packs [N_i, H, W] instance masks into [B, N_max, H, W]."""
+
+    def _make_targets_with_masks(self, mask_counts, h=16, w=16):
+        """Build target dicts with boolean mask tensors for given instance counts."""
+        targets = []
+        for n in mask_counts:
+            masks = torch.ones(n, h, w, dtype=torch.bool) if n > 0 else torch.zeros(0, h, w, dtype=torch.bool)
+            targets.append({"masks": masks, "boxes": torch.zeros(n, 4)})
+        return targets
+
+    def test_normal_batch(self):
+        """Batch of [2 masks, 3 masks] → shape [2, 3, H, W] float32."""
+        from rfdetr.datasets.kornia_transforms import collate_masks
+
+        targets = self._make_targets_with_masks([2, 3])
+        masks_padded = collate_masks(targets, torch.device("cpu"), n_max=3, image_height=16, image_width=16)
+
+        assert masks_padded.shape == (2, 3, 16, 16), f"Expected (2, 3, 16, 16), got {masks_padded.shape}"
+        assert masks_padded.dtype == torch.float32, f"Expected float32, got {masks_padded.dtype}"
+
+    def test_padding_is_zero(self):
+        """Padded slots (beyond real instance count) are filled with zeros."""
+        from rfdetr.datasets.kornia_transforms import collate_masks
+
+        targets = self._make_targets_with_masks([1, 3])  # image 0 padded to 3
+        masks_padded = collate_masks(targets, torch.device("cpu"), n_max=3, image_height=16, image_width=16)
+
+        # Image 0: slot 0 real (ones), slots 1-2 zero-padded
+        assert masks_padded[0, 0].min() == pytest.approx(1.0), "Real mask slot must be all ones"
+        assert masks_padded[0, 1].max() == pytest.approx(0.0), "Padded slot 1 must be all zeros"
+        assert masks_padded[0, 2].max() == pytest.approx(0.0), "Padded slot 2 must be all zeros"
+
+    def test_n_max_zero_returns_empty(self):
+        """n_max=0 → shape [B, 0, H, W]."""
+        from rfdetr.datasets.kornia_transforms import collate_masks
+
+        targets = self._make_targets_with_masks([0, 0])
+        masks_padded = collate_masks(targets, torch.device("cpu"), n_max=0, image_height=16, image_width=16)
+
+        assert masks_padded.shape == (2, 0, 16, 16), f"Expected (2, 0, 16, 16), got {masks_padded.shape}"
+
+    def test_empty_target_list(self):
+        """Empty target list → shape [0, 0, H, W]."""
+        from rfdetr.datasets.kornia_transforms import collate_masks
+
+        masks_padded = collate_masks([], torch.device("cpu"), n_max=0, image_height=16, image_width=16)
+
+        assert masks_padded.shape == (0, 0, 16, 16), f"Expected (0, 0, 16, 16), got {masks_padded.shape}"
+
+    def test_targets_without_masks_key(self):
+        """Targets without 'masks' key produce all-zero rows."""
+        from rfdetr.datasets.kornia_transforms import collate_masks
+
+        targets = [{"boxes": torch.zeros(2, 4)}, {"boxes": torch.zeros(1, 4)}]
+        masks_padded = collate_masks(targets, torch.device("cpu"), n_max=2, image_height=8, image_width=8)
+
+        assert masks_padded.shape == (2, 2, 8, 8)
+        assert masks_padded.max() == pytest.approx(0.0), "Targets without masks key must produce all-zero output"
+
+
+# ---------------------------------------------------------------------------
+# TestBuildKorniaPipelineWithMasks — validates that with_masks=True produces
+# a pipeline with mask data_key included.
+# ---------------------------------------------------------------------------
+
+
+class TestBuildKorniaPipelineWithMasks:
+    """build_kornia_pipeline(with_masks=True) includes mask in data_keys."""
+
+    @pytest.fixture(autouse=True)
+    def _require_kornia(self):
+        """Skip when Kornia is unavailable (optional extra not installed in CPU CI)."""
+        pytest.importorskip("kornia")
+
+    def test_with_masks_false_is_default(self):
+        """with_masks defaults to False; pipeline returns (img, boxes) on call."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({"HorizontalFlip": {"p": 1.0}}, resolution=32)
+        img = torch.rand(1, 3, 32, 32)
+        boxes = torch.tensor([[[0.0, 0.0, 16.0, 16.0]]])
+        result = pipeline(img, boxes)
+        assert len(result) == 2, f"Detection pipeline must return 2 values, got {len(result)}"
+
+    def test_with_masks_true_returns_three_values(self):
+        """with_masks=True: pipeline(img, boxes, masks) returns (img, boxes, masks)."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({"HorizontalFlip": {"p": 1.0}}, resolution=32, with_masks=True)
+        img = torch.rand(1, 3, 32, 32)
+        boxes = torch.tensor([[[0.0, 0.0, 16.0, 16.0]]])
+        masks = torch.ones(1, 1, 32, 32, dtype=torch.float32)
+        result = pipeline(img, boxes, masks)
+        assert len(result) == 3, f"Segmentation pipeline must return 3 values, got {len(result)}"
+
+    def test_with_masks_true_preserves_mask_shape(self):
+        """Mask shape [B, N, H, W] is preserved after pipeline pass."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({"HorizontalFlip": {"p": 0.0}}, resolution=32, with_masks=True)
+        img = torch.rand(2, 3, 32, 32)
+        boxes = torch.tensor([[[0.0, 0.0, 16.0, 16.0]], [[8.0, 8.0, 24.0, 24.0]]])
+        masks = torch.ones(2, 1, 32, 32, dtype=torch.float32)
+        _, _, masks_aug = pipeline(img, boxes, masks)
+        assert masks_aug.shape == (2, 1, 32, 32), f"Mask shape must be preserved: {masks_aug.shape}"
+
+
+# ---------------------------------------------------------------------------
+# TestUnpackBoxesWithMasks — validates that unpack_boxes propagates the same
+# keep filter to masks when masks_aug is provided.
+# ---------------------------------------------------------------------------
+
+
+class TestUnpackBoxesWithMasks:
+    """unpack_boxes with masks_aug keeps/removes masks in sync with boxes."""
+
+    def test_masks_filtered_same_as_boxes(self):
+        """Box removed → corresponding mask also removed from output."""
+        from rfdetr.datasets.kornia_transforms import unpack_boxes
+
+        # B=1, N=2: box 0 valid, box 1 zero-area (will be removed)
+        boxes_aug = torch.tensor([[[5.0, 5.0, 25.0, 25.0], [30.0, 30.0, 30.0, 30.0]]])
+        valid = torch.tensor([[True, True]])
+        targets = [
+            {
+                "boxes": torch.tensor([[5.0, 5.0, 25.0, 25.0], [30.0, 30.0, 60.0, 60.0]]),
+                "labels": torch.tensor([1, 2]),
+            }
+        ]
+        # 2 masks: instance 0 = all ones, instance 1 = all twos (distinguishable)
+        masks_aug = torch.zeros(1, 2, 8, 8, dtype=torch.float32)
+        masks_aug[0, 0] = 1.0
+        masks_aug[0, 1] = 1.0  # will be removed with box 1
+
+        result = unpack_boxes(boxes_aug, valid, targets, 100, 100, masks_aug=masks_aug)
+
+        assert "masks" in result[0], "masks key must be present in output target"
+        assert result[0]["masks"].shape[0] == 1, f"Expected 1 surviving mask, got {result[0]['masks'].shape[0]}"
+
+    def test_masks_converted_to_bool(self):
+        """Float masks > 0.5 threshold converted to bool in output."""
+        from rfdetr.datasets.kornia_transforms import unpack_boxes
+
+        boxes_aug = torch.tensor([[[5.0, 5.0, 25.0, 25.0]]])
+        valid = torch.tensor([[True]])
+        targets = [{"boxes": torch.tensor([[5.0, 5.0, 25.0, 25.0]]), "labels": torch.tensor([1])}]
+        masks_aug = torch.full((1, 1, 8, 8), 0.8, dtype=torch.float32)  # float, all 0.8
+
+        result = unpack_boxes(boxes_aug, valid, targets, 100, 100, masks_aug=masks_aug)
+
+        assert result[0]["masks"].dtype == torch.bool, f"masks must be bool, got {result[0]['masks'].dtype}"
+        assert result[0]["masks"].all(), "All values > 0.5 should be True after thresholding"
+
+    def test_no_masks_aug_leaves_masks_key_unchanged(self):
+        """When masks_aug=None, existing masks key in target is preserved as-is."""
+        from rfdetr.datasets.kornia_transforms import unpack_boxes
+
+        boxes_aug = torch.tensor([[[5.0, 5.0, 25.0, 25.0]]])
+        valid = torch.tensor([[True]])
+        original_mask = torch.ones(1, 8, 8, dtype=torch.bool)
+        targets = [
+            {
+                "boxes": torch.tensor([[5.0, 5.0, 25.0, 25.0]]),
+                "labels": torch.tensor([1]),
+                "masks": original_mask,
+            }
+        ]
+
+        result = unpack_boxes(boxes_aug, valid, targets, 100, 100, masks_aug=None)
+
+        assert "masks" in result[0], "masks key must still be present when masks_aug=None"
+        assert result[0]["masks"] is original_mask, "Original masks object must be preserved unchanged"

@@ -888,7 +888,7 @@ class TestBackendResolution:
 
         captured = {}
 
-        def _fake_build_kornia(aug_cfg, resolution):
+        def _fake_build_kornia(aug_cfg, resolution, with_masks=False):
             captured["aug_config"] = aug_cfg
             return MagicMock()
 
@@ -993,6 +993,29 @@ class TestOnAfterBatchTransfer:
         ]
         return samples, targets
 
+    def _make_kornia_batch_with_masks(self, batch_size=2, h=16, w=16):
+        """Build a batch with xyxy boxes and instance masks for segmentation tests.
+
+        Returns (NestedTensor, targets) where each target includes a 'masks' key
+        with one [N, H, W] bool mask tensor per instance.
+        """
+        tensors = torch.rand(batch_size, 3, h, w)
+        mask = torch.zeros(batch_size, h, w, dtype=torch.bool)
+        samples = NestedTensor(tensors, mask)
+        targets = [
+            {
+                "boxes": torch.tensor([[2.0, 2.0, 10.0, 10.0]], dtype=torch.float32),
+                "labels": torch.tensor([1]),
+                "area": torch.tensor([64.0]),
+                "iscrowd": torch.tensor([0]),
+                "image_id": torch.tensor(i),
+                "orig_size": torch.tensor([h, w]),
+                "masks": torch.ones(1, h, w, dtype=torch.bool),
+            }
+            for i in range(batch_size)
+        ]
+        return samples, targets
+
     def test_training_true_applies_augmentation(self, tmp_path):
         """When training=True and _kornia_pipeline is set, image/box outputs match CPU Normalize contract."""
         dm = self._build_dm(tmp_path)
@@ -1041,19 +1064,67 @@ class TestOnAfterBatchTransfer:
         assert result_samples is samples
         assert result_targets is targets
 
-    def test_segmentation_model_skips_augmentation(self, tmp_path):
-        """When segmentation_head=True, pipeline is not called even during training."""
+    def test_segmentation_model_applies_augmentation_with_masks(self, tmp_path):
+        """Phase 2: segmentation_head=True now calls pipeline with image, boxes, and masks."""
         dm = self._build_dm(tmp_path, segmentation_head=True)
         dm = self._attach_mock_trainer(dm, training=True)
 
-        samples, targets = self._make_kornia_batch()
-        mock_pipeline = MagicMock()
+        samples, targets = self._make_kornia_batch_with_masks()
+        img_aug = samples.tensors.clone()
+        boxes_padded = torch.tensor([[[2.0, 2.0, 10.0, 10.0]]] * 2)
+        masks_aug = torch.ones(2, 1, 16, 16, dtype=torch.float32)
+
+        mock_pipeline = MagicMock(return_value=(img_aug, boxes_padded, masks_aug))
         dm._kornia_pipeline = mock_pipeline
-        dm._kornia_normalize = MagicMock()
+        dm._kornia_normalize = MagicMock(side_effect=lambda x: x)
 
-        dm.on_after_batch_transfer((samples, targets), dataloader_idx=0)
+        result_samples, result_targets = dm.on_after_batch_transfer((samples, targets), dataloader_idx=0)
 
-        mock_pipeline.assert_not_called()
+        mock_pipeline.assert_called_once()
+        call_args, call_kwargs = mock_pipeline.call_args
+        assert len(call_args) == 3, "segmentation augmentation must call pipeline with image, boxes, and masks"
+        assert not call_kwargs, "segmentation augmentation should not pass unexpected keyword arguments"
+
+        masks_arg = call_args[2]
+        assert isinstance(masks_arg, torch.Tensor), "third pipeline argument must be a masks tensor"
+        assert masks_arg.dtype == torch.float32, "masks passed to pipeline must be float32"
+        assert masks_arg.shape == (2, 1, 16, 16), "masks passed to pipeline must have shape [B, N_max, H, W]"
+        assert "masks" in result_targets[0], "masks key must be present in output targets for segmentation"
+
+    def test_segmentation_masks_stay_in_sync_with_boxes(self, tmp_path):
+        """Masks are filtered in sync with boxes: one instance removed → one mask removed."""
+        dm = self._build_dm(tmp_path, segmentation_head=True)
+        dm = self._attach_mock_trainer(dm, training=True)
+
+        h, w = 16, 16
+        tensors = torch.rand(1, 3, h, w)
+        mask_nt = torch.zeros(1, h, w, dtype=torch.bool)
+        from rfdetr.utilities.tensors import NestedTensor
+
+        samples = NestedTensor(tensors, mask_nt)
+        targets = [
+            {
+                "boxes": torch.tensor([[2.0, 2.0, 8.0, 8.0], [10.0, 10.0, 14.0, 14.0]]),
+                "labels": torch.tensor([1, 2]),
+                "area": torch.tensor([36.0, 16.0]),
+                "iscrowd": torch.tensor([0, 0]),
+                "image_id": torch.tensor(0),
+                "orig_size": torch.tensor([h, w]),
+                "masks": torch.ones(2, h, w, dtype=torch.bool),
+            }
+        ]
+        # Augmented: box 0 survives, box 1 becomes zero-area
+        boxes_aug_out = torch.tensor([[[2.0, 2.0, 8.0, 8.0], [5.0, 5.0, 5.0, 5.0]]])
+        masks_aug_out = torch.ones(1, 2, h, w, dtype=torch.float32)
+        mock_pipeline = MagicMock(return_value=(tensors, boxes_aug_out, masks_aug_out))
+        dm._kornia_pipeline = mock_pipeline
+        dm._kornia_normalize = MagicMock(side_effect=lambda x: x)
+
+        _, result_targets = dm.on_after_batch_transfer((samples, targets), dataloader_idx=0)
+
+        assert result_targets[0]["masks"].shape[0] == 1, (
+            f"Expected 1 surviving mask (matching box), got {result_targets[0]['masks'].shape[0]}"
+        )
 
     def test_returns_nested_tensor_in_batch(self, tmp_path):
         """Output batch still has NestedTensor as first element after augmentation."""
