@@ -57,6 +57,12 @@ IMAGENET_MEAN = (0.485, 0.456, 0.406)
 #: ImageNet channel-wise standard deviation (RGB order).
 IMAGENET_STD = (0.229, 0.224, 0.225)
 
+#: Threshold applied to float32 mask values produced by Kornia augmentation.
+#: Kornia forces nearest-neighbour resampling for the ``"mask"`` data key, so
+#: output values are already in {0.0, 1.0}; the threshold is a defensive cast.
+#: Must be updated if the pipeline is ever switched to bilinear interpolation.
+_MASK_BINARIZE_THRESHOLD: float = 0.5
+
 
 def _has_cuda_device() -> bool:
     """Return ``True`` when the runtime has a CUDA accelerator available.
@@ -522,7 +528,7 @@ def unpack_boxes(
             t["iscrowd"] = t["iscrowd"][keep]
         if masks_aug is not None:
             masks_i = masks_aug[i, :n_orig]  # [N_orig, H, W]
-            t["masks"] = masks_i[keep] > 0.5
+            t["masks"] = masks_i[keep] > _MASK_BINARIZE_THRESHOLD
 
         new_targets.append(t)
 
