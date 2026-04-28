@@ -332,6 +332,22 @@ class TestRotateFactory:
         assert float(degrees[0]) == pytest.approx(90.0, abs=0.1)
         assert float(degrees[1]) == pytest.approx(90.0, abs=0.1)
 
+    def test_flags_include_degrees(self):
+        """Rotate factory keeps a legacy degrees entry in Kornia flags for compatibility."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({"Rotate": {"limit": 30, "p": 1.0}}, 560)
+        assert pipeline is not None
+
+        import kornia.augmentation as kornia_augmentation
+
+        rotation_augs = [
+            child for child in pipeline.children() if isinstance(child, kornia_augmentation.RandomRotation)
+        ]
+        assert len(rotation_augs) == 1
+        assert "degrees" in rotation_augs[0].flags
+        assert rotation_augs[0].flags["degrees"] == (-30, 30)
+
 
 # ---------------------------------------------------------------------------
 # TestGpuPostprocessFlag — validates that make_coco_transforms respects the

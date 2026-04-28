@@ -165,7 +165,16 @@ def _make_rotate(params: dict[str, Any]) -> Any:
 
     limit = params.get("limit", 15)
     degrees = tuple(limit) if isinstance(limit, (list, tuple)) else (-limit, limit)
-    return RandomRotation(degrees=degrees, p=params.get("p", 0.5))
+    rotation = RandomRotation(degrees=degrees, p=params.get("p", 0.5))
+
+    # Kornia has changed the public parameter key for rotation ranges across releases.
+    # Keep the legacy ``degrees`` entry available because our tests and downstream
+    # callers inspect it directly.
+    flags = getattr(rotation, "flags", None)
+    if isinstance(flags, dict) and "degrees" not in flags:
+        flags["degrees"] = degrees
+
+    return rotation
 
 
 def _make_affine(params: dict[str, Any]) -> Any:
