@@ -435,13 +435,19 @@ class RFDETRModelModule(LightningModule):
 
         optimizer_provider, optimizer_name = _split_optimizer_name(tc.optimizer)
         if _is_default_adamw_optimizer(optimizer_provider, optimizer_name):
-            optimizer = torch.optim.AdamW(
-                param_dicts,
-                lr=tc.lr,
-                weight_decay=tc.weight_decay,
-                fused=self._use_fused_optimizer,
-                **tc.optimizer_kwargs,
-            )
+            try:
+                optimizer = torch.optim.AdamW(
+                    param_dicts,
+                    lr=tc.lr,
+                    weight_decay=tc.weight_decay,
+                    fused=self._use_fused_optimizer,
+                    **tc.optimizer_kwargs,
+                )
+            except TypeError as exc:
+                raise TypeError(
+                    "Failed to initialize optimizer 'adamw'. "
+                    "Check optimizer_kwargs for arguments supported by torch.optim.AdamW."
+                ) from exc
         else:
             if self.model_config.fused_optimizer:
                 logger.info(
