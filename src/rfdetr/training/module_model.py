@@ -22,8 +22,8 @@ from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.datasets.coco import compute_multi_scale_scales
 from rfdetr.models import build_criterion_from_config, build_model_from_config
 from rfdetr.models.weights import (
-    _interpolate_position_embeddings,
     apply_lora,
+    interpolate_position_embeddings,
     load_pretrain_weights,
 )
 from rfdetr.training.param_groups import get_param_dict
@@ -406,7 +406,7 @@ class RFDETRModelModule(LightningModule):
         # checkpoint["state_dict"] immediately after this hook, so the shapes
         # must already match at this point.  Regression: #998.
         if "state_dict" in checkpoint:
-            _interpolate_position_embeddings(
+            interpolate_position_embeddings(
                 checkpoint["state_dict"],
                 self.model_config.positional_encoding_size,
             )
