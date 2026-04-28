@@ -52,6 +52,8 @@ from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
+__doctest_requires__ = {"build_kornia_pipeline": ["kornia"]}
+
 #: ImageNet channel-wise mean (RGB order).
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 #: ImageNet channel-wise standard deviation (RGB order).
@@ -304,7 +306,6 @@ def build_kornia_pipeline(
         ValueError: If *aug_config* contains an unsupported augmentation key.
 
     Examples:
-        >>> # doctest: +SKIP
         >>> from rfdetr.datasets.aug_config import AUG_CONSERVATIVE
         >>> pipeline = build_kornia_pipeline(AUG_CONSERVATIVE, resolution=560)
         >>> pipeline_seg = build_kornia_pipeline(AUG_CONSERVATIVE, resolution=560, with_masks=True)
