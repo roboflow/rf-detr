@@ -21,7 +21,11 @@ from rfdetr._namespace import _namespace_from_configs
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.datasets.coco import compute_multi_scale_scales
 from rfdetr.models import build_criterion_from_config, build_model_from_config
-from rfdetr.models.weights import apply_lora, load_pretrain_weights
+from rfdetr.models.weights import (
+    _interpolate_position_embeddings,
+    apply_lora,
+    load_pretrain_weights,
+)
 from rfdetr.training.param_groups import get_param_dict
 from rfdetr.utilities.logger import get_logger
 
@@ -396,6 +400,16 @@ class RFDETRModelModule(LightningModule):
         # Raw legacy .pth: no "state_dict" key — build it from "model".
         if "model" in checkpoint and "state_dict" not in checkpoint:
             checkpoint["state_dict"] = {"model." + k: v for k, v in checkpoint["model"].items()}
+
+        # Interpolate DINOv2 positional embeddings when the checkpoint was saved
+        # at a different resolution than the current model.  PTL applies
+        # checkpoint["state_dict"] immediately after this hook, so the shapes
+        # must already match at this point.  Regression: #998.
+        if "state_dict" in checkpoint:
+            _interpolate_position_embeddings(
+                checkpoint["state_dict"],
+                self.model_config.positional_encoding_size,
+            )
 
         # Stash legacy EMA weights for RFDETREMACallback.setup(), which restores
         # them into AveragedModel when resuming from converted legacy checkpoints.
