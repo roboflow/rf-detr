@@ -8,7 +8,6 @@
 
 from __future__ import annotations
 
-import importlib
 import math
 import random
 import warnings
@@ -38,8 +37,7 @@ def _split_optimizer_name(optimizer: str) -> tuple[str | None, str]:
 
     Args:
         optimizer: Optimizer config value, optionally prefixed with
-            ``"pytorch_optimizer:"``, ``"pytorch-optimizer:"``,
-            ``"python:"``, or ``"import:"``.
+            ``"pytorch_optimizer:"`` or ``"pytorch-optimizer:"``.
 
     Returns:
         Tuple of provider and normalized optimizer name. Provider is ``None``
@@ -52,14 +50,12 @@ def _split_optimizer_name(optimizer: str) -> tuple[str | None, str]:
     provider, name = optimizer_name.split(":", 1)
     provider = provider.strip().lower().replace("-", "_")
     name = name.strip()
-    if provider in {"python", "import"}:
-        provider = "python"
-    elif provider == "pytorch_optimizer":
+    if provider == "pytorch_optimizer":
         name = name.lower()
     else:
         raise ValueError(
             f"Unsupported optimizer provider {provider!r}. "
-            "Use 'adamw', 'pytorch_optimizer:<name>', or 'python:<module.OptimizerClass>'."
+            "Use 'adamw' or 'pytorch_optimizer:<name>'."
         )
     if not name:
         raise ValueError("optimizer provider prefix must be followed by a non-empty optimizer name.")
@@ -102,45 +98,6 @@ def _load_pytorch_optimizer(optimizer_name: str) -> type[torch.optim.Optimizer]:
             "Install it with `pip install pytorch-optimizer` or install RF-DETR with the training extra."
         ) from exc
     return load_optimizer(optimizer_name)
-
-
-def _load_python_optimizer(optimizer_path: str) -> type[torch.optim.Optimizer]:
-    """Load an optimizer class from a Python import path.
-
-    Args:
-        optimizer_path: Fully qualified optimizer class path.
-
-    Returns:
-        Optimizer class loaded from the import path.
-
-    Raises:
-        ImportError: If the module or class cannot be imported.
-        TypeError: If the imported object is not a torch optimizer class.
-    """
-    module_name, _, class_name = optimizer_path.rpartition(".")
-    if not module_name or not class_name:
-        raise ImportError(
-            f"optimizer={optimizer_path!r} must be a fully qualified import path, "
-            "for example 'python:my_project.optimizers.CustomOptimizer'."
-        )
-
-    try:
-        module = importlib.import_module(module_name)
-    except ModuleNotFoundError as exc:
-        if exc.name != module_name:
-            raise
-        raise ImportError(
-            f"Could not import optimizer module {module_name!r} for optimizer={optimizer_path!r}."
-        ) from exc
-
-    try:
-        optimizer_class = getattr(module, class_name)
-    except AttributeError as exc:
-        raise ImportError(f"Optimizer class {class_name!r} was not found in module {module_name!r}.") from exc
-
-    if not isinstance(optimizer_class, type) or not issubclass(optimizer_class, torch.optim.Optimizer):
-        raise TypeError(f"optimizer={optimizer_path!r} must resolve to a torch.optim.Optimizer subclass.")
-    return optimizer_class
 
 
 def _get_param_group_parameters(param_group: dict[str, Any]) -> list[torch.Tensor]:
@@ -232,16 +189,6 @@ def _build_pytorch_optimizer(
             "Check pytorch_optimizer.get_supported_optimizers() for available names."
         ) from exc
     return _instantiate_optimizer(optimizer_class, f"pytorch_optimizer:{optimizer_name}", param_dicts, train_config)
-
-
-def _build_python_optimizer(
-    optimizer_path: str,
-    param_dicts: list[dict[str, Any]],
-    train_config: TrainConfig,
-) -> torch.optim.Optimizer:
-    """Build an optimizer from a fully qualified Python import path."""
-    optimizer_class = _load_python_optimizer(optimizer_path)
-    return _instantiate_optimizer(optimizer_class, f"python:{optimizer_path}", param_dicts, train_config)
 
 
 class RFDETRModelModule(LightningModule):
@@ -473,8 +420,7 @@ class RFDETRModelModule(LightningModule):
         cosine annealing covers the full training run regardless of dataset
         size or accumulation settings.
         ``optimizer="adamw"`` keeps RF-DETR's fused torch AdamW path;
-        other names can be loaded from ``pytorch-optimizer`` or via the
-        explicit ``python:``/``import:`` provider to import an optimizer class.
+        other names can be loaded from ``pytorch-optimizer``.
 
         Returns:
             PTL optimizer config dict with optimizer and step-interval scheduler.
@@ -499,8 +445,6 @@ class RFDETRModelModule(LightningModule):
                 fused=self._use_fused_optimizer,
                 **tc.optimizer_kwargs,
             )
-        elif optimizer_provider == "python":
-            optimizer = _build_python_optimizer(optimizer_name, param_dicts, tc)
         else:
             optimizer = _build_pytorch_optimizer(optimizer_name, param_dicts, tc)
 
