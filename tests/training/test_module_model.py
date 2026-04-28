@@ -1207,36 +1207,29 @@ class TestOnLoadCheckpoint:
             }
         }
 
-    def test_pe_interpolated_in_ptl_checkpoint(self, build_module):
-        """on_load_checkpoint must interpolate PE to match model's positional_encoding_size.
+    @pytest.mark.parametrize(
+        "pe_src,pe_tgt",
+        [
+            pytest.param(36, 56, id="pe_interpolated_in_ptl_checkpoint"),
+            pytest.param(36, 36, id="pe_unchanged_when_shapes_match"),
+        ],
+    )
+    def test_ptl_checkpoint_pe_shape(self, pe_src, pe_tgt, build_module):
+        """on_load_checkpoint must produce PE with tokens matching the model's positional_encoding_size.
 
         Regression for #998: resume from .ckpt with custom resolution crashed because
         PTL applied the checkpoint state dict before PE shapes were reconciled.
         """
-        # Checkpoint saved at PE=36 (resolution=576); model built at PE=56 (resolution=896).
-        pe_src, pe_tgt = 36, 56
         checkpoint = self._make_ptl_checkpoint(pe_size_src=pe_src, _pe_size_tgt=pe_tgt)
 
         module, _, _, _ = build_module(model_config=_base_model_config(positional_encoding_size=pe_tgt))
         module.on_load_checkpoint(checkpoint)
 
         pe_after = checkpoint["state_dict"][self._PE_KEY]
-        expected_tokens = pe_tgt * pe_tgt + 1  # 3137
+        expected_tokens = pe_tgt * pe_tgt + 1
         assert pe_after.shape == (1, expected_tokens, 16), (
-            f"PE should be interpolated to {expected_tokens} tokens, got shape {tuple(pe_after.shape)}"
+            f"PE should have {expected_tokens} tokens, got shape {tuple(pe_after.shape)}"
         )
-
-    def test_pe_unchanged_when_shapes_match(self, build_module):
-        """on_load_checkpoint must not alter PE when checkpoint and model shapes already match."""
-        pe_size = 36
-        checkpoint = self._make_ptl_checkpoint(pe_size_src=pe_size, _pe_size_tgt=pe_size)
-
-        module, _, _, _ = build_module(model_config=_base_model_config(positional_encoding_size=pe_size))
-        module.on_load_checkpoint(checkpoint)
-
-        pe_after = checkpoint["state_dict"][self._PE_KEY]
-        expected_tokens = pe_size * pe_size + 1
-        assert pe_after.shape == (1, expected_tokens, 16)
 
     def test_legacy_pth_normalised_and_pe_interpolated(self, build_module):
         """Legacy .pth checkpoint (no state_dict key) must be normalised and PE interpolated.
