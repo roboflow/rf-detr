@@ -657,3 +657,35 @@ class TestPredictClassNameData:
         assert detections.data["class_name"][0] == "", "Truly OOB class_id (> num_classes) must produce empty string"
         oob_warnings = [msg for msg in logger._warned_once if "out of range" in msg]
         assert oob_warnings, "Truly OOB class_id (> num_classes) must trigger an out-of-range warning"
+
+    def test_pretrained_coco_class_id_maps_to_correct_name(self) -> None:
+        """Pretrained COCO models use COCO category IDs (1-indexed, with gaps) as class_ids.
+
+        When num_classes=90 and class_names has 80 entries, class_id 18 must resolve to
+        'dog' (COCO category 18), not 'sheep' (COCO_CLASS_NAMES[18]).
+
+        Regression test for https://github.com/roboflow/rf-detr/issues/988.
+        """
+        from types import SimpleNamespace
+
+        from rfdetr.assets.coco_classes import COCO_CLASS_NAMES, COCO_CLASSES
+
+        # Simulate pretrained COCO model: args.num_classes=90, class_names=COCO_CLASS_NAMES (80 items)
+        coco_model = _DummyModel(class_names=list(COCO_CLASS_NAMES), labels=[18, 27, 3])
+        coco_model.args = SimpleNamespace(num_classes=90)
+
+        model = _DummyRFDETR()
+        model.model = coco_model
+
+        img = PIL.Image.new("RGB", (28, 28))
+        detections = model.predict(img)
+
+        assert detections.data["class_name"][0] == COCO_CLASSES[18], (
+            f"class_id=18 must map to '{COCO_CLASSES[18]}' (COCO category 18), got '{detections.data['class_name'][0]}'"
+        )
+        assert detections.data["class_name"][1] == COCO_CLASSES[27], (
+            f"class_id=27 must map to '{COCO_CLASSES[27]}' (COCO category 27), got '{detections.data['class_name'][1]}'"
+        )
+        assert detections.data["class_name"][2] == COCO_CLASSES[3], (
+            f"class_id=3 must map to '{COCO_CLASSES[3]}' (COCO category 3), got '{detections.data['class_name'][2]}'"
+        )
