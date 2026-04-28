@@ -497,10 +497,6 @@ class TestKorniaPipelineForwardPass:
 class TestCollateMasks:
     """collate_masks packs [N_i, H, W] instance masks into [B, N_max, H, W]."""
 
-    @pytest.fixture(autouse=True)
-    def _require_kornia(self):
-        pytest.importorskip("kornia")
-
     def _make_targets_with_masks(self, mask_counts, h=16, w=16):
         """Build target dicts with boolean mask tensors for given instance counts."""
         targets = []
