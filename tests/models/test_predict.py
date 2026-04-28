@@ -657,3 +657,115 @@ class TestPredictClassNameData:
         assert detections.data["class_name"][0] == "", "Truly OOB class_id (> num_classes) must produce empty string"
         oob_warnings = [msg for msg in logger._warned_once if "out of range" in msg]
         assert oob_warnings, "Truly OOB class_id (> num_classes) must trigger an out-of-range warning"
+
+    def test_pretrained_coco_class_id_maps_to_correct_name(self) -> None:
+        """Pretrained COCO models use COCO category IDs (1-indexed, with gaps) as class_ids.
+
+        When num_classes=90 and class_names has 80 entries, class_id 18 must resolve to
+        'dog' (COCO category 18), not 'sheep' (COCO_CLASS_NAMES[18]).
+
+        Regression test for https://github.com/roboflow/rf-detr/issues/988.
+        """
+        from types import SimpleNamespace
+
+        from rfdetr.assets.coco_classes import COCO_CLASS_NAMES, COCO_CLASSES
+
+        # Simulate pretrained COCO model: args.num_classes=90, class_names=COCO_CLASS_NAMES (80 items)
+        coco_model = _DummyModel(class_names=list(COCO_CLASS_NAMES), labels=[18, 27, 3])
+        coco_model.args = SimpleNamespace(num_classes=90)
+
+        model = _DummyRFDETR()
+        model.model = coco_model
+
+        img = PIL.Image.new("RGB", (28, 28))
+        detections = model.predict(img)
+
+        assert detections.data["class_name"][0] == COCO_CLASSES[18], (
+            f"class_id=18 must map to '{COCO_CLASSES[18]}' (COCO category 18), got '{detections.data['class_name'][0]}'"
+        )
+        assert detections.data["class_name"][1] == COCO_CLASSES[27], (
+            f"class_id=27 must map to '{COCO_CLASSES[27]}' (COCO category 27), got '{detections.data['class_name'][1]}'"
+        )
+        assert detections.data["class_name"][2] == COCO_CLASSES[3], (
+            f"class_id=3 must map to '{COCO_CLASSES[3]}' (COCO category 3), got '{detections.data['class_name'][2]}'"
+        )
+
+    def test_finetuned_model_with_coco_names_and_matching_num_classes_uses_direct_indexing(self) -> None:
+        """Fine-tuned 80-class model with COCO names must use direct indexing, not sparse remap.
+
+        When args.num_classes == len(COCO_CLASS_NAMES) (not strictly greater), the COCO
+        sparse-ID branch must NOT activate. A future refactor flipping > to >= would
+        silently reroute fine-tuned checkpoints through the wrong mapping.
+        """
+        from types import SimpleNamespace
+
+        from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
+
+        # Fine-tuned model: 80 classes, num_classes == len(class_names) — NOT > 80
+        coco_model = _DummyModel(class_names=list(COCO_CLASS_NAMES), labels=[18])
+        coco_model.args = SimpleNamespace(num_classes=80, dataset_file="coco")
+
+        model = _DummyRFDETR()
+        model.model = coco_model
+
+        img = PIL.Image.new("RGB", (28, 28))
+        detections = model.predict(img)
+
+        # Direct index: class_names[18] == "sheep" — the sparse remap must NOT activate
+        assert detections.data["class_name"][0] == COCO_CLASS_NAMES[18], (
+            f"Fine-tuned 80-class model must use direct indexing; got '{detections.data['class_name'][0]}'"
+        )
+
+    def test_custom_class_names_with_high_num_classes_does_not_activate_coco_remap(self) -> None:
+        """Guard: custom class_names with num_classes>80 must NOT activate sparse COCO remap.
+
+        This is the primary guard contract test — a custom model that happens to have
+        num_classes=90 but non-COCO class_names must still use direct 0-indexed mapping.
+        """
+        from types import SimpleNamespace
+
+        custom_names = [f"custom_{i}" for i in range(80)]
+        coco_model = _DummyModel(class_names=custom_names, labels=[18])
+        coco_model.args = SimpleNamespace(num_classes=90, dataset_file="roboflow")
+
+        model = _DummyRFDETR()
+        model.model = coco_model
+
+        img = PIL.Image.new("RGB", (28, 28))
+        detections = model.predict(img)
+
+        # Guard fires: class_names != COCO_CLASS_NAMES → direct index
+        assert detections.data["class_name"][0] == "custom_18", (
+            f"Custom model must use direct indexing; got '{detections.data['class_name'][0]}'"
+        )
+
+    def test_background_class_id_under_pretrained_coco_branch_maps_to_background(self) -> None:
+        """class_id==num_logit_slots (90) must resolve to '__background__' under COCO branch.
+
+        COCO ID 90 is 'toothbrush' — the background check must take priority over
+        the dict lookup so background predictions are not labelled 'toothbrush'.
+        No OOB warning should fire for the background class.
+        """
+        from types import SimpleNamespace
+
+        from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
+        from rfdetr.utilities.logger import get_logger
+
+        logger = get_logger()
+        logger._warned_once.clear()
+
+        # num_logit_slots=90; background slot = class_id 90 (same as COCO 'toothbrush')
+        coco_model = _DummyModel(class_names=list(COCO_CLASS_NAMES), labels=[90])
+        coco_model.args = SimpleNamespace(num_classes=90, dataset_file="coco")
+
+        model = _DummyRFDETR()
+        model.model = coco_model
+
+        img = PIL.Image.new("RGB", (28, 28))
+        detections = model.predict(img)
+
+        assert detections.data["class_name"][0] == "__background__", (
+            f"class_id=90 (num_logit_slots) must map to '__background__', got '{detections.data['class_name'][0]}'"
+        )
+        oob_warnings = [msg for msg in logger._warned_once if "out of range" in msg]
+        assert not oob_warnings, "Background class (class_id==num_logit_slots) must not trigger OOB warning"
