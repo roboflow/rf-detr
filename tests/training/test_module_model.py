@@ -1215,7 +1215,7 @@ class TestOnLoadCheckpoint:
         """
         # Checkpoint saved at PE=36 (resolution=576); model built at PE=56 (resolution=896).
         pe_src, pe_tgt = 36, 56
-        checkpoint = self._make_ptl_checkpoint(pe_size_src=pe_src, pe_size_tgt=pe_tgt)
+        checkpoint = self._make_ptl_checkpoint(pe_size_src=pe_src, _pe_size_tgt=pe_tgt)
 
         module, _, _, _ = build_module(model_config=_base_model_config(positional_encoding_size=pe_tgt))
         module.on_load_checkpoint(checkpoint)
@@ -1229,7 +1229,7 @@ class TestOnLoadCheckpoint:
     def test_pe_unchanged_when_shapes_match(self, build_module):
         """on_load_checkpoint must not alter PE when checkpoint and model shapes already match."""
         pe_size = 36
-        checkpoint = self._make_ptl_checkpoint(pe_size_src=pe_size, pe_size_tgt=pe_size)
+        checkpoint = self._make_ptl_checkpoint(pe_size_src=pe_size, _pe_size_tgt=pe_size)
 
         module, _, _, _ = build_module(model_config=_base_model_config(positional_encoding_size=pe_size))
         module.on_load_checkpoint(checkpoint)
@@ -1258,7 +1258,7 @@ class TestOnLoadCheckpoint:
     def test_non_pe_tensors_not_modified(self, build_module):
         """on_load_checkpoint must not alter non-PE tensors in the state dict."""
         pe_src, pe_tgt = 36, 56
-        checkpoint = self._make_ptl_checkpoint(pe_size_src=pe_src, pe_size_tgt=pe_tgt)
+        checkpoint = self._make_ptl_checkpoint(pe_size_src=pe_src, _pe_size_tgt=pe_tgt)
         original_other = checkpoint["state_dict"]["model.other_layer.weight"].clone()
 
         module, _, _, _ = build_module(model_config=_base_model_config(positional_encoding_size=pe_tgt))
