@@ -492,6 +492,12 @@ def unpack_boxes(
         ``area``, ``iscrowd``, and (when *masks_aug* is given) ``masks``
         entries.
     """
+    if masks_aug is not None:
+        assert masks_aug.shape[:2] == valid.shape, (
+            f"masks_aug batch/n_max dims {tuple(masks_aug.shape[:2])} must match "
+            f"valid shape {tuple(valid.shape)}; ensure collate_masks is called with "
+            "n_max=valid.shape[1] from collate_boxes"
+        )
     new_targets: list[dict[str, Any]] = []
     for i, t in enumerate(targets):
         t = t.copy()
