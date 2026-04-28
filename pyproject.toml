@@ -53,6 +53,7 @@ train = [
     "peft",                            # LoRA backbone fine-tuning (available during training)
     "pytorch_lightning>=2.6,<3",
     "torchmetrics[detection]>=1.2",
+    "pytorch-optimizer",
     "faster-coco-eval>=1.7.2",
     "pycocotools",
     "scipy",

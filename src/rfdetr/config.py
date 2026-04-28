@@ -560,6 +560,8 @@ class TrainConfig(BaseModel):
     fp16_eval: bool = False
     lr_scheduler: Literal["step", "cosine"] = "step"
     lr_min_factor: float = 0.0
+    optimizer: str = "adamw"
+    optimizer_kwargs: Dict[str, Any] = Field(default_factory=dict)
     dont_save_weights: bool = False
     # PTL runtime/perf tuning knobs.
     train_log_sync_dist: bool = False
@@ -606,6 +608,26 @@ class TrainConfig(BaseModel):
         """Validate interval fields are >= 1."""
         if v < 1:
             raise ValueError("Interval fields must be >= 1.")
+        return v
+
+    @field_validator("optimizer", mode="after")
+    @classmethod
+    def validate_optimizer_name(cls, v: str) -> str:
+        """Validate optimizer is a non-empty optimizer name."""
+        optimizer = v.strip()
+        if not optimizer:
+            raise ValueError("optimizer must be a non-empty string.")
+        return optimizer
+
+    @field_validator("optimizer_kwargs", mode="after")
+    @classmethod
+    def validate_optimizer_kwargs(cls, v: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate optimizer_kwargs does not override RF-DETR-managed arguments."""
+        reserved_keys = {"params", "lr", "weight_decay", "fused"}
+        reserved_present = reserved_keys.intersection(v)
+        if reserved_present:
+            reserved = ", ".join(sorted(reserved_present))
+            raise ValueError(f"optimizer_kwargs cannot include RF-DETR-managed key(s): {reserved}.")
         return v
 
     @field_validator("prefetch_factor", mode="after")

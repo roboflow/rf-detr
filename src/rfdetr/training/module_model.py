@@ -32,6 +32,109 @@ from rfdetr.utilities.logger import get_logger
 logger = get_logger()
 
 
+def _split_optimizer_name(optimizer: str) -> tuple[str | None, str]:
+    """Split an optimizer string into optional provider and optimizer name.
+
+    Args:
+        optimizer: Optimizer config value, optionally prefixed with
+            ``"pytorch_optimizer:"`` or ``"pytorch-optimizer:"``.
+
+    Returns:
+        Tuple of provider and normalized optimizer name. Provider is ``None``
+        when no explicit prefix was supplied.
+    """
+    optimizer_name = optimizer.strip()
+    if ":" not in optimizer_name:
+        return None, optimizer_name.lower()
+
+    provider, name = optimizer_name.split(":", 1)
+    provider = provider.strip().lower().replace("-", "_")
+    name = name.strip().lower()
+    if provider != "pytorch_optimizer":
+        raise ValueError(
+            f"Unsupported optimizer provider {provider!r}. "
+            "Use 'adamw' for RF-DETR's default optimizer or 'pytorch_optimizer:<name>'."
+        )
+    if not name:
+        raise ValueError("optimizer provider prefix must be followed by a non-empty optimizer name.")
+    return provider, name
+
+
+def _is_default_adamw_optimizer(provider: str | None, optimizer_name: str) -> bool:
+    """Return whether the config selects RF-DETR's built-in AdamW path.
+
+    Args:
+        provider: Optional optimizer provider prefix.
+        optimizer_name: Normalized optimizer name.
+
+    Returns:
+        ``True`` when the built-in torch AdamW path should be used.
+    """
+    return provider is None and optimizer_name == "adamw"
+
+
+def _load_pytorch_optimizer(optimizer_name: str) -> type[torch.optim.Optimizer]:
+    """Load an optimizer class from pytorch-optimizer by name.
+
+    Args:
+        optimizer_name: Optimizer name understood by pytorch-optimizer.
+
+    Returns:
+        Optimizer class loaded from pytorch-optimizer.
+
+    Raises:
+        ImportError: If pytorch-optimizer is not installed.
+        NotImplementedError: If pytorch-optimizer does not know the optimizer.
+    """
+    try:
+        from pytorch_optimizer import load_optimizer
+    except ModuleNotFoundError as exc:
+        if exc.name != "pytorch_optimizer":
+            raise
+        raise ImportError(
+            f"pytorch-optimizer is required for optimizer={optimizer_name!r}. "
+            "Install it with `pip install pytorch-optimizer` or install RF-DETR with the training extra."
+        ) from exc
+    return load_optimizer(optimizer_name)
+
+
+def _build_pytorch_optimizer(
+    optimizer_name: str,
+    param_dicts: list[dict[str, Any]],
+    train_config: TrainConfig,
+) -> torch.optim.Optimizer:
+    """Build a pytorch-optimizer optimizer while preserving RF-DETR param groups.
+
+    Args:
+        optimizer_name: Optimizer name to load from pytorch-optimizer.
+        param_dicts: RF-DETR parameter groups with layer-wise learning rates.
+        train_config: Training config with base optimizer hyperparameters.
+
+    Returns:
+        Instantiated optimizer.
+    """
+    try:
+        optimizer_class = _load_pytorch_optimizer(optimizer_name)
+    except NotImplementedError as exc:
+        raise ValueError(
+            f"Unsupported pytorch-optimizer optimizer {optimizer_name!r}. "
+            "Check pytorch_optimizer.get_supported_optimizers() for available names."
+        ) from exc
+
+    try:
+        return optimizer_class(
+            param_dicts,
+            lr=train_config.lr,
+            weight_decay=train_config.weight_decay,
+            **train_config.optimizer_kwargs,
+        )
+    except TypeError as exc:
+        raise TypeError(
+            f"Failed to initialize pytorch-optimizer optimizer {optimizer_name!r}. "
+            "Check optimizer_kwargs for arguments supported by that optimizer."
+        ) from exc
+
+
 class RFDETRModelModule(LightningModule):
     """LightningModule wrapping the RF-DETR model and training loop.
 
@@ -255,11 +358,13 @@ class RFDETRModelModule(LightningModule):
         )
 
     def configure_optimizers(self) -> Dict[str, Any]:
-        """Build AdamW optimizer with layer-wise LR decay and LambdaLR scheduler.
+        """Build the configured optimizer with layer-wise LR decay and scheduler.
 
         Uses ``trainer.estimated_stepping_batches`` for total step count so
         cosine annealing covers the full training run regardless of dataset
         size or accumulation settings.
+        ``optimizer="adamw"`` keeps RF-DETR's fused torch AdamW path;
+        other names are loaded from pytorch-optimizer.
 
         Returns:
             PTL optimizer config dict with optimizer and step-interval scheduler.
@@ -272,13 +377,19 @@ class RFDETRModelModule(LightningModule):
         # name-prefix mismatches that put the same tensor in multiple groups.
         model_for_params = getattr(self.model, "_orig_mod", self.model)
         param_dicts = get_param_dict(ns, model_for_params)
-        param_dicts = [p for p in param_dicts if p["params"].requires_grad]
-        optimizer = torch.optim.AdamW(
-            param_dicts,
-            lr=tc.lr,
-            weight_decay=tc.weight_decay,
-            fused=self._use_fused_optimizer,
-        )
+        param_dicts = [param_group for param_group in param_dicts if param_group["params"].requires_grad]
+
+        optimizer_provider, optimizer_name = _split_optimizer_name(tc.optimizer)
+        if _is_default_adamw_optimizer(optimizer_provider, optimizer_name):
+            optimizer = torch.optim.AdamW(
+                param_dicts,
+                lr=tc.lr,
+                weight_decay=tc.weight_decay,
+                fused=self._use_fused_optimizer,
+                **tc.optimizer_kwargs,
+            )
+        else:
+            optimizer = _build_pytorch_optimizer(optimizer_name, param_dicts, tc)
 
         total_steps = int(self.trainer.estimated_stepping_batches)
         steps_per_epoch = max(1, total_steps // tc.epochs)
