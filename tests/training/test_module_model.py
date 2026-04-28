@@ -1265,3 +1265,16 @@ class TestOnLoadCheckpoint:
         module.on_load_checkpoint(checkpoint)
 
         assert torch.equal(checkpoint["state_dict"]["model.other_layer.weight"], original_other)
+
+    def test_no_pe_keys_in_state_dict_is_noop(self, build_module):
+        """on_load_checkpoint must not raise when state_dict contains no PE keys."""
+        checkpoint = {
+            "state_dict": {"model.some_layer.weight": torch.randn(4, 4)},
+            "epoch": 1,
+        }
+        original_keys = set(checkpoint["state_dict"].keys())
+
+        module, _, _, _ = build_module(model_config=_base_model_config(positional_encoding_size=36))
+        module.on_load_checkpoint(checkpoint)
+
+        assert set(checkpoint["state_dict"].keys()) == original_keys
