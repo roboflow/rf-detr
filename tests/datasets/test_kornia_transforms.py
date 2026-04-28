@@ -617,10 +617,6 @@ class TestBuildKorniaPipelineWithMasks:
 class TestUnpackBoxesWithMasks:
     """unpack_boxes with masks_aug keeps/removes masks in sync with boxes."""
 
-    @pytest.fixture(autouse=True)
-    def _require_kornia(self):
-        pytest.importorskip("kornia")
-
     def test_masks_filtered_same_as_boxes(self):
         """Box removed → corresponding mask also removed from output."""
         from rfdetr.datasets.kornia_transforms import unpack_boxes
