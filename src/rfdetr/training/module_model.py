@@ -127,6 +127,8 @@ def _load_python_optimizer(optimizer_path: str) -> type[torch.optim.Optimizer]:
     try:
         module = importlib.import_module(module_name)
     except ModuleNotFoundError as exc:
+        if exc.name != module_name:
+            raise
         raise ImportError(
             f"Could not import optimizer module {module_name!r} for optimizer={optimizer_path!r}."
         ) from exc
@@ -200,8 +202,8 @@ def _instantiate_optimizer(
             weight_decay=train_config.weight_decay,
             **train_config.optimizer_kwargs,
         )
-    except TypeError as exc:
-        raise TypeError(
+    except (TypeError, ValueError) as exc:
+        raise type(exc)(
             f"Failed to initialize optimizer {optimizer_name!r}. "
             "Check optimizer_kwargs and optimizer_param_group_overrides for arguments supported by that optimizer."
         ) from exc
@@ -471,7 +473,8 @@ class RFDETRModelModule(LightningModule):
         cosine annealing covers the full training run regardless of dataset
         size or accumulation settings.
         ``optimizer="adamw"`` keeps RF-DETR's fused torch AdamW path;
-        other names are loaded from pytorch-optimizer.
+        other names can be loaded from ``pytorch-optimizer`` or via the
+        explicit ``python:``/``import:`` provider to import an optimizer class.
 
         Returns:
             PTL optimizer config dict with optimizer and step-interval scheduler.
