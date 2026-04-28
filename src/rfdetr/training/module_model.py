@@ -202,8 +202,8 @@ def _instantiate_optimizer(
             weight_decay=train_config.weight_decay,
             **train_config.optimizer_kwargs,
         )
-    except TypeError as exc:
-        raise TypeError(
+    except (TypeError, ValueError) as exc:
+        raise type(exc)(
             f"Failed to initialize optimizer {optimizer_name!r}. "
             "Check optimizer_kwargs and optimizer_param_group_overrides for arguments supported by that optimizer."
         ) from exc
