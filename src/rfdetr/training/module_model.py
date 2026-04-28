@@ -471,7 +471,8 @@ class RFDETRModelModule(LightningModule):
         cosine annealing covers the full training run regardless of dataset
         size or accumulation settings.
         ``optimizer="adamw"`` keeps RF-DETR's fused torch AdamW path;
-        other names are loaded from pytorch-optimizer.
+        other names can be loaded from ``pytorch-optimizer`` or via the
+        explicit ``python:``/``import:`` provider to import an optimizer class.
 
         Returns:
             PTL optimizer config dict with optimizer and step-interval scheduler.
