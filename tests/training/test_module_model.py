@@ -1166,12 +1166,13 @@ class TestOnLoadCheckpoint:
 
     _PE_KEY = "model.backbone.embeddings.position_embeddings"
 
-    def _make_ptl_checkpoint(self, pe_size_src: int, pe_size_tgt: int, dim: int = 16) -> dict:
+    def _make_ptl_checkpoint(self, pe_size_src: int, _pe_size_tgt: int, dim: int = 16) -> dict:
         """Build a minimal PTL checkpoint with mismatched PE shape.
 
         Args:
             pe_size_src: Source grid side length (checkpoint was saved with this PE).
-            pe_size_tgt: Target grid side length (model was built with this PE).
+            _pe_size_tgt: Target grid side length (model was built with this PE),
+                accepted for test readability but intentionally unused here.
             dim: Embedding dimension (small value for fast tests).
 
         Returns:
