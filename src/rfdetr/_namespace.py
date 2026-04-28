@@ -97,6 +97,7 @@ _TC_NON_NAMESPACE_FIELDS = {
     "lr_min_factor",
     "optimizer",
     "optimizer_kwargs",
+    "optimizer_param_group_overrides",
     # Dataset class labels.
     "class_names",
 }

@@ -53,17 +53,17 @@ module = RFDETRModelModule(model_config, train_config)
 
 ### Lifecycle hooks
 
-| Hook                       | Behaviour                                                                                           |
-| -------------------------- | --------------------------------------------------------------------------------------------------- |
-| `on_fit_start`             | Seeds RNGs when `train_config.seed` is set.                                                         |
-| `on_train_batch_start`     | Applies multi-scale random resize when `train_config.multi_scale=True`.                             |
-| `transfer_batch_to_device` | Moves `NestedTensor` batches to the target device.                                                  |
-| `training_step`            | Computes loss, divides by `accumulate_grad_batches`, and logs `train/loss` and per-term losses.     |
-| `validation_step`          | Runs forward pass and postprocessing; returns `{results, targets}` for `COCOEvalCallback`.          |
-| `test_step`                | Same as `validation_step`, logs under `test/`.                                                      |
-| `predict_step`             | Runs inference-only forward pass and returns postprocessed detections.                              |
-| `configure_optimizers`     | Builds the configured optimizer with layer-wise LR decay and a LambdaLR scheduler (cosine or step). |
-| `on_load_checkpoint`       | Auto-converts legacy `.pth` checkpoints to PTL format.                                              |
+| Hook                       | Behaviour                                                                                                               |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `on_fit_start`             | Seeds RNGs when `train_config.seed` is set.                                                                             |
+| `on_train_batch_start`     | Applies multi-scale random resize when `train_config.multi_scale=True`.                                                 |
+| `transfer_batch_to_device` | Moves `NestedTensor` batches to the target device.                                                                      |
+| `training_step`            | Computes loss, divides by `accumulate_grad_batches`, and logs `train/loss` and per-term losses.                         |
+| `validation_step`          | Runs forward pass and postprocessing; returns `{results, targets}` for `COCOEvalCallback`.                              |
+| `test_step`                | Same as `validation_step`, logs under `test/`.                                                                          |
+| `predict_step`             | Runs inference-only forward pass and returns postprocessed detections.                                                  |
+| `configure_optimizers`     | Builds the configured optimizer, applies optional rank-based parameter-group kwargs, and attaches a LambdaLR scheduler. |
+| `on_load_checkpoint`       | Auto-converts legacy `.pth` checkpoints to PTL format.                                                                  |
 
 ### Accessing the underlying model
 

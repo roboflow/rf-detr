@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import importlib
 import math
 import random
 import warnings
@@ -18,7 +19,7 @@ import torch.nn.functional as F  # noqa: N812
 from pytorch_lightning import LightningModule, seed_everything
 
 from rfdetr._namespace import _namespace_from_configs
-from rfdetr.config import ModelConfig, TrainConfig
+from rfdetr.config import ModelConfig, OptimizerParamGroupOverride, TrainConfig
 from rfdetr.datasets.coco import compute_multi_scale_scales
 from rfdetr.models import build_criterion_from_config, build_model_from_config
 from rfdetr.models.weights import (
@@ -37,7 +38,8 @@ def _split_optimizer_name(optimizer: str) -> tuple[str | None, str]:
 
     Args:
         optimizer: Optimizer config value, optionally prefixed with
-            ``"pytorch_optimizer:"`` or ``"pytorch-optimizer:"``.
+            ``"pytorch_optimizer:"``, ``"pytorch-optimizer:"``,
+            ``"python:"``, or ``"import:"``.
 
     Returns:
         Tuple of provider and normalized optimizer name. Provider is ``None``
@@ -49,11 +51,15 @@ def _split_optimizer_name(optimizer: str) -> tuple[str | None, str]:
 
     provider, name = optimizer_name.split(":", 1)
     provider = provider.strip().lower().replace("-", "_")
-    name = name.strip().lower()
-    if provider != "pytorch_optimizer":
+    name = name.strip()
+    if provider in {"python", "import"}:
+        provider = "python"
+    elif provider == "pytorch_optimizer":
+        name = name.lower()
+    else:
         raise ValueError(
             f"Unsupported optimizer provider {provider!r}. "
-            "Use 'adamw' for RF-DETR's default optimizer or 'pytorch_optimizer:<name>'."
+            "Use 'adamw', 'pytorch_optimizer:<name>', or 'python:<module.OptimizerClass>'."
         )
     if not name:
         raise ValueError("optimizer provider prefix must be followed by a non-empty optimizer name.")
@@ -98,6 +104,109 @@ def _load_pytorch_optimizer(optimizer_name: str) -> type[torch.optim.Optimizer]:
     return load_optimizer(optimizer_name)
 
 
+def _load_python_optimizer(optimizer_path: str) -> type[torch.optim.Optimizer]:
+    """Load an optimizer class from a Python import path.
+
+    Args:
+        optimizer_path: Fully qualified optimizer class path.
+
+    Returns:
+        Optimizer class loaded from the import path.
+
+    Raises:
+        ImportError: If the module or class cannot be imported.
+        TypeError: If the imported object is not a torch optimizer class.
+    """
+    module_name, _, class_name = optimizer_path.rpartition(".")
+    if not module_name or not class_name:
+        raise ImportError(
+            f"optimizer={optimizer_path!r} must be a fully qualified import path, "
+            "for example 'python:my_project.optimizers.CustomOptimizer'."
+        )
+
+    try:
+        module = importlib.import_module(module_name)
+    except ModuleNotFoundError as exc:
+        raise ImportError(
+            f"Could not import optimizer module {module_name!r} for optimizer={optimizer_path!r}."
+        ) from exc
+
+    try:
+        optimizer_class = getattr(module, class_name)
+    except AttributeError as exc:
+        raise ImportError(f"Optimizer class {class_name!r} was not found in module {module_name!r}.") from exc
+
+    if not isinstance(optimizer_class, type) or not issubclass(optimizer_class, torch.optim.Optimizer):
+        raise TypeError(f"optimizer={optimizer_path!r} must resolve to a torch.optim.Optimizer subclass.")
+    return optimizer_class
+
+
+def _get_param_group_parameters(param_group: dict[str, Any]) -> list[torch.Tensor]:
+    """Return materialized tensors from a PyTorch optimizer parameter group."""
+    params = param_group["params"]
+    if isinstance(params, torch.Tensor):
+        return [params]
+    if isinstance(params, (list, tuple)):
+        return list(params)
+    materialized_params = list(params)
+    param_group["params"] = materialized_params
+    return materialized_params
+
+
+def _param_group_matches_override(
+    param_group: dict[str, Any],
+    override: OptimizerParamGroupOverride,
+) -> bool:
+    """Return whether all tensors in a param group match a rank-based override."""
+    params = _get_param_group_parameters(param_group)
+    if not params:
+        return False
+    return all(
+        (override.min_ndim is None or param.ndim >= override.min_ndim)
+        and (override.max_ndim is None or param.ndim <= override.max_ndim)
+        for param in params
+    )
+
+
+def _apply_optimizer_param_group_overrides(
+    param_dicts: list[dict[str, Any]],
+    overrides: list[OptimizerParamGroupOverride],
+) -> list[dict[str, Any]]:
+    """Apply optimizer-specific kwargs to matching parameter groups."""
+    if not overrides:
+        return param_dicts
+
+    updated_param_dicts = []
+    for param_group in param_dicts:
+        updated_param_group = dict(param_group)
+        for override in overrides:
+            if _param_group_matches_override(updated_param_group, override):
+                updated_param_group.update(override.kwargs)
+        updated_param_dicts.append(updated_param_group)
+    return updated_param_dicts
+
+
+def _instantiate_optimizer(
+    optimizer_class: type[torch.optim.Optimizer],
+    optimizer_name: str,
+    param_dicts: list[dict[str, Any]],
+    train_config: TrainConfig,
+) -> torch.optim.Optimizer:
+    """Instantiate an optimizer class with RF-DETR optimizer arguments."""
+    try:
+        return optimizer_class(
+            param_dicts,
+            lr=train_config.lr,
+            weight_decay=train_config.weight_decay,
+            **train_config.optimizer_kwargs,
+        )
+    except TypeError as exc:
+        raise TypeError(
+            f"Failed to initialize optimizer {optimizer_name!r}. "
+            "Check optimizer_kwargs and optimizer_param_group_overrides for arguments supported by that optimizer."
+        ) from exc
+
+
 def _build_pytorch_optimizer(
     optimizer_name: str,
     param_dicts: list[dict[str, Any]],
@@ -120,19 +229,17 @@ def _build_pytorch_optimizer(
             f"Unsupported pytorch-optimizer optimizer {optimizer_name!r}. "
             "Check pytorch_optimizer.get_supported_optimizers() for available names."
         ) from exc
+    return _instantiate_optimizer(optimizer_class, f"pytorch_optimizer:{optimizer_name}", param_dicts, train_config)
 
-    try:
-        return optimizer_class(
-            param_dicts,
-            lr=train_config.lr,
-            weight_decay=train_config.weight_decay,
-            **train_config.optimizer_kwargs,
-        )
-    except TypeError as exc:
-        raise TypeError(
-            f"Failed to initialize pytorch-optimizer optimizer {optimizer_name!r}. "
-            "Check optimizer_kwargs for arguments supported by that optimizer."
-        ) from exc
+
+def _build_python_optimizer(
+    optimizer_path: str,
+    param_dicts: list[dict[str, Any]],
+    train_config: TrainConfig,
+) -> torch.optim.Optimizer:
+    """Build an optimizer from a fully qualified Python import path."""
+    optimizer_class = _load_python_optimizer(optimizer_path)
+    return _instantiate_optimizer(optimizer_class, f"python:{optimizer_path}", param_dicts, train_config)
 
 
 class RFDETRModelModule(LightningModule):
@@ -378,6 +485,7 @@ class RFDETRModelModule(LightningModule):
         model_for_params = getattr(self.model, "_orig_mod", self.model)
         param_dicts = get_param_dict(ns, model_for_params)
         param_dicts = [param_group for param_group in param_dicts if param_group["params"].requires_grad]
+        param_dicts = _apply_optimizer_param_group_overrides(param_dicts, tc.optimizer_param_group_overrides)
 
         optimizer_provider, optimizer_name = _split_optimizer_name(tc.optimizer)
         if _is_default_adamw_optimizer(optimizer_provider, optimizer_name):
@@ -388,6 +496,8 @@ class RFDETRModelModule(LightningModule):
                 fused=self._use_fused_optimizer,
                 **tc.optimizer_kwargs,
             )
+        elif optimizer_provider == "python":
+            optimizer = _build_python_optimizer(optimizer_name, param_dicts, tc)
         else:
             optimizer = _build_pytorch_optimizer(optimizer_name, param_dicts, tc)
 

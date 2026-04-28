@@ -45,6 +45,7 @@ def _detect_device() -> str:
 
 
 DEVICE: str = _detect_device()
+_OPTIMIZER_MANAGED_KWARGS = {"params", "lr", "weight_decay", "fused"}
 
 
 class BaseConfig(BaseModel):
@@ -436,6 +437,37 @@ class RFDETRSeg2XLargeConfig(RFDETRBaseConfig):
     num_classes: int = 90
 
 
+class OptimizerParamGroupOverride(BaseModel):
+    """Optimizer kwargs applied to parameter groups matching tensor-rank constraints."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", validate_assignment=True)
+
+    min_ndim: Optional[int] = Field(default=None, ge=0)
+    max_ndim: Optional[int] = Field(default=None, ge=0)
+    kwargs: Dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_ndim_bounds(self) -> "OptimizerParamGroupOverride":
+        """Validate that the override has a tensor-rank matcher."""
+        if self.min_ndim is None and self.max_ndim is None:
+            raise ValueError("optimizer_param_group_overrides entries must set min_ndim or max_ndim.")
+        if self.min_ndim is not None and self.max_ndim is not None and self.min_ndim > self.max_ndim:
+            raise ValueError("optimizer_param_group_overrides min_ndim must be <= max_ndim.")
+        return self
+
+    @field_validator("kwargs", mode="after")
+    @classmethod
+    def validate_kwargs(cls, v: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate override kwargs do not replace RF-DETR-managed optimizer arguments."""
+        reserved_present = _OPTIMIZER_MANAGED_KWARGS.intersection(v)
+        if reserved_present:
+            reserved = ", ".join(sorted(reserved_present))
+            raise ValueError(
+                f"optimizer_param_group_overrides kwargs cannot include RF-DETR-managed key(s): {reserved}."
+            )
+        return v
+
+
 class TrainConfig(BaseModel):
     """Training hyperparameters and auto-batching configuration.
 
@@ -562,6 +594,7 @@ class TrainConfig(BaseModel):
     lr_min_factor: float = 0.0
     optimizer: str = "adamw"
     optimizer_kwargs: Dict[str, Any] = Field(default_factory=dict)
+    optimizer_param_group_overrides: List[OptimizerParamGroupOverride] = Field(default_factory=list)
     dont_save_weights: bool = False
     # PTL runtime/perf tuning knobs.
     train_log_sync_dist: bool = False
@@ -623,8 +656,7 @@ class TrainConfig(BaseModel):
     @classmethod
     def validate_optimizer_kwargs(cls, v: Dict[str, Any]) -> Dict[str, Any]:
         """Validate optimizer_kwargs does not override RF-DETR-managed arguments."""
-        reserved_keys = {"params", "lr", "weight_decay", "fused"}
-        reserved_present = reserved_keys.intersection(v)
+        reserved_present = _OPTIMIZER_MANAGED_KWARGS.intersection(v)
         if reserved_present:
             reserved = ", ".join(sorted(reserved_present))
             raise ValueError(f"optimizer_kwargs cannot include RF-DETR-managed key(s): {reserved}.")

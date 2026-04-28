@@ -95,6 +95,26 @@ class _RecordingOptimizer(torch.optim.Optimizer):
         return None
 
 
+class _RankAwareRecordingOptimizer(torch.optim.Optimizer):
+    """Optimizer test double that rejects rank-gated flags on tensors below rank 2."""
+
+    def __init__(self, params, lr=1e-3, weight_decay=0.0, momentum=0.0, **kwargs):
+        super().__init__(params, {"lr": lr, "weight_decay": weight_decay, "momentum": momentum, **kwargs})
+        for param_group in self.param_groups:
+            if param_group.get("use_matrix_update") and any(param.ndim < 2 for param in param_group["params"]):
+                raise ValueError("use_matrix_update=True is only valid for tensors with ndim >= 2")
+
+    def step(self, closure=None):
+        """Run an optimizer step for the test double."""
+        if closure is not None:
+            return closure()
+        return None
+
+
+class _NotOptimizer:
+    """Non-optimizer import target for validation tests."""
+
+
 def _build_module(model_config=None, train_config=None, tmp_path=None):
     """Construct RFDETRModelModule with build_model_from_config and build_criterion_from_config mocked."""
     mc = model_config or _base_model_config()
@@ -965,6 +985,87 @@ class TestConfigureOptimizers:
 
         mock_load.assert_called_once_with("adamw")
         assert isinstance(optimizer, _RecordingOptimizer)
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_python_optimizer_provider_imports_class(self, mock_get_param_dict, tmp_path):
+        """python: provider imports a torch optimizer class from a fully qualified path."""
+        module, param_dicts = self._setup_module(
+            tmp_path,
+            optimizer="python:tests.training.test_module_model._RecordingOptimizer",
+        )
+        mock_get_param_dict.return_value = param_dicts
+
+        optimizer = module.configure_optimizers()["optimizer"]
+
+        assert isinstance(optimizer, _RecordingOptimizer)
+        assert optimizer.defaults["lr"] == pytest.approx(module.train_config.lr)
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_python_optimizer_provider_rejects_missing_class_path(self, mock_get_param_dict, tmp_path):
+        """python: provider requires a fully qualified optimizer class path."""
+        module, param_dicts = self._setup_module(tmp_path, optimizer="python:CustomOptimizer")
+        mock_get_param_dict.return_value = param_dicts
+
+        with pytest.raises(ImportError, match="fully qualified import path"):
+            module.configure_optimizers()
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_python_optimizer_provider_rejects_non_optimizer_class(self, mock_get_param_dict, tmp_path):
+        """python: provider requires an import target that subclasses torch.optim.Optimizer."""
+        module, param_dicts = self._setup_module(
+            tmp_path,
+            optimizer="python:tests.training.test_module_model._NotOptimizer",
+        )
+        mock_get_param_dict.return_value = param_dicts
+
+        with pytest.raises(TypeError, match="torch.optim.Optimizer subclass"):
+            module.configure_optimizers()
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_optimizer_param_group_overrides_apply_to_tensor_rank_matches(self, mock_get_param_dict, tmp_path):
+        """Rank-based overrides support optimizer-specific flags only on 2D+ tensor groups."""
+        module, _ = self._setup_module(
+            tmp_path,
+            optimizer="python:tests.training.test_module_model._RankAwareRecordingOptimizer",
+            optimizer_kwargs={"momentum": 0.9},
+            optimizer_param_group_overrides=[{"min_ndim": 2, "kwargs": {"use_matrix_update": True}}],
+        )
+        param_2d = nn.Parameter(torch.randn(4, 4))
+        param_1d = nn.Parameter(torch.randn(4))
+        mock_get_param_dict.return_value = [
+            {"params": param_2d, "lr": 2.5e-5},
+            {"params": param_1d, "lr": module.train_config.lr},
+        ]
+
+        optimizer = module.configure_optimizers()["optimizer"]
+
+        assert optimizer.defaults["momentum"] == pytest.approx(0.9)
+        assert optimizer.param_groups[0]["use_matrix_update"] is True
+        assert "use_matrix_update" not in optimizer.param_groups[1]
+        assert optimizer.param_groups[0]["initial_lr"] == pytest.approx(2.5e-5)
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_optimizer_param_group_overrides_can_apply_false_to_low_rank_tensors(self, mock_get_param_dict, tmp_path):
+        """Rank-based overrides can explicitly mark lower-rank tensors for hybrid optimizers."""
+        module, _ = self._setup_module(
+            tmp_path,
+            optimizer="python:tests.training.test_module_model._RankAwareRecordingOptimizer",
+            optimizer_param_group_overrides=[
+                {"max_ndim": 1, "kwargs": {"use_matrix_update": False}},
+                {"min_ndim": 2, "kwargs": {"use_matrix_update": True}},
+            ],
+        )
+        param_2d = nn.Parameter(torch.randn(4, 4))
+        param_1d = nn.Parameter(torch.randn(4))
+        mock_get_param_dict.return_value = [
+            {"params": param_2d, "lr": module.train_config.lr},
+            {"params": param_1d, "lr": module.train_config.lr},
+        ]
+
+        optimizer = module.configure_optimizers()["optimizer"]
+
+        assert optimizer.param_groups[0]["use_matrix_update"] is True
+        assert optimizer.param_groups[1]["use_matrix_update"] is False
 
     @patch("rfdetr.training.module_model.get_param_dict")
     def test_missing_pytorch_optimizer_has_install_hint(self, mock_get_param_dict, tmp_path):

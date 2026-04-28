@@ -187,6 +187,10 @@ class TestTrainConfigT42PromotedFields:
         """optimizer_kwargs defaults to an empty dict."""
         assert self._tc(tmp_path).optimizer_kwargs == {}
 
+    def test_optimizer_param_group_overrides_default_is_empty_list(self, tmp_path):
+        """optimizer_param_group_overrides defaults to an empty list."""
+        assert self._tc(tmp_path).optimizer_param_group_overrides == []
+
     def test_lr_min_factor_default(self, tmp_path):
         """lr_min_factor defaults to 0.0."""
         assert self._tc(tmp_path).lr_min_factor == pytest.approx(0.0)
@@ -275,6 +279,31 @@ class TestTrainConfigT42PromotedFields:
         """optimizer_kwargs must not override RF-DETR-managed optimizer arguments."""
         with pytest.raises((ValueError, ValidationError)):
             self._tc(tmp_path, optimizer_kwargs={reserved_key: 1})
+
+    def test_optimizer_param_group_overrides_parse_dicts(self, tmp_path):
+        """optimizer_param_group_overrides entries are parsed into validated models."""
+        tc = self._tc(
+            tmp_path,
+            optimizer_param_group_overrides=[{"min_ndim": 2, "kwargs": {"use_matrix_update": True}}],
+        )
+
+        assert tc.optimizer_param_group_overrides[0].min_ndim == 2
+        assert tc.optimizer_param_group_overrides[0].kwargs == {"use_matrix_update": True}
+
+    def test_optimizer_param_group_overrides_require_ndim_matcher(self, tmp_path):
+        """optimizer_param_group_overrides entries must specify a tensor-rank matcher."""
+        with pytest.raises((ValueError, ValidationError)):
+            self._tc(tmp_path, optimizer_param_group_overrides=[{"kwargs": {"use_matrix_update": True}}])
+
+    def test_optimizer_param_group_overrides_reject_invalid_ndim_bounds(self, tmp_path):
+        """optimizer_param_group_overrides min_ndim must be <= max_ndim."""
+        with pytest.raises((ValueError, ValidationError)):
+            self._tc(tmp_path, optimizer_param_group_overrides=[{"min_ndim": 3, "max_ndim": 2}])
+
+    def test_optimizer_param_group_overrides_reject_reserved_kwargs(self, tmp_path):
+        """optimizer_param_group_overrides kwargs must not replace RF-DETR-managed arguments."""
+        with pytest.raises((ValueError, ValidationError)):
+            self._tc(tmp_path, optimizer_param_group_overrides=[{"min_ndim": 2, "kwargs": {"lr": 1e-3}}])
 
     @pytest.mark.parametrize(
         ("field", "value"),
