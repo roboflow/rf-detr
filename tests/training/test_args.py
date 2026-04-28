@@ -71,6 +71,14 @@ class TestNamespaceFromConfigs:
         assert args.sync_bn is True
         assert args.fp16_eval is True
 
+    def test_optimizer_fields_not_forwarded_to_namespace(self, base_model_config, base_train_config):
+        """Optimizer config is PTL-only and must not leak into the legacy namespace."""
+        tc = base_train_config(optimizer="lion", optimizer_kwargs={"weight_decouple": True})
+        args = _namespace_from_configs(base_model_config(), tc)
+
+        assert not hasattr(args, "optimizer")
+        assert not hasattr(args, "optimizer_kwargs")
+
     def test_seed_falls_back_to_legacy_default_when_unset(self, base_model_config, base_train_config):
         """seed defaults to 42 in the namespace when TrainConfig.seed is None."""
         tc = base_train_config(seed=None)

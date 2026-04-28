@@ -179,6 +179,14 @@ class TestTrainConfigT42PromotedFields:
         """lr_scheduler defaults to 'step'."""
         assert self._tc(tmp_path).lr_scheduler == "step"
 
+    def test_optimizer_default_is_adamw(self, tmp_path):
+        """optimizer defaults to AdamW for backward compatibility."""
+        assert self._tc(tmp_path).optimizer == "adamw"
+
+    def test_optimizer_kwargs_default_is_empty_dict(self, tmp_path):
+        """optimizer_kwargs defaults to an empty dict."""
+        assert self._tc(tmp_path).optimizer_kwargs == {}
+
     def test_lr_min_factor_default(self, tmp_path):
         """lr_min_factor defaults to 0.0."""
         assert self._tc(tmp_path).lr_min_factor == pytest.approx(0.0)
@@ -222,6 +230,8 @@ class TestTrainConfigT42PromotedFields:
             pytest.param("fp16_eval", True, id="fp16_eval"),
             pytest.param("lr_scheduler", "cosine", id="lr_scheduler_cosine"),
             pytest.param("lr_min_factor", 0.01, id="lr_min_factor"),
+            pytest.param("optimizer", "lion", id="optimizer"),
+            pytest.param("optimizer_kwargs", {"betas": (0.9, 0.99)}, id="optimizer_kwargs"),
             pytest.param("dont_save_weights", True, id="dont_save_weights"),
             pytest.param("run_test", True, id="run_test"),
             pytest.param("eval_interval", 3, id="eval_interval"),
@@ -246,6 +256,25 @@ class TestTrainConfigT42PromotedFields:
         """lr_scheduler must reject values other than 'step' and 'cosine'."""
         with pytest.raises((ValueError, ValidationError)):
             self._tc(tmp_path, lr_scheduler="cyclic")
+
+    def test_optimizer_rejects_empty_name(self, tmp_path):
+        """optimizer must be a non-empty name."""
+        with pytest.raises((ValueError, ValidationError)):
+            self._tc(tmp_path, optimizer="  ")
+
+    @pytest.mark.parametrize(
+        "reserved_key",
+        [
+            pytest.param("params", id="params"),
+            pytest.param("lr", id="lr"),
+            pytest.param("weight_decay", id="weight_decay"),
+            pytest.param("fused", id="fused"),
+        ],
+    )
+    def test_optimizer_kwargs_reject_reserved_keys(self, tmp_path, reserved_key):
+        """optimizer_kwargs must not override RF-DETR-managed optimizer arguments."""
+        with pytest.raises((ValueError, ValidationError)):
+            self._tc(tmp_path, optimizer_kwargs={reserved_key: 1})
 
     @pytest.mark.parametrize(
         ("field", "value"),
