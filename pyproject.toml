@@ -118,6 +118,7 @@ tests = [
   "pytest-xdist>=3.6,<4",
   "pytest-rerunfailures>=10,<15",
   "pytest-timeout>=2,<3",
+  "pytest-doctestplus>=1.2,<2",
   "tomli>=2.0; python_version < '3.11'",
 ]
 
@@ -184,7 +185,7 @@ ignore = [
 addopts = [
     "-v",                   # verbose output
     "--color=yes",          # colored output
-    "--doctest-modules",    # run doctests from all modules
+    "--doctest-plus",       # run doctests from all modules (pytest-doctestplus)
 ]
 pythonpath = ["src"]
 markers = [

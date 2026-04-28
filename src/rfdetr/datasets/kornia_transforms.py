@@ -52,10 +52,7 @@ from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
-try:
-    import kornia  # noqa: F401
-except ImportError:
-    __doctest_skip__ = ["build_kornia_pipeline"]
+__doctest_requires__ = {"build_kornia_pipeline": ["kornia"]}
 
 #: ImageNet channel-wise mean (RGB order).
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
