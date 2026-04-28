@@ -35,12 +35,12 @@ from rfdetr.utilities.state_dict import _ckpt_args_get, validate_checkpoint_comp
 
 logger = get_logger()
 
-__all__ = ["load_pretrain_weights", "apply_lora"]
+__all__ = ["load_pretrain_weights", "apply_lora", "interpolate_position_embeddings"]
 
 _PE_KEY_SUFFIX = "embeddings.position_embeddings"
 
 
-def _interpolate_position_embeddings(
+def interpolate_position_embeddings(
     checkpoint_state: dict,
     pe_size: int,
 ) -> None:
@@ -259,7 +259,7 @@ def load_pretrain_weights(
         if any(name.endswith(x) for x in query_param_names):
             checkpoint["model"][name] = checkpoint["model"][name][:num_desired_queries]
 
-    _interpolate_position_embeddings(checkpoint["model"], mc.positional_encoding_size)
+    interpolate_position_embeddings(checkpoint["model"], mc.positional_encoding_size)
     nn_model.load_state_dict(checkpoint["model"], strict=False)
 
     # If the user explicitly set a class count larger than the checkpoint,
