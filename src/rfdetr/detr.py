@@ -1244,6 +1244,15 @@ class RFDETR:
             ``detections.data["source_image"]`` to use
             ``detections.metadata["source_image"]``.
 
+            **class_name mapping**: for pretrained COCO checkpoints
+            (``args.dataset_file="coco"`` with ``num_classes > len(class_names)``),
+            ``class_name`` entries are resolved via a sparse COCO category-ID lookup
+            so that raw IDs such as 18 map to ``"dog"`` rather than
+            ``COCO_CLASS_NAMES[18]``. Fine-tuned models with ``remap_category_ids=True``
+            use direct 0-indexed lookup. The background/no-object class (index
+            ``num_classes``) always maps to ``"__background__"``. Unknown IDs map to
+            ``""`` and emit a one-time ``warning_once`` with the out-of-range bound.
+
         Raises:
             ValueError: If ``shape`` cannot be unpacked as a two-element sequence,
                 if either dimension does not support the ``__index__`` protocol
