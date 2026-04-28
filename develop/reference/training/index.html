@@ -5182,9 +5182,9 @@ for the non-fused path.</p>
 
     <div class="doc doc-contents ">
 
-        <p>Auto-detect and normalise legacy <code>.pth</code> checkpoints at load time.</p>
+        <p>Auto-detect legacy formats and reconcile PE shapes at checkpoint load time.</p>
 <p>PTL calls this hook before applying <code>checkpoint["state_dict"]</code> to
-the module.  Two legacy formats are handled:</p>
+the module.  Three normalisation steps are applied in order:</p>
 <ol>
 <li>
 <p><strong>Raw legacy format</strong> — a <code>*.pth</code> file loaded directly by
@@ -5192,6 +5192,14 @@ the module.  Two legacy formats are handled:</p>
    of <code>"model"</code> without <code>"state_dict"</code>.  The state dict is
    rewritten in-place with the <code>"model."</code> prefix so PTL can apply it
    normally.</p>
+</li>
+<li>
+<p><strong>Positional-embedding interpolation</strong> — when the checkpoint was
+   saved at a different image resolution than the current model, the
+   DINOv2 <code>position_embeddings</code> tensor shape will mismatch.
+   :func:<code>~rfdetr.models.weights.interpolate_position_embeddings</code> is
+   called to bicubic-resize the PE to <code>model_config.positional_encoding_size</code>
+   before PTL applies the state dict.  Regression fix for :issue:<code>998</code>.</p>
 </li>
 <li>
 <p><strong>Converted format</strong> — a file produced by
