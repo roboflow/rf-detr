@@ -304,9 +304,10 @@ def build_kornia_pipeline(
         ValueError: If *aug_config* contains an unsupported augmentation key.
 
     Examples:
+        >>> # doctest: +SKIP
         >>> from rfdetr.datasets.aug_config import AUG_CONSERVATIVE
-        >>> build_kornia_pipeline.__doc__ is not None
-        True
+        >>> pipeline = build_kornia_pipeline(AUG_CONSERVATIVE, resolution=560)
+        >>> pipeline_seg = build_kornia_pipeline(AUG_CONSERVATIVE, resolution=560, with_masks=True)
     """
     _require_kornia()
     from kornia.augmentation import AugmentationSequential
