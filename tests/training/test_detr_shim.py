@@ -388,19 +388,19 @@ class TestRFDETRTrainPTL:
     def test_optimizer_config_forwarded_to_get_train_config(self, tmp_path, patch_lit):
         """Optimizer training kwargs must reach get_train_config unchanged."""
         mock_self = _make_rfdetr_self(tmp_path)
-        optimizer_kwargs = {"momentum": 0.9}
+        optimizer_kwargs = {"weight_decouple": True}
         optimizer_param_group_overrides = [{"min_ndim": 2, "kwargs": {"use_matrix_update": True}}]
         p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt:
             RFDETR.train(
                 mock_self,
-                optimizer="python:external_optimizers.HybridOptimizer",
+                optimizer="pytorch_optimizer:lion",
                 optimizer_kwargs=optimizer_kwargs,
                 optimizer_param_group_overrides=optimizer_param_group_overrides,
             )
 
         mock_self.get_train_config.assert_called_once_with(
-            optimizer="python:external_optimizers.HybridOptimizer",
+            optimizer="pytorch_optimizer:lion",
             optimizer_kwargs=optimizer_kwargs,
             optimizer_param_group_overrides=optimizer_param_group_overrides,
         )

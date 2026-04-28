@@ -215,7 +215,7 @@ class RFDETRModelModule(LightningModule):
             # classes (e.g. to match a fine-tuned head), persist that back onto
             # the model_config so downstream components see the aligned value.
             if hasattr(self.model, "num_classes"):
-                model_num_classes = getattr(self.model, "num_classes")
+                model_num_classes = self.model.num_classes
                 if model_num_classes is not None and model_num_classes != prev_num_classes:
                     self.model_config.num_classes = model_num_classes
         if model_config.backbone_lora:
@@ -467,7 +467,7 @@ class RFDETRModelModule(LightningModule):
             if tc.lr_scheduler == "cosine":
                 progress = float(current_step - warmup_steps) / float(max(1, total_steps - warmup_steps))
                 return tc.lr_min_factor + (1 - tc.lr_min_factor) * 0.5 * (1 + math.cos(math.pi * progress))
-            # Step decay: drop by 10× after lr_drop epochs.
+            # Step decay: drop by 10x after lr_drop epochs.
             if current_step < tc.lr_drop * steps_per_epoch:
                 return 1.0
             return 0.1

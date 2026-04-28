@@ -769,7 +769,7 @@ class TestValidationStep:
 
     def test_postprocess_called_with_orig_sizes(self, tmp_path):
         """Postprocessor must receive original image sizes to rescale predictions."""
-        result, fake_pp, _ = self._run_val_step(tmp_path)
+        _result, fake_pp, _ = self._run_val_step(tmp_path)
         fake_pp.assert_called_once()
         orig_sizes = fake_pp.call_args[0][1]
         assert orig_sizes.shape == (2, 2)
@@ -828,7 +828,7 @@ class TestTestStep:
 
     def test_postprocess_called_with_orig_sizes(self, tmp_path):
         """Postprocessor must receive original image sizes to rescale predictions."""
-        result, fake_pp, _ = self._run_test_step(tmp_path)
+        _result, fake_pp, _ = self._run_test_step(tmp_path)
         fake_pp.assert_called_once()
         orig_sizes = fake_pp.call_args[0][1]
         assert orig_sizes.shape == (2, 2)
@@ -1277,7 +1277,7 @@ class TestClipGradients:
         module.clip_gradients(MagicMock(), gradient_clip_val=0.5)
 
         mock_clip_grad_norm.assert_called_once()
-        _, call_kwargs = mock_clip_grad_norm.call_args
+        _, _call_kwargs = mock_clip_grad_norm.call_args
         # Positional arg[1] is max_norm
         assert mock_clip_grad_norm.call_args[0][1] == pytest.approx(0.5)
 
