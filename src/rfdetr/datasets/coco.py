@@ -600,21 +600,13 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
     include_masks = getattr(args, "segmentation_head", False)
     aug_config = getattr(args, "aug_config", None)
     augmentation_backend = getattr(args, "augmentation_backend", "cpu")
-    resolved_augmentation_backend = augmentation_backend
-    if include_masks and augmentation_backend != "cpu":
+    resolved_augmentation_backend = _resolve_runtime_augmentation_backend(augmentation_backend)
+    if resolved_augmentation_backend != augmentation_backend and resolved_augmentation_backend == "cpu":
         logger.warning(
-            "Segmentation training does not currently support GPU postprocess transforms; "
-            "forcing augmentation_backend='cpu' to retain CPU transforms and normalization."
+            "augmentation_backend='auto' resolved to 'cpu' because CUDA or kornia is unavailable; "
+            "disabling GPU postprocess transforms and retaining CPU normalization."
         )
-        resolved_augmentation_backend = "cpu"
-    if resolved_augmentation_backend != "cpu":
-        resolved_augmentation_backend = _resolve_runtime_augmentation_backend(resolved_augmentation_backend)
-        if resolved_augmentation_backend == "cpu":
-            logger.warning(
-                "augmentation_backend='auto' resolved to 'cpu' because CUDA or kornia is unavailable; "
-                "disabling GPU postprocess transforms and retaining CPU normalization."
-            )
-    gpu_postprocess = resolved_augmentation_backend != "cpu" and not include_masks
+    gpu_postprocess = resolved_augmentation_backend != "cpu"
 
     if square_resize_div_64:
         logger.info(f"Building COCO {image_set} dataset with square resize at resolution {resolution}")
@@ -696,7 +688,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
     num_windows = getattr(args, "num_windows", 4)
     aug_config = getattr(args, "aug_config", None)
     resolved_augmentation_backend = _resolve_runtime_augmentation_backend(getattr(args, "augmentation_backend", "cpu"))
-    gpu_postprocess = resolved_augmentation_backend != "cpu" and not include_masks
+    gpu_postprocess = resolved_augmentation_backend != "cpu"
 
     if square_resize_div_64:
         logger.info(f"Building Roboflow {image_set} dataset with square resize at resolution {resolution}")

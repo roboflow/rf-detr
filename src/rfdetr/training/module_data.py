@@ -404,6 +404,7 @@ class RFDETRDataModule(LightningDataModule):
         self._kornia_pipeline = build_kornia_pipeline(
             self.train_config.aug_config if self.train_config.aug_config is not None else AUG_CONFIG,
             self.model_config.resolution,
+            with_masks=self.model_config.segmentation_head,
         )
         self._kornia_normalize = build_normalize()
         logger.info("Kornia GPU augmentation pipeline built (backend=%s)", backend)
@@ -415,7 +416,8 @@ class RFDETRDataModule(LightningDataModule):
         augmentation and normalization are applied on the GPU.  Validation
         and test batches pass through unchanged.
 
-        Segmentation models skip GPU augmentation in phase 1 with a warning.
+        Segmentation models use a mask-aware pipeline (``with_masks=True``) so
+        images, boxes, and per-instance masks are augmented in sync.
 
         Args:
             batch: Tuple of ``(NestedTensor, list[dict])`` already on device.
@@ -427,11 +429,7 @@ class RFDETRDataModule(LightningDataModule):
         if self.trainer is None or not self.trainer.training or self._kornia_pipeline is None:
             return batch
 
-        if self.model_config.segmentation_head:
-            logger.warning_once("Kornia GPU augmentation skipped for segmentation models (phase 2)")
-            return batch
-
-        from rfdetr.datasets.kornia_transforms import collate_boxes, unpack_boxes
+        from rfdetr.datasets.kornia_transforms import collate_boxes, collate_masks, unpack_boxes
         from rfdetr.utilities.tensors import NestedTensor
 
         samples, targets = batch
@@ -441,9 +439,20 @@ class RFDETRDataModule(LightningDataModule):
         self._kornia_pipeline.to(img.device)
         self._kornia_normalize.to(img.device)
         boxes_padded, valid = collate_boxes(targets, img.device)
-        img_aug, boxes_aug = self._kornia_pipeline(img, boxes_padded)
-        img_aug = self._kornia_normalize(img_aug)
-        targets = unpack_boxes(boxes_aug, valid, targets, *img_aug.shape[-2:])
+
+        if self.model_config.segmentation_head:
+            image_height, image_width = img.shape[-2:]
+            masks_padded = collate_masks(
+                targets, img.device, n_max=valid.shape[1], image_height=image_height, image_width=image_width
+            )
+            img_aug, boxes_aug, masks_aug = self._kornia_pipeline(img, boxes_padded, masks_padded)
+            img_aug = self._kornia_normalize(img_aug)
+            targets = unpack_boxes(boxes_aug, valid, targets, *img_aug.shape[-2:], masks_aug=masks_aug)
+        else:
+            img_aug, boxes_aug = self._kornia_pipeline(img, boxes_padded)
+            img_aug = self._kornia_normalize(img_aug)
+            targets = unpack_boxes(boxes_aug, valid, targets, *img_aug.shape[-2:])
+
         height, width = img_aug.shape[-2:]
         for target in targets:
             boxes = target["boxes"]

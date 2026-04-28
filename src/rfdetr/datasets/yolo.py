@@ -710,7 +710,7 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
     num_windows = getattr(args, "num_windows", None)
     aug_config = getattr(args, "aug_config", None)
     resolved_augmentation_backend = _resolve_runtime_augmentation_backend(getattr(args, "augmentation_backend", "cpu"))
-    gpu_postprocess = resolved_augmentation_backend != "cpu" and not include_masks
+    gpu_postprocess = resolved_augmentation_backend != "cpu"
 
     if square_resize_div_64:
         dataset = YoloDetection(
