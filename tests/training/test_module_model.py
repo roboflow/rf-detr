@@ -1164,7 +1164,7 @@ class TestOnLoadCheckpoint:
     on_load_checkpoint did not interpolate PE before PTL applied the state dict.
     """
 
-    _PE_KEY = "model.backbone.embeddings.position_embeddings"
+    _PE_KEY = "model.backbone.0.encoder.encoder.embeddings.position_embeddings"
 
     def _make_ptl_checkpoint(self, pe_size_src: int, _pe_size_tgt: int, dim: int = 16) -> dict:
         """Build a minimal PTL checkpoint with mismatched PE shape.
