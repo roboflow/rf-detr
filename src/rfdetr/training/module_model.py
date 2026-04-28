@@ -376,10 +376,10 @@ class RFDETRModelModule(LightningModule):
         return self.postprocess(outputs, orig_sizes)
 
     def on_load_checkpoint(self, checkpoint: dict[str, Any]) -> None:
-        """Auto-detect and normalise legacy ``.pth`` checkpoints at load time.
+        """Auto-detect legacy formats and reconcile PE shapes at checkpoint load time.
 
         PTL calls this hook before applying ``checkpoint["state_dict"]`` to
-        the module.  Two legacy formats are handled:
+        the module.  Three normalisation steps are applied in order:
 
         1. **Raw legacy format** — a ``*.pth`` file loaded directly by
            ``Trainer`` (e.g. via ``ckpt_path=``).  Recognised by the presence
@@ -387,7 +387,14 @@ class RFDETRModelModule(LightningModule):
            rewritten in-place with the ``"model."`` prefix so PTL can apply it
            normally.
 
-        2. **Converted format** — a file produced by
+        2. **Positional-embedding interpolation** — when the checkpoint was
+           saved at a different image resolution than the current model, the
+           DINOv2 ``position_embeddings`` tensor shape will mismatch.
+           :func:`~rfdetr.models.weights.interpolate_position_embeddings` is
+           called to bicubic-resize the PE to ``model_config.positional_encoding_size``
+           before PTL applies the state dict.  Regression fix for :issue:`998`.
+
+        3. **Converted format** — a file produced by
            :func:`~rfdetr.training.checkpoint.convert_legacy_checkpoint` that
            already has ``"state_dict"`` but also carries
            ``"legacy_ema_state_dict"``.  The EMA weights are stashed on
