@@ -53,10 +53,7 @@ def _split_optimizer_name(optimizer: str) -> tuple[str | None, str]:
     if provider == "pytorch_optimizer":
         name = name.lower()
     else:
-        raise ValueError(
-            f"Unsupported optimizer provider {provider!r}. "
-            "Use 'adamw' or 'pytorch_optimizer:<name>'."
-        )
+        raise ValueError(f"Unsupported optimizer provider {provider!r}. Use 'adamw' or 'pytorch_optimizer:<name>'.")
     if not name:
         raise ValueError("optimizer provider prefix must be followed by a non-empty optimizer name.")
     return provider, name
@@ -446,6 +443,12 @@ class RFDETRModelModule(LightningModule):
                 **tc.optimizer_kwargs,
             )
         else:
+            if self.model_config.fused_optimizer:
+                logger.info(
+                    "fused_optimizer=True has no effect for optimizer=%r; "
+                    "the fused kernel is only applied when optimizer='adamw'.",
+                    tc.optimizer,
+                )
             optimizer = _build_pytorch_optimizer(optimizer_name, param_dicts, tc)
 
         total_steps = int(self.trainer.estimated_stepping_batches)
