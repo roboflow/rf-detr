@@ -1382,12 +1382,22 @@ class RFDETR:
         # sorted COCO IDs with class_names in order. Fine-tuned models remap category
         # IDs to 0-based contiguous indices (remap_category_ids=True), so class_id i maps
         # directly to class_names[i].
-        # Guard: require class_names == COCO_CLASS_NAMES so custom models whose
-        # args.num_classes happens to exceed len(class_names) (e.g. after
-        # reinitialize_detection_head with stale names) are not misidentified.
+        # Guard: require class_names == COCO_CLASS_NAMES AND args.dataset_file == "coco" to
+        # activate the sparse-ID remap, preventing misfire on custom models that happen to
+        # reuse the COCO label list with their own contiguous class IDs. When args is absent
+        # (stripped checkpoint) a one-time warning is emitted and the fallback contiguous
+        # mapping is used.
         _model_args = getattr(self.model, "args", None)
+        if _model_args is None and model_class_names == list(COCO_CLASS_NAMES):
+            logger.warning_once(
+                "predict(): model has no 'args' attribute — COCO sparse-ID mapping cannot activate; "
+                "class_ids are treated as 0-indexed (may be wrong for pretrained COCO checkpoints)"
+            )
         num_logit_slots: int = getattr(_model_args, "num_classes", n) if _model_args is not None else n
-        _is_coco_pretrained = num_logit_slots > n and model_class_names == list(COCO_CLASS_NAMES)
+        _dataset_file = getattr(_model_args, "dataset_file", None) if _model_args is not None else None
+        _is_coco_pretrained = (
+            num_logit_slots > n and model_class_names == list(COCO_CLASS_NAMES) and _dataset_file in ("coco", None)
+        )
         if _is_coco_pretrained:
             _class_id_to_name: dict[int, str] = {
                 coco_id: model_class_names[i] for i, coco_id in enumerate(_SORTED_COCO_IDS) if i < n
@@ -1437,11 +1447,12 @@ class RFDETR:
             truly_oob = [cid for cid in class_ids if cid not in _class_id_to_name and cid != num_logit_slots]
             if truly_oob:
                 logger.warning_once(
-                    "predict() encountered class_id values out of range: %s — mapping to empty string",
+                    "predict() encountered class_id values out of range [0, %d]: %s — mapping to empty string",
+                    num_logit_slots,
                     truly_oob[:5],
                 )
             detections.data["class_name"] = np.array(
-                [_class_id_to_name.get(cid, "__background__" if cid == num_logit_slots else "") for cid in class_ids],
+                ["__background__" if cid == num_logit_slots else _class_id_to_name.get(cid, "") for cid in class_ids],
                 dtype=object,
             )
 
