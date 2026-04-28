@@ -1081,6 +1081,14 @@ class TestOnAfterBatchTransfer:
         result_samples, result_targets = dm.on_after_batch_transfer((samples, targets), dataloader_idx=0)
 
         mock_pipeline.assert_called_once()
+        call_args, call_kwargs = mock_pipeline.call_args
+        assert len(call_args) == 3, "segmentation augmentation must call pipeline with image, boxes, and masks"
+        assert not call_kwargs, "segmentation augmentation should not pass unexpected keyword arguments"
+
+        masks_arg = call_args[2]
+        assert isinstance(masks_arg, torch.Tensor), "third pipeline argument must be a masks tensor"
+        assert masks_arg.dtype == torch.float32, "masks passed to pipeline must be float32"
+        assert masks_arg.shape == (2, 1, 16, 16), "masks passed to pipeline must have shape [B, N_max, H, W]"
         assert "masks" in result_targets[0], "masks key must be present in output targets for segmentation"
 
     def test_segmentation_masks_stay_in_sync_with_boxes(self, tmp_path):
