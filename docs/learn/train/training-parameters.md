@@ -56,16 +56,30 @@ Recommended configurations for different GPUs (targeting effective batch size of
 
 ## Learning Rate Parameters
 
-| Parameter    | Type    | Default  | Description                                                                                                                                                          |
-| ------------ | ------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `lr`         | `float` | `1e-4`   | Learning rate for most parts of the model.                                                                                                                           |
-| `lr_encoder` | `float` | `1.5e-4` | Learning rate specifically for the backbone encoder. Can be set lower than `lr` if you want to fine-tune the encoder more conservatively than the rest of the model. |
+| Parameter          | Type    | Default   | Description                                                                                                                                                                |
+| ------------------ | ------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lr`               | `float` | `1e-4`    | Learning rate for most parts of the model.                                                                                                                                 |
+| `lr_encoder`       | `float` | `1.5e-4`  | Learning rate specifically for the backbone encoder. Can be set lower than `lr` if you want to fine-tune the encoder more conservatively than the rest of the model.       |
+| `optimizer`        | `str`   | `"adamw"` | Optimizer name. `"adamw"` keeps RF-DETR's built-in fused AdamW path. Other names are loaded from `pytorch-optimizer`, for example `"lion"` or `"pytorch_optimizer:adamw"`. |
+| `optimizer_kwargs` | `dict`  | `{}`      | Extra keyword arguments forwarded to the selected optimizer constructor. RF-DETR manages `params`, `lr`, `weight_decay`, and `fused`.                                      |
 
 !!! tip "Learning rate tips"
 
     - Start with the default values for fine-tuning
     - If the model doesn't converge, try reducing `lr` by half
     - For training from scratch (not recommended), you may need higher learning rates
+
+### Custom Optimizer Example
+
+```python
+model.train(
+    dataset_dir="path/to/dataset",
+    optimizer="lion",
+    optimizer_kwargs={"weight_decouple": True},
+)
+```
+
+Custom optimizer names are resolved through `pytorch-optimizer` while preserving RF-DETR's parameter groups and layer-wise learning rates.
 
 ## Resolution Parameters
 
@@ -197,12 +211,14 @@ The parameters below are available for fine-grained control over training behavi
 
 ### Scheduler and Regularization
 
-| Parameter       | Type    | Default  | Description                                                                                                 |
-| --------------- | ------- | -------- | ----------------------------------------------------------------------------------------------------------- |
-| `lr_scheduler`  | `str`   | `"step"` | Learning rate scheduler type. Options: `"step"` (step decay at `lr_drop`) or `"cosine"` (cosine annealing). |
-| `lr_min_factor` | `float` | `0.0`    | Floor for the cosine scheduler, expressed as a fraction of the initial LR. Ignored when using `"step"`.     |
-| `warmup_epochs` | `float` | `0.0`    | Number of epochs for linear learning rate warmup at the start of training.                                  |
-| `drop_path`     | `float` | `0.0`    | Stochastic depth drop-path rate applied to the backbone. Higher values add more regularization.             |
+| Parameter          | Type    | Default   | Description                                                                                                 |
+| ------------------ | ------- | --------- | ----------------------------------------------------------------------------------------------------------- |
+| `lr_scheduler`     | `str`   | `"step"`  | Learning rate scheduler type. Options: `"step"` (step decay at `lr_drop`) or `"cosine"` (cosine annealing). |
+| `lr_min_factor`    | `float` | `0.0`     | Floor for the cosine scheduler, expressed as a fraction of the initial LR. Ignored when using `"step"`.     |
+| `optimizer`        | `str`   | `"adamw"` | Optimizer name. Non-default names are loaded from `pytorch-optimizer`.                                      |
+| `optimizer_kwargs` | `dict`  | `{}`      | Extra keyword arguments forwarded to the selected optimizer constructor.                                    |
+| `warmup_epochs`    | `float` | `0.0`     | Number of epochs for linear learning rate warmup at the start of training.                                  |
+| `drop_path`        | `float` | `0.0`     | Stochastic depth drop-path rate applied to the backbone. Higher values add more regularization.             |
 
 ### Runtime and Accelerator
 
