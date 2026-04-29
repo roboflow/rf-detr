@@ -41,7 +41,7 @@ def _softmax(x: np.ndarray) -> np.ndarray:
         [0.09003057, 0.24472847, 0.66524096]
     """
     e = np.exp(x - x.max(axis=-1, keepdims=True))
-    return e / e.sum(axis=-1, keepdims=True)
+    return np.asarray(e / e.sum(axis=-1, keepdims=True))
 
 
 def _create_interpreter(model_path: str | Path) -> Any:
@@ -81,7 +81,7 @@ def _create_interpreter(model_path: str | Path) -> Any:
     out_det = interp.get_output_details()
     logger.debug("Input  : %s  %s", inp_det[0]["shape"], inp_det[0]["dtype"].__name__)
     for od in out_det:
-        logger.debug("Output : %s  name=%s", od["shape"], od["name"])
+        logger.debug("Output : %s  name=%s", od["shape"], od.get("name", "<unnamed>"))
     return interp
 
 

@@ -173,12 +173,13 @@ class TestCreateInterpreter:
         result = _create_interpreter("model.tflite")
         assert result is interp_instance
 
-    def test_prints_input_and_output_shapes(self, _mock_tflite_runtime, capsys) -> None:
-        """stdout contains 'Input' and 'Output' lines with shape info."""
-        _create_interpreter("model.tflite")
-        captured = capsys.readouterr().out
-        assert "Input" in captured
-        assert "Output" in captured
+    def test_logs_input_and_output_shapes(self, _mock_tflite_runtime) -> None:
+        """Logger.debug is called with 'Input' and 'Output' shape lines."""
+        with mock.patch("rfdetr.export._tflite.inference.logger") as mock_logger:
+            _create_interpreter("model.tflite")
+        debug_msgs = [call.args[0] for call in mock_logger.debug.call_args_list]
+        assert any("Input" in m for m in debug_msgs)
+        assert any("Output" in m for m in debug_msgs)
 
     def test_accepts_path_object(self, _mock_tflite_runtime) -> None:
         """Path objects are converted to strings before passing to Interpreter."""
@@ -291,3 +292,11 @@ class TestRunInference:
         dets_swapped, _ = _run_inference(interp_swapped, rgb_image, threshold=0.3)
 
         assert len(dets_normal) == len(dets_swapped)
+
+    def test_raises_for_non_float32_input_dtype(self, rgb_image: Path) -> None:
+        """ValueError raised when model input dtype is not float32."""
+        interp = mock.MagicMock()
+        interp.get_input_details.return_value = [{"shape": _INPUT_SHAPE, "index": 0, "dtype": np.uint8}]
+        interp.get_output_details.return_value = [_DET_OUTPUT, _LABEL_OUTPUT]
+        with pytest.raises(ValueError, match="float32"):
+            _run_inference(interp, rgb_image)
