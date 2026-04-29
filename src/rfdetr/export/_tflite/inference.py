@@ -115,6 +115,14 @@ def _run_inference(
     out_det = interp.get_output_details()
     _, H, W, C = inp_det[0]["shape"]  # noqa: N806
 
+    expected_dtype = np.float32
+    actual_dtype = inp_det[0]["dtype"]
+    if actual_dtype != expected_dtype:
+        raise ValueError(
+            f"_run_inference only supports float32 input tensors, but model expects {actual_dtype.__name__}. "
+            "Export the model with float32 quantization or implement input quantization manually."
+        )
+
     _imagenet_mean = [0.485, 0.456, 0.406]
     _imagenet_std = [0.229, 0.224, 0.225]
     mean = np.array([_imagenet_mean[i % 3] for i in range(C)], dtype=np.float32)
