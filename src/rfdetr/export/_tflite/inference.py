@@ -56,9 +56,6 @@ def _create_interpreter(model_path: str | Path) -> Any:
 
     Returns:
         An allocated TFLite interpreter ready for inference.
-
-    Examples:
-        >>> interp = _create_interpreter("model_float32.tflite")  # doctest: +SKIP
     """
     try:
         import tflite_runtime.interpreter as _tflite
@@ -72,7 +69,7 @@ def _create_interpreter(model_path: str | Path) -> Any:
         except ImportError as exc:
             raise ImportError(
                 "TFLite inference requires either 'tflite-runtime' or 'tensorflow'. "
-                "Install one: pip install tflite-runtime  OR  pip install tensorflow"
+                "Install one: `pip install tflite-runtime`  OR  `pip install tensorflow`"
             ) from exc
 
     interp = _Interpreter(model_path=str(model_path))
@@ -106,10 +103,6 @@ def _run_inference(
         A tuple of ``(detections, pil_img)`` where ``detections`` contains
         pixel-space ``xyxy`` boxes and ``pil_img`` is the original PIL image
         at its original resolution.
-
-    Examples:
-        >>> interp = _create_interpreter("model.tflite")  # doctest: +SKIP
-        >>> dets, img = _run_inference(interp, "image.jpg", threshold=0.3)  # doctest: +SKIP
     """
     inp_det = interp.get_input_details()
     out_det = interp.get_output_details()
