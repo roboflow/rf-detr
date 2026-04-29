@@ -33,8 +33,8 @@ def _softmax(x: np.ndarray) -> np.ndarray:
 
     Examples:
         >>> import numpy as np
-        >>> _softmax(np.array([1.0, 2.0, 3.0]))
-        array([0.09003057, 0.24472847, 0.66524096])
+        >>> np.round(_softmax(np.array([1.0, 2.0, 3.0])), 8).tolist()
+        [0.09003057, 0.24472847, 0.66524096]
     """
     e = np.exp(x - x.max(axis=-1, keepdims=True))
     return e / e.sum(axis=-1, keepdims=True)
