@@ -120,22 +120,8 @@ class TestCreateInterpreter:
         parent_mod = types.ModuleType("tflite_runtime")
         parent_mod.interpreter = mod  # type: ignore[attr-defined]
 
-        saved_sub = sys.modules.get("tflite_runtime.interpreter")
-        saved_parent = sys.modules.get("tflite_runtime")
-        sys.modules["tflite_runtime.interpreter"] = mod  # type: ignore[assignment]
-        sys.modules["tflite_runtime"] = parent_mod  # type: ignore[assignment]
-
-        yield interp_cls, interp_instance
-
-        if saved_sub is None:
-            sys.modules.pop("tflite_runtime.interpreter", None)
-        else:
-            sys.modules["tflite_runtime.interpreter"] = saved_sub
-
-        if saved_parent is None:
-            sys.modules.pop("tflite_runtime", None)
-        else:
-            sys.modules["tflite_runtime"] = saved_parent
+        with mock.patch.dict(sys.modules, {"tflite_runtime": parent_mod, "tflite_runtime.interpreter": mod}):
+            yield interp_cls, interp_instance
 
     def test_uses_tflite_runtime_when_available(self, _mock_tflite_runtime) -> None:
         """Interpreter is constructed from tflite_runtime when it is importable."""
