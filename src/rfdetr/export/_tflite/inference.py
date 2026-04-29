@@ -21,6 +21,10 @@ import numpy as np
 import supervision as sv
 from PIL import Image as PILImage
 
+from rfdetr.utilities.logger import get_logger
+
+logger = get_logger()
+
 
 def _softmax(x: np.ndarray) -> np.ndarray:
     """Numerically stable softmax over the last axis.
@@ -41,7 +45,7 @@ def _softmax(x: np.ndarray) -> np.ndarray:
 
 
 def _create_interpreter(model_path: str | Path) -> Any:
-    """Load a TFLite model, allocate tensors, and print I/O shapes.
+    """Load a TFLite model, allocate tensors, and log I/O shapes.
 
     Tries ``tflite_runtime`` first (lightweight; preferred on edge devices),
     then falls back to ``tensorflow.lite`` (pre-installed on Colab / full TF
@@ -69,9 +73,9 @@ def _create_interpreter(model_path: str | Path) -> Any:
     interp.allocate_tensors()
     inp_det = interp.get_input_details()
     out_det = interp.get_output_details()
-    print(f"Input  : {inp_det[0]['shape']}  {inp_det[0]['dtype'].__name__}")
+    logger.debug("Input  : %s  %s", inp_det[0]["shape"], inp_det[0]["dtype"].__name__)
     for od in out_det:
-        print(f"Output : {od['shape']}  name={od['name']}")
+        logger.debug("Output : %s  name=%s", od["shape"], od["name"])
     return interp
 
 
