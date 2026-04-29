@@ -122,8 +122,21 @@ def _run_inference(
 
     # RF-DETR ONNX output names: "dets" = pred_boxes, "labels" = pred_logits.
     # Match by name so the code is robust to onnx2tf output reordering.
-    boxes_idx = next(i for i, od in enumerate(out_det) if "dets" in od["name"])
-    logits_idx = next(i for i, od in enumerate(out_det) if "labels" in od["name"])
+    available_output_names = [str(od.get("name", "<unnamed>")) for od in out_det]
+    boxes_idx = next((i for i, od in enumerate(out_det) if "dets" in str(od.get("name", ""))), None)
+    logits_idx = next((i for i, od in enumerate(out_det) if "labels" in str(od.get("name", ""))), None)
+    if boxes_idx is None or logits_idx is None:
+        missing_outputs = []
+        if boxes_idx is None:
+            missing_outputs.append("dets")
+        if logits_idx is None:
+            missing_outputs.append("labels")
+        missing = ", ".join(missing_outputs)
+        available = ", ".join(available_output_names)
+        raise ValueError(
+            f"Expected TFLite output tensor(s) {missing!r} not found. "
+            f"Available output tensor names: [{available}]"
+        )
     boxes_cwh = interp.get_tensor(out_det[boxes_idx]["index"])[0]  # (Q, 4) normalized cxcywh
     logits = interp.get_tensor(out_det[logits_idx]["index"])[0]  # (Q, num_classes+1)
 
