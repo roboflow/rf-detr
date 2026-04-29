@@ -1015,6 +1015,7 @@ class RFDETR:
                     calibration_data=calibration_data,
                     verbosity="info" if verbose else "error",
                     max_images=max_images,
+                    verbose=verbose,
                 )
                 logger.info(f"Successfully exported TFLite model to: {tflite_path}")
 
