@@ -134,8 +134,7 @@ def _run_inference(
         missing = ", ".join(missing_outputs)
         available = ", ".join(available_output_names)
         raise ValueError(
-            f"Expected TFLite output tensor(s) {missing!r} not found. "
-            f"Available output tensor names: [{available}]"
+            f"Expected TFLite output tensor(s) {missing!r} not found. Available output tensor names: [{available}]"
         )
     boxes_cwh = interp.get_tensor(out_det[boxes_idx]["index"])[0]  # (Q, 4) normalized cxcywh
     logits = interp.get_tensor(out_det[logits_idx]["index"])[0]  # (Q, num_classes+1)
