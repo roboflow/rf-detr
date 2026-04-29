@@ -113,10 +113,12 @@ class TestCreateInterpreter:
         # Build the submodule with a real Interpreter attribute
         import types
 
-        mod = types.SimpleNamespace(Interpreter=interp_cls)
+        mod = types.ModuleType("tflite_runtime.interpreter")
+        mod.Interpreter = interp_cls  # type: ignore[attr-defined]
 
         # Build parent package that exposes mod as .interpreter
-        parent_mod = types.SimpleNamespace(interpreter=mod)
+        parent_mod = types.ModuleType("tflite_runtime")
+        parent_mod.interpreter = mod  # type: ignore[attr-defined]
 
         saved_sub = sys.modules.get("tflite_runtime.interpreter")
         saved_parent = sys.modules.get("tflite_runtime")
