@@ -233,6 +233,8 @@ overrides = [
     "kornia", "kornia.*",
     "onnx", "onnx.*",
     "onnx2tf", "onnx2tf.*",
+    "tflite_runtime", "tflite_runtime.*",
+    "tensorflow", "tensorflow.*",
   ], ignore_missing_imports = true },
   # Modules with pre-existing type errors — ignored until incrementally fixed.
   { module = [
