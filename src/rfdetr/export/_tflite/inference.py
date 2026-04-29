@@ -65,9 +65,15 @@ def _create_interpreter(model_path: str | Path) -> Any:
 
         _Interpreter = _tflite.Interpreter  # noqa: N806
     except ImportError:
-        import tensorflow as _tf
+        try:
+            import tensorflow as _tf
 
-        _Interpreter = _tf.lite.Interpreter  # noqa: N806
+            _Interpreter = _tf.lite.Interpreter  # noqa: N806
+        except ImportError as exc:
+            raise ImportError(
+                "TFLite inference requires either 'tflite-runtime' or 'tensorflow'. "
+                "Install one: pip install tflite-runtime  OR  pip install tensorflow"
+            ) from exc
 
     interp = _Interpreter(model_path=str(model_path))
     interp.allocate_tensors()
