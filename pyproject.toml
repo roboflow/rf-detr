@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rfdetr"
-version = "1.6.5"
+version = "1.6.5.post0"
 description = "RF-DETR"
 readme = "README.md"
 authors = [
@@ -48,7 +48,7 @@ dependencies = [
 
 [project.optional-dependencies]
 train = [
-    "pytorch_lightning>=2.6,<3",
+    "pytorch_lightning>=2.6,<=2.6.1",
     "torchmetrics[detection]>=1.2",
     "faster-coco-eval>=1.7.2",
     "pycocotools",
