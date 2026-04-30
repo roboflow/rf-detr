@@ -34,6 +34,7 @@ import os
 import sys
 from typing import Any
 
+from rfdetr.config import PretrainWeightsCompatibilityWarning
 from rfdetr.detr import RFDETR
 from rfdetr.inference import ModelContext
 from rfdetr.variants import (
@@ -54,6 +55,7 @@ from rfdetr.variants import (
 
 __all__ = [
     "ModelContext",
+    "PretrainWeightsCompatibilityWarning",
     "from_checkpoint",
     "RFDETRNano",
     "RFDETRSmall",
