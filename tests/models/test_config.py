@@ -563,41 +563,33 @@ class TestPretrainWeightsCompatibilityWarning:
         assert len(captured) == 1
         assert "segmentation_head" in str(captured[0].message)
 
-    def test_num_queries_decrease_silent(self) -> None:
-        """Decreasing num_queries below variant default is fine — per-group truncation preserves intent."""
-        assert self._capture(RFDETRNanoConfig, num_queries=200) == []
+    @pytest.mark.parametrize(
+        "field, value",
+        [
+            pytest.param("num_queries", 200, id="num_queries_decrease"),
+            pytest.param("num_queries", 300, id="num_queries_equal"),
+            pytest.param("group_detr", 8, id="group_detr_decrease"),
+            pytest.param("num_classes", 5, id="num_classes"),
+            pytest.param("resolution", 448, id="resolution"),
+            pytest.param("positional_encoding_size", 20, id="positional_encoding_size"),
+        ],
+    )
+    def test_silent_field_overrides(self, field: str, value: object) -> None:
+        """Fields that are auto-handled at load time must not emit a warning at config construction."""
+        assert self._capture(RFDETRNanoConfig, **{field: value}) == []
 
-    def test_num_queries_equal_silent(self) -> None:
-        """num_queries equal to variant default emits no warning."""
-        assert self._capture(RFDETRNanoConfig, num_queries=300) == []
-
-    def test_num_queries_increase_warns(self) -> None:
-        """Increasing num_queries above variant default leaves extra slots randomly initialised."""
-        captured = self._capture(RFDETRNanoConfig, num_queries=400)
+    @pytest.mark.parametrize(
+        "field, value",
+        [
+            pytest.param("num_queries", 400, id="num_queries"),
+            pytest.param("group_detr", 20, id="group_detr"),
+        ],
+    )
+    def test_increase_field_warns(self, field: str, value: object) -> None:
+        """Increasing an integer field above the variant default warns — extra slots are randomly initialised."""
+        captured = self._capture(RFDETRNanoConfig, **{field: value})
         assert len(captured) == 1
-        assert "num_queries" in str(captured[0].message)
-
-    def test_group_detr_decrease_silent(self) -> None:
-        """Decreasing group_detr drops tail groups; retained groups remain pretrained."""
-        assert self._capture(RFDETRNanoConfig, group_detr=8) == []
-
-    def test_group_detr_increase_warns(self) -> None:
-        """Increasing group_detr adds groups whose query slots are randomly initialised."""
-        captured = self._capture(RFDETRNanoConfig, group_detr=20)
-        assert len(captured) == 1
-        assert "group_detr" in str(captured[0].message)
-
-    def test_num_classes_change_silent(self) -> None:
-        """num_classes change is auto-handled by head reinit — no warning."""
-        assert self._capture(RFDETRNanoConfig, num_classes=5) == []
-
-    def test_resolution_change_silent(self) -> None:
-        """Resolution change is auto-handled by PE interpolation — no warning."""
-        assert self._capture(RFDETRNanoConfig, resolution=448) == []
-
-    def test_positional_encoding_size_change_silent(self) -> None:
-        """positional_encoding_size override is auto-handled by PE interpolation — no warning."""
-        assert self._capture(RFDETRNanoConfig, positional_encoding_size=20) == []
+        assert field in str(captured[0].message)
 
     def test_pretrain_weights_none_warns(self) -> None:
         """Explicitly opting out of pretrained weights warns about training from scratch."""
@@ -649,12 +641,7 @@ class TestPretrainWeightsCompatibilityWarning:
 
     def test_modelconfig_with_required_fields_does_not_warn(self, sample_model_config: dict[str, object]) -> None:
         """Constructing the abstract ModelConfig with required fields cannot compare to defaults — no warning."""
-        captured: list[warnings.WarningMessage]
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            ModelConfig(**sample_model_config)
-            captured = [w for w in caught if issubclass(w.category, PretrainWeightsCompatibilityWarning)]
-        assert captured == []
+        assert self._capture(ModelConfig, **sample_model_config) == []
 
     def test_breaking_field_with_default_factory_skips_comparison(self) -> None:
         """A subclass whose breaking field uses ``default_factory`` (so ``.default`` is
@@ -668,11 +655,7 @@ class TestPretrainWeightsCompatibilityWarning:
             # PydanticUndefined check.
             encoder: str = Field(default_factory=lambda: "dinov2_windowed_small")
 
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            _DefaultFactoryConfig(encoder="dinov2_registers_windowed_small")
-            captured = [w for w in caught if issubclass(w.category, PretrainWeightsCompatibilityWarning)]
-        assert captured == []
+        assert self._capture(_DefaultFactoryConfig, encoder="dinov2_registers_windowed_small") == []
 
     def test_increase_field_when_required_skips_comparison(self) -> None:
         """A subclass where ``num_queries`` becomes required (no default) must be skipped."""
@@ -680,11 +663,7 @@ class TestPretrainWeightsCompatibilityWarning:
         class _RequiredNumQueriesConfig(RFDETRNanoConfig):
             num_queries: int  # type: ignore[misc]  # no default → required
 
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            _RequiredNumQueriesConfig(num_queries=400)
-            captured = [w for w in caught if issubclass(w.category, PretrainWeightsCompatibilityWarning)]
-        assert captured == []
+        assert self._capture(_RequiredNumQueriesConfig, num_queries=400) == []
 
     def test_increase_field_with_non_int_default_skips_comparison(self) -> None:
         """A subclass where ``num_queries`` has a non-int default must be skipped (can't ``>`` compare)."""
@@ -693,8 +672,4 @@ class TestPretrainWeightsCompatibilityWarning:
         class _NonIntDefaultConfig(RFDETRNanoConfig):
             num_queries: Any = "300"  # type: ignore[assignment]  # non-int default
 
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            _NonIntDefaultConfig(num_queries="400")
-            captured = [w for w in caught if issubclass(w.category, PretrainWeightsCompatibilityWarning)]
-        assert captured == []
+        assert self._capture(_NonIntDefaultConfig, num_queries="400") == []

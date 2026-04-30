@@ -17,6 +17,7 @@ import pytest
 import torch
 
 from rfdetr.config import RFDETRBaseConfig, TrainConfig
+from rfdetr.models.weights import _warn_on_partial_load
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -525,34 +526,43 @@ class TestPartialLoadDetector:
         monkeypatch.setattr("rfdetr.models.weights.logger.warning", _capture)
         return captured
 
-    def test_no_warning_when_state_dict_loads_cleanly(self, captured):
-        """Empty missing/unexpected lists must not emit any warning."""
-        from rfdetr.models.weights import _warn_on_partial_load
+    @pytest.mark.parametrize(
+        "result",
+        [
+            pytest.param(
+                SimpleNamespace(missing_keys=[], unexpected_keys=[]),
+                id="clean_load",
+            ),
+            pytest.param(
+                SimpleNamespace(
+                    missing_keys=[
+                        "class_embed.weight",
+                        "bbox_embed.layers.0.weight",
+                        "refpoint_embed.weight",
+                        "query_feat.weight",
+                        "transformer.enc_out_class_embed.0.weight",
+                        "transformer.enc_out_bbox_embed.0.layers.0.weight",
+                    ],
+                    unexpected_keys=[],
+                ),
+                id="intentional_head_keys",
+            ),
+            pytest.param(
+                SimpleNamespace(missing_keys=42, unexpected_keys=[]),
+                id="non_iterable_missing_keys",
+            ),
+        ],
+    )
+    def test_no_warning_cases(self, captured, result: SimpleNamespace) -> None:
+        """Cases that must not emit any partial-load warning.
 
-        _warn_on_partial_load(SimpleNamespace(missing_keys=[], unexpected_keys=[]), "/fake/weights.pth")
-        assert captured == []
-
-    def test_intentional_head_keys_are_filtered(self, captured):
-        """Keys under class_embed/bbox_embed/refpoint_embed/query_feat/enc_out_* must not trigger the warning."""
-        from rfdetr.models.weights import _warn_on_partial_load
-
-        result = SimpleNamespace(
-            missing_keys=[
-                "class_embed.weight",
-                "bbox_embed.layers.0.weight",
-                "refpoint_embed.weight",
-                "query_feat.weight",
-                "transformer.enc_out_class_embed.0.weight",
-                "transformer.enc_out_bbox_embed.0.layers.0.weight",
-            ],
-            unexpected_keys=[],
-        )
+        Covers: clean load, intentional head keys, and non-iterable missing_keys.
+        """
         _warn_on_partial_load(result, "/fake/weights.pth")
         assert captured == []
 
     def test_unexpected_backbone_missing_keys_warn(self, captured):
         """Missing backbone keys (e.g. register_tokens) must trigger the warning."""
-        from rfdetr.models.weights import _warn_on_partial_load
 
         result = SimpleNamespace(
             missing_keys=[
@@ -568,7 +578,6 @@ class TestPartialLoadDetector:
 
     def test_unexpected_keys_warn(self, captured):
         """Unexpected checkpoint keys (model has no slot for them) must trigger the warning."""
-        from rfdetr.models.weights import _warn_on_partial_load
 
         result = SimpleNamespace(
             missing_keys=[],
@@ -578,62 +587,64 @@ class TestPartialLoadDetector:
         assert len(captured) == 1
         assert "not consumed by model" in captured[0]
 
-    def test_truncates_long_lists_in_message(self, captured):
-        """Sample list in the warning is bounded to 5 keys with a trailing ellipsis."""
-        from rfdetr.models.weights import _warn_on_partial_load
-
-        result = SimpleNamespace(
-            missing_keys=[f"backbone.0.encoder.layer.{i}.weight" for i in range(10)],
-            unexpected_keys=[],
-        )
-        _warn_on_partial_load(result, "/fake/weights.pth")
-        assert len(captured) == 1
-        assert "10 model parameter" in captured[0]
-        assert "..." in captured[0]
-
     def test_handles_non_iterable_input_gracefully(self, captured):
         """A MagicMock-style result (used in many existing tests) must not raise."""
-        from rfdetr.models.weights import _warn_on_partial_load
 
         _warn_on_partial_load(MagicMock(), "/fake/weights.pth")
         # The crucial assertion is "did not raise"; whether captured is empty
         # depends on MagicMock truthiness — both outcomes are acceptable.
 
-    def test_non_iterable_missing_keys_returns_silently(self, captured):
-        """Genuinely non-iterable ``missing_keys`` (e.g. an int) hits the TypeError except branch."""
-        from rfdetr.models.weights import _warn_on_partial_load
-
-        result = SimpleNamespace(missing_keys=42, unexpected_keys=[])
-        _warn_on_partial_load(result, "/fake/weights.pth")
-        assert captured == []
-
-    def test_truncates_long_unexpected_list_in_message(self, captured):
-        """Sample list for *unexpected* keys is also bounded to 5 with a trailing ellipsis."""
-        from rfdetr.models.weights import _warn_on_partial_load
-
-        result = SimpleNamespace(
-            missing_keys=[],
-            unexpected_keys=[f"backbone.0.legacy.{i}.weight" for i in range(8)],
-        )
+    @pytest.mark.parametrize(
+        "missing_keys, unexpected_keys, count_str",
+        [
+            pytest.param(
+                [f"backbone.0.encoder.layer.{i}.weight" for i in range(10)],
+                [],
+                "10 model parameter",
+                id="long_missing_keys",
+            ),
+            pytest.param(
+                [],
+                [f"backbone.0.legacy.{i}.weight" for i in range(8)],
+                "8 checkpoint key(s)",
+                id="long_unexpected_keys",
+            ),
+        ],
+    )
+    def test_truncates_long_key_lists_in_message(
+        self,
+        captured,
+        missing_keys: list[str],
+        unexpected_keys: list[str],
+        count_str: str,
+    ) -> None:
+        """Sample key lists in the warning are bounded to 5 entries with a trailing ellipsis."""
+        result = SimpleNamespace(missing_keys=missing_keys, unexpected_keys=unexpected_keys)
         _warn_on_partial_load(result, "/fake/weights.pth")
         assert len(captured) == 1
-        assert "8 checkpoint key(s)" in captured[0]
+        assert count_str in captured[0]
         assert "..." in captured[0]
 
-    def test_partial_load_is_invoked_during_load_pretrain_weights(self, monkeypatch, tmp_path):
+    @patch("rfdetr.models.weights.torch.load")
+    @patch("rfdetr.models.weights.os.path.isfile", return_value=True)
+    @patch("rfdetr.models.weights.validate_checkpoint_compatibility")
+    @patch("rfdetr.models.weights.validate_pretrain_weights")
+    @patch("rfdetr.models.weights.download_pretrain_weights")
+    def test_partial_load_is_invoked_during_load_pretrain_weights(
+        self,
+        mock_download: MagicMock,
+        mock_validate_weights: MagicMock,
+        mock_validate_compat: MagicMock,
+        mock_isfile: MagicMock,
+        mock_torch_load: MagicMock,
+        monkeypatch,
+    ) -> None:
         """Integration check: load_pretrain_weights wires up the partial-load detector."""
-
         from rfdetr.models.weights import load_pretrain_weights
 
-        monkeypatch.setattr("rfdetr.models.weights.download_pretrain_weights", lambda *a, **kw: None)
-        monkeypatch.setattr("rfdetr.models.weights.validate_pretrain_weights", lambda *a, **kw: None)
-        monkeypatch.setattr("rfdetr.models.weights.validate_checkpoint_compatibility", lambda *a, **kw: None)
-        monkeypatch.setattr("rfdetr.models.weights.os.path.isfile", lambda _: True)
+        mock_torch_load.return_value = _make_checkpoint(num_classes=91)
 
         mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu")
-        checkpoint = _make_checkpoint(num_classes=91)
-        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
-
         nn_model = _fake_nn_model()
         nn_model.load_state_dict.return_value = SimpleNamespace(
             missing_keys=["backbone.0.encoder.something_required.weight"],
