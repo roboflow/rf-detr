@@ -507,7 +507,7 @@ def _labelled_query_tensor(num_queries: int, group_detr: int, dim: int = 2) -> t
     """Build a query embedding tensor where row ``g * num_queries + q`` encodes
     ``[g * 100 + q, 0, ...]``.
 
-    Lets tests check the per-group ordering of the result without floating-point
+    This lets tests check the per-group ordering of the result without floating-point
     fuzz: the first column carries the (group, query) identity directly.
     """
     rows = []
@@ -624,9 +624,14 @@ class TestLoadPretrainWeightsPerGroupQuerySlice:
 
         passed_state = nn_model.load_state_dict.call_args[0][0]
         refpoint = passed_state["refpoint_embed.weight"]
+        query_feat = passed_state["query_feat.weight"]
+        expected = [0, 1, 100, 101, 200, 201]
         # First column carries (group, query) identity (see _labelled_query_tensor).
-        assert refpoint[:, 0].int().tolist() == [0, 1, 100, 101, 200, 201], (
-            "Per-group structure was not preserved in load_pretrain_weights."
+        assert refpoint[:, 0].int().tolist() == expected, (
+            "Per-group structure was not preserved in refpoint_embed.weight."
+        )
+        assert query_feat[:, 0].int().tolist() == expected, (
+            "Per-group structure was not preserved in query_feat.weight."
         )
 
     def test_legacy_checkpoint_without_args_falls_back_to_flat_slice(self, monkeypatch, tmp_path):
@@ -649,10 +654,13 @@ class TestLoadPretrainWeightsPerGroupQuerySlice:
 
         passed_state = nn_model.load_state_dict.call_args[0][0]
         refpoint = passed_state["refpoint_embed.weight"]
+        query_feat = passed_state["query_feat.weight"]
         # Legacy flat slice: first 2*3=6 rows of the original 12.  Original rows
         # are labelled 0,1,2,3,100,101,102,103,200,201,202,203 → first 6 are
         # 0,1,2,3,100,101.
-        assert refpoint[:, 0].int().tolist() == [0, 1, 2, 3, 100, 101]
+        expected = [0, 1, 2, 3, 100, 101]
+        assert refpoint[:, 0].int().tolist() == expected
+        assert query_feat[:, 0].int().tolist() == expected
 
     def test_decreasing_group_detr_drops_tail_groups(self, monkeypatch, tmp_path):
         """checkpoint(nq=4, g=3) → model(nq=4, g=2): tail group dropped, retained groups intact."""
@@ -673,4 +681,75 @@ class TestLoadPretrainWeightsPerGroupQuerySlice:
 
         passed_state = nn_model.load_state_dict.call_args[0][0]
         refpoint = passed_state["refpoint_embed.weight"]
-        assert refpoint[:, 0].int().tolist() == [0, 1, 2, 3, 100, 101, 102, 103]
+        query_feat = passed_state["query_feat.weight"]
+        expected = [0, 1, 2, 3, 100, 101, 102, 103]
+        assert refpoint[:, 0].int().tolist() == expected
+        assert query_feat[:, 0].int().tolist() == expected
+
+    def test_decreasing_num_queries_namespace_args(self, monkeypatch, tmp_path):
+        """Namespace-style args in checkpoint trigger per-group slice identical to dict-style."""
+        from rfdetr.models.weights import load_pretrain_weights
+
+        mc = RFDETRBaseConfig(
+            pretrain_weights="/fake/weights.pth",
+            device="cpu",
+            num_queries=2,
+            num_select=2,
+            group_detr=3,
+        )
+        labelled_refpoint = _labelled_query_tensor(num_queries=4, group_detr=3, dim=4)
+        labelled_query_feat = _labelled_query_tensor(num_queries=4, group_detr=3, dim=256)
+        checkpoint = {
+            "model": {
+                "class_embed.weight": torch.randn(91, 256),
+                "class_embed.bias": torch.randn(91),
+                "refpoint_embed.weight": labelled_refpoint,
+                "query_feat.weight": labelled_query_feat,
+            },
+            "args": SimpleNamespace(num_queries=4, group_detr=3),
+        }
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+
+        nn_model = _fake_nn_model()
+        load_pretrain_weights(nn_model, mc)
+
+        passed_state = nn_model.load_state_dict.call_args[0][0]
+        refpoint = passed_state["refpoint_embed.weight"]
+        query_feat = passed_state["query_feat.weight"]
+        expected = [0, 1, 100, 101, 200, 201]
+        assert refpoint[:, 0].int().tolist() == expected
+        assert query_feat[:, 0].int().tolist() == expected
+
+    def test_legacy_fallback_when_args_missing_num_queries_key(self, monkeypatch, tmp_path):
+        """When checkpoint args dict lacks num_queries/group_detr keys, falls back to flat legacy slice."""
+        from rfdetr.models.weights import load_pretrain_weights
+
+        mc = RFDETRBaseConfig(
+            pretrain_weights="/fake/weights.pth",
+            device="cpu",
+            num_queries=2,
+            num_select=2,
+            group_detr=1,
+        )
+        labelled_refpoint = _labelled_query_tensor(num_queries=4, group_detr=1, dim=4)
+        labelled_query_feat = _labelled_query_tensor(num_queries=4, group_detr=1, dim=256)
+        checkpoint = {
+            "model": {
+                "class_embed.weight": torch.randn(91, 256),
+                "class_embed.bias": torch.randn(91),
+                "refpoint_embed.weight": labelled_refpoint,
+                "query_feat.weight": labelled_query_feat,
+            },
+            "args": {},
+        }
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+
+        nn_model = _fake_nn_model()
+        load_pretrain_weights(nn_model, mc)
+
+        passed_state = nn_model.load_state_dict.call_args[0][0]
+        refpoint = passed_state["refpoint_embed.weight"]
+        query_feat = passed_state["query_feat.weight"]
+        expected = [0, 1]
+        assert refpoint[:, 0].int().tolist() == expected
+        assert query_feat[:, 0].int().tolist() == expected
