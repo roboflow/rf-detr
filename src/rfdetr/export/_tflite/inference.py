@@ -120,8 +120,10 @@ def _run_inference(
     logits_idx = next((i for i, od in enumerate(out_det) if "labels" in str(od.get("name", ""))), None)
     if boxes_idx is None or logits_idx is None:
         # onnx2tf sometimes renames outputs to generic "Identity", "Identity_N" instead
-        # of preserving the original ONNX node names.  Fall back to shape-based matching:
-        # RF-DETR always exports exactly 2 outputs — boxes (*, 4) and logits (*, num_classes+1).
+        # of preserving the original ONNX node names. Fall back to shape-based
+        # matching for the detection outputs only: boxes (*, 4) and logits
+        # (*, num_classes+1). Segmentation exports may include additional outputs
+        # such as masks; unnamed extra outputs are not resolved by this fallback.
         logger.debug(
             "Name-based output matching failed (available: %s). Falling back to shape-based matching.",
             available_output_names,
