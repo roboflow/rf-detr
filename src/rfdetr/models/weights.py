@@ -39,6 +39,8 @@ __all__ = ["load_pretrain_weights", "apply_lora", "interpolate_position_embeddin
 
 _PE_KEY_SUFFIX = "embeddings.position_embeddings"
 
+# Query-related parameters that LWDETR packs as nn.Embedding(num_queries * group_detr, ...).
+# Any new query parameter packed the same way must be added here.
 _QUERY_PARAM_SUFFIXES: tuple[str, ...] = ("refpoint_embed.weight", "query_feat.weight")
 
 
@@ -66,9 +68,10 @@ def _slice_query_param_per_group(
       keep the first ``target_num_queries`` slots of each retained group.
     * ``group_detr`` decrease (``target_group_detr < ckpt_group_detr``) →
       drop tail groups; retained groups stay pretrained.
-    * Either dimension expands → return the per-group sub-tensor anyway.
-      ``load_state_dict`` will raise a shape mismatch immediately, since the
-      checkpoint has fewer slots than the model expects.
+    * Either dimension expands, or one shrinks while the other expands →
+      return whatever per-group sub-tensor can be built (``min(target, ckpt)``
+      along each axis). The result has fewer rows than the model expects, so
+      ``load_state_dict`` will raise a shape mismatch immediately.
 
     When the tensor's flat length disagrees with
     ``ckpt_num_queries * ckpt_group_detr`` (corrupt or unexpected checkpoint
@@ -88,6 +91,13 @@ def _slice_query_param_per_group(
         decrease-or-equal cases, or a smaller per-group sub-tensor for the
         expansion case (which ``load_state_dict`` will then reject).
     """
+    if ckpt_num_queries <= 0 or ckpt_group_detr <= 0 or target_num_queries <= 0 or target_group_detr <= 0:
+        raise ValueError(
+            f"_slice_query_param_per_group: all dimension args must be positive; "
+            f"got ckpt_num_queries={ckpt_num_queries}, ckpt_group_detr={ckpt_group_detr}, "
+            f"target_num_queries={target_num_queries}, target_group_detr={target_group_detr}."
+        )
+
     expected_total = ckpt_num_queries * ckpt_group_detr
     if tensor.shape[0] != expected_total:
         # Args inconsistent with tensor shape — fall back to legacy flat slice.
