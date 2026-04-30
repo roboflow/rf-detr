@@ -90,7 +90,16 @@ def _slice_query_param_per_group(
     """
     expected_total = ckpt_num_queries * ckpt_group_detr
     if tensor.shape[0] != expected_total:
-        # Args inconsistent with tensor — fall back to legacy flat slice.
+        # Args inconsistent with tensor shape — fall back to legacy flat slice.
+        logger.warning(
+            "_slice_query_param_per_group: checkpoint args claim %d × %d = %d rows "
+            "but tensor has %d rows; falling back to flat slice. Per-group structure "
+            "may be scrambled if group_detr > 1.",
+            ckpt_num_queries,
+            ckpt_group_detr,
+            expected_total,
+            tensor.shape[0],
+        )
         return tensor[: target_num_queries * target_group_detr]
 
     if target_num_queries == ckpt_num_queries and target_group_detr == ckpt_group_detr:
@@ -334,6 +343,17 @@ def load_pretrain_weights(
             else:
                 # Legacy checkpoint with no num_queries/group_detr in args:
                 # preserve the original flat slice for backward compatibility.
+                # NOTE: the flat slice is incorrect for group_detr > 1 — it scrambles
+                # groups 1+ when num_queries decreases. Legacy checkpoints predate
+                # multi-group training, so in practice they are all group_detr == 1.
+                if mc.group_detr > 1:
+                    logger.warning(
+                        "load_pretrain_weights: checkpoint lacks args.num_queries / "
+                        "args.group_detr; falling back to flat slice. With "
+                        "group_detr=%d this may scramble per-group query structure if "
+                        "the checkpoint was trained with group_detr > 1.",
+                        mc.group_detr,
+                    )
                 checkpoint["model"][name] = tensor[: mc.num_queries * mc.group_detr]
 
     interpolate_position_embeddings(checkpoint["model"], mc.positional_encoding_size)
