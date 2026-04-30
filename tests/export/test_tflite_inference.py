@@ -39,8 +39,13 @@ def _make_boxes() -> np.ndarray:
 
 
 def _make_logits(high_conf_idx: int | None = 0) -> np.ndarray:
-    """Return (1, 10, 82) logits with one high-confidence entry when requested."""
-    logits = np.zeros((1, 10, 82), dtype=np.float32)
+    """Return (1, 10, 82) logits with one high-confidence entry when requested.
+
+    Background fill is -10.0 so sigmoid scores are near zero (~0.0001) for all
+    entries except the explicitly boosted one (logit=+10.0, sigmoid≈0.9999).
+    This ensures the helper works correctly under per-class sigmoid scoring.
+    """
+    logits = np.full((1, 10, 82), -10.0, dtype=np.float32)
     if high_conf_idx is not None:
         logits[0, high_conf_idx, 0] = 10.0
     return logits
@@ -286,3 +291,151 @@ class TestRunInference:
         interp.get_output_details.return_value = [_DET_OUTPUT, _LABEL_OUTPUT]
         with pytest.raises(ValueError, match="float32"):
             _run_inference(interp, rgb_image)
+
+
+# ---------------------------------------------------------------------------
+# TestSigmoidScoring
+# ---------------------------------------------------------------------------
+
+
+class TestSigmoidScoring:
+    """Tests for per-class sigmoid scoring introduced in _run_inference."""
+
+    @pytest.fixture()
+    def rgb_image(self, tmp_path: Path) -> Path:
+        """Write a small RGB JPEG to a temp file and return its path."""
+        p = tmp_path / "image.jpg"
+        _save_rgb_image(p)
+        return p
+
+    def test_high_logit_yields_confidence_near_one(self, rgb_image: Path) -> None:
+        """Logit of 10.0 produces sigmoid ≈ 0.9999; confidence[0] > 0.99."""
+        logits = _make_logits(high_conf_idx=0)  # logits[0, 0, 0] = 10.0
+        interp = _make_interp(logits=logits)
+        dets, _ = _run_inference(interp, rgb_image, threshold=0.3)
+        assert dets.confidence[0] > 0.99
+
+    def test_low_logit_filtered_at_threshold(self, rgb_image: Path) -> None:
+        """Logit of -10.0 produces sigmoid ≈ 0.0001; detection filtered at threshold=0.3."""
+        logits = np.full((1, 10, 82), -10.0, dtype=np.float32)
+        interp = _make_interp(logits=logits)
+        dets, _ = _run_inference(interp, rgb_image, threshold=0.3)
+        assert len(dets) == 0
+
+    def test_multiclass_class_id_is_argmax_of_logits(self, rgb_image: Path) -> None:
+        """argmax of sigmoid equals argmax of logits; query with [5,2,1,...] gets class_id==0."""
+        # Shape (1, 10, 82): first query has logits [5, 2, 1, 0, ...], rest are -100
+        logits = np.full((1, 10, 82), -100.0, dtype=np.float32)
+        logits[0, 0, 0] = 5.0
+        logits[0, 0, 1] = 2.0
+        logits[0, 0, 2] = 1.0
+        interp = _make_interp(logits=logits)
+        dets, _ = _run_inference(interp, rgb_image, threshold=0.3)
+        # argmax of sigmoid == argmax of logits because sigmoid is monotone increasing
+        assert dets.class_id[0] == 0
+
+
+# ---------------------------------------------------------------------------
+# TestShapeBasedOutputFallback
+# ---------------------------------------------------------------------------
+
+# Generic output detail dicts used across shape-based fallback tests.
+# Indices mirror the canonical ones so _make_interp's _get_tensor dispatch works.
+_GENERIC_DET_OUTPUT = {"shape": [1, 10, 4], "name": "Identity_0", "index": 1}
+_GENERIC_LABEL_OUTPUT = {"shape": [1, 10, 82], "name": "Identity_1", "index": 2}
+
+
+class TestShapeBasedOutputFallback:
+    """Tests for the shape-based output matching fallback in _run_inference."""
+
+    @pytest.fixture()
+    def rgb_image(self, tmp_path: Path) -> Path:
+        """Write a small RGB JPEG to a temp file and return its path."""
+        p = tmp_path / "image.jpg"
+        _save_rgb_image(p)
+        return p
+
+    def test_unambiguous_shapes_inferred_correctly(self, rgb_image: Path) -> None:
+        """Generic names with shapes [1,10,4] and [1,10,82] resolve without error."""
+        interp = _make_interp(
+            out_dets=[_GENERIC_DET_OUTPUT, _GENERIC_LABEL_OUTPUT],
+            logits=_make_logits(high_conf_idx=0),
+        )
+        dets, _ = _run_inference(interp, rgb_image, threshold=0.3)
+        assert isinstance(dets, sv.Detections)
+        assert len(dets) >= 1
+
+    def test_ambiguous_shapes_two_outputs_positional_fallback(self, rgb_image: Path) -> None:
+        """When both outputs have last-dim==4 (num_classes==3) and there are exactly 2, positional fallback is used."""
+        # num_classes=3 → logits shape last-dim==4; boxes last-dim==4 → ambiguous
+        # Positional order: index 0 = boxes (Identity_0, tensor index 1), index 1 = logits (Identity_1, tensor index 2)
+        ambiguous_dets = {"shape": [1, 10, 4], "name": "Identity_0", "index": 1}
+        ambiguous_labels = {"shape": [1, 10, 4], "name": "Identity_1", "index": 2}
+        # Build logits of shape (1, 10, 4) so last col is dropped → (10, 3) per-class
+        logits_ambiguous = np.full((1, 10, 4), -10.0, dtype=np.float32)
+        logits_ambiguous[0, 0, 0] = 10.0  # first query, first class → high confidence
+        interp = _make_interp(
+            out_dets=[ambiguous_dets, ambiguous_labels],
+            logits=logits_ambiguous,
+        )
+        dets, _ = _run_inference(interp, rgb_image, threshold=0.3)
+        assert isinstance(dets, sv.Detections)
+        assert len(dets) >= 1
+
+    def test_three_outputs_all_dim4_raises_value_error(self, rgb_image: Path) -> None:
+        """3 outputs all with last-dim==4 and no name match raises ValueError with expected message."""
+        # Need a third tensor index; extend _get_tensor via a custom mock
+        third_output = {"shape": [1, 10, 4], "name": "Identity_2", "index": 3}
+        boxes = _make_boxes()
+        logits = _make_logits()
+
+        def _get_tensor(index: int) -> np.ndarray:
+            if index == 1:
+                return boxes
+            if index in (2, 3):
+                return logits
+            raise ValueError(f"Unknown tensor index: {index}")
+
+        interp = mock.MagicMock()
+        interp.get_input_details.return_value = [{"shape": _INPUT_SHAPE, "index": 0, "dtype": np.float32}]
+        interp.get_output_details.return_value = [
+            {"shape": [1, 10, 4], "name": "Identity_0", "index": 1},
+            {"shape": [1, 10, 4], "name": "Identity_1", "index": 2},
+            third_output,
+        ]
+        interp.get_tensor.side_effect = _get_tensor
+
+        with pytest.raises(ValueError, match="Shape-based TFLite output matching failed"):
+            _run_inference(interp, rgb_image, threshold=0.3)
+
+    def test_three_outputs_with_rank4_masks_resolves_correctly(self, rgb_image: Path) -> None:
+        """3-output segmentation export (boxes/logits/masks) with generic names resolves without error.
+
+        Ensures the shape fallback ignores the rank-4 masks tensor and correctly
+        identifies boxes [1,Q,4] and logits [1,Q,C+1] as rank-3 candidates.
+        """
+        boxes = _make_boxes()
+        logits = _make_logits(high_conf_idx=0)
+        masks = np.zeros((1, 10, 28, 28), dtype=np.float32)
+
+        def _get_tensor(index: int) -> np.ndarray:
+            if index == 1:
+                return boxes
+            if index == 2:
+                return logits
+            if index == 3:
+                return masks
+            raise ValueError(f"Unknown tensor index: {index}")
+
+        interp = mock.MagicMock()
+        interp.get_input_details.return_value = [{"shape": _INPUT_SHAPE, "index": 0, "dtype": np.float32}]
+        interp.get_output_details.return_value = [
+            {"shape": [1, 10, 4], "name": "Identity_0", "index": 1},
+            {"shape": [1, 10, 82], "name": "Identity_1", "index": 2},
+            {"shape": [1, 10, 28, 28], "name": "Identity_2", "index": 3},
+        ]
+        interp.get_tensor.side_effect = _get_tensor
+
+        dets, _ = _run_inference(interp, rgb_image, threshold=0.3)
+        assert isinstance(dets, sv.Detections)
+        assert len(dets) >= 1

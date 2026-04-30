@@ -26,24 +26,6 @@ from rfdetr.utilities.logger import get_logger
 logger = get_logger()
 
 
-def _softmax(x: np.ndarray) -> np.ndarray:
-    """Numerically stable softmax over the last axis.
-
-    Args:
-        x: Input array of arbitrary shape.
-
-    Returns:
-        Array of the same shape with softmax applied along the last axis.
-
-    Examples:
-        >>> import numpy as np
-        >>> np.round(_softmax(np.array([1.0, 2.0, 3.0])), 8).tolist()
-        [0.09003057, 0.24472847, 0.66524096]
-    """
-    e = np.exp(x - x.max(axis=-1, keepdims=True))
-    return np.asarray(e / e.sum(axis=-1, keepdims=True))
-
-
 def _create_interpreter(model_path: str | Path) -> Any:
     """Load a TFLite model, allocate tensors, and log I/O shapes.
 
@@ -106,7 +88,7 @@ def _run_inference(
     """
     inp_det = interp.get_input_details()
     out_det = interp.get_output_details()
-    _, H, W, C = inp_det[0]["shape"]  # noqa: N806
+    _, height, width, channels = inp_det[0]["shape"]
 
     expected_dtype = np.float32
     actual_dtype = inp_det[0]["dtype"]
@@ -118,13 +100,13 @@ def _run_inference(
 
     _imagenet_mean = [0.485, 0.456, 0.406]
     _imagenet_std = [0.229, 0.224, 0.225]
-    mean = np.array([_imagenet_mean[i % 3] for i in range(C)], dtype=np.float32)
-    std = np.array([_imagenet_std[i % 3] for i in range(C)], dtype=np.float32)
+    mean = np.array([_imagenet_mean[i % 3] for i in range(channels)], dtype=np.float32)
+    std = np.array([_imagenet_std[i % 3] for i in range(channels)], dtype=np.float32)
 
     pil_img = PILImage.open(image_path)
-    pil_mode = "L" if C == 1 else "RGB"
-    arr = np.array(pil_img.convert(pil_mode).resize((W, H)), dtype=np.float32) / 255.0
-    if arr.ndim == 2:  # "L" → (H, W); TFLite needs (H, W, 1)
+    pil_mode = "L" if channels == 1 else "RGB"
+    arr = np.array(pil_img.convert(pil_mode).resize((width, height)), dtype=np.float32) / 255.0
+    if arr.ndim == 2:  # "L" → (height, width); TFLite needs (height, width, 1)
         arr = arr[:, :, np.newaxis]
     inp_tensor = (arr - mean) / std
 
@@ -137,22 +119,57 @@ def _run_inference(
     boxes_idx = next((i for i, od in enumerate(out_det) if "dets" in str(od.get("name", ""))), None)
     logits_idx = next((i for i, od in enumerate(out_det) if "labels" in str(od.get("name", ""))), None)
     if boxes_idx is None or logits_idx is None:
-        missing_outputs = []
-        if boxes_idx is None:
-            missing_outputs.append("dets")
-        if logits_idx is None:
-            missing_outputs.append("labels")
-        missing = ", ".join(missing_outputs)
-        available = ", ".join(available_output_names)
-        raise ValueError(
-            f"Expected TFLite output tensor(s) {missing!r} not found. Available output tensor names: [{available}]"
+        # onnx2tf sometimes renames outputs to generic "Identity", "Identity_N" instead
+        # of preserving the original ONNX node names. Fall back to shape-based
+        # matching for the detection outputs only: boxes (*, 4) and logits
+        # (*, num_classes+1). Segmentation exports may include additional outputs
+        # such as masks; unnamed extra outputs are not resolved by this fallback.
+        logger.debug(
+            "Name-based output matching failed (available: %s). Falling back to shape-based matching.",
+            available_output_names,
         )
+        shape_boxes_candidates = [i for i, od in enumerate(out_det) if len(od["shape"]) == 3 and od["shape"][-1] == 4]
+        shape_logits_candidates = [i for i, od in enumerate(out_det) if len(od["shape"]) == 3 and od["shape"][-1] != 4]
+        if len(shape_boxes_candidates) == 1 and len(shape_logits_candidates) == 1:
+            boxes_idx = shape_boxes_candidates[0]
+            logits_idx = shape_logits_candidates[0]
+        elif len(out_det) == 2:
+            # Ambiguous shapes (e.g. num_classes==3 → logits dim==4 == boxes dim).
+            # onnx2tf preserves ONNX output order: index 0 = dets (boxes), index 1 = labels (logits).
+            logger.debug("Shape-based matching ambiguous. Using positional order (0=boxes, 1=logits).")
+            boxes_idx = 0
+            logits_idx = 1
+        else:
+            available_shapes = [list(od["shape"]) for od in out_det]
+            raise ValueError(
+                f"Shape-based TFLite output matching failed. Expected exactly one rank-3 tensor with "
+                f"last dim == 4 (boxes) and one rank-3 tensor with last dim != 4 (logits). "
+                f"Available output shapes: {available_shapes}"
+            )
     boxes_cwh = interp.get_tensor(out_det[boxes_idx]["index"])[0]  # (Q, 4) normalized cxcywh
-    logits = interp.get_tensor(out_det[logits_idx]["index"])[0]  # (Q, num_classes+1)
+    # Drop last logit column: RF-DETR adds +1 to num_classes (no-object slot, criterion.py:323).
+    # Keeping it causes class_id == len(class_names) → IndexError at display time.
+    logits = interp.get_tensor(out_det[logits_idx]["index"])[0, :, :-1]  # (Q, num_classes)
 
-    probs = _softmax(logits[:, :-1])  # drop background (last logit)
-    scores = probs.max(axis=-1)
-    cls = probs.argmax(axis=-1)
+    # RF-DETR uses per-class sigmoid (not softmax) — mirrors PostProcess.forward in postprocess.py.
+    logger.debug(
+        "Logits stats: shape=%s min=%.3f max=%.3f mean=%.3f",
+        logits.shape,
+        float(logits.min()),
+        float(logits.max()),
+        float(logits.mean()),
+    )
+    one = np.asarray(1, dtype=logits.dtype)
+    scores_all = one / (one + np.exp(-logits.clip(-88, 88)))
+    scores = scores_all.max(axis=-1)
+    cls = scores_all.argmax(axis=-1)
+    logger.debug(
+        "Scores stats: min=%.3f max=%.3f — detections above threshold %.2f: %d",
+        float(scores.min()),
+        float(scores.max()),
+        threshold,
+        int((scores > threshold).sum()),
+    )
     keep = scores > threshold
 
     cx, cy, bw, bh = boxes_cwh[keep].T
