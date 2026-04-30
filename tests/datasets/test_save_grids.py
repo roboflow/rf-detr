@@ -18,8 +18,9 @@ from torch.utils.data import DataLoader
 class _FakeDataset:
     """Minimal dataset returning a single synthetic image + target."""
 
-    def __init__(self, num_samples: int = 4) -> None:
+    def __init__(self, num_samples: int = 4, include_masks: bool = False) -> None:
         self.num_samples = num_samples
+        self.include_masks = include_masks
 
     def __len__(self) -> int:
         return self.num_samples
@@ -32,6 +33,11 @@ class _FakeDataset:
             "boxes": torch.tensor([[0.25, 0.25, 0.5, 0.5], [0.6, 0.6, 0.2, 0.2]]),
             "labels": torch.tensor([0, 1]),
         }
+        if self.include_masks:
+            masks = torch.zeros((2, 224, 224), dtype=torch.bool)
+            masks[0, 48:112, 48:112] = True
+            masks[1, 120:168, 120:168] = True
+            target["masks"] = masks
         return image, target
 
 
@@ -61,3 +67,32 @@ def test_save_grid_writes_files(tmp_path: Path) -> None:
             img = np.array(pil_img)
         assert img.ndim == 3
         assert img.shape[2] == 3
+
+
+def test_save_grid_passes_masks_to_supervision(tmp_path: Path, monkeypatch) -> None:
+    """Segmentation targets should be forwarded to supervision as instance masks."""
+    from rfdetr.datasets import save_grids
+    from rfdetr.datasets.save_grids import DatasetGridSaver
+
+    captured_masks = []
+
+    class _FakeMaskAnnotator:
+        def __init__(self, opacity: float) -> None:
+            self.opacity = opacity
+
+        def annotate(self, scene, detections):
+            captured_masks.append(detections.mask.copy())
+            return scene
+
+    monkeypatch.setattr(save_grids.sv, "MaskAnnotator", _FakeMaskAnnotator)
+
+    dataset = _FakeDataset(num_samples=1, include_masks=True)
+    loader = DataLoader(dataset, batch_size=1, collate_fn=_collate)
+
+    saver = DatasetGridSaver(loader, tmp_path, max_batches=1, dataset_type="train")
+    saver.save_grid()
+
+    assert len(captured_masks) == 1
+    assert captured_masks[0].shape == (2, 224, 224)
+    assert captured_masks[0].dtype == bool
+    assert captured_masks[0][0, 48:112, 48:112].all()
