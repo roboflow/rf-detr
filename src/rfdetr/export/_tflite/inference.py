@@ -158,7 +158,8 @@ def _run_inference(
         float(logits.max()),
         float(logits.mean()),
     )
-    scores_all = 1.0 / (1.0 + np.exp(-logits.clip(-88, 88)))
+    one = np.asarray(1, dtype=logits.dtype)
+    scores_all = one / (one + np.exp(-logits.clip(-88, 88)))
     scores = scores_all.max(axis=-1)
     cls = scores_all.argmax(axis=-1)
     logger.debug(
