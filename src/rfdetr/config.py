@@ -288,7 +288,19 @@ class ModelConfig(BaseConfig):
             # Custom checkpoint: architecture overrides may match what the
             # checkpoint was trained with.  Defer to the load-time partial-load
             # detector which can read the file.
-            return self
+            # Exception: when the user explicitly passes the variant's own
+            # published-default path string (e.g. ``"rf-detr-nano.pth"``), it
+            # IS the published checkpoint — treat it as case 3 so architecture-
+            # override checks still apply.  Compare after expand_path so bare
+            # filenames resolve to the same cache-dir path as self.pretrain_weights.
+            _default_pretrain = cls.model_fields["pretrain_weights"].default
+            if _default_pretrain is not None and _default_pretrain is not PydanticUndefined:
+                _expanded_default = cls.expand_path(_default_pretrain)
+                if self.pretrain_weights != _expanded_default:
+                    return self
+                # Falls through to case-3 when the user passed the exact variant default.
+            else:
+                return self
 
         # `pretrain_weights` is the variant's published default — check
         # architecture overrides against the class defaults.
