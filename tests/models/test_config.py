@@ -4,6 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+import warnings
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -12,6 +13,7 @@ from pydantic import ValidationError
 
 from rfdetr.config import (
     ModelConfig,
+    PretrainWeightsCompatibilityWarning,
     RFDETRBaseConfig,
     RFDETRLargeConfig,
     RFDETRMediumConfig,
@@ -486,3 +488,170 @@ class TestDetectDevice:
         mock_torch.cuda.is_available.return_value = False
         mock_torch.backends.mps.is_available.return_value = False
         assert _detect_device() == "cpu"
+
+
+class TestPretrainWeightsCompatibilityWarning:
+    """Config-time warning for overrides that prevent pretrained weights from loading.
+
+    These tests instantiate the variant *config* directly (not the wrapper class)
+    so they do not touch the network, the cache, or any model construction.
+    """
+
+    def _capture(self, config_cls: type, **kwargs: object) -> list[warnings.WarningMessage]:
+        """Instantiate ``config_cls(**kwargs)`` and return only the pretrain-compat warnings."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            config_cls(**kwargs)
+            return [w for w in caught if issubclass(w.category, PretrainWeightsCompatibilityWarning)]
+
+    def test_default_construction_emits_no_warning(self) -> None:
+        """Default variant construction must not warn — defaults match the published checkpoint."""
+        assert self._capture(RFDETRNanoConfig) == []
+
+    def test_encoder_registers_override_warns(self) -> None:
+        """The dinov2-with-registers footgun: switching encoder away from the variant default."""
+        captured = self._capture(RFDETRNanoConfig, encoder="dinov2_registers_windowed_small")
+        assert len(captured) == 1
+        message = str(captured[0].message)
+        assert "encoder" in message
+        assert "dinov2_registers_windowed_small" in message
+        assert "dinov2_windowed_small" in message
+
+    @pytest.mark.parametrize(
+        "field, value",
+        [
+            pytest.param("hidden_dim", 384, id="hidden_dim"),
+            pytest.param("dec_layers", 6, id="dec_layers"),
+            pytest.param("num_windows", 4, id="num_windows"),
+            pytest.param("sa_nheads", 4, id="sa_nheads"),
+            pytest.param("ca_nheads", 8, id="ca_nheads"),
+            pytest.param("dec_n_points", 4, id="dec_n_points"),
+            pytest.param("out_feature_indexes", [2, 5, 8, 11], id="out_feature_indexes"),
+            pytest.param("projector_scale", ["P3", "P4"], id="projector_scale"),
+            pytest.param("bbox_reparam", False, id="bbox_reparam"),
+            pytest.param("lite_refpoint_refine", False, id="lite_refpoint_refine"),
+            pytest.param("layer_norm", False, id="layer_norm"),
+            pytest.param("two_stage", False, id="two_stage"),
+            pytest.param("num_channels", 1, id="num_channels"),
+        ],
+    )
+    def test_load_breaking_override_warns(self, field: str, value: object) -> None:
+        """Each load-breaking architecture override fires the warning."""
+        captured = self._capture(RFDETRNanoConfig, **{field: value})
+        assert len(captured) == 1
+        assert field in str(captured[0].message)
+
+    def test_mask_downsample_ratio_warns_on_seg_variant(self) -> None:
+        """``mask_downsample_ratio`` change is silently miscalibrating; must warn at config time."""
+        captured = self._capture(RFDETRSegNanoConfig, mask_downsample_ratio=2)
+        assert len(captured) == 1
+        assert "mask_downsample_ratio" in str(captured[0].message)
+
+    def test_patch_size_override_warns_defense_in_depth(self) -> None:
+        """patch_size already raises in load_pretrain_weights; the new warning is defense-in-depth.
+
+        We change patch_size to a value that differs from RFDETRNanoConfig's default (16).
+        """
+        captured = self._capture(RFDETRNanoConfig, patch_size=14)
+        assert len(captured) == 1
+        assert "patch_size" in str(captured[0].message)
+
+    def test_segmentation_head_override_warns(self) -> None:
+        """segmentation_head also raises at load time but warning fires first."""
+        # RFDETRNanoConfig has segmentation_head=False; flipping it to True is the override.
+        captured = self._capture(RFDETRNanoConfig, segmentation_head=True)
+        assert len(captured) == 1
+        assert "segmentation_head" in str(captured[0].message)
+
+    def test_num_queries_decrease_silent(self) -> None:
+        """Decreasing num_queries below variant default is fine — per-group truncation preserves intent."""
+        assert self._capture(RFDETRNanoConfig, num_queries=200) == []
+
+    def test_num_queries_equal_silent(self) -> None:
+        """num_queries equal to variant default emits no warning."""
+        assert self._capture(RFDETRNanoConfig, num_queries=300) == []
+
+    def test_num_queries_increase_warns(self) -> None:
+        """Increasing num_queries above variant default leaves extra slots randomly initialised."""
+        captured = self._capture(RFDETRNanoConfig, num_queries=400)
+        assert len(captured) == 1
+        assert "num_queries" in str(captured[0].message)
+
+    def test_group_detr_decrease_silent(self) -> None:
+        """Decreasing group_detr drops tail groups; retained groups remain pretrained."""
+        assert self._capture(RFDETRNanoConfig, group_detr=8) == []
+
+    def test_group_detr_increase_warns(self) -> None:
+        """Increasing group_detr adds groups whose query slots are randomly initialised."""
+        captured = self._capture(RFDETRNanoConfig, group_detr=20)
+        assert len(captured) == 1
+        assert "group_detr" in str(captured[0].message)
+
+    def test_num_classes_change_silent(self) -> None:
+        """num_classes change is auto-handled by head reinit — no warning."""
+        assert self._capture(RFDETRNanoConfig, num_classes=5) == []
+
+    def test_resolution_change_silent(self) -> None:
+        """Resolution change is auto-handled by PE interpolation — no warning."""
+        assert self._capture(RFDETRNanoConfig, resolution=448) == []
+
+    def test_positional_encoding_size_change_silent(self) -> None:
+        """positional_encoding_size override is auto-handled by PE interpolation — no warning."""
+        assert self._capture(RFDETRNanoConfig, positional_encoding_size=20) == []
+
+    def test_pretrain_weights_none_warns(self) -> None:
+        """Explicitly opting out of pretrained weights warns about training from scratch."""
+        captured = self._capture(RFDETRNanoConfig, pretrain_weights=None)
+        assert len(captured) == 1
+        message = str(captured[0].message)
+        assert "from scratch" in message
+        assert "rf-detr-nano.pth" in message
+
+    def test_pretrain_weights_none_only_one_warning(self) -> None:
+        """When pretrain_weights=None, the architecture-overrides warning is suppressed.
+
+        The from-scratch warning is the dominant message; we don't pile on with arch warnings.
+        """
+        captured = self._capture(
+            RFDETRNanoConfig,
+            pretrain_weights=None,
+            encoder="dinov2_registers_windowed_small",
+            hidden_dim=384,
+        )
+        assert len(captured) == 1
+        assert "from scratch" in str(captured[0].message)
+
+    def test_custom_pretrain_weights_path_suppresses_arch_warning(self) -> None:
+        """Custom pretrain_weights path → defer to load-time detector — no config-time arch warning."""
+        captured = self._capture(
+            RFDETRNanoConfig,
+            pretrain_weights="/tmp/my_custom.pth",
+            encoder="dinov2_registers_windowed_small",
+        )
+        assert captured == []
+
+    def test_multiple_overrides_consolidated_into_one_warning(self) -> None:
+        """All overrides are listed in a single warning, not one warning per field."""
+        captured = self._capture(
+            RFDETRNanoConfig,
+            encoder="dinov2_registers_windowed_small",
+            hidden_dim=384,
+            num_queries=400,
+        )
+        assert len(captured) == 1
+        message = str(captured[0].message)
+        for needle in ("encoder", "hidden_dim", "num_queries"):
+            assert needle in message, f"expected {needle!r} in consolidated warning message"
+
+    def test_warning_is_user_warning_subclass(self) -> None:
+        """Confirms downstream filtering via UserWarning works."""
+        assert issubclass(PretrainWeightsCompatibilityWarning, UserWarning)
+
+    def test_modelconfig_with_required_fields_does_not_warn(self, sample_model_config: dict[str, object]) -> None:
+        """Constructing the abstract ModelConfig with required fields cannot compare to defaults — no warning."""
+        captured: list[warnings.WarningMessage]
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            ModelConfig(**sample_model_config)
+            captured = [w for w in caught if issubclass(w.category, PretrainWeightsCompatibilityWarning)]
+        assert captured == []
