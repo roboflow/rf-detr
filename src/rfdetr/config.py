@@ -62,12 +62,11 @@ _PRETRAIN_BREAKING_FIELDS: tuple[str, ...] = (
 
 # Fields where only an *increase* above the variant default is load-breaking:
 #
-#   * ``num_queries``: extra slots per group cannot be initialized from the
-#     checkpoint and are random; decrease is fine (per-group truncation
-#     preserves intent).
-#   * ``group_detr``: extra groups have random query slots and (in two-stage)
-#     random per-group encoder output heads; decrease is fine (tail groups are
-#     dropped, retained groups remain pretrained).
+#   * ``num_queries``: increasing above the variant default adds slots whose
+#     shape in the checkpoint differs from the model — ``load_state_dict``
+#     raises ``RuntimeError``; decrease is fine (per-group truncation).
+#   * ``group_detr``: same shape-mismatch reasoning applies for extra groups;
+#     decrease is fine (tail groups are dropped, retained groups stay pretrained).
 _PRETRAIN_BREAKING_ON_INCREASE: tuple[str, ...] = (
     "num_queries",
     "group_detr",
