@@ -673,3 +673,45 @@ class TestPretrainWeightsCompatibilityWarning:
             num_queries: Any = "300"  # type: ignore[assignment]  # non-int default
 
         assert self._capture(_NonIntDefaultConfig, num_queries="400") == []
+
+    def test_explicit_variant_default_path_runs_arch_override_check(self) -> None:
+        """Passing the variant's own published-default path string must still check arch overrides.
+
+        Before the case-2 fix, any non-None explicit pretrain_weights bypassed the
+        architecture-override check entirely — including when the user passed the exact
+        variant default string such as "rf-detr-nano.pth".
+        """
+        captured = self._capture(
+            RFDETRNanoConfig,
+            pretrain_weights="rf-detr-nano.pth",
+            encoder="dinov2_registers_windowed_small",
+        )
+        assert len(captured) == 1
+        assert "encoder" in str(captured[0].message)
+
+    def test_product_preserving_group_detr_increase_still_warns(self) -> None:
+        """Increasing group_detr while halving num_queries still warns — check is per-field, not product-aware.
+
+        This documents known current behaviour: the validator compares each field to its
+        variant default independently, not the combined query-slot product.  A product-
+        preserving change (group_detr=26, num_queries=150 vs defaults 13, 300) warns for
+        group_detr because 26 > 13, regardless of whether total slots are the same.
+        """
+        captured = self._capture(RFDETRNanoConfig, num_queries=150, group_detr=26)
+        assert len(captured) == 1
+        assert "group_detr" in str(captured[0].message)
+
+
+class TestBreakingListIntegrity:
+    """Guards against stale entries in _PRETRAIN_BREAKING_FIELDS / _PRETRAIN_BREAKING_ON_INCREASE."""
+
+    def test_all_breaking_fields_exist_in_model_config(self) -> None:
+        """Every field listed in the pretrain-breaking tuples must exist in ModelConfig.model_fields.
+
+        Catches typos and fields renamed/removed without updating the breaking list.
+        """
+        from rfdetr.config import _PRETRAIN_BREAKING_FIELDS, _PRETRAIN_BREAKING_ON_INCREASE
+
+        all_breaking = set(_PRETRAIN_BREAKING_FIELDS) | set(_PRETRAIN_BREAKING_ON_INCREASE)
+        stale = all_breaking - set(ModelConfig.model_fields.keys())
+        assert not stale, f"Fields in breaking lists not in ModelConfig.model_fields: {stale}"

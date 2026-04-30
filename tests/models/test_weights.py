@@ -625,6 +625,27 @@ class TestPartialLoadDetector:
         assert count_str in captured[0]
         assert "..." in captured[0]
 
+    def test_mixed_intentional_and_unintentional_keys_warn_only_for_unexpected(self, captured) -> None:
+        """Only unintentional missing keys appear in the warning; intentional reinit keys are filtered.
+
+        When a checkpoint load returns both head-reinit keys (class_embed.weight, etc.) and
+        a genuine backbone mismatch (backbone.0.encoder.register_tokens), the warning must
+        fire exactly once and must reference the unintentional key, not the filtered ones.
+        """
+        result = SimpleNamespace(
+            missing_keys=[
+                "class_embed.weight",
+                "bbox_embed.layers.0.weight",
+                "refpoint_embed.weight",
+                "backbone.0.encoder.encoder.embeddings.register_tokens",
+            ],
+            unexpected_keys=[],
+        )
+        _warn_on_partial_load(result, "/fake/mixed.pth")
+        assert len(captured) == 1, f"Expected exactly one warning, got {len(captured)}: {captured}"
+        assert "register_tokens" in captured[0], "Warning must reference the unintentional backbone key"
+        assert "class_embed" not in captured[0], "Intentional head key must be filtered from warning text"
+
     @patch("rfdetr.models.weights.torch.load")
     @patch("rfdetr.models.weights.os.path.isfile", return_value=True)
     @patch("rfdetr.models.weights.validate_checkpoint_compatibility")
