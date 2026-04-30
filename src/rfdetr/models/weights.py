@@ -55,8 +55,22 @@ _INTENTIONAL_LOAD_KEY_PATTERNS: tuple[str, ...] = (
 
 
 def _filter_intentional_keys(keys: list[str]) -> list[str]:
-    """Return *keys* with intentional-reinit/trim entries removed."""
-    return [k for k in keys if not any(pat in k for pat in _INTENTIONAL_LOAD_KEY_PATTERNS)]
+    """Return *keys* with intentional-reinit/trim entries removed.
+
+    Matching is boundary-aware: a pattern matches a key when the pattern
+    appears at the start of the key or immediately after a module separator
+    (``.``).  This prevents substring collisions where a pattern like
+    ``"class_embed."`` would inadvertently match a key belonging to an
+    unrelated module (e.g. ``"class_embed_projection.weight"`` is safe
+    because ``class_embed_projection.`` ≠ ``class_embed.``, but using a
+    plain ``in`` check against longer ambiguous strings is fragile by
+    design).
+    """
+
+    def _is_intentional(key: str) -> bool:
+        return any(key.startswith(pat) or f".{pat}" in key for pat in _INTENTIONAL_LOAD_KEY_PATTERNS)
+
+    return [k for k in keys if not _is_intentional(k)]
 
 
 def _warn_on_partial_load(incompatible: Any, pretrain_weights_path: str) -> None:
