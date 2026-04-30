@@ -291,6 +291,13 @@ class ModelConfig(BaseConfig):
 
         # `pretrain_weights` is the variant's published default — check
         # architecture overrides against the class defaults.
+        # Skip entirely when this variant has no published checkpoint (default
+        # is None/PydanticUndefined); warning would reference "(None)" which is
+        # misleading and confusing for users of the abstract base config.
+        _class_default_pretrain = cls.model_fields["pretrain_weights"].default
+        if _class_default_pretrain is None or _class_default_pretrain is PydanticUndefined:
+            return self
+
         overrides: list[tuple[str, Any, Any]] = []
 
         for name in _PRETRAIN_BREAKING_FIELDS:
