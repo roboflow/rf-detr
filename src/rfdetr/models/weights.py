@@ -39,6 +39,68 @@ __all__ = ["load_pretrain_weights", "apply_lora", "interpolate_position_embeddin
 
 _PE_KEY_SUFFIX = "embeddings.position_embeddings"
 
+_QUERY_PARAM_SUFFIXES: tuple[str, ...] = ("refpoint_embed.weight", "query_feat.weight")
+
+
+def _slice_query_param_per_group(
+    tensor: torch.Tensor,
+    ckpt_num_queries: int,
+    ckpt_group_detr: int,
+    target_num_queries: int,
+    target_group_detr: int,
+) -> torch.Tensor:
+    """Slice a ``refpoint_embed`` / ``query_feat`` weight preserving per-group structure.
+
+    ``LWDETR`` packs query embeddings as ``nn.Embedding(num_queries * group_detr, ...)``
+    where group ``g`` occupies the contiguous slot range
+    ``[g * num_queries, (g + 1) * num_queries)`` (see ``LWDETR.__init__`` and
+    ``LWDETR.forward`` in ``models/lwdetr.py``).  When ``num_queries`` decreases
+    and ``group_detr > 1``, a flat ``tensor[: target_num_queries * target_group_detr]``
+    slice silently scrambles groups: the tail of group 0 winds up in what should
+    be group 1's slots, and so on.  At inference only group 0 is read so the
+    bug is invisible, but for training-resume it corrupts groups 1+.
+
+    This helper does the right thing per group:
+
+    * ``num_queries`` decrease (``target_num_queries < ckpt_num_queries``) →
+      keep the first ``target_num_queries`` slots of each retained group.
+    * ``group_detr`` decrease (``target_group_detr < ckpt_group_detr``) →
+      drop tail groups; retained groups stay pretrained.
+    * Either dimension expands → return the per-group sub-tensor anyway.
+      ``load_state_dict`` will raise a shape mismatch immediately, since the
+      checkpoint has fewer slots than the model expects.
+
+    When the tensor's flat length disagrees with
+    ``ckpt_num_queries * ckpt_group_detr`` (corrupt or unexpected checkpoint
+    shape), fall back to the legacy flat slice so loading continues with the
+    same behavior the codebase had before this fix.
+
+    Args:
+        tensor: The checkpoint tensor for ``refpoint_embed.weight`` or
+            ``query_feat.weight``.
+        ckpt_num_queries: ``num_queries`` recorded in the checkpoint's training args.
+        ckpt_group_detr: ``group_detr`` recorded in the checkpoint's training args.
+        target_num_queries: ``num_queries`` configured for the model.
+        target_group_detr: ``group_detr`` configured for the model.
+
+    Returns:
+        A tensor whose layout matches the model's configured packing for the
+        decrease-or-equal cases, or a smaller per-group sub-tensor for the
+        expansion case (which ``load_state_dict`` will then reject).
+    """
+    expected_total = ckpt_num_queries * ckpt_group_detr
+    if tensor.shape[0] != expected_total:
+        # Args inconsistent with tensor — fall back to legacy flat slice.
+        return tensor[: target_num_queries * target_group_detr]
+
+    if target_num_queries == ckpt_num_queries and target_group_detr == ckpt_group_detr:
+        return tensor
+
+    keep_groups = min(target_group_detr, ckpt_group_detr)
+    keep_per_group = min(target_num_queries, ckpt_num_queries)
+    pieces = [tensor[g * ckpt_num_queries : g * ckpt_num_queries + keep_per_group] for g in range(keep_groups)]
+    return torch.cat(pieces, dim=0)
+
 
 def interpolate_position_embeddings(
     checkpoint_state: dict,
@@ -252,12 +314,27 @@ def load_pretrain_weights(
         # class count so load_state_dict succeeds without size mismatches.
         nn_model.reinitialize_detection_head(checkpoint_num_classes)
 
-    # Trim query embeddings to the configured query count.
-    num_desired_queries = mc.num_queries * mc.group_detr
-    query_param_names = ["refpoint_embed.weight", "query_feat.weight"]
+    # Reshape query embeddings to the configured query count, preserving per-group
+    # structure when the checkpoint records its training-time num_queries / group_detr.
+    # See _slice_query_param_per_group for why a flat slice is wrong with group_detr > 1.
+    ckpt_args = checkpoint.get("args")
+    ckpt_num_queries = _ckpt_args_get(ckpt_args, "num_queries") if ckpt_args is not None else None
+    ckpt_group_detr = _ckpt_args_get(ckpt_args, "group_detr") if ckpt_args is not None else None
     for name in list(checkpoint["model"].keys()):
-        if any(name.endswith(x) for x in query_param_names):
-            checkpoint["model"][name] = checkpoint["model"][name][:num_desired_queries]
+        if any(name.endswith(x) for x in _QUERY_PARAM_SUFFIXES):
+            tensor = checkpoint["model"][name]
+            if ckpt_num_queries is not None and ckpt_group_detr is not None:
+                checkpoint["model"][name] = _slice_query_param_per_group(
+                    tensor,
+                    ckpt_num_queries=ckpt_num_queries,
+                    ckpt_group_detr=ckpt_group_detr,
+                    target_num_queries=mc.num_queries,
+                    target_group_detr=mc.group_detr,
+                )
+            else:
+                # Legacy checkpoint with no num_queries/group_detr in args:
+                # preserve the original flat slice for backward compatibility.
+                checkpoint["model"][name] = tensor[: mc.num_queries * mc.group_detr]
 
     interpolate_position_embeddings(checkpoint["model"], mc.positional_encoding_size)
     nn_model.load_state_dict(checkpoint["model"], strict=False)

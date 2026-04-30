@@ -496,3 +496,181 @@ class TestApplyLora:
         assert actual_targets == expected_targets, (
             f"LoRA target_modules mismatch.\nExpected: {expected_targets}\nGot: {actual_targets}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Per-group query embedding slicing
+# ---------------------------------------------------------------------------
+
+
+def _labelled_query_tensor(num_queries: int, group_detr: int, dim: int = 2) -> torch.Tensor:
+    """Build a query embedding tensor where row ``g * num_queries + q`` encodes
+    ``[g * 100 + q, 0, ...]``.
+
+    Lets tests check the per-group ordering of the result without floating-point
+    fuzz: the first column carries the (group, query) identity directly.
+    """
+    rows = []
+    for g in range(group_detr):
+        for q in range(num_queries):
+            rows.append([float(g * 100 + q)] + [0.0] * (dim - 1))
+    return torch.tensor(rows, dtype=torch.float32)
+
+
+class TestSliceQueryParamPerGroup:
+    """Direct unit tests for ``_slice_query_param_per_group``.
+
+    The helper is the fix for a latent bug where a flat ``tensor[:N]`` slice
+    scrambled per-group structure when ``num_queries`` decreased with
+    ``group_detr > 1``.  See the docstring in ``rfdetr.models.weights`` for the
+    ``LWDETR`` packing layout that motivates these tests.
+    """
+
+    def test_returns_input_unchanged_when_dimensions_match(self):
+        from rfdetr.models.weights import _slice_query_param_per_group
+
+        tensor = _labelled_query_tensor(num_queries=4, group_detr=3)
+        out = _slice_query_param_per_group(tensor, 4, 3, target_num_queries=4, target_group_detr=3)
+        assert out is tensor
+
+    def test_num_queries_decrease_preserves_per_group_structure(self):
+        """The bug being fixed: 4→2 queries with 3 groups must keep first 2 of each group."""
+        from rfdetr.models.weights import _slice_query_param_per_group
+
+        tensor = _labelled_query_tensor(num_queries=4, group_detr=3)
+        out = _slice_query_param_per_group(tensor, 4, 3, target_num_queries=2, target_group_detr=3)
+        # Expect rows: g0q0, g0q1, g1q0, g1q1, g2q0, g2q1 → labels 0, 1, 100, 101, 200, 201.
+        labels = out[:, 0].int().tolist()
+        assert labels == [0, 1, 100, 101, 200, 201], (
+            f"Per-group structure scrambled. A flat slice would give {tensor[:6, 0].int().tolist()}."
+        )
+
+    def test_group_detr_decrease_drops_tail_groups(self):
+        from rfdetr.models.weights import _slice_query_param_per_group
+
+        tensor = _labelled_query_tensor(num_queries=4, group_detr=3)
+        out = _slice_query_param_per_group(tensor, 4, 3, target_num_queries=4, target_group_detr=2)
+        labels = out[:, 0].int().tolist()
+        # First 2 groups, all 4 queries each.
+        assert labels == [0, 1, 2, 3, 100, 101, 102, 103]
+
+    def test_both_decrease(self):
+        from rfdetr.models.weights import _slice_query_param_per_group
+
+        tensor = _labelled_query_tensor(num_queries=4, group_detr=3)
+        out = _slice_query_param_per_group(tensor, 4, 3, target_num_queries=2, target_group_detr=2)
+        labels = out[:, 0].int().tolist()
+        assert labels == [0, 1, 100, 101]
+
+    def test_falls_back_to_flat_slice_on_inconsistent_shape(self):
+        """If args don't match the tensor's flat length, defer to legacy behavior."""
+        from rfdetr.models.weights import _slice_query_param_per_group
+
+        weird = torch.arange(7, dtype=torch.float32).unsqueeze(1)  # shape [7, 1], not 4*3=12
+        out = _slice_query_param_per_group(weird, 4, 3, target_num_queries=2, target_group_detr=2)
+        # Legacy: tensor[:4]
+        assert out.shape == (4, 1)
+        assert out[:, 0].tolist() == [0.0, 1.0, 2.0, 3.0]
+
+    def test_num_queries_expansion_returns_smaller_tensor(self):
+        """When target > ckpt, return min-per-group; load_state_dict will reject."""
+        from rfdetr.models.weights import _slice_query_param_per_group
+
+        tensor = _labelled_query_tensor(num_queries=4, group_detr=3)
+        out = _slice_query_param_per_group(tensor, 4, 3, target_num_queries=8, target_group_detr=3)
+        # min(4, 8) = 4 per group, all 3 groups → 12 rows == input length.
+        assert out.shape == (12, 2)
+
+
+class TestLoadPretrainWeightsPerGroupQuerySlice:
+    """End-to-end check that ``load_pretrain_weights`` invokes per-group slicing."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_io(self, monkeypatch):
+        monkeypatch.setattr("rfdetr.models.weights.download_pretrain_weights", lambda *a, **kw: None)
+        monkeypatch.setattr("rfdetr.models.weights.validate_pretrain_weights", lambda *a, **kw: None)
+        monkeypatch.setattr("rfdetr.models.weights.validate_checkpoint_compatibility", lambda *a, **kw: None)
+        monkeypatch.setattr("rfdetr.models.weights.os.path.isfile", lambda _: True)
+
+    def _make_args_dict_checkpoint(self, num_queries: int, group_detr: int) -> dict:
+        """Build a checkpoint with labelled query weights and dict-style args."""
+        labelled_refpoint = _labelled_query_tensor(num_queries, group_detr, dim=4)
+        labelled_query_feat = _labelled_query_tensor(num_queries, group_detr, dim=256)
+        state = {
+            "class_embed.weight": torch.randn(91, 256),
+            "class_embed.bias": torch.randn(91),
+            "refpoint_embed.weight": labelled_refpoint,
+            "query_feat.weight": labelled_query_feat,
+        }
+        # Dict-style args (current PTL format).
+        return {"model": state, "args": {"num_queries": num_queries, "group_detr": group_detr}}
+
+    def test_decreasing_num_queries_preserves_per_group_structure(self, monkeypatch, tmp_path):
+        """Real flow: checkpoint(nq=4, g=3) → model(nq=2, g=3). Group structure must be preserved."""
+        from rfdetr.models.weights import load_pretrain_weights
+
+        mc = RFDETRBaseConfig(
+            pretrain_weights="/fake/weights.pth",
+            device="cpu",
+            num_queries=2,
+            num_select=2,
+            group_detr=3,
+        )
+        checkpoint = self._make_args_dict_checkpoint(num_queries=4, group_detr=3)
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+
+        nn_model = _fake_nn_model()
+        load_pretrain_weights(nn_model, mc)
+
+        passed_state = nn_model.load_state_dict.call_args[0][0]
+        refpoint = passed_state["refpoint_embed.weight"]
+        # First column carries (group, query) identity (see _labelled_query_tensor).
+        assert refpoint[:, 0].int().tolist() == [0, 1, 100, 101, 200, 201], (
+            "Per-group structure was not preserved in load_pretrain_weights."
+        )
+
+    def test_legacy_checkpoint_without_args_falls_back_to_flat_slice(self, monkeypatch, tmp_path):
+        """No ``args`` in checkpoint → preserve the legacy flat slice (backward compat)."""
+        from rfdetr.models.weights import load_pretrain_weights
+
+        mc = RFDETRBaseConfig(
+            pretrain_weights="/fake/weights.pth",
+            device="cpu",
+            num_queries=2,
+            num_select=2,
+            group_detr=3,
+        )
+        checkpoint = self._make_args_dict_checkpoint(num_queries=4, group_detr=3)
+        del checkpoint["args"]  # legacy
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+
+        nn_model = _fake_nn_model()
+        load_pretrain_weights(nn_model, mc)
+
+        passed_state = nn_model.load_state_dict.call_args[0][0]
+        refpoint = passed_state["refpoint_embed.weight"]
+        # Legacy flat slice: first 2*3=6 rows of the original 12.  Original rows
+        # are labelled 0,1,2,3,100,101,102,103,200,201,202,203 → first 6 are
+        # 0,1,2,3,100,101.
+        assert refpoint[:, 0].int().tolist() == [0, 1, 2, 3, 100, 101]
+
+    def test_decreasing_group_detr_drops_tail_groups(self, monkeypatch, tmp_path):
+        """checkpoint(nq=4, g=3) → model(nq=4, g=2): tail group dropped, retained groups intact."""
+        from rfdetr.models.weights import load_pretrain_weights
+
+        mc = RFDETRBaseConfig(
+            pretrain_weights="/fake/weights.pth",
+            device="cpu",
+            num_queries=4,
+            num_select=4,
+            group_detr=2,
+        )
+        checkpoint = self._make_args_dict_checkpoint(num_queries=4, group_detr=3)
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+
+        nn_model = _fake_nn_model()
+        load_pretrain_weights(nn_model, mc)
+
+        passed_state = nn_model.load_state_dict.call_args[0][0]
+        refpoint = passed_state["refpoint_embed.weight"]
+        assert refpoint[:, 0].int().tolist() == [0, 1, 2, 3, 100, 101, 102, 103]
