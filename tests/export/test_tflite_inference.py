@@ -407,3 +407,35 @@ class TestShapeBasedOutputFallback:
 
         with pytest.raises(ValueError, match="Shape-based TFLite output matching failed"):
             _run_inference(interp, rgb_image, threshold=0.3)
+
+    def test_three_outputs_with_rank4_masks_resolves_correctly(self, rgb_image: Path) -> None:
+        """3-output segmentation export (boxes/logits/masks) with generic names resolves without error.
+
+        Ensures the shape fallback ignores the rank-4 masks tensor and correctly
+        identifies boxes [1,Q,4] and logits [1,Q,C+1] as rank-3 candidates.
+        """
+        boxes = _make_boxes()
+        logits = _make_logits(high_conf_idx=0)
+        masks = np.zeros((1, 10, 28, 28), dtype=np.float32)
+
+        def _get_tensor(index: int) -> np.ndarray:
+            if index == 1:
+                return boxes
+            if index == 2:
+                return logits
+            if index == 3:
+                return masks
+            raise ValueError(f"Unknown tensor index: {index}")
+
+        interp = mock.MagicMock()
+        interp.get_input_details.return_value = [{"shape": _INPUT_SHAPE, "index": 0, "dtype": np.float32}]
+        interp.get_output_details.return_value = [
+            {"shape": [1, 10, 4], "name": "Identity_0", "index": 1},
+            {"shape": [1, 10, 82], "name": "Identity_1", "index": 2},
+            {"shape": [1, 10, 28, 28], "name": "Identity_2", "index": 3},
+        ]
+        interp.get_tensor.side_effect = _get_tensor
+
+        dets, _ = _run_inference(interp, rgb_image, threshold=0.3)
+        assert isinstance(dets, sv.Detections)
+        assert len(dets) >= 1
