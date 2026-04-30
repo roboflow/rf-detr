@@ -128,11 +128,11 @@ def _run_inference(
             "Name-based output matching failed (available: %s). Falling back to shape-based matching.",
             available_output_names,
         )
-        shape_boxes_idx = next((i for i, od in enumerate(out_det) if od["shape"][-1] == 4), None)
-        shape_logits_idx = next((i for i, od in enumerate(out_det) if od["shape"][-1] != 4), None)
-        if shape_boxes_idx is not None and shape_logits_idx is not None:
-            boxes_idx = shape_boxes_idx
-            logits_idx = shape_logits_idx
+        shape_boxes_candidates = [i for i, od in enumerate(out_det) if len(od["shape"]) == 3 and od["shape"][-1] == 4]
+        shape_logits_candidates = [i for i, od in enumerate(out_det) if len(od["shape"]) == 3 and od["shape"][-1] != 4]
+        if len(shape_boxes_candidates) == 1 and len(shape_logits_candidates) == 1:
+            boxes_idx = shape_boxes_candidates[0]
+            logits_idx = shape_logits_candidates[0]
         elif len(out_det) == 2:
             # Ambiguous shapes (e.g. num_classes==3 → logits dim==4 == boxes dim).
             # onnx2tf preserves ONNX output order: index 0 = dets (boxes), index 1 = labels (logits).
@@ -142,8 +142,9 @@ def _run_inference(
         else:
             available_shapes = [list(od["shape"]) for od in out_det]
             raise ValueError(
-                f"Shape-based TFLite output matching failed. Expected one tensor with last dim == 4 (boxes) "
-                f"and one with last dim != 4 (logits). Available output shapes: {available_shapes}"
+                f"Shape-based TFLite output matching failed. Expected exactly one rank-3 tensor with "
+                f"last dim == 4 (boxes) and one rank-3 tensor with last dim != 4 (logits). "
+                f"Available output shapes: {available_shapes}"
             )
     boxes_cwh = interp.get_tensor(out_det[boxes_idx]["index"])[0]  # (Q, 4) normalized cxcywh
     # Drop last logit column: RF-DETR adds +1 to num_classes (no-object slot, criterion.py:323).
