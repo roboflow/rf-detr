@@ -200,7 +200,8 @@ filterwarnings = [
     # Many tests instantiate ModelConfig variants with `pretrain_weights=None`
     # to skip downloads.  The pretrain-compat warning is intentional UX for
     # end users; silence it globally for the test suite and re-enable it
-    # explicitly in the dedicated tests via `pytest.warns`.
+    # explicitly in the dedicated tests via `warnings.catch_warnings` plus
+    # `warnings.simplefilter("always")`.
     # NOTE: expressed as a message regex (not as
     # ``ignore::rfdetr.config.PretrainWeightsCompatibilityWarning``) because a
     # class-path filter forces pytest to import ``rfdetr.config`` at
