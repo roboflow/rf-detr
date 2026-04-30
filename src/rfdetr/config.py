@@ -40,6 +40,8 @@ class PretrainWeightsCompatibilityWarning(UserWarning):
 #     segmentation head's conv blocks are trained for a particular spatial scale
 #     and silently miscalibrate at a different one.  The load-time partial-load
 #     detector cannot catch this because no keys are missing or mismatched.
+#     Checked conditionally in the validator (only when segmentation_head=True)
+#     rather than listed here to avoid misleading warnings on detector configs.
 _PRETRAIN_BREAKING_FIELDS: tuple[str, ...] = (
     "encoder",
     "hidden_dim",
@@ -57,7 +59,6 @@ _PRETRAIN_BREAKING_FIELDS: tuple[str, ...] = (
     "patch_size",
     "segmentation_head",
     "num_channels",
-    "mask_downsample_ratio",
 )
 
 # Fields where only an *increase* above the variant default is load-breaking:
@@ -325,6 +326,17 @@ class ModelConfig(BaseConfig):
             current = getattr(self, name)
             if isinstance(current, int) and current > default:
                 overrides.append((name, current, default))
+
+        # ``mask_downsample_ratio`` only affects segmentation models — skip on
+        # detector-only variants to avoid a misleading "weights won't load" warning.
+        if "mask_downsample_ratio" in fields_set and self.segmentation_head:
+            _mdr_info = cls.model_fields.get("mask_downsample_ratio")
+            if _mdr_info is not None and not _mdr_info.is_required():
+                _mdr_default = _mdr_info.default
+                if _mdr_default is not PydanticUndefined:
+                    _mdr_current = getattr(self, "mask_downsample_ratio")
+                    if _mdr_current != _mdr_default:
+                        overrides.append(("mask_downsample_ratio", _mdr_current, _mdr_default))
 
         if overrides:
             default_pretrain = cls.model_fields["pretrain_weights"].default
