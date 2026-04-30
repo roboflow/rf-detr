@@ -655,3 +655,46 @@ class TestPretrainWeightsCompatibilityWarning:
             ModelConfig(**sample_model_config)
             captured = [w for w in caught if issubclass(w.category, PretrainWeightsCompatibilityWarning)]
         assert captured == []
+
+    def test_breaking_field_with_default_factory_skips_comparison(self) -> None:
+        """A subclass whose breaking field uses ``default_factory`` (so ``.default`` is
+        ``PydanticUndefined``) must be silently skipped — we have nothing to compare against.
+        """
+        from pydantic import Field
+
+        class _DefaultFactoryConfig(RFDETRNanoConfig):
+            # Field uses default_factory → FieldInfo.default is PydanticUndefined,
+            # but is_required() is False.  Hits the `continue` on the
+            # PydanticUndefined check.
+            encoder: str = Field(default_factory=lambda: "dinov2_windowed_small")
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            _DefaultFactoryConfig(encoder="dinov2_registers_windowed_small")
+            captured = [w for w in caught if issubclass(w.category, PretrainWeightsCompatibilityWarning)]
+        assert captured == []
+
+    def test_increase_field_when_required_skips_comparison(self) -> None:
+        """A subclass where ``num_queries`` becomes required (no default) must be skipped."""
+
+        class _RequiredNumQueriesConfig(RFDETRNanoConfig):
+            num_queries: int  # type: ignore[misc]  # no default → required
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            _RequiredNumQueriesConfig(num_queries=400)
+            captured = [w for w in caught if issubclass(w.category, PretrainWeightsCompatibilityWarning)]
+        assert captured == []
+
+    def test_increase_field_with_non_int_default_skips_comparison(self) -> None:
+        """A subclass where ``num_queries`` has a non-int default must be skipped (can't ``>`` compare)."""
+        from typing import Any
+
+        class _NonIntDefaultConfig(RFDETRNanoConfig):
+            num_queries: Any = "300"  # type: ignore[assignment]  # non-int default
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            _NonIntDefaultConfig(num_queries="400")
+            captured = [w for w in caught if issubclass(w.category, PretrainWeightsCompatibilityWarning)]
+        assert captured == []

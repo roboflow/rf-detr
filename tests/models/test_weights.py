@@ -599,6 +599,27 @@ class TestPartialLoadDetector:
         # The crucial assertion is "did not raise"; whether captured is empty
         # depends on MagicMock truthiness — both outcomes are acceptable.
 
+    def test_non_iterable_missing_keys_returns_silently(self, captured):
+        """Genuinely non-iterable ``missing_keys`` (e.g. an int) hits the TypeError except branch."""
+        from rfdetr.models.weights import _warn_on_partial_load
+
+        result = SimpleNamespace(missing_keys=42, unexpected_keys=[])
+        _warn_on_partial_load(result, "/fake/weights.pth")
+        assert captured == []
+
+    def test_truncates_long_unexpected_list_in_message(self, captured):
+        """Sample list for *unexpected* keys is also bounded to 5 with a trailing ellipsis."""
+        from rfdetr.models.weights import _warn_on_partial_load
+
+        result = SimpleNamespace(
+            missing_keys=[],
+            unexpected_keys=[f"backbone.0.legacy.{i}.weight" for i in range(8)],
+        )
+        _warn_on_partial_load(result, "/fake/weights.pth")
+        assert len(captured) == 1
+        assert "8 checkpoint key(s)" in captured[0]
+        assert "..." in captured[0]
+
     def test_partial_load_is_invoked_during_load_pretrain_weights(self, monkeypatch, tmp_path):
         """Integration check: load_pretrain_weights wires up the partial-load detector."""
 
