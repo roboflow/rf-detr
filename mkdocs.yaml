@@ -64,6 +64,7 @@ nav:
           - Segmentation Train Config: reference/segmentation_train_config.md
       - Lightning Training:
           - Training Primitives: reference/training.md
+  - Notebooks: notebooks.md
   - Tutorials: tutorials/index.md
   - Changelog: changelog.md
 
@@ -106,6 +107,13 @@ theme:
 
 plugins:
   - search
+  - mkdocs-jupyter:
+      kernel_name: python3
+      execute: false
+      include_source: True
+      include_requirejs: true
+      ignore:
+        - "hooks/*.py"
   - git-revision-date-localized:
       enable_creation_date: false
       type: iso_datetime
@@ -152,3 +160,7 @@ markdown_extensions:
 
 extra_css:
   - stylesheets/rf.css
+  - stylesheets/cookbooks_card.css
+
+extra_javascript:
+  - javascripts/cookbooks-card.js

@@ -1,0 +1,29 @@
+{% extends "main.html" %}
+{% block libs %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.8/purify.min.js"></script>
+<link rel="stylesheet" href="/stylesheets/cookbooks_card.css">
+<script src="/javascripts/cookbooks-card.js"></script>
+{% endblock %}
+{% block content %}
+<section class="mdx-container portfolio-section">
+  <div class="md-grid md-typeset">
+    <div class="text-center">
+      <h1>RF-DETR Notebooks</h1>
+    </div>
+    <div class="custom-grid">
+      <a href="release-demo_1-5/">
+        <p class="card repo-card" data-name="Custom Augmentations and Live Training Progress"
+          data-labels="TRAINING,AUGMENTATION" data-version="v1.5.0" data-author="Borda"></p>
+      </a>
+      <a href="release-demo_1-6/">
+        <p class="card repo-card" data-name="PyTorch Lightning Building Blocks"
+          data-labels="TRAINING,PYTORCH LIGHTNING" data-version="v1.6.0" data-author="Borda"></p>
+      </a>
+      <a href="release-demo_1-7/">
+        <p class="card repo-card" data-name="Zero-Boilerplate Loading and TFLite Export"
+          data-labels="TRAINING,EXPORT,TFLITE" data-version="v1.7.0" data-author="Borda"></p>
+      </a>
+    </div>
+  </div>
+</section>
+{% endblock %}
