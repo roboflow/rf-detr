@@ -2,7 +2,12 @@ document.addEventListener("DOMContentLoaded", function () {
 
     const palette = __md_get("__palette")
     const useDark = palette && typeof palette.color === "object" && palette.color.scheme === "slate"
-    const theme = useDark ? "dark-theme" : "light-default";
+    const computedStyles = getComputedStyle(document.body);
+    const theme = {
+        color: computedStyles.getPropertyValue("--md-default-fg-color").trim() || (useDark ? "#e5e7eb" : "#111827"),
+        background: computedStyles.getPropertyValue("--md-default-bg-color").trim() || (useDark ? "#0f172a" : "#ffffff"),
+        linkColor: computedStyles.getPropertyValue("--md-typeset-a-color").trim() || (useDark ? "#8ab4f8" : "#2563eb"),
+    };
 
     const colorList = [
         "#22c55e",
