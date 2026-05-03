@@ -160,7 +160,5 @@ markdown_extensions:
 
 extra_css:
   - stylesheets/rf.css
-  - stylesheets/cookbooks_card.css
 
 extra_javascript:
-  - javascripts/cookbooks-card.js
