@@ -859,6 +859,7 @@ class RFDETR:
         quantization: str | None = None,
         calibration_data: str | np.ndarray | None = None,
         max_images: int = 100,
+        *,
         notes: object = None,
     ) -> None:
         """Export the trained model to ONNX or TFLite format.

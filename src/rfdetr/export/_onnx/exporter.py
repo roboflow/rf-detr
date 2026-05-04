@@ -62,6 +62,7 @@ def export_onnx(
     verbose: bool = True,
     opset_version: int = 17,
     variant_name: str | None = None,
+    *,
     notes: object = None,
 ) -> str:
     """Export a model to ONNX.
