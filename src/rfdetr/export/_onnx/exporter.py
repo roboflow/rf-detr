@@ -62,6 +62,7 @@ def export_onnx(
     verbose: bool = True,
     opset_version: int = 17,
     variant_name: str | None = None,
+    notes: object = None,
 ) -> str:
     """Export a model to ONNX.
 
@@ -79,6 +80,9 @@ def export_onnx(
             When provided, the exported file is named ``{variant_name}.onnx`` or
             ``{variant_name}-backbone.onnx`` (when ``backbone_only=True``) instead
             of the generic ``inference_model.onnx`` or ``backbone_model.onnx``.
+        notes: Optional user-defined metadata (string, dict, list, or any
+            JSON-serialisable value) to embed in the exported ONNX model under
+            the ``"notes"`` metadata property.  Ignored when ``None``.
 
     Returns:
         Path to the exported ONNX model.
@@ -115,6 +119,15 @@ def export_onnx(
         dynamic_axes=dynamic_axes,
         **export_kwargs,
     )
+
+    if notes is not None and onnx is not None:
+        import json
+
+        onnx_model = onnx.load(output_file)
+        meta = onnx_model.metadata_props.add()
+        meta.key = "notes"
+        meta.value = json.dumps(notes) if not isinstance(notes, str) else notes
+        onnx.save(onnx_model, output_file)
 
     logger.info(f"\nSuccessfully exported ONNX model: {output_file}")
     return output_file

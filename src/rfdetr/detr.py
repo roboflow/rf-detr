@@ -486,6 +486,12 @@ class RFDETR:
           :func:`~rfdetr.training.build_trainer` instead.
         * ``start_epoch`` — emits :class:`DeprecationWarning` and is dropped.
         * ``do_benchmark`` — emits :class:`DeprecationWarning` and is dropped.
+        * ``notes`` — optional user-defined metadata (string, dict, list, or
+          any JSON-serialisable value) stored under the ``"notes"`` key in
+          every ``.pth`` checkpoint produced during training.  The value is
+          also available inside ``args["notes"]`` for full provenance.  Pass
+          the same value to :meth:`export` to embed it in the ONNX file as
+          well.
 
         After training completes the underlying ``nn.Module`` is synced back
         onto ``self.model.model`` so that :meth:`predict` and :meth:`export`
@@ -853,6 +859,7 @@ class RFDETR:
         quantization: str | None = None,
         calibration_data: str | np.ndarray | None = None,
         max_images: int = 100,
+        notes: object = None,
     ) -> None:
         """Export the trained model to ONNX or TFLite format.
 
@@ -902,6 +909,12 @@ class RFDETR:
             max_images: Maximum number of images to load from a
                 calibration directory.  Defaults to ``100``.  Only used
                 when *calibration_data* is a directory path.
+            notes: Optional user-defined metadata (string, dict, list, or
+                any JSON-serialisable value) to embed in the exported ONNX
+                model under the ``"notes"`` metadata property.  When ``None``
+                no metadata entry is written.  The same value can be passed
+                to :meth:`train` so the checkpoint and the ONNX file share
+                the same provenance information.
         """
         logger.info("Exporting model to ONNX format")
         _valid_formats = ("onnx", "tflite")
@@ -994,6 +1007,7 @@ class RFDETR:
                 verbose=verbose,
                 opset_version=opset_version,
                 variant_name=getattr(self, "size", None),
+                notes=notes,
             )
 
             logger.info(f"Successfully exported ONNX model to: {output_file}")
