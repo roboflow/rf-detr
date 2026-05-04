@@ -23,57 +23,6 @@ class PretrainWeightsCompatibilityWarning(UserWarning):
     """
 
 
-# Fields that, when explicitly overridden to any value other than the variant
-# default, prevent the variant's published checkpoint from loading cleanly into
-# the model.  Includes:
-#
-#   * Major architecture knobs that change parameter shapes / keys.
-#   * "Less obvious" architecture knobs (``bbox_reparam``, ``lite_refpoint_refine``,
-#     ``layer_norm``, ``two_stage``) — same effect, but easier to flip without
-#     realising the consequences.
-#   * Defense-in-depth for fields that currently raise hard errors (``patch_size``,
-#     ``segmentation_head``) — if those checks are ever relaxed, the warning still
-#     fires.
-#   * ``num_channels`` — loads via heuristic adaptation in ``_adapt_input_conv`` but
-#     the result is not real pretrained weights for the new input domain.
-#   * ``mask_downsample_ratio`` — does *not* change parameter shapes, but the
-#     segmentation head's conv blocks are trained for a particular spatial scale
-#     and silently miscalibrate at a different one.  The load-time partial-load
-#     detector cannot catch this because no keys are missing or mismatched.
-#     Checked conditionally in the validator (only when segmentation_head=True)
-#     rather than listed here to avoid misleading warnings on detector configs.
-_PRETRAIN_BREAKING_FIELDS: tuple[str, ...] = (
-    "encoder",
-    "hidden_dim",
-    "dec_layers",
-    "num_windows",
-    "sa_nheads",
-    "ca_nheads",
-    "dec_n_points",
-    "out_feature_indexes",
-    "projector_scale",
-    "bbox_reparam",
-    "lite_refpoint_refine",
-    "layer_norm",
-    "two_stage",
-    "patch_size",
-    "segmentation_head",
-    "num_channels",
-)
-
-# Fields where only an *increase* above the variant default is load-breaking:
-#
-#   * ``num_queries``: increasing above the variant default adds slots whose
-#     shape in the checkpoint differs from the model — ``load_state_dict``
-#     raises ``RuntimeError``; decrease is fine (per-group truncation).
-#   * ``group_detr``: same shape-mismatch reasoning applies for extra groups;
-#     decrease is fine (tail groups are dropped, retained groups stay pretrained).
-_PRETRAIN_BREAKING_ON_INCREASE: tuple[str, ...] = (
-    "num_queries",
-    "group_detr",
-)
-
-
 def _detect_device() -> str:
     """Detect the best available device **without** initialising the CUDA runtime.
 
@@ -313,7 +262,39 @@ class ModelConfig(BaseConfig):
 
         overrides: list[tuple[str, Any, Any]] = []
 
-        for name in _PRETRAIN_BREAKING_FIELDS:
+        # Fields that, when explicitly overridden to any value other than the
+        # variant default, prevent the published checkpoint from loading cleanly.
+        # Includes major architecture knobs, "less obvious" knobs (bbox_reparam,
+        # lite_refpoint_refine, layer_norm, two_stage), defense-in-depth for
+        # fields that currently raise hard errors (patch_size, segmentation_head),
+        # and num_channels (loads via heuristic but result isn't real pretrained
+        # weights for the new input domain).
+        breaking_fields: tuple[str, ...] = (
+            "encoder",
+            "hidden_dim",
+            "dec_layers",
+            "num_windows",
+            "sa_nheads",
+            "ca_nheads",
+            "dec_n_points",
+            "out_feature_indexes",
+            "projector_scale",
+            "bbox_reparam",
+            "lite_refpoint_refine",
+            "layer_norm",
+            "two_stage",
+            "patch_size",
+            "segmentation_head",
+            "num_channels",
+        )
+        # Fields where only an *increase* above the variant default is load-breaking:
+        # num_queries / group_detr add slots whose shape differs — decrease is fine.
+        breaking_on_increase: tuple[str, ...] = (
+            "num_queries",
+            "group_detr",
+        )
+
+        for name in breaking_fields:
             if name not in fields_set:
                 continue
             field_info = cls.model_fields.get(name)
@@ -326,7 +307,7 @@ class ModelConfig(BaseConfig):
             if current != default:
                 overrides.append((name, current, default))
 
-        for name in _PRETRAIN_BREAKING_ON_INCREASE:
+        for name in breaking_on_increase:
             if name not in fields_set:
                 continue
             field_info = cls.model_fields.get(name)

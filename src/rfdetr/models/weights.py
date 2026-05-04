@@ -39,20 +39,6 @@ __all__ = ["load_pretrain_weights", "apply_lora", "interpolate_position_embeddin
 
 _PE_KEY_SUFFIX = "embeddings.position_embeddings"
 
-# Substrings identifying state-dict keys that ``load_pretrain_weights`` is
-# *expected* to have to reconcile (head reinitialisation and per-group query
-# trimming).  Keys matching any of these are filtered from the partial-load
-# warning so it only fires on *unexpected* mismatches that indicate a real
-# config / checkpoint incompatibility.
-_INTENTIONAL_LOAD_KEY_PATTERNS: tuple[str, ...] = (
-    "class_embed.",
-    "bbox_embed.",
-    "refpoint_embed.weight",
-    "query_feat.weight",
-    "enc_out_class_embed.",
-    "enc_out_bbox_embed.",
-)
-
 
 def _filter_intentional_keys(keys: list[str]) -> list[str]:
     """Return *keys* with intentional-reinit/trim entries removed.
@@ -66,9 +52,22 @@ def _filter_intentional_keys(keys: list[str]) -> list[str]:
     plain ``in`` check against longer ambiguous strings is fragile by
     design).
     """
+    # Substrings identifying state-dict keys that ``load_pretrain_weights`` is
+    # *expected* to have to reconcile (head reinitialisation and per-group query
+    # trimming).  Keys matching any of these are filtered from the partial-load
+    # warning so it only fires on *unexpected* mismatches that indicate a real
+    # config / checkpoint incompatibility.
+    intentional_patterns: tuple[str, ...] = (
+        "class_embed.",
+        "bbox_embed.",
+        "refpoint_embed.weight",
+        "query_feat.weight",
+        "enc_out_class_embed.",
+        "enc_out_bbox_embed.",
+    )
 
     def _is_intentional(key: str) -> bool:
-        return any(key.startswith(pat) or f".{pat}" in key for pat in _INTENTIONAL_LOAD_KEY_PATTERNS)
+        return any(key.startswith(pat) or f".{pat}" in key for pat in intentional_patterns)
 
     return [k for k in keys if not _is_intentional(k)]
 

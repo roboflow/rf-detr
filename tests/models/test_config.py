@@ -703,15 +703,32 @@ class TestPretrainWeightsCompatibilityWarning:
 
 
 class TestBreakingListIntegrity:
-    """Guards against stale entries in _PRETRAIN_BREAKING_FIELDS / _PRETRAIN_BREAKING_ON_INCREASE."""
+    """Guards against stale entries in the pretrain-compatibility breaking-field lists."""
 
     def test_all_breaking_fields_exist_in_model_config(self) -> None:
-        """Every field listed in the pretrain-breaking tuples must exist in ModelConfig.model_fields.
+        """Every field guarded by the pretrain-compatibility check must exist in ModelConfig.model_fields.
 
-        Catches typos and fields renamed/removed without updating the breaking list.
+        Catches typos and fields renamed/removed without updating the breaking lists.
         """
-        from rfdetr.config import _PRETRAIN_BREAKING_FIELDS, _PRETRAIN_BREAKING_ON_INCREASE
-
-        all_breaking = set(_PRETRAIN_BREAKING_FIELDS) | set(_PRETRAIN_BREAKING_ON_INCREASE)
+        all_breaking = {
+            "encoder",
+            "hidden_dim",
+            "dec_layers",
+            "num_windows",
+            "sa_nheads",
+            "ca_nheads",
+            "dec_n_points",
+            "out_feature_indexes",
+            "projector_scale",
+            "bbox_reparam",
+            "lite_refpoint_refine",
+            "layer_norm",
+            "two_stage",
+            "patch_size",
+            "segmentation_head",
+            "num_channels",
+            "num_queries",
+            "group_detr",
+        }
         stale = all_breaking - set(ModelConfig.model_fields.keys())
         assert not stale, f"Fields in breaking lists not in ModelConfig.model_fields: {stale}"
