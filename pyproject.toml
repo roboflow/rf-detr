@@ -51,7 +51,7 @@ lora = [
 ]
 train = [
     "peft",                            # LoRA backbone fine-tuning (available during training)
-    "pytorch_lightning>=2.6,<3",
+    "pytorch_lightning>=2.6,<3,!=2.6.2,!=2.6.3",  # Keep exclusions; see issue #1016 / related advisory for why 2.6.2 and 2.6.3 are blocked
     "torchmetrics[detection]>=1.2",
     "faster-coco-eval>=1.7.2",
     "pycocotools",
