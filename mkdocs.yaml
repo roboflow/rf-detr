@@ -140,6 +140,7 @@ plugins:
 
 hooks:
   - docs/hooks/package_version.py
+  - docs/hooks/cookbooks_cards.py
 
 markdown_extensions:
   - admonition
