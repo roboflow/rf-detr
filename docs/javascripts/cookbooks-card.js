@@ -14,7 +14,7 @@ document.addEventListener("DOMContentLoaded", function () {
         "#3b82f6",
     ]
 
-    const logoSrc = (document.querySelector('link[rel="icon"]') || {}).href || '/assets/roboflow-logo.svg';
+    const logoSrc = (document.querySelector('link[rel="icon"]') || {}).href || '';
     const authorCache = {};
 
     const repoCards = document.querySelectorAll(".repo-card");

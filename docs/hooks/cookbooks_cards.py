@@ -9,7 +9,7 @@
 from pathlib import Path
 from typing import Any
 
-import yaml
+import yaml  # type: ignore[import-untyped]  # yaml stubs not in docs group
 
 
 def _load_cards(cards_path: Path) -> list[dict[str, Any]]:
