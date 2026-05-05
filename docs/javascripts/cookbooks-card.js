@@ -2,12 +2,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
     const palette = __md_get("__palette")
     const useDark = palette && typeof palette.color === "object" && palette.color.scheme === "slate"
-    const computedStyles = getComputedStyle(document.body);
-    const theme = {
-        color: computedStyles.getPropertyValue("--md-default-fg-color").trim() || (useDark ? "#e5e7eb" : "#111827"),
-        background: computedStyles.getPropertyValue("--md-default-bg-color").trim() || (useDark ? "#0f172a" : "#ffffff"),
-        linkColor: computedStyles.getPropertyValue("--md-typeset-a-color").trim() || (useDark ? "#8ab4f8" : "#2563eb"),
-    };
+    const theme = useDark ? "dark-theme" : "light-default";
 
     const colorList = [
         "#22c55e",
@@ -35,6 +30,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
     async function renderCard(element, elementIndex) {
         const name = element.getAttribute('data-name');
+        const description = element.getAttribute('data-description') || '';
         const labels = element.getAttribute('data-labels');
         const version = element.getAttribute('data-version');
         const authors = element.getAttribute('data-author');
@@ -59,7 +55,6 @@ document.addEventListener("DOMContentLoaded", function () {
 
         let authorAvatarsHTML = authorDataArray.map((authorData, index) => {
             const marginLeft = index === 0 ? '0' : '-10px';
-            const zIndex = 4 - index;
             return `
             <div
                 class="author-container"
@@ -86,7 +81,6 @@ document.addEventListener("DOMContentLoaded", function () {
             <span
                 class="author-name"
                 data-login="${authorData.login}-${elementIndex}"
-                style="color: ${theme.color}"
             >
             <a href="https://github.com/${authorData.login}" target="_blank">
                 ${authorData.login}
@@ -106,21 +100,21 @@ document.addEventListener("DOMContentLoaded", function () {
                 display: grid !important;
                 grid-template-rows: auto;
                 height: 100%;
-            font-family: -apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif,Apple Color Emoji,Segoe UI Emoji; background: ${theme.background}; font-size: 14px; line-height: 1.5; color: ${theme.color}">
+            font-family: -apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif,Apple Color Emoji,Segoe UI Emoji; font-size: 14px; line-height: 1.5;">
             <div style="display: flex; align-items: center;">
-                <span style="font-weight: 700; font-size: 1rem; color: ${theme.linkColor};">
+                <span style="font-weight: 700; font-size: 1rem;">
                 ${name}
                 </span>
             </div>
+            ${description ? `<p style="font-size: 0.85rem; opacity: 0.75; margin: 0.5rem 0 0;">${description}</p>` : ''}
             ${authorsHTML}
-            <div style="font-size: 12px; color: ${theme.color}; display: grid; grid-template-columns: auto 3fr; justify-content: space-between; gap: 1rem;">
+            <div style="font-size: 12px; display: grid; grid-template-columns: auto 3fr; justify-content: space-between; gap: 1rem;">
                 <div style="display: flex; align-items: center;">
                 <img src="/assets/roboflow-logo.svg" aria-label="rf-detr" width="20" height="20" role="img" />
                 &nbsp;
                 <span style="margin-left: 4px">${version}</span>
                 </div>
-                <div style="display: flex; align-items: center; flex-wrap: wrap; align-content: right;
-  gap: 0.1rem;">
+                <div style="display: flex; align-items: center; flex-wrap: wrap; align-content: right; gap: 0.1rem;">
                 ${labelHTML}
                 </div>
             </div>

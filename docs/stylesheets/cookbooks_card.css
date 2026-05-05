@@ -29,8 +29,14 @@
     color: inherit; /* Ensure color does not change on hover */
 }
 
+.cookbooks-subtitle {
+    color: var(--md-default-fg-color--light);
+    font-size: 1rem;
+    margin-bottom: 2rem;
+}
+
 .repo-card {
-    background: radial-gradient(at right top, #A351FB25, #A5F9EA25);
+    background: radial-gradient(at right top, #A351FB66, #A5F9EA66);
     border-radius: 0.5rem;
     padding: 1rem;
     transition: transform 0.2s ease-in-out; /* Smooth transition for the transform */

@@ -1,3 +1,8 @@
+# Local development:
+#   uv pip install -e ".[plus]" --group docs
+#   python -m mkdocs serve     # live-reload at http://127.0.0.1:8000
+#   python -m mkdocs build     # static output → site/
+
 site_name: RF-DETR
 site_url: https://rfdetr.roboflow.com/
 site_author: Roboflow
@@ -64,8 +69,8 @@ nav:
           - Segmentation Train Config: reference/segmentation_train_config.md
       - Lightning Training:
           - Training Primitives: reference/training.md
-  - Notebooks: notebooks.md
-  - Tutorials: tutorials/index.md
+  - Cookbooks: cookbooks.md
+  - Resources: tutorials/index.md
   - Changelog: changelog.md
 
 theme:
