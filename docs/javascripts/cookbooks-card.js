@@ -17,7 +17,7 @@ document.addEventListener("DOMContentLoaded", function () {
     const repoCards = document.querySelectorAll(".repo-card");
     const labelsAll = Array
         .from(repoCards)
-        .flatMap((element) => element.getAttribute('data-labels').split(','))
+        .flatMap((element) => (element.getAttribute('data-labels') || '').split(','))
         .map(label => label.trim())
         .filter(label => label !== '');
     const uniqueLabels = [...new Set(labelsAll)];
@@ -29,11 +29,11 @@ document.addEventListener("DOMContentLoaded", function () {
 
 
     async function renderCard(element, elementIndex) {
-        const name = element.getAttribute('data-name');
+        const name = element.getAttribute('data-name') || '';
         const description = element.getAttribute('data-description') || '';
-        const labels = element.getAttribute('data-labels');
-        const version = element.getAttribute('data-version');
-        const authors = element.getAttribute('data-author');
+        const labels = element.getAttribute('data-labels') || '';
+        const version = element.getAttribute('data-version') || '';
+        const authors = element.getAttribute('data-author') || '';
 
         const labelHTML = labels ? labels.split(',').filter(label => label !== '').map((label, index) => {
             const color = labelToColor[label.trim()];
@@ -47,7 +47,7 @@ document.addEventListener("DOMContentLoaded", function () {
         `;
         }).join(' ') : '';
 
-        const authorArray = authors.split(',');
+        const authorArray = authors ? authors.split(',').filter(a => a.trim()) : [];
         const authorDataArray = await Promise.all(authorArray.map(async (author) => {
             const login = author.trim();
             try {
