@@ -70,7 +70,7 @@ nav:
       - Lightning Training:
           - Training Primitives: reference/training.md
   - Cookbooks: cookbooks.md
-  - Resources: tutorials/index.md
+  - Resources: resources/index.md
   - Changelog: changelog.md
 
 theme:
