@@ -67,9 +67,7 @@ def on_config(config: dict[str, Any]) -> dict[str, Any]:
         >>> isinstance(updated["extra"]["cookbooks_cards"], list)
         True
     """
-    cards_path = (
-        Path(__file__).resolve().parents[2] / "docs" / "cookbooks" / "cards.yaml"
-    )
+    cards_path = Path(__file__).resolve().parents[2] / "docs" / "cookbooks" / "cards.yaml"
     extra = config.setdefault("extra", {})
     extra["cookbooks_cards"] = _load_cards(cards_path)
     return config

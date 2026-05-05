@@ -14,12 +14,12 @@ which renders each entry as a card via a Jinja loop.
 <!-- prettier-ignore -->
 
 ```yaml
-- href: release-demo_X-Y/
-  name: "Short Title"
-  labels: [LABEL1, LABEL2]
-  version: vX.Y.0
-  author: GitHubUsername
-  description: "One sentence describing what the notebook demonstrates."
+  - href: release-demo_X-Y/
+    name: Short Title
+    labels: [LABEL1, LABEL2]
+    version: vX.Y.0
+    author: GitHubUsername
+    description: One sentence describing what the notebook demonstrates.
 ```
 
 Available labels (reuse for consistent tag colouring): `TRAINING`, `AUGMENTATION`, `EXPORT`, `TFLITE`, `PYTORCH LIGHTNING`, `INFERENCE`, `SEGMENTATION`, `DEPLOY`.
@@ -31,7 +31,7 @@ Available labels (reuse for consistent tag colouring): `TRAINING`, `AUGMENTATION
 
 ## Current notebooks
 
-| File | Card title | Version |
+| File                     | Card title                                      | Version |
 | ------------------------ | ----------------------------------------------- | ------- |
-| `release-demo_1-5.ipynb` | Custom Augmentations and Live Training Progress | v1.5.0 |
-| `release-demo_1-6.ipynb` | PyTorch Lightning Building Blocks | v1.6.0 |
+| `release-demo_1-5.ipynb` | Custom Augmentations and Live Training Progress | v1.5.0  |
+| `release-demo_1-6.ipynb` | PyTorch Lightning Building Blocks               | v1.6.0  |
