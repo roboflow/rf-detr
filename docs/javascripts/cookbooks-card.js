@@ -49,8 +49,14 @@ document.addEventListener("DOMContentLoaded", function () {
 
         const authorArray = authors.split(',');
         const authorDataArray = await Promise.all(authorArray.map(async (author) => {
-            const response = await fetch(`https://api.github.com/users/${author.trim()}`);
-            return await response.json();
+            const login = author.trim();
+            try {
+                const response = await fetch(`https://api.github.com/users/${login}`);
+                if (!response.ok) return { login, avatar_url: `https://github.com/${login}.png` };
+                return await response.json();
+            } catch {
+                return { login, avatar_url: `https://github.com/${login}.png` };
+            }
         }));
 
         let authorAvatarsHTML = authorDataArray.map((authorData, index) => {
@@ -64,6 +70,7 @@ document.addEventListener("DOMContentLoaded", function () {
                 <a
                     href="https://github.com/${authorData.login}"
                     target="_blank"
+                    rel="noopener noreferrer"
                     style="line-height: 0;"
                 >
                     <img
@@ -82,7 +89,7 @@ document.addEventListener("DOMContentLoaded", function () {
                 class="author-name"
                 data-login="${authorData.login}-${elementIndex}"
             >
-            <a href="https://github.com/${authorData.login}" target="_blank">
+            <a href="https://github.com/${authorData.login}" target="_blank" rel="noopener noreferrer">
                 ${authorData.login}
             </a>
         </span>`
