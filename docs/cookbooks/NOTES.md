@@ -22,7 +22,8 @@ which renders each entry as a card via a Jinja loop.
     description: One sentence describing what the notebook demonstrates.
 ```
 
-Available labels (reuse for consistent tag colouring): `TRAINING`, `AUGMENTATION`, `EXPORT`, `TFLITE`, `PYTORCH LIGHTNING`, `INFERENCE`, `SEGMENTATION`, `DEPLOY`.
+Available labels (reuse these to keep tags standardised): `TRAINING`, `AUGMENTATION`, `EXPORT`, `TFLITE`, `PYTORCH LIGHTNING`, `INFERENCE`, `SEGMENTATION`, `DEPLOY`.
+Current tag colours are assigned dynamically by the docs UI, so they may change if cards or labels are added or reordered.
 
 ## Removing a notebook
 
