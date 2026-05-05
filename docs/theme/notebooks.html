@@ -14,12 +14,12 @@
     <div class="custom-grid">
       {% for card in config.extra.cookbooks_cards %}
         <a href="{{ card.href }}">
-          <p class="card repo-card"
+          <div class="card repo-card"
              data-name="{{ card.name }}"
              data-labels="{{ card.labels | join(',') }}"
              data-version="{{ card.version }}"
              data-author="{{ card.author }}"
-             data-description="{{ card.description }}"></p>
+             data-description="{{ card.description }}"></div>
         </a>
       {% endfor %}
     </div>
