@@ -140,5 +140,15 @@ jobs:
               ]
             }' || true
 
+      - name: 🏗️ Build docs for artifact
+        run: uv run mkdocs build
+
+      - name: 📤 Upload docs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs-site
+          path: site/
+          retention-days: 7
+
       - name: Minimize uv cache
         run: uv cache prune --ci
