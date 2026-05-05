@@ -14,6 +14,9 @@ document.addEventListener("DOMContentLoaded", function () {
         "#3b82f6",
     ]
 
+    const logoSrc = (document.querySelector('link[rel="icon"]') || {}).href || '/assets/roboflow-logo.svg';
+    const authorCache = {};
+
     const repoCards = document.querySelectorAll(".repo-card");
     const labelsAll = Array
         .from(repoCards)
@@ -50,10 +53,13 @@ document.addEventListener("DOMContentLoaded", function () {
         const authorArray = authors ? authors.split(',').filter(a => a.trim()) : [];
         const authorDataArray = await Promise.all(authorArray.map(async (author) => {
             const login = author.trim();
+            if (authorCache[login]) return authorCache[login];
             try {
                 const response = await fetch(`https://api.github.com/users/${login}`);
                 if (!response.ok) return { login, avatar_url: `https://github.com/${login}.png` };
-                return await response.json();
+                const data = await response.json();
+                authorCache[login] = data;
+                return data;
             } catch {
                 return { login, avatar_url: `https://github.com/${login}.png` };
             }
@@ -117,7 +123,7 @@ document.addEventListener("DOMContentLoaded", function () {
             ${authorsHTML}
             <div style="font-size: 12px; display: grid; grid-template-columns: auto 3fr; justify-content: space-between; gap: 1rem;">
                 <div style="display: flex; align-items: center;">
-                <img src="/assets/roboflow-logo.svg" aria-label="rf-detr" width="20" height="20" role="img" />
+                <img src="${logoSrc}" aria-label="rf-detr" width="20" height="20" role="img" />
                 &nbsp;
                 <span style="margin-left: 4px">${version}</span>
                 </div>
@@ -131,15 +137,15 @@ document.addEventListener("DOMContentLoaded", function () {
         let sanitizedHTML = DOMPurify.sanitize(element.innerText);
         element.innerHTML = sanitizedHTML;
 
-        document.querySelectorAll('.author-name').forEach(element => {
-            element.addEventListener('mouseenter', function () {
+        element.querySelectorAll('.author-name').forEach(nameEl => {
+            nameEl.addEventListener('mouseenter', function () {
                 const login = this.getAttribute('data-login');
-                document.querySelector(`.author-container[data-login="${login}"]`).classList.add('hover');
+                element.querySelector(`.author-container[data-login="${login}"]`).classList.add('hover');
             });
 
-            element.addEventListener('mouseleave', function () {
+            nameEl.addEventListener('mouseleave', function () {
                 const login = this.getAttribute('data-login');
-                document.querySelector(`.author-container[data-login="${login}"]`).classList.remove('hover');
+                element.querySelector(`.author-container[data-login="${login}"]`).classList.remove('hover');
             });
         });
     }
