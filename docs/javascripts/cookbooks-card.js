@@ -108,7 +108,7 @@ document.addEventListener("DOMContentLoaded", function () {
         </div>
         `;
 
-        element.innerText = `
+        const rawHTML = `
             <div style="
                 display: grid !important;
                 grid-template-rows: auto;
@@ -134,8 +134,7 @@ document.addEventListener("DOMContentLoaded", function () {
         </div>
         `;
 
-        let sanitizedHTML = DOMPurify.sanitize(element.innerText);
-        element.innerHTML = sanitizedHTML;
+        element.innerHTML = DOMPurify.sanitize(rawHTML);
 
         element.querySelectorAll('.author-name').forEach(nameEl => {
             nameEl.addEventListener('mouseenter', function () {
