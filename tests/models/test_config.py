@@ -232,6 +232,7 @@ class TestTrainConfigT42PromotedFields:
             pytest.param("train_log_sync_dist", True, id="train_log_sync_dist"),
             pytest.param("train_log_on_step", True, id="train_log_on_step"),
             pytest.param("log_per_class_metrics", False, id="log_per_class_metrics"),
+            pytest.param("max_eval_orig_size", 640, id="max_eval_orig_size"),
             pytest.param("prefetch_factor", 4, id="prefetch_factor"),
             pytest.param("pin_memory", False, id="pin_memory"),
             pytest.param("persistent_workers", False, id="persistent_workers"),
@@ -260,6 +261,15 @@ class TestTrainConfigT42PromotedFields:
         """eval/EMA intervals and prefetch_factor must be >= 1 when provided."""
         with pytest.raises((ValueError, ValidationError)):
             self._tc(tmp_path, **{field: value})
+
+    def test_max_eval_orig_size_defaults_to_none(self, tmp_path):
+        """max_eval_orig_size defaults to None (no cap — evaluates at full original resolution)."""
+        assert self._tc(tmp_path).max_eval_orig_size is None
+
+    def test_max_eval_orig_size_inherited_by_segmentation_train_config(self):
+        """SegmentationTrainConfig inherits max_eval_orig_size from TrainConfig."""
+        tc = SegmentationTrainConfig(dataset_dir="/tmp", max_eval_orig_size=640)
+        assert tc.max_eval_orig_size == 640
 
     def test_batch_size_auto_is_accepted(self, tmp_path):
         """batch_size accepts the special 'auto' value."""

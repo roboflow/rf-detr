@@ -48,6 +48,12 @@ class COCOEvalCallback(Callback):
         eval_interval: Run validation metrics every N epochs. Test metrics are
             always computed when ``trainer.test()`` is called.
         log_per_class_metrics: When ``False``, skip per-class AP logging/table.
+        max_eval_orig_size: Cap the longer side of each image's original size to
+            this value (in pixels) before upsampling masks for COCO evaluation.
+            Reduces mask buffer memory proportionally to ``(cap/orig)²`` with
+            negligible impact on mAP since the model input is already much
+            smaller (e.g. SegNano trains at 312 px). ``None`` disables the cap
+            and evaluates at full original resolution. Defaults to ``None``.
     """
 
     def __init__(
@@ -57,12 +63,14 @@ class COCOEvalCallback(Callback):
         eval_interval: int = 1,
         log_per_class_metrics: bool = True,
         in_notebook: bool | None = None,
+        max_eval_orig_size: int | None = None,
     ) -> None:
         super().__init__()
         self._max_dets = max_dets
         self._segmentation = segmentation
         self._eval_interval = max(1, int(eval_interval))
         self._log_per_class_metrics = bool(log_per_class_metrics)
+        self._max_eval_orig_size = max_eval_orig_size
         self._class_names: list[str] = []
         self._cat_id_to_name: dict[int, str] = {}
         self._f1_local: dict[int, dict[str, Any]] = init_matching_accumulator()
@@ -183,6 +191,12 @@ class COCOEvalCallback(Callback):
                 ).to(pl_module.device)
             samples, _ = batch
             orig_sizes = torch.stack([t["orig_size"] for t in outputs["targets"]]).to(pl_module.device)
+            if self._max_eval_orig_size is not None:
+                # Cap each (H, W) so the longer side ≤ max_eval_orig_size.
+                # Masks are upsampled to orig_size inside postprocess; capping here
+                # keeps mask buffers small without affecting training.
+                scale = (self._max_eval_orig_size / orig_sizes.float().amax(dim=1, keepdim=True)).clamp(max=1.0)
+                orig_sizes = (orig_sizes.float() * scale).long()
             ema_underlying = ema_cb._average_model.module.model
             with torch.no_grad():
                 ema_underlying.eval()  # AveragedModel deepcopy is not managed by PTL
@@ -708,8 +722,24 @@ class COCOEvalCallback(Callback):
         out = []
         for p in preds:
             entry = dict(p)
-            if "masks" in entry and entry["masks"].ndim == 4 and entry["masks"].shape[1] == 1:
-                entry["masks"] = entry["masks"].squeeze(1)
+            if "masks" in entry:
+                masks = entry["masks"]
+                if masks.ndim == 4 and masks.shape[1] == 1:
+                    masks = masks.squeeze(1)
+                if self._max_eval_orig_size is not None:
+                    h, w = masks.shape[-2:]
+                    if max(h, w) > self._max_eval_orig_size:
+                        scale = self._max_eval_orig_size / max(h, w)
+                        new_h = max(1, int(h * scale))
+                        new_w = max(1, int(w * scale))
+                        masks = F.interpolate(
+                            masks.float().unsqueeze(1),
+                            size=(new_h, new_w),
+                            mode="nearest",
+                        ).squeeze(1)
+                        if "boxes" in entry:
+                            entry["boxes"] = entry["boxes"] * scale
+                entry["masks"] = masks
             out.append(entry)
         return out
 
@@ -729,13 +759,17 @@ class COCOEvalCallback(Callback):
         out = []
         for t in targets:
             h, w = t["orig_size"].tolist()
+            if self._max_eval_orig_size is not None and max(h, w) > self._max_eval_orig_size:
+                cap_scale = self._max_eval_orig_size / max(h, w)
+                h = max(1, int(h * cap_scale))
+                w = max(1, int(w * cap_scale))
             scale = t["boxes"].new_tensor([w, h, w, h])
             boxes = box_cxcywh_to_xyxy(t["boxes"]) * scale
             entry: dict[str, torch.Tensor] = {"boxes": boxes, "labels": t["labels"]}
             if "masks" in t:
                 masks = t["masks"].bool()
-                # PostProcess resizes predicted masks to orig_size; resize GT
-                # masks to match so that mask-IoU comparisons are size-consistent.
+                # PostProcess resizes predicted masks to (h, w); resize GT masks
+                # to match so that mask-IoU comparisons are size-consistent.
                 if masks.shape[-2:] != (int(h), int(w)):
                     masks = (
                         F.interpolate(

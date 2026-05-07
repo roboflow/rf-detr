@@ -747,3 +747,152 @@ class TestConvertTargets:
         ]
         out = cb._convert_targets(targets)
         assert set(out[0].keys()) == {"boxes", "labels"}
+
+
+class TestMaxEvalOrigSize:
+    """max_eval_orig_size caps mask resolution and box coordinates for COCO eval."""
+
+    # ------------------------------------------------------------------
+    # _convert_preds: mask downsampling
+    # ------------------------------------------------------------------
+
+    def test_convert_preds_downsamples_masks_when_above_cap(self) -> None:
+        """Masks larger than cap are downsampled to fit the longer side."""
+        cb = COCOEvalCallback(max_eval_orig_size=640)
+        preds = [
+            {
+                "masks": torch.ones(2, 1, 1080, 1920),
+                "boxes": torch.zeros(2, 4),
+                "scores": torch.ones(2),
+                "labels": torch.zeros(2, dtype=torch.long),
+            }
+        ]
+        out = cb._convert_preds(preds)
+        h, w = out[0]["masks"].shape[-2:]
+        assert max(h, w) == 640
+
+    def test_convert_preds_preserves_aspect_ratio_on_downsample(self) -> None:
+        """Downsampled masks preserve the original aspect ratio."""
+        cb = COCOEvalCallback(max_eval_orig_size=640)
+        preds = [
+            {
+                "masks": torch.ones(1, 1, 1080, 1920),
+                "boxes": torch.zeros(1, 4),
+                "scores": torch.ones(1),
+                "labels": torch.zeros(1, dtype=torch.long),
+            }
+        ]
+        out = cb._convert_preds(preds)
+        h, w = out[0]["masks"].shape[-2:]
+        assert abs(w / h - 1920 / 1080) < 0.02
+
+    def test_convert_preds_scales_boxes_with_masks(self) -> None:
+        """Box coordinates are scaled by the same factor as the mask downsample."""
+        cb = COCOEvalCallback(max_eval_orig_size=640)
+        boxes = torch.tensor([[100.0, 200.0, 300.0, 400.0]])
+        preds = [
+            {
+                "masks": torch.ones(1, 1, 1080, 1920),
+                "boxes": boxes,
+                "scores": torch.ones(1),
+                "labels": torch.zeros(1, dtype=torch.long),
+            }
+        ]
+        out = cb._convert_preds(preds)
+        scale = 640 / 1920
+        expected = boxes * scale
+        assert torch.allclose(out[0]["boxes"], expected, atol=1e-4)
+
+    def test_convert_preds_no_op_when_within_cap(self) -> None:
+        """Masks already within the cap are not resized."""
+        cb = COCOEvalCallback(max_eval_orig_size=640)
+        preds = [
+            {
+                "masks": torch.ones(1, 400, 600),
+                "boxes": torch.zeros(1, 4),
+                "scores": torch.ones(1),
+                "labels": torch.zeros(1, dtype=torch.long),
+            }
+        ]
+        out = cb._convert_preds(preds)
+        assert out[0]["masks"].shape[-2:] == (400, 600)
+
+    def test_convert_preds_no_op_when_cap_is_none(self) -> None:
+        """When max_eval_orig_size is None no downsampling occurs regardless of mask size."""
+        cb = COCOEvalCallback(max_eval_orig_size=None)
+        preds = [
+            {
+                "masks": torch.ones(1, 1, 1080, 1920),
+                "boxes": torch.zeros(1, 4),
+                "scores": torch.ones(1),
+                "labels": torch.zeros(1, dtype=torch.long),
+            }
+        ]
+        out = cb._convert_preds(preds)
+        assert out[0]["masks"].shape[-2:] == (1080, 1920)
+
+    # ------------------------------------------------------------------
+    # _convert_targets: orig_size capping
+    # ------------------------------------------------------------------
+
+    def test_convert_targets_caps_gt_mask_size(self) -> None:
+        """GT masks are resized to the capped (h, w), not the original orig_size."""
+        cb = COCOEvalCallback(max_eval_orig_size=640)
+        targets = [
+            {
+                "boxes": torch.tensor([[0.5, 0.5, 0.1, 0.1]]),
+                "labels": torch.tensor([0]),
+                "orig_size": torch.tensor([1080, 1920]),
+                "masks": torch.ones(1, 1080, 1920, dtype=torch.bool),
+            }
+        ]
+        out = cb._convert_targets(targets)
+        h, w = out[0]["masks"].shape[-2:]
+        assert max(h, w) == 640
+
+    def test_convert_targets_scales_boxes_to_capped_size(self) -> None:
+        """GT boxes are scaled to the capped (h, w) coordinate space."""
+        cb = COCOEvalCallback(max_eval_orig_size=640)
+        # Normalised box centred at image centre, half the image size
+        targets = [
+            {
+                "boxes": torch.tensor([[0.5, 0.5, 1.0, 1.0]]),
+                "labels": torch.tensor([0]),
+                "orig_size": torch.tensor([1080, 1920]),
+            }
+        ]
+        out = cb._convert_targets(targets)
+        scale = 640 / 1920
+        capped_h = int(1080 * scale)
+        capped_w = 640
+        # box_cxcywh_to_xyxy([0.5,0.5,1.0,1.0]) * [w,h,w,h] → [0,0,w,h]
+        expected = torch.tensor([[0.0, 0.0, float(capped_w), float(capped_h)]])
+        assert torch.allclose(out[0]["boxes"], expected, atol=1.0)
+
+    def test_convert_targets_no_op_when_cap_is_none(self) -> None:
+        """With max_eval_orig_size=None, GT boxes use full orig_size as scale."""
+        cb = COCOEvalCallback(max_eval_orig_size=None)
+        targets = [
+            {
+                "boxes": torch.tensor([[0.5, 0.5, 1.0, 1.0]]),
+                "labels": torch.tensor([0]),
+                "orig_size": torch.tensor([1080, 1920]),
+            }
+        ]
+        out = cb._convert_targets(targets)
+        expected = torch.tensor([[0.0, 0.0, 1920.0, 1080.0]])
+        assert torch.allclose(out[0]["boxes"], expected, atol=1e-4)
+
+    def test_convert_targets_no_op_when_within_cap(self) -> None:
+        """Images already within the cap are not resized."""
+        cb = COCOEvalCallback(max_eval_orig_size=640)
+        targets = [
+            {
+                "boxes": torch.tensor([[0.5, 0.5, 1.0, 1.0]]),
+                "labels": torch.tensor([0]),
+                "orig_size": torch.tensor([480, 640]),
+                "masks": torch.ones(1, 480, 640, dtype=torch.bool),
+            }
+        ]
+        out = cb._convert_targets(targets)
+        assert out[0]["masks"].shape[-2:] == (480, 640)

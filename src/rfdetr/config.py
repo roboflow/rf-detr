@@ -503,6 +503,7 @@ class TrainConfig(BaseModel):
     eval_max_dets: int = 500
     eval_interval: int = 1
     log_per_class_metrics: bool = True
+    max_eval_orig_size: Optional[int] = None
     aug_config: Optional[Dict[str, Any]] = None
     augmentation_backend: Literal["cpu", "auto", "gpu"] = "cpu"
     save_dataset_grids: bool = False

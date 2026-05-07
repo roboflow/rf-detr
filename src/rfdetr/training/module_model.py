@@ -220,6 +220,10 @@ class RFDETRModelModule(LightningModule):
             self.log("val/loss", loss, prog_bar=True, on_epoch=True, sync_dist=True, batch_size=len(targets))
 
         orig_sizes = torch.stack([t["orig_size"] for t in targets])
+        cap = getattr(self.train_config, "max_eval_orig_size", None)
+        if cap is not None:
+            scale = (cap / orig_sizes.float().amax(dim=1, keepdim=True)).clamp(max=1.0)
+            orig_sizes = (orig_sizes.float() * scale).long()
         results = self.postprocess(outputs, orig_sizes)
         return {"results": results, "targets": targets}
 
@@ -355,6 +359,10 @@ class RFDETRModelModule(LightningModule):
             self.log("test/loss", loss, sync_dist=True, batch_size=len(targets))
 
         orig_sizes = torch.stack([t["orig_size"] for t in targets])
+        cap = getattr(self.train_config, "max_eval_orig_size", None)
+        if cap is not None:
+            scale = (cap / orig_sizes.float().amax(dim=1, keepdim=True)).clamp(max=1.0)
+            orig_sizes = (orig_sizes.float() * scale).long()
         results = self.postprocess(outputs, orig_sizes)
         return {"results": results, "targets": targets}
 
