@@ -12,26 +12,28 @@
         <meta name="author" content="Roboflow">
       
       
+        <link rel="canonical" href="https://rfdetr.roboflow.com/develop/cookbooks/NOTES/">
+      
       
       
       
         
       
       
-      <link rel="icon" href="/develop/assets/roboflow-logo.svg">
+      <link rel="icon" href="../../assets/roboflow-logo.svg">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
     
     
   
     
       
-        <title>RF-DETR</title>
+        <title>Notebooks - RF-DETR</title>
       
     
   
 
     
-      <link rel="stylesheet" href="/develop/assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
       
       
 
@@ -50,11 +52,11 @@
       
     
     
-      <link rel="stylesheet" href="/develop/assets/_mkdocstrings.css">
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
     
-      <link rel="stylesheet" href="/develop/stylesheets/rf.css">
+      <link rel="stylesheet" href="../../stylesheets/rf.css">
     
-    <script>__md_scope=new URL("/develop",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -63,6 +65,76 @@
   
   <link rel="preconnect" href="https://storage.googleapis.com">
 
+  
+  
+  
+  <meta property="og:title" content="Notebooks - RF-DETR">
+  <meta property="og:description" content="Real-time transformer for object detection and instance segmentation. DINOv2 backbone, SOTA on COCO (60.1 AP50:95). Apache 2.0. Works with Python ≥3.10.">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://rfdetr.roboflow.com/develop/cookbooks/NOTES/">
+  <meta property="og:image" content="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png">
+  <meta property="og:image:width" content="840">
+  <meta property="og:image:height" content="630">
+
+  
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:site" content="@roboflow">
+  <meta name="twitter:title" content="Notebooks - RF-DETR">
+  <meta name="twitter:description" content="Real-time transformer for object detection and instance segmentation. DINOv2 backbone, SOTA on COCO (60.1 AP50:95). Apache 2.0. Works with Python ≥3.10.">
+  <meta name="twitter:image" content="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png">
+
+  
+  
+  
+  <meta property="article:modified_time" content="<spanTclass="git-revision-date-localized-pluginTgit-revision-date-localized-plugin-iso_datetime"Ttitle="MayT7,T2026T20:47:26TUTC">2026-05-07T20:47:26</span>+00:00">
+  
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "Notebooks",
+    "description": "Real-time transformer for object detection and instance segmentation. DINOv2 backbone, SOTA on COCO (60.1 AP50:95). Apache 2.0. Works with Python \u22653.10.",
+    "url": "https://rfdetr.roboflow.com/develop/cookbooks/NOTES/",
+    "isPartOf": {"@id": "https://rfdetr.roboflow.com/develop#website"},
+    "about": {"@id": "https://rfdetr.roboflow.com/develop#software"},
+    "proficiencyLevel": "Beginner to advanced",
+    "inLanguage": "en",
+    "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
+    "datePublished": "2025-03-01",
+    "dateModified": "\u003cspanTclass=\"git-revision-date-localized-pluginTgit-revision-date-localized-plugin-iso_datetime\"Ttitle=\"MayT7,T2026T20:47:26TUTC\"\u003e2026-05-07T20:47:26\u003c/span\u003e+00:00",
+    "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
+    "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
+    "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
+    "mainEntityOfPage": {"@type": "WebPage", "@id": "https://rfdetr.roboflow.com/develop/cookbooks/NOTES/"},
+    "speakable": {
+      "@type": "SpeakableSpecification",
+      "cssSelector": [".md-content h1", ".md-typeset > p:first-child"]
+    }
+  }
+  </script>
+  
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      {
+        "@type": "ListItem",
+        "position": 1,
+        "name": "RF-DETR",
+        "item": "https://rfdetr.roboflow.com/develop"
+      },
+      {
+        "@type": "ListItem",
+        "position": 2,
+        "name": "Notebooks",
+        "item": "https://rfdetr.roboflow.com/develop/cookbooks/NOTES/"
+      }
+      
+    ]
+  }
+  </script>
+  
   
 
   </head>
@@ -75,6 +147,11 @@
     <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
     <label class="md-overlay" for="__drawer"></label>
     <div data-md-component="skip">
+      
+        
+        <a href="#notebooks" class="md-skip">
+          Skip to content
+        </a>
       
     </div>
     <div data-md-component="announce">
@@ -100,14 +177,14 @@
 
     <!-- Link to home -->
     <a
-      href="/develop/."
+      href="../.."
       title="RF-DETR"
       class="md-header__button md-logo"
       aria-label="RF-DETR"
       data-md-component="logo"
     >
       
-  <img src="/develop/assets/roboflow-logo.svg" alt="logo">
+  <img src="../../assets/roboflow-logo.svg" alt="logo">
 
     </a>
 
@@ -128,7 +205,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis" style="display: flex; align-items: center; gap: 0.5rem;">
             <a
-            href="/develop/."
+            href="../.."
             title="RF-DETR"
             class="md-header__button md-logo"
             aria-label="RF-DETR"
@@ -136,11 +213,11 @@
             id="item-logo"
             >
             
-  <img src="/develop/assets/roboflow-logo.svg" alt="logo">
+  <img src="../../assets/roboflow-logo.svg" alt="logo">
 
             </a>
             
-              
+              Notebooks
             
           </span>
         </div>
@@ -306,7 +383,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="/develop/." class="md-tabs__link">
+      <a href="../.." class="md-tabs__link">
         
   
   
@@ -327,7 +404,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="/develop/learn/install/" class="md-tabs__link">
+        <a href="../../learn/install/" class="md-tabs__link">
           
   
   
@@ -347,7 +424,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="/develop/reference/rfdetr/" class="md-tabs__link">
+        <a href="../../reference/rfdetr/" class="md-tabs__link">
           
   
   
@@ -365,7 +442,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="/develop/cookbooks/" class="md-tabs__link">
+      <a href="../" class="md-tabs__link">
         
   
   
@@ -384,7 +461,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="/develop/resources/" class="md-tabs__link">
+      <a href="../../resources/" class="md-tabs__link">
         
   
   
@@ -403,7 +480,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="/develop/changelog/" class="md-tabs__link">
+      <a href="../../changelog/" class="md-tabs__link">
         
   
   
@@ -444,9 +521,9 @@
 
 <nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="/develop/." title="RF-DETR" class="md-nav__button md-logo" aria-label="RF-DETR" data-md-component="logo">
+    <a href="../.." title="RF-DETR" class="md-nav__button md-logo" aria-label="RF-DETR" data-md-component="logo">
       
-  <img src="/develop/assets/roboflow-logo.svg" alt="logo">
+  <img src="../../assets/roboflow-logo.svg" alt="logo">
 
     </a>
     RF-DETR
@@ -473,7 +550,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/." class="md-nav__link">
+      <a href="../.." class="md-nav__link">
         
   
   
@@ -552,7 +629,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/install/" class="md-nav__link">
+      <a href="../../learn/install/" class="md-nav__link">
         
   
   
@@ -580,7 +657,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/migration/" class="md-nav__link">
+      <a href="../../learn/migration/" class="md-nav__link">
         
   
   
@@ -660,7 +737,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/run/detection/" class="md-nav__link">
+      <a href="../../learn/run/detection/" class="md-nav__link">
         
   
   
@@ -688,7 +765,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/run/segmentation/" class="md-nav__link">
+      <a href="../../learn/run/segmentation/" class="md-nav__link">
         
   
   
@@ -716,7 +793,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/pretrained/" class="md-nav__link">
+      <a href="../../learn/pretrained/" class="md-nav__link">
         
   
   
@@ -804,7 +881,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/train/" class="md-nav__link">
+      <a href="../../learn/train/" class="md-nav__link">
         
   
   
@@ -832,7 +909,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/train/dataset-formats/" class="md-nav__link">
+      <a href="../../learn/train/dataset-formats/" class="md-nav__link">
         
   
   
@@ -860,7 +937,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/train/training-parameters/" class="md-nav__link">
+      <a href="../../learn/train/training-parameters/" class="md-nav__link">
         
   
   
@@ -888,7 +965,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/train/advanced/" class="md-nav__link">
+      <a href="../../learn/train/advanced/" class="md-nav__link">
         
   
   
@@ -916,7 +993,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/train/customization/" class="md-nav__link">
+      <a href="../../learn/train/customization/" class="md-nav__link">
         
   
   
@@ -944,7 +1021,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/train/augmentations/" class="md-nav__link">
+      <a href="../../learn/train/augmentations/" class="md-nav__link">
         
   
   
@@ -972,7 +1049,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/train/loggers/" class="md-nav__link">
+      <a href="../../learn/train/loggers/" class="md-nav__link">
         
   
   
@@ -1008,7 +1085,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/export/" class="md-nav__link">
+      <a href="../../learn/export/" class="md-nav__link">
         
   
   
@@ -1036,7 +1113,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/deploy/" class="md-nav__link">
+      <a href="../../learn/deploy/" class="md-nav__link">
         
   
   
@@ -1064,7 +1141,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/benchmarks/" class="md-nav__link">
+      <a href="../../learn/benchmarks/" class="md-nav__link">
         
   
   
@@ -1151,7 +1228,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/rfdetr/" class="md-nav__link">
+      <a href="../../reference/rfdetr/" class="md-nav__link">
         
   
   
@@ -1231,7 +1308,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/nano/" class="md-nav__link">
+      <a href="../../reference/nano/" class="md-nav__link">
         
   
   
@@ -1259,7 +1336,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/small/" class="md-nav__link">
+      <a href="../../reference/small/" class="md-nav__link">
         
   
   
@@ -1287,7 +1364,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/medium/" class="md-nav__link">
+      <a href="../../reference/medium/" class="md-nav__link">
         
   
   
@@ -1315,7 +1392,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/large/" class="md-nav__link">
+      <a href="../../reference/large/" class="md-nav__link">
         
   
   
@@ -1343,7 +1420,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/xlarge/" class="md-nav__link">
+      <a href="../../reference/xlarge/" class="md-nav__link">
         
   
   
@@ -1371,7 +1448,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/2xlarge/" class="md-nav__link">
+      <a href="../../reference/2xlarge/" class="md-nav__link">
         
   
   
@@ -1459,7 +1536,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/seg_nano/" class="md-nav__link">
+      <a href="../../reference/seg_nano/" class="md-nav__link">
         
   
   
@@ -1487,7 +1564,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/seg_small/" class="md-nav__link">
+      <a href="../../reference/seg_small/" class="md-nav__link">
         
   
   
@@ -1515,7 +1592,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/seg_medium/" class="md-nav__link">
+      <a href="../../reference/seg_medium/" class="md-nav__link">
         
   
   
@@ -1543,7 +1620,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/seg_large/" class="md-nav__link">
+      <a href="../../reference/seg_large/" class="md-nav__link">
         
   
   
@@ -1571,7 +1648,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/seg_xlarge/" class="md-nav__link">
+      <a href="../../reference/seg_xlarge/" class="md-nav__link">
         
   
   
@@ -1599,7 +1676,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/seg_2xlarge/" class="md-nav__link">
+      <a href="../../reference/seg_2xlarge/" class="md-nav__link">
         
   
   
@@ -1687,7 +1764,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/train_config/" class="md-nav__link">
+      <a href="../../reference/train_config/" class="md-nav__link">
         
   
   
@@ -1715,7 +1792,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/segmentation_train_config/" class="md-nav__link">
+      <a href="../../reference/segmentation_train_config/" class="md-nav__link">
         
   
   
@@ -1803,7 +1880,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/training/" class="md-nav__link">
+      <a href="../../reference/training/" class="md-nav__link">
         
   
   
@@ -1846,7 +1923,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/cookbooks/" class="md-nav__link">
+      <a href="../" class="md-nav__link">
         
   
   
@@ -1873,7 +1950,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/resources/" class="md-nav__link">
+      <a href="../../resources/" class="md-nav__link">
         
   
   
@@ -1900,7 +1977,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/changelog/" class="md-nav__link">
+      <a href="../../changelog/" class="md-nav__link">
         
   
   
@@ -1937,6 +2014,49 @@
   
   
   
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#adding-a-notebook" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Adding a notebook
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#removing-a-notebook" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Removing a notebook
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#current-notebooks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current notebooks
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
   
 </nav>
                   </div>
@@ -1949,8 +2069,95 @@
               
               <article class="md-content__inner md-typeset">
                 
-  <h1>404 - Not found</h1>
+                  
 
+
+  
+  
+
+
+<h1 id="notebooks">Notebooks<a class="headerlink" href="#notebooks" title="Permanent link">&para;</a></h1>
+<p>Each <code>.ipynb</code> file here is rendered as a page under <code>/cookbooks/</code> in the docs site.</p>
+<p>Cards on the cookbooks landing page are driven by <a href="../cards.yaml"><code>cards.yaml</code></a>. The MkDocs hook
+<code>docs/hooks/cookbooks_cards.py</code> loads that file and exposes it to <code>docs/theme/notebooks.html</code>,
+which renders each entry as a card via a Jinja loop.</p>
+<h2 id="adding-a-notebook">Adding a notebook<a class="headerlink" href="#adding-a-notebook" title="Permanent link">&para;</a></h2>
+<ol>
+<li>Add the <code>.ipynb</code> file here, named <code>release-demo_&lt;version&gt;.ipynb</code> (e.g. <code>release-demo_1-8.ipynb</code>).</li>
+<li>Add a new entry to <code>docs/cookbooks/cards.yaml</code> under the <code>cards:</code> list:</li>
+</ol>
+<!-- prettier-ignore -->
+
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">href</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">release-demo_X-Y/</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">    </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Short Title</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">labels</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">LABEL1</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">LABEL2</span><span class="p p-Indicator">]</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">    </span><span class="nt">version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">vX.Y.0</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">    </span><span class="nt">author</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">GitHubUsername</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">    </span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">One sentence describing what the notebook demonstrates.</span>
+</span></code></pre></div>
+<p>Available labels (reuse these to keep tags standardised): <code>TRAINING</code>, <code>AUGMENTATION</code>, <code>EXPORT</code>, <code>TFLITE</code>, <code>PYTORCH LIGHTNING</code>, <code>INFERENCE</code>, <code>SEGMENTATION</code>, <code>DEPLOY</code>.
+Current tag colours are assigned dynamically by the docs UI, so they may change if cards or labels are added or reordered.</p>
+<h2 id="removing-a-notebook">Removing a notebook<a class="headerlink" href="#removing-a-notebook" title="Permanent link">&para;</a></h2>
+<ol>
+<li>Delete the <code>.ipynb</code> file.</li>
+<li>Remove the matching entry (the <code>- href: release-demo_X-Y/</code> block) from <code>docs/cookbooks/cards.yaml</code>.</li>
+</ol>
+<h2 id="current-notebooks">Current notebooks<a class="headerlink" href="#current-notebooks" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Card title</th>
+<th>Version</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>release-demo_1-5.ipynb</code></td>
+<td>Custom Augmentations and Live Training Progress</td>
+<td>v1.5.0</td>
+</tr>
+<tr>
+<td><code>release-demo_1-6.ipynb</code></td>
+<td>PyTorch Lightning Building Blocks</td>
+<td>v1.6.0</td>
+</tr>
+</tbody>
+</table>
+
+
+
+
+
+
+
+  
+    
+  
+  
+
+
+  <aside class="md-source-file">
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Last update">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="May 7, 2026 20:47:26 UTC">2026-05-07 20:47:26</span>
+  </span>
+
+    
+    
+    
+    
+  </aside>
+
+
+
+
+
+                
               </article>
             </div>
           
@@ -2042,10 +2249,10 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "/develop", "features": ["content.tabs.link", "content.code.copy", "navigation.expand", "navigation.tabs", "content.code.annotate", "navigation.tracking", "content.tooltips", "navigation.tabs.sticky"], "search": "/develop/assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.tabs.link", "content.code.copy", "navigation.expand", "navigation.tabs", "content.code.annotate", "navigation.tracking", "content.tooltips", "navigation.tabs.sticky"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="/develop/assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
       
     
   </body>

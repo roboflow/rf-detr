@@ -6,40 +6,51 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="Real-time transformer for object detection and instance segmentation. DINOv2 backbone, SOTA on COCO (60.1 AP50:95). Apache 2.0. Works with Python ≥3.10.">
+        <meta name="description" content="Practical RF-DETR cookbooks — runnable notebooks covering training, fine-tuning, export, and deployment workflows.">
       
       
         <meta name="author" content="Roboflow">
       
       
+        <link rel="canonical" href="https://rfdetr.roboflow.com/develop/cookbooks/">
       
+      
+        <link rel="prev" href="../reference/training/">
+      
+      
+        <link rel="next" href="../resources/">
       
       
         
       
       
-      <link rel="icon" href="/develop/assets/roboflow-logo.svg">
+      <link rel="icon" href="../assets/roboflow-logo.svg">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
     
     
   
     
       
-        <title>RF-DETR</title>
+        <title>Cookbooks - RF-DETR</title>
       
     
   
 
     
-      <link rel="stylesheet" href="/develop/assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
       
       
 
 
     
     
+
       
     
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.8/purify.min.js"></script>
+<link rel="stylesheet" href="../stylesheets/cookbooks_card.css">
+<script src="../javascripts/cookbooks-card.js"></script>
+
     
       
         
@@ -50,11 +61,11 @@
       
     
     
-      <link rel="stylesheet" href="/develop/assets/_mkdocstrings.css">
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
     
-      <link rel="stylesheet" href="/develop/stylesheets/rf.css">
+      <link rel="stylesheet" href="../stylesheets/rf.css">
     
-    <script>__md_scope=new URL("/develop",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -63,6 +74,76 @@
   
   <link rel="preconnect" href="https://storage.googleapis.com">
 
+  
+  
+  
+  <meta property="og:title" content="Cookbooks - RF-DETR">
+  <meta property="og:description" content="Practical RF-DETR cookbooks — runnable notebooks covering training, fine-tuning, export, and deployment workflows.">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://rfdetr.roboflow.com/develop/cookbooks/">
+  <meta property="og:image" content="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png">
+  <meta property="og:image:width" content="840">
+  <meta property="og:image:height" content="630">
+
+  
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:site" content="@roboflow">
+  <meta name="twitter:title" content="Cookbooks - RF-DETR">
+  <meta name="twitter:description" content="Practical RF-DETR cookbooks — runnable notebooks covering training, fine-tuning, export, and deployment workflows.">
+  <meta name="twitter:image" content="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png">
+
+  
+  
+  
+  <meta property="article:modified_time" content="<spanTclass="git-revision-date-localized-pluginTgit-revision-date-localized-plugin-iso_datetime"Ttitle="MayT7,T2026T20:47:26TUTC">2026-05-07T20:47:26</span>+00:00">
+  
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "Cookbooks",
+    "description": "Practical RF-DETR cookbooks \u2014 runnable notebooks covering training, fine-tuning, export, and deployment workflows.",
+    "url": "https://rfdetr.roboflow.com/develop/cookbooks/",
+    "isPartOf": {"@id": "https://rfdetr.roboflow.com/develop#website"},
+    "about": {"@id": "https://rfdetr.roboflow.com/develop#software"},
+    "proficiencyLevel": "Beginner to advanced",
+    "inLanguage": "en",
+    "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
+    "datePublished": "2025-03-01",
+    "dateModified": "\u003cspanTclass=\"git-revision-date-localized-pluginTgit-revision-date-localized-plugin-iso_datetime\"Ttitle=\"MayT7,T2026T20:47:26TUTC\"\u003e2026-05-07T20:47:26\u003c/span\u003e+00:00",
+    "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
+    "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
+    "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
+    "mainEntityOfPage": {"@type": "WebPage", "@id": "https://rfdetr.roboflow.com/develop/cookbooks/"},
+    "speakable": {
+      "@type": "SpeakableSpecification",
+      "cssSelector": [".md-content h1", ".md-typeset > p:first-child"]
+    }
+  }
+  </script>
+  
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      {
+        "@type": "ListItem",
+        "position": 1,
+        "name": "RF-DETR",
+        "item": "https://rfdetr.roboflow.com/develop"
+      },
+      {
+        "@type": "ListItem",
+        "position": 2,
+        "name": "Cookbooks",
+        "item": "https://rfdetr.roboflow.com/develop/cookbooks/"
+      }
+      
+    ]
+  }
+  </script>
+  
   
 
   </head>
@@ -100,14 +181,14 @@
 
     <!-- Link to home -->
     <a
-      href="/develop/."
+      href=".."
       title="RF-DETR"
       class="md-header__button md-logo"
       aria-label="RF-DETR"
       data-md-component="logo"
     >
       
-  <img src="/develop/assets/roboflow-logo.svg" alt="logo">
+  <img src="../assets/roboflow-logo.svg" alt="logo">
 
     </a>
 
@@ -128,7 +209,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis" style="display: flex; align-items: center; gap: 0.5rem;">
             <a
-            href="/develop/."
+            href=".."
             title="RF-DETR"
             class="md-header__button md-logo"
             aria-label="RF-DETR"
@@ -136,11 +217,11 @@
             id="item-logo"
             >
             
-  <img src="/develop/assets/roboflow-logo.svg" alt="logo">
+  <img src="../assets/roboflow-logo.svg" alt="logo">
 
             </a>
             
-              
+              Cookbooks
             
           </span>
         </div>
@@ -306,7 +387,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="/develop/." class="md-tabs__link">
+      <a href=".." class="md-tabs__link">
         
   
   
@@ -327,7 +408,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="/develop/learn/install/" class="md-tabs__link">
+        <a href="../learn/install/" class="md-tabs__link">
           
   
   
@@ -347,7 +428,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="/develop/reference/rfdetr/" class="md-tabs__link">
+        <a href="../reference/rfdetr/" class="md-tabs__link">
           
   
   
@@ -363,9 +444,11 @@
   
   
   
+    
   
-    <li class="md-tabs__item">
-      <a href="/develop/cookbooks/" class="md-tabs__link">
+  
+    <li class="md-tabs__item md-tabs__item--active">
+      <a href="./" class="md-tabs__link">
         
   
   
@@ -384,7 +467,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="/develop/resources/" class="md-tabs__link">
+      <a href="../resources/" class="md-tabs__link">
         
   
   
@@ -403,7 +486,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="/develop/changelog/" class="md-tabs__link">
+      <a href="../changelog/" class="md-tabs__link">
         
   
   
@@ -433,7 +516,9 @@
           
             
               
-              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" hidden>
                 <div class="md-sidebar__scrollwrap">
                   <div class="md-sidebar__inner">
                     
@@ -444,9 +529,9 @@
 
 <nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="/develop/." title="RF-DETR" class="md-nav__button md-logo" aria-label="RF-DETR" data-md-component="logo">
+    <a href=".." title="RF-DETR" class="md-nav__button md-logo" aria-label="RF-DETR" data-md-component="logo">
       
-  <img src="/develop/assets/roboflow-logo.svg" alt="logo">
+  <img src="../assets/roboflow-logo.svg" alt="logo">
 
     </a>
     RF-DETR
@@ -473,7 +558,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/." class="md-nav__link">
+      <a href=".." class="md-nav__link">
         
   
   
@@ -552,7 +637,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/install/" class="md-nav__link">
+      <a href="../learn/install/" class="md-nav__link">
         
   
   
@@ -580,7 +665,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/migration/" class="md-nav__link">
+      <a href="../learn/migration/" class="md-nav__link">
         
   
   
@@ -660,7 +745,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/run/detection/" class="md-nav__link">
+      <a href="../learn/run/detection/" class="md-nav__link">
         
   
   
@@ -688,7 +773,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/run/segmentation/" class="md-nav__link">
+      <a href="../learn/run/segmentation/" class="md-nav__link">
         
   
   
@@ -716,7 +801,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/pretrained/" class="md-nav__link">
+      <a href="../learn/pretrained/" class="md-nav__link">
         
   
   
@@ -804,7 +889,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/train/" class="md-nav__link">
+      <a href="../learn/train/" class="md-nav__link">
         
   
   
@@ -832,7 +917,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/train/dataset-formats/" class="md-nav__link">
+      <a href="../learn/train/dataset-formats/" class="md-nav__link">
         
   
   
@@ -860,7 +945,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/train/training-parameters/" class="md-nav__link">
+      <a href="../learn/train/training-parameters/" class="md-nav__link">
         
   
   
@@ -888,7 +973,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/train/advanced/" class="md-nav__link">
+      <a href="../learn/train/advanced/" class="md-nav__link">
         
   
   
@@ -916,7 +1001,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/train/customization/" class="md-nav__link">
+      <a href="../learn/train/customization/" class="md-nav__link">
         
   
   
@@ -944,7 +1029,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/train/augmentations/" class="md-nav__link">
+      <a href="../learn/train/augmentations/" class="md-nav__link">
         
   
   
@@ -972,7 +1057,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/train/loggers/" class="md-nav__link">
+      <a href="../learn/train/loggers/" class="md-nav__link">
         
   
   
@@ -1008,7 +1093,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/export/" class="md-nav__link">
+      <a href="../learn/export/" class="md-nav__link">
         
   
   
@@ -1036,7 +1121,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/deploy/" class="md-nav__link">
+      <a href="../learn/deploy/" class="md-nav__link">
         
   
   
@@ -1064,7 +1149,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/benchmarks/" class="md-nav__link">
+      <a href="../learn/benchmarks/" class="md-nav__link">
         
   
   
@@ -1151,7 +1236,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/rfdetr/" class="md-nav__link">
+      <a href="../reference/rfdetr/" class="md-nav__link">
         
   
   
@@ -1231,7 +1316,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/nano/" class="md-nav__link">
+      <a href="../reference/nano/" class="md-nav__link">
         
   
   
@@ -1259,7 +1344,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/small/" class="md-nav__link">
+      <a href="../reference/small/" class="md-nav__link">
         
   
   
@@ -1287,7 +1372,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/medium/" class="md-nav__link">
+      <a href="../reference/medium/" class="md-nav__link">
         
   
   
@@ -1315,7 +1400,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/large/" class="md-nav__link">
+      <a href="../reference/large/" class="md-nav__link">
         
   
   
@@ -1343,7 +1428,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/xlarge/" class="md-nav__link">
+      <a href="../reference/xlarge/" class="md-nav__link">
         
   
   
@@ -1371,7 +1456,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/2xlarge/" class="md-nav__link">
+      <a href="../reference/2xlarge/" class="md-nav__link">
         
   
   
@@ -1459,7 +1544,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/seg_nano/" class="md-nav__link">
+      <a href="../reference/seg_nano/" class="md-nav__link">
         
   
   
@@ -1487,7 +1572,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/seg_small/" class="md-nav__link">
+      <a href="../reference/seg_small/" class="md-nav__link">
         
   
   
@@ -1515,7 +1600,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/seg_medium/" class="md-nav__link">
+      <a href="../reference/seg_medium/" class="md-nav__link">
         
   
   
@@ -1543,7 +1628,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/seg_large/" class="md-nav__link">
+      <a href="../reference/seg_large/" class="md-nav__link">
         
   
   
@@ -1571,7 +1656,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/seg_xlarge/" class="md-nav__link">
+      <a href="../reference/seg_xlarge/" class="md-nav__link">
         
   
   
@@ -1599,7 +1684,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/seg_2xlarge/" class="md-nav__link">
+      <a href="../reference/seg_2xlarge/" class="md-nav__link">
         
   
   
@@ -1687,7 +1772,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/train_config/" class="md-nav__link">
+      <a href="../reference/train_config/" class="md-nav__link">
         
   
   
@@ -1715,7 +1800,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/segmentation_train_config/" class="md-nav__link">
+      <a href="../reference/segmentation_train_config/" class="md-nav__link">
         
   
   
@@ -1803,7 +1888,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/training/" class="md-nav__link">
+      <a href="../reference/training/" class="md-nav__link">
         
   
   
@@ -1843,10 +1928,17 @@
       
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="/develop/cookbooks/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1862,6 +1954,7 @@
   
 
       </a>
+      
     </li>
   
 
@@ -1873,7 +1966,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/resources/" class="md-nav__link">
+      <a href="../resources/" class="md-nav__link">
         
   
   
@@ -1900,7 +1993,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/develop/changelog/" class="md-nav__link">
+      <a href="../changelog/" class="md-nav__link">
         
   
   
@@ -1928,7 +2021,9 @@
             
             
               
-              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" hidden>
                 <div class="md-sidebar__scrollwrap">
                   <div class="md-sidebar__inner">
                     
@@ -1949,7 +2044,35 @@
               
               <article class="md-content__inner md-typeset">
                 
-  <h1>404 - Not found</h1>
+<section class="mdx-container portfolio-section">
+  <div class="md-grid md-typeset">
+    <div class="text-center">
+      <h1>RF-DETR Cookbooks</h1>
+      <p class="cookbooks-subtitle">Runnable notebooks for training, fine-tuning, exporting, and deploying RF-DETR models.</p>
+    </div>
+    <div class="custom-grid">
+      
+        <a href="release-demo_1-5/">
+          <div class="card repo-card"
+             data-name="Custom Augmentations and Live Training Progress"
+             data-labels="TRAINING,AUGMENTATION"
+             data-version="v1.5.0"
+             data-author="Borda"
+             data-description="Add custom Albumentations augmentations and monitor training metrics in real time."></div>
+        </a>
+      
+        <a href="release-demo_1-6/">
+          <div class="card repo-card"
+             data-name="PyTorch Lightning Building Blocks"
+             data-labels="TRAINING,PYTORCH LIGHTNING"
+             data-version="v1.6.0"
+             data-author="Borda"
+             data-description="Train RF-DETR with PyTorch Lightning — callbacks, checkpointing, and the LightningModule API."></div>
+        </a>
+      
+    </div>
+  </div>
+</section>
 
               </article>
             </div>
@@ -2042,10 +2165,10 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "/develop", "features": ["content.tabs.link", "content.code.copy", "navigation.expand", "navigation.tabs", "content.code.annotate", "navigation.tracking", "content.tooltips", "navigation.tabs.sticky"], "search": "/develop/assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["content.tabs.link", "content.code.copy", "navigation.expand", "navigation.tabs", "content.code.annotate", "navigation.tracking", "content.tooltips", "navigation.tabs.sticky"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="/develop/assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
       
     
   </body>
