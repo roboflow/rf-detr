@@ -84,7 +84,7 @@ def _make_checkpoint(
 # ---------------------------------------------------------------------------
 
 
-def _make_detr_args(num_classes=90, num_queries=300, group_detr=13):
+def _make_detr_args(num_classes=90, num_queries=300, group_detr=13, positional_encoding_size=24):
     """Return a SimpleNamespace shaped like the args for _load_pretrain_weights_into."""
     return SimpleNamespace(
         pretrain_weights="/fake/weights.pth",
@@ -93,6 +93,7 @@ def _make_detr_args(num_classes=90, num_queries=300, group_detr=13):
         group_detr=group_detr,
         segmentation_head=False,
         patch_size=14,
+        positional_encoding_size=positional_encoding_size,
     )
 
 
@@ -535,3 +536,81 @@ class TestLoadPretrainWeightsPEInterpolation:
         assert any("not a perfect square" in str(args) for args in warning_calls), (
             f"Expected a 'not a perfect square' warning; got calls: {warning_calls}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Regression: PE interpolation for custom resolution — detr.py constructor path
+# ---------------------------------------------------------------------------
+
+
+class TestLoadPretrainWeightsIntoPEInterpolation:
+    """Regression for #1023/#1029 — PE interpolation missing from the constructor path.
+
+    ``_load_pretrain_weights_into`` (detr.py) must bicubic-interpolate the checkpoint's
+    DINOv2 positional embeddings to match ``args.positional_encoding_size`` before
+    calling ``load_state_dict``.  Without this, any ``RFDETR*(resolution=X)`` call
+    with a non-default resolution raises ``RuntimeError: size mismatch``.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _patch_download(self, monkeypatch):
+        """Suppress all download and file-existence side effects."""
+        monkeypatch.setattr("rfdetr.detr.download_pretrain_weights", lambda *a, **kw: None)
+        monkeypatch.setattr("rfdetr.detr.validate_pretrain_weights", lambda *a, **kw: None)
+        monkeypatch.setattr("rfdetr.detr.validate_checkpoint_compatibility", lambda *a, **kw: None)
+        monkeypatch.setattr("rfdetr.detr.os.path.isfile", lambda _: True)
+
+    @pytest.mark.parametrize(
+        "src_pe_size, tgt_pe_size",
+        [
+            pytest.param(24, 44, id="upscale_24x24_to_44x44"),  # 384px → 704px (patch=16)
+            pytest.param(40, 24, id="downscale_40x40_to_24x24"),  # 640px → 384px (patch=16)
+        ],
+    )
+    def test_pe_interpolated_in_constructor_path_regression(self, monkeypatch, src_pe_size, tgt_pe_size):
+        """Constructor path interpolates PE to match args.positional_encoding_size.
+
+        Regression for #1023/#1029: ``_load_pretrain_weights_into`` in detr.py
+        must not raise ``RuntimeError`` when the checkpoint PE grid differs from the
+        model's target PE size.
+        """
+        from rfdetr.detr import _load_pretrain_weights_into
+
+        dim = 384
+        src_n = src_pe_size * src_pe_size + 1
+        checkpoint = _make_checkpoint(num_classes=91)
+        checkpoint["model"][PE_KEY] = torch.randn(1, src_n, dim)
+        monkeypatch.setattr("rfdetr.detr.torch.load", lambda *a, **kw: checkpoint)
+
+        args = _make_detr_args(positional_encoding_size=tgt_pe_size)
+        fake_model = MagicMock()
+
+        _load_pretrain_weights_into(fake_model, args)
+
+        pe = checkpoint["model"][PE_KEY]
+        expected_n = tgt_pe_size * tgt_pe_size + 1
+        assert pe.shape == torch.Size([1, expected_n, dim]), (
+            f"Expected PE shape [1, {expected_n}, {dim}] after interpolation from "
+            f"{src_pe_size}x{src_pe_size} to {tgt_pe_size}x{tgt_pe_size}, got {tuple(pe.shape)}. "
+            "PE interpolation is missing from the _load_pretrain_weights_into constructor path."
+        )
+
+    def test_matching_pe_not_modified_in_constructor_path(self, monkeypatch):
+        """Same-resolution checkpoint PE is untouched in the constructor path."""
+        from rfdetr.detr import _load_pretrain_weights_into
+
+        pe_size = 24
+        dim = 384
+        original_pe = torch.randn(1, pe_size * pe_size + 1, dim)
+        checkpoint = _make_checkpoint(num_classes=91)
+        checkpoint["model"][PE_KEY] = original_pe.clone()
+        monkeypatch.setattr("rfdetr.detr.torch.load", lambda *a, **kw: checkpoint)
+
+        args = _make_detr_args(positional_encoding_size=pe_size)
+        fake_model = MagicMock()
+
+        _load_pretrain_weights_into(fake_model, args)
+
+        pe = checkpoint["model"][PE_KEY]
+        assert pe.shape == torch.Size([1, pe_size * pe_size + 1, dim]), "Matching PE must not be modified."
+        assert torch.equal(pe, original_pe), "Matching PE values must not be modified."

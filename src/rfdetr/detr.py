@@ -50,6 +50,7 @@ from rfdetr.config import (
 from rfdetr.datasets.coco import is_valid_coco_dataset
 from rfdetr.datasets.yolo import is_valid_yolo_dataset
 from rfdetr.models import PostProcess, build_model
+from rfdetr.models.weights import _interpolate_position_embeddings
 from rfdetr.utilities.decorators import deprecated
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.state_dict import _ckpt_args_get, validate_checkpoint_compatibility
@@ -166,6 +167,7 @@ def _load_pretrain_weights_into(nn_model: torch.nn.Module, args: Any) -> List[st
         if any(name.endswith(x) for x in query_param_names):
             checkpoint["model"][name] = checkpoint["model"][name][:num_desired_queries]
 
+    _interpolate_position_embeddings(checkpoint["model"], args.positional_encoding_size)
     nn_model.load_state_dict(checkpoint["model"], strict=False)
 
     # Only reinitialize back to configured size when intentionally reducing a
