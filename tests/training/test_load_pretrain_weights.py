@@ -563,8 +563,8 @@ class TestLoadPretrainWeightsIntoPEInterpolation:
     @pytest.mark.parametrize(
         "src_pe_size, tgt_pe_size",
         [
-            pytest.param(24, 44, id="upscale_24x24_to_44x44"),  # 384px → 704px (patch=16)
-            pytest.param(40, 24, id="downscale_40x40_to_24x24"),  # 640px → 384px (patch=16)
+            pytest.param(24, 44, id="upscale_pe_24x24_to_44x44"),
+            pytest.param(40, 24, id="downscale_pe_40x40_to_24x24"),
         ],
     )
     def test_pe_interpolated_in_constructor_path_regression(self, monkeypatch, src_pe_size, tgt_pe_size):
