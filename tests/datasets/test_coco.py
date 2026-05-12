@@ -449,3 +449,49 @@ class TestBuilderGpuPostprocess:
 
         call_kwargs = mock_transforms.call_args.kwargs if mock_transforms.call_args else mock_transforms.call_args[1]
         assert call_kwargs["gpu_postprocess"] is expected_gpu_postprocess
+
+
+class TestBuilderDoRandomCrop:
+    """Verify ``do_random_crop`` on args is forwarded through to make_coco_transforms."""
+
+    @pytest.mark.parametrize(
+        "do_random_crop",
+        [pytest.param(True, id="crop_enabled"), pytest.param(False, id="crop_disabled")],
+    )
+    def test_do_random_crop_forwarded(self, tmp_path, do_random_crop):
+        """build_roboflow_from_coco forwards args.do_random_crop to make_coco_transforms."""
+        from unittest.mock import MagicMock, patch
+
+        from rfdetr.datasets.coco import build_roboflow_from_coco
+
+        annotations_dir = tmp_path / "train"
+        annotations_dir.mkdir()
+        (annotations_dir / "_annotations.coco.json").write_text(
+            json.dumps({"images": [], "annotations": [], "categories": []}),
+            encoding="utf-8",
+        )
+        args = types.SimpleNamespace(
+            dataset_dir=str(tmp_path),
+            segmentation_head=False,
+            augmentation_backend="cpu",
+            square_resize_div_64=False,
+            multi_scale=False,
+            expanded_scales=False,
+            do_random_resize_via_padding=False,
+            do_random_crop=do_random_crop,
+            patch_size=16,
+            num_windows=4,
+            aug_config=None,
+        )
+
+        with (
+            patch("rfdetr.datasets.coco.make_coco_transforms") as mock_transforms,
+            patch("rfdetr.datasets.coco.CocoDetection") as mock_coco,
+        ):
+            mock_transforms.return_value = MagicMock()
+            mock_coco.return_value = MagicMock()
+
+            build_roboflow_from_coco("train", args, resolution=640)
+
+        call_kwargs = mock_transforms.call_args.kwargs
+        assert call_kwargs["do_random_crop"] is do_random_crop
