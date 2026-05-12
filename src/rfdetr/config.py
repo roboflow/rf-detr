@@ -482,6 +482,11 @@ class TrainConfig(BaseModel):
     multi_scale: bool = True
     expanded_scales: bool = True
     do_random_resize_via_padding: bool = False
+    do_random_crop: bool = True
+    """Whether the training resize pipeline randomly chooses between a direct resize
+    and a resize-and-crop branch. Set to ``False`` to always use the direct resize so
+    input images are never cropped — useful for whole-object classification where the
+    object of interest can be partially or fully cropped out of frame."""
     use_ema: bool = True
     ema_update_interval: int = 1
     num_workers: int = 2
