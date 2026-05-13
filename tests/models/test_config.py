@@ -4,6 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+import warnings
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -12,6 +13,7 @@ from pydantic import ValidationError
 
 from rfdetr.config import (
     ModelConfig,
+    PretrainWeightsCompatibilityWarning,
     RFDETRBaseConfig,
     RFDETRLargeConfig,
     RFDETRMediumConfig,
@@ -544,3 +546,247 @@ class TestDetectDevice:
         mock_torch.cuda.is_available.return_value = False
         mock_torch.backends.mps.is_available.return_value = False
         assert _detect_device() == "cpu"
+
+
+class TestPretrainWeightsCompatibilityWarning:
+    """Config-time warning for overrides that prevent pretrained weights from loading.
+
+    These tests instantiate the variant *config* directly (not the wrapper class)
+    so they do not touch the network, the cache, or any model construction.
+    """
+
+    def _capture(self, config_cls: type, **kwargs: object) -> list[warnings.WarningMessage]:
+        """Instantiate ``config_cls(**kwargs)`` and return only the pretrain-compat warnings."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            config_cls(**kwargs)
+            return [w for w in caught if issubclass(w.category, PretrainWeightsCompatibilityWarning)]
+
+    def test_default_construction_emits_no_warning(self) -> None:
+        """Default variant construction must not warn — defaults match the published checkpoint."""
+        assert self._capture(RFDETRNanoConfig) == []
+
+    def test_encoder_registers_override_warns(self) -> None:
+        """The dinov2-with-registers footgun: switching encoder away from the variant default."""
+        captured = self._capture(RFDETRNanoConfig, encoder="dinov2_registers_windowed_small")
+        assert len(captured) == 1
+        message = str(captured[0].message)
+        assert "encoder" in message
+        assert "dinov2_registers_windowed_small" in message
+        assert "dinov2_windowed_small" in message
+
+    @pytest.mark.parametrize(
+        "field, value",
+        [
+            pytest.param("hidden_dim", 384, id="hidden_dim"),
+            pytest.param("dec_layers", 6, id="dec_layers"),
+            pytest.param("num_windows", 4, id="num_windows"),
+            pytest.param("sa_nheads", 4, id="sa_nheads"),
+            pytest.param("ca_nheads", 8, id="ca_nheads"),
+            pytest.param("dec_n_points", 4, id="dec_n_points"),
+            pytest.param("out_feature_indexes", [2, 5, 8, 11], id="out_feature_indexes"),
+            pytest.param("projector_scale", ["P3", "P4"], id="projector_scale"),
+            pytest.param("bbox_reparam", False, id="bbox_reparam"),
+            pytest.param("lite_refpoint_refine", False, id="lite_refpoint_refine"),
+            pytest.param("layer_norm", False, id="layer_norm"),
+            pytest.param("two_stage", False, id="two_stage"),
+            pytest.param("num_channels", 1, id="num_channels"),
+        ],
+    )
+    def test_load_breaking_override_warns(self, field: str, value: object) -> None:
+        """Each load-breaking architecture override fires the warning."""
+        captured = self._capture(RFDETRNanoConfig, **{field: value})
+        assert len(captured) == 1
+        assert field in str(captured[0].message)
+
+    def test_mask_downsample_ratio_warns_on_seg_variant(self) -> None:
+        """``mask_downsample_ratio`` change is silently miscalibrating; must warn at config time."""
+        captured = self._capture(RFDETRSegNanoConfig, mask_downsample_ratio=2)
+        assert len(captured) == 1
+        assert "mask_downsample_ratio" in str(captured[0].message)
+
+    def test_patch_size_override_warns_defense_in_depth(self) -> None:
+        """patch_size already raises in load_pretrain_weights; the new warning is defense-in-depth.
+
+        We change patch_size to a value that differs from RFDETRNanoConfig's default (16).
+        """
+        captured = self._capture(RFDETRNanoConfig, patch_size=14)
+        assert len(captured) == 1
+        assert "patch_size" in str(captured[0].message)
+
+    def test_segmentation_head_override_warns(self) -> None:
+        """segmentation_head also raises at load time but warning fires first."""
+        # RFDETRNanoConfig has segmentation_head=False; flipping it to True is the override.
+        captured = self._capture(RFDETRNanoConfig, segmentation_head=True)
+        assert len(captured) == 1
+        assert "segmentation_head" in str(captured[0].message)
+
+    @pytest.mark.parametrize(
+        "field, value",
+        [
+            pytest.param("num_queries", 200, id="num_queries_decrease"),
+            pytest.param("num_queries", 300, id="num_queries_equal"),
+            pytest.param("group_detr", 8, id="group_detr_decrease"),
+            pytest.param("num_classes", 5, id="num_classes"),
+            pytest.param("resolution", 448, id="resolution"),
+            pytest.param("positional_encoding_size", 20, id="positional_encoding_size"),
+        ],
+    )
+    def test_silent_field_overrides(self, field: str, value: object) -> None:
+        """Fields that are auto-handled at load time must not emit a warning at config construction."""
+        assert self._capture(RFDETRNanoConfig, **{field: value}) == []
+
+    @pytest.mark.parametrize(
+        "field, value",
+        [
+            pytest.param("num_queries", 400, id="num_queries"),
+            pytest.param("group_detr", 20, id="group_detr"),
+        ],
+    )
+    def test_increase_field_warns(self, field: str, value: object) -> None:
+        """Increasing an integer field above the variant default warns — extra slots are randomly initialised."""
+        captured = self._capture(RFDETRNanoConfig, **{field: value})
+        assert len(captured) == 1
+        assert field in str(captured[0].message)
+
+    def test_pretrain_weights_none_warns(self) -> None:
+        """Explicitly opting out of pretrained weights warns about training from scratch."""
+        captured = self._capture(RFDETRNanoConfig, pretrain_weights=None)
+        assert len(captured) == 1
+        message = str(captured[0].message)
+        assert "from scratch" in message
+        assert "rf-detr-nano.pth" in message
+
+    def test_pretrain_weights_none_only_one_warning(self) -> None:
+        """When pretrain_weights=None, the architecture-overrides warning is suppressed.
+
+        The from-scratch warning is the dominant message; we don't pile on with arch warnings.
+        """
+        captured = self._capture(
+            RFDETRNanoConfig,
+            pretrain_weights=None,
+            encoder="dinov2_registers_windowed_small",
+            hidden_dim=384,
+        )
+        assert len(captured) == 1
+        assert "from scratch" in str(captured[0].message)
+
+    def test_custom_pretrain_weights_path_suppresses_arch_warning(self) -> None:
+        """Custom pretrain_weights path → defer to load-time detector — no config-time arch warning."""
+        captured = self._capture(
+            RFDETRNanoConfig,
+            pretrain_weights="/tmp/my_custom.pth",
+            encoder="dinov2_registers_windowed_small",
+        )
+        assert captured == []
+
+    def test_multiple_overrides_consolidated_into_one_warning(self) -> None:
+        """All overrides are listed in a single warning, not one warning per field."""
+        captured = self._capture(
+            RFDETRNanoConfig,
+            encoder="dinov2_registers_windowed_small",
+            hidden_dim=384,
+            num_queries=400,
+        )
+        assert len(captured) == 1
+        message = str(captured[0].message)
+        for needle in ("encoder", "hidden_dim", "num_queries"):
+            assert needle in message, f"expected {needle!r} in consolidated warning message"
+
+    def test_warning_is_user_warning_subclass(self) -> None:
+        """Confirms downstream filtering via UserWarning works."""
+        assert issubclass(PretrainWeightsCompatibilityWarning, UserWarning)
+
+    def test_modelconfig_with_required_fields_does_not_warn(self, sample_model_config: dict[str, object]) -> None:
+        """Constructing the abstract ModelConfig with required fields cannot compare to defaults — no warning."""
+        assert self._capture(ModelConfig, **sample_model_config) == []
+
+    def test_breaking_field_with_default_factory_skips_comparison(self) -> None:
+        """A subclass whose breaking field uses ``default_factory`` (so ``.default`` is
+        ``PydanticUndefined``) must be silently skipped — we have nothing to compare against.
+        """
+        from pydantic import Field
+
+        class _DefaultFactoryConfig(RFDETRNanoConfig):
+            # Field uses default_factory → FieldInfo.default is PydanticUndefined,
+            # but is_required() is False.  Hits the `continue` on the
+            # PydanticUndefined check.
+            encoder: str = Field(default_factory=lambda: "dinov2_windowed_small")
+
+        assert self._capture(_DefaultFactoryConfig, encoder="dinov2_registers_windowed_small") == []
+
+    def test_increase_field_when_required_skips_comparison(self) -> None:
+        """A subclass where ``num_queries`` becomes required (no default) must be skipped."""
+
+        class _RequiredNumQueriesConfig(RFDETRNanoConfig):
+            num_queries: int  # type: ignore[misc]  # no default → required
+
+        assert self._capture(_RequiredNumQueriesConfig, num_queries=400) == []
+
+    def test_increase_field_with_non_int_default_skips_comparison(self) -> None:
+        """A subclass where ``num_queries`` has a non-int default must be skipped (can't ``>`` compare)."""
+        from typing import Any
+
+        class _NonIntDefaultConfig(RFDETRNanoConfig):
+            num_queries: Any = "300"  # type: ignore[assignment]  # non-int default
+
+        assert self._capture(_NonIntDefaultConfig, num_queries="400") == []
+
+    def test_explicit_variant_default_path_runs_arch_override_check(self) -> None:
+        """Passing the variant's own published-default path string must still check arch overrides.
+
+        Before the case-2 fix, any non-None explicit pretrain_weights bypassed the
+        architecture-override check entirely — including when the user passed the exact
+        variant default string such as "rf-detr-nano.pth".
+        """
+        captured = self._capture(
+            RFDETRNanoConfig,
+            pretrain_weights="rf-detr-nano.pth",
+            encoder="dinov2_registers_windowed_small",
+        )
+        assert len(captured) == 1
+        assert "encoder" in str(captured[0].message)
+
+    def test_product_preserving_group_detr_increase_still_warns(self) -> None:
+        """Increasing group_detr while halving num_queries still warns — check is per-field, not product-aware.
+
+        This documents known current behaviour: the validator compares each field to its
+        variant default independently, not the combined query-slot product.  A product-
+        preserving change (group_detr=26, num_queries=150 vs defaults 13, 300) warns for
+        group_detr because 26 > 13, regardless of whether total slots are the same.
+        """
+        captured = self._capture(RFDETRNanoConfig, num_queries=150, group_detr=26)
+        assert len(captured) == 1
+        assert "group_detr" in str(captured[0].message)
+
+
+class TestBreakingListIntegrity:
+    """Guards against stale entries in the pretrain-compatibility breaking-field lists."""
+
+    def test_all_breaking_fields_exist_in_model_config(self) -> None:
+        """Every field guarded by the pretrain-compatibility check must exist in ModelConfig.model_fields.
+
+        Catches typos and fields renamed/removed without updating the breaking lists.
+        """
+        all_breaking = {
+            "encoder",
+            "hidden_dim",
+            "dec_layers",
+            "num_windows",
+            "sa_nheads",
+            "ca_nheads",
+            "dec_n_points",
+            "out_feature_indexes",
+            "projector_scale",
+            "bbox_reparam",
+            "lite_refpoint_refine",
+            "layer_norm",
+            "two_stage",
+            "patch_size",
+            "segmentation_head",
+            "num_channels",
+            "num_queries",
+            "group_detr",
+        }
+        stale = all_breaking - set(ModelConfig.model_fields.keys())
+        assert not stale, f"Fields in breaking lists not in ModelConfig.model_fields: {stale}"

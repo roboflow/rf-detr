@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rfdetr"
-version = "1.6.0"
+version = "1.7.0.rc0"
 description = "RF-DETR"
 readme = "README.md"
 authors = [
@@ -51,7 +51,7 @@ lora = [
 ]
 train = [
     "peft",                            # LoRA backbone fine-tuning (available during training)
-    "pytorch_lightning>=2.6,<3",
+    "pytorch_lightning>=2.6,<3,!=2.6.2,!=2.6.3",  # Keep exclusions; see issue #1016 / related advisory for why 2.6.2 and 2.6.3 are blocked
     "torchmetrics[detection]>=1.2",
     "pytorch-optimizer>=3.0,<4",
     "faster-coco-eval>=1.7.2",
@@ -198,6 +198,18 @@ filterwarnings = [
     # pytest-xdist workers close their channel before teardown completes;
     # this is a known false-positive that does not affect test results.
     "ignore::pluggy.PluggyTeardownRaisedWarning",
+    # Many tests instantiate ModelConfig variants with `pretrain_weights=None`
+    # to skip downloads.  The pretrain-compat warning is intentional UX for
+    # end users; silence it globally for the test suite and re-enable it
+    # explicitly in the dedicated tests via `warnings.catch_warnings` plus
+    # `warnings.simplefilter("always")`.
+    # NOTE: expressed as a message regex (not as
+    # ``ignore::rfdetr.config.PretrainWeightsCompatibilityWarning``) because a
+    # class-path filter forces pytest to import ``rfdetr.config`` at
+    # config-parse time — before ``pytest-cov`` starts tracing — which makes
+    # the module's top-level statements appear uncovered.
+    "ignore:.*was instantiated with pretrain_weights=None:UserWarning",
+    "ignore:.*was instantiated with overrides that differ from the variant:UserWarning",
 ]
 
 [tool.codespell]
@@ -234,6 +246,8 @@ overrides = [
     "kornia", "kornia.*",
     "onnx", "onnx.*",
     "onnx2tf", "onnx2tf.*",
+    "tflite_runtime", "tflite_runtime.*",
+    "tensorflow", "tensorflow.*",
   ], ignore_missing_imports = true },
   # Modules with pre-existing type errors — ignored until incrementally fixed.
   { module = [

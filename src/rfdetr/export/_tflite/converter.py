@@ -358,6 +358,8 @@ def export_tflite(
     calibration_data: str | os.PathLike[str] | np.ndarray | None = None,
     verbosity: str = "error",
     max_images: int = _DEFAULT_DIR_CALIB_SAMPLES,
+    *,
+    verbose: bool = False,
 ) -> Path:
     """Convert an ONNX model to TFLite via ``onnx2tf``.
 
@@ -392,6 +394,9 @@ def export_tflite(
         max_images: Maximum number of images to load when
             *calibration_data* is a directory path.  Defaults to 100.
             Ignored for other calibration data formats.
+        verbose: When ``True``, stream ``onnx2tf`` per-node progress —
+            useful for monitoring long conversions (5–15 min on
+            transformer-based models).  Defaults to ``False`` (silent).
 
     Returns:
         The path to the primary ``*_float32.tflite`` file.
@@ -470,7 +475,7 @@ def export_tflite(
                 "input_onnx_file_path": str(onnx_path),
                 "output_folder_path": str(output_dir),
                 "output_signaturedefs": True,
-                "non_verbose": True,
+                "non_verbose": not verbose,
                 "verbosity": verbosity,
             }
 
