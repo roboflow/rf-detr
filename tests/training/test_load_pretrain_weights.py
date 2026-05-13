@@ -485,9 +485,10 @@ class TestL1FacadePEInterpolationEndToEnd:
         """
         from rfdetr import RFDETRSegNano
 
-        # 1. Build a default-resolution RFDETRSegNano (no pretrain, on CPU, 90
-        #    classes to match a pretrain checkpoint) so that it produces a
-        #    state_dict with the variant's native PE grid.
+        # 1. Build a default-resolution RFDETRSegNano (no pretrain, on CPU).
+        #    Uses 90 classes to mimic an official COCO-pretrained checkpoint so
+        #    the load path at step 3 exercises both head-reinit (90 → 2 classes)
+        #    and PE interpolation simultaneously.
         default_model = RFDETRSegNano(pretrain_weights=None, num_classes=90, device="cpu")
         default_pe_grid = default_model.model_config.positional_encoding_size
         assert default_pe_grid == 26, "RFDETRSegNano default PE grid must be 26×26 (312 // 12)"
