@@ -17,6 +17,7 @@ import pytest
 import torch
 
 from rfdetr.config import RFDETRBaseConfig, TrainConfig
+from rfdetr.models.weights import _warn_on_partial_load
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -753,3 +754,195 @@ class TestLoadPretrainWeightsPerGroupQuerySlice:
         expected = [0, 1]
         assert refpoint[:, 0].int().tolist() == expected
         assert query_feat[:, 0].int().tolist() == expected
+# Partial-load detector
+# ---------------------------------------------------------------------------
+
+
+class TestPartialLoadDetector:
+    """Tests for ``_warn_on_partial_load`` — surfaces silent partial loads.
+
+    The rf-detr logger has ``propagate=False`` so pytest's ``caplog`` does not
+    see its records.  These tests monkeypatch ``logger.warning`` directly to
+    capture the message text.
+    """
+
+    @pytest.fixture
+    def captured(self, monkeypatch):
+        """Capture every call to ``rfdetr.models.weights.logger.warning`` as a formatted string."""
+        captured: list[str] = []
+
+        def _capture(msg, *args, **kwargs):
+            try:
+                captured.append(msg % args if args else msg)
+            except TypeError:
+                captured.append(msg)
+
+        monkeypatch.setattr("rfdetr.models.weights.logger.warning", _capture)
+        return captured
+
+    @pytest.mark.parametrize(
+        "result",
+        [
+            pytest.param(
+                SimpleNamespace(missing_keys=[], unexpected_keys=[]),
+                id="clean_load",
+            ),
+            pytest.param(
+                SimpleNamespace(
+                    missing_keys=[
+                        "class_embed.weight",
+                        "bbox_embed.layers.0.weight",
+                        "refpoint_embed.weight",
+                        "query_feat.weight",
+                        "transformer.enc_out_class_embed.0.weight",
+                        "transformer.enc_out_bbox_embed.0.layers.0.weight",
+                    ],
+                    unexpected_keys=[],
+                ),
+                id="intentional_head_keys",
+            ),
+            pytest.param(
+                SimpleNamespace(missing_keys=42, unexpected_keys=[]),
+                id="non_iterable_missing_keys",
+            ),
+        ],
+    )
+    def test_no_warning_cases(self, captured, result: SimpleNamespace) -> None:
+        """Cases that must not emit any partial-load warning.
+
+        Covers: clean load, intentional head keys, and non-iterable missing_keys.
+        """
+        _warn_on_partial_load(result, "/fake/weights.pth")
+        assert captured == []
+
+    def test_unexpected_backbone_missing_keys_warn(self, captured):
+        """Missing backbone keys (e.g. register_tokens) must trigger the warning."""
+
+        result = SimpleNamespace(
+            missing_keys=[
+                "backbone.0.encoder.encoder.embeddings.register_tokens",
+                "backbone.0.encoder.encoder.layers.0.register_block.weight",
+            ],
+            unexpected_keys=[],
+        )
+        _warn_on_partial_load(result, "/fake/weights.pth")
+        assert len(captured) == 1
+        assert "/fake/weights.pth" in captured[0]
+        assert "register_tokens" in captured[0]
+
+    def test_unexpected_keys_warn(self, captured):
+        """Unexpected checkpoint keys (model has no slot for them) must trigger the warning."""
+
+        result = SimpleNamespace(
+            missing_keys=[],
+            unexpected_keys=["backbone.0.encoder.legacy_module.weight"],
+        )
+        _warn_on_partial_load(result, "/fake/weights.pth")
+        assert len(captured) == 1
+        assert "not consumed by model" in captured[0]
+
+    def test_handles_non_iterable_input_gracefully(self, captured):
+        """A MagicMock-style result (used in many existing tests) must not raise."""
+
+        _warn_on_partial_load(MagicMock(), "/fake/weights.pth")
+        # The crucial assertion is "did not raise"; whether captured is empty
+        # depends on MagicMock truthiness — both outcomes are acceptable.
+
+    @pytest.mark.parametrize(
+        "missing_keys, unexpected_keys, count_str",
+        [
+            pytest.param(
+                [f"backbone.0.encoder.layer.{i}.weight" for i in range(10)],
+                [],
+                "10 model parameter",
+                id="long_missing_keys",
+            ),
+            pytest.param(
+                [],
+                [f"backbone.0.legacy.{i}.weight" for i in range(8)],
+                "8 checkpoint key(s)",
+                id="long_unexpected_keys",
+            ),
+        ],
+    )
+    def test_truncates_long_key_lists_in_message(
+        self,
+        captured,
+        missing_keys: list[str],
+        unexpected_keys: list[str],
+        count_str: str,
+    ) -> None:
+        """Sample key lists in the warning are bounded to 5 entries with a trailing ellipsis."""
+        result = SimpleNamespace(missing_keys=missing_keys, unexpected_keys=unexpected_keys)
+        _warn_on_partial_load(result, "/fake/weights.pth")
+        assert len(captured) == 1
+        assert count_str in captured[0]
+        assert "..." in captured[0]
+
+    def test_mixed_intentional_and_unintentional_keys_warn_only_for_unexpected(self, captured) -> None:
+        """Only unintentional missing keys appear in the warning; intentional reinit keys are filtered.
+
+        When a checkpoint load returns both head-reinit keys (class_embed.weight, etc.) and
+        a genuine backbone mismatch (backbone.0.encoder.register_tokens), the warning must
+        fire exactly once and must reference the unintentional key, not the filtered ones.
+        """
+        result = SimpleNamespace(
+            missing_keys=[
+                "class_embed.weight",
+                "bbox_embed.layers.0.weight",
+                "refpoint_embed.weight",
+                "backbone.0.encoder.encoder.embeddings.register_tokens",
+            ],
+            unexpected_keys=[],
+        )
+        _warn_on_partial_load(result, "/fake/mixed.pth")
+        assert len(captured) == 1, f"Expected exactly one warning, got {len(captured)}: {captured}"
+        assert "register_tokens" in captured[0], "Warning must reference the unintentional backbone key"
+        assert "class_embed" not in captured[0], "Intentional head key must be filtered from warning text"
+
+    @patch("rfdetr.models.weights.torch.load")
+    @patch("rfdetr.models.weights.os.path.isfile", return_value=True)
+    @patch("rfdetr.models.weights.validate_checkpoint_compatibility")
+    @patch("rfdetr.models.weights.validate_pretrain_weights")
+    @patch("rfdetr.models.weights.download_pretrain_weights")
+    def test_partial_load_is_invoked_during_load_pretrain_weights(
+        self,
+        mock_download: MagicMock,
+        mock_validate_weights: MagicMock,
+        mock_validate_compat: MagicMock,
+        mock_isfile: MagicMock,
+        mock_torch_load: MagicMock,
+        monkeypatch,
+    ) -> None:
+        """Integration check: load_pretrain_weights wires up the partial-load detector."""
+        from rfdetr.models.weights import load_pretrain_weights
+
+        mock_torch_load.return_value = _make_checkpoint(num_classes=91)
+
+        mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu")
+        nn_model = _fake_nn_model()
+        nn_model.load_state_dict.return_value = SimpleNamespace(
+            missing_keys=["backbone.0.encoder.something_required.weight"],
+            unexpected_keys=[],
+        )
+
+        captured: list[str] = []
+
+        def _capture_warning(msg, *args, **kwargs):
+            try:
+                captured.append(msg % args if args else msg)
+            except TypeError:
+                captured.append(msg)
+
+        monkeypatch.setattr("rfdetr.models.weights.logger.warning", _capture_warning)
+        load_pretrain_weights(nn_model, mc)
+
+        assert any("partially" in m for m in captured), (
+            f"Expected partial-load warning to fire; got messages: {captured}"
+        )
+
+        # Conversely, a clean load must not fire the warning.
+        captured.clear()
+        nn_model.load_state_dict.return_value = SimpleNamespace(missing_keys=[], unexpected_keys=[])
+        load_pretrain_weights(nn_model, mc)
+        assert not any("partially" in m for m in captured), f"Clean load must not warn; got messages: {captured}"

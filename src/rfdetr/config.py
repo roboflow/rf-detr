@@ -11,8 +11,16 @@ from typing import Any, ClassVar, Dict, List, Literal, Mapping, Optional, TypeAl
 
 import torch
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic_core import PydanticUndefined
 
 EncoderName: TypeAlias = Literal["dinov2_windowed_small", "dinov2_windowed_base", "dinov2_registers_windowed_small"]
+
+
+class PretrainWeightsCompatibilityWarning(UserWarning):
+    """Warning emitted when ``ModelConfig`` overrides are likely to prevent the variant's
+    published pretrained weights from loading into the model — leaving large portions
+    of the model randomly initialized and typically producing much lower accuracy.
+    """
 
 
 def _detect_device() -> str:
@@ -182,6 +190,165 @@ class ModelConfig(BaseConfig):
         # default resolution and patch size.
         if default_pe == default_resolution // default_patch_size:
             self.positional_encoding_size = self.resolution // self.patch_size
+
+        return self
+
+    @model_validator(mode="after")
+    def _warn_pretrain_compatibility(self) -> "ModelConfig":
+        """Warn when overrides are likely to prevent published pretrained weights from loading.
+
+        Three cases:
+
+        1. ``pretrain_weights`` was explicitly set to ``None`` and the variant
+           has a non-``None`` default → warn that the model is being initialised
+           from scratch.
+        2. ``pretrain_weights`` was explicitly set to a non-``None`` custom path
+           → suppress the architecture-override check (we cannot know the
+           architecture stored in a user-supplied checkpoint at config time).
+           The load-time partial-load detector in
+           :func:`rfdetr.models.weights.load_pretrain_weights` covers this case
+           by inspecting the checkpoint contents directly.
+        3. ``pretrain_weights`` is the variant's published default → check
+           architecture-affecting fields against the variant defaults and emit
+           a single consolidated warning listing every load-breaking override.
+
+        The warning class is :class:`PretrainWeightsCompatibilityWarning` (a
+        :class:`UserWarning` subclass), silenceable via the standard
+        ``warnings.filterwarnings`` machinery.
+        """
+        cls = type(self)
+        fields_set = self.model_fields_set
+        pretrain_user_set = "pretrain_weights" in fields_set
+
+        if pretrain_user_set and self.pretrain_weights is None:
+            default_pretrain = cls.model_fields["pretrain_weights"].default
+            if default_pretrain is not PydanticUndefined and default_pretrain is not None:
+                warnings.warn(
+                    f"{cls.__name__} was instantiated with pretrain_weights=None. "
+                    f"The model will be initialised from scratch, which typically "
+                    f"produces lower accuracy than fine-tuning from the published "
+                    f"checkpoint ({default_pretrain!r}).",
+                    PretrainWeightsCompatibilityWarning,
+                    stacklevel=2,
+                )
+            return self
+
+        if pretrain_user_set and self.pretrain_weights is not None:
+            # Custom checkpoint: architecture overrides may match what the
+            # checkpoint was trained with.  Defer to the load-time partial-load
+            # detector which can read the file.
+            # Exception: when the user explicitly passes the variant's own
+            # published-default path string (e.g. ``"rf-detr-nano.pth"``), it
+            # IS the published checkpoint — treat it as case 3 so architecture-
+            # override checks still apply.  Compare after expand_path so bare
+            # filenames resolve to the same cache-dir path as self.pretrain_weights.
+            _default_pretrain = cls.model_fields["pretrain_weights"].default
+            if _default_pretrain is not None and _default_pretrain is not PydanticUndefined:
+                _expanded_default = cls.expand_path(_default_pretrain)
+                if self.pretrain_weights != _expanded_default:
+                    return self
+                # Falls through to case-3 when the user passed the exact variant default.
+            else:
+                return self
+
+        # `pretrain_weights` is the variant's published default — check
+        # architecture overrides against the class defaults.
+        # Skip entirely when this variant has no published checkpoint (default
+        # is None/PydanticUndefined); warning would reference "(None)" which is
+        # misleading and confusing for users of the abstract base config.
+        _class_default_pretrain = cls.model_fields["pretrain_weights"].default
+        if _class_default_pretrain is None or _class_default_pretrain is PydanticUndefined:
+            return self
+
+        overrides: list[tuple[str, Any, Any]] = []
+
+        # Fields that, when explicitly overridden to any value other than the
+        # variant default, prevent the published checkpoint from loading cleanly.
+        # Includes major architecture knobs, "less obvious" knobs (bbox_reparam,
+        # lite_refpoint_refine, layer_norm, two_stage), defense-in-depth for
+        # fields that currently raise hard errors (patch_size, segmentation_head),
+        # and num_channels (loads via heuristic but result isn't real pretrained
+        # weights for the new input domain).
+        breaking_fields: tuple[str, ...] = (
+            "encoder",
+            "hidden_dim",
+            "dec_layers",
+            "num_windows",
+            "sa_nheads",
+            "ca_nheads",
+            "dec_n_points",
+            "out_feature_indexes",
+            "projector_scale",
+            "bbox_reparam",
+            "lite_refpoint_refine",
+            "layer_norm",
+            "two_stage",
+            "patch_size",
+            "segmentation_head",
+            "num_channels",
+        )
+        # Fields where only an *increase* above the variant default is load-breaking:
+        # num_queries / group_detr add slots whose shape differs — decrease is fine.
+        breaking_on_increase: tuple[str, ...] = (
+            "num_queries",
+            "group_detr",
+        )
+
+        for name in breaking_fields:
+            if name not in fields_set:
+                continue
+            field_info = cls.model_fields.get(name)
+            if field_info is None or field_info.is_required():
+                continue
+            default = field_info.default
+            if default is PydanticUndefined:
+                continue
+            current = getattr(self, name)
+            if current != default:
+                overrides.append((name, current, default))
+
+        for name in breaking_on_increase:
+            if name not in fields_set:
+                continue
+            field_info = cls.model_fields.get(name)
+            if field_info is None or field_info.is_required():
+                continue
+            default = field_info.default
+            if default is PydanticUndefined or not isinstance(default, int):
+                continue
+            current = getattr(self, name)
+            if isinstance(current, int) and current > default:
+                overrides.append((name, current, default))
+
+        # ``mask_downsample_ratio`` only affects segmentation models — skip on
+        # detector-only variants to avoid a misleading "weights won't load" warning.
+        if "mask_downsample_ratio" in fields_set and self.segmentation_head:
+            _mdr_info = cls.model_fields.get("mask_downsample_ratio")
+            if _mdr_info is not None and not _mdr_info.is_required():
+                _mdr_default = _mdr_info.default
+                if _mdr_default is not PydanticUndefined:
+                    _mdr_current = getattr(self, "mask_downsample_ratio")
+                    if _mdr_current != _mdr_default:
+                        overrides.append(("mask_downsample_ratio", _mdr_current, _mdr_default))
+
+        if overrides:
+            default_pretrain = cls.model_fields["pretrain_weights"].default
+            lines = "\n".join(
+                f"  {name}: {current!r} (variant default: {default!r})" for name, current, default in overrides
+            )
+            warnings.warn(
+                f"{cls.__name__} was instantiated with overrides that differ from the variant "
+                f"defaults in ways that prevent the published pretrained weights "
+                f"({default_pretrain!r}) from loading correctly:\n"
+                f"{lines}\n"
+                "Loading the checkpoint with this configuration will leave significant portions "
+                "of the model randomly initialised, which typically produces lower accuracy. "
+                "To suppress this warning: revert the override(s), pick a variant whose defaults "
+                "match, or pass pretrain_weights=None to acknowledge that you intend to train "
+                "from scratch.",
+                PretrainWeightsCompatibilityWarning,
+                stacklevel=2,
+            )
 
         return self
 

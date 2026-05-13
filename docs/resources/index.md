@@ -1,11 +1,11 @@
 ---
-description: RF-DETR tutorials for training, deploying, and running detection and segmentation models across cloud, edge, iOS, Jetson, and Lightning workflows.
+description: RF-DETR resources — blog posts, videos, and guides for training, deploying, and running detection and segmentation models across cloud, edge, iOS, Jetson, and Lightning workflows.
 hide:
   - toc
   - navigation
 ---
 
-# Tutorials
+# Resources
 
 Use the resources below to learn how to train, build with, and deploy RF-DETR models both in the cloud and on your own hardware.
 

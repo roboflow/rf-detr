@@ -1,0 +1,13 @@
+cards:
+  - href: release-demo_1-5/
+    name: "Custom Augmentations and Live Training Progress"
+    labels: [TRAINING, AUGMENTATION]
+    version: v1.5.0
+    author: Borda
+    description: "Add custom Albumentations augmentations and monitor training metrics in real time."
+  - href: release-demo_1-6/
+    name: "PyTorch Lightning Building Blocks"
+    labels: [TRAINING, PYTORCH LIGHTNING]
+    version: v1.6.0
+    author: Borda
+    description: "Train RF-DETR with PyTorch Lightning — callbacks, checkpointing, and the LightningModule API."

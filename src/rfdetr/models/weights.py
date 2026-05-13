@@ -22,7 +22,7 @@ import functools
 import math
 import os
 import warnings
-from typing import List
+from typing import Any, List
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -119,6 +119,96 @@ def _slice_query_param_per_group(
     keep_per_group = min(target_num_queries, ckpt_num_queries)
     pieces = [tensor[g * ckpt_num_queries : g * ckpt_num_queries + keep_per_group] for g in range(keep_groups)]
     return torch.cat(pieces, dim=0)
+
+
+def _filter_intentional_keys(keys: list[str]) -> list[str]:
+    """Return *keys* with intentional-reinit/trim entries removed.
+
+    Matching is boundary-aware: a pattern matches a key when the pattern
+    appears at the start of the key or immediately after a module separator
+    (``.``).  This prevents substring collisions where a pattern like
+    ``"class_embed."`` would inadvertently match a key belonging to an
+    unrelated module (e.g. ``"class_embed_projection.weight"`` is safe
+    because ``class_embed_projection.`` ≠ ``class_embed.``, but using a
+    plain ``in`` check against longer ambiguous strings is fragile by
+    design).
+    """
+    # Substrings identifying state-dict keys that ``load_pretrain_weights`` is
+    # *expected* to have to reconcile (head reinitialisation and per-group query
+    # trimming).  Keys matching any of these are filtered from the partial-load
+    # warning so it only fires on *unexpected* mismatches that indicate a real
+    # config / checkpoint incompatibility.
+    intentional_patterns: tuple[str, ...] = (
+        "class_embed.",
+        "bbox_embed.",
+        "refpoint_embed.weight",
+        "query_feat.weight",
+        "enc_out_class_embed.",
+        "enc_out_bbox_embed.",
+    )
+
+    def _is_intentional(key: str) -> bool:
+        return any(key.startswith(pat) or f".{pat}" in key for pat in intentional_patterns)
+
+    return [k for k in keys if not _is_intentional(k)]
+
+
+def _warn_on_partial_load(incompatible: Any, pretrain_weights_path: str) -> None:
+    """Emit a ``logger.warning`` when ``load_state_dict`` left non-trivial gaps.
+
+    ``load_state_dict(strict=False)`` silently ignores keys that the model has
+    but the checkpoint does not (``missing_keys``) and keys present in the
+    checkpoint but absent from the model (``unexpected_keys``).  When this
+    happens for parameters outside the head / query embeddings — which the
+    loader intentionally reinitialises or trims — the corresponding model
+    weights were left at their random initial values and the user is silently
+    getting a much weaker model.
+
+    This helper surfaces that condition with a single, actionable warning.
+    Same-key shape mismatches do not reach this function — they raise
+    :class:`RuntimeError` directly from ``load_state_dict`` and are therefore
+    impossible to miss.
+
+    Args:
+        incompatible: The ``_IncompatibleKeys`` namedtuple returned by
+            :meth:`torch.nn.Module.load_state_dict`.
+        pretrain_weights_path: Path to the checkpoint that was loaded; included
+            in the warning so the user can identify which load partially
+            succeeded.
+    """
+    missing_keys_raw = getattr(incompatible, "missing_keys", None)
+    unexpected_keys_raw = getattr(incompatible, "unexpected_keys", None)
+    try:
+        missing_keys = [str(k) for k in missing_keys_raw] if missing_keys_raw else []
+        unexpected_keys = [str(k) for k in unexpected_keys_raw] if unexpected_keys_raw else []
+    except TypeError:
+        # Result wasn't iterable (e.g. a MagicMock in unit tests) — quietly skip.
+        return
+    missing = _filter_intentional_keys(missing_keys)
+    unexpected = _filter_intentional_keys(unexpected_keys)
+    if not missing and not unexpected:
+        return
+
+    parts: list[str] = []
+    if missing:
+        sample = ", ".join(missing[:5])
+        if len(missing) > 5:
+            sample += ", ..."
+        parts.append(f"{len(missing)} model parameter(s) not in checkpoint (left at random init): [{sample}]")
+    if unexpected:
+        sample = ", ".join(unexpected[:5])
+        if len(unexpected) > 5:
+            sample += ", ..."
+        parts.append(f"{len(unexpected)} checkpoint key(s) not consumed by model: [{sample}]")
+
+    logger.warning(
+        "Pretrained weights at %r loaded only partially — this typically produces "
+        "lower accuracy. %s. Check that the model configuration (encoder, hidden_dim, "
+        "out_feature_indexes, projector_scale, ...) matches the architecture the "
+        "checkpoint was trained with.",
+        pretrain_weights_path,
+        " ".join(parts),
+    )
 
 
 def interpolate_position_embeddings(
@@ -367,7 +457,8 @@ def load_pretrain_weights(
                 checkpoint["model"][name] = tensor[: mc.num_queries * mc.group_detr]
 
     interpolate_position_embeddings(checkpoint["model"], mc.positional_encoding_size)
-    nn_model.load_state_dict(checkpoint["model"], strict=False)
+    incompatible = nn_model.load_state_dict(checkpoint["model"], strict=False)
+    _warn_on_partial_load(incompatible, pretrain_weights)
 
     # If the user explicitly set a class count larger than the checkpoint,
     # expand/reinitialize the head back to the configured size after load.
