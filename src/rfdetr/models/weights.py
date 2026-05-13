@@ -88,8 +88,9 @@ def _slice_query_param_per_group(
 
     Returns:
         A tensor whose layout matches the model's configured packing for the
-        decrease-or-equal cases, or a smaller per-group sub-tensor for the
-        expansion case (which ``load_state_dict`` will then reject).
+        decrease-or-equal cases, or a per-group sub-tensor built from
+        ``min(target, ckpt)`` along each axis for the expansion case (which
+        ``load_state_dict`` will then reject on shape mismatch).
 
     Raises:
         ValueError: If any of ``ckpt_num_queries``, ``ckpt_group_detr``,
