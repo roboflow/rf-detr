@@ -522,7 +522,8 @@ class TestL1FacadePEInterpolationEndToEnd:
         #    ``RuntimeError: size mismatch for
         #    backbone.0.encoder.encoder.embeddings.position_embeddings``
         #    from LWDETR.load_state_dict — exactly the user-reported failure.
-        new_resolution = 624  # next valid resolution for SegNano (patch_size=12, divisible by 12)
+        # resolution=1008 (user-reported in #1023, 84×84=7057 tokens) is deferred to follow-up parametrization.
+        new_resolution = 624  # 2× the default 312; divisible by patch_size=12
         loaded = RFDETRSegNano(
             pretrain_weights=str(ckpt_path),
             resolution=new_resolution,
