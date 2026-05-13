@@ -412,6 +412,14 @@ class TestL1FacadePEInterpolationEndToEnd:
     from ``models.weights``).  This test pins that wiring so a future refactor
     cannot reintroduce a divergent loader path that silently skips PE
     interpolation.
+
+    Current coverage: ``RFDETRNano`` (detection) and ``RFDETRSegNano``
+    (segmentation), upward-interpolation only.  When a third L1 facade variant
+    is added, collapse both methods to a single ``@pytest.mark.parametrize``
+    over ``(variant_class, default_pe_grid, patch_size, new_resolution)``.
+    Downward-interpolation (high-res checkpoint → lower-res model) is not
+    currently exercised; add a reverse-direction parametrize row when
+    refactoring.
     """
 
     def test_rfdetr_nano_loads_default_pe_checkpoint_at_custom_resolution(self, tmp_path):
