@@ -1567,9 +1567,7 @@ class TestCheckpointNotes:
         trainer = _make_trainer({"val/mAP_50_95": 0.5})
 
         pl_module = _make_pl_module()
-        pl_module.train_config = TrainConfig(
-            dataset_dir=str(tmp_path / "ds"), tensorboard=False, notes=notes
-        )
+        pl_module.train_config = TrainConfig(dataset_dir=str(tmp_path / "ds"), tensorboard=False, notes=notes)
 
         cb.on_validation_end(trainer, pl_module)
 
@@ -1589,9 +1587,7 @@ class TestCheckpointNotes:
         trainer = _make_trainer({"val/mAP_50_95": 0.5})
 
         pl_module = _make_pl_module()
-        pl_module.train_config = TrainConfig(
-            dataset_dir=str(tmp_path / "ds"), tensorboard=False, notes=notes
-        )
+        pl_module.train_config = TrainConfig(dataset_dir=str(tmp_path / "ds"), tensorboard=False, notes=notes)
 
         cb.on_validation_end(trainer, pl_module)
 
