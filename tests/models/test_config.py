@@ -13,6 +13,7 @@ from pydantic import ValidationError
 
 from rfdetr.config import (
     ModelConfig,
+    PretrainWeightsCompatibilityWarning,
     RFDETRBaseConfig,
     RFDETRLargeConfig,
     RFDETRMediumConfig,
@@ -28,7 +29,6 @@ from rfdetr.config import (
     TrainConfig,
     _detect_device,
 )
-from rfdetr.config import PretrainWeightsCompatibilityWarning
 
 
 @pytest.fixture
