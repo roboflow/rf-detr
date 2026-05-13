@@ -443,6 +443,35 @@ def load_pretrain_weights(
         )
         ckpt_num_queries = None
         ckpt_group_detr = None
+    # When exactly one of the pair is present, infer the missing value from the
+    # first matching tensor's shape.  This handles PTL checkpoints where
+    # BestModelCallback writes TrainConfig.model_dump() into checkpoint["args"]
+    # but TrainConfig does not include num_queries (it lives on ModelConfig).
+    if (ckpt_num_queries is None) != (ckpt_group_detr is None):
+        _first_query_key = next(
+            (k for k in checkpoint["model"] if any(k.endswith(s) for s in _QUERY_PARAM_SUFFIXES)),
+            None,
+        )
+        if _first_query_key is not None:
+            _n = checkpoint["model"][_first_query_key].shape[0]
+            if ckpt_num_queries is not None and ckpt_num_queries > 0 and _n % ckpt_num_queries == 0:
+                ckpt_group_detr = _n // ckpt_num_queries
+                logger.warning(
+                    "load_pretrain_weights: args.group_detr absent; inferred ckpt_group_detr=%d "
+                    "from tensor rows %d ÷ ckpt_num_queries=%d.",
+                    ckpt_group_detr,
+                    _n,
+                    ckpt_num_queries,
+                )
+            elif ckpt_group_detr is not None and ckpt_group_detr > 0 and _n % ckpt_group_detr == 0:
+                ckpt_num_queries = _n // ckpt_group_detr
+                logger.warning(
+                    "load_pretrain_weights: args.num_queries absent; inferred ckpt_num_queries=%d "
+                    "from tensor rows %d ÷ ckpt_group_detr=%d.",
+                    ckpt_num_queries,
+                    _n,
+                    ckpt_group_detr,
+                )
     for name in list(checkpoint["model"].keys()):
         if any(name.endswith(x) for x in _QUERY_PARAM_SUFFIXES):
             tensor = checkpoint["model"][name]
