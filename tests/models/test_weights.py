@@ -573,6 +573,66 @@ class TestSliceQueryParamPerGroup:
         assert out.shape == (4, 1)
         assert out[:, 0].tolist() == [0.0, 1.0, 2.0, 3.0]
 
+    @pytest.mark.parametrize(
+        "ckpt_nq,ckpt_g,tgt_nq,tgt_g,expected_labels",
+        [
+            pytest.param(
+                4,
+                3,
+                8,
+                3,
+                [0, 1, 2, 3, 100, 101, 102, 103, 200, 201, 202, 203],
+                id="nq_expands_g_equal",
+            ),
+            pytest.param(
+                4,
+                2,
+                4,
+                4,
+                [0, 1, 2, 3, 100, 101, 102, 103],
+                id="g_expands_nq_equal",
+            ),
+            pytest.param(
+                4,
+                3,
+                8,
+                2,
+                [0, 1, 2, 3, 100, 101, 102, 103],
+                id="nq_expands_g_shrinks",
+            ),
+            pytest.param(
+                4,
+                3,
+                2,
+                4,
+                [0, 1, 100, 101, 200, 201],
+                id="nq_shrinks_g_expands",
+            ),
+            pytest.param(
+                4,
+                3,
+                8,
+                4,
+                [0, 1, 2, 3, 100, 101, 102, 103, 200, 201, 202, 203],
+                id="both_expand",
+            ),
+        ],
+    )
+    def test_expansion_combos(
+        self,
+        ckpt_nq: int,
+        ckpt_g: int,
+        tgt_nq: int,
+        tgt_g: int,
+        expected_labels: list[int],
+    ) -> None:
+        """min(target, ckpt) along each axis produces the correct per-group prefix."""
+        from rfdetr.models.weights import _slice_query_param_per_group
+
+        tensor = _labelled_query_tensor(num_queries=ckpt_nq, group_detr=ckpt_g)
+        out = _slice_query_param_per_group(tensor, ckpt_nq, ckpt_g, tgt_nq, tgt_g)
+        assert out[:, 0].int().tolist() == expected_labels
+
     def test_num_queries_expansion_returns_smaller_tensor(self):
         """When target > ckpt, return min-per-group; load_state_dict will reject."""
         from rfdetr.models.weights import _slice_query_param_per_group
