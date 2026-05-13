@@ -454,23 +454,22 @@ def load_pretrain_weights(
         )
         if _first_query_key is not None:
             _n = checkpoint["model"][_first_query_key].shape[0]
+            _absent: str | None = None
             if ckpt_num_queries is not None and ckpt_num_queries > 0 and _n % ckpt_num_queries == 0:
                 ckpt_group_detr = _n // ckpt_num_queries
-                logger.warning(
-                    "load_pretrain_weights: args.group_detr absent; inferred ckpt_group_detr=%d "
-                    "from tensor rows %d ÷ ckpt_num_queries=%d.",
-                    ckpt_group_detr,
-                    _n,
-                    ckpt_num_queries,
-                )
+                _absent, _inferred, _known, _known_val = "group_detr", ckpt_group_detr, "num_queries", ckpt_num_queries
             elif ckpt_group_detr is not None and ckpt_group_detr > 0 and _n % ckpt_group_detr == 0:
                 ckpt_num_queries = _n // ckpt_group_detr
+                _absent, _inferred, _known, _known_val = "num_queries", ckpt_num_queries, "group_detr", ckpt_group_detr
+            if _absent is not None:
                 logger.warning(
-                    "load_pretrain_weights: args.num_queries absent; inferred ckpt_num_queries=%d "
-                    "from tensor rows %d ÷ ckpt_group_detr=%d.",
-                    ckpt_num_queries,
+                    "load_pretrain_weights: args.%s absent; inferred ckpt_%s=%d from tensor rows %d ÷ ckpt_%s=%d.",
+                    _absent,
+                    _absent,
+                    _inferred,
                     _n,
-                    ckpt_group_detr,
+                    _known,
+                    _known_val,
                 )
     # Warn once (not once per suffix key) when falling back to the legacy flat slice.
     if mc.group_detr > 1 and (ckpt_num_queries is None or ckpt_group_detr is None):
