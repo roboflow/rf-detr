@@ -582,6 +582,27 @@ class TestSliceQueryParamPerGroup:
         # min(4, 8) = 4 per group, all 3 groups → 12 rows == input length.
         assert out.shape == (12, 2)
 
+    @pytest.mark.parametrize(
+        "ckpt_nq,ckpt_g,tgt_nq,tgt_g",
+        [
+            pytest.param(0, 3, 2, 3, id="ckpt_nq=0"),
+            pytest.param(-1, 3, 2, 3, id="ckpt_nq=-1"),
+            pytest.param(4, 0, 2, 3, id="ckpt_g=0"),
+            pytest.param(4, -1, 2, 3, id="ckpt_g=-1"),
+            pytest.param(4, 3, 0, 3, id="tgt_nq=0"),
+            pytest.param(4, 3, -1, 3, id="tgt_nq=-1"),
+            pytest.param(4, 3, 2, 0, id="tgt_g=0"),
+            pytest.param(4, 3, 2, -1, id="tgt_g=-1"),
+        ],
+    )
+    def test_raises_on_non_positive_dimension(self, ckpt_nq: int, ckpt_g: int, tgt_nq: int, tgt_g: int) -> None:
+        """ValueError raised when any dimension arg is zero or negative."""
+        from rfdetr.models.weights import _slice_query_param_per_group
+
+        tensor = torch.zeros(12, 2)
+        with pytest.raises(ValueError, match="must be positive"):
+            _slice_query_param_per_group(tensor, ckpt_nq, ckpt_g, tgt_nq, tgt_g)
+
 
 class TestLoadPretrainWeightsPerGroupQuerySlice:
     """End-to-end check that ``load_pretrain_weights`` invokes per-group slicing."""
