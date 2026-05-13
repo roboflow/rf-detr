@@ -742,6 +742,47 @@ class TestLoadPretrainWeightsPerGroupQuerySlice:
         assert refpoint[:, 0].int().tolist() == expected
         assert query_feat[:, 0].int().tolist() == expected
 
+    def test_legacy_fallback_multigroup_emits_warning(self, monkeypatch) -> None:
+        """group_detr > 1 legacy checkpoint (no num_queries/group_detr in args) emits scramble-risk warning."""
+        from rfdetr.models.weights import load_pretrain_weights
+
+        mc = RFDETRBaseConfig(
+            pretrain_weights="/fake/weights.pth",
+            device="cpu",
+            num_queries=2,
+            num_select=2,
+            group_detr=3,
+        )
+        labelled_refpoint = _labelled_query_tensor(num_queries=4, group_detr=3, dim=4)
+        labelled_query_feat = _labelled_query_tensor(num_queries=4, group_detr=3, dim=256)
+        checkpoint = {
+            "model": {
+                "class_embed.weight": torch.randn(91, 256),
+                "class_embed.bias": torch.randn(91),
+                "refpoint_embed.weight": labelled_refpoint,
+                "query_feat.weight": labelled_query_feat,
+            },
+            "args": {},  # no num_queries / group_detr keys
+        }
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+
+        captured: list[str] = []
+
+        def _capture(msg: str, *args: object, **kwargs: object) -> None:
+            try:
+                captured.append(msg % args if args else msg)
+            except TypeError:
+                captured.append(msg)
+
+        monkeypatch.setattr("rfdetr.models.weights.logger.warning", _capture)
+
+        nn_model = _fake_nn_model()
+        load_pretrain_weights(nn_model, mc)
+
+        assert any("group_detr" in msg and ("scramble" in msg or "flat slice" in msg) for msg in captured), (
+            f"Expected scramble-risk warning for group_detr > 1; got: {captured}"
+        )
+
     def test_legacy_fallback_when_args_missing_num_queries_key(self, monkeypatch, tmp_path):
         """When checkpoint args dict lacks num_queries/group_detr keys, falls back to flat legacy slice."""
         from rfdetr.models.weights import load_pretrain_weights
