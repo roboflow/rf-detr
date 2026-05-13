@@ -603,7 +603,7 @@ class TestLoadPretrainWeightsPerGroupQuerySlice:
             "refpoint_embed.weight": labelled_refpoint,
             "query_feat.weight": labelled_query_feat,
         }
-        # Dict-style args (current PTL format).
+        # Dict-style args payload used to exercise the checkpoint-loading path.
         return {"model": state, "args": {"num_queries": num_queries, "group_detr": group_detr}}
 
     def test_decreasing_num_queries_preserves_per_group_structure(self, monkeypatch, tmp_path):
