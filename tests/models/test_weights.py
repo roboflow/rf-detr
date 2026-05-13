@@ -754,6 +754,8 @@ class TestLoadPretrainWeightsPerGroupQuerySlice:
         expected = [0, 1]
         assert refpoint[:, 0].int().tolist() == expected
         assert query_feat[:, 0].int().tolist() == expected
+
+
 # Partial-load detector
 # ---------------------------------------------------------------------------
 
