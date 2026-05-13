@@ -471,6 +471,15 @@ def load_pretrain_weights(
                     _n,
                     ckpt_group_detr,
                 )
+    # Warn once (not once per suffix key) when falling back to the legacy flat slice.
+    if mc.group_detr > 1 and (ckpt_num_queries is None or ckpt_group_detr is None):
+        logger.warning(
+            "load_pretrain_weights: checkpoint lacks args.num_queries / "
+            "args.group_detr; falling back to flat slice. With "
+            "group_detr=%d this may scramble per-group query structure if "
+            "the checkpoint was trained with group_detr > 1.",
+            mc.group_detr,
+        )
     for name in list(checkpoint["model"].keys()):
         if any(name.endswith(x) for x in _QUERY_PARAM_SUFFIXES):
             tensor = checkpoint["model"][name]
@@ -488,14 +497,6 @@ def load_pretrain_weights(
                 # NOTE: the flat slice is incorrect for group_detr > 1 — it scrambles
                 # groups 1+ when num_queries decreases. Legacy checkpoints predate
                 # multi-group training, so in practice they are all group_detr == 1.
-                if mc.group_detr > 1:
-                    logger.warning(
-                        "load_pretrain_weights: checkpoint lacks args.num_queries / "
-                        "args.group_detr; falling back to flat slice. With "
-                        "group_detr=%d this may scramble per-group query structure if "
-                        "the checkpoint was trained with group_detr > 1.",
-                        mc.group_detr,
-                    )
                 checkpoint["model"][name] = tensor[: mc.num_queries * mc.group_detr]
 
     interpolate_position_embeddings(checkpoint["model"], mc.positional_encoding_size)
