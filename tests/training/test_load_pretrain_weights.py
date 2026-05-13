@@ -499,7 +499,9 @@ class TestL1FacadePEInterpolationEndToEnd:
         assert default_pe.shape == torch.Size([1, default_pe_grid * default_pe_grid + 1, pe_dim])
 
         # 2. Persist as a checkpoint that mimics the official pretrain weights
-        #    (rf-detr-seg-nano.pt) — top-level "model" key, "args" with
+        #    format.  Saved as .pth (not .pt) so the tmp_path fixture path does
+        #    not trigger ModelWeights registry / MD5 lookup.  Top-level keys
+        #    match the real checkpoint: "model" (state_dict) and "args" with
         #    segmentation_head=True and patch_size=12.
         ckpt_path = tmp_path / "rf-detr-seg-nano.pth"
         torch.save(
