@@ -80,8 +80,8 @@ class TestExportOnnxNotes:
 
         model = onnx.load(output_file)
         meta = {prop.key: prop.value for prop in model.metadata_props}
-        assert "notes" in meta
-        assert meta["notes"] == expected_value
+        assert "rfdetr_notes" in meta
+        assert meta["rfdetr_notes"] == expected_value
 
     def test_string_notes_stored_verbatim_without_json_wrapping(self, tmp_path: Path) -> None:
         """Plain string notes must be stored as-is, not double-encoded as JSON."""
@@ -90,7 +90,7 @@ class TestExportOnnxNotes:
 
         model = onnx.load(output_file)
         meta = {prop.key: prop.value for prop in model.metadata_props}
-        assert meta["notes"] == "my run description"
+        assert meta["rfdetr_notes"] == "my run description"
 
     def test_dict_notes_round_trip_via_json(self, tmp_path: Path) -> None:
         """Dict notes deserialise back to the original dict via json.loads."""
@@ -99,12 +99,63 @@ class TestExportOnnxNotes:
 
         model = onnx.load(output_file)
         meta = {prop.key: prop.value for prop in model.metadata_props}
-        assert json.loads(meta["notes"]) == notes
+        assert json.loads(meta["rfdetr_notes"]) == notes
 
     def test_no_notes_metadata_when_notes_is_none(self, tmp_path: Path) -> None:
-        """When notes=None (default), no 'notes' metadata entry is written."""
+        """When notes=None (default), no 'rfdetr_notes' metadata entry is written."""
         output_file = _export_tiny_model(tmp_path, notes=None)
 
         model = onnx.load(output_file)
         meta = {prop.key: prop.value for prop in model.metadata_props}
-        assert "notes" not in meta
+        assert "rfdetr_notes" not in meta
+
+    @pytest.mark.parametrize(
+        "notes",
+        [
+            pytest.param("", id="empty_string"),
+            pytest.param({}, id="empty_dict"),
+            pytest.param([], id="empty_list"),
+            pytest.param(0, id="zero"),
+            pytest.param(False, id="false"),
+        ],
+    )
+    def test_falsy_notes_still_embedded(self, tmp_path: Path, notes: object) -> None:
+        """Falsy but non-None notes are embedded; guard is 'is not None', not truthiness."""
+        output_file = _export_tiny_model(tmp_path, notes=notes)
+
+        model = onnx.load(output_file)
+        meta = {prop.key: prop.value for prop in model.metadata_props}
+        assert "rfdetr_notes" in meta
+
+    def test_unicode_notes_stored_verbatim(self, tmp_path: Path) -> None:
+        """Unicode string notes survive the ONNX metadata round-trip unchanged."""
+        notes = "Reviewer: Łukasz · 2026-Q2 · ✅"
+        output_file = _export_tiny_model(tmp_path, notes=notes)
+
+        model = onnx.load(output_file)
+        meta = {prop.key: prop.value for prop in model.metadata_props}
+        assert meta["rfdetr_notes"] == notes
+
+    def test_nan_notes_raises_value_error(self, tmp_path: Path) -> None:
+        """Non-finite float notes raise ValueError (allow_nan=False)."""
+        with pytest.raises(ValueError):
+            _export_tiny_model(tmp_path, notes=float("nan"))
+
+    def test_notes_is_keyword_only(self, tmp_path: Path) -> None:
+        """notes must be passed as a keyword argument; positional use raises TypeError."""
+        model = _TinyModel().eval()
+        input_tensor = torch.randn(1, 3, 32, 32)
+        with pytest.raises(TypeError):
+            export_onnx(  # type: ignore[call-arg]
+                str(tmp_path),
+                model,
+                ["input"],
+                input_tensor,
+                ["output"],
+                None,
+                False,
+                False,
+                17,
+                None,
+                "positional_notes_value",
+            )

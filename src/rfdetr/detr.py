@@ -912,10 +912,12 @@ class RFDETR:
                 when *calibration_data* is a directory path.
             notes: Optional user-defined metadata (string, dict, list, or
                 any JSON-serialisable value) to embed in the exported ONNX
-                model under the ``"notes"`` metadata property.  When ``None``
-                no metadata entry is written.  The same value can be passed
-                to :meth:`train` so the checkpoint and the ONNX file share
-                the same provenance information.
+                model under the ``"rfdetr_notes"`` metadata property.  When
+                ``None`` no metadata entry is written.  String values are stored
+                verbatim; all other types are JSON-encoded so consumers must
+                call ``json.loads()`` to recover a dict or list.  The same
+                value can be passed to :meth:`train` so the checkpoint and the
+                ONNX file share the same provenance information.
         """
         logger.info("Exporting model to ONNX format")
         _valid_formats = ("onnx", "tflite")

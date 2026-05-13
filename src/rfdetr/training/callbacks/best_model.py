@@ -148,11 +148,6 @@ class BestModelCallback(ModelCheckpoint):
         version = get_version()
         if version is not None:
             payload["rfdetr_version"] = version
-        # Propagate user-supplied notes to the top level for easy retrieval.
-        # notes is also preserved inside args_dict (via TrainConfig.model_dump()).
-        notes = args_dict.get("notes") if isinstance(args_dict, dict) else None
-        if notes is not None:
-            payload["notes"] = notes
         return payload
 
     @staticmethod
