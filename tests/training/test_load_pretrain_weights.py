@@ -475,7 +475,7 @@ class TestL1FacadePEInterpolationEndToEnd:
         """Saving an RFDETRSegNano state_dict at default resolution and loading at
         a higher resolution must succeed via PE interpolation in the L1 facade.
 
-        Regression for https://github.com/roboflow/rf-detr/issues/1010 — the
+        Regression for https://github.com/roboflow/rf-detr/issues/1023 — the
         segmentation model variant (``RFDETRSegNano``) raised
         ``RuntimeError: size mismatch for
         backbone.0.encoder.encoder.embeddings.position_embeddings`` when
