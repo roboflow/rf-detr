@@ -500,6 +500,384 @@ class TestApplyLora:
 
 
 # ---------------------------------------------------------------------------
+# Per-group query embedding slicing
+# ---------------------------------------------------------------------------
+
+
+def _labelled_query_tensor(num_queries: int, group_detr: int, dim: int = 2) -> torch.Tensor:
+    """Build a query embedding tensor where row ``g * num_queries + q`` encodes
+    ``[g * 100 + q, 0, ...]``.
+
+    This lets tests check the per-group ordering of the result without floating-point
+    fuzz: the first column carries the (group, query) identity directly.
+    """
+    rows = []
+    for g in range(group_detr):
+        for q in range(num_queries):
+            rows.append([float(g * 100 + q)] + [0.0] * (dim - 1))
+    return torch.tensor(rows, dtype=torch.float32)
+
+
+class TestSliceQueryParamPerGroup:
+    """Direct unit tests for ``_slice_query_param_per_group``.
+
+    The helper is the fix for a latent bug where a flat ``tensor[:N]`` slice
+    scrambled per-group structure when ``num_queries`` decreased with
+    ``group_detr > 1``.  See the docstring in ``rfdetr.models.weights`` for the
+    ``LWDETR`` packing layout that motivates these tests.
+    """
+
+    def test_returns_input_unchanged_when_dimensions_match(self):
+        from rfdetr.models.weights import _slice_query_param_per_group
+
+        tensor = _labelled_query_tensor(num_queries=4, group_detr=3)
+        out = _slice_query_param_per_group(tensor, 4, 3, target_num_queries=4, target_group_detr=3)
+        assert out is tensor
+
+    def test_num_queries_decrease_preserves_per_group_structure(self):
+        """The bug being fixed: 4→2 queries with 3 groups must keep first 2 of each group."""
+        from rfdetr.models.weights import _slice_query_param_per_group
+
+        tensor = _labelled_query_tensor(num_queries=4, group_detr=3)
+        out = _slice_query_param_per_group(tensor, 4, 3, target_num_queries=2, target_group_detr=3)
+        # Expect rows: g0q0, g0q1, g1q0, g1q1, g2q0, g2q1 → labels 0, 1, 100, 101, 200, 201.
+        labels = out[:, 0].int().tolist()
+        assert labels == [0, 1, 100, 101, 200, 201], (
+            f"Per-group structure scrambled. A flat slice would give {tensor[:6, 0].int().tolist()}."
+        )
+
+    def test_group_detr_decrease_drops_tail_groups(self):
+        from rfdetr.models.weights import _slice_query_param_per_group
+
+        tensor = _labelled_query_tensor(num_queries=4, group_detr=3)
+        out = _slice_query_param_per_group(tensor, 4, 3, target_num_queries=4, target_group_detr=2)
+        labels = out[:, 0].int().tolist()
+        # First 2 groups, all 4 queries each.
+        assert labels == [0, 1, 2, 3, 100, 101, 102, 103]
+
+    def test_both_decrease(self):
+        from rfdetr.models.weights import _slice_query_param_per_group
+
+        tensor = _labelled_query_tensor(num_queries=4, group_detr=3)
+        out = _slice_query_param_per_group(tensor, 4, 3, target_num_queries=2, target_group_detr=2)
+        labels = out[:, 0].int().tolist()
+        assert labels == [0, 1, 100, 101]
+
+    def test_falls_back_to_flat_slice_on_inconsistent_shape(self):
+        """If args don't match the tensor's flat length, defer to legacy behavior."""
+        from rfdetr.models.weights import _slice_query_param_per_group
+
+        weird = torch.arange(7, dtype=torch.float32).unsqueeze(1)  # shape [7, 1], not 4*3=12
+        out = _slice_query_param_per_group(weird, 4, 3, target_num_queries=2, target_group_detr=2)
+        # Legacy: tensor[:4]
+        assert out.shape == (4, 1)
+        assert out[:, 0].tolist() == [0.0, 1.0, 2.0, 3.0]
+
+    @pytest.mark.parametrize(
+        "ckpt_nq,ckpt_g,tgt_nq,tgt_g,expected_labels",
+        [
+            pytest.param(
+                4,
+                3,
+                8,
+                3,
+                [0, 1, 2, 3, 100, 101, 102, 103, 200, 201, 202, 203],
+                id="nq_expands_g_equal",
+            ),
+            pytest.param(
+                4,
+                2,
+                4,
+                4,
+                [0, 1, 2, 3, 100, 101, 102, 103],
+                id="g_expands_nq_equal",
+            ),
+            pytest.param(
+                4,
+                3,
+                8,
+                2,
+                [0, 1, 2, 3, 100, 101, 102, 103],
+                id="nq_expands_g_shrinks",
+            ),
+            pytest.param(
+                4,
+                3,
+                2,
+                4,
+                [0, 1, 100, 101, 200, 201],
+                id="nq_shrinks_g_expands",
+            ),
+            pytest.param(
+                4,
+                3,
+                8,
+                4,
+                [0, 1, 2, 3, 100, 101, 102, 103, 200, 201, 202, 203],
+                id="both_expand",
+            ),
+        ],
+    )
+    def test_expansion_combos(
+        self,
+        ckpt_nq: int,
+        ckpt_g: int,
+        tgt_nq: int,
+        tgt_g: int,
+        expected_labels: list[int],
+    ) -> None:
+        """min(target, ckpt) along each axis produces the correct per-group prefix."""
+        from rfdetr.models.weights import _slice_query_param_per_group
+
+        tensor = _labelled_query_tensor(num_queries=ckpt_nq, group_detr=ckpt_g)
+        out = _slice_query_param_per_group(tensor, ckpt_nq, ckpt_g, tgt_nq, tgt_g)
+        assert out[:, 0].int().tolist() == expected_labels
+
+    def test_num_queries_expansion_returns_smaller_tensor(self):
+        """When target > ckpt, return min-per-group; load_state_dict will reject."""
+        from rfdetr.models.weights import _slice_query_param_per_group
+
+        tensor = _labelled_query_tensor(num_queries=4, group_detr=3)
+        out = _slice_query_param_per_group(tensor, 4, 3, target_num_queries=8, target_group_detr=3)
+        # min(4, 8) = 4 per group, all 3 groups → 12 rows == input length.
+        assert out.shape == (12, 2)
+
+    @pytest.mark.parametrize(
+        "ckpt_nq,ckpt_g,tgt_nq,tgt_g",
+        [
+            pytest.param(0, 3, 2, 3, id="ckpt_nq=0"),
+            pytest.param(-1, 3, 2, 3, id="ckpt_nq=-1"),
+            pytest.param(4, 0, 2, 3, id="ckpt_g=0"),
+            pytest.param(4, -1, 2, 3, id="ckpt_g=-1"),
+            pytest.param(4, 3, 0, 3, id="tgt_nq=0"),
+            pytest.param(4, 3, -1, 3, id="tgt_nq=-1"),
+            pytest.param(4, 3, 2, 0, id="tgt_g=0"),
+            pytest.param(4, 3, 2, -1, id="tgt_g=-1"),
+        ],
+    )
+    def test_raises_on_non_positive_dimension(self, ckpt_nq: int, ckpt_g: int, tgt_nq: int, tgt_g: int) -> None:
+        """ValueError raised when any dimension arg is zero or negative."""
+        from rfdetr.models.weights import _slice_query_param_per_group
+
+        tensor = torch.zeros(12, 2)
+        with pytest.raises(ValueError, match="must be positive"):
+            _slice_query_param_per_group(tensor, ckpt_nq, ckpt_g, tgt_nq, tgt_g)
+
+
+class TestLoadPretrainWeightsPerGroupQuerySlice:
+    """End-to-end check that ``load_pretrain_weights`` invokes per-group slicing."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_io(self, monkeypatch):
+        monkeypatch.setattr("rfdetr.models.weights.download_pretrain_weights", lambda *a, **kw: None)
+        monkeypatch.setattr("rfdetr.models.weights.validate_pretrain_weights", lambda *a, **kw: None)
+        monkeypatch.setattr("rfdetr.models.weights.validate_checkpoint_compatibility", lambda *a, **kw: None)
+        monkeypatch.setattr("rfdetr.models.weights.os.path.isfile", lambda _: True)
+
+    def _make_args_dict_checkpoint(self, num_queries: int, group_detr: int) -> dict:
+        """Build a checkpoint with labelled query weights and dict-style args."""
+        labelled_refpoint = _labelled_query_tensor(num_queries, group_detr, dim=4)
+        labelled_query_feat = _labelled_query_tensor(num_queries, group_detr, dim=256)
+        state = {
+            "class_embed.weight": torch.randn(91, 256),
+            "class_embed.bias": torch.randn(91),
+            "refpoint_embed.weight": labelled_refpoint,
+            "query_feat.weight": labelled_query_feat,
+        }
+        # Dict-style args payload used to exercise the checkpoint-loading path.
+        return {"model": state, "args": {"num_queries": num_queries, "group_detr": group_detr}}
+
+    def test_decreasing_num_queries_preserves_per_group_structure(self, monkeypatch, tmp_path):
+        """Real flow: checkpoint(nq=4, g=3) → model(nq=2, g=3). Group structure must be preserved."""
+        from rfdetr.models.weights import load_pretrain_weights
+
+        mc = RFDETRBaseConfig(
+            pretrain_weights="/fake/weights.pth",
+            device="cpu",
+            num_queries=2,
+            num_select=2,
+            group_detr=3,
+        )
+        checkpoint = self._make_args_dict_checkpoint(num_queries=4, group_detr=3)
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+
+        nn_model = _fake_nn_model()
+        load_pretrain_weights(nn_model, mc)
+
+        passed_state = nn_model.load_state_dict.call_args[0][0]
+        refpoint = passed_state["refpoint_embed.weight"]
+        query_feat = passed_state["query_feat.weight"]
+        expected = [0, 1, 100, 101, 200, 201]
+        # First column carries (group, query) identity (see _labelled_query_tensor).
+        assert refpoint[:, 0].int().tolist() == expected, (
+            "Per-group structure was not preserved in refpoint_embed.weight."
+        )
+        assert query_feat[:, 0].int().tolist() == expected, (
+            "Per-group structure was not preserved in query_feat.weight."
+        )
+
+    def test_legacy_checkpoint_without_args_falls_back_to_flat_slice(self, monkeypatch, tmp_path):
+        """No ``args`` in checkpoint → preserve the legacy flat slice (backward compat)."""
+        from rfdetr.models.weights import load_pretrain_weights
+
+        mc = RFDETRBaseConfig(
+            pretrain_weights="/fake/weights.pth",
+            device="cpu",
+            num_queries=2,
+            num_select=2,
+            group_detr=3,
+        )
+        checkpoint = self._make_args_dict_checkpoint(num_queries=4, group_detr=3)
+        del checkpoint["args"]  # legacy
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+
+        nn_model = _fake_nn_model()
+        load_pretrain_weights(nn_model, mc)
+
+        passed_state = nn_model.load_state_dict.call_args[0][0]
+        refpoint = passed_state["refpoint_embed.weight"]
+        query_feat = passed_state["query_feat.weight"]
+        # Legacy flat slice: first 2*3=6 rows of the original 12.  Original rows
+        # are labelled 0,1,2,3,100,101,102,103,200,201,202,203 → first 6 are
+        # 0,1,2,3,100,101.
+        expected = [0, 1, 2, 3, 100, 101]
+        assert refpoint[:, 0].int().tolist() == expected
+        assert query_feat[:, 0].int().tolist() == expected
+
+    def test_decreasing_group_detr_drops_tail_groups(self, monkeypatch, tmp_path):
+        """checkpoint(nq=4, g=3) → model(nq=4, g=2): tail group dropped, retained groups intact."""
+        from rfdetr.models.weights import load_pretrain_weights
+
+        mc = RFDETRBaseConfig(
+            pretrain_weights="/fake/weights.pth",
+            device="cpu",
+            num_queries=4,
+            num_select=4,
+            group_detr=2,
+        )
+        checkpoint = self._make_args_dict_checkpoint(num_queries=4, group_detr=3)
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+
+        nn_model = _fake_nn_model()
+        load_pretrain_weights(nn_model, mc)
+
+        passed_state = nn_model.load_state_dict.call_args[0][0]
+        refpoint = passed_state["refpoint_embed.weight"]
+        query_feat = passed_state["query_feat.weight"]
+        expected = [0, 1, 2, 3, 100, 101, 102, 103]
+        assert refpoint[:, 0].int().tolist() == expected
+        assert query_feat[:, 0].int().tolist() == expected
+
+    def test_decreasing_num_queries_namespace_args(self, monkeypatch, tmp_path):
+        """Namespace-style args in checkpoint trigger per-group slice identical to dict-style."""
+        from rfdetr.models.weights import load_pretrain_weights
+
+        mc = RFDETRBaseConfig(
+            pretrain_weights="/fake/weights.pth",
+            device="cpu",
+            num_queries=2,
+            num_select=2,
+            group_detr=3,
+        )
+        labelled_refpoint = _labelled_query_tensor(num_queries=4, group_detr=3, dim=4)
+        labelled_query_feat = _labelled_query_tensor(num_queries=4, group_detr=3, dim=256)
+        checkpoint = {
+            "model": {
+                "class_embed.weight": torch.randn(91, 256),
+                "class_embed.bias": torch.randn(91),
+                "refpoint_embed.weight": labelled_refpoint,
+                "query_feat.weight": labelled_query_feat,
+            },
+            "args": SimpleNamespace(num_queries=4, group_detr=3),
+        }
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+
+        nn_model = _fake_nn_model()
+        load_pretrain_weights(nn_model, mc)
+
+        passed_state = nn_model.load_state_dict.call_args[0][0]
+        refpoint = passed_state["refpoint_embed.weight"]
+        query_feat = passed_state["query_feat.weight"]
+        expected = [0, 1, 100, 101, 200, 201]
+        assert refpoint[:, 0].int().tolist() == expected
+        assert query_feat[:, 0].int().tolist() == expected
+
+    def test_legacy_fallback_multigroup_emits_warning(self, monkeypatch) -> None:
+        """group_detr > 1 legacy checkpoint (no num_queries/group_detr in args) emits scramble-risk warning."""
+        from rfdetr.models.weights import load_pretrain_weights
+
+        mc = RFDETRBaseConfig(
+            pretrain_weights="/fake/weights.pth",
+            device="cpu",
+            num_queries=2,
+            num_select=2,
+            group_detr=3,
+        )
+        labelled_refpoint = _labelled_query_tensor(num_queries=4, group_detr=3, dim=4)
+        labelled_query_feat = _labelled_query_tensor(num_queries=4, group_detr=3, dim=256)
+        checkpoint = {
+            "model": {
+                "class_embed.weight": torch.randn(91, 256),
+                "class_embed.bias": torch.randn(91),
+                "refpoint_embed.weight": labelled_refpoint,
+                "query_feat.weight": labelled_query_feat,
+            },
+            "args": {},  # no num_queries / group_detr keys
+        }
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+
+        captured: list[str] = []
+
+        def _capture(msg: str, *args: object, **kwargs: object) -> None:
+            try:
+                captured.append(msg % args if args else msg)
+            except TypeError:
+                captured.append(msg)
+
+        monkeypatch.setattr("rfdetr.models.weights.logger.warning", _capture)
+
+        nn_model = _fake_nn_model()
+        load_pretrain_weights(nn_model, mc)
+
+        assert any("group_detr" in msg and ("scramble" in msg or "flat slice" in msg) for msg in captured), (
+            f"Expected scramble-risk warning for group_detr > 1; got: {captured}"
+        )
+
+    def test_legacy_fallback_when_args_missing_num_queries_key(self, monkeypatch, tmp_path):
+        """When checkpoint args dict lacks num_queries/group_detr keys, falls back to flat legacy slice."""
+        from rfdetr.models.weights import load_pretrain_weights
+
+        mc = RFDETRBaseConfig(
+            pretrain_weights="/fake/weights.pth",
+            device="cpu",
+            num_queries=2,
+            num_select=2,
+            group_detr=1,
+        )
+        labelled_refpoint = _labelled_query_tensor(num_queries=4, group_detr=1, dim=4)
+        labelled_query_feat = _labelled_query_tensor(num_queries=4, group_detr=1, dim=256)
+        checkpoint = {
+            "model": {
+                "class_embed.weight": torch.randn(91, 256),
+                "class_embed.bias": torch.randn(91),
+                "refpoint_embed.weight": labelled_refpoint,
+                "query_feat.weight": labelled_query_feat,
+            },
+            "args": {},
+        }
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+
+        nn_model = _fake_nn_model()
+        load_pretrain_weights(nn_model, mc)
+
+        passed_state = nn_model.load_state_dict.call_args[0][0]
+        refpoint = passed_state["refpoint_embed.weight"]
+        query_feat = passed_state["query_feat.weight"]
+        expected = [0, 1]
+        assert refpoint[:, 0].int().tolist() == expected
+        assert query_feat[:, 0].int().tolist() == expected
+
+
 # Partial-load detector
 # ---------------------------------------------------------------------------
 
