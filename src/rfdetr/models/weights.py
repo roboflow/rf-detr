@@ -90,6 +90,10 @@ def _slice_query_param_per_group(
         A tensor whose layout matches the model's configured packing for the
         decrease-or-equal cases, or a smaller per-group sub-tensor for the
         expansion case (which ``load_state_dict`` will then reject).
+
+    Raises:
+        ValueError: If any of ``ckpt_num_queries``, ``ckpt_group_detr``,
+            ``target_num_queries``, or ``target_group_detr`` is ≤ 0.
     """
     if ckpt_num_queries <= 0 or ckpt_group_detr <= 0 or target_num_queries <= 0 or target_group_detr <= 0:
         raise ValueError(
