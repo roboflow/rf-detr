@@ -673,6 +673,16 @@ class TrainConfig(BaseModel):
     aug_config: Optional[Dict[str, Any]] = None
     augmentation_backend: Literal["cpu", "auto", "gpu"] = "cpu"
     save_dataset_grids: bool = False
+    notes: Optional[Any] = Field(
+        default=None,
+        description=(
+            "User-defined provenance metadata embedded in best-model .pth checkpoints "
+            "under checkpoint['args']['notes'] and in exported ONNX files under the "
+            "'rfdetr_notes' metadata property. Accepts any JSON-serialisable value "
+            "(string, dict, list, int, float, bool). String values are stored verbatim; "
+            "all other types are JSON-encoded."
+        ),
+    )
 
     @model_validator(mode="after")
     def _warn_deprecated_train_config_fields(self) -> "TrainConfig":

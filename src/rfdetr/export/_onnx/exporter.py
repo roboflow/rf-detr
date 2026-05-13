@@ -12,6 +12,7 @@ ONNX export, simplification, and OnnxOptimizer.
 """
 
 import inspect
+import json
 import os
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
@@ -62,6 +63,8 @@ def export_onnx(
     verbose: bool = True,
     opset_version: int = 17,
     variant_name: str | None = None,
+    *,
+    notes: object = None,
 ) -> str:
     """Export a model to ONNX.
 
@@ -79,6 +82,11 @@ def export_onnx(
             When provided, the exported file is named ``{variant_name}.onnx`` or
             ``{variant_name}-backbone.onnx`` (when ``backbone_only=True``) instead
             of the generic ``inference_model.onnx`` or ``backbone_model.onnx``.
+        notes: Optional user-defined metadata (string, dict, list, or any
+            JSON-serialisable value) to embed in the exported ONNX model under
+            the ``"rfdetr_notes"`` metadata property.  Ignored when ``None``.
+            String values are stored verbatim; all other types are JSON-encoded,
+            so consumers must call ``json.loads()`` to recover a dict or list.
 
     Returns:
         Path to the exported ONNX model.
@@ -115,6 +123,22 @@ def export_onnx(
         dynamic_axes=dynamic_axes,
         **export_kwargs,
     )
+
+    if notes is not None and onnx is not None:
+        # torch.onnx.export writes to disk only; no in-memory handle is available,
+        # so we reload and resave to inject metadata (~1-2 s on large models).
+        onnx_model = onnx.load(output_file)
+        # Strings stored as-is so readers can consume without JSON-decoding;
+        # non-strings go through json.dumps to survive the round-trip.
+        notes_value = notes if isinstance(notes, str) else json.dumps(notes, allow_nan=False)
+        existing = next((p for p in onnx_model.metadata_props if p.key == "rfdetr_notes"), None)
+        if existing is not None:
+            existing.value = notes_value
+        else:
+            meta = onnx_model.metadata_props.add()
+            meta.key = "rfdetr_notes"
+            meta.value = notes_value
+        onnx.save(onnx_model, output_file)
 
     logger.info(f"\nSuccessfully exported ONNX model: {output_file}")
     return output_file
