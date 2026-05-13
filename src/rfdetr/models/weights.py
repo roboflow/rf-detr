@@ -427,8 +427,18 @@ def load_pretrain_weights(
     # structure when the checkpoint records its training-time num_queries / group_detr.
     # See _slice_query_param_per_group for why a flat slice is wrong with group_detr > 1.
     ckpt_args = checkpoint.get("args")
-    ckpt_num_queries = _ckpt_args_get(ckpt_args, "num_queries") if ckpt_args is not None else None
-    ckpt_group_detr = _ckpt_args_get(ckpt_args, "group_detr") if ckpt_args is not None else None
+    ckpt_num_queries_raw = _ckpt_args_get(ckpt_args, "num_queries") if ckpt_args is not None else None
+    ckpt_group_detr_raw = _ckpt_args_get(ckpt_args, "group_detr") if ckpt_args is not None else None
+    try:
+        ckpt_num_queries = int(ckpt_num_queries_raw) if ckpt_num_queries_raw is not None else None
+        ckpt_group_detr = int(ckpt_group_detr_raw) if ckpt_group_detr_raw is not None else None
+    except (TypeError, ValueError):
+        logger.warning(
+            "load_pretrain_weights: checkpoint args.num_queries / args.group_detr not coercible "
+            "to int; falling back to legacy flat slice."
+        )
+        ckpt_num_queries = None
+        ckpt_group_detr = None
     for name in list(checkpoint["model"].keys()):
         if any(name.endswith(x) for x in _QUERY_PARAM_SUFFIXES):
             tensor = checkpoint["model"][name]
