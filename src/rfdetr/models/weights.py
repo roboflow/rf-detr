@@ -145,8 +145,7 @@ def _filter_intentional_keys(keys: list[str]) -> list[str]:
     intentional_patterns: tuple[str, ...] = (
         "class_embed.",
         "bbox_embed.",
-        "refpoint_embed.weight",
-        "query_feat.weight",
+        *_QUERY_PARAM_SUFFIXES,
         "enc_out_class_embed.",
         "enc_out_bbox_embed.",
     )
