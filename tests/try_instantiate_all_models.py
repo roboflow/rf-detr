@@ -36,13 +36,13 @@ from rfdetr import (
     RFDETRSegSmall,
     RFDETRSegXLarge,
     RFDETRSmall,
-    RFDETRXLarge,
 )
 
 try:
-    from rfdetr import RFDETR2XLarge
+    from rfdetr import RFDETR2XLarge, RFDETRXLarge
 except ImportError:
     RFDETR2XLarge = None
+    RFDETRXLarge = None
 
 # Explicitly list all models to validate
 MODELS_TO_TEST = [
@@ -51,7 +51,6 @@ MODELS_TO_TEST = [
     RFDETRSmall,
     RFDETRMedium,
     RFDETRLarge,
-    partial(RFDETRXLarge, accept_platform_model_license=True),
     # Segmentation Models
     RFDETRSegNano,
     RFDETRSegSmall,
@@ -61,8 +60,14 @@ MODELS_TO_TEST = [
     RFDETRSeg2XLarge,
 ]
 
+if RFDETRXLarge is not None:
+    MODELS_TO_TEST.append(partial(RFDETRXLarge, accept_platform_model_license=True))
 if RFDETR2XLarge is not None:
     MODELS_TO_TEST.append(partial(RFDETR2XLarge, accept_platform_model_license=True))
+
+# 1008 = LCM(12, 16) × 21: valid for all patch sizes (PE=63 for det ÷16, PE=84 for seg ÷12).
+# Each model is tested at its default resolution and at 1008 (regression #1038).
+_CUSTOM_RESOLUTION = 1008
 
 
 def _test_from_checkpoint(model_instance: object, actual_cls: type, extra_kwargs: dict) -> None:
@@ -115,37 +120,38 @@ def main() -> None:
 
     failed_models = []
 
-    # Progress bar for all models
     pbar = tqdm(MODELS_TO_TEST, desc="Testing models", unit="model")
     for model_class in pbar:
-        # Handle partial-wrapped classes
-        actual_cls = model_class.func if isinstance(model_class, partial) else model_class
-        extra_kwargs = model_class.keywords if isinstance(model_class, partial) else {}
-        model_name = actual_cls.size
-        pbar.set_description(f"Testing {model_name}")
+        base_name = model_class.func.size if isinstance(model_class, partial) else model_class.size
+        for res in (None, _CUSTOM_RESOLUTION):
+            # Handle partial-wrapped classes
+            actual_cls = model_class.func if isinstance(model_class, partial) else model_class
+            extra_kwargs = model_class.keywords if isinstance(model_class, partial) else {}
+            model_name = base_name if res is None else f"{base_name}@{res}"
+            model_cls = actual_cls if res is None else partial(actual_cls, resolution=res)
+            pbar.set_description(f"Testing {model_name}")
+            try:
+                # Instantiate model class - triggers download, MD5 validation, and loading
+                model_instance = model_class()
 
-        try:
-            # Instantiate model class - triggers download, MD5 validation, and loading
-            model_instance = model_class()
+                # Verify model was created
+                assert model_instance is not None, "Model instance is None"
+                assert hasattr(model_instance, "model"), "Model missing 'model' attribute"
 
-            # Verify model was created
-            assert model_instance is not None, "Model instance is None"
-            assert hasattr(model_instance, "model"), "Model missing 'model' attribute"
+                # from_checkpoint round-trip: save a training-style checkpoint and reload it
+                _test_from_checkpoint(model_instance, model_cls, extra_kwargs)
 
-            # from_checkpoint round-trip: save a training-style checkpoint and reload it
-            _test_from_checkpoint(model_instance, actual_cls, extra_kwargs)
-
-        except Exception as ex:
-            failed_models.append((model_name, str(ex)))
+            except Exception as ex:
+                failed_models.append((model_name, str(ex)))
 
     pbar.close()
 
     # Summary
-    total = len(MODELS_TO_TEST)
+    total = len(MODELS_TO_TEST) * 2
     print("\nResults:")
-    print(f"  Total:     {total}")
-    print(f"  Succeeded: {total - len(failed_models)}")
-    print(f"  Failed:    {len(failed_models)}")
+    print(f"\tTotal:\t{total}")
+    print(f"\tSucceeded:\t{total - len(failed_models)}")
+    print(f"\tFailed:\t{len(failed_models)}")
 
     if failed_models:
         print("\nFailed models:")
