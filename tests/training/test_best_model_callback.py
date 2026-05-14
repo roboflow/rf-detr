@@ -1540,3 +1540,108 @@ class TestBestEmaStatePersistence:
         cb2.load_state_dict(sd)
 
         assert cb2._best_ema == 0.0
+
+
+# ---------------------------------------------------------------------------
+# TestCheckpointNotes
+# ---------------------------------------------------------------------------
+
+
+class TestCheckpointNotes:
+    """Verify user-supplied notes are persisted in .pth checkpoint files."""
+
+    @pytest.mark.parametrize(
+        "notes",
+        [
+            pytest.param("simple string", id="string"),
+            pytest.param({"date": "2026-01-01", "labeller": "Alice"}, id="dict"),
+            pytest.param(["class_a", "class_b"], id="list"),
+            pytest.param(42, id="int"),
+        ],
+    )
+    def test_notes_accessible_via_args_dict(self, tmp_path: Path, notes: object) -> None:
+        """Notes supplied via TrainConfig are accessible under checkpoint['args']['notes']."""
+        from rfdetr.config import TrainConfig
+
+        cb = BestModelCallback(output_dir=str(tmp_path))
+        trainer = _make_trainer({"val/mAP_50_95": 0.5})
+
+        pl_module = _make_pl_module()
+        pl_module.train_config = TrainConfig(dataset_dir=str(tmp_path / "ds"), tensorboard=False, notes=notes)
+
+        cb.on_validation_end(trainer, pl_module)
+
+        checkpoint = torch.load(
+            tmp_path / "checkpoint_best_regular.pth",
+            map_location="cpu",
+            weights_only=False,
+        )
+        assert checkpoint["args"]["notes"] == notes
+
+    def test_notes_also_preserved_in_args_dict(self, tmp_path: Path) -> None:
+        """Notes are also accessible inside checkpoint['args']['notes'] via TrainConfig dump."""
+        from rfdetr.config import TrainConfig
+
+        notes = {"project": "ceramics", "batch": 7}
+        cb = BestModelCallback(output_dir=str(tmp_path))
+        trainer = _make_trainer({"val/mAP_50_95": 0.5})
+
+        pl_module = _make_pl_module()
+        pl_module.train_config = TrainConfig(dataset_dir=str(tmp_path / "ds"), tensorboard=False, notes=notes)
+
+        cb.on_validation_end(trainer, pl_module)
+
+        checkpoint = torch.load(
+            tmp_path / "checkpoint_best_regular.pth",
+            map_location="cpu",
+            weights_only=False,
+        )
+        assert checkpoint["args"]["notes"] == notes
+
+    def test_notes_absent_when_not_provided(self, tmp_path: Path) -> None:
+        """When notes=None (default), no top-level 'notes' key is written to checkpoint."""
+        from rfdetr.config import TrainConfig
+
+        cb = BestModelCallback(output_dir=str(tmp_path))
+        trainer = _make_trainer({"val/mAP_50_95": 0.5})
+
+        pl_module = _make_pl_module()
+        pl_module.train_config = TrainConfig(dataset_dir=str(tmp_path / "ds"), tensorboard=False)
+
+        cb.on_validation_end(trainer, pl_module)
+
+        checkpoint = torch.load(
+            tmp_path / "checkpoint_best_regular.pth",
+            map_location="cpu",
+            weights_only=False,
+        )
+        assert "notes" not in checkpoint
+
+    @pytest.mark.parametrize(
+        "notes",
+        [
+            pytest.param("", id="empty_string"),
+            pytest.param({}, id="empty_dict"),
+            pytest.param([], id="empty_list"),
+            pytest.param(0, id="zero"),
+            pytest.param(False, id="false"),
+        ],
+    )
+    def test_falsy_notes_stored_in_args_dict(self, tmp_path: Path, notes: object) -> None:
+        """Falsy but non-None notes values are preserved in checkpoint['args']['notes']."""
+        from rfdetr.config import TrainConfig
+
+        cb = BestModelCallback(output_dir=str(tmp_path))
+        trainer = _make_trainer({"val/mAP_50_95": 0.5})
+
+        pl_module = _make_pl_module()
+        pl_module.train_config = TrainConfig(dataset_dir=str(tmp_path / "ds"), tensorboard=False, notes=notes)
+
+        cb.on_validation_end(trainer, pl_module)
+
+        checkpoint = torch.load(
+            tmp_path / "checkpoint_best_regular.pth",
+            map_location="cpu",
+            weights_only=False,
+        )
+        assert checkpoint["args"]["notes"] == notes

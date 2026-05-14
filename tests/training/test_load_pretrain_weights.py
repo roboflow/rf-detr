@@ -412,6 +412,14 @@ class TestL1FacadePEInterpolationEndToEnd:
     from ``models.weights``).  This test pins that wiring so a future refactor
     cannot reintroduce a divergent loader path that silently skips PE
     interpolation.
+
+    Current coverage: ``RFDETRNano`` (detection) and ``RFDETRSegNano``
+    (segmentation), upward-interpolation only.  When a third L1 facade variant
+    is added, collapse both methods to a single ``@pytest.mark.parametrize``
+    over ``(variant_class, default_pe_grid, patch_size, new_resolution)``.
+    Downward-interpolation (high-res checkpoint → lower-res model) is not
+    currently exercised; add a reverse-direction parametrize row when
+    refactoring.
     """
 
     def test_rfdetr_nano_loads_default_pe_checkpoint_at_custom_resolution(self, tmp_path):
@@ -464,6 +472,78 @@ class TestL1FacadePEInterpolationEndToEnd:
         #    interpolated target shape (40 × 40 + 1 = 1601 tokens).
         expected_pe_grid = new_resolution // patch_size
         assert expected_pe_grid == 40
+        assert loaded.model_config.positional_encoding_size == expected_pe_grid
+        loaded_pe = loaded.model.model.state_dict()[PE_KEY]
+        assert loaded_pe.shape == torch.Size([1, expected_pe_grid * expected_pe_grid + 1, pe_dim]), (
+            f"Backbone PE was not interpolated to the requested resolution; "
+            f"got shape {tuple(loaded_pe.shape)}, expected [1, {expected_pe_grid**2 + 1}, {pe_dim}]."
+        )
+
+    def test_rfdetr_seg_nano_loads_default_pe_checkpoint_at_custom_resolution(self, tmp_path):
+        """Saving an RFDETRSegNano state_dict at default resolution and loading at
+        a higher resolution must succeed via PE interpolation in the L1 facade.
+
+        Regression for https://github.com/roboflow/rf-detr/issues/1023 — the
+        segmentation model variant (``RFDETRSegNano``) raised
+        ``RuntimeError: size mismatch for
+        backbone.0.encoder.encoder.embeddings.position_embeddings`` when
+        instantiated with a non-default ``resolution`` because the L1 facade's
+        checkpoint-loading path did not interpolate positional embeddings for
+        segmentation models.
+        """
+        from rfdetr import RFDETRSegNano
+
+        # 1. Build a default-resolution RFDETRSegNano (no pretrain, on CPU).
+        #    Uses 90 classes to mimic an official COCO-pretrained checkpoint so
+        #    the load path at step 3 exercises both head-reinit (90 → 2 classes)
+        #    and PE interpolation simultaneously.
+        default_model = RFDETRSegNano(pretrain_weights=None, num_classes=90, device="cpu")
+        default_pe_grid = default_model.model_config.positional_encoding_size
+        assert default_pe_grid == 26, "RFDETRSegNano default PE grid must be 26×26 (312 // 12)"
+        patch_size = default_model.model_config.patch_size
+        assert patch_size == 12, "RFDETRSegNano patch_size must be 12"
+        default_state = default_model.model.model.state_dict()
+        default_pe = default_state[PE_KEY]
+        pe_dim = default_pe.shape[-1]
+        assert default_pe.shape == torch.Size([1, default_pe_grid * default_pe_grid + 1, pe_dim])
+
+        # 2. Persist as a checkpoint that mimics the official pretrain weights
+        #    format.  Saved as .pth (not .pt) so the tmp_path fixture path does
+        #    not trigger ModelWeights registry / MD5 lookup.  Top-level keys
+        #    match the real checkpoint: "model" (state_dict) and "args" with
+        #    segmentation_head=True and patch_size=12.
+        ckpt_path = tmp_path / "rf-detr-seg-nano.pth"
+        torch.save(
+            {
+                "model": dict(default_state),
+                "args": SimpleNamespace(
+                    class_names=[],
+                    patch_size=patch_size,
+                    segmentation_head=True,
+                ),
+            },
+            ckpt_path,
+        )
+
+        # 3. Re-instantiate at a custom resolution with fewer classes.  Without
+        #    PE interpolation this raises
+        #    ``RuntimeError: size mismatch for
+        #    backbone.0.encoder.encoder.embeddings.position_embeddings``
+        #    from LWDETR.load_state_dict — exactly the user-reported failure.
+        # resolution=1008 (user-reported in #1023, 84×84=7057 tokens) is deferred to follow-up parametrization.
+        new_resolution = 624  # 2× the default 312; divisible by patch_size=12
+        loaded = RFDETRSegNano(
+            pretrain_weights=str(ckpt_path),
+            resolution=new_resolution,
+            num_classes=2,
+            device="cpu",
+        )
+
+        # 4. The model_config validator must update PE proportionally to the
+        #    new resolution, and the loaded backbone PE parameter must have the
+        #    interpolated target shape (52 × 52 + 1 = 2705 tokens).
+        expected_pe_grid = new_resolution // patch_size
+        assert expected_pe_grid == 52
         assert loaded.model_config.positional_encoding_size == expected_pe_grid
         loaded_pe = loaded.model.model.state_dict()[PE_KEY]
         assert loaded_pe.shape == torch.Size([1, expected_pe_grid * expected_pe_grid + 1, pe_dim]), (
