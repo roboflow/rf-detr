@@ -23,6 +23,7 @@ from rfdetr.assets.model_weights import download_pretrain_weights, validate_pret
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.datasets.coco import compute_multi_scale_scales
 from rfdetr.models.lwdetr import build_criterion_and_postprocessors, build_model
+from rfdetr.models.weights import _interpolate_position_embeddings
 from rfdetr.training.param_groups import get_param_dict
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.state_dict import validate_checkpoint_compatibility
@@ -163,6 +164,7 @@ class RFDETRModelModule(LightningModule):
             if any(name.endswith(x) for x in query_param_names):
                 checkpoint["model"][name] = checkpoint["model"][name][:num_desired_queries]
 
+        _interpolate_position_embeddings(checkpoint["model"], mc.positional_encoding_size)
         self.model.load_state_dict(checkpoint["model"], strict=False)
 
         # If the user explicitly set a class count larger than the checkpoint,

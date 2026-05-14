@@ -31,13 +31,13 @@ from rfdetr import (
     RFDETRSegSmall,
     RFDETRSegXLarge,
     RFDETRSmall,
-    RFDETRXLarge,
 )
 
 try:
-    from rfdetr import RFDETR2XLarge
+    from rfdetr import RFDETR2XLarge, RFDETRXLarge
 except ImportError:
     RFDETR2XLarge = None
+    RFDETRXLarge = None
 
 # Explicitly list all models to validate
 MODELS_TO_TEST = [
@@ -46,7 +46,6 @@ MODELS_TO_TEST = [
     RFDETRSmall,
     RFDETRMedium,
     RFDETRLarge,
-    partial(RFDETRXLarge, accept_platform_model_license=True),
     # Segmentation Models
     RFDETRSegNano,
     RFDETRSegSmall,
@@ -56,8 +55,14 @@ MODELS_TO_TEST = [
     RFDETRSeg2XLarge,
 ]
 
+if RFDETRXLarge is not None:
+    MODELS_TO_TEST.append(partial(RFDETRXLarge, accept_platform_model_license=True))
 if RFDETR2XLarge is not None:
     MODELS_TO_TEST.append(partial(RFDETR2XLarge, accept_platform_model_license=True))
+
+# 1008 = LCM(12, 16) × 21: valid for all patch sizes (PE=63 for det ÷16, PE=84 for seg ÷12).
+# Each model is tested at its default resolution and at 1008 (regression #1038).
+_CUSTOM_RESOLUTION = 1008
 
 
 def main() -> None:
@@ -66,31 +71,32 @@ def main() -> None:
 
     failed_models = []
 
-    # Progress bar for all models
     pbar = tqdm(MODELS_TO_TEST, desc="Testing models", unit="model")
     for model_class in pbar:
-        # Handle partial-wrapped classes
-        model_name = model_class.func.size if isinstance(model_class, partial) else model_class.size
-        pbar.set_description(f"Testing {model_name}")
+        base_name = model_class.func.size if isinstance(model_class, partial) else model_class.size
+        for res in (None, _CUSTOM_RESOLUTION):
+            model_name = base_name if res is None else f"{base_name}@{res}"
+            cls = model_class if res is None else partial(model_class, resolution=res)
+            pbar.set_description(f"Testing {model_name}")
+            try:
+                # Instantiate model class - triggers download, MD5 validation, and loading
+                model_instance = cls()
 
-        try:
-            # Instantiate model class - triggers download, MD5 validation, and loading
-            model_instance = model_class()
+                # Verify model was created
+                assert model_instance is not None, "Model instance is None"
+                assert hasattr(model_instance, "model"), "Model missing 'model' attribute"
 
-            # Verify model was created
-            assert model_instance is not None, "Model instance is None"
-            assert hasattr(model_instance, "model"), "Model missing 'model' attribute"
-
-        except Exception as ex:
-            failed_models.append((model_name, str(ex)))
+            except Exception as ex:
+                failed_models.append((model_name, str(ex)))
 
     pbar.close()
 
     # Summary
+    total = len(MODELS_TO_TEST) * 2
     print("\nResults:")
-    print(f"  Total:     {len(MODELS_TO_TEST)}")
-    print(f"  Succeeded: {len(MODELS_TO_TEST) - len(failed_models)}")
-    print(f"  Failed:    {len(failed_models)}")
+    print(f"\tTotal:\t{total}")
+    print(f"\tSucceeded:\t{total - len(failed_models)}")
+    print(f"\tFailed:\t{len(failed_models)}")
 
     if failed_models:
         print("\nFailed models:")
