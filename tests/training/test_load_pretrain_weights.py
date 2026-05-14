@@ -711,7 +711,7 @@ class TestModuleLoadPretrainWeightsPEInterpolation:
 # ---------------------------------------------------------------------------
 
 
-class TestModuleLoadPretrainWeightsPEInterpolation:
+class TestModuleLoadPretrainWeightsPEInterpolationCustomResolution:
     """Regression for #1038 — PE interpolation missing from the training path.
 
     ``RFDETRModelModule._load_pretrain_weights`` must bicubic-interpolate the
