@@ -34,13 +34,8 @@ from rfdetr import (
     RFDETRXLarge,
 )
 
-try:
-    from rfdetr.config import RFDETRSegLargeConfig, RFDETRSegNanoConfig, TrainConfig
-    from rfdetr.training.module_model import RFDETRModelModule
-
-    _TRAINING_DEPS_AVAILABLE = True
-except ImportError:
-    _TRAINING_DEPS_AVAILABLE = False
+from rfdetr.config import RFDETRSegLargeConfig, RFDETRSegNanoConfig, TrainConfig
+from rfdetr.training.module_model import RFDETRModelModule
 
 try:
     from rfdetr import RFDETR2XLarge
@@ -72,13 +67,10 @@ if RFDETR2XLarge is not None:
 # the checkpoint PE to match positional_encoding_size before load_state_dict.
 # (name, config_cls, resolution) — resolution differs from each model's default.
 # Empty when pytorch_lightning is not installed (e.g. integration workflow with .[plus] only).
-if _TRAINING_DEPS_AVAILABLE:
-    TRAINING_PATH_RESOLUTION_TESTS: list[tuple] = [
-        ("RFDETRSegNano@1008", RFDETRSegNanoConfig, 1008),  # default PE=26 (312/12), target PE=84 (1008/12)
-        ("RFDETRSegLarge@1008", RFDETRSegLargeConfig, 1008),  # default PE=42 (504/12), target PE=84 (1008/12)
-    ]
-else:
-    TRAINING_PATH_RESOLUTION_TESTS: list[tuple] = []
+TRAINING_PATH_RESOLUTION_TESTS: list[tuple] = [
+    ("RFDETRSegNano@1008", RFDETRSegNanoConfig, 1008),  # default PE=26 (312/12), target PE=84 (1008/12)
+    ("RFDETRSegLarge@1008", RFDETRSegLargeConfig, 1008),  # default PE=42 (504/12), target PE=84 (1008/12)
+]
 
 
 def main() -> None:
@@ -111,20 +103,17 @@ def main() -> None:
     # Build RFDETRModelModule directly — exercises _load_pretrain_weights() with real weights
     # at a non-default resolution where PE grids must be bicubic-interpolated.
     print("\nTraining-Path Custom Resolution Tests (regression #1038)\n")
-    if not _TRAINING_DEPS_AVAILABLE:
-        print("  [SKIP] pytorch_lightning not installed — skipping training-path tests\n")
-    else:
-        tc = TrainConfig(dataset_dir="/nonexistent", output_dir="/nonexistent", accelerator="cpu")
-        pbar2 = tqdm(TRAINING_PATH_RESOLUTION_TESTS, desc="Training-path tests", unit="model")
-        for model_name, config_cls, resolution in pbar2:
-            pbar2.set_description(f"Testing {model_name}")
-            try:
-                mc = config_cls(resolution=resolution, device="cpu")
-                module = RFDETRModelModule(mc, tc)
-                assert module.model is not None, "module.model is None after weight loading"
-            except Exception as ex:
-                failed_models.append((model_name, str(ex)))
-        pbar2.close()
+    tc = TrainConfig(dataset_dir="/nonexistent", output_dir="/nonexistent", accelerator="cpu")
+    pbar2 = tqdm(TRAINING_PATH_RESOLUTION_TESTS, desc="Training-path tests", unit="model")
+    for model_name, config_cls, resolution in pbar2:
+        pbar2.set_description(f"Testing {model_name}")
+        try:
+            mc = config_cls(resolution=resolution, device="cpu")
+            module = RFDETRModelModule(mc, tc)
+            assert module.model is not None, "module.model is None after weight loading"
+        except Exception as ex:
+            failed_models.append((model_name, str(ex)))
+    pbar2.close()
 
     # Summary
     total = len(MODELS_TO_TEST) + len(TRAINING_PATH_RESOLUTION_TESTS)
