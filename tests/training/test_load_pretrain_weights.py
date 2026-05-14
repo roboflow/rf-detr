@@ -704,3 +704,95 @@ class TestModuleLoadPretrainWeightsPEInterpolation:
         pe = checkpoint["model"][PE_KEY]
         assert pe.shape == torch.Size([1, pe_size * pe_size + 1, dim]), "Matching PE must not be modified."
         assert torch.equal(pe, original_pe), "Matching PE values must not be modified."
+
+
+# ---------------------------------------------------------------------------
+# Regression #1038: PE interpolation for custom resolution — training path
+# ---------------------------------------------------------------------------
+
+
+class TestModuleLoadPretrainWeightsPEInterpolation:
+    """Regression for #1038 — PE interpolation missing from the training path.
+
+    ``RFDETRModelModule._load_pretrain_weights`` must bicubic-interpolate the
+    checkpoint's DINOv2 positional embeddings to match
+    ``model_config.positional_encoding_size`` before calling ``load_state_dict``.
+    Without this, any ``model.train()`` call with a custom ``resolution`` that
+    changes the PE grid raises::
+
+        RuntimeError: Error(s) in loading state_dict for LWDETR:
+            size mismatch for backbone.0.encoder.encoder.embeddings.position_embeddings
+    """
+
+    @pytest.fixture(autouse=True)
+    def _patch_download(self, monkeypatch):
+        """Suppress all download and file-existence side effects."""
+        monkeypatch.setattr("rfdetr.training.module_model.download_pretrain_weights", lambda *a, **kw: None)
+        monkeypatch.setattr("rfdetr.training.module_model.validate_pretrain_weights", lambda *a, **kw: None)
+        monkeypatch.setattr("rfdetr.training.module_model.validate_checkpoint_compatibility", lambda *a, **kw: None)
+        monkeypatch.setattr("rfdetr.training.module_model.os.path.isfile", lambda _: True)
+
+    @pytest.mark.parametrize(
+        "config_cls, src_pe_size, tgt_pe_size",
+        [
+            pytest.param(RFDETRSegNanoConfig, 26, 84, id="seg_nano_upscale_26x26_to_84x84"),  # SegNano at 1008 (#1023)
+            pytest.param(
+                RFDETRSegLargeConfig, 42, 84, id="seg_large_upscale_42x42_to_84x84"
+            ),  # SegLarge at 1008 (#1038)
+            pytest.param(RFDETRNanoConfig, 24, 40, id="nano_upscale_24x24_to_40x40"),
+            pytest.param(RFDETRNanoConfig, 40, 24, id="nano_downscale_40x40_to_24x24"),
+        ],
+    )
+    @patch("rfdetr.training.module_model.torch.load")
+    def test_pe_interpolated_in_training_path(self, mock_torch_load, config_cls, src_pe_size, tgt_pe_size, tmp_path):
+        """Training path interpolates PE to match model_config.positional_encoding_size.
+
+        Regression for #1038: ``_load_pretrain_weights`` in module_model.py did not call
+        ``_interpolate_position_embeddings``, raising ``RuntimeError: size mismatch``
+        when training with a custom resolution.
+        """
+        mc = config_cls(
+            pretrain_weights="/fake/weights.pth",
+            device="cpu",
+            positional_encoding_size=tgt_pe_size,
+        )
+
+        dim = 384
+        src_n = src_pe_size * src_pe_size + 1
+        checkpoint = _make_checkpoint(num_classes=91)
+        checkpoint["model"][PE_KEY] = torch.randn(1, src_n, dim)
+        mock_torch_load.return_value = checkpoint
+
+        module, _ = _build_module(model_config=mc, tmp_path=tmp_path)
+        module._load_pretrain_weights()
+
+        pe = checkpoint["model"][PE_KEY]
+        expected_n = tgt_pe_size * tgt_pe_size + 1
+        assert pe.shape == torch.Size([1, expected_n, dim]), (
+            f"Expected PE shape [1, {expected_n}, {dim}] after interpolation from "
+            f"{src_pe_size}x{src_pe_size} to {tgt_pe_size}x{tgt_pe_size}, got {tuple(pe.shape)}. "
+            "PE interpolation is missing from the _load_pretrain_weights training path."
+        )
+
+    @patch("rfdetr.training.module_model.torch.load")
+    def test_matching_pe_not_modified_in_training_path(self, mock_torch_load, tmp_path):
+        """Same-resolution checkpoint PE is untouched in the training path."""
+        pe_size = 24
+        mc = RFDETRNanoConfig(
+            pretrain_weights="/fake/weights.pth",
+            device="cpu",
+            positional_encoding_size=pe_size,
+        )
+
+        dim = 384
+        original_pe = torch.randn(1, pe_size * pe_size + 1, dim)
+        checkpoint = _make_checkpoint(num_classes=91)
+        checkpoint["model"][PE_KEY] = original_pe.clone()
+        mock_torch_load.return_value = checkpoint
+
+        module, _ = _build_module(model_config=mc, tmp_path=tmp_path)
+        module._load_pretrain_weights()
+
+        pe = checkpoint["model"][PE_KEY]
+        assert pe.shape == torch.Size([1, pe_size * pe_size + 1, dim]), "Matching PE must not be modified."
+        assert torch.equal(pe, original_pe), "Matching PE values must not be modified."

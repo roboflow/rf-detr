@@ -33,6 +33,8 @@ from rfdetr import (
     RFDETRSmall,
     RFDETRXLarge,
 )
+from rfdetr.config import RFDETRSegLargeConfig, RFDETRSegNanoConfig, TrainConfig
+from rfdetr.training.module_model import RFDETRModelModule
 
 try:
     from rfdetr import RFDETR2XLarge
@@ -58,6 +60,15 @@ MODELS_TO_TEST = [
 
 if RFDETR2XLarge is not None:
     MODELS_TO_TEST.append(partial(RFDETR2XLarge, accept_platform_model_license=True))
+
+# Training-path custom-resolution tests: regression for #1038.
+# RFDETRModelModule.__init__ calls _load_pretrain_weights(), which must bicubic-interpolate
+# the checkpoint PE to match positional_encoding_size before load_state_dict.
+# (name, config_cls, resolution) — resolution differs from each model's default.
+TRAINING_PATH_RESOLUTION_TESTS: list[tuple] = [
+    ("RFDETRSegNano@1008", RFDETRSegNanoConfig, 1008),  # default PE=26 (312/12), target PE=84 (1008/12)
+    ("RFDETRSegLarge@1008", RFDETRSegLargeConfig, 1008),  # default PE=42 (504/12), target PE=84 (1008/12)
+]
 
 
 def main() -> None:
@@ -86,10 +97,27 @@ def main() -> None:
 
     pbar.close()
 
+    # Training-path PE interpolation tests (regression #1038).
+    # Build RFDETRModelModule directly — exercises _load_pretrain_weights() with real weights
+    # at a non-default resolution where PE grids must be bicubic-interpolated.
+    print("\nTraining-Path Custom Resolution Tests (regression #1038)\n")
+    tc = TrainConfig(dataset_dir="/nonexistent", output_dir="/nonexistent", accelerator="cpu")
+    pbar2 = tqdm(TRAINING_PATH_RESOLUTION_TESTS, desc="Training-path tests", unit="model")
+    for model_name, config_cls, resolution in pbar2:
+        pbar2.set_description(f"Testing {model_name}")
+        try:
+            mc = config_cls(resolution=resolution, device="cpu")
+            module = RFDETRModelModule(mc, tc)
+            assert module.model is not None, "module.model is None after weight loading"
+        except Exception as ex:
+            failed_models.append((model_name, str(ex)))
+    pbar2.close()
+
     # Summary
+    total = len(MODELS_TO_TEST) + len(TRAINING_PATH_RESOLUTION_TESTS)
     print("\nResults:")
-    print(f"  Total:     {len(MODELS_TO_TEST)}")
-    print(f"  Succeeded: {len(MODELS_TO_TEST) - len(failed_models)}")
+    print(f"  Total:     {total}")
+    print(f"  Succeeded: {total - len(failed_models)}")
     print(f"  Failed:    {len(failed_models)}")
 
     if failed_models:
