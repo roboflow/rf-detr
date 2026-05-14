@@ -33,7 +33,6 @@ from rfdetr import (
     RFDETRSmall,
     RFDETRXLarge,
 )
-
 from rfdetr.config import RFDETRSegLargeConfig, RFDETRSegNanoConfig, TrainConfig
 from rfdetr.training.module_model import RFDETRModelModule
 
