@@ -128,11 +128,15 @@ def main() -> None:
             actual_cls = model_class.func if isinstance(model_class, partial) else model_class
             extra_kwargs = model_class.keywords if isinstance(model_class, partial) else {}
             model_name = base_name if res is None else f"{base_name}@{res}"
-            model_cls = actual_cls if res is None else partial(actual_cls, resolution=res)
+            model_cls = (
+                model_class
+                if res is None
+                else partial(actual_cls, resolution=res, **extra_kwargs)
+            )
             pbar.set_description(f"Testing {model_name}")
             try:
                 # Instantiate model class - triggers download, MD5 validation, and loading
-                model_instance = model_class()
+                model_instance = model_cls()
 
                 # Verify model was created
                 assert model_instance is not None, "Model instance is None"
