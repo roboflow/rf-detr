@@ -162,7 +162,7 @@ def main() -> None:
                 # from_checkpoint round-trip: save a training-style checkpoint and reload it.
                 # Pass the real class (not a partial) so `_test_from_checkpoint` can read
                 # `.size` and `.__name__` and run `isinstance(recovered, actual_cls)`.
-                _test_from_checkpoint(model_instance, actual_cls, extra_kwargs)
+                _test_from_checkpoint(model_instance, actual_cls, instantiate_kwargs)
                 succeeded += 1
             except Exception as ex:
                 # Fail-fast: surface the first failing model directly so CI logs the
