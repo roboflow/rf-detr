@@ -478,11 +478,11 @@ def export_tflite(
                 "non_verbose": not verbose,
                 "verbosity": verbosity,
                 # tf_converter goes through SavedModel and produces a TFLite
-                # graph that the standard interpreter can load.  The 2.x default
+                # graph that the standard interpreter can load. The 2.x default
                 # flatbuffer_direct backend builds a TFLite that trips the
                 # TFLite TopK_V2 kernel's "k > internal dimension" check at
-                # AllocateTensors() time on the encoder TopK node.  See
-                # tflite.md, bug "flatbuffer_direct TopK".
+                # AllocateTensors() time on the encoder TopK node, so we force
+                # tf_converter here for compatibility.
                 "tflite_backend": "tf_converter",
                 # Replace Erf / GeLU with TFLite-native pseudo-operators so the
                 # produced .tflite does not require the TensorFlow Flex delegate
