@@ -893,3 +893,67 @@ class TestCheckOnnx2tfAvailable:
         with mock.patch.dict(sys.modules, {"onnx2tf": None}):
             with pytest.raises(ImportError, match="onnx2tf is not installed"):
                 _check_onnx2tf_available()
+
+
+# ---------------------------------------------------------------------------
+# TestGridSampleKwargDetection
+# ---------------------------------------------------------------------------
+
+
+class TestGridSampleKwargDetection:
+    """Tests for module-level detection of the onnx2tf GridSample replacement kwarg."""
+
+    def test_kwarg_name_contains_grid_and_pseudo_when_detected(self) -> None:
+        """If non-None, the detected kwarg name must embed both 'grid' and 'pseudo'."""
+        from rfdetr.export._tflite.converter import _GRIDSAMPLE_KWARG
+
+        if _GRIDSAMPLE_KWARG is not None:
+            lower = _GRIDSAMPLE_KWARG.lower()
+            assert "grid" in lower
+            assert "pseudo" in lower
+
+    def test_module_import_does_not_raise(self) -> None:
+        """Importing the converter module must succeed regardless of onnx2tf version."""
+        import rfdetr.export._tflite.converter  # noqa: F401
+
+
+# ---------------------------------------------------------------------------
+# TestGridSampleKwargForwarded
+# ---------------------------------------------------------------------------
+
+
+class TestGridSampleKwargForwarded:
+    """Tests that the GridSample replacement kwarg is forwarded to onnx2tf.convert."""
+
+    def test_kwarg_passed_as_true_when_set(
+        self,
+        onnx_model: Path,
+        tflite_output: Path,
+        fake_onnx2tf: Any,
+        mock_prepare_calib: Any,
+    ) -> None:
+        """_GRIDSAMPLE_KWARG is forwarded to convert() as True when non-None."""
+        from rfdetr.export._tflite import converter as conv_mod
+
+        _, convert_mock = fake_onnx2tf
+        sentinel = "replace_to_pseudo_gridsample_node"
+        with mock.patch.object(conv_mod, "_GRIDSAMPLE_KWARG", sentinel):
+            export_tflite(onnx_model, tflite_output)
+
+        assert convert_mock.call_args.kwargs.get(sentinel) is True
+
+    def test_warning_logged_when_kwarg_is_none(
+        self,
+        onnx_model: Path,
+        tflite_output: Path,
+        fake_onnx2tf: Any,
+        mock_prepare_calib: Any,
+    ) -> None:
+        """A warning mentioning GridSample is logged when _GRIDSAMPLE_KWARG is None."""
+        from rfdetr.export._tflite import converter as conv_mod
+
+        with mock.patch.object(conv_mod, "_GRIDSAMPLE_KWARG", None):
+            with mock.patch("rfdetr.export._tflite.converter.logger") as mock_logger:
+                export_tflite(onnx_model, tflite_output)
+                assert mock_logger.warning.called
+                assert "GridSample" in mock_logger.warning.call_args[0][0]

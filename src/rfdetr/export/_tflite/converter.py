@@ -92,6 +92,31 @@ _IMAGE_EXTENSIONS: frozenset[str] = frozenset({".jpg", ".jpeg", ".png", ".bmp", 
 # Default number of images to sample from a directory for calibration.
 _DEFAULT_DIR_CALIB_SAMPLES: int = 100
 
+# Detect the GridSample→pseudo-GridSample replacement kwarg exposed by onnx2tf.
+# The kwarg name has drifted across versions; we match any parameter containing
+# both "grid" and "pseudo" (case-insensitive) in convert()'s signature.
+# Workaround for onnx2tf#274: onnx2tf's GridSample lowering produces values
+# that diverge from ONNX while onnx2tf's own validator silently passes.
+# RF-DETR's deformable cross-attention uses F.grid_sample once per decoder
+# layer; without this fix top-1 detection scores collapse from ~0.6 to ~0.02.
+_GRIDSAMPLE_KWARG: str | None
+try:
+    import inspect as _inspect
+
+    from onnx2tf import convert as _onnx2tf_convert
+
+    _GRIDSAMPLE_KWARG = next(
+        (
+            name
+            for name in _inspect.signature(_onnx2tf_convert).parameters
+            if "grid" in name.lower() and "pseudo" in name.lower()
+        ),
+        None,
+    )
+    del _inspect, _onnx2tf_convert
+except ImportError:
+    _GRIDSAMPLE_KWARG = None
+
 
 def _check_onnx2tf_available() -> None:
     """Verify that the ``onnx2tf`` package is importable.
@@ -507,6 +532,17 @@ def export_tflite(
                 # "FlexErf failed to prepare".
                 "replace_to_pseudo_operators": ["Erf", "GeLU"],
             }
+
+            if _GRIDSAMPLE_KWARG is not None:
+                convert_kwargs[_GRIDSAMPLE_KWARG] = True
+                logger.debug(f"Enabling onnx2tf GridSample replacement: {_GRIDSAMPLE_KWARG}=True")
+            else:
+                logger.warning(
+                    "Installed onnx2tf has no GridSample replacement kwarg. "
+                    "If the exported TFLite model produces low-confidence detections, "
+                    "this is likely onnx2tf#274 and you should pin onnx2tf to a version "
+                    "that supports the replacement (e.g. onnx2tf<2.4)."
+                )
 
             if quantization == "int8":
                 convert_kwargs["output_integer_quantized_tflite"] = True
