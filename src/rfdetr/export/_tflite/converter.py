@@ -592,7 +592,10 @@ def export_tflite(
         tflite_files = sorted(output_dir.glob(f"{model_stem}_*.tflite"))
         if tflite_files:
             primary = tflite_files[0]
-            logger.info(f"Expected {model_stem}_float32.tflite not found; using {primary.name} instead.")
+            logger.warning(
+                f"Expected {model_stem}_float32.tflite not found; using {primary.name} instead. "
+                "The returned model may have a different dtype (e.g. int8) than the caller expects."
+            )
         else:
             raise RuntimeError(
                 f"onnx2tf completed but no .tflite file matching '{model_stem}_*.tflite' was found in {output_dir}"
