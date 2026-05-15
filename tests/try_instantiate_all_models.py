@@ -78,7 +78,20 @@ _CUSTOM_RESOLUTION = 1008
 # Plus models (XLarge / 2XLarge) are heavy enough that running them at
 # resolution=1008 risks the 15-min CI timeout on windows-latest / macos-latest
 # runners.  Smaller models still exercise the 1008 path for #1038 coverage.
-_HEAVY_MODEL_NAMES = {"xlarge", "xxlarge", "seg-xlarge", "seg-xxlarge"}
+_HEAVY_MODEL_NAMES = {
+    "xlarge",
+    "2xlarge",
+    "xxlarge",
+    "seg-xlarge",
+    "seg-2xlarge",
+    "seg-xxlarge",
+    "rfdetr-xlarge",
+    "rfdetr-2xlarge",
+    "rfdetr-xxlarge",
+    "rfdetr-seg-xlarge",
+    "rfdetr-seg-2xlarge",
+    "rfdetr-seg-xxlarge",
+}
 
 
 def _test_from_checkpoint(model_instance: object, actual_cls: type, extra_kwargs: dict) -> None:
