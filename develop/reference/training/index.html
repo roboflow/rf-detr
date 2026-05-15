@@ -5258,6 +5258,17 @@ the module.  Three normalisation steps are applied in order:</p>
 </ol>
 
 
+<details class="note" open>
+  <summary>Note</summary>
+  <p>This hook only fires on <code>Trainer(ckpt_path=...)</code> resume paths.
+Fresh-train bootstrap from a <code>pretrain_weights</code> checkpoint runs
+through :func:<code>~rfdetr.models.weights.load_pretrain_weights</code> during
+<code>__init__</code> instead — that helper performs its own PTL <code>.ckpt</code>
+normalisation (<code>state_dict</code> → <code>model</code> key, <code>_orig_mod</code> strip)
+and PE interpolation, so the two code paths intentionally do not
+share state.</p>
+</details>
+
 <p><span class="doc-section-title">Parameters:</span></p>
     <table>
       <thead>
