@@ -37,6 +37,7 @@ from rfdetr.config import (
     RFDETRSegLargeConfig,
     RFDETRSegMediumConfig,
     RFDETRSegNanoConfig,
+    RFDETRSegPreviewConfig,
     RFDETRSegSmallConfig,
     RFDETRSegXLargeConfig,
     RFDETRSmallConfig,
@@ -577,44 +578,96 @@ class TestLoadPretrainWeightsDeprecation:
 
 
 class TestModuleLoadPretrainWeightsPEInterpolationCustomResolution:
-    """Regression for #1038 — PE interpolation missing from the training path.
+    """Regression for #1038 — PE interpolation must fire through ``RFDETRModelModule.__init__``.
 
-    ``RFDETRModelModule._load_pretrain_weights`` must bicubic-interpolate the
-    checkpoint's DINOv2 positional embeddings to match
-    ``model_config.positional_encoding_size`` before calling ``load_state_dict``.
-    Without this, any ``model.train()`` call with a custom ``resolution`` that
-    changes the PE grid raises::
+    The L2 training entry path (``RFDETRSegLarge(resolution=1008).train(...)``)
+    constructs an :class:`~rfdetr.training.module_model.RFDETRModelModule` whose
+    ``__init__`` delegates to :func:`~rfdetr.models.weights.load_pretrain_weights`.
+    That helper must bicubic-interpolate the checkpoint's DINOv2 positional
+    embeddings to match ``model_config.positional_encoding_size`` before calling
+    ``load_state_dict``.  Without this, any ``model.train()`` call with a custom
+    ``resolution`` that changes the PE grid raises::
 
         RuntimeError: Error(s) in loading state_dict for LWDETR:
             size mismatch for backbone.0.encoder.encoder.embeddings.position_embeddings
+
+    These tests exercise the construction path end-to-end (mocking only the
+    heavy ``build_model_from_config`` / ``build_criterion_from_config`` calls
+    and disk I/O), so the regression cannot reappear if the in-init delegation
+    to ``load_pretrain_weights`` is removed.
     """
 
     @pytest.fixture(autouse=True)
-    def _patch_download(self, monkeypatch):
-        """Suppress all download and file-existence side effects."""
-        monkeypatch.setattr("rfdetr.training.module_model.download_pretrain_weights", lambda *a, **kw: None)
-        monkeypatch.setattr("rfdetr.training.module_model.validate_pretrain_weights", lambda *a, **kw: None)
-        monkeypatch.setattr("rfdetr.training.module_model.validate_checkpoint_compatibility", lambda *a, **kw: None)
-        monkeypatch.setattr("rfdetr.training.module_model.os.path.isfile", lambda _: True)
+    def _patch_canonical_io(self, monkeypatch):
+        """Suppress download/validate side effects on the canonical load path."""
+        monkeypatch.setattr("rfdetr.models.weights.download_pretrain_weights", lambda *a, **kw: None)
+        monkeypatch.setattr("rfdetr.models.weights.validate_pretrain_weights", lambda *a, **kw: None)
+        monkeypatch.setattr("rfdetr.models.weights.validate_checkpoint_compatibility", lambda *a, **kw: None)
+        monkeypatch.setattr("rfdetr.models.weights.os.path.isfile", lambda _: True)
+
+    def _construct_module(self, mc, checkpoint, monkeypatch, tmp_path):
+        """Construct an RFDETRModelModule with all heavy work mocked.
+
+        Returns the constructed module and the fake nn_model whose
+        ``load_state_dict`` receives the (now-interpolated) state dict.
+        """
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+        fake_model = MagicMock()
+        # Pretend the head was already aligned so the canonical loader does not
+        # try to introspect the MagicMock's internals.
+        fake_model.num_classes = mc.num_classes
+        monkeypatch.setattr(
+            "rfdetr.training.module_model.build_model_from_config",
+            lambda *a, **kw: fake_model,
+        )
+        monkeypatch.setattr(
+            "rfdetr.training.module_model.build_criterion_from_config",
+            lambda *a, **kw: (MagicMock(), MagicMock()),
+        )
+
+        tc = TrainConfig(
+            dataset_dir=str(tmp_path / "dataset"),
+            output_dir=str(tmp_path / "output"),
+            epochs=1,
+            lr=1e-4,
+            lr_encoder=1.5e-4,
+            batch_size=2,
+            weight_decay=1e-4,
+            lr_drop=1,
+            warmup_epochs=0.0,
+            drop_path=0.0,
+            multi_scale=False,
+            expanded_scales=False,
+            do_random_resize_via_padding=False,
+            grad_accum_steps=1,
+            tensorboard=False,
+        )
+        from rfdetr.training.module_model import RFDETRModelModule
+
+        module = RFDETRModelModule(mc, tc)
+        return module, fake_model
 
     @pytest.mark.parametrize(
         "config_cls, src_pe_size, tgt_pe_size",
         [
-            pytest.param(RFDETRSegNanoConfig, 26, 84, id="seg_nano_upscale_26x26_to_84x84"),  # SegNano at 1008 (#1023)
-            pytest.param(
-                RFDETRSegLargeConfig, 42, 84, id="seg_large_upscale_42x42_to_84x84"
-            ),  # SegLarge at 1008 (#1038)
-            pytest.param(RFDETRNanoConfig, 24, 40, id="nano_upscale_24x24_to_40x40"),
-            pytest.param(RFDETRNanoConfig, 40, 24, id="nano_downscale_40x40_to_24x24"),
+            # All 7 segmentation variants listed in #1038, plus detection up/downscale.
+            pytest.param(RFDETRSegNanoConfig, 26, 84, id="seg_nano_upscale_26_to_84"),
+            pytest.param(RFDETRSegSmallConfig, 32, 84, id="seg_small_upscale_32_to_84"),
+            pytest.param(RFDETRSegMediumConfig, 36, 84, id="seg_medium_upscale_36_to_84"),
+            pytest.param(RFDETRSegLargeConfig, 42, 84, id="seg_large_upscale_42_to_84"),
+            pytest.param(RFDETRSegPreviewConfig, 24, 84, id="seg_preview_upscale_24_to_84"),
+            pytest.param(RFDETRSegXLargeConfig, 52, 84, id="seg_xlarge_upscale_52_to_84"),
+            pytest.param(RFDETRSeg2XLargeConfig, 64, 84, id="seg_2xlarge_upscale_64_to_84"),
+            pytest.param(RFDETRNanoConfig, 24, 40, id="nano_upscale_24_to_40"),
+            pytest.param(RFDETRNanoConfig, 40, 24, id="nano_downscale_40_to_24"),
         ],
     )
-    @patch("rfdetr.training.module_model.torch.load")
-    def test_pe_interpolated_in_training_path(self, mock_torch_load, config_cls, src_pe_size, tgt_pe_size, tmp_path):
-        """Training path interpolates PE to match model_config.positional_encoding_size.
+    def test_pe_interpolated_in_training_path(self, monkeypatch, config_cls, src_pe_size, tgt_pe_size, tmp_path):
+        """Module construction interpolates PE to match ``positional_encoding_size``.
 
-        Regression for #1038: ``_load_pretrain_weights`` in module_model.py did not call
-        ``_interpolate_position_embeddings``, raising ``RuntimeError: size mismatch``
-        when training with a custom resolution.
+        Regression for #1038 — ``RFDETRModelModule.__init__`` must trigger PE
+        interpolation through the canonical loader so ``load_state_dict`` does
+        not raise ``RuntimeError: size mismatch`` at custom training resolutions.
         """
         mc = config_cls(
             pretrain_weights="/fake/weights.pth",
@@ -624,23 +677,22 @@ class TestModuleLoadPretrainWeightsPEInterpolationCustomResolution:
 
         dim = 384
         src_n = src_pe_size * src_pe_size + 1
-        checkpoint = _make_checkpoint(num_classes=91)
+        checkpoint = _make_checkpoint(num_classes=mc.num_classes + 1)
         checkpoint["model"][PE_KEY] = torch.randn(1, src_n, dim)
-        mock_torch_load.return_value = checkpoint
 
-        module, _ = _build_module(model_config=mc, tmp_path=tmp_path)
-        module._load_pretrain_weights()
+        _, fake_model = self._construct_module(mc, checkpoint, monkeypatch, tmp_path)
 
         pe = checkpoint["model"][PE_KEY]
         expected_n = tgt_pe_size * tgt_pe_size + 1
         assert pe.shape == torch.Size([1, expected_n, dim]), (
             f"Expected PE shape [1, {expected_n}, {dim}] after interpolation from "
             f"{src_pe_size}x{src_pe_size} to {tgt_pe_size}x{tgt_pe_size}, got {tuple(pe.shape)}. "
-            "PE interpolation is missing from the _load_pretrain_weights training path."
+            "PE interpolation must fire during RFDETRModelModule.__init__ via canonical load_pretrain_weights."
         )
+        # load_state_dict was called on the model with the interpolated state dict.
+        fake_model.load_state_dict.assert_called_once()
 
-    @patch("rfdetr.training.module_model.torch.load")
-    def test_matching_pe_not_modified_in_training_path(self, mock_torch_load, tmp_path):
+    def test_matching_pe_not_modified_in_training_path(self, monkeypatch, tmp_path):
         """Same-resolution checkpoint PE is untouched in the training path."""
         pe_size = 24
         mc = RFDETRNanoConfig(
@@ -651,12 +703,10 @@ class TestModuleLoadPretrainWeightsPEInterpolationCustomResolution:
 
         dim = 384
         original_pe = torch.randn(1, pe_size * pe_size + 1, dim)
-        checkpoint = _make_checkpoint(num_classes=91)
+        checkpoint = _make_checkpoint(num_classes=mc.num_classes + 1)
         checkpoint["model"][PE_KEY] = original_pe.clone()
-        mock_torch_load.return_value = checkpoint
 
-        module, _ = _build_module(model_config=mc, tmp_path=tmp_path)
-        module._load_pretrain_weights()
+        self._construct_module(mc, checkpoint, monkeypatch, tmp_path)
 
         pe = checkpoint["model"][PE_KEY]
         assert pe.shape == torch.Size([1, pe_size * pe_size + 1, dim]), "Matching PE must not be modified."
