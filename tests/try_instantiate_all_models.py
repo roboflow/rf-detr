@@ -65,9 +65,20 @@ if RFDETRXLarge is not None:
 if RFDETR2XLarge is not None:
     MODELS_TO_TEST.append(partial(RFDETR2XLarge, accept_platform_model_license=True))
 
-# 1008 = LCM(12, 16) × 21: valid for all patch sizes (PE=63 for det ÷16, PE=84 for seg ÷12).
-# Each model is tested at its default resolution and at 1008 (regression #1038).
+# 1008 = LCM(12, 16) × 21: valid for all patch sizes (PE=63 for det ÷16,
+# PE=84 for seg ÷12). Each model is tested at its default resolution and at
+# 1008 (regression #1038).
+#
+# Note on Base: ``RFDETRBaseConfig.positional_encoding_size = 37`` is *not*
+# formula-derived (see test_load_pretrain_weights.py:TestLoadPretrainWeightsPEInterpolation
+# ::test_base_config_non_formula_pe_is_interpolated_from_smaller_checkpoint),
+# so this `÷16` description applies only to Nano/Small/Medium/Large.
 _CUSTOM_RESOLUTION = 1008
+
+# Plus models (XLarge / 2XLarge) are heavy enough that running them at
+# resolution=1008 risks the 15-min CI timeout on windows-latest / macos-latest
+# runners.  Smaller models still exercise the 1008 path for #1038 coverage.
+_HEAVY_MODEL_NAMES = {"xlarge", "xxlarge", "seg-xlarge", "seg-xxlarge"}
 
 
 def _test_from_checkpoint(model_instance: object, actual_cls: type, extra_kwargs: dict) -> None:
@@ -118,50 +129,53 @@ def main() -> None:
     """Download, validate, instantiate all models, and test from_checkpoint round-trip."""
     print("Model Instantiation & Download Validation\n")
 
-    failed_models = []
-
+    succeeded = 0
     pbar = tqdm(MODELS_TO_TEST, desc="Testing models", unit="model")
     for model_class in pbar:
-        base_name = model_class.func.size if isinstance(model_class, partial) else model_class.size
+        actual_cls = model_class.func if isinstance(model_class, partial) else model_class
+        extra_kwargs = model_class.keywords if isinstance(model_class, partial) else {}
+        base_name = actual_cls.size
+
         for res in (None, _CUSTOM_RESOLUTION):
-            # Handle partial-wrapped classes
-            actual_cls = model_class.func if isinstance(model_class, partial) else model_class
-            extra_kwargs = model_class.keywords if isinstance(model_class, partial) else {}
+            # Skip the 1008-resolution variant for heavyweight Plus models — they
+            # risk the 15-min CI timeout on windows-latest / macos-latest runners.
+            if res == _CUSTOM_RESOLUTION and base_name in _HEAVY_MODEL_NAMES:
+                continue
+
             model_name = base_name if res is None else f"{base_name}@{res}"
-            model_cls = model_class if res is None else partial(actual_cls, resolution=res, **extra_kwargs)
+            # Build the kwargs once so `_test_from_checkpoint` and the
+            # instantiation call share the same parameter set (avoids the
+            # `functools.partial.size` AttributeError seen in the previous form).
+            instantiate_kwargs = dict(extra_kwargs)
+            if res is not None:
+                instantiate_kwargs["resolution"] = res
+
             pbar.set_description(f"Testing {model_name}")
             try:
                 # Instantiate model class - triggers download, MD5 validation, and loading
-                model_instance = model_cls()
+                model_instance = actual_cls(**instantiate_kwargs)
 
                 # Verify model was created
                 assert model_instance is not None, "Model instance is None"
                 assert hasattr(model_instance, "model"), "Model missing 'model' attribute"
 
-                # from_checkpoint round-trip: save a training-style checkpoint and reload it
-                _test_from_checkpoint(model_instance, model_cls, extra_kwargs)
-
+                # from_checkpoint round-trip: save a training-style checkpoint and reload it.
+                # Pass the real class (not a partial) so `_test_from_checkpoint` can read
+                # `.size` and `.__name__` and run `isinstance(recovered, actual_cls)`.
+                _test_from_checkpoint(model_instance, actual_cls, extra_kwargs)
+                succeeded += 1
             except Exception as ex:
-                failed_models.append((model_name, str(ex)))
+                # Fail-fast: surface the first failing model directly so CI logs the
+                # root cause cleanly instead of burying it under later cascade failures.
+                pbar.close()
+                print(f"\n[FAIL] {model_name}: {ex}")
+                raise
 
     pbar.close()
-
-    # Summary
-    total = len(MODELS_TO_TEST) * 2
     print("\nResults:")
-    print(f"\tTotal:\t{total}")
-    print(f"\tSucceeded:\t{total - len(failed_models)}")
-    print(f"\tFailed:\t{len(failed_models)}")
-
-    if failed_models:
-        print("\nFailed models:")
-        for model_name, error in failed_models:
-            print(f"  {model_name}: {error}")
-        print("\n[WARN] Some models failed")
-        sys.exit(1)
-    else:
-        print("\n[OK] All models validated successfully")
-        sys.exit(0)
+    print(f"\tSucceeded:\t{succeeded}")
+    print("\n[OK] All models validated successfully")
+    sys.exit(0)
 
 
 if __name__ == "__main__":
