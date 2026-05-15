@@ -14,18 +14,14 @@ import warnings
 from typing import Any, Dict, Optional, Tuple
 
 import torch
-import torch.nn.functional as F  # noqa: N812
+import torch.nn.functional as F  # noqa: N812 -- project-conventional alias (see AGENTS.md)
 from pytorch_lightning import LightningModule, seed_everything
 
 from rfdetr._namespace import _namespace_from_configs
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.datasets.coco import compute_multi_scale_scales
-from rfdetr.models import build_criterion_from_config, build_model_from_config
-from rfdetr.models.weights import (
-    apply_lora,
-    interpolate_position_embeddings,
-    load_pretrain_weights,
-)
+from rfdetr.models.lwdetr import build_criterion_from_config, build_model_from_config
+from rfdetr.models.weights import apply_lora, interpolate_position_embeddings, load_pretrain_weights
 from rfdetr.training.param_groups import get_param_dict
 from rfdetr.utilities.logger import get_logger
 
@@ -51,22 +47,15 @@ class RFDETRModelModule(LightningModule):
         # Model, criterion, and postprocessor.
         self.model = build_model_from_config(model_config, train_config)
         if model_config.pretrain_weights is not None:
-            # Capture the configured class count before loading weights so we can
-            # detect any automatic alignment to the checkpoint.
-            prev_num_classes = self.model_config.num_classes
+            # Canonical loader handles PE interpolation, PTL .ckpt normalisation,
+            # per-group query slicing, class-name extraction, partial-load warnings,
+            # and writes any auto-aligned ``num_classes`` back onto ``model_config``.
             load_pretrain_weights(self.model, self.model_config)
-            # If the loaded checkpoint changed the model's effective number of
-            # classes (e.g. to match a fine-tuned head), persist that back onto
-            # the model_config so downstream components see the aligned value.
-            if hasattr(self.model, "num_classes"):
-                model_num_classes = getattr(self.model, "num_classes")
-                if model_num_classes is not None and model_num_classes != prev_num_classes:
-                    self.model_config.num_classes = model_num_classes
         if model_config.backbone_lora:
             apply_lora(self.model)
 
-        # Build criterion and postprocessor after potential num_classes
-        # alignment so they match the current model head.
+        # Build criterion/postprocessors after potential num_classes alignment so
+        # they are constructed with a config that matches the current model head.
         self.criterion, self.postprocess = build_criterion_from_config(self.model_config, self.train_config)
 
         # torch.compile is opt-in: set model_config.compile=True to enable.
@@ -400,6 +389,15 @@ class RFDETRModelModule(LightningModule):
            ``"legacy_ema_state_dict"``.  The EMA weights are stashed on
            ``self._pending_legacy_ema_state`` for optional restoration by
            :class:`~rfdetr.training.callbacks.ema.RFDETREMACallback`.
+
+        Note:
+            This hook only fires on ``Trainer(ckpt_path=...)`` resume paths.
+            Fresh-train bootstrap from a ``pretrain_weights`` checkpoint runs
+            through :func:`~rfdetr.models.weights.load_pretrain_weights` during
+            ``__init__`` instead — that helper performs its own PTL ``.ckpt``
+            normalisation (``state_dict`` → ``model`` key, ``_orig_mod`` strip)
+            and PE interpolation, so the two code paths intentionally do not
+            share state.
 
         Args:
             checkpoint: Checkpoint dict passed in by PTL (mutated in-place).

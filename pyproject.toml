@@ -197,6 +197,18 @@ filterwarnings = [
     # pytest-xdist workers close their channel before teardown completes;
     # this is a known false-positive that does not affect test results.
     "ignore::pluggy.PluggyTeardownRaisedWarning",
+    # Many tests instantiate ModelConfig variants with `pretrain_weights=None`
+    # to skip downloads.  The pretrain-compat warning is intentional UX for
+    # end users; silence it globally for the test suite and re-enable it
+    # explicitly in the dedicated tests via `warnings.catch_warnings` plus
+    # `warnings.simplefilter("always")`.
+    # NOTE: expressed as a message regex (not as
+    # ``ignore::rfdetr.config.PretrainWeightsCompatibilityWarning``) because a
+    # class-path filter forces pytest to import ``rfdetr.config`` at
+    # config-parse time — before ``pytest-cov`` starts tracing — which makes
+    # the module's top-level statements appear uncovered.
+    "ignore:.*was instantiated with pretrain_weights=None:UserWarning",
+    "ignore:.*was instantiated with overrides that differ from the variant:UserWarning",
 ]
 
 [tool.codespell]
