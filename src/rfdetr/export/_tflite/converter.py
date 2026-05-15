@@ -477,6 +477,18 @@ def export_tflite(
                 "output_signaturedefs": True,
                 "non_verbose": not verbose,
                 "verbosity": verbosity,
+                # tf_converter goes through SavedModel and produces a TFLite
+                # graph that the standard interpreter can load.  The 2.x default
+                # flatbuffer_direct backend builds a TFLite that trips the
+                # TFLite TopK_V2 kernel's "k > internal dimension" check at
+                # AllocateTensors() time on the encoder TopK node.  See
+                # tflite.md, bug "flatbuffer_direct TopK".
+                "tflite_backend": "tf_converter",
+                # Replace Erf / GeLU with TFLite-native pseudo-operators so the
+                # produced .tflite does not require the TensorFlow Flex delegate
+                # at inference time.  Without this, AllocateTensors() fails with
+                # "FlexErf failed to prepare".
+                "replace_to_pseudo_operators": ["Erf", "GeLU"],
             }
 
             if quantization == "int8":
@@ -488,7 +500,7 @@ def export_tflite(
         logger.error(f"onnx2tf conversion failed: {exc}")
         raise RuntimeError(f"onnx2tf conversion failed: {exc}") from exc
 
-    # onnx2tf names output files based on the ONNX model stem.
+    # onnx2tf names output files based on the input ONNX model stem.
     model_stem = onnx_path.stem
     primary = output_dir / f"{model_stem}_float32.tflite"
 
