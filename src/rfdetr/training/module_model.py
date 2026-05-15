@@ -182,7 +182,13 @@ class RFDETRModelModule(LightningModule):
 
         Mirrors ``Model.__init__`` LoRA setup.
         """
-        from peft import LoraConfig, get_peft_model
+        try:
+            from peft import LoraConfig, get_peft_model
+        except ImportError as exc:
+            raise ImportError(
+                "backbone_lora=True requires the optional 'peft' dependency. "
+                "Install it with `pip install peft` and try again."
+            ) from exc
 
         lora_config = LoraConfig(
             r=16,
