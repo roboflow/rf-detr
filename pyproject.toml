@@ -61,7 +61,7 @@ train = [
     "rf100vl",
 ]
 onnx = [
-    "onnx>=1.16.0,<1.20",
+    "onnx>=1.16.0,<2.0",
     "onnxsim<0.6.0",  # TODO: onnxsim 0.6.0+ hangs on install
     "onnx_graphsurgeon",
     "onnxruntime",
