@@ -72,6 +72,7 @@ def _install_fake_onnx2tf() -> tuple[_FakeOnnx2tfModule, mock.MagicMock, dict[st
     fake = _FakeOnnx2tfModule()
     pkg = types.ModuleType("onnx2tf")
     pkg.convert = fake.convert  # type: ignore[attr-defined]
+    pkg.__version__ = "2.4.0"  # type: ignore[attr-defined]
 
     # onnx2tf.onnx2tf — force-imported by export_tflite() before patching
     inner_mod = types.ModuleType("onnx2tf.onnx2tf")
@@ -926,10 +927,27 @@ class TestCheckOnnx2tfAvailable:
         _check_onnx2tf_available()  # should not raise
 
     def test_raises_when_not_importable(self) -> None:
+        """ImportError is raised with install hint when onnx2tf is absent."""
         _remove_fake_onnx2tf()
         with mock.patch.dict(sys.modules, {"onnx2tf": None}):
             with pytest.raises(ImportError, match="onnx2tf is not installed"):
                 _check_onnx2tf_available()
+
+    def test_raises_when_version_too_old(self, fake_onnx2tf: Any) -> None:
+        """ImportError is raised when onnx2tf.__version__ is below 2.4.0."""
+        sys.modules["onnx2tf"].__version__ = "1.26.4"  # type: ignore[attr-defined]
+        with pytest.raises(ImportError, match="onnx2tf 1.26.4 is installed"):
+            _check_onnx2tf_available()
+
+    def test_passes_when_version_meets_minimum(self, fake_onnx2tf: Any) -> None:
+        """No exception when onnx2tf.__version__ is exactly 2.4.0."""
+        sys.modules["onnx2tf"].__version__ = "2.4.0"  # type: ignore[attr-defined]
+        _check_onnx2tf_available()  # should not raise
+
+    def test_passes_when_version_exceeds_minimum(self, fake_onnx2tf: Any) -> None:
+        """No exception when onnx2tf.__version__ is above 2.4.0."""
+        sys.modules["onnx2tf"].__version__ = "3.0.0"  # type: ignore[attr-defined]
+        _check_onnx2tf_available()  # should not raise
 
 
 # ---------------------------------------------------------------------------

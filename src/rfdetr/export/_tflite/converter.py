@@ -128,19 +128,38 @@ except ImportError:
 
 
 def _check_onnx2tf_available() -> None:
-    """Verify that the ``onnx2tf`` package is importable.
+    """Verify that a compatible ``onnx2tf`` package is importable.
+
+    onnx2tf 2.4.0 or later is required — earlier 1.x releases cannot lower
+    the constant ``Expand``, 1-D ``TopK``, and rank-3 ``Tile`` ops present
+    in RF-DETR's ONNX graph.
 
     Raises:
-        ImportError: If ``onnx2tf`` cannot be imported.
+        ImportError: If ``onnx2tf`` cannot be imported or is below 2.4.0.
     """
     try:
-        import onnx2tf  # noqa: F401
+        import onnx2tf
     except ImportError as exc:
         raise ImportError(
             "onnx2tf is not installed. TFLite export requires both ONNX and "
             "TFLite export dependencies. Install them with: "
             "pip install rfdetr[onnx,tflite]"
         ) from exc
+
+    version_str: str = getattr(onnx2tf, "__version__", "0.0.0")
+    try:
+        from packaging.version import Version
+
+        if Version(version_str) < Version("2.4.0"):
+            raise ImportError(
+                f"onnx2tf {version_str} is installed but RF-DETR requires "
+                "onnx2tf>=2.4.0. Upgrade with: pip install 'rfdetr[tflite]'"
+            )
+    except ImportError as packaging_exc:
+        if "onnx2tf" in str(packaging_exc):
+            raise
+        # packaging not installed — skip version check rather than failing
+        logger.debug(f"packaging library not available; skipping onnx2tf version check (installed: {version_str})")
 
 
 @contextlib.contextmanager
