@@ -6,9 +6,16 @@
 
 """ONNX → TFLite conversion using the ``onnx2tf`` library.
 
-``onnx2tf`` (PINTO0309) converts an ONNX graph to TFLite.  Version 2.0+
-uses a fast ``flatbuffer_direct`` backend; earlier 1.x releases go through
-the TensorFlow ``TFLiteConverter``.
+``onnx2tf`` (PINTO0309) converts an ONNX graph to TFLite.  **Version 2.4.0
+or later is required** — earlier 1.x releases cannot lower three op
+patterns in the RF-DETR graph (constant Expand, 1-D TopK, rank-3 Tile).
+Although the onnx2tf 2.x default backend is ``flatbuffer_direct``, RF-DETR
+unconditionally forces ``tflite_backend="tf_converter"`` to avoid a runtime
+error in the TFLite TopK_V2 kernel (``flatbuffer_direct`` trips a
+"k > internal dimension" check at ``AllocateTensors()`` time).  ``Erf``
+and ``GeLU`` activations are replaced with TFLite-native pseudo-operators
+(``replace_to_pseudo_operators=["Erf", "GeLU"]``) so the produced model
+does not require the TensorFlow Flex delegate at inference time.
 
 The converter uses the ``onnx2tf`` Python API directly (rather than
 shelling out to the CLI) so that we can:
@@ -363,8 +370,8 @@ def export_tflite(
 ) -> Path:
     """Convert an ONNX model to TFLite via ``onnx2tf``.
 
-    Uses the ``onnx2tf`` Python API with a NumPy compatibility shim so
-    that both 1.x and 2.x releases of ``onnx2tf`` work correctly.
+    Requires ``onnx2tf >= 2.4.0``.  Uses the Python API with a NumPy
+    compatibility shim.
 
     Args:
         onnx_path: Path to the source ``.onnx`` file.
@@ -416,6 +423,16 @@ def export_tflite(
         conversion.  Concurrent calls from multiple threads will interfere
         with each other.  Run conversion in a subprocess if isolation is
         required.
+
+        ``tf_converter`` backend is forced unconditionally (overriding
+        onnx2tf's 2.x ``flatbuffer_direct`` default) to avoid a runtime
+        error in the TFLite TopK_V2 kernel.  ``Erf`` and ``GeLU`` ops are
+        substituted with TFLite-native pseudo-operators to avoid a missing
+        TensorFlow Flex delegate at inference time.
+
+        Segmentation export (``pred_masks`` output) is **not validated** in
+        the current implementation; additional operators may need to be
+        added to ``replace_to_pseudo_operators`` for segmentation models.
     """
     onnx_path = Path(onnx_path)
     output_dir = Path(output_dir)
