@@ -519,12 +519,12 @@ def export_tflite(
                 "output_signaturedefs": True,
                 "non_verbose": not verbose,
                 "verbosity": verbosity,
-                # tf_converter goes through SavedModel and produces a TFLite
-                # graph that the standard interpreter can load. The 2.x default
-                # flatbuffer_direct backend builds a TFLite that trips the
-                # TFLite TopK_V2 kernel's "k > internal dimension" check at
-                # AllocateTensors() time on the encoder TopK node, so we force
-                # tf_converter here for compatibility.
+                # onnx2tf 2.x defaults to flatbuffer_direct, but that backend
+                # trips the TFLite TopK_V2 kernel's "k > internal dimension"
+                # check at AllocateTensors() time on RF-DETR's encoder TopK
+                # node.  We force tf_converter (SavedModel → TFLiteConverter
+                # path) to route around this.  onnx2tf 2.x tf_converter also
+                # correctly lowers Expand / Tile ops that onnx2tf 1.x could not.
                 "tflite_backend": "tf_converter",
                 # Replace Erf / GeLU with TFLite-native pseudo-operators so the
                 # produced .tflite does not require the TensorFlow Flex delegate
