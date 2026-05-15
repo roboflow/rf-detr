@@ -241,6 +241,43 @@ class TestExportTfliteConverter:
         kwargs = convert_mock.call_args.kwargs
         assert kwargs["output_signaturedefs"] is True
 
+    def test_tflite_backend_forced_to_tf_converter(
+        self,
+        onnx_model: Path,
+        tflite_output: Path,
+        fake_onnx2tf: Any,
+        mock_prepare_calib: Any,
+    ) -> None:
+        """tflite_backend must always be 'tf_converter' to avoid the TFLite TopK_V2 kernel check.
+
+        onnx2tf 2.x defaults to flatbuffer_direct, which trips a
+        "k > internal dimension" error at AllocateTensors() time on
+        RF-DETR's encoder TopK node.  tf_converter is forced unconditionally.
+        """
+        _, convert_mock = fake_onnx2tf
+        export_tflite(onnx_model, tflite_output)
+
+        assert convert_mock.call_args.kwargs["tflite_backend"] == "tf_converter"
+
+    def test_replace_to_pseudo_operators_contains_erf_and_gelu(
+        self,
+        onnx_model: Path,
+        tflite_output: Path,
+        fake_onnx2tf: Any,
+        mock_prepare_calib: Any,
+    ) -> None:
+        """replace_to_pseudo_operators must include Erf and GeLU.
+
+        Without this, AllocateTensors() fails with "FlexErf failed to prepare"
+        because the TFLite runtime lacks native Erf / GeLU kernels.
+        """
+        _, convert_mock = fake_onnx2tf
+        export_tflite(onnx_model, tflite_output)
+
+        pseudo_ops = convert_mock.call_args.kwargs.get("replace_to_pseudo_operators", [])
+        assert "Erf" in pseudo_ops
+        assert "GeLU" in pseudo_ops
+
     def test_fp32_quantization_no_int8_flag(
         self,
         onnx_model: Path,
