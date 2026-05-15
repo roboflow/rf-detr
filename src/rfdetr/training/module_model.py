@@ -17,10 +17,10 @@ import torch
 import torch.nn.functional as F  # noqa: N812 -- project-conventional alias (see AGENTS.md)
 from pytorch_lightning import LightningModule, seed_everything
 
-from rfdetr._namespace import build_namespace
+from rfdetr._namespace import _namespace_from_configs
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.datasets.coco import compute_multi_scale_scales
-from rfdetr.models.lwdetr import build_criterion_and_postprocessors, build_model
+from rfdetr.models.lwdetr import build_criterion_from_config, build_model_from_config
 from rfdetr.models.weights import apply_lora, interpolate_position_embeddings, load_pretrain_weights
 from rfdetr.training.param_groups import get_param_dict
 from rfdetr.utilities.logger import get_logger
@@ -44,11 +44,8 @@ class RFDETRModelModule(LightningModule):
         # (which contains only model weights, not criterion/postprocess state).
         self.strict_loading = False
 
-        # Build a local namespace for the legacy builder functions.
-        ns = build_namespace(model_config, train_config)
-
         # Model, criterion, and postprocessor.
-        self.model = build_model(ns)
+        self.model = build_model_from_config(model_config, train_config)
         if model_config.pretrain_weights is not None:
             # Canonical loader handles PE interpolation, PTL .ckpt normalisation,
             # per-group query slicing, class-name extraction, partial-load warnings,
@@ -57,11 +54,9 @@ class RFDETRModelModule(LightningModule):
         if model_config.backbone_lora:
             apply_lora(self.model)
 
-        # Rebuild the namespace after potential num_classes alignment so that
-        # the criterion and postprocessors are constructed with a config that
-        # matches the current model head.
-        ns = build_namespace(self.model_config, self.train_config)
-        self.criterion, self.postprocess = build_criterion_and_postprocessors(ns)
+        # Build criterion/postprocessors after potential num_classes alignment so
+        # they are constructed with a config that matches the current model head.
+        self.criterion, self.postprocess = build_criterion_from_config(self.model_config, self.train_config)
 
         # torch.compile is opt-in: set model_config.compile=True to enable.
         # Only enabled on CUDA; MPS and CPU do not benefit from compilation.
@@ -259,7 +254,7 @@ class RFDETRModelModule(LightningModule):
             PTL optimizer config dict with optimizer and step-interval scheduler.
         """
         tc = self.train_config
-        ns = build_namespace(self.model_config, tc)
+        ns = _namespace_from_configs(self.model_config, tc)
 
         # Unwrap torch.compile's OptimizedModule so get_param_dict sees the
         # original module's named_parameters() — compiled wrapper can cause
