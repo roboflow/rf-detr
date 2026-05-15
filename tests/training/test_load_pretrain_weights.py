@@ -99,6 +99,14 @@ def _make_train_config():
     )
 
 
+def _suppress_pretrain_io(monkeypatch) -> None:
+    """Suppress download/validate/file-existence side effects on the canonical load path."""
+    monkeypatch.setattr("rfdetr.models.weights.download_pretrain_weights", lambda *a, **kw: None)
+    monkeypatch.setattr("rfdetr.models.weights.validate_pretrain_weights", lambda *a, **kw: None)
+    monkeypatch.setattr("rfdetr.models.weights.validate_checkpoint_compatibility", lambda *a, **kw: None)
+    monkeypatch.setattr("rfdetr.models.weights.os.path.isfile", lambda _: True)
+
+
 # ---------------------------------------------------------------------------
 # Regression tests: load_pretrain_weights (models/weights.py)
 # ---------------------------------------------------------------------------
@@ -115,10 +123,7 @@ class TestLoadPretrainWeightsSecondReinit:
     @pytest.fixture(autouse=True)
     def _patch_download(self, monkeypatch):
         """Suppress all download and file-existence side effects."""
-        monkeypatch.setattr("rfdetr.models.weights.download_pretrain_weights", lambda *a, **kw: None)
-        monkeypatch.setattr("rfdetr.models.weights.validate_pretrain_weights", lambda *a, **kw: None)
-        monkeypatch.setattr("rfdetr.models.weights.validate_checkpoint_compatibility", lambda *a, **kw: None)
-        monkeypatch.setattr("rfdetr.models.weights.os.path.isfile", lambda _: True)
+        _suppress_pretrain_io(monkeypatch)
 
     def test_finetune_checkpoint_preserves_weights(self, monkeypatch):
         """Fine-tuned checkpoint (fewer classes) must NOT trigger second reinit.
@@ -271,10 +276,7 @@ class TestLoadPretrainWeightsPEInterpolation:
     @pytest.fixture(autouse=True)
     def _patch_download(self, monkeypatch):
         """Suppress all download and file-existence side effects."""
-        monkeypatch.setattr("rfdetr.models.weights.download_pretrain_weights", lambda *a, **kw: None)
-        monkeypatch.setattr("rfdetr.models.weights.validate_pretrain_weights", lambda *a, **kw: None)
-        monkeypatch.setattr("rfdetr.models.weights.validate_checkpoint_compatibility", lambda *a, **kw: None)
-        monkeypatch.setattr("rfdetr.models.weights.os.path.isfile", lambda _: True)
+        _suppress_pretrain_io(monkeypatch)
 
     @pytest.mark.parametrize(
         "src_pe_size, tgt_resolution, patch_size, expected_tgt_pe_size",
@@ -598,12 +600,9 @@ class TestModuleLoadPretrainWeightsPEInterpolationCustomResolution:
     """
 
     @pytest.fixture(autouse=True)
-    def _patch_canonical_io(self, monkeypatch):
+    def _patch_download(self, monkeypatch):
         """Suppress download/validate side effects on the canonical load path."""
-        monkeypatch.setattr("rfdetr.models.weights.download_pretrain_weights", lambda *a, **kw: None)
-        monkeypatch.setattr("rfdetr.models.weights.validate_pretrain_weights", lambda *a, **kw: None)
-        monkeypatch.setattr("rfdetr.models.weights.validate_checkpoint_compatibility", lambda *a, **kw: None)
-        monkeypatch.setattr("rfdetr.models.weights.os.path.isfile", lambda _: True)
+        _suppress_pretrain_io(monkeypatch)
 
     def _construct_module(self, mc, checkpoint, monkeypatch, tmp_path):
         """Construct an RFDETRModelModule with all heavy work mocked.
