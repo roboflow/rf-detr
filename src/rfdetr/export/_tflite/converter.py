@@ -568,8 +568,9 @@ def export_tflite(
                 logger.warning(
                     "Installed onnx2tf has no GridSample replacement kwarg. "
                     "If the exported TFLite model produces low-confidence detections, "
-                    "this is likely onnx2tf#274 and you should pin onnx2tf to a version "
-                    "that supports the replacement (e.g. onnx2tf<2.4)."
+                    "this is likely onnx2tf#274; try a compatible onnx2tf 2.x release "
+                    "that still satisfies this converter's minimum version requirement "
+                    "(onnx2tf>=2.4.0) and exposes the GridSample replacement option."
                 )
 
             if quantization == "int8":
