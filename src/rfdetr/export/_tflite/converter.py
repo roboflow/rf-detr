@@ -63,6 +63,15 @@ Note:
     the ONNX model: ImageNet mean/std (``mean=[0.485, 0.456, 0.406]``,
     ``std=[0.229, 0.224, 0.225]``).  The caller is responsible for applying
     this normalization at inference time.
+
+Note:
+    **Segmentation model export is not validated.**  The same ``convert_kwargs``
+    are applied to segmentation models as to detection models, but the
+    segmentation output path introduces additional ops (``ScatterND``,
+    ``Resize``, extra ``GridSample`` calls in the mask resampling path) that
+    have not been exercised end-to-end through TFLite.  Treat segmentation
+    TFLite export as experimental and verify outputs against the ONNX baseline
+    before deployment.
 """
 
 from __future__ import annotations
