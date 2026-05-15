@@ -76,7 +76,7 @@ trt = [
 tflite = [
     "onnx2tf>=2.4.0,<3.0.0",
     "flatbuffers>=23.5.26",
-    "onnx>=1.16.0,<1.20",
+    "onnx>=1.20.0,<2.0",
     "tf-keras>=2.16.0",
     "tensorflow>=2.16.0",
 ]
