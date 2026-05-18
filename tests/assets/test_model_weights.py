@@ -134,7 +134,7 @@ def test_model_weights_inherits_from_base():
     )
 
 
-def test_download_pretrain_weights_warns_for_legacy_large(monkeypatch, tmp_path) -> None:
+def test_legacy_large_checkpoint_warns(monkeypatch, tmp_path) -> None:
     """Legacy Large downloads warn so users do not confuse them with the current Large release."""
     target = tmp_path / "rf-detr-large.pth"
     monkeypatch.setattr("rfdetr.assets.model_weights._download_file", lambda **_: None)
@@ -145,7 +145,7 @@ def test_download_pretrain_weights_warns_for_legacy_large(monkeypatch, tmp_path)
         download_pretrain_weights(str(target))
 
 
-def test_download_pretrain_weights_does_not_warn_for_current_large(monkeypatch, tmp_path) -> None:
+def test_current_large_checkpoint_no_warning(monkeypatch, tmp_path) -> None:
     """Current Large downloads should not emit the legacy Large warning."""
     monkeypatch.setattr("rfdetr.assets.model_weights._download_file", lambda **_: None)
 
@@ -155,4 +155,4 @@ def test_download_pretrain_weights_does_not_warn_for_current_large(monkeypatch, 
         warnings.simplefilter("always")
         download_pretrain_weights(str(tmp_path / "rf-detr-large-2026.pth"))
 
-    assert [warning for warning in caught if "legacy RF-DETR Large checkpoint" in str(warning.message)] == []
+    assert not any("legacy RF-DETR Large checkpoint" in str(warning.message) for warning in caught)
