@@ -146,21 +146,6 @@ def _check_onnx2tf_available() -> None:
             "pip install rfdetr[onnx,tflite]"
         ) from exc
 
-    version_str: str = getattr(onnx2tf, "__version__", "0.0.0")
-    try:
-        from packaging.version import Version
-
-        if Version(version_str) < Version("2.4.0"):
-            raise ImportError(
-                f"onnx2tf {version_str} is installed but RF-DETR requires "
-                "onnx2tf>=2.4.0. Upgrade with: pip install 'rfdetr[tflite]'"
-            )
-    except ImportError as packaging_exc:
-        if "onnx2tf" in str(packaging_exc):
-            raise
-        # packaging not installed — skip version check rather than failing
-        logger.debug(f"packaging library not available; skipping onnx2tf version check (installed: {version_str})")
-
 
 @contextlib.contextmanager
 def _numpy_allow_pickle() -> Generator[None, None, None]:
