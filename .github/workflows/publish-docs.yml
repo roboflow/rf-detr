@@ -4,7 +4,7 @@
 # Deploy matrix:
 #   push develop                    → mike deploy develop        (rfdetr.roboflow.com/develop/)
 #   push release/latest             → mike deploy latest         (rfdetr.roboflow.com/latest/)
-#   release published (stable/post) → mike deploy <base> latest  (rfdetr.roboflow.com/<base>/ — .postN stripped to base; RC/pre-release skipped)
+#   release published (stable/post) → mike deploy <base> latest  (rfdetr.roboflow.com/<base>/ + /latest/ alias → <base>; .postN stripped; RC/pre-release skipped)
 #
 # Every deploy also:
 #   - Copies robots.txt, llms.txt, llms-full.txt to gh-pages root
@@ -78,7 +78,7 @@ jobs:
         run: |
           TAG="${{ github.event.release.tag_name }}"
           DOC_VERSION="${TAG%.post*}"
-          uv run mike deploy --push "$DOC_VERSION"
+          uv run mike deploy --push --update-aliases "$DOC_VERSION" latest
 
       - name: 🏗️ Build docs for artifact
         run: uv run mkdocs build
