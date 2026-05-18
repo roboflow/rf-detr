@@ -138,7 +138,7 @@ def _check_onnx2tf_available() -> None:
         ImportError: If ``onnx2tf`` cannot be imported or is below 2.4.0.
     """
     try:
-        import onnx2tf
+        import onnx2tf  # noqa: F401
     except ImportError as exc:
         raise ImportError(
             "onnx2tf is not installed. TFLite export requires both ONNX and "
