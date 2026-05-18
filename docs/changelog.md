@@ -16,4 +16,4 @@ Use the release feed to review versioned package changes, migration notes, and m
 
 ---
 
---8<-- "../CHANGELOG.md"
+--8<-- "CHANGELOG.md"
