@@ -46,7 +46,10 @@ jobs:
 
       - name: 🚀 Install Packages
         timeout-minutes: 5
-        run: uv sync --group tests --group ci-gpu-pin --extra onnx --extra plus --extra train --extra visual
+        # Use uv pip install (not uv sync) to avoid universal lock resolution failing on
+        # extras that require Python>=3.12 (e.g. tflite/onnx2tf) when project supports >=3.10.
+        # UV_TORCH_BACKEND=auto (set above) works only with uv pip, not uv sync.
+        run: uv pip install -e ".[onnx,plus,train,visual]" --group tests --group ci-gpu-pin
 
       - name: 🧪 Run the Test
         run: |

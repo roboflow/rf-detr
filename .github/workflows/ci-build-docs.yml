@@ -34,7 +34,7 @@ jobs:
         run: uv pip install -e ".[plus]" --group docs
 
       - name: 🧪 Test Docs Build
-        run: uv run mkdocs build --verbose
+        run: uv run --no-sync mkdocs build --verbose
 
       - name: 📤 Upload docs artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
