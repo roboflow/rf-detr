@@ -216,7 +216,8 @@
   </script>
   {% else %}
   {# article:modified_time — content pages only; emit only when a full ISO-8601 date-time is available #}
-  {% if page.meta.git_revision_date_localized %}<meta property="article:modified_time" content="{{ page.meta.git_revision_date_localized | replace(' ', 'T') + '+00:00' }}">{% endif %}
+  {# striptags: plugin may return a <time> HTML element (Markup-safe); strip tags before embedding in content attr #}
+  {% if page.meta.git_revision_date_localized %}<meta property="article:modified_time" content="{{ page.meta.git_revision_date_localized | string | striptags | replace(' ', 'T') | e }}">{% endif %}
   {# JSON-LD: TechArticle — content pages #}
   <script type="application/ld+json">
   {
@@ -231,7 +232,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    {% if page.meta.git_revision_date_localized %}"dateModified": {{ (page.meta.git_revision_date_localized | replace(' ', 'T') + '+00:00') | tojson }},
+    {% if page.meta.git_revision_date_localized %}"dateModified": {{ page.meta.git_revision_date_localized | string | striptags | replace(' ', 'T') | tojson }},
     {% endif %}"image": {{ (page.meta.image | default(config.extra.og_image | default('https://rfdetr.roboflow.com/latest/assets/roboflow-logo.svg'))) | tojson }},
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
