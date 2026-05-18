@@ -26,37 +26,19 @@ shelling out to the CLI) so that we can:
   locally-prepared calibration data instead of downloading from GitHub
   (which can fail in many environments).
 
-``onnx2tf`` uses ``download_test_image_data()`` in two contexts:
-
-1. **Output validation** — always runs to compare ONNX-vs-TF outputs.
-2. **INT8 calibration** — when ``output_integer_quantized_tflite=True``,
-   uses the same function as a representative dataset source.
-
-Both calls are redirected to local data via the
-``_patch_validation_download()`` context manager.  This avoids the
-network dependency and lets the caller supply proper calibration images
-for INT8 quantization.
+``onnx2tf`` calls ``download_test_image_data()`` for its ONNX-vs-TF output
+validation.  ``_patch_validation_download()`` redirects that call to local
+data, avoiding the network dependency.
 
 INT8 quantization
 -----------------
-When ``quantization="int8"`` the caller **should** supply representative
-calibration images via *calibration_data*.  Accepted formats:
+``quantization="int8"`` produces a **dynamic-range** INT8 model (INT8
+weights, float activations, roughly 4x smaller than FP32, no calibration
+data needed), built from the ``onnx2tf`` SavedModel.
 
-* A **directory path** containing JPEG/PNG images — the converter
-  automatically loads, resizes, and converts them to the correct format.
-  This is the easiest approach: just point to your dataset folder.
-* A ``.npy`` file path — shape ``(N, H, W, 3)``, dtype ``float32``,
-  values in ``[0, 1]``.
-* A :class:`numpy.ndarray` with the same constraints.
-
-Pixel values must be in ``[0, 1]`` (divided by 255 but **not**
-ImageNet-normalized — the converter applies ImageNet normalization
-automatically via ``onnx2tf``'s default ``quant_norm_mean`` /
-``quant_norm_std`` parameters).
-
-If no calibration data is provided, random noise is used instead and a
-warning is emitted.  This is sufficient for ``fp32`` / ``fp16`` conversion
-but will produce **poor accuracy** for ``int8``.
+Static (full-integer) INT8 is not supported and raises ``ValueError``:
+RF-DETR's transformer activations do not survive 8-bit post-training
+quantization.
 
 Note:
     The resulting ``.tflite`` model expects the same input normalization as
@@ -396,6 +378,28 @@ def _prepare_calibration_data(
     return npy_path
 
 
+def _quantize_dynamic_range(saved_model_dir: Path, model_stem: str) -> Path:
+    """Build a dynamic-range INT8 TFLite model from the onnx2tf SavedModel.
+
+    Dynamic-range quantization stores weights as INT8 and keeps activations in
+    float, so it needs no calibration data.
+
+    Args:
+        saved_model_dir: Directory holding the SavedModel ``onnx2tf`` wrote.
+        model_stem: Stem of the source ONNX file, used to name the output.
+
+    Returns:
+        Path to the written ``{model_stem}_dynamic_range_quant.tflite`` file.
+    """
+    import tensorflow as tf
+
+    converter = tf.lite.TFLiteConverter.from_saved_model(str(saved_model_dir))
+    converter.optimizations = [tf.lite.Optimize.DEFAULT]
+    out_path = saved_model_dir / f"{model_stem}_dynamic_range_quant.tflite"
+    out_path.write_bytes(converter.convert())
+    return out_path
+
+
 def export_tflite(
     onnx_path: str | os.PathLike[str],
     output_dir: str | os.PathLike[str],
@@ -414,26 +418,29 @@ def export_tflite(
     Args:
         onnx_path: Path to the source ``.onnx`` file.
         output_dir: Directory where TFLite artifacts will be written.
-            ``onnx2tf`` creates files named ``{stem}_float32.tflite`` and
-            ``{stem}_float16.tflite`` (plus ``{stem}_integer_quant.tflite``
-            when ``quantization="int8"``).
+            ``onnx2tf`` creates ``{stem}_float32.tflite`` and
+            ``{stem}_float16.tflite``.  When ``quantization="int8"`` a
+            ``{stem}_dynamic_range_quant.tflite`` is additionally written.
         quantization: Quantization mode.
 
-            * ``None`` / ``"fp32"`` — default FP32 + FP16 output.
-            * ``"fp16"`` — same as above (onnx2tf always emits both).
-            * ``"int8"`` — additionally produce an INT8-quantized model.
-        calibration_data: Representative data used by ``onnx2tf`` for
-            output validation (fp32/fp16) and INT8 calibration.  Accepts:
+            * ``None`` / ``"fp32"`` / ``"fp16"`` — FP32 + FP16 output
+              (``onnx2tf`` always emits both).
+            * ``"int8"`` — additionally produce a dynamic-range INT8 model
+              (INT8 weights, float activations, ~4x smaller than FP32).
+              Static / full-integer INT8 is not supported.
+        calibration_data: Representative data used by ``onnx2tf`` for its
+            ONNX-vs-TF output validation.  Accepts:
 
-            * ``None`` — auto-generate random data (warns for int8).
+            * ``None`` — auto-generate random data.
             * A **directory path** containing JPEG/PNG images — images
               are loaded, resized, and converted automatically.
             * A path to a ``.npy`` file — shape ``(N, H, W, 3)``,
               dtype float32, pixel values in ``[0, 1]``.
             * A :class:`numpy.ndarray` with the same format.
 
-            For INT8 quantization, provide real images from your dataset
-            for best accuracy.
+            Dynamic-range INT8 needs no calibration data, so this argument
+            does not affect the quantized weights — it only feeds onnx2tf's
+            internal validation pass.
         verbosity: Log verbosity passed to ``onnx2tf``.  One of
             ``"debug"``, ``"info"``, ``"warn"``, ``"error"`` (default).
         max_images: Maximum number of images to load when
@@ -444,7 +451,11 @@ def export_tflite(
             transformer-based models).  Defaults to ``False`` (silent).
 
     Returns:
-        The path to the primary ``*_float32.tflite`` file.
+        Path to the primary artifact.  ``onnx2tf`` always writes both
+        ``{stem}_float32.tflite`` and ``{stem}_float16.tflite`` to
+        *output_dir*; ``quantization="int8"`` adds
+        ``{stem}_dynamic_range_quant.tflite``.  The returned path is the
+        dynamic-range file for ``int8``, otherwise the float32 file.
 
     Raises:
         FileNotFoundError: If *onnx_path* does not exist or
@@ -481,7 +492,8 @@ def export_tflite(
     if quantization not in _VALID_QUANTIZATIONS:
         raise ValueError(
             f"Unsupported quantization mode {quantization!r}. "
-            f"Choose from: {sorted(q for q in _VALID_QUANTIZATIONS if q is not None)}"
+            f"Choose from: {sorted(q for q in _VALID_QUANTIZATIONS if q is not None)}. "
+            "Static / full-integer INT8 is not supported; 'int8' is dynamic-range."
         )
 
     _check_onnx2tf_available()
@@ -558,9 +570,6 @@ def export_tflite(
                     "(onnx2tf>=2.4.0) and exposes the GridSample replacement option."
                 )
 
-            if quantization == "int8":
-                convert_kwargs["output_integer_quantized_tflite"] = True
-
             convert(**convert_kwargs)
 
     except Exception as exc:
@@ -569,6 +578,13 @@ def export_tflite(
 
     # onnx2tf names output files based on the input ONNX model stem.
     model_stem = onnx_path.stem
+
+    if quantization == "int8":
+        # Dynamic-range INT8; static full-integer INT8 is rejected as unsupported.
+        primary = _quantize_dynamic_range(output_dir, model_stem)
+        logger.info(f"TFLite model exported to: {primary}")
+        return primary
+
     primary = output_dir / f"{model_stem}_float32.tflite"
 
     if not primary.is_file():

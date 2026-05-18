@@ -185,6 +185,22 @@ class TestExportTfliteConverter:
         with pytest.raises(ValueError, match="Unsupported quantization"):
             export_tflite(onnx_model, tmp_path / "out", quantization="q4")
 
+    @pytest.mark.parametrize(
+        "static_mode",
+        [
+            pytest.param("int8_static", id="int8_static"),
+            pytest.param("full_int8", id="full_int8"),
+            pytest.param("integer_quant", id="integer_quant"),
+        ],
+    )
+    def test_static_int8_raises(self, onnx_model: Path, tmp_path: Path, fake_onnx2tf: Any, static_mode: str) -> None:
+        """A static / full-integer INT8 request must raise a ValueError.
+
+        Static INT8 is intentionally unsupported; only dynamic-range 'int8' is offered.
+        """
+        with pytest.raises(ValueError, match="[Ss]tatic / full-integer INT8 is not supported"):
+            export_tflite(onnx_model, tmp_path / "out", quantization=static_mode)
+
     def test_default_quantization_calls_convert(
         self,
         onnx_model: Path,
@@ -301,16 +317,31 @@ class TestExportTfliteConverter:
         export_tflite(onnx_model, tflite_output, quantization="fp16")
         assert "output_integer_quantized_tflite" not in convert_mock.call_args.kwargs
 
-    def test_int8_quantization_sets_flag(
+    def test_int8_quantization_produces_dynamic_range(
         self,
         onnx_model: Path,
         tflite_output: Path,
         fake_onnx2tf: Any,
         mock_prepare_calib: Any,
     ) -> None:
+        """int8 export derives a dynamic-range model and avoids onnx2tf's -oiqt path.
+
+        onnx2tf's ``output_integer_quantized_tflite`` (-oiqt) only yields static
+        quantization, which RF-DETR's transformer activations do not survive.
+        The converter instead builds dynamic-range INT8 from the SavedModel via
+        ``_quantize_dynamic_range``, so the onnx2tf call must NOT carry the
+        ``output_integer_quantized_tflite`` flag.
+        """
         _, convert_mock = fake_onnx2tf
-        export_tflite(onnx_model, tflite_output, quantization="int8")
-        assert convert_mock.call_args.kwargs["output_integer_quantized_tflite"] is True
+        dyn_path = tflite_output / "model_dynamic_range_quant.tflite"
+        with mock.patch(
+            "rfdetr.export._tflite.converter._quantize_dynamic_range",
+            return_value=dyn_path,
+        ) as quant_mock:
+            result = export_tflite(onnx_model, tflite_output, quantization="int8")
+        assert "output_integer_quantized_tflite" not in convert_mock.call_args.kwargs
+        quant_mock.assert_called_once()
+        assert result == dyn_path
 
     def test_verbosity_forwarded(
         self,
