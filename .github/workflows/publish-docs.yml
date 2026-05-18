@@ -2,9 +2,9 @@
 # using mike for versioned docs.
 #
 # Deploy matrix:
-#   push develop            → mike deploy develop          (rfdetr.roboflow.com/develop/)
-#   push release/latest     → mike deploy latest            (rfdetr.roboflow.com/latest/)
-#   release published        → mike deploy <tag> latest     (rfdetr.roboflow.com/<tag>/ + /latest/ alias → <tag>)
+#   push develop                    → mike deploy develop        (rfdetr.roboflow.com/develop/)
+#   push release/latest             → mike deploy latest         (rfdetr.roboflow.com/latest/)
+#   release published (stable/post) → mike deploy <base> latest  (rfdetr.roboflow.com/<base>/ — .postN stripped to base; RC/pre-release skipped)
 #
 # Every deploy also:
 #   - Copies robots.txt, llms.txt, llms-full.txt to gh-pages root
@@ -72,10 +72,13 @@ jobs:
         run: uv run mike deploy --push --update-aliases latest
 
       - name: 🚀 Deploy Release Docs
-        if: github.event_name == 'release' && github.event.action == 'published'
+        if: github.event_name == 'release' && github.event.action == 'published' && !github.event.release.prerelease
         env:
           MKDOCS_GIT_COMMITTERS_APIKEY: ${{ secrets.GITHUB_TOKEN }}
-        run: uv run mike deploy --push --update-aliases ${{ github.event.release.tag_name }} latest
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          DOC_VERSION="${TAG%.post*}"
+          uv run mike deploy --push "$DOC_VERSION"
 
       - name: 🏗️ Build docs for artifact
         run: uv run mkdocs build
@@ -93,7 +96,8 @@ jobs:
            (github.ref == 'refs/heads/develop' ||
             github.ref == 'refs/heads/release/latest')) ||
           (github.event_name == 'release' &&
-           github.event.action == 'published')
+           github.event.action == 'published' &&
+           !github.event.release.prerelease)
         run: |
           cp docs/root-static/robots.txt /tmp/robots.txt
           cp docs/root-static/llms.txt /tmp/llms.txt
@@ -137,7 +141,8 @@ jobs:
            (github.ref == 'refs/heads/develop' ||
             github.ref == 'refs/heads/release/latest')) ||
           (github.event_name == 'release' &&
-           github.event.action == 'published')
+           github.event.action == 'published' &&
+           !github.event.release.prerelease)
         run: |
           curl -s -o /dev/null -w "%{http_code}" -X POST "https://api.indexnow.org/IndexNow" \
             -H "Content-Type: application/json; charset=utf-8" \
