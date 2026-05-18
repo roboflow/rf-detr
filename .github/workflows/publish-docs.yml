@@ -30,7 +30,7 @@ on:
 
 # Ensure only one concurrent deployment
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.ref || github.event_name == 'workflow_dispatch' && inputs.target || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.ref_name || github.event_name == 'workflow_dispatch' && inputs.target || github.run_id }}
   cancel-in-progress: true
 
 # Restrict permissions by default
