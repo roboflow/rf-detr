@@ -5,6 +5,9 @@
 #   push develop                    → mike deploy develop        (rfdetr.roboflow.com/develop/)
 #   push release/latest             → mike deploy latest         (rfdetr.roboflow.com/latest/)
 #   release published (stable/post) → mike deploy <base> latest  (rfdetr.roboflow.com/<base>/ + /latest/ alias → <base>; .postN stripped; RC/pre-release skipped)
+  #   workflow_dispatch target=develop         → same as push develop
+#   workflow_dispatch target=release/latest  → same as push release/latest (→ latest alias)
+#   workflow_dispatch target=<version tag>   → mike deploy <tag> latest
 #
 # Every deploy also:
 #   - Copies robots.txt, llms.txt, llms-full.txt to gh-pages root
@@ -18,10 +21,16 @@ on:
     branches: ["release/latest", "develop"]
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Deploy target: 'develop', 'release/latest', or a version tag (e.g. '1.2.3'). Determines both the checkout ref and the mike version label."
+        required: true
+        default: "release/latest"
 
 # Ensure only one concurrent deployment
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.ref}}
+  group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.ref || github.event_name == 'workflow_dispatch' && inputs.target || github.run_id }}
   cancel-in-progress: true
 
 # Restrict permissions by default
@@ -43,6 +52,7 @@ jobs:
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           fetch-depth: 0
+          ref: ${{ inputs.target }}
 
       - name: 🐍 Install uv and set Python
         uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
@@ -80,6 +90,21 @@ jobs:
           DOC_VERSION="${TAG%.post*}"
           uv run mike deploy --push --update-aliases "$DOC_VERSION" latest
 
+      - name: 🚀 Deploy Docs (workflow_dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          MKDOCS_GIT_COMMITTERS_APIKEY: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TARGET="${{ inputs.target }}"
+          if [ "$TARGET" = "develop" ]; then
+            uv run mike deploy --push develop
+          elif [ "$TARGET" = "release/latest" ]; then
+            uv run mike deploy --push --update-aliases latest
+          else
+            DOC_VERSION="${TARGET%.post*}"
+            uv run mike deploy --push --update-aliases "$DOC_VERSION" latest
+          fi
+
       - name: 🏗️ Build docs for artifact
         run: uv run mkdocs build
 
@@ -97,7 +122,8 @@ jobs:
             github.ref == 'refs/heads/release/latest')) ||
           (github.event_name == 'release' &&
            github.event.action == 'published' &&
-           !github.event.release.prerelease)
+           !github.event.release.prerelease) ||
+          github.event_name == 'workflow_dispatch'
         run: |
           cp docs/root-static/robots.txt /tmp/robots.txt
           cp docs/root-static/llms.txt /tmp/llms.txt
@@ -142,7 +168,8 @@ jobs:
             github.ref == 'refs/heads/release/latest')) ||
           (github.event_name == 'release' &&
            github.event.action == 'published' &&
-           !github.event.release.prerelease)
+           !github.event.release.prerelease) ||
+          github.event_name == 'workflow_dispatch'
         run: |
           curl -s -o /dev/null -w "%{http_code}" -X POST "https://api.indexnow.org/IndexNow" \
             -H "Content-Type: application/json; charset=utf-8" \
