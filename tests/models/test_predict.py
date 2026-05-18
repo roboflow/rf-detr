@@ -657,3 +657,95 @@ class TestPredictClassNameData:
         assert detections.data["class_name"][0] == "", "Truly OOB class_id (> num_classes) must produce empty string"
         oob_warnings = [msg for msg in logger._warned_once if "out of range" in msg]
         assert oob_warnings, "Truly OOB class_id (> num_classes) must trigger an out-of-range warning"
+
+    @pytest.mark.parametrize(
+        ("class_id", "expected_name"),
+        [
+            pytest.param(18, "dog", id="coco_id_18_dog"),
+            pytest.param(27, "backpack", id="coco_id_27_backpack"),
+            pytest.param(3, "car", id="coco_id_3_car"),
+        ],
+    )
+    def test_coco_pretrained_sparse_id_mapping(self, class_id: int, expected_name: str) -> None:
+        """Pretrained COCO models use raw COCO category IDs (1-indexed, with gaps) as class_ids.
+
+        When num_classes=90 and class_names has 80 entries, class_id 18 must resolve to
+        'dog' (COCO category 18), not 'sheep' (COCO_CLASS_NAMES[18] via 0-indexed lookup).
+
+        Regression test for https://github.com/roboflow/rf-detr/issues/988.
+        """
+        from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
+
+        coco_model = _DummyModel(class_names=list(COCO_CLASS_NAMES), labels=[class_id])
+        coco_model.args = SimpleNamespace(num_classes=90)
+        model = _DummyRFDETR()
+        model.model = coco_model
+
+        img = PIL.Image.new("RGB", (28, 28))
+        detections = model.predict(img)
+
+        assert detections.data["class_name"][0] == expected_name, (
+            f"class_id={class_id} must map to '{expected_name}', got '{detections.data['class_name'][0]}'"
+        )
+
+    def test_coco_pretrained_dataset_file_roboflow(self) -> None:
+        """Pretrained COCO weights packaged as dataset_file='roboflow' must still use sparse-ID mapping.
+
+        RF-DETR pretrained checkpoints (e.g. RFDETRSegSmall) can have dataset_file='roboflow'
+        even though they were trained on COCO. The fix must not depend on dataset_file value.
+
+        Regression test for https://github.com/roboflow/rf-detr/issues/988 (post-revert follow-up).
+        """
+        from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
+
+        coco_model = _DummyModel(class_names=list(COCO_CLASS_NAMES), labels=[18])
+        coco_model.args = SimpleNamespace(num_classes=90, dataset_file="roboflow")
+        model = _DummyRFDETR()
+        model.model = coco_model
+
+        img = PIL.Image.new("RGB", (28, 28))
+        detections = model.predict(img)
+
+        assert detections.data["class_name"][0] == "dog", (
+            f"dataset_file='roboflow' COCO pretrained: class_id=18 must map to 'dog', "
+            f"got '{detections.data['class_name'][0]}'"
+        )
+
+    def test_finetuned_coco_names_uses_direct_indexing(self) -> None:
+        """Fine-tuned 80-class model with COCO names must use direct 0-indexed lookup, not sparse remap.
+
+        When num_classes == len(COCO_CLASS_NAMES) (not strictly greater), the COCO
+        sparse-ID branch must NOT activate.
+        """
+        from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
+
+        coco_model = _DummyModel(class_names=list(COCO_CLASS_NAMES), labels=[18])
+        coco_model.args = SimpleNamespace(num_classes=80, dataset_file="coco")
+        model = _DummyRFDETR()
+        model.model = coco_model
+
+        img = PIL.Image.new("RGB", (28, 28))
+        detections = model.predict(img)
+
+        assert detections.data["class_name"][0] == COCO_CLASS_NAMES[18], (
+            f"Fine-tuned 80-class model must use direct indexing; got '{detections.data['class_name'][0]}'"
+        )
+
+    def test_custom_names_high_num_classes_no_coco_remap(self) -> None:
+        """Custom class_names with num_classes>80 must NOT activate sparse COCO remap.
+
+        Guard: a custom model with num_classes=90 but non-COCO class_names must use
+        direct 0-indexed mapping (class_names != COCO_CLASS_NAMES fails the guard).
+        """
+        custom_names = [f"custom_{i}" for i in range(80)]
+        coco_model = _DummyModel(class_names=custom_names, labels=[18])
+        coco_model.args = SimpleNamespace(num_classes=90)
+        model = _DummyRFDETR()
+        model.model = coco_model
+
+        img = PIL.Image.new("RGB", (28, 28))
+        detections = model.predict(img)
+
+        assert detections.data["class_name"][0] == "custom_18", (
+            f"Custom class names must use direct indexing; got '{detections.data['class_name'][0]}'"
+        )
