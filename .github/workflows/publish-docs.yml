@@ -48,6 +48,19 @@ jobs:
       url: https://rfdetr.roboflow.com/
     timeout-minutes: 10
     steps:
+      - name: 🔍 Validate dispatch target
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          TARGET="${{ inputs.target }}"
+          if [ "$TARGET" = "develop" ] || [ "$TARGET" = "release/latest" ]; then
+            echo "✓ Target '$TARGET' is valid"
+          elif echo "$TARGET" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(\.post[0-9]+)?$'; then
+            echo "✓ Target '$TARGET' is valid (version tag)"
+          else
+            echo "::error::Invalid target '$TARGET'. Must be 'develop', 'release/latest', or a version tag (e.g. '1.2.3' or '1.2.3.post1')"
+            exit 1
+          fi
+
       - name: 📥 Checkout the repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
