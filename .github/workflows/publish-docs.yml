@@ -4,10 +4,10 @@
 # Deploy matrix:
 #   push develop                    → mike deploy develop        (rfdetr.roboflow.com/develop/)
 #   push release/latest             → mike deploy latest         (rfdetr.roboflow.com/latest/)
-#   release published (stable/post) → mike deploy <base> latest  (rfdetr.roboflow.com/<base>/ + /latest/ alias → <base>; .postN stripped; RC/pre-release skipped)
+#   release published (stable/post) → mike deploy <base>          (rfdetr.roboflow.com/<base>/; .postN stripped; RC/pre-release skipped)
 #   workflow_dispatch target=develop         → same as push develop
 #   workflow_dispatch target=release/latest  → same as push release/latest (→ latest alias)
-#   workflow_dispatch target=<version tag>   → mike deploy <tag> latest
+#   workflow_dispatch target=<version tag>   → mike deploy <tag>
 #
 # Every deploy also:
 #   - Copies robots.txt, llms.txt, llms-full.txt to gh-pages root
@@ -88,7 +88,7 @@ jobs:
         run: |
           TAG="${{ github.event.release.tag_name }}"
           DOC_VERSION="${TAG%.post*}"
-          uv run mike deploy --push --update-aliases "$DOC_VERSION" latest
+          uv run mike deploy --push "$DOC_VERSION"
 
       - name: 🚀 Deploy Docs (workflow_dispatch)
         if: github.event_name == 'workflow_dispatch'
@@ -102,7 +102,7 @@ jobs:
             uv run mike deploy --push --update-aliases latest
           else
             DOC_VERSION="${TARGET%.post*}"
-            uv run mike deploy --push --update-aliases "$DOC_VERSION"
+            uv run mike deploy --push "$DOC_VERSION"
           fi
 
       - name: 🏗️ Build docs for artifact
