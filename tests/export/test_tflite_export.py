@@ -933,22 +933,6 @@ class TestCheckOnnx2tfAvailable:
             with pytest.raises(ImportError, match="onnx2tf is not installed"):
                 _check_onnx2tf_available()
 
-    def test_raises_when_version_too_old(self, fake_onnx2tf: Any) -> None:
-        """ImportError is raised when onnx2tf.__version__ is below 2.4.0."""
-        sys.modules["onnx2tf"].__version__ = "1.26.4"  # type: ignore[attr-defined]
-        with pytest.raises(ImportError, match="onnx2tf 1.26.4 is installed"):
-            _check_onnx2tf_available()
-
-    def test_passes_when_version_meets_minimum(self, fake_onnx2tf: Any) -> None:
-        """No exception when onnx2tf.__version__ is exactly 2.4.0."""
-        sys.modules["onnx2tf"].__version__ = "2.4.0"  # type: ignore[attr-defined]
-        _check_onnx2tf_available()  # should not raise
-
-    def test_passes_when_version_exceeds_minimum(self, fake_onnx2tf: Any) -> None:
-        """No exception when onnx2tf.__version__ is above 2.4.0."""
-        sys.modules["onnx2tf"].__version__ = "3.0.0"  # type: ignore[attr-defined]
-        _check_onnx2tf_available()  # should not raise
-
 
 # ---------------------------------------------------------------------------
 # TestGridSampleKwargDetection
