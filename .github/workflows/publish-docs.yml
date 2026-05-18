@@ -2,9 +2,9 @@
 # using mike for versioned docs.
 #
 # Deploy matrix:
-#   push develop            → mike deploy develop          (rfdetr.roboflow.com/develop/)
-#   push release/latest     → mike deploy latest            (rfdetr.roboflow.com/latest/)
-#   release published (stable/post) → mike deploy <base>   (rfdetr.roboflow.com/<base>/ — .postN stripped to base; RC/pre-release skipped)
+#   push develop                    → mike deploy develop        (rfdetr.roboflow.com/develop/)
+#   push release/latest             → mike deploy latest         (rfdetr.roboflow.com/latest/)
+#   release published (stable/post) → mike deploy <base> latest  (rfdetr.roboflow.com/<base>/ + /latest/ alias → <base>; .postN stripped; RC/pre-release skipped)
 #
 # Every deploy also:
 #   - Copies robots.txt, llms.txt, llms-full.txt to gh-pages root
@@ -78,7 +78,7 @@ jobs:
         run: |
           TAG="${{ github.event.release.tag_name }}"
           DOC_VERSION="${TAG%.post*}"
-          uv run mike deploy --push "$DOC_VERSION"
+          uv run mike deploy --push --update-aliases "$DOC_VERSION" latest
 
       - name: 🏗️ Build docs for artifact
         run: uv run mkdocs build
@@ -110,13 +110,22 @@ jobs:
           cp /tmp/llms-full.txt llms-full.txt
           cp /tmp/indexnow.txt cace9ef287cb8d641db90d4295fcb1e1.txt
           git add robots.txt llms.txt llms-full.txt cace9ef287cb8d641db90d4295fcb1e1.txt
+          # Normalize versioned paths (/X.Y.Z/) to /latest/ so sitemap URLs are
+          # not blocked by the User-agent: * Disallow rules in robots.txt.
+          # latest/ may be a mike alias redirect (no sitemap.xml) — fall back to highest versioned dir.
+          SITEMAP_SRC=""
           if [ -f latest/sitemap.xml ]; then
-            # Normalize versioned paths (/X.Y.Z/) to /latest/ so sitemap URLs are
-            # not blocked by the User-agent: * Disallow rules in robots.txt.
-            sed 's|rfdetr\.roboflow\.com/[0-9][^/]*/|rfdetr.roboflow.com/latest/|g' latest/sitemap.xml > sitemap.xml
-            git add sitemap.xml
-          elif [ -f develop/sitemap.xml ]; then
-            sed 's|rfdetr\.roboflow\.com/develop/|rfdetr.roboflow.com/latest/|g' develop/sitemap.xml > sitemap.xml
+            SITEMAP_SRC="latest/sitemap.xml"
+          else
+            LATEST_VER=$(ls -d [0-9]* 2>/dev/null | grep -E '^[0-9]+\.[0-9]+' | sort -V | tail -1)
+            if [ -n "$LATEST_VER" ] && [ -f "$LATEST_VER/sitemap.xml" ]; then
+              SITEMAP_SRC="$LATEST_VER/sitemap.xml"
+            elif [ -f develop/sitemap.xml ]; then
+              SITEMAP_SRC="develop/sitemap.xml"
+            fi
+          fi
+          if [ -n "$SITEMAP_SRC" ]; then
+            sed 's|rfdetr\.roboflow\.com/[^/]*/|rfdetr.roboflow.com/latest/|g' "$SITEMAP_SRC" > sitemap.xml
             git add sitemap.xml
           fi
           git diff --staged --quiet || git commit -m "chore: update root static files and sitemap"
