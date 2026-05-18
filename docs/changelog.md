@@ -17,4 +17,4 @@ to review versioned package changes, migration notes, and model updates.
 - [Review the project changelog source](https://github.com/roboflow/rf-detr/blob/main/CHANGELOG.md)
 - [Install the latest PyPI package](https://pypi.org/project/rfdetr/)
 
-For migration guidance inside these docs, see the [migration guide](learn/migration.md).
+For migration guidance inside these docs, see the [migration guide](getting-started/migration.md).

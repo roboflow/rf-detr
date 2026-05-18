@@ -30,9 +30,10 @@ extra:
 
 nav:
   - Home: index.md
+  - Getting Started:
+      - Install: getting-started/install.md
+      - Migration Guide: getting-started/migration.md
   - How to:
-      - Install: learn/install.md
-      - Migration Guide: learn/migration.md
       - Run Model:
           - Detection: learn/run/detection.md
           - Segmentation: learn/run/segmentation.md
