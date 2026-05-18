@@ -6,6 +6,7 @@
 
 
 import os
+import warnings
 
 import pytest
 
@@ -131,3 +132,27 @@ def test_model_weights_inherits_from_base():
     assert issubclass(ModelWeights, ModelWeightsBase), (
         "ModelWeights must inherit from ModelWeightsBase for compatibility"
     )
+
+
+def test_download_pretrain_weights_warns_for_legacy_large(monkeypatch, tmp_path) -> None:
+    """Legacy Large downloads warn so users do not confuse them with the current Large release."""
+    target = tmp_path / "rf-detr-large.pth"
+    monkeypatch.setattr("rfdetr.assets.model_weights._download_file", lambda **_: None)
+
+    with pytest.warns(UserWarning, match="legacy RF-DETR Large checkpoint"):
+        from rfdetr.assets.model_weights import download_pretrain_weights
+
+        download_pretrain_weights(str(target))
+
+
+def test_download_pretrain_weights_does_not_warn_for_current_large(monkeypatch, tmp_path) -> None:
+    """Current Large downloads should not emit the legacy Large warning."""
+    monkeypatch.setattr("rfdetr.assets.model_weights._download_file", lambda **_: None)
+
+    from rfdetr.assets.model_weights import download_pretrain_weights
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        download_pretrain_weights(str(tmp_path / "rf-detr-large-2026.pth"))
+
+    assert [warning for warning in caught if "legacy RF-DETR Large checkpoint" in str(warning.message)] == []
