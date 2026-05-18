@@ -1,0 +1,67 @@
+# RF-DETR
+> RF-DETR is a real-time object detection and instance segmentation transformer by Roboflow.
+> DINOv2 backbone. ICLR 2026. SOTA on COCO (60.1 AP50:95, RF-DETR-2XL).
+> Apache 2.0 for base models (Nano-Large). Install: pip install rfdetr.
+
+## Canonical Facts
+- Product: RF-DETR (Roboflow Detection Transformer)
+- Python package: `rfdetr`
+- Maintainer: Roboflow
+- Canonical docs: https://rfdetr.roboflow.com/
+- Source repository: https://github.com/roboflow/rf-detr
+- Paper: https://arxiv.org/abs/2511.09554
+- Runtime: Python 3.10+, torch >=2.2.0, torchvision >=0.17.0, transformers >=5.1.0 and <6.0.0
+- Tasks: object detection and instance segmentation
+- Backbone: DINOv2 vision transformer
+- Dataset formats: COCO JSON and YOLO
+- Export targets: ONNX, TensorRT, and TFLite
+- License: Apache 2.0 for code and core Nano through Large models; XLarge and 2XLarge detection models require `rfdetr[plus]` and PML 1.0
+
+## Getting Started
+- [Install](https://rfdetr.roboflow.com/latest/learn/install/): pip install rfdetr
+- [Run Detection](https://rfdetr.roboflow.com/latest/learn/run/detection/): Run RF-DETR detection on images, video, webcam, and streams
+- [Run Segmentation](https://rfdetr.roboflow.com/latest/learn/run/segmentation/): Run RF-DETR Seg instance segmentation on images and video
+- [Pretrained Models](https://rfdetr.roboflow.com/latest/learn/pretrained/): Nano, Small, Medium, Large, XLarge, and 2XLarge checkpoints
+
+## Train
+- [Train Overview](https://rfdetr.roboflow.com/latest/learn/train/): Fine-tune RF-DETR detection and segmentation models
+- [Dataset Formats](https://rfdetr.roboflow.com/latest/learn/train/dataset-formats/): COCO JSON and YOLO dataset formats
+- [Training Parameters](https://rfdetr.roboflow.com/latest/learn/train/training-parameters/): RF-DETR hyperparameters and TrainConfig options
+- [Advanced Training](https://rfdetr.roboflow.com/latest/learn/train/advanced/): Resume, early stopping, multi-GPU DDP, and memory optimization
+- [Custom Training API](https://rfdetr.roboflow.com/latest/learn/train/customization/): PyTorch Lightning training primitives
+- [Augmentations](https://rfdetr.roboflow.com/latest/learn/train/augmentations/): Albumentations presets and custom transforms
+- [Training Loggers](https://rfdetr.roboflow.com/latest/learn/train/loggers/): TensorBoard, Weights and Biases, MLflow, and a ClearML workaround
+
+## Export and Deploy
+- [Export](https://rfdetr.roboflow.com/latest/learn/export/): ONNX, TFLite, TensorRT
+- [Deploy](https://rfdetr.roboflow.com/latest/learn/deploy/): deploy_to_roboflow() API
+
+## Benchmarks
+- [COCO and RF100-VL Results](https://rfdetr.roboflow.com/latest/learn/benchmarks/): T4 TensorRT FP16, batch 1
+- Detection model range: RF-DETR-Nano 2.3 ms and 48.4 COCO AP50:95 through RF-DETR-2XLarge 17.2 ms and 60.1 COCO AP50:95
+- Segmentation model range: RF-DETR-Seg-Nano 3.4 ms and 40.3 COCO AP50:95 through RF-DETR-Seg-2XLarge 21.8 ms and 49.9 COCO AP50:95
+
+## Model Selection Answers
+- Use RF-DETR-Nano for lowest latency edge detection: 2.3 ms on T4 TensorRT FP16, 48.4 AP50:95 on COCO, 30.5 M params.
+- Use RF-DETR-Small (3.5 ms, 53.0 AP50:95) or RF-DETR-Medium (4.4 ms, 54.7 AP50:95) when latency is tight but accuracy must improve over Nano.
+- Use RF-DETR-Large for the best open Apache 2.0 accuracy-latency trade-off: 6.8 ms, 56.5 AP50:95 on COCO.
+- Use RF-DETR-XLarge (11.5 ms, 58.6 AP50:95) or RF-DETR-2XLarge (17.2 ms, 60.1 AP50:95) when maximum accuracy matters; requires rfdetr[plus] and PML 1.0 license.
+- Use RF-DETR-Seg-Large (8.8 ms, 47.1 AP50:95) or RF-DETR-Seg-2XLarge (21.8 ms, 49.9 AP50:95) when instance masks are required; detection-only models return bounding boxes only.
+
+## API Reference
+- [RFDETR base class](https://rfdetr.roboflow.com/latest/reference/rfdetr/): train(), predict(), export(), deploy_to_roboflow()
+- [Detection models](https://rfdetr.roboflow.com/latest/reference/nano/): RFDETRNano through RFDETR2XLarge
+- [Segmentation models](https://rfdetr.roboflow.com/latest/reference/seg_nano/): RFDETRSegNano through RFDETRSeg2XLarge
+- [TrainConfig](https://rfdetr.roboflow.com/latest/reference/train_config/): Detection training configuration schema
+- [SegmentationTrainConfig](https://rfdetr.roboflow.com/latest/reference/segmentation_train_config/): Segmentation training configuration schema
+- [Lightning Training](https://rfdetr.roboflow.com/latest/reference/training/): PyTorch Lightning training module, datamodule, callbacks, and trainer builder
+
+## Migration
+- [Migration Guide](https://rfdetr.roboflow.com/latest/learn/migration/): Update imports from deprecated module paths
+
+## Optional
+- [GitHub](https://github.com/roboflow/rf-detr): 6.4k stars, Apache 2.0
+- [arXiv Paper](https://arxiv.org/abs/2511.09554): ICLR 2026
+- [PyPI](https://pypi.org/project/rfdetr/): rfdetr package
+- [Hugging Face Demo](https://huggingface.co/spaces/Roboflow/RF-DETR): Interactive RF-DETR demo
+- [Discord](https://discord.gg/GbfgXGJ8Bk): RF-DETR community

@@ -1,0 +1,359 @@
+# RF-DETR — Full Documentation
+
+> RF-DETR is a real-time transformer architecture for object detection and instance segmentation by Roboflow.
+> DINOv2 vision transformer backbone. ICLR 2026. SOTA on COCO (60.1 AP50:95, RF-DETR-2XL).
+> Apache 2.0 license for core models (Nano through Large). Python 3.10+.
+> Source: https://github.com/roboflow/rf-detr | Paper: https://arxiv.org/abs/2511.09554
+
+---
+
+## Overview
+
+RF-DETR (Roboflow Detection Transformer) is a real-time object detection and instance segmentation model from Roboflow, accepted at ICLR 2026. It uses a DINOv2 vision transformer backbone and achieves state-of-the-art accuracy–latency trade-offs on Microsoft COCO and RF100-VL.
+
+RF-DETR is the first real-time model to exceed 60 mean Average Precision (mAP) when benchmarked on the COCO dataset. RF-DETR-2XL achieves 60.1 AP50:95 at 17.2 ms latency on NVIDIA T4 (TensorRT FP16, batch 1).
+
+**Licensing:**
+- Core models (Nano, Small, Medium, Large) and all code: Apache 2.0
+- XLarge and 2XLarge detection models: PML 1.0 (requires rfdetr[plus])
+- Segmentation models follow the same tier structure
+
+---
+
+## Installation
+
+**Requirements:** Python 3.10 or higher, pip or uv.
+
+```bash
+pip install rfdetr
+```
+
+For uv projects:
+```bash
+uv add rfdetr
+```
+
+For XLarge/2XLarge models (PML 1.0):
+```bash
+pip install "rfdetr[plus]"
+```
+
+---
+
+## Run Detection
+
+```python
+from rfdetr import RFDETRLarge
+
+model = RFDETRLarge()
+detections = model.predict("image.jpg", threshold=0.5)
+print(detections)
+```
+
+**Available detection model classes:**
+- `RFDETRNano` — 2.3 ms, 67.6 AP50, 30.5M params, 384×384
+- `RFDETRSmall` — 3.5 ms, 72.1 AP50, 32.1M params, 512×512
+- `RFDETRMedium` — 4.4 ms, 73.6 AP50, 33.7M params, 576×576
+- `RFDETRLarge` — 6.8 ms, 75.1 AP50 (56.5 AP50:95), 33.9M params, 704×704
+- `RFDETRXLarge` — 11.5 ms, 77.4 AP50, 126.4M params, 700×700 (requires rfdetr[plus])
+- `RFDETR2XLarge` — 17.2 ms, 78.5 AP50 (60.1 AP50:95), 126.9M params, 880×880 (requires rfdetr[plus])
+
+All latency figures: NVIDIA T4, TensorRT FP16, batch size 1.
+
+**Load fine-tuned checkpoint:**
+```python
+model = RFDETRLarge(pretrain_weights="path/to/checkpoint_best_total.pth")
+```
+
+---
+
+## Run Segmentation
+
+```python
+from rfdetr import RFDETRSegLarge
+
+model = RFDETRSegLarge()
+detections = model.predict("image.jpg", threshold=0.5)
+```
+
+**Available segmentation model classes:**
+- `RFDETRSegNano` — 3.4 ms, 63.0 AP50, 33.6M params, 312×312
+- `RFDETRSegSmall` — 4.4 ms, 66.2 AP50, 33.7M params, 384×384
+- `RFDETRSegMedium` — 5.9 ms, 68.4 AP50, 35.7M params, 432×432
+- `RFDETRSegLarge` — 8.8 ms, 70.5 AP50 (47.1 AP50:95), 36.2M params, 504×504
+- `RFDETRSegXLarge` — 13.5 ms, 72.2 AP50, 38.1M params, 624×624 (requires rfdetr[plus])
+- `RFDETRSeg2XLarge` — 21.8 ms, 73.1 AP50 (49.9 AP50:95), 38.6M params, 768×768 (requires rfdetr[plus])
+
+Segmentation models output instance masks in addition to bounding boxes. Masks are returned as a `torch.Tensor` or dict with `spatial_features`, `query_features`, and `bias` keys.
+
+---
+
+## Train a Custom Model
+
+### Quick Start (Detection)
+
+```python
+from rfdetr import RFDETRLarge
+
+model = RFDETRLarge()
+model.train(
+    dataset_dir="./dataset",
+    epochs=50,
+    batch_size=4,
+    grad_accum_steps=4,  # effective batch = batch_size * grad_accum_steps = 16
+    lr=1e-4,
+    output_dir="./output"
+)
+```
+
+### Quick Start (Segmentation)
+
+```python
+from rfdetr import RFDETRSegLarge
+
+model = RFDETRSegLarge()
+model.train(dataset_dir="./dataset", epochs=50, batch_size=4)
+```
+
+### Dataset Formats
+
+**COCO JSON format** (auto-detected):
+```
+dataset/
+  train/
+    _annotations.coco.json
+    image1.jpg
+    ...
+  valid/
+    _annotations.coco.json
+    image1.jpg
+    ...
+```
+
+**YOLO format** (set `dataset_file="yolo"`):
+```
+dataset/
+  data.yaml
+  train/
+    images/
+    labels/
+  valid/
+    images/
+    labels/
+```
+
+### Key Training Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `epochs` | 50 | Training epochs |
+| `batch_size` | 4 | Images per GPU step |
+| `grad_accum_steps` | 4 | Gradient accumulation steps (effective batch = batch_size × grad_accum_steps) |
+| `lr` | 1e-4 | Peak learning rate |
+| `output_dir` | `"output"` | Checkpoint directory |
+| `checkpoint_interval` | 1 | Save checkpoint every N epochs |
+
+**Recommended effective batch size: 16** (e.g., batch_size=4, grad_accum_steps=4 on 8GB VRAM GPU).
+
+### Checkpoint Types
+
+After training, the `output_dir` contains:
+- `checkpoint_best_total.pth` — best checkpoint by total loss (use for production)
+- `checkpoint_best_ap.pth` — best checkpoint by COCO AP
+- `checkpoint_epoch_N.pth` — periodic snapshots
+
+**Load fine-tuned model:**
+```python
+model = RFDETRLarge(pretrain_weights="output/checkpoint_best_total.pth")
+```
+
+### Advanced Training
+
+**Resume from checkpoint:**
+```python
+model.train(dataset_dir="./dataset", resume="output/checkpoint_epoch_20.pth")
+```
+
+**Multi-GPU DDP training:**
+```bash
+torchrun --nproc_per_node=4 train.py
+```
+
+Here, `train.py` refers to your own PyTorch distributed training entrypoint. In this standalone reference, it should be a script that initializes RF-DETR and calls `model.train(...)` with your dataset and training arguments, so `torchrun` can launch one process per GPU.
+**Gradient checkpointing** (reduces VRAM at cost of speed):
+```python
+model.train(dataset_dir="./dataset", gradient_checkpointing=True)
+```
+
+### Training Loggers
+
+```python
+# TensorBoard
+model.train(dataset_dir="./dataset", tensorboard=True)
+
+# Weights and Biases
+model.train(dataset_dir="./dataset", wandb=True)
+
+# ClearML is not yet integrated as a native RF-DETR logger.
+# Do not pass clearml=True; that flag raises NotImplementedError
+# when the trainer is built.
+
+# MLflow
+model.train(dataset_dir="./dataset", mlflow=True)
+```
+
+---
+
+## Export and Deploy
+
+### Export to ONNX
+
+```python
+model.export(format="onnx")
+```
+
+Produces a single `.onnx` file compatible with ONNX Runtime and OpenCV DNN. Export works on CPU.
+
+### Export to TFLite
+
+```python
+model.export(format="tflite")
+```
+
+### TensorRT Deployment
+
+Export to ONNX first, then convert with TensorRT tooling:
+```bash
+trtexec --onnx=model.onnx --saveEngine=model.trt --fp16
+```
+
+### Deploy to Roboflow
+
+```python
+model.deploy_to_roboflow(
+    workspace="your-workspace",
+    project_id="your-project-id",
+    version=1,
+    api_key="YOUR_API_KEY"
+)
+```
+
+---
+
+## Benchmarks
+
+**Benchmark methodology:** Accuracy measured with standard COCO metrics (pycocotools) on COCO val2017 split. Latency measured on NVIDIA T4 GPU, TensorRT 10.4, CUDA 12.4, FP16 precision, batch size 1, with a 200ms buffer between passes to reduce thermal variance. All accuracy and latency measurements use the same model artifact and numerical precision.
+
+### Detection Results
+
+| Architecture | COCO AP50 | COCO AP50:95 | RF100VL AP50 | RF100VL AP50:95 | Latency (ms) | Params (M) | Resolution |
+|---|---|---|---|---|---|---|---|
+| RF-DETR-N | 67.6 | 48.4 | 85.0 | 57.7 | 2.3 | 30.5 | 384×384 |
+| RF-DETR-S | 72.1 | 53.0 | 86.7 | 60.2 | 3.5 | 32.1 | 512×512 |
+| RF-DETR-M | 73.6 | 54.7 | 87.4 | 61.2 | 4.4 | 33.7 | 576×576 |
+| RF-DETR-L | 75.1 | 56.5 | 88.2 | 62.2 | 6.8 | 33.9 | 704×704 |
+| RF-DETR-XL | 77.4 | 58.6 | 88.5 | 62.9 | 11.5 | 126.4 | 700×700 |
+| RF-DETR-2XL | 78.5 | 60.1 | 89.0 | 63.2 | 17.2 | 126.9 | 880×880 |
+
+### Segmentation Results
+
+| Architecture | COCO AP50 | COCO AP50:95 | Latency (ms) | Params (M) | Resolution |
+|---|---|---|---|---|---|
+| RF-DETR-Seg-N | 63.0 | 40.3 | 3.4 | 33.6 | 312×312 |
+| RF-DETR-Seg-S | 66.2 | 43.1 | 4.4 | 33.7 | 384×384 |
+| RF-DETR-Seg-M | 68.4 | 45.3 | 5.9 | 35.7 | 432×432 |
+| RF-DETR-Seg-L | 70.5 | 47.1 | 8.8 | 36.2 | 504×504 |
+| RF-DETR-Seg-XL | 72.2 | 48.8 | 13.5 | 38.1 | 624×624 |
+| RF-DETR-Seg-2XL | 73.1 | 49.9 | 21.8 | 38.6 | 768×768 |
+
+---
+
+## Frequently Asked Questions
+
+**What is RF-DETR?**
+RF-DETR (Roboflow Detection Transformer) is a real-time object detection and instance segmentation model from Roboflow, accepted at ICLR 2026. It uses a DINOv2 vision transformer backbone and achieves state-of-the-art accuracy–latency trade-offs on COCO (60.1 AP50:95 for RF-DETR-2XL) and RF100-VL.
+
+**How does RF-DETR compare to YOLO11?**
+RF-DETR-L achieves 56.5 AP50:95 on COCO at 6.8 ms latency on an NVIDIA T4, outperforming YOLO11x (54.7 AP) at lower latency. The DINOv2 backbone gives RF-DETR stronger performance on domain-shift benchmarks such as RF100-VL.
+
+**What GPU is required to train RF-DETR?**
+A CUDA-capable GPU with at least 8 GB VRAM (e.g., NVIDIA RTX 3060, T4, A10) is recommended for fine-tuning. Smaller models (RF-DETR-N and RF-DETR-S) can fit in 6 GB VRAM with reduced batch size. CPU inference is supported for evaluation.
+
+**Which dataset formats does RF-DETR support?**
+RF-DETR supports COCO JSON and YOLO-format datasets. Roboflow datasets export directly to both formats. Detection and segmentation datasets use the same format — the model variant determines the task.
+
+**Can RF-DETR run in real time?**
+Yes. RF-DETR-N runs at 2.3 ms per frame on a T4 GPU (TensorRT FP16, batch 1), and RF-DETR-L at 6.8 ms — both well within real-time thresholds. ONNX and TFLite exports are available for edge deployment.
+
+**What is the difference between RF-DETR detection and segmentation models?**
+Detection models output bounding boxes. Segmentation models additionally output instance masks. Both share the same backbone and training API; segmentation adds a mask head and requires COCO-format segmentation annotations.
+
+**Is RF-DETR open source?**
+Yes. Core models (Nano through Large) and all training/inference code are released under the Apache 2.0 license. XLarge and 2XLarge models require the rfdetr[plus] package (PML 1.0 license).
+
+**How do I fine-tune RF-DETR on a custom dataset?**
+Instantiate a model and call model.train() with your dataset directory in COCO JSON or YOLO format. Example: model = RFDETRLarge(); model.train(dataset_dir='./dataset', epochs=50, batch_size=4). The model downloads pretrained weights automatically and resumes from the best checkpoint.
+
+**How do I export RF-DETR to ONNX or TensorRT?**
+Call model.export(format='onnx') after training or loading a checkpoint. ONNX export works on CPU. For TensorRT, export to ONNX first, then convert with trtexec --onnx=model.onnx --saveEngine=model.trt --fp16.
+
+**Which RF-DETR model size should I use?**
+RF-DETR-Nano (2.3 ms, 67.6 AP50) is best for edge/real-time. RF-DETR-Large (6.8 ms, 56.5 AP50:95) is best accuracy–latency trade-off for server deployment. RF-DETR-2XLarge (17.2 ms, 60.1 AP50:95) maximizes accuracy when latency budget allows.
+
+---
+
+## API Reference
+
+### RFDETR base class
+
+All model classes inherit from `RFDETR` and share these methods:
+
+- `predict(image, threshold=0.5)` — run inference on a single image (path, URL, numpy array, or PIL Image)
+- `train(dataset_dir, epochs, batch_size, ...)` — fine-tune on custom dataset
+- `export(format)` — export to ONNX, TFLite, or TensorRT
+- `deploy_to_roboflow(workspace, project_id, version)` — deploy model to Roboflow hosted inference
+
+### TrainConfig
+
+Key fields for detection training configuration:
+
+| Field | Type | Description |
+|---|---|---|
+| `epochs` | int | Training epochs |
+| `batch_size` | int | Images per GPU step |
+| `grad_accum_steps` | int | Gradient accumulation steps |
+| `lr` | float | Peak learning rate |
+| `output_dir` | str | Checkpoint output directory |
+| `resume` | str | Path to checkpoint to resume from |
+| `gradient_checkpointing` | bool | Reduce VRAM at cost of speed |
+| `tensorboard` | bool | Enable TensorBoard logging |
+| `wandb` | bool | Enable Weights & Biases logging |
+
+---
+
+## Migration Guide
+
+If upgrading from rfdetr < 1.4.0, update these imports:
+
+```python
+# Old model class (deprecated)
+from rfdetr import RFDETRBase
+# New
+from rfdetr import RFDETRLarge
+
+# Old
+from rfdetr.util.misc import get_rank
+# New (unchanged — still works)
+from rfdetr.util.misc import get_rank
+```
+
+---
+
+## External Links
+
+- [GitHub](https://github.com/roboflow/rf-detr) — Source code, issues, pull requests (Apache 2.0)
+- [arXiv Paper](https://arxiv.org/abs/2511.09554) — RF-DETR: Real-Time Detection Transformers, ICLR 2026
+- [PyPI](https://pypi.org/project/rfdetr/) — pip install rfdetr
+- [Hugging Face Demo](https://huggingface.co/spaces/Roboflow/RF-DETR) — Interactive demo
+- [Discord](https://discord.gg/GbfgXGJ8Bk) — Community support
+- [Documentation](https://rfdetr.roboflow.com/) — Full docs
