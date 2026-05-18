@@ -5,7 +5,7 @@
 #   push develop                    → mike deploy develop        (rfdetr.roboflow.com/develop/)
 #   push release/latest             → mike deploy latest         (rfdetr.roboflow.com/latest/)
 #   release published (stable/post) → mike deploy <base> latest  (rfdetr.roboflow.com/<base>/ + /latest/ alias → <base>; .postN stripped; RC/pre-release skipped)
-  #   workflow_dispatch target=develop         → same as push develop
+#   workflow_dispatch target=develop         → same as push develop
 #   workflow_dispatch target=release/latest  → same as push release/latest (→ latest alias)
 #   workflow_dispatch target=<version tag>   → mike deploy <tag> latest
 #
