@@ -102,7 +102,7 @@ jobs:
             uv run mike deploy --push --update-aliases latest
           else
             DOC_VERSION="${TARGET%.post*}"
-            uv run mike deploy --push --update-aliases "$DOC_VERSION" latest
+            uv run mike deploy --push --update-aliases "$DOC_VERSION"
           fi
 
       - name: 🏗️ Build docs for artifact
