@@ -9,6 +9,7 @@
 Covers:
 * ``_create_interpreter()`` — interpreter loading with tflite_runtime / tensorflow fallback
 * ``_run_inference()`` — image preprocessing, invocation, and detection decoding
+* ``_decode_masks()`` — segmentation mask upsampling and thresholding
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ import pytest
 import supervision as sv
 from PIL import Image as PILImage
 
-from rfdetr.export._tflite.inference import _create_interpreter, _run_inference
+from rfdetr.export._tflite.inference import _create_interpreter, _decode_masks, _run_inference
 
 # ---------------------------------------------------------------------------
 # Shared helpers / factories
@@ -439,3 +440,147 @@ class TestShapeBasedOutputFallback:
         dets, _ = _run_inference(interp, rgb_image, threshold=0.3)
         assert isinstance(dets, sv.Detections)
         assert len(dets) >= 1
+
+
+# ---------------------------------------------------------------------------
+# TestMaskDecoding
+# ---------------------------------------------------------------------------
+
+
+class TestMaskDecoding:
+    """Tests for ``_decode_masks()`` and mask decoding in ``_run_inference()``."""
+
+    @pytest.fixture()
+    def rgb_image(self, tmp_path: Path) -> Path:
+        """Write a small RGB JPEG to a temp file and return its path."""
+        p = tmp_path / "image.jpg"
+        _save_rgb_image(p)
+        return p
+
+    def test_decode_masks_shape_and_dtype(self) -> None:
+        """Output shape is (K, height, width) from out_size=(width, height); dtype is bool."""
+        out = _decode_masks(np.zeros((3, 10, 10), dtype=np.float32), (40, 20))
+        assert out.shape == (3, 20, 40)
+        assert out.dtype == bool
+
+    def test_decode_masks_thresholds_at_zero(self) -> None:
+        """Positive logits decode to True, negative logits to False."""
+        logits = np.stack(
+            [
+                np.full((8, 8), 5.0, dtype=np.float32),
+                np.full((8, 8), -5.0, dtype=np.float32),
+            ]
+        )
+        out = _decode_masks(logits, (16, 16))
+        assert out[0].all()
+        assert not out[1].any()
+
+    def test_decode_masks_empty_input(self) -> None:
+        """Zero masks in yields a (0, height, width) array, not an error."""
+        out = _decode_masks(np.zeros((0, 10, 10), dtype=np.float32), (32, 32))
+        assert out.shape == (0, 32, 32)
+
+    def test_run_inference_decodes_masks_for_seg_model(self, rgb_image: Path) -> None:
+        """A 3-output segmentation export populates Detections.mask at image size."""
+        boxes = _make_boxes()
+        logits = _make_logits(high_conf_idx=0)
+        masks = np.full((1, 10, 28, 28), -10.0, dtype=np.float32)
+        masks[0, 0] = 10.0  # query 0 (the kept detection) gets an all-positive mask
+
+        def _get_tensor(index: int) -> np.ndarray:
+            return {1: boxes, 2: logits, 3: masks}[index]
+
+        interp = mock.MagicMock()
+        interp.get_input_details.return_value = [{"shape": _INPUT_SHAPE, "index": 0, "dtype": np.float32}]
+        interp.get_output_details.return_value = [
+            {"shape": [1, 10, 4], "name": "Identity_0", "index": 1},
+            {"shape": [1, 10, 82], "name": "Identity_1", "index": 2},
+            {"shape": [1, 10, 28, 28], "name": "Identity_2", "index": 3},
+        ]
+        interp.get_tensor.side_effect = _get_tensor
+
+        dets, img = _run_inference(interp, rgb_image, threshold=0.3)
+        assert dets.mask is not None
+        assert dets.mask.shape == (len(dets), img.height, img.width)
+        assert dets.mask.dtype == bool
+        assert dets.mask[0].all()  # query 0's all-positive logits decode to a full mask
+
+    def test_run_inference_no_mask_for_detection_model(self, rgb_image: Path) -> None:
+        """A 2-output detection export leaves Detections.mask as None."""
+        interp = _make_interp(logits=_make_logits(high_conf_idx=0))
+        dets, _ = _run_inference(interp, rgb_image, threshold=0.3)
+        assert dets.mask is None
+
+    def test_run_inference_name_based_mask_detection(self, rgb_image: Path) -> None:
+        """Output named 'masks:0' exercises the name-based path and sets Detections.mask."""
+        boxes = _make_boxes()
+        logits = _make_logits(high_conf_idx=0)
+        masks = np.full((1, 10, 28, 28), 10.0, dtype=np.float32)
+
+        def _get_tensor(index: int) -> np.ndarray:
+            return {1: boxes, 2: logits, 3: masks}[index]
+
+        interp = mock.MagicMock()
+        interp.get_input_details.return_value = [{"shape": _INPUT_SHAPE, "index": 0, "dtype": np.float32}]
+        interp.get_output_details.return_value = [
+            {"shape": [1, 10, 4], "name": "serving_default_dets:0", "index": 1},
+            {"shape": [1, 10, 82], "name": "serving_default_labels:0", "index": 2},
+            {"shape": [1, 10, 28, 28], "name": "serving_default_masks:0", "index": 3},
+        ]
+        interp.get_tensor.side_effect = _get_tensor
+
+        dets, _ = _run_inference(interp, rgb_image, threshold=0.3)
+        assert dets.mask is not None
+
+    def test_run_inference_seg_model_no_detections_returns_none_mask(self, rgb_image: Path) -> None:
+        """Seg model with all scores below threshold returns mask=None (keep.any() is False)."""
+        boxes = _make_boxes()
+        logits = _make_logits(high_conf_idx=None)  # all scores near zero, below threshold
+        masks = np.full((1, 10, 28, 28), 10.0, dtype=np.float32)
+
+        def _get_tensor(index: int) -> np.ndarray:
+            return {1: boxes, 2: logits, 3: masks}[index]
+
+        interp = mock.MagicMock()
+        interp.get_input_details.return_value = [{"shape": _INPUT_SHAPE, "index": 0, "dtype": np.float32}]
+        interp.get_output_details.return_value = [
+            {"shape": [1, 10, 4], "name": "Identity_0", "index": 1},
+            {"shape": [1, 10, 82], "name": "Identity_1", "index": 2},
+            {"shape": [1, 10, 28, 28], "name": "Identity_2", "index": 3},
+        ]
+        interp.get_tensor.side_effect = _get_tensor
+
+        dets, _ = _run_inference(interp, rgb_image, threshold=0.3)
+        assert len(dets) == 0
+        assert dets.mask is None
+
+    def test_decode_masks_raises_on_wrong_rank(self) -> None:
+        """_decode_masks raises ValueError when input is not rank-3."""
+        with pytest.raises(ValueError, match="rank-3"):
+            _decode_masks(np.zeros((10, 28, 28, 1), dtype=np.float32), (56, 56))
+
+    def test_decode_masks_exact_zero_logit_decodes_to_false(self) -> None:
+        """Logit exactly 0.0 is not > 0.0 and decodes to False (strict threshold)."""
+        zero_logits = np.zeros((1, 8, 8), dtype=np.float32)
+        out = _decode_masks(zero_logits, (16, 16))
+        assert not out.any()
+
+    def test_decode_masks_non_square_logit_input(self) -> None:
+        """Non-square logit map (K, Hm, Wm) with Hm != Wm resizes to the correct output shape."""
+        logits = np.full((3, 7, 14), 5.0, dtype=np.float32)
+        out = _decode_masks(logits, (56, 28))  # out_size=(width=56, height=28)
+        assert out.shape == (3, 28, 56)
+        assert out.all()  # all-positive logits → all True
+
+    def test_decode_masks_parity_positive_negative_regions(self) -> None:
+        """Positive/negative logit regions map correctly after bilinear upsample + threshold.
+
+        Uses high-magnitude logits (±10) so no ambiguity near the boundary; verifies
+        the core _decode_masks contract matches the >0 PostProcess.forward equivalent.
+        """
+        logits = np.full((1, 14, 14), -10.0, dtype=np.float32)
+        logits[0, :7, :] = 10.0  # top half strongly positive, bottom half strongly negative
+        out = _decode_masks(logits, (28, 28))
+        # Interior rows well away from the half-way boundary
+        assert out[0, 1:6, :].all()  # top rows → all True
+        assert not out[0, 15:27, :].any()  # bottom rows → all False
