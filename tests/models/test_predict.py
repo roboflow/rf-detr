@@ -632,8 +632,8 @@ class TestPredictClassNameData:
         model = self._make_model_with_class_names(["cat", "dog"], labels=[2])
         img = PIL.Image.new("RGB", (28, 28))
         model.predict(img)
-        oob_warnings = [msg for msg in logger._warned_once if "out of range" in msg]
-        assert not oob_warnings, "Background class (class_id == num_classes) must not trigger an out-of-range warning"
+        unmapped_warnings = [msg for msg in logger._warned_once if "unmapped class_id" in msg]
+        assert not unmapped_warnings, "Background class must not trigger unmapped-class-id warning"
 
     def test_truly_oob_class_id_still_maps_to_empty_string_and_warns(self) -> None:
         """A class_id strictly above num_classes still maps to empty string AND emits a warning.
@@ -655,5 +655,203 @@ class TestPredictClassNameData:
         img = PIL.Image.new("RGB", (28, 28))
         detections = model.predict(img)
         assert detections.data["class_name"][0] == "", "Truly OOB class_id (> num_classes) must produce empty string"
-        oob_warnings = [msg for msg in logger._warned_once if "out of range" in msg]
-        assert oob_warnings, "Truly OOB class_id (> num_classes) must trigger an out-of-range warning"
+        unmapped_warnings = [msg for msg in logger._warned_once if "unmapped class_id" in msg]
+        assert unmapped_warnings, "Truly OOB class_id (> num_classes) must trigger an unmapped-class-id warning"
+
+    @pytest.mark.parametrize(
+        ("class_id", "expected_name"),
+        [
+            pytest.param(18, "dog", id="coco_id_18_dog"),
+            pytest.param(27, "backpack", id="coco_id_27_backpack"),
+            pytest.param(3, "car", id="coco_id_3_car"),
+        ],
+    )
+    def test_coco_pretrained_sparse_id_mapping(self, class_id: int, expected_name: str) -> None:
+        """Pretrained COCO models use raw COCO category IDs (1-indexed, with gaps) as class_ids.
+
+        When num_classes=90 and class_names has 80 entries, class_id 18 must resolve to
+        'dog' (COCO category 18), not 'sheep' (COCO_CLASS_NAMES[18] via 0-indexed lookup).
+
+        Regression test for https://github.com/roboflow/rf-detr/issues/988.
+        """
+        from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
+
+        coco_model = _DummyModel(class_names=list(COCO_CLASS_NAMES), labels=[class_id])
+        coco_model.args = SimpleNamespace(num_classes=90)
+        model = _DummyRFDETR()
+        model.model = coco_model
+
+        img = PIL.Image.new("RGB", (28, 28))
+        detections = model.predict(img)
+
+        assert detections.data["class_name"][0] == expected_name, (
+            f"class_id={class_id} must map to '{expected_name}', got '{detections.data['class_name'][0]}'"
+        )
+
+    def test_coco_pretrained_dataset_file_roboflow(self) -> None:
+        """Pretrained COCO weights packaged as dataset_file='roboflow' must still use sparse-ID mapping.
+
+        RF-DETR pretrained checkpoints (e.g. RFDETRSegSmall) can have dataset_file='roboflow'
+        even though they were trained on COCO. The fix must not depend on dataset_file value.
+
+        Regression test for https://github.com/roboflow/rf-detr/issues/988 (post-revert follow-up).
+        """
+        from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
+
+        coco_model = _DummyModel(class_names=list(COCO_CLASS_NAMES), labels=[18])
+        coco_model.args = SimpleNamespace(num_classes=90, dataset_file="roboflow")
+        model = _DummyRFDETR()
+        model.model = coco_model
+
+        img = PIL.Image.new("RGB", (28, 28))
+        detections = model.predict(img)
+
+        assert detections.data["class_name"][0] == "dog", (
+            f"dataset_file='roboflow' COCO pretrained: class_id=18 must map to 'dog', "
+            f"got '{detections.data['class_name'][0]}'"
+        )
+
+    def test_finetuned_coco_names_uses_direct_indexing(self) -> None:
+        """Fine-tuned 80-class model with COCO names must use direct 0-indexed lookup, not sparse remap.
+
+        When num_classes == len(COCO_CLASS_NAMES) (not strictly greater), the COCO
+        sparse-ID branch must NOT activate.
+        """
+        from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
+
+        coco_model = _DummyModel(class_names=list(COCO_CLASS_NAMES), labels=[18])
+        coco_model.args = SimpleNamespace(num_classes=80, dataset_file="coco")
+        model = _DummyRFDETR()
+        model.model = coco_model
+
+        img = PIL.Image.new("RGB", (28, 28))
+        detections = model.predict(img)
+
+        assert detections.data["class_name"][0] == COCO_CLASS_NAMES[18], (
+            f"Fine-tuned 80-class model must use direct indexing; got '{detections.data['class_name'][0]}'"
+        )
+
+    def test_custom_names_high_num_classes_no_coco_remap(self) -> None:
+        """Custom class_names with num_classes>80 must NOT activate sparse COCO remap.
+
+        Guard: a custom model with num_classes=90 but non-COCO class_names must use
+        direct 0-indexed mapping (class_names != COCO_CLASS_NAMES fails the guard).
+        """
+        custom_names = [f"custom_{i}" for i in range(80)]
+        coco_model = _DummyModel(class_names=custom_names, labels=[18])
+        coco_model.args = SimpleNamespace(num_classes=90)
+        model = _DummyRFDETR()
+        model.model = coco_model
+
+        img = PIL.Image.new("RGB", (28, 28))
+        detections = model.predict(img)
+
+        assert detections.data["class_name"][0] == "custom_18", (
+            f"Custom class names must use direct indexing; got '{detections.data['class_name'][0]}'"
+        )
+
+    def test_coco_names_without_model_args_fires_warning(self) -> None:
+        """predict() must warn when COCO class_names present but model has no 'args' attribute.
+
+        Without args, num_logit_slots falls back to n so _is_coco_pretrained stays False.
+        The warning is the caller's only signal that sparse COCO-ID mapping cannot activate,
+        which may cause wrong class names for pretrained COCO checkpoints loaded without args.
+        """
+        from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
+        from rfdetr.utilities.logger import get_logger
+
+        logger = get_logger()
+        logger._warned_once.clear()
+
+        no_args_model = _DummyModel(class_names=list(COCO_CLASS_NAMES), labels=[0])
+        # Do NOT set no_args_model.args — this is the scenario under test.
+        model = _DummyRFDETR()
+        model.model = no_args_model
+
+        img = PIL.Image.new("RGB", (28, 28))
+        model.predict(img)
+
+        coco_warnings = [msg for msg in logger._warned_once if "COCO sparse-ID mapping cannot activate" in msg]
+        assert coco_warnings, (
+            "predict() must emit a warning when class_names matches COCO_CLASS_NAMES "
+            "but model has no 'args' attribute (sparse-ID mapping cannot activate)"
+        )
+
+    def test_non_coco_names_without_model_args_no_warning_uses_direct_index(self) -> None:
+        """No warning and direct indexing for non-COCO class_names when model has no 'args'.
+
+        When model has no 'args' AND class_names != COCO_CLASS_NAMES, neither the COCO
+        warning nor sparse-ID mapping activates. class_id maps directly to class_names[class_id].
+        """
+        from rfdetr.utilities.logger import get_logger
+
+        logger = get_logger()
+        logger._warned_once.clear()
+
+        no_args_model = _DummyModel(class_names=["cat", "dog"], labels=[0])
+        # Do NOT set no_args_model.args.
+        model = _DummyRFDETR()
+        model.model = no_args_model
+
+        img = PIL.Image.new("RGB", (28, 28))
+        detections = model.predict(img)
+
+        coco_warnings = [msg for msg in logger._warned_once if "COCO" in msg]
+        assert not coco_warnings, "Non-COCO class_names with no args must not emit a COCO warning"
+        assert detections.data["class_name"][0] == "cat", (
+            f"Direct-index mapping: class_id=0 must map to 'cat', got '{detections.data['class_name'][0]}'"
+        )
+
+    def test_coco_pretrained_oob_gap_class_id_maps_to_empty_string_and_warns(self) -> None:
+        """COCO category gap ID 12 must produce empty string and OOB warning in pretrained branch.
+
+        COCO skips category ID 12 (gap between fire hydrant=11 and stop sign=13). A pretrained
+        model emitting cid=12 has no mapping in _class_id_to_name and must trigger the
+        out-of-range warning even in the COCO-pretrained branch.
+        """
+        from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
+        from rfdetr.utilities.logger import get_logger
+
+        logger = get_logger()
+        logger._warned_once.clear()
+
+        coco_model = _DummyModel(class_names=list(COCO_CLASS_NAMES), labels=[12])
+        coco_model.args = SimpleNamespace(num_classes=90)
+        model = _DummyRFDETR()
+        model.model = coco_model
+
+        img = PIL.Image.new("RGB", (28, 28))
+        detections = model.predict(img)
+
+        assert detections.data["class_name"][0] == "", "COCO gap ID 12 (no such category) must produce empty string"
+        unmapped_warnings = [msg for msg in logger._warned_once if "unmapped class_id" in msg]
+        assert unmapped_warnings, "COCO gap ID 12 must trigger an unmapped-class-id warning"
+
+    def test_coco_pretrained_class_id_90_maps_to_toothbrush_not_background(self) -> None:
+        """COCO class ID 90 ('toothbrush') must not be mislabelled '__background__' in pretrained branch.
+
+        For COCO-pretrained models num_logit_slots==90, which is also a valid COCO category
+        (toothbrush). Background is implicit (below threshold), not a sentinel label.
+        The background sentinel check must be scoped to fine-tuned models only.
+
+        Regression test for HIGH-1 finding in /review of PR #1051.
+        """
+        from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
+        from rfdetr.utilities.logger import get_logger
+
+        logger = get_logger()
+        logger._warned_once.clear()
+
+        coco_model = _DummyModel(class_names=list(COCO_CLASS_NAMES), labels=[90])
+        coco_model.args = SimpleNamespace(num_classes=90)
+        model = _DummyRFDETR()
+        model.model = coco_model
+
+        img = PIL.Image.new("RGB", (28, 28))
+        detections = model.predict(img)
+
+        assert detections.data["class_name"][0] == "toothbrush", (
+            f"COCO pretrained: class_id=90 must map to 'toothbrush', got '{detections.data['class_name'][0]}'"
+        )
+        unmapped_warnings = [msg for msg in logger._warned_once if "unmapped class_id" in msg]
+        assert not unmapped_warnings, "class_id=90 (valid COCO category) must not trigger unmapped-class-id warning"

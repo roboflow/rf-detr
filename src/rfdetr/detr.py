@@ -30,7 +30,7 @@ import torchvision.transforms.functional as F  # noqa: N812
 import yaml
 from PIL import Image
 
-from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
+from rfdetr.assets.coco_classes import COCO_CLASS_NAMES, COCO_CLASSES
 from rfdetr.assets.model_weights import download_pretrain_weights, get_model_cache_dir
 from rfdetr.config import (
     ModelConfig,
@@ -1259,6 +1259,15 @@ class RFDETR:
             ``detections.data["source_image"]`` to use
             ``detections.metadata["source_image"]``.
 
+        Note:
+            ``class_name`` mapping uses one of two modes depending on the checkpoint.
+            For pretrained COCO checkpoints (detected when
+            ``model.args.num_classes > len(class_names)`` and ``class_names`` matches
+            ``COCO_CLASS_NAMES``), raw COCO category IDs (1–90, sparse) are looked up
+            by category ID rather than by position — so ``class_id=18`` yields ``"dog"``,
+            not ``class_names[18]``. For fine-tuned models, ``class_id`` is a 0-based
+            index into ``class_names``.
+
         Raises:
             ValueError: If ``shape`` cannot be unpacked as a two-element sequence,
                 if either dimension does not support the ``__index__`` protocol
@@ -1391,6 +1400,25 @@ class RFDETR:
 
         model_class_names = self.class_names
         n = len(model_class_names)
+        # Pretrained COCO models use COCO category IDs (1–90, with gaps) as class_ids,
+        # while class_names is a flat 0-indexed list of 80 entries. Detected when
+        # args.num_classes > len(class_names) AND class_names == COCO_CLASS_NAMES.
+        # Fine-tuned models remap category IDs to 0-based contiguous indices, so
+        # class_id i maps directly to class_names[i].
+        _model_args = getattr(self.model, "args", None)
+        if _model_args is None and model_class_names == list(COCO_CLASS_NAMES):
+            logger.warning_once(
+                "predict(): model has no 'args' attribute — COCO sparse-ID mapping cannot activate; "
+                "class_ids are treated as 0-indexed (may be wrong for pretrained COCO checkpoints)"
+            )
+        num_logit_slots: int = getattr(_model_args, "num_classes", n)
+        _is_coco_pretrained = num_logit_slots > n and model_class_names == list(COCO_CLASS_NAMES)
+        if _is_coco_pretrained:
+            _class_id_to_name: dict[int, str] = {
+                coco_id: model_class_names[i] for i, coco_id in enumerate(COCO_CLASSES) if i < n
+            }
+        else:
+            _class_id_to_name = dict(enumerate(model_class_names))
         detections_list = []
         for i, result in enumerate(results):
             scores = result["scores"]
@@ -1424,30 +1452,27 @@ class RFDETR:
             detections.data["source_shape"] = np.tile(np.array(orig_sizes[i], dtype=np.int64), (len(detections), 1))
 
             # Attach class names so callers can map class_id → name without a
-            # separate lookup.  class_id is always 0-indexed regardless of the
-            # original dataset format (COCO category IDs are remapped during
-            # training), so class_names[class_id] is the correct mapping.
-            # Always set data["class_name"] for a consistent interface.
+            # separate lookup. Always set data["class_name"] for a consistent interface.
             #
-            # RF-DETR uses num_classes + 1 logits internally; class index n is the
-            # background/no-object class and is expected — map it to "__background__"
-            # without warning.  Indices outside [0, n] are genuinely unexpected and
-            # still produce an empty string with a one-time warning.
+            # For fine-tuned models, logit index num_logit_slots is the no-object slot —
+            # map it to "__background__" without warning. For COCO-pretrained models,
+            # background is implicit (filtered by threshold); class ID 90 is "toothbrush".
+            # IDs not in _class_id_to_name are genuinely unexpected and produce an empty
+            # string with a one-time warning.
             class_ids = detections.class_id if detections.class_id is not None else np.array([], dtype=int)
-            truly_oob = [cid for cid in class_ids if not (0 <= cid <= n)]
+            truly_oob = [cid for cid in class_ids if cid not in _class_id_to_name and cid != num_logit_slots]
             if truly_oob:
                 logger.warning_once(
-                    "predict() encountered class_id values out of range [0, %d]: %s — mapping to empty string",
-                    n,
+                    "predict() encountered unmapped class_id(s): %s — mapping to empty string",
                     truly_oob[:5],
                 )
-            detections.data["class_name"] = np.array(
-                [
-                    model_class_names[cid] if 0 <= cid < n else ("__background__" if cid == n else "")
-                    for cid in class_ids
-                ],
-                dtype=object,
-            )
+            if _is_coco_pretrained:
+                class_names = [_class_id_to_name.get(cid, "") for cid in class_ids]
+            else:
+                class_names = [
+                    "__background__" if cid == num_logit_slots else _class_id_to_name.get(cid, "") for cid in class_ids
+                ]
+            detections.data["class_name"] = np.array(class_names, dtype=object)
 
             detections_list.append(detections)
 
