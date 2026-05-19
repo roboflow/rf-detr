@@ -228,7 +228,7 @@ def _run_inference(
                 len(rank4_candidates),
             )
     masks = None
-    if mask_idx is not None:
+    if mask_idx is not None and keep.any():
         raw_masks = interp.get_tensor(out_det[mask_idx]["index"])[0]  # (Q, Hm, Wm)
         masks = _decode_masks(raw_masks[keep], (ow, oh))
 
