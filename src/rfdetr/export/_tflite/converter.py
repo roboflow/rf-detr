@@ -47,13 +47,10 @@ Note:
     this normalization at inference time.
 
 Note:
-    **Segmentation model export is not validated.**  The same ``convert_kwargs``
-    are applied to segmentation models as to detection models, but the
-    segmentation output path introduces additional ops (``ScatterND``,
-    ``Resize``, extra ``GridSample`` calls in the mask resampling path) that
-    have not been exercised end-to-end through TFLite.  Treat segmentation
-    TFLite export as experimental and verify outputs against the ONNX baseline
-    before deployment.
+    Segmentation models additionally emit a ``masks`` output.  FP32, FP16,
+    and dynamic-range INT8 all match the PyTorch baseline closely (INT8 mask
+    fidelity is marginally lower).  Verified on the non-plus segmentation
+    variants: Nano, Small, Medium, Large, and Preview.
 """
 
 from __future__ import annotations
@@ -479,9 +476,10 @@ def export_tflite(
         substituted with TFLite-native pseudo-operators to avoid a missing
         TensorFlow Flex delegate at inference time.
 
-        Segmentation export (``pred_masks`` output) is **not validated** in
-        the current implementation; additional operators may need to be
-        added to ``replace_to_pseudo_operators`` for segmentation models.
+        Segmentation models additionally emit a ``masks`` output, decoded by
+        :func:`rfdetr.export._tflite.inference._run_inference`.  Verified on
+        the non-plus segmentation variants (Nano, Small, Medium, Large,
+        Preview).
     """
     onnx_path = Path(onnx_path)
     output_dir = Path(output_dir)
