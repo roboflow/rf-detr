@@ -218,7 +218,15 @@ def _run_inference(
     # Segmentation exports add a rank-4 mask output; decode it when present.
     mask_idx = next((i for i, od in enumerate(out_det) if "masks" in str(od.get("name", ""))), None)
     if mask_idx is None:
-        mask_idx = next((i for i, od in enumerate(out_det) if len(od["shape"]) == 4), None)
+        rank4_candidates = [i for i, od in enumerate(out_det) if len(od["shape"]) == 4]
+        if len(rank4_candidates) == 1:
+            mask_idx = rank4_candidates[0]
+        elif len(rank4_candidates) >= 2:
+            logger.warning(
+                "Ambiguous rank-4 outputs (%d candidates); skipping mask decode. "
+                "Name your mask output to contain 'masks' to disambiguate.",
+                len(rank4_candidates),
+            )
     masks = None
     if mask_idx is not None:
         raw_masks = interp.get_tensor(out_det[mask_idx]["index"])[0]  # (Q, Hm, Wm)
