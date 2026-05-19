@@ -312,7 +312,7 @@ def _build_train_resize_config(
     *,
     square: bool,
     max_size: Optional[int] = None,
-    do_random_crop: bool = True,
+    include_crop_branch: bool = True,
 ) -> List[Dict[str, Any]]:
     """Build the training resize pipeline as an Albumentations config list.
 
@@ -337,13 +337,13 @@ def _build_train_resize_config(
             ratio using ``A.SmallestMaxSize`` with an optional long-side cap.
         max_size: Maximum long-side size for non-square resizes.  Defaults to
             ``1333`` when *square* is ``False``.
-        do_random_crop: If ``False``, omit the resize-and-crop branch so the
+        include_crop_branch: If ``False``, omit the resize-and-crop branch so the
             pipeline always uses Option A (direct resize). Useful when objects
             of interest can be partially or fully cropped out of frame.
             Defaults to ``True`` (preserves the original two-branch behavior).
 
     Returns:
-        A single-element list. When ``do_random_crop`` is ``True`` (default)
+        A single-element list. When ``include_crop_branch`` is ``True`` (default)
         the entry wraps a ``OneOf`` over both branches; when ``False`` the
         entry is Option A directly.
     """
@@ -391,13 +391,13 @@ def _build_train_resize_config(
             }
         }
 
-    if not do_random_crop:
+    if not include_crop_branch:
         return [option_a]
 
     return [{"OneOf": {"transforms": [option_a, option_b]}}]
 
 
-def _resolve_do_random_crop(aug_config: Optional[Dict[str, Any]]) -> bool:
+def _crop_branch_enabled(aug_config: Optional[Dict[str, Any]]) -> bool:
     """Decide whether the training resize pipeline keeps its resize-and-crop branch.
 
     ``aug_config={}`` is an explicit request to disable augmentations; it also
@@ -497,9 +497,9 @@ def make_coco_transforms(
 
     if image_set == "train":
         resolved_aug_config = aug_config if aug_config is not None else AUG_CONFIG
-        do_random_crop = _resolve_do_random_crop(aug_config)
+        include_crop_branch = _crop_branch_enabled(aug_config)
         resize_wrappers = AlbumentationsWrapper.from_config(
-            _build_train_resize_config(scales, square=False, max_size=1333, do_random_crop=do_random_crop)
+            _build_train_resize_config(scales, square=False, max_size=1333, include_crop_branch=include_crop_branch)
         )
         pipeline = [*resize_wrappers]
         if not gpu_postprocess:
@@ -592,9 +592,9 @@ def make_coco_transforms_square_div_64(
 
     if image_set == "train":
         resolved_aug_config = aug_config if aug_config is not None else AUG_CONFIG
-        do_random_crop = _resolve_do_random_crop(aug_config)
+        include_crop_branch = _crop_branch_enabled(aug_config)
         resize_wrappers = AlbumentationsWrapper.from_config(
-            _build_train_resize_config(scales, square=True, do_random_crop=do_random_crop)
+            _build_train_resize_config(scales, square=True, include_crop_branch=include_crop_branch)
         )
         pipeline = [*resize_wrappers]
         if not gpu_postprocess:

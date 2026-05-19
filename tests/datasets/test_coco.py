@@ -465,20 +465,20 @@ class TestAugConfigDisablesCrop:
             pytest.param({"HorizontalFlip": {"p": 0.5}}, True, id="nonempty_keeps_crop"),
         ],
     )
-    def test_resolve_do_random_crop(self, aug_config, expected):
-        """_resolve_do_random_crop maps aug_config to the crop-branch decision."""
-        from rfdetr.datasets.coco import _resolve_do_random_crop
+    def test_crop_branch_enabled(self, aug_config, expected):
+        """_crop_branch_enabled maps aug_config to the crop-branch decision."""
+        from rfdetr.datasets.coco import _crop_branch_enabled
 
-        assert _resolve_do_random_crop(aug_config) is expected
+        assert _crop_branch_enabled(aug_config) is expected
 
     def test_empty_aug_config_warns(self):
         """Passing aug_config={} logs a warning about the dropped resize-and-crop branch."""
         from unittest.mock import patch
 
-        from rfdetr.datasets.coco import _resolve_do_random_crop
+        from rfdetr.datasets.coco import _crop_branch_enabled
 
         with patch("rfdetr.datasets.coco.logger") as mock_logger:
-            _resolve_do_random_crop({})
+            _crop_branch_enabled({})
         mock_logger.warning.assert_called_once()
 
     @pytest.mark.parametrize(
@@ -497,4 +497,4 @@ class TestAugConfigDisablesCrop:
         with patch("rfdetr.datasets.coco._build_train_resize_config", return_value=[]) as mock_build:
             make_coco_transforms("train", 640, aug_config=aug_config)
 
-        assert mock_build.call_args.kwargs["do_random_crop"] is expected
+        assert mock_build.call_args.kwargs["include_crop_branch"] is expected

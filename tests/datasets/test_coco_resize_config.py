@@ -197,16 +197,16 @@ class TestBuildTrainResizeConfigNonSquareMultiScale:
         assert option_b["Sequential"]["transforms"][3] == {"LongestMaxSize": {"max_size": 1000}}
 
 
-class TestBuildTrainResizeConfigDoRandomCrop:
-    """do_random_crop=False drops the resize-and-crop branch so only Option A runs."""
+class TestBuildTrainResizeConfigCropBranch:
+    """include_crop_branch=False drops the resize-and-crop branch so only Option A runs."""
 
     @pytest.mark.parametrize(
         "square",
         [pytest.param(True, id="square"), pytest.param(False, id="nonsquare")],
     )
-    def test_do_random_crop_false_drops_crop_branch(self, square):
+    def test_include_crop_branch_false_drops_crop_branch(self, square):
         """No RandomCrop/RandomSizedCrop appears in either square or non-square pipelines."""
-        result = _build_train_resize_config([480, 640], square=square, do_random_crop=False)
+        result = _build_train_resize_config([480, 640], square=square, include_crop_branch=False)
         flat = str(result)
         assert "RandomSizedCrop" not in flat
         assert "RandomCrop" not in flat
