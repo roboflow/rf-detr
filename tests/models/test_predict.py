@@ -749,3 +749,80 @@ class TestPredictClassNameData:
         assert detections.data["class_name"][0] == "custom_18", (
             f"Custom class names must use direct indexing; got '{detections.data['class_name'][0]}'"
         )
+
+    def test_coco_names_without_model_args_fires_warning(self) -> None:
+        """predict() must warn when COCO class_names present but model has no 'args' attribute.
+
+        Without args, num_logit_slots falls back to n so _is_coco_pretrained stays False.
+        The warning is the caller's only signal that sparse COCO-ID mapping cannot activate,
+        which may cause wrong class names for pretrained COCO checkpoints loaded without args.
+        """
+        from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
+        from rfdetr.utilities.logger import get_logger
+
+        logger = get_logger()
+        logger._warned_once.clear()
+
+        no_args_model = _DummyModel(class_names=list(COCO_CLASS_NAMES), labels=[0])
+        # Do NOT set no_args_model.args — this is the scenario under test.
+        model = _DummyRFDETR()
+        model.model = no_args_model
+
+        img = PIL.Image.new("RGB", (28, 28))
+        model.predict(img)
+
+        coco_warnings = [msg for msg in logger._warned_once if "COCO sparse-ID mapping cannot activate" in msg]
+        assert coco_warnings, (
+            "predict() must emit a warning when class_names matches COCO_CLASS_NAMES "
+            "but model has no 'args' attribute (sparse-ID mapping cannot activate)"
+        )
+
+    def test_non_coco_names_without_model_args_no_warning_uses_direct_index(self) -> None:
+        """No warning and direct indexing for non-COCO class_names when model has no 'args'.
+
+        When model has no 'args' AND class_names != COCO_CLASS_NAMES, neither the COCO
+        warning nor sparse-ID mapping activates. class_id maps directly to class_names[class_id].
+        """
+        from rfdetr.utilities.logger import get_logger
+
+        logger = get_logger()
+        logger._warned_once.clear()
+
+        no_args_model = _DummyModel(class_names=["cat", "dog"], labels=[0])
+        # Do NOT set no_args_model.args.
+        model = _DummyRFDETR()
+        model.model = no_args_model
+
+        img = PIL.Image.new("RGB", (28, 28))
+        detections = model.predict(img)
+
+        coco_warnings = [msg for msg in logger._warned_once if "COCO" in msg]
+        assert not coco_warnings, "Non-COCO class_names with no args must not emit a COCO warning"
+        assert detections.data["class_name"][0] == "cat", (
+            f"Direct-index mapping: class_id=0 must map to 'cat', got '{detections.data['class_name'][0]}'"
+        )
+
+    def test_coco_pretrained_oob_gap_class_id_maps_to_empty_string_and_warns(self) -> None:
+        """COCO category gap ID 12 must produce empty string and OOB warning in pretrained branch.
+
+        COCO skips category ID 12 (gap between fire hydrant=11 and stop sign=13). A pretrained
+        model emitting cid=12 has no mapping in _class_id_to_name and must trigger the
+        out-of-range warning even in the COCO-pretrained branch.
+        """
+        from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
+        from rfdetr.utilities.logger import get_logger
+
+        logger = get_logger()
+        logger._warned_once.clear()
+
+        coco_model = _DummyModel(class_names=list(COCO_CLASS_NAMES), labels=[12])
+        coco_model.args = SimpleNamespace(num_classes=90)
+        model = _DummyRFDETR()
+        model.model = coco_model
+
+        img = PIL.Image.new("RGB", (28, 28))
+        detections = model.predict(img)
+
+        assert detections.data["class_name"][0] == "", "COCO gap ID 12 (no such category) must produce empty string"
+        oob_warnings = [msg for msg in logger._warned_once if "out of range" in msg]
+        assert oob_warnings, "COCO gap ID 12 must trigger an out-of-range warning"
