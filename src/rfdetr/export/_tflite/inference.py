@@ -68,11 +68,13 @@ def _create_interpreter(model_path: str | Path) -> Any:
     return interp
 
 
-def _decode_masks(mask_logits: NDArray[Any], out_size: tuple[int, int]) -> NDArray[Any]:
+def _decode_masks(mask_logits: NDArray[Any], out_size: tuple[int, int]) -> NDArray[np.bool_]:
     """Upsample raw mask logits to image size and threshold at zero.
 
-    Mirrors ``PostProcess.forward``: bilinear resize followed by ``> 0``. Uses
-    Pillow so no PyTorch dependency is required at inference time.
+    Approximates ``PostProcess.forward``: bilinear resize followed by ``> 0``.
+    Uses Pillow's bilinear resampling rather than ``F.interpolate`` (no PyTorch
+    dependency at inference time); border pixels may differ slightly due to
+    distinct half-pixel conventions.
 
     Args:
         mask_logits: Raw mask logits of shape ``(K, Hm, Wm)``.
@@ -80,9 +82,17 @@ def _decode_masks(mask_logits: NDArray[Any], out_size: tuple[int, int]) -> NDArr
 
     Returns:
         Boolean mask array of shape ``(K, height, width)``.
+
+    Raises:
+        ValueError: If *mask_logits* is not rank-3.
     """
+    if mask_logits.ndim != 3:
+        raise ValueError(
+            f"_decode_masks expects rank-3 (K, Hm, Wm); got shape {mask_logits.shape}. "
+            "This usually means the rank-4 mask-output heuristic in _run_inference matched the wrong tensor."
+        )
     width, height = out_size
-    out = np.empty((mask_logits.shape[0], height, width), dtype=bool)
+    out = np.empty((mask_logits.shape[0], height, width), dtype=np.bool_)
     for i, logit_map in enumerate(mask_logits):
         mask_img = PILImage.fromarray(logit_map.astype(np.float32), mode="F")
         resized = mask_img.resize((width, height), _PIL_BILINEAR)
