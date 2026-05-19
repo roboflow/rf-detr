@@ -397,13 +397,29 @@ def _build_train_resize_config(
     return [{"OneOf": {"transforms": [option_a, option_b]}}]
 
 
+def _resolve_do_random_crop(aug_config: Optional[Dict[str, Any]]) -> bool:
+    """Decide whether the training resize pipeline keeps its resize-and-crop branch.
+
+    ``aug_config={}`` is an explicit request to disable augmentations; it also
+    drops the resize-and-crop branch. ``aug_config=None`` (the default) and any
+    non-empty config keep it.
+    """
+    if aug_config == {}:
+        logger.warning(
+            "aug_config={} disables the training resize-and-crop branch in addition to all "
+            "augmentations; images will not be randomly cropped. Pass aug_config=None to keep "
+            "the default resize pipeline."
+        )
+        return False
+    return True
+
+
 def make_coco_transforms(
     image_set: str,
     resolution: int,
     multi_scale: bool = False,
     expanded_scales: bool = False,
     skip_random_resize: bool = False,
-    do_random_crop: bool = True,
     patch_size: int = 16,
     num_windows: int = 4,
     aug_config: Optional[Dict[str, Dict[str, Any]]] = None,
@@ -438,11 +454,6 @@ def make_coco_transforms(
             scale range when ``multi_scale=True``.
         skip_random_resize: When ``multi_scale=True``, use only the largest scale
             and skip random selection among multiple scales.
-        do_random_crop: If ``False``, omit the resize-and-crop branch of the
-            training resize pipeline so input images are never cropped. Useful
-            when objects of interest can be partially or fully cropped out of
-            frame (e.g., whole-object defect classification). Defaults to
-            ``True`` (original behavior). Has no effect on val/test splits.
         patch_size: Model patch size used by :func:`compute_multi_scale_scales` to
             ensure all candidate resolutions are compatible with the backbone.
         num_windows: Number of attention windows; used by
@@ -486,6 +497,7 @@ def make_coco_transforms(
 
     if image_set == "train":
         resolved_aug_config = aug_config if aug_config is not None else AUG_CONFIG
+        do_random_crop = _resolve_do_random_crop(aug_config)
         resize_wrappers = AlbumentationsWrapper.from_config(
             _build_train_resize_config(scales, square=False, max_size=1333, do_random_crop=do_random_crop)
         )
@@ -519,7 +531,6 @@ def make_coco_transforms_square_div_64(
     multi_scale: bool = False,
     expanded_scales: bool = False,
     skip_random_resize: bool = False,
-    do_random_crop: bool = True,
     patch_size: int = 16,
     num_windows: int = 4,
     aug_config: Optional[Dict[str, Dict[str, Any]]] = None,
@@ -550,10 +561,6 @@ def make_coco_transforms_square_div_64(
         skip_random_resize: If True and ``multi_scale`` is enabled, use only the
             largest scale returned by ``compute_multi_scale_scales`` and skip random
             selection among multiple scales.
-        do_random_crop: If False, omit the resize-and-crop branch of the training
-            resize pipeline so input images are never cropped. Useful when objects
-            of interest can be partially or fully cropped out of frame. Defaults
-            to True (original behavior). Has no effect on val/test splits.
         patch_size: Patch size used by ``compute_multi_scale_scales`` when
             determining valid square resolutions (typically related to the model's
             patch embedding or stride).
@@ -585,6 +592,7 @@ def make_coco_transforms_square_div_64(
 
     if image_set == "train":
         resolved_aug_config = aug_config if aug_config is not None else AUG_CONFIG
+        do_random_crop = _resolve_do_random_crop(aug_config)
         resize_wrappers = AlbumentationsWrapper.from_config(
             _build_train_resize_config(scales, square=True, do_random_crop=do_random_crop)
         )
@@ -622,7 +630,6 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
     square_resize_div_64 = getattr(args, "square_resize_div_64", False)
     include_masks = getattr(args, "segmentation_head", False)
     aug_config = getattr(args, "aug_config", None)
-    do_random_crop = getattr(args, "do_random_crop", True)
     augmentation_backend = getattr(args, "augmentation_backend", "cpu")
     resolved_augmentation_backend = _resolve_runtime_augmentation_backend(augmentation_backend)
     if resolved_augmentation_backend != augmentation_backend and resolved_augmentation_backend == "cpu":
@@ -643,7 +650,6 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
                 multi_scale=args.multi_scale,
                 expanded_scales=args.expanded_scales,
                 skip_random_resize=not args.do_random_resize_via_padding,
-                do_random_crop=do_random_crop,
                 patch_size=args.patch_size,
                 num_windows=args.num_windows,
                 aug_config=aug_config,
@@ -662,7 +668,6 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
                 multi_scale=args.multi_scale,
                 expanded_scales=args.expanded_scales,
                 skip_random_resize=not args.do_random_resize_via_padding,
-                do_random_crop=do_random_crop,
                 patch_size=args.patch_size,
                 num_windows=args.num_windows,
                 aug_config=aug_config,
@@ -710,7 +715,6 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
     multi_scale = getattr(args, "multi_scale", False)
     expanded_scales = getattr(args, "expanded_scales", False)
     do_random_resize_via_padding = getattr(args, "do_random_resize_via_padding", False)
-    do_random_crop = getattr(args, "do_random_crop", True)
     patch_size = getattr(args, "patch_size", 16)
     num_windows = getattr(args, "num_windows", 4)
     aug_config = getattr(args, "aug_config", None)
@@ -728,7 +732,6 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
                 multi_scale=multi_scale,
                 expanded_scales=expanded_scales,
                 skip_random_resize=not do_random_resize_via_padding,
-                do_random_crop=do_random_crop,
                 patch_size=patch_size,
                 num_windows=num_windows,
                 aug_config=aug_config,
@@ -748,7 +751,6 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
                 multi_scale=multi_scale,
                 expanded_scales=expanded_scales,
                 skip_random_resize=not do_random_resize_via_padding,
-                do_random_crop=do_random_crop,
                 patch_size=patch_size,
                 num_windows=num_windows,
                 aug_config=aug_config,

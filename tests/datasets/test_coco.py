@@ -451,47 +451,50 @@ class TestBuilderGpuPostprocess:
         assert call_kwargs["gpu_postprocess"] is expected_gpu_postprocess
 
 
-class TestBuilderDoRandomCrop:
-    """Verify ``do_random_crop`` on args is forwarded through to make_coco_transforms."""
+class TestAugConfigDisablesCrop:
+    """``aug_config={}`` disables the training resize-and-crop branch.
+
+    ``aug_config=None`` (the default) and any non-empty config keep it.
+    """
 
     @pytest.mark.parametrize(
-        "do_random_crop",
-        [pytest.param(True, id="crop_enabled"), pytest.param(False, id="crop_disabled")],
+        "aug_config,expected",
+        [
+            pytest.param(None, True, id="none_keeps_crop"),
+            pytest.param({}, False, id="empty_disables_crop"),
+            pytest.param({"HorizontalFlip": {"p": 0.5}}, True, id="nonempty_keeps_crop"),
+        ],
     )
-    def test_do_random_crop_forwarded(self, tmp_path, do_random_crop):
-        """build_roboflow_from_coco forwards args.do_random_crop to make_coco_transforms."""
-        from unittest.mock import MagicMock, patch
+    def test_resolve_do_random_crop(self, aug_config, expected):
+        """_resolve_do_random_crop maps aug_config to the crop-branch decision."""
+        from rfdetr.datasets.coco import _resolve_do_random_crop
 
-        from rfdetr.datasets.coco import build_roboflow_from_coco
+        assert _resolve_do_random_crop(aug_config) is expected
 
-        annotations_dir = tmp_path / "train"
-        annotations_dir.mkdir()
-        (annotations_dir / "_annotations.coco.json").write_text(
-            json.dumps({"images": [], "annotations": [], "categories": []}),
-            encoding="utf-8",
-        )
-        args = types.SimpleNamespace(
-            dataset_dir=str(tmp_path),
-            segmentation_head=False,
-            augmentation_backend="cpu",
-            square_resize_div_64=False,
-            multi_scale=False,
-            expanded_scales=False,
-            do_random_resize_via_padding=False,
-            do_random_crop=do_random_crop,
-            patch_size=16,
-            num_windows=4,
-            aug_config=None,
-        )
+    def test_empty_aug_config_warns(self):
+        """Passing aug_config={} logs a warning about the dropped resize-and-crop branch."""
+        from unittest.mock import patch
 
-        with (
-            patch("rfdetr.datasets.coco.make_coco_transforms") as mock_transforms,
-            patch("rfdetr.datasets.coco.CocoDetection") as mock_coco,
-        ):
-            mock_transforms.return_value = MagicMock()
-            mock_coco.return_value = MagicMock()
+        from rfdetr.datasets.coco import _resolve_do_random_crop
 
-            build_roboflow_from_coco("train", args, resolution=640)
+        with patch("rfdetr.datasets.coco.logger") as mock_logger:
+            _resolve_do_random_crop({})
+        mock_logger.warning.assert_called_once()
 
-        call_kwargs = mock_transforms.call_args.kwargs
-        assert call_kwargs["do_random_crop"] is do_random_crop
+    @pytest.mark.parametrize(
+        "aug_config,expected",
+        [
+            pytest.param(None, True, id="none_keeps_crop"),
+            pytest.param({}, False, id="empty_disables_crop"),
+        ],
+    )
+    def test_make_coco_transforms_forwards_crop_decision(self, aug_config, expected):
+        """make_coco_transforms passes the aug_config-derived value to _build_train_resize_config."""
+        from unittest.mock import patch
+
+        from rfdetr.datasets.coco import make_coco_transforms
+
+        with patch("rfdetr.datasets.coco._build_train_resize_config", return_value=[]) as mock_build:
+            make_coco_transforms("train", 640, aug_config=aug_config)
+
+        assert mock_build.call_args.kwargs["do_random_crop"] is expected

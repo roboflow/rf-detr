@@ -14,7 +14,7 @@ from rfdetr.datasets.aug_config import AUG_CONSERVATIVE, AUG_AGGRESSIVE, AUG_AER
 model.train(dataset_dir="...", aug_config=AUG_CONSERVATIVE)
 model.train(dataset_dir="...", aug_config=AUG_AGGRESSIVE)
 
-# Disable all augmentations
+# Disable all augmentations (also drops the training resize-and-crop branch)
 model.train(dataset_dir="...", aug_config={})
 
 # Fully custom

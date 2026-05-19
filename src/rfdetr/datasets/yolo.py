@@ -706,7 +706,6 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
     multi_scale = getattr(args, "multi_scale", False)
     expanded_scales = getattr(args, "expanded_scales", None)
     do_random_resize_via_padding = getattr(args, "do_random_resize_via_padding", False)
-    do_random_crop = getattr(args, "do_random_crop", True)
     patch_size = getattr(args, "patch_size", None)
     num_windows = getattr(args, "num_windows", None)
     aug_config = getattr(args, "aug_config", None)
@@ -724,7 +723,6 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
                 multi_scale=multi_scale,
                 expanded_scales=expanded_scales,
                 skip_random_resize=not do_random_resize_via_padding,
-                do_random_crop=do_random_crop,
                 patch_size=patch_size,
                 num_windows=num_windows,
                 aug_config=aug_config,
@@ -743,7 +741,6 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
                 multi_scale=multi_scale,
                 expanded_scales=expanded_scales,
                 skip_random_resize=not do_random_resize_via_padding,
-                do_random_crop=do_random_crop,
                 patch_size=patch_size,
                 num_windows=num_windows,
                 aug_config=aug_config,
