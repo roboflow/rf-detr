@@ -50,9 +50,6 @@ except Exception:
 
 logger = get_logger()
 
-# Sorted once at import time; used to map sparse COCO category IDs → class_names index.
-_SORTED_COCO_IDS: list[int] = sorted(COCO_CLASSES.keys())
-
 # ModelContext and _build_model_context are eagerly imported above (runtime use in get_model).
 _VARIANT_EXPORTS = (
     "RFDETRBase",
