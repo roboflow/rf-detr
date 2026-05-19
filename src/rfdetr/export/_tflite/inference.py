@@ -26,6 +26,9 @@ from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
+# PILImage.Resampling was introduced in Pillow 9.1; fall back to the legacy constant.
+_PIL_BILINEAR = getattr(PILImage, "Resampling", PILImage).BILINEAR
+
 
 def _create_interpreter(model_path: str | Path) -> Any:
     """Load a TFLite model, allocate tensors, and log I/O shapes.
@@ -82,7 +85,7 @@ def _decode_masks(mask_logits: NDArray[Any], out_size: tuple[int, int]) -> NDArr
     out = np.empty((mask_logits.shape[0], height, width), dtype=bool)
     for i, logit_map in enumerate(mask_logits):
         mask_img = PILImage.fromarray(logit_map.astype(np.float32), mode="F")
-        resized = mask_img.resize((width, height), PILImage.Resampling.BILINEAR)
+        resized = mask_img.resize((width, height), _PIL_BILINEAR)
         out[i] = np.asarray(resized) > 0.0
     return out
 
