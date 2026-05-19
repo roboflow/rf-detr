@@ -1259,6 +1259,15 @@ class RFDETR:
             ``detections.data["source_image"]`` to use
             ``detections.metadata["source_image"]``.
 
+        Note:
+            ``class_name`` mapping uses one of two modes depending on the checkpoint.
+            For pretrained COCO checkpoints (detected when
+            ``model.args.num_classes > len(class_names)`` and ``class_names`` matches
+            ``COCO_CLASS_NAMES``), raw COCO category IDs (1–90, sparse) are looked up
+            by category ID rather than by position — so ``class_id=18`` yields ``"dog"``,
+            not ``class_names[18]``. For fine-tuned models, ``class_id`` is a 0-based
+            index into ``class_names``.
+
         Raises:
             ValueError: If ``shape`` cannot be unpacked as a two-element sequence,
                 if either dimension does not support the ``__index__`` protocol
