@@ -1405,11 +1405,11 @@ class RFDETR:
                 "predict(): model has no 'args' attribute — COCO sparse-ID mapping cannot activate; "
                 "class_ids are treated as 0-indexed (may be wrong for pretrained COCO checkpoints)"
             )
-        num_logit_slots: int = getattr(_model_args, "num_classes", n) if _model_args is not None else n
+        num_logit_slots: int = getattr(_model_args, "num_classes", n)
         _is_coco_pretrained = num_logit_slots > n and model_class_names == list(COCO_CLASS_NAMES)
         if _is_coco_pretrained:
             _class_id_to_name: dict[int, str] = {
-                coco_id: model_class_names[i] for i, coco_id in enumerate(_SORTED_COCO_IDS) if i < n
+                coco_id: model_class_names[i] for i, coco_id in enumerate(COCO_CLASSES) if i < n
             }
         else:
             _class_id_to_name = dict(enumerate(model_class_names))
