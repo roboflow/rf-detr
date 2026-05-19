@@ -285,6 +285,10 @@ To disable all augmentations, pass an empty dict:
 model.train(dataset_dir="path/to/dataset", aug_config={})
 ```
 
+Passing `{}` also drops the training resize-and-crop branch, so images are resized
+directly to the target scale without random cropping. To keep the default resize
+pipeline, omit `aug_config` or pass `aug_config=None`.
+
 ---
 
 ## Memory Optimization

@@ -32,7 +32,7 @@ model.train(
 )
 ```
 
-To disable augmentations: `aug_config={}`. Omitting it uses the default (horizontal flip at 50%).
+To disable augmentations: `aug_config={}`. This also drops the training resize-and-crop branch, so images are resized directly to the target scale without random cropping. Omitting it (or passing `aug_config=None`) uses the default (horizontal flip at 50%) and keeps the resize-and-crop branch.
 
 ## Built-in Presets
 
