@@ -72,6 +72,7 @@ def _install_fake_onnx2tf() -> tuple[_FakeOnnx2tfModule, mock.MagicMock, dict[st
     fake = _FakeOnnx2tfModule()
     pkg = types.ModuleType("onnx2tf")
     pkg.convert = fake.convert  # type: ignore[attr-defined]
+    pkg.__version__ = "2.4.0"  # type: ignore[attr-defined]
 
     # onnx2tf.onnx2tf — force-imported by export_tflite() before patching
     inner_mod = types.ModuleType("onnx2tf.onnx2tf")
@@ -184,6 +185,22 @@ class TestExportTfliteConverter:
         with pytest.raises(ValueError, match="Unsupported quantization"):
             export_tflite(onnx_model, tmp_path / "out", quantization="q4")
 
+    @pytest.mark.parametrize(
+        "static_mode",
+        [
+            pytest.param("int8_static", id="int8_static"),
+            pytest.param("full_int8", id="full_int8"),
+            pytest.param("integer_quant", id="integer_quant"),
+        ],
+    )
+    def test_static_int8_raises(self, onnx_model: Path, tmp_path: Path, fake_onnx2tf: Any, static_mode: str) -> None:
+        """A static / full-integer INT8 request must raise a ValueError.
+
+        Static INT8 is intentionally unsupported; only dynamic-range 'int8' is offered.
+        """
+        with pytest.raises(ValueError, match="[Ss]tatic / full-integer INT8 is not supported"):
+            export_tflite(onnx_model, tmp_path / "out", quantization=static_mode)
+
     def test_default_quantization_calls_convert(
         self,
         onnx_model: Path,
@@ -241,6 +258,43 @@ class TestExportTfliteConverter:
         kwargs = convert_mock.call_args.kwargs
         assert kwargs["output_signaturedefs"] is True
 
+    def test_tflite_backend_forced_to_tf_converter(
+        self,
+        onnx_model: Path,
+        tflite_output: Path,
+        fake_onnx2tf: Any,
+        mock_prepare_calib: Any,
+    ) -> None:
+        """tflite_backend must always be 'tf_converter' to avoid the TFLite TopK_V2 kernel check.
+
+        onnx2tf 2.x defaults to flatbuffer_direct, which trips a
+        "k > internal dimension" error at AllocateTensors() time on
+        RF-DETR's encoder TopK node.  tf_converter is forced unconditionally.
+        """
+        _, convert_mock = fake_onnx2tf
+        export_tflite(onnx_model, tflite_output)
+
+        assert convert_mock.call_args.kwargs["tflite_backend"] == "tf_converter"
+
+    def test_replace_to_pseudo_operators_contains_erf_and_gelu(
+        self,
+        onnx_model: Path,
+        tflite_output: Path,
+        fake_onnx2tf: Any,
+        mock_prepare_calib: Any,
+    ) -> None:
+        """replace_to_pseudo_operators must include Erf and GeLU.
+
+        Without this, AllocateTensors() fails with "FlexErf failed to prepare"
+        because the TFLite runtime lacks native Erf / GeLU kernels.
+        """
+        _, convert_mock = fake_onnx2tf
+        export_tflite(onnx_model, tflite_output)
+
+        pseudo_ops = convert_mock.call_args.kwargs.get("replace_to_pseudo_operators", [])
+        assert "Erf" in pseudo_ops
+        assert "GeLU" in pseudo_ops
+
     def test_fp32_quantization_no_int8_flag(
         self,
         onnx_model: Path,
@@ -263,16 +317,31 @@ class TestExportTfliteConverter:
         export_tflite(onnx_model, tflite_output, quantization="fp16")
         assert "output_integer_quantized_tflite" not in convert_mock.call_args.kwargs
 
-    def test_int8_quantization_sets_flag(
+    def test_int8_quantization_produces_dynamic_range(
         self,
         onnx_model: Path,
         tflite_output: Path,
         fake_onnx2tf: Any,
         mock_prepare_calib: Any,
     ) -> None:
+        """int8 export derives a dynamic-range model and avoids onnx2tf's -oiqt path.
+
+        onnx2tf's ``output_integer_quantized_tflite`` (-oiqt) only yields static
+        quantization, which RF-DETR's transformer activations do not survive.
+        The converter instead builds dynamic-range INT8 from the SavedModel via
+        ``_quantize_dynamic_range``, so the onnx2tf call must NOT carry the
+        ``output_integer_quantized_tflite`` flag.
+        """
         _, convert_mock = fake_onnx2tf
-        export_tflite(onnx_model, tflite_output, quantization="int8")
-        assert convert_mock.call_args.kwargs["output_integer_quantized_tflite"] is True
+        dyn_path = tflite_output / "model_dynamic_range_quant.tflite"
+        with mock.patch(
+            "rfdetr.export._tflite.converter._quantize_dynamic_range",
+            return_value=dyn_path,
+        ) as quant_mock:
+            result = export_tflite(onnx_model, tflite_output, quantization="int8")
+        assert "output_integer_quantized_tflite" not in convert_mock.call_args.kwargs
+        quant_mock.assert_called_once()
+        assert result == dyn_path
 
     def test_verbosity_forwarded(
         self,
@@ -889,7 +958,72 @@ class TestCheckOnnx2tfAvailable:
         _check_onnx2tf_available()  # should not raise
 
     def test_raises_when_not_importable(self) -> None:
+        """ImportError is raised with install hint when onnx2tf is absent."""
         _remove_fake_onnx2tf()
         with mock.patch.dict(sys.modules, {"onnx2tf": None}):
             with pytest.raises(ImportError, match="onnx2tf is not installed"):
                 _check_onnx2tf_available()
+
+
+# ---------------------------------------------------------------------------
+# TestGridSampleKwargDetection
+# ---------------------------------------------------------------------------
+
+
+class TestGridSampleKwargDetection:
+    """Tests for module-level detection of the onnx2tf GridSample replacement kwarg."""
+
+    def test_kwarg_name_contains_grid_and_pseudo_when_detected(self) -> None:
+        """If non-None, the detected kwarg name must embed both 'grid' and 'pseudo'."""
+        from rfdetr.export._tflite.converter import _GRIDSAMPLE_KWARG
+
+        if _GRIDSAMPLE_KWARG is not None:
+            lower = _GRIDSAMPLE_KWARG.lower()
+            assert "grid" in lower
+            assert "pseudo" in lower
+
+    def test_module_import_does_not_raise(self) -> None:
+        """Importing the converter module must succeed regardless of onnx2tf version."""
+        import rfdetr.export._tflite.converter  # noqa: F401
+
+
+# ---------------------------------------------------------------------------
+# TestGridSampleKwargForwarded
+# ---------------------------------------------------------------------------
+
+
+class TestGridSampleKwargForwarded:
+    """Tests that the GridSample replacement kwarg is forwarded to onnx2tf.convert."""
+
+    def test_kwarg_passed_as_true_when_set(
+        self,
+        onnx_model: Path,
+        tflite_output: Path,
+        fake_onnx2tf: Any,
+        mock_prepare_calib: Any,
+    ) -> None:
+        """_GRIDSAMPLE_KWARG is forwarded to convert() as True when non-None."""
+        from rfdetr.export._tflite import converter as conv_mod
+
+        _, convert_mock = fake_onnx2tf
+        sentinel = "replace_to_pseudo_gridsample_node"
+        with mock.patch.object(conv_mod, "_GRIDSAMPLE_KWARG", sentinel):
+            export_tflite(onnx_model, tflite_output)
+
+        assert convert_mock.call_args.kwargs.get(sentinel) is True
+
+    def test_warning_logged_when_kwarg_is_none(
+        self,
+        onnx_model: Path,
+        tflite_output: Path,
+        fake_onnx2tf: Any,
+        mock_prepare_calib: Any,
+    ) -> None:
+        """A warning mentioning GridSample is logged when _GRIDSAMPLE_KWARG is None."""
+        from rfdetr.export._tflite import converter as conv_mod
+
+        with mock.patch.object(conv_mod, "_GRIDSAMPLE_KWARG", None):
+            with mock.patch("rfdetr.export._tflite.converter.logger") as mock_logger:
+                export_tflite(onnx_model, tflite_output)
+                assert mock_logger.warning.called
+                assert "GridSample" in mock_logger.warning.call_args[0][0]

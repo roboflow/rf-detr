@@ -6,9 +6,16 @@
 
 """ONNX → TFLite conversion using the ``onnx2tf`` library.
 
-``onnx2tf`` (PINTO0309) converts an ONNX graph to TFLite.  Version 2.0+
-uses a fast ``flatbuffer_direct`` backend; earlier 1.x releases go through
-the TensorFlow ``TFLiteConverter``.
+``onnx2tf`` (PINTO0309) converts an ONNX graph to TFLite.  **Version 2.4.0
+or later is required** — earlier 1.x releases cannot lower three op
+patterns in the RF-DETR graph (constant Expand, 1-D TopK, rank-3 Tile).
+Although the onnx2tf 2.x default backend is ``flatbuffer_direct``, RF-DETR
+unconditionally forces ``tflite_backend="tf_converter"`` to avoid a runtime
+error in the TFLite TopK_V2 kernel (``flatbuffer_direct`` trips a
+"k > internal dimension" check at ``AllocateTensors()`` time).  ``Erf``
+and ``GeLU`` activations are replaced with TFLite-native pseudo-operators
+(``replace_to_pseudo_operators=["Erf", "GeLU"]``) so the produced model
+does not require the TensorFlow Flex delegate at inference time.
 
 The converter uses the ``onnx2tf`` Python API directly (rather than
 shelling out to the CLI) so that we can:
@@ -19,43 +26,34 @@ shelling out to the CLI) so that we can:
   locally-prepared calibration data instead of downloading from GitHub
   (which can fail in many environments).
 
-``onnx2tf`` uses ``download_test_image_data()`` in two contexts:
-
-1. **Output validation** — always runs to compare ONNX-vs-TF outputs.
-2. **INT8 calibration** — when ``output_integer_quantized_tflite=True``,
-   uses the same function as a representative dataset source.
-
-Both calls are redirected to local data via the
-``_patch_validation_download()`` context manager.  This avoids the
-network dependency and lets the caller supply proper calibration images
-for INT8 quantization.
+``onnx2tf`` calls ``download_test_image_data()`` for its ONNX-vs-TF output
+validation.  ``_patch_validation_download()`` redirects that call to local
+data, avoiding the network dependency.
 
 INT8 quantization
 -----------------
-When ``quantization="int8"`` the caller **should** supply representative
-calibration images via *calibration_data*.  Accepted formats:
+``quantization="int8"`` produces a **dynamic-range** INT8 model (INT8
+weights, float activations, roughly 4x smaller than FP32, no calibration
+data needed), built from the ``onnx2tf`` SavedModel.
 
-* A **directory path** containing JPEG/PNG images — the converter
-  automatically loads, resizes, and converts them to the correct format.
-  This is the easiest approach: just point to your dataset folder.
-* A ``.npy`` file path — shape ``(N, H, W, 3)``, dtype ``float32``,
-  values in ``[0, 1]``.
-* A :class:`numpy.ndarray` with the same constraints.
-
-Pixel values must be in ``[0, 1]`` (divided by 255 but **not**
-ImageNet-normalized — the converter applies ImageNet normalization
-automatically via ``onnx2tf``'s default ``quant_norm_mean`` /
-``quant_norm_std`` parameters).
-
-If no calibration data is provided, random noise is used instead and a
-warning is emitted.  This is sufficient for ``fp32`` / ``fp16`` conversion
-but will produce **poor accuracy** for ``int8``.
+Static (full-integer) INT8 is not supported and raises ``ValueError``:
+RF-DETR's transformer activations do not survive 8-bit post-training
+quantization.
 
 Note:
     The resulting ``.tflite`` model expects the same input normalization as
     the ONNX model: ImageNet mean/std (``mean=[0.485, 0.456, 0.406]``,
     ``std=[0.229, 0.224, 0.225]``).  The caller is responsible for applying
     this normalization at inference time.
+
+Note:
+    **Segmentation model export is not validated.**  The same ``convert_kwargs``
+    are applied to segmentation models as to detection models, but the
+    segmentation output path introduces additional ops (``ScatterND``,
+    ``Resize``, extra ``GridSample`` calls in the mask resampling path) that
+    have not been exercised end-to-end through TFLite.  Treat segmentation
+    TFLite export as experimental and verify outputs against the ONNX baseline
+    before deployment.
 """
 
 from __future__ import annotations
@@ -85,12 +83,41 @@ _IMAGE_EXTENSIONS: frozenset[str] = frozenset({".jpg", ".jpeg", ".png", ".bmp", 
 # Default number of images to sample from a directory for calibration.
 _DEFAULT_DIR_CALIB_SAMPLES: int = 100
 
+# Detect the GridSample→pseudo-GridSample replacement kwarg exposed by onnx2tf.
+# The kwarg name has drifted across versions; we match any parameter containing
+# both "grid" and "pseudo" (case-insensitive) in convert()'s signature.
+# Workaround for onnx2tf#274: onnx2tf's GridSample lowering produces values
+# that diverge from ONNX while onnx2tf's own validator silently passes.
+# RF-DETR's deformable cross-attention uses F.grid_sample once per decoder
+# layer; without this fix top-1 detection scores collapse from ~0.6 to ~0.02.
+_GRIDSAMPLE_KWARG: str | None
+try:
+    import inspect as _inspect
+
+    from onnx2tf import convert as _onnx2tf_convert
+
+    _GRIDSAMPLE_KWARG = next(
+        (
+            name
+            for name in _inspect.signature(_onnx2tf_convert).parameters
+            if "grid" in name.lower() and "pseudo" in name.lower()
+        ),
+        None,
+    )
+    del _inspect, _onnx2tf_convert
+except ImportError:
+    _GRIDSAMPLE_KWARG = None
+
 
 def _check_onnx2tf_available() -> None:
-    """Verify that the ``onnx2tf`` package is importable.
+    """Verify that a compatible ``onnx2tf`` package is importable.
+
+    onnx2tf 2.4.0 or later is required — earlier 1.x releases cannot lower
+    the constant ``Expand``, 1-D ``TopK``, and rank-3 ``Tile`` ops present
+    in RF-DETR's ONNX graph.
 
     Raises:
-        ImportError: If ``onnx2tf`` cannot be imported.
+        ImportError: If ``onnx2tf`` cannot be imported or is below 2.4.0.
     """
     try:
         import onnx2tf  # noqa: F401
@@ -351,6 +378,28 @@ def _prepare_calibration_data(
     return npy_path
 
 
+def _quantize_dynamic_range(saved_model_dir: Path, model_stem: str) -> Path:
+    """Build a dynamic-range INT8 TFLite model from the onnx2tf SavedModel.
+
+    Dynamic-range quantization stores weights as INT8 and keeps activations in
+    float, so it needs no calibration data.
+
+    Args:
+        saved_model_dir: Directory holding the SavedModel ``onnx2tf`` wrote.
+        model_stem: Stem of the source ONNX file, used to name the output.
+
+    Returns:
+        Path to the written ``{model_stem}_dynamic_range_quant.tflite`` file.
+    """
+    import tensorflow as tf
+
+    converter = tf.lite.TFLiteConverter.from_saved_model(str(saved_model_dir))
+    converter.optimizations = [tf.lite.Optimize.DEFAULT]
+    out_path = saved_model_dir / f"{model_stem}_dynamic_range_quant.tflite"
+    out_path.write_bytes(converter.convert())
+    return out_path
+
+
 def export_tflite(
     onnx_path: str | os.PathLike[str],
     output_dir: str | os.PathLike[str],
@@ -363,32 +412,35 @@ def export_tflite(
 ) -> Path:
     """Convert an ONNX model to TFLite via ``onnx2tf``.
 
-    Uses the ``onnx2tf`` Python API with a NumPy compatibility shim so
-    that both 1.x and 2.x releases of ``onnx2tf`` work correctly.
+    Requires ``onnx2tf >= 2.4.0``.  Uses the Python API with a NumPy
+    compatibility shim.
 
     Args:
         onnx_path: Path to the source ``.onnx`` file.
         output_dir: Directory where TFLite artifacts will be written.
-            ``onnx2tf`` creates files named ``{stem}_float32.tflite`` and
-            ``{stem}_float16.tflite`` (plus ``{stem}_integer_quant.tflite``
-            when ``quantization="int8"``).
+            ``onnx2tf`` creates ``{stem}_float32.tflite`` and
+            ``{stem}_float16.tflite``.  When ``quantization="int8"`` a
+            ``{stem}_dynamic_range_quant.tflite`` is additionally written.
         quantization: Quantization mode.
 
-            * ``None`` / ``"fp32"`` — default FP32 + FP16 output.
-            * ``"fp16"`` — same as above (onnx2tf always emits both).
-            * ``"int8"`` — additionally produce an INT8-quantized model.
-        calibration_data: Representative data used by ``onnx2tf`` for
-            output validation (fp32/fp16) and INT8 calibration.  Accepts:
+            * ``None`` / ``"fp32"`` / ``"fp16"`` — FP32 + FP16 output
+              (``onnx2tf`` always emits both).
+            * ``"int8"`` — additionally produce a dynamic-range INT8 model
+              (INT8 weights, float activations, ~4x smaller than FP32).
+              Static / full-integer INT8 is not supported.
+        calibration_data: Representative data used by ``onnx2tf`` for its
+            ONNX-vs-TF output validation.  Accepts:
 
-            * ``None`` — auto-generate random data (warns for int8).
+            * ``None`` — auto-generate random data.
             * A **directory path** containing JPEG/PNG images — images
               are loaded, resized, and converted automatically.
             * A path to a ``.npy`` file — shape ``(N, H, W, 3)``,
               dtype float32, pixel values in ``[0, 1]``.
             * A :class:`numpy.ndarray` with the same format.
 
-            For INT8 quantization, provide real images from your dataset
-            for best accuracy.
+            Dynamic-range INT8 needs no calibration data, so this argument
+            does not affect the quantized weights — it only feeds onnx2tf's
+            internal validation pass.
         verbosity: Log verbosity passed to ``onnx2tf``.  One of
             ``"debug"``, ``"info"``, ``"warn"``, ``"error"`` (default).
         max_images: Maximum number of images to load when
@@ -399,7 +451,11 @@ def export_tflite(
             transformer-based models).  Defaults to ``False`` (silent).
 
     Returns:
-        The path to the primary ``*_float32.tflite`` file.
+        Path to the primary artifact.  ``onnx2tf`` always writes both
+        ``{stem}_float32.tflite`` and ``{stem}_float16.tflite`` to
+        *output_dir*; ``quantization="int8"`` adds
+        ``{stem}_dynamic_range_quant.tflite``.  The returned path is the
+        dynamic-range file for ``int8``, otherwise the float32 file.
 
     Raises:
         FileNotFoundError: If *onnx_path* does not exist or
@@ -416,6 +472,16 @@ def export_tflite(
         conversion.  Concurrent calls from multiple threads will interfere
         with each other.  Run conversion in a subprocess if isolation is
         required.
+
+        ``tf_converter`` backend is forced unconditionally (overriding
+        onnx2tf's 2.x ``flatbuffer_direct`` default) to avoid a runtime
+        error in the TFLite TopK_V2 kernel.  ``Erf`` and ``GeLU`` ops are
+        substituted with TFLite-native pseudo-operators to avoid a missing
+        TensorFlow Flex delegate at inference time.
+
+        Segmentation export (``pred_masks`` output) is **not validated** in
+        the current implementation; additional operators may need to be
+        added to ``replace_to_pseudo_operators`` for segmentation models.
     """
     onnx_path = Path(onnx_path)
     output_dir = Path(output_dir)
@@ -426,7 +492,8 @@ def export_tflite(
     if quantization not in _VALID_QUANTIZATIONS:
         raise ValueError(
             f"Unsupported quantization mode {quantization!r}. "
-            f"Choose from: {sorted(q for q in _VALID_QUANTIZATIONS if q is not None)}"
+            f"Choose from: {sorted(q for q in _VALID_QUANTIZATIONS if q is not None)}. "
+            "Static / full-integer INT8 is not supported; 'int8' is dynamic-range."
         )
 
     _check_onnx2tf_available()
@@ -477,10 +544,31 @@ def export_tflite(
                 "output_signaturedefs": True,
                 "non_verbose": not verbose,
                 "verbosity": verbosity,
+                # onnx2tf 2.x defaults to flatbuffer_direct, but that backend
+                # trips the TFLite TopK_V2 kernel's "k > internal dimension"
+                # check at AllocateTensors() time on RF-DETR's encoder TopK
+                # node.  We force tf_converter (SavedModel → TFLiteConverter
+                # path) to route around this.  onnx2tf 2.x tf_converter also
+                # correctly lowers Expand / Tile ops that onnx2tf 1.x could not.
+                "tflite_backend": "tf_converter",
+                # Replace Erf / GeLU with TFLite-native pseudo-operators so the
+                # produced .tflite does not require the TensorFlow Flex delegate
+                # at inference time.  Without this, AllocateTensors() fails with
+                # "FlexErf failed to prepare".
+                "replace_to_pseudo_operators": ["Erf", "GeLU"],
             }
 
-            if quantization == "int8":
-                convert_kwargs["output_integer_quantized_tflite"] = True
+            if _GRIDSAMPLE_KWARG is not None:
+                convert_kwargs[_GRIDSAMPLE_KWARG] = True
+                logger.debug(f"Enabling onnx2tf GridSample replacement: {_GRIDSAMPLE_KWARG}=True")
+            else:
+                logger.warning(
+                    "Installed onnx2tf has no GridSample replacement kwarg. "
+                    "If the exported TFLite model produces low-confidence detections, "
+                    "this is likely onnx2tf#274; try a compatible onnx2tf 2.x release "
+                    "that still satisfies this converter's minimum version requirement "
+                    "(onnx2tf>=2.4.0) and exposes the GridSample replacement option."
+                )
 
             convert(**convert_kwargs)
 
@@ -488,8 +576,15 @@ def export_tflite(
         logger.error(f"onnx2tf conversion failed: {exc}")
         raise RuntimeError(f"onnx2tf conversion failed: {exc}") from exc
 
-    # onnx2tf names output files based on the ONNX model stem.
+    # onnx2tf names output files based on the input ONNX model stem.
     model_stem = onnx_path.stem
+
+    if quantization == "int8":
+        # Dynamic-range INT8; static full-integer INT8 is rejected as unsupported.
+        primary = _quantize_dynamic_range(output_dir, model_stem)
+        logger.info(f"TFLite model exported to: {primary}")
+        return primary
+
     primary = output_dir / f"{model_stem}_float32.tflite"
 
     if not primary.is_file():
@@ -499,7 +594,10 @@ def export_tflite(
         tflite_files = sorted(output_dir.glob(f"{model_stem}_*.tflite"))
         if tflite_files:
             primary = tflite_files[0]
-            logger.info(f"Expected {model_stem}_float32.tflite not found; using {primary.name} instead.")
+            logger.warning(
+                f"Expected {model_stem}_float32.tflite not found; using {primary.name} instead. "
+                "The returned model may have a different dtype (e.g. int8) than the caller expects."
+            )
         else:
             raise RuntimeError(
                 f"onnx2tf completed but no .tflite file matching '{model_stem}_*.tflite' was found in {output_dir}"
