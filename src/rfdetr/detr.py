@@ -1448,10 +1448,11 @@ class RFDETR:
             # Attach class names so callers can map class_id → name without a
             # separate lookup. Always set data["class_name"] for a consistent interface.
             #
-            # RF-DETR uses num_classes + 1 logits internally; class index num_logit_slots
-            # is the background/no-object class — map it to "__background__" without
-            # warning. IDs not in _class_id_to_name are genuinely unexpected and produce
-            # an empty string with a one-time warning.
+            # For fine-tuned models, logit index num_logit_slots is the no-object slot —
+            # map it to "__background__" without warning. For COCO-pretrained models,
+            # background is implicit (filtered by threshold); class ID 90 is "toothbrush".
+            # IDs not in _class_id_to_name are genuinely unexpected and produce an empty
+            # string with a one-time warning.
             class_ids = detections.class_id if detections.class_id is not None else np.array([], dtype=int)
             truly_oob = [cid for cid in class_ids if cid not in _class_id_to_name and cid != num_logit_slots]
             if truly_oob:
@@ -1460,10 +1461,13 @@ class RFDETR:
                     num_logit_slots,
                     truly_oob[:5],
                 )
-            detections.data["class_name"] = np.array(
-                ["__background__" if cid == num_logit_slots else _class_id_to_name.get(cid, "") for cid in class_ids],
-                dtype=object,
-            )
+            if _is_coco_pretrained:
+                class_names = [_class_id_to_name.get(cid, "") for cid in class_ids]
+            else:
+                class_names = [
+                    "__background__" if cid == num_logit_slots else _class_id_to_name.get(cid, "") for cid in class_ids
+                ]
+            detections.data["class_name"] = np.array(class_names, dtype=object)
 
             detections_list.append(detections)
 
