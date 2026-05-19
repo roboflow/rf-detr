@@ -19,6 +19,7 @@ from typing import Any
 
 import numpy as np
 import supervision as sv
+from numpy.typing import NDArray
 from PIL import Image as PILImage
 
 from rfdetr.utilities.logger import get_logger
@@ -64,7 +65,7 @@ def _create_interpreter(model_path: str | Path) -> Any:
     return interp
 
 
-def _decode_masks(mask_logits: np.ndarray, out_size: tuple[int, int]) -> np.ndarray:
+def _decode_masks(mask_logits: NDArray[Any], out_size: tuple[int, int]) -> NDArray[Any]:
     """Upsample raw mask logits to image size and threshold at zero.
 
     Mirrors ``PostProcess.forward``: bilinear resize followed by ``> 0``. Uses
@@ -80,7 +81,8 @@ def _decode_masks(mask_logits: np.ndarray, out_size: tuple[int, int]) -> np.ndar
     width, height = out_size
     out = np.empty((mask_logits.shape[0], height, width), dtype=bool)
     for i, logit_map in enumerate(mask_logits):
-        resized = PILImage.fromarray(logit_map.astype(np.float32), mode="F").resize((width, height), PILImage.BILINEAR)
+        mask_img = PILImage.fromarray(logit_map.astype(np.float32), mode="F")
+        resized = mask_img.resize((width, height), PILImage.Resampling.BILINEAR)
         out[i] = np.asarray(resized) > 0.0
     return out
 
