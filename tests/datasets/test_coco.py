@@ -494,7 +494,13 @@ class TestAugConfigDisablesCrop:
 
         from rfdetr.datasets.coco import make_coco_transforms
 
-        with patch("rfdetr.datasets.coco._build_train_resize_config", return_value=[]) as mock_build:
+        # Patch AlbumentationsWrapper.from_config so the test exercises only argument
+        # forwarding; without it the mocked empty configs trigger unrelated
+        # "Empty augmentation config provided" warnings.
+        with (
+            patch("rfdetr.datasets.coco._build_train_resize_config", return_value=[]) as mock_build,
+            patch("rfdetr.datasets.coco.AlbumentationsWrapper.from_config", return_value=[]),
+        ):
             make_coco_transforms("train", 640, aug_config=aug_config)
 
         assert mock_build.call_args.kwargs["include_crop_branch"] is expected
