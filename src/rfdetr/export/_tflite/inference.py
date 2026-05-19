@@ -7,9 +7,9 @@
 """TFLite inference helpers for RF-DETR exported models.
 
 These functions handle interpreter creation, image preprocessing, and
-detection decoding without requiring PyTorch or the RF-DETR training stack —
-only ``tflite-runtime`` (or ``tensorflow``), ``numpy``, ``supervision``, and
-``Pillow`` are needed at inference time.
+decoding of detection and segmentation-mask outputs without requiring PyTorch
+or the RF-DETR training stack: only ``tflite-runtime`` (or ``tensorflow``),
+``numpy``, ``supervision``, and ``Pillow`` are needed at inference time.
 """
 
 from __future__ import annotations
@@ -64,6 +64,27 @@ def _create_interpreter(model_path: str | Path) -> Any:
     return interp
 
 
+def _decode_masks(mask_logits: np.ndarray, out_size: tuple[int, int]) -> np.ndarray:
+    """Upsample raw mask logits to image size and threshold at zero.
+
+    Mirrors ``PostProcess.forward``: bilinear resize followed by ``> 0``. Uses
+    Pillow so no PyTorch dependency is required at inference time.
+
+    Args:
+        mask_logits: Raw mask logits of shape ``(K, Hm, Wm)``.
+        out_size: Target ``(width, height)`` in pixels.
+
+    Returns:
+        Boolean mask array of shape ``(K, height, width)``.
+    """
+    width, height = out_size
+    out = np.empty((mask_logits.shape[0], height, width), dtype=bool)
+    for i, logit_map in enumerate(mask_logits):
+        resized = PILImage.fromarray(logit_map.astype(np.float32), mode="F").resize((width, height), PILImage.BILINEAR)
+        out[i] = np.asarray(resized) > 0.0
+    return out
+
+
 def _run_inference(
     interp: Any,
     image_path: str | Path,
@@ -75,6 +96,8 @@ def _run_inference(
     normalises the image with ImageNet statistics, invokes the model, then
     decodes the ``dets`` / ``labels`` output tensors into a
     :class:`supervision.Detections` object with pixel-space ``xyxy`` boxes.
+    For segmentation exports the ``masks`` output is also decoded into
+    ``Detections.mask``.
 
     Args:
         interp: Allocated TFLite interpreter returned by ``_create_interpreter``.
@@ -83,8 +106,8 @@ def _run_inference(
 
     Returns:
         A tuple of ``(detections, pil_img)`` where ``detections`` contains
-        pixel-space ``xyxy`` boxes and ``pil_img`` is the original PIL image
-        at its original resolution.
+        pixel-space ``xyxy`` boxes (and ``mask`` for segmentation models) and
+        ``pil_img`` is the original PIL image at its original resolution.
     """
     inp_det = interp.get_input_details()
     out_det = interp.get_output_details()
@@ -119,11 +142,11 @@ def _run_inference(
     boxes_idx = next((i for i, od in enumerate(out_det) if "dets" in str(od.get("name", ""))), None)
     logits_idx = next((i for i, od in enumerate(out_det) if "labels" in str(od.get("name", ""))), None)
     if boxes_idx is None or logits_idx is None:
-        # onnx2tf sometimes renames outputs to generic "Identity", "Identity_N" instead
-        # of preserving the original ONNX node names. Fall back to shape-based
-        # matching for the detection outputs only: boxes (*, 4) and logits
-        # (*, num_classes+1). Segmentation exports may include additional outputs
-        # such as masks; unnamed extra outputs are not resolved by this fallback.
+        # onnx2tf sometimes renames outputs to generic "Identity", "Identity_N"
+        # instead of preserving the original ONNX node names. Fall back to
+        # shape-based matching: boxes are the rank-3 tensor with last dim 4,
+        # logits the rank-3 tensor with last dim != 4. A rank-4 mask output,
+        # if present, is matched separately below.
         logger.debug(
             "Name-based output matching failed (available: %s). Falling back to shape-based matching.",
             available_output_names,
@@ -177,4 +200,14 @@ def _run_inference(
     xyxy = np.stack([cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2], axis=1)
     xyxy *= np.array([ow, oh, ow, oh], dtype=np.float32)
 
-    return sv.Detections(xyxy=xyxy, confidence=scores[keep], class_id=cls[keep].astype(int)), pil_img
+    # Segmentation exports add a rank-4 mask output; decode it when present.
+    mask_idx = next((i for i, od in enumerate(out_det) if "masks" in str(od.get("name", ""))), None)
+    if mask_idx is None:
+        mask_idx = next((i for i, od in enumerate(out_det) if len(od["shape"]) == 4), None)
+    masks = None
+    if mask_idx is not None:
+        raw_masks = interp.get_tensor(out_det[mask_idx]["index"])[0]  # (Q, Hm, Wm)
+        masks = _decode_masks(raw_masks[keep], (ow, oh))
+
+    detections = sv.Detections(xyxy=xyxy, confidence=scores[keep], class_id=cls[keep].astype(int), mask=masks)
+    return detections, pil_img
