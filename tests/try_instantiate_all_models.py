@@ -138,6 +138,65 @@ def _test_from_checkpoint(model_instance: object, actual_cls: type, extra_kwargs
         os.unlink(tmp_path)
 
 
+def _test_coco_class_name_mapping(model_instance: object) -> None:
+    """Verify predict() uses sparse COCO category-ID → class-name mapping.
+
+    Issue #988: RFDETRSegSmall returned "sheep" for class_id=18 instead of "dog"
+    because 0-indexed ``COCO_CLASS_NAMES[18]`` was used instead of the sparse-dict
+    lookup ``COCO_CLASSES[18]``.  threshold=0 forces all top-k queries through so
+    every class ID in the output is covered.
+
+    Args:
+        model_instance: An already-loaded pretrained COCO model instance.
+
+    Raises:
+        AssertionError: On any class-name mapping failure.
+    """
+    import PIL.Image
+
+    from rfdetr.assets.coco_classes import COCO_CLASS_NAMES, COCO_CLASSES
+
+    # Sanity-check model properties required for the pretrained COCO branch.
+    class_names = model_instance.class_names
+    assert class_names is not None, "Pretrained COCO model must have class_names set"
+    assert len(class_names) == len(COCO_CLASS_NAMES), (
+        f"Expected {len(COCO_CLASS_NAMES)} COCO class names, got {len(class_names)}"
+    )
+    assert class_names == list(COCO_CLASS_NAMES), "model.class_names must equal COCO_CLASS_NAMES"
+    num_classes = model_instance.model.args.num_classes
+    assert num_classes == 90, f"Pretrained COCO model must have num_classes=90, got {num_classes}"
+
+    # Run at threshold=0 to exercise all top-k output slots.
+    img = PIL.Image.new("RGB", (640, 640), color=(128, 128, 128))
+    detections = model_instance.predict(img, threshold=0.0)
+
+    assert "class_name" in detections.data, "data['class_name'] must be present after predict()"
+
+    # For every detection whose class_id is a valid COCO category, class_name must
+    # use sparse-ID lookup (COCO_CLASSES[class_id]), not 0-indexed lookup.
+    # Canonical regression case: class_id=18 → "dog", NOT "sheep" (COCO_CLASS_NAMES[18]).
+    for class_id, class_name in zip(detections.class_id, detections.data["class_name"]):
+        cid = int(class_id)
+        if cid in COCO_CLASSES:
+            expected = COCO_CLASSES[cid]
+            assert class_name == expected, (
+                f"Sparse COCO ID mapping broken (issue #988): "
+                f"class_id={cid} must map to '{expected}', got '{class_name}'"
+            )
+
+    # Regression for PR #1051 HIGH-1: no COCO-pretrained detection may carry
+    # '__background__' — background is implicit (below threshold), never a sentinel label.
+    background_labeled = [
+        (int(cid), name)
+        for cid, name in zip(detections.class_id, detections.data["class_name"])
+        if name == "__background__"
+    ]
+    assert not background_labeled, (
+        "COCO-pretrained predict() must never produce '__background__' class names "
+        f"(PR #1051 HIGH-1 regression); found: {background_labeled[:3]}"
+    )
+
+
 def main() -> None:
     """Download, validate, instantiate all models, and test from_checkpoint round-trip."""
     print("Model Instantiation & Download Validation\n")
@@ -176,6 +235,12 @@ def main() -> None:
                 # Pass the real class (not a partial) so `_test_from_checkpoint` can read
                 # `.size` and `.__name__` and run `isinstance(recovered, actual_cls)`.
                 _test_from_checkpoint(model_instance, actual_cls, instantiate_kwargs)
+
+                # Inference class-name regression for issue #988 — run on the
+                # lightest pretrained COCO model at default resolution only.
+                if actual_cls is RFDETRNano and res is None:
+                    _test_coco_class_name_mapping(model_instance)
+
                 succeeded += 1
             except Exception as ex:
                 # Fail-fast: surface the first failing model directly so CI logs the
