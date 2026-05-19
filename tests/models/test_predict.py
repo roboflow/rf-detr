@@ -826,3 +826,32 @@ class TestPredictClassNameData:
         assert detections.data["class_name"][0] == "", "COCO gap ID 12 (no such category) must produce empty string"
         oob_warnings = [msg for msg in logger._warned_once if "out of range" in msg]
         assert oob_warnings, "COCO gap ID 12 must trigger an out-of-range warning"
+
+    def test_coco_pretrained_class_id_90_maps_to_toothbrush_not_background(self) -> None:
+        """COCO class ID 90 ('toothbrush') must not be mislabelled '__background__' in pretrained branch.
+
+        For COCO-pretrained models num_logit_slots==90, which is also a valid COCO category
+        (toothbrush). Background is implicit (below threshold), not a sentinel label.
+        The background sentinel check must be scoped to fine-tuned models only.
+
+        Regression test for HIGH-1 finding in /review of PR #1051.
+        """
+        from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
+        from rfdetr.utilities.logger import get_logger
+
+        logger = get_logger()
+        logger._warned_once.clear()
+
+        coco_model = _DummyModel(class_names=list(COCO_CLASS_NAMES), labels=[90])
+        coco_model.args = SimpleNamespace(num_classes=90)
+        model = _DummyRFDETR()
+        model.model = coco_model
+
+        img = PIL.Image.new("RGB", (28, 28))
+        detections = model.predict(img)
+
+        assert detections.data["class_name"][0] == "toothbrush", (
+            f"COCO pretrained: class_id=90 must map to 'toothbrush', got '{detections.data['class_name'][0]}'"
+        )
+        oob_warnings = [msg for msg in logger._warned_once if "out of range" in msg]
+        assert not oob_warnings, "class_id=90 (valid COCO category) must not trigger an out-of-range warning"
