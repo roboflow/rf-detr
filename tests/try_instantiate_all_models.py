@@ -144,10 +144,11 @@ def _test_coco_class_name_mapping(model_instance: object) -> None:
     Issue #988: RFDETRSegSmall returned "sheep" for class_id=18 instead of "dog"
     because 0-indexed ``COCO_CLASS_NAMES[18]`` was used instead of the sparse-dict
     lookup ``COCO_CLASSES[18]``.  threshold=0 forces all top-k queries through so
-    every class ID in the output is covered.
+    every class ID in the output is covered.  Covers both detection and segmentation
+    nano variants (RFDETRNano, RFDETRSegNano).
 
     Args:
-        model_instance: An already-loaded pretrained COCO model instance.
+        model_instance: An already-loaded pretrained COCO model instance (det or seg).
 
     Raises:
         AssertionError: On any class-name mapping failure.
@@ -236,9 +237,9 @@ def main() -> None:
                 # `.size` and `.__name__` and run `isinstance(recovered, actual_cls)`.
                 _test_from_checkpoint(model_instance, actual_cls, instantiate_kwargs)
 
-                # Inference class-name regression for issue #988 — run on the
-                # lightest pretrained COCO model at default resolution only.
-                if actual_cls is RFDETRNano and res is None:
+                # Inference class-name regression for issue #988 — run on all
+                # nano-sized pretrained COCO models at default resolution only.
+                if "nano" in base_name.lower() and res is None:
                     _test_coco_class_name_mapping(model_instance)
 
                 succeeded += 1
