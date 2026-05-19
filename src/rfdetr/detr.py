@@ -1463,8 +1463,7 @@ class RFDETR:
             truly_oob = [cid for cid in class_ids if cid not in _class_id_to_name and cid != num_logit_slots]
             if truly_oob:
                 logger.warning_once(
-                    "predict() encountered class_id values out of range [0, %d]: %s — mapping to empty string",
-                    num_logit_slots,
+                    "predict() encountered unmapped class_id(s): %s — mapping to empty string",
                     truly_oob[:5],
                 )
             if _is_coco_pretrained:

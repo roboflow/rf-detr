@@ -632,8 +632,8 @@ class TestPredictClassNameData:
         model = self._make_model_with_class_names(["cat", "dog"], labels=[2])
         img = PIL.Image.new("RGB", (28, 28))
         model.predict(img)
-        oob_warnings = [msg for msg in logger._warned_once if "out of range" in msg]
-        assert not oob_warnings, "Background class (class_id == num_classes) must not trigger an out-of-range warning"
+        unmapped_warnings = [msg for msg in logger._warned_once if "unmapped class_id" in msg]
+        assert not unmapped_warnings, "Background class must not trigger unmapped-class-id warning"
 
     def test_truly_oob_class_id_still_maps_to_empty_string_and_warns(self) -> None:
         """A class_id strictly above num_classes still maps to empty string AND emits a warning.
@@ -655,8 +655,8 @@ class TestPredictClassNameData:
         img = PIL.Image.new("RGB", (28, 28))
         detections = model.predict(img)
         assert detections.data["class_name"][0] == "", "Truly OOB class_id (> num_classes) must produce empty string"
-        oob_warnings = [msg for msg in logger._warned_once if "out of range" in msg]
-        assert oob_warnings, "Truly OOB class_id (> num_classes) must trigger an out-of-range warning"
+        unmapped_warnings = [msg for msg in logger._warned_once if "unmapped class_id" in msg]
+        assert unmapped_warnings, "Truly OOB class_id (> num_classes) must trigger an unmapped-class-id warning"
 
     @pytest.mark.parametrize(
         ("class_id", "expected_name"),
@@ -824,8 +824,8 @@ class TestPredictClassNameData:
         detections = model.predict(img)
 
         assert detections.data["class_name"][0] == "", "COCO gap ID 12 (no such category) must produce empty string"
-        oob_warnings = [msg for msg in logger._warned_once if "out of range" in msg]
-        assert oob_warnings, "COCO gap ID 12 must trigger an out-of-range warning"
+        unmapped_warnings = [msg for msg in logger._warned_once if "unmapped class_id" in msg]
+        assert unmapped_warnings, "COCO gap ID 12 must trigger an unmapped-class-id warning"
 
     def test_coco_pretrained_class_id_90_maps_to_toothbrush_not_background(self) -> None:
         """COCO class ID 90 ('toothbrush') must not be mislabelled '__background__' in pretrained branch.
@@ -853,5 +853,5 @@ class TestPredictClassNameData:
         assert detections.data["class_name"][0] == "toothbrush", (
             f"COCO pretrained: class_id=90 must map to 'toothbrush', got '{detections.data['class_name'][0]}'"
         )
-        oob_warnings = [msg for msg in logger._warned_once if "out of range" in msg]
-        assert not oob_warnings, "class_id=90 (valid COCO category) must not trigger an out-of-range warning"
+        unmapped_warnings = [msg for msg in logger._warned_once if "unmapped class_id" in msg]
+        assert not unmapped_warnings, "class_id=90 (valid COCO category) must not trigger unmapped-class-id warning"
