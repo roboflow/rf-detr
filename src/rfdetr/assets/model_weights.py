@@ -357,8 +357,8 @@ def download_pretrain_weights(
     if model_name == _LEGACY_LARGE_MODEL_NAME:
         warnings.warn(
             f"{_LEGACY_LARGE_MODEL_NAME!r} is the legacy RF-DETR Large checkpoint kept for "
-            "backward compatibility. It is much slower and more accurate than the current "
-            f"RF-DETR Large release. For the current Large model, prefer "
+            "backward compatibility. It is slower than the current RF-DETR Large "
+            f"release. For the current Large model, prefer "
             f"{_CURRENT_LARGE_MODEL_NAME!r} or the RFDETRLarge class defaults.",
             UserWarning,
             stacklevel=2,
