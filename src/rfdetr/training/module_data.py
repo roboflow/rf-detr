@@ -29,9 +29,8 @@ _MIN_TRAIN_BATCHES = 5
 def _has_cuda_device() -> bool:
     """Return ``True`` when the runtime has a CUDA accelerator available.
 
-    Uses the fork-safe global ``DEVICE`` constant instead of direct
-    ``torch.cuda.is_available()`` calls to avoid creating a CUDA context in
-    fork-based notebook/DDP workflows.
+    Uses the fork-safe global ``DEVICE`` constant instead of direct ``torch.cuda.is_available()`` calls to avoid
+    creating a CUDA context in fork-based notebook/DDP workflows.
     """
     from rfdetr.config import DEVICE
 
@@ -41,17 +40,14 @@ def _has_cuda_device() -> bool:
 class GradAccumAlignedDataset(torch.utils.data.Dataset):
     """Dataset wrapper that pads length to a multiple of ``effective_batch_size * world_size``.
 
-    Workaround for https://github.com/Lightning-AI/pytorch-lightning/issues/19987:
-    PTL fires the optimizer on partial accumulation windows at the tail of the
-    dataset, causing the last optimizer step to be under-scaled.  Padding the
-    dataset to a multiple of ``effective_batch_size * world_size`` ensures that
-    ``drop_last=True`` on the DataLoader becomes a true no-op — every
-    accumulation window is always complete.
+    Workaround for https://github.com/Lightning-AI/pytorch-lightning/issues/19987: PTL fires the optimizer on partial
+    accumulation windows at the tail of the dataset, causing the last optimizer step to be under-scaled.  Padding the
+    dataset to a multiple of ``effective_batch_size * world_size`` ensures that ``drop_last=True`` on the DataLoader
+    becomes a true no-op — every accumulation window is always complete.
 
-    Padding indices are drawn randomly from the original dataset.  Because RF-DETR
-    uses online augmentation, each padded sample receives a fresh random
-    augmentation at ``__getitem__`` time, so it behaves like a new training
-    example rather than a true duplicate.
+    Padding indices are drawn randomly from the original dataset.  Because RF-DETR uses online augmentation, each padded
+    sample receives a fresh random augmentation at ``__getitem__`` time, so it behaves like a new training example
+    rather than a true duplicate.
 
     This wrapper can be removed once the upstream PTL issue is resolved.
 
@@ -59,9 +55,8 @@ class GradAccumAlignedDataset(torch.utils.data.Dataset):
         dataset: The underlying dataset to wrap.
         effective_batch_size: ``batch_size * grad_accum_steps``.
         world_size: Number of DDP processes (default 1 for single-GPU/CPU).
-            The alignment unit is ``effective_batch_size * world_size`` so that
-            after PTL's ``DistributedSampler`` splits samples across ranks each
-            rank still receives an exact multiple of ``effective_batch_size``.
+            The alignment unit is ``effective_batch_size * world_size`` so that after PTL's ``DistributedSampler``
+            splits samples across ranks each rank still receives an exact multiple of ``effective_batch_size``.
     """
 
     def __init__(
@@ -109,13 +104,11 @@ class GradAccumAlignedDataset(torch.utils.data.Dataset):
 def _resolve_augmentation_backend(backend: str) -> str:
     """Resolve ``"auto"`` to ``"cpu"`` or ``"gpu"`` based on runtime availability.
 
-    For ``"cpu"`` and ``"gpu"`` the value is returned unchanged.  For
-    ``"auto"`` the function checks CUDA and kornia availability and returns
-    ``"gpu"`` only when both are present; otherwise ``"cpu"``.
+    For ``"cpu"`` and ``"gpu"`` the value is returned unchanged.  For ``"auto"`` the function checks CUDA and kornia
+    availability and returns ``"gpu"`` only when both are present; otherwise ``"cpu"``.
 
-    Called before dataset construction so that ``gpu_postprocess`` in the
-    dataset builders always matches what the DataModule will actually do in
-    ``on_after_batch_transfer``.
+    Called before dataset construction so that ``gpu_postprocess`` in the dataset builders always matches what the
+    DataModule will actually do in ``on_after_batch_transfer``.
 
     Args:
         backend: Value of ``TrainConfig.augmentation_backend``.
@@ -213,9 +206,8 @@ class RFDETRDataModule(LightningDataModule):
     def setup(self, stage: str) -> None:
         """Build datasets for the requested stage.
 
-        PTL calls this on every process before the corresponding
-        dataloader method.  Datasets are built lazily — a dataset is
-        only constructed once even if ``setup`` is called multiple times.
+        PTL calls this on every process before the corresponding dataloader method.  Datasets are built lazily — a
+        dataset is only constructed once even if ``setup`` is called multiple times.
 
         Args:
             stage: PTL stage identifier — one of ``"fit"``, ``"validate"``,
@@ -256,14 +248,11 @@ class RFDETRDataModule(LightningDataModule):
     def train_dataloader(self) -> DataLoader:
         """Return the training DataLoader.
 
-        Uses a replacement sampler when the dataset is too small to fill
-        ``_MIN_TRAIN_BATCHES`` effective batches (matching legacy behaviour in
-        ``main.py``).  Otherwise wraps the dataset with
-        :class:`GradAccumAlignedDataset` to ensure its length is an exact
-        multiple of ``effective_batch_size * world_size`` (workaround for
-        https://github.com/Lightning-AI/pytorch-lightning/issues/19987) and
-        then uses ``shuffle=True, drop_last=True`` so that PTL can
-        auto-inject ``DistributedSampler`` in DDP mode.
+        Uses a replacement sampler when the dataset is too small to fill ``_MIN_TRAIN_BATCHES`` effective batches
+        (matching legacy behaviour in ``main.py``).  Otherwise wraps the dataset with :class:`GradAccumAlignedDataset`
+        to ensure its length is an exact multiple of ``effective_batch_size * world_size`` (workaround for
+        https://github.com/Lightning-AI/pytorch-lightning/issues/19987) and then uses ``shuffle=True, drop_last=True``
+        so that PTL can auto-inject ``DistributedSampler`` in DDP mode.
 
         Returns:
             DataLoader for the training dataset.
@@ -371,9 +360,8 @@ class RFDETRDataModule(LightningDataModule):
     def _setup_kornia_pipeline(self) -> None:
         """Resolve augmentation backend and build the Kornia pipeline if applicable.
 
-        Called once during ``setup("fit")``.  When ``augmentation_backend``
-        is ``"cpu"`` this is a no-op.  For ``"auto"`` the method falls back
-        silently when CUDA or Kornia are unavailable.  For ``"gpu"`` missing
+        Called once during ``setup("fit")``.  When ``augmentation_backend`` is ``"cpu"`` this is a no-op.  For
+        ``"auto"`` the method falls back silently when CUDA or Kornia are unavailable.  For ``"gpu"`` missing
         requirements raise hard errors.
         """
         backend = self.train_config.augmentation_backend
@@ -412,12 +400,11 @@ class RFDETRDataModule(LightningDataModule):
     def on_after_batch_transfer(self, batch: Tuple, dataloader_idx: int) -> Tuple:
         """Apply Kornia GPU augmentation after the batch is transferred to device.
 
-        When ``_kornia_pipeline`` is set and the trainer is in training mode,
-        augmentation and normalization are applied on the GPU.  Validation
-        and test batches pass through unchanged.
+        When ``_kornia_pipeline`` is set and the trainer is in training mode, augmentation and normalization are applied
+        on the GPU.  Validation and test batches pass through unchanged.
 
-        Segmentation models use a mask-aware pipeline (``with_masks=True``) so
-        images, boxes, and per-instance masks are augmented in sync.
+        Segmentation models use a mask-aware pipeline (``with_masks=True``) so images, boxes, and per-instance masks are
+        augmented in sync.
 
         Args:
             batch: Tuple of ``(NestedTensor, list[dict])`` already on device.
@@ -471,9 +458,8 @@ class RFDETRDataModule(LightningDataModule):
     def class_names(self) -> Optional[List[str]]:
         """Class names from the training or validation dataset annotation file.
 
-        Reads category names from the first available COCO-style dataset.
-        Returns ``None`` if no dataset has been set up yet or the dataset
-        does not expose COCO-style category information.
+        Reads category names from the first available COCO-style dataset. Returns ``None`` if no dataset has been set up
+        yet or the dataset does not expose COCO-style category information.
 
         Returns:
             Sorted list of class name strings, or ``None``.
@@ -489,8 +475,8 @@ class RFDETRDataModule(LightningDataModule):
     def transfer_batch_to_device(self, batch: Tuple, device: torch.device, dataloader_idx: int) -> Tuple:
         """Move a ``(NestedTensor, targets)`` batch to *device*.
 
-        PTL's default iterates tuple elements and calls ``.to(device)``; that
-        works for plain tensors but ``NestedTensor`` must be moved explicitly.
+        PTL's default iterates tuple elements and calls ``.to(device)``; that works for plain tensors but
+        ``NestedTensor`` must be moved explicitly.
 
         Args:
             batch: Tuple of (NestedTensor samples, list of target dicts).

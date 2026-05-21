@@ -70,8 +70,7 @@ def detect_roboflow_format(dataset_dir: Path) -> str:
 def build_roboflow(image_set: str, args: Any, resolution: int) -> Dataset[Any]:
     """Build a Roboflow dataset, auto-detecting COCO or YOLO format.
 
-    This function detects the dataset format and delegates to the
-    appropriate builder function.
+    This function detects the dataset format and delegates to the appropriate builder function.
     """
     root = Path(args.dataset_dir)
     assert root.exists(), f"provided Roboflow path {root} does not exist"

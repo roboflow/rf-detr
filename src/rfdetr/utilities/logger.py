@@ -28,12 +28,11 @@ class _RFDETRLogger(logging.Logger):
 def get_logger(name: str = "rf-detr", level: int | None = None) -> _RFDETRLogger:
     """Creates and configures a logger with stdout and stderr handlers.
 
-    This function creates a logger that sends INFO and DEBUG level logs to stdout,
-    and WARNING, ERROR, and CRITICAL level logs to stderr. If the logger already
-    has handlers, it returns the existing logger without adding new handlers.
+    This function creates a logger that sends INFO and DEBUG level logs to stdout, and WARNING, ERROR, and CRITICAL
+    level logs to stderr. If the logger already has handlers, it returns the existing logger without adding new
+    handlers.
 
-    The log level can be specified directly or through the LOG_LEVEL environment
-    variable.
+    The log level can be specified directly or through the LOG_LEVEL environment variable.
 
     Args:
         name: The name of the logger. Defaults to "rf-detr".

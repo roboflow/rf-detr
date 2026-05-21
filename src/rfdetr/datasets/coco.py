@@ -59,11 +59,9 @@ def compute_multi_scale_scales(
 def _is_rle(segmentation: Any) -> bool:
     """Check whether a COCO segmentation entry is in RLE format.
 
-    RLE annotations are dicts with ``"counts"`` and ``"size"`` keys, as opposed
-    to polygon annotations which are lists of coordinate arrays.
-    This is a structural check only — it verifies key presence but does not
-    validate value types. A dict with counts=None will pass this check but fail
-    downstream in convert_coco_poly_to_mask.
+    RLE annotations are dicts with ``"counts"`` and ``"size"`` keys, as opposed to polygon annotations which are lists
+    of coordinate arrays. This is a structural check only — it verifies key presence but does not validate value types.
+    A dict with counts=None will pass this check but fail downstream in convert_coco_poly_to_mask.
 
     Args:
         segmentation: A single COCO segmentation annotation entry.
@@ -77,27 +75,22 @@ def _is_rle(segmentation: Any) -> bool:
 def convert_coco_poly_to_mask(segmentations: List[Any], height: int, width: int) -> torch.Tensor:
     """Convert COCO segmentation annotations to a binary mask tensor of shape ``[N, H, W]``.
 
-    Supports both polygon and RLE (Run-Length Encoding) annotation formats.
-    Polygon annotations (lists of coordinate arrays) are rasterised via
-    ``pycocotools.mask.frPyObjects``.  RLE annotations (dicts with
-    ``"counts"`` and ``"size"`` keys; ``counts`` may be str or bytes for
-    compressed RLE, or list of ints for uncompressed RLE) are decoded directly, skipping the
-    polygon-to-RLE conversion step.
+    Supports both polygon and RLE (Run-Length Encoding) annotation formats. Polygon annotations (lists of coordinate
+    arrays) are rasterised via ``pycocotools.mask.frPyObjects``.  RLE annotations (dicts with ``"counts"`` and
+    ``"size"`` keys; ``counts`` may be str or bytes for compressed RLE, or list of ints for uncompressed RLE) are
+    decoded directly, skipping the polygon-to-RLE conversion step.
 
     Args:
         segmentations: Per-instance segmentation annotations.  Each element is
-            either a polygon list (``[[x1, y1, x2, y2, ...], ...]``), an RLE
-            dict (``{"counts": ..., "size": [H, W]}``), or ``None`` / empty
-            for instances without a mask.
-            Dicts must be valid COCO RLE annotations with non-empty ``"counts"``
-            and ``"size"`` fields.
+            either a polygon list (``[[x1, y1, x2, y2, ...], ...]``), an RLE dict (``{"counts": ..., "size": [H, W]}``),
+            or ``None`` / empty for instances without a mask. Dicts must be valid COCO RLE annotations with non-empty
+            ``"counts"`` and ``"size"`` fields.
         height: Image height in pixels (used for polygon rasterisation).
         width: Image width in pixels (used for polygon rasterisation).
 
     Returns:
-        A ``uint8`` tensor of shape ``(N, H, W)`` where each slice is a binary
-        mask for one instance.  Returns a ``(0, H, W)`` tensor when
-        *segmentations* is empty.
+        A ``uint8`` tensor of shape ``(N, H, W)`` where each slice is a binary mask for one instance.  Returns a ``(0,
+        H, W)`` tensor when *segmentations* is empty.
     """
     import pycocotools.mask as coco_mask
 
@@ -144,20 +137,16 @@ class CocoDetection(torchvision.datasets.CocoDetection):
     2. Optional remapping of sparse COCO category IDs to contiguous 0-based label
        indices via ``remap_category_ids``.
 
-    COCO category IDs are sparse (1–90 with gaps such as 12, 26, 29 …).  When a
-    model has only *N* output slots the IDs cannot be used directly as tensor
-    indices — doing so causes out-of-bounds errors in the matcher and loss.
-    Setting ``remap_category_ids=True`` builds a ``cat2label`` mapping from the
-    annotation file so that IDs are remapped to the range ``[0, N)``.  The
-    reverse ``label2cat`` mapping is attached to the underlying COCO API object
-    so that :class:`~rfdetr.datasets.coco_eval.CocoEvaluator` can convert
-    predicted label indices back to the original category IDs required by
-    pycocotools.
+    COCO category IDs are sparse (1–90 with gaps such as 12, 26, 29 …).  When a model has only *N* output slots the IDs
+    cannot be used directly as tensor indices — doing so causes out-of-bounds errors in the matcher and loss. Setting
+    ``remap_category_ids=True`` builds a ``cat2label`` mapping from the annotation file so that IDs are remapped to the
+    range ``[0, N)``.  The reverse ``label2cat`` mapping is attached to the underlying COCO API object so that
+    :class:`~rfdetr.datasets.coco_eval.CocoEvaluator` can convert predicted label indices back to the original category
+    IDs required by pycocotools.
 
-    ``remap_category_ids`` should be ``True`` for Roboflow / custom datasets
-    (via :func:`build_roboflow_from_coco`) and ``False`` (the default) when
-    evaluating pretrained models that were trained with the convention that model
-    output slot *k* corresponds directly to COCO category ID *k*.
+    ``remap_category_ids`` should be ``True`` for Roboflow / custom datasets (via :func:`build_roboflow_from_coco`) and
+    ``False`` (the default) when evaluating pretrained models that were trained with the convention that model output
+    slot *k* corresponds directly to COCO category ID *k*.
 
     Args:
         img_folder: Path to the directory containing the dataset images.
@@ -167,9 +156,8 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         include_masks: If ``True``, decode polygon segmentation masks into binary
             tensors and include them in the target dict under the ``"masks"`` key.
         remap_category_ids: If ``True``, build a ``cat2label`` mapping from the
-            annotation file that remaps sparse category IDs to contiguous 0-based
-            label indices.  The reverse mapping is stored as ``label2cat`` on both
-            this object and the underlying COCO API object.  Defaults to ``False``.
+            annotation file that remaps sparse category IDs to contiguous 0-based label indices.  The reverse mapping is
+            stored as ``label2cat`` on both this object and the underlying COCO API object.  Defaults to ``False``.
     """
 
     def __init__(
@@ -210,9 +198,8 @@ class CocoDetection(torchvision.datasets.CocoDetection):
 class ConvertCoco(object):
     """Convert a raw COCO annotation dict into model-ready tensors.
 
-    Accepts the ``(image, target)`` pair produced by
-    ``torchvision.datasets.CocoDetection`` and returns the same image alongside
-    a target dict containing:
+    Accepts the ``(image, target)`` pair produced by ``torchvision.datasets.CocoDetection`` and returns the same image
+    alongside a target dict containing:
 
     - ``"boxes"`` – ``(N, 4)`` float32 tensor in absolute ``[x_min, y_min, x_max, y_max]`` format.
     - ``"labels"`` – ``(N,)`` int64 tensor of class indices.
@@ -222,19 +209,16 @@ class ConvertCoco(object):
     - ``"masks"`` – ``(N, H, W)`` bool tensor of binary segmentation masks, only
       present when ``include_masks=True``.
 
-    Crowd annotations (``iscrowd=1``) and degenerate boxes (zero width or height
-    after clamping to image boundaries) are filtered out.
+    Crowd annotations (``iscrowd=1``) and degenerate boxes (zero width or height after clamping to image boundaries) are
+    filtered out.
 
     Args:
         include_masks: If ``True``, decode segmentation annotations (polygon or
-            RLE format) into binary masks and include them in the returned
-            target dict.
+            RLE format) into binary masks and include them in the returned target dict.
         cat2label: Optional mapping from COCO ``category_id`` values to contiguous
-            0-based label indices.  When ``None`` (default) the raw
-            ``category_id`` values are used as labels directly, which is correct
-            for datasets whose IDs are already 0-indexed.  Pass a non-``None``
-            mapping for sparse COCO-style datasets (e.g. IDs 1–90 with gaps) so
-            that labels stay within the model's output range.
+            0-based label indices.  When ``None`` (default) the raw ``category_id`` values are used as labels directly,
+            which is correct for datasets whose IDs are already 0-indexed.  Pass a non-``None`` mapping for sparse
+            COCO-style datasets (e.g. IDs 1–90 with gaps) so that labels stay within the model's output range.
     """
 
     def __init__(self, include_masks: bool = False, cat2label: Optional[Dict[int, int]] = None) -> None:
@@ -315,9 +299,8 @@ def _build_train_resize_config(
 ) -> List[Dict[str, Any]]:
     """Build the training resize pipeline as an Albumentations config list.
 
-    Expresses the ``RandomSelect(resize_a, Compose([resize_b1, crop, resize_b2]))``
-    pattern as a config-driven ``OneOf``/``Sequential`` for use with
-    :meth:`AlbumentationsWrapper.from_config`.
+    Expresses the ``RandomSelect(resize_a, Compose([resize_b1, crop, resize_b2]))`` pattern as a config-driven
+    ``OneOf``/``Sequential`` for use with :meth:`AlbumentationsWrapper.from_config`.
 
     Two branches are selected with equal probability:
 
@@ -325,15 +308,14 @@ def _build_train_resize_config(
     - **Option B** – resize to an intermediate scale (400/500/600 px), crop,
       then resize to the target scale.
 
-    Divisibility padding (rounding ``H``/``W`` up to a multiple of
-    ``patch_size * num_windows``) is handled by the batch collator via
-    :func:`~rfdetr.utilities.tensors.make_collate_fn`, not here.
+    Divisibility padding (rounding ``H``/``W`` up to a multiple of ``patch_size * num_windows``) is handled by the batch
+    collator via :func:`~rfdetr.utilities.tensors.make_collate_fn`, not here.
 
     Args:
         scales: Target resize scales in pixels.
         square: If ``True``, produce square output using ``A.Resize``
-            (one random scale from *scales*).  If ``False``, preserve aspect
-            ratio using ``A.SmallestMaxSize`` with an optional long-side cap.
+            (one random scale from *scales*).  If ``False``, preserve aspect ratio using ``A.SmallestMaxSize`` with an
+            optional long-side cap.
         max_size: Maximum long-side size for non-square resizes.  Defaults to
             ``1333`` when *square* is ``False``.
 
@@ -400,19 +382,16 @@ def make_coco_transforms(
 ) -> Compose:
     """Build the standard COCO transform pipeline for a given dataset split.
 
-    Returns a composed transform that resizes images to the target ``resolution``
-    (with optional multi-scale jitter), applies Albumentations-based augmentations
-    during training, and normalises pixel values with ImageNet statistics.
+    Returns a composed transform that resizes images to the target ``resolution`` (with optional multi-scale jitter),
+    applies Albumentations-based augmentations during training, and normalises pixel values with ImageNet statistics.
 
-    For the ``"train"`` split the pipeline uses a two-branch ``OneOf`` between a
-    direct resize and a resize → random-crop → resize sequence (built via
-    :func:`_build_train_resize_config`), followed by the augmentation stack and
-    normalisation.  For ``"val"``, ``"test"``, and ``"val_speed"`` only resize and
-    normalisation are applied — no augmentation.
+    For the ``"train"`` split the pipeline uses a two-branch ``OneOf`` between a direct resize and a resize →
+    random-crop → resize sequence (built via :func:`_build_train_resize_config`), followed by the augmentation stack and
+    normalisation.  For ``"val"``, ``"test"``, and ``"val_speed"`` only resize and normalisation are applied — no
+    augmentation.
 
-    When *gpu_postprocess* is ``True``, both the Albumentations augmentation
-    wrappers and the ``Normalize`` step are omitted from the ``"train"`` pipeline.
-    The ``RFDETRDataModule`` then applies augmentation and normalization on the
+    When *gpu_postprocess* is ``True``, both the Albumentations augmentation wrappers and the ``Normalize`` step are
+    omitted from the ``"train"`` pipeline. The ``RFDETRDataModule`` then applies augmentation and normalization on the
     device in ``on_after_batch_transfer`` instead.
 
     Args:
@@ -421,8 +400,7 @@ def make_coco_transforms(
         resolution: Target short-side resolution in pixels.  During validation the
             longest side is capped at 1333 px to preserve aspect ratio.
         multi_scale: If ``True``, sample the resize target from a range of scales
-            computed by :func:`compute_multi_scale_scales` instead of using a
-            single fixed size.
+            computed by :func:`compute_multi_scale_scales` instead of using a single fixed size.
         expanded_scales: Passed to :func:`compute_multi_scale_scales`; broadens the
             scale range when ``multi_scale=True``.
         skip_random_resize: When ``multi_scale=True``, use only the largest scale
@@ -432,26 +410,21 @@ def make_coco_transforms(
         num_windows: Number of attention windows; used by
             :func:`compute_multi_scale_scales` to derive candidate resolutions.
         aug_config: Albumentations augmentation config dict passed to
-            :class:`~rfdetr.datasets.transforms.AlbumentationsWrapper`.  Falls back
-            to the default :data:`~rfdetr.datasets.aug_config.AUG_CONFIG` when
-            ``None``.
+            :class:`~rfdetr.datasets.transforms.AlbumentationsWrapper`.  Falls back to the default
+            :data:`~rfdetr.datasets.aug_config.AUG_CONFIG` when ``None``.
         gpu_postprocess: When ``True``, skip Albumentations augmentation wrappers and
-            ``Normalize`` from the CPU pipeline.  The ``RFDETRDataModule`` then applies
-            both augmentation and normalization on the GPU in
-            ``on_after_batch_transfer``.  Has no effect on val/test splits.
+            ``Normalize`` from the CPU pipeline.  The ``RFDETRDataModule`` then applies both augmentation and
+            normalization on the GPU in ``on_after_batch_transfer``.  Has no effect on val/test splits.
 
     Returns:
-        A :class:`torchvision.transforms.v2.Compose` pipeline ready to be passed
-        to :class:`CocoDetection`.
+        A :class:`torchvision.transforms.v2.Compose` pipeline ready to be passed to :class:`CocoDetection`.
 
         .. note::
-            This pipeline does **not** guarantee that output ``H`` and ``W`` are
-            divisible by ``patch_size * num_windows``.  Divisibility is enforced
-            at the batch level by the DataLoader collate function.  If you apply
-            these transforms outside of :class:`~rfdetr.training.module_data.RFDETRDataModule`,
-            pass the result through :func:`~rfdetr.utilities.tensors.nested_tensor_from_tensor_list`
-            with ``block_size=patch_size * num_windows``, or use
-            :func:`~rfdetr.utilities.tensors.make_collate_fn` with that value.
+            This pipeline does **not** guarantee that output ``H`` and ``W`` are divisible by ``patch_size *
+            num_windows``.  Divisibility is enforced at the batch level by the DataLoader collate function.  If you
+            apply these transforms outside of :class:`~rfdetr.training.module_data.RFDETRDataModule`, pass the result
+            through :func:`~rfdetr.utilities.tensors.nested_tensor_from_tensor_list` with ``block_size=patch_size *
+            num_windows``, or use :func:`~rfdetr.utilities.tensors.make_collate_fn` with that value.
 
     Raises:
         ValueError: If ``image_set`` is not one of the recognised split names.
@@ -511,44 +484,38 @@ def make_coco_transforms_square_div_64(
     """
     Create COCO transforms with square resizing where the output size is divisible by 64.
 
-    This function builds a torchvision-style transform pipeline for COCO images that
-    resizes them to square shapes suitable for models that require spatial dimensions
-    divisible by 64. It supports multi-scale training and optional random resizing and
-    cropping for the training split.
+    This function builds a torchvision-style transform pipeline for COCO images that resizes them to square shapes
+    suitable for models that require spatial dimensions divisible by 64. It supports multi-scale training and optional
+    random resizing and cropping for the training split.
 
-    When *gpu_postprocess* is ``True``, both the Albumentations augmentation
-    wrappers and the ``Normalize`` step are omitted from the ``"train"`` pipeline.
-    The ``RFDETRDataModule`` then applies augmentation and normalization on the
+    When *gpu_postprocess* is ``True``, both the Albumentations augmentation wrappers and the ``Normalize`` step are
+    omitted from the ``"train"`` pipeline. The ``RFDETRDataModule`` then applies augmentation and normalization on the
     device in ``on_after_batch_transfer`` instead.
 
     Args:
         image_set: Dataset split identifier. Expected values are "train", "val",
-            "test", or "val_speed". Each split uses a slightly different transform
-            pipeline suited for training or evaluation.
+            "test", or "val_speed". Each split uses a slightly different transform pipeline suited for training or
+            evaluation.
         resolution: Base square resolution (in pixels) to which images are resized.
         multi_scale: If True, enable multi-scale training by sampling from a set of
             square resolutions instead of a single fixed size.
         expanded_scales: If True, expand the range of scales used during
             multi-scale training. Passed through to ``compute_multi_scale_scales``.
         skip_random_resize: If True and ``multi_scale`` is enabled, use only the
-            largest scale returned by ``compute_multi_scale_scales`` and skip random
-            selection among multiple scales.
+            largest scale returned by ``compute_multi_scale_scales`` and skip random selection among multiple scales.
         patch_size: Patch size used by ``compute_multi_scale_scales`` when
-            determining valid square resolutions (typically related to the model's
-            patch embedding or stride).
+            determining valid square resolutions (typically related to the model's patch embedding or stride).
         num_windows: Number of windows used by ``compute_multi_scale_scales`` to
             derive the list of candidate square resolutions.
         aug_config: Augmentation configuration dictionary compatible with
-            :class:`~rfdetr.datasets.transforms.AlbumentationsWrapper`. If ``None``,
-            the default :data:`~rfdetr.datasets.aug_config.AUG_CONFIG` is used.
+            :class:`~rfdetr.datasets.transforms.AlbumentationsWrapper`. If ``None``, the default
+            :data:`~rfdetr.datasets.aug_config.AUG_CONFIG` is used.
         gpu_postprocess: When ``True``, skip Albumentations augmentation wrappers and
-            ``Normalize`` from the CPU pipeline.  The ``RFDETRDataModule`` then applies
-            both augmentation and normalization on the GPU in
-            ``on_after_batch_transfer``.  Has no effect on val/test splits.
+            ``Normalize`` from the CPU pipeline.  The ``RFDETRDataModule`` then applies both augmentation and
+            normalization on the GPU in ``on_after_batch_transfer``.  Has no effect on val/test splits.
 
     Returns:
-        A ``Compose`` object containing the composed image transforms appropriate
-        for the specified ``image_set``.
+        A ``Compose`` object containing the composed image transforms appropriate for the specified ``image_set``.
     """
     to_image = ToImage()
     to_float = ToDtype(torch.float32, scale=True)
@@ -650,11 +617,11 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
 def _resolve_runtime_augmentation_backend(backend: str) -> str:
     """Resolve ``augmentation_backend`` at runtime for dataset builders.
 
-    Thin wrapper around :func:`rfdetr.datasets.kornia_transforms.resolve_augmentation_backend`
-    kept for backward-compatibility with callers in ``yolo.py``.
+    Thin wrapper around :func:`rfdetr.datasets.kornia_transforms.resolve_augmentation_backend` kept for
+    backward-compatibility with callers in ``yolo.py``.
 
-    ``"auto"`` becomes ``"gpu"`` only when CUDA and Kornia are both available,
-    otherwise ``"cpu"``. Explicit ``"cpu"``/``"gpu"`` values pass through.
+    ``"auto"`` becomes ``"gpu"`` only when CUDA and Kornia are both available, otherwise ``"cpu"``. Explicit
+    ``"cpu"``/``"gpu"`` values pass through.
     """
     from rfdetr.datasets.kornia_transforms import resolve_augmentation_backend
 
@@ -664,8 +631,7 @@ def _resolve_runtime_augmentation_backend(backend: str) -> str:
 def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
     """Build a Roboflow COCO-format dataset.
 
-    This uses Roboflow's standard directory structure
-    (train/valid/test folders with _annotations.coco.json).
+    This uses Roboflow's standard directory structure (train/valid/test folders with _annotations.coco.json).
     """
     root = Path(args.dataset_dir)
     if not root.exists():

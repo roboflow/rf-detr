@@ -14,8 +14,8 @@ from rfdetr.models.math import MLP
 class DetectionHead(nn.Module):
     """Projection head for object detection outputs.
 
-    Wraps the classification linear layer and bounding-box MLP used
-    by the LWDETR decoder to produce final detection predictions.
+    Wraps the classification linear layer and bounding-box MLP used by the LWDETR decoder to produce final detection
+    predictions.
 
     Args:
         hidden_dim: Feature dimension coming from the transformer decoder.
@@ -34,10 +34,8 @@ class DetectionHead(nn.Module):
             hs: Decoder output tensor of shape ``(B, N, hidden_dim)``.
 
         Returns:
-            Tuple of ``(outputs_class, outputs_coord)`` where
-            ``outputs_class`` has shape ``(B, N, num_classes)`` and
-            ``outputs_coord`` has shape ``(B, N, 4)`` in ``[cx, cy, w, h]``
-            normalised to ``[0, 1]``.
+            Tuple of ``(outputs_class, outputs_coord)`` where ``outputs_class`` has shape ``(B, N, num_classes)`` and
+            ``outputs_coord`` has shape ``(B, N, 4)`` in ``[cx, cy, w, h]`` normalised to ``[0, 1]``.
         """
         outputs_class = self.class_embed(hs)
         outputs_coord = self.bbox_embed(hs).sigmoid()

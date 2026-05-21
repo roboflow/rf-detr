@@ -121,8 +121,7 @@ def _build_datamodule(model_config=None, train_config=None, tmp_path=None):
 def build_datamodule(tmp_path):
     """Factory fixture — returns a constructed RFDETRDataModule.
 
-    build_dataset is mocked automatically.
-    tmp_path is injected automatically so test methods do not need to declare it.
+    build_dataset is mocked automatically. tmp_path is injected automatically so test methods do not need to declare it.
     """
     return lambda model_config=None, train_config=None: _build_datamodule(model_config, train_config, tmp_path)
 
@@ -407,10 +406,8 @@ class TestTrainDataloader:
     ):
         """len(train_dataloader()) is always a multiple of grad_accum_steps.
 
-        Verifies the workaround for
-        https://github.com/Lightning-AI/pytorch-lightning/issues/19987:
-        the training DataLoader must never present a partial accumulation
-        window to PTL.
+        Verifies the workaround for https://github.com/Lightning-AI/pytorch-lightning/issues/19987: the training
+        DataLoader must never present a partial accumulation window to PTL.
         """
         dm = self._setup_dm_with_train(
             tmp_path,
@@ -736,8 +733,8 @@ class TestSegmentationSupport:
 class TestTransferBatchToDevice:
     """Tests for RFDETRDataModule.transfer_batch_to_device().
 
-    Verifies that NestedTensor samples and all target-dict tensors are correctly
-    moved to the target device without unwrapping the NestedTensor into plain tensors.
+    Verifies that NestedTensor samples and all target-dict tensors are correctly moved to the target device without
+    unwrapping the NestedTensor into plain tensors.
     """
 
     def test_samples_transferred_to_target_device(self, build_datamodule):
@@ -789,8 +786,7 @@ class TestTransferBatchToDevice:
 class TestBackendResolution:
     """Backend resolution selects Kornia, CPU, or raises depending on environment.
 
-    All tests run on CPU CI by mocking fork-safe CUDA detection and the
-    ``kornia`` import as needed.
+    All tests run on CPU CI by mocking fork-safe CUDA detection and the ``kornia`` import as needed.
     """
 
     def _build_dm_with_backend(self, tmp_path, augmentation_backend="cpu"):
@@ -974,8 +970,8 @@ class TestOnAfterBatchTransfer:
     def _make_kornia_batch(self, batch_size=2, h=16, w=16):
         """Build a batch with xyxy boxes suitable for on_after_batch_transfer.
 
-        Returns (NestedTensor, targets) where boxes are in absolute xyxy format
-        and pixel values are in [0, 1] (pre-normalization).
+        Returns (NestedTensor, targets) where boxes are in absolute xyxy format and pixel values are in [0, 1]
+        (pre-normalization).
         """
         tensors = torch.rand(batch_size, 3, h, w)  # [0, 1] range
         mask = torch.zeros(batch_size, h, w, dtype=torch.bool)
@@ -996,8 +992,8 @@ class TestOnAfterBatchTransfer:
     def _make_kornia_batch_with_masks(self, batch_size=2, h=16, w=16):
         """Build a batch with xyxy boxes and instance masks for segmentation tests.
 
-        Returns (NestedTensor, targets) where each target includes a 'masks' key
-        with one [N, H, W] bool mask tensor per instance.
+        Returns (NestedTensor, targets) where each target includes a 'masks' key with one [N, H, W] bool mask tensor per
+        instance.
         """
         tensors = torch.rand(batch_size, 3, h, w)
         mask = torch.zeros(batch_size, h, w, dtype=torch.bool)

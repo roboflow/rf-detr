@@ -51,9 +51,8 @@ def _call_manual_path(
 ) -> torch.Tensor:
     """Force the manual gather-based code path by mocking input.device.type.
 
-    The function checks ``input.device.type != "mps"`` to decide which branch
-    to take.  We patch ``torch.Tensor.device`` to return an object whose
-    ``.type`` is ``"mps"`` so the manual path runs on a normal CPU tensor.
+    The function checks ``input.device.type != "mps"`` to decide which branch to take.  We patch ``torch.Tensor.device``
+    to return an object whose ``.type`` is ``"mps"`` so the manual path runs on a normal CPU tensor.
     """
 
     class _FakeMPSDevice:
@@ -389,8 +388,7 @@ class TestBilinearGridSampleRealUseCases:
     def test_ms_deform_attn_pattern(self, seed):
         """Matches ms_deform_attn_func: padding_mode='zeros', align_corners=False.
 
-        The attention function passes (B*n_heads, head_dim, H, W) input and
-        (B*n_heads, Len_q, P, 2) grid.
+        The attention function passes (B*n_heads, head_dim, H, W) input and (B*n_heads, Len_q, P, 2) grid.
         """
         # Simulate B=2, n_heads=8, head_dim=32
         input = torch.randn(16, 32, 14, 14)
@@ -404,8 +402,7 @@ class TestBilinearGridSampleRealUseCases:
     def test_point_sample_pattern(self, seed):
         """Matches point_sample in segmentation: padding_mode='border', align_corners=False.
 
-        point_sample transforms point_coords via ``2.0 * point_coords - 1.0`` to
-        map [0, 1] -> [-1, 1].
+        point_sample transforms point_coords via ``2.0 * point_coords - 1.0`` to map [0, 1] -> [-1, 1].
         """
         input = torch.randn(4, 256, 28, 28)
         # Simulate point_coords in [0, 1], transformed to [-1, 1]
@@ -421,9 +418,8 @@ class TestBilinearGridSampleRealUseCases:
 class TestNestedTensorBlockSize:
     """``nested_tensor_from_tensor_list`` with block_size rounds batch max H/W up.
 
-    This is the collator-level pad for backbone divisibility.  The rounded-up
-    strip must be marked as padding in the mask so downstream attention skips
-    it.  See https://github.com/roboflow/rf-detr/issues/983 for context.
+    This is the collator-level pad for backbone divisibility.  The rounded-up strip must be marked as padding in the
+    mask so downstream attention skips it.  See https://github.com/roboflow/rf-detr/issues/983 for context.
     """
 
     @staticmethod
@@ -505,8 +501,7 @@ class TestMakeCollateFn:
             *shapes: Variadic sequence of ``(C, H, W)`` shapes, one per image.
 
         Returns:
-            List of ``(image_tensor, target_dict)`` pairs ready to pass to a
-            collate callable.
+            List of ``(image_tensor, target_dict)`` pairs ready to pass to a collate callable.
         """
         batch = []
         for shape in shapes:

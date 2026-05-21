@@ -6,8 +6,8 @@
 
 """Shared test helpers for the rfdetr.training test suite.
 
-Plain classes and functions (not pytest fixtures) shared across multiple test
-modules to avoid verbatim duplication.  Import with a relative import::
+Plain classes and functions (not pytest fixtures) shared across multiple test modules to avoid verbatim duplication.
+Import with a relative import::
 
     from .helpers import _FakeCriterion, _FakeDataset, _TinyModel
 """
@@ -22,8 +22,8 @@ import torch.utils.data
 class _TinyModel(nn.Module):
     """Minimal real nn.Module satisfying the RFDETRModule model contract.
 
-    Has a single trainable parameter so the optimizer has something to update
-    and the loss has a gradient path back through the model.
+    Has a single trainable parameter so the optimizer has something to update and the loss has a gradient path back
+    through the model.
     """
 
     def __init__(self) -> None:
@@ -46,8 +46,8 @@ class _TinyModel(nn.Module):
 class _FakeCriterion:
     """Callable criterion that returns a loss connected to the model output.
 
-    Keeps a gradient path from the loss back to _TinyModel.dummy so that
-    ``loss.backward()`` does not error when the Trainer calls it.
+    Keeps a gradient path from the loss back to _TinyModel.dummy so that ``loss.backward()`` does not error when the
+    Trainer calls it.
     """
 
     weight_dict = {"loss_ce": 1.0}
@@ -60,9 +60,8 @@ class _FakeCriterion:
 class _FakeDataset(torch.utils.data.Dataset):
     """Dataset with ``(image, target)`` pairs for detection.
 
-    The image is a ``(3, 32, 32)`` float tensor; the target dict includes the
-    fields expected by RFDETRModule: ``boxes``, ``labels``, ``image_id``,
-    ``orig_size``, ``size``.
+    The image is a ``(3, 32, 32)`` float tensor; the target dict includes the fields expected by RFDETRModule:
+    ``boxes``, ``labels``, ``image_id``, ``orig_size``, ``size``.
     """
 
     def __init__(self, length: int = 20) -> None:
@@ -95,11 +94,10 @@ class _FakeDatasetWithMasks(_FakeDataset):
 class _FakePostProcess:
     """Picklable postprocessor for ddp_spawn tests.
 
-    ``MagicMock`` is not picklable and cannot survive the subprocess boundary
-    that ``ddp_spawn`` creates.  This plain class is a drop-in replacement.
+    ``MagicMock`` is not picklable and cannot survive the subprocess boundary that ``ddp_spawn`` creates.  This plain
+    class is a drop-in replacement.
 
-    Delegates to ``_fake_postprocess``; keep both in sync if the fake output
-    format changes.
+    Delegates to ``_fake_postprocess``; keep both in sync if the fake output format changes.
     """
 
     def __call__(self, outputs, orig_sizes):

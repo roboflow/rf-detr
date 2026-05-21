@@ -42,9 +42,8 @@ def _make_boxes() -> np.ndarray:
 def _make_logits(high_conf_idx: int | None = 0) -> np.ndarray:
     """Return (1, 10, 82) logits with one high-confidence entry when requested.
 
-    Background fill is -10.0 so sigmoid scores are near zero (~0.0001) for all
-    entries except the explicitly boosted one (logit=+10.0, sigmoid≈0.9999).
-    This ensures the helper works correctly under per-class sigmoid scoring.
+    Background fill is -10.0 so sigmoid scores are near zero (~0.0001) for all entries except the explicitly boosted one
+    (logit=+10.0, sigmoid≈0.9999). This ensures the helper works correctly under per-class sigmoid scoring.
     """
     logits = np.full((1, 10, 82), -10.0, dtype=np.float32)
     if high_conf_idx is not None:
@@ -103,10 +102,9 @@ class TestCreateInterpreter:
     def _mock_tflite_runtime(self):
         """Inject a fake tflite_runtime.interpreter into sys.modules.
 
-        Python's import machinery resolves ``import tflite_runtime.interpreter``
-        by looking up ``sys.modules["tflite_runtime.interpreter"]`` directly.
-        We also set the ``interpreter`` attribute on the parent package mock so
-        attribute-path resolution is consistent regardless of Python version.
+        Python's import machinery resolves ``import tflite_runtime.interpreter`` by looking up
+        ``sys.modules["tflite_runtime.interpreter"]`` directly. We also set the ``interpreter`` attribute on the parent
+        package mock so attribute-path resolution is consistent regardless of Python version.
         """
         interp_instance = mock.MagicMock()
         interp_instance.get_input_details.return_value = [{"shape": [1, 640, 640, 3], "dtype": np.float32}]
@@ -421,8 +419,8 @@ class TestShapeBasedOutputFallback:
     def test_three_outputs_with_rank4_masks_resolves_correctly(self, rgb_image: Path) -> None:
         """3-output segmentation export (boxes/logits/masks) with generic names resolves without error.
 
-        Ensures the shape fallback ignores the rank-4 masks tensor and correctly
-        identifies boxes [1,Q,4] and logits [1,Q,C+1] as rank-3 candidates.
+        Ensures the shape fallback ignores the rank-4 masks tensor and correctly identifies boxes [1,Q,4] and logits
+        [1,Q,C+1] as rank-3 candidates.
         """
         boxes = _make_boxes()
         logits = _make_logits(high_conf_idx=0)
@@ -584,8 +582,8 @@ class TestMaskDecoding:
     def test_decode_masks_parity_positive_negative_regions(self) -> None:
         """Positive/negative logit regions map correctly after bilinear upsample + threshold.
 
-        Uses high-magnitude logits (±10) so no ambiguity near the boundary; verifies
-        the core _decode_masks contract matches the >0 PostProcess.forward equivalent.
+        Uses high-magnitude logits (±10) so no ambiguity near the boundary; verifies the core _decode_masks contract
+        matches the >0 PostProcess.forward equivalent.
         """
         logits = np.full((1, 14, 14), -10.0, dtype=np.float32)
         logits[0, :7, :] = 10.0  # top half strongly positive, bottom half strongly negative

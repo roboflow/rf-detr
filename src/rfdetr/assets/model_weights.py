@@ -7,9 +7,8 @@
 """
 Model weights abstraction and download system.
 
-Provides forward-compatible pattern for model weights across rf-detr and rf-detr-plus packages.
-External packages (like rf-detr-plus) should inherit from ModelWeightsBase to ensure compile-time
-interface compatibility.
+Provides forward-compatible pattern for model weights across rf-detr and rf-detr-plus packages. External packages (like
+rf-detr-plus) should inherit from ModelWeightsBase to ensure compile-time interface compatibility.
 
 Critical Strategic Decisions:
     1. **Standalone first**: Check local ModelWeights before lazy-importing external packages
@@ -21,8 +20,7 @@ Critical Strategic Decisions:
 Download Priority Order:
     1. Local ModelWeights.from_filename() - rf-detr's built-in models
     2. rfdetr_plus.assets.ModelWeights.from_filename() - lazy import if not found locally
-    3. PLATFORM_MODELS dict - legacy fallback for backward compatibility
-"""
+    3. PLATFORM_MODELS dict - legacy fallback for backward compatibility"""
 
 import os
 from dataclasses import dataclass
@@ -43,8 +41,8 @@ class ModelWeightAsset:
     """
     Dataclass representing a model asset with download information.
 
-    This is the standard format for model assets across rf-detr packages.
-    Both rf-detr and rf-detr-plus should use this structure for compatibility.
+    This is the standard format for model assets across rf-detr packages. Both rf-detr and rf-detr-plus should use this
+    structure for compatibility.
 
     Attributes:
         filename: The local filename for the model weights
@@ -68,8 +66,8 @@ class ModelWeightsBase(Enum):
     """
     Base class for model weight registries.
 
-    This base class ensures compile-time compatibility between rf-detr and rf-detr-plus.
-    Both packages should inherit from this class to ensure they have the same interface.
+    This base class ensures compile-time compatibility between rf-detr and rf-detr-plus. Both packages should inherit
+    from this class to ensure they have the same interface.
 
     Each enum member's value must be a ModelWeightAsset instance.
 
@@ -275,8 +273,7 @@ class ModelWeights(ModelWeightsBase):
 def get_model_cache_dir() -> str:
     """Return the directory where RF-DETR caches downloaded model weights.
 
-    Reads the ``RF_HOME`` environment variable; defaults to ``~/.roboflow/models``
-    when the variable is not set.
+    Reads the ``RF_HOME`` environment variable; defaults to ``~/.roboflow/models`` when the variable is not set.
 
     Set ``RF_HOME`` to override the cache location for all RF-DETR models:
 
@@ -287,9 +284,8 @@ def get_model_cache_dir() -> str:
     Args: None
 
     Returns:
-        Absolute, user-expanded path to the model cache directory.  The directory
-        is *not* created by this function — callers that need it to exist should
-        call ``os.makedirs(get_model_cache_dir(), exist_ok=True)`` themselves.
+        Absolute, user-expanded path to the model cache directory.  The directory is *not* created by this function —
+        callers that need it to exist should call ``os.makedirs(get_model_cache_dir(), exist_ok=True)`` themselves.
 
     Examples:
         >>> import os

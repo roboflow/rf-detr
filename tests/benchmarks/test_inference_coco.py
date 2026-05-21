@@ -11,8 +11,8 @@ For every detection and segmentation model variant, this module:
 2. Copies the weights into a fresh :class:`~rfdetr.training.RFDETRModelModule`.
 3. Evaluates via ``Trainer.validate`` and asserts mAP thresholds.
 
-API contract tests (return type of ``predict()``) live in
-``tests/models/test_predict.py`` and do not require a COCO download.
+API contract tests (return type of ``predict()``) live in ``tests/models/test_predict.py`` and do not require a COCO
+download.
 
 Test functions:
 
@@ -22,8 +22,7 @@ Test functions:
   segmentation models (Nano through 2XLarge).
 - :func:`test_inference_detection_ptl_predict` — ``trainer.predict()`` exercises
   the PTL predict loop (50 samples) then asserts mAP via ``Trainer.validate``.
-- :func:`test_inference_segmentation_ptl_predict` — same for segmentation models.
-"""
+- :func:`test_inference_segmentation_ptl_predict` — same for segmentation models."""
 
 import os
 from pathlib import Path
@@ -90,8 +89,7 @@ def _build_datamodule(
 ) -> RFDETRDataModule:
     """Set up an :class:`~rfdetr.training.RFDETRDataModule` for validation.
 
-    Calls ``setup("validate")`` so ``_dataset_val`` is ready.  When
-    *num_samples* is set the dataset is wrapped in a
+    Calls ``setup("validate")`` so ``_dataset_val`` is ready.  When *num_samples* is set the dataset is wrapped in a
     :class:`torch.utils.data.Subset`.
 
     Args:
@@ -115,9 +113,8 @@ def _build_datamodule(
 def _build_ptl_module(rfdetr_obj: RFDETR, train_config: TrainConfig) -> RFDETRModelModule:
     """Copy pretrained weights from *rfdetr_obj* into a fresh :class:`~rfdetr.training.RFDETRModelModule`.
 
-    Constructs the module with the same architecture (no pretrain download),
-    loads weights from ``rfdetr_obj.model.model``, and asserts PTL lineage and
-    weight-copy correctness before returning.
+    Constructs the module with the same architecture (no pretrain download), loads weights from
+    ``rfdetr_obj.model.model``, and asserts PTL lineage and weight-copy correctness before returning.
 
     Args:
         rfdetr_obj: A pretrained :class:`~rfdetr.detr.RFDETR` instance.
@@ -125,8 +122,7 @@ def _build_ptl_module(rfdetr_obj: RFDETR, train_config: TrainConfig) -> RFDETRMo
             valid ``output_dir``).
 
     Returns:
-        Weight-synced :class:`~rfdetr.training.RFDETRModelModule` ready for
-        ``Trainer.validate`` or ``Trainer.predict``.
+        Weight-synced :class:`~rfdetr.training.RFDETRModelModule` ready for ``Trainer.validate`` or ``Trainer.predict``.
     """
     module = RFDETRModelModule(rfdetr_obj.model_config, train_config)
     module.model.load_state_dict(rfdetr_obj.model.model.state_dict())
@@ -172,8 +168,8 @@ def test_inference_detection_rfdetr_predict(
 ) -> None:
     """``RFDETR.predict()`` returns valid ``sv.Detections`` for detection models.
 
-    Loads a pretrained detection model, runs ``predict()`` on a sample of COCO
-    val images, and asserts ``Trainer.validate`` meets the mAP and F1 thresholds.
+    Loads a pretrained detection model, runs ``predict()`` on a sample of COCO val images, and asserts
+    ``Trainer.validate`` meets the mAP and F1 thresholds.
 
     Args:
         tmp_path: Pytest-provided temporary directory.
@@ -226,8 +222,7 @@ def test_inference_segmentation_rfdetr_predict(
 ) -> None:
     """Asserts mAP and F1 thresholds for segmentation models via ``Trainer.validate``.
 
-    Same structure as :func:`test_inference_detection_rfdetr_predict` but for
-    segmentation variants.
+    Same structure as :func:`test_inference_detection_rfdetr_predict` but for segmentation variants.
 
     Args:
         tmp_path: Pytest-provided temporary directory.
@@ -283,10 +278,10 @@ def test_inference_detection_ptl_predict(
 ) -> None:
     """``trainer.predict()`` runs through the PTL predict loop for detection models.
 
-    Loads a pretrained detection model, copies weights into a
-    :class:`~rfdetr.training.RFDETRModelModule`, runs ``trainer.predict()`` on a
-    small subset (50 samples) to exercise :meth:`~rfdetr.training.RFDETRModelModule.predict_step`,
-    then runs ``Trainer.validate`` on the full *num_samples* to assert mAP and F1.
+    Loads a pretrained detection model, copies weights into a :class:`~rfdetr.training.RFDETRModelModule`, runs
+    ``trainer.predict()`` on a small subset (50 samples) to exercise
+    :meth:`~rfdetr.training.RFDETRModelModule.predict_step`, then runs ``Trainer.validate`` on the full *num_samples* to
+    assert mAP and F1.
 
     Args:
         tmp_path: Pytest-provided temporary directory.
@@ -345,8 +340,7 @@ def test_inference_segmentation_ptl_predict(
 ) -> None:
     """``trainer.predict()`` runs through the PTL predict loop for segmentation models.
 
-    Same structure as :func:`test_inference_detection_ptl_predict` but for
-    segmentation variants.
+    Same structure as :func:`test_inference_detection_ptl_predict` but for segmentation variants.
 
     Args:
         tmp_path: Pytest-provided temporary directory.

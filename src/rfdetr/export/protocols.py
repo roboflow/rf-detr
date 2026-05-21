@@ -16,8 +16,8 @@ import torch.nn as nn
 class ExporterProtocol(Protocol):
     """Protocol for model exporters.
 
-    Any callable or class that matches this signature can be registered
-    as an exporter without inheriting from a base class.
+    Any callable or class that matches this signature can be registered as an exporter without inheriting from a base
+    class.
     """
 
     def __call__(

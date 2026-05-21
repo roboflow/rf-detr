@@ -6,12 +6,10 @@
 
 """Characterization tests for build_model() and build_criterion_and_postprocessors().
 
-These tests pin the current behavior of the legacy namespace-based builder
-functions. They serve as a safety net during the config-native builder
-refactoring: any change that alters these outputs is a regression.
+These tests pin the current behavior of the legacy namespace-based builder functions. They serve as a safety net during
+the config-native builder refactoring: any change that alters these outputs is a regression.
 
-All tests in this file must pass against the CURRENT codebase.
-"""
+All tests in this file must pass against the CURRENT codebase."""
 
 import pytest
 import torch
@@ -271,8 +269,7 @@ class TestBuildCriterionCharacterization:
 class TestBuildModelContextCharacterization:
     """Pin current _build_model_context() behaviour.
 
-    _build_model_context is the inference-path factory used by RFDETR.get_model().
-    It has zero test coverage today.
+    _build_model_context is the inference-path factory used by RFDETR.get_model(). It has zero test coverage today.
     """
 
     def test_returns_model_context(self) -> None:
@@ -355,9 +352,8 @@ class TestBuildModelContextCharacterization:
 class TestRFDETRModelModuleInitCharacterization:
     """Pin RFDETRModelModule.__init__() structural outputs.
 
-    The existing test_module_model.py tests the init via mocked build_model and
-    build_namespace. These tests exercise the REAL init path (no mocks) to
-    characterize what a freshly built module looks like.
+    The existing test_module_model.py tests the init via mocked build_model and build_namespace. These tests exercise
+    the REAL init path (no mocks) to characterize what a freshly built module looks like.
     """
 
     def _make_module(self, mc=None, tc=None):

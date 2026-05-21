@@ -106,8 +106,8 @@ def _validate_shape_dims(
 
     Args:
         shape: The raw value supplied by the caller (e.g. from ``export(shape=...)`` or
-            ``predict(shape=...)``).  Must be a two-element sequence of positive integers
-            (or integer-compatible types accepted by :func:`operator.index`).
+            ``predict(shape=...)``).  Must be a two-element sequence of positive integers (or integer-compatible types
+            accepted by :func:`operator.index`).
         block_size: Required divisor for both dimensions.  Equals ``patch_size * num_windows``.
         patch_size: Backbone patch size — used only in error messages.
         num_windows: Number of attention windows — used only in error messages.
@@ -117,8 +117,8 @@ def _validate_shape_dims(
 
     Raises:
         ValueError: If ``shape`` cannot be unpacked as a two-element sequence, if either
-            dimension is a bool, float, or other non-integer type, if either dimension is
-            not positive, or if either dimension is not divisible by ``block_size``.
+            dimension is a bool, float, or other non-integer type, if either dimension is not positive, or if either
+            dimension is not divisible by ``block_size``.
 
     """
     try:
@@ -152,8 +152,7 @@ def _resolve_patch_size(patch_size: int | None, model_config: object, caller: st
     Args:
         patch_size: Value supplied by the caller, or ``None`` to read from ``model_config``.
         model_config: The model's configuration object.  Must expose ``patch_size`` as a
-            positive integer attribute when ``patch_size`` is ``None`` or when a mismatch
-            check is needed.
+            positive integer attribute when ``patch_size`` is ``None`` or when a mismatch check is needed.
         caller: Name of the calling method (``"export"`` or ``"predict"``) — used in
             error messages to help the caller locate the problem.
 
@@ -185,13 +184,12 @@ def _resolve_patch_size(patch_size: int | None, model_config: object, caller: st
 def _ensure_model_on_device(model_ctx: Any) -> None:
     """Move model weights to the target device recorded in *model_ctx*.
 
-    ``_build_model_context`` intentionally keeps the ``nn.Module`` on CPU so
-    that ``RFDETR.__init__`` does not initialise CUDA (which would prevent DDP
-    strategies from forking in notebook environments).  This helper performs
+    ``_build_model_context`` intentionally keeps the ``nn.Module`` on CPU so that ``RFDETR.__init__`` does not
+    initialise CUDA (which would prevent DDP strategies from forking in notebook environments).  This helper performs
     the deferred ``.to(device)`` on first use.
 
-    It is safe to call on duck-typed stand-ins (e.g. ``SimpleNamespace``); the
-    function silently returns when the expected attributes are missing.
+    It is safe to call on duck-typed stand-ins (e.g. ``SimpleNamespace``); the function silently returns when the
+    expected attributes are missing.
     """
     target = getattr(model_ctx, "device", None)
     inner = getattr(model_ctx, "model", None)
@@ -206,8 +204,7 @@ def _ensure_model_on_device(model_ctx: Any) -> None:
 
 class RFDETR:
     """The base RF-DETR class implements the core methods for training RF-DETR models,
-    running inference on the models, optimising models, and uploading trained
-    models for deployment.
+    running inference on the models, optimising models, and uploading trained models for deployment.
     """
 
     means = [0.485, 0.456, 0.406]
@@ -240,15 +237,13 @@ class RFDETR:
     def maybe_download_pretrain_weights(self):
         """Download pre-trained weights if they are not already downloaded.
 
-        Bare filenames (no directory component, e.g. ``rf-detr-base.pth``) are
-        resolved to the model cache directory — set the ``RF_HOME`` environment
-        variable to override the location (default: ``~/.roboflow/models``).
-        Resolution happens in ``ModelConfig.expand_path`` for explicitly-provided
-        values, and here as a fallback for field defaults (which Pydantic does not
-        validate by default).
+        Bare filenames (no directory component, e.g. ``rf-detr-base.pth``) are resolved to the model cache directory —
+        set the ``RF_HOME`` environment variable to override the location (default: ``~/.roboflow/models``). Resolution
+        happens in ``ModelConfig.expand_path`` for explicitly-provided values, and here as a fallback for field defaults
+        (which Pydantic does not validate by default).
 
-        Paths that already contain a directory component are used as-is; the
-        parent directory is created if it does not yet exist.
+        Paths that already contain a directory component are used as-is; the parent directory is created if it does not
+        yet exist.
         """
         pretrain_weights = self.model_config.pretrain_weights
         if pretrain_weights is None:
@@ -269,8 +264,7 @@ class RFDETR:
 
     @classmethod
     def from_checkpoint(cls, path: str | os.PathLike[str], **kwargs: Any) -> RFDETR:
-        """Load an RF-DETR model from a training checkpoint, automatically
-        inferring the model class.
+        """Load an RF-DETR model from a training checkpoint, automatically inferring the model class.
 
         The correct subclass is resolved in order of preference:
 
@@ -279,31 +273,26 @@ class RFDETR:
         2. ``pretrain_weights`` field in the checkpoint's ``args`` entry
            (legacy fallback).
 
-        Both legacy ``argparse.Namespace`` checkpoints (produced by
-        ``engine.py``) and dict-style checkpoints (produced by the PTL
-        training stack) are supported.
+        Both legacy ``argparse.Namespace`` checkpoints (produced by ``engine.py``) and dict-style checkpoints (produced
+        by the PTL training stack) are supported.
 
         Args:
             path: Path to a checkpoint file (e.g. ``checkpoint_best_total.pth``).
             **kwargs: Additional keyword arguments forwarded to the model
-                constructor (e.g. ``accept_platform_model_license=True`` for
-                XLarge / 2XLarge models).
+                constructor (e.g. ``accept_platform_model_license=True`` for XLarge / 2XLarge models).
 
         Returns:
-            An instance of the appropriate :class:`RFDETR` subclass loaded from
-            the checkpoint.
+            An instance of the appropriate :class:`RFDETR` subclass loaded from the checkpoint.
 
         Warning:
             This method calls ``torch.load`` with ``weights_only=False``, which
-            unpickles arbitrary Python objects. Only load checkpoints from
-            trusted sources.
+            unpickles arbitrary Python objects. Only load checkpoints from trusted sources.
 
         Raises:
             FileNotFoundError: If *path* does not exist.
             OSError: If *path* exists but cannot be read.
             KeyError: If the checkpoint does not contain an ``"args"`` key.
-            ValueError: If the model class cannot be inferred from
-                ``model_name`` or ``pretrain_weights``.
+            ValueError: If the model class cannot be inferred from ``model_name`` or ``pretrain_weights``.
 
         Examples:
             >>> model = RFDETR.from_checkpoint("checkpoint_best_total.pth")  # doctest: +SKIP
@@ -424,8 +413,8 @@ class RFDETR:
             device: A device specifier accepted by ``torch.device``.
 
         Returns:
-            ``(accelerator, devices)`` where ``devices`` is ``None`` unless an explicit
-            device index is provided (for example ``cuda:1``).
+            ``(accelerator, devices)`` where ``devices`` is ``None`` unless an explicit device index is provided (for
+            example ``cuda:1``).
 
         Raises:
             ValueError: If ``device`` is not a valid torch device specifier.
@@ -459,43 +448,32 @@ class RFDETR:
     def train(self, **kwargs):
         """Train an RF-DETR model via the PyTorch Lightning stack.
 
-        All keyword arguments are forwarded to :meth:`get_train_config` to build
-        a :class:`~rfdetr.config.TrainConfig`.  Several kwargs are absorbed and
-        handled specially so that existing call-sites do not break:
+        All keyword arguments are forwarded to :meth:`get_train_config` to build a :class:`~rfdetr.config.TrainConfig`.
+        Several kwargs are absorbed and handled specially so that existing call-sites do not break:
 
         * ``resolution`` — updates the model's input resolution by mutating
-          :attr:`model_config.resolution` in place before the train config is
-          built. This change persists on :attr:`model_config` after
-          :meth:`train` returns. The value must be a positive integer divisible
-          by ``patch_size * num_windows`` for the model variant; a
-          :class:`ValueError` is raised otherwise.
-          :attr:`model_config.positional_encoding_size` is also updated when
-          the config derives it formulaically (``PE == resolution //
-          patch_size``); configs with a pretrained-specific PE value (e.g.
-          ``RFDETRBase`` uses DINOv2's PE=37 at 560 px) are left unchanged to
-          preserve checkpoint compatibility.
+          :attr:`model_config.resolution` in place before the train config is built. This change persists on
+          :attr:`model_config` after :meth:`train` returns. The value must be a positive integer divisible by
+          ``patch_size * num_windows`` for the model variant; a :class:`ValueError` is raised otherwise.
+          :attr:`model_config.positional_encoding_size` is also updated when the config derives it formulaically (``PE
+          == resolution // patch_size``); configs with a pretrained-specific PE value (e.g. ``RFDETRBase`` uses DINOv2's
+          PE=37 at 560 px) are left unchanged to preserve checkpoint compatibility.
         * ``device`` — normalized via :class:`torch.device` and mapped to PyTorch
-          Lightning trainer arguments. ``"cpu"`` becomes ``accelerator="cpu"``;
-          ``"cuda"`` and ``"cuda:N"`` become ``accelerator="gpu"`` and optionally
-          ``devices=[N]``; ``"mps"`` becomes ``accelerator="mps"``. Other valid
-          torch device types fall back to PTL auto-detection and emit a
-          :class:`UserWarning`.
+          Lightning trainer arguments. ``"cpu"`` becomes ``accelerator="cpu"``; ``"cuda"`` and ``"cuda:N"`` become
+          ``accelerator="gpu"`` and optionally ``devices=[N]``; ``"mps"`` becomes ``accelerator="mps"``. Other valid
+          torch device types fall back to PTL auto-detection and emit a :class:`UserWarning`.
         * ``callbacks`` — if the dict contains any non-empty lists a
-          :class:`DeprecationWarning` is emitted; the dict is then discarded.
-          Use PTL :class:`~pytorch_lightning.Callback` objects passed via
-          :func:`~rfdetr.training.build_trainer` instead.
+          :class:`DeprecationWarning` is emitted; the dict is then discarded. Use PTL
+          :class:`~pytorch_lightning.Callback` objects passed via :func:`~rfdetr.training.build_trainer` instead.
         * ``start_epoch`` — emits :class:`DeprecationWarning` and is dropped.
         * ``do_benchmark`` — emits :class:`DeprecationWarning` and is dropped.
         * ``notes`` — optional user-defined metadata (string, dict, list, or
-          any JSON-serialisable value) stored under the ``"notes"`` key in
-          every ``.pth`` checkpoint produced during training.  The value is
-          also available inside ``args["notes"]`` for full provenance.  Pass
-          the same value to :meth:`export` to embed it in the ONNX file as
-          well.
+          any JSON-serialisable value) stored under the ``"notes"`` key in every ``.pth`` checkpoint produced during
+          training.  The value is also available inside ``args["notes"]`` for full provenance.  Pass the same value to
+          :meth:`export` to embed it in the ONNX file as well.
 
-        After training completes the underlying ``nn.Module`` is synced back
-        onto ``self.model.model`` so that :meth:`predict` and :meth:`export`
-        continue to work without reloading the checkpoint.
+        After training completes the underlying ``nn.Module`` is synced back onto ``self.model.model`` so that
+        :meth:`predict` and :meth:`export` continue to work without reloading the checkpoint.
 
         Raises:
             ImportError: If training dependencies are not installed. Install with
@@ -689,20 +667,18 @@ class RFDETR:
     ) -> None:
         """Optimize the model for inference with optional JIT compilation and dtype casting.
 
-        Operations are wrapped in the correct CUDA device context to prevent context
-        leaks on multi-GPU setups. When ``compile=True`` the model is traced with
-        ``torch.jit.trace`` using a dummy input of ``batch_size`` images at the
-        model's current resolution.
+        Operations are wrapped in the correct CUDA device context to prevent context leaks on multi-GPU setups. When
+        ``compile=True`` the model is traced with ``torch.jit.trace`` using a dummy input of ``batch_size`` images at
+        the model's current resolution.
 
         Args:
             compile: If ``True``, trace the model with ``torch.jit.trace`` to obtain
-                a JIT-compiled ``ScriptModule``. Set to ``False`` for broader
-                compatibility (e.g. models with dynamic control flow).
-            batch_size: Number of images the traced model will be optimized for.
-                Ignored when ``compile=False``.
+                a JIT-compiled ``ScriptModule``. Set to ``False`` for broader compatibility (e.g. models with dynamic
+                control flow).
+            batch_size: Number of images the traced model will be optimized for. Ignored when ``compile=False``.
             dtype: Target floating-point dtype for the inference model. Accepts a
-                ``torch.dtype`` directly (e.g. ``torch.float16``) or its string name
-                (e.g. ``"float16"``). Defaults to ``torch.float32``.
+                ``torch.dtype`` directly (e.g. ``torch.float16``) or its string name (e.g. ``"float16"``). Defaults to
+                ``torch.float32``.
 
         Raises:
             TypeError: If ``dtype`` is not a ``torch.dtype``, or if ``dtype`` is a
@@ -791,9 +767,8 @@ class RFDETR:
     def remove_optimized_model(self) -> None:
         """Remove the optimized inference model and reset all optimization flags.
 
-        Clears ``model.inference_model`` and resets all internal state set by
-        :meth:`optimize_for_inference`. Safe to call even if the model has not
-        been optimized.
+        Clears ``model.inference_model`` and resets all internal state set by :meth:`optimize_for_inference`. Safe to
+        call even if the model has not been optimized.
 
         Examples:
             >>> from types import SimpleNamespace
@@ -864,8 +839,7 @@ class RFDETR:
     ) -> Path:
         """Export the trained model to ONNX or TFLite format.
 
-        See the `export documentation <https://rfdetr.roboflow.com/learn/export/>`_
-        for more information.
+        See the `export documentation <https://rfdetr.roboflow.com/learn/export/>`_ for more information.
 
         Args:
             output_dir: Directory to write the exported model to.
@@ -881,48 +855,38 @@ class RFDETR:
             dynamic_batch: If True, export with a dynamic batch dimension
                 so the ONNX model accepts variable batch sizes at runtime.
             patch_size: Backbone patch size. Defaults to the value stored in
-                ``model_config.patch_size`` (typically 14 or 16). When provided
-                explicitly it must match the instantiated model's patch size.
-                Shape divisibility is validated against ``patch_size * num_windows``.
+                ``model_config.patch_size`` (typically 14 or 16). When provided explicitly it must match the
+                instantiated model's patch size. Shape divisibility is validated against ``patch_size * num_windows``.
             format: Export format — ``"onnx"`` (default) or ``"tflite"``.
-                When ``"tflite"`` is selected the model is first exported to ONNX
-                then converted to TFLite via ``onnx2tf``.  Requires
-                ``pip install rfdetr[onnx,tflite]``.
+                When ``"tflite"`` is selected the model is first exported to ONNX then converted to TFLite via
+                ``onnx2tf``.  Requires ``pip install rfdetr[onnx,tflite]``.
 
                 .. warning::
-                    TFLite export is experimental and subject to change; upstream
-                    dependency instabilities (``onnx2tf``, ``ai_edge_litert``) may
-                    affect results.
+                    TFLite export is experimental and subject to change; upstream dependency instabilities (``onnx2tf``,
+                    ``ai_edge_litert``) may affect results.
             quantization: TFLite quantization mode (ignored when
-                ``format="onnx"``).  One of ``None``, ``"fp32"``, ``"fp16"``,
-                ``"int8"``.  ``None`` / ``"fp32"`` / ``"fp16"`` produce FP32 +
-                FP16 ``.tflite`` files; ``"int8"`` additionally produces an
-                INT8-quantized model.
-            calibration_data: Representative images for INT8 calibration
-                and ``onnx2tf`` output validation.  Accepts:
+                ``format="onnx"``).  One of ``None``, ``"fp32"``, ``"fp16"``, ``"int8"``.  ``None`` / ``"fp32"`` /
+                ``"fp16"`` produce FP32 + FP16 ``.tflite`` files; ``"int8"`` additionally produces an INT8-quantized
+                model.
+            calibration_data: Representative images for INT8 calibration and ``onnx2tf`` output validation.  Accepts:
 
-                * ``None`` — auto-generate random data (sufficient for
-                  fp32/fp16; warns for int8).
+                * ``None`` — auto-generate random data (sufficient for fp32/fp16; warns for int8).
                 * A **directory path** (``str``) containing JPEG/PNG
-                  images — the converter automatically loads, resizes, and
-                  prepares them.  This is the simplest approach.
-                * A path (``str``) to a ``.npy`` file of shape
-                  ``(N, H, W, 3)``, dtype float32, values in ``[0, 1]``.
+                  images — the converter automatically loads, resizes, and prepares them.  This is the simplest
+                  approach.
+                * A path (``str``) to a ``.npy`` file of shape ``(N, H, W, 3)``, dtype float32, values in ``[0, 1]``.
                 * A :class:`numpy.ndarray` with the same format.
 
-                For INT8 quantization, provide 20–100 representative
-                images from your training/validation set for best accuracy.
-            max_images: Maximum number of images to load from a
-                calibration directory.  Defaults to ``100``.  Only used
+                For INT8 quantization, provide 20–100 representative images from your training/validation set for best
+                accuracy.
+            max_images: Maximum number of images to load from a calibration directory.  Defaults to ``100``.  Only used
                 when *calibration_data* is a directory path.
             notes: Optional user-defined metadata (string, dict, list, or
-                any JSON-serialisable value) to embed in the exported ONNX
-                model under the ``"rfdetr_notes"`` metadata property.  When
-                ``None`` no metadata entry is written.  String values are stored
-                verbatim; all other types are JSON-encoded so consumers must
-                call ``json.loads()`` to recover a dict or list.  The same
-                value can be passed to :meth:`train` so the checkpoint and the
-                ONNX file share the same provenance information.
+                any JSON-serialisable value) to embed in the exported ONNX model under the ``"rfdetr_notes"`` metadata
+                property.  When ``None`` no metadata entry is written.  String values are stored verbatim; all other
+                types are JSON-encoded so consumers must call ``json.loads()`` to recover a dict or list.  The same
+                value can be passed to :meth:`train` so the checkpoint and the ONNX file share the same provenance
+                information.
 
         Returns:
             Path to the exported model file (``.onnx`` or ``.tflite``).
@@ -1105,10 +1069,9 @@ class RFDETR:
     def _detect_num_classes_for_training(dataset_dir: str) -> int:
         """Detect the class count using the same category basis as training labels.
 
-        For COCO-style datasets this counts all categories by ``id`` from
-        ``train/_annotations.coco.json`` (matching the remapping based on
-        ``coco.cats`` used by the training datamodule). For YOLO-style datasets
-        it falls back to ``_load_classes``.
+        For COCO-style datasets this counts all categories by ``id`` from ``train/_annotations.coco.json`` (matching the
+        remapping based on ``coco.cats`` used by the training datamodule). For YOLO-style datasets it falls back to
+        ``_load_classes``.
         """
         if is_valid_coco_dataset(dataset_dir):
             coco_path = os.path.join(dataset_dir, "train", "_annotations.coco.json")
@@ -1123,16 +1086,16 @@ class RFDETR:
     def _align_num_classes_from_dataset(self, dataset_dir: str) -> None:
         """Auto-detect the dataset class count and align ``model_config.num_classes`` in-place.
 
-        Must be called before ``RFDETRModelModule`` is constructed so that weight loading inside
-        the module uses the correct (dataset-derived) class count.
+        Must be called before ``RFDETRModelModule`` is constructed so that weight loading inside the module uses the
+        correct (dataset-derived) class count.
 
-        When the user did **not** explicitly override ``num_classes`` (or passed the class-config
-        default), ``model_config.num_classes`` and ``self.model.args.num_classes`` are updated
-        to match the dataset.  When the user *did* set a non-default value that differs from the
-        dataset, the configured value is preserved and a warning is emitted.
+        When the user did **not** explicitly override ``num_classes`` (or passed the class-config default),
+        ``model_config.num_classes`` and ``self.model.args.num_classes`` are updated to match the dataset.  When the
+        user *did* set a non-default value that differs from the dataset, the configured value is preserved and a
+        warning is emitted.
 
-        Failures from ``_detect_num_classes_for_training`` are caught and logged at DEBUG level
-        so that training is never blocked by detection errors.
+        Failures from ``_detect_num_classes_for_training`` are caught and logged at DEBUG level so that training is
+        never blocked by detection errors.
 
         Args:
             dataset_dir: Path to the training dataset root directory.
@@ -1193,8 +1156,7 @@ class RFDETR:
             config: Architecture configuration.
 
         Returns:
-            ModelContext with model, postprocess, device, resolution, args,
-            and class_names attributes.
+            ModelContext with model, postprocess, device, resolution, args, and class_names attributes.
 
         """
         return _build_model_context(config)
@@ -1204,9 +1166,8 @@ class RFDETR:
         """Retrieve the class names supported by the loaded model.
 
         Returns:
-            A list of class name strings, 0-indexed.  When no custom class
-            names are embedded in the checkpoint, returns the standard 80
-            COCO class names.
+            A list of class name strings, 0-indexed.  When no custom class names are embedded in the checkpoint, returns
+            the standard 80 COCO class names.
 
         """
         if hasattr(self.model, "class_names") and self.model.class_names is not None:
@@ -1223,13 +1184,11 @@ class RFDETR:
         include_source_image: bool = True,
         **kwargs: Any,
     ) -> sv.Detections | list[sv.Detections]:
-        """Performs object detection on the input images and returns bounding box
-        predictions.
+        """Performs object detection on the input images and returns bounding box predictions.
 
-        This method accepts a single image or a list of images in various formats
-        (file path, image url, PIL Image, NumPy array, or torch.Tensor). The images should be in
-        RGB channel order. If a torch.Tensor is provided, it must already be normalized
-        to values in the [0, 1] range and have the shape (C, H, W).
+        This method accepts a single image or a list of images in various formats (file path, image url, PIL Image,
+        NumPy array, or torch.Tensor). The images should be in RGB channel order. If a torch.Tensor is provided, it must
+        already be normalized to values in the [0, 1] range and have the shape (C, H, W).
 
         Args:
             images:
@@ -1238,59 +1197,45 @@ class RFDETR:
             threshold:
                 The minimum confidence score needed to consider a detected bounding box valid.
             shape:
-                Optional ``(height, width)`` tuple to resize images to before inference.
-                When provided, overrides the model's default inference resolution. The
-                tuple should match the resolution used when exporting the model
-                (typically a square shape). Both dimensions must be positive integers
-                divisible by ``patch_size * num_windows``. Defaults to
-                ``(model.resolution, model.resolution)`` when not set.
+                Optional ``(height, width)`` tuple to resize images to before inference. When provided, overrides the
+                model's default inference resolution. The tuple should match the resolution used when exporting the
+                model (typically a square shape). Both dimensions must be positive integers divisible by ``patch_size *
+                num_windows``. Defaults to ``(model.resolution, model.resolution)`` when not set.
             patch_size:
-                Backbone patch size used for shape divisibility validation. Defaults
-                to ``model_config.patch_size`` (typically 14 for large models, 16 for
-                smaller ones). Divisibility is checked against
-                ``patch_size * num_windows``.
+                Backbone patch size used for shape divisibility validation. Defaults to ``model_config.patch_size``
+                (typically 14 for large models, 16 for smaller ones). Divisibility is checked against ``patch_size *
+                num_windows``.
             include_source_image:
-                Whether to attach the original image as ``source_image`` in
-                ``detections.metadata``. Defaults to ``True``.  Set to ``False``
-                to reduce memory use when source images are not needed.
+                Whether to attach the original image as ``source_image`` in ``detections.metadata``. Defaults to
+                ``True``.  Set to ``False`` to reduce memory use when source images are not needed.
             **kwargs:
                 Additional keyword arguments.
 
         Returns:
-            A single or multiple Detections objects, each containing bounding box
-            coordinates, confidence scores, and class IDs. The ``data`` dict of
-            each :class:`~supervision.Detections` object contains ``class_name``
-            as a string array corresponding to each detection and ``source_shape``
-            as an ``int64`` array of shape ``(N, 2)`` with ``[height, width]`` rows.
-            ``source_shape`` is stored per detection so supervision indexing works
-            correctly. It was previously a ``(height, width)`` Python ``tuple``;
-            callers using ``isinstance(v, tuple)`` or ``v == (H, W)`` must be
-            updated. The ``metadata`` dict contains ``source_image`` as the original
-            ``uint8`` image array of shape ``(H, W, 3)`` when
-            ``include_source_image=True``.
+            A single or multiple Detections objects, each containing bounding box coordinates, confidence scores, and
+            class IDs. The ``data`` dict of each :class:`~supervision.Detections` object contains ``class_name`` as a
+            string array corresponding to each detection and ``source_shape`` as an ``int64`` array of shape ``(N, 2)``
+            with ``[height, width]`` rows. ``source_shape`` is stored per detection so supervision indexing works
+            correctly. It was previously a ``(height, width)`` Python ``tuple``; callers using ``isinstance(v, tuple)``
+            or ``v == (H, W)`` must be updated. The ``metadata`` dict contains ``source_image`` as the original
+            ``uint8`` image array of shape ``(H, W, 3)`` when ``include_source_image=True``.
 
         Note:
-            ``source_image`` moved from ``detections.data`` to
-            ``detections.metadata``. Update callers reading
-            ``detections.data["source_image"]`` to use
-            ``detections.metadata["source_image"]``.
+            ``source_image`` moved from ``detections.data`` to ``detections.metadata``. Update callers reading
+            ``detections.data["source_image"]`` to use ``detections.metadata["source_image"]``.
 
         Note:
-            ``class_name`` mapping uses one of two modes depending on the checkpoint.
-            For pretrained COCO checkpoints (detected when
-            ``model.args.num_classes > len(class_names)`` and ``class_names`` matches
-            ``COCO_CLASS_NAMES``), raw COCO category IDs (1–90, sparse) are looked up
-            by category ID rather than by position — so ``class_id=18`` yields ``"dog"``,
-            not ``class_names[18]``. For fine-tuned models, ``class_id`` is a 0-based
-            index into ``class_names``.
+            ``class_name`` mapping uses one of two modes depending on the checkpoint. For pretrained COCO checkpoints
+            (detected when ``model.args.num_classes > len(class_names)`` and ``class_names`` matches
+            ``COCO_CLASS_NAMES``), raw COCO category IDs (1–90, sparse) are looked up by category ID rather than by
+            position — so ``class_id=18`` yields ``"dog"``, not ``class_names[18]``. For fine-tuned models, ``class_id``
+            is a 0-based index into ``class_names``.
 
         Raises:
             ValueError: If ``shape`` cannot be unpacked as a two-element sequence,
-                if either dimension does not support the ``__index__`` protocol
-                (e.g. ``float``) or is a ``bool``, if either dimension is zero or
-                negative, if either dimension is not divisible by
-                ``patch_size * num_windows``, or if ``patch_size`` is not a positive
-                integer.
+                if either dimension does not support the ``__index__`` protocol (e.g. ``float``) or is a ``bool``, if
+                either dimension is zero or negative, if either dimension is not divisible by ``patch_size *
+                num_windows``, or if ``patch_size`` is not a positive integer.
 
         """
         import supervision as sv
@@ -1506,8 +1451,8 @@ class RFDETR:
 
         Deploying with Roboflow will create a Serverless API to which you can make requests.
 
-        You can also download weights into a Roboflow Inference deployment for use in
-        Roboflow Workflows and on-device deployment.
+        You can also download weights into a Roboflow Inference deployment for use in Roboflow Workflows and on-device
+        deployment.
 
         Args:
             workspace: The name of the Roboflow workspace to deploy to.
@@ -1520,8 +1465,7 @@ class RFDETR:
 
         Raises:
             ValueError: If the `api_key` is not provided and not found in the
-                environment variable `ROBOFLOW_API_KEY`, or if the `size` is
-                not set for custom architectures.
+                environment variable `ROBOFLOW_API_KEY`, or if the `size` is not set for custom architectures.
 
         """
         from roboflow import Roboflow

@@ -6,13 +6,11 @@
 
 """Smoke tests: Trainer(fast_dev_run=2).fit(module, datamodule) — T7.
 
-Verifies that the PTL training loop runs end-to-end without error for both
-detection and segmentation configurations.  All heavy operations (build_model,
-build_criterion_and_postprocessors, build_dataset, get_param_dict) are patched
-so no real dataset or GPU is required.
+Verifies that the PTL training loop runs end-to-end without error for both detection and segmentation configurations.
+All heavy operations (build_model, build_criterion_and_postprocessors, build_dataset, get_param_dict) are patched so no
+real dataset or GPU is required.
 
-Chapter 1 gate: these must pass before Chapter 2 begins.
-"""
+Chapter 1 gate: these must pass before Chapter 2 begins."""
 
 import sys
 from unittest.mock import MagicMock, patch
@@ -256,9 +254,8 @@ class TestSegmentationSmoke:
 class TestBuildTrainerSmoke:
     """Smoke tests for the ``build_trainer()`` public factory.
 
-    Verifies that the full callback stack wired by ``build_trainer`` runs
-    end-to-end with ``fast_dev_run``, using mocked internals so no real
-    dataset or GPU is required.
+    Verifies that the full callback stack wired by ``build_trainer`` runs end-to-end with ``fast_dev_run``, using mocked
+    internals so no real dataset or GPU is required.
     """
 
     def test_fit_via_build_trainer(self, base_model_config, base_train_config):
@@ -287,14 +284,13 @@ class TestBuildTrainerSmoke:
 class _DDPModule(RFDETRModelModule):
     """RFDETRModelModule subclass for ddp_spawn smoke tests.
 
-    Overrides ``configure_optimizers`` so ``get_param_dict`` is never called
-    in child processes.  ``ddp_spawn`` forks child processes that unpack a
-    pickled copy of this module; patches applied in the parent process are not
-    visible in children, so the real ``get_param_dict`` would be called and
-    would fail on ``_TinyModel`` (no ``.backbone`` attribute).
+    Overrides ``configure_optimizers`` so ``get_param_dict`` is never called in child processes.  ``ddp_spawn`` forks
+    child processes that unpack a pickled copy of this module; patches applied in the parent process are not visible in
+    children, so the real ``get_param_dict`` would be called and would fail on ``_TinyModel`` (no ``.backbone``
+    attribute).
 
-    Must be defined at module level so ``pickle`` can look up the class by
-    qualified name when deserialising in the child process.
+    Must be defined at module level so ``pickle`` can look up the class by qualified name when deserialising in the
+    child process.
     """
 
     def configure_optimizers(self):
@@ -305,14 +301,13 @@ class _DDPModule(RFDETRModelModule):
 class _MultiScaleCheckDDPModule(RFDETRModelModule):
     """DDP-safe module that asserts on_train_batch_start mutation reaches training_step.
 
-    With multi_scale=True and _FakeDataset's 32×32 images, on_train_batch_start
-    interpolates samples.tensors to a multi-scale resolution (≥392 for
-    RFDETRBaseConfig resolution=560).  This module raises AssertionError in
-    training_step if the tensor height is still 32, meaning the in-place
-    NestedTensor mutation did not propagate through the PTL batch-hook chain.
+    With multi_scale=True and _FakeDataset's 32×32 images, on_train_batch_start interpolates samples.tensors to a
+    multi-scale resolution (≥392 for RFDETRBaseConfig resolution=560).  This module raises AssertionError in
+    training_step if the tensor height is still 32, meaning the in-place NestedTensor mutation did not propagate through
+    the PTL batch-hook chain.
 
-    Must be defined at module level so pickle can look up the class by qualified
-    name when ddp_spawn deserialises it in the child process.
+    Must be defined at module level so pickle can look up the class by qualified name when ddp_spawn deserialises it in
+    the child process.
 
     Regression guard for issue #952.
     """
@@ -343,11 +338,9 @@ class _MultiScaleCheckDDPModule(RFDETRModelModule):
 class TestMultiScaleHookPropagation:
     """on_train_batch_start resize must propagate to training_step via NestedTensor mutation.
 
-    _FakeDataset emits 32×32 images.  With multi_scale=True and
-    RFDETRBaseConfig(resolution=560, patch_size=14, num_windows=4) the computed
-    scales start at 392, so none equal 32.  _MultiScaleCheckDDPModule raises
-    AssertionError in training_step if h==32, making trainer.fit() fail when
-    the in-place mutation does not propagate.
+    _FakeDataset emits 32×32 images.  With multi_scale=True and RFDETRBaseConfig(resolution=560, patch_size=14,
+    num_windows=4) the computed scales start at 392, so none equal 32.  _MultiScaleCheckDDPModule raises AssertionError
+    in training_step if h==32, making trainer.fit() fail when the in-place mutation does not propagate.
     """
 
     def test_mutation_persists_to_training_step(self, base_model_config, base_train_config):
@@ -376,10 +369,9 @@ class TestMultiScaleHookPropagation:
 def test_ddp_spawn_fit_runs_without_error(base_model_config, base_train_config):
     """ddp_spawn with 2 CPU workers must run fast_dev_run=2 without error.
 
-    ``ddp_spawn`` forks child processes, so all objects passed to
-    ``trainer.fit()`` must be picklable.  ``MagicMock`` is NOT picklable;
-    this test uses ``_FakePostProcess``, plain dataset instances, and
-    ``_DDPModule`` (module-level class) instead.
+    ``ddp_spawn`` forks child processes, so all objects passed to ``trainer.fit()`` must be picklable.  ``MagicMock`` is
+    NOT picklable; this test uses ``_FakePostProcess``, plain dataset instances, and ``_DDPModule`` (module-level class)
+    instead.
     """
     mc = base_model_config()
     tc = base_train_config(use_ema=False, run_test=False, devices=2, strategy="ddp_spawn")
@@ -408,14 +400,12 @@ def test_ddp_spawn_fit_runs_without_error(base_model_config, base_train_config):
 def test_ddp_spawn_multi_scale_mutation_propagates(base_model_config, base_train_config):
     """ddp_spawn with multi_scale=True must propagate on_train_batch_start resize to training_step.
 
-    _MultiScaleCheckDDPModule raises AssertionError in training_step when the
-    NestedTensor height is still 32 (original _FakeDataset size).  If trainer.fit()
-    completes without error the PTL batch-hook reference chain is intact in DDP,
-    i.e. the in-place mutation in on_train_batch_start is visible in training_step
-    on both workers.
+    _MultiScaleCheckDDPModule raises AssertionError in training_step when the NestedTensor height is still 32 (original
+    _FakeDataset size).  If trainer.fit() completes without error the PTL batch-hook reference chain is intact in DDP,
+    i.e. the in-place mutation in on_train_batch_start is visible in training_step on both workers.
 
-    Regression test for issue #952 on CPU DDP (non-Windows): confirms the
-    transforms/resize propagation is not a Windows-only concern.
+    Regression test for issue #952 on CPU DDP (non-Windows): confirms the transforms/resize propagation is not a
+    Windows-only concern.
     """
     mc = base_model_config()
     tc = base_train_config(multi_scale=True, use_ema=False, run_test=False, devices=2, strategy="ddp_spawn")

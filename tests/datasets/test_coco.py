@@ -105,9 +105,8 @@ def _write_coco_json(path: Path, categories: List[Dict]) -> None:
 class TestLoadClassesHierarchy:
     """Regression tests for ``_load_classes`` supercategory filtering (#609).
 
-    When all categories have ``supercategory: "none"`` (flat COCO datasets),
-    ``_load_classes`` previously returned an empty list. It should only filter
-    when a Roboflow hierarchical export is detected.
+    When all categories have ``supercategory: "none"`` (flat COCO datasets), ``_load_classes`` previously returned an
+    empty list. It should only filter when a Roboflow hierarchical export is detected.
     """
 
     def test_roboflow_hierarchy_filters_parent(self, tmp_path: Path) -> None:
@@ -134,9 +133,8 @@ class TestLoadClassesHierarchy:
     def test_mixed_supercategories_keeps_all(self, tmp_path: Path) -> None:
         """Mix of 'none' and non-'none' supercategories where no category is a parent of another.
 
-        'animal' appears as a supercategory but is not itself a category name, so
-        ``has_children`` is empty and all categories pass the ``name not in has_children``
-        filter — both 'dog' and 'cat' are returned.
+        'animal' appears as a supercategory but is not itself a category name, so ``has_children`` is empty and all
+        categories pass the ``name not in has_children`` filter — both 'dog' and 'cat' are returned.
         """
         categories = [
             {"id": 1, "name": "dog", "supercategory": "none"},
@@ -196,9 +194,7 @@ class TestLoadClassesHierarchy:
         assert result == expected
 
     def test_placeholder_values_treated_as_no_parent(self, tmp_path: Path) -> None:
-        """Placeholders like None, '', and 'null' should be treated the same
-        as 'none'.
-        """
+        """Placeholders like None, '', and 'null' should be treated the same as 'none'."""
         categories = [
             {"id": 1, "name": "dog", "supercategory": None},
             {"id": 2, "name": "cat", "supercategory": ""},

@@ -192,8 +192,8 @@ class TestValidateCheckpointCompatibility:
     ) -> None:
         """Projection weight shape used to infer ckpt patch_size when 'args' key absent.
 
-        Regression test for #965 — pretrained COCO weights lack 'args', so the
-        shape-based fallback must fire before load_state_dict raises a cryptic RuntimeError.
+        Regression test for #965 — pretrained COCO weights lack 'args', so the shape-based fallback must fire before
+        load_state_dict raises a cryptic RuntimeError.
         """
         proj_key = "backbone.0.encoder.encoder.embeddings.patch_embeddings.projection.weight"
         proj_weight = torch.zeros(384, 3, ckpt_patch_size, ckpt_patch_size)
@@ -298,9 +298,9 @@ class TestValidateCheckpointCompatibility:
     ) -> None:
         """Shape-based patch_size check is skipped when key or attribute is absent.
 
-        Verifies backward compatibility: missing projection key, missing model key,
-        model_args without patch_size attribute, non-4D projection weights, or an
-        explicit args.patch_size (SimpleNamespace or dict) must all be handled without error.
+        Verifies backward compatibility: missing projection key, missing model key, model_args without patch_size
+        attribute, non-4D projection weights, or an explicit args.patch_size (SimpleNamespace or dict) must all be
+        handled without error.
         """
         model_args = SimpleNamespace(**model_args_kwargs)
         validate_checkpoint_compatibility(checkpoint, model_args)  # must not raise
@@ -308,8 +308,8 @@ class TestValidateCheckpointCompatibility:
     def test_non_square_projection_kernel_skips_check(self) -> None:
         """Non-square patch projection kernel is skipped — patch_size cannot be inferred reliably.
 
-        Guards against hypothetical future backbones with non-square Conv2d kernels
-        where shape[-1] would not equal patch_size.
+        Guards against hypothetical future backbones with non-square Conv2d kernels where shape[-1] would not equal
+        patch_size.
         """
         proj_key = "backbone.0.encoder.encoder.embeddings.patch_embeddings.projection.weight"
         proj_weight = torch.zeros(384, 3, 16, 14)  # non-square: h=16, w=14

@@ -6,10 +6,8 @@
 
 """Package-private helper: build a self-contained namespace from Pydantic configs.
 
-Replaces the previous shim in ``_args.py`` that called the deprecated
-``populate_args()`` function from ``main.py``.  This module has zero dependency
-on ``main.py`` and can survive its deletion.
-"""
+Replaces the previous shim in ``_args.py`` that called the deprecated ``populate_args()`` function from ``main.py``.
+This module has zero dependency on ``main.py`` and can survive its deletion."""
 
 import dataclasses
 import types
@@ -110,26 +108,22 @@ def _namespace_from_configs(
 ) -> types.SimpleNamespace:
     """Build a ``types.SimpleNamespace`` from configs and architectural defaults.
 
-    This is the internal implementation behind :func:`build_namespace`.
-    Extracting it allows config-native builder functions to construct a
-    namespace without going through the public ``build_namespace()`` API
-    while still accepting overridable defaults.
+    This is the internal implementation behind :func:`build_namespace`. Extracting it allows config-native builder
+    functions to construct a namespace without going through the public ``build_namespace()`` API while still accepting
+    overridable defaults.
 
     This function is used by multiple modules as the transitional namespace
-    bridge: :func:`rfdetr.models.build_model_from_config`,
-    :func:`rfdetr.models.build_criterion_from_config`, and
-    :func:`rfdetr.detr._build_model_context` all call it directly to avoid
-    the public ``build_namespace()`` shim.
+    bridge: :func:`rfdetr.models.build_model_from_config`, :func:`rfdetr.models.build_criterion_from_config`, and
+    :func:`rfdetr.detr._build_model_context` all call it directly to avoid the public ``build_namespace()`` shim.
 
     Args:
         model_config: Architecture configuration.
         train_config: Training hyperparameter configuration.
-        defaults: Hardcoded architectural constants.  Defaults to
-            :data:`MODEL_DEFAULTS`.
+        defaults: Hardcoded architectural constants.  Defaults to :data:`MODEL_DEFAULTS`.
 
     Returns:
-        ``types.SimpleNamespace`` compatible with ``build_model``,
-        ``build_criterion_and_postprocessors``, and ``build_dataset``.
+        ``types.SimpleNamespace`` compatible with ``build_model``, ``build_criterion_and_postprocessors``, and
+        ``build_dataset``.
     """
     mc = model_config
     tc = train_config
@@ -171,8 +165,8 @@ def build_namespace(model_config: ModelConfig, train_config: TrainConfig) -> typ
     """Build a ``types.SimpleNamespace`` from Pydantic model and train configs.
 
     .. deprecated::
-        ``build_namespace`` is a backward-compatibility shim with no remaining
-        internal callers.  Use the config-native builders instead:
+        ``build_namespace`` is a backward-compatibility shim with no remaining internal callers.  Use the config-native
+        builders instead:
 
         - :func:`rfdetr.models.build_model_from_config` — replaces
           ``build_model(build_namespace(mc, tc))``
@@ -188,8 +182,8 @@ def build_namespace(model_config: ModelConfig, train_config: TrainConfig) -> typ
         train_config: Training hyperparameter configuration.
 
     Returns:
-        ``types.SimpleNamespace`` compatible with ``build_model``,
-        ``build_criterion_and_postprocessors``, and ``build_dataset``.
+        ``types.SimpleNamespace`` compatible with ``build_model``, ``build_criterion_and_postprocessors``, and
+        ``build_dataset``.
     """
     warnings.warn(
         "build_namespace() is deprecated and will be removed in v1.9. "

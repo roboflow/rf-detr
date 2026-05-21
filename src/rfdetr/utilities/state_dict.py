@@ -48,9 +48,8 @@ def _raise_patch_size_mismatch(ckpt_patch_size: int, model_patch_size: int) -> N
 def _ckpt_args_get(args: Any, field: str, default: Any = None) -> Any:
     """Get a field from checkpoint ``"args"``, handling both dict and attribute access.
 
-    New checkpoints (PTL training stack) store ``"args"`` as a plain ``dict``
-    (via ``TrainConfig.model_dump()``).  Legacy checkpoints (pre-PTL engine or
-    the pre-release PTL code) stored it as a ``Namespace``-like object.  This
+    New checkpoints (PTL training stack) store ``"args"`` as a plain ``dict`` (via ``TrainConfig.model_dump()``).
+    Legacy checkpoints (pre-PTL engine or the pre-release PTL code) stored it as a ``Namespace``-like object.  This
     helper abstracts both so callers do not need to branch on the type.
 
     Args:
@@ -69,23 +68,20 @@ def _ckpt_args_get(args: Any, field: str, default: Any = None) -> Any:
 def _make_fit_loop_state(epoch: int) -> dict:
     """Build a minimal ``fit_loop`` state dict that restores the epoch counter.
 
-    ``BestModelCallback`` stores ``trainer.current_epoch`` as ``"epoch"`` in
-    the checkpoint.  That value is captured during ``on_validation_end``, which
-    fires *before* the loop's epoch-end hooks increment the counter.  To resume
-    training *after* that epoch, PTL's epoch-progress counter must be set to
-    ``epoch + 1`` so that ``trainer.current_epoch == epoch + 1`` when the new
-    ``trainer.fit()`` call begins.
+    ``BestModelCallback`` stores ``trainer.current_epoch`` as ``"epoch"`` in the checkpoint.  That value is captured
+    during ``on_validation_end``, which fires *before* the loop's epoch-end hooks increment the counter.  To resume
+    training *after* that epoch, PTL's epoch-progress counter must be set to ``epoch + 1`` so that
+    ``trainer.current_epoch == epoch + 1`` when the new ``trainer.fit()`` call begins.
 
-    Optimizer and scheduler states are intentionally omitted — loading a
-    ``.pth`` file starts a fresh optimizer for the new training phase.
+    Optimizer and scheduler states are intentionally omitted — loading a ``.pth`` file starts a fresh optimizer for the
+    new training phase.
 
     Args:
         epoch: The ``"epoch"`` value from the checkpoint (``trainer.current_epoch``
             at the time of ``on_validation_end``).
 
     Returns:
-        A ``fit_loop`` state dict compatible with
-        :meth:`pytorch_lightning.loops._FitLoop.load_state_dict`.
+        A ``fit_loop`` state dict compatible with :meth:`pytorch_lightning.loops._FitLoop.load_state_dict`.
     """
     n = epoch + 1  # number of epochs fully completed after epoch `epoch` finishes
     zero4 = {"ready": 0, "started": 0, "processed": 0, "completed": 0}
@@ -138,13 +134,11 @@ def _make_fit_loop_state(epoch: int) -> dict:
 def strip_checkpoint(checkpoint: str | os.PathLike[str]) -> None:
     """Strip a checkpoint file down to ``model``, ``args``, and PTL-compatible keys.
 
-    Preserves ``model_name`` (when present) so that ``RFDETR.from_checkpoint()``
-    can still resolve the model class from the stripped file.  Also preserves
-    ``rfdetr_version`` (when present) for provenance tracking.
+    Preserves ``model_name`` (when present) so that ``RFDETR.from_checkpoint()`` can still resolve the model class from
+    the stripped file.  Also preserves ``rfdetr_version`` (when present) for provenance tracking.
 
-    Also preserves ``state_dict``, ``global_step``, ``pytorch-lightning_version``,
-    ``loops``, ``optimizer_states``, and ``lr_schedulers`` when present so the
-    stripped checkpoint can still be used directly with
+    Also preserves ``state_dict``, ``global_step``, ``pytorch-lightning_version``, ``loops``, ``optimizer_states``, and
+    ``lr_schedulers`` when present so the stripped checkpoint can still be used directly with
     ``trainer.fit(ckpt_path=...)``.
 
     Overwrites the file atomically so a partial write cannot corrupt it.
@@ -206,56 +200,46 @@ def clean_state_dict(state_dict: dict[str, Any]) -> OrderedDict[str, Any]:
 def validate_checkpoint_compatibility(checkpoint: dict[str, Any], model_args: Any) -> None:
     """Validate that a checkpoint is compatible with the model configuration.
 
-    Checks for mismatches in ``segmentation_head`` and ``patch_size`` between
-    the checkpoint's saved training arguments and the current model configuration.
-    Raises a descriptive :class:`ValueError` before ``load_state_dict`` fires so
-    that users receive a clear, actionable message instead of a cryptic tensor
-    size mismatch error.
+    Checks for mismatches in ``segmentation_head`` and ``patch_size`` between the checkpoint's saved training arguments
+    and the current model configuration. Raises a descriptive :class:`ValueError` before ``load_state_dict`` fires so
+    that users receive a clear, actionable message instead of a cryptic tensor size mismatch error.
 
     If either side is missing an attribute (e.g. a legacy checkpoint saved before
         ``segmentation_head`` or ``patch_size`` was added to ``args``), that specific
-        check is skipped silently — this preserves backwards compatibility with
-        pre-existing checkpoints.
+        check is skipped silently — this preserves backwards compatibility with pre-existing checkpoints.
 
     Args:
         checkpoint: Loaded checkpoint dictionary, expected to contain an optional
             ``"args"`` key with training namespace attributes or a plain dict.
         model_args: Namespace (e.g. ``types.SimpleNamespace``) with at least
-            ``segmentation_head`` and ``patch_size`` attributes describing the
-            current model.
+            ``segmentation_head`` and ``patch_size`` attributes describing the current model.
 
     Raises:
         ValueError: If ``segmentation_head`` or ``patch_size`` in the checkpoint
-            args do not match those of the model, or if the ``patch_size`` inferred
-            from the DINOv2 projection weight shape differs from
-            ``model_args.patch_size`` when no explicit ``args.patch_size`` is present.
+            args do not match those of the model, or if the ``patch_size`` inferred from the DINOv2 projection weight
+            shape differs from ``model_args.patch_size`` when no explicit ``args.patch_size`` is present.
 
     Note:
-        This helper does not mutate ``model_args``. It emits ``logger.warning``
-        (not an exception) for class-count mismatches so that callers can still
-        proceed with reinitialization or weight loading.
+        This helper does not mutate ``model_args``. It emits ``logger.warning`` (not an exception) for class-count
+        mismatches so that callers can still proceed with reinitialization or weight loading.
 
-        When ``"args"`` is absent or ``args.patch_size`` is not set, a fallback
-        infers ``patch_size`` from the DINOv2 patch-embedding projection weight
-        shape (key ``backbone.0.encoder.encoder.embeddings.patch_embeddings.projection.weight``).
-        This fallback **can raise** :class:`ValueError` on a mismatch, providing a
-        clear error before the cryptic :class:`RuntimeError` from
-        :meth:`~torch.nn.Module.load_state_dict` would otherwise fire.
-        For all other attributes (e.g. ``segmentation_head``), if either side is
-        missing, that check is skipped silently — preserving backward compatibility.
+        When ``"args"`` is absent or ``args.patch_size`` is not set, a fallback infers ``patch_size`` from the DINOv2
+        patch-embedding projection weight shape (key
+        ``backbone.0.encoder.encoder.embeddings.patch_embeddings.projection.weight``). This fallback **can raise**
+        :class:`ValueError` on a mismatch, providing a clear error before the cryptic :class:`RuntimeError` from
+        :meth:`~torch.nn.Module.load_state_dict` would otherwise fire. For all other attributes (e.g.
+        ``segmentation_head``), if either side is missing, that check is skipped silently — preserving backward
+        compatibility.
 
         Two class-count scenarios are distinguished:
 
         * Backbone pretrain: the checkpoint head was trained with more classes
-          than the current ``model_args.num_classes``. In this case the detection
-          head is typically reinitialized or trimmed externally to match the
-          configured number of classes.
+          than the current ``model_args.num_classes``. In this case the detection head is typically reinitialized or
+          trimmed externally to match the configured number of classes.
         * Fine-tuned checkpoint: the checkpoint head was trained with fewer
-          classes than the current ``model_args.num_classes``. If you intend to
-          reuse the checkpoint's classification head as-is, set
-          ``model_args.num_classes`` to ``ckpt_num_classes - 1`` (the value
-          reported in the warning) before loading the state dict to align the
-          configuration and silence the warning.
+          classes than the current ``model_args.num_classes``. If you intend to reuse the checkpoint's classification
+          head as-is, set ``model_args.num_classes`` to ``ckpt_num_classes - 1`` (the value reported in the warning)
+          before loading the state dict to align the configuration and silence the warning.
     """
     # Emit actionable class-count mismatch warning early, before any reinit happens.
     ckpt_class_bias = checkpoint.get("model", {}).get("class_embed.bias", None)

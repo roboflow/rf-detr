@@ -20,8 +20,7 @@ class _DummyTqdm:
     """
     Minimal tqdm stand-in for download tests.
 
-    This avoids real progress bars while preserving the context manager and
-    `update` calls used by the downloader.
+    This avoids real progress bars while preserving the context manager and `update` calls used by the downloader.
     """
 
     def __init__(self, **kwargs: object) -> None:
@@ -53,8 +52,7 @@ class _FakeResponse:
     """
     Test double for requests responses used by the downloader.
 
-    Provides headers, iterable content chunks, and optional HTTP error behavior
-    via `raise_for_status`.
+    Provides headers, iterable content chunks, and optional HTTP error behavior via `raise_for_status`.
     """
 
     def __init__(

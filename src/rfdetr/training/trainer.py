@@ -97,26 +97,24 @@ def build_trainer(
 ) -> Trainer:
     """Assemble a PTL ``Trainer`` with the full RF-DETR callback and logger stack.
 
-    Resolves training precision from ``model_config.amp`` and device capability,
-    guards EMA against sharded strategies, wires conditional loggers, and applies
-    promoted training knobs (gradient clipping, sync_batchnorm, strategy).
+    Resolves training precision from ``model_config.amp`` and device capability, guards EMA against sharded strategies,
+    wires conditional loggers, and applies promoted training knobs (gradient clipping, sync_batchnorm, strategy).
 
     Args:
         train_config: Training hyperparameter configuration.
         model_config: Architecture configuration (used for precision and segmentation).
         accelerator: PTL accelerator string (e.g. ``"auto"``, ``"cpu"``, ``"gpu"``).
-            Defaults to ``None`` which reads from ``train_config.accelerator``
-            (itself defaulting to ``"auto"``).
-            Pass ``"cpu"`` to override auto-detection (e.g. when the caller
-            explicitly requests CPU training via ``device="cpu"``).
+            Defaults to ``None`` which reads from ``train_config.accelerator`` (itself defaulting to ``"auto"``). Pass
+            ``"cpu"`` to override auto-detection (e.g. when the caller explicitly requests CPU training via
+            ``device="cpu"``).
         **trainer_kwargs: Extra keyword arguments forwarded verbatim to
-            ``pytorch_lightning.Trainer``.  Use this to pass PTL-native flags
-            that are not exposed through ``TrainConfig``, for example::
+            ``pytorch_lightning.Trainer``.  Use this to pass PTL-native flags that are not exposed through
+            ``TrainConfig``, for example::
 
                 build_trainer(tc, mc, fast_dev_run=2)
 
-            Any key present in both ``trainer_kwargs`` and the built config dict
-            will be overridden by the value in ``trainer_kwargs``.
+            Any key present in both ``trainer_kwargs`` and the built config dict will be overridden by the value in
+            ``trainer_kwargs``.
 
     Returns:
         A configured ``pytorch_lightning.Trainer`` instance.
