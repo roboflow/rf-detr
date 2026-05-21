@@ -57,7 +57,7 @@ def _create_interpreter(model_path: str | Path) -> Any:
     if _Interpreter is None:
         raise ImportError(
             "TFLite inference requires 'ai_edge_litert', 'tflite-runtime', or 'tensorflow'. "
-            "Install one: `pip install ai_edge_litert`  OR  `pip install tflite-runtime`"
+            "Install one: `pip install ai_edge_litert`  OR  `pip install tflite-runtime`  OR  `pip install tensorflow`"
         )
 
     interp = _Interpreter(model_path=str(model_path))
