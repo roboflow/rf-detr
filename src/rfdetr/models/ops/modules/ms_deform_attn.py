@@ -11,9 +11,7 @@
 # ------------------------------------------------------------------------------------------------
 # Modified from https://github.com/chengdazhi/Deformable-Convolution-V2-PyTorch/tree/pytorch_1.0.0
 # ------------------------------------------------------------------------------------------------
-"""
-Multi-Scale Deformable Attention Module
-"""
+"""Multi-Scale Deformable Attention Module."""
 
 from __future__ import absolute_import, division, print_function
 
@@ -35,16 +33,12 @@ def _is_power_of_2(n):
 
 
 class MSDeformAttn(nn.Module):
-    """Multi-Scale Deformable Attention Module"""
+    """Multi-Scale Deformable Attention Module."""
 
     def __init__(self, d_model=256, n_levels=4, n_heads=8, n_points=4):
-        """
-        Multi-Scale Deformable Attention Module
-        :param d_model      hidden dimension
-        :param n_levels     number of feature levels
-        :param n_heads      number of attention heads
-        :param n_points     number of sampling points per attention head per feature level
-        """
+        """Multi-Scale Deformable Attention Module :param d_model      hidden dimension :param n_levels     number of
+        feature levels :param n_heads      number of attention heads :param n_points     number of sampling points per
+        attention head per feature level."""
         super().__init__()
         if d_model % n_heads != 0:
             raise ValueError("d_model must be divisible by n_heads, but got {} and {}".format(d_model, n_heads))
@@ -74,7 +68,7 @@ class MSDeformAttn(nn.Module):
         self._export = False
 
     def export(self):
-        """export mode"""
+        """Export mode."""
         self._export = True
 
     def _reset_parameters(self):

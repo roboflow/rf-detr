@@ -3,7 +3,6 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Tests for rfdetr.utilities.tensors.
 
 Covers:
@@ -419,7 +418,9 @@ class TestNestedTensorBlockSize:
     """``nested_tensor_from_tensor_list`` with block_size rounds batch max H/W up.
 
     This is the collator-level pad for backbone divisibility.  The rounded-up strip must be marked as padding in the
-    mask so downstream attention skips it.  See https://github.com/roboflow/rf-detr/issues/983 for context.
+    mask so downstream attention skips it.  See
+    https://github.com/roboflow/rf-detr/issues/983
+    for context.
     """
 
     @staticmethod
@@ -440,7 +441,7 @@ class TestNestedTensorBlockSize:
         assert nested.mask[1, :, 180:].all().item() is True
 
     def test_block_size_rounds_up(self) -> None:
-        """batch-max is rounded up to the next multiple of block_size."""
+        """Batch-max is rounded up to the next multiple of block_size."""
         images = [self._image(3, 100, 200), self._image(3, 150, 180)]
         nested = nested_tensor_from_tensor_list(images, block_size=32)
         _, _, h, w = nested.tensors.shape

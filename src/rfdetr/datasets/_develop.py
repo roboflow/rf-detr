@@ -3,11 +3,11 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Private developer tools for testing and benchmarking RF-DETR.
 
 These utilities are intended for internal use by developers and test suites. They are not part of the public API and may
-change without notice."""
+change without notice.
+"""
 
 from __future__ import annotations
 

@@ -7,7 +7,6 @@
 # Original copyrights: LW-DETR (Baidu), Conditional DETR (Microsoft),
 # DETR (Facebook), Deformable DETR (SenseTime)
 # ------------------------------------------------------------------------
-
 """Mathematical building blocks: MLP, inverse_sigmoid, accuracy, interpolate."""
 
 from typing import List, Optional, Tuple

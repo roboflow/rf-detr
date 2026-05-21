@@ -3,14 +3,14 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Shared type protocols for RF-DETR model builder functions.
 
 The ``BuilderArgs`` protocol documents the minimum attribute set consumed by ``build_model()``, ``build_backbone()``,
 ``build_transformer()``, and ``build_criterion_and_postprocessors()``.  It is satisfied structurally by any object that
 exposes the required attributes — including the ``SimpleNamespace`` produced by
 :func:`rfdetr._namespace.build_namespace` and, after Item #1 is complete, by
-``ModelConfig``/``TrainConfig`` directly."""
+``ModelConfig``/``TrainConfig`` directly.
+"""
 
 from __future__ import annotations
 

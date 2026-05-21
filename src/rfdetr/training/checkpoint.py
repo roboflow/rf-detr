@@ -3,14 +3,14 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Checkpoint conversion utilities for the PTL training stack.
 
 Provides :func:`convert_legacy_checkpoint` to convert RF-DETR ``*.pth`` checkpoints (produced by the pre-PTL
 ``engine.py`` training loop) into the ``*.ckpt`` format expected by ``pytorch_lightning.Trainer``.
 
 Auto-detection of legacy format at load time is handled by
-:meth:`rfdetr.training.module_model.RFDETRModelModule.on_load_checkpoint`."""
+:meth:`rfdetr.training.module_model.RFDETRModelModule.on_load_checkpoint`.
+"""
 
 from __future__ import annotations
 

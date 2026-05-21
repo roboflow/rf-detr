@@ -15,10 +15,7 @@
 # Modified from Deformable DETR (https://github.com/fundamentalvision/Deformable-DETR)
 # Copyright (c) 2020 SenseTime. All Rights Reserved.
 # ------------------------------------------------------------------------
-
-"""
-LW-DETR model and criterion classes
-"""
+"""LW-DETR model and criterion classes."""
 
 import copy
 import math
@@ -84,7 +81,7 @@ def _resize_linear(linear: nn.Linear, num_classes: int) -> nn.Linear:
 
 
 class LWDETR(nn.Module):
-    """This is the Group DETR v3 module that performs object detection"""
+    """This is the Group DETR v3 module that performs object detection."""
 
     def __init__(
         self,
@@ -100,6 +97,7 @@ class LWDETR(nn.Module):
         bbox_reparam=False,
     ):
         """Initializes the model.
+
         Parameters:
             backbone: torch module of the backbone to be used. See backbone.py
             transformer: torch module of the transformer architecture. See transformer.py
@@ -186,6 +184,7 @@ class LWDETR(nn.Module):
 
     def forward(self, samples: NestedTensor, targets=None):
         """The forward expects a NestedTensor, which consists of:
+
            - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
            - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
 

@@ -594,9 +594,8 @@ class TestDrawSyntheticShapeEdgeCases:
         ],
     )
     def test_degenerate_size_returns_polygon_without_crashing(self, shape, size, expected_n_coords):
-        """draw_synthetic_shape with size=0 or size=1 must not raise and must
-        return the expected number of flat coordinate values.
-        """
+        """draw_synthetic_shape with size=0 or size=1 must not raise and must return the expected number of flat
+        coordinate values."""
         img = np.zeros((100, 100, 3), dtype=np.uint8)
         _, poly = draw_synthetic_shape(img, shape, sv.Color.WHITE, (50, 50), size)
         assert len(poly) == expected_n_coords

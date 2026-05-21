@@ -3,7 +3,6 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Augmentation presets and default configuration for RF-DETR training.
 
 Import a preset and pass it as ``aug_config`` to your training call:
@@ -80,7 +79,8 @@ instead of Albumentations.
 | ``GaussNoise`` | ``K.RandomGaussianNoise`` | Upper bound of ``std_range`` used as fixed std |
 
 **Phase 1 limitation**: Segmentation models (``segmentation_head=True``) skip GPU augmentation; CPU Albumentations are
-used instead. Mask support is planned for Phase 2."""
+used instead. Mask support is planned for Phase 2.
+"""
 
 # ---------------------------------------------------------------------------
 # Default configuration (backward-compatible baseline)

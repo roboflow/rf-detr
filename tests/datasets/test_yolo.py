@@ -112,7 +112,7 @@ class TestBuildRoboflowFromYoloAugConfig:
         assert kwargs["data_file"] == str(tmp_path / "data.yml")
 
     def test_auto_no_cuda_sets_gpu_postprocess_false(self) -> None:
-        """auto + no CUDA must keep CPU normalize by passing gpu_postprocess=False."""
+        """Auto + no CUDA must keep CPU normalize by passing gpu_postprocess=False."""
         args = self._make_args(square_resize_div_64=False, aug_config=None)
         args.augmentation_backend = "auto"
         with (

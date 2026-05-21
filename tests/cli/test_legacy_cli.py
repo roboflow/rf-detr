@@ -3,7 +3,6 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Tests for the CLI entry point configuration."""
 
 import pathlib
@@ -22,7 +21,7 @@ class TestEntryPoint:
         return m.group(1)
 
     def test_entry_point_value(self):
-        """rfdetr entry point must be rfdetr.cli:main."""
+        """Rfdetr entry point must be rfdetr.cli:main."""
         assert self._read_entry_point() == "rfdetr.cli:main"
 
     def test_entry_point_not_legacy(self):

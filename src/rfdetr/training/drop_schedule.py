@@ -7,7 +7,6 @@
 # Copyright (c) 2024 Baidu. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Drop-path / dropout schedule utilities."""
 
 from typing import Literal
@@ -23,7 +22,7 @@ def drop_scheduler(
     mode: Literal["standard", "early", "late"] = "standard",
     schedule: Literal["constant", "linear"] = "constant",
 ) -> np.ndarray:
-    """drop scheduler"""
+    """Drop scheduler."""
     assert mode in ["standard", "early", "late"]
     if mode == "standard":
         return np.full(epochs * niter_per_ep, drop_rate)

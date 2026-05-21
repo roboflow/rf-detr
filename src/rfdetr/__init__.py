@@ -20,7 +20,8 @@ while the shim directories are present).
 hint) instead of the cryptic default ``ModuleNotFoundError: No module named 'rfdetr.util'``.
 
 To complete Phase 2, delete ``src/rfdetr/util/`` and ``src/rfdetr/deploy/`` and bump ``_REMOVED_IN_V17`` (or rename it)
-to reflect the new version boundary."""
+to reflect the new version boundary.
+"""
 
 import importlib
 import importlib.abc

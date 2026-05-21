@@ -3,7 +3,6 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Tests for Chapter 5 / Phase 7+8 (updated Phase 3):
 
 1. ``TestRFDETRTrainPTL``           — RFDETR.train() delegates to PTL build_trainer().fit()
@@ -256,7 +255,7 @@ class TestRFDETRTrainPTL:
         assert mock_self.model.class_names == []
 
     def test_device_kwarg_cpu_no_warning(self, tmp_path, patch_lit):
-        """device='cpu' is consumed without a DeprecationWarning."""
+        """Device='cpu' is consumed without a DeprecationWarning."""
         mock_self = _make_rfdetr_self(tmp_path)
         p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
@@ -266,7 +265,7 @@ class TestRFDETRTrainPTL:
         mock_self.get_train_config.assert_called_once_with()
 
     def test_device_kwarg_cuda_forwards_gpu_accelerator_without_devices(self, tmp_path, patch_lit):
-        """device='cuda' is mapped to accelerator='gpu' without explicit devices override."""
+        """Device='cuda' is mapped to accelerator='gpu' without explicit devices override."""
         mock_self = _make_rfdetr_self(tmp_path)
         p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
@@ -286,7 +285,7 @@ class TestRFDETRTrainPTL:
         mock_self.get_train_config.assert_called_once_with()
 
     def test_callbacks_none_no_warning(self, tmp_path, patch_lit):
-        """callbacks=None produces no DeprecationWarning."""
+        """Callbacks=None produces no DeprecationWarning."""
         mock_self = _make_rfdetr_self(tmp_path)
         p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
@@ -295,7 +294,7 @@ class TestRFDETRTrainPTL:
         assert not any(issubclass(x.category, DeprecationWarning) for x in w)
 
     def test_callbacks_empty_dict_no_warning(self, tmp_path, patch_lit):
-        """callbacks={} (falsy dict) produces no DeprecationWarning."""
+        """Callbacks={} (falsy dict) produces no DeprecationWarning."""
         mock_self = _make_rfdetr_self(tmp_path)
         p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
@@ -366,7 +365,7 @@ class TestRFDETRTrainPTL:
         mock_self.get_train_config.assert_called_once_with()
 
     def test_device_not_forwarded_to_get_train_config(self, tmp_path, patch_lit):
-        """device= is popped and not passed on to get_train_config."""
+        """Device= is popped and not passed on to get_train_config."""
         mock_self = _make_rfdetr_self(tmp_path)
         p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt:
@@ -437,7 +436,7 @@ class TestRFDETRTrainPTLAbsorption:
     """RFDETR.train() absorbs legacy kwargs and routes through PTL build_trainer()."""
 
     def test_device_cpu_absorbed_as_accelerator_cpu(self, tmp_path, patch_lit):
-        """device='cpu' is absorbed and forwarded to build_trainer as accelerator='cpu'."""
+        """Device='cpu' is absorbed and forwarded to build_trainer as accelerator='cpu'."""
         mock_self = _make_rfdetr_self(tmp_path)
         p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
         with p_mod, p_dm, p_bt:
@@ -446,7 +445,7 @@ class TestRFDETRTrainPTLAbsorption:
         mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator="cpu")
 
     def test_device_cuda_absorbed_as_accelerator_gpu(self, tmp_path, patch_lit):
-        """device='cuda' forwards accelerator='gpu' without a devices kwarg."""
+        """Device='cuda' forwards accelerator='gpu' without a devices kwarg."""
         mock_self = _make_rfdetr_self(tmp_path)
         p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
         with p_mod, p_dm, p_bt:
@@ -456,7 +455,7 @@ class TestRFDETRTrainPTLAbsorption:
         assert "devices" not in mock_bt.call_args.kwargs
 
     def test_device_cuda_index_absorbed_as_accelerator_gpu_devices_list(self, tmp_path, patch_lit):
-        """device='cuda:1' forwards accelerator='gpu' and devices=[1]."""
+        """Device='cuda:1' forwards accelerator='gpu' and devices=[1]."""
         mock_self = _make_rfdetr_self(tmp_path)
         p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
         with p_mod, p_dm, p_bt:
@@ -496,7 +495,7 @@ class TestRFDETRTrainPTLAbsorption:
         assert "devices" not in mock_bt.call_args.kwargs
 
     def test_callbacks_empty_dict_no_error(self, tmp_path, patch_lit):
-        """callbacks={} is accepted without error."""
+        """Callbacks={} is accepted without error."""
         mock_self = _make_rfdetr_self(tmp_path)
         p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt:
@@ -627,7 +626,7 @@ class TestResolutionKwarg:
     """RFDETR.train(resolution=...) applies, validates, and syncs the resolution override."""
 
     def test_updates_model_config_resolution(self, tmp_path, patch_lit):
-        """resolution kwarg is applied to model_config.resolution before training."""
+        """Resolution kwarg is applied to model_config.resolution before training."""
         mock_self = _make_rfdetr_self(tmp_path)
         block_size = mock_self.model_config.patch_size * mock_self.model_config.num_windows
         valid_resolution = block_size * 11  # guaranteed divisible and different from default
@@ -663,7 +662,7 @@ class TestResolutionKwarg:
         assert mock_self.model_config.positional_encoding_size == expected_pe
 
     def test_does_not_reach_get_train_config(self, tmp_path, patch_lit):
-        """resolution kwarg is popped before get_train_config is called."""
+        """Resolution kwarg is popped before get_train_config is called."""
         mock_self = _make_rfdetr_self(tmp_path)
         block_size = mock_self.model_config.patch_size * mock_self.model_config.num_windows
         p_mod, p_dm, p_bt, *_ = patch_lit
@@ -672,7 +671,7 @@ class TestResolutionKwarg:
         assert "resolution" not in mock_self.get_train_config.call_args.kwargs
 
     def test_indivisible_raises_value_error(self, tmp_path, patch_lit):
-        """resolution not divisible by patch_size * num_windows raises ValueError."""
+        """Resolution not divisible by patch_size * num_windows raises ValueError."""
         mock_self = _make_rfdetr_self(tmp_path)
         block_size = mock_self.model_config.patch_size * mock_self.model_config.num_windows
         indivisible = block_size * 10 + 1  # guaranteed not divisible by block_size
@@ -709,7 +708,7 @@ class TestResolutionKwarg:
             RFDETR.train(mock_self, resolution=bad_resolution)
 
     def test_syncs_model_resolution_attribute(self, tmp_path, patch_lit):
-        """resolution kwarg sets model.resolution so predict()/export() see the new resolution.
+        """Resolution kwarg sets model.resolution so predict()/export() see the new resolution.
 
         Regression test for #952 — keeps the cached inference/export context in sync after a resolution override in
         train().
@@ -723,7 +722,7 @@ class TestResolutionKwarg:
         assert mock_self.model.resolution == new_resolution
 
     def test_syncs_model_args_resolution_and_pe(self, tmp_path, patch_lit):
-        """resolution kwarg updates model.args.resolution and model.args.positional_encoding_size.
+        """Resolution kwarg updates model.args.resolution and model.args.positional_encoding_size.
 
         For formula-derived configs (PE == resolution // patch_size), both fields in model.args must be kept consistent
         with model_config so export/deployment pipelines use the correct values.  Regression test for #952.
@@ -853,7 +852,7 @@ class TestConvertLegacyCheckpoint:
         assert ckpt["hyper_parameters"] == {"lr": pytest.approx(1e-4), "epochs": 100}
 
     def test_args_none_gives_empty_hyper_parameters(self, tmp_path, patch_lit):
-        """args=None produces an empty hyper_parameters dict."""
+        """Args=None produces an empty hyper_parameters dict."""
         src = _make_legacy_pth(tmp_path, args_value=None)
         dst = str(tmp_path / "out.ckpt")
         convert_legacy_checkpoint(src, dst)
@@ -1372,9 +1371,8 @@ def _make_detr_checkpoint(
 
 
 class TestLoadPretrainWeightsInto:
-    """Tests for load_pretrain_weights (models/weights.py) — checkpoint compatibility
-    validation exercised when RFDETRNano(pretrain_weights=...) is called (issue #806).
-    """
+    """Tests for load_pretrain_weights (models/weights.py) — checkpoint compatibility validation exercised when
+    RFDETRNano(pretrain_weights=...) is called (issue #806)."""
 
     @pytest.fixture(autouse=True)
     def _patch_download(self, monkeypatch):

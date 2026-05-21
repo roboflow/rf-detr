@@ -3,7 +3,6 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Unit tests for _namespace_from_configs — the canonical config-to-Namespace mapping."""
 
 import pytest
@@ -72,7 +71,7 @@ class TestNamespaceFromConfigs:
         assert args.fp16_eval is True
 
     def test_seed_falls_back_to_legacy_default_when_unset(self, base_model_config, base_train_config):
-        """seed defaults to 42 in the namespace when TrainConfig.seed is None."""
+        """Seed defaults to 42 in the namespace when TrainConfig.seed is None."""
         tc = base_train_config(seed=None)
         args = _namespace_from_configs(base_model_config(), tc)
         assert args.seed == 42
@@ -93,7 +92,7 @@ class TestNamespaceFromConfigs:
         assert args.num_queries == 300
 
     def test_resume_none_becomes_empty_string(self, base_model_config, base_train_config):
-        """resume=None (the default) is converted to '' for the Namespace."""
+        """Resume=None (the default) is converted to '' for the Namespace."""
         tc = base_train_config()
         assert tc.resume is None
         args = _namespace_from_configs(base_model_config(), tc)

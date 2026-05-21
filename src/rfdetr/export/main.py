@@ -6,10 +6,7 @@
 # Copied and modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
 # Copyright (c) 2024 Baidu. All Rights Reserved.
 # ------------------------------------------------------------------------
-
-"""
-CLI orchestrator for ONNX and TensorRT model export.
-"""
+"""CLI orchestrator for ONNX and TensorRT model export."""
 
 import os
 import random

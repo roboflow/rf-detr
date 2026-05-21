@@ -3,13 +3,13 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Characterization tests for build_model() and build_criterion_and_postprocessors().
 
 These tests pin the current behavior of the legacy namespace-based builder functions. They serve as a safety net during
 the config-native builder refactoring: any change that alters these outputs is a regression.
 
-All tests in this file must pass against the CURRENT codebase."""
+All tests in this file must pass against the CURRENT codebase.
+"""
 
 import pytest
 import torch

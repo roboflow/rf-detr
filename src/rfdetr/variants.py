@@ -7,7 +7,8 @@
 
 All classes inherit from :class:`~rfdetr.detr.RFDETR` which remains defined in ``rfdetr.detr``. Backward-compatible
 access from ``rfdetr.detr`` is provided via lazy ``__getattr__`` re-exports, so importing ``rfdetr.variants`` no longer
-depends on a fragile eager ``detr -> variants`` import sequence."""
+depends on a fragile eager ``detr -> variants`` import sequence.
+"""
 
 from __future__ import annotations
 
@@ -66,27 +67,21 @@ class RFDETRBase(RFDETR):
 
 
 class RFDETRNano(RFDETR):
-    """
-    Train an RF-DETR Nano model.
-    """
+    """Train an RF-DETR Nano model."""
 
     size = "rfdetr-nano"
     _model_config_class = RFDETRNanoConfig
 
 
 class RFDETRSmall(RFDETR):
-    """
-    Train an RF-DETR Small model.
-    """
+    """Train an RF-DETR Small model."""
 
     size = "rfdetr-small"
     _model_config_class = RFDETRSmallConfig
 
 
 class RFDETRMedium(RFDETR):
-    """
-    Train an RF-DETR Medium model.
-    """
+    """Train an RF-DETR Medium model."""
 
     size = "rfdetr-medium"
     _model_config_class = RFDETRMediumConfig

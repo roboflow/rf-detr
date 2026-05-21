@@ -3,7 +3,6 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Comprehensive unit tests for RFDETRModelModule (LightningModule wrapper)."""
 
 from types import SimpleNamespace
@@ -142,9 +141,8 @@ def make_batch():
 
 
 class TestInit:
-    """Tests for RFDETRModelModule.__init__ — covers attribute assignment and
-    delegation to build_model() / build_criterion_and_postprocessors()
-    when pretrain_weights is None."""
+    """Tests for RFDETRModelModule.__init__ — covers attribute assignment and delegation to build_model() /
+    build_criterion_and_postprocessors() when pretrain_weights is None."""
 
     def test_model_is_set(self, build_module):
         """__init__ must assign the built model to module.model."""
@@ -194,7 +192,7 @@ class TestInit:
     @patch("rfdetr.training.module_model.torch.compile")
     @patch("rfdetr.config.DEVICE", "cuda")
     def test_compile_disabled_when_train_accelerator_is_cpu(self, _mock_compile: MagicMock, tmp_path):
-        """compile stays disabled when training is explicitly forced to CPU."""
+        """Compile stays disabled when training is explicitly forced to CPU."""
         mc = _base_model_config(compile=True)
         tc = _base_train_config(tmp_path, multi_scale=False, accelerator="cpu")
         _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
@@ -202,9 +200,9 @@ class TestInit:
 
 
 class TestLoadPretrainWeights:
-    """Tests for _load_pretrain_weights() — covers checkpoint validation, detection-head
-    reinitialization on class-count mismatch, query-embedding trimming, re-download on
-    corruption, and class-name extraction from checkpoint metadata."""
+    """Tests for _load_pretrain_weights() — covers checkpoint validation, detection-head reinitialization on class-count
+    mismatch, query-embedding trimming, re-download on corruption, and class-name extraction from checkpoint
+    metadata."""
 
     def _make_checkpoint(self, num_classes_in_ckpt=91, num_queries=300, group_detr=13):
         """Build a fake checkpoint dict."""
@@ -337,8 +335,8 @@ class TestLoadPretrainWeights:
     def test_download_before_load_when_weights_absent(
         self, mock_torch_load, mock_validate, mock_download, mock_isfile, base_model_config, build_module
     ):
-        """download_pretrain_weights must be called before torch.load so a fresh
-        environment (e.g. Colab) downloads weights automatically.
+        """download_pretrain_weights must be called before torch.load so a fresh environment (e.g. Colab) downloads
+        weights automatically.
 
         Regression test: previously download was only called as an except-block fallback, but ModelWeights.from_filename
         received the absolute path and returned None, causing a silent no-op and a FileNotFoundError.
@@ -436,9 +434,8 @@ class TestLoadPretrainWeights:
 
 
 class TestApplyLora:
-    """Tests for _apply_lora() — verifies that PEFT LoraConfig is constructed with the
-    correct target modules and that the backbone encoder is replaced in-place with the
-    wrapped PEFT model."""
+    """Tests for _apply_lora() — verifies that PEFT LoraConfig is constructed with the correct target modules and that
+    the backbone encoder is replaced in-place with the wrapped PEFT model."""
 
     def _build_module_with_backbone(self, tmp_path):
         """Build module with a mock backbone that exposes backbone[0].encoder."""
@@ -534,9 +531,8 @@ class TestOnFitStart:
 
 
 class TestOnTrainBatchStart:
-    """Tests for on_train_batch_start() — covers multi-scale interpolation of
-    NestedTensor inputs and verifies regularization scheduling is delegated to
-    DropPathCallback."""
+    """Tests for on_train_batch_start() — covers multi-scale interpolation of NestedTensor inputs and verifies
+    regularization scheduling is delegated to DropPathCallback."""
 
     def _setup_module(
         self,
@@ -614,9 +610,8 @@ class TestOnTrainBatchStart:
 
 
 class TestTrainingStep:
-    """Tests for training_step() — covers weighted loss aggregation, per-loss logging
-    under the train/ prefix, prog_bar visibility, scalar tensor output, and that losses
-    absent from weight_dict are excluded from the total."""
+    """Tests for training_step() — covers weighted loss aggregation, per-loss logging under the train/ prefix, prog_bar
+    visibility, scalar tensor output, and that losses absent from weight_dict are excluded from the total."""
 
     def _run_step(self, tmp_path, loss_dict=None, weight_dict=None, accumulate_grad_batches=1):
         module, fake_model, fake_criterion, _ = _build_module(tmp_path=tmp_path)
@@ -711,8 +706,8 @@ class TestTrainingStep:
 
 
 class TestValidationStep:
-    """Tests for validation_step() — verifies output dict shape, postprocessor
-    invocation with correct original sizes, and val/loss logging."""
+    """Tests for validation_step() — verifies output dict shape, postprocessor invocation with correct original sizes,
+    and val/loss logging."""
 
     def _run_val_step(self, tmp_path):
         module, fake_model, fake_criterion, fake_pp = _build_module(tmp_path=tmp_path)
@@ -766,8 +761,8 @@ class TestValidationStep:
 
 
 class TestTestStep:
-    """Tests for test_step() — verifies output dict shape, postprocessor
-    invocation with correct original sizes, and test/loss logging.
+    """Tests for test_step() — verifies output dict shape, postprocessor invocation with correct original sizes, and
+    test/loss logging.
 
     Mirrors :class:`TestValidationStep` since both steps share the same forward+postprocess logic and differ only in the
     logged metric prefix.
@@ -845,9 +840,8 @@ class TestTestStep:
 
 
 class TestConfigureOptimizers:
-    """Tests for configure_optimizers() — covers required output keys, AdamW optimizer
-    type, step-interval scheduler, LR lambda warmup ramp, and step-decay behaviour
-    before and after lr_drop."""
+    """Tests for configure_optimizers() — covers required output keys, AdamW optimizer type, step-interval scheduler, LR
+    lambda warmup ramp, and step-decay behaviour before and after lr_drop."""
 
     def _setup_module(self, tmp_path, **train_overrides):
         tc = _base_train_config(tmp_path, **train_overrides)
@@ -1077,9 +1071,8 @@ class TestClipGradients:
 
 
 class TestPredictStep:
-    """Tests for predict_step() — verifies that only samples (not targets) are passed
-    to the model, that postprocess receives the correct original sizes, and that the
-    postprocessor output is returned directly to the caller."""
+    """Tests for predict_step() — verifies that only samples (not targets) are passed to the model, that postprocess
+    receives the correct original sizes, and that the postprocessor output is returned directly to the caller."""
 
     def test_calls_postprocess_with_orig_sizes(self, build_module):
         """Postprocessor must receive a (batch, 2) tensor of original image sizes."""
@@ -1123,8 +1116,8 @@ class TestPredictStep:
 
 
 class TestReinitializeDetectionHead:
-    """Tests for reinitialize_detection_head() — verifies that the module delegates
-    to the underlying model and that arbitrary class counts are forwarded unchanged."""
+    """Tests for reinitialize_detection_head() — verifies that the module delegates to the underlying model and that
+    arbitrary class counts are forwarded unchanged."""
 
     def test_delegates_to_model(self, build_module):
         """Module must delegate head reinitialization to the underlying model."""
@@ -1152,8 +1145,8 @@ class TestReinitializeDetectionHead:
 
 
 class TestOnLoadCheckpoint:
-    """Tests for on_load_checkpoint() — covers legacy .pth normalisation and
-    positional-embedding interpolation for custom-resolution PTL checkpoints.
+    """Tests for on_load_checkpoint() — covers legacy .pth normalisation and positional-embedding interpolation for
+    custom-resolution PTL checkpoints.
 
     Regression: issue #998 — resume with custom resolution crashed because
     on_load_checkpoint did not interpolate PE before PTL applied the state dict.

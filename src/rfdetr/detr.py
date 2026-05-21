@@ -119,7 +119,6 @@ def _validate_shape_dims(
         ValueError: If ``shape`` cannot be unpacked as a two-element sequence, if either
             dimension is a bool, float, or other non-integer type, if either dimension is not positive, or if either
             dimension is not divisible by ``block_size``.
-
     """
     try:
         height, width = shape  # type: ignore[misc]
@@ -162,7 +161,6 @@ def _resolve_patch_size(patch_size: int | None, model_config: object, caller: st
     Raises:
         ValueError: If the resolved or provided ``patch_size`` is not a positive integer,
             or if a caller-provided value disagrees with ``model_config.patch_size``.
-
     """
     if patch_size is None:
         patch_size = getattr(model_config, "patch_size", 14)
@@ -203,9 +201,8 @@ def _ensure_model_on_device(model_ctx: Any) -> None:
 
 
 class RFDETR:
-    """The base RF-DETR class implements the core methods for training RF-DETR models,
-    running inference on the models, optimising models, and uploading trained models for deployment.
-    """
+    """The base RF-DETR class implements the core methods for training RF-DETR models, running inference on the models,
+    optimising models, and uploading trained models for deployment."""
 
     means = [0.485, 0.456, 0.406]
     stds = [0.229, 0.224, 0.225]
@@ -418,7 +415,6 @@ class RFDETR:
 
         Raises:
             ValueError: If ``device`` is not a valid torch device specifier.
-
         """
         if device is None:
             return None, None
@@ -480,7 +476,6 @@ class RFDETR:
                 ``pip install "rfdetr[train,loggers]"``.
             ValueError: If ``resolution`` is not a positive integer or is not
                 divisible by ``patch_size * num_windows`` for the model variant.
-
         """
         # Both imports are grouped in a single try block because they both live in
         # the `rfdetr[train]` extras group — a missing `pytorch_lightning` (or any
@@ -1157,7 +1152,6 @@ class RFDETR:
 
         Returns:
             ModelContext with model, postprocess, device, resolution, args, and class_names attributes.
-
         """
         return _build_model_context(config)
 
@@ -1168,7 +1162,6 @@ class RFDETR:
         Returns:
             A list of class name strings, 0-indexed.  When no custom class names are embedded in the checkpoint, returns
             the standard 80 COCO class names.
-
         """
         if hasattr(self.model, "class_names") and self.model.class_names is not None:
             return list(self.model.class_names)
@@ -1236,7 +1229,6 @@ class RFDETR:
                 if either dimension does not support the ``__index__`` protocol (e.g. ``float``) or is a ``bool``, if
                 either dimension is zero or negative, if either dimension is not divisible by ``patch_size *
                 num_windows``, or if ``patch_size`` is not a positive integer.
-
         """
         import supervision as sv
 
@@ -1466,7 +1458,6 @@ class RFDETR:
         Raises:
             ValueError: If the `api_key` is not provided and not found in the
                 environment variable `ROBOFLOW_API_KEY`, or if the `size` is not set for custom architectures.
-
         """
         from roboflow import Roboflow
 

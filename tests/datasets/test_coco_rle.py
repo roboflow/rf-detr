@@ -3,11 +3,11 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Tests for native RLE annotation support in the COCO dataset pipeline.
 
 Verifies that :func:`convert_coco_poly_to_mask` and :class:`ConvertCoco` correctly handle compressed RLE, uncompressed
-RLE, and polygon segmentation formats — including mixed annotations within the same image."""
+RLE, and polygon segmentation formats — including mixed annotations within the same image.
+"""
 
 import numpy as np
 import pycocotools.mask as mask_util

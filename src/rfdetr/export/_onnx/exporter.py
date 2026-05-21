@@ -6,10 +6,7 @@
 # Copied and modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
 # Copyright (c) 2024 Baidu. All Rights Reserved.
 # ------------------------------------------------------------------------
-
-"""
-ONNX export, simplification, and OnnxOptimizer.
-"""
+"""ONNX export, simplification, and OnnxOptimizer."""
 
 import inspect
 import json
@@ -220,7 +217,7 @@ class OnnxOptimizer:
         G_LOGGER.severity = severity
 
     def load_onnx(self, onnx_path: str):
-        """Load onnx from file"""
+        """Load onnx from file."""
         assert os.path.isfile(onnx_path), f"not found onnx file: {onnx_path}"
         onnx_graph = onnx.load(onnx_path)
         G_LOGGER.info(f"load onnx file: {onnx_path}")
@@ -282,12 +279,11 @@ class OnnxOptimizer:
             return onnx_graph
 
     def resize_fix(self):
-        """
-        This function loops through the graph looking for Resize nodes that uses scales for resize (has 3 inputs). It
-        substitutes found Resize with Resize that takes the size of the output tensor instead of scales. It adds
-        Shape->Slice->Concat
-                Shape->Slice----^     subgraph to the graph to extract the shape of the output tensor.
-        This fix is required for the dynamic shape support.
+        """This function loops through the graph looking for Resize nodes that uses scales for resize (has 3 inputs).
+
+        It substitutes found Resize with Resize that takes the size of the output tensor instead of scales. It adds
+        Shape->Slice->Concat         Shape->Slice----^     subgraph to the graph to extract the shape of the output
+        tensor. This fix is required for the dynamic shape support.
         """
         resized_node_count = 0
         for node in self.graph.nodes:

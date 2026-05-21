@@ -150,7 +150,7 @@ class TestTrainConfigT42PromotedFields:
     # --- device field removed ---
 
     def test_device_not_in_model_fields(self):
-        """device must not appear in TrainConfig.model_fields (PTL auto-detects accelerator)."""
+        """Device must not appear in TrainConfig.model_fields (PTL auto-detects accelerator)."""
         assert "device" not in TrainConfig.model_fields
 
     def test_device_kwarg_silently_ignored(self, tmp_path):
@@ -166,7 +166,7 @@ class TestTrainConfigT42PromotedFields:
         assert self._tc(tmp_path).clip_max_norm == pytest.approx(0.1)
 
     def test_seed_default_is_none(self, tmp_path):
-        """seed defaults to None (no seeding)."""
+        """Seed defaults to None (no seeding)."""
         assert self._tc(tmp_path).seed is None
 
     def test_sync_bn_default_is_false(self, tmp_path):
@@ -259,7 +259,7 @@ class TestTrainConfigT42PromotedFields:
         ],
     )
     def test_interval_and_prefetch_reject_non_positive_values(self, tmp_path, field, value):
-        """eval/EMA intervals and prefetch_factor must be >= 1 when provided."""
+        """Eval/EMA intervals and prefetch_factor must be >= 1 when provided."""
         with pytest.raises((ValueError, ValidationError)):
             self._tc(tmp_path, **{field: value})
 
@@ -643,9 +643,8 @@ class TestPretrainWeightsCompatibilityWarning:
         assert self._capture(ModelConfig, **sample_model_config) == []
 
     def test_breaking_field_with_default_factory_skips_comparison(self) -> None:
-        """A subclass whose breaking field uses ``default_factory`` (so ``.default`` is
-        ``PydanticUndefined``) must be silently skipped — we have nothing to compare against.
-        """
+        """A subclass whose breaking field uses ``default_factory`` (so ``.default`` is ``PydanticUndefined``) must be
+        silently skipped — we have nothing to compare against."""
         from pydantic import Field
 
         class _DefaultFactoryConfig(RFDETRNanoConfig):

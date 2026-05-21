@@ -3,7 +3,6 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Unit and parity tests for RFDETREMACallback."""
 
 from __future__ import annotations
@@ -57,8 +56,8 @@ class TestAvgFnDecayFormula:
         assert torch.allclose(result, expected, atol=1e-7)
 
     def test_tau_warmup_at_step_1(self) -> None:
-        """At the first call (num_averaged=0) with tau>0 the effective decay
-        uses updates=1 matching ModelEma's 1-indexed counter."""
+        """At the first call (num_averaged=0) with tau>0 the effective decay uses updates=1 matching ModelEma's
+        1-indexed counter."""
         decay = 0.993
         tau = 100
         cb = RFDETREMACallback(decay=decay, tau=tau)
@@ -167,7 +166,10 @@ class TestUpdateInterval:
     """Verify update_interval_steps throttles EMA updates on step hooks."""
 
     def test_updates_only_on_interval_steps(self) -> None:
-        """update_interval_steps=2 updates on steps 2, 4, ... only."""
+        """update_interval_steps=2 updates on steps 2, 4, ...
+
+        only.
+        """
         cb = RFDETREMACallback(update_interval_steps=2)
         cb._average_model = MagicMock()
 
