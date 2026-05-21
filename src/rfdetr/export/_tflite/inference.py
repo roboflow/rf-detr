@@ -14,6 +14,8 @@ or the RF-DETR training stack: only ``tflite-runtime`` (or ``tensorflow``),
 
 from __future__ import annotations
 
+import contextlib
+import importlib
 from pathlib import Path
 from typing import Any
 
@@ -43,20 +45,24 @@ def _create_interpreter(model_path: str | Path) -> Any:
     Returns:
         An allocated TFLite interpreter ready for inference.
     """
-    try:
-        import tflite_runtime.interpreter as _tflite
-
-        _Interpreter = _tflite.Interpreter  # noqa: N806
-    except ImportError:
-        try:
-            import tensorflow as _tf
-
-            _Interpreter = _tf.lite.Interpreter  # noqa: N806
-        except ImportError as exc:
-            raise ImportError(
-                "TFLite inference requires either 'tflite-runtime' or 'tensorflow'. "
-                "Install one: `pip install tflite-runtime`  OR  `pip install tensorflow`"
-            ) from exc
+    _Interpreter = None  # noqa: N806
+    _tried: list[str] = []
+    for _pkg, _attr in (
+        ("ai_edge_litert.interpreter", "Interpreter"),
+        ("tflite_runtime.interpreter", "Interpreter"),
+        ("tensorflow.lite", "Interpreter"),
+    ):
+        with contextlib.suppress(ImportError):
+            _Interpreter = getattr(importlib.import_module(_pkg), _attr)  # noqa: N806
+            break
+        _tried.append(_pkg.split(".")[0])
+    if _Interpreter is None:
+        _tried_str = ", ".join(f"'{p}'" for p in _tried)
+        raise ImportError(
+            f"TFLite inference requires 'ai_edge_litert', 'tflite-runtime', or 'tensorflow' "
+            f"(tried: {_tried_str}). "
+            "Install one: `pip install ai_edge_litert`  OR  `pip install tflite-runtime`"
+        )
 
     interp = _Interpreter(model_path=str(model_path))
     interp.allocate_tensors()
@@ -185,6 +191,24 @@ def _run_inference(
                 f"Available output shapes: {available_shapes}"
             )
     boxes_cwh = interp.get_tensor(out_det[boxes_idx]["index"])[0]  # (Q, 4) normalized cxcywh
+
+    # Sanity-check: normalized cxcywh boxes must be in [0, 1].  When num_classes==3
+    # the logits tensor also has last-dim 4, making shape-based and positional matching
+    # ambiguous — onnx2tf may output [labels, dets] rather than [dets, labels].
+    # A max > 2.0 or min < -2.0 reliably signals the tensors are swapped (logits routinely
+    # reach ±3–10; normalized coords are in [0, 1] by definition).  The min check handles
+    # the case where all logits are negative (e.g. max ≈ -2.96) — without it the swap is
+    # never triggered and logit values are misinterpreted as box coords.
+    if float(boxes_cwh.max()) > 2.0 or float(boxes_cwh.min()) < -2.0:
+        logger.debug(
+            "Box tensor max=%.2f exceeds [0,1] — swapping boxes/logits assignment "
+            "(num_classes==%d likely caused ambiguous positional fallback).",
+            float(boxes_cwh.max()),
+            interp.get_tensor(out_det[logits_idx]["index"]).shape[-1] - 1,
+        )
+        boxes_idx, logits_idx = logits_idx, boxes_idx
+        boxes_cwh = interp.get_tensor(out_det[boxes_idx]["index"])[0]
+
     # Drop last logit column: RF-DETR adds +1 to num_classes (no-object slot, criterion.py:323).
     # Keeping it causes class_id == len(class_names) → IndexError at display time.
     logits = interp.get_tensor(out_det[logits_idx]["index"])[0, :, :-1]  # (Q, num_classes)

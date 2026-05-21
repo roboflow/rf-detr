@@ -8,7 +8,7 @@
 
 import subprocess
 
-from rfdetr.export import tensorrt as tensorrt_export
+from rfdetr.export import _tensorrt as tensorrt_export
 
 
 def test_run_command_shell_dry_run_handles_missing_cuda_visible_devices(monkeypatch) -> None:
