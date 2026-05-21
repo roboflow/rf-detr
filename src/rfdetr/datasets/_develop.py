@@ -42,13 +42,11 @@ class _SimpleDataset:
     """Simple synthetic dataset for testing augmentations and training loops.
 
     Creates synthetic images with varying numbers of bounding boxes to test
-    edge cases in augmentation pipelines, particularly the case where
-    num_boxes=2 (which matches orig_size shape [2]).
+    edge cases in augmentation pipelines, particularly the case where num_boxes=2 (which matches orig_size shape [2]).
 
     Implements the ``__len__`` / ``__getitem__`` protocol expected by
     ``torch.utils.data.DataLoader`` without inheriting from
-    ``torch.utils.data.Dataset``, so importing this class does not pull in
-    torch at module load time.
+    ``torch.utils.data.Dataset``, so importing this class does not pull in torch at module load time.
 
     Args:
         num_samples: Number of samples in the dataset.

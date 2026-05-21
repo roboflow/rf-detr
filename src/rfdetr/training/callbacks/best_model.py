@@ -45,8 +45,7 @@ class BestModelCallback(ModelCheckpoint):
 
     ``state_dict()`` and ``load_state_dict()`` are overridden to persist
     ``_best_ema`` in the Lightning callback state, ensuring that
-    ``trainer.fit(ckpt_path=...)`` resumes EMA high-water-mark tracking
-    from the correct value.
+    ``trainer.fit(ckpt_path=...)`` resumes EMA high-water-mark tracking from the correct value.
 
     Args:
         output_dir: Directory where checkpoint files are written.
@@ -56,8 +55,7 @@ class BestModelCallback(ModelCheckpoint):
         skip_best_epochs: Ignore the first N epochs (0..N-1) when tracking
             best regular and EMA checkpoints.  Useful when fine-tuning from
             ``pretrain_weights``: the pretrained model's epoch-0 mAP can
-            artificially dominate best-checkpoint selection before training
-            adapts to the new dataset.
+            artificially dominate best-checkpoint selection before training adapts to the new dataset.
 
     Examples:
         Skip the first 3 epochs so pretrained weights do not dominate:
@@ -189,8 +187,7 @@ class BestModelCallback(ModelCheckpoint):
             from the CLI/PTL path. ``RFDETR.train()`` pre-populates
             ``model_config.model_name`` before saving any checkpoint, so the
             config type-name branch (and therefore the ``DeprecatedConfig``
-            guard) is never reached when training is started via
-            ``RFDETR.train()``.
+            guard) is never reached when training is started via ``RFDETR.train()``.
         """
         model_config = getattr(pl_module, "model_config", None)
         configured_name = getattr(model_config, "model_name", None) if model_config is not None else None
@@ -215,8 +212,7 @@ class BestModelCallback(ModelCheckpoint):
 
         Extends the parent :class:`~pytorch_lightning.callbacks.ModelCheckpoint`
         state dict with ``_best_ema`` so that ``trainer.fit(ckpt_path=...)``
-        resumes EMA tracking from the correct high-water mark rather than
-        resetting to ``0.0``.
+        resumes EMA tracking from the correct high-water mark rather than resetting to ``0.0``.
 
         Returns:
             State dict with all parent fields plus ``"_best_ema"``.
@@ -351,8 +347,7 @@ class BestModelCallback(ModelCheckpoint):
         """Select the overall best model and optionally run test evaluation.
 
         Copies the winner (regular vs EMA, strict ``>`` for EMA) to
-        ``checkpoint_best_total.pth``, strips optimizer/scheduler state, then
-        optionally runs ``trainer.test()``.
+        ``checkpoint_best_total.pth``, strips optimizer/scheduler state, then optionally runs ``trainer.test()``.
 
         Args:
             trainer: The Lightning Trainer instance.
@@ -414,8 +409,7 @@ class RFDETREarlyStopping(EarlyStopping):
     The effective metric is injected into ``trainer.callback_metrics`` under a
     synthetic key before delegating to the parent's stopping logic, so all parent
     features are available for free: ``state_dict``/``load_state_dict`` for
-    checkpoint resumption, NaN/inf guard via ``check_finite``, and
-    ``stopping_threshold``/``divergence_threshold``.
+    checkpoint resumption, NaN/inf guard via ``check_finite``, and ``stopping_threshold``/``divergence_threshold``.
 
     Early stopping evaluates only on validation epochs where the monitored
     metrics are logged; non-eval epochs (``eval_interval > 1``) are skipped automatically.
@@ -424,15 +418,13 @@ class RFDETREarlyStopping(EarlyStopping):
         patience: Number of epochs with no improvement before stopping.
         min_delta: Minimum mAP improvement to reset the patience counter.
         use_ema: When ``True`` and both regular and EMA metrics are available,
-            monitor only the EMA metric.  When ``False``, monitor
-            ``max(regular, ema)``.
+            monitor only the EMA metric.  When ``False``, monitor ``max(regular, ema)``.
         monitor_regular: Metric key for the regular model mAP.
         monitor_ema: Metric key for the EMA model mAP.
         verbose: If ``True``, log early stopping status each epoch.
         skip_best_epochs: Ignore the first N epochs (0..N-1) when evaluating
             patience and best-score baselines.  Set this when fine-tuning from
-            ``pretrain_weights`` to avoid premature stopping before the model
-            adapts to the new dataset.
+            ``pretrain_weights`` to avoid premature stopping before the model adapts to the new dataset.
 
     Examples:
         Fine-tuning from pretrained weights — skip first 3 epochs:

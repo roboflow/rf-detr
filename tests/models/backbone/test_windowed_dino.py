@@ -215,8 +215,7 @@ def test_buggy_reshape_silent_corruption_for_nonsquare():
     inflated, which silently corrupts the tensor layout.
 
     Pre-fix with hp=4, wp=6, hidden_size=8, num_windows=2:
-      total elements = 1*4*6*8 = 192
-      buggy fixed dims = 2*2*2*2 = 16  →  last dim inferred as 192/16 = 12 (not 8)
+      total elements = 1*4*6*8 = 192 buggy fixed dims = 2*2*2*2 = 16  →  last dim inferred as 192/16 = 12 (not 8)
 
     The fix ensures the correct reshape always yields a last dim equal to hidden_size.
     """

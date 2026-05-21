@@ -476,8 +476,7 @@ class TestBestModelCallback:
         """on_fit_end loads checkpoint_best_total.pth weights before trainer.test().
 
         Mirrors legacy main.py:602-609 which loads the best checkpoint into the
-        model before running test evaluation so the test loop measures the best
-        model, not the end-of-training state.
+        model before running test evaluation so the test loop measures the best model, not the end-of-training state.
         """
         from pytorch_lightning import LightningModule
 

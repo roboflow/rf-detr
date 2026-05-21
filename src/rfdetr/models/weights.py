@@ -135,8 +135,7 @@ def _filter_intentional_keys(keys: list[str]) -> list[str]:
     ``"class_embed."`` would inadvertently match a key belonging to an
     unrelated module (e.g. ``"class_embed_projection.weight"`` is safe
     because ``class_embed_projection.`` ≠ ``class_embed.``, but using a
-    plain ``in`` check against longer ambiguous strings is fragile by
-    design).
+    plain ``in`` check against longer ambiguous strings is fragile by design).
     """
     # Substrings identifying state-dict keys that ``load_pretrain_weights`` is
     # *expected* to have to reconcile (head reinitialisation and per-group query
@@ -174,8 +173,7 @@ def _warn_on_partial_load(incompatible: Any, pretrain_weights_path: str) -> None
         incompatible: The ``_IncompatibleKeys`` namedtuple returned by
             :meth:`torch.nn.Module.load_state_dict`.
         pretrain_weights_path: Path to the checkpoint that was loaded; included
-            in the warning so the user can identify which load partially
-            succeeded.
+            in the warning so the user can identify which load partially succeeded.
     """
     missing_keys_raw = getattr(incompatible, "missing_keys", None)
     unexpected_keys_raw = getattr(incompatible, "unexpected_keys", None)
@@ -229,8 +227,7 @@ def interpolate_position_embeddings(
     Args:
         checkpoint_state: The ``"model"`` sub-dict from a loaded checkpoint.
         pe_size: Target grid side length in patches (number of patches per spatial
-            dimension, assuming a square grid).  Typically
-            ``model_config.positional_encoding_size``.
+            dimension, assuming a square grid).  Typically ``model_config.positional_encoding_size``.
     """
     n_target = pe_size * pe_size  # target number of patch tokens
 
@@ -289,8 +286,7 @@ def load_pretrain_weights(
     """Load pretrained checkpoint weights into *nn_model* in-place.
 
     Canonical implementation shared by the L1 facade (``_build_model_context``
-    in ``rfdetr.detr``) and the L2 LightningModule (``RFDETRModelModule.__init__``
-    in ``rfdetr.training.module_model``).
+    in ``rfdetr.detr``) and the L2 LightningModule (``RFDETRModelModule.__init__`` in ``rfdetr.training.module_model``).
 
     Uses the Pydantic-aware logic from ``module_model.py``:
 
@@ -309,11 +305,9 @@ def load_pretrain_weights(
     Args:
         nn_model: The model whose weights will be updated in-place.
         model_config: Pydantic ``ModelConfig`` instance. Must have
-            ``pretrain_weights``, ``num_classes``, ``num_queries``, and
-            ``group_detr`` attributes.
+            ``pretrain_weights``, ``num_classes``, ``num_queries``, and ``group_detr`` attributes.
         train_config: Deprecated since v1.8 — no longer used internally.
-            Passing a non-``None`` value emits a ``DeprecationWarning``.
-            Omit the argument; it will be removed in v1.9.
+            Passing a non-``None`` value emits a ``DeprecationWarning``. Omit the argument; it will be removed in v1.9.
 
     Returns:
         List of class name strings from the checkpoint, or an empty list if none

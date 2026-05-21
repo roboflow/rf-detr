@@ -152,8 +152,7 @@ def _resolve_patch_size(patch_size: int | None, model_config: object, caller: st
     Args:
         patch_size: Value supplied by the caller, or ``None`` to read from ``model_config``.
         model_config: The model's configuration object.  Must expose ``patch_size`` as a
-            positive integer attribute when ``patch_size`` is ``None`` or when a mismatch
-            check is needed.
+            positive integer attribute when ``patch_size`` is ``None`` or when a mismatch check is needed.
         caller: Name of the calling method (``"export"`` or ``"predict"``) — used in
             error messages to help the caller locate the problem.
 
@@ -187,8 +186,7 @@ def _ensure_model_on_device(model_ctx: Any) -> None:
 
     ``_build_model_context`` intentionally keeps the ``nn.Module`` on CPU so
     that ``RFDETR.__init__`` does not initialise CUDA (which would prevent DDP
-    strategies from forking in notebook environments).  This helper performs
-    the deferred ``.to(device)`` on first use.
+    strategies from forking in notebook environments).  This helper performs the deferred ``.to(device)`` on first use.
 
     It is safe to call on duck-typed stand-ins (e.g. ``SimpleNamespace``); the
     function silently returns when the expected attributes are missing.
@@ -206,8 +204,7 @@ def _ensure_model_on_device(model_ctx: Any) -> None:
 
 class RFDETR:
     """The base RF-DETR class implements the core methods for training RF-DETR models,
-    running inference on the models, optimising models, and uploading trained
-    models for deployment.
+    running inference on the models, optimising models, and uploading trained models for deployment.
     """
 
     means = [0.485, 0.456, 0.406]
@@ -460,19 +457,16 @@ class RFDETR:
           :attr:`model_config.resolution` in place before the train config is
           built. This change persists on :attr:`model_config` after
           :meth:`train` returns. The value must be a positive integer divisible
-          by ``patch_size * num_windows`` for the model variant; a
-          :class:`ValueError` is raised otherwise.
+          by ``patch_size * num_windows`` for the model variant; a :class:`ValueError` is raised otherwise.
           :attr:`model_config.positional_encoding_size` is also updated when
           the config derives it formulaically (``PE == resolution //
           patch_size``); configs with a pretrained-specific PE value (e.g.
-          ``RFDETRBase`` uses DINOv2's PE=37 at 560 px) are left unchanged to
-          preserve checkpoint compatibility.
+          ``RFDETRBase`` uses DINOv2's PE=37 at 560 px) are left unchanged to preserve checkpoint compatibility.
         * ``device`` — normalized via :class:`torch.device` and mapped to PyTorch
           Lightning trainer arguments. ``"cpu"`` becomes ``accelerator="cpu"``;
           ``"cuda"`` and ``"cuda:N"`` become ``accelerator="gpu"`` and optionally
           ``devices=[N]``; ``"mps"`` becomes ``accelerator="mps"``. Other valid
-          torch device types fall back to PTL auto-detection and emit a
-          :class:`UserWarning`.
+          torch device types fall back to PTL auto-detection and emit a :class:`UserWarning`.
         * ``callbacks`` — if the dict contains any non-empty lists a
           :class:`DeprecationWarning` is emitted; the dict is then discarded.
           Use PTL :class:`~pytorch_lightning.Callback` objects passed via
@@ -483,8 +477,7 @@ class RFDETR:
           any JSON-serialisable value) stored under the ``"notes"`` key in
           every ``.pth`` checkpoint produced during training.  The value is
           also available inside ``args["notes"]`` for full provenance.  Pass
-          the same value to :meth:`export` to embed it in the ONNX file as
-          well.
+          the same value to :meth:`export` to embed it in the ONNX file as well.
 
         After training completes the underlying ``nn.Module`` is synced back
         onto ``self.model.model`` so that :meth:`predict` and :meth:`export`
@@ -783,8 +776,7 @@ class RFDETR:
         """Remove the optimized inference model and reset all optimization flags.
 
         Clears ``model.inference_model`` and resets all internal state set by
-        :meth:`optimize_for_inference`. Safe to call even if the model has not
-        been optimized.
+        :meth:`optimize_for_inference`. Safe to call even if the model has not been optimized.
 
         Examples:
             >>> from types import SimpleNamespace
@@ -855,8 +847,7 @@ class RFDETR:
     ) -> Path:
         """Export the trained model to ONNX or TFLite format.
 
-        See the `export documentation <https://rfdetr.roboflow.com/learn/export/>`_
-        for more information.
+        See the `export documentation <https://rfdetr.roboflow.com/learn/export/>`_ for more information.
 
         Args:
             output_dir: Directory to write the exported model to.
@@ -877,8 +868,7 @@ class RFDETR:
                 Shape divisibility is validated against ``patch_size * num_windows``.
             format: Export format — ``"onnx"`` (default) or ``"tflite"``.
                 When ``"tflite"`` is selected the model is first exported to ONNX
-                then converted to TFLite via ``onnx2tf``.  Requires
-                ``pip install rfdetr[onnx,tflite]``.
+                then converted to TFLite via ``onnx2tf``.  Requires ``pip install rfdetr[onnx,tflite]``.
 
                 .. warning::
                     TFLite export is experimental and subject to change; upstream
@@ -1092,8 +1082,7 @@ class RFDETR:
 
         For COCO-style datasets this counts all categories by ``id`` from
         ``train/_annotations.coco.json`` (matching the remapping based on
-        ``coco.cats`` used by the training datamodule). For YOLO-style datasets
-        it falls back to ``_load_classes``.
+        ``coco.cats`` used by the training datamodule). For YOLO-style datasets it falls back to ``_load_classes``.
         """
         if is_valid_coco_dataset(dataset_dir):
             coco_path = os.path.join(dataset_dir, "train", "_annotations.coco.json")
@@ -1251,10 +1240,8 @@ class RFDETR:
             ``uint8`` image array of shape ``(H, W, 3)`` when ``include_source_image=True``.
 
         Note:
-            ``source_image`` moved from ``detections.data`` to
-            ``detections.metadata``. Update callers reading
-            ``detections.data["source_image"]`` to use
-            ``detections.metadata["source_image"]``.
+            ``source_image`` moved from ``detections.data`` to ``detections.metadata``. Update callers reading
+            ``detections.data["source_image"]`` to use ``detections.metadata["source_image"]``.
 
         Note:
             ``class_name`` mapping uses one of two modes depending on the checkpoint.

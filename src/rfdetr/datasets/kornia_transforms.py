@@ -23,20 +23,15 @@ Usage::
     )
 
     # Detection:
-    pipeline = build_kornia_pipeline(aug_config, resolution=560)
-    normalize = build_normalize()
-    boxes_padded, valid = collate_boxes(targets, device)
-    img_aug, boxes_aug = pipeline(img, boxes_padded)
-    img_aug = normalize(img_aug)
-    targets = unpack_boxes(boxes_aug, valid, targets, H, W)
+    pipeline = build_kornia_pipeline(aug_config, resolution=560) normalize = build_normalize()
+    boxes_padded, valid = collate_boxes(targets, device) img_aug, boxes_aug = pipeline(img, boxes_padded)
+    img_aug = normalize(img_aug) targets = unpack_boxes(boxes_aug, valid, targets, H, W)
 
     # Segmentation (Phase 2):
-    pipeline = build_kornia_pipeline(aug_config, resolution=560, with_masks=True)
-    normalize = build_normalize()
+    pipeline = build_kornia_pipeline(aug_config, resolution=560, with_masks=True) normalize = build_normalize()
     boxes_padded, valid = collate_boxes(targets, device)
     masks_padded = collate_masks(targets, device, n_max=valid.shape[1], image_height=H, image_width=W)
-    img_aug, boxes_aug, masks_aug = pipeline(img, boxes_padded, masks_padded)
-    img_aug = normalize(img_aug)
+    img_aug, boxes_aug, masks_aug = pipeline(img, boxes_padded, masks_padded) img_aug = normalize(img_aug)
     targets = unpack_boxes(boxes_aug, valid, targets, H, W, masks_aug=masks_aug)
 """
 
@@ -434,8 +429,7 @@ def collate_masks(
             Dicts without the key are treated as having zero instances.
         device: Device on which to allocate the output tensor.
         n_max: Maximum instance count across the batch — must equal
-            ``collate_boxes(targets, device)[1].shape[1]`` to keep box/mask
-            indices in sync.
+            ``collate_boxes(targets, device)[1].shape[1]`` to keep box/mask indices in sync.
         image_height: Spatial height ``H`` of each mask (pixels).
         image_width: Spatial width ``W`` of each mask (pixels).
 

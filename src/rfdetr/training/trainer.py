@@ -105,8 +105,7 @@ def build_trainer(
         train_config: Training hyperparameter configuration.
         model_config: Architecture configuration (used for precision and segmentation).
         accelerator: PTL accelerator string (e.g. ``"auto"``, ``"cpu"``, ``"gpu"``).
-            Defaults to ``None`` which reads from ``train_config.accelerator``
-            (itself defaulting to ``"auto"``).
+            Defaults to ``None`` which reads from ``train_config.accelerator`` (itself defaulting to ``"auto"``).
             Pass ``"cpu"`` to override auto-detection (e.g. when the caller
             explicitly requests CPU training via ``device="cpu"``).
         **trainer_kwargs: Extra keyword arguments forwarded verbatim to

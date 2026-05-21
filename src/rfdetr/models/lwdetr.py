@@ -167,8 +167,7 @@ class LWDETR(nn.Module):
         ``out_features`` equals *num_classes*.  When *num_classes* is larger than
         the current head the existing weights are tiled; when smaller they are
         truncated.  Replacing the module (rather than mutating ``.data``) keeps
-        ``nn.Linear.out_features`` consistent with the actual weight shape, which
-        is required for correct ONNX export.
+        ``nn.Linear.out_features`` consistent with the actual weight shape, which is required for correct ONNX export.
 
         Args:
             num_classes: Target number of output classes (including background).
@@ -572,8 +571,7 @@ def build_criterion_from_config(
 ) -> tuple[SetCriterion, PostProcess]:
     """Build criterion and postprocessor directly from config objects.
 
-    A config-native alternative to
-    ``build_criterion_and_postprocessors(build_namespace(mc, tc))``.
+    A config-native alternative to ``build_criterion_and_postprocessors(build_namespace(mc, tc))``.
 
     Args:
         model_config: Architecture configuration.

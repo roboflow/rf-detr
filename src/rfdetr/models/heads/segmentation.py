@@ -412,8 +412,7 @@ def get_uncertain_point_coords_with_randomness(
         coarse_logits: A tensor of shape (N, C, Hmask, Wmask) or (N, 1, Hmask, Wmask) for
             class-specific or class-agnostic prediction.
         uncertainty_func: A function that takes a Tensor of shape (N, C, P) or (N, 1, P) that
-            contains logit predictions for P points and returns their uncertainties as a Tensor of
-            shape (N, 1, P).
+            contains logit predictions for P points and returns their uncertainties as a Tensor of shape (N, 1, P).
         num_points: The number of points P to sample.
         oversample_ratio: Oversampling parameter.
         importance_sample_ratio: Ratio of points that are sampled via importnace sampling.

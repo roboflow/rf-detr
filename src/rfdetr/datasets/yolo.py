@@ -225,8 +225,7 @@ def _parse_yolo_label_line(
         height: Image height in pixels.
         parse_polygons: When ``False`` the pixel-space polygon array is not
             computed or returned (``polygon_px`` will be ``None``).  Set to
-            ``False`` on the detection-only path to avoid allocating polygon
-            arrays that would immediately be discarded.
+            ``False`` on the detection-only path to avoid allocating polygon arrays that would immediately be discarded.
 
     Returns:
         Tuple of ``(class_id, xyxy_px, polygon_px)`` where coordinates are in
@@ -303,8 +302,7 @@ def _build_yolo_samples(
 
     Iterates over every image in ``img_folder``, reads image dimensions via PIL
     (header-only, no full decode), and parses the matching ``.txt`` label file
-    when present.  Images without a label file are included as *background*
-    samples with empty detections.
+    when present.  Images without a label file are included as *background* samples with empty detections.
 
     Args:
         img_folder: Path to the directory containing images.
@@ -600,13 +598,11 @@ class YoloDetection(VisionDataset):
     Both detection (``include_masks=False``) and segmentation
     (``include_masks=True``) paths use a lazy backend: image pixels are loaded
     on demand inside ``__getitem__`` rather than at construction time, which
-    keeps peak RAM proportional to the number of annotations rather than to
-    ``N × H × W``.
+    keeps peak RAM proportional to the number of annotations rather than to ``N × H × W``.
 
     Images without a matching ``.txt`` label file are treated as *background*
     images and produce empty detections.  This ensures that datasets containing
-    a mix of annotated and unannotated images are handled correctly in both
-    single-GPU and multi-GPU training.
+    a mix of annotated and unannotated images are handled correctly in both single-GPU and multi-GPU training.
 
     This class provides a VisionDataset interface compatible with RF-DETR training,
     matching the API of CocoDetection.
@@ -617,8 +613,7 @@ class YoloDetection(VisionDataset):
         data_file: Path to data.yaml file containing class names and dataset info
         transforms: Optional transforms to apply to images and targets
         include_masks: Whether to load segmentation masks (for YOLO segmentation format).
-            When True polygons are parsed and rasterized on demand; when False only
-            bounding-box coordinates are stored.
+            When True polygons are parsed and rasterized on demand; when False only bounding-box coordinates are stored.
     """
 
     def __init__(
@@ -678,8 +673,7 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
             ``dataset_dir``, ``square_resize_div_64``, ``aug_config``,
             ``segmentation_head``, ``multi_scale``, ``expanded_scales``,
             ``do_random_resize_via_padding``, ``patch_size``, ``num_windows``.
-            ``aug_config`` is forwarded to the transform builder; when
-            ``None`` the builder falls back to the default
+            ``aug_config`` is forwarded to the transform builder; when ``None`` the builder falls back to the default
             :data:`~rfdetr.datasets.aug_config.AUG_CONFIG`.
         resolution: Target square resolution in pixels.
 

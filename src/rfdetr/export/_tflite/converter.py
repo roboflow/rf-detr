@@ -46,8 +46,7 @@ shelling out to the CLI) so that we can:
 * Apply a compatibility shim for older ``onnx2tf`` releases that call
   :func:`numpy.load` on pickled data without ``allow_pickle=True``.
 * Redirect ``onnx2tf``'s built-in ``download_test_image_data()`` to use
-  locally-prepared calibration data instead of downloading from GitHub
-  (which can fail in many environments).
+  locally-prepared calibration data instead of downloading from GitHub (which can fail in many environments).
 
 ``onnx2tf`` calls ``download_test_image_data()`` for its ONNX-vs-TF output
 validation.  ``_patch_validation_download()`` redirects that call to local
@@ -66,8 +65,7 @@ quantization.
 Note:
     The resulting ``.tflite`` model expects the same input normalization as
     the ONNX model: ImageNet mean/std (``mean=[0.485, 0.456, 0.406]``,
-    ``std=[0.229, 0.224, 0.225]``).  The caller is responsible for applying
-    this normalization at inference time.
+    ``std=[0.229, 0.224, 0.225]``).  The caller is responsible for applying this normalization at inference time.
 
 Note:
     Segmentation models additionally emit a ``masks`` output.  FP32, FP16,
@@ -113,8 +111,7 @@ def _replace_single_gridsample(node: Any, graph: Any, *, index: int) -> None:
     ``Gather(axis=0)`` to TFLite's ``GATHER`` op with no ``batch_dims`` —
     the only TFLite gather path that is unconditionally supported, neither
     crashing on ``AllocateTensors()`` nor producing wrong values.
-    Per-sample batch offsets are added to the flat index so that a single
-    rank-1 ``Gather`` covers the entire batch.
+    Per-sample batch offsets are added to the flat index so that a single rank-1 ``Gather`` covers the entire batch.
 
     The replacement is mathematically identical to PyTorch's
     ``F.grid_sample`` for ``mode="bilinear"``, ``padding_mode="zeros"``,
@@ -122,8 +119,7 @@ def _replace_single_gridsample(node: Any, graph: Any, *, index: int) -> None:
     zero-padded border, which has the same effect as PyTorch's zero padding.
 
     Shape-dependent values are computed at runtime via ONNX Shape/Gather/
-    Concat/Cast ops so the subgraph works for any static or dynamic input
-    shape.
+    Concat/Cast ops so the subgraph works for any static or dynamic input shape.
 
     Args:
         node: The ``gs.Node`` to replace (must be a ``GridSample`` node).
@@ -633,8 +629,7 @@ def _load_calibration_images(
             alphabetically and the first *max_images* are used.
 
     Returns:
-        A ``float32`` NumPy array of shape ``(N, height, width, 3)`` with
-        pixel values in ``[0, 1]``.
+        A ``float32`` NumPy array of shape ``(N, height, width, 3)`` with pixel values in ``[0, 1]``.
 
     Raises:
         FileNotFoundError: If *image_dir* does not exist or contains no
@@ -717,26 +712,22 @@ def _prepare_calibration_data(
     Args:
         onnx_path: Path to the source ``.onnx`` file (used to read the
             input tensor NCHW shape for random data generation and for
-            determining the target resolution when loading images from
-            a directory).
+            determining the target resolution when loading images from a directory).
         calibration_data: One of:
 
             * ``None`` — generate random calibration data.  Sufficient for
               fp32/fp16 but emits a warning for int8.
             * A **directory path** containing JPEG/PNG images — images are
-              loaded, resized to the model input resolution, and converted
-              to the correct format automatically.
+              loaded, resized to the model input resolution, and converted to the correct format automatically.
             * A path to a ``.npy`` file containing an array of shape
               ``(N, H, W, 3)``, dtype float32, values in ``[0, 1]``.
             * A :class:`numpy.ndarray` with the same constraints.
         output_dir: Directory where a temporary ``.npy`` file may be
-            written when *calibration_data* is ``None``, a directory, or
-            an ndarray.
+            written when *calibration_data* is ``None``, a directory, or an ndarray.
         quantization: The requested quantization mode (used only to decide
             whether to emit a warning).
         max_images: Maximum number of images to load when
-            *calibration_data* is a directory path.  Ignored for other
-            calibration data formats.
+            *calibration_data* is a directory path.  Ignored for other calibration data formats.
 
     Returns:
         Path to the ``.npy`` calibration data file.
@@ -822,16 +813,14 @@ def export_tflite(
     Args:
         onnx_path: Path to the source ``.onnx`` file.
         output_dir: Directory where TFLite artifacts will be written.
-            ``onnx2tf`` creates ``{stem}_float32.tflite`` and
-            ``{stem}_float16.tflite``.  When ``quantization="int8"`` a
+            ``onnx2tf`` creates ``{stem}_float32.tflite`` and ``{stem}_float16.tflite``.  When ``quantization="int8"`` a
             ``{stem}_dynamic_range_quant.tflite`` is additionally written.
         quantization: Quantization mode.
 
             * ``None`` / ``"fp32"`` / ``"fp16"`` — FP32 + FP16 output
               (``onnx2tf`` always emits both).
             * ``"int8"`` — additionally produce a dynamic-range INT8 model
-              (INT8 weights, float activations, ~4x smaller than FP32).
-              Static / full-integer INT8 is not supported.
+              (INT8 weights, float activations, ~4x smaller than FP32). Static / full-integer INT8 is not supported.
         calibration_data: Representative data used by ``onnx2tf`` for its
             ONNX-vs-TF output validation.  Accepts:
 
@@ -843,13 +832,11 @@ def export_tflite(
             * A :class:`numpy.ndarray` with the same format.
 
             Dynamic-range INT8 needs no calibration data, so this argument
-            does not affect the quantized weights — it only feeds onnx2tf's
-            internal validation pass.
+            does not affect the quantized weights — it only feeds onnx2tf's internal validation pass.
         verbosity: Log verbosity passed to ``onnx2tf``.  One of
             ``"debug"``, ``"info"``, ``"warn"``, ``"error"`` (default).
         max_images: Maximum number of images to load when
-            *calibration_data* is a directory path.  Defaults to 100.
-            Ignored for other calibration data formats.
+            *calibration_data* is a directory path.  Defaults to 100. Ignored for other calibration data formats.
         verbose: When ``True``, stream ``onnx2tf`` per-node progress —
             useful for monitoring long conversions (5–15 min on
             transformer-based models).  Defaults to ``False`` (silent).

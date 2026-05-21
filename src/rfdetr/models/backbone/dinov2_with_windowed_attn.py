@@ -406,8 +406,7 @@ class WindowedDinov2WithRegistersEmbeddings(nn.Module):
         Returns:
             Patch embedding tensor. When ``num_windows > 1`` the batch dimension
             is expanded to ``B * num_windows ** 2`` and the sequence length
-            corresponds to patches within a single window (plus CLS token and
-            any register tokens).
+            corresponds to patches within a single window (plus CLS token and any register tokens).
 
         Raises:
             ValueError: If ``H`` or ``W`` is not divisible by

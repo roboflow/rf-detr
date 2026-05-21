@@ -221,8 +221,7 @@ class RFDETRModelModule(LightningModule):
         insufficient: on Ampere+ hardware that flag is always ``True`` even when
         the trainer is configured for ``32-true``, which causes a
         ``params, grads, exp_avgs, and exp_avg_sqs must have same dtype, device,
-        and layout`` crash in DDP because gradient bucket views have non-matching
-        strides in FP32.
+        and layout`` crash in DDP because gradient bucket views have non-matching strides in FP32.
 
         Returns:
             ``True`` when fused AdamW is both requested and safe to use.
@@ -247,8 +246,7 @@ class RFDETRModelModule(LightningModule):
         """Build AdamW optimizer with layer-wise LR decay and LambdaLR scheduler.
 
         Uses ``trainer.estimated_stepping_batches`` for total step count so
-        cosine annealing covers the full training run regardless of dataset
-        size or accumulation settings.
+        cosine annealing covers the full training run regardless of dataset size or accumulation settings.
 
         Returns:
             PTL optimizer config dict with optimizer and step-interval scheduler.
@@ -373,8 +371,7 @@ class RFDETRModelModule(LightningModule):
         1. **Raw legacy format** — a ``*.pth`` file loaded directly by
            ``Trainer`` (e.g. via ``ckpt_path=``).  Recognised by the presence
            of ``"model"`` without ``"state_dict"``.  The state dict is
-           rewritten in-place with the ``"model."`` prefix so PTL can apply it
-           normally.
+           rewritten in-place with the ``"model."`` prefix so PTL can apply it normally.
 
         2. **Positional-embedding interpolation** — when the checkpoint was
            saved at a different image resolution than the current model, the

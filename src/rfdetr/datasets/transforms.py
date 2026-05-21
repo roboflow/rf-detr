@@ -124,8 +124,7 @@ def _is_geometric_transform(transform: alb.BasicTransform) -> bool:
     """Return True if transform (or any nested transform) affects spatial coordinates.
 
     For container transforms such as ``A.OneOf`` or ``A.Sequential``, returns
-    ``True`` when *any* nested transform is geometric so that bounding-box
-    handling is enabled for the whole container.
+    ``True`` when *any* nested transform is geometric so that bounding-box handling is enabled for the whole container.
 
     Args:
         transform: Albumentations transform to inspect.
@@ -165,8 +164,7 @@ def _build_albu_transform(name: str, params: Dict[str, Any]) -> alb.BasicTransfo
     Args:
         name: Transform name (e.g. ``"HorizontalFlip"``, ``"OneOf"``).
         params: Parameter dictionary for the transform.  For container transforms
-            the dict must contain a ``"transforms"`` key whose value is a list of
-            single-key dicts ``{name: params}``.
+            the dict must contain a ``"transforms"`` key whose value is a list of single-key dicts ``{name: params}``.
 
     Returns:
         Instantiated Albumentations transform.
@@ -237,8 +235,7 @@ def _random_sized_crop_uses_size_param(aug_cls: type) -> bool:
         aug_cls: Albumentations transform class to inspect.
 
     Returns:
-        ``True`` when the class accepts a ``size`` keyword argument; otherwise
-        ``False``.
+        ``True`` when the class accepts a ``size`` keyword argument; otherwise ``False``.
     """
 
     signature = inspect.signature(aug_cls.__init__)
@@ -258,8 +255,7 @@ def _normalize_albu_params(name: str, params: Dict[str, Any], aug_cls: type) -> 
         aug_cls: Albumentations transform class that will be instantiated.
 
     Returns:
-        A normalized copy of ``params`` suitable for the installed
-        Albumentations version.
+        A normalized copy of ``params`` suitable for the installed Albumentations version.
 
     Examples:
         >>> class CropV2:
@@ -367,8 +363,7 @@ class AlbumentationsWrapper:
         >>> aug_image, aug_target = wrapper(image, target)
 
     Note:
-        For custom geometric transforms, add the transform class name to the
-        GEOMETRIC_TRANSFORMS set at module level.
+        For custom geometric transforms, add the transform class name to the GEOMETRIC_TRANSFORMS set at module level.
     """
 
     def __init__(self, transform: alb.BasicTransform) -> None:
@@ -572,8 +567,7 @@ class AlbumentationsWrapper:
 
         This method handles the data format conversion between RF-DETR and Albumentations:
         1. Converts PIL Image to numpy array (required by Albumentations)
-        2. Converts PyTorch tensors to numpy/lists (required by Albumentations)
-        3. Applies the transform
+        2. Converts PyTorch tensors to numpy/lists (required by Albumentations) 3. Applies the transform
         4. Converts results back to PIL Image and PyTorch tensors
 
         For geometric transforms with bounding boxes, this method also:
@@ -678,8 +672,7 @@ class AlbumentationsWrapper:
                 },
             }
 
-        **List format** (new; useful when you need two entries with the same name
-        or when explicit order matters)::
+        **List format** (new; useful when you need two entries with the same name or when explicit order matters)::
 
             config = [
                 {"HorizontalFlip": {"p": 0.5}},
@@ -692,15 +685,13 @@ class AlbumentationsWrapper:
             ]
 
         **Shorthand for container ``transforms`` list** -- when a container key's
-        value is a *list* rather than a dict, it is interpreted as the
-        ``transforms`` parameter::
+        value is a *list* rather than a dict, it is interpreted as the ``transforms`` parameter::
 
             {"OneOf": [{"HorizontalFlip": {"p": 1.0}}, {"VerticalFlip": {"p": 1.0}}]}
 
         Args:
             config_dict: Augmentation configuration -- either a ``dict`` mapping
-                transform names to parameter dicts, or a ``list`` of single-key
-                dicts ``{name: params}``.
+                transform names to parameter dicts, or a ``list`` of single-key dicts ``{name: params}``.
 
         Returns:
             List of :class:`AlbumentationsWrapper` instances in config order.

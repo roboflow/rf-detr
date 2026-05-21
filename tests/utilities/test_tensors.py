@@ -503,8 +503,7 @@ class TestMakeCollateFn:
             *shapes: Variadic sequence of ``(C, H, W)`` shapes, one per image.
 
         Returns:
-            List of ``(image_tensor, target_dict)`` pairs ready to pass to a
-            collate callable.
+            List of ``(image_tensor, target_dict)`` pairs ready to pass to a collate callable.
         """
         batch = []
         for shape in shapes:

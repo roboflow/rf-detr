@@ -222,8 +222,7 @@ class TestPredictSourceData:
         """Boolean index on class_id must not raise IndexError — exact issue #968 pattern.
 
         The reporter used ``detections.class_id == 1`` to filter by class, producing a
-        partial boolean mask (1 of 2 detections).  This is the primary reproduction path
-        from the original bug report.
+        partial boolean mask (1 of 2 detections).  This is the primary reproduction path from the original bug report.
         """
         img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
         model = _DummyRFDETR()
@@ -253,8 +252,7 @@ class TestPredictSourceData:
 
         Regression test for https://github.com/roboflow/rf-detr/issues/963.
         MeanAveragePrecision.compute() uses __getitem__ (not just __iter__) on
-        Detections objects — both paths go through get_data_item() and would have
-        crashed on the old tuple format.
+        Detections objects — both paths go through get_data_item() and would have crashed on the old tuple format.
         """
         img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
         model = _DummyRFDETR()
@@ -711,8 +709,7 @@ class TestPredictClassNameData:
     def test_finetuned_coco_names_uses_direct_indexing(self) -> None:
         """Fine-tuned 80-class model with COCO names must use direct 0-indexed lookup, not sparse remap.
 
-        When num_classes == len(COCO_CLASS_NAMES) (not strictly greater), the COCO
-        sparse-ID branch must NOT activate.
+        When num_classes == len(COCO_CLASS_NAMES) (not strictly greater), the COCO sparse-ID branch must NOT activate.
         """
         from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
 

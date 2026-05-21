@@ -86,10 +86,8 @@ def convert_coco_poly_to_mask(segmentations: List[Any], height: int, width: int)
     Args:
         segmentations: Per-instance segmentation annotations.  Each element is
             either a polygon list (``[[x1, y1, x2, y2, ...], ...]``), an RLE
-            dict (``{"counts": ..., "size": [H, W]}``), or ``None`` / empty
-            for instances without a mask.
-            Dicts must be valid COCO RLE annotations with non-empty ``"counts"``
-            and ``"size"`` fields.
+            dict (``{"counts": ..., "size": [H, W]}``), or ``None`` / empty for instances without a mask.
+            Dicts must be valid COCO RLE annotations with non-empty ``"counts"`` and ``"size"`` fields.
         height: Image height in pixels (used for polygon rasterisation).
         width: Image width in pixels (used for polygon rasterisation).
 
@@ -433,8 +431,7 @@ def make_coco_transforms(
             ``on_after_batch_transfer``.  Has no effect on val/test splits.
 
     Returns:
-        A :class:`torchvision.transforms.v2.Compose` pipeline ready to be passed
-        to :class:`CocoDetection`.
+        A :class:`torchvision.transforms.v2.Compose` pipeline ready to be passed to :class:`CocoDetection`.
 
         .. note::
             This pipeline does **not** guarantee that output ``H`` and ``W`` are
@@ -505,8 +502,7 @@ def make_coco_transforms_square_div_64(
 
     This function builds a torchvision-style transform pipeline for COCO images that
     resizes them to square shapes suitable for models that require spatial dimensions
-    divisible by 64. It supports multi-scale training and optional random resizing and
-    cropping for the training split.
+    divisible by 64. It supports multi-scale training and optional random resizing and cropping for the training split.
 
     When *gpu_postprocess* is ``True``, both the Albumentations augmentation
     wrappers and the ``Normalize`` step are omitted from the ``"train"`` pipeline.
@@ -523,11 +519,9 @@ def make_coco_transforms_square_div_64(
         expanded_scales: If True, expand the range of scales used during
             multi-scale training. Passed through to ``compute_multi_scale_scales``.
         skip_random_resize: If True and ``multi_scale`` is enabled, use only the
-            largest scale returned by ``compute_multi_scale_scales`` and skip random
-            selection among multiple scales.
+            largest scale returned by ``compute_multi_scale_scales`` and skip random selection among multiple scales.
         patch_size: Patch size used by ``compute_multi_scale_scales`` when
-            determining valid square resolutions (typically related to the model's
-            patch embedding or stride).
+            determining valid square resolutions (typically related to the model's patch embedding or stride).
         num_windows: Number of windows used by ``compute_multi_scale_scales`` to
             derive the list of candidate square resolutions.
         aug_config: Augmentation configuration dictionary compatible with
@@ -539,8 +533,7 @@ def make_coco_transforms_square_div_64(
             ``on_after_batch_transfer``.  Has no effect on val/test splits.
 
     Returns:
-        A ``Compose`` object containing the composed image transforms appropriate
-        for the specified ``image_set``.
+        A ``Compose`` object containing the composed image transforms appropriate for the specified ``image_set``.
     """
     to_image = ToImage()
     to_float = ToDtype(torch.float32, scale=True)

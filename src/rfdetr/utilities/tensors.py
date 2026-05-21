@@ -71,8 +71,7 @@ class NestedTensor:
         """Move tensors and mask to *device*.
 
         Args:
-            device: Target device.
-            **kwargs: Additional arguments forwarded to ``Tensor.to``.
+            device: Target device. **kwargs: Additional arguments forwarded to ``Tensor.to``.
 
         Returns:
             New NestedTensor on *device*.
@@ -124,7 +123,8 @@ def nested_tensor_from_tensor_list(
             rounded-up strip is explicitly tracked in the ``mask`` as padding.
 
     Returns:
-        NestedTensor with all images padded to the maximum spatial dimensions (rounded up to *block_size* when provided).
+        NestedTensor with all images padded to the maximum spatial dimensions (rounded up to *block_size*
+        when provided).
     """
     # TODO make this more general
     if tensor_list[0].ndim == 3:
@@ -348,8 +348,7 @@ def make_collate_fn(
     Passing ``block_size=None`` produces a callable equivalent to :func:`collate_fn`.
 
     The returned callable is a :class:`functools.partial`, not a closure, so it
-    is picklable and safe to use with multi-process DataLoaders (``num_workers > 0``)
-    and DDP spawn workers.
+    is picklable and safe to use with multi-process DataLoaders (``num_workers > 0``) and DDP spawn workers.
 
     Args:
         block_size: When set, batch ``H`` and ``W`` are rounded up to the next

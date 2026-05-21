@@ -786,8 +786,7 @@ class TestTransferBatchToDevice:
 class TestBackendResolution:
     """Backend resolution selects Kornia, CPU, or raises depending on environment.
 
-    All tests run on CPU CI by mocking fork-safe CUDA detection and the
-    ``kornia`` import as needed.
+    All tests run on CPU CI by mocking fork-safe CUDA detection and the ``kornia`` import as needed.
     """
 
     def _build_dm_with_backend(self, tmp_path, augmentation_backend="cpu"):

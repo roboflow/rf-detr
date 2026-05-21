@@ -295,8 +295,7 @@ class TestDownloadErrorHandling:
         """Absolute paths like /content/rf-detr-base.pth must still match the registry.
 
         Regression test: previously ModelWeights.from_filename received the full
-        path instead of the basename, so it returned None and the download was
-        silently skipped.
+        path instead of the basename, so it returned None and the download was silently skipped.
         """
         mock_exists.return_value = False
 

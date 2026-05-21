@@ -210,8 +210,7 @@ class TestRFDETRTrainPTL:
         """self.model.class_names is set from RFDETRDataModule.class_names after train().
 
         Regression test for #509: custom class names were not synced back from
-        RFDETRDataModule after training, causing predict() to return COCO labels
-        instead of the dataset's class labels.
+        RFDETRDataModule after training, causing predict() to return COCO labels instead of the dataset's class labels.
         """
         mock_self = _make_rfdetr_self(tmp_path)
         p_mod, p_dm, p_bt, _mcls, dmcls, _mock_bt = patch_lit

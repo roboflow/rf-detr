@@ -142,8 +142,7 @@ def __getattr__(name: str):
     * Training/PTL exports (names in ``_LAZY_TRAINING``) are imported from ``rfdetr.training``
       on first use to avoid importing PyTorch Lightning at ``import rfdetr`` time.
     * Plus-only exports (names in ``_PLUS_EXPORTS``) are imported from ``rfdetr.platform.models``,
-      and a descriptive ``ImportError`` is raised with an installation hint if the model is
-      not available.
+      and a descriptive ``ImportError`` is raised with an installation hint if the model is not available.
     * Removed-module aliases (keys in ``_REMOVED_IN_V17``, such as ``util`` and ``deploy``)
       are first attempted via a shim submodule (e.g. ``rfdetr.util``); once the shim files
       are removed, a migration-hint ``ImportError`` is raised instead of silently masking

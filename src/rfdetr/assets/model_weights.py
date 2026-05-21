@@ -275,8 +275,7 @@ class ModelWeights(ModelWeightsBase):
 def get_model_cache_dir() -> str:
     """Return the directory where RF-DETR caches downloaded model weights.
 
-    Reads the ``RF_HOME`` environment variable; defaults to ``~/.roboflow/models``
-    when the variable is not set.
+    Reads the ``RF_HOME`` environment variable; defaults to ``~/.roboflow/models`` when the variable is not set.
 
     Set ``RF_HOME`` to override the cache location for all RF-DETR models:
 

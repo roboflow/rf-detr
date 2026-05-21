@@ -117,8 +117,7 @@ def batch_dice_loss(inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor
     Args:
         inputs: A float tensor of arbitrary shape. The predictions for each example.
         targets: A float tensor with the same shape as inputs. Stores the binary
-            classification label for each element in inputs
-            (0 for the negative class and 1 for the positive class).
+            classification label for each element in inputs (0 for the negative class and 1 for the positive class).
     """
     inputs = inputs.sigmoid()
     inputs = inputs.flatten(1)
@@ -137,8 +136,7 @@ def batch_sigmoid_ce_loss(inputs: torch.Tensor, targets: torch.Tensor) -> torch.
     Args:
         inputs: A float tensor of arbitrary shape. The predictions for each example.
         targets: A float tensor with the same shape as inputs. Stores the binary
-            classification label for each element in inputs
-            (0 for the negative class and 1 for the positive class).
+            classification label for each element in inputs (0 for the negative class and 1 for the positive class).
 
     Returns:
         Loss tensor.

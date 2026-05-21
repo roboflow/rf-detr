@@ -29,8 +29,7 @@ class RFDETREMACallback(Callback):
     Args:
         decay: Base EMA decay factor. Corresponds to ``TrainConfig.ema_decay``.
         tau: Warm-up time constant (in optimizer steps). When > 0 the
-            effective decay ramps from 0 towards *decay* following
-            ``decay * (1 - exp(-updates / tau))``. Corresponds to
+            effective decay ramps from 0 towards *decay* following ``decay * (1 - exp(-updates / tau))``. Corresponds to
             ``TrainConfig.ema_tau``.
         use_buffers: Whether buffers are averaged in addition to parameters.
         update_interval_steps: Update EMA every N optimizer steps.
@@ -65,8 +64,7 @@ class RFDETREMACallback(Callback):
 
         Matches the ``ModelEma`` formula where ``updates`` is 1-indexed:
         PTL's ``num_averaged`` starts at 0 (incremented *after* calling
-        ``avg_fn``), so ``updates = num_averaged + 1`` reproduces the
-        same sequence of effective decay values.
+        ``avg_fn``), so ``updates = num_averaged + 1`` reproduces the same sequence of effective decay values.
 
         Args:
             averaged_param: Current EMA parameter value.

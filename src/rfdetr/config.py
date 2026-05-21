@@ -165,8 +165,7 @@ class ModelConfig(BaseConfig):
         (``default_pe == default_resolution // patch_size``).
 
         Configs with a pretrained-specific PE (e.g., ``RFDETRBaseConfig`` with
-        ``positional_encoding_size=37`` for DINOv2's native 518 px grid, while
-        ``resolution=560``) are left unchanged.
+        ``positional_encoding_size=37`` for DINOv2's native 518 px grid, while ``resolution=560``) are left unchanged.
         """
         if "resolution" not in self.model_fields_set or "positional_encoding_size" in self.model_fields_set:
             return self
@@ -200,12 +199,10 @@ class ModelConfig(BaseConfig):
         Three cases:
 
         1. ``pretrain_weights`` was explicitly set to ``None`` and the variant
-           has a non-``None`` default → warn that the model is being initialised
-           from scratch.
+           has a non-``None`` default → warn that the model is being initialised from scratch.
         2. ``pretrain_weights`` was explicitly set to a non-``None`` custom path
            → suppress the architecture-override check (we cannot know the
-           architecture stored in a user-supplied checkpoint at config time).
-           The load-time partial-load detector in
+           architecture stored in a user-supplied checkpoint at config time). The load-time partial-load detector in
            :func:`rfdetr.models.weights.load_pretrain_weights` covers this case
            by inspecting the checkpoint contents directly.
         3. ``pretrain_weights`` is the variant's published default → check
@@ -607,13 +604,11 @@ class TrainConfig(BaseModel):
         * ``auto_batch_target_effective`` is interpreted as the **per-device**
           effective batch size target, i.e. the number of images seen by a
           single process in one optimizer step after accounting for
-          ``grad_accum_steps``. In multi-GPU / multi-node runs the global
-          effective batch size is therefore:
+          ``grad_accum_steps``. In multi-GPU / multi-node runs the global effective batch size is therefore:
 
             ``global_effective_batch = auto_batch_target_effective * devices * num_nodes``
 
-          This avoids silently changing behavior when scaling from single-GPU
-          to multi-GPU training.
+          This avoids silently changing behavior when scaling from single-GPU to multi-GPU training.
     """
 
     lr: float = 1e-4

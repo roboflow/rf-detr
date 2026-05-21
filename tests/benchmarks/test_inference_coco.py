@@ -123,8 +123,7 @@ def _build_ptl_module(rfdetr_obj: RFDETR, train_config: TrainConfig) -> RFDETRMo
             valid ``output_dir``).
 
     Returns:
-        Weight-synced :class:`~rfdetr.training.RFDETRModelModule` ready for
-        ``Trainer.validate`` or ``Trainer.predict``.
+        Weight-synced :class:`~rfdetr.training.RFDETRModelModule` ready for ``Trainer.validate`` or ``Trainer.predict``.
     """
     module = RFDETRModelModule(rfdetr_obj.model_config, train_config)
     module.model.load_state_dict(rfdetr_obj.model.model.state_dict())
