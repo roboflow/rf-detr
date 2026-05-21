@@ -11,7 +11,7 @@ _PLUS_EXPORTS = {
     "RFDETRXLarge",
 }
 
-_PLUS_AVAILABLE = True
+_IS_RFDETR_PLUS_AVAILABLE = True
 
 try:
     from rfdetr_plus.models import (
@@ -27,7 +27,7 @@ except ModuleNotFoundError as ex:
     if ex.name not in ("rfdetr_plus", "rfdetr_plus.models"):
         raise
 
-    _PLUS_AVAILABLE = False
+    _IS_RFDETR_PLUS_AVAILABLE = False
 
     import warnings
 
@@ -43,7 +43,7 @@ except ModuleNotFoundError as ex:
 def __getattr__(name: str):
     """Lazy failure for missing plus exports: warn on import, raise on access."""
     # Only intercept plus-only symbols when the extra package is missing.
-    if name in _PLUS_EXPORTS and not _PLUS_AVAILABLE:
+    if name in _PLUS_EXPORTS and not _IS_RFDETR_PLUS_AVAILABLE:
         from rfdetr.platform import _INSTALL_MSG
 
         # Surface a clear install hint when someone explicitly requests a plus symbol.

@@ -18,14 +18,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from rfdetr.detr import RFDETR
+from rfdetr.platform.models import _IS_RFDETR_PLUS_AVAILABLE as HAS_PLUS
 from rfdetr.variants import RFDETRSmall
-
-try:
-    import rfdetr.platform.models as _pm
-
-    HAS_PLUS = _pm._PLUS_AVAILABLE
-except ImportError:
-    HAS_PLUS = False
 
 
 def _ns(pretrain_weights: str, num_classes: int = 80) -> dict:
