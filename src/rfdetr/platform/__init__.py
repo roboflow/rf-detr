@@ -11,7 +11,10 @@ _INSTALL_MSG = (
     " Install it with `pip install rfdetr[plus]` (or `pip install rfdetr_plus` if supported)."
 )
 
-_IS_RFDETR_PLUS_AVAILABLE = importlib.util.find_spec("rfdetr_plus.models") is not None
+try:
+    _IS_RFDETR_PLUS_AVAILABLE = importlib.util.find_spec("rfdetr_plus.models") is not None
+except ImportError:
+    _IS_RFDETR_PLUS_AVAILABLE = False
 if not _IS_RFDETR_PLUS_AVAILABLE:
     warnings.warn(
         _INSTALL_MSG.format(name="platform model downloads"),
