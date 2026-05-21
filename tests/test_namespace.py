@@ -146,7 +146,7 @@ class TestNamespaceFieldOwnership:
 class TestBuildNamespaceDeprecated:
     """build_namespace() is a deprecated shim — verify the warning fires."""
 
-    def test_emits_deprecation_warning(self) -> None:
+    def test_emits_deprecation_warning(self, reset_build_namespace_warning_state) -> None:
         """Every call to build_namespace() must emit a DeprecationWarning."""
         from rfdetr._namespace import build_namespace
 
@@ -156,7 +156,7 @@ class TestBuildNamespaceDeprecated:
         with pytest.warns(FutureWarning, match="build_namespace"):
             build_namespace(mc, tc)
 
-    def test_result_identical_to_namespace_from_configs(self) -> None:
+    def test_result_identical_to_namespace_from_configs(self, reset_build_namespace_warning_state) -> None:
         """build_namespace output must equal _namespace_from_configs output."""
         from rfdetr._namespace import build_namespace
         from rfdetr.models._defaults import MODEL_DEFAULTS
