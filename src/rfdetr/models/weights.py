@@ -15,10 +15,8 @@ class-name extraction from ``detr.py:_load_pretrain_weights_into``.
 
 from __future__ import annotations
 
-import functools
 import math
 import os
-import warnings
 from typing import Any, List
 
 import torch
@@ -257,14 +255,7 @@ def interpolate_position_embeddings(
         )
 
 
-@deprecated(
-    target=True,
-    args_mapping={"train_config": None},
-    deprecated_in="1.8",
-    remove_in="1.9",
-    num_warns=-1,
-    stream=functools.partial(warnings.warn, category=DeprecationWarning),
-)
+@deprecated(target=True, args_mapping={"train_config": None}, deprecated_in="1.7.0", remove_in="1.9.0", num_warns=-1)
 def load_pretrain_weights(
     nn_model: torch.nn.Module,
     model_config: ModelConfig,
@@ -293,8 +284,9 @@ def load_pretrain_weights(
         nn_model: The model whose weights will be updated in-place.
         model_config: Pydantic ``ModelConfig`` instance. Must have
             ``pretrain_weights``, ``num_classes``, ``num_queries``, and ``group_detr`` attributes.
-        train_config: Deprecated since v1.8 — no longer used internally.
-            Passing a non-``None`` value emits a ``DeprecationWarning``. Omit the argument; it will be removed in v1.9.
+        train_config: Deprecated since v1.7.0 — no longer used internally.
+            Passing a non-``None`` value emits a ``DeprecationWarning``.
+            Omit the argument; it will be removed in v1.9.0.
 
     Returns:
         List of class name strings from the checkpoint, or an empty list if none are present or if

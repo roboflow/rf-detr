@@ -7,6 +7,8 @@
 
 from rfdetr.utilities.decorators import _warn_deprecated_module
 
-_warn_deprecated_module("rfdetr.models.segmentation_head", "rfdetr.models.heads.segmentation")
+_warn_deprecated_module(
+    "rfdetr.models.segmentation_head", "rfdetr.models.heads.segmentation", deprecated_in="1.6.0", remove_in="1.9.0"
+)
 
 from rfdetr.models.heads.segmentation import DepthwiseConvBlock, MLPBlock, SegmentationHead  # noqa: F401, E402

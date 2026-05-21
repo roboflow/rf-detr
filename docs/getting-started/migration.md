@@ -8,7 +8,7 @@ Read each section between your current version and your target — every section
 only the delta between two adjacent releases.
 
 ```
-1.4.x → 1.5  →  1.6  →  1.7
+1.4.x  →  1.5 →  1.6  →  1.7
 ```
 
 You can apply all changes in one go; working through sections one release at a time
@@ -47,7 +47,7 @@ See the [Changelog](../changelog.md) for the full list of changes in each releas
     source = detections.metadata["source_image"]
     ```
 
-### Deprecated (removal in v1.9)
+### Deprecated (removal in v1.9.0)
 
 !!! note "Deprecated: `rfdetr.util.*` and `rfdetr.deploy.*` import paths"
 
@@ -150,7 +150,7 @@ See the [Changelog](../changelog.md) for the full list of changes in each releas
     train_config = TrainConfig(cls_loss_coef=2.0)
     ```
 
-### Deprecated (removal in v2.0)
+### Deprecated (removal in v2.0.0)
 
 !!! note "Deprecated: `RFDETRBase` replaced by size-specific classes"
 
@@ -240,7 +240,22 @@ See the [Changelog](../changelog.md) for the full list of changes in each releas
     img, polygon = draw_synthetic_shape(...)
     ```
 
-### Deprecated (removal in v1.7)
+### Deprecated (removal in v1.8.0)
+
+!!! note "Deprecated: `simplify` and `force` arguments removed from `RFDETR.export()`"
+
+    **`RFDETR.export(..., simplify=..., force=...)`** — both arguments are no-ops.
+    Remove them from your calls.
+
+    ```python
+    # Before (deprecated)
+    model.export("model.onnx", simplify=True, force=True)
+
+    # After
+    model.export("model.onnx")
+    ```
+
+### Deprecated (removal in v1.9.0, extended from v1.7.0)
 
 !!! note "Deprecated: `rfdetr.deploy.*` moved to `rfdetr.export.*`"
 
@@ -266,19 +281,6 @@ See the [Changelog](../changelog.md) for the full list of changes in each releas
     from rfdetr.utilities.distributed import get_rank
     ```
 
-!!! note "Deprecated: `simplify` and `force` arguments removed from `RFDETR.export()`"
-
-    **`RFDETR.export(..., simplify=..., force=...)`** — both arguments are no-ops.
-    Remove them from your calls.
-
-    ```python
-    # Before (deprecated)
-    model.export("model.onnx", simplify=True, force=True)
-
-    # After
-    model.export("model.onnx")
-    ```
-
 ---
 
 ## Upgrade 1.4 → 1.5
@@ -300,7 +302,7 @@ See the [Changelog](../changelog.md) for the full list of changes in each releas
     config = ModelConfig()
     ```
 
-### Deprecated (removal in v1.7)
+### Deprecated (removal in v1.7.0)
 
 !!! note "Deprecated: `OPEN_SOURCE_MODELS` replaced by `ModelWeights` enum"
 

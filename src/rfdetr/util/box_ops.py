@@ -7,7 +7,7 @@
 
 from rfdetr.utilities.decorators import _warn_deprecated_module
 
-_warn_deprecated_module("rfdetr.util.box_ops", "rfdetr.utilities.box_ops")
+_warn_deprecated_module("rfdetr.util.box_ops", "rfdetr.utilities.box_ops", deprecated_in="1.6.0", remove_in="1.9.0")
 
 from rfdetr.utilities.box_ops import (  # noqa: F401, E402
     batch_dice_loss,

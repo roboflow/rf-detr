@@ -9,7 +9,7 @@ import sys
 
 from rfdetr.utilities.decorators import _warn_deprecated_module
 
-_warn_deprecated_module("rfdetr.deploy", "rfdetr.export")
+_warn_deprecated_module("rfdetr.deploy", "rfdetr.export", deprecated_in="1.6.0", remove_in="1.9.0")
 
 # Make old submodule paths still importable without submodule files
 import rfdetr.export.benchmark as _benchmark  # noqa: E402

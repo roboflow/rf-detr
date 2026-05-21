@@ -7,6 +7,8 @@
 
 from rfdetr.utilities.decorators import _warn_deprecated_module
 
-_warn_deprecated_module("rfdetr.util.coco_classes", "rfdetr.assets.coco_classes")
+_warn_deprecated_module(
+    "rfdetr.util.coco_classes", "rfdetr.assets.coco_classes", deprecated_in="1.6.0", remove_in="1.9.0"
+)
 
 from rfdetr.assets.coco_classes import COCO_CLASSES  # noqa: F401, E402

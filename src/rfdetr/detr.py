@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import contextlib
-import functools
 import glob
 import importlib
 import json
@@ -502,7 +501,9 @@ class RFDETR:
         callbacks_dict = kwargs.pop("callbacks", None)
         if callbacks_dict and any(callbacks_dict.values()):
             warnings.warn(
-                "Custom callbacks dict is not forwarded to PTL. Use PTL Callback objects instead.",
+                "Custom callbacks dict is not forwarded to PTL. "
+                "Deprecated since v1.7.0, will be removed in v1.9.0. "
+                "Use PTL Callback objects instead.",
                 DeprecationWarning,
                 stacklevel=2,
             )
@@ -515,7 +516,8 @@ class RFDETR:
         # Absorb legacy `start_epoch` — PTL resumes automatically via ckpt_path.
         if "start_epoch" in kwargs:
             warnings.warn(
-                "`start_epoch` is deprecated and ignored; PTL resumes automatically via `resume`.",
+                "`start_epoch` is deprecated since v1.7.0 and will be removed in v1.9.0; "
+                "PTL resumes automatically via `resume`.",
                 DeprecationWarning,
                 stacklevel=2,
             )
@@ -525,7 +527,8 @@ class RFDETR:
         run_benchmark = bool(kwargs.pop("do_benchmark", False))
         if run_benchmark:
             warnings.warn(
-                "`do_benchmark` in `.train()` is deprecated; use `rfdetr benchmark`.",
+                "`do_benchmark` in `.train()` is deprecated since v1.7.0 and will be removed in v1.9.0; "
+                "use `rfdetr benchmark`.",
                 DeprecationWarning,
                 stacklevel=2,
             )
@@ -811,10 +814,9 @@ class RFDETR:
         target=True,
         # `simplify` / `force` are retained for API compatibility and treated as no-op.
         args_mapping={"simplify": None, "force": None},
-        deprecated_in="1.6",
-        remove_in="1.8",
+        deprecated_in="1.6.0",
+        remove_in="1.8.0",
         num_warns=1,
-        stream=functools.partial(warnings.warn, category=DeprecationWarning, stacklevel=2),
     )
     def export(
         self,

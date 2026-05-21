@@ -7,6 +7,6 @@
 
 from rfdetr.utilities.decorators import _warn_deprecated_module
 
-_warn_deprecated_module("rfdetr.util.visualize", "rfdetr.visualize.data")
+_warn_deprecated_module("rfdetr.util.visualize", "rfdetr.visualize.data", deprecated_in="1.6.0", remove_in="1.9.0")
 
 from rfdetr.visualize.data import save_gt_predictions_visualization  # noqa: F401, E402

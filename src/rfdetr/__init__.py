@@ -7,20 +7,20 @@
 
 Two-phase legacy-module deprecation
 ------------------------------------
-Some sub-packages were relocated in v1.6 and are scheduled for removal in v1.8. The migration is handled in two phases
-so users get a full release cycle to update their imports:
+Some sub-packages were relocated in v1.6.0 and are scheduled for removal in v1.9.0. The migration is handled in
+two phases so users get a full release cycle to update their imports:
 
-**Phase 1 — v1.7 (current):** the old packages (``rfdetr.util``, ``rfdetr.deploy``) still exist on disk and work
+**Phase 1 — v1.7.0 (current):** the old packages (``rfdetr.util``, ``rfdetr.deploy``) still exist on disk and work
 normally, but emit a ``DeprecationWarning`` on import. ``_RemovedModuleFinder`` is installed in ``sys.meta_path`` but
 stays dormant: its ``find_spec`` returns ``None`` whenever ``importlib.machinery.PathFinder`` can resolve the name (i.e.
 while the shim directories are present).
 
-**Phase 2 — v1.8:** the shim directories are deleted.  ``PathFinder`` can no longer resolve ``rfdetr.util`` /
+**Phase 2 — v1.9.0:** the shim directories are deleted.  ``PathFinder`` can no longer resolve ``rfdetr.util`` /
 ``rfdetr.deploy``, so ``_RemovedModuleFinder`` intercepts the import and raises a descriptive ``ImportError`` (migration
 hint) instead of the cryptic default ``ModuleNotFoundError: No module named 'rfdetr.util'``.
 
 To complete Phase 2, delete ``src/rfdetr/util/`` and ``src/rfdetr/deploy/`` and bump
-``_REMOVE_IN_VERSION_1_8`` (or rename it) to reflect the new version boundary.
+``_REMOVE_IN_VERSION_1_9`` (or rename it) to reflect the new version boundary.
 """
 
 import importlib
@@ -75,10 +75,10 @@ _LAZY_TRAINING = frozenset({"RFDETRModelModule", "RFDETRDataModule", "build_trai
 _PLUS_EXPORTS = frozenset({"RFDETR2XLarge", "RFDETRXLarge"})
 
 # Legacy module aliases delegate to shim packages while they still exist, then raise
-# TODO: migration-hint ImportError messages once those shims are removed in v1.8.
-_REMOVE_IN_VERSION_1_8 = {
-    "util": "rfdetr.util will be removed in v1.8. Use rfdetr.utilities instead.",
-    "deploy": "rfdetr.deploy will be removed in v1.8. Use rfdetr.export instead.",
+# TODO: migration-hint ImportError messages once those shims are removed in v1.9.0.
+_REMOVE_IN_VERSION_1_9 = {
+    "util": "rfdetr.util will be removed in v1.9.0. Use rfdetr.utilities instead.",
+    "deploy": "rfdetr.deploy will be removed in v1.9.0. Use rfdetr.export instead.",
 }
 
 
@@ -112,14 +112,14 @@ class _RemovedModuleFinder(importlib.abc.MetaPathFinder):
         if not fullname.startswith(f"{__name__}."):
             return None
         root, _, _ = fullname.removeprefix(f"{__name__}.").partition(".")
-        if root not in _REMOVE_IN_VERSION_1_8:
+        if root not in _REMOVE_IN_VERSION_1_9:
             return None
 
         if self._PATH_FINDER.find_spec(fullname, path) is not None:
             return None
 
         is_package = fullname == f"{__name__}.{root}"
-        loader = _RemovedModuleLoader(_REMOVE_IN_VERSION_1_8[root])
+        loader = _RemovedModuleLoader(_REMOVE_IN_VERSION_1_9[root])
         return importlib.util.spec_from_loader(fullname, loader, is_package=is_package)
 
 
@@ -140,11 +140,11 @@ def __getattr__(name: str):
       on first use to avoid importing PyTorch Lightning at ``import rfdetr`` time.
     * Plus-only exports (names in ``_PLUS_EXPORTS``) are imported from ``rfdetr.platform.models``,
       and a descriptive ``ImportError`` is raised with an installation hint if the model is not available.
-    * Removed-module aliases (keys in ``_REMOVE_IN_VERSION_1_8``, such as ``util`` and ``deploy``)
+    * Removed-module aliases (keys in ``_REMOVE_IN_VERSION_1_9``, such as ``util`` and ``deploy``)
       are first attempted via a shim submodule (e.g. ``rfdetr.util``); once the shim files are removed, a migration-hint
       ``ImportError`` is raised instead of silently masking unrelated nested import errors.
     """
-    if name in _REMOVE_IN_VERSION_1_8:
+    if name in _REMOVE_IN_VERSION_1_9:
         module_name = f"{__name__}.{name}"
         try:
             value = importlib.import_module(module_name)
@@ -154,7 +154,7 @@ def __getattr__(name: str):
             # Avoid masking nested import errors from within the shim itself.
             if exc.name != module_name:
                 raise
-            raise ImportError(_REMOVE_IN_VERSION_1_8[name]) from None
+            raise ImportError(_REMOVE_IN_VERSION_1_9[name]) from None
 
     if name in _LAZY_TRAINING:
         from rfdetr import training as _training

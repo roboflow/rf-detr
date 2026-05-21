@@ -9,12 +9,13 @@ Thank you for helping to advance RF-DETR! Your participation is invaluable in ev
 3. [Development Environment Setup](#development-environment-setup)
 4. [Test-Driven Development](#test-driven-development)
 5. [Code Quality and Linting](#code-quality-and-linting)
-6. [Building Documentation](#building-documentation)
-7. [CLA Signing](#cla-signing)
-8. [Google-Style Docstrings and Mandatory Type Hints](#google-style-docstrings-and-mandatory-type-hints)
-9. [Reporting Bugs](#reporting-bugs)
-10. [Adding a New Model](#adding-a-new-model)
-11. [License](#license)
+6. [Deprecation Policy](#deprecation-policy)
+7. [Building Documentation](#building-documentation)
+8. [CLA Signing](#cla-signing)
+9. [Google-Style Docstrings and Mandatory Type Hints](#google-style-docstrings-and-mandatory-type-hints)
+10. [Reporting Bugs](#reporting-bugs)
+11. [Adding a New Model](#adding-a-new-model)
+12. [License](#license)
 
 ## How to Contribute
 
@@ -313,6 +314,75 @@ pre-commit run --all-files
 ```
 
 **Configuration:** See `.pre-commit-config.yaml` for all hooks and `pyproject.toml` for tool-specific settings (e.g., `[tool.ruff]`).
+
+## Deprecation Policy
+
+RF-DETR follows a structured deprecation process to give users enough time to migrate before anything is removed. Every contributor adding or removing public API is responsible for following this policy end-to-end.
+
+### Versioning conventions
+
+All version references use full three-part semver (e.g., `1.7.0`, not `1.7`). This applies equally to `deprecated_in`, `remove_in`, migration guide headings, and inline warning messages.
+
+### Minimum deprecation window
+
+A symbol deprecated in release `X.Y.0` must not be removed before `X.(Y+2).0`. For example, a symbol deprecated in `1.7.0` may be removed no earlier than `1.9.0`. This two-minor-release window gives users at least two upgrade cycles to react.
+
+### Emitting the warning
+
+Use `pyDeprecate` exclusively — never call `warnings.warn` directly for deprecation purposes. The importable package name is `deprecate` (not `pyDeprecate`).
+
+**Deprecating a function or method** — apply the `@deprecated` decorator and supply both version fields:
+
+```python
+from deprecate import deprecated
+
+
+@deprecated(target=new_fn, deprecated_in="1.7.0", remove_in="1.9.0")
+def old_fn(*args, **kwargs): ...
+```
+
+**Deprecating a class** — use `@deprecated_class` instead of applying `@deprecated` directly to the class:
+
+```python
+from deprecate import deprecated_class
+
+
+@deprecated_class(target=NewClass, deprecated_in="1.7.0", remove_in="1.9.0")
+class OldClass: ...
+```
+
+**Deprecating a relocated module** — keep the old module path as a shim file that calls `_warn_deprecated_module` and then re-exports the new module's public symbols. The shim must be kept until the `remove_in` release:
+
+```python
+# src/rfdetr/old_module.py
+from rfdetr.utilities.decorators import _warn_deprecated_module
+
+_warn_deprecated_module("rfdetr.old_module", "rfdetr.new_module", deprecated_in="1.7.0", remove_in="1.9.0")
+
+from rfdetr.new_module import *  # noqa: F401, F403
+```
+
+### Warning message requirements
+
+The generated message must state both the version where the symbol was deprecated and the version where it will be removed, so users can act without consulting the changelog. The `@deprecated` decorator and `_warn_deprecated_module` helper produce this automatically when both `deprecated_in` and `remove_in` are supplied. For example:
+
+> `rfdetr.old_module is deprecated since v1.7.0 and will be removed in v1.9.0; use rfdetr.new_module instead.`
+
+Do not suppress or abbreviate either version in a custom message.
+
+### Migration guide
+
+Every new deprecation must have a corresponding entry in `docs/getting-started/migration.md` under the relevant upgrade section. Entries go inside a `### Deprecated (removal in vX.Z.0)` subsection — create that subsection if it does not yet exist. The entry should name the deprecated symbol, the replacement, and a minimal before/after code snippet so users can migrate in under a minute.
+
+### Removal checklist
+
+When the `remove_in` version arrives, carry out each step in order:
+
+1. Delete the deprecated symbol, class, or shim file.
+2. Remove the `@deprecated` or `@deprecated_class` decorator from any remaining references.
+3. Add a breaking-change entry to `docs/getting-started/migration.md` under the correct upgrade section, noting what was removed and what replaces it.
+4. Search the codebase for any remaining imports of the removed symbol and update them.
+5. Verify `pre-commit run --all-files` passes and the test suite is green before opening the PR.
 
 ## Building Documentation
 

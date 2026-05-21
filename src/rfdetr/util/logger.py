@@ -7,6 +7,6 @@
 
 from rfdetr.utilities.decorators import _warn_deprecated_module
 
-_warn_deprecated_module("rfdetr.util.logger", "rfdetr.utilities.logger")
+_warn_deprecated_module("rfdetr.util.logger", "rfdetr.utilities.logger", deprecated_in="1.6.0", remove_in="1.9.0")
 
 from rfdetr.utilities.logger import get_logger  # noqa: F401, E402

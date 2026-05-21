@@ -145,7 +145,7 @@ class ModelConfig(BaseConfig):
             # Pydantic v2.  The warning still fires correctly; the origin frame is
             # less precise than ideal.
             warnings.warn(
-                "ModelConfig.cls_loss_coef is deprecated and will be removed in v1.9. "
+                "ModelConfig.cls_loss_coef is deprecated since v1.7.0 and will be removed in v1.9.0. "
                 "Set cls_loss_coef on TrainConfig instead.",
                 DeprecationWarning,
                 stacklevel=2,
@@ -666,8 +666,8 @@ class TrainConfig(BaseModel):
         """Emit DeprecationWarning for fields whose ownership is moving to ModelConfig.
 
         The following fields are duplicated between ``ModelConfig`` and ``TrainConfig`` but ``ModelConfig`` is the
-        authoritative source (Item #3, v1.7).  Setting them on ``TrainConfig`` is deprecated.  The fields will be
-        removed in v1.9.
+        authoritative source (Item #3, v1.7.0).  Setting them on ``TrainConfig`` is deprecated.  The fields will be
+        removed in v1.9.0.
 
         - ``group_detr``: query group count is an architecture decision → ``ModelConfig``
         - ``ia_bce_loss``: loss type is tied to architecture family → ``ModelConfig``
@@ -680,7 +680,7 @@ class TrainConfig(BaseModel):
                 # stacklevel=2 points into Pydantic internals; unavoidable with
                 # @model_validator(mode="after") in Pydantic v2.
                 warnings.warn(
-                    f"TrainConfig.{field} is deprecated and will be removed in v1.9. "
+                    f"TrainConfig.{field} is deprecated since v1.7.0 and will be removed in v1.9.0. "
                     f"Set {field} on ModelConfig instead.",
                     DeprecationWarning,
                     stacklevel=2,
