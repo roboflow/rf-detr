@@ -304,18 +304,22 @@ class RFDETR:
         _plus_available = False
         _plus_symbols: dict[str, type[RFDETR]] = {}
         _plus_entries: list[tuple[str, type[RFDETR]]] = []
-        try:
-            import rfdetr.platform.models as platform_models
+        from rfdetr.platform import _IS_RFDETR_PLUS_AVAILABLE
 
-            for class_symbol in _CHECKPOINT_PLUS_MODEL_NAME_CLASS_SYMBOLS:
-                plus_obj = getattr(platform_models, class_symbol)
-                _plus_symbols[class_symbol] = plus_obj
-            _plus_entries = [
-                (name, _plus_symbols[class_symbol]) for name, class_symbol in _CHECKPOINT_PLUS_MODEL_MAP_ENTRIES
-            ]
-            _plus_available = True
-        except (ImportError, AttributeError):
-            _plus_symbols = {}
+        if _IS_RFDETR_PLUS_AVAILABLE:
+            try:
+                import rfdetr.platform.models as platform_models
+
+                for class_symbol in _CHECKPOINT_PLUS_MODEL_NAME_CLASS_SYMBOLS:
+                    plus_obj = getattr(platform_models, class_symbol)
+                    _plus_symbols[class_symbol] = plus_obj
+                _plus_entries = [
+                    (name, _plus_symbols[class_symbol]) for name, class_symbol in _CHECKPOINT_PLUS_MODEL_MAP_ENTRIES
+                ]
+                _plus_available = True
+            except ModuleNotFoundError as ex:
+                if ex.name not in {"rfdetr_plus", "rfdetr_plus.models"}:
+                    raise
 
         # weights_only=False is required because legacy checkpoints embed
         # argparse.Namespace objects that cannot be deserialised with
