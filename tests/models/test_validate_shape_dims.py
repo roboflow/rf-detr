@@ -6,9 +6,8 @@
 
 """Unit tests for :func:`rfdetr.detr._validate_shape_dims` and :func:`rfdetr.detr._resolve_patch_size`.
 
-Tests call each helper directly so each validation path has a single focused
-test without the export/predict scaffolding overhead.
-"""
+Tests call each helper directly so each validation path has a single focused test without the export/predict scaffolding
+overhead."""
 
 from types import SimpleNamespace
 

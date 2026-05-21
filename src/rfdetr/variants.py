@@ -5,11 +5,9 @@
 # ------------------------------------------------------------------------
 """Concrete RF-DETR model variant classes.
 
-All classes inherit from :class:`~rfdetr.detr.RFDETR` which remains defined in
-``rfdetr.detr``. Backward-compatible access from ``rfdetr.detr`` is provided
-via lazy ``__getattr__`` re-exports, so importing ``rfdetr.variants`` no longer
-depends on a fragile eager ``detr -> variants`` import sequence.
-"""
+All classes inherit from :class:`~rfdetr.detr.RFDETR` which remains defined in ``rfdetr.detr``. Backward-compatible
+access from ``rfdetr.detr`` is provided via lazy ``__getattr__`` re-exports, so importing ``rfdetr.variants`` no longer
+depends on a fragile eager ``detr -> variants`` import sequence."""
 
 from __future__ import annotations
 
@@ -113,9 +111,8 @@ class RFDETRLarge(RFDETR):
     def _should_fallback_to_deprecated_config(exc: Exception) -> bool:
         """Return whether initialization should retry with deprecated Large config.
 
-        The fallback is only for known checkpoint/config incompatibilities from
-        deprecated Large weights. Runtime issues such as CUDA OOM must fail
-        fast and must not trigger a second initialization attempt.
+        The fallback is only for known checkpoint/config incompatibilities from deprecated Large weights. Runtime issues
+        such as CUDA OOM must fail fast and must not trigger a second initialization attempt.
 
         Args:
             exc: Exception raised by initial ``RFDETR`` initialization.

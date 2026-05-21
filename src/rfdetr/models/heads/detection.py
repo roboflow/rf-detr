@@ -14,8 +14,8 @@ from rfdetr.models.math import MLP
 class DetectionHead(nn.Module):
     """Projection head for object detection outputs.
 
-    Wraps the classification linear layer and bounding-box MLP used
-    by the LWDETR decoder to produce final detection predictions.
+    Wraps the classification linear layer and bounding-box MLP used by the LWDETR decoder to produce final detection
+    predictions.
 
     Args:
         hidden_dim: Feature dimension coming from the transformer decoder.

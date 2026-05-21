@@ -56,8 +56,8 @@ def save_on_master(obj: Any, f: Any, *args: Any, **kwargs: Any) -> None:
     Args:
         obj: Object to save.
         f: File path or file-like object passed to ``torch.save``.
-        *args: Additional positional arguments forwarded to ``torch.save``.
-        **kwargs: Additional keyword arguments forwarded to ``torch.save``.
+        *args: Additional positional arguments forwarded to ``torch.save``. **kwargs: Additional keyword arguments
+        forwarded to ``torch.save``.
     """
     if is_main_process():
         torch.save(obj, f, *args, **kwargs)

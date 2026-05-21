@@ -16,11 +16,10 @@ from rfdetr.utilities.tensors import _bilinear_grid_sample
 class _DepthwiseConvWithoutCuDNN(torch.autograd.Function):
     """Depthwise conv2d with cuDNN disabled in both forward and backward.
 
-    ``torch.backends.cudnn.flags(enabled=False)`` as a context manager only
-    covers operations executed within its scope.  ``nn.Conv2d`` records the
-    forward op in the autograd graph; the corresponding backward kernels run
-    later, **outside** that scope, with cuDNN re-enabled.  On some CUDA stacks
-    (T4 / P100 on Kaggle / Colab) cuDNN fails engine selection for depthwise conv backward, raising::
+    ``torch.backends.cudnn.flags(enabled=False)`` as a context manager only covers operations executed within its scope.
+    ``nn.Conv2d`` records the forward op in the autograd graph; the corresponding backward kernels run later,
+    **outside** that scope, with cuDNN re-enabled.  On some CUDA stacks (T4 / P100 on Kaggle / Colab) cuDNN fails engine
+    selection for depthwise conv backward, raising::
 
         RuntimeError: GET was unable to find an engine to execute this computation
 
@@ -80,15 +79,14 @@ class _DepthwiseConvWithoutCuDNN(torch.autograd.Function):
             grad_output: Upstream gradient ``(N, C, H, W)``.
 
         Returns:
-            Gradients for each ``forward`` input.  Inputs that do not require
-            gradients (``ctx.needs_input_grad[i]`` is ``False``) get ``None``. Non-tensor inputs always get ``None``.
+            Gradients for each ``forward`` input.  Inputs that do not require gradients (``ctx.needs_input_grad[i]`` is
+            ``False``) get ``None``. Non-tensor inputs always get ``None``.
 
         Note:
-            Under AMP (``"16-mixed"``), ``grad_output`` arrives as ``fp16`` while
-            the saved ``weight`` stays ``fp32``.  Both tensors are upcast to
-            ``weight.dtype`` before calling ``conv2d_input`` / ``conv2d_weight``.
-            ``grad_input`` is then cast back to the original input dtype so
-            downstream gradient accumulation uses the expected dtype.
+            Under AMP (``"16-mixed"``), ``grad_output`` arrives as ``fp16`` while the saved ``weight`` stays ``fp32``.
+            Both tensors are upcast to ``weight.dtype`` before calling ``conv2d_input`` / ``conv2d_weight``.
+            ``grad_input`` is then cast back to the original input dtype so downstream gradient accumulation uses the
+            expected dtype.
         """
         x, weight = ctx.saved_tensors
         input_dtype = x.dtype
@@ -330,8 +328,8 @@ class SegmentationHead(nn.Module):
 
 def point_sample(input: torch.Tensor, point_coords: torch.Tensor, **kwargs: Any) -> torch.Tensor:
     """
-    A wrapper around :func:`~rfdetr.utilities.tensors._bilinear_grid_sample` to support 3D point_coords tensors.
-    Unlike :func:`torch.nn.functional.grid_sample` it assumes `point_coords` to lie inside [0, 1] x [0, 1] square.
+    A wrapper around :func:`~rfdetr.utilities.tensors._bilinear_grid_sample` to support 3D point_coords tensors. Unlike
+    :func:`torch.nn.functional.grid_sample` it assumes `point_coords` to lie inside [0, 1] x [0, 1] square.
 
     Args:
         input: A tensor of shape (N, C, H, W) that contains features map on a H x W grid.
@@ -458,12 +456,12 @@ def calculate_uncertainty(logits: torch.Tensor) -> torch.Tensor:
 
     Args:
         logits: A tensor of shape (R, 1, ...) for class-specific or
-            class-agnostic, where R is the total number of predicted masks in all images and C is
-            the number of foreground classes. The values are logits.
+            class-agnostic, where R is the total number of predicted masks in all images and C is the number of
+            foreground classes. The values are logits.
 
     Returns:
-        A tensor of shape (R, 1, ...) that contains uncertainty scores with the most
-        uncertain locations having the highest uncertainty score.
+        A tensor of shape (R, 1, ...) that contains uncertainty scores with the most uncertain locations having the
+        highest uncertainty score.
     """
     assert logits.shape[1] == 1
     gt_class_logits = logits.clone()

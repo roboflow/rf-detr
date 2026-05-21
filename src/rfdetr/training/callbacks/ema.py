@@ -21,9 +21,8 @@ from torch.optim.swa_utils import AveragedModel
 class RFDETREMACallback(Callback):
     """Exponential Moving Average with optional tau-based warm-up.
 
-    Drop-in replacement for ``rfdetr.util.utils.ModelEma`` implemented as a
-    plain Lightning callback around :class:`torch.optim.swa_utils.AveragedModel`.
-    The ``_avg_fn`` reproduces the exact same formula as ``ModelEma``
+    Drop-in replacement for ``rfdetr.util.utils.ModelEma`` implemented as a plain Lightning callback around
+    :class:`torch.optim.swa_utils.AveragedModel`. The ``_avg_fn`` reproduces the exact same formula as ``ModelEma``
     (1-indexed ``updates`` counter, optional ``tau`` warm-up).
 
     Args:
@@ -62,9 +61,9 @@ class RFDETREMACallback(Callback):
     ) -> torch.Tensor:
         """Compute the EMA update for a single parameter tensor.
 
-        Matches the ``ModelEma`` formula where ``updates`` is 1-indexed:
-        PTL's ``num_averaged`` starts at 0 (incremented *after* calling
-        ``avg_fn``), so ``updates = num_averaged + 1`` reproduces the same sequence of effective decay values.
+        Matches the ``ModelEma`` formula where ``updates`` is 1-indexed: PTL's ``num_averaged`` starts at 0 (incremented
+        *after* calling ``avg_fn``), so ``updates = num_averaged + 1`` reproduces the same sequence of effective decay
+        values.
 
         Args:
             averaged_param: Current EMA parameter value.
@@ -127,8 +126,8 @@ class RFDETREMACallback(Callback):
     ) -> bool:
         """Return ``True`` after every optimizer step and every epoch end.
 
-        The base ``WeightAveraging`` only updates on steps. This override
-        also triggers an update at epoch boundaries, matching RF-DETR's existing EMA behaviour.
+        The base ``WeightAveraging`` only updates on steps. This override also triggers an update at epoch boundaries,
+        matching RF-DETR's existing EMA behaviour.
 
         Args:
             step_idx: Index of the last optimizer step, or ``None``.

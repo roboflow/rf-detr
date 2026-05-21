@@ -129,8 +129,8 @@ def _make_batch(batch_size=2, channels=3, h=16, w=16):
 def build_module(tmp_path):
     """Factory fixture — returns (module, fake_model, fake_criterion, fake_postprocess).
 
-    build_model and build_criterion_and_postprocessors are mocked automatically.
-    tmp_path is injected automatically so test methods do not need to declare it.
+    build_model and build_criterion_and_postprocessors are mocked automatically. tmp_path is injected automatically so
+    test methods do not need to declare it.
     """
     return lambda model_config=None, train_config=None: _build_module(model_config, train_config, tmp_path)
 
@@ -340,9 +340,8 @@ class TestLoadPretrainWeights:
         """download_pretrain_weights must be called before torch.load so a fresh
         environment (e.g. Colab) downloads weights automatically.
 
-        Regression test: previously download was only called as an except-block
-        fallback, but ModelWeights.from_filename received the absolute path and
-        returned None, causing a silent no-op and a FileNotFoundError.
+        Regression test: previously download was only called as an except-block fallback, but ModelWeights.from_filename
+        received the absolute path and returned None, causing a silent no-op and a FileNotFoundError.
         """
         mc = base_model_config(num_classes=90)
         checkpoint = self._make_checkpoint(num_classes_in_ckpt=91)
@@ -512,8 +511,8 @@ class TestOnFitStart:
     def test_seed_rank_offset(self, mock_seed, base_train_config, build_module):
         """Non-zero rank: seed_everything(seed + global_rank) must be called.
 
-        Validates the rank-offset contract — each worker seeds with a unique
-        value to prevent correlated data augmentation across DDP processes.
+        Validates the rank-offset contract — each worker seeds with a unique value to prevent correlated data
+        augmentation across DDP processes.
         """
         tc = base_train_config(seed=7)
         module, _, _, _ = build_module(train_config=tc)
@@ -770,8 +769,8 @@ class TestTestStep:
     """Tests for test_step() — verifies output dict shape, postprocessor
     invocation with correct original sizes, and test/loss logging.
 
-    Mirrors :class:`TestValidationStep` since both steps share the same
-    forward+postprocess logic and differ only in the logged metric prefix.
+    Mirrors :class:`TestValidationStep` since both steps share the same forward+postprocess logic and differ only in the
+    logged metric prefix.
     """
 
     def _run_test_step(self, tmp_path):
@@ -972,12 +971,10 @@ class TestConfigureOptimizers:
     ):
         """Fused AdamW must be disabled when trainer precision is not bf16-mixed.
 
-        On Ampere+ GPUs torch.cuda.is_bf16_supported() is True even when the
-        trainer is configured for 32-true precision.  The old code always enabled
-        fused AdamW based on GPU capability alone, crashing with
-        ``params, grads, exp_avgs, and exp_avg_sqs must have same dtype, device, and layout`` when DDP
-        gradient bucket views had non-matching strides.
-        The fix checks ``trainer.precision`` before enabling fused.
+        On Ampere+ GPUs torch.cuda.is_bf16_supported() is True even when the trainer is configured for 32-true
+        precision.  The old code always enabled fused AdamW based on GPU capability alone, crashing with ``params,
+        grads, exp_avgs, and exp_avg_sqs must have same dtype, device, and layout`` when DDP gradient bucket views had
+        non-matching strides. The fix checks ``trainer.precision`` before enabling fused.
         """
         module, param_dicts = self._setup_module(tmp_path)
         mock_get_param_dict.return_value = param_dicts
@@ -1000,9 +997,8 @@ class TestConfigureOptimizers:
     ):
         """Fused AdamW must be enabled when both GPU supports BF16 and trainer uses bf16-mixed.
 
-        The fused path is beneficial (and safe) only when training precision is
-        actually BF16: parameters, gradients, and optimizer state all stay in
-        the same dtype/layout, satisfying the fused kernel requirements.
+        The fused path is beneficial (and safe) only when training precision is actually BF16: parameters, gradients,
+        and optimizer state all stay in the same dtype/layout, satisfying the fused kernel requirements.
         """
         module, param_dicts = self._setup_module(tmp_path)
         mock_get_param_dict.return_value = param_dicts
@@ -1044,9 +1040,9 @@ class TestClipGradients:
     ):
         """clip_gradients must delegate to super() when trainer precision is not a BF16 variant.
 
-        On Ampere+ GPUs is_bf16_supported() is True regardless of actual precision.
-        The method must check trainer.precision before choosing the fused path, mirroring
-        the same gate in configure_optimizers() to prevent silent divergence.
+        On Ampere+ GPUs is_bf16_supported() is True regardless of actual precision. The method must check
+        trainer.precision before choosing the fused path, mirroring the same gate in configure_optimizers() to prevent
+        silent divergence.
         """
         module = self._setup_module(tmp_path, precision=precision)
 
@@ -1067,9 +1063,8 @@ class TestClipGradients:
     ):
         """clip_gradients must call clip_grad_norm_ directly when precision is bf16-mixed.
 
-        When fused AdamW is active (BF16, no GradScaler), the standard PTL AMP plugin
-        refuses to clip gradients.  clip_grad_norm_ is called directly instead, bypassing
-        the scaler-aware path that would otherwise raise.
+        When fused AdamW is active (BF16, no GradScaler), the standard PTL AMP plugin refuses to clip gradients.
+        clip_grad_norm_ is called directly instead, bypassing the scaler-aware path that would otherwise raise.
         """
         module = self._setup_module(tmp_path, precision="bf16-mixed")
 
@@ -1217,8 +1212,8 @@ class TestOnLoadCheckpoint:
     def test_ptl_checkpoint_pe_shape(self, pe_src, pe_tgt, build_module):
         """on_load_checkpoint must produce PE with tokens matching the model's positional_encoding_size.
 
-        Regression for #998: resume from .ckpt with custom resolution crashed because
-        PTL applied the checkpoint state dict before PE shapes were reconciled.
+        Regression for #998: resume from .ckpt with custom resolution crashed because PTL applied the checkpoint state
+        dict before PE shapes were reconciled.
         """
         checkpoint = self._make_ptl_checkpoint(pe_size_src=pe_src, _pe_size_tgt=pe_tgt)
 
@@ -1234,8 +1229,8 @@ class TestOnLoadCheckpoint:
     def test_legacy_pth_normalised_and_pe_interpolated(self, build_module):
         """Legacy .pth checkpoint (no state_dict key) must be normalised and PE interpolated.
 
-        on_load_checkpoint converts the raw "model" dict to PTL format and must
-        also interpolate PE so that PTL's subsequent load_state_dict does not crash.
+        on_load_checkpoint converts the raw "model" dict to PTL format and must also interpolate PE so that PTL's
+        subsequent load_state_dict does not crash.
         """
         pe_src, pe_tgt = 36, 56
         checkpoint = self._make_legacy_pth_checkpoint(pe_size_src=pe_src)

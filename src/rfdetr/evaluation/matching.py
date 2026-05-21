@@ -60,9 +60,8 @@ def _match_single_class(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
     """Greedy highest-score-first matching for one class in one image.
 
-    Implements the COCO matching algorithm: each GT is matched at most once;
-    detections are processed in descending score order; detections matched to
-    crowd GTs are marked as ignored rather than false positives.
+    Implements the COCO matching algorithm: each GT is matched at most once; detections are processed in descending
+    score order; detections matched to crowd GTs are marked as ignored rather than false positives.
 
     Args:
         pred_scores: Float tensor of shape [N] with detection confidences.
@@ -134,9 +133,9 @@ def build_matching_data(
 ) -> dict[int, dict[str, Any]]:
     """Build compact per-class matching data from a batch of predictions and targets.
 
-    Implements greedy highest-score-first matching compatible with the COCO
-    algorithm. The returned dict can be passed directly to ``merge_matching_data()`` and ultimately consumed by
-    ``sweep_confidence_thresholds()`` after conversion to list form.
+    Implements greedy highest-score-first matching compatible with the COCO algorithm. The returned dict can be passed
+    directly to ``merge_matching_data()`` and ultimately consumed by ``sweep_confidence_thresholds()`` after conversion
+    to list form.
 
     Args:
         preds_list: Per-image predictions. Each dict must contain:
@@ -255,9 +254,9 @@ def merge_matching_data(
 ) -> dict[int, dict[str, Any]]:
     """Merge *new_data* into *accumulator* in place.
 
-    Both arguments share the dict schema produced by ``build_matching_data()``:
-    each class-keyed sub-dict contains ``"scores"`` (float32 ndarray),
-    ``"matches"`` (int64 ndarray), ``"ignore"`` (bool ndarray), and ``"total_gt"`` (int).
+    Both arguments share the dict schema produced by ``build_matching_data()``: each class-keyed sub-dict contains
+    ``"scores"`` (float32 ndarray), ``"matches"`` (int64 ndarray), ``"ignore"`` (bool ndarray), and ``"total_gt"``
+    (int).
 
     Args:
         accumulator: Running accumulator, modified in place.
@@ -288,8 +287,8 @@ def distributed_merge_matching_data(
 ) -> dict[int, dict[str, Any]]:
     """Gather per-rank matching data from all DDP ranks and merge into one dict.
 
-    Uses ``rfdetr.utilities.all_gather`` (pickle-based) so the data need not be a tensor.
-    In single-process (non-distributed) mode, returns a merged copy of *local_data* unchanged.
+    Uses ``rfdetr.utilities.all_gather`` (pickle-based) so the data need not be a tensor. In single-process
+    (non-distributed) mode, returns a merged copy of *local_data* unchanged.
 
     Args:
         local_data: Per-rank accumulator produced by ``merge_matching_data()``.

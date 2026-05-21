@@ -8,10 +8,9 @@
 # ------------------------------------------------------------------------
 
 """
-This tool provides performance benchmarks by using ONNX Runtime and TensorRT
-to run inference on a given model with the COCO validation set. It offers
-reliable measurements of inference latency using ONNX Runtime or TensorRT on the device.
-"""
+This tool provides performance benchmarks by using ONNX Runtime and TensorRT to run inference on a given model with
+the COCO validation set. It offers reliable measurements of inference latency using ONNX Runtime or TensorRT on the
+device."""
 
 import contextlib
 import json

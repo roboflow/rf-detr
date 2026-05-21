@@ -6,9 +6,8 @@
 
 """RF-DETR CLI package.
 
-The ``rfdetr`` console script and ``python -m rfdetr`` both invoke :func:`main`,
-which runs :class:`~rfdetr.training.cli.RFDETRCli` (Lightning CLI with jsonargparse).
-"""
+The ``rfdetr`` console script and ``python -m rfdetr`` both invoke :func:`main`, which runs
+:class:`~rfdetr.training.cli.RFDETRCli` (Lightning CLI with jsonargparse)."""
 
 from rfdetr.training.cli import main
 

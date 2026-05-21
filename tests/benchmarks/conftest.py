@@ -56,9 +56,8 @@ def seed_everything(request: pytest.FixtureRequest) -> None:
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Reorder tests to prioritize long-running training test before xdist distribution.
 
-    This hook runs after collection but before xdist distributes tests to workers.
-    By moving the training test to the front, we ensure it gets scheduled early,
-    maximizing parallel resource utilization.
+    This hook runs after collection but before xdist distributes tests to workers. By moving the training test to the
+    front, we ensure it gets scheduled early, maximizing parallel resource utilization.
     """
     training_tests = []
     other_tests = []

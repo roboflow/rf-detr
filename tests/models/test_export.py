@@ -11,9 +11,8 @@ Use cases covered:
 - Segmentation outputs must be present in both train/eval modes to avoid export crashes.
 - Export should not change the original model's training state.
 - CLI export path (deploy.export.main) must include 'masks' in output_names for
-  segmentation models, call make_infer_image with the correct individual args, and
-  call export_onnx with args.output_dir as the first argument.
-"""
+  segmentation models, call make_infer_image with the correct individual args, and call export_onnx with args.output_dir
+  as the first argument."""
 
 import importlib.util
 import inspect
@@ -47,8 +46,8 @@ def ignore_tracer_warnings() -> Iterator[None]:
 class _DummyCoreModel:
     """Minimal torch.nn.Module stub shared across export tests.
 
-    Avoids real forward passes; returns synthetic detection (and optionally
-    segmentation) outputs matching the shapes expected by RFDETR.export().
+    Avoids real forward passes; returns synthetic detection (and optionally segmentation) outputs matching the shapes
+    expected by RFDETR.export().
     """
 
     def __init__(self, *, segmentation_head: bool = False) -> None:
@@ -126,8 +125,8 @@ def test_segmentation_model_export_no_crash(tmp_path: Path) -> None:
 def test_export_does_not_change_original_training_state(tmp_path: Path) -> None:
     """Verify that calling export() does not change the original model's train/eval state.
 
-    This ensures that export() puts a deepcopy of the model in eval mode without
-    mutating the underlying training model used by RF-DETR.
+    This ensures that export() puts a deepcopy of the model in eval mode without mutating the underlying training model
+    used by RF-DETR.
     """
     model = RFDETRSegNano()
 
@@ -329,9 +328,8 @@ class TestCliExportMain:
         """
         Run deploy.export.main(args) with all heavy dependencies mocked.
 
-        Stubs out build_model, make_infer_image, and export_onnx, and injects
-        mock onnx/onnxsim modules so the export module can be imported even when
-        those optional packages are not installed.
+        Stubs out build_model, make_infer_image, and export_onnx, and injects mock onnx/onnxsim modules so the export
+        module can be imported even when those optional packages are not installed.
 
         Returns (make_infer_image_captured, export_onnx_captured).
         """
@@ -426,8 +424,7 @@ class TestCliExportMain:
 
     def test_make_infer_image_receives_individual_fields(self, output_dir: str) -> None:
         """
-        make_infer_image must be called with (infer_dir, shape, batch_size, device),
-        not with the whole args Namespace.
+        make_infer_image must be called with (infer_dir, shape, batch_size, device), not with the whole args Namespace.
 
         Before the fix, deploy/export.py line 251 used:
 
@@ -449,8 +446,8 @@ class TestCliExportMain:
 
     def test_export_onnx_receives_output_dir_and_kwargs(self, output_dir: str) -> None:
         """
-        export_onnx must be called as export_onnx(output_dir, model, ...) with
-        backbone_only, verbose, and opset_version forwarded as keyword args.
+        export_onnx must be called as export_onnx(output_dir, model, ...) with backbone_only, verbose, and opset_version
+        forwarded as keyword args.
 
         Before the fix, deploy/export.py line 294 used:
 
@@ -712,8 +709,8 @@ class TestExportPatchSize:
 def test_make_infer_image_produces_correct_rectangular_shape() -> None:
     """make_infer_image must produce a (B, C, H, W) tensor for non-square shapes.
 
-    Regression test for the square-resize bug where ``Resize((shape[0], shape[0]))``
-    was used instead of ``Resize((shape[0], shape[1]))``, causing the output width to silently equal the height.
+    Regression test for the square-resize bug where ``Resize((shape[0], shape[0]))`` was used instead of
+    ``Resize((shape[0], shape[1]))``, causing the output width to silently equal the height.
     """
     from rfdetr.export.main import make_infer_image
 

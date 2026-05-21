@@ -26,13 +26,11 @@ class PretrainWeightsCompatibilityWarning(UserWarning):
 def _detect_device() -> str:
     """Detect the best available device **without** initialising the CUDA runtime.
 
-    ``torch.cuda.is_available()`` creates a CUDA driver context that makes
-    ``_is_in_bad_fork()`` return ``True`` in child processes.  This breaks
-    fork-based DDP strategies (e.g. ``ddp_notebook``) in notebook environments.
+    ``torch.cuda.is_available()`` creates a CUDA driver context that makes ``_is_in_bad_fork()`` return ``True`` in
+    child processes.  This breaks fork-based DDP strategies (e.g. ``ddp_notebook``) in notebook environments.
 
-    We defer to :func:`torch.accelerator.current_accelerator` (PyTorch ≥ 2.4)
-    when available — it queries the driver through NVML without creating a
-    primary context.  On older builds we fall back to ``torch.cuda.is_available()``.
+    We defer to :func:`torch.accelerator.current_accelerator` (PyTorch ≥ 2.4) when available — it queries the driver
+    through NVML without creating a primary context.  On older builds we fall back to ``torch.cuda.is_available()``.
     """
     accelerator = getattr(torch, "accelerator", None)
     current_accelerator = getattr(accelerator, "current_accelerator", None)
@@ -57,8 +55,8 @@ DEVICE: str = _detect_device()
 
 class BaseConfig(BaseModel):
     """
-    Base configuration class that validates input parameters against the defined model schema.
-    If any unknown fields are provided, a ValueError is raised listing the unknown and available parameters.
+    Base configuration class that validates input parameters against the defined model schema. If any unknown fields are
+    provided, a ValueError is raised listing the unknown and available parameters.
     """
 
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", validate_assignment=True)
@@ -139,8 +137,8 @@ class ModelConfig(BaseConfig):
     def _warn_deprecated_model_config_fields(self) -> "ModelConfig":
         """Emit DeprecationWarning when cls_loss_coef is explicitly set on ModelConfig.
 
-        ``cls_loss_coef`` ownership is moving to ``TrainConfig`` (Item #3, v1.7). Setting
-        it on ``ModelConfig`` is deprecated.  Use ``TrainConfig(cls_loss_coef=...)`` instead.
+        ``cls_loss_coef`` ownership is moving to ``TrainConfig`` (Item #3, v1.7). Setting it on ``ModelConfig`` is
+        deprecated.  Use ``TrainConfig(cls_loss_coef=...)`` instead.
         """
         if "cls_loss_coef" in self.model_fields_set:
             # stacklevel=2 points into Pydantic internals rather than the user call
@@ -159,13 +157,12 @@ class ModelConfig(BaseConfig):
     def _sync_pe_with_resolution(self) -> "ModelConfig":
         """Auto-update positional_encoding_size when resolution is explicitly provided.
 
-        When a user provides a custom ``resolution`` at construction time (e.g.,
-        ``RFDETRLarge(resolution=640)``), ``positional_encoding_size`` is updated
-        proportionally, provided the class-default PE is formula-derived
+        When a user provides a custom ``resolution`` at construction time (e.g., ``RFDETRLarge(resolution=640)``),
+        ``positional_encoding_size`` is updated proportionally, provided the class-default PE is formula-derived
         (``default_pe == default_resolution // patch_size``).
 
-        Configs with a pretrained-specific PE (e.g., ``RFDETRBaseConfig`` with
-        ``positional_encoding_size=37`` for DINOv2's native 518 px grid, while ``resolution=560``) are left unchanged.
+        Configs with a pretrained-specific PE (e.g., ``RFDETRBaseConfig`` with ``positional_encoding_size=37`` for
+        DINOv2's native 518 px grid, while ``resolution=560``) are left unchanged.
         """
         if "resolution" not in self.model_fields_set or "positional_encoding_size" in self.model_fields_set:
             return self
@@ -201,16 +198,16 @@ class ModelConfig(BaseConfig):
         1. ``pretrain_weights`` was explicitly set to ``None`` and the variant
            has a non-``None`` default → warn that the model is being initialised from scratch.
         2. ``pretrain_weights`` was explicitly set to a non-``None`` custom path
-           → suppress the architecture-override check (we cannot know the
-           architecture stored in a user-supplied checkpoint at config time). The load-time partial-load detector in
-           :func:`rfdetr.models.weights.load_pretrain_weights` covers this case
-           by inspecting the checkpoint contents directly.
+           → suppress the architecture-override check (we cannot know the architecture stored in a user-supplied
+           checkpoint at config time). The load-time partial-load detector in
+           :func:`rfdetr.models.weights.load_pretrain_weights` covers this case by inspecting the checkpoint contents
+           directly.
         3. ``pretrain_weights`` is the variant's published default → check
-           architecture-affecting fields against the variant defaults and emit
-           a single consolidated warning listing every load-breaking override.
+           architecture-affecting fields against the variant defaults and emit a single consolidated warning listing
+           every load-breaking override.
 
-        The warning class is :class:`PretrainWeightsCompatibilityWarning` (a
-        :class:`UserWarning` subclass), silenceable via the standard ``warnings.filterwarnings`` machinery.
+        The warning class is :class:`PretrainWeightsCompatibilityWarning` (a :class:`UserWarning` subclass), silenceable
+        via the standard ``warnings.filterwarnings`` machinery.
         """
         cls = type(self)
         fields_set = self.model_fields_set
@@ -353,13 +350,12 @@ class ModelConfig(BaseConfig):
     def expand_path(cls, v: Optional[str]) -> Optional[str]:
         """Expand and resolve the pretrain_weights path.
 
-        Bare filenames (no directory component, e.g. ``rf-detr-base.pth``) are
-        resolved to the model cache directory so weights land in a stable,
-        user-configurable location (``~/.roboflow/models`` by default, or the
-        path set via the ``RF_HOME`` environment variable) instead of CWD.
+        Bare filenames (no directory component, e.g. ``rf-detr-base.pth``) are resolved to the model cache directory so
+        weights land in a stable, user-configurable location (``~/.roboflow/models`` by default, or the path set via the
+        ``RF_HOME`` environment variable) instead of CWD.
 
-        Paths that already contain a directory separator (e.g. ``~/models/x.pth``,
-        ``/abs/path/x.pth``, ``models/x.pth``) are normalised with ``os.path.realpath`` as before.
+        Paths that already contain a directory separator (e.g. ``~/models/x.pth``, ``/abs/path/x.pth``,
+        ``models/x.pth``) are normalised with ``os.path.realpath`` as before.
         """
         if v is None:
             return v
@@ -602,9 +598,9 @@ class TrainConfig(BaseModel):
 
     Notes:
         * ``auto_batch_target_effective`` is interpreted as the **per-device**
-          effective batch size target, i.e. the number of images seen by a
-          single process in one optimizer step after accounting for
-          ``grad_accum_steps``. In multi-GPU / multi-node runs the global effective batch size is therefore:
+          effective batch size target, i.e. the number of images seen by a single process in one optimizer step after
+          accounting for ``grad_accum_steps``. In multi-GPU / multi-node runs the global effective batch size is
+          therefore:
 
             ``global_effective_batch = auto_batch_target_effective * devices * num_nodes``
 
@@ -680,9 +676,9 @@ class TrainConfig(BaseModel):
     def _warn_deprecated_train_config_fields(self) -> "TrainConfig":
         """Emit DeprecationWarning for fields whose ownership is moving to ModelConfig.
 
-        The following fields are duplicated between ``ModelConfig`` and ``TrainConfig``
-        but ``ModelConfig`` is the authoritative source (Item #3, v1.7).  Setting them
-        on ``TrainConfig`` is deprecated.  The fields will be removed in v1.9.
+        The following fields are duplicated between ``ModelConfig`` and ``TrainConfig`` but ``ModelConfig`` is the
+        authoritative source (Item #3, v1.7).  Setting them on ``TrainConfig`` is deprecated.  The fields will be
+        removed in v1.9.
 
         - ``group_detr``: query group count is an architecture decision → ``ModelConfig``
         - ``ia_bce_loss``: loss type is tied to architecture family → ``ModelConfig``
@@ -789,8 +785,8 @@ class TrainConfig(BaseModel):
     @classmethod
     def expand_paths(cls, v: str) -> str:
         """
-        Expand user paths (e.g., '~' or paths with separators) but leave simple filenames
-        (like 'rf-detr-base.pth') unchanged so they can match hosted model keys.
+        Expand user paths (e.g., '~' or paths with separators) but leave simple filenames (like 'rf-detr-base.pth')
+        unchanged so they can match hosted model keys.
         """
         if v is None:
             return v

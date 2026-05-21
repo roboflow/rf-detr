@@ -101,9 +101,8 @@ class TestHungarianMatcherNonFiniteCosts:
         """Regression test: when all finite costs are negative and one query
         produces NaN, the matcher must select the valid query, not the NaN one.
 
-        This guards against the bug where ``max_cost * 2`` (the old replacement
-        formula) could be smaller than ``max_cost`` when all costs are negative,
-        causing the NaN query to appear cheaper than valid queries.
+        This guards against the bug where ``max_cost * 2`` (the old replacement formula) could be smaller than
+        ``max_cost`` when all costs are negative, causing the NaN query to appear cheaper than valid queries.
         """
         nan = float("nan")
         # Query 0: NaN box coordinates -> produces non-finite costs
@@ -142,8 +141,8 @@ class TestHungarianMatcherNonFiniteCosts:
     ) -> None:
         """Exercises the ``C.split(sizes, -1)`` loop with batch_size > 1.
 
-        Each image has 2 queries and 1 target. One query per image has NaN
-        coordinates; the matcher must select the valid query in each case.
+        Each image has 2 queries and 1 target. One query per image has NaN coordinates; the matcher must select the
+        valid query in each case.
         """
         nan = float("nan")
         outputs = {

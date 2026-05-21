@@ -29,8 +29,8 @@ def save_gt_predictions_visualization(
     """
     Save a visualization image showing both GT and prediction boxes.
 
-    Boxes are labeled with class ID and confidence (for predictions).
-    For predictions with known IoU, the IoU value is also shown.
+    Boxes are labeled with class ID and confidence (for predictions). For predictions with known IoU, the IoU value is
+    also shown.
     """
     import supervision as sv
 

@@ -8,12 +8,11 @@
 """
 Comprehensive validation script to test model instantiation with all available weights.
 
-Tests detection and segmentation model classes from rf-detr by importing and instantiating them.
-Validates: imports, download, MD5 hash, model instantiation, and from_checkpoint round-trip.
+Tests detection and segmentation model classes from rf-detr by importing and instantiating them. Validates: imports,
+download, MD5 hash, model instantiation, and from_checkpoint round-trip.
 
 Usage:
-    python tests/try_instantiate_all_models.py
-"""
+    python tests/try_instantiate_all_models.py"""
 
 import argparse
 import os
@@ -97,9 +96,9 @@ _HEAVY_MODEL_NAMES = {
 def _test_from_checkpoint(model_instance: object, actual_cls: type, extra_kwargs: dict) -> None:
     """Round-trip a model through from_checkpoint using a temp training checkpoint.
 
-    Saves the instantiated model's weights into a minimal training-style checkpoint
-    (``{"args": ..., "model": state_dict}``), calls ``rfdetr.from_checkpoint`` on it,
-    and asserts the returned object is an instance of *actual_cls*.
+    Saves the instantiated model's weights into a minimal training-style checkpoint (``{"args": ..., "model":
+    state_dict}``), calls ``rfdetr.from_checkpoint`` on it, and asserts the returned object is an instance of
+    *actual_cls*.
 
     Args:
         model_instance: An already-loaded RFDETR model instance.
@@ -141,11 +140,10 @@ def _test_from_checkpoint(model_instance: object, actual_cls: type, extra_kwargs
 def _test_coco_class_name_mapping(model_instance: object) -> None:
     """Verify predict() uses sparse COCO category-ID → class-name mapping.
 
-    Issue #988: RFDETRSegSmall returned "sheep" for class_id=18 instead of "dog"
-    because 0-indexed ``COCO_CLASS_NAMES[18]`` was used instead of the sparse-dict
-    lookup ``COCO_CLASSES[18]``.  threshold=0 forces all top-k queries through so
-    every class ID in the output is covered.  Covers both detection and segmentation
-    nano variants (RFDETRNano, RFDETRSegNano).
+    Issue #988: RFDETRSegSmall returned "sheep" for class_id=18 instead of "dog" because 0-indexed
+    ``COCO_CLASS_NAMES[18]`` was used instead of the sparse-dict lookup ``COCO_CLASSES[18]``.  threshold=0 forces all
+    top-k queries through so every class ID in the output is covered.  Covers both detection and segmentation nano
+    variants (RFDETRNano, RFDETRSegNano).
 
     Args:
         model_instance: An already-loaded pretrained COCO model instance (det or seg).

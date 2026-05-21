@@ -6,10 +6,9 @@
 
 """ONNX Runtime inference helpers for RF-DETR exported models.
 
-These functions handle session creation, image preprocessing, and detection
-decoding without requiring PyTorch or the RF-DETR training stack — only
-``onnxruntime``, ``numpy``, ``supervision``, and ``Pillow`` are needed at inference time.
-"""
+These functions handle session creation, image preprocessing, and detection decoding without requiring PyTorch or
+the RF-DETR training stack — only ``onnxruntime``, ``numpy``, ``supervision``, and ``Pillow`` are needed at inference
+time."""
 
 from __future__ import annotations
 
@@ -28,8 +27,8 @@ logger = get_logger()
 def _create_onnx_session(model_path: str | Path) -> Any:
     """Load an ONNX model and create an ONNX Runtime inference session.
 
-    Imports ``onnxruntime`` at call time so that the rest of the package
-    remains usable without it installed.  Input and output names / shapes are logged at DEBUG level for troubleshooting.
+    Imports ``onnxruntime`` at call time so that the rest of the package remains usable without it installed.  Input and
+    output names / shapes are logged at DEBUG level for troubleshooting.
 
     Args:
         model_path: Path to the ``.onnx`` model file.
@@ -67,24 +66,22 @@ def _run_inference(
 ) -> tuple[sv.Detections, PILImage.Image]:
     """Preprocess one image, run ONNX Runtime inference, and decode detections.
 
-    Reads input shape from the session (NCHW ``float32``), resizes and
-    normalises the image with ImageNet statistics, invokes the model, then
-    decodes the ``dets`` / ``labels`` output tensors into a
-    :class:`supervision.Detections` object with pixel-space ``xyxy`` boxes.
+    Reads input shape from the session (NCHW ``float32``), resizes and normalises the image with ImageNet statistics,
+    invokes the model, then decodes the ``dets`` / ``labels`` output tensors into a :class:`supervision.Detections`
+    object with pixel-space ``xyxy`` boxes.
 
     **Input contract** (must match ``RFDETR.predict()`` preprocessing exactly):
 
     - Image is opened as-is and converted to ``"RGB"`` (3-channel) or ``"L"``
       (1-channel greyscale) depending on the model's channel count.
     - Resize uses ``PIL.Image.Resampling.BILINEAR`` — matching
-      ``torchvision.transforms.functional.resize()`` which defaults to
-      ``InterpolationMode.BILINEAR``.  Using PIL's default (``BICUBIC``) would
-      produce slightly different pixel values and can degrade confidence.
+      ``torchvision.transforms.functional.resize()`` which defaults to ``InterpolationMode.BILINEAR``.  Using PIL's
+      default (``BICUBIC``) would produce slightly different pixel values and can degrade confidence.
     - Pixel values are scaled to ``[0, 1]`` then normalised with ImageNet
       statistics: ``mean=[0.485, 0.456, 0.406]``, ``std=[0.229, 0.224, 0.225]``.
     - The tensor is kept as ``[1, C, H, W]`` (NCHW) — unlike the TFLite helper
-      which uses NHWC because ``onnx2tf`` transposes at export time.  ONNX RT
-      consumes the native ONNX NCHW layout directly.
+      which uses NHWC because ``onnx2tf`` transposes at export time.  ONNX RT consumes the native ONNX NCHW layout
+      directly.
 
     Args:
         session: ONNX Runtime ``InferenceSession`` returned by
@@ -94,8 +91,8 @@ def _run_inference(
         threshold: Confidence threshold; detections below this are discarded.
 
     Returns:
-        A tuple of ``(detections, pil_img)`` where ``detections`` contains
-        pixel-space ``xyxy`` boxes and ``pil_img`` is the original PIL image at its original resolution.
+        A tuple of ``(detections, pil_img)`` where ``detections`` contains pixel-space ``xyxy`` boxes and ``pil_img`` is
+        the original PIL image at its original resolution.
 
     Examples:
         .. code-block:: python

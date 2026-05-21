@@ -6,10 +6,9 @@
 
 """Tests for RFDETRCli — PTL Ch4/T4.
 
-Verifies that the CLI module is correctly structured: importable, subclasses
-LightningCLI, overrides add_arguments_to_parser, and exposes a callable
-main() entry point.  CLI integration / smoke tests (--help subprocess, YAML roundtrip) live in T4-7.
-"""
+Verifies that the CLI module is correctly structured: importable, subclasses LightningCLI, overrides
+add_arguments_to_parser, and exposes a callable main() entry point.  CLI integration / smoke tests (--help subprocess,
+YAML roundtrip) live in T4-7."""
 
 import pytest
 

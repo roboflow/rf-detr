@@ -6,9 +6,8 @@
 
 """Unit tests for ``rfdetr.models.weights`` — the unified weight-loading and LoRA module.
 
-These tests cover ``load_pretrain_weights`` and ``apply_lora`` directly,
-exercising the unified logic extracted from ``detr.py`` and ``module_model.py``.
-"""
+These tests cover ``load_pretrain_weights`` and ``apply_lora`` directly, exercising the unified logic extracted from
+``detr.py`` and ``module_model.py``."""
 
 from types import SimpleNamespace
 from unittest.mock import MagicMock, call, patch
@@ -104,9 +103,8 @@ class TestLoadPretrainWeightsReinitScenarios:
     def test_characterization_fine_tuned_checkpoint_auto_aligns_default_num_classes(self, monkeypatch, tmp_path):
         """Fine-tuned checkpoint (fewer classes) + default num_classes → 1 reinit to ckpt size.
 
-        When the user did NOT explicitly set num_classes (default=90), the loader
-        auto-aligns to the checkpoint's class count (3 classes = bias shape [3]).
-        Only one reinit fires; no second reinit back to 91.
+        When the user did NOT explicitly set num_classes (default=90), the loader auto-aligns to the checkpoint's class
+        count (3 classes = bias shape [3]). Only one reinit fires; no second reinit back to 91.
         """
         from rfdetr.models.weights import load_pretrain_weights
 
@@ -356,9 +354,8 @@ class TestLoadPretrainWeightsPTLCkptFormat:
     def test_ptl_ckpt_non_model_keys_in_state_dict_are_excluded(self, monkeypatch):
         """Non-model. keys in state_dict (optimizer, lr_scheduler) must not appear in checkpoint['model'].
 
-        Real PTL checkpoints contain keys like 'optimizer.param_groups' and
-        'lr_scheduler.last_epoch' alongside the 'model.*' weights.  The loader must
-        exclude these non-model keys so they do not pollute the state dict passed to
+        Real PTL checkpoints contain keys like 'optimizer.param_groups' and 'lr_scheduler.last_epoch' alongside the
+        'model.*' weights.  The loader must exclude these non-model keys so they do not pollute the state dict passed to
         load_state_dict and do not cause KeyError or unexpected parameter names.
         """
         from rfdetr.models.weights import load_pretrain_weights
@@ -382,10 +379,9 @@ class TestLoadPretrainWeightsPTLCkptFormat:
     def test_ptl_ckpt_torch_compile_orig_mod_prefix_stripped(self, monkeypatch):
         """PTL .ckpt from a torch.compile-wrapped model must load without KeyError.
 
-        When a model is wrapped with torch.compile before training, PTL records weights
-        under keys like "model._orig_mod.class_embed.bias".  The loader must strip both
-        the "model." and the subsequent "_orig_mod." segment so the resulting keys match
-        the bare parameter names expected by load_state_dict.
+        When a model is wrapped with torch.compile before training, PTL records weights under keys like
+        "model._orig_mod.class_embed.bias".  The loader must strip both the "model." and the subsequent "_orig_mod."
+        segment so the resulting keys match the bare parameter names expected by load_state_dict.
         """
         from rfdetr.models.weights import load_pretrain_weights
 
@@ -445,8 +441,8 @@ class TestLoadPretrainWeightsPTLCkptFormat:
 class TestApplyLora:
     """Verify that apply_lora applies LoRA adapters to the backbone encoder.
 
-    ``apply_lora`` lazily imports ``peft`` inside the function body, so we use
-    ``patch.dict("sys.modules", ...)`` to intercept the import rather than patching a module-level name.
+    ``apply_lora`` lazily imports ``peft`` inside the function body, so we use ``patch.dict("sys.modules", ...)`` to
+    intercept the import rather than patching a module-level name.
     """
 
     def test_characterization_apply_lora_wraps_backbone_encoder(self):
@@ -520,9 +516,8 @@ def _labelled_query_tensor(num_queries: int, group_detr: int, dim: int = 2) -> t
 class TestSliceQueryParamPerGroup:
     """Direct unit tests for ``_slice_query_param_per_group``.
 
-    The helper is the fix for a latent bug where a flat ``tensor[:N]`` slice
-    scrambled per-group structure when ``num_queries`` decreased with
-    ``group_detr > 1``.  See the docstring in ``rfdetr.models.weights`` for the
+    The helper is the fix for a latent bug where a flat ``tensor[:N]`` slice scrambled per-group structure when
+    ``num_queries`` decreased with ``group_detr > 1``.  See the docstring in ``rfdetr.models.weights`` for the
     ``LWDETR`` packing layout that motivates these tests.
     """
 
@@ -884,8 +879,8 @@ class TestLoadPretrainWeightsPerGroupQuerySlice:
 class TestPartialLoadDetector:
     """Tests for ``_warn_on_partial_load`` — surfaces silent partial loads.
 
-    The rf-detr logger has ``propagate=False`` so pytest's ``caplog`` does not
-    see its records.  These tests monkeypatch ``logger.warning`` directly to capture the message text.
+    The rf-detr logger has ``propagate=False`` so pytest's ``caplog`` does not see its records.  These tests monkeypatch
+    ``logger.warning`` directly to capture the message text.
     """
 
     @pytest.fixture
@@ -1004,9 +999,9 @@ class TestPartialLoadDetector:
     def test_mixed_intentional_and_unintentional_keys_warn_only_for_unexpected(self, captured) -> None:
         """Only unintentional missing keys appear in the warning; intentional reinit keys are filtered.
 
-        When a checkpoint load returns both head-reinit keys (class_embed.weight, etc.) and
-        a genuine backbone mismatch (backbone.0.encoder.register_tokens), the warning must
-        fire exactly once and must reference the unintentional key, not the filtered ones.
+        When a checkpoint load returns both head-reinit keys (class_embed.weight, etc.) and a genuine backbone mismatch
+        (backbone.0.encoder.register_tokens), the warning must fire exactly once and must reference the unintentional
+        key, not the filtered ones.
         """
         result = SimpleNamespace(
             missing_keys=[

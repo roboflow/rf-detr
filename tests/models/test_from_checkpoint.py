@@ -6,10 +6,8 @@
 
 """Tests for RFDETR.from_checkpoint classmethod.
 
-The inference logic is isolated by patching ``torch.load`` and the target
-model class inside ``rfdetr.variants`` (or ``rfdetr.platform.models`` for
-plus models).  No model weights are downloaded or GPU memory allocated.
-"""
+The inference logic is isolated by patching ``torch.load`` and the target model class inside ``rfdetr.variants`` (or
+``rfdetr.platform.models`` for plus models).  No model weights are downloaded or GPU memory allocated."""
 
 from __future__ import annotations
 
@@ -47,8 +45,8 @@ def _dict(pretrain_weights: str, num_classes: int = 80) -> dict:
 
 def _call_from_checkpoint(ckpt: dict, path: Path, cls_patch_target: str, **kwargs):
     """
-    Invoke RFDETR.from_checkpoint with torch.load mocked to return *ckpt* and
-    the model class at *cls_patch_target* replaced by a MagicMock.
+    Invoke RFDETR.from_checkpoint with torch.load mocked to return *ckpt* and the model class at *cls_patch_target*
+    replaced by a MagicMock.
 
     Returns:
         Tuple of (result, mock_class).

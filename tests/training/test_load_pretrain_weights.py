@@ -6,20 +6,18 @@
 
 """Regression tests for fine-tuned checkpoint weight destruction.
 
-When a user loads a fine-tuned N-class checkpoint but has ``num_classes``
-configured to a LARGER value (e.g. default 90), the second reinit in
-``load_pretrain_weights`` (models/weights.py) must NOT erroneously resize the
-detection head to ``num_classes + 1``, destroying the loaded weights.
+When a user loads a fine-tuned N-class checkpoint but has ``num_classes`` configured to a LARGER value (e.g. default
+90), the second reinit in ``load_pretrain_weights`` (models/weights.py) must NOT erroneously resize the detection head
+to ``num_classes + 1``, destroying the loaded weights.
 
 The fix changes the second reinit condition from:
     ``checkpoint_num_classes != args.num_classes + 1``
-to the user-override-aware logic that auto-aligns to the checkpoint when the
-user did not explicitly set ``num_classes``.
+to the user-override-aware logic that auto-aligns to the checkpoint when the user did not explicitly set
+``num_classes``.
 
-These tests exercise ``rfdetr.models.weights.load_pretrain_weights`` directly,
-which is the unified function that replaced the two prior separate implementations
-(``detr.py:_load_pretrain_weights_into`` and ``module_model.py:RFDETRModelModule._load_pretrain_weights``).
-"""
+These tests exercise ``rfdetr.models.weights.load_pretrain_weights`` directly, which is the unified function that
+replaced the two prior separate implementations (``detr.py:_load_pretrain_weights_into`` and
+``module_model.py:RFDETRModelModule._load_pretrain_weights``)."""
 
 from types import SimpleNamespace
 from unittest.mock import MagicMock, call
@@ -114,9 +112,8 @@ def _suppress_pretrain_io(monkeypatch) -> None:
 class TestLoadPretrainWeightsSecondReinit:
     """Regression tests for ``load_pretrain_weights`` in ``rfdetr.models.weights``.
 
-    Validates that the second reinitialize_detection_head call only fires when
-    the checkpoint has MORE classes than configured (backbone pretrain scenario),
-    not when it has fewer (fine-tuned checkpoint scenario).
+    Validates that the second reinitialize_detection_head call only fires when the checkpoint has MORE classes than
+    configured (backbone pretrain scenario), not when it has fewer (fine-tuned checkpoint scenario).
     """
 
     @pytest.fixture(autouse=True)
@@ -128,9 +125,8 @@ class TestLoadPretrainWeightsSecondReinit:
         """Fine-tuned checkpoint (fewer classes) must NOT trigger second reinit.
 
         Scenario: 2-class fine-tuned checkpoint (bias shape [3]) loaded with
-        default num_classes=90. The first reinit correctly resizes the head to 3
-        so load_state_dict works. The second reinit must NOT resize to 91 —
-        that would destroy the loaded fine-tuned weights.
+        default num_classes=90. The first reinit correctly resizes the head to 3 so load_state_dict works. The second
+        reinit must NOT resize to 91 — that would destroy the loaded fine-tuned weights.
         """
         from rfdetr.models.weights import load_pretrain_weights
 
@@ -171,8 +167,8 @@ class TestLoadPretrainWeightsSecondReinit:
         """Backbone pretrain (more classes in checkpoint) must still reinit.
 
         Scenario: COCO 91-class checkpoint loaded for 2-class fine-tuning
-        (num_classes=2). Both reinits are correct here: first to 91 for
-        load_state_dict, second to 3 for the configured class count.
+        (num_classes=2). Both reinits are correct here: first to 91 for load_state_dict, second to 3 for the configured
+        class count.
         """
         from rfdetr.models.weights import load_pretrain_weights
 
@@ -190,8 +186,8 @@ class TestLoadPretrainWeightsSecondReinit:
         """Explicit larger num_classes must be restored after checkpoint load.
 
         Scenario: 91-class checkpoint loaded with explicit num_classes=93.
-        Loader must temporarily match checkpoint size for load_state_dict, then
-        expand to 94 logits and keep args.num_classes unchanged.
+        Loader must temporarily match checkpoint size for load_state_dict, then expand to 94 logits and keep
+        args.num_classes unchanged.
         """
         from rfdetr.models.weights import load_pretrain_weights
 
@@ -228,12 +224,12 @@ class TestLoadPretrainWeightsSecondReinit:
         """Auto-align ``mc.num_classes`` and avoid a second reinit for 8-class checkpoints.
 
         Scenario (from user bug report): user trains on 8 categories (IDs 0–7).
-        The checkpoint stores ``class_embed.bias`` with shape [9] (8 user classes
-        + 1 background). Loading without specifying ``num_classes`` must NOT
-        trigger a second reinit to 91 after temporarily matching the checkpoint size for ``load_state_dict``.
+        The checkpoint stores ``class_embed.bias`` with shape [9] (8 user classes + 1 background). Loading without
+        specifying ``num_classes`` must NOT trigger a second reinit to 91 after temporarily matching the checkpoint size
+        for ``load_state_dict``.
 
-        This test asserts the loader auto-aligns ``mc.num_classes`` to 8 (9 - 1)
-        and fires exactly one reinit call — to 9 (the checkpoint size).
+        This test asserts the loader auto-aligns ``mc.num_classes`` to 8 (9 - 1) and fires exactly one reinit call — to
+        9 (the checkpoint size).
         """
         # 8 dataset categories → training builds a model with 8+1=9 logits.
         checkpoint = _make_checkpoint(num_classes=9)
@@ -264,10 +260,9 @@ PE_KEY = "backbone.0.encoder.encoder.embeddings.position_embeddings"
 class TestLoadPretrainWeightsPEInterpolation:
     """Regression tests for #960 — PE must be interpolated when resolution changes.
 
-    ``load_pretrain_weights`` must bicubic-interpolate the checkpoint's DINOv2
-    positional embeddings to match the model's ``positional_encoding_size`` before
-    calling ``load_state_dict``.  Without this, any custom ``resolution`` that
-    changes the PE grid size causes a ``RuntimeError: size mismatch``.
+    ``load_pretrain_weights`` must bicubic-interpolate the checkpoint's DINOv2 positional embeddings to match the
+    model's ``positional_encoding_size`` before calling ``load_state_dict``.  Without this, any custom ``resolution``
+    that changes the PE grid size causes a ``RuntimeError: size mismatch``.
     """
 
     @pytest.fixture(autouse=True)
@@ -288,9 +283,9 @@ class TestLoadPretrainWeightsPEInterpolation:
     ):
         """Checkpoint PE is bicubic-interpolated to match model_config.positional_encoding_size.
 
-        Regression for #960: ``load_pretrain_weights`` must not raise ``RuntimeError``
-        when model resolution differs from checkpoint resolution.  The PE tensor in the
-        checkpoint must be resized in-place before ``load_state_dict`` is called.
+        Regression for #960: ``load_pretrain_weights`` must not raise ``RuntimeError`` when model resolution differs
+        from checkpoint resolution.  The PE tensor in the checkpoint must be resized in-place before ``load_state_dict``
+        is called.
         """
         mc = RFDETRNanoConfig(
             pretrain_weights="/fake/weights.pth",
@@ -342,10 +337,9 @@ class TestLoadPretrainWeightsPEInterpolation:
     def test_base_config_non_formula_pe_is_interpolated_from_smaller_checkpoint(self, monkeypatch):
         """RFDETRBaseConfig PE=37 (not formula-derived) is interpolated when checkpoint differs.
 
-        RFDETRBaseConfig.positional_encoding_size=37 is not updated by
-        ``_sync_pe_with_resolution`` because 37 ≠ 560//16=35 (not formula-derived).
-        Loading a checkpoint with a smaller PE grid (e.g., 24×24) must still
-        trigger interpolation to the model's fixed PE=37×37 target.
+        RFDETRBaseConfig.positional_encoding_size=37 is not updated by ``_sync_pe_with_resolution`` because 37 ≠
+        560//16=35 (not formula-derived). Loading a checkpoint with a smaller PE grid (e.g., 24×24) must still trigger
+        interpolation to the model's fixed PE=37×37 target.
         """
         mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu")
         assert mc.positional_encoding_size == 37, "RFDETRBaseConfig PE must remain 37 (not formula-derived)"
@@ -370,9 +364,8 @@ class TestLoadPretrainWeightsPEInterpolation:
     def test_non_square_source_pe_logs_warning_and_is_not_modified(self, monkeypatch):
         """Non-square source PE grids are skipped with a warning and left unchanged.
 
-        When ``n_source`` is not a perfect square the interpolation is skipped to
-        avoid producing malformed embeddings.  The tensor must remain untouched and
-        a warning must be emitted via the weights module logger.
+        When ``n_source`` is not a perfect square the interpolation is skipped to avoid producing malformed embeddings.
+        The tensor must remain untouched and a warning must be emitted via the weights module logger.
         """
         mc = RFDETRNanoConfig(pretrain_weights="/fake/weights.pth", device="cpu")
         # positional_encoding_size=24 → n_target=576 (perfect square, so the
@@ -403,29 +396,25 @@ class TestL1FacadePEInterpolationEndToEnd:
     custom ``resolution`` and a checkpoint trained at the variant's default
     resolution must not raise ``RuntimeError`` from a PE shape mismatch.
 
-    In v1.6.5 the L1 facade (``RFDETRLarge``, ``RFDETRNano``, ...) used a
-    private ``_load_pretrain_weights_into`` helper in ``detr.py`` that bypassed
-    the PE bicubic-interpolation added to ``models.weights.load_pretrain_weights``
-    Code that wired the L1 facade through the unified loader landed
-    later (``inference._build_model_context`` calling ``load_pretrain_weights``
-    from ``models.weights``).  This test pins that wiring so a future refactor
-    cannot reintroduce a divergent loader path that silently skips PE interpolation.
+    In v1.6.5 the L1 facade (``RFDETRLarge``, ``RFDETRNano``, ...) used a private ``_load_pretrain_weights_into`` helper
+    in ``detr.py`` that bypassed the PE bicubic-interpolation added to ``models.weights.load_pretrain_weights`` Code
+    that wired the L1 facade through the unified loader landed later (``inference._build_model_context`` calling
+    ``load_pretrain_weights`` from ``models.weights``).  This test pins that wiring so a future refactor cannot
+    reintroduce a divergent loader path that silently skips PE interpolation.
 
-    Current coverage: ``RFDETRNano`` (detection) and ``RFDETRSegNano``
-    (segmentation), upward-interpolation only.  When a third L1 facade variant
-    is added, collapse both methods to a single ``@pytest.mark.parametrize``
-    over ``(variant_class, default_pe_grid, patch_size, new_resolution)``.
-    Downward-interpolation (high-res checkpoint → lower-res model) is not
-    currently exercised; add a reverse-direction parametrize row when refactoring.
+    Current coverage: ``RFDETRNano`` (detection) and ``RFDETRSegNano`` (segmentation), upward-interpolation only.  When
+    a third L1 facade variant is added, collapse both methods to a single ``@pytest.mark.parametrize`` over
+    ``(variant_class, default_pe_grid, patch_size, new_resolution)``. Downward-interpolation (high-res checkpoint →
+    lower-res model) is not currently exercised; add a reverse-direction parametrize row when refactoring.
     """
 
     def test_rfdetr_nano_loads_default_pe_checkpoint_at_custom_resolution(self, tmp_path):
         """Saving an RFDETRNano state_dict at default resolution and loading at
         a higher resolution must succeed via PE interpolation in the L1 facade.
 
-        Mirrors the user-reported scenario in https://github.com/roboflow/rf-detr/issues/990 (PE size mismatch
-        ``[1, 1937, 384]`` vs ``[1, 6401, 384]`` raised from
-        ``LWDETR.load_state_dict``), reduced to RFDETRNano for test speed.
+        Mirrors the user-reported scenario in https://github.com/roboflow/rf-detr/issues/990 (PE size mismatch ``[1,
+        1937, 384]`` vs ``[1, 6401, 384]`` raised from ``LWDETR.load_state_dict``), reduced to RFDETRNano for test
+        speed.
         """
         from rfdetr import RFDETRNano
 
@@ -479,11 +468,11 @@ class TestL1FacadePEInterpolationEndToEnd:
         """Saving an RFDETRSegNano state_dict at default resolution and loading at
         a higher resolution must succeed via PE interpolation in the L1 facade.
 
-        Regression for https://github.com/roboflow/rf-detr/issues/1023 — the
-        segmentation model variant (``RFDETRSegNano``) raised ``RuntimeError: size mismatch for
-        backbone.0.encoder.encoder.embeddings.position_embeddings`` when
-        instantiated with a non-default ``resolution`` because the L1 facade's
-        checkpoint-loading path did not interpolate positional embeddings for segmentation models.
+        Regression for https://github.com/roboflow/rf-detr/issues/1023 — the segmentation model variant
+        (``RFDETRSegNano``) raised ``RuntimeError: size mismatch for
+        backbone.0.encoder.encoder.embeddings.position_embeddings`` when instantiated with a non-default ``resolution``
+        because the L1 facade's checkpoint-loading path did not interpolate positional embeddings for segmentation
+        models.
         """
         from rfdetr import RFDETRSegNano
 
@@ -573,20 +562,18 @@ class TestLoadPretrainWeightsDeprecation:
 class TestModuleLoadPretrainWeightsPEInterpolationCustomResolution:
     """Regression for #1038 — PE interpolation must fire through ``RFDETRModelModule.__init__``.
 
-    The L2 training entry path (``RFDETRSegLarge(resolution=1008).train(...)``)
-    constructs an :class:`~rfdetr.training.module_model.RFDETRModelModule` whose
-    ``__init__`` delegates to :func:`~rfdetr.models.weights.load_pretrain_weights`.
-    That helper must bicubic-interpolate the checkpoint's DINOv2 positional
-    embeddings to match ``model_config.positional_encoding_size`` before calling
-    ``load_state_dict``.  Without this, any ``model.train()`` call with a custom
-    ``resolution`` that changes the PE grid raises::
+    The L2 training entry path (``RFDETRSegLarge(resolution=1008).train(...)``) constructs an
+    :class:`~rfdetr.training.module_model.RFDETRModelModule` whose ``__init__`` delegates to
+    :func:`~rfdetr.models.weights.load_pretrain_weights`. That helper must bicubic-interpolate the checkpoint's DINOv2
+    positional embeddings to match ``model_config.positional_encoding_size`` before calling ``load_state_dict``.
+    Without this, any ``model.train()`` call with a custom ``resolution`` that changes the PE grid raises::
 
         RuntimeError: Error(s) in loading state_dict for LWDETR:
             size mismatch for backbone.0.encoder.encoder.embeddings.position_embeddings
 
-    These tests exercise the construction path end-to-end (mocking only the
-    heavy ``build_model_from_config`` / ``build_criterion_from_config`` calls
-    and disk I/O), so the regression cannot reappear if the in-init delegation to ``load_pretrain_weights`` is removed.
+    These tests exercise the construction path end-to-end (mocking only the heavy ``build_model_from_config`` /
+    ``build_criterion_from_config`` calls and disk I/O), so the regression cannot reappear if the in-init delegation to
+    ``load_pretrain_weights`` is removed.
     """
 
     @pytest.fixture(autouse=True)
@@ -597,8 +584,8 @@ class TestModuleLoadPretrainWeightsPEInterpolationCustomResolution:
     def _construct_module(self, mc, checkpoint, monkeypatch, tmp_path):
         """Construct an RFDETRModelModule with all heavy work mocked.
 
-        Returns the constructed module and the fake nn_model whose
-        ``load_state_dict`` receives the (now-interpolated) state dict.
+        Returns the constructed module and the fake nn_model whose ``load_state_dict`` receives the (now-interpolated)
+        state dict.
         """
         monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
         fake_model = MagicMock()
@@ -654,9 +641,8 @@ class TestModuleLoadPretrainWeightsPEInterpolationCustomResolution:
     def test_pe_interpolated_in_training_path(self, monkeypatch, config_cls, src_pe_size, tgt_pe_size, tmp_path):
         """Module construction interpolates PE to match ``positional_encoding_size``.
 
-        Regression for #1038 — ``RFDETRModelModule.__init__`` must trigger PE
-        interpolation through the canonical loader so ``load_state_dict`` does
-        not raise ``RuntimeError: size mismatch`` at custom training resolutions.
+        Regression for #1038 — ``RFDETRModelModule.__init__`` must trigger PE interpolation through the canonical loader
+        so ``load_state_dict`` does not raise ``RuntimeError: size mismatch`` at custom training resolutions.
         """
         mc = config_cls(
             pretrain_weights="/fake/weights.pth",

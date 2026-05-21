@@ -6,9 +6,8 @@
 
 """Regression tests for _resize_linear() and LWDETR.reinitialize_detection_head().
 
-These tests guard against the out_features staleness bug where in-place .data
-mutation did not update nn.Linear.out_features, causing ONNX export to emit stale (pre-fine-tuning) class counts.
-"""
+These tests guard against the out_features staleness bug where in-place .data mutation did not update
+nn.Linear.out_features, causing ONNX export to emit stale (pre-fine-tuning) class counts."""
 
 from unittest.mock import MagicMock
 
@@ -21,8 +20,8 @@ from rfdetr.models.lwdetr import LWDETR, _resize_linear
 def _make_minimal_lwdetr(num_classes: int = 91, two_stage: bool = False) -> LWDETR:
     """Construct the smallest viable LWDETR without loading pretrained weights.
 
-    Uses a MagicMock backbone and transformer with hidden_dim=4 so the model
-    can be constructed in milliseconds without any network I/O.
+    Uses a MagicMock backbone and transformer with hidden_dim=4 so the model can be constructed in milliseconds without
+    any network I/O.
 
     Args:
         num_classes: Initial number of output classes passed to LWDETR.
@@ -94,15 +93,15 @@ class TestResizeLinear:
 class TestReinitializeDetectionHead:
     """Integration tests for LWDETR.reinitialize_detection_head().
 
-    Uses a minimal LWDETR (hidden_dim=4, no real backbone) to verify that
-    out_features is updated on the replaced nn.Linear modules — the core invariant required for correct ONNX export.
+    Uses a minimal LWDETR (hidden_dim=4, no real backbone) to verify that out_features is updated on the replaced
+    nn.Linear modules — the core invariant required for correct ONNX export.
     """
 
     def test_updates_class_embed_out_features(self) -> None:
         """class_embed.out_features must reflect num_classes after reinitialize.
 
-        The `num_outputs_including_background` argument represents the total number
-        of classifier outputs (foreground classes plus background).
+        The `num_outputs_including_background` argument represents the total number of classifier outputs (foreground
+        classes plus background).
         """
         num_outputs_including_background = 8
         model = _make_minimal_lwdetr(num_classes=91)
@@ -118,8 +117,8 @@ class TestReinitializeDetectionHead:
     def test_two_stage_updates_enc_out_class_embed(self) -> None:
         """enc_out_class_embed entries must also have updated out_features in two-stage mode.
 
-        The `num_outputs_including_background` argument represents the total number
-        of classifier outputs (foreground classes plus background).
+        The `num_outputs_including_background` argument represents the total number of classifier outputs (foreground
+        classes plus background).
         """
         num_outputs_including_background = 8
         model = _make_minimal_lwdetr(num_classes=91, two_stage=True)

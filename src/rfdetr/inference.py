@@ -24,8 +24,8 @@ if TYPE_CHECKING:
 class ModelContext:
     """Lightweight model wrapper returned by RFDETR.get_model().
 
-    Provides the same attribute interface as the legacy ``main.py:Model`` but
-    without importing or depending on ``populate_args()`` or the legacy stack.
+    Provides the same attribute interface as the legacy ``main.py:Model`` but without importing or depending on
+    ``populate_args()`` or the legacy stack.
 
     Args:
         model: The underlying ``nn.Module`` (LWDETR instance).
@@ -70,8 +70,8 @@ _ModelContext = ModelContext  # backward-compat alias
 def _adapt_input_conv(num_channels: int, conv_weight: torch.Tensor) -> torch.Tensor:
     """Adapt a 3-channel pretrained conv weight tensor to *num_channels* input channels.
 
-    When ``num_channels == 3``: returns the weight unchanged.
-    When ``num_channels == 1``: averages weights across the original 3 channels.
+    When ``num_channels == 3``: returns the weight unchanged. When ``num_channels == 1``: averages weights across the
+    original 3 channels.
     Otherwise (``num_channels != 1`` and ``num_channels != 3``): tiles the 3-channel
     pattern and scales by ``3 / num_channels`` to preserve activation magnitude.
 
@@ -96,13 +96,11 @@ def _adapt_input_conv(num_channels: int, conv_weight: torch.Tensor) -> torch.Ten
 def _build_model_context(model_config: ModelConfig) -> ModelContext:
     """Build a ModelContext from ModelConfig without using legacy main.py:Model.
 
-    Replicates ``Model.__init__`` logic: builds the nn.Module, optionally loads
-    pretrain weights and applies LoRA.  The model is intentionally kept on CPU;
-    :func:`_ensure_model_on_device` in ``detr.py`` performs the deferred
-    ``.to(device)`` on the first ``predict()`` / ``export()`` /
-    ``optimize_for_inference()`` call.  Keeping construction CPU-only prevents
-    CUDA initialisation during ``__init__``, which would block DDP strategies
-    (``ddp_notebook``, ``ddp_spawn``) from spawning child processes in notebook environments.
+    Replicates ``Model.__init__`` logic: builds the nn.Module, optionally loads pretrain weights and applies LoRA.  The
+    model is intentionally kept on CPU; :func:`_ensure_model_on_device` in ``detr.py`` performs the deferred
+    ``.to(device)`` on the first ``predict()`` / ``export()`` / ``optimize_for_inference()`` call.  Keeping construction
+    CPU-only prevents CUDA initialisation during ``__init__``, which would block DDP strategies (``ddp_notebook``,
+    ``ddp_spawn``) from spawning child processes in notebook environments.
 
     Args:
         model_config: Architecture configuration.

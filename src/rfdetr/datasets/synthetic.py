@@ -131,9 +131,8 @@ def draw_synthetic_shape(
         size: Size of the shape.
 
     Returns:
-        Tuple of ``(image_with_shape, polygon)`` where ``polygon`` is a flat
-        list ``[x1, y1, x2, y2, …]`` suitable for the COCO ``segmentation``
-        field.  Returns an empty polygon list for unknown shape names.
+        Tuple of ``(image_with_shape, polygon)`` where ``polygon`` is a flat list ``[x1, y1, x2, y2, …]`` suitable for
+        the COCO ``segmentation`` field.  Returns an empty polygon list for unknown shape names.
     """
     cx, cy = center
     half_size = size // 2
@@ -173,8 +172,8 @@ def calculate_boundary_overlap(bbox: np.ndarray, img_size: int) -> float:
         img_size: Size of the image.
 
     Returns:
-        Overlap fraction in ``[0, 1]``: ``0.0`` means the box is fully inside
-        the image; ``1.0`` means it is fully outside.
+        Overlap fraction in ``[0, 1]``: ``0.0`` means the box is fully inside the image; ``1.0`` means it is fully
+        outside.
     """
     x_min, y_min, x_max, y_max = bbox
 
@@ -215,11 +214,9 @@ def generate_synthetic_sample(
             a placement attempt is rejected.
 
     Returns:
-        Tuple of ``(image, detections)`` where ``image`` is an
-        ``(img_size, img_size, 3)`` uint8 array and ``detections`` is an
-        :class:`sv.Detections` instance whose ``data["polygons"]`` field
-        contains one flat ``[x1, y1, x2, y2, …]`` polygon list per detection,
-        matching the geometry returned by :func:`draw_synthetic_shape`.
+        Tuple of ``(image, detections)`` where ``image`` is an ``(img_size, img_size, 3)`` uint8 array and
+        ``detections`` is an :class:`sv.Detections` instance whose ``data["polygons"]`` field contains one flat ``[x1,
+        y1, x2, y2, …]`` polygon list per detection, matching the geometry returned by :func:`draw_synthetic_shape`.
     """
     img = np.ones((img_size, img_size, 3), dtype=np.uint8) * 128
     color_names = list(SYNTHETIC_COLORS.keys())
@@ -318,8 +315,8 @@ def _write_coco_json(
 ) -> None:
     """Write a synthetic COCO JSON file.
 
-    Category IDs use sparse 1-based encoding (index * 2 + 1 → 1, 3, 5, …) so
-    synthetic data exercises the same ``cat2label`` remapping path that real COCO datasets use.
+    Category IDs use sparse 1-based encoding (index * 2 + 1 → 1, 3, 5, …) so synthetic data exercises the same
+    ``cat2label`` remapping path that real COCO datasets use.
 
     Args:
         annotations_path: Destination path for the JSON file.
@@ -328,8 +325,8 @@ def _write_coco_json(
         detections_list: Detections for each image in the same order.
         img_size: Side length of the square images (width = height = img_size).
         with_segmentation: When ``True`` each annotation includes a
-            ``segmentation`` polygon taken from ``detections.data["polygons"]``
-            (populated by :func:`generate_synthetic_sample`).  When ``False`` the field is an empty list.
+            ``segmentation`` polygon taken from ``detections.data["polygons"]`` (populated by
+            :func:`generate_synthetic_sample`).  When ``False`` the field is an empty list.
 
     Raises:
         ValueError: If ``file_paths`` and ``detections_list`` have different
@@ -448,9 +445,8 @@ def generate_coco_dataset(
             - Tuple of 3 floats for train/val/test (e.g., (0.7, 0.2, 0.1))
             - Dictionary (legacy support, e.g., {"train": 0.7, "val": 0.2, "test": 0.1})
         with_segmentation: If ``True``, include COCO polygon ``segmentation``
-            fields derived from the exact geometry of each drawn shape.
-            Requires the COCO dataset reader to be loaded with
-            ``include_masks=True`` (i.e. ``args.segmentation_head=True``).
+            fields derived from the exact geometry of each drawn shape. Requires the COCO dataset reader to be loaded
+            with ``include_masks=True`` (i.e. ``args.segmentation_head=True``).
     """
     # Normalize split_ratios to dictionary
     split_ratios_dict = _normalize_split_ratios(split_ratios)

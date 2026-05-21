@@ -402,8 +402,8 @@ class TestOnValidationEpochEnd:
     def test_ema_metrics_logged_when_map_metric_ema_populated(self) -> None:
         """val/ema_* metrics are logged when map_metric_ema has accumulated data.
 
-        EMA metrics are now computed from a separate map_metric_ema that is
-        populated during on_validation_batch_end (not aliased from base metrics).
+        EMA metrics are now computed from a separate map_metric_ema that is populated during on_validation_batch_end
+        (not aliased from base metrics).
         """
         cb = COCOEvalCallback(max_dets=500)
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
@@ -477,8 +477,8 @@ class TestOnValidationEpochEnd:
         """Core metrics written to trainer.callback_metrics each epoch so
         ModelCheckpoint / BestModelCallback detect improvement.
 
-        pl_module.log() from a callback's on_validation_epoch_end goes only to
-        logged_metrics (external loggers), not callback_metrics.
+        pl_module.log() from a callback's on_validation_epoch_end goes only to logged_metrics (external loggers), not
+        callback_metrics.
         """
         cb = COCOEvalCallback(max_dets=500)
         trainer = _make_trainer()
@@ -639,8 +639,8 @@ class TestConvertPreds:
     ) -> None:
         """Filtering degenerate boxes must preserve mask alignment via original indices.
 
-        Regression context: when a degenerate box is not last, keep indices are
-        non-zero/non-contiguous. Downstream filtering must keep masks from the same original prediction indices.
+        Regression context: when a degenerate box is not last, keep indices are non-zero/non-contiguous. Downstream
+        filtering must keep masks from the same original prediction indices.
         """
         cb = COCOEvalCallback()
 

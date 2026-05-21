@@ -95,8 +95,8 @@ class TestDownloadPretrainWeights:
     def test_file_exists_with_incorrect_md5_warns_and_skips(self, mock_file_operations):
         """Test that file is NOT re-downloaded when MD5 is incorrect and redownload=False.
 
-        This protects fine-tuned checkpoints that share the same filename as a
-        registry model (e.g. rf-detr-nano.pth) from being silently overwritten.
+        This protects fine-tuned checkpoints that share the same filename as a registry model (e.g. rf-detr-nano.pth)
+        from being silently overwritten.
         """
         mock_file_operations["exists"].return_value = True
         mock_file_operations["validate"].return_value = False  # Incorrect MD5
@@ -124,8 +124,8 @@ class TestDownloadPretrainWeights:
     def test_redownload_flag_forces_download_despite_incorrect_md5(self, mock_file_operations):
         """Test that redownload=True triggers download even when MD5 is incorrect.
 
-        Verifies the force-redownload path where the user explicitly wants to overwrite
-        an existing file (e.g. a fine-tuned checkpoint) with the original registry weights.
+        Verifies the force-redownload path where the user explicitly wants to overwrite an existing file (e.g. a
+        fine-tuned checkpoint) with the original registry weights.
         """
         mock_file_operations["exists"].return_value = True
         mock_file_operations["validate"].return_value = False  # Incorrect MD5
@@ -294,8 +294,8 @@ class TestDownloadErrorHandling:
     def test_absolute_path_resolves_to_known_model(self, mock_exists, mock_download):
         """Absolute paths like /content/rf-detr-base.pth must still match the registry.
 
-        Regression test: previously ModelWeights.from_filename received the full
-        path instead of the basename, so it returned None and the download was silently skipped.
+        Regression test: previously ModelWeights.from_filename received the full path instead of the basename, so it
+        returned None and the download was silently skipped.
         """
         mock_exists.return_value = False
 
@@ -331,8 +331,8 @@ class TestMaybeDownloadPretrainWeightsCacheDir:
     def _make_rfdetr(self, pretrain_weights):
         """Return an RFDETR shell backed by a fully validated RFDETRBaseConfig.
 
-        Uses RFDETRBaseConfig (which supplies required field defaults) so the
-        expand_path field validator on pretrain_weights is exercised end-to-end.
+        Uses RFDETRBaseConfig (which supplies required field defaults) so the expand_path field validator on
+        pretrain_weights is exercised end-to-end.
 
         Args:
             pretrain_weights: Raw value to pass to RFDETRBaseConfig; the pydantic

@@ -79,14 +79,12 @@ def export_onnx(
         verbose: Whether ONNX exporter should emit verbose logs.
         opset_version: ONNX opset version.
         variant_name: Model variant identifier (e.g. ``"rfdetr-medium"``).
-            When provided, the exported file is named ``{variant_name}.onnx`` or
-            ``{variant_name}-backbone.onnx`` (when ``backbone_only=True``) instead
-            of the generic ``inference_model.onnx`` or ``backbone_model.onnx``.
+            When provided, the exported file is named ``{variant_name}.onnx`` or ``{variant_name}-backbone.onnx`` (when
+            ``backbone_only=True``) instead of the generic ``inference_model.onnx`` or ``backbone_model.onnx``.
         notes: Optional user-defined metadata (string, dict, list, or any
-            JSON-serialisable value) to embed in the exported ONNX model under
-            the ``"rfdetr_notes"`` metadata property.  Ignored when ``None``.
-            String values are stored verbatim; all other types are JSON-encoded,
-            so consumers must call ``json.loads()`` to recover a dict or list.
+            JSON-serialisable value) to embed in the exported ONNX model under the ``"rfdetr_notes"`` metadata property.
+            Ignored when ``None``. String values are stored verbatim; all other types are JSON-encoded, so consumers
+            must call ``json.loads()`` to recover a dict or list.
 
     Returns:
         Path to the exported ONNX model.
@@ -285,9 +283,9 @@ class OnnxOptimizer:
 
     def resize_fix(self):
         """
-        This function loops through the graph looking for Resize nodes that uses scales for resize (has 3 inputs).
-        It substitutes found Resize with Resize that takes the size of the output tensor instead of scales.
-        It adds Shape->Slice->Concat
+        This function loops through the graph looking for Resize nodes that uses scales for resize (has 3 inputs). It
+        substitutes found Resize with Resize that takes the size of the output tensor instead of scales. It adds
+        Shape->Slice->Concat
                 Shape->Slice----^     subgraph to the graph to extract the shape of the output tensor.
         This fix is required for the dynamic shape support.
         """

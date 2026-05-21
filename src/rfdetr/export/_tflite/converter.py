@@ -6,73 +6,58 @@
 
 """ONNX → TFLite conversion using the ``onnx2tf`` library.
 
-``onnx2tf`` (PINTO0309) converts an ONNX graph to TFLite.  **Version 2.4.0
-or later is required** — earlier 1.x releases cannot lower three op
-patterns in the RF-DETR graph (constant Expand, 1-D TopK, rank-3 Tile).
-Although the onnx2tf 2.x default backend is ``flatbuffer_direct``, RF-DETR
-unconditionally forces ``tflite_backend="tf_converter"`` to avoid a runtime
-error in the TFLite TopK_V2 kernel (``flatbuffer_direct`` trips a
-"k > internal dimension" check at ``AllocateTensors()`` time).  ``Erf``
-and ``GeLU`` activations are replaced with TFLite-native pseudo-operators
-(``replace_to_pseudo_operators=["Erf", "GeLU"]``) so the produced model
-does not require the TensorFlow Flex delegate at inference time.
+``onnx2tf`` (PINTO0309) converts an ONNX graph to TFLite.  **Version 2.4.0 or later is required** — earlier 1.x releases
+cannot lower three op patterns in the RF-DETR graph (constant Expand, 1-D TopK, rank-3 Tile). Although the onnx2tf 2.x
+default backend is ``flatbuffer_direct``, RF-DETR unconditionally forces ``tflite_backend="tf_converter"`` to avoid a
+runtime error in the TFLite TopK_V2 kernel (``flatbuffer_direct`` trips a "k > internal dimension" check at
+``AllocateTensors()`` time).  ``Erf`` and ``GeLU`` activations are replaced with TFLite-native pseudo-operators
+(``replace_to_pseudo_operators=["Erf", "GeLU"]``) so the produced model does not require the TensorFlow Flex delegate at
+inference time.
 
 GridSample rewrite
 ------------------
-RF-DETR's deformable cross-attention uses :func:`torch.nn.functional.grid_sample`
-once per decoder layer (6 calls total).  ``onnx2tf``'s built-in GridSample
-handler lowers the op to ``tf.gather_nd(batch_dims=1)``, which TFLite's
-``GatherNd`` kernel does not support — the kernel silently accepts the call
-during ``AllocateTensors()`` but produces numerically wrong output at
-inference time, causing all detection scores to collapse from ~0.6 to ~0.1.
-The ``replace_to_pseudo_operators=["GridSample"]`` pseudo-op path also
-produces numerically wrong logit magnitudes in both FP32 and FP16 (the
-pseudo-op itself is broken, not a quantization issue).  An earlier ONNX-level
-rewrite using ``GatherElements(axis=2)`` was lowered to
-``tf.gather_nd(batch_dims=2)``, which TFLite does not support and crashes
-with index out-of-bounds at inference time.
+RF-DETR's deformable cross-attention uses :func:`torch.nn.functional.grid_sample` once per decoder layer (6 calls
+total).  ``onnx2tf``'s built-in GridSample handler lowers the op to ``tf.gather_nd(batch_dims=1)``, which TFLite's
+``GatherNd`` kernel does not support — the kernel silently accepts the call during ``AllocateTensors()`` but produces
+numerically wrong output at inference time, causing all detection scores to collapse from ~0.6 to ~0.1. The
+``replace_to_pseudo_operators=["GridSample"]`` pseudo-op path also produces numerically wrong logit magnitudes in both
+FP32 and FP16 (the pseudo-op itself is broken, not a quantization issue).  An earlier ONNX-level rewrite using
+``GatherElements(axis=2)`` was lowered to ``tf.gather_nd(batch_dims=2)``, which TFLite does not support and crashes with
+index out-of-bounds at inference time.
 
-Before invoking ``onnx2tf``, :func:`_replace_gridsample_for_tflite` rewrites
-every ``GridSample`` node in the ONNX graph into an equivalent bilinear
-sampling subgraph built from ``Gather(axis=0)`` on a transposed and flattened
-``(N*(H+2)*(W+2), C)`` image tensor.  ``onnx2tf`` lowers ``Gather(axis=0)``
-to TFLite's ``GATHER`` op with no ``batch_dims`` — the only TFLite gather
-path that is unconditionally supported, neither crashing on
+Before invoking ``onnx2tf``, :func:`_replace_gridsample_for_tflite` rewrites every ``GridSample`` node in the ONNX graph
+into an equivalent bilinear sampling subgraph built from ``Gather(axis=0)`` on a transposed and flattened
+``(N*(H+2)*(W+2), C)`` image tensor.  ``onnx2tf`` lowers ``Gather(axis=0)`` to TFLite's ``GATHER`` op with no
+``batch_dims`` — the only TFLite gather path that is unconditionally supported, neither crashing on
 ``AllocateTensors()`` nor producing wrong values.
 
-The converter uses the ``onnx2tf`` Python API directly (rather than
-shelling out to the CLI) so that we can:
+The converter uses the ``onnx2tf`` Python API directly (rather than shelling out to the CLI) so that we can:
 
 * Apply a compatibility shim for older ``onnx2tf`` releases that call
   :func:`numpy.load` on pickled data without ``allow_pickle=True``.
 * Redirect ``onnx2tf``'s built-in ``download_test_image_data()`` to use
   locally-prepared calibration data instead of downloading from GitHub (which can fail in many environments).
 
-``onnx2tf`` calls ``download_test_image_data()`` for its ONNX-vs-TF output
-validation.  ``_patch_validation_download()`` redirects that call to local
-data, avoiding the network dependency.
+``onnx2tf`` calls ``download_test_image_data()`` for its ONNX-vs-TF output validation.  ``_patch_validation_download()``
+redirects that call to local data, avoiding the network dependency.
 
 INT8 quantization
 -----------------
-``quantization="int8"`` produces a **dynamic-range** INT8 model (INT8
-weights, float activations, roughly 4x smaller than FP32, no calibration
-data needed), built from the ``onnx2tf`` SavedModel.
+``quantization="int8"`` produces a **dynamic-range** INT8 model (INT8 weights, float activations, roughly 4x smaller
+than FP32, no calibration data needed), built from the ``onnx2tf`` SavedModel.
 
-Static (full-integer) INT8 is not supported and raises ``ValueError``:
-RF-DETR's transformer activations do not survive 8-bit post-training
-quantization.
+Static (full-integer) INT8 is not supported and raises ``ValueError``: RF-DETR's transformer activations do not survive
+8-bit post-training quantization.
 
 Note:
-    The resulting ``.tflite`` model expects the same input normalization as
-    the ONNX model: ImageNet mean/std (``mean=[0.485, 0.456, 0.406]``,
-    ``std=[0.229, 0.224, 0.225]``).  The caller is responsible for applying this normalization at inference time.
+    The resulting ``.tflite`` model expects the same input normalization as the ONNX model: ImageNet mean/std
+    (``mean=[0.485, 0.456, 0.406]``, ``std=[0.229, 0.224, 0.225]``).  The caller is responsible for applying this
+    normalization at inference time.
 
 Note:
-    Segmentation models additionally emit a ``masks`` output.  FP32, FP16,
-    and dynamic-range INT8 all match the PyTorch baseline closely (INT8 mask
-    fidelity is marginally lower).  Verified on the non-plus segmentation
-    variants: Nano, Small, Medium, Large, and Preview.
-"""
+    Segmentation models additionally emit a ``masks`` output.  FP32, FP16, and dynamic-range INT8 all match the PyTorch
+    baseline closely (INT8 mask fidelity is marginally lower).  Verified on the non-plus segmentation
+    variants: Nano, Small, Medium, Large, and Preview."""
 
 from __future__ import annotations
 
@@ -105,21 +90,18 @@ _DEFAULT_DIR_CALIB_SAMPLES: int = 100
 def _replace_single_gridsample(node: Any, graph: Any, *, index: int) -> None:
     """Rewrite one GridSample ONNX node into a TFLite-safe bilinear subgraph.
 
-    Replaces ``GridSample(im, grid)`` with an equivalent bilinear sampling
-    subgraph that performs four ``Gather(axis=0)`` lookups on a transposed
-    and flattened ``(N*(H+2)*(W+2), C)`` image tensor.  ``onnx2tf`` lowers
-    ``Gather(axis=0)`` to TFLite's ``GATHER`` op with no ``batch_dims`` —
-    the only TFLite gather path that is unconditionally supported, neither
-    crashing on ``AllocateTensors()`` nor producing wrong values.
-    Per-sample batch offsets are added to the flat index so that a single rank-1 ``Gather`` covers the entire batch.
+    Replaces ``GridSample(im, grid)`` with an equivalent bilinear sampling subgraph that performs four
+    ``Gather(axis=0)`` lookups on a transposed and flattened ``(N*(H+2)*(W+2), C)`` image tensor.  ``onnx2tf`` lowers
+    ``Gather(axis=0)`` to TFLite's ``GATHER`` op with no ``batch_dims`` — the only TFLite gather path that is
+    unconditionally supported, neither crashing on ``AllocateTensors()`` nor producing wrong values. Per-sample batch
+    offsets are added to the flat index so that a single rank-1 ``Gather`` covers the entire batch.
 
-    The replacement is mathematically identical to PyTorch's
-    ``F.grid_sample`` for ``mode="bilinear"``, ``padding_mode="zeros"``,
-    ``align_corners=0``.  Out-of-bounds sample positions are clamped to the
-    zero-padded border, which has the same effect as PyTorch's zero padding.
+    The replacement is mathematically identical to PyTorch's ``F.grid_sample`` for ``mode="bilinear"``,
+    ``padding_mode="zeros"``, ``align_corners=0``.  Out-of-bounds sample positions are clamped to the zero-padded
+    border, which has the same effect as PyTorch's zero padding.
 
-    Shape-dependent values are computed at runtime via ONNX Shape/Gather/
-    Concat/Cast ops so the subgraph works for any static or dynamic input shape.
+    Shape-dependent values are computed at runtime via ONNX Shape/Gather/ Concat/Cast ops so the subgraph works for any
+    static or dynamic input shape.
 
     Args:
         node: The ``gs.Node`` to replace (must be a ``GridSample`` node).
@@ -419,21 +401,17 @@ def _replace_single_gridsample(node: Any, graph: Any, *, index: int) -> None:
 def _replace_gridsample_for_tflite(onnx_path: Path, output_dir: Path) -> Path:
     """Rewrite every GridSample node in *onnx_path* to use TFLite-safe ops.
 
-    ``onnx2tf``'s built-in GridSample handler lowers to
-    ``tf.gather_nd(batch_dims=1)``, which TFLite's ``GatherNd`` kernel does
-    not support — the kernel silently accepts the model during
-    ``AllocateTensors()`` but produces numerically wrong output at inference
-    time.  The ``replace_to_pseudo_operators=["GridSample"]`` pseudo-op path
-    also produces wrong logit magnitudes in both FP32 and FP16 (the pseudo-op
-    itself is broken, independent of quantization).  This function rewrites
-    the ONNX graph *before* calling ``onnx2tf.convert()``, replacing each
-    ``GridSample`` node with an equivalent bilinear subgraph that performs
-    four ``Gather(axis=0)`` lookups on a transposed and flattened
-    ``(N*(H+2)*(W+2), C)`` image tensor.  ``onnx2tf`` lowers ``Gather(axis=0)``
-    to TFLite's ``GATHER`` op with no ``batch_dims`` — the only TFLite gather path that is unconditionally supported.
+    ``onnx2tf``'s built-in GridSample handler lowers to ``tf.gather_nd(batch_dims=1)``, which TFLite's ``GatherNd``
+    kernel does not support — the kernel silently accepts the model during ``AllocateTensors()`` but produces
+    numerically wrong output at inference time.  The ``replace_to_pseudo_operators=["GridSample"]`` pseudo-op path also
+    produces wrong logit magnitudes in both FP32 and FP16 (the pseudo-op itself is broken, independent of quantization).
+    This function rewrites the ONNX graph *before* calling ``onnx2tf.convert()``, replacing each ``GridSample`` node
+    with an equivalent bilinear subgraph that performs four ``Gather(axis=0)`` lookups on a transposed and flattened
+    ``(N*(H+2)*(W+2), C)`` image tensor.  ``onnx2tf`` lowers ``Gather(axis=0)`` to TFLite's ``GATHER`` op with no
+    ``batch_dims`` — the only TFLite gather path that is unconditionally supported.
 
-    Only ``mode="bilinear"``, ``padding_mode="zeros"``, ``align_corners=0``
-    nodes are patched — the only variant emitted by RF-DETR's exporter.
+    Only ``mode="bilinear"``, ``padding_mode="zeros"``, ``align_corners=0`` nodes are patched — the only variant emitted
+    by RF-DETR's exporter.
 
     Args:
         onnx_path: Path to the source ``.onnx`` file.
@@ -441,8 +419,8 @@ def _replace_gridsample_for_tflite(onnx_path: Path, output_dir: Path) -> Path:
             already exist.
 
     Returns:
-        Path to the patched ``.onnx`` file if any ``GridSample`` nodes were
-        found; *onnx_path* unchanged if the graph contains no such nodes.
+        Path to the patched ``.onnx`` file if any ``GridSample`` nodes were found; *onnx_path* unchanged if the graph
+        contains no such nodes.
 
     Raises:
         ImportError: If ``onnx`` or ``onnx_graphsurgeon`` are not available.
@@ -493,8 +471,8 @@ def _replace_gridsample_for_tflite(onnx_path: Path, output_dir: Path) -> Path:
 def _check_onnx2tf_available() -> None:
     """Verify that a compatible ``onnx2tf`` package is importable.
 
-    onnx2tf 2.4.0 or later is required — earlier 1.x releases cannot lower
-    the constant ``Expand``, 1-D ``TopK``, and rank-3 ``Tile`` ops present in RF-DETR's ONNX graph.
+    onnx2tf 2.4.0 or later is required — earlier 1.x releases cannot lower the constant ``Expand``, 1-D ``TopK``, and
+    rank-3 ``Tile`` ops present in RF-DETR's ONNX graph.
 
     Raises:
         ImportError: If ``onnx2tf`` cannot be imported or is below 2.4.0.
@@ -537,12 +515,11 @@ def _check_onnx2tf_available() -> None:
 def _numpy_allow_pickle() -> Generator[None, None, None]:
     """Temporarily patch :func:`numpy.load` to set ``allow_pickle=True``.
 
-    ``onnx2tf`` 1.x calls ``np.load()`` on its bundled calibration data
-    without passing ``allow_pickle=True``.  NumPy ≥ 1.16.3 defaults that
-    flag to ``False`` and raises :class:`ValueError` for pickled files.
+    ``onnx2tf`` 1.x calls ``np.load()`` on its bundled calibration data without passing ``allow_pickle=True``.  NumPy ≥
+    1.16.3 defaults that flag to ``False`` and raises :class:`ValueError` for pickled files.
 
-    This context manager monkey-patches ``np.load`` for the duration of the
-    ``onnx2tf`` conversion and restores the original afterwards.
+    This context manager monkey-patches ``np.load`` for the duration of the ``onnx2tf`` conversion and restores the
+    original afterwards.
     """
     _original_load = np.load
 
@@ -561,20 +538,19 @@ def _numpy_allow_pickle() -> Generator[None, None, None]:
 def _patch_validation_download(npy_path: str) -> Generator[None, None, None]:
     """Redirect ``download_test_image_data()`` to use local calibration data.
 
-    ``onnx2tf`` calls ``download_test_image_data()`` during conversion to
-    fetch test images from GitHub.  The function is called in two places:
+    ``onnx2tf`` calls ``download_test_image_data()`` during conversion to fetch test images from GitHub.  The function
+    is called in two places:
 
     1. **Validation** — compares ONNX-vs-TF outputs (all conversions).
     2. **INT8 calibration** — builds a representative dataset when
        ``output_integer_quantized_tflite=True``.
 
-    This download can fail in many environments (firewalls, CI, air-gapped
-    systems, or when the upstream file is unavailable).  This context
-    manager monkey-patches the function in all known module locations to
-    return the data from the calibration ``.npy`` file we already prepared.
+    This download can fail in many environments (firewalls, CI, air-gapped systems, or when the upstream file is
+    unavailable).  This context manager monkey-patches the function in all known module locations to return the data
+    from the calibration ``.npy`` file we already prepared.
 
-    We intentionally do **not** use ``custom_input_op_name_np_data_path``
-    because that code path triggers a ``tf.tile`` rank mismatch in onnx2tf
+    We intentionally do **not** use ``custom_input_op_name_np_data_path`` because that code path triggers a ``tf.tile``
+    rank mismatch in onnx2tf
     1.x when processing models with DINOv2-style embeddings and N > 1
     calibration samples.  Patching the download function achieves the same goal without that issue.
 
@@ -618,8 +594,8 @@ def _load_calibration_images(
 ) -> NDArray[np.float32]:
     """Load images from a directory and prepare them for calibration.
 
-    Images are loaded, resized to ``(height, width)``, converted to
-    ``float32`` in ``[0, 1]``, and stacked into an NHWC array.
+    Images are loaded, resized to ``(height, width)``, converted to ``float32`` in ``[0, 1]``, and stacked into an NHWC
+    array.
 
     Args:
         image_dir: Directory containing image files (JPEG, PNG, etc.).
@@ -702,17 +678,15 @@ def _prepare_calibration_data(
 ) -> Path:
     """Prepare calibration data as a ``.npy`` file for ``onnx2tf``.
 
-    The returned path points to a ``.npy`` file containing an NHWC float32
-    array with pixel values in ``[0, 1]``.  This file is loaded by the
-    ``_patch_validation_download()`` context manager, which replaces
-    ``onnx2tf``'s built-in ``download_test_image_data()`` call.  ``onnx2tf``
-    uses this data for both ONNX-vs-TF output validation and (when INT8 is
-    requested) as a representative calibration dataset.
+    The returned path points to a ``.npy`` file containing an NHWC float32 array with pixel values in ``[0, 1]``.  This
+    file is loaded by the ``_patch_validation_download()`` context manager, which replaces ``onnx2tf``'s built-in
+    ``download_test_image_data()`` call.  ``onnx2tf`` uses this data for both ONNX-vs-TF output validation and (when
+    INT8 is requested) as a representative calibration dataset.
 
     Args:
         onnx_path: Path to the source ``.onnx`` file (used to read the
-            input tensor NCHW shape for random data generation and for
-            determining the target resolution when loading images from a directory).
+            input tensor NCHW shape for random data generation and for determining the target resolution when loading
+            images from a directory).
         calibration_data: One of:
 
             * ``None`` — generate random calibration data.  Sufficient for
@@ -831,21 +805,20 @@ def export_tflite(
               dtype float32, pixel values in ``[0, 1]``.
             * A :class:`numpy.ndarray` with the same format.
 
-            Dynamic-range INT8 needs no calibration data, so this argument
-            does not affect the quantized weights — it only feeds onnx2tf's internal validation pass.
+            Dynamic-range INT8 needs no calibration data, so this argument does not affect the quantized weights — it
+            only feeds onnx2tf's internal validation pass.
         verbosity: Log verbosity passed to ``onnx2tf``.  One of
             ``"debug"``, ``"info"``, ``"warn"``, ``"error"`` (default).
         max_images: Maximum number of images to load when
             *calibration_data* is a directory path.  Defaults to 100. Ignored for other calibration data formats.
         verbose: When ``True``, stream ``onnx2tf`` per-node progress —
-            useful for monitoring long conversions (5–15 min on
-            transformer-based models).  Defaults to ``False`` (silent).
+            useful for monitoring long conversions (5–15 min on transformer-based models).  Defaults to ``False``
+            (silent).
 
     Returns:
-        Path to the primary artifact.  ``onnx2tf`` always writes both
-        ``{stem}_float32.tflite`` and ``{stem}_float16.tflite`` to *output_dir*; ``quantization="int8"`` adds
-        ``{stem}_dynamic_range_quant.tflite``.  The returned path is the
-        dynamic-range file for ``int8``, otherwise the float32 file.
+        Path to the primary artifact.  ``onnx2tf`` always writes both ``{stem}_float32.tflite`` and
+        ``{stem}_float16.tflite`` to *output_dir*; ``quantization="int8"`` adds ``{stem}_dynamic_range_quant.tflite``.
+        The returned path is the dynamic-range file for ``int8``, otherwise the float32 file.
 
     Raises:
         FileNotFoundError: If *onnx_path* does not exist or
@@ -855,20 +828,18 @@ def export_tflite(
         RuntimeError: If the conversion fails.
 
     Note:
-        This function is **not thread-safe**.  It globally monkey-patches
-        :func:`numpy.load` (via :func:`_numpy_allow_pickle`) and ``onnx2tf.download_test_image_data`` (via
-        :func:`_patch_validation_download`) for the duration of the
-        conversion.  Concurrent calls from multiple threads will interfere
-        with each other.  Run conversion in a subprocess if isolation is required.
+        This function is **not thread-safe**.  It globally monkey-patches :func:`numpy.load` (via
+        :func:`_numpy_allow_pickle`) and ``onnx2tf.download_test_image_data`` (via :func:`_patch_validation_download`)
+        for the duration of the conversion.  Concurrent calls from multiple threads will interfere with each other.  Run
+        conversion in a subprocess if isolation is required.
 
-        ``tf_converter`` backend is forced unconditionally (overriding
-        onnx2tf's 2.x ``flatbuffer_direct`` default) to avoid a runtime
-        error in the TFLite TopK_V2 kernel.  ``Erf`` and ``GeLU`` ops are
-        substituted with TFLite-native pseudo-operators to avoid a missing TensorFlow Flex delegate at inference time.
+        ``tf_converter`` backend is forced unconditionally (overriding onnx2tf's 2.x ``flatbuffer_direct`` default) to
+        avoid a runtime error in the TFLite TopK_V2 kernel.  ``Erf`` and ``GeLU`` ops are substituted with TFLite-native
+        pseudo-operators to avoid a missing TensorFlow Flex delegate at inference time.
 
         Segmentation models additionally emit a ``masks`` output, decoded by
-        :func:`rfdetr.export._tflite.inference._run_inference`.  Verified on
-        the non-plus segmentation variants (Nano, Small, Medium, Large, Preview).
+        :func:`rfdetr.export._tflite.inference._run_inference`.  Verified on the non-plus segmentation variants (Nano,
+        Small, Medium, Large, Preview).
     """
     onnx_path = Path(onnx_path)
     output_dir = Path(output_dir)

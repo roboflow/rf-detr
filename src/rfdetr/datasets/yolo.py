@@ -148,9 +148,8 @@ class _LazyYoloSample:
     """Lightweight per-image YOLO metadata with polygons kept lazy until fetch time.
 
     Note: ``frozen=True`` prevents field *reassignment* but does NOT prevent
-    in-place mutation of ``np.ndarray`` fields (e.g. ``sample.xyxy[0] = 999.0``
-    would silently succeed).  This is safe across DataLoader workers because
-    each worker receives a pickled copy of the dataset.
+    in-place mutation of ``np.ndarray`` fields (e.g. ``sample.xyxy[0] = 999.0`` would silently succeed).  This is safe
+    across DataLoader workers because each worker receives a pickled copy of the dataset.
     """
 
     image_path: str
@@ -224,12 +223,12 @@ def _parse_yolo_label_line(
         width: Image width in pixels.
         height: Image height in pixels.
         parse_polygons: When ``False`` the pixel-space polygon array is not
-            computed or returned (``polygon_px`` will be ``None``).  Set to
-            ``False`` on the detection-only path to avoid allocating polygon arrays that would immediately be discarded.
+            computed or returned (``polygon_px`` will be ``None``).  Set to ``False`` on the detection-only path to
+            avoid allocating polygon arrays that would immediately be discarded.
 
     Returns:
-        Tuple of ``(class_id, xyxy_px, polygon_px)`` where coordinates are in
-        pixel space.  ``polygon_px`` is ``None`` when ``parse_polygons=False``.
+        Tuple of ``(class_id, xyxy_px, polygon_px)`` where coordinates are in pixel space.  ``polygon_px`` is ``None``
+        when ``parse_polygons=False``.
 
     Raises:
         ValueError: If the line is malformed or the class ID is out of range.
@@ -300,22 +299,21 @@ def _build_yolo_samples(
 ) -> tuple[list[str], list[_LazyYoloSample]]:
     """Build the class list and sample list shared by both YOLO builder functions.
 
-    Iterates over every image in ``img_folder``, reads image dimensions via PIL
-    (header-only, no full decode), and parses the matching ``.txt`` label file
-    when present.  Images without a label file are included as *background* samples with empty detections.
+    Iterates over every image in ``img_folder``, reads image dimensions via PIL (header-only, no full decode), and
+    parses the matching ``.txt`` label file when present.  Images without a label file are included as *background*
+    samples with empty detections.
 
     Args:
         img_folder: Path to the directory containing images.
         lb_folder: Path to the directory containing YOLO ``.txt`` label files.
         data_file: Path to the ``data.yaml`` / ``data.yml`` file with class names.
         include_polygons: When ``True`` polygon coordinates are stored in each
-            :class:`_LazyYoloSample` (segmentation path).  When ``False``
-            polygon coordinates returned by :func:`_parse_yolo_label_line` are
-            discarded and ``polygons=()`` is stored instead (detection-only path).
+            :class:`_LazyYoloSample` (segmentation path).  When ``False`` polygon coordinates returned by
+            :func:`_parse_yolo_label_line` are discarded and ``polygons=()`` is stored instead (detection-only path).
 
     Returns:
-        A ``(classes, samples)`` tuple where ``classes`` is the ordered list of
-        class names and ``samples`` is a list of :class:`_LazyYoloSample` objects.
+        A ``(classes, samples)`` tuple where ``classes`` is the ordered list of class names and ``samples`` is a list of
+        :class:`_LazyYoloSample` objects.
 
     Examples:
         >>> # Used internally by _build_lazy_yolo_detection_dataset and
@@ -368,13 +366,11 @@ def _build_yolo_samples(
 def _build_lazy_yolo_detection_dataset(img_folder: str, lb_folder: str, data_file: str) -> _LazyYoloDetectionDataset:
     """Build a YOLO detection dataset that stores bounding boxes lazily.
 
-    Unlike :func:`_build_lazy_yolo_segmentation_dataset`, this function does
-    not store polygon coordinates or dense masks — only ``xyxy`` boxes are
-    retained, keeping peak memory proportional to the number of annotations.
+    Unlike :func:`_build_lazy_yolo_segmentation_dataset`, this function does not store polygon coordinates or dense
+    masks — only ``xyxy`` boxes are retained, keeping peak memory proportional to the number of annotations.
 
-    Images without a matching ``.txt`` label file are included as
-    *background* samples with empty detections, so datasets that mix labelled
-    and unlabelled images are handled correctly.
+    Images without a matching ``.txt`` label file are included as *background* samples with empty detections, so
+    datasets that mix labelled and unlabelled images are handled correctly.
 
     Args:
         img_folder: Path to the directory containing images.
@@ -382,8 +378,8 @@ def _build_lazy_yolo_detection_dataset(img_folder: str, lb_folder: str, data_fil
         data_file: Path to the ``data.yaml`` / ``data.yml`` file with class names.
 
     Returns:
-        A :class:`_LazyYoloDetectionDataset` whose ``__getitem__`` loads pixel
-        data on demand and returns ``sv.Detections`` without mask information.
+        A :class:`_LazyYoloDetectionDataset` whose ``__getitem__`` loads pixel data on demand and returns
+        ``sv.Detections`` without mask information.
     """
     classes, samples = _build_yolo_samples(img_folder, lb_folder, data_file, include_polygons=False)
     return _LazyYoloDetectionDataset(classes=classes, samples=samples)
@@ -398,8 +394,8 @@ def _build_lazy_yolo_segmentation_dataset(img_folder: str, lb_folder: str, data_
         data_file: Path to the ``data.yaml`` / ``data.yml`` file with class names.
 
     Returns:
-        A :class:`_LazyYoloDetectionDataset` whose ``__getitem__`` loads pixel
-        data on demand and rasterizes polygon masks into dense boolean tensors.
+        A :class:`_LazyYoloDetectionDataset` whose ``__getitem__`` loads pixel data on demand and rasterizes polygon
+        masks into dense boolean tensors.
     """
     classes, samples = _build_yolo_samples(img_folder, lb_folder, data_file, include_polygons=True)
     return _LazyYoloDetectionDataset(classes=classes, samples=samples)
@@ -595,17 +591,15 @@ class ConvertYolo:
 class YoloDetection(VisionDataset):
     """YOLO format dataset with lazy image loading and optional mask support.
 
-    Both detection (``include_masks=False``) and segmentation
-    (``include_masks=True``) paths use a lazy backend: image pixels are loaded
-    on demand inside ``__getitem__`` rather than at construction time, which
-    keeps peak RAM proportional to the number of annotations rather than to ``N × H × W``.
+    Both detection (``include_masks=False``) and segmentation (``include_masks=True``) paths use a lazy backend: image
+    pixels are loaded on demand inside ``__getitem__`` rather than at construction time, which keeps peak RAM
+    proportional to the number of annotations rather than to ``N × H × W``.
 
-    Images without a matching ``.txt`` label file are treated as *background*
-    images and produce empty detections.  This ensures that datasets containing
-    a mix of annotated and unannotated images are handled correctly in both single-GPU and multi-GPU training.
+    Images without a matching ``.txt`` label file are treated as *background* images and produce empty detections.  This
+    ensures that datasets containing a mix of annotated and unannotated images are handled correctly in both single-GPU
+    and multi-GPU training.
 
-    This class provides a VisionDataset interface compatible with RF-DETR training,
-    matching the API of CocoDetection.
+    This class provides a VisionDataset interface compatible with RF-DETR training, matching the API of CocoDetection.
 
     Args:
         img_folder: Path to the directory containing images
@@ -663,17 +657,16 @@ class YoloDetection(VisionDataset):
 def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> YoloDetection:
     """Build a Roboflow YOLO-format dataset.
 
-    This uses Roboflow's standard YOLO directory structure
-    (train/valid/test folders with images/ and labels/ subdirectories).
+    This uses Roboflow's standard YOLO directory structure (train/valid/test folders with images/ and labels/
+    subdirectories).
 
     Args:
         image_set: Dataset split to load. One of ``"train"``, ``"val"``, or
             ``"test"``.
         args: Argument namespace. The following attributes are consumed:
-            ``dataset_dir``, ``square_resize_div_64``, ``aug_config``,
-            ``segmentation_head``, ``multi_scale``, ``expanded_scales``,
-            ``do_random_resize_via_padding``, ``patch_size``, ``num_windows``.
-            ``aug_config`` is forwarded to the transform builder; when ``None`` the builder falls back to the default
+            ``dataset_dir``, ``square_resize_div_64``, ``aug_config``, ``segmentation_head``, ``multi_scale``,
+            ``expanded_scales``, ``do_random_resize_via_padding``, ``patch_size``, ``num_windows``. ``aug_config`` is
+            forwarded to the transform builder; when ``None`` the builder falls back to the default
             :data:`~rfdetr.datasets.aug_config.AUG_CONFIG`.
         resolution: Target square resolution in pixels.
 

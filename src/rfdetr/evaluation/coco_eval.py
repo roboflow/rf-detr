@@ -15,11 +15,10 @@
 
 """COCO evaluator for ONNX/TRT export benchmarking.
 
-Provides :class:`CocoEvaluator` used by :mod:`rfdetr.export.benchmark` to
-compute mAP during ONNX and TensorRT inference benchmarks.
+Provides :class:`CocoEvaluator` used by :mod:`rfdetr.export.benchmark` to compute mAP during ONNX and TensorRT inference
+benchmarks.
 
-Mostly copy-paste from https://github.com/pytorch/vision/blob/edfd5a7/references/detection/coco_eval.py
-"""
+Mostly copy-paste from https://github.com/pytorch/vision/blob/edfd5a7/references/detection/coco_eval.py"""
 
 import contextlib
 import copy

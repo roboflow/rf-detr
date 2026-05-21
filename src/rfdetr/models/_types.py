@@ -6,13 +6,11 @@
 
 """Shared type protocols for RF-DETR model builder functions.
 
-The ``BuilderArgs`` protocol documents the minimum attribute set consumed by
-``build_model()``, ``build_backbone()``, ``build_transformer()``, and
-``build_criterion_and_postprocessors()``.  It is satisfied structurally by any
-object that exposes the required attributes — including the ``SimpleNamespace``
-produced by :func:`rfdetr._namespace.build_namespace` and, after Item #1 is
-complete, by ``ModelConfig``/``TrainConfig`` directly.
-"""
+The ``BuilderArgs`` protocol documents the minimum attribute set consumed by ``build_model()``, ``build_backbone()``,
+``build_transformer()``, and ``build_criterion_and_postprocessors()``.  It is satisfied structurally by any object that
+exposes the required attributes — including the ``SimpleNamespace`` produced by
+:func:`rfdetr._namespace.build_namespace` and, after Item #1 is complete, by
+``ModelConfig``/``TrainConfig`` directly."""
 
 from __future__ import annotations
 
@@ -23,15 +21,13 @@ from typing import List, Optional, Protocol, runtime_checkable
 class BuilderArgs(Protocol):
     """Protocol satisfied by both ``ModelConfig``-based Namespaces and raw ``SimpleNamespace`` objects.
 
-    This documents the minimum attribute set consumed by ``build_model()``,
-    ``build_backbone()``, ``build_transformer()``, and
-    ``build_criterion_and_postprocessors()``.  All attributes that appear in
+    This documents the minimum attribute set consumed by ``build_model()``, ``build_backbone()``,
+    ``build_transformer()``, and ``build_criterion_and_postprocessors()``.  All attributes that appear in
     ``build_namespace()`` hardcoded defaults are included.
 
     Note:
-        Python 3.10/3.11 runtime ``isinstance()`` checks with
-        ``@runtime_checkable`` only verify callable (method) presence, not
-        data-attribute presence.  Full structural enforcement requires Python
+        Python 3.10/3.11 runtime ``isinstance()`` checks with ``@runtime_checkable`` only verify callable (method)
+        presence, not data-attribute presence.  Full structural enforcement requires Python
         3.12+ or a static type checker (mypy / pyright).
     """
 

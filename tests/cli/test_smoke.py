@@ -6,13 +6,11 @@
 
 """CLI smoke tests and YAML roundtrip tests — PTL Ch4/T7.
 
-Smoke tests run RFDETRCli in-process with args=['--help'] / ['fit', '--help'] /
-['validate', '--help'] and assert SystemExit(0) — no subprocess needed.
+Smoke tests run RFDETRCli in-process with args=['--help'] / ['fit', '--help'] / ['validate', '--help'] and assert
+SystemExit(0) — no subprocess needed.
 
-YAML roundtrip tests load each example config with yaml.safe_load, import the
-class_path, construct the config object with the YAML init_args, and verify
-every specified field survived the round-trip.
-"""
+YAML roundtrip tests load each example config with yaml.safe_load, import the class_path, construct the config object
+with the YAML init_args, and verify every specified field survived the round-trip."""
 
 import importlib
 import pathlib
@@ -148,9 +146,8 @@ class TestTrainConfigRoundtrip:
     def test_train_config_fields_survive_roundtrip(self, name, tmp_path):
         """Every field in train_config.init_args is preserved after instantiation.
 
-        dataset_dir is rewritten to tmp_path so path expansion doesn't fail on
-        the placeholder /data/coco value.  TrainConfig.expand_paths() converts
-        relative paths containing separators to absolute, so both sides are
+        dataset_dir is rewritten to tmp_path so path expansion doesn't fail on the placeholder /data/coco value.
+        TrainConfig.expand_paths() converts relative paths containing separators to absolute, so both sides are
         normalised with os.path.abspath before comparison.
         """
         import os

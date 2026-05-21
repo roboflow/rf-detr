@@ -6,11 +6,9 @@
 
 """TFLite inference helpers for RF-DETR exported models.
 
-These functions handle interpreter creation, image preprocessing, and
-decoding of detection and segmentation-mask outputs without requiring PyTorch
-or the RF-DETR training stack: only ``tflite-runtime`` (or ``tensorflow``),
-``numpy``, ``supervision``, and ``Pillow`` are needed at inference time.
-"""
+These functions handle interpreter creation, image preprocessing, and decoding of detection and segmentation-mask
+outputs without requiring PyTorch or the RF-DETR training stack: only ``tflite-runtime`` (or ``tensorflow``), ``numpy``,
+``supervision``, and ``Pillow`` are needed at inference time."""
 
 from __future__ import annotations
 
@@ -35,8 +33,8 @@ _PIL_BILINEAR = getattr(PILImage, "Resampling", PILImage).BILINEAR
 def _create_interpreter(model_path: str | Path) -> Any:
     """Load a TFLite model, allocate tensors, and log I/O shapes.
 
-    Tries ``tflite_runtime`` first (lightweight; preferred on edge devices),
-    then falls back to ``tensorflow.lite`` (pre-installed on Colab / full TF environments).
+    Tries ``tflite_runtime`` first (lightweight; preferred on edge devices), then falls back to ``tensorflow.lite``
+    (pre-installed on Colab / full TF environments).
 
     Args:
         model_path: Path to the ``.tflite`` model file.
@@ -76,9 +74,9 @@ def _create_interpreter(model_path: str | Path) -> Any:
 def _decode_masks(mask_logits: NDArray[Any], out_size: tuple[int, int]) -> NDArray[np.bool_]:
     """Upsample raw mask logits to image size and threshold at zero.
 
-    Approximates ``PostProcess.forward``: bilinear resize followed by ``> 0``.
-    Uses Pillow's bilinear resampling rather than ``F.interpolate`` (no PyTorch
-    dependency at inference time); border pixels may differ slightly due to distinct half-pixel conventions.
+    Approximates ``PostProcess.forward``: bilinear resize followed by ``> 0``. Uses Pillow's bilinear resampling rather
+    than ``F.interpolate`` (no PyTorch dependency at inference time); border pixels may differ slightly due to distinct
+    half-pixel conventions.
 
     Args:
         mask_logits: Raw mask logits of shape ``(K, Hm, Wm)``.
@@ -111,11 +109,10 @@ def _run_inference(
 ) -> tuple[sv.Detections, PILImage.Image]:
     """Preprocess one image, run TFLite inference, and decode detections.
 
-    Reads input shape from the interpreter (NHWC ``float32``), resizes and
-    normalises the image with ImageNet statistics, invokes the model, then
-    decodes the ``dets`` / ``labels`` output tensors into a
-    :class:`supervision.Detections` object with pixel-space ``xyxy`` boxes.
-    For segmentation exports the ``masks`` output is also decoded into ``Detections.mask``.
+    Reads input shape from the interpreter (NHWC ``float32``), resizes and normalises the image with ImageNet
+    statistics, invokes the model, then decodes the ``dets`` / ``labels`` output tensors into a
+    :class:`supervision.Detections` object with pixel-space ``xyxy`` boxes. For segmentation exports the ``masks``
+    output is also decoded into ``Detections.mask``.
 
     Args:
         interp: Allocated TFLite interpreter returned by ``_create_interpreter``.
@@ -123,9 +120,8 @@ def _run_inference(
         threshold: Confidence threshold; detections below this are discarded.
 
     Returns:
-        A tuple of ``(detections, pil_img)`` where ``detections`` contains
-        pixel-space ``xyxy`` boxes (and ``mask`` for segmentation models) and
-        ``pil_img`` is the original PIL image at its original resolution.
+        A tuple of ``(detections, pil_img)`` where ``detections`` contains pixel-space ``xyxy`` boxes (and ``mask`` for
+        segmentation models) and ``pil_img`` is the original PIL image at its original resolution.
     """
     inp_det = interp.get_input_details()
     out_det = interp.get_output_details()

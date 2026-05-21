@@ -474,10 +474,9 @@ class TestGenerateCocoDatasetWithSegmentation:
     def test_empty_polygon_falls_back_to_empty_segmentation(self, tmp_path):
         """An empty polygon entry silently falls back to ``segmentation=[]``.
 
-        The ``len(polygon_data) < len(detections)`` guard only checks array
-        length, not contents.  An element that is an empty list passes the
-        guard and takes the ``else`` branch producing ``segmentation=[]``.
-        This test documents the existing silent-fallback behaviour.
+        The ``len(polygon_data) < len(detections)`` guard only checks array length, not contents.  An element that is an
+        empty list passes the guard and takes the ``else`` branch producing ``segmentation=[]``. This test documents the
+        existing silent-fallback behaviour.
         """
         annotations_path = tmp_path / "_annotations.coco.json"
         polygon_data = np.empty(1, dtype=object)

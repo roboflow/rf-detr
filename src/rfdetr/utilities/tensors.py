@@ -117,14 +117,13 @@ def nested_tensor_from_tensor_list(
     Args:
         tensor_list: List of 3-D tensors (C, H, W) with possibly different H, W.
         block_size: When set, round the padded ``H`` and ``W`` up to the next
-            multiple of *block_size* before allocating the batch tensor.  Used to
-            satisfy backbone divisibility requirements (e.g. windowed-attention
-            backbones require ``H % (patch_size * num_windows) == 0``).  The
+            multiple of *block_size* before allocating the batch tensor.  Used to satisfy backbone divisibility
+            requirements (e.g. windowed-attention backbones require ``H % (patch_size * num_windows) == 0``).  The
             rounded-up strip is explicitly tracked in the ``mask`` as padding.
 
     Returns:
-        NestedTensor with all images padded to the maximum spatial dimensions (rounded up to *block_size*
-        when provided).
+        NestedTensor with all images padded to the maximum spatial dimensions (rounded up to *block_size* when
+        provided).
     """
     # TODO make this more general
     if tensor_list[0].ndim == 3:
@@ -210,12 +209,11 @@ def _bilinear_grid_sample(
 ) -> torch.Tensor:
     """Bilinear grid sampling compatible with all PyTorch backends including MPS.
 
-    Drop-in replacement for ``F.grid_sample(input, grid, mode='bilinear', ...)``.
-    On MPS, ``F.grid_sample`` backward (``grid_sampler_2d_backward``) is not yet
-    implemented and silently falls back to CPU.  This function uses gather-based
-    index arithmetic — natively supported on every backend — for the MPS path,
-    while delegating to ``F.grid_sample`` on CUDA/CPU where its fused kernel is
-    faster.  The two paths are numerically identical, so model accuracy is unaffected.
+    Drop-in replacement for ``F.grid_sample(input, grid, mode='bilinear', ...)``. On MPS, ``F.grid_sample`` backward
+    (``grid_sampler_2d_backward``) is not yet implemented and silently falls back to CPU.  This function uses
+    gather-based index arithmetic — natively supported on every backend — for the MPS path, while delegating to
+    ``F.grid_sample`` on CUDA/CPU where its fused kernel is faster.  The two paths are numerically identical, so model
+    accuracy is unaffected.
 
     Args:
         input: Feature map of shape ``(N, C, H, W)``.
@@ -304,9 +302,8 @@ def _collate_with_block_size(
 ) -> tuple[Any, ...]:
     """Module-level collate helper used as the base for :func:`make_collate_fn`.
 
-    Defined at module scope (rather than as a closure inside
-    :func:`make_collate_fn`) so that the resulting :class:`functools.partial` is
-    picklable for multi-process DataLoaders and DDP spawn workers.
+    Defined at module scope (rather than as a closure inside :func:`make_collate_fn`) so that the resulting
+    :class:`functools.partial` is picklable for multi-process DataLoaders and DDP spawn workers.
 
     Args:
         batch: List of ``(image, target)`` pairs from a dataset.
@@ -324,9 +321,8 @@ def _collate_with_block_size(
 def collate_fn(batch: list[tuple[Any, ...]]) -> tuple[Any, ...]:
     """Collate a list of (image, target) pairs into a batched NestedTensor.
 
-    Uses :func:`nested_tensor_from_tensor_list` with no ``block_size`` rounding.
-    For DataLoaders that need backbone-aware rounding (e.g. windowed attention
-    requires divisibility by ``patch_size * num_windows``), use
+    Uses :func:`nested_tensor_from_tensor_list` with no ``block_size`` rounding. For DataLoaders that need
+    backbone-aware rounding (e.g. windowed attention requires divisibility by ``patch_size * num_windows``), use
     :func:`make_collate_fn` instead to obtain a parameterised collate callable.
 
     Args:
@@ -343,12 +339,12 @@ def make_collate_fn(
 ) -> Callable[[list[tuple[Any, ...]]], tuple[Any, ...]]:
     """Build a collate function that rounds batch ``H``/``W`` up to *block_size*.
 
-    Used by the training DataModule to ensure that batched inputs satisfy the
-    backbone's spatial divisibility requirement (``patch_size * num_windows``).
-    Passing ``block_size=None`` produces a callable equivalent to :func:`collate_fn`.
+    Used by the training DataModule to ensure that batched inputs satisfy the backbone's spatial divisibility
+    requirement (``patch_size * num_windows``). Passing ``block_size=None`` produces a callable equivalent to
+    :func:`collate_fn`.
 
-    The returned callable is a :class:`functools.partial`, not a closure, so it
-    is picklable and safe to use with multi-process DataLoaders (``num_workers > 0``) and DDP spawn workers.
+    The returned callable is a :class:`functools.partial`, not a closure, so it is picklable and safe to use with
+    multi-process DataLoaders (``num_workers > 0``) and DDP spawn workers.
 
     Args:
         block_size: When set, batch ``H`` and ``W`` are rounded up to the next

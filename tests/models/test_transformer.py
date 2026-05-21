@@ -147,10 +147,9 @@ def test_gen_encoder_output_proposals_accepts_python_int_pair_spatial_shapes() -
 class TestMSDeformAttnCorePytorch:
     """Tests for ms_deform_attn_core_pytorch with Python int pair spatial shapes.
 
-    Regression suite for torch.export.export compatibility: iterating over a
-    spatial_shapes tensor yields FakeTensor scalars during FakeTensor tracing,
-    which cannot be used as Python int split/view sizes.  The function now
-    accepts an optional ``value_spatial_shapes_hw`` list of Python int pairs that bypasses tensor iteration.
+    Regression suite for torch.export.export compatibility: iterating over a spatial_shapes tensor yields FakeTensor
+    scalars during FakeTensor tracing, which cannot be used as Python int split/view sizes.  The function now accepts an
+    optional ``value_spatial_shapes_hw`` list of Python int pairs that bypasses tensor iteration.
     """
 
     @pytest.fixture
@@ -176,9 +175,9 @@ class TestMSDeformAttnCorePytorch:
     def test_with_python_int_pair_spatial_shapes(self, make_inputs: _MSDeformInputs) -> None:
         """Regression: value_spatial_shapes_hw list of Python int pairs must be accepted.
 
-        This is the torch.export.export-compatible code path: tensor scalar values
-        (from iterating over a FakeTensor) cannot be used as split/view sizes, so the
-        caller passes explicit Python int pairs via value_spatial_shapes_hw instead.
+        This is the torch.export.export-compatible code path: tensor scalar values (from iterating over a FakeTensor)
+        cannot be used as split/view sizes, so the caller passes explicit Python int pairs via value_spatial_shapes_hw
+        instead.
         """
         value, spatial_shapes_tensor, sampling_locations, attention_weights, levels = make_inputs
 
@@ -229,8 +228,8 @@ class TestMSDeformAttnCorePytorch:
 class TestMSDeformAttnModule:
     """Tests for MSDeformAttn.forward covering the export-compatibility changes.
 
-    Validates the module-level parameter threading and export-mode assert guard
-    introduced in the torch.export.export compatibility fix.
+    Validates the module-level parameter threading and export-mode assert guard introduced in the torch.export.export
+    compatibility fix.
     """
 
     _d_model = 32
@@ -325,8 +324,8 @@ class TestMSDeformAttnModule:
 class TestGenEncoderOutputProposalsDynamicBatch:
     """Regression tests for dynamic batch support in gen_encoder_output_proposals.
 
-    Ensures that the ONNX-symbolic refactoring (PR #950 / issue #949) does not bake a
-    fixed batch dimension into proposals and that output shapes are correct for varying batch sizes.
+    Ensures that the ONNX-symbolic refactoring (PR #950 / issue #949) does not bake a fixed batch dimension into
+    proposals and that output shapes are correct for varying batch sizes.
     """
 
     @pytest.mark.parametrize("batch_size", [1, 2, 4, 8])
@@ -371,8 +370,8 @@ class TestGenEncoderOutputProposalsDynamicBatch:
     def test_output_shape_invariant_with_padding_mask(self, batch_size: int) -> None:
         """Output shapes must be correct when memory_padding_mask is provided with varying batch sizes.
 
-        Regression for PR #950 / issue #949: the masked branch used .reshape(-1, h, w, 1) to
-        infer the batch dimension dynamically; this test verifies the branch handles varying batch sizes without error.
+        Regression for PR #950 / issue #949: the masked branch used .reshape(-1, h, w, 1) to infer the batch dimension
+        dynamically; this test verifies the branch handles varying batch sizes without error.
 
         Args:
             batch_size: Number of images in the batch.
@@ -395,9 +394,8 @@ class TestGenEncoderOutputProposalsDynamicBatch:
     def test_onnx_export_with_dynamic_batch_axis(self, batch_size: int) -> None:
         """ONNX export with dynamic batch axis must run inference for batch sizes other than the trace batch.
 
-        Regression for issue #949: exporting with a fixed trace batch baked `Reshape([8,...])` as
-        a constant ONNX node, causing TRT engines to fail at inference for any batch != 8.
-        Skipped when onnx or onnxruntime is not installed.
+        Regression for issue #949: exporting with a fixed trace batch baked `Reshape([8,...])` as a constant ONNX node,
+        causing TRT engines to fail at inference for any batch != 8. Skipped when onnx or onnxruntime is not installed.
         """
 
         pytest.importorskip("onnx")
@@ -441,10 +439,9 @@ class TestGenEncoderOutputProposalsDynamicBatch:
 def test_ms_deform_attn_core_pytorch_export_compatible() -> None:
     """torch.export.export must succeed on a module using ms_deform_attn_core_pytorch with hw param.
 
-    Regression test for the FakeTensor tracing failure: iterating over spatial_shapes
-    and using the scalar elements as split/view sizes fails during torch.export.export
-    because FakeTensor data is not allocated. Passing value_spatial_shapes_hw (concrete
-    Python ints from a module attribute) bypasses the tensor iteration entirely.
+    Regression test for the FakeTensor tracing failure: iterating over spatial_shapes and using the scalar elements as
+    split/view sizes fails during torch.export.export because FakeTensor data is not allocated. Passing
+    value_spatial_shapes_hw (concrete Python ints from a module attribute) bypasses the tensor iteration entirely.
     """
     levels: list[tuple[int, int]] = [(4, 4), (2, 2)]
     bsz, n_heads, head_dim = 1, 2, 4

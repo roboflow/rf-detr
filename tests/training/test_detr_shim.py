@@ -209,8 +209,8 @@ class TestRFDETRTrainPTL:
     def test_class_names_synced_from_datamodule_after_training(self, tmp_path, patch_lit):
         """self.model.class_names is set from RFDETRDataModule.class_names after train().
 
-        Regression test for #509: custom class names were not synced back from
-        RFDETRDataModule after training, causing predict() to return COCO labels instead of the dataset's class labels.
+        Regression test for #509: custom class names were not synced back from RFDETRDataModule after training, causing
+        predict() to return COCO labels instead of the dataset's class labels.
         """
         mock_self = _make_rfdetr_self(tmp_path)
         p_mod, p_dm, p_bt, _mcls, dmcls, _mock_bt = patch_lit
@@ -225,8 +225,8 @@ class TestRFDETRTrainPTL:
     def test_class_names_not_synced_when_datamodule_returns_none(self, tmp_path, patch_lit):
         """self.model.class_names is NOT overwritten when datamodule.class_names is None.
 
-        Ensures the sync-back guard does not clobber existing class names
-        when the datamodule has no class information (e.g. custom dataset format).
+        Ensures the sync-back guard does not clobber existing class names when the datamodule has no class information
+        (e.g. custom dataset format).
         """
         mock_self = _make_rfdetr_self(tmp_path)
         sentinel_names = ["existing_class"]
@@ -711,8 +711,8 @@ class TestResolutionKwarg:
     def test_syncs_model_resolution_attribute(self, tmp_path, patch_lit):
         """resolution kwarg sets model.resolution so predict()/export() see the new resolution.
 
-        Regression test for #952 — keeps the cached inference/export context in sync after
-        a resolution override in train().
+        Regression test for #952 — keeps the cached inference/export context in sync after a resolution override in
+        train().
         """
         mock_self = _make_rfdetr_self(tmp_path)
         block_size = mock_self.model_config.patch_size * mock_self.model_config.num_windows
@@ -725,9 +725,8 @@ class TestResolutionKwarg:
     def test_syncs_model_args_resolution_and_pe(self, tmp_path, patch_lit):
         """resolution kwarg updates model.args.resolution and model.args.positional_encoding_size.
 
-        For formula-derived configs (PE == resolution // patch_size), both fields in model.args
-        must be kept consistent with model_config so export/deployment pipelines use the
-        correct values.  Regression test for #952.
+        For formula-derived configs (PE == resolution // patch_size), both fields in model.args must be kept consistent
+        with model_config so export/deployment pipelines use the correct values.  Regression test for #952.
         """
         mock_self = _make_rfdetr_self(tmp_path)
         # RFDETRSmallConfig: formula-derived PE (512 // 16 == 32), so PE updates with resolution.
@@ -902,8 +901,8 @@ class TestConvertLegacyCheckpoint:
     def test_round_trip_with_on_load_checkpoint(self, tmp_path, patch_lit):
         """convert_legacy_checkpoint output is handled correctly by on_load_checkpoint.
 
-        After conversion, loading the .ckpt via on_load_checkpoint must NOT
-        re-apply the 'model.' prefix because 'state_dict' already exists.
+        After conversion, loading the .ckpt via on_load_checkpoint must NOT re-apply the 'model.' prefix because
+        'state_dict' already exists.
         """
         src = _make_legacy_pth(tmp_path, include_ema=True)
         dst = str(tmp_path / "out.ckpt")
@@ -1271,10 +1270,9 @@ class TestRFDETRLargeFallback:
     def test_pe_size_mismatch_with_custom_resolution_does_not_retry(self, monkeypatch, patch_lit):
         """Custom resolution= must not trigger deprecated-config fallback on PE size mismatch.
 
-        Regression for #960: when ``resolution=`` is explicitly passed, a positional
-        embedding size mismatch is caused by the resolution change — not by deprecated
-        weights.  The fallback must be suppressed so the error surfaces to the caller
-        rather than silently loading the wrong model architecture.
+        Regression for #960: when ``resolution=`` is explicitly passed, a positional embedding size mismatch is caused
+        by the resolution change — not by deprecated weights.  The fallback must be suppressed so the error surfaces to
+        the caller rather than silently loading the wrong model architecture.
         """
         call_count = 0
 
@@ -1423,10 +1421,9 @@ class TestClassNamesProperty:
     def test_empty_class_names_returns_empty_list_not_coco(self, patch_lit):
         """class_names property returns [] when model.class_names is [], NOT COCO fallback.
 
-        Regression test for #509: the truthiness check `and self.model.class_names:`
-        treated [] as falsy and fell through to return COCO_CLASSES, defeating the
-        detr.py sync-back even after training on a dataset that reports empty names.
-        The fix uses `is not None` so that [] is preserved.
+        Regression test for #509: the truthiness check `and self.model.class_names:` treated [] as falsy and fell
+        through to return COCO_CLASSES, defeating the detr.py sync-back even after training on a dataset that reports
+        empty names. The fix uses `is not None` so that [] is preserved.
         """
         mock_self = MagicMock()
         mock_self.model.class_names = []
@@ -1476,9 +1473,8 @@ class TestClassNamesProperty:
 class TestDeployToRoboflow:
     """deploy_to_roboflow writes class_names.txt and embeds class_names in args.
 
-    Regression tests for the bug where RFDETRSeg models (and any model whose
-    args namespace lacks a ``class_names`` attribute) failed to upload to
-    Roboflow with a FileNotFoundError from the Roboflow client library.
+    Regression tests for the bug where RFDETRSeg models (and any model whose args namespace lacks a ``class_names``
+    attribute) failed to upload to Roboflow with a FileNotFoundError from the Roboflow client library.
     """
 
     @pytest.fixture
@@ -1695,8 +1691,8 @@ class TestSaveTrainingConfig:
     def _run_train(self, tmp_path, patch_lit, class_names=None, **train_overrides):
         """Run RFDETR.train() with patched PTL; return (mock_self, output_dir path).
 
-        class_names is injected via the datamodule mock (the path RFDETR.train uses
-        to sync self.model.class_names after trainer.fit completes).
+        class_names is injected via the datamodule mock (the path RFDETR.train uses to sync self.model.class_names after
+        trainer.fit completes).
         """
         if class_names is None:
             class_names = ["cat", "dog", "bird"]
@@ -1760,16 +1756,14 @@ class TestSaveTrainingConfig:
 class TestRFDETRTrainNumClassesAutoDetect:
     """RFDETR.train() auto-detects num_classes from the training dataset.
 
-    When the user did not explicitly override ``num_classes`` (or passed the
-    class-config default), the model's ``num_classes`` is automatically aligned
-    to the dataset's class count before ``RFDETRModelModule`` is constructed.
+    When the user did not explicitly override ``num_classes`` (or passed the class-config default), the model's
+    ``num_classes`` is automatically aligned to the dataset's class count before ``RFDETRModelModule`` is constructed.
 
-    When the user *did* explicitly set a non-default ``num_classes`` that differs
-    from the dataset, the configured value is preserved and a warning is logged.
+    When the user *did* explicitly set a non-default ``num_classes`` that differs from the dataset, the configured value
+    is preserved and a warning is logged.
 
-    Dataset detection is best-effort: if ``_load_classes`` raises any of the
-    expected exceptions (``FileNotFoundError``, ``ValueError``, ``KeyError``,
-    ``OSError``), training proceeds unaffected without raising.
+    Dataset detection is best-effort: if ``_load_classes`` raises any of the expected exceptions (``FileNotFoundError``,
+    ``ValueError``, ``KeyError``, ``OSError``), training proceeds unaffected without raising.
     """
 
     _FOUR_CLASS_NAMES = ["ball", "goalkeeper", "referee", "player"]
@@ -1810,8 +1804,8 @@ class TestRFDETRTrainNumClassesAutoDetect:
     def test_coco_auto_detect_uses_full_category_mapping_not_leaf_only_names(self, mock_self, patch_lit):
         """COCO class-count detection must follow ``coco.cats`` semantics.
 
-        Regression test for hierarchical COCO datasets where leaf-only class
-        names can undercount categories relative to label remapping.
+        Regression test for hierarchical COCO datasets where leaf-only class names can undercount categories relative to
+        label remapping.
         """
         dataset_dir = Path(mock_self.get_train_config.return_value.dataset_dir)
         self._write_coco_categories(

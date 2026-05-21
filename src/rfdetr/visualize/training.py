@@ -6,19 +6,16 @@
 
 """Post-training metrics plotting utilities.
 
-Reads the ``metrics.csv`` written by PTL's ``CSVLogger`` (always present
-after a ``build_trainer``-based run) and saves a seaborn figure grouped by
-metric type (Loss, AP@0.50, AP@0.50:0.95, AR).
+Reads the ``metrics.csv`` written by PTL's ``CSVLogger`` (always present after a ``build_trainer``-based run) and saves
+a seaborn figure grouped by metric type (Loss, AP@0.50, AP@0.50:0.95, AR).
 
-Loss panel shows only the aggregate ``train/loss`` and ``val/loss`` scalars.
-AP/AR panels show all ``val/`` columns for each group — both the base and EMA
-series when EMA is enabled, so both are visible in the legend.
+Loss panel shows only the aggregate ``train/loss`` and ``val/loss`` scalars. AP/AR panels show all ``val/`` columns for
+each group — both the base and EMA series when EMA is enabled, so both are visible in the legend.
 
 Usage::
 
-    from rfdetr.visualize.training import plot_metrics
-    plot_metrics("output/rfdetr_base/metrics.csv", "output/rfdetr_base/metrics_plot.png")
-"""
+    from rfdetr.visualize.training import plot_metrics plot_metrics("output/rfdetr_base/metrics.csv",
+    "output/rfdetr_base/metrics_plot.png")"""
 
 from __future__ import annotations
 
@@ -33,8 +30,8 @@ def plot_metrics(
 ) -> str:
     """Read a PTL ``CSVLogger`` metrics file and save a seaborn training plot.
 
-    The figure contains one subplot per metric group (Loss, AP@0.50,
-    AP@0.50:0.95, AR), arranged in a 2-column grid.  Only groups with at least one non-NaN column are shown.
+    The figure contains one subplot per metric group (Loss, AP@0.50, AP@0.50:0.95, AR), arranged in a 2-column grid.
+    Only groups with at least one non-NaN column are shown.
 
     Args:
         metrics_csv: Path to the ``metrics.csv`` file produced by

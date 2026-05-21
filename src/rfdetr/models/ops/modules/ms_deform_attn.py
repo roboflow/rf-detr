@@ -112,8 +112,8 @@ class MSDeformAttn(nn.Module):
         Args:
             query: (N, Length_{query}, C)
             reference_points: (N, Length_{query}, n_levels, 2) with range in [0, 1],
-                top-left (0,0), bottom-right (1, 1), including padding area; or
-                (N, Length_{query}, n_levels, 4) adding additional (w, h) to form reference boxes.
+                top-left (0,0), bottom-right (1, 1), including padding area; or (N, Length_{query}, n_levels, 4) adding
+                additional (w, h) to form reference boxes.
             input_flatten: (N, sum_{l=0}^{L-1} H_l * W_l, C)
             input_spatial_shapes: (n_levels, 2), [(H_0, W_0), (H_1, W_1), ..., (H_{L-1}, W_{L-1})]
             input_level_start_index: (n_levels,), [0, H_0*W_0, H_0*W_0+H_1*W_1, ...,
@@ -121,10 +121,9 @@ class MSDeformAttn(nn.Module):
             input_padding_mask: (N, sum_{l=0}^{L-1} H_l * W_l), True for padding elements,
                 False for non-padding elements.
             input_spatial_shapes_hw: List of (H, W) int pairs, same ordering as
-                input_spatial_shapes. When provided, these Python ints are used for tensor
-                split/view operations inside ms_deform_attn_core_pytorch so that the function
-                is compatible with torch.export.export (FakeTensor tracing cannot extract
-                concrete values from a tensor).
+                input_spatial_shapes. When provided, these Python ints are used for tensor split/view operations inside
+                ms_deform_attn_core_pytorch so that the function is compatible with torch.export.export (FakeTensor
+                tracing cannot extract concrete values from a tensor).
 
         Returns:
             Output tensor of shape (N, Length_{query}, C).

@@ -168,9 +168,9 @@ class TestAlbumentationsWrapper:
     def test_orig_size_preserved_with_two_boxes(self):
         """Test that orig_size is not treated as per-instance field when num_boxes=2.
 
-        Regression test for bug where orig_size (shape [2] for [h, w]) was incorrectly
-        treated as a per-instance field when there were exactly 2 boxes, causing
-        orig_size to be filtered/indexed incorrectly and leading to inconsistent tensor shapes in batches.
+        Regression test for bug where orig_size (shape [2] for [h, w]) was incorrectly treated as a per-instance field
+        when there were exactly 2 boxes, causing orig_size to be filtered/indexed incorrectly and leading to
+        inconsistent tensor shapes in batches.
         """
         transform = alb.HorizontalFlip(p=1.0)
         wrapper = AlbumentationsWrapper(transform)
@@ -202,8 +202,8 @@ class TestAlbumentationsWrapper:
     def test_orig_size_preserved_with_two_boxes_and_masks(self):
         """Test that orig_size and masks are handled correctly when num_boxes=2.
 
-        Critical regression test: With 2 boxes, both orig_size and masks have
-        first dimension = 2, but they must be treated differently:
+        Critical regression test: With 2 boxes, both orig_size and masks have first dimension = 2, but they must be
+        treated differently:
         - orig_size (shape [2]): global field, should NOT be filtered
         - masks (shape [2, H, W]): per-instance field, SHOULD be transformed
         """
@@ -442,8 +442,8 @@ class TestAlbumentationsWrapper:
     def test_geometric_transform_with_empty_masks_tensor(self):
         """Test that a geometric transform does not crash when masks tensor is empty (0 instances).
 
-        Regression test for: when a prior crop removes all annotations, target["masks"]
-        has shape (0, H, W). Passing an empty list to albumentations raises ValueError: masks cannot be empty.
+        Regression test for: when a prior crop removes all annotations, target["masks"] has shape (0, H, W). Passing an
+        empty list to albumentations raises ValueError: masks cannot be empty.
         """
         transform = alb.HorizontalFlip(p=1.0)
         wrapper = AlbumentationsWrapper(transform)
@@ -568,10 +568,9 @@ class TestAlbumentationsWrapper:
     def test_degenerate_bbox_at_image_boundary_is_silently_dropped(self):
         """Degenerate boxes (x_min == x_max or y_min == y_max) must not raise ValueError.
 
-        Regression test: COCO annotations sometimes place a box exactly on the image
-        boundary so that both x coordinates equal the image width (normalized: 1.0).
-        Albumentations' check_bboxes rejects these with
-        "x_max is less than or equal to x_min", crashing the DataLoader worker.
+        Regression test: COCO annotations sometimes place a box exactly on the image boundary so that both x coordinates
+        equal the image width (normalized: 1.0). Albumentations' check_bboxes rejects these with "x_max is less than or
+        equal to x_min", crashing the DataLoader worker.
         """
         transform = alb.HorizontalFlip(p=1.0)
         wrapper = AlbumentationsWrapper(transform)
@@ -826,8 +825,8 @@ class TestRandomSizedCropCompat:
     def test_from_config_partial_height_is_silently_skipped(self):
         """from_config swallows the ValueError for partial height-only config and skips the transform.
 
-        This documents the intentional silent-skip behavior: from_config wraps
-        _build_albu_transform in a broad except clause so bad configs produce a warning rather than an exception.
+        This documents the intentional silent-skip behavior: from_config wraps _build_albu_transform in a broad except
+        clause so bad configs produce a warning rather than an exception.
         """
 
         config = {
@@ -1276,9 +1275,9 @@ class TestTrainingLoop:
     def test_augmentation_in_dataloader(self):
         """Test that augmentations work correctly when used with DataLoader.
 
-        This is a critical integration test that simulates actual training conditions
-        where multiple samples with different numbers of boxes are batched together.
-        It specifically tests that orig_size remains consistent across the batch.
+        This is a critical integration test that simulates actual training conditions where multiple samples with
+        different numbers of boxes are batched together. It specifically tests that orig_size remains consistent across
+        the batch.
         """
         # Create augmentations
         aug_transforms = [
@@ -1320,8 +1319,8 @@ class TestTrainingLoop:
     def test_augmentation_with_varying_box_counts(self):
         """Test that samples with 1, 2, and 3 boxes all work correctly in same batch.
 
-        This specifically tests the edge case where some samples have 2 boxes
-        (which matches orig_size shape [2]), ensuring they don't get mixed up.
+        This specifically tests the edge case where some samples have 2 boxes (which matches orig_size shape [2]),
+        ensuring they don't get mixed up.
         """
         aug_transforms = [AlbumentationsWrapper(alb.HorizontalFlip(p=0.5))]
         transforms = Compose(aug_transforms)

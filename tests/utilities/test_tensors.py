@@ -51,9 +51,8 @@ def _call_manual_path(
 ) -> torch.Tensor:
     """Force the manual gather-based code path by mocking input.device.type.
 
-    The function checks ``input.device.type != "mps"`` to decide which branch
-    to take.  We patch ``torch.Tensor.device`` to return an object whose
-    ``.type`` is ``"mps"`` so the manual path runs on a normal CPU tensor.
+    The function checks ``input.device.type != "mps"`` to decide which branch to take.  We patch ``torch.Tensor.device``
+    to return an object whose ``.type`` is ``"mps"`` so the manual path runs on a normal CPU tensor.
     """
 
     class _FakeMPSDevice:
@@ -419,9 +418,8 @@ class TestBilinearGridSampleRealUseCases:
 class TestNestedTensorBlockSize:
     """``nested_tensor_from_tensor_list`` with block_size rounds batch max H/W up.
 
-    This is the collator-level pad for backbone divisibility.  The rounded-up
-    strip must be marked as padding in the mask so downstream attention skips
-    it.  See https://github.com/roboflow/rf-detr/issues/983 for context.
+    This is the collator-level pad for backbone divisibility.  The rounded-up strip must be marked as padding in the
+    mask so downstream attention skips it.  See https://github.com/roboflow/rf-detr/issues/983 for context.
     """
 
     @staticmethod

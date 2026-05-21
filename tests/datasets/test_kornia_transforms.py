@@ -6,9 +6,8 @@
 
 """Tests for Kornia GPU augmentation pipeline builder and bbox utilities.
 
-All tests in this module are CPU-compatible — Kornia operates on CPU tensors
-identically to GPU tensors, so no ``@pytest.mark.gpu`` is needed.
-"""
+All tests in this module are CPU-compatible — Kornia operates on CPU tensors identically to GPU tensors, so no
+``@pytest.mark.gpu`` is needed."""
 
 import pytest
 import torch
