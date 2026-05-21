@@ -452,7 +452,6 @@ def _replace_gridsample_for_tflite(onnx_path: Path, output_dir: Path) -> Path:
     Raises:
         ImportError: If ``onnx`` or ``onnx_graphsurgeon`` are not available.
         NotImplementedError: If a ``GridSample`` node has unsupported attrs.
-        ValueError: If any ``GridSample`` input has dynamic (``None``) dims.
         RuntimeError: If the patched graph fails ONNX shape-inference or
             model validation.
     """
