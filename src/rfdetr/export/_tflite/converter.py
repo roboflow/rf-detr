@@ -530,6 +530,7 @@ def _check_onnx2tf_available() -> None:
         if installed is None:
             return
 
+    assert installed is not None  # guaranteed by the early return above
     if _Version(installed) < _Version("2.4.0"):
         raise ImportError(
             f"onnx2tf {installed} is installed but RF-DETR requires >= 2.4.0. "

@@ -254,6 +254,8 @@ overrides = [
     "kornia", "kornia.*",
     "onnx", "onnx.*",
     "onnx2tf", "onnx2tf.*",
+    "onnx_graphsurgeon", "onnx_graphsurgeon.*",
+    "onnxruntime", "onnxruntime.*",
     "tflite_runtime", "tflite_runtime.*",
     "tensorflow", "tensorflow.*",
   ], ignore_missing_imports = true },
