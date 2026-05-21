@@ -190,6 +190,10 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "notebooks/*.py" = ["E402"]  # cell-local imports are intentional in percent-format scripts
 
+[tool.docformatter]
+wrap-summaries = 120
+wrap-descriptions = 120
+
 [tool.pytest.ini_options]
 addopts = [
     "-v",                   # verbose output
