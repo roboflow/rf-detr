@@ -4,14 +4,14 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+from rfdetr.platform import _IS_RFDETR_PLUS_AVAILABLE
+
 __all__: list[str] = []
 
 _PLUS_EXPORTS = {
     "RFDETR2XLarge",
     "RFDETRXLarge",
 }
-
-_IS_RFDETR_PLUS_AVAILABLE = True
 
 try:
     from rfdetr_plus.models import (
@@ -26,18 +26,6 @@ try:
 except ModuleNotFoundError as ex:
     if ex.name not in ("rfdetr_plus", "rfdetr_plus.models"):
         raise
-
-    _IS_RFDETR_PLUS_AVAILABLE = False
-
-    import warnings
-
-    from rfdetr.platform import _INSTALL_MSG
-
-    warnings.warn(
-        _INSTALL_MSG.format(name="platform model downloads"),
-        ImportWarning,
-        stacklevel=2,
-    )
 
 
 def __getattr__(name: str):

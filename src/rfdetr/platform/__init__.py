@@ -3,7 +3,6 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-import importlib
 import warnings
 
 _INSTALL_MSG = (
@@ -11,8 +10,12 @@ _INSTALL_MSG = (
     " Install it with `pip install rfdetr[plus]` (or `pip install rfdetr_plus` if supported)."
 )
 
+try:
+    import rfdetr_plus as _rfdetr_plus  # noqa: F401
 
-if importlib.util.find_spec("rfdetr_plus") is None:
+    _IS_RFDETR_PLUS_AVAILABLE: bool = True
+except ModuleNotFoundError:
+    _IS_RFDETR_PLUS_AVAILABLE = False
     warnings.warn(
         _INSTALL_MSG.format(name="platform model downloads"),
         ImportWarning,
