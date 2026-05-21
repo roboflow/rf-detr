@@ -13,7 +13,7 @@ _PLUS_EXPORTS = {
     "RFDETRXLarge",
 }
 
-try:
+if _IS_RFDETR_PLUS_AVAILABLE:
     from rfdetr_plus.models import (
         RFDETR2XLarge,
         RFDETRXLarge,
@@ -23,9 +23,6 @@ try:
         "RFDETR2XLarge",
         "RFDETRXLarge",
     ]
-except ModuleNotFoundError as ex:
-    if ex.name not in ("rfdetr_plus", "rfdetr_plus.models"):
-        raise
 
 
 def __getattr__(name: str):
