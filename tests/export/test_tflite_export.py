@@ -18,7 +18,6 @@ Tests cover:
 
 from __future__ import annotations
 
-import importlib.util
 import sys
 import types
 from pathlib import Path
@@ -28,6 +27,7 @@ from unittest import mock
 import numpy as np
 import pytest
 
+from rfdetr.export._tflite import _IS_ONNX2TF_AVAILABLE
 from rfdetr.export._tflite.converter import (
     _DEFAULT_CALIB_SAMPLES,
     _DEFAULT_DIR_CALIB_SAMPLES,
@@ -43,7 +43,7 @@ from rfdetr.export._tflite.converter import (
 )
 
 onnx2tf_available = pytest.mark.skipif(
-    importlib.util.find_spec("onnx2tf") is None,
+    not _IS_ONNX2TF_AVAILABLE,
     reason="onnx2tf not installed",
 )
 
