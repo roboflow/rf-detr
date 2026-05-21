@@ -74,11 +74,11 @@ trt = [
     "polygraphy",
 ]
 tflite = [
-    "onnx2tf>=2.4.0,<3.0.0; python_version >= '3.12'",
-    "flatbuffers>=23.5.26; python_version >= '3.12'",
-    "onnx>=1.20.0,<2.0; python_version >= '3.12'",
-    "tf-keras>=2.16.0; python_version >= '3.12'",
-    "tensorflow>=2.16.0; python_version >= '3.12'",
+    "onnx2tf>=2.4.0,<3.0.0",
+    "flatbuffers>=23.5.26",
+    "onnx>=1.20.0,<2.0",
+    "tf-keras>=2.16.0",
+    "tensorflow>=2.16.0",
 ]
 kornia = [
     "kornia>=0.7,<1",              # GPU-side augmentation via on_after_batch_transfer
