@@ -42,10 +42,7 @@ from rfdetr.export._tflite.converter import (
     export_tflite,
 )
 
-onnx2tf_available = pytest.mark.skipif(
-    not _IS_ONNX2TF_AVAILABLE,
-    reason="onnx2tf not installed"
-)
+onnx2tf_available = pytest.mark.skipif(not _IS_ONNX2TF_AVAILABLE, reason="onnx2tf not installed")
 
 # ---------------------------------------------------------------------------
 # Helpers — fake onnx2tf module injected into sys.modules
