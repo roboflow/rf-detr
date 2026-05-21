@@ -1007,7 +1007,8 @@ def export_tflite(
         if tflite_files:
             primary = tflite_files[0]
             logger.warning(
-                f"Expected {onnx_path} not found; using {primary.name} instead. "
+                f"Expected TFLite output {output_dir / f'{model_stem}_float32.tflite'} not found; "
+                f"searched for '{model_stem}_*.tflite' in {output_dir} and using {primary.name} instead. "
                 "The returned model may have a different dtype (e.g. int8) than the caller expects."
             )
         else:
