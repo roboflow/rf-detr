@@ -11,16 +11,18 @@
 TensorRT export helpers: trtexec invocation and output parsing.
 """
 
+import argparse
 import os
 import re
 import subprocess
+from typing import Any
 
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
 
-def run_command_shell(command, dry_run: bool = False) -> subprocess.CompletedProcess:
+def run_command_shell(command: str, dry_run: bool = False) -> "subprocess.CompletedProcess[str]":
     if dry_run:
         logger.info(f"\nCUDA_VISIBLE_DEVICES={os.getenv('CUDA_VISIBLE_DEVICES', '')} {command}\n")
     try:
@@ -32,7 +34,7 @@ def run_command_shell(command, dry_run: bool = False) -> subprocess.CompletedPro
         raise
 
 
-def trtexec(onnx_dir: str, args) -> None:
+def trtexec(onnx_dir: str, args: argparse.Namespace) -> None:
     engine_dir = onnx_dir.replace(".onnx", ".engine")
 
     # Base trtexec command
@@ -61,7 +63,7 @@ def trtexec(onnx_dir: str, args) -> None:
     parse_trtexec_output(output.stdout)
 
 
-def parse_trtexec_output(output_text):
+def parse_trtexec_output(output_text: str) -> dict[str, Any]:
     logger.info(output_text)
     # Common patterns in trtexec output
     gpu_compute_pattern = (
@@ -72,7 +74,7 @@ def parse_trtexec_output(output_text):
     latency_pattern = r"Latency: min = (\d+\.\d+) ms, max = (\d+\.\d+) ms, mean = (\d+\.\d+) ms"
     throughput_pattern = r"Throughput: (\d+\.\d+) qps"
 
-    stats = {}
+    stats: dict[str, Any] = {}
 
     # Extract compute times
     if match := re.search(gpu_compute_pattern, output_text):

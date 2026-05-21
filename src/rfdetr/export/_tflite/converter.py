@@ -949,13 +949,6 @@ def export_tflite(
                 "output_signaturedefs": True,
                 "non_verbose": not verbose,
                 "verbosity": verbosity,
-                # onnx2tf 2.x defaults to flatbuffer_direct, but that backend
-                # trips the TFLite TopK_V2 kernel's "k > internal dimension"
-                # check at AllocateTensors() time on RF-DETR's encoder TopK
-                # node.  We force tf_converter (SavedModel → TFLiteConverter
-                # path) to route around this.  onnx2tf 2.x tf_converter also
-                # correctly lowers Expand / Tile ops that onnx2tf 1.x could not.
-                "tflite_backend": "tf_converter",
                 # Replace Erf / GeLU with TFLite-native pseudo-operators so the
                 # produced .tflite does not require the TensorFlow Flex delegate
                 # at inference time.  Without this, AllocateTensors() fails with
@@ -972,8 +965,10 @@ def export_tflite(
             # inspect.signature() cannot probe tflite_backend= at import time on
             # onnx2tf 2.x (the function is wrapped with *args/**kwargs), so we
             # probe at call time via try/except instead.
+            # tflite_backend is intentionally NOT in convert_kwargs so that the
+            # except-TypeError fallback path calls convert() without it.
             try:
-                convert(**{**convert_kwargs, "tflite_backend": "tf_converter"})
+                convert(**convert_kwargs, tflite_backend="tf_converter")
             except TypeError:
                 logger.warning(
                     "onnx2tf does not support tflite_backend= — proceeding with "
