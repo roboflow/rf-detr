@@ -7,20 +7,20 @@
 
 Two-phase legacy-module deprecation
 ------------------------------------
-Some sub-packages were relocated in v1.6 and are scheduled for removal in v1.7. The migration is handled in two phases
+Some sub-packages were relocated in v1.6 and are scheduled for removal in v1.8. The migration is handled in two phases
 so users get a full release cycle to update their imports:
 
-**Phase 1 — v1.6 (current):** the old packages (``rfdetr.util``, ``rfdetr.deploy``) still exist on disk and work
+**Phase 1 — v1.7 (current):** the old packages (``rfdetr.util``, ``rfdetr.deploy``) still exist on disk and work
 normally, but emit a ``DeprecationWarning`` on import. ``_RemovedModuleFinder`` is installed in ``sys.meta_path`` but
 stays dormant: its ``find_spec`` returns ``None`` whenever ``importlib.machinery.PathFinder`` can resolve the name (i.e.
 while the shim directories are present).
 
-**Phase 2 — v1.7:** the shim directories are deleted.  ``PathFinder`` can no longer resolve ``rfdetr.util`` /
+**Phase 2 — v1.8:** the shim directories are deleted.  ``PathFinder`` can no longer resolve ``rfdetr.util`` /
 ``rfdetr.deploy``, so ``_RemovedModuleFinder`` intercepts the import and raises a descriptive ``ImportError`` (migration
 hint) instead of the cryptic default ``ModuleNotFoundError: No module named 'rfdetr.util'``.
 
-To complete Phase 2, delete ``src/rfdetr/util/`` and ``src/rfdetr/deploy/`` and bump ``_REMOVED_IN_V17`` (or rename it)
-to reflect the new version boundary.
+To complete Phase 2, delete ``src/rfdetr/util/`` and ``src/rfdetr/deploy/`` and bump
+``_REMOVE_IN_VERSION_1_8`` (or rename it) to reflect the new version boundary.
 """
 
 import importlib
@@ -140,7 +140,7 @@ def __getattr__(name: str):
       on first use to avoid importing PyTorch Lightning at ``import rfdetr`` time.
     * Plus-only exports (names in ``_PLUS_EXPORTS``) are imported from ``rfdetr.platform.models``,
       and a descriptive ``ImportError`` is raised with an installation hint if the model is not available.
-    * Removed-module aliases (keys in ``_REMOVED_IN_V17``, such as ``util`` and ``deploy``)
+    * Removed-module aliases (keys in ``_REMOVE_IN_VERSION_1_8``, such as ``util`` and ``deploy``)
       are first attempted via a shim submodule (e.g. ``rfdetr.util``); once the shim files are removed, a migration-hint
       ``ImportError`` is raised instead of silently masking unrelated nested import errors.
     """
