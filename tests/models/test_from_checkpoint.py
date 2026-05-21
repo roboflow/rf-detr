@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from rfdetr.detr import RFDETR
-from rfdetr.platform.models import _IS_RFDETR_PLUS_AVAILABLE
+from rfdetr.platform import _IS_RFDETR_PLUS_AVAILABLE
 from rfdetr.variants import RFDETRSmall
 
 
