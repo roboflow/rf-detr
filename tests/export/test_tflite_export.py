@@ -44,7 +44,7 @@ from rfdetr.export._tflite.converter import (
 
 onnx2tf_available = pytest.mark.skipif(
     not _IS_ONNX2TF_AVAILABLE,
-    reason="onnx2tf not installed",
+    reason="onnx2tf not installed"
 )
 
 # ---------------------------------------------------------------------------
