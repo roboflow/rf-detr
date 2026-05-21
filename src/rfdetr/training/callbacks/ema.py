@@ -130,8 +130,7 @@ class RFDETREMACallback(Callback):
         """Return ``True`` after every optimizer step and every epoch end.
 
         The base ``WeightAveraging`` only updates on steps. This override
-        also triggers an update at epoch boundaries, matching RF-DETR's
-        existing EMA behaviour.
+        also triggers an update at epoch boundaries, matching RF-DETR's existing EMA behaviour.
 
         Args:
             step_idx: Index of the last optimizer step, or ``None``.

@@ -121,8 +121,7 @@ def draw_synthetic_shape(
 ) -> Tuple[np.ndarray, List[float]]:
     """Draw a geometric shape on an image and return its COCO polygon.
 
-    The polygon is computed first, then used for both rendering and annotation,
-    so the two are always identical.
+    The polygon is computed first, then used for both rendering and annotation, so the two are always identical.
 
     Args:
         img: Input image array to draw on.
@@ -320,8 +319,7 @@ def _write_coco_json(
     """Write a synthetic COCO JSON file.
 
     Category IDs use sparse 1-based encoding (index * 2 + 1 → 1, 3, 5, …) so
-    synthetic data exercises the same ``cat2label`` remapping path that real
-    COCO datasets use.
+    synthetic data exercises the same ``cat2label`` remapping path that real COCO datasets use.
 
     Args:
         annotations_path: Destination path for the JSON file.
@@ -331,8 +329,7 @@ def _write_coco_json(
         img_size: Side length of the square images (width = height = img_size).
         with_segmentation: When ``True`` each annotation includes a
             ``segmentation`` polygon taken from ``detections.data["polygons"]``
-            (populated by :func:`generate_synthetic_sample`).  When ``False``
-            the field is an empty list.
+            (populated by :func:`generate_synthetic_sample`).  When ``False`` the field is an empty list.
 
     Raises:
         ValueError: If ``file_paths`` and ``detections_list`` have different

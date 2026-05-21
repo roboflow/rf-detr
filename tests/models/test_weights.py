@@ -446,8 +446,7 @@ class TestApplyLora:
     """Verify that apply_lora applies LoRA adapters to the backbone encoder.
 
     ``apply_lora`` lazily imports ``peft`` inside the function body, so we use
-    ``patch.dict("sys.modules", ...)`` to intercept the import rather than
-    patching a module-level name.
+    ``patch.dict("sys.modules", ...)`` to intercept the import rather than patching a module-level name.
     """
 
     def test_characterization_apply_lora_wraps_backbone_encoder(self):
@@ -886,8 +885,7 @@ class TestPartialLoadDetector:
     """Tests for ``_warn_on_partial_load`` — surfaces silent partial loads.
 
     The rf-detr logger has ``propagate=False`` so pytest's ``caplog`` does not
-    see its records.  These tests monkeypatch ``logger.warning`` directly to
-    capture the message text.
+    see its records.  These tests monkeypatch ``logger.warning`` directly to capture the message text.
     """
 
     @pytest.fixture

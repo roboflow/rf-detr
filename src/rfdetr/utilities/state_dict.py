@@ -73,8 +73,7 @@ def _make_fit_loop_state(epoch: int) -> dict:
     the checkpoint.  That value is captured during ``on_validation_end``, which
     fires *before* the loop's epoch-end hooks increment the counter.  To resume
     training *after* that epoch, PTL's epoch-progress counter must be set to
-    ``epoch + 1`` so that ``trainer.current_epoch == epoch + 1`` when the new
-    ``trainer.fit()`` call begins.
+    ``epoch + 1`` so that ``trainer.current_epoch == epoch + 1`` when the new ``trainer.fit()`` call begins.
 
     Optimizer and scheduler states are intentionally omitted — loading a
     ``.pth`` file starts a fresh optimizer for the new training phase.
@@ -84,8 +83,7 @@ def _make_fit_loop_state(epoch: int) -> dict:
             at the time of ``on_validation_end``).
 
     Returns:
-        A ``fit_loop`` state dict compatible with
-        :meth:`pytorch_lightning.loops._FitLoop.load_state_dict`.
+        A ``fit_loop`` state dict compatible with :meth:`pytorch_lightning.loops._FitLoop.load_state_dict`.
     """
     n = epoch + 1  # number of epochs fully completed after epoch `epoch` finishes
     zero4 = {"ready": 0, "started": 0, "processed": 0, "completed": 0}
@@ -144,8 +142,7 @@ def strip_checkpoint(checkpoint: str | os.PathLike[str]) -> None:
 
     Also preserves ``state_dict``, ``global_step``, ``pytorch-lightning_version``,
     ``loops``, ``optimizer_states``, and ``lr_schedulers`` when present so the
-    stripped checkpoint can still be used directly with
-    ``trainer.fit(ckpt_path=...)``.
+    stripped checkpoint can still be used directly with ``trainer.fit(ckpt_path=...)``.
 
     Overwrites the file atomically so a partial write cannot corrupt it.
 
@@ -209,8 +206,7 @@ def validate_checkpoint_compatibility(checkpoint: dict[str, Any], model_args: An
     Checks for mismatches in ``segmentation_head`` and ``patch_size`` between
     the checkpoint's saved training arguments and the current model configuration.
     Raises a descriptive :class:`ValueError` before ``load_state_dict`` fires so
-    that users receive a clear, actionable message instead of a cryptic tensor
-    size mismatch error.
+    that users receive a clear, actionable message instead of a cryptic tensor size mismatch error.
 
     If either side is missing an attribute (e.g. a legacy checkpoint saved before
         ``segmentation_head`` or ``patch_size`` was added to ``args``), that specific

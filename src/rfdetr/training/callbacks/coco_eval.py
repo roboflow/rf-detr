@@ -28,8 +28,7 @@ from rfdetr.utilities.box_ops import box_cxcywh_to_xyxy
 class COCOEvalCallback(Callback):
     """Validation callback that computes mAP (via torchmetrics) and macro-F1.
 
-    Accumulates predictions and targets across validation batches, then at
-    epoch end computes:
+    Accumulates predictions and targets across validation batches, then at epoch end computes:
 
     - ``val/mAP_50_95``, ``val/mAP_50``, ``val/mAP_75``, ``val/mAR`` using
       ``torchmetrics.detection.MeanAveragePrecision``.
@@ -145,8 +144,7 @@ class COCOEvalCallback(Callback):
     ) -> None:
         """Accumulate predictions and matching data for one validation batch.
 
-        Expects ``outputs`` to be the dict returned by
-        ``RFDETRModelModule.validation_step``:
+        Expects ``outputs`` to be the dict returned by ``RFDETRModelModule.validation_step``:
         ``{"results": list[dict], "targets": list[dict]}``.
 
         When an EMA callback is present the EMA model is run on the same batch
@@ -532,8 +530,7 @@ class COCOEvalCallback(Callback):
         """Render the overall metrics table with merged group-header cells.
 
         Uses only plain Unicode box-drawing characters (no ANSI colour codes)
-        so the output renders correctly in both terminals and Jupyter/Colab
-        notebook widgets.
+        so the output renders correctly in both terminals and Jupyter/Colab notebook widgets.
 
         .. code-block:: text
 
@@ -690,8 +687,7 @@ class COCOEvalCallback(Callback):
         ``PostProcess.forward`` returns masks with shape ``[K, 1, H, W]``
         (the extra channel is introduced by ``F.interpolate`` which requires
         4-D input).  Both ``torchmetrics.MeanAveragePrecision`` and
-        ``engine.build_matching_data`` expect ``[K, H, W]``, so squeeze the
-        channel dim when present.
+        ``engine.build_matching_data`` expect ``[K, H, W]``, so squeeze the channel dim when present.
 
         ``PostProcess.forward`` currently returns ``[K, 1, H, W]`` masks.
         Keep this callback-local squeeze for metric code paths because
@@ -723,8 +719,7 @@ class COCOEvalCallback(Callback):
                 CxCyWH format and ``orig_size`` as ``[H, W]``.
 
         Returns:
-            Per-image dicts with ``boxes`` in absolute xyxy, ``labels``,
-            and optionally ``masks`` and ``iscrowd``.
+            Per-image dicts with ``boxes`` in absolute xyxy, ``labels``, and optionally ``masks`` and ``iscrowd``.
         """
         out = []
         for t in targets:

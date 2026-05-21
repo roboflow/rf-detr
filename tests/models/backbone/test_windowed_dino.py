@@ -174,8 +174,7 @@ def test_buggy_reshape_raises_for_nonsquare():
     is not divisible by the (wrong) shape.
 
     With hidden_size=1 and hp=4, wp=6, num_windows=2 the total elements are 24 but
-    the buggy target dims (2,2,2,2,-1) require a non-integer last dimension,
-    so PyTorch raises RuntimeError.
+    the buggy target dims (2,2,2,2,-1) require a non-integer last dimension, so PyTorch raises RuntimeError.
     """
     hp, wp = 4, 6  # non-square: width > height
     num_windows = 2

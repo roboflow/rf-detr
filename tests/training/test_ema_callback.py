@@ -77,8 +77,7 @@ class TestModelEmaParity:
     """Ensure N-step EMA weights match ModelEma exactly."""
 
     def test_avg_fn_matches_modelema_weight_parity(self) -> None:
-        """Simulate 500 update steps and compare final EMA weights with
-        ModelEma.module to confirm numerical parity."""
+        """Simulate 500 update steps and compare final EMA weights with ModelEma.module to confirm numerical parity."""
         torch.manual_seed(42)
         n_steps = 500
         decay = 0.993

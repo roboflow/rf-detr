@@ -75,8 +75,7 @@ def test_train_fast_dev_run(
 
     Uses ``build_trainer(tc, mc, fast_dev_run=2)`` and
     ``trainer.fit(module, datamodule=datamodule)`` with a real model and real
-    data (no mocking).  Only asserts the pipeline runs without error;
-    convergence is tested by the GPU-only tests below.
+    data (no mocking).  Only asserts the pipeline runs without error; convergence is tested by the GPU-only tests below.
     """
     output_dir = tmp_path / "output"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -264,10 +263,8 @@ def test_train_convergence_segmentation(
 ) -> None:
     """Segmentation PTL stack converges on synthetic polygon data.
 
-    Mirrors :func:`test_train_convergence_native_ptl` but uses
-    :class:`~rfdetr.config.RFDETRSegNanoConfig` and
-    :class:`~rfdetr.config.SegmentationTrainConfig` with a dataset that
-    includes COCO polygon annotations.
+    Mirrors :func:`test_train_convergence_native_ptl` but uses :class:`~rfdetr.config.RFDETRSegNanoConfig` and
+    :class:`~rfdetr.config.SegmentationTrainConfig` with a dataset that includes COCO polygon annotations.
 
     The mask mAP threshold is deliberately lower than the bbox threshold
     because segmentation convergence is harder within the same epoch budget.

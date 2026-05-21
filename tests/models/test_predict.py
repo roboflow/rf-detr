@@ -203,8 +203,7 @@ class TestPredictSourceData:
 
         Regression test for https://github.com/roboflow/rf-detr/issues/968.
         source_image was stored as (H, W, C) in detections.data; supervision's
-        __getitem__ tried to index it with a per-detection boolean mask, raising
-        IndexError because H != N.
+        __getitem__ tried to index it with a per-detection boolean mask, raising IndexError because H != N.
         """
         img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
         model = _DummyRFDETR()
@@ -276,8 +275,7 @@ class TestPredictSourceData:
         """source_shape must have shape (0, 2) when threshold filters all detections.
 
         Regression test for https://github.com/roboflow/rf-detr/issues/963.
-        The zero-detection path must not raise and must produce an empty array, not a
-        scalar or a (1, 2) array.
+        The zero-detection path must not raise and must produce an empty array, not a scalar or a (1, 2) array.
         """
         img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
         model = _DummyRFDETR()
@@ -596,8 +594,7 @@ class TestPredictClassNameData:
 
         RF-DETR internally allocates num_classes + 1 outputs; the extra class at
         index n is the background/no-object class. Returning it as '__background__'
-        is unambiguous, whereas the previous empty string was indistinguishable from
-        a genuine OOB error.
+        is unambiguous, whereas the previous empty string was indistinguishable from a genuine OOB error.
 
         Regression / contract test for https://github.com/roboflow/rf-detr/pull/966
         post-merge issue reported by @Alarmod.

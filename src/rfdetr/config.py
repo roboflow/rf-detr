@@ -213,8 +213,7 @@ class ModelConfig(BaseConfig):
            a single consolidated warning listing every load-breaking override.
 
         The warning class is :class:`PretrainWeightsCompatibilityWarning` (a
-        :class:`UserWarning` subclass), silenceable via the standard
-        ``warnings.filterwarnings`` machinery.
+        :class:`UserWarning` subclass), silenceable via the standard ``warnings.filterwarnings`` machinery.
         """
         cls = type(self)
         fields_set = self.model_fields_set
@@ -363,8 +362,7 @@ class ModelConfig(BaseConfig):
         path set via the ``RF_HOME`` environment variable) instead of CWD.
 
         Paths that already contain a directory separator (e.g. ``~/models/x.pth``,
-        ``/abs/path/x.pth``, ``models/x.pth``) are normalised with
-        ``os.path.realpath`` as before.
+        ``/abs/path/x.pth``, ``models/x.pth``) are normalised with ``os.path.realpath`` as before.
         """
         if v is None:
             return v
@@ -383,8 +381,7 @@ class ModelConfig(BaseConfig):
 
         Args:
             v: Device specifier provided by callers. Supported values are
-                ``str`` (for example ``"cpu"``, ``"cuda"``, ``"cuda:1"``)
-                and ``torch.device``.
+                ``str`` (for example ``"cpu"``, ``"cuda"``, ``"cuda:1"``) and ``torch.device``.
 
         Returns:
             Canonical string form of the parsed device (for example ``"cuda:1"``).

@@ -20,8 +20,7 @@ class _DepthwiseConvWithoutCuDNN(torch.autograd.Function):
     covers operations executed within its scope.  ``nn.Conv2d`` records the
     forward op in the autograd graph; the corresponding backward kernels run
     later, **outside** that scope, with cuDNN re-enabled.  On some CUDA stacks
-    (T4 / P100 on Kaggle / Colab) cuDNN fails engine selection for depthwise
-    conv backward, raising::
+    (T4 / P100 on Kaggle / Colab) cuDNN fails engine selection for depthwise conv backward, raising::
 
         RuntimeError: GET was unable to find an engine to execute this computation
 
@@ -82,8 +81,7 @@ class _DepthwiseConvWithoutCuDNN(torch.autograd.Function):
 
         Returns:
             Gradients for each ``forward`` input.  Inputs that do not require
-            gradients (``ctx.needs_input_grad[i]`` is ``False``) get ``None``.
-            Non-tensor inputs always get ``None``.
+            gradients (``ctx.needs_input_grad[i]`` is ``False``) get ``None``. Non-tensor inputs always get ``None``.
 
         Note:
             Under AMP (``"16-mixed"``), ``grad_output`` arrives as ``fp16`` while
@@ -333,8 +331,7 @@ class SegmentationHead(nn.Module):
 def point_sample(input: torch.Tensor, point_coords: torch.Tensor, **kwargs: Any) -> torch.Tensor:
     """
     A wrapper around :func:`~rfdetr.utilities.tensors._bilinear_grid_sample` to support 3D point_coords tensors.
-    Unlike :func:`torch.nn.functional.grid_sample` it assumes `point_coords` to lie inside
-    [0, 1] x [0, 1] square.
+    Unlike :func:`torch.nn.functional.grid_sample` it assumes `point_coords` to lie inside [0, 1] x [0, 1] square.
 
     Args:
         input: A tensor of shape (N, C, H, W) that contains features map on a H x W grid.
@@ -408,8 +405,7 @@ def get_uncertain_point_coords_with_randomness(
 ) -> torch.Tensor:
     """
     Sample points in [0, 1] x [0, 1] coordinate space based on their uncertainty. The unceratinties
-        are calculated for each point using 'uncertainty_func' function that takes point's logit
-        prediction as input.
+        are calculated for each point using 'uncertainty_func' function that takes point's logit prediction as input.
     See PointRend paper for details.
 
     Args:

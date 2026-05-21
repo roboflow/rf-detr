@@ -51,10 +51,8 @@ class BestModelCallback(ModelCheckpoint):
     Args:
         output_dir: Directory where checkpoint files are written.
         monitor_regular: Metric key for the regular model mAP.
-        monitor_ema: Metric key for the EMA model mAP.  ``None`` disables
-            EMA tracking.
-        run_test: If ``True``, run ``trainer.test()`` on the best model at
-            the end of training.
+        monitor_ema: Metric key for the EMA model mAP.  ``None`` disables EMA tracking.
+        run_test: If ``True``, run ``trainer.test()`` on the best model at the end of training.
         skip_best_epochs: Ignore the first N epochs (0..N-1) when tracking
             best regular and EMA checkpoints.  Useful when fine-tuning from
             ``pretrain_weights``: the pretrained model's epoch-0 mAP can
@@ -420,8 +418,7 @@ class RFDETREarlyStopping(EarlyStopping):
     ``stopping_threshold``/``divergence_threshold``.
 
     Early stopping evaluates only on validation epochs where the monitored
-    metrics are logged; non-eval epochs (``eval_interval > 1``) are skipped
-    automatically.
+    metrics are logged; non-eval epochs (``eval_interval > 1``) are skipped automatically.
 
     Args:
         patience: Number of epochs with no improvement before stopping.

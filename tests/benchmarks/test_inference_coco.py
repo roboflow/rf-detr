@@ -90,8 +90,7 @@ def _build_datamodule(
 ) -> RFDETRDataModule:
     """Set up an :class:`~rfdetr.training.RFDETRDataModule` for validation.
 
-    Calls ``setup("validate")`` so ``_dataset_val`` is ready.  When
-    *num_samples* is set the dataset is wrapped in a
+    Calls ``setup("validate")`` so ``_dataset_val`` is ready.  When *num_samples* is set the dataset is wrapped in a
     :class:`torch.utils.data.Subset`.
 
     Args:
@@ -116,8 +115,7 @@ def _build_ptl_module(rfdetr_obj: RFDETR, train_config: TrainConfig) -> RFDETRMo
     """Copy pretrained weights from *rfdetr_obj* into a fresh :class:`~rfdetr.training.RFDETRModelModule`.
 
     Constructs the module with the same architecture (no pretrain download),
-    loads weights from ``rfdetr_obj.model.model``, and asserts PTL lineage and
-    weight-copy correctness before returning.
+    loads weights from ``rfdetr_obj.model.model``, and asserts PTL lineage and weight-copy correctness before returning.
 
     Args:
         rfdetr_obj: A pretrained :class:`~rfdetr.detr.RFDETR` instance.
@@ -226,8 +224,7 @@ def test_inference_segmentation_rfdetr_predict(
 ) -> None:
     """Asserts mAP and F1 thresholds for segmentation models via ``Trainer.validate``.
 
-    Same structure as :func:`test_inference_detection_rfdetr_predict` but for
-    segmentation variants.
+    Same structure as :func:`test_inference_detection_rfdetr_predict` but for segmentation variants.
 
     Args:
         tmp_path: Pytest-provided temporary directory.
@@ -345,8 +342,7 @@ def test_inference_segmentation_ptl_predict(
 ) -> None:
     """``trainer.predict()`` runs through the PTL predict loop for segmentation models.
 
-    Same structure as :func:`test_inference_detection_ptl_predict` but for
-    segmentation variants.
+    Same structure as :func:`test_inference_detection_ptl_predict` but for segmentation variants.
 
     Args:
         tmp_path: Pytest-provided temporary directory.

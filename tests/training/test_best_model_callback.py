@@ -440,8 +440,7 @@ class TestBestModelCallback:
         """run_test=True but no test_step override — trainer.test() is NOT called.
 
         The guard in BestModelCallback.on_fit_end() skips trainer.test() for
-        modules that do not override LightningModule.test_step() to avoid a
-        MisconfigurationException from PTL.
+        modules that do not override LightningModule.test_step() to avoid a MisconfigurationException from PTL.
         """
         cb = BestModelCallback(output_dir=str(tmp_path), run_test=True)
         pl_module = _make_pl_module()  # MagicMock — no test_step on its class
@@ -1165,8 +1164,7 @@ class TestRFDETREarlyStopping:
     ) -> None:
         """RFDETREarlyStopping stops at the expected epoch for a plateau sequence.
 
-        Drives the callback with an identical mAP sequence and asserts the
-        trigger epoch matches the expected value.
+        Drives the callback with an identical mAP sequence and asserts the trigger epoch matches the expected value.
         """
         new_cb = RFDETREarlyStopping(
             patience=patience,
@@ -1389,8 +1387,7 @@ class TestBestEmaStatePersistence:
         """After resume, inferior post-resume EMA must not overwrite checkpoint_best_ema.pth.
 
         Without the fix: _best_ema resets to 0.0 on resume, so any positive EMA
-        metric (0.5) trivially satisfies ema_val > _best_ema and overwrites the
-        checkpoint saved pre-resume (0.75).
+        metric (0.5) trivially satisfies ema_val > _best_ema and overwrites the checkpoint saved pre-resume (0.75).
         """
         # --- Pre-resume phase: establish EMA best of 0.75 ---
         cb_pre = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95")
@@ -1427,8 +1424,7 @@ class TestBestEmaStatePersistence:
         Without the fix: _best_ema=0.0 after resume, so regular (0.6) wins over
         the true EMA best (0.8) — checkpoint_best_total.pth is built from the
         wrong source.  Use epoch number as a distinguisher: pre-resume EMA was
-        saved at epoch 3; regular was saved at epoch 1; total epoch must be 3
-        (EMA epoch) when EMA correctly wins.
+        saved at epoch 3; regular was saved at epoch 1; total epoch must be 3 (EMA epoch) when EMA correctly wins.
         """
         # Pre-resume epoch 1: regular best=0.6.
         cb_pre = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95", run_test=False)

@@ -128,8 +128,7 @@ def _restore_rfdetr_datamodule_trainer_property():
     cleanup this mutates the class for the remainder of the session.
 
     This fixture deletes any class-level override from ``RFDETRDataModule.__dict__``
-    after every test, mirroring the ``_restore_rfdetr_module_trainer_property``
-    pattern above.
+    after every test, mirroring the ``_restore_rfdetr_module_trainer_property`` pattern above.
     """
     yield
     from rfdetr.training.module_data import RFDETRDataModule

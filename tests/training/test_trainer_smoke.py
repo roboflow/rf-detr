@@ -257,8 +257,7 @@ class TestBuildTrainerSmoke:
     """Smoke tests for the ``build_trainer()`` public factory.
 
     Verifies that the full callback stack wired by ``build_trainer`` runs
-    end-to-end with ``fast_dev_run``, using mocked internals so no real
-    dataset or GPU is required.
+    end-to-end with ``fast_dev_run``, using mocked internals so no real dataset or GPU is required.
     """
 
     def test_fit_via_build_trainer(self, base_model_config, base_train_config):
@@ -346,8 +345,7 @@ class TestMultiScaleHookPropagation:
     _FakeDataset emits 32×32 images.  With multi_scale=True and
     RFDETRBaseConfig(resolution=560, patch_size=14, num_windows=4) the computed
     scales start at 392, so none equal 32.  _MultiScaleCheckDDPModule raises
-    AssertionError in training_step if h==32, making trainer.fit() fail when
-    the in-place mutation does not propagate.
+    AssertionError in training_step if h==32, making trainer.fit() fail when the in-place mutation does not propagate.
     """
 
     def test_mutation_persists_to_training_step(self, base_model_config, base_train_config):
@@ -378,8 +376,7 @@ def test_ddp_spawn_fit_runs_without_error(base_model_config, base_train_config):
 
     ``ddp_spawn`` forks child processes, so all objects passed to
     ``trainer.fit()`` must be picklable.  ``MagicMock`` is NOT picklable;
-    this test uses ``_FakePostProcess``, plain dataset instances, and
-    ``_DDPModule`` (module-level class) instead.
+    this test uses ``_FakePostProcess``, plain dataset instances, and ``_DDPModule`` (module-level class) instead.
     """
     mc = base_model_config()
     tc = base_train_config(use_ema=False, run_test=False, devices=2, strategy="ddp_spawn")
@@ -411,8 +408,7 @@ def test_ddp_spawn_multi_scale_mutation_propagates(base_model_config, base_train
     _MultiScaleCheckDDPModule raises AssertionError in training_step when the
     NestedTensor height is still 32 (original _FakeDataset size).  If trainer.fit()
     completes without error the PTL batch-hook reference chain is intact in DDP,
-    i.e. the in-place mutation in on_train_batch_start is visible in training_step
-    on both workers.
+    i.e. the in-place mutation in on_train_batch_start is visible in training_step on both workers.
 
     Regression test for issue #952 on CPU DDP (non-Windows): confirms the
     transforms/resize propagation is not a Windows-only concern.

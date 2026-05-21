@@ -349,8 +349,7 @@ class AlbumentationsWrapper:
     Detection checks the transform class name against ``GEOMETRIC_TRANSFORMS`` and
     recursively inspects nested container transforms (for example ``OneOf`` and
     ``Sequential``). For geometric transforms, bbox_params are automatically configured
-    to handle coordinate transformations, clip boxes to image boundaries, and remove
-    invalid boxes.
+    to handle coordinate transformations, clip boxes to image boundaries, and remove invalid boxes.
 
     Args:
         transform: Albumentations transform to apply (e.g., alb.HorizontalFlip, alb.GaussianBlur).
@@ -664,8 +663,7 @@ class AlbumentationsWrapper:
 
         Supports both a flat dictionary format (backward-compatible) and a list
         format that allows duplicate transform names and explicit ordering.
-        Container transforms (``OneOf``, ``SomeOf``, ``Sequential``) may be
-        nested arbitrarily deep.
+        Container transforms (``OneOf``, ``SomeOf``, ``Sequential``) may be nested arbitrarily deep.
 
         **Dict format** (existing, backward-compatible)::
 

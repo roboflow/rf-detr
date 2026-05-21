@@ -21,8 +21,7 @@ class DropPathCallback(Callback):
 
     Computes the full schedule array in ``on_train_start`` using
     :func:`rfdetr.util.drop_scheduler.drop_scheduler`, then indexes into it
-    on every training batch to update the model's stochastic-depth and
-    dropout rates.
+    on every training batch to update the model's stochastic-depth and dropout rates.
 
     Args:
         drop_path: Peak drop-path rate.  ``0.0`` disables the schedule.

@@ -34,8 +34,7 @@ def plot_metrics(
     """Read a PTL ``CSVLogger`` metrics file and save a seaborn training plot.
 
     The figure contains one subplot per metric group (Loss, AP@0.50,
-    AP@0.50:0.95, AR), arranged in a 2-column grid.  Only groups with at
-    least one non-NaN column are shown.
+    AP@0.50:0.95, AR), arranged in a 2-column grid.  Only groups with at least one non-NaN column are shown.
 
     Args:
         metrics_csv: Path to the ``metrics.csv`` file produced by

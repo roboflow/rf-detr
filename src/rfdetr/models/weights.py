@@ -166,12 +166,9 @@ def _warn_on_partial_load(incompatible: Any, pretrain_weights_path: str) -> None
     happens for parameters outside the head / query embeddings — which the
     loader intentionally reinitialises or trims — the corresponding model
     weights were left at their random initial values and the user is silently
-    getting a much weaker model.
-
-    This helper surfaces that condition with a single, actionable warning.
+    getting a much weaker model. This helper surfaces that condition with a single, actionable warning.
     Same-key shape mismatches do not reach this function — they raise
-    :class:`RuntimeError` directly from ``load_state_dict`` and are therefore
-    impossible to miss.
+    :class:`RuntimeError` directly from ``load_state_dict`` and are therefore impossible to miss.
 
     Args:
         incompatible: The ``_IncompatibleKeys`` namedtuple returned by
@@ -227,8 +224,7 @@ def interpolate_position_embeddings(
     skip shape mismatches on matching keys — it raises ``RuntimeError``.
 
     This function bicubic-interpolates every PE tensor in the checkpoint whose shape
-    differs from the target grid, modifying *checkpoint_state* in-place before
-    ``load_state_dict`` is called.
+    differs from the target grid, modifying *checkpoint_state* in-place before ``load_state_dict`` is called.
 
     Args:
         checkpoint_state: The ``"model"`` sub-dict from a loaded checkpoint.
@@ -519,8 +515,7 @@ def load_pretrain_weights(
 def apply_lora(nn_model: torch.nn.Module) -> None:
     """Apply LoRA adapters to the backbone encoder of *nn_model*.
 
-    Replaces ``nn_model.backbone[0].encoder`` in-place with a PEFT-wrapped
-    encoder using DoRA with rank 16 and alpha 16.
+    Replaces ``nn_model.backbone[0].encoder`` in-place with a PEFT-wrapped encoder using DoRA with rank 16 and alpha 16.
 
     Args:
         nn_model: LWDETR model whose backbone encoder will receive LoRA adapters.

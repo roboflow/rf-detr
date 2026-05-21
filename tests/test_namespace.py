@@ -74,8 +74,7 @@ class TestNamespaceProtocol:
         """isinstance() check passes on all supported Python versions.
 
         On Python 3.10/3.11 this is a structural no-op (no method members to
-        check).  On 3.12+ it verifies attribute presence.  The test documents
-        the intent regardless of Python version.
+        check).  On 3.12+ it verifies attribute presence.  The test documents the intent regardless of Python version.
         """
         ns = self._make_ns()
         assert isinstance(ns, BuilderArgs)

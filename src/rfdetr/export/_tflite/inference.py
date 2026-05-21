@@ -36,8 +36,7 @@ def _create_interpreter(model_path: str | Path) -> Any:
     """Load a TFLite model, allocate tensors, and log I/O shapes.
 
     Tries ``tflite_runtime`` first (lightweight; preferred on edge devices),
-    then falls back to ``tensorflow.lite`` (pre-installed on Colab / full TF
-    environments).
+    then falls back to ``tensorflow.lite`` (pre-installed on Colab / full TF environments).
 
     Args:
         model_path: Path to the ``.tflite`` model file.
@@ -79,8 +78,7 @@ def _decode_masks(mask_logits: NDArray[Any], out_size: tuple[int, int]) -> NDArr
 
     Approximates ``PostProcess.forward``: bilinear resize followed by ``> 0``.
     Uses Pillow's bilinear resampling rather than ``F.interpolate`` (no PyTorch
-    dependency at inference time); border pixels may differ slightly due to
-    distinct half-pixel conventions.
+    dependency at inference time); border pixels may differ slightly due to distinct half-pixel conventions.
 
     Args:
         mask_logits: Raw mask logits of shape ``(K, Hm, Wm)``.
@@ -117,8 +115,7 @@ def _run_inference(
     normalises the image with ImageNet statistics, invokes the model, then
     decodes the ``dets`` / ``labels`` output tensors into a
     :class:`supervision.Detections` object with pixel-space ``xyxy`` boxes.
-    For segmentation exports the ``masks`` output is also decoded into
-    ``Detections.mask``.
+    For segmentation exports the ``masks`` output is also decoded into ``Detections.mask``.
 
     Args:
         interp: Allocated TFLite interpreter returned by ``_create_interpreter``.

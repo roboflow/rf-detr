@@ -69,11 +69,9 @@ class TestHungarianMatcherNonFiniteCosts:
     ) -> None:
         """When ALL costs are non-finite, the fallback sentinel (``dtype_info.max``)
         should allow ``linear_sum_assignment`` to complete with a valid 1-to-1
-        assignment: exactly one match, query index in [0, num_queries), target
-        index 0.
+        assignment: exactly one match, query index in [0, num_queries), target index 0.
 
-        This exercises the ``else: replacement_cost = C.new_tensor(dtype_info.max)``
-        branch.
+        This exercises the ``else: replacement_cost = C.new_tensor(dtype_info.max)`` branch.
         """
         nan = float("nan")
         outputs = {

@@ -121,8 +121,7 @@ def _build_datamodule(model_config=None, train_config=None, tmp_path=None):
 def build_datamodule(tmp_path):
     """Factory fixture — returns a constructed RFDETRDataModule.
 
-    build_dataset is mocked automatically.
-    tmp_path is injected automatically so test methods do not need to declare it.
+    build_dataset is mocked automatically. tmp_path is injected automatically so test methods do not need to declare it.
     """
     return lambda model_config=None, train_config=None: _build_datamodule(model_config, train_config, tmp_path)
 
@@ -407,10 +406,8 @@ class TestTrainDataloader:
     ):
         """len(train_dataloader()) is always a multiple of grad_accum_steps.
 
-        Verifies the workaround for
-        https://github.com/Lightning-AI/pytorch-lightning/issues/19987:
-        the training DataLoader must never present a partial accumulation
-        window to PTL.
+        Verifies the workaround for https://github.com/Lightning-AI/pytorch-lightning/issues/19987:
+        the training DataLoader must never present a partial accumulation window to PTL.
         """
         dm = self._setup_dm_with_train(
             tmp_path,

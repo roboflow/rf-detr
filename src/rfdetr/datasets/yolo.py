@@ -412,8 +412,7 @@ def _build_coco_api_from_samples(classes: list[str], dataset: Any) -> Any:
 
     Args:
         classes: Ordered class names where index is the YOLO class ID.
-        dataset: Lazy YOLO backend exposing ``__len__`` and either
-            ``get_image_info(idx)`` or ``__getitem__(idx)``.
+        dataset: Lazy YOLO backend exposing ``__len__`` and either ``get_image_info(idx)`` or ``__getitem__(idx)``.
 
     Returns:
         Initialized ``pycocotools.COCO`` object with ``dataset`` and indexes.
@@ -685,8 +684,7 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
         resolution: Target square resolution in pixels.
 
     Returns:
-        A :class:`YoloDetection` dataset instance ready for use with a
-        DataLoader.
+        A :class:`YoloDetection` dataset instance ready for use with a DataLoader.
     """
     root = Path(args.dataset_dir)
     assert root.exists(), f"provided Roboflow path {root} does not exist"

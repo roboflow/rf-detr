@@ -18,8 +18,7 @@ user did not explicitly set ``num_classes``.
 
 These tests exercise ``rfdetr.models.weights.load_pretrain_weights`` directly,
 which is the unified function that replaced the two prior separate implementations
-(``detr.py:_load_pretrain_weights_into`` and
-``module_model.py:RFDETRModelModule._load_pretrain_weights``).
+(``detr.py:_load_pretrain_weights_into`` and ``module_model.py:RFDETRModelModule._load_pretrain_weights``).
 """
 
 from types import SimpleNamespace
@@ -155,8 +154,7 @@ class TestLoadPretrainWeightsSecondReinit:
     def test_no_mismatch_no_reinit(self, monkeypatch):
         """Checkpoint class count matches config — no reinit at all.
 
-        Scenario: COCO checkpoint (91 classes) with num_classes=90.
-        91 == 90 + 1, so no reinit should fire.
+        Scenario: COCO checkpoint (91 classes) with num_classes=90. 91 == 90 + 1, so no reinit should fire.
         """
         from rfdetr.models.weights import load_pretrain_weights
 
@@ -232,8 +230,7 @@ class TestLoadPretrainWeightsSecondReinit:
         Scenario (from user bug report): user trains on 8 categories (IDs 0–7).
         The checkpoint stores ``class_embed.bias`` with shape [9] (8 user classes
         + 1 background). Loading without specifying ``num_classes`` must NOT
-        trigger a second reinit to 91 after temporarily matching the checkpoint
-        size for ``load_state_dict``.
+        trigger a second reinit to 91 after temporarily matching the checkpoint size for ``load_state_dict``.
 
         This test asserts the loader auto-aligns ``mc.num_classes`` to 8 (9 - 1)
         and fires exactly one reinit call — to 9 (the checkpoint size).
@@ -324,8 +321,7 @@ class TestLoadPretrainWeightsPEInterpolation:
     def test_matching_pe_shape_is_not_modified(self, monkeypatch):
         """When checkpoint PE matches model expectations, the tensor is not changed.
 
-        Ensures PE interpolation is a no-op for same-resolution checkpoints so that
-        normal weight loading is unaffected.
+        Ensures PE interpolation is a no-op for same-resolution checkpoints so that normal weight loading is unaffected.
         """
         mc = RFDETRNanoConfig(pretrain_weights="/fake/weights.pth", device="cpu")
         # Default: positional_encoding_size=24 → PE = [1, 24*24+1, 384] = [1, 577, 384]
@@ -413,24 +409,21 @@ class TestL1FacadePEInterpolationEndToEnd:
     Code that wired the L1 facade through the unified loader landed
     later (``inference._build_model_context`` calling ``load_pretrain_weights``
     from ``models.weights``).  This test pins that wiring so a future refactor
-    cannot reintroduce a divergent loader path that silently skips PE
-    interpolation.
+    cannot reintroduce a divergent loader path that silently skips PE interpolation.
 
     Current coverage: ``RFDETRNano`` (detection) and ``RFDETRSegNano``
     (segmentation), upward-interpolation only.  When a third L1 facade variant
     is added, collapse both methods to a single ``@pytest.mark.parametrize``
     over ``(variant_class, default_pe_grid, patch_size, new_resolution)``.
     Downward-interpolation (high-res checkpoint → lower-res model) is not
-    currently exercised; add a reverse-direction parametrize row when
-    refactoring.
+    currently exercised; add a reverse-direction parametrize row when refactoring.
     """
 
     def test_rfdetr_nano_loads_default_pe_checkpoint_at_custom_resolution(self, tmp_path):
         """Saving an RFDETRNano state_dict at default resolution and loading at
         a higher resolution must succeed via PE interpolation in the L1 facade.
 
-        Mirrors the user-reported scenario in
-        https://github.com/roboflow/rf-detr/issues/990 (PE size mismatch
+        Mirrors the user-reported scenario in https://github.com/roboflow/rf-detr/issues/990 (PE size mismatch
         ``[1, 1937, 384]`` vs ``[1, 6401, 384]`` raised from
         ``LWDETR.load_state_dict``), reduced to RFDETRNano for test speed.
         """
@@ -487,12 +480,10 @@ class TestL1FacadePEInterpolationEndToEnd:
         a higher resolution must succeed via PE interpolation in the L1 facade.
 
         Regression for https://github.com/roboflow/rf-detr/issues/1023 — the
-        segmentation model variant (``RFDETRSegNano``) raised
-        ``RuntimeError: size mismatch for
+        segmentation model variant (``RFDETRSegNano``) raised ``RuntimeError: size mismatch for
         backbone.0.encoder.encoder.embeddings.position_embeddings`` when
         instantiated with a non-default ``resolution`` because the L1 facade's
-        checkpoint-loading path did not interpolate positional embeddings for
-        segmentation models.
+        checkpoint-loading path did not interpolate positional embeddings for segmentation models.
         """
         from rfdetr import RFDETRSegNano
 
@@ -595,8 +586,7 @@ class TestModuleLoadPretrainWeightsPEInterpolationCustomResolution:
 
     These tests exercise the construction path end-to-end (mocking only the
     heavy ``build_model_from_config`` / ``build_criterion_from_config`` calls
-    and disk I/O), so the regression cannot reappear if the in-init delegation
-    to ``load_pretrain_weights`` is removed.
+    and disk I/O), so the regression cannot reappear if the in-init delegation to ``load_pretrain_weights`` is removed.
     """
 
     @pytest.fixture(autouse=True)

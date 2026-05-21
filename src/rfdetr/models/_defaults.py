@@ -30,8 +30,7 @@ class ModelDefaults:
         ``ModelDefaults`` is public API as of v1.7.  Fields that represent
         true architectural decisions (e.g. ``dim_feedforward``, ``aux_loss``)
         will be promoted to ``ModelConfig`` or ``TrainConfig`` in future
-        phases; field names and defaults may change across minor versions
-        during this transitional period.
+        phases; field names and defaults may change across minor versions during this transitional period.
 
     Attributes:
         drop_mode: Drop-path mode used during training.

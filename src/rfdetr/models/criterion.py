@@ -27,6 +27,7 @@ from rfdetr.utilities.distributed import get_world_size, is_dist_avail_and_initi
 def sigmoid_focal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: float = 2):
     """
     Loss used in RetinaNet for dense detection: https://arxiv.org/abs/1708.02002.
+
     Args:
         inputs: A float tensor of arbitrary shape.
                 The predictions for each example.
@@ -37,6 +38,7 @@ def sigmoid_focal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: f
                 positive vs negative examples. Default = -1 (no weighting).
         gamma: Exponent of the modulating factor (1 - p_t) to
                balance easy vs hard examples.
+
     Returns:
         Loss tensor
     """
@@ -82,6 +84,7 @@ def dice_loss(
 ):
     """
     Compute the DICE loss, similar to generalized IOU for masks
+
     Args:
         inputs: A float tensor of arbitrary shape.
                 The predictions for each example.
@@ -112,6 +115,7 @@ def sigmoid_ce_loss(
         targets: A float tensor with the same shape as inputs. Stores the binary
                  classification label for each element in inputs
                 (0 for the negative class and 1 for the positive class).
+
     Returns:
         Loss tensor
     """
@@ -124,8 +128,7 @@ sigmoid_ce_loss_jit = torch.jit.script(sigmoid_ce_loss)  # type: torch.jit.Scrip
 
 
 class SetCriterion(nn.Module):
-    """This class computes the loss for Conditional DETR.
-    The process happens in two steps:
+    """This class computes the loss for Conditional DETR. The process happens in two steps:
         1) we compute hungarian assignment between ground truth boxes and the outputs of the model
         2) we supervise each pair of matched ground-truth / prediction (supervise class and box)
     """

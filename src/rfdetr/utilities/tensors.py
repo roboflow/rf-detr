@@ -29,8 +29,7 @@ def _round_up_to_multiple(value: int, multiple: int) -> int:
         multiple: Positive integer divisor.
 
     Returns:
-        The smallest integer greater than or equal to *value* that is an exact
-        multiple of *multiple*.
+        The smallest integer greater than or equal to *value* that is an exact multiple of *multiple*.
 
     Raises:
         ValueError: If ``value`` is negative or ``multiple`` is not positive.
@@ -125,8 +124,7 @@ def nested_tensor_from_tensor_list(
             rounded-up strip is explicitly tracked in the ``mask`` as padding.
 
     Returns:
-        NestedTensor with all images padded to the maximum spatial dimensions
-        (rounded up to *block_size* when provided).
+        NestedTensor with all images padded to the maximum spatial dimensions (rounded up to *block_size* when provided).
     """
     # TODO make this more general
     if tensor_list[0].ndim == 3:
@@ -217,16 +215,13 @@ def _bilinear_grid_sample(
     implemented and silently falls back to CPU.  This function uses gather-based
     index arithmetic — natively supported on every backend — for the MPS path,
     while delegating to ``F.grid_sample`` on CUDA/CPU where its fused kernel is
-    faster.  The two paths are numerically identical, so model accuracy is
-    unaffected.
+    faster.  The two paths are numerically identical, so model accuracy is unaffected.
 
     Args:
         input: Feature map of shape ``(N, C, H, W)``.
         grid: Sampling grid of shape ``(N, Hg, Wg, 2)`` with values in ``[-1, 1]``.
-        padding_mode: ``"zeros"`` returns 0 for out-of-bounds samples;
-            ``"border"`` clamps to the nearest border pixel.
-        align_corners: If ``True``, grid extremes ``±1`` map to pixel centres at
-            positions ``0`` and ``H-1``/``W-1``.
+        padding_mode: ``"zeros"`` returns 0 for out-of-bounds samples; ``"border"`` clamps to the nearest border pixel.
+        align_corners: If ``True``, grid extremes ``±1`` map to pixel centres at positions ``0`` and ``H-1``/``W-1``.
 
     Returns:
         Sampled tensor of shape ``(N, C, Hg, Wg)``.
@@ -315,8 +310,7 @@ def _collate_with_block_size(
 
     Args:
         batch: List of ``(image, target)`` pairs from a dataset.
-        block_size: When set, round batch ``H`` and ``W`` up to the next multiple
-            of this value before padding.  See
+        block_size: When set, round batch ``H`` and ``W`` up to the next multiple of this value before padding.  See
             :func:`nested_tensor_from_tensor_list`.
 
     Returns:
@@ -359,8 +353,7 @@ def make_collate_fn(
 
     Args:
         block_size: When set, batch ``H`` and ``W`` are rounded up to the next
-            multiple of this value before padding.  The rounded-up strip is
-            marked as padding in the NestedTensor mask.
+            multiple of this value before padding.  The rounded-up strip is marked as padding in the NestedTensor mask.
 
     Returns:
         A collate callable suitable for ``torch.utils.data.DataLoader``.

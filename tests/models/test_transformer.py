@@ -150,8 +150,7 @@ class TestMSDeformAttnCorePytorch:
     Regression suite for torch.export.export compatibility: iterating over a
     spatial_shapes tensor yields FakeTensor scalars during FakeTensor tracing,
     which cannot be used as Python int split/view sizes.  The function now
-    accepts an optional ``value_spatial_shapes_hw`` list of Python int pairs
-    that bypasses tensor iteration.
+    accepts an optional ``value_spatial_shapes_hw`` list of Python int pairs that bypasses tensor iteration.
     """
 
     @pytest.fixture
@@ -327,8 +326,7 @@ class TestGenEncoderOutputProposalsDynamicBatch:
     """Regression tests for dynamic batch support in gen_encoder_output_proposals.
 
     Ensures that the ONNX-symbolic refactoring (PR #950 / issue #949) does not bake a
-    fixed batch dimension into proposals and that output shapes are correct for varying
-    batch sizes.
+    fixed batch dimension into proposals and that output shapes are correct for varying batch sizes.
     """
 
     @pytest.mark.parametrize("batch_size", [1, 2, 4, 8])
@@ -374,8 +372,7 @@ class TestGenEncoderOutputProposalsDynamicBatch:
         """Output shapes must be correct when memory_padding_mask is provided with varying batch sizes.
 
         Regression for PR #950 / issue #949: the masked branch used .reshape(-1, h, w, 1) to
-        infer the batch dimension dynamically; this test verifies the branch handles varying
-        batch sizes without error.
+        infer the batch dimension dynamically; this test verifies the branch handles varying batch sizes without error.
 
         Args:
             batch_size: Number of images in the batch.

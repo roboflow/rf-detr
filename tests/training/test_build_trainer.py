@@ -36,8 +36,7 @@ def _tc(tmp_path, **kwargs):
     """Minimal TrainConfig for tests.
 
     Loggers are disabled by default to avoid requiring optional deps (tensorboard,
-    wandb, mlflow) in the CPU test environment.  Logger-specific tests override these
-    explicitly via kwargs or mocking.
+    wandb, mlflow) in the CPU test environment.  Logger-specific tests override these explicitly via kwargs or mocking.
     """
     defaults = dict(
         dataset_dir=str(tmp_path / "ds"),
@@ -668,8 +667,7 @@ class TestBuildTrainerSegmentationDDP:
         """strategy='ddp' + segmentation_head=True must produce DDPStrategy(find_unused_parameters=True).
 
         The segmentation head's sparse_forward() leaves parameters unused on some
-        forward steps.  Plain DDP raises RuntimeError unless find_unused_parameters
-        is enabled.
+        forward steps.  Plain DDP raises RuntimeError unless find_unused_parameters is enabled.
         """
         import unittest.mock as mock
 
@@ -694,8 +692,7 @@ class TestBuildTrainerSegmentationDDP:
         """strategy='ddp' without segmentation_head must pass the string through unchanged.
 
         Only the segmentation path needs find_unused_parameters; standard detection
-        DDP must not be wrapped unnecessarily to avoid the autograd-graph traversal
-        overhead on every backward pass.
+        DDP must not be wrapped unnecessarily to avoid the autograd-graph traversal overhead on every backward pass.
         """
         import unittest.mock as mock
 
@@ -717,8 +714,7 @@ class TestBuildTrainerSegmentationDDP:
 
         ddp_spawn is already replaced with an interactive-spawn DDPStrategy that has
         find_unused_parameters=True for notebook compatibility.  Segmentation must not
-        accidentally drop that flag when the ddp_spawn path is taken instead of the
-        plain 'ddp' path.
+        accidentally drop that flag when the ddp_spawn path is taken instead of the plain 'ddp' path.
         """
         import unittest.mock as mock
 

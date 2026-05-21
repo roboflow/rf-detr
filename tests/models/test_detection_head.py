@@ -7,8 +7,7 @@
 """Regression tests for _resize_linear() and LWDETR.reinitialize_detection_head().
 
 These tests guard against the out_features staleness bug where in-place .data
-mutation did not update nn.Linear.out_features, causing ONNX export to emit
-stale (pre-fine-tuning) class counts.
+mutation did not update nn.Linear.out_features, causing ONNX export to emit stale (pre-fine-tuning) class counts.
 """
 
 from unittest.mock import MagicMock
@@ -96,8 +95,7 @@ class TestReinitializeDetectionHead:
     """Integration tests for LWDETR.reinitialize_detection_head().
 
     Uses a minimal LWDETR (hidden_dim=4, no real backbone) to verify that
-    out_features is updated on the replaced nn.Linear modules — the core
-    invariant required for correct ONNX export.
+    out_features is updated on the replaced nn.Linear modules — the core invariant required for correct ONNX export.
     """
 
     def test_updates_class_embed_out_features(self) -> None:

@@ -640,8 +640,7 @@ class TestConvertPreds:
         """Filtering degenerate boxes must preserve mask alignment via original indices.
 
         Regression context: when a degenerate box is not last, keep indices are
-        non-zero/non-contiguous. Downstream filtering must keep masks from the
-        same original prediction indices.
+        non-zero/non-contiguous. Downstream filtering must keep masks from the same original prediction indices.
         """
         cb = COCOEvalCallback()
 

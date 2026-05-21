@@ -105,8 +105,7 @@ def test_export_onnx_uses_legacy_exporter_when_dynamo_flag_exists(
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for export test")
 @pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed, run: pip install rfdetr[onnx]")
 def test_segmentation_model_export_no_crash(tmp_path: Path) -> None:
-    """
-    Integration test: exporting a segmentation model should not crash.
+    """Integration test: exporting a segmentation model should not crash.
 
     This exercises the full export path to ensure no AttributeError occurs.
     """
@@ -125,8 +124,7 @@ def test_segmentation_model_export_no_crash(tmp_path: Path) -> None:
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for export test")
 @pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed, run: pip install rfdetr[onnx]")
 def test_export_does_not_change_original_training_state(tmp_path: Path) -> None:
-    """
-    Verify that calling export() does not change the original model's train/eval state.
+    """Verify that calling export() does not change the original model's train/eval state.
 
     This ensures that export() puts a deepcopy of the model in eval mode without
     mutating the underlying training model used by RF-DETR.
@@ -484,8 +482,7 @@ class TestCliExportMain:
     def test_simplify_flag_logs_warning_and_continues_export(self, output_dir: str) -> None:
         """CLI --simplify=True must log a deprecation warning and still call export_onnx.
 
-        The flag is now a no-op: the logger emits a warning and export continues
-        without running ONNX simplification.
+        The flag is now a no-op: the logger emits a warning and export continues without running ONNX simplification.
         """
         args = self._make_args(output_dir=output_dir, simplify=True)
         export_onnx_called: dict[str, bool] = {"value": False}
@@ -717,8 +714,7 @@ def test_make_infer_image_produces_correct_rectangular_shape() -> None:
     """make_infer_image must produce a (B, C, H, W) tensor for non-square shapes.
 
     Regression test for the square-resize bug where ``Resize((shape[0], shape[0]))``
-    was used instead of ``Resize((shape[0], shape[1]))``, causing the output width
-    to silently equal the height.
+    was used instead of ``Resize((shape[0], shape[1]))``, causing the output width to silently equal the height.
     """
     from rfdetr.export.main import make_infer_image
 

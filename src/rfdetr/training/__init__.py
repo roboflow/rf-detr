@@ -6,8 +6,7 @@
 
 """RF-DETR training package (PyTorch Lightning).
 
-Provides the Lightning module, data module, callbacks, and CLI for
-training and evaluation.
+Provides the Lightning module, data module, callbacks, and CLI for training and evaluation.
 
 Exports:
     RFDETRModelModule: LightningModule wrapping the RF-DETR model and training loop.

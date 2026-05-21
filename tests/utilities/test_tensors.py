@@ -389,8 +389,7 @@ class TestBilinearGridSampleRealUseCases:
     def test_ms_deform_attn_pattern(self, seed):
         """Matches ms_deform_attn_func: padding_mode='zeros', align_corners=False.
 
-        The attention function passes (B*n_heads, head_dim, H, W) input and
-        (B*n_heads, Len_q, P, 2) grid.
+        The attention function passes (B*n_heads, head_dim, H, W) input and (B*n_heads, Len_q, P, 2) grid.
         """
         # Simulate B=2, n_heads=8, head_dim=32
         input = torch.randn(16, 32, 14, 14)
@@ -404,8 +403,7 @@ class TestBilinearGridSampleRealUseCases:
     def test_point_sample_pattern(self, seed):
         """Matches point_sample in segmentation: padding_mode='border', align_corners=False.
 
-        point_sample transforms point_coords via ``2.0 * point_coords - 1.0`` to
-        map [0, 1] -> [-1, 1].
+        point_sample transforms point_coords via ``2.0 * point_coords - 1.0`` to map [0, 1] -> [-1, 1].
         """
         input = torch.randn(4, 256, 28, 28)
         # Simulate point_coords in [0, 1], transformed to [-1, 1]

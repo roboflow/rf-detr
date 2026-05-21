@@ -30,8 +30,7 @@ def _has_cuda_device() -> bool:
     """Return ``True`` when the runtime has a CUDA accelerator available.
 
     Uses the fork-safe global ``DEVICE`` constant instead of direct
-    ``torch.cuda.is_available()`` calls to avoid creating a CUDA context in
-    fork-based notebook/DDP workflows.
+    ``torch.cuda.is_available()`` calls to avoid creating a CUDA context in fork-based notebook/DDP workflows.
     """
     from rfdetr.config import DEVICE
 
@@ -45,13 +44,11 @@ class GradAccumAlignedDataset(torch.utils.data.Dataset):
     PTL fires the optimizer on partial accumulation windows at the tail of the
     dataset, causing the last optimizer step to be under-scaled.  Padding the
     dataset to a multiple of ``effective_batch_size * world_size`` ensures that
-    ``drop_last=True`` on the DataLoader becomes a true no-op — every
-    accumulation window is always complete.
+    ``drop_last=True`` on the DataLoader becomes a true no-op — every accumulation window is always complete.
 
     Padding indices are drawn randomly from the original dataset.  Because RF-DETR
     uses online augmentation, each padded sample receives a fresh random
-    augmentation at ``__getitem__`` time, so it behaves like a new training
-    example rather than a true duplicate.
+    augmentation at ``__getitem__`` time, so it behaves like a new training example rather than a true duplicate.
 
     This wrapper can be removed once the upstream PTL issue is resolved.
 
@@ -114,8 +111,7 @@ def _resolve_augmentation_backend(backend: str) -> str:
     ``"gpu"`` only when both are present; otherwise ``"cpu"``.
 
     Called before dataset construction so that ``gpu_postprocess`` in the
-    dataset builders always matches what the DataModule will actually do in
-    ``on_after_batch_transfer``.
+    dataset builders always matches what the DataModule will actually do in ``on_after_batch_transfer``.
 
     Args:
         backend: Value of ``TrainConfig.augmentation_backend``.
@@ -262,8 +258,7 @@ class RFDETRDataModule(LightningDataModule):
         :class:`GradAccumAlignedDataset` to ensure its length is an exact
         multiple of ``effective_batch_size * world_size`` (workaround for
         https://github.com/Lightning-AI/pytorch-lightning/issues/19987) and
-        then uses ``shuffle=True, drop_last=True`` so that PTL can
-        auto-inject ``DistributedSampler`` in DDP mode.
+        then uses ``shuffle=True, drop_last=True`` so that PTL can auto-inject ``DistributedSampler`` in DDP mode.
 
         Returns:
             DataLoader for the training dataset.
@@ -373,8 +368,7 @@ class RFDETRDataModule(LightningDataModule):
 
         Called once during ``setup("fit")``.  When ``augmentation_backend``
         is ``"cpu"`` this is a no-op.  For ``"auto"`` the method falls back
-        silently when CUDA or Kornia are unavailable.  For ``"gpu"`` missing
-        requirements raise hard errors.
+        silently when CUDA or Kornia are unavailable.  For ``"gpu"`` missing requirements raise hard errors.
         """
         backend = self.train_config.augmentation_backend
         if backend == "cpu":
@@ -413,8 +407,7 @@ class RFDETRDataModule(LightningDataModule):
         """Apply Kornia GPU augmentation after the batch is transferred to device.
 
         When ``_kornia_pipeline`` is set and the trainer is in training mode,
-        augmentation and normalization are applied on the GPU.  Validation
-        and test batches pass through unchanged.
+        augmentation and normalization are applied on the GPU.  Validation and test batches pass through unchanged.
 
         Segmentation models use a mask-aware pipeline (``with_masks=True``) so
         images, boxes, and per-instance masks are augmented in sync.

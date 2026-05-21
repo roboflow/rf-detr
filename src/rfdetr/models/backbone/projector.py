@@ -25,8 +25,7 @@ import torch.nn.functional as F  # noqa: N812
 class LayerNorm(nn.Module):
     """
     A LayerNorm variant, popularized by Transformers, that performs point-wise mean and
-    variance normalization over the channel dimension for inputs that have shape
-    (batch_size, channels, height, width).
+    variance normalization over the channel dimension for inputs that have shape (batch_size, channels, height, width).
     https://github.com/facebookresearch/ConvNeXt/blob/d1fa8f6fef0a165b27399986cc2bdacc92777e40/models/convnext.py#L119
     """
 
@@ -52,8 +51,7 @@ def get_norm(norm: Optional[Union[str, Callable[[int], nn.Module]]], out_channel
     """
     Args:
         norm: Either one of BN, SyncBN, FrozenBN, GN;
-            or a callable that takes a channel number and returns
-            the normalization layer as a nn.Module.
+            or a callable that takes a channel number and returns the normalization layer as a nn.Module.
 
     Returns:
         The normalization layer.

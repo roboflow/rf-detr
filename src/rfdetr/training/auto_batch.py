@@ -300,8 +300,7 @@ def resolve_auto_batch_config(
     Expects model_context to have attributes: .device (torch.device) and .model (nn.Module).
     Runs probe_max_micro_batch on the current model/criterion, then recommend_grad_accum_steps
     using train_config.auto_batch_target_effective. Logs device, segmentation flag, resolution,
-    and the chosen values; also logs that the probe is train-step-only and that eval/test
-    may use more memory.
+    and the chosen values; also logs that the probe is train-step-only and that eval/test may use more memory.
 
     Args:
         model_context: Object with .device and .model (e.g. RFDETR.model from get_model()).
@@ -311,8 +310,7 @@ def resolve_auto_batch_config(
         max_micro_batch: Upper bound on batch size to try (passed to probe_max_micro_batch).
 
     Returns:
-        AutoBatchResult with safe_micro_batch, recommended_grad_accum_steps,
-        effective_batch_size, and device_name.
+        AutoBatchResult with safe_micro_batch, recommended_grad_accum_steps, effective_batch_size, and device_name.
 
     Raises:
         RuntimeError: If CUDA is not available or model_context.device is not CUDA.

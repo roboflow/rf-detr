@@ -102,8 +102,7 @@ def _build_model_context(model_config: ModelConfig) -> ModelContext:
     ``.to(device)`` on the first ``predict()`` / ``export()`` /
     ``optimize_for_inference()`` call.  Keeping construction CPU-only prevents
     CUDA initialisation during ``__init__``, which would block DDP strategies
-    (``ddp_notebook``, ``ddp_spawn``) from spawning child processes in notebook
-    environments.
+    (``ddp_notebook``, ``ddp_spawn``) from spawning child processes in notebook environments.
 
     Args:
         model_config: Architecture configuration.

@@ -67,8 +67,7 @@ def _resize_linear(linear: nn.Linear, num_classes: int) -> nn.Linear:
         num_classes: Target number of output features.
 
     Returns:
-        A new :class:`~torch.nn.Linear` with ``in_features`` unchanged and
-        ``out_features == num_classes``.
+        A new :class:`~torch.nn.Linear` with ``in_features`` unchanged and ``out_features == num_classes``.
     """
     base = linear.weight.shape[0]
     num_repeats = int(math.ceil(num_classes / base))

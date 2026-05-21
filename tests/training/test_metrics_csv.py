@@ -129,8 +129,7 @@ class TestDetectionMetricsCSV:
 
         With grad_accum_steps=4 the old code divided the logged value by 4,
         making train/loss ~4× smaller than val/loss.  After the fix the logged
-        value equals the raw weighted criterion output so both losses are on the
-        same scale.
+        value equals the raw weighted criterion output so both losses are on the same scale.
         """
         fixed_loss_value = 5.0
         grad_accum_steps = 4

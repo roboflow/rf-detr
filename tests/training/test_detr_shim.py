@@ -62,8 +62,7 @@ def _make_train_config(tmp_path, **overrides):
 def _make_rfdetr_self(tmp_path, **train_overrides):
     """Return a MagicMock shaped like RFDETR with real config objects.
 
-    No spec is used because RFDETR.model is set in __init__ (instance attr)
-    and spec=RFDETR would block access to it.
+    No spec is used because RFDETR.model is set in __init__ (instance attr) and spec=RFDETR would block access to it.
     """
     mock = MagicMock()
     mock.model_config = _make_model_config()

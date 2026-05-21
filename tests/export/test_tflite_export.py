@@ -134,8 +134,7 @@ def fake_onnx2tf():
     """Provide a fake ``onnx2tf`` that records *convert()* calls.
 
     Also patches ``_replace_gridsample_for_tflite`` to return the input path
-    unchanged so tests that supply stub ONNX bytes do not depend on
-    ``onnx.load`` tolerating those bytes.
+    unchanged so tests that supply stub ONNX bytes do not depend on ``onnx.load`` tolerating those bytes.
     """
     fake, convert_mock, saved = _install_fake_onnx2tf()
     with mock.patch(
@@ -160,8 +159,7 @@ def mock_prepare_calib(tmp_path: Path) -> Generator:
 
     ``export_tflite`` calls ``_prepare_calibration_data`` which calls
     ``_get_onnx_input_info`` (requiring a real ONNX file).  Since the
-    ``onnx_model`` fixture writes only stub bytes, this mock prevents
-    the ONNX parse from being attempted.
+    ``onnx_model`` fixture writes only stub bytes, this mock prevents the ONNX parse from being attempted.
     """
     dummy_npy = tmp_path / "_rfdetr_calib_data.npy"
     np.save(str(dummy_npy), np.zeros((1, 64, 64, 3), dtype=np.float32))
@@ -243,8 +241,7 @@ class TestExportTfliteConverter:
         """custom_input_op_name_np_data_path must NOT be passed to convert().
 
         The onnx2tf custom_input code path triggers a tf.tile rank mismatch
-        with DINOv2-style backbones when N > 1.  We rely on patching
-        download_test_image_data() instead.
+        with DINOv2-style backbones when N > 1.  We rely on patching download_test_image_data() instead.
         """
         _, convert_mock = fake_onnx2tf
         export_tflite(onnx_model, tflite_output)
@@ -262,8 +259,7 @@ class TestExportTfliteConverter:
         """output_signaturedefs must always be True.
 
         Segmentation models produce ONNX node names with leading "/"
-        characters that violate the TF saved_model naming pattern.
-        Enabling signature defs bypasses this restriction.
+        characters that violate the TF saved_model naming pattern. Enabling signature defs bypasses this restriction.
         """
         _, convert_mock = fake_onnx2tf
         export_tflite(onnx_model, tflite_output)
@@ -342,8 +338,7 @@ class TestExportTfliteConverter:
         onnx2tf's ``output_integer_quantized_tflite`` (-oiqt) only yields static
         quantization, which RF-DETR's transformer activations do not survive.
         The converter instead builds dynamic-range INT8 from the SavedModel via
-        ``_quantize_dynamic_range``, so the onnx2tf call must NOT carry the
-        ``output_integer_quantized_tflite`` flag.
+        ``_quantize_dynamic_range``, so the onnx2tf call must NOT carry the ``output_integer_quantized_tflite`` flag.
         """
         _, convert_mock = fake_onnx2tf
         dyn_path = tflite_output / "model_dynamic_range_quant.tflite"

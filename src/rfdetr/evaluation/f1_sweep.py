@@ -23,8 +23,7 @@ def sweep_confidence_thresholds(
             Each entry is a dict with keys ``"scores"``, ``"matches"``,
             ``"ignore"``, and ``"total_gt"``.
         conf_thresholds: Iterable of float confidence thresholds to evaluate.
-        classes_with_gt: List of class indices that have at least one GT
-            instance — used for macro-averaging.
+        classes_with_gt: List of class indices that have at least one GT instance — used for macro-averaging.
 
     Returns:
         List of result dicts, one per threshold, each containing:

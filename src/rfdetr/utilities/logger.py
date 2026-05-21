@@ -32,8 +32,7 @@ def get_logger(name: str = "rf-detr", level: int | None = None) -> _RFDETRLogger
     and WARNING, ERROR, and CRITICAL level logs to stderr. If the logger already
     has handlers, it returns the existing logger without adding new handlers.
 
-    The log level can be specified directly or through the LOG_LEVEL environment
-    variable.
+    The log level can be specified directly or through the LOG_LEVEL environment variable.
 
     Args:
         name: The name of the logger. Defaults to "rf-detr".

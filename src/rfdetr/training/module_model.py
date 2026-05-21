@@ -385,8 +385,7 @@ class RFDETRModelModule(LightningModule):
 
         3. **Converted format** — a file produced by
            :func:`~rfdetr.training.checkpoint.convert_legacy_checkpoint` that
-           already has ``"state_dict"`` but also carries
-           ``"legacy_ema_state_dict"``.  The EMA weights are stashed on
+           already has ``"state_dict"`` but also carries ``"legacy_ema_state_dict"``.  The EMA weights are stashed on
            ``self._pending_legacy_ema_state`` for optional restoration by
            :class:`~rfdetr.training.callbacks.ema.RFDETREMACallback`.
 
@@ -396,8 +395,7 @@ class RFDETRModelModule(LightningModule):
             through :func:`~rfdetr.models.weights.load_pretrain_weights` during
             ``__init__`` instead — that helper performs its own PTL ``.ckpt``
             normalisation (``state_dict`` → ``model`` key, ``_orig_mod`` strip)
-            and PE interpolation, so the two code paths intentionally do not
-            share state.
+            and PE interpolation, so the two code paths intentionally do not share state.
 
         Args:
             checkpoint: Checkpoint dict passed in by PTL (mutated in-place).

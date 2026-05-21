@@ -26,6 +26,7 @@ def get_vit_lr_decay_rate(name: str, lr_decay_rate: float = 1.0, num_layers: int
         name: parameter name.
         lr_decay_rate: base lr decay rate.
         num_layers: number of ViT blocks.
+
     Returns:
         lr decay rate for the given parameter.
     """
@@ -46,6 +47,7 @@ def get_vit_weight_decay_rate(name: str, weight_decay_rate: float = 1.0) -> floa
     Args:
         name: parameter name.
         weight_decay_rate: base weight decay rate.
+
     Returns:
         weight decay rate for the given parameter.
     """

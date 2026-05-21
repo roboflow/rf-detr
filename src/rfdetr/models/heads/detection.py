@@ -34,10 +34,8 @@ class DetectionHead(nn.Module):
             hs: Decoder output tensor of shape ``(B, N, hidden_dim)``.
 
         Returns:
-            Tuple of ``(outputs_class, outputs_coord)`` where
-            ``outputs_class`` has shape ``(B, N, num_classes)`` and
-            ``outputs_coord`` has shape ``(B, N, 4)`` in ``[cx, cy, w, h]``
-            normalised to ``[0, 1]``.
+            Tuple of ``(outputs_class, outputs_coord)`` where ``outputs_class`` has shape ``(B, N, num_classes)`` and
+            ``outputs_coord`` has shape ``(B, N, 4)`` in ``[cx, cy, w, h]`` normalised to ``[0, 1]``.
         """
         outputs_class = self.class_embed(hs)
         outputs_coord = self.bbox_embed(hs).sigmoid()

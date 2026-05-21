@@ -130,6 +130,7 @@ class HungarianMatcher(nn.Module):
                  "boxes": Tensor of dim [num_target_boxes, 4] containing the target box coordinates
                  "masks": Tensor of dim [num_target_boxes, H, W] containing the target mask coordinates
             group_detr: Number of groups used for matching.
+
         Returns:
             A list of size batch_size, containing tuples of (index_i, index_j) where:
                 - index_i is the indices of the selected predictions (in order)

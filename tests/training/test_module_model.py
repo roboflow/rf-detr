@@ -975,8 +975,7 @@ class TestConfigureOptimizers:
         On Ampere+ GPUs torch.cuda.is_bf16_supported() is True even when the
         trainer is configured for 32-true precision.  The old code always enabled
         fused AdamW based on GPU capability alone, crashing with
-        ``params, grads, exp_avgs, and exp_avg_sqs must have same dtype, device,
-        and layout`` when DDP gradient bucket views had non-matching strides.
+        ``params, grads, exp_avgs, and exp_avg_sqs must have same dtype, device, and layout`` when DDP gradient bucket views had non-matching strides.
         The fix checks ``trainer.precision`` before enabling fused.
         """
         module, param_dicts = self._setup_module(tmp_path)

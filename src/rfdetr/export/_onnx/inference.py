@@ -8,8 +8,7 @@
 
 These functions handle session creation, image preprocessing, and detection
 decoding without requiring PyTorch or the RF-DETR training stack — only
-``onnxruntime``, ``numpy``, ``supervision``, and ``Pillow`` are needed at
-inference time.
+``onnxruntime``, ``numpy``, ``supervision``, and ``Pillow`` are needed at inference time.
 """
 
 from __future__ import annotations
@@ -30,8 +29,7 @@ def _create_onnx_session(model_path: str | Path) -> Any:
     """Load an ONNX model and create an ONNX Runtime inference session.
 
     Imports ``onnxruntime`` at call time so that the rest of the package
-    remains usable without it installed.  Input and output names / shapes
-    are logged at DEBUG level for troubleshooting.
+    remains usable without it installed.  Input and output names / shapes are logged at DEBUG level for troubleshooting.
 
     Args:
         model_path: Path to the ``.onnx`` model file.
@@ -98,8 +96,7 @@ def _run_inference(
 
     Returns:
         A tuple of ``(detections, pil_img)`` where ``detections`` contains
-        pixel-space ``xyxy`` boxes and ``pil_img`` is the original PIL image
-        at its original resolution.
+        pixel-space ``xyxy`` boxes and ``pil_img`` is the original PIL image at its original resolution.
 
     Examples:
         .. code-block:: python

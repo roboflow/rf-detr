@@ -57,8 +57,7 @@ def synthetic_shape_segmentation_dataset_dir(
     """Build a synthetic COCO-style dataset with polygon segmentation annotations.
 
     Same layout as :func:`synthetic_shape_dataset_dir` but every annotation
-    includes a ``segmentation`` polygon field so the dataset can be used to
-    train or evaluate segmentation models.
+    includes a ``segmentation`` polygon field so the dataset can be used to train or evaluate segmentation models.
 
     Args:
         tmp_path_factory: Pytest factory for temporary directories.

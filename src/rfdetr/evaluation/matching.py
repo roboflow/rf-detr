@@ -135,8 +135,7 @@ def build_matching_data(
     """Build compact per-class matching data from a batch of predictions and targets.
 
     Implements greedy highest-score-first matching compatible with the COCO
-    algorithm. The returned dict can be passed directly to
-    ``merge_matching_data()`` and ultimately consumed by
+    algorithm. The returned dict can be passed directly to ``merge_matching_data()`` and ultimately consumed by
     ``sweep_confidence_thresholds()`` after conversion to list form.
 
     Args:
@@ -258,8 +257,7 @@ def merge_matching_data(
 
     Both arguments share the dict schema produced by ``build_matching_data()``:
     each class-keyed sub-dict contains ``"scores"`` (float32 ndarray),
-    ``"matches"`` (int64 ndarray), ``"ignore"`` (bool ndarray), and
-    ``"total_gt"`` (int).
+    ``"matches"`` (int64 ndarray), ``"ignore"`` (bool ndarray), and ``"total_gt"`` (int).
 
     Args:
         accumulator: Running accumulator, modified in place.
@@ -291,8 +289,7 @@ def distributed_merge_matching_data(
     """Gather per-rank matching data from all DDP ranks and merge into one dict.
 
     Uses ``rfdetr.utilities.all_gather`` (pickle-based) so the data need not be a tensor.
-    In single-process (non-distributed) mode, returns a merged copy of *local_data*
-    unchanged.
+    In single-process (non-distributed) mode, returns a merged copy of *local_data* unchanged.
 
     Args:
         local_data: Per-rank accumulator produced by ``merge_matching_data()``.

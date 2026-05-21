@@ -196,9 +196,7 @@ class TestLoadClassesHierarchy:
         assert result == expected
 
     def test_placeholder_values_treated_as_no_parent(self, tmp_path: Path) -> None:
-        """Placeholders like None, '', and 'null' should be treated the same
-        as 'none'.
-        """
+        """Placeholders like None, '', and 'null' should be treated the same as 'none'."""
         categories = [
             {"id": 1, "name": "dog", "supercategory": None},
             {"id": 2, "name": "cat", "supercategory": ""},

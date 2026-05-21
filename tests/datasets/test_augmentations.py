@@ -170,8 +170,7 @@ class TestAlbumentationsWrapper:
 
         Regression test for bug where orig_size (shape [2] for [h, w]) was incorrectly
         treated as a per-instance field when there were exactly 2 boxes, causing
-        orig_size to be filtered/indexed incorrectly and leading to inconsistent
-        tensor shapes in batches.
+        orig_size to be filtered/indexed incorrectly and leading to inconsistent tensor shapes in batches.
         """
         transform = alb.HorizontalFlip(p=1.0)
         wrapper = AlbumentationsWrapper(transform)
@@ -444,8 +443,7 @@ class TestAlbumentationsWrapper:
         """Test that a geometric transform does not crash when masks tensor is empty (0 instances).
 
         Regression test for: when a prior crop removes all annotations, target["masks"]
-        has shape (0, H, W). Passing an empty list to albumentations raises
-        ValueError: masks cannot be empty.
+        has shape (0, H, W). Passing an empty list to albumentations raises ValueError: masks cannot be empty.
         """
         transform = alb.HorizontalFlip(p=1.0)
         wrapper = AlbumentationsWrapper(transform)
@@ -829,8 +827,7 @@ class TestRandomSizedCropCompat:
         """from_config swallows the ValueError for partial height-only config and skips the transform.
 
         This documents the intentional silent-skip behavior: from_config wraps
-        _build_albu_transform in a broad except clause so bad configs produce a
-        warning rather than an exception.
+        _build_albu_transform in a broad except clause so bad configs produce a warning rather than an exception.
         """
 
         config = {
@@ -1518,8 +1515,7 @@ class TestAugPresets:
     def test_aug_aggressive_translate_percent_is_bidirectional(self) -> None:
         """AUG_AGGRESSIVE translate_percent must allow both positive and negative translations.
 
-        (0.1, 0.1) is a degenerate range that only shifts right/down;
-        the correct range is (-0.1, 0.1).
+        (0.1, 0.1) is a degenerate range that only shifts right/down; the correct range is (-0.1, 0.1).
         """
         translate = AUG_AGGRESSIVE["Affine"]["translate_percent"]
         lo, hi = translate

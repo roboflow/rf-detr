@@ -578,8 +578,7 @@ class TestExtractYoloClassNames:
         The downstream range check in _parse_yolo_label_line assumes class IDs
         are a contiguous 0..N-1 range.  Silently accepting sparse keys would
         cause valid label files to be rejected during parsing (e.g. class ID 2
-        in a 2-class dataset built from {0: cat, 2: dog} would exceed the
-        num_classes bound).
+        in a 2-class dataset built from {0: cat, 2: dog} would exceed the num_classes bound).
         """
         data_file = tmp_path / "data.yaml"
         data_file.write_text(yaml_content, encoding="utf-8")

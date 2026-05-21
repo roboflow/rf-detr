@@ -244,8 +244,7 @@ class RFDETR:
         resolved to the model cache directory — set the ``RF_HOME`` environment
         variable to override the location (default: ``~/.roboflow/models``).
         Resolution happens in ``ModelConfig.expand_path`` for explicitly-provided
-        values, and here as a fallback for field defaults (which Pydantic does not
-        validate by default).
+        values, and here as a fallback for field defaults (which Pydantic does not validate by default).
 
         Paths that already contain a directory component are used as-is; the
         parent directory is created if it does not yet exist.
@@ -269,8 +268,7 @@ class RFDETR:
 
     @classmethod
     def from_checkpoint(cls, path: str | os.PathLike[str], **kwargs: Any) -> RFDETR:
-        """Load an RF-DETR model from a training checkpoint, automatically
-        inferring the model class.
+        """Load an RF-DETR model from a training checkpoint, automatically inferring the model class.
 
         The correct subclass is resolved in order of preference:
 
@@ -280,30 +278,25 @@ class RFDETR:
            (legacy fallback).
 
         Both legacy ``argparse.Namespace`` checkpoints (produced by
-        ``engine.py``) and dict-style checkpoints (produced by the PTL
-        training stack) are supported.
+        ``engine.py``) and dict-style checkpoints (produced by the PTL training stack) are supported.
 
         Args:
             path: Path to a checkpoint file (e.g. ``checkpoint_best_total.pth``).
             **kwargs: Additional keyword arguments forwarded to the model
-                constructor (e.g. ``accept_platform_model_license=True`` for
-                XLarge / 2XLarge models).
+                constructor (e.g. ``accept_platform_model_license=True`` for XLarge / 2XLarge models).
 
         Returns:
-            An instance of the appropriate :class:`RFDETR` subclass loaded from
-            the checkpoint.
+            An instance of the appropriate :class:`RFDETR` subclass loaded from the checkpoint.
 
         Warning:
             This method calls ``torch.load`` with ``weights_only=False``, which
-            unpickles arbitrary Python objects. Only load checkpoints from
-            trusted sources.
+            unpickles arbitrary Python objects. Only load checkpoints from trusted sources.
 
         Raises:
             FileNotFoundError: If *path* does not exist.
             OSError: If *path* exists but cannot be read.
             KeyError: If the checkpoint does not contain an ``"args"`` key.
-            ValueError: If the model class cannot be inferred from
-                ``model_name`` or ``pretrain_weights``.
+            ValueError: If the model class cannot be inferred from ``model_name`` or ``pretrain_weights``.
 
         Examples:
             >>> model = RFDETR.from_checkpoint("checkpoint_best_total.pth")  # doctest: +SKIP
@@ -691,15 +684,13 @@ class RFDETR:
 
         Operations are wrapped in the correct CUDA device context to prevent context
         leaks on multi-GPU setups. When ``compile=True`` the model is traced with
-        ``torch.jit.trace`` using a dummy input of ``batch_size`` images at the
-        model's current resolution.
+        ``torch.jit.trace`` using a dummy input of ``batch_size`` images at the model's current resolution.
 
         Args:
             compile: If ``True``, trace the model with ``torch.jit.trace`` to obtain
                 a JIT-compiled ``ScriptModule``. Set to ``False`` for broader
                 compatibility (e.g. models with dynamic control flow).
-            batch_size: Number of images the traced model will be optimized for.
-                Ignored when ``compile=False``.
+            batch_size: Number of images the traced model will be optimized for. Ignored when ``compile=False``.
             dtype: Target floating-point dtype for the inference model. Accepts a
                 ``torch.dtype`` directly (e.g. ``torch.float16``) or its string name
                 (e.g. ``"float16"``). Defaults to ``torch.float32``.
@@ -891,29 +882,23 @@ class RFDETR:
 
                 .. warning::
                     TFLite export is experimental and subject to change; upstream
-                    dependency instabilities (``onnx2tf``, ``ai_edge_litert``) may
-                    affect results.
+                    dependency instabilities (``onnx2tf``, ``ai_edge_litert``) may affect results.
             quantization: TFLite quantization mode (ignored when
                 ``format="onnx"``).  One of ``None``, ``"fp32"``, ``"fp16"``,
                 ``"int8"``.  ``None`` / ``"fp32"`` / ``"fp16"`` produce FP32 +
-                FP16 ``.tflite`` files; ``"int8"`` additionally produces an
-                INT8-quantized model.
-            calibration_data: Representative images for INT8 calibration
-                and ``onnx2tf`` output validation.  Accepts:
+                FP16 ``.tflite`` files; ``"int8"`` additionally produces an INT8-quantized model.
+            calibration_data: Representative images for INT8 calibration and ``onnx2tf`` output validation.  Accepts:
 
-                * ``None`` — auto-generate random data (sufficient for
-                  fp32/fp16; warns for int8).
+                * ``None`` — auto-generate random data (sufficient for fp32/fp16; warns for int8).
                 * A **directory path** (``str``) containing JPEG/PNG
                   images — the converter automatically loads, resizes, and
                   prepares them.  This is the simplest approach.
-                * A path (``str``) to a ``.npy`` file of shape
-                  ``(N, H, W, 3)``, dtype float32, values in ``[0, 1]``.
+                * A path (``str``) to a ``.npy`` file of shape ``(N, H, W, 3)``, dtype float32, values in ``[0, 1]``.
                 * A :class:`numpy.ndarray` with the same format.
 
                 For INT8 quantization, provide 20–100 representative
                 images from your training/validation set for best accuracy.
-            max_images: Maximum number of images to load from a
-                calibration directory.  Defaults to ``100``.  Only used
+            max_images: Maximum number of images to load from a calibration directory.  Defaults to ``100``.  Only used
                 when *calibration_data* is a directory path.
             notes: Optional user-defined metadata (string, dict, list, or
                 any JSON-serialisable value) to embed in the exported ONNX
@@ -1205,8 +1190,7 @@ class RFDETR:
 
         Returns:
             A list of class name strings, 0-indexed.  When no custom class
-            names are embedded in the checkpoint, returns the standard 80
-            COCO class names.
+            names are embedded in the checkpoint, returns the standard 80 COCO class names.
 
         """
         if hasattr(self.model, "class_names") and self.model.class_names is not None:
@@ -1223,8 +1207,7 @@ class RFDETR:
         include_source_image: bool = True,
         **kwargs: Any,
     ) -> sv.Detections | list[sv.Detections]:
-        """Performs object detection on the input images and returns bounding box
-        predictions.
+        """Performs object detection on the input images and returns bounding box predictions.
 
         This method accepts a single image or a list of images in various formats
         (file path, image url, PIL Image, NumPy array, or torch.Tensor). The images should be in
@@ -1247,8 +1230,7 @@ class RFDETR:
             patch_size:
                 Backbone patch size used for shape divisibility validation. Defaults
                 to ``model_config.patch_size`` (typically 14 for large models, 16 for
-                smaller ones). Divisibility is checked against
-                ``patch_size * num_windows``.
+                smaller ones). Divisibility is checked against ``patch_size * num_windows``.
             include_source_image:
                 Whether to attach the original image as ``source_image`` in
                 ``detections.metadata``. Defaults to ``True``.  Set to ``False``
@@ -1266,8 +1248,7 @@ class RFDETR:
             correctly. It was previously a ``(height, width)`` Python ``tuple``;
             callers using ``isinstance(v, tuple)`` or ``v == (H, W)`` must be
             updated. The ``metadata`` dict contains ``source_image`` as the original
-            ``uint8`` image array of shape ``(H, W, 3)`` when
-            ``include_source_image=True``.
+            ``uint8`` image array of shape ``(H, W, 3)`` when ``include_source_image=True``.
 
         Note:
             ``source_image`` moved from ``detections.data`` to
@@ -1281,16 +1262,14 @@ class RFDETR:
             ``model.args.num_classes > len(class_names)`` and ``class_names`` matches
             ``COCO_CLASS_NAMES``), raw COCO category IDs (1–90, sparse) are looked up
             by category ID rather than by position — so ``class_id=18`` yields ``"dog"``,
-            not ``class_names[18]``. For fine-tuned models, ``class_id`` is a 0-based
-            index into ``class_names``.
+            not ``class_names[18]``. For fine-tuned models, ``class_id`` is a 0-based index into ``class_names``.
 
         Raises:
             ValueError: If ``shape`` cannot be unpacked as a two-element sequence,
                 if either dimension does not support the ``__index__`` protocol
                 (e.g. ``float``) or is a ``bool``, if either dimension is zero or
                 negative, if either dimension is not divisible by
-                ``patch_size * num_windows``, or if ``patch_size`` is not a positive
-                integer.
+                ``patch_size * num_windows``, or if ``patch_size`` is not a positive integer.
 
         """
         import supervision as sv
@@ -1520,8 +1499,7 @@ class RFDETR:
 
         Raises:
             ValueError: If the `api_key` is not provided and not found in the
-                environment variable `ROBOFLOW_API_KEY`, or if the `size` is
-                not set for custom architectures.
+                environment variable `ROBOFLOW_API_KEY`, or if the `size` is not set for custom architectures.
 
         """
         from roboflow import Roboflow

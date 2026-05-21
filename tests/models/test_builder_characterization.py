@@ -271,8 +271,7 @@ class TestBuildCriterionCharacterization:
 class TestBuildModelContextCharacterization:
     """Pin current _build_model_context() behaviour.
 
-    _build_model_context is the inference-path factory used by RFDETR.get_model().
-    It has zero test coverage today.
+    _build_model_context is the inference-path factory used by RFDETR.get_model(). It has zero test coverage today.
     """
 
     def test_returns_model_context(self) -> None:

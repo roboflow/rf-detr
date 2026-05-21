@@ -257,8 +257,7 @@ def _make_gaussian_blur(params: dict[str, Any]) -> Any:
 def _make_gauss_noise(params: dict[str, Any]) -> Any:
     """Build a ``K.RandomGaussianNoise`` from aug_config params.
 
-    Kornia takes a single ``std`` value; we use the upper bound of
-    ``std_range`` as an acceptable approximation.
+    Kornia takes a single ``std`` value; we use the upper bound of ``std_range`` as an acceptable approximation.
     """
     from kornia.augmentation import RandomGaussianNoise
 
@@ -298,8 +297,7 @@ def build_kornia_pipeline(
 
     Args:
         aug_config: Mapping of augmentation names to parameter dicts, identical
-            to the format accepted by the Albumentations path (e.g.
-            ``{"HorizontalFlip": {"p": 0.5}}``).
+            to the format accepted by the Albumentations path (e.g. ``{"HorizontalFlip": {"p": 0.5}}``).
         resolution: Target image resolution in pixels (currently reserved for
             future resolution-aware augmentations).
         with_masks: When ``True``, include ``"mask"`` in ``data_keys`` so
@@ -386,8 +384,7 @@ def collate_boxes(
             - ``boxes_padded`` — ``[B, N_max, 4]`` float tensor (zero-padded).
             - ``valid_mask``   — ``[B, N_max]`` bool tensor (``True`` = real box).
 
-        When ``B == 0`` or all images have zero boxes, both tensors have
-        ``N_max == 0``.
+        When ``B == 0`` or all images have zero boxes, both tensors have ``N_max == 0``.
     """
     if len(targets) == 0:
         return (
@@ -444,8 +441,7 @@ def collate_masks(
 
     Returns:
         Float32 tensor of shape ``[B, N_max, H, W]``, zero-padded where
-        ``N_i < N_max``.  Boolean input masks are cast to ``float32``
-        (``True → 1.0``, ``False → 0.0``).
+        ``N_i < N_max``.  Boolean input masks are cast to ``float32`` (``True → 1.0``, ``False → 0.0``).
 
     Examples:
         >>> import torch
@@ -481,8 +477,7 @@ def unpack_boxes(
     After Kornia augmentation the padded ``[B, N_max, 4]`` tensor is unpacked
     back into per-image target dicts.  Boxes are clamped to ``[0, W] x [0, H]``
     and any that collapse to zero area are removed along with their
-    corresponding ``labels``, ``area``, ``iscrowd``, and (if provided) ``masks``
-    entries.
+    corresponding ``labels``, ``area``, ``iscrowd``, and (if provided) ``masks`` entries.
 
     Args:
         boxes_aug: Augmented boxes tensor ``[B, N_max, 4]`` in xyxy format.
@@ -495,13 +490,11 @@ def unpack_boxes(
             (float32) from Kornia.  When provided, masks are filtered by the
             same ``keep`` mask as boxes, thresholded at ``> 0.5`` to bool, and
             stored under ``"masks"`` in each output target dict.  When
-            ``None``, any existing ``"masks"`` entry in the target dict is
-            preserved unchanged.
+            ``None``, any existing ``"masks"`` entry in the target dict is preserved unchanged.
 
     Returns:
         A new list of target dicts with updated ``boxes``, ``labels``,
-        ``area``, ``iscrowd``, and (when *masks_aug* is given) ``masks``
-        entries.
+        ``area``, ``iscrowd``, and (when *masks_aug* is given) ``masks`` entries.
     """
     if masks_aug is not None:
         assert masks_aug.shape[:2] == valid.shape, (

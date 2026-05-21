@@ -70,8 +70,7 @@ def test_depthwise_conv_backward_disables_cudnn(monkeypatch) -> None:
     """Backward pass must also run with cuDNN disabled (issue #731).
 
     The previous fix (PR #728) only wrapped the forward pass in a context
-    manager.  The backward kernels ran with cuDNN re-enabled, causing
-    RuntimeError on T4/P100 GPUs.
+    manager.  The backward kernels ran with cuDNN re-enabled, causing RuntimeError on T4/P100 GPUs.
     """
     block = DepthwiseConvBlock(dim=8)
     enabled_calls: list[bool] = []
