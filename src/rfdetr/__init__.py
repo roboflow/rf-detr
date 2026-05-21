@@ -75,10 +75,10 @@ _LAZY_TRAINING = frozenset({"RFDETRModelModule", "RFDETRDataModule", "build_trai
 _PLUS_EXPORTS = frozenset({"RFDETR2XLarge", "RFDETRXLarge"})
 
 # Legacy module aliases delegate to shim packages while they still exist, then raise
-# migration-hint ImportError messages once those shims are removed in v1.7+.
-_REMOVED_IN_V17 = {
-    "util": "rfdetr.util was removed in v1.7. Use rfdetr.utilities instead.",
-    "deploy": "rfdetr.deploy was removed in v1.7. Use rfdetr.export instead.",
+# TODO: migration-hint ImportError messages once those shims are removed in v1.8.
+_REMOVE_IN_VERSION_1_8 = {
+    "util": "rfdetr.util will be removed in v1.8. Use rfdetr.utilities instead.",
+    "deploy": "rfdetr.deploy will be removed in v1.8. Use rfdetr.export instead.",
 }
 
 
@@ -112,14 +112,14 @@ class _RemovedModuleFinder(importlib.abc.MetaPathFinder):
         if not fullname.startswith(f"{__name__}."):
             return None
         root, _, _ = fullname.removeprefix(f"{__name__}.").partition(".")
-        if root not in _REMOVED_IN_V17:
+        if root not in _REMOVE_IN_VERSION_1_8:
             return None
 
         if self._PATH_FINDER.find_spec(fullname, path) is not None:
             return None
 
         is_package = fullname == f"{__name__}.{root}"
-        loader = _RemovedModuleLoader(_REMOVED_IN_V17[root])
+        loader = _RemovedModuleLoader(_REMOVE_IN_VERSION_1_8[root])
         return importlib.util.spec_from_loader(fullname, loader, is_package=is_package)
 
 
@@ -144,7 +144,7 @@ def __getattr__(name: str):
       are first attempted via a shim submodule (e.g. ``rfdetr.util``); once the shim files are removed, a migration-hint
       ``ImportError`` is raised instead of silently masking unrelated nested import errors.
     """
-    if name in _REMOVED_IN_V17:
+    if name in _REMOVE_IN_VERSION_1_8:
         module_name = f"{__name__}.{name}"
         try:
             value = importlib.import_module(module_name)
@@ -154,7 +154,7 @@ def __getattr__(name: str):
             # Avoid masking nested import errors from within the shim itself.
             if exc.name != module_name:
                 raise
-            raise ImportError(_REMOVED_IN_V17[name]) from None
+            raise ImportError(_REMOVE_IN_VERSION_1_8[name]) from None
 
     if name in _LAZY_TRAINING:
         from rfdetr import training as _training

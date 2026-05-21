@@ -1158,7 +1158,7 @@ class TestRemovedLegacyModuleAliases:
         missing_name = "rfdetr.missing_removed_shim"
         missing_exc = ModuleNotFoundError(f"No module named '{missing_name}'", name=missing_name)
         with (
-            patch.dict(rfdetr._REMOVED_IN_V17, {"missing_removed_shim": "migration hint"}),
+            patch.dict(rfdetr._REMOVE_IN_VERSION_1_8, {"missing_removed_shim": "migration hint"}),
             patch("rfdetr.importlib.import_module", side_effect=missing_exc),
             pytest.raises(ImportError, match="migration hint"),
         ):
@@ -1169,7 +1169,7 @@ class TestRemovedLegacyModuleAliases:
         import rfdetr
 
         with (
-            patch.dict(rfdetr._REMOVED_IN_V17, {"missing_dep_shim": "migration hint"}),
+            patch.dict(rfdetr._REMOVE_IN_VERSION_1_8, {"missing_dep_shim": "migration hint"}),
             patch(
                 "rfdetr.importlib.import_module",
                 side_effect=ModuleNotFoundError("No module named 'torchvision_ops'", name="torchvision_ops"),
