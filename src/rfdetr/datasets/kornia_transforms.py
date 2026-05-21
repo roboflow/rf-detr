@@ -15,20 +15,29 @@ Usage::
 
     from rfdetr.datasets.kornia_transforms import (
         build_kornia_pipeline,
-        build_normalize, collate_boxes, collate_masks, unpack_boxes,
+        build_normalize,
+        collate_boxes,
+        collate_masks,
+        unpack_boxes,
     )
 
     # Detection:
-    pipeline = build_kornia_pipeline(aug_config, resolution=560) normalize = build_normalize() boxes_padded, valid =
-    collate_boxes(targets, device) img_aug, boxes_aug = pipeline(img, boxes_padded) img_aug = normalize(img_aug) targets
-    = unpack_boxes(boxes_aug, valid, targets, H, W)
+    pipeline = build_kornia_pipeline(aug_config, resolution=560)
+    normalize = build_normalize()
+    boxes_padded, valid = collate_boxes(targets, device)
+    img_aug, boxes_aug = pipeline(img, boxes_padded)
+    img_aug = normalize(img_aug)
+    targets = unpack_boxes(boxes_aug, valid, targets, H, W)
 
     # Segmentation (Phase 2):
-    pipeline = build_kornia_pipeline(aug_config, resolution=560, with_masks=True) normalize = build_normalize()
-    boxes_padded, valid = collate_boxes(targets, device) masks_padded = collate_masks(targets, device,
-    n_max=valid.shape[1], image_height=H, image_width=W) img_aug, boxes_aug, masks_aug = pipeline(img, boxes_padded,
-    masks_padded) img_aug = normalize(img_aug) targets = unpack_boxes(boxes_aug, valid, targets, H, W,
-    masks_aug=masks_aug)"""
+    pipeline = build_kornia_pipeline(aug_config, resolution=560, with_masks=True)
+    normalize = build_normalize()
+    boxes_padded, valid = collate_boxes(targets, device)
+    masks_padded = collate_masks(targets, device, n_max=valid.shape[1], image_height=H, image_width=W)
+    img_aug, boxes_aug, masks_aug = pipeline(img, boxes_padded, masks_padded)
+    img_aug = normalize(img_aug)
+    targets = unpack_boxes(boxes_aug, valid, targets, H, W, masks_aug=masks_aug)
+"""
 
 from __future__ import annotations
 

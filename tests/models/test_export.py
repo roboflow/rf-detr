@@ -281,7 +281,8 @@ class TestCliExportMain:
     """
     Unit tests for deploy.export.main() (CLI export path).
 
-    Three bugs were present before the fix: 1. output_names omitted 'masks' for segmentation models.
+    Three bugs were present before the fix:
+    1. output_names omitted 'masks' for segmentation models.
     2. make_infer_image received the whole args Namespace instead of individual fields.
     3. export_onnx received model/args in the wrong positions (output_dir was missing).
     """

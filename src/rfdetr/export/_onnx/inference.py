@@ -42,7 +42,8 @@ def _create_onnx_session(model_path: str | Path) -> Any:
     Examples:
         .. code-block:: python
 
-            sess = _create_onnx_session("model.onnx") print(sess.get_inputs()[0].name)
+            sess = _create_onnx_session("model.onnx")
+            print(sess.get_inputs()[0].name)
     """
     try:
         import onnxruntime as ort
@@ -97,7 +98,8 @@ def _run_inference(
     Examples:
         .. code-block:: python
 
-            sess = _create_onnx_session("model.onnx") dets, img = _run_inference(sess, "photo.jpg", threshold=0.3)
+            sess = _create_onnx_session("model.onnx")
+            dets, img = _run_inference(sess, "photo.jpg", threshold=0.3)
             print(dets.confidence)
     """
     inputs = session.get_inputs()

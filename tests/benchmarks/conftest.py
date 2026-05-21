@@ -44,7 +44,8 @@ def seed_everything(request: pytest.FixtureRequest) -> None:
 
     Defaults to seed 7. Override per-test via indirect parametrize::
 
-        @pytest.mark.parametrize("seed_everything", [42], indirect=True) def test_foo(seed_everything): ...
+        @pytest.mark.parametrize("seed_everything", [42], indirect=True)
+        def test_foo(seed_everything): ...
 
     Args:
         request: Pytest fixture request that may carry an overridden seed.

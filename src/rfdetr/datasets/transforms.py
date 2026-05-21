@@ -561,7 +561,8 @@ class AlbumentationsWrapper:
 
         This method handles the data format conversion between RF-DETR and Albumentations:
         1. Converts PIL Image to numpy array (required by Albumentations)
-        2. Converts PyTorch tensors to numpy/lists (required by Albumentations) 3. Applies the transform
+        2. Converts PyTorch tensors to numpy/lists (required by Albumentations)
+        3. Applies the transform
         4. Converts results back to PIL Image and PyTorch tensors
 
         For geometric transforms with bounding boxes, this method also:
@@ -657,9 +658,11 @@ class AlbumentationsWrapper:
 
             config = {
                 "HorizontalFlip": {"p": 0.5},
-                "Rotate": {"limit": 45, "p": 0.3}, "OneOf": {
+                "Rotate": {"limit": 45, "p": 0.3},
+                "OneOf": {
                     "transforms": [
-                        {"HorizontalFlip": {"p": 1.0}}, {"VerticalFlip": {"p": 1.0}},
+                        {"HorizontalFlip": {"p": 1.0}},
+                        {"VerticalFlip": {"p": 1.0}},
                     ],
                 },
             }
@@ -670,7 +673,8 @@ class AlbumentationsWrapper:
                 {"HorizontalFlip": {"p": 0.5}},
                 {"OneOf": {
                     "transforms": [
-                        {"Rotate": {"limit": 45, "p": 1.0}}, {"ShiftScaleRotate": {"p": 1.0}},
+                        {"Rotate": {"limit": 45, "p": 1.0}},
+                        {"ShiftScaleRotate": {"p": 1.0}},
                     ],
                 }},
             ]

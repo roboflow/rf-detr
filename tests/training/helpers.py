@@ -9,7 +9,8 @@
 Plain classes and functions (not pytest fixtures) shared across multiple test modules to avoid verbatim duplication.
 Import with a relative import::
 
-    from .helpers import _FakeCriterion, _FakeDataset, _TinyModel"""
+    from .helpers import _FakeCriterion, _FakeDataset, _TinyModel
+"""
 
 from __future__ import annotations
 

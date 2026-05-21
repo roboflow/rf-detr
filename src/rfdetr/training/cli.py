@@ -8,8 +8,10 @@
 
 Provides the ``rfdetr`` command with auto-generated subcommands::
 
-    rfdetr fit     --config configs/rfdetr_base.yaml rfdetr validate --ckpt_path output/best.ckpt rfdetr test
-    --ckpt_path output/best.ckpt rfdetr predict --ckpt_path output/best.ckpt
+    rfdetr fit     --config configs/rfdetr_base.yaml
+    rfdetr validate --ckpt_path output/best.ckpt
+    rfdetr test    --ckpt_path output/best.ckpt
+    rfdetr predict --ckpt_path output/best.ckpt
 
 Both ``RFDETRModelModule`` and ``RFDETRDataModule`` share the same ``(model_config, train_config)`` constructor
 signature.  ``link_arguments`` eliminates the duplication so the user specifies each config group once; the datamodule

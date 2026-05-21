@@ -14,8 +14,9 @@ each group — both the base and EMA series when EMA is enabled, so both are vis
 
 Usage::
 
-    from rfdetr.visualize.training import plot_metrics plot_metrics("output/rfdetr_base/metrics.csv",
-    "output/rfdetr_base/metrics_plot.png")"""
+    from rfdetr.visualize.training import plot_metrics
+    plot_metrics("output/rfdetr_base/metrics.csv", "output/rfdetr_base/metrics_plot.png")
+"""
 
 from __future__ import annotations
 
