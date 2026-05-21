@@ -514,11 +514,22 @@ def _check_onnx2tf_available() -> None:
             "pip install rfdetr[onnx,tflite]"
         ) from exc
 
+    from importlib.metadata import PackageNotFoundError as _PkgNotFound
     from importlib.metadata import version as _pkg_version
 
+    import onnx2tf as _onnx2tf_mod
     from packaging.version import Version as _Version
 
-    installed = _pkg_version("onnx2tf")
+    try:
+        installed: str | None = _pkg_version("onnx2tf")
+    except _PkgNotFound:
+        # Dist-info absent (e.g. editable install without metadata, or a
+        # test that injects a fake onnx2tf into sys.modules).
+        # Fall back to the __version__ attribute; if missing, skip version check.
+        installed = getattr(_onnx2tf_mod, "__version__", None)
+        if installed is None:
+            return
+
     if _Version(installed) < _Version("2.4.0"):
         raise ImportError(
             f"onnx2tf {installed} is installed but RF-DETR requires >= 2.4.0. "
