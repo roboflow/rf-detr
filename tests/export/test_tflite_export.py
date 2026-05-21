@@ -966,64 +966,117 @@ class TestCheckOnnx2tfAvailable:
 
 
 # ---------------------------------------------------------------------------
-# TestGridSampleKwargDetection
+# TestGridSampleOnnxRewrite
 # ---------------------------------------------------------------------------
 
+onnx_gs_available = pytest.mark.skipif(
+    not all(
+        __import__("importlib").util.find_spec(p) is not None for p in ("onnx", "onnx_graphsurgeon", "onnxruntime")
+    ),
+    reason="onnx, onnx_graphsurgeon, and onnxruntime required",
+)
 
-class TestGridSampleKwargDetection:
-    """Tests for module-level detection of the onnx2tf GridSample replacement kwarg."""
 
-    def test_kwarg_name_contains_grid_and_pseudo_when_detected(self) -> None:
-        """If non-None, the detected kwarg name must embed both 'grid' and 'pseudo'."""
-        from rfdetr.export._tflite.converter import _GRIDSAMPLE_KWARG
+def _build_gridsample_onnx(
+    path: Path,
+    *,
+    n: int = 1,
+    c: int = 4,
+    h: int = 8,
+    w: int = 8,
+    h_out: int = 4,
+    w_out: int = 4,
+) -> None:
+    """Write a minimal ONNX model with one GridSample node to *path*."""
+    import onnx
+    from onnx import TensorProto, helper
 
-        if _GRIDSAMPLE_KWARG is not None:
-            lower = _GRIDSAMPLE_KWARG.lower()
-            assert "grid" in lower
-            assert "pseudo" in lower
+    im = helper.make_tensor_value_info("im", TensorProto.FLOAT, [n, c, h, w])
+    grid = helper.make_tensor_value_info("grid", TensorProto.FLOAT, [n, h_out, w_out, 2])
+    out = helper.make_tensor_value_info("out", TensorProto.FLOAT, [n, c, h_out, w_out])
+    node = helper.make_node(
+        "GridSample",
+        inputs=["im", "grid"],
+        outputs=["out"],
+        mode="bilinear",
+        padding_mode="zeros",
+        align_corners=0,
+    )
+    graph = helper.make_graph([node], "gs_test", [im, grid], [out])
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 16)])
+    onnx.save(model, str(path))
+
+
+@pytest.fixture()
+def gridsample_onnx(tmp_path: Path) -> Path:
+    """Build a tiny ONNX file with a single GridSample node."""
+    p = tmp_path / "gs_model.onnx"
+    _build_gridsample_onnx(p)
+    return p
+
+
+class TestGridSampleOnnxRewrite:
+    """Tests for the ONNX-level GridSample → Gather(axis=0) rewrite."""
 
     def test_module_import_does_not_raise(self) -> None:
         """Importing the converter module must succeed regardless of onnx2tf version."""
         import rfdetr.export._tflite.converter  # noqa: F401
 
+    @onnx_gs_available
+    def test_no_gridsample_nodes_after_rewrite(self, gridsample_onnx: Path, tmp_path: Path) -> None:
+        """_replace_gridsample_for_tflite removes all GridSample nodes from the graph."""
+        import onnx
+        import onnx_graphsurgeon as gs
 
-# ---------------------------------------------------------------------------
-# TestGridSampleKwargForwarded
-# ---------------------------------------------------------------------------
+        from rfdetr.export._tflite.converter import _replace_gridsample_for_tflite
 
+        patched_path = _replace_gridsample_for_tflite(gridsample_onnx, tmp_path)
 
-class TestGridSampleKwargForwarded:
-    """Tests that the GridSample replacement kwarg is forwarded to onnx2tf.convert."""
+        model = onnx.load(str(patched_path))
+        graph = gs.import_onnx(model)
+        remaining = [n for n in graph.nodes if n.op == "GridSample"]
+        assert remaining == [], f"Expected no GridSample nodes; found {len(remaining)}"
 
-    def test_kwarg_passed_as_true_when_set(
-        self,
-        onnx_model: Path,
-        tflite_output: Path,
-        fake_onnx2tf: Any,
-        mock_prepare_calib: Any,
-    ) -> None:
-        """_GRIDSAMPLE_KWARG is forwarded to convert() as True when non-None."""
-        from rfdetr.export._tflite import converter as conv_mod
+    @onnx_gs_available
+    def test_gather_nodes_present_after_rewrite(self, gridsample_onnx: Path, tmp_path: Path) -> None:
+        """Rewritten graph contains Gather nodes (the TFLite-safe replacement ops)."""
+        import onnx
+        import onnx_graphsurgeon as gs
 
-        _, convert_mock = fake_onnx2tf
-        sentinel = "replace_to_pseudo_gridsample_node"
-        with mock.patch.object(conv_mod, "_GRIDSAMPLE_KWARG", sentinel):
-            export_tflite(onnx_model, tflite_output)
+        from rfdetr.export._tflite.converter import _replace_gridsample_for_tflite
 
-        assert convert_mock.call_args.kwargs.get(sentinel) is True
+        patched_path = _replace_gridsample_for_tflite(gridsample_onnx, tmp_path)
 
-    def test_warning_logged_when_kwarg_is_none(
-        self,
-        onnx_model: Path,
-        tflite_output: Path,
-        fake_onnx2tf: Any,
-        mock_prepare_calib: Any,
-    ) -> None:
-        """A warning mentioning GridSample is logged when _GRIDSAMPLE_KWARG is None."""
-        from rfdetr.export._tflite import converter as conv_mod
+        model = onnx.load(str(patched_path))
+        graph = gs.import_onnx(model)
+        gather_nodes = [n for n in graph.nodes if n.op == "Gather"]
+        assert len(gather_nodes) >= 4, f"Expected ≥4 Gather nodes (one per bilinear corner); found {len(gather_nodes)}"
 
-        with mock.patch.object(conv_mod, "_GRIDSAMPLE_KWARG", None):
-            with mock.patch("rfdetr.export._tflite.converter.logger") as mock_logger:
-                export_tflite(onnx_model, tflite_output)
-                assert mock_logger.warning.called
-                assert "GridSample" in mock_logger.warning.call_args[0][0]
+    @onnx_gs_available
+    def test_numerical_equivalence_vs_pytorch(self, gridsample_onnx: Path, tmp_path: Path) -> None:
+        """Rewritten ONNX output matches torch.nn.functional.grid_sample within 1e-5."""
+        import onnxruntime as ort
+        import torch
+        import torch.nn.functional as F  # noqa: N812
+
+        from rfdetr.export._tflite.converter import _replace_gridsample_for_tflite
+
+        rng = np.random.default_rng(0)
+        im_np = rng.standard_normal((1, 4, 8, 8)).astype(np.float32)
+        grid_np = rng.uniform(-1, 1, (1, 4, 4, 2)).astype(np.float32)
+
+        ref = F.grid_sample(
+            torch.from_numpy(im_np),
+            torch.from_numpy(grid_np),
+            mode="bilinear",
+            padding_mode="zeros",
+            align_corners=False,
+        ).numpy()
+
+        patched_path = _replace_gridsample_for_tflite(gridsample_onnx, tmp_path)
+        sess = ort.InferenceSession(str(patched_path), providers=["CPUExecutionProvider"])
+        (result,) = sess.run(None, {"im": im_np, "grid": grid_np})
+
+        np.testing.assert_allclose(
+            result, ref, atol=1e-5, rtol=0, err_msg="Gather(axis=0) rewrite output diverges from F.grid_sample"
+        )

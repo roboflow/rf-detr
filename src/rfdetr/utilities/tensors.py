@@ -282,7 +282,8 @@ def _bilinear_grid_sample(
         ix1 = ix1.clamp(0, width - 1)
         iy1 = iy1.clamp(0, height - 1)
 
-    flat = input.flatten(2)  # [batch_size, channels, height*width]
+    # MPS path: GatherElements(axis=2) — correct on MPS at runtime.
+    flat = input.flatten(2)  # (N, C, H*W)
 
     def _gather(iy_: torch.Tensor, ix_: torch.Tensor) -> torch.Tensor:
         idx = (iy_ * width + ix_).flatten(1).unsqueeze(1).expand(batch_size, channels, -1)

@@ -17,7 +17,7 @@ import warnings
 from collections import defaultdict
 from copy import deepcopy
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 import requests
@@ -836,7 +836,7 @@ class RFDETR:
     @deprecated(
         target=True,
         # `simplify` / `force` are retained for API compatibility and treated as no-op.
-        args_mapping={"simplify": False, "force": False},
+        args_mapping={"simplify": None, "force": None},
         deprecated_in="1.6",
         remove_in="1.8",
         num_warns=1,
@@ -846,11 +846,11 @@ class RFDETR:
         self,
         output_dir: str = "output",
         infer_dir: str = None,
-        simplify: bool = False,
+        simplify: Optional[bool] = None,
         backbone_only: bool = False,
         opset_version: int = 17,
         verbose: bool = True,
-        force: bool = False,
+        force: Optional[bool] = None,
         shape: tuple[int, int] | None = None,
         batch_size: int = 1,
         dynamic_batch: bool = False,
@@ -861,7 +861,7 @@ class RFDETR:
         max_images: int = 100,
         *,
         notes: object = None,
-    ) -> None:
+    ) -> Path:
         """Export the trained model to ONNX or TFLite format.
 
         See the `export documentation <https://rfdetr.roboflow.com/learn/export/>`_
@@ -888,6 +888,11 @@ class RFDETR:
                 When ``"tflite"`` is selected the model is first exported to ONNX
                 then converted to TFLite via ``onnx2tf``.  Requires
                 ``pip install rfdetr[onnx,tflite]``.
+
+                .. warning::
+                    TFLite export is experimental and subject to change; upstream
+                    dependency instabilities (``onnx2tf``, ``ai_edge_litert``) may
+                    affect results.
             quantization: TFLite quantization mode (ignored when
                 ``format="onnx"``).  One of ``None``, ``"fp32"``, ``"fp16"``,
                 ``"int8"``.  ``None`` / ``"fp32"`` / ``"fp16"`` produce FP32 +
@@ -918,6 +923,9 @@ class RFDETR:
                 call ``json.loads()`` to recover a dict or list.  The same
                 value can be passed to :meth:`train` so the checkpoint and the
                 ONNX file share the same provenance information.
+
+        Returns:
+            Path to the exported model file (``.onnx`` or ``.tflite``).
         """
         logger.info("Exporting model to ONNX format")
         _valid_formats = ("onnx", "tflite")
@@ -1016,6 +1024,12 @@ class RFDETR:
             logger.info(f"Successfully exported ONNX model to: {output_file}")
 
             if format == "tflite":
+                warnings.warn(
+                    "TFLite export is experimental and work-in-progress. "
+                    "Upstream dependency instabilities (onnx2tf, ai_edge_litert) may affect results.",
+                    UserWarning,
+                    stacklevel=2,
+                )
                 try:
                     from rfdetr.export._tflite.converter import export_tflite
                 except ImportError:
@@ -1035,8 +1049,10 @@ class RFDETR:
                     verbose=verbose,
                 )
                 logger.info(f"Successfully exported TFLite model to: {tflite_path}")
+                return tflite_path
 
             logger.info("Export completed successfully")
+            return Path(output_file)
         finally:
             self.model.model = self.model.model.to(device)
 
