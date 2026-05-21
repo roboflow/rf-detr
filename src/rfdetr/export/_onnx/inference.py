@@ -105,7 +105,7 @@ def _run_inference(
         .. code-block:: python
 
             sess = _create_onnx_session("model.onnx")
-            dets, img = _run_onnx_inference(sess, "photo.jpg", threshold=0.3)
+            dets, img = _run_inference(sess, "photo.jpg", threshold=0.3)
             print(dets.confidence)
     """
     inputs = session.get_inputs()
