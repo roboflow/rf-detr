@@ -153,9 +153,18 @@ class TestCreateInterpreter:
         tf_mod = mock.MagicMock()
         tf_mod.lite = tf_lite_mod
 
-        with mock.patch.dict(sys.modules, {"tflite_runtime": None, "tflite_runtime.interpreter": None}):
-            with mock.patch.dict(sys.modules, {"tensorflow": tf_mod}):
-                _create_interpreter("model.tflite")
+        with mock.patch.dict(
+            sys.modules,
+            {
+                "ai_edge_litert": None,
+                "ai_edge_litert.interpreter": None,
+                "tflite_runtime": None,
+                "tflite_runtime.interpreter": None,
+                "tensorflow": tf_mod,
+                "tensorflow.lite": tf_lite_mod,
+            },
+        ):
+            _create_interpreter("model.tflite")
 
         tf_interp_cls.assert_called_once_with(model_path="model.tflite")
 

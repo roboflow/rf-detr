@@ -143,7 +143,7 @@ If you want lower latency on NVIDIA GPUs, you can convert the exported ONNX mode
 ```python
 from argparse import Namespace
 
-from rfdetr.export.tensorrt import trtexec
+from rfdetr.export._tensorrt import trtexec
 
 args = Namespace(
     verbose=True,

@@ -18,6 +18,7 @@ Tests cover:
 
 from __future__ import annotations
 
+import importlib.util
 import sys
 import types
 from pathlib import Path
@@ -39,6 +40,11 @@ from rfdetr.export._tflite.converter import (
     _patch_validation_download,
     _prepare_calibration_data,
     export_tflite,
+)
+
+onnx2tf_available = pytest.mark.skipif(
+    importlib.util.find_spec("onnx2tf") is None,
+    reason="onnx2tf not installed",
 )
 
 # ---------------------------------------------------------------------------
@@ -174,6 +180,7 @@ def tflite_output(tmp_path: Path, onnx_model: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 
+@onnx2tf_available
 class TestExportTfliteConverter:
     """Tests for ``export_tflite()``."""
 
@@ -951,6 +958,7 @@ class TestLoadCalibrationImages:
 # ---------------------------------------------------------------------------
 
 
+@onnx2tf_available
 class TestCheckOnnx2tfAvailable:
     """Tests for ``_check_onnx2tf_available()``."""
 

@@ -46,6 +46,7 @@ def _create_interpreter(model_path: str | Path) -> Any:
         An allocated TFLite interpreter ready for inference.
     """
     _Interpreter = None  # noqa: N806
+    _tried: list[str] = []
     for _pkg, _attr in (
         ("ai_edge_litert.interpreter", "Interpreter"),
         ("tflite_runtime.interpreter", "Interpreter"),
@@ -54,10 +55,13 @@ def _create_interpreter(model_path: str | Path) -> Any:
         with contextlib.suppress(ImportError):
             _Interpreter = getattr(importlib.import_module(_pkg), _attr)  # noqa: N806
             break
+        _tried.append(_pkg.split(".")[0])
     if _Interpreter is None:
+        _tried_str = ", ".join(f"'{p}'" for p in _tried)
         raise ImportError(
-            "TFLite inference requires 'ai_edge_litert', 'tflite-runtime', or 'tensorflow'. "
-            "Install one: `pip install ai_edge_litert`  OR  `pip install tflite-runtime`  OR  `pip install tensorflow`"
+            f"TFLite inference requires 'ai_edge_litert', 'tflite-runtime', or 'tensorflow' "
+            f"(tried: {_tried_str}). "
+            "Install one: `pip install ai_edge_litert`  OR  `pip install tflite-runtime`"
         )
 
     interp = _Interpreter(model_path=str(model_path))
