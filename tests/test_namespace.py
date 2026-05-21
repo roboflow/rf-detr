@@ -153,7 +153,7 @@ class TestBuildNamespaceDeprecated:
         mc = RFDETRBaseConfig(num_classes=80)
         tc = TrainConfig(dataset_dir="/tmp")
 
-        with pytest.warns(DeprecationWarning, match="build_namespace\\(\\) is deprecated"):
+        with pytest.warns(FutureWarning, match="build_namespace"):
             build_namespace(mc, tc)
 
     def test_result_identical_to_namespace_from_configs(self) -> None:
@@ -164,7 +164,7 @@ class TestBuildNamespaceDeprecated:
         mc = RFDETRBaseConfig(num_classes=80)
         tc = TrainConfig(dataset_dir="/tmp")
 
-        with pytest.warns(DeprecationWarning):
+        with pytest.warns(FutureWarning):
             ns_legacy = build_namespace(mc, tc)
         ns_new = _namespace_from_configs(mc, tc, MODEL_DEFAULTS)
 

@@ -134,5 +134,5 @@ class TestNamespaceFromConfigs:
         """build_namespace() must emit a DeprecationWarning on every call."""
         from rfdetr._namespace import build_namespace
 
-        with pytest.warns(DeprecationWarning, match="build_namespace\\(\\) is deprecated"):
+        with pytest.warns(FutureWarning, match="build_namespace"):
             build_namespace(base_model_config(), base_train_config())
