@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
+from rfdetr.platform import _IS_RFDETR_PLUS_AVAILABLE
 from rfdetr.utilities.files import _download_file, _validate_file_md5
 from rfdetr.utilities.logger import get_logger
 
@@ -339,14 +340,14 @@ def download_pretrain_weights(
     asset = ModelWeights.from_filename(model_name)
 
     # Only try rf-detr-plus if not found locally (lazy import)
-    if asset is None:
+    if asset is None and _IS_RFDETR_PLUS_AVAILABLE:
         try:
             from rfdetr_plus.assets import ModelWeights as PlusModelWeights
 
             asset = PlusModelWeights.from_filename(model_name)
-        except (ImportError, AttributeError):
-            # Package not installed or doesn't have assets module yet
-            pass
+        except ModuleNotFoundError as ex:
+            if ex.name not in {"rfdetr_plus", "rfdetr_plus.assets"}:
+                raise
 
     # Extract URL and MD5 from the asset if found
     if asset is not None:

@@ -4,13 +4,13 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-import sys
 from unittest.mock import Mock, patch
 
 import pytest
 
 from rfdetr.assets import ModelWeightAsset, ModelWeights
 from rfdetr.assets.model_weights import download_pretrain_weights
+from rfdetr.platform import _IS_RFDETR_PLUS_AVAILABLE
 
 
 # Module-level fixture for common file operation mocks
@@ -46,10 +46,7 @@ class TestDownloadPretrainWeights:
         assert call_kwargs["expected_md5"] is not None  # Should have MD5 hash
         assert len(call_kwargs["expected_md5"]) == 32  # Valid MD5 hash
 
-    @pytest.mark.skipif(
-        "rfdetr_plus" not in sys.modules and "rfdetr_plus.assets" not in sys.modules,
-        reason="rf-detr-plus not installed - skip priority test",
-    )
+    @pytest.mark.skipif(not _IS_RFDETR_PLUS_AVAILABLE, reason="rf-detr-plus not installed - skip priority test")
     def test_download_from_rfdetr_plus_when_available(self, mock_file_operations):
         """Test that rf-detr-plus models are prioritized when available.
 

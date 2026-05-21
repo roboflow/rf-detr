@@ -18,14 +18,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from rfdetr.detr import RFDETR
+from rfdetr.platform import _IS_RFDETR_PLUS_AVAILABLE
 from rfdetr.variants import RFDETRSmall
-
-try:
-    import rfdetr.platform.models as _pm
-
-    HAS_PLUS = _pm._PLUS_AVAILABLE
-except ImportError:
-    HAS_PLUS = False
 
 
 def _ns(pretrain_weights: str, num_classes: int = 80) -> dict:
@@ -210,7 +204,7 @@ class TestFromCheckpointEdgeCases:
         call_kwargs = mock_cls.call_args.kwargs
         assert call_kwargs["num_classes"] == 5
 
-    @pytest.mark.skipif(HAS_PLUS, reason="rfdetr_plus is installed — guard not active")
+    @pytest.mark.skipif(_IS_RFDETR_PLUS_AVAILABLE, reason="rfdetr_plus is installed — guard not active")
     def test_characterization_xlarge_without_plus_raises_import_error(self, tmp_path: Path) -> None:
         """Xlarge checkpoint without rfdetr_plus raises ImportError instead of wrong class."""
         for weights in ("rf-detr-xlarge.pth", "rf-detr-xxlarge.pth"):
@@ -354,7 +348,7 @@ class TestFromCheckpointModelName:
             model = RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
         assert model.__class__.__name__ == expected_class
 
-    @pytest.mark.skipif(HAS_PLUS, reason="rfdetr_plus is installed — guard not active")
+    @pytest.mark.skipif(_IS_RFDETR_PLUS_AVAILABLE, reason="rfdetr_plus is installed — guard not active")
     @pytest.mark.parametrize("model_name", ["RFDETRXLarge", "RFDETR2XLarge"])
     def test_plus_model_name_without_plus_raises_import_error(self, tmp_path: Path, model_name: str) -> None:
         """Plus checkpoints using model_name raise install guidance without rfdetr_plus."""
