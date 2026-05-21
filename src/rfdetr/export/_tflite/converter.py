@@ -912,7 +912,17 @@ def export_tflite(
     # before invoking onnx2tf.  onnx2tf's default GridSample lowering produces
     # wrong values in TFLite, and its pseudo-op replacement is independently
     # broken.  The patched path becomes the input for everything downstream.
-    onnx_path = _replace_gridsample_for_tflite(onnx_path, output_dir)
+    # Best-effort: skip the rewrite when onnx/onnx_graphsurgeon are not installed
+    # (e.g. test environments that only mock onnx2tf).
+    try:
+        onnx_path = _replace_gridsample_for_tflite(onnx_path, output_dir)
+    except ImportError as exc:
+        logger.warning(
+            "GridSample TFLite patch skipped — onnx/onnx_graphsurgeon not available (%s). "
+            "TFLite inference may produce incorrect scores if the model contains GridSample nodes. "
+            "Install with: pip install rfdetr[onnx,tflite]",
+            exc,
+        )
 
     calib_npy_path = _prepare_calibration_data(
         onnx_path, calibration_data, output_dir, quantization, max_images=max_images

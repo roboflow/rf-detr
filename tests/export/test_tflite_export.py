@@ -134,9 +134,18 @@ def _remove_fake_onnx2tf(saved: dict[str, object] | None = None) -> None:
 
 @pytest.fixture()
 def fake_onnx2tf():
-    """Provide a fake ``onnx2tf`` that records *convert()* calls."""
+    """Provide a fake ``onnx2tf`` that records *convert()* calls.
+
+    Also patches ``_replace_gridsample_for_tflite`` to return the input path
+    unchanged so tests that supply stub ONNX bytes do not depend on
+    ``onnx.load`` tolerating those bytes.
+    """
     fake, convert_mock, saved = _install_fake_onnx2tf()
-    yield fake, convert_mock
+    with mock.patch(
+        "rfdetr.export._tflite.converter._replace_gridsample_for_tflite",
+        side_effect=lambda path, _dir: path,
+    ):
+        yield fake, convert_mock
     _remove_fake_onnx2tf(saved)
 
 
