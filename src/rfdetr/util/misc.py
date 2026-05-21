@@ -21,7 +21,7 @@ backward compatibility."""
 
 from rfdetr.utilities.decorators import _warn_deprecated_module
 
-_warn_deprecated_module("rfdetr.util.misc", "rfdetr.utilities")
+_warn_deprecated_module("rfdetr.util.misc", "rfdetr.utilities", deprecated_in="1.6.0", remove_in="1.9.0")
 
 # Re-export symbols that have moved to utilities/.
 # Re-export math functions from their canonical location in rfdetr.models.math.

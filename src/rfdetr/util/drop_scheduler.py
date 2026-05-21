@@ -7,6 +7,8 @@
 
 from rfdetr.utilities.decorators import _warn_deprecated_module
 
-_warn_deprecated_module("rfdetr.util.drop_scheduler", "rfdetr.training.drop_schedule")
+_warn_deprecated_module(
+    "rfdetr.util.drop_scheduler", "rfdetr.training.drop_schedule", deprecated_in="1.6.0", remove_in="1.9.0"
+)
 
 from rfdetr.training.drop_schedule import drop_scheduler  # noqa: F401, E402

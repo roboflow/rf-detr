@@ -130,9 +130,11 @@ class TestNamespaceFromConfigs:
         args = _namespace_from_configs(mc, base_train_config())
         assert args.segmentation_head is True
 
-    def test_build_namespace_emits_deprecation_warning(self, base_model_config, base_train_config):
+    def test_build_namespace_emits_deprecation_warning(
+        self, base_model_config, base_train_config, reset_build_namespace_warning_state
+    ):
         """build_namespace() must emit a DeprecationWarning on every call."""
         from rfdetr._namespace import build_namespace
 
-        with pytest.warns(DeprecationWarning, match="build_namespace\\(\\) is deprecated"):
+        with pytest.warns(FutureWarning, match="build_namespace"):
             build_namespace(base_model_config(), base_train_config())

@@ -7,4 +7,4 @@
 
 from rfdetr.utilities.decorators import _warn_deprecated_module
 
-_warn_deprecated_module("rfdetr.util.files", "rfdetr.utilities.files")
+_warn_deprecated_module("rfdetr.util.files", "rfdetr.utilities.files", deprecated_in="1.6.0", remove_in="1.9.0")

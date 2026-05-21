@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rfdetr"
-version = "1.7.0.rc0"
+version = "1.7.0"
 description = "RF-DETR"
 readme = "README.md"
 authors = [
@@ -151,10 +151,11 @@ rfdetr = "rfdetr.cli:main"
 [tool.uv]
 # onnx2tf 2.4.0 pins ml-dtypes==0.5.1 unconditionally, but ml-dtypes 0.5.1 requires
 # numpy>=2.1.0 on Python 3.13 while onnx2tf also pins numpy==1.26.4 — contradiction.
-# Since the entire [tflite] extra is gated to python_version<'3.13', override ml-dtypes
-# to also be python_version<'3.13' so uv's universal resolver doesn't see the conflict.
+# The entire [tflite] extra is gated to python_version>='3.12', and onnx2tf 2.4.0 requires
+# Python>=3.12 and <3.13 (tensorflow constraint); override ml-dtypes to the same window
+# so uv's universal resolver doesn't see the conflict on Python 3.13+.
 override-dependencies = [
-    "ml-dtypes==0.5.1; python_version < '3.13'",
+    "ml-dtypes==0.5.1; python_version >= '3.12' and python_version < '3.13'",
 ]
 
 [tool.setuptools.packages.find]

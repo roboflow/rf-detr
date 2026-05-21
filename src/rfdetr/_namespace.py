@@ -10,7 +10,8 @@ This module has zero dependency on ``main.py`` and can survive its deletion."""
 
 import dataclasses
 import types
-import warnings
+
+from deprecate import deprecated
 
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.models._defaults import MODEL_DEFAULTS, ModelDefaults
@@ -160,12 +161,13 @@ def _namespace_from_configs(
     )
 
 
+@deprecated(target=_namespace_from_configs, deprecated_in="1.7.0", remove_in="1.9.0")
 def build_namespace(model_config: ModelConfig, train_config: TrainConfig) -> types.SimpleNamespace:
     """Build a ``types.SimpleNamespace`` from Pydantic model and train configs.
 
-    .. deprecated::
-        ``build_namespace`` is a backward-compatibility shim with no remaining internal callers.  Use the config-native
-        builders instead:
+    .. deprecated:: 1.7.0
+        ``build_namespace`` is a backward-compatibility shim with no remaining internal callers.
+        Deprecated since v1.7.0, will be removed in v1.9.0. Use the config-native builders instead:
 
         - :func:`rfdetr.models.build_model_from_config` — replaces
           ``build_model(build_namespace(mc, tc))``
@@ -173,8 +175,6 @@ def build_namespace(model_config: ModelConfig, train_config: TrainConfig) -> typ
           ``build_criterion_and_postprocessors(build_namespace(mc, tc))``
         - :func:`rfdetr._namespace._namespace_from_configs` — for the rare
           case where a raw namespace is still required (e.g. ``build_dataset``)
-
-        ``build_namespace`` will be removed in v1.9.
 
     Args:
         model_config: Architecture configuration.
@@ -184,11 +184,4 @@ def build_namespace(model_config: ModelConfig, train_config: TrainConfig) -> typ
         ``types.SimpleNamespace`` compatible with ``build_model``, ``build_criterion_and_postprocessors``, and
         ``build_dataset``.
     """
-    warnings.warn(
-        "build_namespace() is deprecated and will be removed in v1.9. "
-        "Use build_model_from_config() or build_criterion_from_config() instead; "
-        "for raw namespace access use rfdetr._namespace._namespace_from_configs().",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return _namespace_from_configs(model_config, train_config)
+    ...

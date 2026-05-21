@@ -155,7 +155,7 @@ class RFDETRLarge(RFDETR):
                     "=" * 100 + "\n"
                     "WARNING: Automatically switched to deprecated model configuration,"
                     " due to using deprecated weights."
-                    " This will be removed in a future version.\n"
+                    " This will be removed in v1.9.0.\n"
                     " Please retrain your model with the new weights and configuration.\n"
                     "=" * 100 + "\n"
                 )

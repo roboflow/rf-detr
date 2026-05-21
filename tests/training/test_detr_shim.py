@@ -1158,7 +1158,7 @@ class TestRemovedLegacyModuleAliases:
         missing_name = "rfdetr.missing_removed_shim"
         missing_exc = ModuleNotFoundError(f"No module named '{missing_name}'", name=missing_name)
         with (
-            patch.dict(rfdetr._REMOVED_IN_V17, {"missing_removed_shim": "migration hint"}),
+            patch.dict(rfdetr._REMOVE_IN_VERSION_1_9, {"missing_removed_shim": "migration hint"}),
             patch("rfdetr.importlib.import_module", side_effect=missing_exc),
             pytest.raises(ImportError, match="migration hint"),
         ):
@@ -1169,7 +1169,7 @@ class TestRemovedLegacyModuleAliases:
         import rfdetr
 
         with (
-            patch.dict(rfdetr._REMOVED_IN_V17, {"missing_dep_shim": "migration hint"}),
+            patch.dict(rfdetr._REMOVE_IN_VERSION_1_9, {"missing_dep_shim": "migration hint"}),
             patch(
                 "rfdetr.importlib.import_module",
                 side_effect=ModuleNotFoundError("No module named 'torchvision_ops'", name="torchvision_ops"),
@@ -1185,7 +1185,7 @@ class TestRemovedLegacyModuleAliases:
         """Dotted legacy imports get a migration hint once the util shim package is removed."""
         self._simulate_missing_removed_module_specs(monkeypatch, "rfdetr.util")
 
-        with pytest.raises(ImportError, match=r"rfdetr\.util was removed in v1\.7"):
+        with pytest.raises(ImportError, match=r"rfdetr\.util will be removed in v1\.9"):
             importlib.import_module("rfdetr.util")
 
     def test_removed_deploy_submodule_import_raises_migration_hint_when_shim_is_deleted(
@@ -1195,7 +1195,7 @@ class TestRemovedLegacyModuleAliases:
         """Dotted legacy submodule imports get a migration hint once the deploy shim is removed."""
         self._simulate_missing_removed_module_specs(monkeypatch, "rfdetr.deploy", "rfdetr.deploy.benchmark")
 
-        with pytest.raises(ImportError, match=r"rfdetr\.deploy was removed in v1\.7"):
+        with pytest.raises(ImportError, match=r"rfdetr\.deploy will be removed in v1\.9"):
             importlib.import_module("rfdetr.deploy.benchmark")
 
     def test_find_spec_ignores_non_rfdetr_top_level_imports(self) -> None:

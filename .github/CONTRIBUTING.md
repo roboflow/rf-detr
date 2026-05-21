@@ -9,12 +9,13 @@ Thank you for helping to advance RF-DETR! Your participation is invaluable in ev
 3. [Development Environment Setup](#development-environment-setup)
 4. [Test-Driven Development](#test-driven-development)
 5. [Code Quality and Linting](#code-quality-and-linting)
-6. [Building Documentation](#building-documentation)
-7. [CLA Signing](#cla-signing)
-8. [Google-Style Docstrings and Mandatory Type Hints](#google-style-docstrings-and-mandatory-type-hints)
-9. [Reporting Bugs](#reporting-bugs)
-10. [Adding a New Model](#adding-a-new-model)
-11. [License](#license)
+6. [Deprecation Policy](#deprecation-policy)
+7. [Building Documentation](#building-documentation)
+8. [CLA Signing](#cla-signing)
+9. [Google-Style Docstrings and Mandatory Type Hints](#google-style-docstrings-and-mandatory-type-hints)
+10. [Reporting Bugs](#reporting-bugs)
+11. [Adding a New Model](#adding-a-new-model)
+12. [License](#license)
 
 ## How to Contribute
 
@@ -313,6 +314,32 @@ pre-commit run --all-files
 ```
 
 **Configuration:** See `.pre-commit-config.yaml` for all hooks and `pyproject.toml` for tool-specific settings (e.g., `[tool.ruff]`).
+
+## Deprecation Policy
+
+RF-DETR uses [pyDeprecate](https://github.com/Borda/pyDeprecate) to emit structured deprecation warnings. Use `@deprecated` for functions and methods, `@deprecated_class` for classes. The importable package name is `deprecate` (not `pyDeprecate`); refer to its docs for advanced usage.
+
+```python
+from deprecate import deprecated
+
+
+@deprecated(target=new_fn, deprecated_in="1.7.0", remove_in="1.9.0")
+def old_fn(*args, **kwargs): ...
+```
+
+**Rules:**
+
+- All version strings must be full semver: `1.7.0`, not `1.7`.
+- Minimum window: a symbol deprecated in `X.Y.0` cannot be removed before `X.(Y+2).0` (two minor releases).
+- Every new deprecation needs an entry in `docs/getting-started/migration.md` under a `### Deprecated (removal in vX.Z.0)` subsection.
+
+**Removal checklist** (when `remove_in` version arrives):
+
+1. Delete the deprecated symbol, class, or shim file.
+2. Remove any remaining `@deprecated` / `@deprecated_class` decorators.
+3. Add a breaking-change entry to `docs/getting-started/migration.md`.
+4. Search for lingering imports of the removed symbol and update them.
+5. Verify `pre-commit run --all-files` passes and tests are green.
 
 ## Building Documentation
 
