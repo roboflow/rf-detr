@@ -3,11 +3,11 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Regression tests for _resize_linear() and LWDETR.reinitialize_detection_head().
 
 These tests guard against the out_features staleness bug where in-place .data mutation did not update
-nn.Linear.out_features, causing ONNX export to emit stale (pre-fine-tuning) class counts."""
+nn.Linear.out_features, causing ONNX export to emit stale (pre-fine-tuning) class counts.
+"""
 
 from unittest.mock import MagicMock
 
@@ -83,7 +83,7 @@ class TestResizeLinear:
         assert torch.allclose(result.bias.data, linear.bias.data)
 
     def test_no_bias_returns_no_bias(self) -> None:
-        """bias=False input: returned module has bias=None and out_features is correct."""
+        """Bias=False input: returned module has bias=None and out_features is correct."""
         linear = nn.Linear(256, 91, bias=False)
         result = _resize_linear(linear, 8)
         assert result.out_features == 8, f"Expected out_features=8, got {result.out_features}"

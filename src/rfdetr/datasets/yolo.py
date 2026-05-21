@@ -469,8 +469,7 @@ def _build_coco_api_from_samples(classes: list[str], dataset: Any) -> Any:
 
 
 def is_valid_yolo_dataset(dataset_dir: str) -> bool:
-    """
-    Checks if the specified dataset directory is in yolo format.
+    """Checks if the specified dataset directory is in yolo format.
 
     We accept a dataset to be in yolo format if the following conditions are met:
     - The dataset_dir contains a data.yaml or data.yml file
@@ -494,8 +493,7 @@ def is_valid_yolo_dataset(dataset_dir: str) -> bool:
 
 
 class ConvertYolo:
-    """
-    Converts supervision Detections to the target dict format expected by RF-DETR.
+    """Converts supervision Detections to the target dict format expected by RF-DETR.
 
     Args:
         include_masks: whether to include segmentation masks
@@ -529,8 +527,7 @@ class ConvertYolo:
         self.include_masks = include_masks
 
     def __call__(self, image: Image.Image, target: dict) -> tuple:
-        """
-        Convert image and YOLO detections to RF-DETR format.
+        """Convert image and YOLO detections to RF-DETR format.
 
         Args:
             image: PIL Image

@@ -3,7 +3,6 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Unit tests for :class:`BestModelCallback` and :class:`RFDETREarlyStopping`."""
 
 from __future__ import annotations
@@ -710,7 +709,10 @@ class TestBestModelCallback:
         assert isinstance(ckpt["args"], dict)
 
     def test_regular_checkpoint_has_ptl_state_dict_key(self, tmp_path: Path) -> None:
-        """Saved regular checkpoint must include 'state_dict' with model. prefix."""
+        """Saved regular checkpoint must include 'state_dict' with model.
+
+        prefix.
+        """
         cb = BestModelCallback(output_dir=str(tmp_path))
         trainer = _make_trainer({"val/mAP_50_95": 0.5})
         pl_module = _make_pl_module()
@@ -746,7 +748,10 @@ class TestBestModelCallback:
         assert ckpt.get("pytorch-lightning_version") == ptl_version
 
     def test_ema_checkpoint_has_ptl_state_dict_key(self, tmp_path: Path) -> None:
-        """Saved EMA checkpoint must include 'state_dict' with model. prefix."""
+        """Saved EMA checkpoint must include 'state_dict' with model.
+
+        prefix.
+        """
         cb = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95")
         trainer = _make_trainer({"val/mAP_50_95": 0.4, "val/ema_mAP_50_95": 0.6})
         pl_module = _make_pl_module()
@@ -1027,7 +1032,7 @@ class TestRFDETREarlyStopping:
         assert cb.wait_count == 3
 
     def test_stops_after_patience_exceeded(self) -> None:
-        """patience=3 with 3 no-improvement epochs triggers stop."""
+        """Patience=3 with 3 no-improvement epochs triggers stop."""
         cb = RFDETREarlyStopping(patience=3, min_delta=0.001)
         pl_module = _make_pl_module()
 

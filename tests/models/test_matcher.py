@@ -191,11 +191,11 @@ class TestHungarianMatcherNonFiniteCosts:
         matcher: HungarianMatcher,
         standard_target: dict[str, torch.Tensor],
     ) -> None:
-        """Sanitization runs on the full cost matrix before splitting by group, so
-        non-finite entries must be handled correctly when ``group_detr > 1``.
+        """Sanitization runs on the full cost matrix before splitting by group, so non-finite entries must be handled
+        correctly when ``group_detr > 1``.
 
-        4 queries, 2 groups of 2. Query 0 has a NaN box; query 2 (the best valid
-        match in group 1) must be selected across groups.
+        4 queries, 2 groups of 2. Query 0 has a NaN box; query 2 (the best valid match in group 1) must be selected
+        across groups.
         """
         nan = float("nan")
         outputs = {

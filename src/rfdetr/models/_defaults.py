@@ -3,12 +3,12 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Hardcoded architectural constants not exposed in ModelConfig or TrainConfig.
 
 These values correspond to the ``build_namespace()`` defaults in ``_namespace.py`` that have no corresponding config
 field.  Making them explicit in a frozen dataclass enables testing, documentation, and (future) overrides without
-touching config validation."""
+touching config validation.
+"""
 
 from __future__ import annotations
 

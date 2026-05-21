@@ -134,7 +134,7 @@ class _DepthwiseConvWithoutCuDNN(torch.autograd.Function):
 
 
 class DepthwiseConvBlock(nn.Module):
-    r"""Simplified ConvNeXt block without the MLP subnet"""
+    r"""Simplified ConvNeXt block without the MLP subnet."""
 
     def __init__(self, dim, layer_scale_init_value=0):
         super().__init__()
@@ -327,9 +327,8 @@ class SegmentationHead(nn.Module):
 
 
 def point_sample(input: torch.Tensor, point_coords: torch.Tensor, **kwargs: Any) -> torch.Tensor:
-    """
-    A wrapper around :func:`~rfdetr.utilities.tensors._bilinear_grid_sample` to support 3D point_coords tensors. Unlike
-    :func:`torch.nn.functional.grid_sample` it assumes `point_coords` to lie inside [0, 1] x [0, 1] square.
+    """A wrapper around :func:`~rfdetr.utilities.tensors._bilinear_grid_sample` to support 3D point_coords tensors.
+    Unlike :func:`torch.nn.functional.grid_sample` it assumes `point_coords` to lie inside [0, 1] x [0, 1] square.
 
     Args:
         input: A tensor of shape (N, C, H, W) that contains features map on a H x W grid.
@@ -401,10 +400,9 @@ def get_uncertain_point_coords_with_randomness(
     oversample_ratio: int = 3,
     importance_sample_ratio: float = 0.75,
 ) -> torch.Tensor:
-    """
-    Sample points in [0, 1] x [0, 1] coordinate space based on their uncertainty. The unceratinties
-        are calculated for each point using 'uncertainty_func' function that takes point's logit prediction as input.
-    See PointRend paper for details.
+    """Sample points in [0, 1] x [0, 1] coordinate space based on their uncertainty. The unceratinties are calculated
+    for each point using 'uncertainty_func' function that takes point's logit prediction as input. See PointRend paper
+    for details.
 
     Args:
         coarse_logits: A tensor of shape (N, C, Hmask, Wmask) or (N, 1, Hmask, Wmask) for
@@ -450,9 +448,8 @@ def get_uncertain_point_coords_with_randomness(
 
 
 def calculate_uncertainty(logits: torch.Tensor) -> torch.Tensor:
-    """
-    We estimate uncertainty as L1 distance between 0.0 and the logit prediction in 'logits' for the
-        foreground class in `classes`.
+    """We estimate uncertainty as L1 distance between 0.0 and the logit prediction in 'logits' for the foreground class
+    in `classes`.
 
     Args:
         logits: A tensor of shape (R, 1, ...) for class-specific or

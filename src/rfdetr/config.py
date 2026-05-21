@@ -17,10 +17,9 @@ EncoderName: TypeAlias = Literal["dinov2_windowed_small", "dinov2_windowed_base"
 
 
 class PretrainWeightsCompatibilityWarning(UserWarning):
-    """Warning emitted when ``ModelConfig`` overrides are likely to prevent the variant's
-    published pretrained weights from loading into the model — leaving large portions
-    of the model randomly initialized and typically producing much lower accuracy.
-    """
+    """Warning emitted when ``ModelConfig`` overrides are likely to prevent the variant's published pretrained weights
+    from loading into the model — leaving large portions of the model randomly initialized and typically producing much
+    lower accuracy."""
 
 
 def _detect_device() -> str:
@@ -54,9 +53,9 @@ DEVICE: str = _detect_device()
 
 
 class BaseConfig(BaseModel):
-    """
-    Base configuration class that validates input parameters against the defined model schema. If any unknown fields are
-    provided, a ValueError is raised listing the unknown and available parameters.
+    """Base configuration class that validates input parameters against the defined model schema.
+
+    If any unknown fields are provided, a ValueError is raised listing the unknown and available parameters.
     """
 
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", validate_assignment=True)
@@ -394,9 +393,7 @@ class ModelConfig(BaseConfig):
 
 
 class RFDETRBaseConfig(ModelConfig):
-    """
-    The configuration for an RF-DETR Base model.
-    """
+    """The configuration for an RF-DETR Base model."""
 
     encoder: EncoderName = "dinov2_windowed_small"
     hidden_dim: int = 256
@@ -416,9 +413,7 @@ class RFDETRBaseConfig(ModelConfig):
 
 
 class RFDETRLargeDeprecatedConfig(RFDETRBaseConfig):
-    """
-    The configuration for an RF-DETR Large model.
-    """
+    """The configuration for an RF-DETR Large model."""
 
     encoder: EncoderName = "dinov2_windowed_base"
     hidden_dim: int = 384
@@ -430,9 +425,7 @@ class RFDETRLargeDeprecatedConfig(RFDETRBaseConfig):
 
 
 class RFDETRNanoConfig(RFDETRBaseConfig):
-    """
-    The configuration for an RF-DETR Nano model.
-    """
+    """The configuration for an RF-DETR Nano model."""
 
     out_feature_indexes: List[int] = [3, 6, 9, 12]
     num_windows: int = 2
@@ -444,9 +437,7 @@ class RFDETRNanoConfig(RFDETRBaseConfig):
 
 
 class RFDETRSmallConfig(RFDETRBaseConfig):
-    """
-    The configuration for an RF-DETR Small model.
-    """
+    """The configuration for an RF-DETR Small model."""
 
     out_feature_indexes: List[int] = [3, 6, 9, 12]
     num_windows: int = 2
@@ -458,9 +449,7 @@ class RFDETRSmallConfig(RFDETRBaseConfig):
 
 
 class RFDETRMediumConfig(RFDETRBaseConfig):
-    """
-    The configuration for an RF-DETR Medium model.
-    """
+    """The configuration for an RF-DETR Medium model."""
 
     out_feature_indexes: List[int] = [3, 6, 9, 12]
     num_windows: int = 2
@@ -784,10 +773,8 @@ class TrainConfig(BaseModel):
     @field_validator("dataset_dir", "output_dir", mode="after")
     @classmethod
     def expand_paths(cls, v: str) -> str:
-        """
-        Expand user paths (e.g., '~' or paths with separators) but leave simple filenames (like 'rf-detr-base.pth')
-        unchanged so they can match hosted model keys.
-        """
+        """Expand user paths (e.g., '~' or paths with separators) but leave simple filenames (like 'rf-detr-base.pth')
+        unchanged so they can match hosted model keys."""
         if v is None:
             return v
         return os.path.realpath(os.path.expanduser(v))

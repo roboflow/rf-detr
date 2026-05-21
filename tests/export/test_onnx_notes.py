@@ -3,7 +3,6 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Tests for the ``notes`` parameter in :func:`~rfdetr.export._onnx.exporter.export_onnx`."""
 
 import json
@@ -142,7 +141,7 @@ class TestExportOnnxNotes:
             _export_tiny_model(tmp_path, notes=float("nan"))
 
     def test_notes_is_keyword_only(self, tmp_path: Path) -> None:
-        """notes must be passed as a keyword argument; positional use raises TypeError."""
+        """Notes must be passed as a keyword argument; positional use raises TypeError."""
         model = _TinyModel().eval()
         input_tensor = torch.randn(1, 3, 32, 32)
         with pytest.raises(TypeError):

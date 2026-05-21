@@ -121,8 +121,8 @@ class TestDownloadPretrainWeights:
     def test_redownload_flag_forces_download_despite_incorrect_md5(self, mock_file_operations):
         """Test that redownload=True triggers download even when MD5 is incorrect.
 
-        Verifies the force-redownload path where the user explicitly wants to overwrite an existing file (e.g. a
-        fine-tuned checkpoint) with the original registry weights.
+        Verifies the force-redownload path where the user explicitly wants to overwrite an existing file (e.g. a fine-
+        tuned checkpoint) with the original registry weights.
         """
         mock_file_operations["exists"].return_value = True
         mock_file_operations["validate"].return_value = False  # Incorrect MD5

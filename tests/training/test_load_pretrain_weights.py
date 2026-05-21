@@ -3,7 +3,6 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Regression tests for fine-tuned checkpoint weight destruction.
 
 When a user loads a fine-tuned N-class checkpoint but has ``num_classes`` configured to a LARGER value (e.g. default
@@ -17,7 +16,8 @@ to the user-override-aware logic that auto-aligns to the checkpoint when the use
 
 These tests exercise ``rfdetr.models.weights.load_pretrain_weights`` directly, which is the unified function that
 replaced the two prior separate implementations (``detr.py:_load_pretrain_weights_into`` and
-``module_model.py:RFDETRModelModule._load_pretrain_weights``)."""
+``module_model.py:RFDETRModelModule._load_pretrain_weights``).
+"""
 
 from types import SimpleNamespace
 from unittest.mock import MagicMock, call
@@ -392,9 +392,8 @@ class TestLoadPretrainWeightsPEInterpolation:
 
 
 class TestL1FacadePEInterpolationEndToEnd:
-    """Regression for instantiating an RF-DETR L1 facade variant with a
-    custom ``resolution`` and a checkpoint trained at the variant's default
-    resolution must not raise ``RuntimeError`` from a PE shape mismatch.
+    """Regression for instantiating an RF-DETR L1 facade variant with a custom ``resolution`` and a checkpoint trained
+    at the variant's default resolution must not raise ``RuntimeError`` from a PE shape mismatch.
 
     In v1.6.5 the L1 facade (``RFDETRLarge``, ``RFDETRNano``, ...) used a private ``_load_pretrain_weights_into`` helper
     in ``detr.py`` that bypassed the PE bicubic-interpolation added to ``models.weights.load_pretrain_weights`` Code
@@ -409,8 +408,8 @@ class TestL1FacadePEInterpolationEndToEnd:
     """
 
     def test_rfdetr_nano_loads_default_pe_checkpoint_at_custom_resolution(self, tmp_path):
-        """Saving an RFDETRNano state_dict at default resolution and loading at
-        a higher resolution must succeed via PE interpolation in the L1 facade.
+        """Saving an RFDETRNano state_dict at default resolution and loading at a higher resolution must succeed via PE
+        interpolation in the L1 facade.
 
         Mirrors the user-reported scenario in https://github.com/roboflow/rf-detr/issues/990 (PE size mismatch ``[1,
         1937, 384]`` vs ``[1, 6401, 384]`` raised from ``LWDETR.load_state_dict``), reduced to RFDETRNano for test
@@ -465,8 +464,8 @@ class TestL1FacadePEInterpolationEndToEnd:
         )
 
     def test_rfdetr_seg_nano_loads_default_pe_checkpoint_at_custom_resolution(self, tmp_path):
-        """Saving an RFDETRSegNano state_dict at default resolution and loading at
-        a higher resolution must succeed via PE interpolation in the L1 facade.
+        """Saving an RFDETRSegNano state_dict at default resolution and loading at a higher resolution must succeed via
+        PE interpolation in the L1 facade.
 
         Regression for https://github.com/roboflow/rf-detr/issues/1023 — the segmentation model variant
         (``RFDETRSegNano``) raised ``RuntimeError: size mismatch for

@@ -3,7 +3,6 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Smoke tests: Trainer(fast_dev_run=2).fit(module, datamodule) — T7.
 
 Verifies that the PTL training loop runs end-to-end without error for both detection and segmentation configurations.
@@ -301,10 +300,10 @@ class _DDPModule(RFDETRModelModule):
 class _MultiScaleCheckDDPModule(RFDETRModelModule):
     """DDP-safe module that asserts on_train_batch_start mutation reaches training_step.
 
-    With multi_scale=True and _FakeDataset's 32×32 images, on_train_batch_start interpolates samples.tensors to a
-    multi-scale resolution (≥392 for RFDETRBaseConfig resolution=560).  This module raises AssertionError in
-    training_step if the tensor height is still 32, meaning the in-place NestedTensor mutation did not propagate through
-    the PTL batch-hook chain.
+    With multi_scale=True and _FakeDataset's 32×32 images, on_train_batch_start interpolates samples.tensors to a multi-
+    scale resolution (≥392 for RFDETRBaseConfig resolution=560).  This module raises AssertionError in training_step if
+    the tensor height is still 32, meaning the in-place NestedTensor mutation did not propagate through the PTL batch-
+    hook chain.
 
     Must be defined at module level so pickle can look up the class by qualified name when ddp_spawn deserialises it in
     the child process.

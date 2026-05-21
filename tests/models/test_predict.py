@@ -365,7 +365,7 @@ class TestPredictShape:
         ],
     )
     def test_predict_shape_accepts_integer_like_types(self, int_shape: tuple) -> None:
-        """predict() accepts integer-like types (numpy, torch) via the __index__ protocol."""
+        """Predict() accepts integer-like types (numpy, torch) via the __index__ protocol."""
         from unittest.mock import patch
 
         import torchvision.transforms.functional as F  # noqa: N812
@@ -387,7 +387,7 @@ class TestPredictShape:
         ],
     )
     def test_predict_shape_not_divisible_by_14_raises(self, bad_shape: tuple[int, int]) -> None:
-        """predict() must reject shapes with dimensions not divisible by 14."""
+        """Predict() must reject shapes with dimensions not divisible by 14."""
         model = _DummyRFDETR()
         img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
         with pytest.raises(ValueError, match="divisible by 14"):
@@ -408,7 +408,7 @@ class TestPredictShape:
         ],
     )
     def test_predict_shape_invalid_raises(self, bad_shape: tuple[int | float | bool, ...]) -> None:
-        """predict() must raise ValueError for invalid shape values."""
+        """Predict() must raise ValueError for invalid shape values."""
         model = _DummyRFDETR()
         img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
         with pytest.raises(ValueError, match="shape"):
@@ -416,7 +416,7 @@ class TestPredictShape:
 
 
 class TestPredictPatchSize:
-    """predict() patch_size resolution and validation tests."""
+    """Predict() patch_size resolution and validation tests."""
 
     def _make_model_with_config(self, patch_size: int, num_windows: int) -> _DummyRFDETR:
         """Return a _DummyRFDETR whose model_config carries patch_size and num_windows."""
@@ -427,7 +427,7 @@ class TestPredictPatchSize:
         return model
 
     def test_predict_defaults_patch_size_from_model_config(self) -> None:
-        """predict() reads patch_size from model_config when not provided by the caller."""
+        """Predict() reads patch_size from model_config when not provided by the caller."""
         # patch_size=16, num_windows=2 → block_size=32; shape=(64,64) is valid
         model = self._make_model_with_config(patch_size=16, num_windows=2)
         img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
@@ -435,7 +435,7 @@ class TestPredictPatchSize:
         model.predict(img, shape=(64, 64))
 
     def test_predict_shape_must_be_divisible_by_block_size(self) -> None:
-        """predict() rejects shapes not divisible by patch_size * num_windows."""
+        """Predict() rejects shapes not divisible by patch_size * num_windows."""
         # patch_size=16, num_windows=2 → block_size=32; shape (48, 64) fails (48%32==16)
         model = self._make_model_with_config(patch_size=16, num_windows=2)
         img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
@@ -444,14 +444,14 @@ class TestPredictPatchSize:
 
     @pytest.mark.parametrize("bad_patch_size", [0, -1, True, False])
     def test_predict_invalid_patch_size_raises(self, bad_patch_size: int) -> None:
-        """predict() must raise ValueError when patch_size is not a positive integer."""
+        """Predict() must raise ValueError when patch_size is not a positive integer."""
         model = _DummyRFDETR()
         img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
         with pytest.raises(ValueError, match="patch_size must be a positive integer"):
             model.predict(img, patch_size=bad_patch_size)  # type: ignore[arg-type]
 
     def test_predict_patch_size_mismatch_raises(self) -> None:
-        """predict() must raise ValueError when caller's patch_size != model_config.patch_size."""
+        """Predict() must raise ValueError when caller's patch_size != model_config.patch_size."""
         # model has patch_size=16; passing patch_size=14 should raise immediately
         model = self._make_model_with_config(patch_size=16, num_windows=1)
         img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
@@ -468,7 +468,7 @@ class TestPredictPatchSize:
 
     @pytest.mark.parametrize("bad_num_windows", [0, -1, True])
     def test_predict_invalid_num_windows_raises(self, bad_num_windows: int) -> None:
-        """predict() must raise ValueError when model_config.num_windows is not a positive integer."""
+        """Predict() must raise ValueError when model_config.num_windows is not a positive integer."""
         model = self._make_model_with_config(patch_size=14, num_windows=1)
         model.model_config.num_windows = bad_num_windows
         img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
@@ -476,7 +476,7 @@ class TestPredictPatchSize:
             model.predict(img, shape=(14, 14))
 
     def test_predict_default_resolution_not_divisible_by_block_size_raises(self) -> None:
-        """predict() with shape=None must raise ValueError when model.resolution % block_size != 0."""
+        """Predict() with shape=None must raise ValueError when model.resolution % block_size != 0."""
         # patch_size=14, num_windows=1 → block_size=14; set resolution=25 (not divisible)
         model = self._make_model_with_config(patch_size=14, num_windows=1)
         model.model.resolution = 25
@@ -499,7 +499,7 @@ class TestPredictClassNameData:
         return model
 
     def test_class_name_key_present_in_detections_data(self) -> None:
-        """predict() must include 'class_name' in detections.data when class_names is set."""
+        """Predict() must include 'class_name' in detections.data when class_names is set."""
         model = self._make_model_with_class_names(["cat", "dog"], labels=[0])
         img = PIL.Image.new("RGB", (28, 28))
         detections = model.predict(img)
@@ -665,7 +665,8 @@ class TestPredictClassNameData:
         When num_classes=90 and class_names has 80 entries, class_id 18 must resolve to 'dog' (COCO category 18), not
         'sheep' (COCO_CLASS_NAMES[18] via 0-indexed lookup).
 
-        Regression test for https://github.com/roboflow/rf-detr/issues/988.
+        Regression test for
+        https://github.com/roboflow/rf-detr/issues/988.
         """
         from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
 
@@ -687,7 +688,9 @@ class TestPredictClassNameData:
         RF-DETR pretrained checkpoints (e.g. RFDETRSegSmall) can have dataset_file='roboflow' even though they were
         trained on COCO. The fix must not depend on dataset_file value.
 
-        Regression test for https://github.com/roboflow/rf-detr/issues/988 (post-revert follow-up).
+        Regression test for
+        https://github.com/roboflow/rf-detr/issues/988
+        (post-revert follow-up).
         """
         from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
 
@@ -743,7 +746,7 @@ class TestPredictClassNameData:
         )
 
     def test_coco_names_without_model_args_fires_warning(self) -> None:
-        """predict() must warn when COCO class_names present but model has no 'args' attribute.
+        """Predict() must warn when COCO class_names present but model has no 'args' attribute.
 
         Without args, num_logit_slots falls back to n so _is_coco_pretrained stays False. The warning is the caller's
         only signal that sparse COCO-ID mapping cannot activate, which may cause wrong class names for pretrained COCO

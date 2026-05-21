@@ -3,7 +3,6 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Tests for the ONNX → TFLite export pipeline.
 
 Tests cover:
@@ -330,7 +329,7 @@ class TestExportTfliteConverter:
         fake_onnx2tf: Any,
         mock_prepare_calib: Any,
     ) -> None:
-        """int8 export derives a dynamic-range model and avoids onnx2tf's -oiqt path.
+        """Int8 export derives a dynamic-range model and avoids onnx2tf's -oiqt path.
 
         onnx2tf's ``output_integer_quantized_tflite`` (-oiqt) only yields static quantization, which RF-DETR's
         transformer activations do not survive. The converter instead builds dynamic-range INT8 from the SavedModel via

@@ -3,7 +3,6 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Tests for TFLite inference helpers.
 
 Covers:
@@ -233,7 +232,7 @@ class TestRunInference:
         assert len(dets) == 0
 
     def test_boxes_in_pixel_space(self, rgb_image: Path) -> None:
-        """xyxy coordinates are scaled to image pixel dimensions, not 0–1 range."""
+        """Xyxy coordinates are scaled to image pixel dimensions, not 0–1 range."""
         img_size = (200, 100)  # (width, height) for PIL
         PILImage.new("RGB", img_size, color=(100, 150, 200)).save(rgb_image)
 
@@ -331,7 +330,7 @@ class TestSigmoidScoring:
         assert len(dets) == 0
 
     def test_multiclass_class_id_is_argmax_of_logits(self, rgb_image: Path) -> None:
-        """argmax of sigmoid equals argmax of logits; query with [5,2,1,...] gets class_id==0."""
+        """Argmax of sigmoid equals argmax of logits; query with [5,2,1,...] gets class_id==0."""
         # Shape (1, 10, 82): first query has logits [5, 2, 1, 0, ...], rest are -100
         logits = np.full((1, 10, 82), -100.0, dtype=np.float32)
         logits[0, 0, 0] = 5.0

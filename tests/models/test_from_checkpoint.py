@@ -3,11 +3,11 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Tests for RFDETR.from_checkpoint classmethod.
 
 The inference logic is isolated by patching ``torch.load`` and the target model class inside ``rfdetr.variants`` (or
-``rfdetr.platform.models`` for plus models).  No model weights are downloaded or GPU memory allocated."""
+``rfdetr.platform.models`` for plus models).  No model weights are downloaded or GPU memory allocated.
+"""
 
 from __future__ import annotations
 
@@ -38,8 +38,7 @@ def _dict(pretrain_weights: str, num_classes: int = 80) -> dict:
 
 
 def _call_from_checkpoint(ckpt: dict, path: Path, cls_patch_target: str, **kwargs):
-    """
-    Invoke RFDETR.from_checkpoint with torch.load mocked to return *ckpt* and the model class at *cls_patch_target*
+    """Invoke RFDETR.from_checkpoint with torch.load mocked to return *ckpt* and the model class at *cls_patch_target*
     replaced by a MagicMock.
 
     Returns:
@@ -207,7 +206,7 @@ class TestFromCheckpointEdgeCases:
 
     @pytest.mark.skipif(_IS_RFDETR_PLUS_AVAILABLE, reason="rfdetr_plus is installed — guard not active")
     def test_characterization_xlarge_without_plus_raises_import_error(self, tmp_path: Path) -> None:
-        """xlarge checkpoint without rfdetr_plus raises ImportError instead of wrong class."""
+        """Xlarge checkpoint without rfdetr_plus raises ImportError instead of wrong class."""
         for weights in ("rf-detr-xlarge.pth", "rf-detr-xxlarge.pth"):
             ckpt = _ns(weights)
             with patch("rfdetr.detr.torch.load", return_value=ckpt):

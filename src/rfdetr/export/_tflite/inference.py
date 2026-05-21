@@ -3,12 +3,12 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """TFLite inference helpers for RF-DETR exported models.
 
 These functions handle interpreter creation, image preprocessing, and decoding of detection and segmentation-mask
 outputs without requiring PyTorch or the RF-DETR training stack: only ``tflite-runtime`` (or ``tensorflow``), ``numpy``,
-``supervision``, and ``Pillow`` are needed at inference time."""
+``supervision``, and ``Pillow`` are needed at inference time.
+"""
 
 from __future__ import annotations
 

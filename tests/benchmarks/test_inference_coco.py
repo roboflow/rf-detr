@@ -22,7 +22,8 @@ Test functions:
   segmentation models (Nano through 2XLarge).
 - :func:`test_inference_detection_ptl_predict` — ``trainer.predict()`` exercises
   the PTL predict loop (50 samples) then asserts mAP via ``Trainer.validate``.
-- :func:`test_inference_segmentation_ptl_predict` — same for segmentation models."""
+- :func:`test_inference_segmentation_ptl_predict` — same for segmentation models.
+"""
 
 import os
 from pathlib import Path

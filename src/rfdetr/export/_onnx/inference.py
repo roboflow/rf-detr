@@ -3,12 +3,12 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """ONNX Runtime inference helpers for RF-DETR exported models.
 
 These functions handle session creation, image preprocessing, and detection decoding without requiring PyTorch or
 the RF-DETR training stack — only ``onnxruntime``, ``numpy``, ``supervision``, and ``Pillow`` are needed at inference
-time."""
+time.
+"""
 
 from __future__ import annotations
 

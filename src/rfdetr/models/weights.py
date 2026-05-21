@@ -3,7 +3,6 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Shared weight-loading and LoRA application utilities.
 
 Provides the canonical implementations of pretrained checkpoint loading and LoRA adapter injection, used by both the L1
@@ -11,7 +10,8 @@ inference facade (``rfdetr.detr``) and the L2 LightningModule (``rfdetr.training
 
 The weight-loading logic is taken from ``RFDETRModelModule._load_pretrain_weights`` in ``module_model.py`` (more
 complete: Pydantic-aware user-override detection, auto-alignment for fine-tuned checkpoints) and augmented with
-class-name extraction from ``detr.py:_load_pretrain_weights_into``."""
+class-name extraction from ``detr.py:_load_pretrain_weights_into``.
+"""
 
 from __future__ import annotations
 

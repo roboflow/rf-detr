@@ -12,9 +12,7 @@
 # Copied from DETR (https://github.com/facebookresearch/detr)
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 # ------------------------------------------------------------------------
-
-"""
-COCO dataset which returns image_id for evaluation.
+"""COCO dataset which returns image_id for evaluation.
 
 Mostly copy-paste from https://github.com/pytorch/vision/blob/13b35ff/references/detection/coco_utils.py
 """
@@ -481,8 +479,7 @@ def make_coco_transforms_square_div_64(
     aug_config: Optional[Dict[str, Dict[str, Any]]] = None,
     gpu_postprocess: bool = False,
 ) -> Compose:
-    """
-    Create COCO transforms with square resizing where the output size is divisible by 64.
+    """Create COCO transforms with square resizing where the output size is divisible by 64.
 
     This function builds a torchvision-style transform pipeline for COCO images that resizes them to square shapes
     suitable for models that require spatial dimensions divisible by 64. It supports multi-scale training and optional

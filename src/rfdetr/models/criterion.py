@@ -7,7 +7,6 @@
 # Original copyrights: LW-DETR (Baidu), Conditional DETR (Microsoft),
 # DETR (Facebook), Deformable DETR (SenseTime)
 # ------------------------------------------------------------------------
-
 """Loss functions and criterion for RF-DETR training."""
 
 import torch
@@ -82,8 +81,7 @@ def dice_loss(
     targets: torch.Tensor,
     num_masks: float,
 ):
-    """
-    Compute the DICE loss, similar to generalized IOU for masks
+    """Compute the DICE loss, similar to generalized IOU for masks.
 
     Args:
         inputs: A float tensor of arbitrary shape.
@@ -128,7 +126,9 @@ sigmoid_ce_loss_jit = torch.jit.script(sigmoid_ce_loss)  # type: torch.jit.Scrip
 
 
 class SetCriterion(nn.Module):
-    """This class computes the loss for Conditional DETR. The process happens in two steps:
+    """This class computes the loss for Conditional DETR.
+
+    The process happens in two steps:
     1) we compute Hungarian assignment between ground truth boxes and the outputs of the model.
     2) we supervise each pair of matched ground-truth / prediction (supervise class and box).
     """
@@ -148,6 +148,7 @@ class SetCriterion(nn.Module):
         mask_point_sample_ratio: int = 16,
     ):
         """Create the criterion.
+
         Parameters:
             num_classes: number of object categories, omitting the special no-object category
             matcher: module able to compute a matching between targets and proposals
@@ -170,9 +171,8 @@ class SetCriterion(nn.Module):
         self.mask_point_sample_ratio = mask_point_sample_ratio
 
     def loss_labels(self, outputs, targets, indices, num_boxes, log=True):
-        """Classification loss (Binary focal loss)
-        targets dicts must contain the key "labels" containing a tensor of dim [nb_target_boxes]
-        """
+        """Classification loss (Binary focal loss) targets dicts must contain the key "labels" containing a tensor of
+        dim [nb_target_boxes]"""
         assert "pred_logits" in outputs
         src_logits = outputs["pred_logits"]
 
@@ -316,8 +316,10 @@ class SetCriterion(nn.Module):
 
     @torch.no_grad()
     def loss_cardinality(self, outputs, targets, indices, num_boxes):
-        """Compute the cardinality error, ie the absolute error in the number of predicted non-empty boxes
-        This is not really a loss, it is intended for logging purposes only. It doesn't propagate gradients
+        """Compute the cardinality error, ie the absolute error in the number of predicted non-empty boxes This is not
+        really a loss, it is intended for logging purposes only.
+
+        It doesn't propagate gradients
         """
         pred_logits = outputs["pred_logits"]
         device = pred_logits.device
@@ -329,10 +331,9 @@ class SetCriterion(nn.Module):
         return losses
 
     def loss_boxes(self, outputs, targets, indices, num_boxes):
-        """Compute the losses related to the bounding boxes, the L1 regression loss and the GIoU loss
-        targets dicts must contain the key "boxes" containing a tensor of dim [nb_target_boxes, 4]
-        The target boxes are expected in format (center_x, center_y, w, h), normalized by the image size.
-        """
+        """Compute the losses related to the bounding boxes, the L1 regression loss and the GIoU loss targets dicts must
+        contain the key "boxes" containing a tensor of dim [nb_target_boxes, 4] The target boxes are expected in format
+        (center_x, center_y, w, h), normalized by the image size."""
         assert "pred_boxes" in outputs
         idx = self._get_src_permutation_idx(indices)
         src_boxes = outputs["pred_boxes"][idx]
@@ -354,6 +355,7 @@ class SetCriterion(nn.Module):
 
     def loss_masks(self, outputs, targets, indices, num_boxes):
         """Compute BCE-with-logits and Dice losses for segmentation masks on matched pairs.
+
         Expects outputs to contain 'pred_masks' of shape [B, Q, H, W] and targets with key 'masks'.
         """
         assert "pred_masks" in outputs, "pred_masks missing in model outputs"
@@ -473,6 +475,7 @@ class SetCriterion(nn.Module):
 
     def forward(self, outputs, targets):
         """This performs the loss computation.
+
         Parameters:
              outputs: dict of tensors, see the output specification of the model for the format
              targets: list of dicts, such that len(targets) == batch_size.

@@ -26,8 +26,7 @@ def save_gt_predictions_visualization(
     pred_ious: list[float | None],
     save_dir: Path,
 ) -> None:
-    """
-    Save a visualization image showing both GT and prediction boxes.
+    """Save a visualization image showing both GT and prediction boxes.
 
     Boxes are labeled with class ID and confidence (for predictions). For predictions with known IoU, the IoU value is
     also shown.

@@ -23,7 +23,7 @@ class Joiner(nn.Sequential):
         self._export = False
 
     def forward(self, tensor_list: NestedTensor):
-        """ """
+        """"""
         x = self[0](tensor_list)
         pos = []
         for x_ in x:

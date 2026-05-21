@@ -3,11 +3,11 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Package-level pytest fixtures for tests/training/.
 
 Provides cross-test cleanup that prevents class-level state from leaking between individual tests in the training/ test
-package, plus shared config factory fixtures used across multiple test modules."""
+package, plus shared config factory fixtures used across multiple test modules.
+"""
 
 import pytest
 

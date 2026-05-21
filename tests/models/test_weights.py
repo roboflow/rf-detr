@@ -3,11 +3,11 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Unit tests for ``rfdetr.models.weights`` — the unified weight-loading and LoRA module.
 
 These tests cover ``load_pretrain_weights`` and ``apply_lora`` directly, exercising the unified logic extracted from
-``detr.py`` and ``module_model.py``."""
+``detr.py`` and ``module_model.py``.
+"""
 
 from types import SimpleNamespace
 from unittest.mock import MagicMock, call, patch
@@ -500,8 +500,7 @@ class TestApplyLora:
 
 
 def _labelled_query_tensor(num_queries: int, group_detr: int, dim: int = 2) -> torch.Tensor:
-    """Build a query embedding tensor where row ``g * num_queries + q`` encodes
-    ``[g * 100 + q, 0, ...]``.
+    """Build a query embedding tensor where row ``g * num_queries + q`` encodes ``[g * 100 + q, 0, ...]``.
 
     This lets tests check the per-group ordering of the result without floating-point
     fuzz: the first column carries the (group, query) identity directly.
@@ -620,7 +619,7 @@ class TestSliceQueryParamPerGroup:
         tgt_g: int,
         expected_labels: list[int],
     ) -> None:
-        """min(target, ckpt) along each axis produces the correct per-group prefix."""
+        """Min(target, ckpt) along each axis produces the correct per-group prefix."""
         from rfdetr.models.weights import _slice_query_param_per_group
 
         tensor = _labelled_query_tensor(num_queries=ckpt_nq, group_detr=ckpt_g)
@@ -739,7 +738,7 @@ class TestLoadPretrainWeightsPerGroupQuerySlice:
         assert query_feat[:, 0].int().tolist() == expected
 
     def test_decreasing_group_detr_drops_tail_groups(self, monkeypatch, tmp_path):
-        """checkpoint(nq=4, g=3) → model(nq=4, g=2): tail group dropped, retained groups intact."""
+        """Checkpoint(nq=4, g=3) → model(nq=4, g=2): tail group dropped, retained groups intact."""
         from rfdetr.models.weights import load_pretrain_weights
 
         mc = RFDETRBaseConfig(

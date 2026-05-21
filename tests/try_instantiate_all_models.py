@@ -4,15 +4,14 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
-"""
-Comprehensive validation script to test model instantiation with all available weights.
+"""Comprehensive validation script to test model instantiation with all available weights.
 
 Tests detection and segmentation model classes from rf-detr by importing and instantiating them. Validates: imports,
 download, MD5 hash, model instantiation, and from_checkpoint round-trip.
 
 Usage:
-    python tests/try_instantiate_all_models.py"""
+    python tests/try_instantiate_all_models.py
+"""
 
 import argparse
 import os

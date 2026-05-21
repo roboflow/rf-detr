@@ -12,10 +12,7 @@
 # Copied from DETR (https://github.com/facebookresearch/detr)
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 # ------------------------------------------------------------------------
-
-"""
-Transforms and data augmentation for both image + bbox.
-"""
+"""Transforms and data augmentation for both image + bbox."""
 
 from __future__ import annotations
 

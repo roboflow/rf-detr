@@ -3,7 +3,6 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """ONNX → TFLite conversion using the ``onnx2tf`` library.
 
 ``onnx2tf`` (PINTO0309) converts an ONNX graph to TFLite.  **Version 2.4.0 or later is required** — earlier 1.x releases
@@ -57,7 +56,8 @@ Note:
 Note:
     Segmentation models additionally emit a ``masks`` output.  FP32, FP16, and dynamic-range INT8 all match the PyTorch
     baseline closely (INT8 mask fidelity is marginally lower).  Verified on the non-plus segmentation
-    variants: Nano, Small, Medium, Large, and Preview."""
+    variants: Nano, Small, Medium, Large, and Preview.
+"""
 
 from __future__ import annotations
 

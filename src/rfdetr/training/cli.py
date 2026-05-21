@@ -3,7 +3,6 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """LightningCLI entry point for RF-DETR training and evaluation.
 
 Provides the ``rfdetr`` command with auto-generated subcommands::
@@ -15,7 +14,8 @@ Provides the ``rfdetr`` command with auto-generated subcommands::
 
 Both ``RFDETRModelModule`` and ``RFDETRDataModule`` share the same ``(model_config, train_config)`` constructor
 signature.  ``link_arguments`` eliminates the duplication so the user specifies each config group once; the datamodule
-receives the same values automatically at parse time."""
+receives the same values automatically at parse time.
+"""
 
 from pytorch_lightning.cli import LightningArgumentParser, LightningCLI
 

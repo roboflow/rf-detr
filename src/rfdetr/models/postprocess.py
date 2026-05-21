@@ -7,7 +7,6 @@
 # Original copyrights: LW-DETR (Baidu), Conditional DETR (Microsoft),
 # DETR (Facebook), Deformable DETR (SenseTime)
 # ------------------------------------------------------------------------
-
 """Post-processing module for converting model outputs to COCO API format."""
 
 import torch
@@ -18,7 +17,7 @@ from rfdetr.utilities import box_ops
 
 
 class PostProcess(nn.Module):
-    """This module converts the model's output into the format expected by the coco api"""
+    """This module converts the model's output into the format expected by the coco api."""
 
     def __init__(self, num_select=300) -> None:
         super().__init__()

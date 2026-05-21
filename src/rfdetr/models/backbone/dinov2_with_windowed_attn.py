@@ -29,7 +29,8 @@ Helper functions copied locally:
     ``get_aligned_output_features_output_indices`` and
     ``find_pruneable_heads_and_indices`` were removed from the transformers v5 public API.  Private copies
     (``_get_aligned_output_features_output_indices`` and ``_find_pruneable_heads_and_indices``)
-    are kept in this module."""
+    are kept in this module.
+"""
 
 import collections.abc
 import math
@@ -284,10 +285,9 @@ class WindowedDinov2WithRegistersConfig(BackboneConfigMixin, PretrainedConfig):
 
 
 class Dinov2WithRegistersPatchEmbeddings(nn.Module):
-    """
-    This class turns `pixel_values` of shape `(batch_size, num_channels, height, width)` into the initial
-    `hidden_states` (patch embeddings) of shape `(batch_size, seq_length, hidden_size)` to be consumed by a Transformer.
-    """
+    """This class turns `pixel_values` of shape `(batch_size, num_channels, height, width)` into the initial
+    `hidden_states` (patch embeddings) of shape `(batch_size, seq_length, hidden_size)` to be consumed by a
+    Transformer."""
 
     def __init__(self, config):
         super().__init__()
@@ -316,9 +316,7 @@ class Dinov2WithRegistersPatchEmbeddings(nn.Module):
 
 
 class WindowedDinov2WithRegistersEmbeddings(nn.Module):
-    """
-    Construct the CLS token, mask token, register tokens, position and patch embeddings.
-    """
+    """Construct the CLS token, mask token, register tokens, position and patch embeddings."""
 
     def __init__(self, config: WindowedDinov2WithRegistersConfig) -> None:
         super().__init__()
@@ -338,8 +336,7 @@ class WindowedDinov2WithRegistersEmbeddings(nn.Module):
         self.config = config
 
     def interpolate_pos_encoding(self, embeddings: torch.Tensor, height: int, width: int) -> torch.Tensor:
-        """
-        This method allows to interpolate the pre-trained position encodings, to be able to use the model on higher
+        """This method allows to interpolate the pre-trained position encodings, to be able to use the model on higher
         resolution images. This implementation supports torch.jit tracing while maintaining backwards compatibility with
         the original implementation.
 
@@ -568,10 +565,8 @@ class Dinov2WithRegistersSdpaSelfAttention(Dinov2WithRegistersSelfAttention):
 
 
 class Dinov2WithRegistersSelfOutput(nn.Module):
-    """
-    The residual connection is defined in Dinov2WithRegistersLayer instead of here (as is the case with other models),
-    due to the layernorm applied before each block.
-    """
+    """The residual connection is defined in Dinov2WithRegistersLayer instead of here (as is the case with other
+    models), due to the layernorm applied before each block."""
 
     def __init__(self, config: WindowedDinov2WithRegistersConfig) -> None:
         super().__init__()
@@ -639,8 +634,7 @@ class Dinov2WithRegistersLayerScale(nn.Module):
 
 
 def drop_path(input: torch.Tensor, drop_prob: float = 0.0, training: bool = False) -> torch.Tensor:
-    """
-    Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks).
+    """Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks).
 
     Comment by Ross Wightman: This is the same as the DropConnect impl I created for EfficientNet, etc networks,
     however, the original name is misleading as 'Drop Connect' is a different form of dropout in a separate paper... See
@@ -842,10 +836,8 @@ class WindowedDinov2WithRegistersEncoder(nn.Module):
 
 
 class WindowedDinov2WithRegistersPreTrainedModel(PreTrainedModel):
-    """
-    An abstract class to handle weights initialization and a simple interface for downloading and loading pretrained
-    models.
-    """
+    """An abstract class to handle weights initialization and a simple interface for downloading and loading pretrained
+    models."""
 
     config_class = WindowedDinov2WithRegistersConfig
     base_model_prefix = "dinov2_with_registers"
@@ -855,7 +847,7 @@ class WindowedDinov2WithRegistersPreTrainedModel(PreTrainedModel):
     _supports_sdpa = True
 
     def _init_weights(self, module: Union[nn.Linear, nn.Conv2d, nn.LayerNorm]) -> None:
-        """Initialize the weights"""
+        """Initialize the weights."""
         if isinstance(module, (nn.Linear, nn.Conv2d)):
             # Upcast the input in `fp32` and cast it back to desired `dtype` to avoid
             # `trunc_normal_cpu` not implemented in `half` issues
@@ -934,8 +926,9 @@ class WindowedDinov2WithRegistersModel(WindowedDinov2WithRegistersPreTrainedMode
         return self.embeddings.patch_embeddings
 
     def _prune_heads(self, heads_to_prune: Dict[int, List[int]]) -> None:
-        """
-        Prunes heads of the model. heads_to_prune: dict of {layer_num: list of heads to prune in this layer} See base
+        """Prunes heads of the model.
+
+        heads_to_prune: dict of {layer_num: list of heads to prune in this layer} See base
         class PreTrainedModel
         """
         for layer, heads in heads_to_prune.items():
@@ -1102,8 +1095,8 @@ class WindowedDinov2WithRegistersForImageClassification(WindowedDinov2WithRegist
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
     ) -> Union[tuple, ImageClassifierOutput]:
-        r"""
-        labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
+        r"""Labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
+
             Labels for computing the image classification/regression loss. Indices should be in `[0, ...,
             config.num_labels - 1]`. If `config.num_labels == 1` a regression loss is computed (Mean-Square loss), If
             `config.num_labels > 1` a classification loss is computed (Cross-Entropy).

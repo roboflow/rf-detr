@@ -14,7 +14,6 @@
 # Copied from DETR (https://github.com/facebookresearch/detr)
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 # ------------------------------------------------------------------------
-
 """Deprecated: most symbols have moved to ``rfdetr.utilities``.
 
 ``accuracy``, ``inverse_sigmoid``, and ``interpolate`` now live in ``rfdetr.models.math`` and are re-exported here for

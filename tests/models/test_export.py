@@ -3,16 +3,15 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
-"""
-Tests for model export functionality.
+"""Tests for model export functionality.
 
 Use cases covered:
 - Segmentation outputs must be present in both train/eval modes to avoid export crashes.
 - Export should not change the original model's training state.
 - CLI export path (deploy.export.main) must include 'masks' in output_names for
   segmentation models, call make_infer_image with the correct individual args, and call export_onnx with args.output_dir
-  as the first argument."""
+  as the first argument.
+"""
 
 import importlib.util
 import inspect
@@ -189,9 +188,8 @@ def test_rfdetr_export_dynamic_batch_forwards_dynamic_axes(
     dynamic_batch: bool,
     segmentation_head: bool,
 ) -> None:
-    """`RFDETR.export(..., dynamic_batch=True)` must pass a non-None `dynamic_axes` dict
-    to `export_onnx`; `dynamic_batch=False` must pass `None`.
-    """
+    """`RFDETR.export(..., dynamic_batch=True)` must pass a non-None `dynamic_axes` dict to `export_onnx`;
+    `dynamic_batch=False` must pass `None`."""
 
     model = types.SimpleNamespace(
         model=types.SimpleNamespace(
@@ -278,8 +276,7 @@ def test_segmentation_outputs_present_in_train_and_eval(mode: Literal["train", "
 
 
 class TestCliExportMain:
-    """
-    Unit tests for deploy.export.main() (CLI export path).
+    """Unit tests for deploy.export.main() (CLI export path).
 
     Three bugs were present before the fix:
     1. output_names omitted 'masks' for segmentation models.
@@ -326,8 +323,7 @@ class TestCliExportMain:
 
     @staticmethod
     def _run(args: types.SimpleNamespace) -> tuple[dict, dict]:
-        """
-        Run deploy.export.main(args) with all heavy dependencies mocked.
+        """Run deploy.export.main(args) with all heavy dependencies mocked.
 
         Stubs out build_model, make_infer_image, and export_onnx, and injects mock onnx/onnxsim modules so the export
         module can be imported even when those optional packages are not installed.
@@ -404,12 +400,11 @@ class TestCliExportMain:
         backbone_only: bool,
         expected_output_names: list[str],
     ) -> None:
-        """
-        export_onnx must receive the correct output_names for every model type.
+        """export_onnx must receive the correct output_names for every model type.
 
         Before the fix, deploy/export.py line 253 used:
 
-            output_names = ['features'] if args.backbone_only else ['dets', 'labels']
+        output_names = ['features'] if args.backbone_only else ['dets', 'labels']
 
         which always omitted 'masks' for segmentation models.
         """
@@ -424,12 +419,12 @@ class TestCliExportMain:
         assert actual == expected_output_names, f"expected output_names={expected_output_names}, got {actual!r}"
 
     def test_make_infer_image_receives_individual_fields(self, output_dir: str) -> None:
-        """
-        make_infer_image must be called with (infer_dir, shape, batch_size, device), not with the whole args Namespace.
+        """make_infer_image must be called with (infer_dir, shape, batch_size, device), not with the whole args
+        Namespace.
 
         Before the fix, deploy/export.py line 251 used:
 
-            input_tensors = make_infer_image(args, device)
+        input_tensors = make_infer_image(args, device)
         """
         shape = (640, 640)
         batch_size = 2
@@ -446,13 +441,12 @@ class TestCliExportMain:
         assert pos[:3] == (infer_dir, shape, batch_size), f"expected (infer_dir, shape, batch_size), got {pos[:3]!r}"
 
     def test_export_onnx_receives_output_dir_and_kwargs(self, output_dir: str) -> None:
-        """
-        export_onnx must be called as export_onnx(output_dir, model, ...) with backbone_only, verbose, and opset_version
-        forwarded as keyword args.
+        """export_onnx must be called as export_onnx(output_dir, model, ...) with backbone_only, verbose, and
+        opset_version forwarded as keyword args.
 
         Before the fix, deploy/export.py line 294 used:
 
-            export_onnx(model, args, input_names, input_tensors, output_names, dynamic_axes)
+        export_onnx(model, args, input_names, input_tensors, output_names, dynamic_axes)
 
         which swapped output_dir/model and dropped all keyword args.
         """
@@ -610,7 +604,7 @@ class TestExportPatchSize:
     def test_export_invalid_patch_size_raises(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bad_patch_size: int
     ) -> None:
-        """export() must raise ValueError when patch_size is not a positive integer."""
+        """Export() must raise ValueError when patch_size is not a positive integer."""
         model = self._scaffold(monkeypatch, tmp_path, patch_size=14, num_windows=4)
         # Keep model_config.patch_size consistent with the patch_size argument for this test
         model.model_config.patch_size = bad_patch_size
@@ -620,7 +614,7 @@ class TestExportPatchSize:
     def test_export_shape_must_be_divisible_by_block_size(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """export() must reject shapes not divisible by patch_size * num_windows."""
+        """Export() must reject shapes not divisible by patch_size * num_windows."""
         # patch_size=16, num_windows=2 → block_size=32; shape (48, 64): 48 % 32 != 0
         model = self._scaffold(monkeypatch, tmp_path, patch_size=16, num_windows=2)
         with pytest.raises(ValueError, match="divisible by 32"):
@@ -638,13 +632,13 @@ class TestExportPatchSize:
     def test_export_negative_or_zero_shape_raises(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bad_shape: tuple[int, int]
     ) -> None:
-        """export() must reject non-positive shape dimensions (Python -N % M == 0 wraps silently)."""
+        """Export() must reject non-positive shape dimensions (Python -N % M == 0 wraps silently)."""
         model = self._scaffold(monkeypatch, tmp_path, patch_size=16, num_windows=2)
         with pytest.raises(ValueError, match="positive integers"):
             _detr_module.RFDETR.export(model, output_dir=str(tmp_path), shape=bad_shape)
 
     def test_export_shape_valid_for_block_size(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        """export() accepts shape divisible by patch_size * num_windows without error."""
+        """Export() accepts shape divisible by patch_size * num_windows without error."""
         # patch_size=16, num_windows=2 → block_size=32; shape (64, 64) is valid
         model = self._scaffold(monkeypatch, tmp_path, patch_size=16, num_windows=2)
         # Should not raise
@@ -654,7 +648,7 @@ class TestExportPatchSize:
     def test_export_bool_patch_size_raises(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bad_patch_size: bool
     ) -> None:
-        """export() must reject bool values for patch_size (isinstance(True, int) is True)."""
+        """Export() must reject bool values for patch_size (isinstance(True, int) is True)."""
         model = self._scaffold(monkeypatch, tmp_path, patch_size=14, num_windows=1)
         with pytest.raises(ValueError, match="patch_size must be a positive integer"):
             _detr_module.RFDETR.export(model, output_dir=str(tmp_path), patch_size=bad_patch_size)
@@ -680,7 +674,7 @@ class TestExportPatchSize:
     def test_export_invalid_shape_type_raises(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bad_shape: tuple
     ) -> None:
-        """export() must raise ValueError for float, bool, or wrong-arity shape tuples."""
+        """Export() must raise ValueError for float, bool, or wrong-arity shape tuples."""
         model = self._scaffold(monkeypatch, tmp_path, patch_size=14, num_windows=1)
         with pytest.raises(ValueError, match="shape"):
             _detr_module.RFDETR.export(model, output_dir=str(tmp_path), shape=bad_shape)
@@ -689,7 +683,7 @@ class TestExportPatchSize:
     def test_export_invalid_num_windows_raises(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bad_num_windows: int
     ) -> None:
-        """export() must raise ValueError when model_config.num_windows is not a positive integer."""
+        """Export() must raise ValueError when model_config.num_windows is not a positive integer."""
         model = self._scaffold(monkeypatch, tmp_path, patch_size=14, num_windows=1)
         model.model_config.num_windows = bad_num_windows
         with pytest.raises(ValueError, match="num_windows must be a positive integer"):
@@ -698,7 +692,7 @@ class TestExportPatchSize:
     def test_export_default_resolution_not_divisible_by_block_size_raises(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """export() with shape=None must raise ValueError when model.resolution % block_size != 0."""
+        """Export() with shape=None must raise ValueError when model.resolution % block_size != 0."""
         # patch_size=14, num_windows=3 → block_size=42; scaffold sets resolution=84 (42*2) which is valid
         # Override resolution to 50 (not divisible by 42) to trigger the check
         model = self._scaffold(monkeypatch, tmp_path, patch_size=14, num_windows=3)
