@@ -24,7 +24,7 @@ Developed by Isaac Robinson, Peter Robicheaux, Fedor Popov, Deva Ramanan (CMU), 
 
 ## Install
 
-You can install and use `rfdetr` in a [**Python>=3.10**](https://www.python.org/) environment. For detailed installation instructions, including installing from source, and setting up a local development environment, check out our [install](learn/install.md) page.
+You can install and use `rfdetr` in a [**Python>=3.10**](https://www.python.org/) environment. For detailed installation instructions, including installing from source, and setting up a local development environment, check out our [install](getting-started/install.md) page.
 
 !!! example "Installation"
 

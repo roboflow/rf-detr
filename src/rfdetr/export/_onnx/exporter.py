@@ -6,12 +6,10 @@
 # Copied and modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
 # Copyright (c) 2024 Baidu. All Rights Reserved.
 # ------------------------------------------------------------------------
-
-"""
-ONNX export, simplification, and OnnxOptimizer.
-"""
+"""ONNX export, simplification, and OnnxOptimizer."""
 
 import inspect
+import json
 import os
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
@@ -62,6 +60,8 @@ def export_onnx(
     verbose: bool = True,
     opset_version: int = 17,
     variant_name: str | None = None,
+    *,
+    notes: object = None,
 ) -> str:
     """Export a model to ONNX.
 
@@ -76,9 +76,12 @@ def export_onnx(
         verbose: Whether ONNX exporter should emit verbose logs.
         opset_version: ONNX opset version.
         variant_name: Model variant identifier (e.g. ``"rfdetr-medium"``).
-            When provided, the exported file is named ``{variant_name}.onnx`` or
-            ``{variant_name}-backbone.onnx`` (when ``backbone_only=True``) instead
-            of the generic ``inference_model.onnx`` or ``backbone_model.onnx``.
+            When provided, the exported file is named ``{variant_name}.onnx`` or ``{variant_name}-backbone.onnx`` (when
+            ``backbone_only=True``) instead of the generic ``inference_model.onnx`` or ``backbone_model.onnx``.
+        notes: Optional user-defined metadata (string, dict, list, or any
+            JSON-serialisable value) to embed in the exported ONNX model under the ``"rfdetr_notes"`` metadata property.
+            Ignored when ``None``. String values are stored verbatim; all other types are JSON-encoded, so consumers
+            must call ``json.loads()`` to recover a dict or list.
 
     Returns:
         Path to the exported ONNX model.
@@ -115,6 +118,22 @@ def export_onnx(
         dynamic_axes=dynamic_axes,
         **export_kwargs,
     )
+
+    if notes is not None and onnx is not None:
+        # torch.onnx.export writes to disk only; no in-memory handle is available,
+        # so we reload and resave to inject metadata (~1-2 s on large models).
+        onnx_model = onnx.load(output_file)
+        # Strings stored as-is so readers can consume without JSON-decoding;
+        # non-strings go through json.dumps to survive the round-trip.
+        notes_value = notes if isinstance(notes, str) else json.dumps(notes, allow_nan=False)
+        existing = next((p for p in onnx_model.metadata_props if p.key == "rfdetr_notes"), None)
+        if existing is not None:
+            existing.value = notes_value
+        else:
+            meta = onnx_model.metadata_props.add()
+            meta.key = "rfdetr_notes"
+            meta.value = notes_value
+        onnx.save(onnx_model, output_file)
 
     logger.info(f"\nSuccessfully exported ONNX model: {output_file}")
     return output_file
@@ -198,7 +217,7 @@ class OnnxOptimizer:
         G_LOGGER.severity = severity
 
     def load_onnx(self, onnx_path: str):
-        """Load onnx from file"""
+        """Load onnx from file."""
         assert os.path.isfile(onnx_path), f"not found onnx file: {onnx_path}"
         onnx_graph = onnx.load(onnx_path)
         G_LOGGER.info(f"load onnx file: {onnx_path}")
@@ -260,12 +279,11 @@ class OnnxOptimizer:
             return onnx_graph
 
     def resize_fix(self):
-        """
-        This function loops through the graph looking for Resize nodes that uses scales for resize (has 3 inputs).
-        It substitutes found Resize with Resize that takes the size of the output tensor instead of scales.
-        It adds Shape->Slice->Concat
-                Shape->Slice----^     subgraph to the graph to extract the shape of the output tensor.
-        This fix is required for the dynamic shape support.
+        """This function loops through the graph looking for Resize nodes that uses scales for resize (has 3 inputs).
+
+        It substitutes found Resize with Resize that takes the size of the output tensor instead of scales. It adds
+        Shape->Slice->Concat         Shape->Slice----^     subgraph to the graph to extract the shape of the output
+        tensor. This fix is required for the dynamic shape support.
         """
         resized_node_count = 0
         for node in self.graph.nodes:

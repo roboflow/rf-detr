@@ -1,0 +1,29 @@
+{% extends "main.html" %}
+{% block libs %}
+{{ super() }}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.8/purify.min.js"></script>
+<link rel="stylesheet" href="{{ 'stylesheets/cookbooks_card.css' | url }}">
+<script src="{{ 'javascripts/cookbooks-card.js' | url }}"></script>
+{% endblock %}
+{% block content %}
+<section class="mdx-container portfolio-section">
+  <div class="md-grid md-typeset">
+    <div class="text-center">
+      <h1>RF-DETR Cookbooks</h1>
+      <p class="cookbooks-subtitle">Runnable notebooks for training, fine-tuning, exporting, and deploying RF-DETR models.</p>
+    </div>
+    <div class="custom-grid">
+      {% for card in config.extra.cookbooks_cards %}
+        <a href="{{ card.href }}">
+          <div class="card repo-card"
+             data-name="{{ card.name }}"
+             data-labels="{{ card.labels | join(',') }}"
+             data-version="{{ card.version }}"
+             data-author="{{ card.author }}"
+             data-description="{{ card.description }}"></div>
+        </a>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+{% endblock %}

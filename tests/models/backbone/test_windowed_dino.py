@@ -19,8 +19,8 @@ from rfdetr.models.backbone.dinov2_with_windowed_attn import (
 
 
 def test_window_partition_forward_rectangular_preserves_shapes():
-    """
-    Regression test for WindowedDinov2WithRegistersEmbeddings.forward with rectangular input.
+    """Regression test for WindowedDinov2WithRegistersEmbeddings.forward with rectangular input.
+
     Ensures window partitioning logic correctly handles H != W.
     """
     # Params: H_patches=6, W_patches=4, num_windows=2 -> 3x2 patches per window
@@ -62,11 +62,10 @@ def test_window_partition_forward_rectangular_preserves_shapes():
     ],
 )
 def test_window_partition_nonsquare_does_not_raise(hp, wp, num_windows):
-    """
-    Before the fix, the reshape used num_h_patches_per_window for the width
-    dimension, so the total element count mismatched and PyTorch raised a
-    RuntimeError for any non-square image.  The fix replaces that variable
-    with num_w_patches_per_window, making the operation valid for all shapes.
+    """Before the fix, the reshape used num_h_patches_per_window for the width dimension, so the total element count
+    mismatched and PyTorch raised a RuntimeError for any non-square image.
+
+    The fix replaces that variable with num_w_patches_per_window, making the operation valid for all shapes.
     """
     hidden_size, patch_size, nr = 32, 16, 0
     h, w = hp * patch_size, wp * patch_size
@@ -90,18 +89,14 @@ def test_window_partition_nonsquare_does_not_raise(hp, wp, num_windows):
 
 
 def test_window_partition_correct_window_content():
-    """
-    Verifies that after windowing each window contains the spatially correct
-    patch tokens — not just that the shape is right.
+    """Verifies that after windowing each window contains the spatially correct patch tokens — not just that the shape
+    is right.
 
-    Layout with hp=4, wp=6, num_windows=2 (2x2 grid of windows):
-      Window (0,0): rows 0-1, cols 0-2
-      Window (0,1): rows 0-1, cols 3-5
-      Window (1,0): rows 2-3, cols 0-2
-      Window (1,1): rows 2-3, cols 3-5
+    Layout with hp=4, wp=6, num_windows=2 (2x2 grid of windows):   Window (0,0): rows 0-1, cols 0-2   Window (0,1): rows
+    0-1, cols 3-5   Window (1,0): rows 2-3, cols 0-2   Window (1,1): rows 2-3, cols 3-5
 
-    Before the fix the reshape used num_h_patches_per_window for the width dim
-    so it raised an error and never produced window content at all.
+    Before the fix the reshape used num_h_patches_per_window for the width dim so it raised an error and never produced
+    window content at all.
     """
     hidden_size, patch_size, num_windows, nr = 1, 16, 2, 0
     hp, wp = 4, 6
@@ -169,13 +164,11 @@ def test_window_partition_correct_window_content():
 
 def test_buggy_reshape_raises_for_nonsquare():
     """
-    Directly demonstrates what the pre-fix code did: using num_h_patches_per_window
-    in the width position of the reshape causes a RuntimeError when the element count
-    is not divisible by the (wrong) shape.
+    Directly demonstrates what the pre-fix code did: using num_h_patches_per_window in the width position of the reshape
+    causes a RuntimeError when the element count is not divisible by the (wrong) shape.
 
-    With hidden_size=1 and hp=4, wp=6, num_windows=2 the total elements are 24 but
-    the buggy target dims (2,2,2,2,-1) require a non-integer last dimension,
-    so PyTorch raises RuntimeError.
+    With hidden_size=1 and hp=4, wp=6, num_windows=2 the total elements are 24 but the buggy target dims (2,2,2,2,-1)
+    require a non-integer last dimension, so PyTorch raises RuntimeError.
     """
     hp, wp = 4, 6  # non-square: width > height
     num_windows = 2
@@ -210,14 +203,11 @@ def test_buggy_reshape_raises_for_nonsquare():
 
 
 def test_buggy_reshape_silent_corruption_for_nonsquare():
-    """
-    When hidden_size happens to make the total element count divisible by the
-    buggy target shape, PyTorch does NOT raise — instead the last dimension is
-    inflated, which silently corrupts the tensor layout.
+    """When hidden_size happens to make the total element count divisible by the buggy target shape, PyTorch does NOT
+    raise — instead the last dimension is inflated, which silently corrupts the tensor layout.
 
-    Pre-fix with hp=4, wp=6, hidden_size=8, num_windows=2:
-      total elements = 1*4*6*8 = 192
-      buggy fixed dims = 2*2*2*2 = 16  →  last dim inferred as 192/16 = 12 (not 8)
+    Pre-fix with hp=4, wp=6, hidden_size=8, num_windows=2:   total elements = 1*4*6*8 = 192 buggy fixed dims = 2*2*2*2 =
+    16  →  last dim inferred as 192/16 = 12 (not 8)
 
     The fix ensures the correct reshape always yields a last dim equal to hidden_size.
     """
@@ -437,8 +427,8 @@ class TestSetAttnImplementation:
 def test_forward_validates_spatial_dims(h: int, w: int, num_windows: int, should_raise: bool) -> None:
     """WindowedDinov2WithRegistersEmbeddings raises ValueError for incompatible dims.
 
-    Both H and W must be divisible by patch_size * num_windows.  The check
-    must survive Python's -O flag (assert would be silently stripped).
+    Both H and W must be divisible by patch_size * num_windows.  The check must survive Python's -O flag (assert would
+    be silently stripped).
     """
     patch_size = 16
     config = WindowedDinov2WithRegistersConfig(

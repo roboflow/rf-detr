@@ -3,7 +3,6 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Tests for RFDETR.optimize_for_inference()."""
 
 from types import SimpleNamespace
@@ -49,7 +48,7 @@ class _FakeRFDETR(RFDETR):
 
 
 class TestOptimizeForInferenceDtype:
-    """dtype coercion and validation tests."""
+    """Dtype coercion and validation tests."""
 
     def test_string_dtype_float32_is_accepted(self) -> None:
         """Passing dtype='float32' (str) should be coerced to torch.float32."""

@@ -3,7 +3,6 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Regression tests for _namespace_from_configs() config forwarding."""
 
 import sys
@@ -17,8 +16,8 @@ from rfdetr.models._types import BuilderArgs
 
 
 class TestNamespaceForwarding:
-    """Verify that _namespace_from_configs() forwards TrainConfig fields that were
-    previously hardcoded to wrong defaults."""
+    """Verify that _namespace_from_configs() forwards TrainConfig fields that were previously hardcoded to wrong
+    defaults."""
 
     def _make_ns(self: "TestNamespaceForwarding", **tc_kwargs: Any) -> Any:
         """Build a namespace for tests with minimal default TrainConfig values."""
@@ -71,11 +70,10 @@ class TestNamespaceProtocol:
         assert isinstance(ns, BuilderArgs)
 
     def test_namespace_is_builderargs_instance(self) -> None:
-        """isinstance() check passes on all supported Python versions.
+        """Isinstance() check passes on all supported Python versions.
 
-        On Python 3.10/3.11 this is a structural no-op (no method members to
-        check).  On 3.12+ it verifies attribute presence.  The test documents
-        the intent regardless of Python version.
+        On Python 3.10/3.11 this is a structural no-op (no method members to check).  On 3.12+ it verifies attribute
+        presence.  The test documents the intent regardless of Python version.
         """
         ns = self._make_ns()
         assert isinstance(ns, BuilderArgs)
@@ -148,17 +146,17 @@ class TestNamespaceFieldOwnership:
 class TestBuildNamespaceDeprecated:
     """build_namespace() is a deprecated shim — verify the warning fires."""
 
-    def test_emits_deprecation_warning(self) -> None:
+    def test_emits_deprecation_warning(self, reset_build_namespace_warning_state) -> None:
         """Every call to build_namespace() must emit a DeprecationWarning."""
         from rfdetr._namespace import build_namespace
 
         mc = RFDETRBaseConfig(num_classes=80)
         tc = TrainConfig(dataset_dir="/tmp")
 
-        with pytest.warns(DeprecationWarning, match="build_namespace\\(\\) is deprecated"):
+        with pytest.warns(FutureWarning, match="build_namespace"):
             build_namespace(mc, tc)
 
-    def test_result_identical_to_namespace_from_configs(self) -> None:
+    def test_result_identical_to_namespace_from_configs(self, reset_build_namespace_warning_state) -> None:
         """build_namespace output must equal _namespace_from_configs output."""
         from rfdetr._namespace import build_namespace
         from rfdetr.models._defaults import MODEL_DEFAULTS
@@ -166,7 +164,7 @@ class TestBuildNamespaceDeprecated:
         mc = RFDETRBaseConfig(num_classes=80)
         tc = TrainConfig(dataset_dir="/tmp")
 
-        with pytest.warns(DeprecationWarning):
+        with pytest.warns(FutureWarning):
             ns_legacy = build_namespace(mc, tc)
         ns_new = _namespace_from_configs(mc, tc, MODEL_DEFAULTS)
 

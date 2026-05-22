@@ -112,7 +112,7 @@ class TestBuildRoboflowFromYoloAugConfig:
         assert kwargs["data_file"] == str(tmp_path / "data.yml")
 
     def test_auto_no_cuda_sets_gpu_postprocess_false(self) -> None:
-        """auto + no CUDA must keep CPU normalize by passing gpu_postprocess=False."""
+        """Auto + no CUDA must keep CPU normalize by passing gpu_postprocess=False."""
         args = self._make_args(square_resize_div_64=False, aug_config=None)
         args.augmentation_backend = "auto"
         with (
@@ -575,11 +575,9 @@ class TestExtractYoloClassNames:
     def test_class_names_dict_non_contiguous_raises(self, tmp_path: Path, yaml_content: str) -> None:
         """Dict 'names' with non-contiguous or non-zero-based keys must raise ValueError.
 
-        The downstream range check in _parse_yolo_label_line assumes class IDs
-        are a contiguous 0..N-1 range.  Silently accepting sparse keys would
-        cause valid label files to be rejected during parsing (e.g. class ID 2
-        in a 2-class dataset built from {0: cat, 2: dog} would exceed the
-        num_classes bound).
+        The downstream range check in _parse_yolo_label_line assumes class IDs are a contiguous 0..N-1 range.  Silently
+        accepting sparse keys would cause valid label files to be rejected during parsing (e.g. class ID 2 in a 2-class
+        dataset built from {0: cat, 2: dog} would exceed the num_classes bound).
         """
         data_file = tmp_path / "data.yaml"
         data_file.write_text(yaml_content, encoding="utf-8")

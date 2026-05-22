@@ -3,7 +3,6 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Regression tests for COCO dataset handling.
 
 Tests cover:
@@ -105,9 +104,8 @@ def _write_coco_json(path: Path, categories: List[Dict]) -> None:
 class TestLoadClassesHierarchy:
     """Regression tests for ``_load_classes`` supercategory filtering (#609).
 
-    When all categories have ``supercategory: "none"`` (flat COCO datasets),
-    ``_load_classes`` previously returned an empty list. It should only filter
-    when a Roboflow hierarchical export is detected.
+    When all categories have ``supercategory: "none"`` (flat COCO datasets), ``_load_classes`` previously returned an
+    empty list. It should only filter when a Roboflow hierarchical export is detected.
     """
 
     def test_roboflow_hierarchy_filters_parent(self, tmp_path: Path) -> None:
@@ -134,9 +132,8 @@ class TestLoadClassesHierarchy:
     def test_mixed_supercategories_keeps_all(self, tmp_path: Path) -> None:
         """Mix of 'none' and non-'none' supercategories where no category is a parent of another.
 
-        'animal' appears as a supercategory but is not itself a category name, so
-        ``has_children`` is empty and all categories pass the ``name not in has_children``
-        filter — both 'dog' and 'cat' are returned.
+        'animal' appears as a supercategory but is not itself a category name, so ``has_children`` is empty and all
+        categories pass the ``name not in has_children`` filter — both 'dog' and 'cat' are returned.
         """
         categories = [
             {"id": 1, "name": "dog", "supercategory": "none"},
@@ -147,9 +144,8 @@ class TestLoadClassesHierarchy:
         assert result == ["dog", "cat"]
 
     def test_category_named_none_does_not_empty_list(self, tmp_path: Path) -> None:
-        """If a category is literally named 'none' and all supercategories
-        are placeholders, the loader must return all class names instead of [].
-        """
+        """If a category is literally named 'none' and all supercategories are placeholders, the loader must return all
+        class names instead of []."""
         categories = [
             {"id": 1, "name": "none", "supercategory": "none"},
             {"id": 2, "name": "dog", "supercategory": "none"},
@@ -196,9 +192,7 @@ class TestLoadClassesHierarchy:
         assert result == expected
 
     def test_placeholder_values_treated_as_no_parent(self, tmp_path: Path) -> None:
-        """Placeholders like None, '', and 'null' should be treated the same
-        as 'none'.
-        """
+        """Placeholders like None, '', and 'null' should be treated the same as 'none'."""
         categories = [
             {"id": 1, "name": "dog", "supercategory": None},
             {"id": 2, "name": "cat", "supercategory": ""},
@@ -261,7 +255,7 @@ class TestBuildO365RawGpuBackend:
             return result, mock_transform, mock_sq_transform
 
     def test_cpu_backend_no_warning(self):
-        """cpu backend does not call logger.warning with O365 content."""
+        """Cpu backend does not call logger.warning with O365 content."""
         from unittest.mock import patch
 
         with patch("rfdetr.datasets.o365.logger") as mock_logger:
@@ -270,7 +264,7 @@ class TestBuildO365RawGpuBackend:
         assert len(o365_warns) == 0, "cpu backend must not warn about O365 GPU augmentation"
 
     def test_auto_backend_emits_warning(self):
-        """auto + CUDA + kornia available: logger.warning about O365 Phase 1 limitation."""
+        """Auto + CUDA + kornia available: logger.warning about O365 Phase 1 limitation."""
         import sys
         from unittest.mock import MagicMock, patch
 
@@ -284,7 +278,7 @@ class TestBuildO365RawGpuBackend:
         assert len(o365_warns) >= 1, "auto backend must warn about O365 GPU aug limitation"
 
     def test_auto_backend_no_cuda_no_warning(self):
-        """auto + no CUDA: resolves to cpu, no O365 warning emitted."""
+        """Auto + no CUDA: resolves to cpu, no O365 warning emitted."""
         from unittest.mock import patch
 
         with (
@@ -296,13 +290,13 @@ class TestBuildO365RawGpuBackend:
         assert len(o365_warns) == 0, "auto + no CUDA must not warn about O365 GPU aug"
 
     def test_gpu_postprocess_false_for_cpu_backend(self):
-        """cpu backend passes gpu_postprocess=False (or omits it) to make_coco_transforms."""
+        """Cpu backend passes gpu_postprocess=False (or omits it) to make_coco_transforms."""
         _, mock_transform, _ = self._call_build_o365_raw("cpu")
         call_kwargs = mock_transform.call_args.kwargs if mock_transform.call_args else {}
         assert call_kwargs.get("gpu_postprocess", False) is False
 
     def test_gpu_postprocess_true_for_auto_backend(self):
-        """auto + CUDA + kornia available: gpu_postprocess=True passed to make_coco_transforms."""
+        """Auto + CUDA + kornia available: gpu_postprocess=True passed to make_coco_transforms."""
         import sys
         from unittest.mock import MagicMock, patch
 
@@ -315,7 +309,7 @@ class TestBuildO365RawGpuBackend:
         assert call_kwargs.get("gpu_postprocess", False) is True
 
     def test_gpu_postprocess_false_for_auto_no_cuda(self):
-        """auto + no CUDA: gpu_postprocess=False so CPU Normalize is retained."""
+        """Auto + no CUDA: gpu_postprocess=False so CPU Normalize is retained."""
         from unittest.mock import patch
 
         with patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=False):
@@ -330,7 +324,7 @@ class TestBuildO365RawGpuBackend:
         mock_transform.assert_not_called()
 
     def test_gpu_backend_no_cuda_raises_runtime_error(self):
-        """gpu backend must fail fast when CUDA is unavailable."""
+        """Gpu backend must fail fast when CUDA is unavailable."""
         from unittest.mock import patch
 
         with (
@@ -340,7 +334,7 @@ class TestBuildO365RawGpuBackend:
             self._call_build_o365_raw("gpu")
 
     def test_gpu_backend_no_kornia_raises_import_error(self):
-        """gpu backend must raise with install hint when kornia is missing."""
+        """Gpu backend must raise with install hint when kornia is missing."""
         from unittest.mock import patch
 
         original_import = __builtins__.__import__ if hasattr(__builtins__, "__import__") else __import__
@@ -362,7 +356,7 @@ class TestBuildRoboflowFromCocoBackendResolution:
     """Roboflow COCO builder should resolve backend for gpu_postprocess consistently."""
 
     def test_auto_no_cuda_keeps_cpu_normalize(self):
-        """auto + no CUDA must set gpu_postprocess=False."""
+        """Auto + no CUDA must set gpu_postprocess=False."""
         from unittest.mock import MagicMock, patch
 
         from rfdetr.datasets.coco import build_roboflow_from_coco
@@ -389,3 +383,63 @@ class TestBuildRoboflowFromCocoBackendResolution:
             mock_transforms.return_value = MagicMock()
             build_roboflow_from_coco("train", args, resolution=640)
         assert mock_transforms.call_args.kwargs["gpu_postprocess"] is False
+
+
+class TestBuilderGpuPostprocess:
+    """Verify Roboflow COCO builder sets gpu_postprocess for segmentation models."""
+
+    @pytest.mark.parametrize(
+        "segmentation_head, augmentation_backend, resolved_backend, expected_gpu_postprocess",
+        [
+            pytest.param(False, "cpu", "cpu", False, id="cpu_backend_no_seg"),
+            pytest.param(True, "cpu", "cpu", False, id="cpu_backend_with_seg"),
+            pytest.param(False, "gpu", "gpu", True, id="gpu_backend_no_seg"),
+            pytest.param(True, "gpu", "gpu", True, id="gpu_backend_with_seg"),
+            pytest.param(True, "auto", "gpu", True, id="auto_resolved_gpu_with_seg"),
+            pytest.param(True, "auto", "cpu", False, id="auto_resolved_cpu_with_seg"),
+        ],
+    )
+    def test_gpu_postprocess_flag(
+        self,
+        tmp_path,
+        segmentation_head,
+        augmentation_backend,
+        resolved_backend,
+        expected_gpu_postprocess,
+    ):
+        """Build Roboflow COCO datasets and assert the GPU postprocess flag passed to transforms."""
+        from unittest.mock import MagicMock, patch
+
+        from rfdetr.datasets.coco import build_roboflow_from_coco
+
+        annotations_dir = tmp_path / "train"
+        annotations_dir.mkdir()
+        (annotations_dir / "_annotations.coco.json").write_text(
+            json.dumps({"images": [], "annotations": [], "categories": []}),
+            encoding="utf-8",
+        )
+        args = types.SimpleNamespace(
+            dataset_dir=str(tmp_path),
+            segmentation_head=segmentation_head,
+            augmentation_backend=augmentation_backend,
+            square_resize_div_64=False,
+            multi_scale=False,
+            expanded_scales=False,
+            do_random_resize_via_padding=False,
+            patch_size=16,
+            num_windows=4,
+            aug_config=None,
+        )
+
+        with (
+            patch("rfdetr.datasets.coco._resolve_runtime_augmentation_backend", return_value=resolved_backend),
+            patch("rfdetr.datasets.coco.make_coco_transforms") as mock_transforms,
+            patch("rfdetr.datasets.coco.CocoDetection") as mock_coco,
+        ):
+            mock_transforms.return_value = MagicMock()
+            mock_coco.return_value = MagicMock()
+
+            build_roboflow_from_coco("train", args, resolution=640)
+
+        call_kwargs = mock_transforms.call_args.kwargs if mock_transforms.call_args else mock_transforms.call_args[1]
+        assert call_kwargs["gpu_postprocess"] is expected_gpu_postprocess

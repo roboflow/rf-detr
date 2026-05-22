@@ -3,26 +3,21 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Shared weight-loading and LoRA application utilities.
 
-Provides the canonical implementations of pretrained checkpoint loading and
-LoRA adapter injection, used by both the L1 inference facade (``rfdetr.detr``)
-and the L2 LightningModule (``rfdetr.training.module_model``).
+Provides the canonical implementations of pretrained checkpoint loading and LoRA adapter injection, used by both the L1
+inference facade (``rfdetr.detr``) and the L2 LightningModule (``rfdetr.training.module_model``).
 
-The weight-loading logic is taken from ``RFDETRModelModule._load_pretrain_weights``
-in ``module_model.py`` (more complete: Pydantic-aware user-override detection,
-auto-alignment for fine-tuned checkpoints) and augmented with class-name
-extraction from ``detr.py:_load_pretrain_weights_into``.
+The weight-loading logic is taken from ``RFDETRModelModule._load_pretrain_weights`` in ``module_model.py`` (more
+complete: Pydantic-aware user-override detection, auto-alignment for fine-tuned checkpoints) and augmented with
+class-name extraction from ``detr.py:_load_pretrain_weights_into``.
 """
 
 from __future__ import annotations
 
-import functools
 import math
 import os
-import warnings
-from typing import List
+from typing import Any, List
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -35,31 +30,189 @@ from rfdetr.utilities.state_dict import _ckpt_args_get, validate_checkpoint_comp
 
 logger = get_logger()
 
-__all__ = ["load_pretrain_weights", "apply_lora"]
+__all__ = ["load_pretrain_weights", "apply_lora", "interpolate_position_embeddings"]
 
 _PE_KEY_SUFFIX = "embeddings.position_embeddings"
 
+# Query-related parameters that LWDETR packs as nn.Embedding(num_queries * group_detr, ...).
+# Any new query parameter packed the same way must be added here.
+_QUERY_PARAM_SUFFIXES: tuple[str, ...] = ("refpoint_embed.weight", "query_feat.weight")
 
-def _interpolate_position_embeddings(
+
+def _slice_query_param_per_group(
+    tensor: torch.Tensor,
+    ckpt_num_queries: int,
+    ckpt_group_detr: int,
+    target_num_queries: int,
+    target_group_detr: int,
+) -> torch.Tensor:
+    """Slice a ``refpoint_embed`` / ``query_feat`` weight preserving per-group structure.
+
+    ``LWDETR`` packs query embeddings as ``nn.Embedding(num_queries * group_detr, ...)`` where group ``g`` occupies the
+    contiguous slot range ``[g * num_queries, (g + 1) * num_queries)`` (see ``LWDETR.__init__`` and ``LWDETR.forward``
+    in ``models/lwdetr.py``).  When ``num_queries`` decreases and ``group_detr > 1``, a flat ``tensor[:
+    target_num_queries * target_group_detr]`` slice silently scrambles groups: the tail of group 0 winds up in what
+    should be group 1's slots, and so on.  At inference only group 0 is read so the bug is invisible, but for
+    training-resume it corrupts groups 1+.
+
+    This helper does the right thing per group:
+
+    * ``num_queries`` decrease (``target_num_queries < ckpt_num_queries``) →
+      keep the first ``target_num_queries`` slots of each retained group.
+    * ``group_detr`` decrease (``target_group_detr < ckpt_group_detr``) →
+      drop tail groups; retained groups stay pretrained.
+    * Either dimension expands, or one shrinks while the other expands →
+      return whatever per-group sub-tensor can be built (``min(target, ckpt)`` along each axis). The result has fewer
+      rows than the model expects, so ``load_state_dict`` will raise a shape mismatch immediately.
+
+    When the tensor's flat length disagrees with ``ckpt_num_queries * ckpt_group_detr`` (corrupt or unexpected
+    checkpoint shape), fall back to the legacy flat slice so loading continues with the same behavior the codebase had
+    before this fix.
+
+    Args:
+        tensor: The checkpoint tensor for ``refpoint_embed.weight`` or
+            ``query_feat.weight``.
+        ckpt_num_queries: ``num_queries`` recorded in the checkpoint's training args.
+        ckpt_group_detr: ``group_detr`` recorded in the checkpoint's training args.
+        target_num_queries: ``num_queries`` configured for the model.
+        target_group_detr: ``group_detr`` configured for the model.
+
+    Returns:
+        A tensor whose layout matches the model's configured packing for the decrease-or-equal cases, or a per-group
+        sub-tensor built from ``min(target, ckpt)`` along each axis for the expansion case (which ``load_state_dict``
+        will then reject on shape mismatch).
+
+    Raises:
+        ValueError: If any of ``ckpt_num_queries``, ``ckpt_group_detr``,
+            ``target_num_queries``, or ``target_group_detr`` is ≤ 0.
+    """
+    if ckpt_num_queries <= 0 or ckpt_group_detr <= 0 or target_num_queries <= 0 or target_group_detr <= 0:
+        raise ValueError(
+            f"_slice_query_param_per_group: all dimension args must be positive; "
+            f"got ckpt_num_queries={ckpt_num_queries}, ckpt_group_detr={ckpt_group_detr}, "
+            f"target_num_queries={target_num_queries}, target_group_detr={target_group_detr}."
+        )
+
+    expected_total = ckpt_num_queries * ckpt_group_detr
+    if tensor.shape[0] != expected_total:
+        # Args inconsistent with tensor shape — fall back to legacy flat slice.
+        logger.warning(
+            "_slice_query_param_per_group: checkpoint args claim %d × %d = %d rows "
+            "but tensor has %d rows; falling back to flat slice. Per-group structure "
+            "may be scrambled if group_detr > 1.",
+            ckpt_num_queries,
+            ckpt_group_detr,
+            expected_total,
+            tensor.shape[0],
+        )
+        return tensor[: target_num_queries * target_group_detr]
+
+    if target_num_queries == ckpt_num_queries and target_group_detr == ckpt_group_detr:
+        return tensor
+
+    keep_groups = min(target_group_detr, ckpt_group_detr)
+    keep_per_group = min(target_num_queries, ckpt_num_queries)
+    pieces = [tensor[g * ckpt_num_queries : g * ckpt_num_queries + keep_per_group] for g in range(keep_groups)]
+    return torch.cat(pieces, dim=0)
+
+
+def _filter_intentional_keys(keys: list[str]) -> list[str]:
+    """Return *keys* with intentional-reinit/trim entries removed.
+
+    Matching is boundary-aware: a pattern matches a key when the pattern appears at the start of the key or immediately
+    after a module separator (``.``).  This prevents substring collisions where a pattern like ``"class_embed."`` would
+    inadvertently match a key belonging to an unrelated module (e.g. ``"class_embed_projection.weight"`` is safe because
+    ``class_embed_projection.`` ≠ ``class_embed.``, but using a plain ``in`` check against longer ambiguous strings is
+    fragile by design).
+    """
+    # Substrings identifying state-dict keys that ``load_pretrain_weights`` is
+    # *expected* to have to reconcile (head reinitialisation and per-group query
+    # trimming).  Keys matching any of these are filtered from the partial-load
+    # warning so it only fires on *unexpected* mismatches that indicate a real
+    # config / checkpoint incompatibility.
+    intentional_patterns: tuple[str, ...] = (
+        "class_embed.",
+        "bbox_embed.",
+        *_QUERY_PARAM_SUFFIXES,
+        "enc_out_class_embed.",
+        "enc_out_bbox_embed.",
+    )
+
+    def _is_intentional(key: str) -> bool:
+        return any(key.startswith(pat) or f".{pat}" in key for pat in intentional_patterns)
+
+    return [k for k in keys if not _is_intentional(k)]
+
+
+def _warn_on_partial_load(incompatible: Any, pretrain_weights_path: str) -> None:
+    """Emit a ``logger.warning`` when ``load_state_dict`` left non-trivial gaps.
+
+    ``load_state_dict(strict=False)`` silently ignores keys that the model has but the checkpoint does not
+    (``missing_keys``) and keys present in the checkpoint but absent from the model (``unexpected_keys``).  When this
+    happens for parameters outside the head / query embeddings — which the loader intentionally reinitialises or trims —
+    the corresponding model weights were left at their random initial values and the user is silently getting a much
+    weaker model. This helper surfaces that condition with a single, actionable warning. Same-key shape mismatches do
+    not reach this function — they raise :class:`RuntimeError` directly from ``load_state_dict`` and are therefore
+    impossible to miss.
+
+    Args:
+        incompatible: The ``_IncompatibleKeys`` namedtuple returned by
+            :meth:`torch.nn.Module.load_state_dict`.
+        pretrain_weights_path: Path to the checkpoint that was loaded; included
+            in the warning so the user can identify which load partially succeeded.
+    """
+    missing_keys_raw = getattr(incompatible, "missing_keys", None)
+    unexpected_keys_raw = getattr(incompatible, "unexpected_keys", None)
+    try:
+        missing_keys = [str(k) for k in missing_keys_raw] if missing_keys_raw else []
+        unexpected_keys = [str(k) for k in unexpected_keys_raw] if unexpected_keys_raw else []
+    except TypeError:
+        # Result wasn't iterable (e.g. a MagicMock in unit tests) — quietly skip.
+        return
+    missing = _filter_intentional_keys(missing_keys)
+    unexpected = _filter_intentional_keys(unexpected_keys)
+    if not missing and not unexpected:
+        return
+
+    parts: list[str] = []
+    if missing:
+        sample = ", ".join(missing[:5])
+        if len(missing) > 5:
+            sample += ", ..."
+        parts.append(f"{len(missing)} model parameter(s) not in checkpoint (left at random init): [{sample}]")
+    if unexpected:
+        sample = ", ".join(unexpected[:5])
+        if len(unexpected) > 5:
+            sample += ", ..."
+        parts.append(f"{len(unexpected)} checkpoint key(s) not consumed by model: [{sample}]")
+
+    logger.warning(
+        "Pretrained weights at %r loaded only partially — this typically produces "
+        "lower accuracy. %s. Check that the model configuration (encoder, hidden_dim, "
+        "out_feature_indexes, projector_scale, ...) matches the architecture the "
+        "checkpoint was trained with.",
+        pretrain_weights_path,
+        " ".join(parts),
+    )
+
+
+def interpolate_position_embeddings(
     checkpoint_state: dict,
     pe_size: int,
 ) -> None:
     """Interpolate DINOv2 positional embeddings in *checkpoint_state* to match *pe_size*.
 
-    When the model is configured with a custom ``resolution`` that differs from the
-    checkpoint's training resolution, the DINOv2 backbone's ``position_embeddings``
-    parameter has an incompatible shape.  ``load_state_dict(strict=False)`` does **not**
-    skip shape mismatches on matching keys — it raises ``RuntimeError``.
+    When the model is configured with a custom ``resolution`` that differs from the checkpoint's training resolution,
+    the DINOv2 backbone's ``position_embeddings`` parameter has an incompatible shape.
+    ``load_state_dict(strict=False)`` does **not** skip shape mismatches on matching keys — it raises ``RuntimeError``.
 
-    This function bicubic-interpolates every PE tensor in the checkpoint whose shape
-    differs from the target grid, modifying *checkpoint_state* in-place before
-    ``load_state_dict`` is called.
+    This function bicubic-interpolates every PE tensor in the checkpoint whose shape differs from the target grid,
+    modifying *checkpoint_state* in-place before ``load_state_dict`` is called.
 
     Args:
         checkpoint_state: The ``"model"`` sub-dict from a loaded checkpoint.
         pe_size: Target grid side length in patches (number of patches per spatial
-            dimension, assuming a square grid).  Typically
-            ``model_config.positional_encoding_size``.
+            dimension, assuming a square grid).  Typically ``model_config.positional_encoding_size``.
     """
     n_target = pe_size * pe_size  # target number of patch tokens
 
@@ -102,14 +255,7 @@ def _interpolate_position_embeddings(
         )
 
 
-@deprecated(
-    target=True,
-    args_mapping={"train_config": None},
-    deprecated_in="1.8",
-    remove_in="1.9",
-    num_warns=-1,
-    stream=functools.partial(warnings.warn, category=DeprecationWarning),
-)
+@deprecated(target=True, args_mapping={"train_config": None}, deprecated_in="1.7.0", remove_in="1.9.0", num_warns=-1)
 def load_pretrain_weights(
     nn_model: torch.nn.Module,
     model_config: ModelConfig,
@@ -117,36 +263,34 @@ def load_pretrain_weights(
 ) -> List[str]:
     """Load pretrained checkpoint weights into *nn_model* in-place.
 
-    Canonical implementation shared by the L1 facade (``_build_model_context``
-    in ``rfdetr.detr``) and the L2 LightningModule (``RFDETRModelModule.__init__``
-    in ``rfdetr.training.module_model``).
+    Canonical implementation shared by the L1 facade (``_build_model_context`` in ``rfdetr.detr``) and the L2
+    LightningModule (``RFDETRModelModule.__init__`` in ``rfdetr.training.module_model``).
 
     Uses the Pydantic-aware logic from ``module_model.py``:
 
     - When the user did **not** explicitly override ``num_classes`` (left at the
-      ModelConfig default), the checkpoint class count is treated as authoritative
-      and the model head is auto-aligned to it.
+      ModelConfig default), the checkpoint class count is treated as authoritative and the model head is auto-aligned to
+      it.
     - When the user **did** explicitly override ``num_classes`` to a value larger
-      than the checkpoint provides, the head is temporarily aligned to the
-      checkpoint for loading, then expanded back to the configured size.
+      than the checkpoint provides, the head is temporarily aligned to the checkpoint for loading, then expanded back to
+      the configured size.
     - When the checkpoint has more classes than configured (backbone-pretrain
-      scenario), both reinitializations are applied: expand to checkpoint size for
-      loading, then trim to configured size.
+      scenario), both reinitializations are applied: expand to checkpoint size for loading, then trim to configured
+      size.
 
     Class names stored in the checkpoint ``args`` are extracted and returned.
 
     Args:
         nn_model: The model whose weights will be updated in-place.
         model_config: Pydantic ``ModelConfig`` instance. Must have
-            ``pretrain_weights``, ``num_classes``, ``num_queries``, and
-            ``group_detr`` attributes.
-        train_config: Deprecated since v1.8 — no longer used internally.
+            ``pretrain_weights``, ``num_classes``, ``num_queries``, and ``group_detr`` attributes.
+        train_config: Deprecated since v1.7.0 — no longer used internally.
             Passing a non-``None`` value emits a ``DeprecationWarning``.
-            Omit the argument; it will be removed in v1.9.
+            Omit the argument; it will be removed in v1.9.0.
 
     Returns:
-        List of class name strings from the checkpoint, or an empty list if none
-        are present or if ``model_config.pretrain_weights`` is ``None``.
+        List of class name strings from the checkpoint, or an empty list if none are present or if
+        ``model_config.pretrain_weights`` is ``None``.
 
     Raises:
         Exception: If the checkpoint file cannot be loaded even after a re-download.
@@ -252,15 +396,81 @@ def load_pretrain_weights(
         # class count so load_state_dict succeeds without size mismatches.
         nn_model.reinitialize_detection_head(checkpoint_num_classes)
 
-    # Trim query embeddings to the configured query count.
-    num_desired_queries = mc.num_queries * mc.group_detr
-    query_param_names = ["refpoint_embed.weight", "query_feat.weight"]
+    # Reshape query embeddings to the configured query count, preserving per-group
+    # structure when the checkpoint records its training-time num_queries / group_detr.
+    # See _slice_query_param_per_group for why a flat slice is wrong with group_detr > 1.
+    ckpt_args = checkpoint.get("args")
+    ckpt_num_queries_raw = _ckpt_args_get(ckpt_args, "num_queries") if ckpt_args is not None else None
+    ckpt_group_detr_raw = _ckpt_args_get(ckpt_args, "group_detr") if ckpt_args is not None else None
+    try:
+        ckpt_num_queries = int(ckpt_num_queries_raw) if ckpt_num_queries_raw is not None else None
+        ckpt_group_detr = int(ckpt_group_detr_raw) if ckpt_group_detr_raw is not None else None
+    except (TypeError, ValueError):
+        logger.warning(
+            "load_pretrain_weights: checkpoint args.num_queries / args.group_detr not coercible "
+            "to int; falling back to legacy flat slice."
+        )
+        ckpt_num_queries = None
+        ckpt_group_detr = None
+    # When exactly one of the pair is present, infer the missing value from the
+    # first matching tensor's shape.  This handles PTL checkpoints where
+    # BestModelCallback writes TrainConfig.model_dump() into checkpoint["args"]
+    # but TrainConfig does not include num_queries (it lives on ModelConfig).
+    if (ckpt_num_queries is None) != (ckpt_group_detr is None):
+        _first_query_key = next(
+            (k for k in checkpoint["model"] if any(k.endswith(s) for s in _QUERY_PARAM_SUFFIXES)),
+            None,
+        )
+        if _first_query_key is not None:
+            _n = checkpoint["model"][_first_query_key].shape[0]
+            _absent: str | None = None
+            if ckpt_num_queries is not None and ckpt_num_queries > 0 and _n % ckpt_num_queries == 0:
+                ckpt_group_detr = _n // ckpt_num_queries
+                _absent, _inferred, _known, _known_val = "group_detr", ckpt_group_detr, "num_queries", ckpt_num_queries
+            elif ckpt_group_detr is not None and ckpt_group_detr > 0 and _n % ckpt_group_detr == 0:
+                ckpt_num_queries = _n // ckpt_group_detr
+                _absent, _inferred, _known, _known_val = "num_queries", ckpt_num_queries, "group_detr", ckpt_group_detr
+            if _absent is not None:
+                logger.warning(
+                    "load_pretrain_weights: args.%s absent; inferred ckpt_%s=%d from tensor rows %d ÷ ckpt_%s=%d.",
+                    _absent,
+                    _absent,
+                    _inferred,
+                    _n,
+                    _known,
+                    _known_val,
+                )
+    # Warn once (not once per suffix key) when falling back to the legacy flat slice.
+    if mc.group_detr > 1 and (ckpt_num_queries is None or ckpt_group_detr is None):
+        logger.warning(
+            "load_pretrain_weights: checkpoint lacks args.num_queries / "
+            "args.group_detr; falling back to flat slice. With "
+            "group_detr=%d this may scramble per-group query structure if "
+            "the checkpoint was trained with group_detr > 1.",
+            mc.group_detr,
+        )
     for name in list(checkpoint["model"].keys()):
-        if any(name.endswith(x) for x in query_param_names):
-            checkpoint["model"][name] = checkpoint["model"][name][:num_desired_queries]
+        if any(name.endswith(x) for x in _QUERY_PARAM_SUFFIXES):
+            tensor = checkpoint["model"][name]
+            if ckpt_num_queries is not None and ckpt_group_detr is not None:
+                checkpoint["model"][name] = _slice_query_param_per_group(
+                    tensor,
+                    ckpt_num_queries=ckpt_num_queries,
+                    ckpt_group_detr=ckpt_group_detr,
+                    target_num_queries=mc.num_queries,
+                    target_group_detr=mc.group_detr,
+                )
+            else:
+                # Legacy checkpoint with no num_queries/group_detr in args:
+                # preserve the original flat slice for backward compatibility.
+                # NOTE: the flat slice is incorrect for group_detr > 1 — it scrambles
+                # groups 1+ when num_queries decreases. Legacy checkpoints predate
+                # multi-group training, so in practice they are all group_detr == 1.
+                checkpoint["model"][name] = tensor[: mc.num_queries * mc.group_detr]
 
-    _interpolate_position_embeddings(checkpoint["model"], mc.positional_encoding_size)
-    nn_model.load_state_dict(checkpoint["model"], strict=False)
+    interpolate_position_embeddings(checkpoint["model"], mc.positional_encoding_size)
+    incompatible = nn_model.load_state_dict(checkpoint["model"], strict=False)
+    _warn_on_partial_load(incompatible, pretrain_weights)
 
     # If the user explicitly set a class count larger than the checkpoint,
     # expand/reinitialize the head back to the configured size after load.
@@ -278,8 +488,7 @@ def load_pretrain_weights(
 def apply_lora(nn_model: torch.nn.Module) -> None:
     """Apply LoRA adapters to the backbone encoder of *nn_model*.
 
-    Replaces ``nn_model.backbone[0].encoder`` in-place with a PEFT-wrapped
-    encoder using DoRA with rank 16 and alpha 16.
+    Replaces ``nn_model.backbone[0].encoder`` in-place with a PEFT-wrapped encoder using DoRA with rank 16 and alpha 16.
 
     Args:
         nn_model: LWDETR model whose backbone encoder will receive LoRA adapters.

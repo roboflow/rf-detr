@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rfdetr"
-version = "1.6.0"
+version = "1.8.0.dev"
 description = "RF-DETR"
 readme = "README.md"
 authors = [
@@ -55,7 +55,7 @@ lora = [
 ]
 train = [
     "peft",                            # LoRA backbone fine-tuning (available during training)
-    "pytorch_lightning>=2.6,<3",
+    "pytorch_lightning>=2.6,<3,!=2.6.2,!=2.6.3",  # Keep exclusions; see issue #1016 / related advisory for why 2.6.2 and 2.6.3 are blocked
     "torchmetrics[detection]>=1.2",
     "faster-coco-eval>=1.7.2",
     "pycocotools",
@@ -65,7 +65,7 @@ train = [
     "rf100vl",
 ]
 onnx = [
-    "onnx>=1.16.0,<1.20",
+    "onnx>=1.16.0,<2.0",
     "onnxsim<0.6.0",  # TODO: onnxsim 0.6.0+ hangs on install
     "onnx_graphsurgeon",
     "onnxruntime",
@@ -78,9 +78,9 @@ trt = [
     "polygraphy",
 ]
 tflite = [
-    "onnx2tf>=1.26.0,<2.0.0",
+    "onnx2tf>=2.4.0,<3.0.0",
     "flatbuffers>=23.5.26",
-    "onnx>=1.16.0,<1.20",
+    "onnx>=1.20.0,<2.0",
     "tf-keras>=2.16.0",
     "tensorflow>=2.16.0",
 ]
@@ -89,7 +89,7 @@ kornia = [
 ]
 loggers = [
     "tensorboard>=2.13.0",
-    "protobuf>=3.20.0,<4.0.0",  # Pins protobuf below 4.x to avoid TensorBoard descriptor crash with protobuf>=4 (see #844)
+    "protobuf>=3.20.0",  # Cap <4.0.0 removed — tensorflow>=2.16.0 (required by [tflite]) needs protobuf>=3.20.3 and is incompatible with <4.0.0 (see #1041)
     "wandb",
     "mlflow",
     "clearml",
@@ -117,11 +117,12 @@ build = [
 ]
 
 tests = [
-  "pytest>=7.2,<9",
+  "pytest>=7.2,<10",
   "pytest-cov>=4,<8",
   "pytest-xdist>=3.6,<4",
   "pytest-rerunfailures>=10,<15",
   "pytest-timeout>=2,<3",
+  "pytest-doctestplus>=1.2,<2",
   "tomli>=2.0; python_version < '3.11'",
 ]
 
@@ -150,6 +151,16 @@ Homepage = "https://github.com/roboflow/rf-detr"
 
 [project.scripts]
 rfdetr = "rfdetr.cli:main"
+
+[tool.uv]
+# onnx2tf 2.4.0 pins ml-dtypes==0.5.1 unconditionally, but ml-dtypes 0.5.1 requires
+# numpy>=2.1.0 on Python 3.13 while onnx2tf also pins numpy==1.26.4 — contradiction.
+# The entire [tflite] extra is gated to python_version>='3.12', and onnx2tf 2.4.0 requires
+# Python>=3.12 and <3.13 (tensorflow constraint); override ml-dtypes to the same window
+# so uv's universal resolver doesn't see the conflict on Python 3.13+.
+override-dependencies = [
+    "ml-dtypes==0.5.1; python_version >= '3.12' and python_version < '3.13'",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -184,11 +195,15 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "notebooks/*.py" = ["E402"]  # cell-local imports are intentional in percent-format scripts
 
+[tool.docformatter]
+wrap-summaries = 120
+wrap-descriptions = 120
+
 [tool.pytest.ini_options]
 addopts = [
     "-v",                   # verbose output
     "--color=yes",          # colored output
-    "--doctest-modules",    # run doctests from all modules
+    "--doctest-plus",       # run doctests from all modules (pytest-doctestplus)
 ]
 pythonpath = ["src"]
 markers = [
@@ -200,6 +215,18 @@ filterwarnings = [
     # pytest-xdist workers close their channel before teardown completes;
     # this is a known false-positive that does not affect test results.
     "ignore::pluggy.PluggyTeardownRaisedWarning",
+    # Many tests instantiate ModelConfig variants with `pretrain_weights=None`
+    # to skip downloads.  The pretrain-compat warning is intentional UX for
+    # end users; silence it globally for the test suite and re-enable it
+    # explicitly in the dedicated tests via `warnings.catch_warnings` plus
+    # `warnings.simplefilter("always")`.
+    # NOTE: expressed as a message regex (not as
+    # ``ignore::rfdetr.config.PretrainWeightsCompatibilityWarning``) because a
+    # class-path filter forces pytest to import ``rfdetr.config`` at
+    # config-parse time — before ``pytest-cov`` starts tracing — which makes
+    # the module's top-level statements appear uncovered.
+    "ignore:.*was instantiated with pretrain_weights=None:UserWarning",
+    "ignore:.*was instantiated with overrides that differ from the variant:UserWarning",
 ]
 
 [tool.codespell]
@@ -236,6 +263,10 @@ overrides = [
     "kornia", "kornia.*",
     "onnx", "onnx.*",
     "onnx2tf", "onnx2tf.*",
+    "onnx_graphsurgeon", "onnx_graphsurgeon.*",
+    "onnxruntime", "onnxruntime.*",
+    "tflite_runtime", "tflite_runtime.*",
+    "tensorflow", "tensorflow.*",
   ], ignore_missing_imports = true },
   # Modules with pre-existing type errors — ignored until incrementally fixed.
   { module = [

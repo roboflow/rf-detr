@@ -3,15 +3,12 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
+"""Kornia-based GPU augmentation pipeline for RF-DETR training.
 
-"""Kornia-based GPU augmentation pipeline for RF-DETR detection training.
+This module provides GPU-side augmentation as an alternative to the CPU-based Albumentations pipeline.  All transforms
+run on the device where the batch already resides (typically CUDA), avoiding a CPU-GPU round-trip per sample.
 
-This module provides GPU-side augmentation as an alternative to the CPU-based
-Albumentations pipeline.  All transforms run on the device where the batch
-already resides (typically CUDA), avoiding a CPU-GPU round-trip per sample.
-
-Phase 1 supports detection bounding boxes only; segmentation masks are
-deferred to phase 2.
+Supports detection (boxes only) and segmentation (boxes + instance masks).
 
 Usage::
 
@@ -19,17 +16,26 @@ Usage::
         build_kornia_pipeline,
         build_normalize,
         collate_boxes,
+        collate_masks,
         unpack_boxes,
     )
 
+    # Detection:
     pipeline = build_kornia_pipeline(aug_config, resolution=560)
     normalize = build_normalize()
-
-    # In on_after_batch_transfer:
     boxes_padded, valid = collate_boxes(targets, device)
     img_aug, boxes_aug = pipeline(img, boxes_padded)
     img_aug = normalize(img_aug)
     targets = unpack_boxes(boxes_aug, valid, targets, H, W)
+
+    # Segmentation (Phase 2):
+    pipeline = build_kornia_pipeline(aug_config, resolution=560, with_masks=True)
+    normalize = build_normalize()
+    boxes_padded, valid = collate_boxes(targets, device)
+    masks_padded = collate_masks(targets, device, n_max=valid.shape[1], image_height=H, image_width=W)
+    img_aug, boxes_aug, masks_aug = pipeline(img, boxes_padded, masks_padded)
+    img_aug = normalize(img_aug)
+    targets = unpack_boxes(boxes_aug, valid, targets, H, W, masks_aug=masks_aug)
 """
 
 from __future__ import annotations
@@ -44,18 +50,25 @@ from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
+__doctest_requires__ = {"build_kornia_pipeline": ["kornia"]}
+
 #: ImageNet channel-wise mean (RGB order).
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 #: ImageNet channel-wise standard deviation (RGB order).
 IMAGENET_STD = (0.229, 0.224, 0.225)
 
+#: Threshold applied to float32 mask values produced by Kornia augmentation.
+#: Kornia forces nearest-neighbour resampling for the ``"mask"`` data key, so
+#: output values are already in {0.0, 1.0}; the threshold is a defensive cast.
+#: Must be updated if the pipeline is ever switched to bilinear interpolation.
+_MASK_BINARIZE_THRESHOLD: float = 0.5
+
 
 def _has_cuda_device() -> bool:
     """Return ``True`` when the runtime has a CUDA accelerator available.
 
-    Uses the fork-safe global ``DEVICE`` constant from ``rfdetr.config`` so that
-    the CUDA driver context is not created in the main process before forking
-    (fork-based DDP and some notebook environments).
+    Uses the fork-safe global ``DEVICE`` constant from ``rfdetr.config`` so that the CUDA driver context is not created
+    in the main process before forking (fork-based DDP and some notebook environments).
 
     Returns:
         ``True`` if at least one CUDA device is reachable; ``False`` otherwise.
@@ -72,9 +85,8 @@ def _has_cuda_device() -> bool:
 def resolve_augmentation_backend(backend: str) -> str:
     """Resolve an ``augmentation_backend`` value to a concrete ``"cpu"`` or ``"gpu"``.
 
-    ``"auto"`` resolves to ``"gpu"`` only when both CUDA and Kornia are available;
-    otherwise it falls back to ``"cpu"``.  Explicit ``"cpu"`` and ``"gpu"`` values
-    pass through unchanged; ``"gpu"`` is validated (CUDA + kornia presence).
+    ``"auto"`` resolves to ``"gpu"`` only when both CUDA and Kornia are available; otherwise it falls back to ``"cpu"``.
+    Explicit ``"cpu"`` and ``"gpu"`` values pass through unchanged; ``"gpu"`` is validated (CUDA + kornia presence).
 
     Args:
         backend: One of ``"cpu"``, ``"auto"``, or ``"gpu"``.
@@ -149,17 +161,24 @@ def _make_rotate(params: dict[str, Any]) -> Any:
 
     limit = params.get("limit", 15)
     degrees = tuple(limit) if isinstance(limit, (list, tuple)) else (-limit, limit)
-    return RandomRotation(degrees=degrees, p=params.get("p", 0.5))
+    rotation = RandomRotation(degrees=degrees, p=params.get("p", 0.5))
+
+    # Kornia has changed the public parameter key for rotation ranges across releases.
+    # Keep the legacy ``degrees`` entry available because our tests and downstream
+    # callers inspect it directly.
+    flags = getattr(rotation, "flags", None)
+    if isinstance(flags, dict) and "degrees" not in flags:
+        flags["degrees"] = degrees
+
+    return rotation
 
 
 def _make_affine(params: dict[str, Any]) -> Any:
     """Build a ``K.RandomAffine`` from aug_config params.
 
-    Albumentations ``translate_percent`` is a ``(min, max)`` signed range
-    (e.g. ``(-0.1, 0.1)``).  Kornia ``translate`` is a non-negative
-    per-axis max fraction ``(tx, ty)`` where translation is sampled from
-    ``[-tx, tx]``.  The conversion takes ``max(|min|, |max|)`` for each
-    axis, producing a symmetric range that matches the intent.
+    Albumentations ``translate_percent`` is a ``(min, max)`` signed range (e.g. ``(-0.1, 0.1)``).  Kornia ``translate``
+    is a non-negative per-axis max fraction ``(tx, ty)`` where translation is sampled from ``[-tx, tx]``.  The
+    conversion takes ``max(|min|, |max|)`` for each axis, producing a symmetric range that matches the intent.
     """
     from kornia.augmentation import RandomAffine
 
@@ -232,8 +251,7 @@ def _make_gaussian_blur(params: dict[str, Any]) -> Any:
 def _make_gauss_noise(params: dict[str, Any]) -> Any:
     """Build a ``K.RandomGaussianNoise`` from aug_config params.
 
-    Kornia takes a single ``std`` value; we use the upper bound of
-    ``std_range`` as an acceptable approximation.
+    Kornia takes a single ``std`` value; we use the upper bound of ``std_range`` as an acceptable approximation.
     """
     from kornia.augmentation import RandomGaussianNoise
 
@@ -264,25 +282,33 @@ _REGISTRY: dict[str, Callable[[dict[str, Any]], Any]] = {
 def build_kornia_pipeline(
     aug_config: dict[str, dict[str, Any]],
     resolution: int,
+    with_masks: bool = False,
 ) -> Any:
     """Build a Kornia ``AugmentationSequential`` from an aug_config dict.
 
-    Each key in *aug_config* is looked up in ``_REGISTRY`` and instantiated
-    with the corresponding parameter dict.  Unknown keys raise ``ValueError``.
+    Each key in *aug_config* is looked up in ``_REGISTRY`` and instantiated with the corresponding parameter dict.
+    Unknown keys raise ``ValueError``.
 
     Args:
         aug_config: Mapping of augmentation names to parameter dicts, identical
-            to the format accepted by the Albumentations path (e.g.
-            ``{"HorizontalFlip": {"p": 0.5}}``).
+            to the format accepted by the Albumentations path (e.g. ``{"HorizontalFlip": {"p": 0.5}}``).
         resolution: Target image resolution in pixels (currently reserved for
             future resolution-aware augmentations).
+        with_masks: When ``True``, include ``"mask"`` in ``data_keys`` so
+            instance segmentation masks are augmented in sync with images and boxes.  The pipeline then expects three
+            inputs ``(img, boxes, masks)`` and returns three outputs.  Defaults to ``False`` (detection-only, two
+            inputs/outputs).
 
     Returns:
-        A ``kornia.augmentation.AugmentationSequential`` instance configured
-        with ``data_keys=["input", "bbox_xyxy"]``.
+        A ``kornia.augmentation.AugmentationSequential`` instance.
 
     Raises:
         ValueError: If *aug_config* contains an unsupported augmentation key.
+
+    Examples:
+        >>> from rfdetr.datasets.aug_config import AUG_CONSERVATIVE
+        >>> pipeline = build_kornia_pipeline(AUG_CONSERVATIVE, resolution=560)
+        >>> pipeline_seg = build_kornia_pipeline(AUG_CONSERVATIVE, resolution=560, with_masks=True)
     """
     _require_kornia()
     from kornia.augmentation import AugmentationSequential
@@ -296,9 +322,10 @@ def build_kornia_pipeline(
             )
         transforms.append(factory(params))
 
+    data_keys = ["input", "bbox_xyxy", "mask"] if with_masks else ["input", "bbox_xyxy"]
     return AugmentationSequential(
         *transforms,
-        data_keys=["input", "bbox_xyxy"],
+        data_keys=data_keys,
     )
 
 
@@ -336,9 +363,8 @@ def collate_boxes(
 ) -> tuple[Tensor, Tensor]:
     """Pack variable-length xyxy boxes into a padded tensor and valid mask.
 
-    Kornia ``AugmentationSequential`` expects boxes as ``[B, N_max, 4]``.
-    This function zero-pads each image's boxes to the maximum count in the
-    batch and returns a boolean mask indicating which entries are real.
+    Kornia ``AugmentationSequential`` expects boxes as ``[B, N_max, 4]``. This function zero-pads each image's boxes to
+    the maximum count in the batch and returns a boolean mask indicating which entries are real.
 
     Args:
         targets: List of target dicts (one per image), each containing a
@@ -350,8 +376,7 @@ def collate_boxes(
             - ``boxes_padded`` — ``[B, N_max, 4]`` float tensor (zero-padded).
             - ``valid_mask``   — ``[B, N_max]`` bool tensor (``True`` = real box).
 
-        When ``B == 0`` or all images have zero boxes, both tensors have
-        ``N_max == 0``.
+        When ``B == 0`` or all images have zero boxes, both tensors have ``N_max == 0``.
     """
     if len(targets) == 0:
         return (
@@ -381,19 +406,67 @@ def collate_boxes(
     return boxes_padded, valid_mask
 
 
+def collate_masks(
+    targets: list[dict[str, Any]],
+    device: torch.device,
+    n_max: int,
+    image_height: int,
+    image_width: int,
+) -> Tensor:
+    """Pack variable-length instance masks into a zero-padded ``[B, N_max, H, W]`` tensor.
+
+    Kornia ``AugmentationSequential`` expects masks as ``[B, N_max, H, W]`` when ``data_keys`` includes ``"mask"``.
+    This function zero-pads each image's masks to *n_max* channels (matching the padding used by :func:`collate_boxes`)
+    and converts boolean masks to ``float32`` for Kornia compatibility.
+
+    Args:
+        targets: List of target dicts (one per image).  Each dict may optionally
+            contain a ``"masks"`` key with an ``[N_i, H, W]`` boolean tensor. Dicts without the key are treated as
+            having zero instances.
+        device: Device on which to allocate the output tensor.
+        n_max: Maximum instance count across the batch — must equal
+            ``collate_boxes(targets, device)[1].shape[1]`` to keep box/mask indices in sync.
+        image_height: Spatial height ``H`` of each mask (pixels).
+        image_width: Spatial width ``W`` of each mask (pixels).
+
+    Returns:
+        Float32 tensor of shape ``[B, N_max, H, W]``, zero-padded where ``N_i < N_max``.  Boolean input masks are cast
+        to ``float32`` (``True → 1.0``, ``False → 0.0``).
+
+    Examples:
+        >>> import torch
+        >>> targets = [{"masks": torch.ones(2, 8, 8, dtype=torch.bool)}]
+        >>> out = collate_masks(targets, torch.device("cpu"), n_max=2, image_height=8, image_width=8)
+        >>> out.shape
+        torch.Size([1, 2, 8, 8])
+        >>> out.dtype
+        torch.float32
+    """
+    batch_size = len(targets)
+    masks_padded = torch.zeros(batch_size, n_max, image_height, image_width, dtype=torch.float32, device=device)
+    for i, t in enumerate(targets):
+        if "masks" not in t or n_max == 0:
+            continue
+        masks_i = t["masks"].to(dtype=torch.float32, device=device)  # [N_i, H, W]
+        n = min(masks_i.shape[0], n_max)
+        if n > 0:
+            masks_padded[i, :n] = masks_i[:n]
+    return masks_padded
+
+
 def unpack_boxes(
     boxes_aug: Tensor,
     valid: Tensor,
     targets: list[dict[str, Any]],
     image_height: int,
     image_width: int,
+    masks_aug: Tensor | None = None,
 ) -> list[dict[str, Any]]:
-    """Unpack augmented boxes, clamp to image bounds, and remove zero-area boxes.
+    """Unpack augmented boxes (and optionally masks), clamp to image bounds, remove zero-area boxes.
 
-    After Kornia augmentation the padded ``[B, N_max, 4]`` tensor is unpacked
-    back into per-image target dicts.  Boxes are clamped to ``[0, W] x [0, H]``
-    and any that collapse to zero area are removed along with their
-    corresponding ``labels``, ``area``, and ``iscrowd`` entries.
+    After Kornia augmentation the padded ``[B, N_max, 4]`` tensor is unpacked back into per-image target dicts.  Boxes
+    are clamped to ``[0, W] x [0, H]`` and any that collapse to zero area are removed along with their corresponding
+    ``labels``, ``area``, ``iscrowd``, and (if provided) ``masks`` entries.
 
     Args:
         boxes_aug: Augmented boxes tensor ``[B, N_max, 4]`` in xyxy format.
@@ -402,11 +475,21 @@ def unpack_boxes(
             modification — the input list itself is not mutated.
         image_height: Image height in pixels (for clamping).
         image_width: Image width in pixels (for clamping).
+        masks_aug: Optional augmented masks tensor ``[B, N_max, H, W]``
+            (float32) from Kornia.  When provided, masks are filtered by the same ``keep`` mask as boxes, thresholded at
+            ``> 0.5`` to bool, and stored under ``"masks"`` in each output target dict.  When ``None``, any existing
+            ``"masks"`` entry in the target dict is preserved unchanged.
 
     Returns:
-        A new list of target dicts with updated ``boxes``, ``labels``,
-        ``area``, and ``iscrowd`` entries.
+        A new list of target dicts with updated ``boxes``, ``labels``, ``area``, ``iscrowd``, and (when *masks_aug* is
+        given) ``masks`` entries.
     """
+    if masks_aug is not None:
+        assert masks_aug.shape[:2] == valid.shape, (
+            f"masks_aug batch/n_max dims {tuple(masks_aug.shape[:2])} must match "
+            f"valid shape {tuple(valid.shape)}; ensure collate_masks is called with "
+            "n_max=valid.shape[1] from collate_boxes"
+        )
     new_targets: list[dict[str, Any]] = []
     for i, t in enumerate(targets):
         t = t.copy()
@@ -441,6 +524,9 @@ def unpack_boxes(
             t["area"] = (kept_boxes[:, 2] - kept_boxes[:, 0]) * (kept_boxes[:, 3] - kept_boxes[:, 1])
         if "iscrowd" in t:
             t["iscrowd"] = t["iscrowd"][keep]
+        if masks_aug is not None:
+            masks_i = masks_aug[i, :n_orig]  # [N_orig, H, W]
+            t["masks"] = masks_i[keep] > _MASK_BINARIZE_THRESHOLD
 
         new_targets.append(t)
 

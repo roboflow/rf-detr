@@ -3,7 +3,6 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Unit tests for :class:`BestModelCallback` and :class:`RFDETREarlyStopping`."""
 
 from __future__ import annotations
@@ -34,8 +33,8 @@ def _make_trainer(
 ) -> MagicMock:
     """Create a minimal mock Trainer with controllable callback_metrics.
 
-    Sets the attributes required by ModelCheckpoint and EarlyStopping
-    skip-guards so that callbacks run normally in unit tests.
+    Sets the attributes required by ModelCheckpoint and EarlyStopping skip-guards so that callbacks run normally in unit
+    tests.
     """
     trainer = MagicMock()
     trainer.callback_metrics = {k: torch.tensor(v) for k, v in metrics.items()}
@@ -90,8 +89,8 @@ class _ResumeTinyModule(LightningModule):
 class _EvalIntervalModule(LightningModule):
     """Tiny module that only logs val/mAP_50_95 every ``eval_interval`` epochs.
 
-    Simulates RF-DETR's COCO-eval skip behaviour: validation runs every epoch
-    but the metric key is absent on non-eval epochs.
+    Simulates RF-DETR's COCO-eval skip behaviour: validation runs every epoch but the metric key is absent on non-eval
+    epochs.
     """
 
     def __init__(self, eval_interval: int = 2) -> None:
@@ -439,9 +438,8 @@ class TestBestModelCallback:
     def test_run_test_true_without_test_step_skips_trainer_test(self, tmp_path: Path) -> None:
         """run_test=True but no test_step override — trainer.test() is NOT called.
 
-        The guard in BestModelCallback.on_fit_end() skips trainer.test() for
-        modules that do not override LightningModule.test_step() to avoid a
-        MisconfigurationException from PTL.
+        The guard in BestModelCallback.on_fit_end() skips trainer.test() for modules that do not override
+        LightningModule.test_step() to avoid a MisconfigurationException from PTL.
         """
         cb = BestModelCallback(output_dir=str(tmp_path), run_test=True)
         pl_module = _make_pl_module()  # MagicMock — no test_step on its class
@@ -476,9 +474,8 @@ class TestBestModelCallback:
     def test_run_test_loads_best_weights_before_test(self, tmp_path: Path) -> None:
         """on_fit_end loads checkpoint_best_total.pth weights before trainer.test().
 
-        Mirrors legacy main.py:602-609 which loads the best checkpoint into the
-        model before running test evaluation so the test loop measures the best
-        model, not the end-of-training state.
+        Mirrors legacy main.py:602-609 which loads the best checkpoint into the model before running test evaluation so
+        the test loop measures the best model, not the end-of-training state.
         """
         from pytorch_lightning import LightningModule
 
@@ -515,9 +512,8 @@ class TestBestModelCallback:
     def test_checkpoint_class_names_populated_from_datamodule(self, tmp_path: Path) -> None:
         """Saved checkpoint args.class_names reflects dataset class names.
 
-        Regression test for #509: checkpoints were saved with class_names=None
-        when the user did not pass class_names explicitly, causing reloaded-model
-        inference to fall through to COCO labels instead of dataset labels.
+        Regression test for #509: checkpoints were saved with class_names=None when the user did not pass class_names
+        explicitly, causing reloaded-model inference to fall through to COCO labels instead of dataset labels.
         """
         from rfdetr.config import TrainConfig
 
@@ -542,8 +538,8 @@ class TestBestModelCallback:
     def test_ema_checkpoint_class_names_populated_from_datamodule(self, tmp_path: Path) -> None:
         """EMA checkpoint args.class_names also reflects dataset class names.
 
-        Regression test for #509: EMA checkpoint path was not enriched with
-        class names, so EMA-selected runs would still return COCO labels after reload.
+        Regression test for #509: EMA checkpoint path was not enriched with class names, so EMA-selected runs would
+        still return COCO labels after reload.
         """
         from rfdetr.config import TrainConfig
 
@@ -570,8 +566,8 @@ class TestBestModelCallback:
     def test_checkpoint_class_names_not_overwritten_when_already_set(self, tmp_path: Path) -> None:
         """Explicitly-set class_names in TrainConfig are preserved in the checkpoint.
 
-        When the user passes class_names=['defect'] to TrainConfig, the saved
-        checkpoint must keep that value even if the datamodule reports different names.
+        When the user passes class_names=['defect'] to TrainConfig, the saved checkpoint must keep that value even if
+        the datamodule reports different names.
         """
         from rfdetr.config import TrainConfig
 
@@ -597,9 +593,9 @@ class TestBestModelCallback:
     def test_checkpoint_explicit_empty_class_names_not_overwritten_by_datamodule(self, tmp_path: Path) -> None:
         """TrainConfig(class_names=[]) is preserved even when datamodule has non-empty names.
 
-        Guard-bypass regression: the truthiness check `not getattr(..., "class_names", None)`
-        treated an explicit empty list the same as None (both falsy), silently overwriting
-        the user's intent with the datamodule's names. The fix uses `is None` identity.
+        Guard-bypass regression: the truthiness check `not getattr(..., "class_names", None)` treated an explicit empty
+        list the same as None (both falsy), silently overwriting the user's intent with the datamodule's names. The fix
+        uses `is None` identity.
         """
         from rfdetr.config import TrainConfig
 
@@ -713,7 +709,10 @@ class TestBestModelCallback:
         assert isinstance(ckpt["args"], dict)
 
     def test_regular_checkpoint_has_ptl_state_dict_key(self, tmp_path: Path) -> None:
-        """Saved regular checkpoint must include 'state_dict' with model. prefix."""
+        """Saved regular checkpoint must include 'state_dict' with model.
+
+        prefix.
+        """
         cb = BestModelCallback(output_dir=str(tmp_path))
         trainer = _make_trainer({"val/mAP_50_95": 0.5})
         pl_module = _make_pl_module()
@@ -749,7 +748,10 @@ class TestBestModelCallback:
         assert ckpt.get("pytorch-lightning_version") == ptl_version
 
     def test_ema_checkpoint_has_ptl_state_dict_key(self, tmp_path: Path) -> None:
-        """Saved EMA checkpoint must include 'state_dict' with model. prefix."""
+        """Saved EMA checkpoint must include 'state_dict' with model.
+
+        prefix.
+        """
         cb = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95")
         trainer = _make_trainer({"val/mAP_50_95": 0.4, "val/ema_mAP_50_95": 0.6})
         pl_module = _make_pl_module()
@@ -1030,7 +1032,7 @@ class TestRFDETREarlyStopping:
         assert cb.wait_count == 3
 
     def test_stops_after_patience_exceeded(self) -> None:
-        """patience=3 with 3 no-improvement epochs triggers stop."""
+        """Patience=3 with 3 no-improvement epochs triggers stop."""
         cb = RFDETREarlyStopping(patience=3, min_delta=0.001)
         pl_module = _make_pl_module()
 
@@ -1165,8 +1167,7 @@ class TestRFDETREarlyStopping:
     ) -> None:
         """RFDETREarlyStopping stops at the expected epoch for a plateau sequence.
 
-        Drives the callback with an identical mAP sequence and asserts the
-        trigger epoch matches the expected value.
+        Drives the callback with an identical mAP sequence and asserts the trigger epoch matches the expected value.
         """
         new_cb = RFDETREarlyStopping(
             patience=patience,
@@ -1345,11 +1346,10 @@ class TestCheckpointRfdetrVersion:
 class TestBestEmaStatePersistence:
     """Regression tests for _best_ema not surviving Lightning checkpoint resume.
 
-    Before the fix, BestModelCallback did not override state_dict() /
-    load_state_dict(), so _best_ema was never included in the Lightning callback
-    state bundle.  On resume via trainer.fit(ckpt_path=...) the callback was
-    reconstructed fresh with _best_ema=0.0, causing any positive post-resume EMA
-    value to trivially overwrite checkpoint_best_ema.pth with inferior weights.
+    Before the fix, BestModelCallback did not override state_dict() / load_state_dict(), so _best_ema was never included
+    in the Lightning callback state bundle.  On resume via trainer.fit(ckpt_path=...) the callback was reconstructed
+    fresh with _best_ema=0.0, causing any positive post-resume EMA value to trivially overwrite checkpoint_best_ema.pth
+    with inferior weights.
 
     Regression tests for GitHub issue #969.
     """
@@ -1388,9 +1388,8 @@ class TestBestEmaStatePersistence:
     def test_resume_does_not_clobber_ema_checkpoint_with_inferior_weights(self, tmp_path: Path) -> None:
         """After resume, inferior post-resume EMA must not overwrite checkpoint_best_ema.pth.
 
-        Without the fix: _best_ema resets to 0.0 on resume, so any positive EMA
-        metric (0.5) trivially satisfies ema_val > _best_ema and overwrites the
-        checkpoint saved pre-resume (0.75).
+        Without the fix: _best_ema resets to 0.0 on resume, so any positive EMA metric (0.5) trivially satisfies ema_val
+        > _best_ema and overwrites the checkpoint saved pre-resume (0.75).
         """
         # --- Pre-resume phase: establish EMA best of 0.75 ---
         cb_pre = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95")
@@ -1424,11 +1423,9 @@ class TestBestEmaStatePersistence:
     def test_on_fit_end_selects_ema_winner_after_resume(self, tmp_path: Path) -> None:
         """on_fit_end picks EMA winner correctly when _best_ema is properly restored.
 
-        Without the fix: _best_ema=0.0 after resume, so regular (0.6) wins over
-        the true EMA best (0.8) — checkpoint_best_total.pth is built from the
-        wrong source.  Use epoch number as a distinguisher: pre-resume EMA was
-        saved at epoch 3; regular was saved at epoch 1; total epoch must be 3
-        (EMA epoch) when EMA correctly wins.
+        Without the fix: _best_ema=0.0 after resume, so regular (0.6) wins over the true EMA best (0.8) —
+        checkpoint_best_total.pth is built from the wrong source.  Use epoch number as a distinguisher: pre-resume EMA
+        was saved at epoch 3; regular was saved at epoch 1; total epoch must be 3 (EMA epoch) when EMA correctly wins.
         """
         # Pre-resume epoch 1: regular best=0.6.
         cb_pre = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95", run_test=False)
@@ -1540,3 +1537,108 @@ class TestBestEmaStatePersistence:
         cb2.load_state_dict(sd)
 
         assert cb2._best_ema == 0.0
+
+
+# ---------------------------------------------------------------------------
+# TestCheckpointNotes
+# ---------------------------------------------------------------------------
+
+
+class TestCheckpointNotes:
+    """Verify user-supplied notes are persisted in .pth checkpoint files."""
+
+    @pytest.mark.parametrize(
+        "notes",
+        [
+            pytest.param("simple string", id="string"),
+            pytest.param({"date": "2026-01-01", "labeller": "Alice"}, id="dict"),
+            pytest.param(["class_a", "class_b"], id="list"),
+            pytest.param(42, id="int"),
+        ],
+    )
+    def test_notes_accessible_via_args_dict(self, tmp_path: Path, notes: object) -> None:
+        """Notes supplied via TrainConfig are accessible under checkpoint['args']['notes']."""
+        from rfdetr.config import TrainConfig
+
+        cb = BestModelCallback(output_dir=str(tmp_path))
+        trainer = _make_trainer({"val/mAP_50_95": 0.5})
+
+        pl_module = _make_pl_module()
+        pl_module.train_config = TrainConfig(dataset_dir=str(tmp_path / "ds"), tensorboard=False, notes=notes)
+
+        cb.on_validation_end(trainer, pl_module)
+
+        checkpoint = torch.load(
+            tmp_path / "checkpoint_best_regular.pth",
+            map_location="cpu",
+            weights_only=False,
+        )
+        assert checkpoint["args"]["notes"] == notes
+
+    def test_notes_also_preserved_in_args_dict(self, tmp_path: Path) -> None:
+        """Notes are also accessible inside checkpoint['args']['notes'] via TrainConfig dump."""
+        from rfdetr.config import TrainConfig
+
+        notes = {"project": "ceramics", "batch": 7}
+        cb = BestModelCallback(output_dir=str(tmp_path))
+        trainer = _make_trainer({"val/mAP_50_95": 0.5})
+
+        pl_module = _make_pl_module()
+        pl_module.train_config = TrainConfig(dataset_dir=str(tmp_path / "ds"), tensorboard=False, notes=notes)
+
+        cb.on_validation_end(trainer, pl_module)
+
+        checkpoint = torch.load(
+            tmp_path / "checkpoint_best_regular.pth",
+            map_location="cpu",
+            weights_only=False,
+        )
+        assert checkpoint["args"]["notes"] == notes
+
+    def test_notes_absent_when_not_provided(self, tmp_path: Path) -> None:
+        """When notes=None (default), no top-level 'notes' key is written to checkpoint."""
+        from rfdetr.config import TrainConfig
+
+        cb = BestModelCallback(output_dir=str(tmp_path))
+        trainer = _make_trainer({"val/mAP_50_95": 0.5})
+
+        pl_module = _make_pl_module()
+        pl_module.train_config = TrainConfig(dataset_dir=str(tmp_path / "ds"), tensorboard=False)
+
+        cb.on_validation_end(trainer, pl_module)
+
+        checkpoint = torch.load(
+            tmp_path / "checkpoint_best_regular.pth",
+            map_location="cpu",
+            weights_only=False,
+        )
+        assert "notes" not in checkpoint
+
+    @pytest.mark.parametrize(
+        "notes",
+        [
+            pytest.param("", id="empty_string"),
+            pytest.param({}, id="empty_dict"),
+            pytest.param([], id="empty_list"),
+            pytest.param(0, id="zero"),
+            pytest.param(False, id="false"),
+        ],
+    )
+    def test_falsy_notes_stored_in_args_dict(self, tmp_path: Path, notes: object) -> None:
+        """Falsy but non-None notes values are preserved in checkpoint['args']['notes']."""
+        from rfdetr.config import TrainConfig
+
+        cb = BestModelCallback(output_dir=str(tmp_path))
+        trainer = _make_trainer({"val/mAP_50_95": 0.5})
+
+        pl_module = _make_pl_module()
+        pl_module.train_config = TrainConfig(dataset_dir=str(tmp_path / "ds"), tensorboard=False, notes=notes)
+
+        cb.on_validation_end(trainer, pl_module)
+
+        checkpoint = torch.load(
+            tmp_path / "checkpoint_best_regular.pth",
+            map_location="cpu",
+            weights_only=False,
+        )
+        assert checkpoint["args"]["notes"] == notes

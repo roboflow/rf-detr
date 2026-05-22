@@ -3,7 +3,6 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Unit tests for COCOEvalCallback."""
 
 from unittest.mock import MagicMock, patch
@@ -70,7 +69,7 @@ def _minimal_metrics(pfx: str = "", max_dets: int = 500) -> dict:
 
 
 class TestSetup:
-    """setup() creates map_metric with correct configuration."""
+    """Setup() creates map_metric with correct configuration."""
 
     def test_init_defaults_notebook_flag_to_false_without_ipython(self) -> None:
         """Constructor sets _in_notebook=False when IPython import is unavailable."""
@@ -153,8 +152,8 @@ class TestOnFitStart:
         assert cb._class_names == []
 
     def test_cat_id_to_name_uses_label2cat_when_available(self) -> None:
-        """When coco.label2cat is present (remap_category_ids=True) the mapping
-        uses 0-based remapped label IDs so class names align with predictions."""
+        """When coco.label2cat is present (remap_category_ids=True) the mapping uses 0-based remapped label IDs so class
+        names align with predictions."""
         coco = MagicMock()
         coco.cats = {1: {"name": "fish"}, 2: {"name": "shark"}}
         # label2cat: remapped_label → original_cat_id  (cat2label inverse)
@@ -402,8 +401,8 @@ class TestOnValidationEpochEnd:
     def test_ema_metrics_logged_when_map_metric_ema_populated(self) -> None:
         """val/ema_* metrics are logged when map_metric_ema has accumulated data.
 
-        EMA metrics are now computed from a separate map_metric_ema that is
-        populated during on_validation_batch_end (not aliased from base metrics).
+        EMA metrics are now computed from a separate map_metric_ema that is populated during on_validation_batch_end
+        (not aliased from base metrics).
         """
         cb = COCOEvalCallback(max_dets=500)
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
@@ -474,11 +473,11 @@ class TestOnValidationEpochEnd:
         assert not any(k.startswith("val/AP/") for k in logged_keys)
 
     def test_callback_metrics_updated_for_model_checkpoint(self) -> None:
-        """Core metrics written to trainer.callback_metrics each epoch so
-        ModelCheckpoint / BestModelCallback detect improvement.
+        """Core metrics written to trainer.callback_metrics each epoch so ModelCheckpoint / BestModelCallback detect
+        improvement.
 
-        pl_module.log() from a callback's on_validation_epoch_end goes only to
-        logged_metrics (external loggers), not callback_metrics.
+        pl_module.log() from a callback's on_validation_epoch_end goes only to logged_metrics (external loggers), not
+        callback_metrics.
         """
         cb = COCOEvalCallback(max_dets=500)
         trainer = _make_trainer()
@@ -514,8 +513,10 @@ class TestOnValidationEpochEnd:
         assert "val/ema_mAR" in trainer.callback_metrics
 
     def test_ema_segm_metrics_use_ema_values_not_base(self) -> None:
-        """EMA segmentation metrics must come from map_metric_ema, not the
-        base map_metric.  Regression test for #978."""
+        """EMA segmentation metrics must come from map_metric_ema, not the base map_metric.
+
+        Regression test for #978.
+        """
         cb = COCOEvalCallback(max_dets=500, segmentation=True)
         trainer = _make_trainer()
         trainer.callback_metrics = {}
@@ -550,9 +551,10 @@ class TestOnValidationEpochEnd:
         assert logged["val/ema_segm_mAP_50"].item() == pytest.approx(0.65)
 
     def test_ghost_class_with_negative_ar_sentinel_is_filtered(self) -> None:
-        """A class where both ap=-1 and ar=-1 (negative sentinels, not NaN) must
-        be excluded from the per-class table.  The old filter checked for NaN
-        only, so ar=-1 (a valid float) escaped the guard."""
+        """A class where both ap=-1 and ar=-1 (negative sentinels, not NaN) must be excluded from the per-class table.
+
+        The old filter checked for NaN only, so ar=-1 (a valid float) escaped the guard.
+        """
         cb = COCOEvalCallback()
         cb._cat_id_to_name = {0: "fish"}
         trainer = _make_trainer()
@@ -585,8 +587,8 @@ class TestOnTestEpochEnd:
     """Test-loop-specific behaviour of on_test_epoch_end."""
 
     def test_no_ema_aliases_for_test(self) -> None:
-        """test/ema_* aliases are NOT logged — test always runs with EMA weights
-        via the RFDETREMACallback swap so test/mAP_50 is already the EMA result."""
+        """test/ema_* aliases are NOT logged — test always runs with EMA weights via the RFDETREMACallback swap so
+        test/mAP_50 is already the EMA result."""
         cb = COCOEvalCallback(max_dets=500)
         cb.setup(_make_trainer(), _make_pl_module(), stage="test")
         cb.map_metric = MagicMock(name="map_metric")
@@ -639,9 +641,8 @@ class TestConvertPreds:
     ) -> None:
         """Filtering degenerate boxes must preserve mask alignment via original indices.
 
-        Regression context: when a degenerate box is not last, keep indices are
-        non-zero/non-contiguous. Downstream filtering must keep masks from the
-        same original prediction indices.
+        Regression context: when a degenerate box is not last, keep indices are non-zero/non-contiguous. Downstream
+        filtering must keep masks from the same original prediction indices.
         """
         cb = COCOEvalCallback()
 
@@ -693,7 +694,7 @@ class TestConvertTargets:
         assert boxes[0, 3].item() == pytest.approx(160.0)
 
     def test_labels_passed_through(self) -> None:
-        """labels tensor is preserved unchanged."""
+        """Labels tensor is preserved unchanged."""
         cb = COCOEvalCallback()
         targets = [
             {
@@ -706,7 +707,7 @@ class TestConvertTargets:
         assert out[0]["labels"][0].item() == 7
 
     def test_masks_passed_through_as_bool(self) -> None:
-        """masks tensor is cast to bool and included in output."""
+        """Masks tensor is cast to bool and included in output."""
         cb = COCOEvalCallback()
         targets = [
             {
@@ -721,7 +722,7 @@ class TestConvertTargets:
         assert out[0]["masks"].dtype == torch.bool
 
     def test_iscrowd_passed_through(self) -> None:
-        """iscrowd tensor is included when present."""
+        """Iscrowd tensor is included when present."""
         cb = COCOEvalCallback()
         targets = [
             {

@@ -3,7 +3,6 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Tests for package metadata helpers and structural import paths."""
 
 import subprocess
@@ -41,9 +40,9 @@ def test_get_sha_marks_dirty_worktree_when_diff_command_returns_exit_code_1() ->
 def test_peft_not_imported_eagerly_on_backbone_import_characterization() -> None:
     """Importing backbone.backbone must NOT pull peft into sys.modules (peft is optional).
 
-    This characterization test captures the invariant introduced in PR 1 (chore/packaging-peft-lora):
-    after the lazy-import refactor, importing backbone at module-load time must not trigger a
-    top-level ``from peft import PeftModel``.
+    This characterization test captures the invariant introduced in PR 1 (chore/packaging-peft-lora): after the
+    lazy-import refactor, importing backbone at module-load time must not trigger a top-level ``from peft import
+    PeftModel``.
     """
     result = subprocess.run(
         [
@@ -172,8 +171,8 @@ class TestImportPaths:
     def test_identity_across_import_paths(self) -> None:
         """The same class object must be returned regardless of import path.
 
-        This ensures re-exports are true re-exports (not copies) so that
-        isinstance() checks work across all import paths.
+        This ensures re-exports are true re-exports (not copies) so that isinstance() checks work across all import
+        paths.
         """
         import rfdetr
         from rfdetr.detr import ModelContext as FromDetr

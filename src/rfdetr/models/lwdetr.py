@@ -15,10 +15,7 @@
 # Modified from Deformable DETR (https://github.com/fundamentalvision/Deformable-DETR)
 # Copyright (c) 2020 SenseTime. All Rights Reserved.
 # ------------------------------------------------------------------------
-
-"""
-LW-DETR model and criterion classes
-"""
+"""LW-DETR model and criterion classes."""
 
 import copy
 import math
@@ -56,19 +53,16 @@ from rfdetr.utilities.tensors import NestedTensor, nested_tensor_from_tensor_lis
 def _resize_linear(linear: nn.Linear, num_classes: int) -> nn.Linear:
     """Return a new :class:`~torch.nn.Linear` resized to *num_classes* outputs.
 
-    Tiles the existing weight rows when *num_classes* is larger than the current
-    output size, or truncates them when smaller.  The returned module has
-    ``out_features == num_classes`` so that ``nn.Linear`` metadata stays
-    consistent with the actual weight shape — a requirement for correct ONNX
-    export and ``torch.jit.trace`` serialisation.
+    Tiles the existing weight rows when *num_classes* is larger than the current output size, or truncates them when
+    smaller.  The returned module has ``out_features == num_classes`` so that ``nn.Linear`` metadata stays consistent
+    with the actual weight shape — a requirement for correct ONNX export and ``torch.jit.trace`` serialisation.
 
     Args:
         linear: Source linear layer whose weights are used as the starting point.
         num_classes: Target number of output features.
 
     Returns:
-        A new :class:`~torch.nn.Linear` with ``in_features`` unchanged and
-        ``out_features == num_classes``.
+        A new :class:`~torch.nn.Linear` with ``in_features`` unchanged and ``out_features == num_classes``.
     """
     base = linear.weight.shape[0]
     num_repeats = int(math.ceil(num_classes / base))
@@ -87,7 +81,7 @@ def _resize_linear(linear: nn.Linear, num_classes: int) -> nn.Linear:
 
 
 class LWDETR(nn.Module):
-    """This is the Group DETR v3 module that performs object detection"""
+    """This is the Group DETR v3 module that performs object detection."""
 
     def __init__(
         self,
@@ -103,6 +97,7 @@ class LWDETR(nn.Module):
         bbox_reparam=False,
     ):
         """Initializes the model.
+
         Parameters:
             backbone: torch module of the backbone to be used. See backbone.py
             transformer: torch module of the transformer architecture. See transformer.py
@@ -163,13 +158,11 @@ class LWDETR(nn.Module):
     def reinitialize_detection_head(self, num_classes: int) -> None:
         """Resize the detection classification head to *num_classes* outputs.
 
-        Replaces ``self.class_embed`` (and each ``enc_out_class_embed`` when the
-        model uses two-stage detection) with a new :class:`torch.nn.Linear` whose
-        ``out_features`` equals *num_classes*.  When *num_classes* is larger than
-        the current head the existing weights are tiled; when smaller they are
-        truncated.  Replacing the module (rather than mutating ``.data``) keeps
-        ``nn.Linear.out_features`` consistent with the actual weight shape, which
-        is required for correct ONNX export.
+        Replaces ``self.class_embed`` (and each ``enc_out_class_embed`` when the model uses two-stage detection) with a
+        new :class:`torch.nn.Linear` whose ``out_features`` equals *num_classes*.  When *num_classes* is larger than the
+        current head the existing weights are tiled; when smaller they are truncated.  Replacing the module (rather than
+        mutating ``.data``) keeps ``nn.Linear.out_features`` consistent with the actual weight shape, which is required
+        for correct ONNX export.
 
         Args:
             num_classes: Target number of output classes (including background).
@@ -191,6 +184,7 @@ class LWDETR(nn.Module):
 
     def forward(self, samples: NestedTensor, targets=None):
         """The forward expects a NestedTensor, which consists of:
+
            - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
            - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
 
@@ -198,9 +192,9 @@ class LWDETR(nn.Module):
            - "pred_logits": the classification logits (including no-object) for all queries.
                             Shape= [batch_size x num_queries x num_classes]
            - "pred_boxes": The normalized boxes coordinates for all queries, represented as
-                           (center_x, center_y, width, height). These values are normalized in [0, 1],
-                           relative to the size of each individual image (disregarding possible padding).
-                           See PostProcess for information on how to retrieve the unnormalized bounding box.
+                           (center_x, center_y, width, height). These values are normalized in [0, 1], relative to the
+                           size of each individual image (disregarding possible padding). See PostProcess for
+                           information on how to retrieve the unnormalized bounding box.
            - "aux_outputs": Optional, only returned when auxiliary losses are activated. It is a list of
                             dictionaries containing the two above keys for each decoder layer.
         """
@@ -370,8 +364,8 @@ class LWDETR(nn.Module):
     def update_drop_path(self, drop_path_rate: float, vit_encoder_num_layers: int) -> None:
         """Update drop_path rates for backbone encoder layers with linear schedule.
 
-        Applies a linear schedule where the first layer has drop_path_rate=0 and the last
-        layer has drop_path_rate=drop_path_rate. Intermediate layers are interpolated linearly.
+        Applies a linear schedule where the first layer has drop_path_rate=0 and the last layer has
+        drop_path_rate=drop_path_rate. Intermediate layers are interpolated linearly.
 
         Args:
             drop_path_rate: Maximum drop path rate (applied to last layer).
@@ -527,20 +521,18 @@ def build_model_from_config(
 ) -> LWDETR:
     """Build an LWDETR model directly from a ModelConfig.
 
-    A config-native alternative to ``build_model(build_namespace(mc, tc))``.
-    Constructs the namespace internally from ``model_config``, an optional
-    ``train_config``, and ``defaults``, then delegates to :func:`build_model`.
+    A config-native alternative to ``build_model(build_namespace(mc, tc))``. Constructs the namespace internally from
+    ``model_config``, an optional ``train_config``, and ``defaults``, then delegates to :func:`build_model`.
 
     Note:
-        The internal ``SimpleNamespace`` bridge is transitional — it will be
-        eliminated once all builder functions accept config objects directly.
-        Callers should not rely on the namespace shape or pass it externally.
+        The internal ``SimpleNamespace`` bridge is transitional — it will be eliminated once all builder functions
+        accept config objects directly. Callers should not rely on the namespace shape or pass it externally.
 
     Args:
         model_config: Architecture configuration.
         train_config: Training hyperparameter configuration. If ``None``,
-            a minimal dummy ``TrainConfig(dataset_dir=".", output_dir=".")`` is
-            constructed, matching the previous default behavior.
+            a minimal dummy ``TrainConfig(dataset_dir=".", output_dir=".")`` is constructed, matching the previous
+            default behavior.
         defaults: Hardcoded architectural constants. Defaults to ``MODEL_DEFAULTS``.
 
     Returns:
@@ -573,8 +565,7 @@ def build_criterion_from_config(
 ) -> tuple[SetCriterion, PostProcess]:
     """Build criterion and postprocessor directly from config objects.
 
-    A config-native alternative to
-    ``build_criterion_and_postprocessors(build_namespace(mc, tc))``.
+    A config-native alternative to ``build_criterion_and_postprocessors(build_namespace(mc, tc))``.
 
     Args:
         model_config: Architecture configuration.

@@ -3,7 +3,6 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """COCOEvalCallback — torchmetrics-based mAP and F1 evaluation."""
 
 import contextlib
@@ -28,8 +27,7 @@ from rfdetr.utilities.box_ops import box_cxcywh_to_xyxy
 class COCOEvalCallback(Callback):
     """Validation callback that computes mAP (via torchmetrics) and macro-F1.
 
-    Accumulates predictions and targets across validation batches, then at
-    epoch end computes:
+    Accumulates predictions and targets across validation batches, then at epoch end computes:
 
     - ``val/mAP_50_95``, ``val/mAP_50``, ``val/mAP_75``, ``val/mAR`` using
       ``torchmetrics.detection.MeanAveragePrecision``.
@@ -37,8 +35,8 @@ class COCOEvalCallback(Callback):
     - ``val/F1``, ``val/precision``, ``val/recall`` from a confidence-threshold
       sweep over compact per-class matching data (DDP-safe).
 
-    For segmentation models (``segmentation=True``) additional metrics
-    ``val/segm_mAP_50_95`` and ``val/segm_mAP_50`` are logged.
+    For segmentation models (``segmentation=True``) additional metrics ``val/segm_mAP_50_95`` and ``val/segm_mAP_50``
+    are logged.
 
     Args:
         max_dets: Maximum detections per image passed to
@@ -101,9 +99,8 @@ class COCOEvalCallback(Callback):
     def on_fit_start(self, trainer: Any, pl_module: Any) -> None:
         """Pull class names from the DataModule once the datasets are set up.
 
-        Builds a ``category_id → name`` mapping from the COCO annotation
-        metadata so that per-class AP is logged under the class name regardless
-        of whether the dataset uses sequential or non-sequential category IDs.
+        Builds a ``category_id → name`` mapping from the COCO annotation metadata so that per-class AP is logged under
+        the class name regardless of whether the dataset uses sequential or non-sequential category IDs.
 
         Args:
             trainer: The PTL Trainer.
@@ -145,13 +142,11 @@ class COCOEvalCallback(Callback):
     ) -> None:
         """Accumulate predictions and matching data for one validation batch.
 
-        Expects ``outputs`` to be the dict returned by
-        ``RFDETRModelModule.validation_step``:
-        ``{"results": list[dict], "targets": list[dict]}``.
+        Expects ``outputs`` to be the dict returned by ``RFDETRModelModule.validation_step``: ``{"results": list[dict],
+        "targets": list[dict]}``.
 
-        When an EMA callback is present the EMA model is run on the same batch
-        in a separate ``torch.no_grad()`` forward pass so that base and EMA
-        metrics are computed from independent predictions.
+        When an EMA callback is present the EMA model is run on the same batch in a separate ``torch.no_grad()`` forward
+        pass so that base and EMA metrics are computed from independent predictions.
 
         Args:
             trainer: The PTL Trainer.
@@ -221,8 +216,8 @@ class COCOEvalCallback(Callback):
     ) -> None:
         """Accumulate predictions and matching data for one test batch.
 
-        Mirrors :meth:`on_validation_batch_end` for the test evaluation loop
-        triggered by ``trainer.test()`` at the end of training.
+        Mirrors :meth:`on_validation_batch_end` for the test evaluation loop triggered by ``trainer.test()`` at the end
+        of training.
 
         Args:
             trainer: The PTL Trainer.
@@ -259,12 +254,10 @@ class COCOEvalCallback(Callback):
     def _compute_and_log(self, trainer: Any, pl_module: Any, split: str) -> None:
         """Shared epoch-end logic for validation and test evaluation loops.
 
-        Computes mAP (via ``self.map_metric``), runs the F1 confidence-threshold
-        sweep, logs all scalar metrics via ``pl_module.log``, prints two summary
-        tables to the terminal, and resets internal accumulators.  When
-        ``self.map_metric_ema`` is set, EMA variants of all metrics (including
-        ``ema_segm_mAP_50_95`` and ``ema_segm_mAP_50`` for segmentation models)
-        are logged under the same ``split/`` namespace.
+        Computes mAP (via ``self.map_metric``), runs the F1 confidence-threshold sweep, logs all scalar metrics via
+        ``pl_module.log``, prints two summary tables to the terminal, and resets internal accumulators.  When
+        ``self.map_metric_ema`` is set, EMA variants of all metrics (including ``ema_segm_mAP_50_95`` and
+        ``ema_segm_mAP_50`` for segmentation models) are logged under the same ``split/`` namespace.
 
         Args:
             trainer: The PTL Trainer.
@@ -447,11 +440,10 @@ class COCOEvalCallback(Callback):
     ) -> None:
         """Print two tables to the terminal: overall metrics and per-class metrics.
 
-        The overall table is transposed (metrics as columns, one value row) with
-        true merged group-header cells rendered via box-drawing characters:
-        ``mAP`` spans sub-columns 50:95 / 50 / 75, ``mAR`` spans ``@N``, and
-        ``F1 sweep`` spans F1 / Prec / Recall.  The per-class table uses a
-        standard Rich ``Table`` with columns for AP 50:95, AR, F1, Prec, Recall.
+        The overall table is transposed (metrics as columns, one value row) with true merged group-header cells rendered
+        via box-drawing characters: ``mAP`` spans sub-columns 50:95 / 50 / 75, ``mAR`` spans ``@N``, and ``F1 sweep``
+        spans F1 / Prec / Recall.  The per-class table uses a standard Rich ``Table`` with columns for AP 50:95, AR, F1,
+        Prec, Recall.
 
         Only runs on the global-zero rank to avoid duplicate output in DDP.
 
@@ -531,9 +523,8 @@ class COCOEvalCallback(Callback):
     def _render_overall_merged(self, title_pfx: str, overall: dict[str, float]) -> str:
         """Render the overall metrics table with merged group-header cells.
 
-        Uses only plain Unicode box-drawing characters (no ANSI colour codes)
-        so the output renders correctly in both terminals and Jupyter/Colab
-        notebook widgets.
+        Uses only plain Unicode box-drawing characters (no ANSI colour codes) so the output renders correctly in both
+        terminals and Jupyter/Colab notebook widgets.
 
         .. code-block:: text
 
@@ -687,23 +678,20 @@ class COCOEvalCallback(Callback):
     def _convert_preds(self, preds: list[dict[str, torch.Tensor]]) -> list[dict[str, torch.Tensor]]:
         """Normalise prediction dicts from ``PostProcess`` for torchmetrics.
 
-        ``PostProcess.forward`` returns masks with shape ``[K, 1, H, W]``
-        (the extra channel is introduced by ``F.interpolate`` which requires
-        4-D input).  Both ``torchmetrics.MeanAveragePrecision`` and
-        ``engine.build_matching_data`` expect ``[K, H, W]``, so squeeze the
-        channel dim when present.
+        ``PostProcess.forward`` returns masks with shape ``[K, 1, H, W]`` (the extra channel is introduced by
+        ``F.interpolate`` which requires 4-D input).  Both ``torchmetrics.MeanAveragePrecision`` and
+        ``engine.build_matching_data`` expect ``[K, H, W]``, so squeeze the channel dim when present.
 
-        ``PostProcess.forward`` currently returns ``[K, 1, H, W]`` masks.
-        Keep this callback-local squeeze for metric code paths because
-        ``RFDETR.predict`` and other inference-facing callers still consume the
-        4-D representation and apply ``.squeeze(1)`` at their boundary.
+        ``PostProcess.forward`` currently returns ``[K, 1, H, W]`` masks. Keep this callback-local squeeze for metric
+        code paths because ``RFDETR.predict`` and other inference-facing callers still consume the 4-D representation
+        and apply ``.squeeze(1)`` at their boundary.
 
         Args:
             preds: Raw per-image prediction dicts from ``PostProcess``.
 
         Returns:
-            Per-image dicts with ``masks`` squeezed to ``[K, H, W]`` when
-            applicable; all other keys are passed through unchanged.
+            Per-image dicts with ``masks`` squeezed to ``[K, H, W]`` when applicable; all other keys are passed through
+            unchanged.
         """
         out = []
         for p in preds:
@@ -723,8 +711,7 @@ class COCOEvalCallback(Callback):
                 CxCyWH format and ``orig_size`` as ``[H, W]``.
 
         Returns:
-            Per-image dicts with ``boxes`` in absolute xyxy, ``labels``,
-            and optionally ``masks`` and ``iscrowd``.
+            Per-image dicts with ``boxes`` in absolute xyxy, ``labels``, and optionally ``masks`` and ``iscrowd``.
         """
         out = []
         for t in targets:

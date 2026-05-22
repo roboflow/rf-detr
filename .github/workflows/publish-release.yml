@@ -27,7 +27,7 @@ jobs:
       contents: write # Add this line
     steps:
       - name: 📥 Download distribution artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: dist
           path: dist/
@@ -37,13 +37,13 @@ jobs:
       - name: 🚀 Publish to PyPi
         # Only publish non-pre-releases
         if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
-        uses: pypa/gh-action-pypi-publish@v1.13.0
+        uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e # v1.13.0
         with:
           attestations: true
 
       - name: 📤 Upload assets to GitHub Release
         if: github.event_name == 'release'
-        uses: AButler/upload-release-assets@v3.0
+        uses: AButler/upload-release-assets@3d6774fae0ed91407dc5ae29d576b166536d1777 # v3.0
         with:
           files: "dist/*.whl;dist/*.tar.gz"
           repo-token: ${{ secrets.GITHUB_TOKEN }}

@@ -26,11 +26,10 @@ def save_gt_predictions_visualization(
     pred_ious: list[float | None],
     save_dir: Path,
 ) -> None:
-    """
-    Save a visualization image showing both GT and prediction boxes.
+    """Save a visualization image showing both GT and prediction boxes.
 
-    Boxes are labeled with class ID and confidence (for predictions).
-    For predictions with known IoU, the IoU value is also shown.
+    Boxes are labeled with class ID and confidence (for predictions). For predictions with known IoU, the IoU value is
+    also shown.
     """
     import supervision as sv
 
@@ -38,6 +37,7 @@ def save_gt_predictions_visualization(
 
     top_padding = 60
     image = np.zeros((image_height + top_padding, image_width, 3), dtype=np.uint8)
+    scene: Image.Image = Image.fromarray(image)
 
     gt_boxes_offset = [[x, y + top_padding, w, h] for x, y, w, h in gt_boxes]
     pred_boxes_offset = [[x, y + top_padding, w, h] for x, y, w, h in pred_boxes]
@@ -107,11 +107,11 @@ def save_gt_predictions_visualization(
             pred_labels.append(f"c{class_id}\nconf={conf:.3f}")
 
     if gt_detections is not None:
-        image = gt_box_annotator.annotate(scene=image, detections=gt_detections)
-        image = gt_label_annotator.annotate(scene=image, detections=gt_detections, labels=gt_labels)
+        scene = gt_box_annotator.annotate(scene=scene, detections=gt_detections)
+        scene = gt_label_annotator.annotate(scene=scene, detections=gt_detections, labels=gt_labels)
     if pred_detections is not None:
-        image = pred_box_annotator.annotate(scene=image, detections=pred_detections)
-        image = pred_label_annotator.annotate(scene=image, detections=pred_detections, labels=pred_labels)
+        scene = pred_box_annotator.annotate(scene=scene, detections=pred_detections)
+        scene = pred_label_annotator.annotate(scene=scene, detections=pred_detections, labels=pred_labels)
 
-    Image.fromarray(image).save(save_dir / f"{scenario_name}.png")
+    scene.save(save_dir / f"{scenario_name}.png")
     logger.info(f"Saved visualization to {save_dir}/{scenario_name}.png")
