@@ -121,6 +121,13 @@ def _test_from_checkpoint(model_instance: object, actual_cls: type, extra_kwargs
         ),
         "model": model_instance.model.model.state_dict(),
     }
+    starter_like_ckpt = {
+        "args": argparse.Namespace(
+            pretrain_weights="none",
+            num_classes=num_classes,
+        ),
+        "model": model_instance.model.model.state_dict(),
+    }
 
     tmp_fd, tmp_path = tempfile.mkstemp(suffix=".pth")
     os.close(tmp_fd)
@@ -134,6 +141,19 @@ def _test_from_checkpoint(model_instance: object, actual_cls: type, extra_kwargs
         )
     finally:
         os.unlink(tmp_path)
+
+    starter_fd, starter_path = tempfile.mkstemp(prefix=f"{actual_cls.size}-starter-", suffix=".pth")
+    os.close(starter_fd)
+    try:
+        torch.save(starter_like_ckpt, starter_path)
+        starter_recovered = _rfdetr.from_checkpoint(starter_path, **extra_kwargs)
+        assert starter_recovered is not None, "from_checkpoint returned None for starter-like checkpoint"
+        assert hasattr(starter_recovered, "model"), "starter-like from_checkpoint result missing 'model' attribute"
+        assert isinstance(starter_recovered, actual_cls), (
+            f"starter-like from_checkpoint returned {type(starter_recovered).__name__}, expected {actual_cls.__name__}"
+        )
+    finally:
+        os.unlink(starter_path)
 
 
 def _test_coco_class_name_mapping(model_instance: object) -> None:

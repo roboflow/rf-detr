@@ -362,9 +362,11 @@ class RFDETR:
 
         # Fall back to pretrain_weights filename parsing for older checkpoints.
         if isinstance(args, dict):
-            weights_name = str(args.get("pretrain_weights", "")).lower()
+            weights_name = str(args.get("pretrain_weights", "")).strip().lower()
         else:
-            weights_name = str(getattr(args, "pretrain_weights", "")).lower()
+            weights_name = str(getattr(args, "pretrain_weights", "")).strip().lower()
+        if weights_name in {"", "none", "null"}:
+            weights_name = os.path.basename(os.fspath(path)).lower()
 
         if model_cls is None:
             # Guard: plus-only checkpoints should raise an actionable install error

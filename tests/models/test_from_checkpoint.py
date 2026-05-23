@@ -314,6 +314,15 @@ class TestFromCheckpointModelName:
         _, mock_cls = _call_from_checkpoint(ckpt, tmp_path / "ckpt.pth", "rfdetr.variants.RFDETRSmall")
         mock_cls.assert_called_once()
 
+    @pytest.mark.parametrize("missing_value", ["none", "null", ""])
+    def test_falls_back_to_checkpoint_filename_when_pretrain_weights_missing(
+        self, tmp_path: Path, missing_value: str
+    ) -> None:
+        """When pretrain_weights is missing-like, from_checkpoint infers class from checkpoint filename."""
+        ckpt = {"args": {"pretrain_weights": missing_value, "num_classes": 80}}
+        _, mock_cls = _call_from_checkpoint(ckpt, tmp_path / "rf-detr-small.pth", "rfdetr.variants.RFDETRSmall")
+        mock_cls.assert_called_once()
+
     def test_unknown_model_name_falls_back_to_pretrain_weights(self, tmp_path: Path) -> None:
         """Unrecognised model_name falls back to pretrain_weights parsing."""
         ckpt = {
