@@ -38,7 +38,11 @@ except ModuleNotFoundError:  # pragma: no cover - numpy is an optional dependenc
 
 
 def _ensure_numpy_compat_aliases() -> None:
-    """Populate NumPy aliases removed in 2.x when older dependencies still expect them."""
+    """Populate NumPy 2.x-removed aliases expected by older training dependencies.
+
+    NumPy 2.0 removed ``np.complex_``; some transitive dependencies still import it,
+    which can break ``model.train(...)`` import paths on fresh environments.
+    """
     if np is None:
         return
     if not hasattr(np, "complex_"):

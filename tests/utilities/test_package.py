@@ -176,6 +176,8 @@ class TestImportPaths:
 
         assert rfdetr is not None
         assert hasattr(np, "complex_")
+        assert np.complex_ is np.complex128
+        assert np.complex_(1.0) == np.complex128(1.0)
 
     def test_identity_across_import_paths(self) -> None:
         """The same class object must be returned regardless of import path.
