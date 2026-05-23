@@ -34,7 +34,9 @@ from typing import Any
 try:
     import numpy as np
 except ModuleNotFoundError:  # pragma: no cover - numpy is an optional dependency in some environments
-    np = None  # type: ignore[assignment]
+    _NUMPY: Any | None = None
+else:
+    _NUMPY = np
 
 
 def _ensure_numpy_compat_aliases() -> None:
@@ -43,10 +45,10 @@ def _ensure_numpy_compat_aliases() -> None:
     NumPy 2.0 removed ``np.complex_``; some transitive dependencies still import it,
     which can break ``model.train(...)`` import paths on fresh environments.
     """
-    if np is None:
+    if _NUMPY is None:
         return
-    if not hasattr(np, "complex_"):
-        np.complex_ = np.complex128
+    if not hasattr(_NUMPY, "complex_"):
+        _NUMPY.complex_ = _NUMPY.complex128
 
 
 _ensure_numpy_compat_aliases()
