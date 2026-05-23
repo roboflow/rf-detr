@@ -322,6 +322,7 @@ class TestFromCheckpointModelName:
         ckpt = {"args": {"pretrain_weights": missing_value, "num_classes": 80}}
         _, mock_cls = _call_from_checkpoint(ckpt, tmp_path / "rf-detr-small.pth", "rfdetr.variants.RFDETRSmall")
         mock_cls.assert_called_once()
+        assert mock_cls.call_args.kwargs["num_classes"] == 80
 
     def test_unknown_model_name_falls_back_to_pretrain_weights(self, tmp_path: Path) -> None:
         """Unrecognised model_name falls back to pretrain_weights parsing."""

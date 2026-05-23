@@ -142,8 +142,8 @@ def _test_from_checkpoint(model_instance: object, actual_cls: type, extra_kwargs
     finally:
         os.unlink(tmp_path)
 
-    starter_fd, starter_path = tempfile.mkstemp(prefix=f"{actual_cls.size}-starter-", suffix=".pth")
-    os.close(starter_fd)
+    starter_tmp_fd, starter_path = tempfile.mkstemp(prefix=f"{actual_cls.size}-starter-", suffix=".pth")
+    os.close(starter_tmp_fd)
     try:
         torch.save(starter_like_ckpt, starter_path)
         starter_recovered = _rfdetr.from_checkpoint(starter_path, **extra_kwargs)
