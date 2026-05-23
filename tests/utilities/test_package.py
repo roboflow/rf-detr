@@ -174,7 +174,6 @@ class TestImportPaths:
 
         import rfdetr  # noqa: F401
 
-
         assert hasattr(np, "complex_")
         assert np.complex_ is np.complex128
         assert np.complex_(1.0) == np.complex128(1.0)
