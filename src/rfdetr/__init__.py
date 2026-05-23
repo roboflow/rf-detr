@@ -29,12 +29,13 @@ import importlib.machinery
 import importlib.util
 import os
 import sys
+from types import ModuleType
 from typing import Any
 
 try:
     import numpy as np
 except ModuleNotFoundError:  # pragma: no cover - numpy is an optional dependency in some environments
-    _NUMPY: Any | None = None
+    _NUMPY: ModuleType | None = None
 else:
     _NUMPY = np
 
