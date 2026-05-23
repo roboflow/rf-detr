@@ -168,6 +168,15 @@ class TestImportPaths:
 
         assert ModelContext is not None
 
+    def test_top_level_import_sets_numpy_complex_alias(self) -> None:
+        """Importing top-level rfdetr ensures NumPy's removed ``complex_`` alias is available."""
+        import numpy as np
+
+        import rfdetr
+
+        assert rfdetr is not None
+        assert hasattr(np, "complex_")
+
     def test_identity_across_import_paths(self) -> None:
         """The same class object must be returned regardless of import path.
 

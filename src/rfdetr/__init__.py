@@ -31,9 +31,25 @@ import os
 import sys
 from typing import Any
 
-from rfdetr.detr import RFDETR
-from rfdetr.inference import ModelContext
-from rfdetr.variants import (
+try:
+    import numpy as np
+except ModuleNotFoundError:  # pragma: no cover - numpy is an optional dependency in some environments
+    np = None  # type: ignore[assignment]
+
+
+def _ensure_numpy_compat_aliases() -> None:
+    """Populate NumPy aliases removed in 2.x when older dependencies still expect them."""
+    if np is None:
+        return
+    if not hasattr(np, "complex_"):
+        np.complex_ = np.complex128
+
+
+_ensure_numpy_compat_aliases()
+
+from rfdetr.detr import RFDETR  # noqa: E402
+from rfdetr.inference import ModelContext  # noqa: E402
+from rfdetr.variants import (  # noqa: E402
     RFDETRBase,  # DEPRECATED # noqa: F401
     RFDETRLarge,
     RFDETRLargeDeprecated,  # DEPRECATED # noqa: F401
