@@ -373,6 +373,12 @@ class RFDETR:
             weights_name = str(args.get("pretrain_weights", "")).strip().lower()
         else:
             weights_name = str(getattr(args, "pretrain_weights", "")).strip().lower()
+        # The sentinel set {"", "none", "null"} covers three cases:
+        #   ""     — pretrain_weights key absent entirely
+        #   "none" — PTL serialises Python None as the string "none"; NOT an
+        #            intentional "no pretraining" flag (see test_pretrain_weights_none_warns
+        #            which operates at the config level, not the checkpoint level)
+        #   "null" — alternate serialisation of None (e.g. YAML-originated checkpoints)
         _filename_fallback = False
         if weights_name in {"", "none", "null"}:
             weights_name = os.path.basename(str(path)).lower()
