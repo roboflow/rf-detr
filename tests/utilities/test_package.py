@@ -170,9 +170,8 @@ class TestImportPaths:
 
     def test_top_level_import_sets_numpy_complex_alias(self) -> None:
         """Importing top-level rfdetr ensures NumPy's removed ``complex_`` alias is available."""
-        import numpy as np
-
         import rfdetr  # noqa: F401
+        import numpy as np
 
         assert hasattr(np, "complex_")
         assert np.complex_ is np.complex128
