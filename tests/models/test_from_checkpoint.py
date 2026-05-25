@@ -96,6 +96,27 @@ class TestFromCheckpointNamespaceArgs:
         assert call_kwargs.get("pretrain_weights") == str(tmp_path / "ckpt.pth")
         assert result is mock_cls.return_value
 
+    @pytest.mark.parametrize(
+        "missing_value",
+        [
+            pytest.param("none", id="bare-none"),
+            pytest.param("null", id="bare-null"),
+            pytest.param("", id="empty"),
+            pytest.param("  None  ", id="whitespace-None"),
+            pytest.param("  ", id="whitespace-only"),
+            pytest.param(" null ", id="whitespace-null"),
+            pytest.param(None, id="python-None"),
+        ],
+    )
+    def test_namespace_args_falls_back_to_checkpoint_filename_when_pretrain_weights_missing(
+        self, tmp_path: Path, missing_value: str | None
+    ) -> None:
+        """Namespace args: filename fallback fires when pretrain_weights is unset-like."""
+        ckpt = _ns(missing_value)  # type: ignore[arg-type]
+        _, mock_cls = _call_from_checkpoint(ckpt, tmp_path / "rf-detr-small.pth", "rfdetr.variants.RFDETRSmall")
+        mock_cls.assert_called_once()
+        assert mock_cls.call_args.kwargs["num_classes"] == 80
+
 
 # ---------------------------------------------------------------------------
 # Dict args (PTL / converted checkpoints)
@@ -150,6 +171,21 @@ class TestFromCheckpointEdgeCases:
         with patch("rfdetr.detr.torch.load", return_value=ckpt):
             with pytest.raises(ValueError, match="Could not infer model class"):
                 RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+
+    def test_filename_fallback_unrecognized_name_raises_value_error(self, tmp_path: Path) -> None:
+        """ValueError fires via filename-fallback path when filename has no known model token."""
+        ckpt = {"args": {"pretrain_weights": "none", "num_classes": 80}}
+        with patch("rfdetr.detr.torch.load", return_value=ckpt):
+            with pytest.raises(ValueError, match="Could not infer model class"):
+                RFDETR.from_checkpoint(tmp_path / "finetuned.pth")
+
+    @pytest.mark.skipif(_IS_RFDETR_PLUS_AVAILABLE, reason="rfdetr_plus is installed — guard not active")
+    def test_filename_fallback_xlarge_without_plus_raises_import_error(self, tmp_path: Path) -> None:
+        """ImportError fires via filename-fallback path when rfdetr_plus is absent."""
+        ckpt = {"args": {"pretrain_weights": "none", "num_classes": 80}}
+        with patch("rfdetr.detr.torch.load", return_value=ckpt):
+            with pytest.raises(ImportError):
+                RFDETR.from_checkpoint(tmp_path / "rf-detr-xlarge-starter.pth")
 
     def test_characterization_missing_args_key_raises_key_error(self, tmp_path: Path) -> None:
         """Checkpoint without 'args' key raises KeyError."""
@@ -313,6 +349,27 @@ class TestFromCheckpointModelName:
         assert "model_name" not in ckpt
         _, mock_cls = _call_from_checkpoint(ckpt, tmp_path / "ckpt.pth", "rfdetr.variants.RFDETRSmall")
         mock_cls.assert_called_once()
+
+    @pytest.mark.parametrize(
+        "missing_value",
+        [
+            pytest.param("none", id="bare-none"),
+            pytest.param("null", id="bare-null"),
+            pytest.param("", id="empty"),
+            pytest.param("  None  ", id="whitespace-None"),
+            pytest.param("  ", id="whitespace-only"),
+            pytest.param(" null ", id="whitespace-null"),
+            pytest.param(None, id="python-None"),
+        ],
+    )
+    def test_falls_back_to_checkpoint_filename_when_pretrain_weights_missing(
+        self, tmp_path: Path, missing_value: str | None
+    ) -> None:
+        """When pretrain_weights is missing-like, from_checkpoint infers class from checkpoint filename."""
+        ckpt = {"args": {"pretrain_weights": missing_value, "num_classes": 80}}
+        _, mock_cls = _call_from_checkpoint(ckpt, tmp_path / "rf-detr-small.pth", "rfdetr.variants.RFDETRSmall")
+        mock_cls.assert_called_once()
+        assert mock_cls.call_args.kwargs["num_classes"] == 80
 
     def test_unknown_model_name_falls_back_to_pretrain_weights(self, tmp_path: Path) -> None:
         """Unrecognised model_name falls back to pretrain_weights parsing."""
