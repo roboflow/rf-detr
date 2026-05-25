@@ -111,7 +111,7 @@ Both `model_config` and `train_config` are specified once; `RFDETRCli`
 automatically links them to the datamodule so you do not need to repeat the
 same arguments under `--data.*`.
 
-::: rfdetr.training.cli.RFDETRCli
+::: rfdetr.cli.train.RFDETRCli
     options:
       show_source: false
       members:

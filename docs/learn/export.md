@@ -72,6 +72,39 @@ The `export()` method accepts several parameters to customize the export process
 | `shape`            | `None`     | Input shape as tuple `(height, width)`. Each dimension must be divisible by the selected model's block size (`patch_size * num_windows`). If not provided, uses the model's default resolution. |
 | `batch_size`       | `1`        | Batch size for the exported model.                                                                                                                                                              |
 
+## Command-Line Export
+
+The same export is available from the shell via the `rfdetr export` subcommand. It loads a checkpoint with `rfdetr.from_checkpoint` (which auto-resolves the model variant) and calls `RFDETR.export`. Install the CLI extra alongside the format you need:
+
+```bash
+pip install "rfdetr[cli,onnx]"          # ONNX
+pip install "rfdetr[cli,onnx,tflite]"   # TFLite
+```
+
+Then export a checkpoint:
+
+=== "ONNX"
+
+    ```bash
+    rfdetr export --checkpoint path/to/checkpoint.pth --format onnx --output_dir output
+    ```
+
+=== "TFLite (FP32 + FP16)"
+
+    ```bash
+    rfdetr export --checkpoint path/to/checkpoint.pth --format tflite --output_dir output
+    ```
+
+=== "TFLite (INT8 with calibration)"
+
+    ```bash
+    rfdetr export --checkpoint path/to/checkpoint.pth --format tflite --quantization int8 --calibration_data path/to/val_images/ --max_images 100 --output_dir output
+    ```
+
+Every parameter from [Export Parameters](#export-parameters) is exposed as a flag (with an underscore, e.g. `--calibration_data`, `--max_images`). Run `rfdetr export --help` for the full list. Flags can also be supplied from a YAML file with `--config export.yaml`.
+
+The export subcommand does not require the `[train]` extra (no PyTorch Lightning), so `rfdetr export` and `rfdetr --help` work in an inference-only environment.
+
 ## Advanced Export Examples
 
 ### Export with Custom Output Directory
