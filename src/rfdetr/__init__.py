@@ -34,6 +34,7 @@ from typing import Any
 
 try:
     import numpy
+
     _IS_NUMPY_INSTALLED = True
 except ImportError:
     _IS_NUMPY_INSTALLED = False
@@ -42,9 +43,9 @@ if _IS_NUMPY_INSTALLED and not getattr(numpy, "complex_", None):
     setattr(numpy, "complex_", numpy.complex128)
 
 
-from rfdetr.detr import RFDETR  # noqa: E402
-from rfdetr.inference import ModelContext  # noqa: E402
-from rfdetr.variants import (  # noqa: E402
+from rfdetr.detr import RFDETR
+from rfdetr.inference import ModelContext
+from rfdetr.variants import (
     RFDETRBase,  # DEPRECATED # noqa: F401
     RFDETRLarge,
     RFDETRLargeDeprecated,  # DEPRECATED # noqa: F401
