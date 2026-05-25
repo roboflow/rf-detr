@@ -42,7 +42,9 @@ except ImportError:
     _IS_NUMPY_INSTALLED = False
 
 if _IS_NUMPY_INSTALLED and not hasattr(numpy, "complex_"):
-    numpy.complex_ = numpy.complex128
+    _complex128 = getattr(numpy, "complex128", None)
+    if _complex128 is not None:
+        numpy.complex_ = _complex128
 
 
 from rfdetr.detr import RFDETR
