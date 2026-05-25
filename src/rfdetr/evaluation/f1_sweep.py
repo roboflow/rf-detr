@@ -3,7 +3,6 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Confidence-threshold sweep for precision/recall/F1 computation."""
 
 from typing import Any
@@ -20,11 +19,9 @@ def sweep_confidence_thresholds(
 
     Args:
         per_class_data: Per-class matching data list indexed by class id.
-            Each entry is a dict with keys ``"scores"``, ``"matches"``,
-            ``"ignore"``, and ``"total_gt"``.
+            Each entry is a dict with keys ``"scores"``, ``"matches"``, ``"ignore"``, and ``"total_gt"``.
         conf_thresholds: Iterable of float confidence thresholds to evaluate.
-        classes_with_gt: List of class indices that have at least one GT
-            instance — used for macro-averaging.
+        classes_with_gt: List of class indices that have at least one GT instance — used for macro-averaging.
 
     Returns:
         List of result dicts, one per threshold, each containing:

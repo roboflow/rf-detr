@@ -5,9 +5,8 @@
 # ------------------------------------------------------------------------
 """Concrete RF-DETR model variant classes.
 
-All classes inherit from :class:`~rfdetr.detr.RFDETR` which remains defined in
-``rfdetr.detr``. Backward-compatible access from ``rfdetr.detr`` is provided
-via lazy ``__getattr__`` re-exports, so importing ``rfdetr.variants`` no longer
+All classes inherit from :class:`~rfdetr.detr.RFDETR` which remains defined in ``rfdetr.detr``. Backward-compatible
+access from ``rfdetr.detr`` is provided via lazy ``__getattr__`` re-exports, so importing ``rfdetr.variants`` no longer
 depends on a fragile eager ``detr -> variants`` import sequence.
 """
 
@@ -68,27 +67,21 @@ class RFDETRBase(RFDETR):
 
 
 class RFDETRNano(RFDETR):
-    """
-    Train an RF-DETR Nano model.
-    """
+    """Train an RF-DETR Nano model."""
 
     size = "rfdetr-nano"
     _model_config_class = RFDETRNanoConfig
 
 
 class RFDETRSmall(RFDETR):
-    """
-    Train an RF-DETR Small model.
-    """
+    """Train an RF-DETR Small model."""
 
     size = "rfdetr-small"
     _model_config_class = RFDETRSmallConfig
 
 
 class RFDETRMedium(RFDETR):
-    """
-    Train an RF-DETR Medium model.
-    """
+    """Train an RF-DETR Medium model."""
 
     size = "rfdetr-medium"
     _model_config_class = RFDETRMediumConfig
@@ -113,9 +106,8 @@ class RFDETRLarge(RFDETR):
     def _should_fallback_to_deprecated_config(exc: Exception) -> bool:
         """Return whether initialization should retry with deprecated Large config.
 
-        The fallback is only for known checkpoint/config incompatibilities from
-        deprecated Large weights. Runtime issues such as CUDA OOM must fail
-        fast and must not trigger a second initialization attempt.
+        The fallback is only for known checkpoint/config incompatibilities from deprecated Large weights. Runtime issues
+        such as CUDA OOM must fail fast and must not trigger a second initialization attempt.
 
         Args:
             exc: Exception raised by initial ``RFDETR`` initialization.
@@ -163,7 +155,7 @@ class RFDETRLarge(RFDETR):
                     "=" * 100 + "\n"
                     "WARNING: Automatically switched to deprecated model configuration,"
                     " due to using deprecated weights."
-                    " This will be removed in a future version.\n"
+                    " This will be removed in v1.9.0.\n"
                     " Please retrain your model with the new weights and configuration.\n"
                     "=" * 100 + "\n"
                 )

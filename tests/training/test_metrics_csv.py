@@ -3,17 +3,14 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Integration tests: metrics.csv contains all columns used by plot_metrics().
 
-Runs a minimal PTL training loop (1 epoch, 2 batches each) using mocked model
-internals so no real dataset or GPU is required.  After training, reads the
-CSVLogger output and asserts that every metric column that ``plot_metrics()``
-needs is present and has at least one non-NaN value.
+Runs a minimal PTL training loop (1 epoch, 2 batches each) using mocked model internals so no real dataset or GPU is
+required.  After training, reads the CSVLogger output and asserts that every metric column that ``plot_metrics()`` needs
+is present and has at least one non-NaN value.
 
-Also verifies that ``train/loss`` is logged at the same scale as ``val/loss``
-(i.e. NOT divided by ``grad_accum_steps`` before logging).
-"""
+Also verifies that ``train/loss`` is logged at the same scale as ``val/loss`` (i.e. NOT divided by ``grad_accum_steps``
+before logging)."""
 
 from __future__ import annotations
 
@@ -125,12 +122,10 @@ class TestDetectionMetricsCSV:
         assert not all_nan, f"EMA columns with all-NaN values: {sorted(all_nan)}"
 
     def test_train_loss_is_unscaled(self, base_model_config, base_train_config):
-        """train/loss must be logged at the raw criterion scale, not divided by grad_accum_steps.
+        """Train/loss must be logged at the raw criterion scale, not divided by grad_accum_steps.
 
-        With grad_accum_steps=4 the old code divided the logged value by 4,
-        making train/loss ~4× smaller than val/loss.  After the fix the logged
-        value equals the raw weighted criterion output so both losses are on the
-        same scale.
+        With grad_accum_steps=4 the old code divided the logged value by 4, making train/loss ~4× smaller than val/loss.
+        After the fix the logged value equals the raw weighted criterion output so both losses are on the same scale.
         """
         fixed_loss_value = 5.0
         grad_accum_steps = 4

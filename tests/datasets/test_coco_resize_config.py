@@ -3,7 +3,6 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Characterization tests for _build_train_resize_config."""
 
 import pytest
@@ -46,7 +45,7 @@ class TestBuildTrainResizeConfigStructure:
 
 
 class TestBuildTrainResizeConfigSquareSingleScale:
-    """square=True, single scale — OneOf[Resize] + Sequential[..., OneOf[RandomSizedCrop]]."""
+    """Square=True, single scale — OneOf[Resize] + Sequential[..., OneOf[RandomSizedCrop]]."""
 
     def test_option_a_is_oneof_wrapping_single_resize(self):
         result = _build_train_resize_config([640], square=True)
@@ -86,7 +85,7 @@ class TestBuildTrainResizeConfigSquareSingleScale:
 
 
 class TestBuildTrainResizeConfigSquareMultiScale:
-    """square=True, multiple scales — OneOf[Resize] + Sequential[..., OneOf[RandomSizedCrop]]."""
+    """Square=True, multiple scales — OneOf[Resize] + Sequential[..., OneOf[RandomSizedCrop]]."""
 
     def test_option_a_is_oneof_of_resizes(self):
         result = _build_train_resize_config([480, 640], square=True)
@@ -126,7 +125,7 @@ class TestBuildTrainResizeConfigSquareMultiScale:
 
 
 class TestBuildTrainResizeConfigNonSquareSingleScale:
-    """square=False, single scale — SmallestMaxSize uses scalar, default cap 1333."""
+    """Square=False, single scale — SmallestMaxSize uses scalar, default cap 1333."""
 
     def test_option_a_uses_scalar_size(self):
         result = _build_train_resize_config([640], square=False)
@@ -161,7 +160,7 @@ class TestBuildTrainResizeConfigNonSquareSingleScale:
 
 
 class TestBuildTrainResizeConfigNonSquareMultiScale:
-    """square=False, multiple scales — SmallestMaxSize uses list directly."""
+    """Square=False, multiple scales — SmallestMaxSize uses list directly."""
 
     def test_option_a_uses_list_size(self):
         result = _build_train_resize_config([480, 640], square=False)

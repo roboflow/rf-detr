@@ -17,44 +17,32 @@ from rfdetr.utilities.files import _compute_file_md5, _download_file, _validate_
 
 
 class _DummyTqdm:
-    """
-    Minimal tqdm stand-in for download tests.
+    """Minimal tqdm stand-in for download tests.
 
-    This avoids real progress bars while preserving the context manager and
-    `update` calls used by the downloader.
+    This avoids real progress bars while preserving the context manager and `update` calls used by the downloader.
     """
 
     def __init__(self, **kwargs: object) -> None:
-        """
-        Store initialization kwargs for optional inspection.
-        """
+        """Store initialization kwargs for optional inspection."""
         self.kwargs = kwargs
 
     def __enter__(self) -> "_DummyTqdm":
-        """
-        Return self to satisfy context manager protocol.
-        """
+        """Return self to satisfy context manager protocol."""
         return self
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
-        """
-        Propagate exceptions raised inside the context.
-        """
+        """Propagate exceptions raised inside the context."""
         return False
 
     def update(self, size: int) -> None:
-        """
-        No-op progress update for compatibility with tqdm.
-        """
+        """No-op progress update for compatibility with tqdm."""
         return None
 
 
 class _FakeResponse:
-    """
-    Test double for requests responses used by the downloader.
+    """Test double for requests responses used by the downloader.
 
-    Provides headers, iterable content chunks, and optional HTTP error behavior
-    via `raise_for_status`.
+    Provides headers, iterable content chunks, and optional HTTP error behavior via `raise_for_status`.
     """
 
     def __init__(
@@ -63,24 +51,18 @@ class _FakeResponse:
         headers: Optional[dict[str, str]] = None,
         raise_error: Optional[Exception] = None,
     ) -> None:
-        """
-        Initialize the fake response with content and metadata.
-        """
+        """Initialize the fake response with content and metadata."""
         self._content_chunks = list(content_chunks)
         self.headers = headers or {}
         self._raise_error = raise_error
 
     def raise_for_status(self) -> None:
-        """
-        Raise the configured HTTP error, if any.
-        """
+        """Raise the configured HTTP error, if any."""
         if self._raise_error is not None:
             raise self._raise_error
 
     def iter_content(self, chunk_size: int = 1024) -> Iterator[bytes]:
-        """
-        Yield the configured content chunks.
-        """
+        """Yield the configured content chunks."""
         for chunk in self._content_chunks:
             yield chunk
 

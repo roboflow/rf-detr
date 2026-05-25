@@ -3,11 +3,10 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Tests for Kornia GPU augmentation pipeline builder and bbox utilities.
 
-All tests in this module are CPU-compatible — Kornia operates on CPU tensors
-identically to GPU tensors, so no ``@pytest.mark.gpu`` is needed.
+All tests in this module are CPU-compatible — Kornia operates on CPU tensors identically to GPU tensors, so no
+``@pytest.mark.gpu`` is needed.
 """
 
 import pytest
@@ -27,8 +26,8 @@ from rfdetr.datasets.aug_config import (
 
 
 class TestBuildKorniaPipeline:
-    """build_kornia_pipeline returns a valid pipeline for every preset and
-    rejects unknown transform keys with a clear error."""
+    """build_kornia_pipeline returns a valid pipeline for every preset and rejects unknown transform keys with a clear
+    error."""
 
     @pytest.fixture(autouse=True)
     def _require_kornia(self):

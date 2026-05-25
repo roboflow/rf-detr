@@ -16,12 +16,10 @@ from rfdetr.utilities.tensors import _bilinear_grid_sample
 class _DepthwiseConvWithoutCuDNN(torch.autograd.Function):
     """Depthwise conv2d with cuDNN disabled in both forward and backward.
 
-    ``torch.backends.cudnn.flags(enabled=False)`` as a context manager only
-    covers operations executed within its scope.  ``nn.Conv2d`` records the
-    forward op in the autograd graph; the corresponding backward kernels run
-    later, **outside** that scope, with cuDNN re-enabled.  On some CUDA stacks
-    (T4 / P100 on Kaggle / Colab) cuDNN fails engine selection for depthwise
-    conv backward, raising::
+    ``torch.backends.cudnn.flags(enabled=False)`` as a context manager only covers operations executed within its scope.
+    ``nn.Conv2d`` records the forward op in the autograd graph; the corresponding backward kernels run later,
+    **outside** that scope, with cuDNN re-enabled.  On some CUDA stacks (T4 / P100 on Kaggle / Colab) cuDNN fails engine
+    selection for depthwise conv backward, raising::
 
         RuntimeError: GET was unable to find an engine to execute this computation
 
@@ -81,16 +79,14 @@ class _DepthwiseConvWithoutCuDNN(torch.autograd.Function):
             grad_output: Upstream gradient ``(N, C, H, W)``.
 
         Returns:
-            Gradients for each ``forward`` input.  Inputs that do not require
-            gradients (``ctx.needs_input_grad[i]`` is ``False``) get ``None``.
-            Non-tensor inputs always get ``None``.
+            Gradients for each ``forward`` input.  Inputs that do not require gradients (``ctx.needs_input_grad[i]`` is
+            ``False``) get ``None``. Non-tensor inputs always get ``None``.
 
         Note:
-            Under AMP (``"16-mixed"``), ``grad_output`` arrives as ``fp16`` while
-            the saved ``weight`` stays ``fp32``.  Both tensors are upcast to
-            ``weight.dtype`` before calling ``conv2d_input`` / ``conv2d_weight``.
-            ``grad_input`` is then cast back to the original input dtype so
-            downstream gradient accumulation uses the expected dtype.
+            Under AMP (``"16-mixed"``), ``grad_output`` arrives as ``fp16`` while the saved ``weight`` stays ``fp32``.
+            Both tensors are upcast to ``weight.dtype`` before calling ``conv2d_input`` / ``conv2d_weight``.
+            ``grad_input`` is then cast back to the original input dtype so downstream gradient accumulation uses the
+            expected dtype.
         """
         x, weight = ctx.saved_tensors
         input_dtype = x.dtype
@@ -138,7 +134,7 @@ class _DepthwiseConvWithoutCuDNN(torch.autograd.Function):
 
 
 class DepthwiseConvBlock(nn.Module):
-    r"""Simplified ConvNeXt block without the MLP subnet"""
+    r"""Simplified ConvNeXt block without the MLP subnet."""
 
     def __init__(self, dim, layer_scale_init_value=0):
         super().__init__()
@@ -331,10 +327,8 @@ class SegmentationHead(nn.Module):
 
 
 def point_sample(input: torch.Tensor, point_coords: torch.Tensor, **kwargs: Any) -> torch.Tensor:
-    """
-    A wrapper around :func:`~rfdetr.utilities.tensors._bilinear_grid_sample` to support 3D point_coords tensors.
-    Unlike :func:`torch.nn.functional.grid_sample` it assumes `point_coords` to lie inside
-    [0, 1] x [0, 1] square.
+    """A wrapper around :func:`~rfdetr.utilities.tensors._bilinear_grid_sample` to support 3D point_coords tensors.
+    Unlike :func:`torch.nn.functional.grid_sample` it assumes `point_coords` to lie inside [0, 1] x [0, 1] square.
 
     Args:
         input: A tensor of shape (N, C, H, W) that contains features map on a H x W grid.
@@ -406,18 +400,15 @@ def get_uncertain_point_coords_with_randomness(
     oversample_ratio: int = 3,
     importance_sample_ratio: float = 0.75,
 ) -> torch.Tensor:
-    """
-    Sample points in [0, 1] x [0, 1] coordinate space based on their uncertainty. The unceratinties
-        are calculated for each point using 'uncertainty_func' function that takes point's logit
-        prediction as input.
-    See PointRend paper for details.
+    """Sample points in [0, 1] x [0, 1] coordinate space based on their uncertainty. The unceratinties are calculated
+    for each point using 'uncertainty_func' function that takes point's logit prediction as input. See PointRend paper
+    for details.
 
     Args:
         coarse_logits: A tensor of shape (N, C, Hmask, Wmask) or (N, 1, Hmask, Wmask) for
             class-specific or class-agnostic prediction.
         uncertainty_func: A function that takes a Tensor of shape (N, C, P) or (N, 1, P) that
-            contains logit predictions for P points and returns their uncertainties as a Tensor of
-            shape (N, 1, P).
+            contains logit predictions for P points and returns their uncertainties as a Tensor of shape (N, 1, P).
         num_points: The number of points P to sample.
         oversample_ratio: Oversampling parameter.
         importance_sample_ratio: Ratio of points that are sampled via importnace sampling.
@@ -457,18 +448,17 @@ def get_uncertain_point_coords_with_randomness(
 
 
 def calculate_uncertainty(logits: torch.Tensor) -> torch.Tensor:
-    """
-    We estimate uncertainty as L1 distance between 0.0 and the logit prediction in 'logits' for the
-        foreground class in `classes`.
+    """We estimate uncertainty as L1 distance between 0.0 and the logit prediction in 'logits' for the foreground class
+    in `classes`.
 
     Args:
         logits: A tensor of shape (R, 1, ...) for class-specific or
-            class-agnostic, where R is the total number of predicted masks in all images and C is
-            the number of foreground classes. The values are logits.
+            class-agnostic, where R is the total number of predicted masks in all images and C is the number of
+            foreground classes. The values are logits.
 
     Returns:
-        A tensor of shape (R, 1, ...) that contains uncertainty scores with the most
-        uncertain locations having the highest uncertainty score.
+        A tensor of shape (R, 1, ...) that contains uncertainty scores with the most uncertain locations having the
+        highest uncertainty score.
     """
     assert logits.shape[1] == 1
     gt_class_logits = logits.clone()

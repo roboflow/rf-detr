@@ -12,10 +12,7 @@
 # Copied from DETR (https://github.com/facebookresearch/detr)
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 # ------------------------------------------------------------------------
-
-"""
-Backbone modules.
-"""
+"""Backbone modules."""
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -134,7 +131,7 @@ class Backbone(BackboneBase):
             self.encoder = self.encoder.merge_and_unload()
 
     def forward(self, tensor_list: NestedTensor):
-        """ """
+        """"""
         # (H, W, B, C)
         feats = self.encoder(tensor_list.tensors)
         feats = self.projector(feats)
@@ -185,8 +182,7 @@ class Backbone(BackboneBase):
 
 
 def get_dinov2_lr_decay_rate(name: str, lr_decay_rate: float = 1.0, num_layers: int = 12) -> float:
-    """
-    Calculate lr decay rate for different ViT blocks.
+    """Calculate lr decay rate for different ViT blocks.
 
     Args:
         name: Parameter name.

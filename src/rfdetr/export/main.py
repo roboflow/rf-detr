@@ -6,10 +6,7 @@
 # Copied and modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
 # Copyright (c) 2024 Baidu. All Rights Reserved.
 # ------------------------------------------------------------------------
-
-"""
-CLI orchestrator for ONNX and TensorRT model export.
-"""
+"""CLI orchestrator for ONNX and TensorRT model export."""
 
 import os
 import random
@@ -22,7 +19,7 @@ from torchvision.transforms.v2 import Compose, Resize, ToDtype, ToImage
 
 from rfdetr.datasets.transforms import Normalize
 from rfdetr.export._onnx.exporter import export_onnx
-from rfdetr.export.tensorrt import trtexec
+from rfdetr.export._tensorrt import trtexec
 from rfdetr.models import build_model
 from rfdetr.utilities.distributed import get_rank
 from rfdetr.utilities.logger import get_logger

@@ -9,10 +9,7 @@
 # Modified from ViTDet (https://github.com/facebookresearch/detectron2/tree/main/projects/ViTDet)
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 # ------------------------------------------------------------------------
-
-"""
-Projector
-"""
+"""Projector."""
 
 from typing import Callable, Optional, Sequence, Union
 
@@ -23,10 +20,9 @@ import torch.nn.functional as F  # noqa: N812
 
 
 class LayerNorm(nn.Module):
-    """
-    A LayerNorm variant, popularized by Transformers, that performs point-wise mean and
-    variance normalization over the channel dimension for inputs that have shape
-    (batch_size, channels, height, width).
+    """A LayerNorm variant, popularized by Transformers, that performs point-wise mean and variance normalization over
+    the channel dimension for inputs that have shape (batch_size, channels, height, width).
+
     https://github.com/facebookresearch/ConvNeXt/blob/d1fa8f6fef0a165b27399986cc2bdacc92777e40/models/convnext.py#L119
     """
 
@@ -52,8 +48,7 @@ def get_norm(norm: Optional[Union[str, Callable[[int], nn.Module]]], out_channel
     """
     Args:
         norm: Either one of BN, SyncBN, FrozenBN, GN;
-            or a callable that takes a channel number and returns
-            the normalization layer as a nn.Module.
+            or a callable that takes a channel number and returns the normalization layer as a nn.Module.
 
     Returns:
         The normalization layer.
@@ -70,7 +65,7 @@ def get_norm(norm: Optional[Union[str, Callable[[int], nn.Module]]], out_channel
 
 
 def get_activation(name, inplace=False):
-    """get activation"""
+    """Get activation."""
     if name == "silu":
         module = nn.SiLU(inplace=inplace)
     elif name == "relu":
@@ -85,7 +80,7 @@ def get_activation(name, inplace=False):
 
 
 class ConvX(nn.Module):
-    """Conv-bn module"""
+    """Conv-bn module."""
 
     def __init__(
         self,
@@ -120,7 +115,7 @@ class ConvX(nn.Module):
         self.act = get_activation(act, inplace=True)
 
     def forward(self, x):
-        """forward"""
+        """forward."""
         out = self.act(self.bn(self.conv(x.contiguous())))
         return out
 
@@ -129,7 +124,7 @@ class Bottleneck(nn.Module):
     """Standard bottleneck."""
 
     def __init__(self, c1, c2, shortcut=True, g=1, k=(3, 3), e=0.5, act="silu", layer_norm=False, rms_norm=False):
-        """ch_in, ch_out, shortcut, groups, kernels, expand"""
+        """ch_in, ch_out, shortcut, groups, kernels, expand."""
         super().__init__()
         c_ = int(c2 * e)  # hidden channels
         self.cv1 = ConvX(c1, c_, k[0], 1, act=act, layer_norm=layer_norm, rms_norm=rms_norm)
@@ -145,7 +140,7 @@ class C2f(nn.Module):
     """Faster Implementation of CSP Bottleneck with 2 convolutions."""
 
     def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5, act="silu", layer_norm=False, rms_norm=False):
-        """ch_in, ch_out, number, shortcut, groups, expansion"""
+        """ch_in, ch_out, number, shortcut, groups, expansion."""
         super().__init__()
         self.c = int(c2 * e)  # hidden channels
         self.cv1 = ConvX(c1, 2 * self.c, 1, 1, act=act, layer_norm=layer_norm, rms_norm=rms_norm)
@@ -165,8 +160,8 @@ class C2f(nn.Module):
 
 
 class MultiScaleProjector(nn.Module):
-    """
-    This module implements MultiScaleProjector in :paper:`lwdetr`.
+    """This module implements MultiScaleProjector in :paper:`lwdetr`.
+
     It creates pyramid features built on top of the input feature map.
     """
 
@@ -312,6 +307,6 @@ class SimpleProjector(nn.Module):
         self.ln = get_norm("LN", out_dim)
 
     def forward(self, x):
-        """forward"""
+        """forward."""
         out = self.ln(self.convx2(self.convx1(x[0])))
         return [out]

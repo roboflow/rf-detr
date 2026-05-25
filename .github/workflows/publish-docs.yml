@@ -86,13 +86,13 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
         env:
           MKDOCS_GIT_COMMITTERS_APIKEY: ${{ secrets.GITHUB_TOKEN }}
-        run: uv run mike deploy --push develop
+        run: uv run --no-sync mike deploy --push develop
 
       - name: 🚀 Deploy Latest Branch Docs
         if: github.event_name == 'push' && github.ref == 'refs/heads/release/latest'
         env:
           MKDOCS_GIT_COMMITTERS_APIKEY: ${{ secrets.GITHUB_TOKEN }}
-        run: uv run mike deploy --push --update-aliases latest
+        run: uv run --no-sync mike deploy --push --update-aliases latest
 
       - name: 🚀 Deploy Release Docs
         if: github.event_name == 'release' && github.event.action == 'published' && !github.event.release.prerelease
@@ -101,7 +101,7 @@ jobs:
         run: |
           TAG="${{ github.event.release.tag_name }}"
           DOC_VERSION="${TAG%.post*}"
-          uv run mike deploy --push "$DOC_VERSION"
+          uv run --no-sync mike deploy --push "$DOC_VERSION"
 
       - name: 🚀 Deploy Docs (workflow_dispatch)
         if: github.event_name == 'workflow_dispatch'
@@ -110,16 +110,16 @@ jobs:
         run: |
           TARGET="${{ inputs.target }}"
           if [ "$TARGET" = "develop" ]; then
-            uv run mike deploy --push develop
+            uv run --no-sync mike deploy --push develop
           elif [ "$TARGET" = "release/latest" ]; then
-            uv run mike deploy --push --update-aliases latest
+            uv run --no-sync mike deploy --push --update-aliases latest
           else
             DOC_VERSION="${TARGET%.post*}"
-            uv run mike deploy --push "$DOC_VERSION"
+            uv run --no-sync mike deploy --push "$DOC_VERSION"
           fi
 
       - name: 🏗️ Build docs for artifact
-        run: uv run mkdocs build
+        run: uv run --no-sync mkdocs build
 
       - name: 📤 Upload docs artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

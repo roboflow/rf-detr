@@ -3,7 +3,6 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Tests for package metadata helpers and structural import paths."""
 
 import subprocess
@@ -41,9 +40,9 @@ def test_get_sha_marks_dirty_worktree_when_diff_command_returns_exit_code_1() ->
 def test_peft_not_imported_eagerly_on_backbone_import_characterization() -> None:
     """Importing backbone.backbone must NOT pull peft into sys.modules (peft is optional).
 
-    This characterization test captures the invariant introduced in PR 1 (chore/packaging-peft-lora):
-    after the lazy-import refactor, importing backbone at module-load time must not trigger a
-    top-level ``from peft import PeftModel``.
+    This characterization test captures the invariant introduced in PR 1 (chore/packaging-peft-lora): after the
+    lazy-import refactor, importing backbone at module-load time must not trigger a top-level ``from peft import
+    PeftModel``.
     """
     result = subprocess.run(
         [
@@ -169,11 +168,41 @@ class TestImportPaths:
 
         assert ModelContext is not None
 
+    def test_top_level_import_sets_numpy_complex_alias(self) -> None:
+        """Verify rfdetr shim sets np.complex_ in a fresh interpreter with complex_ absent.
+
+        Runs in a subprocess so the shim code path is actually executed — importing rfdetr inside pytest is a no-op
+        because rfdetr is already cached in sys.modules.
+        """
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import numpy\n"
+                    "if hasattr(numpy, 'complex_'):\n"
+                    "    del numpy.complex_\n"
+                    "import rfdetr\n"
+                    "assert hasattr(numpy, 'complex_'), 'shim did not set numpy.complex_'\n"
+                    "assert numpy.complex_ is numpy.complex128, 'complex_ must alias complex128'\n"
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, (
+            "Subprocess for NumPy complex_ shim failed:\n"
+            f"return code: {result.returncode}\n"
+            f"stdout:\n{result.stdout}\n"
+            f"stderr:\n{result.stderr}"
+        )
+
     def test_identity_across_import_paths(self) -> None:
         """The same class object must be returned regardless of import path.
 
-        This ensures re-exports are true re-exports (not copies) so that
-        isinstance() checks work across all import paths.
+        This ensures re-exports are true re-exports (not copies) so that isinstance() checks work across all import
+        paths.
         """
         import rfdetr
         from rfdetr.detr import ModelContext as FromDetr

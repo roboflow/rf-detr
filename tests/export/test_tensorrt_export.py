@@ -3,12 +3,11 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Tests for TensorRT export helpers."""
 
 import subprocess
 
-from rfdetr.export import tensorrt as tensorrt_export
+from rfdetr.export import _tensorrt as tensorrt_export
 
 
 def test_run_command_shell_dry_run_handles_missing_cuda_visible_devices(monkeypatch) -> None:

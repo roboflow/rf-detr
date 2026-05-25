@@ -3,14 +3,13 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Backward-compatibility shim — rfdetr.deploy is deprecated; use rfdetr.export."""
 
 import sys
 
 from rfdetr.utilities.decorators import _warn_deprecated_module
 
-_warn_deprecated_module("rfdetr.deploy", "rfdetr.export")
+_warn_deprecated_module("rfdetr.deploy", "rfdetr.export", deprecated_in="1.6.0", remove_in="1.9.0")
 
 # Make old submodule paths still importable without submodule files
 import rfdetr.export.benchmark as _benchmark  # noqa: E402

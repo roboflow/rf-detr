@@ -3,7 +3,6 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Tests for Chapter 5 / Phase 7+8 (updated Phase 3):
 
 1. ``TestRFDETRTrainPTL``           — RFDETR.train() delegates to PTL build_trainer().fit()
@@ -62,8 +61,7 @@ def _make_train_config(tmp_path, **overrides):
 def _make_rfdetr_self(tmp_path, **train_overrides):
     """Return a MagicMock shaped like RFDETR with real config objects.
 
-    No spec is used because RFDETR.model is set in __init__ (instance attr)
-    and spec=RFDETR would block access to it.
+    No spec is used because RFDETR.model is set in __init__ (instance attr) and spec=RFDETR would block access to it.
     """
     mock = MagicMock()
     mock.model_config = _make_model_config()
@@ -210,9 +208,8 @@ class TestRFDETRTrainPTL:
     def test_class_names_synced_from_datamodule_after_training(self, tmp_path, patch_lit):
         """self.model.class_names is set from RFDETRDataModule.class_names after train().
 
-        Regression test for #509: custom class names were not synced back from
-        RFDETRDataModule after training, causing predict() to return COCO labels
-        instead of the dataset's class labels.
+        Regression test for #509: custom class names were not synced back from RFDETRDataModule after training, causing
+        predict() to return COCO labels instead of the dataset's class labels.
         """
         mock_self = _make_rfdetr_self(tmp_path)
         p_mod, p_dm, p_bt, _mcls, dmcls, _mock_bt = patch_lit
@@ -227,8 +224,8 @@ class TestRFDETRTrainPTL:
     def test_class_names_not_synced_when_datamodule_returns_none(self, tmp_path, patch_lit):
         """self.model.class_names is NOT overwritten when datamodule.class_names is None.
 
-        Ensures the sync-back guard does not clobber existing class names
-        when the datamodule has no class information (e.g. custom dataset format).
+        Ensures the sync-back guard does not clobber existing class names when the datamodule has no class information
+        (e.g. custom dataset format).
         """
         mock_self = _make_rfdetr_self(tmp_path)
         sentinel_names = ["existing_class"]
@@ -258,7 +255,7 @@ class TestRFDETRTrainPTL:
         assert mock_self.model.class_names == []
 
     def test_device_kwarg_cpu_no_warning(self, tmp_path, patch_lit):
-        """device='cpu' is consumed without a DeprecationWarning."""
+        """Device='cpu' is consumed without a DeprecationWarning."""
         mock_self = _make_rfdetr_self(tmp_path)
         p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
@@ -268,7 +265,7 @@ class TestRFDETRTrainPTL:
         mock_self.get_train_config.assert_called_once_with()
 
     def test_device_kwarg_cuda_forwards_gpu_accelerator_without_devices(self, tmp_path, patch_lit):
-        """device='cuda' is mapped to accelerator='gpu' without explicit devices override."""
+        """Device='cuda' is mapped to accelerator='gpu' without explicit devices override."""
         mock_self = _make_rfdetr_self(tmp_path)
         p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
@@ -288,7 +285,7 @@ class TestRFDETRTrainPTL:
         mock_self.get_train_config.assert_called_once_with()
 
     def test_callbacks_none_no_warning(self, tmp_path, patch_lit):
-        """callbacks=None produces no DeprecationWarning."""
+        """Callbacks=None produces no DeprecationWarning."""
         mock_self = _make_rfdetr_self(tmp_path)
         p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
@@ -297,7 +294,7 @@ class TestRFDETRTrainPTL:
         assert not any(issubclass(x.category, DeprecationWarning) for x in w)
 
     def test_callbacks_empty_dict_no_warning(self, tmp_path, patch_lit):
-        """callbacks={} (falsy dict) produces no DeprecationWarning."""
+        """Callbacks={} (falsy dict) produces no DeprecationWarning."""
         mock_self = _make_rfdetr_self(tmp_path)
         p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
@@ -368,7 +365,7 @@ class TestRFDETRTrainPTL:
         mock_self.get_train_config.assert_called_once_with()
 
     def test_device_not_forwarded_to_get_train_config(self, tmp_path, patch_lit):
-        """device= is popped and not passed on to get_train_config."""
+        """Device= is popped and not passed on to get_train_config."""
         mock_self = _make_rfdetr_self(tmp_path)
         p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt:
@@ -439,7 +436,7 @@ class TestRFDETRTrainPTLAbsorption:
     """RFDETR.train() absorbs legacy kwargs and routes through PTL build_trainer()."""
 
     def test_device_cpu_absorbed_as_accelerator_cpu(self, tmp_path, patch_lit):
-        """device='cpu' is absorbed and forwarded to build_trainer as accelerator='cpu'."""
+        """Device='cpu' is absorbed and forwarded to build_trainer as accelerator='cpu'."""
         mock_self = _make_rfdetr_self(tmp_path)
         p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
         with p_mod, p_dm, p_bt:
@@ -448,7 +445,7 @@ class TestRFDETRTrainPTLAbsorption:
         mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator="cpu")
 
     def test_device_cuda_absorbed_as_accelerator_gpu(self, tmp_path, patch_lit):
-        """device='cuda' forwards accelerator='gpu' without a devices kwarg."""
+        """Device='cuda' forwards accelerator='gpu' without a devices kwarg."""
         mock_self = _make_rfdetr_self(tmp_path)
         p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
         with p_mod, p_dm, p_bt:
@@ -458,7 +455,7 @@ class TestRFDETRTrainPTLAbsorption:
         assert "devices" not in mock_bt.call_args.kwargs
 
     def test_device_cuda_index_absorbed_as_accelerator_gpu_devices_list(self, tmp_path, patch_lit):
-        """device='cuda:1' forwards accelerator='gpu' and devices=[1]."""
+        """Device='cuda:1' forwards accelerator='gpu' and devices=[1]."""
         mock_self = _make_rfdetr_self(tmp_path)
         p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
         with p_mod, p_dm, p_bt:
@@ -498,7 +495,7 @@ class TestRFDETRTrainPTLAbsorption:
         assert "devices" not in mock_bt.call_args.kwargs
 
     def test_callbacks_empty_dict_no_error(self, tmp_path, patch_lit):
-        """callbacks={} is accepted without error."""
+        """Callbacks={} is accepted without error."""
         mock_self = _make_rfdetr_self(tmp_path)
         p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt:
@@ -629,7 +626,7 @@ class TestResolutionKwarg:
     """RFDETR.train(resolution=...) applies, validates, and syncs the resolution override."""
 
     def test_updates_model_config_resolution(self, tmp_path, patch_lit):
-        """resolution kwarg is applied to model_config.resolution before training."""
+        """Resolution kwarg is applied to model_config.resolution before training."""
         mock_self = _make_rfdetr_self(tmp_path)
         block_size = mock_self.model_config.patch_size * mock_self.model_config.num_windows
         valid_resolution = block_size * 11  # guaranteed divisible and different from default
@@ -665,7 +662,7 @@ class TestResolutionKwarg:
         assert mock_self.model_config.positional_encoding_size == expected_pe
 
     def test_does_not_reach_get_train_config(self, tmp_path, patch_lit):
-        """resolution kwarg is popped before get_train_config is called."""
+        """Resolution kwarg is popped before get_train_config is called."""
         mock_self = _make_rfdetr_self(tmp_path)
         block_size = mock_self.model_config.patch_size * mock_self.model_config.num_windows
         p_mod, p_dm, p_bt, *_ = patch_lit
@@ -674,7 +671,7 @@ class TestResolutionKwarg:
         assert "resolution" not in mock_self.get_train_config.call_args.kwargs
 
     def test_indivisible_raises_value_error(self, tmp_path, patch_lit):
-        """resolution not divisible by patch_size * num_windows raises ValueError."""
+        """Resolution not divisible by patch_size * num_windows raises ValueError."""
         mock_self = _make_rfdetr_self(tmp_path)
         block_size = mock_self.model_config.patch_size * mock_self.model_config.num_windows
         indivisible = block_size * 10 + 1  # guaranteed not divisible by block_size
@@ -711,10 +708,10 @@ class TestResolutionKwarg:
             RFDETR.train(mock_self, resolution=bad_resolution)
 
     def test_syncs_model_resolution_attribute(self, tmp_path, patch_lit):
-        """resolution kwarg sets model.resolution so predict()/export() see the new resolution.
+        """Resolution kwarg sets model.resolution so predict()/export() see the new resolution.
 
-        Regression test for #952 — keeps the cached inference/export context in sync after
-        a resolution override in train().
+        Regression test for #952 — keeps the cached inference/export context in sync after a resolution override in
+        train().
         """
         mock_self = _make_rfdetr_self(tmp_path)
         block_size = mock_self.model_config.patch_size * mock_self.model_config.num_windows
@@ -725,11 +722,10 @@ class TestResolutionKwarg:
         assert mock_self.model.resolution == new_resolution
 
     def test_syncs_model_args_resolution_and_pe(self, tmp_path, patch_lit):
-        """resolution kwarg updates model.args.resolution and model.args.positional_encoding_size.
+        """Resolution kwarg updates model.args.resolution and model.args.positional_encoding_size.
 
-        For formula-derived configs (PE == resolution // patch_size), both fields in model.args
-        must be kept consistent with model_config so export/deployment pipelines use the
-        correct values.  Regression test for #952.
+        For formula-derived configs (PE == resolution // patch_size), both fields in model.args must be kept consistent
+        with model_config so export/deployment pipelines use the correct values.  Regression test for #952.
         """
         mock_self = _make_rfdetr_self(tmp_path)
         # RFDETRSmallConfig: formula-derived PE (512 // 16 == 32), so PE updates with resolution.
@@ -856,7 +852,7 @@ class TestConvertLegacyCheckpoint:
         assert ckpt["hyper_parameters"] == {"lr": pytest.approx(1e-4), "epochs": 100}
 
     def test_args_none_gives_empty_hyper_parameters(self, tmp_path, patch_lit):
-        """args=None produces an empty hyper_parameters dict."""
+        """Args=None produces an empty hyper_parameters dict."""
         src = _make_legacy_pth(tmp_path, args_value=None)
         dst = str(tmp_path / "out.ckpt")
         convert_legacy_checkpoint(src, dst)
@@ -904,8 +900,8 @@ class TestConvertLegacyCheckpoint:
     def test_round_trip_with_on_load_checkpoint(self, tmp_path, patch_lit):
         """convert_legacy_checkpoint output is handled correctly by on_load_checkpoint.
 
-        After conversion, loading the .ckpt via on_load_checkpoint must NOT
-        re-apply the 'model.' prefix because 'state_dict' already exists.
+        After conversion, loading the .ckpt via on_load_checkpoint must NOT re-apply the 'model.' prefix because
+        'state_dict' already exists.
         """
         src = _make_legacy_pth(tmp_path, include_ema=True)
         dst = str(tmp_path / "out.ckpt")
@@ -1162,7 +1158,7 @@ class TestRemovedLegacyModuleAliases:
         missing_name = "rfdetr.missing_removed_shim"
         missing_exc = ModuleNotFoundError(f"No module named '{missing_name}'", name=missing_name)
         with (
-            patch.dict(rfdetr._REMOVED_IN_V17, {"missing_removed_shim": "migration hint"}),
+            patch.dict(rfdetr._REMOVE_IN_VERSION_1_9, {"missing_removed_shim": "migration hint"}),
             patch("rfdetr.importlib.import_module", side_effect=missing_exc),
             pytest.raises(ImportError, match="migration hint"),
         ):
@@ -1173,7 +1169,7 @@ class TestRemovedLegacyModuleAliases:
         import rfdetr
 
         with (
-            patch.dict(rfdetr._REMOVED_IN_V17, {"missing_dep_shim": "migration hint"}),
+            patch.dict(rfdetr._REMOVE_IN_VERSION_1_9, {"missing_dep_shim": "migration hint"}),
             patch(
                 "rfdetr.importlib.import_module",
                 side_effect=ModuleNotFoundError("No module named 'torchvision_ops'", name="torchvision_ops"),
@@ -1189,7 +1185,7 @@ class TestRemovedLegacyModuleAliases:
         """Dotted legacy imports get a migration hint once the util shim package is removed."""
         self._simulate_missing_removed_module_specs(monkeypatch, "rfdetr.util")
 
-        with pytest.raises(ImportError, match=r"rfdetr\.util was removed in v1\.7"):
+        with pytest.raises(ImportError, match=r"rfdetr\.util will be removed in v1\.9"):
             importlib.import_module("rfdetr.util")
 
     def test_removed_deploy_submodule_import_raises_migration_hint_when_shim_is_deleted(
@@ -1199,7 +1195,7 @@ class TestRemovedLegacyModuleAliases:
         """Dotted legacy submodule imports get a migration hint once the deploy shim is removed."""
         self._simulate_missing_removed_module_specs(monkeypatch, "rfdetr.deploy", "rfdetr.deploy.benchmark")
 
-        with pytest.raises(ImportError, match=r"rfdetr\.deploy was removed in v1\.7"):
+        with pytest.raises(ImportError, match=r"rfdetr\.deploy will be removed in v1\.9"):
             importlib.import_module("rfdetr.deploy.benchmark")
 
     def test_find_spec_ignores_non_rfdetr_top_level_imports(self) -> None:
@@ -1273,10 +1269,9 @@ class TestRFDETRLargeFallback:
     def test_pe_size_mismatch_with_custom_resolution_does_not_retry(self, monkeypatch, patch_lit):
         """Custom resolution= must not trigger deprecated-config fallback on PE size mismatch.
 
-        Regression for #960: when ``resolution=`` is explicitly passed, a positional
-        embedding size mismatch is caused by the resolution change — not by deprecated
-        weights.  The fallback must be suppressed so the error surfaces to the caller
-        rather than silently loading the wrong model architecture.
+        Regression for #960: when ``resolution=`` is explicitly passed, a positional embedding size mismatch is caused
+        by the resolution change — not by deprecated weights.  The fallback must be suppressed so the error surfaces to
+        the caller rather than silently loading the wrong model architecture.
         """
         call_count = 0
 
@@ -1376,9 +1371,8 @@ def _make_detr_checkpoint(
 
 
 class TestLoadPretrainWeightsInto:
-    """Tests for load_pretrain_weights (models/weights.py) — checkpoint compatibility
-    validation exercised when RFDETRNano(pretrain_weights=...) is called (issue #806).
-    """
+    """Tests for load_pretrain_weights (models/weights.py) — checkpoint compatibility validation exercised when
+    RFDETRNano(pretrain_weights=...) is called (issue #806)."""
 
     @pytest.fixture(autouse=True)
     def _patch_download(self, monkeypatch):
@@ -1425,10 +1419,9 @@ class TestClassNamesProperty:
     def test_empty_class_names_returns_empty_list_not_coco(self, patch_lit):
         """class_names property returns [] when model.class_names is [], NOT COCO fallback.
 
-        Regression test for #509: the truthiness check `and self.model.class_names:`
-        treated [] as falsy and fell through to return COCO_CLASSES, defeating the
-        detr.py sync-back even after training on a dataset that reports empty names.
-        The fix uses `is not None` so that [] is preserved.
+        Regression test for #509: the truthiness check `and self.model.class_names:` treated [] as falsy and fell
+        through to return COCO_CLASSES, defeating the detr.py sync-back even after training on a dataset that reports
+        empty names. The fix uses `is not None` so that [] is preserved.
         """
         mock_self = MagicMock()
         mock_self.model.class_names = []
@@ -1478,9 +1471,8 @@ class TestClassNamesProperty:
 class TestDeployToRoboflow:
     """deploy_to_roboflow writes class_names.txt and embeds class_names in args.
 
-    Regression tests for the bug where RFDETRSeg models (and any model whose
-    args namespace lacks a ``class_names`` attribute) failed to upload to
-    Roboflow with a FileNotFoundError from the Roboflow client library.
+    Regression tests for the bug where RFDETRSeg models (and any model whose args namespace lacks a ``class_names``
+    attribute) failed to upload to Roboflow with a FileNotFoundError from the Roboflow client library.
     """
 
     @pytest.fixture
@@ -1697,8 +1689,8 @@ class TestSaveTrainingConfig:
     def _run_train(self, tmp_path, patch_lit, class_names=None, **train_overrides):
         """Run RFDETR.train() with patched PTL; return (mock_self, output_dir path).
 
-        class_names is injected via the datamodule mock (the path RFDETR.train uses
-        to sync self.model.class_names after trainer.fit completes).
+        class_names is injected via the datamodule mock (the path RFDETR.train uses to sync self.model.class_names after
+        trainer.fit completes).
         """
         if class_names is None:
             class_names = ["cat", "dog", "bird"]
@@ -1762,16 +1754,14 @@ class TestSaveTrainingConfig:
 class TestRFDETRTrainNumClassesAutoDetect:
     """RFDETR.train() auto-detects num_classes from the training dataset.
 
-    When the user did not explicitly override ``num_classes`` (or passed the
-    class-config default), the model's ``num_classes`` is automatically aligned
-    to the dataset's class count before ``RFDETRModelModule`` is constructed.
+    When the user did not explicitly override ``num_classes`` (or passed the class-config default), the model's
+    ``num_classes`` is automatically aligned to the dataset's class count before ``RFDETRModelModule`` is constructed.
 
-    When the user *did* explicitly set a non-default ``num_classes`` that differs
-    from the dataset, the configured value is preserved and a warning is logged.
+    When the user *did* explicitly set a non-default ``num_classes`` that differs from the dataset, the configured value
+    is preserved and a warning is logged.
 
-    Dataset detection is best-effort: if ``_load_classes`` raises any of the
-    expected exceptions (``FileNotFoundError``, ``ValueError``, ``KeyError``,
-    ``OSError``), training proceeds unaffected without raising.
+    Dataset detection is best-effort: if ``_load_classes`` raises any of the expected exceptions (``FileNotFoundError``,
+    ``ValueError``, ``KeyError``, ``OSError``), training proceeds unaffected without raising.
     """
 
     _FOUR_CLASS_NAMES = ["ball", "goalkeeper", "referee", "player"]
@@ -1812,8 +1802,8 @@ class TestRFDETRTrainNumClassesAutoDetect:
     def test_coco_auto_detect_uses_full_category_mapping_not_leaf_only_names(self, mock_self, patch_lit):
         """COCO class-count detection must follow ``coco.cats`` semantics.
 
-        Regression test for hierarchical COCO datasets where leaf-only class
-        names can undercount categories relative to label remapping.
+        Regression test for hierarchical COCO datasets where leaf-only class names can undercount categories relative to
+        label remapping.
         """
         dataset_dir = Path(mock_self.get_train_config.return_value.dataset_dir)
         self._write_coco_categories(

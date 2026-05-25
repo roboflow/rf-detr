@@ -143,7 +143,7 @@ If you want lower latency on NVIDIA GPUs, you can convert the exported ONNX mode
 ```python
 from argparse import Namespace
 
-from rfdetr.export.tensorrt import trtexec
+from rfdetr.export._tensorrt import trtexec
 
 args = Namespace(
     verbose=True,
@@ -157,6 +157,36 @@ trtexec("output/inference_model.onnx", args)
 This produces `output/inference_model.engine`. If `profile=True`, it also writes an Nsight Systems report (`.nsys-rep`).
 
 ## TFLite Export
+
+!!! warning "Experimental — Use with Caution"
+
+    TFLite export is **experimental and work-in-progress**. The pipeline depends on
+    several upstream packages (`onnx2tf`, `ai_edge_litert`, `tflite-runtime`) that
+    have experienced breaking API changes and installation instabilities across
+    releases. You may encounter errors or unexpected results.
+
+    **Known instabilities:**
+
+    - `onnx2tf` output graph structure can change between minor versions, silently
+        altering output tensor layout and breaking downstream inference code.
+    - `ai_edge_litert` (Google's replacement for `tflite-runtime`) is still
+        stabilising its public API; version pinning is strongly recommended.
+    - INT8 quantization accuracy is sensitive to calibration data quality — poor
+        calibration causes silent precision loss with no error at export time.
+    - The ONNX → TF → TFLite conversion chain introduces numerical rounding that
+        may produce slightly different predictions from the original PyTorch model.
+    - Installation of the `[tflite]` extra may conflict with existing TensorFlow
+        or NumPy versions in your environment.
+
+    **Recommendations:**
+
+    - Pin your dependency versions (e.g. `onnx2tf==X.Y.Z`) and test before each upgrade.
+    - Validate exported `.tflite` files against a held-out evaluation set before deploying.
+    - Prefer ONNX export when your target runtime supports it — it is more stable and
+        better tested.
+    - If export fails, check the [open issues](https://github.com/roboflow/rf-detr/issues)
+        for known workarounds or report a new one with your environment details
+        (`pip freeze`, Python version, OS).
 
 Export your model to TFLite for deployment on mobile devices, microcontrollers, and edge hardware via TensorFlow Lite. The TFLite export pipeline converts ONNX → TensorFlow → TFLite using [onnx2tf](https://github.com/PINTO0309/onnx2tf).
 

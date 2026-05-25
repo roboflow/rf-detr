@@ -3,11 +3,10 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Private developer tools for testing and benchmarking RF-DETR.
 
-These utilities are intended for internal use by developers and test suites.
-They are not part of the public API and may change without notice.
+These utilities are intended for internal use by developers and test suites. They are not part of the public API and may
+change without notice.
 """
 
 from __future__ import annotations
@@ -41,14 +40,11 @@ _COCO_URLS = {
 class _SimpleDataset:
     """Simple synthetic dataset for testing augmentations and training loops.
 
-    Creates synthetic images with varying numbers of bounding boxes to test
-    edge cases in augmentation pipelines, particularly the case where
-    num_boxes=2 (which matches orig_size shape [2]).
+    Creates synthetic images with varying numbers of bounding boxes to test edge cases in augmentation pipelines,
+    particularly the case where num_boxes=2 (which matches orig_size shape [2]).
 
-    Implements the ``__len__`` / ``__getitem__`` protocol expected by
-    ``torch.utils.data.DataLoader`` without inheriting from
-    ``torch.utils.data.Dataset``, so importing this class does not pull in
-    torch at module load time.
+    Implements the ``__len__`` / ``__getitem__`` protocol expected by ``torch.utils.data.DataLoader`` without inheriting
+    from ``torch.utils.data.Dataset``, so importing this class does not pull in torch at module load time.
 
     Args:
         num_samples: Number of samples in the dataset.

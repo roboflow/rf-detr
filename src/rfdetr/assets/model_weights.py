@@ -3,13 +3,10 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
+"""Model weights abstraction and download system.
 
-"""
-Model weights abstraction and download system.
-
-Provides forward-compatible pattern for model weights across rf-detr and rf-detr-plus packages.
-External packages (like rf-detr-plus) should inherit from ModelWeightsBase to ensure compile-time
-interface compatibility.
+Provides forward-compatible pattern for model weights across rf-detr and rf-detr-plus packages. External packages (like
+rf-detr-plus) should inherit from ModelWeightsBase to ensure compile-time interface compatibility.
 
 Critical Strategic Decisions:
     1. **Standalone first**: Check local ModelWeights before lazy-importing external packages
@@ -29,6 +26,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
+from rfdetr.platform import _IS_RFDETR_PLUS_AVAILABLE
 from rfdetr.utilities.files import _download_file, _validate_file_md5
 from rfdetr.utilities.logger import get_logger
 
@@ -40,11 +38,10 @@ _DEFAULT_CACHE_DIR = "~/.roboflow/models"
 
 @dataclass(frozen=True)
 class ModelWeightAsset:
-    """
-    Dataclass representing a model asset with download information.
+    """Dataclass representing a model asset with download information.
 
-    This is the standard format for model assets across rf-detr packages.
-    Both rf-detr and rf-detr-plus should use this structure for compatibility.
+    This is the standard format for model assets across rf-detr packages. Both rf-detr and rf-detr-plus should use this
+    structure for compatibility.
 
     Attributes:
         filename: The local filename for the model weights
@@ -65,11 +62,10 @@ class ModelWeightAsset:
 
 
 class ModelWeightsBase(Enum):
-    """
-    Base class for model weight registries.
+    """Base class for model weight registries.
 
-    This base class ensures compile-time compatibility between rf-detr and rf-detr-plus.
-    Both packages should inherit from this class to ensure they have the same interface.
+    This base class ensures compile-time compatibility between rf-detr and rf-detr-plus. Both packages should inherit
+    from this class to ensure they have the same interface.
 
     Each enum member's value must be a ModelWeightAsset instance.
 
@@ -114,8 +110,7 @@ class ModelWeightsBase(Enum):
 
     @classmethod
     def from_filename(cls, filename: str) -> Optional[ModelWeightAsset]:
-        """
-        Get ModelWeightAsset by filename.
+        """Get ModelWeightAsset by filename.
 
         Args:
             filename: The model filename (e.g., 'rf-detr-base.pth')
@@ -135,8 +130,7 @@ class ModelWeightsBase(Enum):
 
     @classmethod
     def get_url(cls, filename: str) -> Optional[str]:
-        """
-        Get download URL for a model by filename.
+        """Get download URL for a model by filename.
 
         Args:
             filename: The model filename
@@ -149,8 +143,7 @@ class ModelWeightsBase(Enum):
 
     @classmethod
     def get_md5(cls, filename: str) -> Optional[str]:
-        """
-        Get expected MD5 hash for a model by filename.
+        """Get expected MD5 hash for a model by filename.
 
         Args:
             filename: The model filename
@@ -163,8 +156,7 @@ class ModelWeightsBase(Enum):
 
     @classmethod
     def list_models(cls) -> list[str]:
-        """
-        List all available model filenames.
+        """List all available model filenames.
 
         Returns:
             List of model filenames
@@ -173,8 +165,7 @@ class ModelWeightsBase(Enum):
 
 
 class ModelWeights(ModelWeightsBase):
-    """
-    Enumeration of available RF-DETR model assets.
+    """Enumeration of available RF-DETR model assets.
 
     Inherits from ModelWeightsBase to ensure compatibility with rf-detr-plus.
 
@@ -275,8 +266,7 @@ class ModelWeights(ModelWeightsBase):
 def get_model_cache_dir() -> str:
     """Return the directory where RF-DETR caches downloaded model weights.
 
-    Reads the ``RF_HOME`` environment variable; defaults to ``~/.roboflow/models``
-    when the variable is not set.
+    Reads the ``RF_HOME`` environment variable; defaults to ``~/.roboflow/models`` when the variable is not set.
 
     Set ``RF_HOME`` to override the cache location for all RF-DETR models:
 
@@ -287,9 +277,8 @@ def get_model_cache_dir() -> str:
     Args: None
 
     Returns:
-        Absolute, user-expanded path to the model cache directory.  The directory
-        is *not* created by this function — callers that need it to exist should
-        call ``os.makedirs(get_model_cache_dir(), exist_ok=True)`` themselves.
+        Absolute, user-expanded path to the model cache directory.  The directory is *not* created by this function —
+        callers that need it to exist should call ``os.makedirs(get_model_cache_dir(), exist_ok=True)`` themselves.
 
     Examples:
         >>> import os
@@ -312,8 +301,7 @@ def download_pretrain_weights(
     redownload: bool = False,
     validate_md5: bool = True,
 ) -> None:
-    """
-    Download pretrained weights with optional MD5 validation.
+    """Download pretrained weights with optional MD5 validation.
 
     Download Priority Order:
         The function searches for models in the following order, stopping at the first match:
@@ -352,14 +340,14 @@ def download_pretrain_weights(
     asset = ModelWeights.from_filename(model_name)
 
     # Only try rf-detr-plus if not found locally (lazy import)
-    if asset is None:
+    if asset is None and _IS_RFDETR_PLUS_AVAILABLE:
         try:
             from rfdetr_plus.assets import ModelWeights as PlusModelWeights
 
             asset = PlusModelWeights.from_filename(model_name)
-        except (ImportError, AttributeError):
-            # Package not installed or doesn't have assets module yet
-            pass
+        except ModuleNotFoundError as ex:
+            if ex.name not in {"rfdetr_plus", "rfdetr_plus.assets"}:
+                raise
 
     # Extract URL and MD5 from the asset if found
     if asset is not None:
@@ -401,8 +389,7 @@ def download_pretrain_weights(
 
 
 def validate_pretrain_weights(pretrain_weights: str, strict: bool = False) -> bool:
-    """
-    Validate MD5 hash of pretrained weights file.
+    """Validate MD5 hash of pretrained weights file.
 
     Args:
         pretrain_weights: Path to the pretrained weights file

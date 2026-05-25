@@ -15,13 +15,11 @@ from rfdetr import RFDETRNano
 def test_resume_with_completed_epochs_returns_early(tmp_path: Path) -> None:
     """Passing start_epoch emits DeprecationWarning and still reaches trainer.fit().
 
-    In the legacy engine.py path, ``start_epoch=epochs`` caused the training loop
-    to be skipped (``range(start_epoch, epochs)`` was empty), which triggered an
-    ``UnboundLocalError`` when accessing ``test_stats``.
+    In the legacy engine.py path, ``start_epoch=epochs`` caused the training loop to be skipped (``range(start_epoch,
+    epochs)`` was empty), which triggered an ``UnboundLocalError`` when accessing ``test_stats``.
 
-    In the PTL path, ``start_epoch`` is a deprecated kwarg that is absorbed and
-    ignored (PTL resumes automatically via ``ckpt_path``). The shim should emit
-    the warning and still call ``trainer.fit(...)`` without raising.
+    In the PTL path, ``start_epoch`` is a deprecated kwarg that is absorbed and ignored (PTL resumes automatically via
+    ``ckpt_path``). The shim should emit the warning and still call ``trainer.fit(...)`` without raising.
 
     Args:
         tmp_path: Pytest temporary directory.
@@ -56,10 +54,9 @@ def test_resume_with_completed_epochs_returns_early(tmp_path: Path) -> None:
 def test_resume_with_completed_epochs_calls_on_train_end_callback(tmp_path: Path) -> None:
     """Old-style on_train_end callbacks are not forwarded to PTL.
 
-    In the legacy engine.py path, callbacks added to ``model.callbacks["on_train_end"]``
-    were invoked at the end of training (including when the loop was skipped).
-    In the PTL path the old-style callback dict on the model instance is not consulted;
-    use PTL ``Callback`` objects via ``build_trainer()`` instead.
+    In the legacy engine.py path, callbacks added to ``model.callbacks["on_train_end"]`` were invoked at the end of
+    training (including when the loop was skipped). In the PTL path the old-style callback dict on the model instance is
+    not consulted; use PTL ``Callback`` objects via ``build_trainer()`` instead.
     """
     output_dir = tmp_path / "train_output"
     output_dir.mkdir(parents=True, exist_ok=True)

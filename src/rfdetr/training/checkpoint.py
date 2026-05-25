@@ -3,12 +3,10 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Checkpoint conversion utilities for the PTL training stack.
 
-Provides :func:`convert_legacy_checkpoint` to convert RF-DETR ``*.pth``
-checkpoints (produced by the pre-PTL ``engine.py`` training loop) into the
-``*.ckpt`` format expected by ``pytorch_lightning.Trainer``.
+Provides :func:`convert_legacy_checkpoint` to convert RF-DETR ``*.pth`` checkpoints (produced by the pre-PTL
+``engine.py`` training loop) into the ``*.ckpt`` format expected by ``pytorch_lightning.Trainer``.
 
 Auto-detection of legacy format at load time is handled by
 :meth:`rfdetr.training.module_model.RFDETRModelModule.on_load_checkpoint`.
@@ -29,16 +27,16 @@ __all__ = ["convert_legacy_checkpoint"]
 def convert_legacy_checkpoint(old_path: str, new_path: str) -> None:
     """Convert a legacy RF-DETR ``.pth`` checkpoint to PTL ``.ckpt`` format.
 
-    Loads a checkpoint saved by the pre-PTL ``engine.py`` training loop and
-    rewrites it in the structure expected by ``pytorch_lightning.Trainer``:
+    Loads a checkpoint saved by the pre-PTL ``engine.py`` training loop and rewrites it in the structure expected by
+    ``pytorch_lightning.Trainer``:
 
     * ``state_dict`` keys are prefixed with ``"model."`` to match the
       attribute path inside :class:`~rfdetr.training.module_model.RFDETRModelModule`.
     * ``args`` (``argparse.Namespace`` or ``dict``) is normalised to a plain
       ``dict`` and stored as ``hyper_parameters``.
     * ``legacy_checkpoint_format: True`` is written so
-      :meth:`~rfdetr.training.module_model.RFDETRModelModule.on_load_checkpoint` can
-      distinguish converted files from native PTL checkpoints.
+      :meth:`~rfdetr.training.module_model.RFDETRModelModule.on_load_checkpoint` can distinguish converted files from
+      native PTL checkpoints.
     * If an ``ema_model`` key is present it is preserved verbatim under
       ``legacy_ema_state_dict`` for optional EMA weight restoration.
 
