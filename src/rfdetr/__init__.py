@@ -29,7 +29,6 @@ import importlib.machinery
 import importlib.util
 import os
 import sys
-from types import ModuleType
 from typing import Any
 
 try:
