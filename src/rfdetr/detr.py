@@ -373,12 +373,15 @@ class RFDETR:
             weights_name = str(args.get("pretrain_weights", "")).strip().lower()
         else:
             weights_name = str(getattr(args, "pretrain_weights", "")).strip().lower()
-        # The sentinel set {"", "none", "null"} covers three cases:
+        # The sentinel set {"", "none", "null"} covers unset-like checkpoint values:
         #   ""     — pretrain_weights key absent entirely
-        #   "none" — PTL serialises Python None as the string "none"; NOT an
-        #            intentional "no pretraining" flag (see test_pretrain_weights_none_warns
-        #            which operates at the config level, not the checkpoint level)
-        #   "null" — alternate serialisation of None (e.g. YAML-originated checkpoints)
+        #   "none" — checkpoint value was None or the literal string "none";
+        #            after str(...).strip().lower() both normalize to the same sentinel.
+        #            This is NOT an intentional "no pretraining" flag (see
+        #            test_pretrain_weights_none_warns, which operates at the config
+        #            level, not the checkpoint level)
+        #   "null" — checkpoint stored the literal string "null" (for example from a
+        #            YAML-originated value), which is also treated as unset-like here
         _filename_fallback = False
         if weights_name in {"", "none", "null"}:
             weights_name = os.path.basename(os.fspath(path)).lower()
