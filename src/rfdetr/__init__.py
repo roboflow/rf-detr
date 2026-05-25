@@ -31,6 +31,22 @@ import os
 import sys
 from typing import Any
 
+# np.complex_ was removed in NumPy 2.0 (June 2024). Some transitive dependencies (e.g. older
+# tensorflow, chumpy) still reference it, causing AttributeError on import rfdetr. See issue #1061.
+# TODO: Remove once all transitive deps support NumPy 2.x natively.
+try:
+    import numpy
+
+    _IS_NUMPY_INSTALLED = True
+except ImportError:
+    _IS_NUMPY_INSTALLED = False
+
+if _IS_NUMPY_INSTALLED and not hasattr(numpy, "complex_"):
+    _complex128 = getattr(numpy, "complex128", None)
+    if _complex128 is not None:
+        numpy.complex_ = _complex128
+
+
 from rfdetr.detr import RFDETR
 from rfdetr.inference import ModelContext
 from rfdetr.variants import (
