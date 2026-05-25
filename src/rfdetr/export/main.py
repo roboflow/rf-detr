@@ -186,6 +186,7 @@ def main(args):
     if args.tensorrt:
         output_file = trtexec(onnx_path, args)
 
-    # TODO: register --tflite, --quantization, --calibration-data, --max-images in the
-    # argparser to enable TFLite export via CLI.  Until then, use RFDETR.export(format="tflite").
-    _ = onnx_path  # referenced above; suppress unused-variable warning until CLI is wired up
+    # TFLite export is available through the ``rfdetr export --format tflite``
+    # CLI subcommand (see ``rfdetr.cli.export``), which calls
+    # ``RFDETR.export(format="tflite")``.  This ``args``-driven entry point
+    # handles ONNX export and the optional TensorRT step.
