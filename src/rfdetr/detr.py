@@ -373,8 +373,10 @@ class RFDETR:
             weights_name = str(args.get("pretrain_weights", "")).strip().lower()
         else:
             weights_name = str(getattr(args, "pretrain_weights", "")).strip().lower()
+        _filename_fallback = False
         if weights_name in {"", "none", "null"}:
             weights_name = os.path.basename(os.fspath(path)).lower()
+            _filename_fallback = True
 
         if model_cls is None:
             # Guard: plus-only checkpoints should raise an actionable install error
@@ -394,6 +396,14 @@ class RFDETR:
                 if name in weights_name:
                     model_cls = klass
                     break
+
+            if _filename_fallback and model_cls is not None:
+                logger.info(
+                    "pretrain_weights unset in checkpoint %r; inferred model class %s from filename %r",
+                    path,
+                    getattr(model_cls, "__name__", repr(model_cls)),
+                    weights_name,
+                )
 
         if model_cls is None:
             raise ValueError(
