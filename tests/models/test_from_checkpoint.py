@@ -314,9 +314,20 @@ class TestFromCheckpointModelName:
         _, mock_cls = _call_from_checkpoint(ckpt, tmp_path / "ckpt.pth", "rfdetr.variants.RFDETRSmall")
         mock_cls.assert_called_once()
 
-    @pytest.mark.parametrize("missing_value", ["none", "null", ""])
+    @pytest.mark.parametrize(
+        "missing_value",
+        [
+            pytest.param("none", id="bare-none"),
+            pytest.param("null", id="bare-null"),
+            pytest.param("", id="empty"),
+            pytest.param("  None  ", id="whitespace-None"),
+            pytest.param("  ", id="whitespace-only"),
+            pytest.param(" null ", id="whitespace-null"),
+            pytest.param(None, id="python-None"),
+        ],
+    )
     def test_falls_back_to_checkpoint_filename_when_pretrain_weights_missing(
-        self, tmp_path: Path, missing_value: str
+        self, tmp_path: Path, missing_value: str | None
     ) -> None:
         """When pretrain_weights is missing-like, from_checkpoint infers class from checkpoint filename."""
         ckpt = {"args": {"pretrain_weights": missing_value, "num_classes": 80}}
