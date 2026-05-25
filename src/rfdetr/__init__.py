@@ -33,26 +33,14 @@ from types import ModuleType
 from typing import Any
 
 try:
-    import numpy as np
-except ModuleNotFoundError:  # pragma: no cover - numpy is an optional dependency in some environments
-    _NUMPY: ModuleType | None = None
-else:
-    _NUMPY = np
+    import numpy
+    _IS_NUMPY_INSTALLED = True
+except ImportError:
+    _IS_NUMPY_INSTALLED = False
 
+if _IS_NUMPY_INSTALLED and not getattr(numpy, "complex_", None):
+    setattr(numpy, "complex_", numpy.complex128)
 
-def _ensure_numpy_compat_aliases() -> None:
-    """Populate NumPy 2.x-removed aliases expected by older training dependencies.
-
-    NumPy 2.0 removed ``np.complex_``; some transitive dependencies still import it,
-    which can break ``model.train(...)`` import paths on fresh environments.
-    """
-    if _NUMPY is None:
-        return
-    if not hasattr(_NUMPY, "complex_"):
-        _NUMPY.complex_ = _NUMPY.complex128
-
-
-_ensure_numpy_compat_aliases()
 
 from rfdetr.detr import RFDETR  # noqa: E402
 from rfdetr.inference import ModelContext  # noqa: E402
