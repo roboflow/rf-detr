@@ -172,6 +172,21 @@ class TestFromCheckpointEdgeCases:
             with pytest.raises(ValueError, match="Could not infer model class"):
                 RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
 
+    def test_filename_fallback_unrecognized_name_raises_value_error(self, tmp_path: Path) -> None:
+        """ValueError fires via filename-fallback path when filename has no known model token."""
+        ckpt = {"args": {"pretrain_weights": "none", "num_classes": 80}}
+        with patch("rfdetr.detr.torch.load", return_value=ckpt):
+            with pytest.raises(ValueError, match="Could not infer model class"):
+                RFDETR.from_checkpoint(tmp_path / "finetuned.pth")
+
+    @pytest.mark.skipif(_IS_RFDETR_PLUS_AVAILABLE, reason="rfdetr_plus is installed — guard not active")
+    def test_filename_fallback_xlarge_without_plus_raises_import_error(self, tmp_path: Path) -> None:
+        """ImportError fires via filename-fallback path when rfdetr_plus is absent."""
+        ckpt = {"args": {"pretrain_weights": "none", "num_classes": 80}}
+        with patch("rfdetr.detr.torch.load", return_value=ckpt):
+            with pytest.raises(ImportError):
+                RFDETR.from_checkpoint(tmp_path / "rf-detr-xlarge-starter.pth")
+
     def test_characterization_missing_args_key_raises_key_error(self, tmp_path: Path) -> None:
         """Checkpoint without 'args' key raises KeyError."""
         ckpt = {"model": {}}
