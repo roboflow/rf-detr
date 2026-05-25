@@ -123,7 +123,17 @@ class TestCreateInterpreter:
         parent_mod = types.ModuleType("tflite_runtime")
         parent_mod.interpreter = mod  # type: ignore[attr-defined]
 
-        with mock.patch.dict(sys.modules, {"tflite_runtime": parent_mod, "tflite_runtime.interpreter": mod}):
+        # ``_create_interpreter`` tries ai_edge_litert before tflite_runtime, so mask it to force the
+        # tflite_runtime path even when ai_edge_litert is installed
+        with mock.patch.dict(
+            sys.modules,
+            {
+                "ai_edge_litert": None,
+                "ai_edge_litert.interpreter": None,
+                "tflite_runtime": parent_mod,
+                "tflite_runtime.interpreter": mod,
+            },
+        ):
             yield interp_cls, interp_instance
 
     def test_uses_tflite_runtime_when_available(self, _mock_tflite_runtime) -> None:
