@@ -267,7 +267,14 @@ class RFDETR:
         1. ``model_name`` key in the checkpoint (written by the PTL training
            stack since v1.7.0).
         2. ``pretrain_weights`` field in the checkpoint's ``args`` entry
-           (legacy fallback).
+           (legacy fallback for older checkpoints).
+        3. The **filename** of *path* itself, used as a last resort when
+           ``pretrain_weights`` is absent or an unset-like sentinel value
+           (empty string, ``"none"``, or ``"null"``).  Starter weights
+           published by Roboflow store ``pretrain_weights="none"`` in their
+           ``args``; passing the canonical filename (e.g.
+           ``rf-detr-small.pth``) lets ``from_checkpoint`` infer the class
+           automatically.
 
         Both legacy ``argparse.Namespace`` checkpoints (produced by ``engine.py``) and dict-style checkpoints (produced
         by the PTL training stack) are supported.
@@ -288,7 +295,8 @@ class RFDETR:
             FileNotFoundError: If *path* does not exist.
             OSError: If *path* exists but cannot be read.
             KeyError: If the checkpoint does not contain an ``"args"`` key.
-            ValueError: If the model class cannot be inferred from ``model_name`` or ``pretrain_weights``.
+            ValueError: If the model class cannot be inferred from ``model_name``,
+                ``pretrain_weights``, or the checkpoint filename.
 
         Examples:
             >>> model = RFDETR.from_checkpoint("checkpoint_best_total.pth")  # doctest: +SKIP
@@ -360,7 +368,7 @@ class RFDETR:
         else:
             normalized_name = ""
 
-        # Fall back to pretrain_weights filename parsing for older checkpoints.
+        # Fall back to pretrain_weights (legacy) or, when unset-like, the checkpoint filename.
         if isinstance(args, dict):
             weights_name = str(args.get("pretrain_weights", "")).strip().lower()
         else:
