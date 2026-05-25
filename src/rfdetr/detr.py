@@ -381,7 +381,7 @@ class RFDETR:
         #   "null" — alternate serialisation of None (e.g. YAML-originated checkpoints)
         _filename_fallback = False
         if weights_name in {"", "none", "null"}:
-            weights_name = os.path.basename(str(path)).lower()
+            weights_name = os.path.basename(os.fspath(path)).lower()
             _filename_fallback = True
 
         if model_cls is None:
