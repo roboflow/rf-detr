@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
--
+- Fixed `import rfdetr` failing on NumPy 2.x when a transitive dependency references the removed `np.complex_` alias ([#1064](https://github.com/roboflow/rf-detr/pull/1064))
 
 ### Security
 
