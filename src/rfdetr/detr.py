@@ -375,7 +375,7 @@ class RFDETR:
             weights_name = str(getattr(args, "pretrain_weights", "")).strip().lower()
         _filename_fallback = False
         if weights_name in {"", "none", "null"}:
-            weights_name = os.path.basename(os.fspath(path)).lower()
+            weights_name = os.path.basename(str(path)).lower()
             _filename_fallback = True
 
         if model_cls is None:
