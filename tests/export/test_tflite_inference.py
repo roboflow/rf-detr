@@ -183,6 +183,7 @@ class TestCreateInterpreter:
             _create_interpreter("model.tflite")
 
         tf_interp_cls.assert_called_once_with(model_path="model.tflite")
+        interp_instance.allocate_tensors.assert_called_once()
 
     def test_returns_interpreter(self, _mock_tflite_runtime) -> None:
         """Return value is the interpreter instance (not the class)."""
