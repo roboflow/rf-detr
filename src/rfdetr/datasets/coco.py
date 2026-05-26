@@ -153,6 +153,10 @@ class CocoDetection(torchvision.datasets.CocoDetection):
             annotation conversion.  ``None`` means no additional transforms.
         include_masks: If ``True``, decode polygon segmentation masks into binary
             tensors and include them in the target dict under the ``"masks"`` key.
+        include_keypoints: If ``True``, parse COCO keypoints and include them in
+            the target dict under the ``"keypoints"`` key.
+        num_keypoints_per_class: Optional keypoint schema describing the number of
+            keypoints per class. When provided, keypoints are padded/truncated to ``sum(num_keypoints_per_class)``.
         remap_category_ids: If ``True``, build a ``cat2label`` mapping from the
             annotation file that remaps sparse category IDs to contiguous 0-based label indices.  The reverse mapping is
             stored as ``label2cat`` on both this object and the underlying COCO API object.  Defaults to ``False``.
@@ -164,11 +168,14 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         ann_file: Union[str, Path],
         transforms: Optional[Any],
         include_masks: bool = False,
+        include_keypoints: bool = False,
+        num_keypoints_per_class: Optional[List[int]] = None,
         remap_category_ids: bool = False,
     ) -> None:
         super(CocoDetection, self).__init__(img_folder, ann_file)
         self._transforms = transforms
         self.include_masks = include_masks
+        self.include_keypoints = include_keypoints
         if remap_category_ids:
             # Mapping from original COCO category_id to contiguous label indices
             self.cat2label = {cat_id: i for i, cat_id in enumerate(sorted(self.coco.cats.keys()))}
@@ -179,7 +186,12 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         else:
             self.cat2label = None
             self.label2cat = None
-        self.prepare = ConvertCoco(include_masks=include_masks, cat2label=self.cat2label)
+        self.prepare = ConvertCoco(
+            include_masks=include_masks,
+            include_keypoints=include_keypoints,
+            cat2label=self.cat2label,
+            num_keypoints_per_class=num_keypoints_per_class,
+        )
 
     def __getitem__(self, idx: int) -> Tuple[Any, Any]:
         img, target = super(CocoDetection, self).__getitem__(idx)
@@ -206,6 +218,8 @@ class ConvertCoco(object):
     - ``"iscrowd"`` – ``(N,)`` int64 tensor (0 = instance, 1 = crowd).
     - ``"masks"`` – ``(N, H, W)`` bool tensor of binary segmentation masks, only
       present when ``include_masks=True``.
+    - ``"keypoints"`` – ``(N, K, 3)`` float32 tensor in COCO keypoint format,
+      only present when ``include_keypoints=True``.
 
     Crowd annotations (``iscrowd=1``) and degenerate boxes (zero width or height after clamping to image boundaries) are
     filtered out.
@@ -217,11 +231,21 @@ class ConvertCoco(object):
             0-based label indices.  When ``None`` (default) the raw ``category_id`` values are used as labels directly,
             which is correct for datasets whose IDs are already 0-indexed.  Pass a non-``None`` mapping for sparse
             COCO-style datasets (e.g. IDs 1–90 with gaps) so that labels stay within the model's output range.
+        num_keypoints_per_class: Optional keypoint schema. When provided, keypoints
+            are padded/truncated to ``sum(num_keypoints_per_class)`` in each annotation.
     """
 
-    def __init__(self, include_masks: bool = False, cat2label: Optional[Dict[int, int]] = None) -> None:
+    def __init__(
+        self,
+        include_masks: bool = False,
+        include_keypoints: bool = False,
+        cat2label: Optional[Dict[int, int]] = None,
+        num_keypoints_per_class: Optional[List[int]] = None,
+    ) -> None:
         self.include_masks = include_masks
+        self.include_keypoints = include_keypoints
         self.cat2label = cat2label
+        self.num_keypoints = sum(num_keypoints_per_class) if num_keypoints_per_class is not None else 0
 
     def __call__(self, image: Image.Image, target: Dict[str, Any]) -> Tuple[Image.Image, Dict[str, Any]]:
         w, h = image.size
@@ -268,6 +292,36 @@ class ConvertCoco(object):
         iscrowd = torch.tensor([obj["iscrowd"] if "iscrowd" in obj else 0 for obj in anno])
         target["area"] = area[keep]
         target["iscrowd"] = iscrowd[keep]
+
+        if self.include_keypoints:
+            num_keypoints = self.num_keypoints
+            if num_keypoints == 0:
+                for obj in anno:
+                    keypoints = obj.get("keypoints")
+                    if keypoints is not None:
+                        num_keypoints = len(keypoints) // 3
+                        break
+
+            keypoint_tensors: List[torch.Tensor] = []
+            for obj in anno:
+                raw_keypoints = obj.get("keypoints")
+                if raw_keypoints is None:
+                    keypoint_tensors.append(torch.zeros((num_keypoints, 3), dtype=torch.float32))
+                    continue
+
+                keypoint_tensor = torch.as_tensor(raw_keypoints, dtype=torch.float32).reshape(-1, 3)
+                if keypoint_tensor.shape[0] < num_keypoints:
+                    padded = torch.zeros((num_keypoints, 3), dtype=torch.float32)
+                    padded[: keypoint_tensor.shape[0]] = keypoint_tensor
+                    keypoint_tensors.append(padded)
+                    continue
+                keypoint_tensors.append(keypoint_tensor[:num_keypoints])
+
+            if len(keypoint_tensors) > 0:
+                keypoints_out = torch.stack(keypoint_tensors, dim=0)
+            else:
+                keypoints_out = torch.zeros((0, num_keypoints, 3), dtype=torch.float32)
+            target["keypoints"] = keypoints_out[keep]
 
         # add segmentation masks if requested, otherwise ensure consistent key when include_masks=True
         if self.include_masks:
@@ -551,7 +605,8 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
         logger.error(f"COCO path {root} does not exist")
         raise FileNotFoundError(f"COCO path {root} does not exist")
 
-    mode = "instances"
+    has_keypoints = getattr(args, "use_grouppose_keypoints", False)
+    mode = "person_keypoints" if has_keypoints else "instances"
     PATHS = {  # noqa: N806
         "train": (root / "train2017", root / "annotations" / f"{mode}_train2017.json"),
         "val": (root / "val2017", root / "annotations" / f"{mode}_val2017.json"),
@@ -562,6 +617,8 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
 
     square_resize_div_64 = getattr(args, "square_resize_div_64", False)
     include_masks = getattr(args, "segmentation_head", False)
+    include_keypoints = has_keypoints
+    num_keypoints_per_class = getattr(args, "num_keypoints_per_class", [])
     aug_config = getattr(args, "aug_config", None)
     augmentation_backend = getattr(args, "augmentation_backend", "cpu")
     resolved_augmentation_backend = _resolve_runtime_augmentation_backend(augmentation_backend)
@@ -589,6 +646,9 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
                 gpu_postprocess=gpu_postprocess,
             ),
             include_masks=include_masks,
+            include_keypoints=include_keypoints,
+            num_keypoints_per_class=num_keypoints_per_class,
+            remap_category_ids=has_keypoints,
         )
     else:
         logger.info(f"Building COCO {image_set} dataset at resolution {resolution}")
@@ -607,6 +667,9 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
                 gpu_postprocess=gpu_postprocess,
             ),
             include_masks=include_masks,
+            include_keypoints=include_keypoints,
+            num_keypoints_per_class=num_keypoints_per_class,
+            remap_category_ids=has_keypoints,
         )
     return dataset
 
@@ -649,6 +712,8 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
     do_random_resize_via_padding = getattr(args, "do_random_resize_via_padding", False)
     patch_size = getattr(args, "patch_size", 16)
     num_windows = getattr(args, "num_windows", 4)
+    include_keypoints = getattr(args, "use_grouppose_keypoints", False)
+    num_keypoints_per_class = getattr(args, "num_keypoints_per_class", [])
     aug_config = getattr(args, "aug_config", None)
     resolved_augmentation_backend = _resolve_runtime_augmentation_backend(getattr(args, "augmentation_backend", "cpu"))
     gpu_postprocess = resolved_augmentation_backend != "cpu"
@@ -670,6 +735,8 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
                 gpu_postprocess=gpu_postprocess,
             ),
             include_masks=include_masks,
+            include_keypoints=include_keypoints,
+            num_keypoints_per_class=num_keypoints_per_class,
             remap_category_ids=True,
         )
     else:
@@ -689,6 +756,8 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
                 gpu_postprocess=gpu_postprocess,
             ),
             include_masks=include_masks,
+            include_keypoints=include_keypoints,
+            num_keypoints_per_class=num_keypoints_per_class,
             remap_category_ids=True,
         )
     return dataset

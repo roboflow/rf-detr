@@ -19,7 +19,7 @@ import pytest
 import torch
 from PIL import Image
 
-from rfdetr.datasets.coco import ConvertCoco
+from rfdetr.datasets.coco import ConvertCoco, build_coco
 from rfdetr.detr import RFDETR
 
 # Minimal image shared across all tests
@@ -443,3 +443,144 @@ class TestBuilderGpuPostprocess:
 
         call_kwargs = mock_transforms.call_args.kwargs if mock_transforms.call_args else mock_transforms.call_args[1]
         assert call_kwargs["gpu_postprocess"] is expected_gpu_postprocess
+
+
+def _make_keypoint_annotation(
+    *,
+    category_id: int = 1,
+    bbox: List[float] | None = None,
+    area: float = 80.0,
+    keypoints: List[float] | None = None,
+) -> Dict[str, object]:
+    """Build a minimal keypoint annotation used in keypoint conversion tests."""
+    return {
+        "bbox": bbox if bbox is not None else [10.0, 5.0, 8.0, 10.0],
+        "category_id": category_id,
+        "area": area,
+        "iscrowd": 0,
+        "keypoints": keypoints if keypoints is not None else [1.0, 2.0, 2.0] * 17,
+    }
+
+
+def _make_coco_builder_args(tmp_path: Path, *, use_grouppose_keypoints: bool) -> types.SimpleNamespace:
+    """Return a namespace with all fields consumed by ``build_coco``."""
+    return types.SimpleNamespace(
+        dataset_dir=None,
+        coco_path=str(tmp_path),
+        square_resize_div_64=False,
+        segmentation_head=False,
+        multi_scale=False,
+        expanded_scales=False,
+        do_random_resize_via_padding=False,
+        patch_size=16,
+        num_windows=4,
+        aug_config=None,
+        augmentation_backend="cpu",
+        use_grouppose_keypoints=use_grouppose_keypoints,
+        num_keypoints_per_class=[17] if use_grouppose_keypoints else [],
+    )
+
+
+class TestConvertCocoKeypoints:
+    """ConvertCoco keypoint-mode coverage."""
+
+    def test_keypoint_target_includes_keypoints(self) -> None:
+        """Keypoint-enabled conversion should emit keypoints in ``[N, K, 3]`` format."""
+        converter = ConvertCoco(
+            include_masks=False,
+            include_keypoints=True,
+            cat2label={1: 0},
+            num_keypoints_per_class=[17],
+        )
+
+        _, target = converter(
+            _IMAGE,
+            {"image_id": 42, "annotations": [_make_keypoint_annotation()]},
+        )
+
+        assert target["keypoints"].shape == (1, 17, 3)
+        assert target["keypoints"].dtype == torch.float32
+        assert target["labels"].tolist() == [0]
+
+    def test_person_category_maps_to_contiguous_zero(self) -> None:
+        """COCO person category ``1`` should map to contiguous keypoint label ``0``."""
+        converter = ConvertCoco(
+            include_masks=False,
+            include_keypoints=True,
+            cat2label={1: 0},
+            num_keypoints_per_class=[17],
+        )
+        _, target = converter(
+            _IMAGE,
+            {"image_id": 7, "annotations": [_make_keypoint_annotation(category_id=1)]},
+        )
+
+        assert target["labels"].shape == (1,)
+        assert target["labels"].item() == 0
+
+    def test_num_keypoints_zero_annotation_keeps_shape(self) -> None:
+        """Annotations with zeroed keypoints should preserve configured keypoint dimensions."""
+        converter = ConvertCoco(
+            include_masks=False,
+            include_keypoints=True,
+            cat2label={1: 0},
+            num_keypoints_per_class=[17],
+        )
+        _, target = converter(
+            _IMAGE,
+            {"image_id": 3, "annotations": [_make_keypoint_annotation(keypoints=[0.0] * (17 * 3))]},
+        )
+
+        assert target["keypoints"].shape == (1, 17, 3)
+        assert torch.count_nonzero(target["keypoints"]) == 0
+
+    def test_empty_image_uses_schema_sum_shape(self) -> None:
+        """Empty images should emit ``(0, sum(num_keypoints_per_class), 3)`` keypoint tensors."""
+        converter = ConvertCoco(
+            include_masks=False,
+            include_keypoints=True,
+            cat2label={1: 0},
+            num_keypoints_per_class=[2, 1],
+        )
+        _, target = converter(_IMAGE, {"image_id": 99, "annotations": []})
+
+        assert target["keypoints"].shape == (0, 3, 3)
+
+
+class TestBuildCocoKeypointMode:
+    """COCO builder mode switch for person keypoints."""
+
+    def test_keypoint_mode_uses_person_keypoints_annotations(self, tmp_path: Path) -> None:
+        """Keypoint mode should switch train annotations to ``person_keypoints_train2017.json``."""
+        args = _make_coco_builder_args(tmp_path, use_grouppose_keypoints=True)
+
+        from unittest.mock import patch
+
+        with (
+            patch("rfdetr.datasets.coco.make_coco_transforms", return_value=lambda image, target: (image, target)),
+            patch("rfdetr.datasets.coco.CocoDetection", return_value=object()) as mock_dataset,
+        ):
+            build_coco("train", args, resolution=640)
+
+        _, kwargs = mock_dataset.call_args
+        ann_file = str(mock_dataset.call_args.args[1])
+        assert ann_file.endswith("annotations/person_keypoints_train2017.json")
+        assert kwargs["include_keypoints"] is True
+        assert kwargs["remap_category_ids"] is True
+
+    def test_default_mode_uses_instances_annotations(self, tmp_path: Path) -> None:
+        """Default detection mode should keep ``instances_train2017.json`` annotations."""
+        from unittest.mock import patch
+
+        args = _make_coco_builder_args(tmp_path, use_grouppose_keypoints=False)
+        with (
+            patch("rfdetr.datasets.coco.make_coco_transforms", return_value=lambda image, target: (image, target)),
+            patch("rfdetr.datasets.coco.CocoDetection", return_value=object()) as mock_dataset,
+        ):
+            build_coco("train", args, resolution=640)
+
+        _, kwargs = mock_dataset.call_args
+        ann_file = str(mock_dataset.call_args.args[1])
+        assert ann_file.endswith("annotations/instances_train2017.json")
+        assert kwargs["include_keypoints"] is False
+        assert kwargs["remap_category_ids"] is False
