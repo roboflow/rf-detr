@@ -207,6 +207,59 @@ class TestCreateInterpreter:
         assert call_kwargs["model_path"] == "model.tflite"
         assert isinstance(call_kwargs["model_path"], str)
 
+    @pytest.fixture()
+    def _mock_ai_edge_litert(self):
+        """Inject a fake ai_edge_litert.interpreter into sys.modules and mask lower-priority backends.
+
+        Mirrors ``_mock_tflite_runtime`` for the first-priority backend so the
+        ``ai_edge_litert.interpreter`` branch of ``_create_interpreter`` can be exercised
+        independently of whether the real package is installed.
+        """
+        interp_instance = mock.MagicMock()
+        interp_instance.get_input_details.return_value = [{"shape": [1, 640, 640, 3], "dtype": np.float32}]
+        interp_instance.get_output_details.return_value = [
+            {"shape": [1, 300, 4], "name": "dets"},
+            {"shape": [1, 300, 81], "name": "labels"},
+        ]
+        interp_cls = mock.MagicMock(return_value=interp_instance)
+
+        import types
+
+        mod = types.ModuleType("ai_edge_litert.interpreter")
+        mod.Interpreter = interp_cls  # type: ignore[attr-defined]
+
+        parent_mod = types.ModuleType("ai_edge_litert")
+        parent_mod.interpreter = mod  # type: ignore[attr-defined]
+
+        with mock.patch.dict(
+            sys.modules,
+            {
+                "ai_edge_litert": parent_mod,
+                "ai_edge_litert.interpreter": mod,
+                "tflite_runtime": None,
+                "tflite_runtime.interpreter": None,
+            },
+        ):
+            yield interp_cls, interp_instance
+
+    def test_uses_ai_edge_litert_when_available(self, _mock_ai_edge_litert) -> None:
+        """ai_edge_litert is used as the first-priority backend when it is importable."""
+        interp_cls, _ = _mock_ai_edge_litert
+        _create_interpreter("model.tflite")
+        interp_cls.assert_called_once_with(model_path="model.tflite")
+
+    def test_ai_edge_litert_allocate_tensors_called(self, _mock_ai_edge_litert) -> None:
+        """allocate_tensors() is called after construction via the ai_edge_litert backend."""
+        _, interp_instance = _mock_ai_edge_litert
+        _create_interpreter("model.tflite")
+        interp_instance.allocate_tensors.assert_called_once()
+
+    def test_ai_edge_litert_returns_interpreter(self, _mock_ai_edge_litert) -> None:
+        """Return value is the ai_edge_litert interpreter instance."""
+        _, interp_instance = _mock_ai_edge_litert
+        result = _create_interpreter("model.tflite")
+        assert result is interp_instance
+
 
 # ---------------------------------------------------------------------------
 # TestRunInference
