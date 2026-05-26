@@ -260,6 +260,21 @@ class TestCreateInterpreter:
         result = _create_interpreter("model.tflite")
         assert result is interp_instance
 
+    def test_raises_when_no_backend_available(self) -> None:
+        """ImportError with a helpful install message is raised when all backends are absent."""
+        with mock.patch.dict(
+            sys.modules,
+            {
+                **_AI_EDGE_LITERT_MASK,
+                "tflite_runtime": None,
+                "tflite_runtime.interpreter": None,
+                "tensorflow": None,
+                "tensorflow.lite": None,
+            },
+        ):
+            with pytest.raises(ImportError, match="TFLite inference requires"):
+                _create_interpreter("model.tflite")
+
 
 # ---------------------------------------------------------------------------
 # TestRunInference
