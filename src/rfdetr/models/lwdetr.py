@@ -200,7 +200,7 @@ class LWDETR(nn.Module):
         """
         if isinstance(samples, (list, torch.Tensor)):
             samples = nested_tensor_from_tensor_list(samples)
-        features, poss = self.backbone(samples)
+        features, poss, _ = self.backbone(samples)
 
         srcs = []
         masks = []
@@ -281,7 +281,7 @@ class LWDETR(nn.Module):
         return out
 
     def forward_export(self, tensors):
-        srcs, _, poss = self.backbone(tensors)
+        srcs, _, poss, _ = self.backbone(tensors)
         # only use one group in inference
         refpoint_embed_weight = self.refpoint_embed.weight[: self.num_queries]
         query_feat_weight = self.query_feat.weight[: self.num_queries]
@@ -425,6 +425,7 @@ def build_model(args: "BuilderArgs"):
         patch_size=args.patch_size,
         num_windows=args.num_windows,
         positional_encoding_size=args.positional_encoding_size,
+        dual_projector=args.dual_projector,
     )
     if args.encoder_only:
         return backbone[0].encoder, None, None
