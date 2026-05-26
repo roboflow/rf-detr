@@ -148,14 +148,13 @@ def _build_ptl_module(rfdetr_obj: RFDETR, train_config: TrainConfig) -> RFDETRMo
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.gpu
 @pytest.mark.parametrize(
     ("model_cls", "threshold_map", "threshold_f1", "num_samples", "batch_size"),
     [
         pytest.param(RFDETRNano, 0.66, 0.66, 1000, 6, id="det-nano"),
-        pytest.param(RFDETRSmall, 0.72, 0.70, 500, 6, id="det-small"),
-        pytest.param(RFDETRMedium, 0.73, 0.71, 500, 4, id="det-medium"),
-        pytest.param(RFDETRLarge, 0.74, 0.72, 500, 2, id="det-large"),
+        pytest.param(RFDETRSmall, 0.72, 0.70, 500, 6, id="det-small", marks=pytest.mark.gpu),
+        pytest.param(RFDETRMedium, 0.73, 0.71, 500, 4, id="det-medium", marks=pytest.mark.gpu),
+        pytest.param(RFDETRLarge, 0.74, 0.72, 500, 2, id="det-large", marks=pytest.mark.gpu),
     ],
 )
 def test_inference_detection_rfdetr_predict(
@@ -200,16 +199,15 @@ def test_inference_detection_rfdetr_predict(
     assert f1_val >= threshold_f1, f"F1 {f1_val:.4f} < {threshold_f1}"
 
 
-@pytest.mark.gpu
 @pytest.mark.parametrize(
     ("model_cls", "threshold_map", "threshold_f1", "num_samples", "batch_size"),
     [
         pytest.param(RFDETRSegNano, 0.63, 0.64, 500, 6, id="seg-nano"),
-        pytest.param(RFDETRSegSmall, 0.66, 0.67, 100, 6, id="seg-small"),
-        pytest.param(RFDETRSegMedium, 0.68, 0.68, 100, 4, id="seg-medium"),
-        pytest.param(RFDETRSegLarge, 0.70, 0.69, 100, 2, id="seg-large"),
-        pytest.param(RFDETRSegXLarge, 0.72, 0.70, 100, 2, id="seg-xlarge"),
-        pytest.param(RFDETRSeg2XLarge, 0.73, 0.71, 100, 2, id="seg-2xlarge"),
+        pytest.param(RFDETRSegSmall, 0.66, 0.67, 100, 6, id="seg-small", marks=pytest.mark.gpu),
+        pytest.param(RFDETRSegMedium, 0.68, 0.68, 100, 4, id="seg-medium", marks=pytest.mark.gpu),
+        pytest.param(RFDETRSegLarge, 0.70, 0.69, 100, 2, id="seg-large", marks=pytest.mark.gpu),
+        pytest.param(RFDETRSegXLarge, 0.72, 0.70, 100, 2, id="seg-xlarge", marks=pytest.mark.gpu),
+        pytest.param(RFDETRSeg2XLarge, 0.73, 0.71, 100, 2, id="seg-2xlarge", marks=pytest.mark.gpu),
     ],
 )
 def test_inference_segmentation_rfdetr_predict(
@@ -258,14 +256,13 @@ def test_inference_segmentation_rfdetr_predict(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.gpu
 @pytest.mark.parametrize(
     ("model_cls", "threshold_map", "threshold_f1", "num_samples", "batch_size"),
     [
         pytest.param(RFDETRNano, 0.66, 0.66, 2000, 6, id="det-nano"),
-        pytest.param(RFDETRSmall, 0.72, 0.70, 500, 6, id="det-small"),
-        pytest.param(RFDETRMedium, 0.73, 0.71, 500, 4, id="det-medium"),
-        pytest.param(RFDETRLarge, 0.74, 0.72, 500, 2, id="det-large"),
+        pytest.param(RFDETRSmall, 0.72, 0.70, 500, 6, id="det-small", marks=pytest.mark.gpu),
+        pytest.param(RFDETRMedium, 0.73, 0.71, 500, 4, id="det-medium", marks=pytest.mark.gpu),
+        pytest.param(RFDETRLarge, 0.74, 0.72, 500, 2, id="det-large", marks=pytest.mark.gpu),
     ],
 )
 def test_inference_detection_ptl_predict(
@@ -318,16 +315,15 @@ def test_inference_detection_ptl_predict(
     assert f1_val >= threshold_f1, f"F1 {f1_val:.4f} < {threshold_f1}"
 
 
-@pytest.mark.gpu
 @pytest.mark.parametrize(
     ("model_cls", "threshold_map", "threshold_f1", "num_samples", "batch_size"),
     [
         pytest.param(RFDETRSegNano, 0.63, 0.64, 500, 6, id="seg-nano"),
-        pytest.param(RFDETRSegSmall, 0.66, 0.67, 100, 6, id="seg-small"),
-        pytest.param(RFDETRSegMedium, 0.68, 0.68, 100, 4, id="seg-medium"),
-        pytest.param(RFDETRSegLarge, 0.70, 0.69, 100, 2, id="seg-large"),
-        pytest.param(RFDETRSegXLarge, 0.72, 0.70, 100, 2, id="seg-xlarge"),
-        pytest.param(RFDETRSeg2XLarge, 0.73, 0.71, 100, 2, id="seg-2xlarge"),
+        pytest.param(RFDETRSegSmall, 0.66, 0.67, 100, 6, id="seg-small", marks=pytest.mark.gpu),
+        pytest.param(RFDETRSegMedium, 0.68, 0.68, 100, 4, id="seg-medium", marks=pytest.mark.gpu),
+        pytest.param(RFDETRSegLarge, 0.70, 0.69, 100, 2, id="seg-large", marks=pytest.mark.gpu),
+        pytest.param(RFDETRSegXLarge, 0.72, 0.70, 100, 2, id="seg-xlarge", marks=pytest.mark.gpu),
+        pytest.param(RFDETRSeg2XLarge, 0.73, 0.71, 100, 2, id="seg-2xlarge", marks=pytest.mark.gpu),
     ],
 )
 def test_inference_segmentation_ptl_predict(
