@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 """Unit tests for COCOEvalCallback."""
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -124,6 +125,16 @@ class TestSetup:
         cb = COCOEvalCallback(segmentation=True)
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
         assert cb.map_metric._coco_backend.backend == "faster_coco_eval"
+
+    def test_keypoint_mode_does_not_enable_torchmetrics_keypoint_iou(self) -> None:
+        """Keypoint mode must keep torchmetrics on bbox-only iou_type."""
+        cb = COCOEvalCallback(segmentation=True)
+        module = _make_pl_module()
+        module.model_config = SimpleNamespace(use_grouppose_keypoints=True)
+        cb.setup(_make_trainer(), module, stage="fit")
+        assert "bbox" in cb.map_metric.iou_type
+        assert "segm" not in cb.map_metric.iou_type
+        assert "keypoints" not in cb.map_metric.iou_type
 
 
 class TestOnFitStart:
@@ -358,6 +369,76 @@ class TestEpochEndCommon:
         logged_keys = {c.args[0] for c in module.log.call_args_list}
         assert f"{prefix}segm_mAP_50_95" in logged_keys
         assert f"{prefix}segm_mAP_50" in logged_keys
+
+
+class TestKeypointCocoEvalRouting:
+    """Tests for keypoint COCO evaluation routing in keypoint mode."""
+
+    def test_coco_evaluator_accepts_keypoint_predictions(self) -> None:
+        """Keypoint mode should forward keypoint predictions to COCO evaluator update()."""
+        cb = COCOEvalCallback(max_dets=500)
+        module = _make_pl_module()
+        module.model_config = SimpleNamespace(use_grouppose_keypoints=True)
+        trainer = _make_trainer()
+        cb.setup(trainer, module, stage="fit")
+
+        evaluator = MagicMock(name="keypoint_coco_eval")
+        cb._get_or_create_keypoint_coco_evaluator = MagicMock(return_value=evaluator)  # type: ignore[method-assign]
+        outputs = {
+            "results": [
+                {
+                    "boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]], dtype=torch.float32),
+                    "scores": torch.tensor([0.9], dtype=torch.float32),
+                    "labels": torch.tensor([0], dtype=torch.int64),
+                    "keypoints": torch.tensor([[[1.0, 2.0, 0.8]]], dtype=torch.float32),
+                }
+            ],
+            "targets": [{"image_id": torch.tensor([12])}],
+        }
+
+        cb._update_keypoint_coco_eval(trainer, outputs)
+
+        evaluator.update.assert_called_once()
+        predictions = evaluator.update.call_args.args[0]
+        assert 12 in predictions
+        assert "keypoints" in predictions[12]
+        assert predictions[12]["keypoints"].shape == (1, 1, 3)
+
+    def test_keypoint_coco_eval_exposes_map_50_95(self) -> None:
+        """Epoch-end logging should expose keypoint_map_50_95 from COCO keypoint stats[0]."""
+        cb = COCOEvalCallback(max_dets=500)
+        module = _make_pl_module()
+        module.model_config = SimpleNamespace(use_grouppose_keypoints=True)
+        trainer = _make_trainer()
+        trainer.callback_metrics = {}
+        cb.setup(trainer, module, stage="fit")
+        cb.map_metric = MagicMock(name="map_metric")
+        cb.map_metric.compute.return_value = _minimal_metrics()
+
+        keypoint_eval = MagicMock(name="keypoint_coco_eval")
+        keypoint_eval.coco_eval = {"keypoints": SimpleNamespace(stats=np.array([0.42], dtype=np.float32))}
+        cb._keypoint_coco_evaluator = keypoint_eval
+        cb._keypoint_eval_has_updates = True
+
+        cb.on_validation_epoch_end(trainer, module)
+
+        logged = {call.args[0]: call.args[1] for call in module.log.call_args_list}
+        assert "val/keypoint_map_50_95" in logged
+        assert float(logged["val/keypoint_map_50_95"]) == pytest.approx(0.42)
+        assert trainer.callback_metrics["val/keypoint_map_50_95"].item() == pytest.approx(0.42)
+        keypoint_eval.synchronize_between_processes.assert_called_once()
+        keypoint_eval.accumulate.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "stage,hook,prefix",
+    [
+        pytest.param("fit", "on_validation_epoch_end", "val/", id="val"),
+        pytest.param("test", "on_test_epoch_end", "test/", id="test"),
+    ],
+)
+class TestPerClassAPLogging:
+    """Per-class AP logging behavior for validation and test loops."""
 
     def test_per_class_ap_logged_when_classes_present(self, stage, hook, prefix) -> None:
         """AP/<name> is logged for each class when class metrics are present."""

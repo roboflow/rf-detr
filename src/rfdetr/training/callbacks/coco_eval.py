@@ -15,6 +15,7 @@ import torch.nn.functional as F  # noqa: N812
 from pytorch_lightning import Callback
 from torchmetrics.detection import MeanAveragePrecision
 
+from rfdetr.datasets import get_coco_api_from_dataset
 from rfdetr.evaluation.f1_sweep import sweep_confidence_thresholds
 from rfdetr.evaluation.matching import (
     build_matching_data,
@@ -70,6 +71,10 @@ class COCOEvalCallback(Callback):
         # sync so it is issued symmetrically on all DDP ranks (see _should_compute_ema).
         self._ema_has_updates: bool = False
         self._output_widget: Any = None  # ipywidgets.Output, created lazily
+        self._keypoint_mode: bool = False
+        self._use_segm_metrics: bool = segmentation
+        self._keypoint_coco_evaluator: Any | None = None
+        self._keypoint_eval_has_updates: bool = False
         self._in_notebook: bool = False
         if in_notebook is None:
             with contextlib.suppress(ImportError):
@@ -91,7 +96,13 @@ class COCOEvalCallback(Callback):
             pl_module: The LightningModule.
             stage: One of ``"fit"``, ``"validate"``, ``"test"``, ``"predict"``.
         """
-        iou_type: Any = ["bbox", "segm"] if self._segmentation else "bbox"
+        model_config = getattr(pl_module, "model_config", None)
+        use_grouppose_keypoints = (
+            getattr(model_config, "use_grouppose_keypoints", False) if model_config is not None else False
+        )
+        self._keypoint_mode = use_grouppose_keypoints is True
+        self._use_segm_metrics = self._segmentation and not self._keypoint_mode
+        iou_type: Any = ["bbox", "segm"] if self._use_segm_metrics else "bbox"
         kwargs: dict[str, Any] = dict(
             class_metrics=True,
             max_detection_thresholds=[1, 10, self._max_dets],
@@ -214,9 +225,10 @@ class COCOEvalCallback(Callback):
 
         self.map_metric.update(preds, targets)
 
-        iou_type = "segm" if self._segmentation else "bbox"
+        iou_type = "segm" if self._use_segm_metrics else "bbox"
         batch_matching = build_matching_data(preds, targets, iou_threshold=0.5, iou_type=iou_type)
         merge_matching_data(self._f1_local, batch_matching)
+        self._update_keypoint_coco_eval(trainer, outputs)
 
         # Run EMA model separately on the same batch so that base and EMA metrics
         # are computed from independent forward passes rather than being aliases.
@@ -284,9 +296,10 @@ class COCOEvalCallback(Callback):
 
         self.map_metric.update(preds, targets)
 
-        iou_type = "segm" if self._segmentation else "bbox"
+        iou_type = "segm" if self._use_segm_metrics else "bbox"
         batch_matching = build_matching_data(preds, targets, iou_threshold=0.5, iou_type=iou_type)
         merge_matching_data(self._f1_local, batch_matching)
+        self._update_keypoint_coco_eval(trainer, outputs)
 
     def on_test_epoch_end(self, trainer: Any, pl_module: Any) -> None:
         """Compute and log mAP and F1 under ``test/`` prefix at end of test epoch.
@@ -323,7 +336,7 @@ class COCOEvalCallback(Callback):
         metrics = self.map_metric.compute()
 
         # torchmetrics prefixes all keys when iou_type is a list (e.g. "bbox_map")
-        pfx = "bbox_" if self._segmentation else ""
+        pfx = "bbox_" if self._use_segm_metrics else ""
         mar_key = f"{pfx}mar_{self._max_dets}"
 
         overall: dict[str, float] = {
@@ -362,7 +375,7 @@ class COCOEvalCallback(Callback):
             trainer.callback_metrics[f"{split}/ema_mAP_50_95"] = ema_metrics[f"{pfx}map"].detach().cpu()
             trainer.callback_metrics[f"{split}/ema_mAP_50"] = ema_metrics[f"{pfx}map_50"].detach().cpu()
             trainer.callback_metrics[f"{split}/ema_mAR"] = ema_metrics[mar_key].detach().cpu()
-            if self._segmentation:
+            if self._use_segm_metrics:
                 pl_module.log(f"{split}/ema_segm_mAP_50_95", ema_metrics["segm_map"])
                 pl_module.log(f"{split}/ema_segm_mAP_50", ema_metrics["segm_map_50"])
                 trainer.callback_metrics[f"{split}/ema_segm_mAP_50_95"] = ema_metrics["segm_map"].detach().cpu()
@@ -373,7 +386,7 @@ class COCOEvalCallback(Callback):
             # sync uniformly on every rank, but clear local state so the next epoch is clean.
             self.map_metric_ema.reset()
 
-        if self._segmentation:
+        if self._use_segm_metrics:
             overall["segm mAP 50:95"] = float(metrics["segm_map"])
             overall["segm mAP 50"] = float(metrics["segm_map_50"])
             pl_module.log(f"{split}/segm_mAP_50_95", metrics["segm_map"])
@@ -443,6 +456,9 @@ class COCOEvalCallback(Callback):
         )
 
         self._print_metrics_tables(trainer, split, overall, per_class)
+        self._compute_and_log_keypoint_map(split, pl_module, trainer)
+        if self._keypoint_mode and not self._keypoint_eval_has_updates:
+            self._keypoint_coco_evaluator = None
         self.map_metric.reset()
         self._f1_local = init_matching_accumulator()
 
@@ -470,7 +486,7 @@ class COCOEvalCallback(Callback):
             self.map_metric_ema = None
             return
         if self.map_metric_ema is None:
-            ema_iou_type: Any = ["bbox", "segm"] if self._segmentation else "bbox"
+            ema_iou_type: Any = ["bbox", "segm"] if self._use_segm_metrics else "bbox"
             self.map_metric_ema = MeanAveragePrecision(
                 iou_type=ema_iou_type,
                 class_metrics=True,
@@ -561,6 +577,75 @@ class COCOEvalCallback(Callback):
         # torchmetrics 1.x compute() works correctly regardless, but emits a UserWarning
         # ("compute called before update") that spams DDP logs on those ranks.
         metric._update_count = max(getattr(metric, "_update_count", 0), 1)
+
+    def _get_or_create_keypoint_coco_evaluator(self, trainer: Any) -> Any | None:
+        """Create (or return) the COCO keypoint evaluator for this epoch."""
+        if self._keypoint_coco_evaluator is not None:
+            return self._keypoint_coco_evaluator
+
+        from rfdetr.evaluation.coco_eval import CocoEvaluator
+
+        datamodule = getattr(trainer, "datamodule", None)
+        if datamodule is None:
+            return None
+
+        for attr in ("_dataset_val", "_dataset_test", "_dataset_train"):
+            dataset = getattr(datamodule, attr, None)
+            if dataset is None:
+                continue
+            coco_api = get_coco_api_from_dataset(dataset)
+            if coco_api is None:
+                continue
+            self._keypoint_coco_evaluator = CocoEvaluator(coco_api, ["keypoints"], max_dets=self._max_dets)
+            return self._keypoint_coco_evaluator
+        return None
+
+    def _update_keypoint_coco_eval(self, trainer: Any, outputs: dict[str, Any]) -> None:
+        """Accumulate batch predictions into the COCO keypoint evaluator."""
+        if not self._keypoint_mode:
+            return
+
+        evaluator = self._get_or_create_keypoint_coco_evaluator(trainer)
+        if evaluator is None:
+            return
+
+        predictions: dict[int, dict[str, torch.Tensor]] = {}
+        results = outputs["results"]
+        targets = outputs["targets"]
+        for result, target in zip(results, targets):
+            image_id_tensor = target.get("image_id")
+            if image_id_tensor is None:
+                continue
+            image_id = int(image_id_tensor.item()) if torch.is_tensor(image_id_tensor) else int(image_id_tensor)
+            if "keypoints" not in result:
+                predictions[image_id] = {}
+                continue
+            predictions[image_id] = {
+                "boxes": result["boxes"].detach().cpu(),
+                "scores": result["scores"].detach().cpu(),
+                "labels": result["labels"].detach().cpu(),
+                "keypoints": result["keypoints"].detach().cpu(),
+            }
+
+        if not predictions:
+            return
+        evaluator.update(predictions)
+        self._keypoint_eval_has_updates = True
+
+    def _compute_and_log_keypoint_map(self, split: str, pl_module: Any, trainer: Any) -> None:
+        """Compute and log COCO keypoint AP (50:95) when keypoint mode is active."""
+        if not self._keypoint_mode or not self._keypoint_eval_has_updates or self._keypoint_coco_evaluator is None:
+            return
+
+        self._keypoint_coco_evaluator.synchronize_between_processes()
+        self._keypoint_coco_evaluator.accumulate()
+        coco_eval_keypoints = self._keypoint_coco_evaluator.coco_eval["keypoints"].stats
+        keypoint_map_50_95 = float(coco_eval_keypoints[0])
+        pl_module.log(f"{split}/keypoint_map_50_95", keypoint_map_50_95)
+        trainer.callback_metrics[f"{split}/keypoint_map_50_95"] = torch.tensor(keypoint_map_50_95)
+
+        self._keypoint_coco_evaluator = None
+        self._keypoint_eval_has_updates = False
 
     def _build_per_class_rows(
         self,
