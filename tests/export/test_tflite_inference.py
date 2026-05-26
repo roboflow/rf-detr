@@ -146,8 +146,8 @@ class TestCreateInterpreter:
         ):
             yield interp_cls, interp_instance
 
-    def test_uses_tflite_runtime_when_available(self, _mock_tflite_runtime) -> None:
-        """Interpreter is constructed from tflite_runtime when it is importable."""
+    def test_uses_tflite_runtime_when_ai_edge_litert_absent(self, _mock_tflite_runtime) -> None:
+        """tflite_runtime is used as backend when ai_edge_litert is masked from the environment."""
         interp_cls, interp_instance = _mock_tflite_runtime
         _create_interpreter("model.tflite")
         interp_cls.assert_called_once_with(model_path="model.tflite")
