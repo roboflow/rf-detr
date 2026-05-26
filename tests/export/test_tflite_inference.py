@@ -93,6 +93,13 @@ def _save_grayscale_image(path: Path, size: tuple[int, int] = (64, 64)) -> None:
 # TestCreateInterpreter
 # ---------------------------------------------------------------------------
 
+# Shared masking entries for mock.patch.dict(sys.modules, ...) that force
+# ``_create_interpreter`` to skip the ai_edge_litert backend probe.
+_AI_EDGE_LITERT_MASK: dict[str, None] = {
+    "ai_edge_litert": None,
+    "ai_edge_litert.interpreter": None,
+}
+
 
 class TestCreateInterpreter:
     """Tests for ``_create_interpreter()``."""
@@ -129,14 +136,10 @@ class TestCreateInterpreter:
         parent_mod = types.ModuleType("tflite_runtime")
         parent_mod.interpreter = mod  # type: ignore[attr-defined]
 
-        # ``_create_interpreter`` prefers ai_edge_litert over tflite_runtime, so we mask the former
-        # in sys.modules. Without this, when ai_edge_litert is installed the real package is loaded
-        # and the mocked tflite_runtime Interpreter is never reached — the test fails.
         with mock.patch.dict(
             sys.modules,
             {
-                "ai_edge_litert": None,
-                "ai_edge_litert.interpreter": None,
+                **_AI_EDGE_LITERT_MASK,
                 "tflite_runtime": parent_mod,
                 "tflite_runtime.interpreter": mod,
             },
@@ -170,8 +173,7 @@ class TestCreateInterpreter:
         with mock.patch.dict(
             sys.modules,
             {
-                "ai_edge_litert": None,
-                "ai_edge_litert.interpreter": None,
+                **_AI_EDGE_LITERT_MASK,
                 "tflite_runtime": None,
                 "tflite_runtime.interpreter": None,
                 "tensorflow": tf_mod,
