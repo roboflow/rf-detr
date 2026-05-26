@@ -14,6 +14,7 @@ from __future__ import annotations
 
 __all__ = [
     "RFDETRBase",
+    "RFDETRKeypointPreview",
     "RFDETRNano",
     "RFDETRSmall",
     "RFDETRMedium",
@@ -34,6 +35,7 @@ from deprecate import deprecated_class
 from rfdetr.config import (
     ModelConfig,
     RFDETRBaseConfig,
+    RFDETRKeypointPreviewConfig,
     RFDETRLargeConfig,
     RFDETRLargeDeprecatedConfig,
     RFDETRMediumConfig,
@@ -71,6 +73,13 @@ class RFDETRNano(RFDETR):
 
     size = "rfdetr-nano"
     _model_config_class = RFDETRNanoConfig
+
+
+class RFDETRKeypointPreview(RFDETR):
+    """Train or run inference with the RF-DETR keypoint preview model."""
+
+    size = "rfdetr-keypoint-preview"
+    _model_config_class = RFDETRKeypointPreviewConfig
 
 
 class RFDETRSmall(RFDETR):

@@ -52,6 +52,7 @@ logger = get_logger()
 # ModelContext and _build_model_context are eagerly imported above (runtime use in get_model).
 _VARIANT_EXPORTS = (
     "RFDETRBase",
+    "RFDETRKeypointPreview",
     "RFDETRLarge",
     "RFDETRLargeDeprecated",
     "RFDETRMedium",
@@ -74,6 +75,7 @@ _CHECKPOINT_MODEL_NAME_CLASS_SYMBOLS: tuple[str, ...] = tuple(
 )
 _CHECKPOINT_PLUS_MODEL_NAME_CLASS_SYMBOLS: tuple[str, ...] = ("RFDETRXLarge", "RFDETR2XLarge")
 _CHECKPOINT_MODEL_MAP_ENTRIES: tuple[tuple[str, str], ...] = (
+    ("keypoint-preview", "RFDETRKeypointPreview"),
     ("seg-2xlarge", "RFDETRSeg2XLarge"),
     ("seg-xxlarge", "RFDETRSeg2XLarge"),
     ("seg-xlarge", "RFDETRSegXLarge"),
@@ -347,12 +349,17 @@ class RFDETR:
             for name, class_symbol in _CHECKPOINT_MODEL_MAP_ENTRIES
             if name.startswith("seg-")
         ]
+        _keypoint_map: list[tuple[str, type[RFDETR]]] = [
+            (name, _variant_symbols[class_symbol])
+            for name, class_symbol in _CHECKPOINT_MODEL_MAP_ENTRIES
+            if "keypoint" in name
+        ]
         _base_map: list[tuple[str, type[RFDETR]]] = [
             (name, _variant_symbols[class_symbol])
             for name, class_symbol in _CHECKPOINT_MODEL_MAP_ENTRIES
-            if not name.startswith("seg-")
+            if not name.startswith("seg-") and "keypoint" not in name
         ]
-        _model_map: list[tuple[str, type[RFDETR]]] = _seg_map + _plus_entries + _base_map
+        _model_map: list[tuple[str, type[RFDETR]]] = _seg_map + _keypoint_map + _plus_entries + _base_map
 
         # New checkpoints store model_name directly — use it when available.
         _name_map: dict[str, type[RFDETR]] = dict(_variant_symbols)
@@ -392,7 +399,9 @@ class RFDETR:
             # when rfdetr_plus is missing, regardless of whether class inference
             # relies on model_name (new format) or pretrain_weights (legacy format).
             plus_by_model_name = normalized_name in _CHECKPOINT_PLUS_MODEL_NAME_CLASS_SYMBOLS
-            plus_by_weights_name = "xlarge" in weights_name and "seg-" not in weights_name
+            plus_by_weights_name = (
+                "xlarge" in weights_name and "seg-" not in weights_name and "keypoint-preview" not in weights_name
+            )
             if not _plus_available and (plus_by_model_name or plus_by_weights_name):
                 from rfdetr.platform import _INSTALL_MSG
 
@@ -1246,7 +1255,8 @@ class RFDETR:
             with ``[height, width]`` rows. ``source_shape`` is stored per detection so supervision indexing works
             correctly. It was previously a ``(height, width)`` Python ``tuple``; callers using ``isinstance(v, tuple)``
             or ``v == (H, W)`` must be updated. The ``metadata`` dict contains ``source_image`` as the original
-            ``uint8`` image array of shape ``(H, W, 3)`` when ``include_source_image=True``.
+            ``uint8`` image array of shape ``(H, W, 3)`` when ``include_source_image=True``. When keypoint predictions
+            are available, ``data["keypoints"]`` is attached with shape ``(N, K, 3)`` in pixel coordinates.
 
         Note:
             ``source_image`` moved from ``detections.data`` to ``detections.metadata``. Update callers reading
@@ -1434,6 +1444,9 @@ class RFDETR:
                     confidence=scores.float().cpu().numpy(),
                     class_id=labels.cpu().numpy(),
                 )
+            if "keypoints" in result:
+                keypoints = result["keypoints"][keep]
+                detections.data["keypoints"] = keypoints.float().cpu().numpy()
 
             if include_source_image:
                 detections.metadata["source_image"] = source_images[i]

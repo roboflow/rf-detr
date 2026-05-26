@@ -30,24 +30,33 @@ def _is_online(host: str, port: int, timeout_s: float = 3.0) -> bool:
 
 
 class _DummyModel:
-    def __init__(self, class_names: list[str] | None = None, labels: list[int] | None = None) -> None:
+    def __init__(
+        self,
+        class_names: list[str] | None = None,
+        labels: list[int] | None = None,
+        include_keypoints: bool = False,
+        num_keypoints: int = 17,
+    ) -> None:
         self.device = torch.device("cpu")
         self.resolution = 28
         self.model = torch.nn.Identity()
         self.class_names = class_names
         self._labels = labels if labels is not None else [1]
+        self._include_keypoints = include_keypoints
+        self._num_keypoints = num_keypoints
 
     def postprocess(self, predictions: Any, target_sizes: torch.Tensor) -> list[dict[str, torch.Tensor]]:
         batch = target_sizes.shape[0]
         results = []
         for _ in range(batch):
-            results.append(
-                {
-                    "scores": torch.tensor([0.9] * len(self._labels)),
-                    "labels": torch.tensor(self._labels),
-                    "boxes": torch.tensor([[0.0, 0.0, 1.0, 1.0]] * len(self._labels)),
-                }
-            )
+            result: dict[str, torch.Tensor] = {
+                "scores": torch.tensor([0.9] * len(self._labels)),
+                "labels": torch.tensor(self._labels),
+                "boxes": torch.tensor([[0.0, 0.0, 1.0, 1.0]] * len(self._labels)),
+            }
+            if self._include_keypoints:
+                result["keypoints"] = torch.full((len(self._labels), self._num_keypoints, 3), 0.5, dtype=torch.float32)
+            results.append(result)
         return results
 
 
@@ -245,6 +254,29 @@ class TestPredictSourceData:
         single = detections[0]
         assert "source_image" in single.metadata
         assert single.metadata["source_image"].shape == (48, 64, 3)
+
+    def test_predict_keypoints_attached_to_detections_data(self) -> None:
+        """Keypoint predictions are attached to detections.data['keypoints'] after threshold filtering."""
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+        model = _DummyRFDETR()
+        model.model = _DummyModel(labels=[0, 1], include_keypoints=True)
+
+        detections = model.predict(img)
+
+        assert "keypoints" in detections.data
+        keypoints = detections.data["keypoints"]
+        assert isinstance(keypoints, np.ndarray)
+        assert keypoints.shape == (2, 17, 3)
+        assert np.allclose(keypoints, 0.5)
+
+    def test_predict_non_keypoint_no_keypoints_key_in_data(self) -> None:
+        """Non-keypoint predictions keep the legacy detections.data contract."""
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+        model = _DummyRFDETR()
+
+        detections = model.predict(img)
+
+        assert "keypoints" not in detections.data
 
     def test_source_shape_survives_detections_indexing(self) -> None:
         """Integer and boolean-mask indexing of sv.Detections must work correctly.

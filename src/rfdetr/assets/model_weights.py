@@ -223,6 +223,10 @@ class ModelWeights(ModelWeightsBase):
         "https://storage.googleapis.com/rfdetr/medium_coco/checkpoint_best_regular.pth",
         "7223f764a87b863f02eb8d52bf0ce2ee",
     )
+    RF_DETR_KEYPOINT_PREVIEW = ModelWeightAsset(
+        "rf-detr-keypoint-preview-xlarge.pth",
+        "https://storage.googleapis.com/rfdetr/rf-detr-keypoint-preview-xlarge.pth",
+    )
 
     # Segmentation Models
     RF_DETR_SEG_PREVIEW = ModelWeightAsset(
