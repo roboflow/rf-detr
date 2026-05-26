@@ -93,17 +93,30 @@ def _save_grayscale_image(path: Path, size: tuple[int, int] = (64, 64)) -> None:
 # TestCreateInterpreter
 # ---------------------------------------------------------------------------
 
+# Shared masking entries for mock.patch.dict(sys.modules, ...) that force
+# ``_create_interpreter`` to skip the ai_edge_litert backend probe.
+_AI_EDGE_LITERT_MASK: dict[str, None] = {
+    "ai_edge_litert": None,
+    "ai_edge_litert.interpreter": None,
+}
+
 
 class TestCreateInterpreter:
     """Tests for ``_create_interpreter()``."""
 
     @pytest.fixture()
     def _mock_tflite_runtime(self):
-        """Inject a fake tflite_runtime.interpreter into sys.modules.
+        """Inject a fake tflite_runtime.interpreter into sys.modules and mask ai_edge_litert.
+
+        ``_create_interpreter`` probes backends in priority order: ``ai_edge_litert`` first, then
+        ``tflite_runtime``, then ``tensorflow``. Masking ``ai_edge_litert`` and
+        ``ai_edge_litert.interpreter`` to ``None`` forces the import loop to fall through to the
+        ``tflite_runtime`` path so tests exercise that branch regardless of what is installed.
 
         Python's import machinery resolves ``import tflite_runtime.interpreter`` by looking up
-        ``sys.modules["tflite_runtime.interpreter"]`` directly. We also set the ``interpreter`` attribute on the parent
-        package mock so attribute-path resolution is consistent regardless of Python version.
+        ``sys.modules["tflite_runtime.interpreter"]`` directly. We also set the ``interpreter``
+        attribute on the parent package mock so attribute-path resolution is consistent regardless
+        of Python version.
         """
         interp_instance = mock.MagicMock()
         interp_instance.get_input_details.return_value = [{"shape": [1, 640, 640, 3], "dtype": np.float32}]
@@ -123,11 +136,18 @@ class TestCreateInterpreter:
         parent_mod = types.ModuleType("tflite_runtime")
         parent_mod.interpreter = mod  # type: ignore[attr-defined]
 
-        with mock.patch.dict(sys.modules, {"tflite_runtime": parent_mod, "tflite_runtime.interpreter": mod}):
+        with mock.patch.dict(
+            sys.modules,
+            {
+                **_AI_EDGE_LITERT_MASK,
+                "tflite_runtime": parent_mod,
+                "tflite_runtime.interpreter": mod,
+            },
+        ):
             yield interp_cls, interp_instance
 
-    def test_uses_tflite_runtime_when_available(self, _mock_tflite_runtime) -> None:
-        """Interpreter is constructed from tflite_runtime when it is importable."""
+    def test_uses_tflite_runtime_when_ai_edge_litert_absent(self, _mock_tflite_runtime) -> None:
+        """tflite_runtime is used as backend when ai_edge_litert is masked from the environment."""
         interp_cls, interp_instance = _mock_tflite_runtime
         _create_interpreter("model.tflite")
         interp_cls.assert_called_once_with(model_path="model.tflite")
@@ -153,8 +173,7 @@ class TestCreateInterpreter:
         with mock.patch.dict(
             sys.modules,
             {
-                "ai_edge_litert": None,
-                "ai_edge_litert.interpreter": None,
+                **_AI_EDGE_LITERT_MASK,
                 "tflite_runtime": None,
                 "tflite_runtime.interpreter": None,
                 "tensorflow": tf_mod,
@@ -164,6 +183,7 @@ class TestCreateInterpreter:
             _create_interpreter("model.tflite")
 
         tf_interp_cls.assert_called_once_with(model_path="model.tflite")
+        interp_instance.allocate_tensors.assert_called_once()
 
     def test_returns_interpreter(self, _mock_tflite_runtime) -> None:
         """Return value is the interpreter instance (not the class)."""
@@ -186,6 +206,74 @@ class TestCreateInterpreter:
         call_kwargs = interp_cls.call_args[1]
         assert call_kwargs["model_path"] == "model.tflite"
         assert isinstance(call_kwargs["model_path"], str)
+
+    @pytest.fixture()
+    def _mock_ai_edge_litert(self):
+        """Inject a fake ai_edge_litert.interpreter into sys.modules and mask lower-priority backends.
+
+        Mirrors ``_mock_tflite_runtime`` for the first-priority backend so the
+        ``ai_edge_litert.interpreter`` branch of ``_create_interpreter`` can be exercised
+        independently of whether the real package is installed.
+        """
+        interp_instance = mock.MagicMock()
+        interp_instance.get_input_details.return_value = [{"shape": [1, 640, 640, 3], "dtype": np.float32}]
+        interp_instance.get_output_details.return_value = [
+            {"shape": [1, 300, 4], "name": "dets"},
+            {"shape": [1, 300, 81], "name": "labels"},
+        ]
+        interp_cls = mock.MagicMock(return_value=interp_instance)
+
+        import types
+
+        mod = types.ModuleType("ai_edge_litert.interpreter")
+        mod.Interpreter = interp_cls  # type: ignore[attr-defined]
+
+        parent_mod = types.ModuleType("ai_edge_litert")
+        parent_mod.interpreter = mod  # type: ignore[attr-defined]
+
+        with mock.patch.dict(
+            sys.modules,
+            {
+                "ai_edge_litert": parent_mod,
+                "ai_edge_litert.interpreter": mod,
+                "tflite_runtime": None,
+                "tflite_runtime.interpreter": None,
+            },
+        ):
+            yield interp_cls, interp_instance
+
+    def test_uses_ai_edge_litert_when_available(self, _mock_ai_edge_litert) -> None:
+        """ai_edge_litert is used as the first-priority backend when it is importable."""
+        interp_cls, _ = _mock_ai_edge_litert
+        _create_interpreter("model.tflite")
+        interp_cls.assert_called_once_with(model_path="model.tflite")
+
+    def test_ai_edge_litert_allocate_tensors_called(self, _mock_ai_edge_litert) -> None:
+        """allocate_tensors() is called after construction via the ai_edge_litert backend."""
+        _, interp_instance = _mock_ai_edge_litert
+        _create_interpreter("model.tflite")
+        interp_instance.allocate_tensors.assert_called_once()
+
+    def test_ai_edge_litert_returns_interpreter(self, _mock_ai_edge_litert) -> None:
+        """Return value is the ai_edge_litert interpreter instance."""
+        _, interp_instance = _mock_ai_edge_litert
+        result = _create_interpreter("model.tflite")
+        assert result is interp_instance
+
+    def test_raises_when_no_backend_available(self) -> None:
+        """ImportError with a helpful install message is raised when all backends are absent."""
+        with mock.patch.dict(
+            sys.modules,
+            {
+                **_AI_EDGE_LITERT_MASK,
+                "tflite_runtime": None,
+                "tflite_runtime.interpreter": None,
+                "tensorflow": None,
+                "tensorflow.lite": None,
+            },
+        ):
+            with pytest.raises(ImportError, match="TFLite inference requires"):
+                _create_interpreter("model.tflite")
 
 
 # ---------------------------------------------------------------------------
