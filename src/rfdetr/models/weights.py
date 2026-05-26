@@ -469,6 +469,26 @@ def load_pretrain_weights(
                 checkpoint["model"][name] = tensor[: mc.num_queries * mc.group_detr]
 
     checkpoint["model"] = remap_projector_to_cross_attn(checkpoint["model"], nn_model)
+    # `_kp_active_mask` is a deterministic buffer derived from
+    # `num_keypoints_per_class` in the current config. Some checkpoints store a
+    # shape that reflects an earlier schema (for example [2, 17] vs [1, 17]).
+    # Dropping only this key avoids hard load failures while preserving all
+    # learned weights.
+    ckpt_kp_active_mask = checkpoint["model"].get("_kp_active_mask")
+    model_state_dict = nn_model.state_dict() if hasattr(nn_model, "state_dict") else {}
+    model_kp_active_mask = model_state_dict.get("_kp_active_mask") if isinstance(model_state_dict, dict) else None
+    if (
+        isinstance(ckpt_kp_active_mask, torch.Tensor)
+        and isinstance(model_kp_active_mask, torch.Tensor)
+        and ckpt_kp_active_mask.shape != model_kp_active_mask.shape
+    ):
+        logger.warning(
+            "load_pretrain_weights: dropping checkpoint _kp_active_mask with shape %s "
+            "because current model expects %s (derived from current keypoint schema).",
+            tuple(ckpt_kp_active_mask.shape),
+            tuple(model_kp_active_mask.shape),
+        )
+        checkpoint["model"].pop("_kp_active_mask", None)
     interpolate_position_embeddings(checkpoint["model"], mc.positional_encoding_size)
     incompatible = nn_model.load_state_dict(checkpoint["model"], strict=False)
     _warn_on_partial_load(incompatible, pretrain_weights)

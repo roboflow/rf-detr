@@ -596,7 +596,7 @@ class RFDETRKeypointPreviewConfig(RFDETRBaseConfig):
     use_grouppose_keypoints: bool = True
     dual_projector: bool = True
     dual_projector_kp_only: bool = True
-    num_keypoints_per_class: List[int] = [17]
+    num_keypoints_per_class: List[int] = [0, 17]
     keypoint_cross_attn: bool = True
     inter_instance_kp_attn: bool = False
     grouppose_keypoint_dim_downscale: int = 1
@@ -612,7 +612,7 @@ class RFDETRKeypointPreviewConfig(RFDETRBaseConfig):
     num_classes: int = 90
 
 
-class TrainConfig(BaseModel):
+class TrainConfig(BaseConfig):
     """Training hyperparameters and auto-batching configuration.
 
     Notes:
