@@ -87,6 +87,24 @@ class _NotebookSpawnDDPStrategy(_DDPStrategy):
         self._launcher = _InteractiveSpawnLauncher(self, start_method=self._start_method)
 
 
+def _is_distributed_strategy_requested(strategy: str) -> bool:
+    """Return whether a TrainConfig strategy string requests distributed execution."""
+    strategy_name = strategy.lower()
+    return any(token in strategy_name for token in ("ddp", "fsdp", "deepspeed"))
+
+
+def _requests_multiple_devices(devices: int | str) -> bool:
+    """Return whether the configured devices value explicitly requests multiple devices."""
+    if isinstance(devices, int):
+        return devices > 1
+    devices_name = devices.strip().lower()
+    if devices_name.isdigit():
+        return int(devices_name) > 1
+    if "," in devices_name:
+        return len([entry for entry in devices_name.split(",") if entry.strip()]) > 1
+    return False
+
+
 def build_trainer(
     train_config: TrainConfig,
     model_config: ModelConfig,
@@ -154,6 +172,18 @@ def build_trainer(
 
     # --- Strategy + EMA sharding guard ---
     strategy = tc.strategy
+    has_keypoints = bool(model_config.use_grouppose_keypoints)
+    distributed_requested = (
+        _is_distributed_strategy_requested(tc.strategy) or tc.num_nodes > 1 or _requests_multiple_devices(tc.devices)
+    )
+    if has_keypoints and distributed_requested:
+        # TODO(@keypoints-ddp): validate criterion-owned RealNVP parameter synchronization
+        # across processes before enabling keypoint distributed training.
+        raise NotImplementedError(
+            "Keypoint training currently does not support distributed execution "
+            f"(strategy={tc.strategy!r}, devices={tc.devices!r}, num_nodes={tc.num_nodes!r}). "
+            "Use single-process training for now (for example strategy='auto', devices=1, num_nodes=1)."
+        )
 
     # Transparently replace fork-based DDP with spawn-based DDP — see the
     # module-level comment block above _InteractiveSpawnLauncher for rationale.

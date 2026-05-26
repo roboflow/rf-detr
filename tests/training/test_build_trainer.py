@@ -679,6 +679,35 @@ class TestBuildTrainerDDPFields:
         assert tc.devices == "auto"
 
 
+class TestBuildTrainerKeypointDistributedGuard:
+    """Keypoint mode must fail fast for unsupported distributed training settings."""
+
+    def test_keypoint_ddp_strategy_raises_clear_error(self, tmp_path):
+        """Keypoint mode rejects explicit distributed strategy requests with a clear error."""
+        tc = _tc(tmp_path, use_ema=False, strategy="ddp")
+        mc = _mc(use_grouppose_keypoints=True)
+
+        with pytest.raises(NotImplementedError, match="Keypoint training currently does not support distributed"):
+            build_trainer(tc, mc)
+
+    def test_non_keypoint_ddp_strategy_is_unchanged(self, tmp_path):
+        """Non-keypoint mode keeps the existing ddp strategy behavior unchanged."""
+        import unittest.mock as mock
+
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        tc = _tc(tmp_path, use_ema=False, strategy="ddp")
+        mc = _mc(use_grouppose_keypoints=False)
+        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
+            build_trainer(tc, mc)
+
+        assert captured["strategy"] == "ddp"
+
+
 class TestBuildTrainerSegmentationDDP:
     """build_trainer() must enable find_unused_parameters when segmentation_head=True + strategy='ddp'."""
 
