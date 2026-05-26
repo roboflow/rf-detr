@@ -192,7 +192,6 @@ class Transformer(nn.Module):
             dec_n_points=dec_n_points,
             skip_self_attn=False,
             enable_keypoint_processing=use_grouppose_keypoints,
-            num_keypoints_per_class=self.num_keypoints_per_class,
             grouppose_keypoint_dim_downscale=grouppose_keypoint_dim_downscale,
             keypoint_cross_attn=keypoint_cross_attn,
             inter_instance_kp_attn=inter_instance_kp_attn,
