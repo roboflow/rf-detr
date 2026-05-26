@@ -28,12 +28,26 @@ from typing import Any
 import faster_coco_eval.core.mask as mask_util
 import numpy as np
 from faster_coco_eval import COCO
-from faster_coco_eval.core.cocoeval import COCOeval
+from faster_coco_eval.core.faster_eval_api import COCOeval
 
 from rfdetr.utilities.distributed import all_gather
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
+
+
+def _load_coco_results(coco_gt: COCO, results: list[dict[str, Any]]) -> COCO:
+    """Build a COCO detections object, including the empty-result case."""
+    if results:
+        return COCO.loadRes(coco_gt, results)
+
+    coco_dt = COCO()
+    coco_dt.dataset["info"] = copy.deepcopy(coco_gt.dataset.get("info", {}))
+    coco_dt.dataset["images"] = copy.deepcopy(coco_gt.dataset.get("images", []))
+    coco_dt.dataset["categories"] = copy.deepcopy(coco_gt.dataset.get("categories", []))
+    coco_dt.dataset["annotations"] = []
+    coco_dt.createIndex()
+    return coco_dt
 
 
 def _xyxy_to_xywh(boxes: np.ndarray) -> np.ndarray:
@@ -60,10 +74,10 @@ class CocoEvaluator:
         self.coco_eval: dict[str, COCOeval] = {}
         for iou_type in iou_types:
             self.coco_eval[iou_type] = COCOeval(coco_gt, iouType=iou_type)
-            self.coco_eval[iou_type].params.maxDets = [1, 10, max_dets]
+            self.coco_eval[iou_type].params.maxDets = [20] if iou_type == "keypoints" else [1, 10, max_dets]
 
         self.img_ids: list[int] = []
-        self.eval_imgs: dict[str, list[Any]] = {k: [] for k in iou_types}
+        self.coco_results: dict[str, list[dict[str, Any]]] = {k: [] for k in iou_types}
         self.cat_ids = set(coco_gt.cats.keys())
         self._prefer_raw_category_ids = False
 
@@ -96,34 +110,38 @@ class CocoEvaluator:
 
         for iou_type in self.iou_types:
             results = self.prepare(predictions, iou_type)
-
-            with open(os.devnull, "w") as devnull:
-                with contextlib.redirect_stdout(devnull):
-                    coco_dt = COCO.loadRes(self.coco_gt, results) if results else COCO()
-            coco_eval = self.coco_eval[iou_type]
-
-            coco_eval.cocoDt = coco_dt
-            coco_eval.params.imgIds = list(img_ids)
-            img_ids, eval_imgs = evaluate(coco_eval)
-
-            self.eval_imgs[iou_type].append(eval_imgs)
+            self.coco_results[iou_type].extend(results)
 
     def synchronize_between_processes(self) -> None:
-        """Merge eval results across distributed processes."""
+        """Merge image IDs and COCO result records across distributed processes."""
+        gathered_img_ids = all_gather(self.img_ids)
+        self.img_ids = sorted({image_id for rank_img_ids in gathered_img_ids for image_id in rank_img_ids})
         for iou_type in self.iou_types:
-            self.eval_imgs[iou_type] = np.concatenate(self.eval_imgs[iou_type], 2)
-            create_common_coco_eval(self.coco_eval[iou_type], self.img_ids, self.eval_imgs[iou_type])
+            gathered_results = all_gather(self.coco_results[iou_type])
+            self.coco_results[iou_type] = [result for rank_results in gathered_results for result in rank_results]
 
     def accumulate(self) -> None:
         """Accumulate per-image evaluation results into mean metrics."""
-        for coco_eval in self.coco_eval.values():
+        for iou_type, coco_eval in self.coco_eval.items():
+            self._evaluate(iou_type, coco_eval)
             coco_eval.accumulate()
+            patched_pycocotools_summarize(coco_eval)
 
     def summarize(self) -> None:
         """Print and log COCO summary statistics."""
         for iou_type, coco_eval in self.coco_eval.items():
             logger.info("IoU metric: {}".format(iou_type))
             patched_pycocotools_summarize(coco_eval)
+
+    def _evaluate(self, iou_type: str, coco_eval: COCOeval) -> None:
+        """Run faster-coco-eval evaluation for accumulated COCO result records."""
+        results = self.coco_results[iou_type]
+        with open(os.devnull, "w") as devnull:
+            with contextlib.redirect_stdout(devnull):
+                coco_dt = _load_coco_results(self.coco_gt, results)
+                coco_eval.cocoDt = coco_dt
+                coco_eval.params.imgIds = list(np.unique(self.img_ids))
+                coco_eval.evaluate()
 
     def prepare(self, predictions: dict[int, Any], iou_type: str) -> list[dict[str, Any]]:
         """Convert predictions to COCO format for the given iou_type."""
@@ -227,78 +245,6 @@ class CocoEvaluator:
                     }
                 )
         return coco_results
-
-
-def merge(img_ids: list[int], eval_imgs: Any) -> tuple[np.ndarray, np.ndarray]:
-    """Merge distributed per-image evaluation results."""
-    all_img_ids = all_gather(img_ids)
-    all_eval_imgs = all_gather(eval_imgs)
-
-    merged_img_ids: list[int] = []
-    for p in all_img_ids:
-        merged_img_ids.extend(p)
-
-    merged_eval_imgs = []
-    for p in all_eval_imgs:
-        merged_eval_imgs.append(p)
-
-    merged_img_ids_arr = np.array(merged_img_ids)
-    merged_eval_imgs_arr = np.concatenate(merged_eval_imgs, 2)
-
-    # keep only unique (and in sorted order) images
-    merged_img_ids_arr, idx = np.unique(merged_img_ids_arr, return_index=True)
-    merged_eval_imgs_arr = merged_eval_imgs_arr[..., idx]
-
-    return merged_img_ids_arr, merged_eval_imgs_arr
-
-
-def create_common_coco_eval(coco_eval: COCOeval, img_ids: list[int], eval_imgs: Any) -> None:
-    """Populate a COCOeval object with merged distributed results."""
-    img_ids_arr, eval_imgs = merge(img_ids, eval_imgs)
-    img_ids_list = list(img_ids_arr)
-    eval_imgs_list = list(eval_imgs.flatten())
-
-    coco_eval.evalImgs = eval_imgs_list
-    coco_eval.params.imgIds = img_ids_list
-    coco_eval._paramsEval = copy.deepcopy(coco_eval.params)
-
-
-#################################################################
-# From pycocotools, just removed the prints and fixed
-# a Python3 bug about unicode not defined
-#################################################################
-def evaluate(self: COCOeval) -> tuple[list[int], np.ndarray]:
-    """Run per-image evaluation and store results in self.evalImgs."""
-    p = self.params
-    if p.useSegm is not None:
-        p.iouType = "segm" if p.useSegm == 1 else "bbox"
-        logger.warning("useSegm (deprecated) is not None. Running {} evaluation".format(p.iouType))
-    p.imgIds = list(np.unique(p.imgIds))
-    if p.useCats:
-        p.catIds = list(np.unique(p.catIds))
-    p.maxDets = sorted(p.maxDets)
-    self.params = p
-
-    self._prepare()
-    category_ids = p.catIds if p.useCats else [-1]
-
-    if p.iouType == "segm" or p.iouType == "bbox":
-        compute_iou = self.computeIoU
-    elif p.iouType == "keypoints":
-        compute_iou = self.computeOks
-    self.ious = {(imgId, catId): compute_iou(imgId, catId) for imgId in p.imgIds for catId in category_ids}
-
-    evaluate_image = self.evaluateImg
-    max_det = p.maxDets[-1]
-    eval_images = [
-        evaluate_image(imgId, catId, areaRng, max_det)
-        for catId in category_ids
-        for areaRng in p.areaRng
-        for imgId in p.imgIds
-    ]
-    eval_images = np.asarray(eval_images).reshape(len(category_ids), len(p.areaRng), len(p.imgIds))
-    self._paramsEval = copy.deepcopy(self.params)
-    return p.imgIds, eval_images
 
 
 #################################################################

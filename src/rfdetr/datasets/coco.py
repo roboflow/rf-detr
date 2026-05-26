@@ -648,7 +648,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             include_masks=include_masks,
             include_keypoints=include_keypoints,
             num_keypoints_per_class=num_keypoints_per_class,
-            remap_category_ids=not has_keypoints,
+            remap_category_ids=False,
         )
     else:
         logger.info(f"Building COCO {image_set} dataset at resolution {resolution}")
@@ -669,7 +669,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             include_masks=include_masks,
             include_keypoints=include_keypoints,
             num_keypoints_per_class=num_keypoints_per_class,
-            remap_category_ids=not has_keypoints,
+            remap_category_ids=False,
         )
     return dataset
 

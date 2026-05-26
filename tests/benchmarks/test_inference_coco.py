@@ -30,7 +30,7 @@ download.
 import json
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
 import numpy as np
 import PIL.Image
@@ -282,7 +282,7 @@ def _select_fixed_person_images(
     images_root: Path,
     annotations_path: Path,
     max_images: int = 8,
-) -> tuple[list[PIL.Image.Image], list[int]]:
+) -> tuple[list[str], list[int]]:
     """Load a deterministic subset of COCO person-keypoint validation images.
 
     Args:
@@ -291,7 +291,7 @@ def _select_fixed_person_images(
         max_images: Maximum number of keypoint-bearing images to load.
 
     Returns:
-        RGB PIL images and their corresponding COCO image IDs.
+        RGB image paths and their corresponding COCO image IDs.
 
     Raises:
         RuntimeError: If no usable person-keypoint images are available.
@@ -311,13 +311,47 @@ def _select_fixed_person_images(
     if not selected_ids:
         raise RuntimeError("No keypoint-bearing COCO validation images were found.")
 
-    images: list[PIL.Image.Image] = []
+    image_paths: list[str] = []
     for image_id in selected_ids:
         image_path = images_root / image_id_to_name[image_id]
-        with PIL.Image.open(image_path) as image:
-            images.append(image.convert("RGB"))
+        image_paths.append(str(image_path))
 
-    return images, selected_ids
+    return image_paths, selected_ids
+
+
+def _predict_keypoint_preview_batches(
+    model: RFDETRKeypointPreview,
+    image_paths: Sequence[str],
+    batch_size: int,
+    threshold: float = 0.5,
+) -> list[sv.Detections]:
+    """Run keypoint-preview inference in fixed-size batches.
+
+    Args:
+        model: Loaded keypoint-preview model.
+        image_paths: COCO image paths to evaluate.
+        batch_size: Number of RGB images to pass to each ``predict()`` call.
+        threshold: Minimum confidence score passed to ``RFDETRKeypointPreview.predict()``.
+
+    Returns:
+        Per-image keypoint detections in the same order as ``image_paths``.
+
+    Raises:
+        RuntimeError: If batched prediction unexpectedly returns a single detection object.
+    """
+    predictions: list[sv.Detections] = []
+    for start_idx in range(0, len(image_paths), batch_size):
+        batch_paths = list(image_paths[start_idx : start_idx + batch_size])
+        batch_images: list[PIL.Image.Image] = []
+        for image_path in batch_paths:
+            with PIL.Image.open(image_path) as image:
+                batch_images.append(image.convert("RGB"))
+
+        batch_predictions = model.predict(batch_images, threshold=threshold, include_source_image=False)
+        if not isinstance(batch_predictions, list):
+            raise RuntimeError("Expected batched keypoint preview inference to return list[Detections].")
+        predictions.extend(batch_predictions)
+    return predictions
 
 
 def _detections_to_coco_predictions(
@@ -351,11 +385,9 @@ def keypoint_preview_predictions(
 ) -> tuple[list[sv.Detections], list[int], Path]:
     """Run one deterministic keypoint-preview inference pass for the COCO benchmark tests."""
     images_root, annotations_path = download_coco_val_keypoints
-    images, image_ids = _select_fixed_person_images(images_root, annotations_path)
+    image_paths, image_ids = _select_fixed_person_images(images_root, annotations_path)
     model = RFDETRKeypointPreview(device="cuda" if torch.cuda.is_available() else "cpu")
-    predictions = model.predict(images, threshold=0.5)
-    if not isinstance(predictions, list):
-        raise RuntimeError("Expected batched keypoint preview inference to return list[Detections].")
+    predictions = _predict_keypoint_preview_batches(model, image_paths, batch_size=8)
     return predictions, image_ids, annotations_path
 
 
@@ -478,20 +510,37 @@ def test_keypoint_preview_pretrained_inference_thresholded(
     assert float(np.mean(all_confidences)) >= 0.5
 
 
-def test_keypoint_preview_coco_metric_floor(
-    keypoint_preview_predictions: tuple[list[sv.Detections], list[int], Path],
+@pytest.mark.gpu
+@pytest.mark.parametrize(
+    ("threshold_keypoint_map", "num_samples", "batch_size"),
+    [
+        pytest.param(0.71, 500, 2, id="keypoint-preview"),
+    ],
+)
+def test_inference_keypoint_preview_rfdetr_predict(
+    download_coco_val_keypoints: tuple[Path, Path],
+    threshold_keypoint_map: float,
+    num_samples: int,
+    batch_size: int,
 ) -> None:
-    """Keypoint COCO evaluator path should return a valid AP value for preview predictions."""
-    predictions, image_ids, annotations_path = keypoint_preview_predictions
+    """``RFDETRKeypointPreview.predict()`` meets the keypoint COCO AP threshold."""
+    images_root, annotations_path = download_coco_val_keypoints
+    image_paths, image_ids = _select_fixed_person_images(images_root, annotations_path, max_images=num_samples)
+    assert len(image_ids) >= num_samples, f"Expected at least {num_samples} keypoint-bearing images."
+
+    model = RFDETRKeypointPreview(device="cuda" if torch.cuda.is_available() else "cpu")
+    predictions = _predict_keypoint_preview_batches(model, image_paths, batch_size=batch_size, threshold=0.0)
     coco_gt = COCO(str(annotations_path))
-    coco_gt.label2cat = {0: 1}
+    coco_gt.label2cat = {1: 1}
     evaluator = CocoEvaluator(coco_gt, ["keypoints"])
     evaluator.update(_detections_to_coco_predictions(predictions, image_ids))
     evaluator.synchronize_between_processes()
     evaluator.accumulate()
 
     keypoint_ap_50_95 = float(evaluator.coco_eval["keypoints"].stats[0])
-    assert keypoint_ap_50_95 >= 0.0, f"Expected non-negative keypoint AP, got {keypoint_ap_50_95:.4f}"
+    assert keypoint_ap_50_95 >= threshold_keypoint_map, (
+        f"keypoint AP@50:95 {keypoint_ap_50_95:.4f} < {threshold_keypoint_map}"
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -67,7 +67,7 @@ def gen_sineembed_for_position(pos_tensor: Tensor, dim: int = 128) -> Tensor:
 
         h_embed = pos_tensor[:, :, 3] * scale
         pos_h = h_embed[:, :, None] / dim_t
-        pos_h = torch.stack((pos_h[:, :, 0::2].cos(), pos_h[:, :, 1::2].sin()), dim=3).flatten(2)
+        pos_h = torch.stack((pos_h[:, :, 0::2].sin(), pos_h[:, :, 1::2].cos()), dim=3).flatten(2)
         pos = torch.cat((pos_y, pos_x, pos_w, pos_h), dim=2)
     else:
         raise ValueError("Unknown pos_tensor shape(-1):{}".format(pos_tensor.size(-1)))
