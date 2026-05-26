@@ -48,6 +48,14 @@ _MC_NAMESPACE_FIELDS = {
     "resolution",
     "sa_nheads",
     "segmentation_head",
+    "use_grouppose_keypoints",
+    "keypoint_cross_attn",
+    "inter_instance_kp_attn",
+    "grouppose_keypoint_dim_downscale",
+    "dual_projector",
+    "dual_projector_kp_only",
+    "num_keypoints_per_class",
+    "num_decoder_registers",
     "two_stage",
 }
 

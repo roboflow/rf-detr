@@ -118,6 +118,14 @@ class ModelConfig(BaseConfig):
     ia_bce_loss: bool = True
     cls_loss_coef: float = 1.0
     segmentation_head: bool = False
+    use_grouppose_keypoints: bool = False
+    keypoint_cross_attn: bool = True
+    inter_instance_kp_attn: bool = False
+    grouppose_keypoint_dim_downscale: int = 1
+    dual_projector: bool = False
+    dual_projector_kp_only: bool = False
+    num_keypoints_per_class: List[int] = Field(default_factory=list)
+    num_decoder_registers: int = 0
     mask_downsample_ratio: int = 4
     backbone_lora: bool = False
     freeze_encoder: bool = False
@@ -582,6 +590,28 @@ class RFDETRSeg2XLargeConfig(RFDETRBaseConfig):
     num_classes: int = 90
 
 
+class RFDETRKeypointPreviewConfig(RFDETRBaseConfig):
+    """Configuration for the preview keypoint model."""
+
+    use_grouppose_keypoints: bool = True
+    dual_projector: bool = True
+    dual_projector_kp_only: bool = True
+    num_keypoints_per_class: List[int] = [17]
+    keypoint_cross_attn: bool = True
+    inter_instance_kp_attn: bool = False
+    grouppose_keypoint_dim_downscale: int = 1
+    out_feature_indexes: List[int] = [3, 6, 9, 12]
+    num_windows: int = 2
+    dec_layers: int = 4
+    patch_size: int = 12
+    resolution: int = 576
+    positional_encoding_size: int = 576 // 12
+    num_queries: int = 100
+    num_select: int = 100
+    pretrain_weights: Optional[str] = "rf-detr-keypoint-preview-xlarge.pth"
+    num_classes: int = 90
+
+
 class TrainConfig(BaseModel):
     """Training hyperparameters and auto-batching configuration.
 
@@ -619,6 +649,14 @@ class TrainConfig(BaseModel):
     ia_bce_loss: bool = True
     cls_loss_coef: float = 1.0
     num_select: int = 300
+    keypoint_flip_pairs: List[int] = Field(default_factory=list)
+    keypoint_l1_loss_coef: float = 0
+    keypoint_findable_loss_coef: float = 0
+    keypoint_visible_loss_coef: float = 0
+    keypoint_nll_loss_coef: float = 0
+    rle: bool = False
+    rle_conditional: bool = False
+    rle_loss_coef: float = 0
     dataset_file: Literal["coco", "o365", "roboflow", "yolo"] = "roboflow"
     square_resize_div_64: bool = True
     dataset_dir: str
@@ -787,3 +825,16 @@ class SegmentationTrainConfig(TrainConfig):
     mask_dice_loss_coef: float = 5.0
     cls_loss_coef: float = 5.0
     segmentation_head: bool = True
+
+
+class KeypointTrainConfig(TrainConfig):
+    """Keypoint-specific training defaults."""
+
+    cls_loss_coef: float = 2.0  # TODO: verify empirically before final release; ported as-is from internal recipe.
+    keypoint_l1_loss_coef: float = 1
+    keypoint_findable_loss_coef: float = 1
+    keypoint_visible_loss_coef: float = 1
+    keypoint_nll_loss_coef: float = 1
+    rle: bool = True
+    rle_conditional: bool = True
+    rle_loss_coef: float = 1
