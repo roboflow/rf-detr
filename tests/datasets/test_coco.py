@@ -477,7 +477,7 @@ def _make_coco_builder_args(tmp_path: Path, *, use_grouppose_keypoints: bool) ->
         aug_config=None,
         augmentation_backend="cpu",
         use_grouppose_keypoints=use_grouppose_keypoints,
-        num_keypoints_per_class=[17] if use_grouppose_keypoints else [],
+        num_keypoints_per_class=[0, 17] if use_grouppose_keypoints else [],
     )
 
 
@@ -489,8 +489,8 @@ class TestConvertCocoKeypoints:
         converter = ConvertCoco(
             include_masks=False,
             include_keypoints=True,
-            cat2label={1: 0},
-            num_keypoints_per_class=[17],
+            cat2label=None,
+            num_keypoints_per_class=[0, 17],
         )
 
         _, target = converter(
@@ -500,15 +500,15 @@ class TestConvertCocoKeypoints:
 
         assert target["keypoints"].shape == (1, 17, 3)
         assert target["keypoints"].dtype == torch.float32
-        assert target["labels"].tolist() == [0]
+        assert target["labels"].tolist() == [1]
 
-    def test_person_category_maps_to_contiguous_zero(self) -> None:
-        """COCO person category ``1`` should map to contiguous keypoint label ``0``."""
+    def test_person_category_stays_raw_coco_id(self) -> None:
+        """COCO person category ``1`` should stay aligned with keypoint schema slot ``1``."""
         converter = ConvertCoco(
             include_masks=False,
             include_keypoints=True,
-            cat2label={1: 0},
-            num_keypoints_per_class=[17],
+            cat2label=None,
+            num_keypoints_per_class=[0, 17],
         )
         _, target = converter(
             _IMAGE,
@@ -516,15 +516,15 @@ class TestConvertCocoKeypoints:
         )
 
         assert target["labels"].shape == (1,)
-        assert target["labels"].item() == 0
+        assert target["labels"].item() == 1
 
     def test_num_keypoints_zero_annotation_keeps_shape(self) -> None:
         """Annotations with zeroed keypoints should preserve configured keypoint dimensions."""
         converter = ConvertCoco(
             include_masks=False,
             include_keypoints=True,
-            cat2label={1: 0},
-            num_keypoints_per_class=[17],
+            cat2label=None,
+            num_keypoints_per_class=[0, 17],
         )
         _, target = converter(
             _IMAGE,
@@ -566,7 +566,7 @@ class TestBuildCocoKeypointMode:
         ann_file = str(mock_dataset.call_args.args[1])
         assert ann_file.endswith("annotations/person_keypoints_train2017.json")
         assert kwargs["include_keypoints"] is True
-        assert kwargs["remap_category_ids"] is True
+        assert kwargs["remap_category_ids"] is False
 
     def test_default_mode_uses_instances_annotations(self, tmp_path: Path) -> None:
         """Default detection mode should keep ``instances_train2017.json`` annotations."""
@@ -583,4 +583,4 @@ class TestBuildCocoKeypointMode:
         ann_file = str(mock_dataset.call_args.args[1])
         assert ann_file.endswith("annotations/instances_train2017.json")
         assert kwargs["include_keypoints"] is False
-        assert kwargs["remap_category_ids"] is False
+        assert kwargs["remap_category_ids"] is True

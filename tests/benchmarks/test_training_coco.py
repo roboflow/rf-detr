@@ -186,7 +186,9 @@ def test_keypoint_training_subset_loss_decreases(
     (post_metrics,) = trainer.validate(module, datamodule=datamodule)
     post_loss = _to_float(post_metrics["val/loss"])
     assert torch.isfinite(torch.tensor(post_loss)), f"Expected finite post-training val/loss, got {post_loss:.6f}"
-    assert post_loss <= pre_loss, f"Expected val/loss to decrease on subset: before={pre_loss:.6f}, after={post_loss:.6f}"
+    assert post_loss <= pre_loss, (
+        f"Expected val/loss to decrease on subset: before={pre_loss:.6f}, after={post_loss:.6f}"
+    )
 
 
 @pytest.mark.gpu
@@ -223,6 +225,5 @@ def test_keypoint_training_subset_metric_improves(
     post_map = _to_float(post_metrics["val/keypoint_map_50_95"])
     assert torch.isfinite(torch.tensor(post_map)), f"Expected finite post-training keypoint AP, got {post_map:.6f}"
     assert post_map >= pre_map - 0.02, (
-        "Expected keypoint AP to improve or remain close on subset "
-        f"(before={pre_map:.6f}, after={post_map:.6f})."
+        f"Expected keypoint AP to improve or remain close on subset (before={pre_map:.6f}, after={post_map:.6f})."
     )

@@ -211,3 +211,6 @@ cache-gh/
 checkpoints/
 releases/
 tasks/
+
+demo_*.jpg
+demo_*.py
