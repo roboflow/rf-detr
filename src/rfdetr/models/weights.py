@@ -26,7 +26,7 @@ from rfdetr.assets.model_weights import download_pretrain_weights, validate_pret
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.utilities.decorators import deprecated
 from rfdetr.utilities.logger import get_logger
-from rfdetr.utilities.state_dict import _ckpt_args_get, validate_checkpoint_compatibility
+from rfdetr.utilities.state_dict import _ckpt_args_get, remap_projector_to_cross_attn, validate_checkpoint_compatibility
 
 logger = get_logger()
 
@@ -468,6 +468,7 @@ def load_pretrain_weights(
                 # multi-group training, so in practice they are all group_detr == 1.
                 checkpoint["model"][name] = tensor[: mc.num_queries * mc.group_detr]
 
+    checkpoint["model"] = remap_projector_to_cross_attn(checkpoint["model"], nn_model)
     interpolate_position_embeddings(checkpoint["model"], mc.positional_encoding_size)
     incompatible = nn_model.load_state_dict(checkpoint["model"], strict=False)
     _warn_on_partial_load(incompatible, pretrain_weights)

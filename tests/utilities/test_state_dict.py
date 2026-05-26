@@ -12,7 +12,11 @@ import pytest
 import torch
 from pytorch_lightning import LightningModule, Trainer
 
-from rfdetr.utilities.state_dict import _make_fit_loop_state, validate_checkpoint_compatibility
+from rfdetr.utilities.state_dict import (
+    _make_fit_loop_state,
+    remap_projector_to_cross_attn,
+    validate_checkpoint_compatibility,
+)
 
 # ---------------------------------------------------------------------------
 # _make_fit_loop_state
@@ -386,6 +390,45 @@ class TestValidateCheckpointCompatibility:
 
         warning_msgs = [r.getMessage() for r in caplog.records if r.name == "rf-detr" and r.levelno >= logging.WARNING]
         assert not warning_msgs, f"Expected no warnings, got: {warning_msgs}"
+
+
+class TestRemapProjectorToCrossAttn:
+    """Tests for dual-projector checkpoint key remapping."""
+
+    def test_clones_projector_weights_when_dual_projector_enabled(self) -> None:
+        """Dual-projector models clone projector keys into cross_attn_projector when missing."""
+        state_dict = {
+            "backbone.0.projector.0.weight": torch.randn(4, 4, 1, 1),
+            "backbone.0.projector.0.bias": torch.randn(4),
+        }
+        model = SimpleNamespace(backbone=[SimpleNamespace(dual_projector=True)])
+
+        remapped = remap_projector_to_cross_attn(state_dict, model)
+
+        assert remapped is state_dict
+        assert "backbone.0.cross_attn_projector.0.weight" in remapped
+        assert "backbone.0.cross_attn_projector.0.bias" in remapped
+        assert torch.equal(
+            remapped["backbone.0.cross_attn_projector.0.weight"],
+            state_dict["backbone.0.projector.0.weight"],
+        )
+        assert torch.equal(
+            remapped["backbone.0.cross_attn_projector.0.bias"],
+            state_dict["backbone.0.projector.0.bias"],
+        )
+
+    def test_skips_when_cross_attn_keys_already_present(self) -> None:
+        """No remap is applied when cross_attn_projector keys already exist."""
+        state_dict = {
+            "backbone.0.projector.0.weight": torch.randn(4, 4, 1, 1),
+            "backbone.0.cross_attn_projector.0.weight": torch.randn(4, 4, 1, 1),
+        }
+        model = SimpleNamespace(backbone=[SimpleNamespace(dual_projector=True)])
+
+        remapped = remap_projector_to_cross_attn(state_dict, model)
+
+        assert remapped is state_dict
+        assert len([key for key in remapped if key.startswith("backbone.0.cross_attn_projector.")]) == 1
 
     def test_class_count_missing_model_key_no_warning(self, caplog):
         """Checkpoint without 'model' key — no warning (backward compat)."""
