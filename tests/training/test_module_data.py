@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 """Comprehensive unit tests for RFDETRDataModule (LightningDataModule wrapper)."""
 
+import warnings
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -306,6 +307,46 @@ class TestSetup:
             mock_build.assert_not_called()
 
         assert dm._dataset_val is existing_val
+
+
+class TestKeypointAugmentationWarning:
+    """Keypoint mode emits an explicit augmentation warning exactly once."""
+
+    def _build_dm(self, tmp_path, *, use_grouppose_keypoints: bool):
+        mc = _base_model_config(
+            use_grouppose_keypoints=use_grouppose_keypoints,
+            num_keypoints_per_class=[17] if use_grouppose_keypoints else [],
+        )
+        tc = _base_train_config(tmp_path)
+        from rfdetr.training.module_data import RFDETRDataModule
+
+        return RFDETRDataModule(mc, tc)
+
+    def test_keypoint_mode_emits_augmentation_warning(self, tmp_path):
+        """Setup('fit') should warn once when keypoint mode is enabled."""
+        dm = self._build_dm(tmp_path, use_grouppose_keypoints=True)
+
+        with patch("rfdetr.training.module_data.build_dataset", side_effect=lambda *a, **k: _fake_dataset(10)):
+            with pytest.warns(UserWarning, match="Keypoint mode is enabled"):
+                dm.setup("fit")
+
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                dm.setup("fit")
+            assert not [w for w in caught if "Keypoint mode is enabled" in str(w.message)]
+
+    def test_non_keypoint_mode_no_augmentation_warning(self, tmp_path):
+        """Setup('fit') should not emit the keypoint augmentation warning in detection mode."""
+        dm = self._build_dm(tmp_path, use_grouppose_keypoints=False)
+
+        with (
+            patch("rfdetr.training.module_data.build_dataset", side_effect=lambda *a, **k: _fake_dataset(10)),
+            warnings.catch_warnings(record=True) as caught,
+        ):
+            warnings.simplefilter("always")
+            dm.setup("fit")
+
+        assert not [w for w in caught if "Keypoint mode is enabled" in str(w.message)]
 
 
 class TestTrainDataloader:
@@ -1134,6 +1175,27 @@ class TestOnAfterBatchTransfer:
         result_samples, _ = dm.on_after_batch_transfer((samples, targets), dataloader_idx=0)
 
         assert isinstance(result_samples, NestedTensor), f"Expected NestedTensor, got {type(result_samples).__name__}"
+
+    def test_gpu_augmentation_passes_through_keypoints_without_geometry(self, tmp_path):
+        """GPU augmentation path should leave keypoint coordinates unchanged in preview mode."""
+        dm = self._build_dm(tmp_path)
+        dm = self._attach_mock_trainer(dm, training=True)
+
+        samples, targets = self._make_kornia_batch()
+        keypoints = torch.tensor([[[3.0, 4.0, 2.0]]], dtype=torch.float32)
+        targets[0]["keypoints"] = keypoints.clone()
+        targets[1]["keypoints"] = keypoints.clone()
+        input_keypoints = [target["keypoints"].clone() for target in targets]
+
+        img_aug = samples.tensors.clone()
+        boxes_padded = torch.tensor([[[2.0, 2.0, 10.0, 10.0]]] * 2)
+        dm._kornia_pipeline = MagicMock(return_value=(img_aug, boxes_padded))
+        dm._kornia_normalize = MagicMock(side_effect=lambda x: x)
+
+        _, result_targets = dm.on_after_batch_transfer((samples, targets), dataloader_idx=0)
+
+        for idx, target in enumerate(result_targets):
+            torch.testing.assert_close(target["keypoints"], input_keypoints[idx], rtol=1e-4, atol=1e-6)
 
 
 # ---------------------------------------------------------------------------

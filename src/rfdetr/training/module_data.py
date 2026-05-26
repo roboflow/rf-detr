@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 """LightningDataModule for RF-DETR dataset construction and loaders."""
 
+import warnings
 from typing import Any, List, Optional, Tuple
 
 import torch
@@ -168,6 +169,7 @@ class RFDETRDataModule(LightningDataModule):
         # GPU augmentation pipeline (Kornia); built lazily in setup("fit").
         self._kornia_pipeline: Any | None = None
         self._kornia_normalize: Any | None = None
+        self._keypoint_augmentation_warning_emitted: bool = False
         # Sentinel: True once _setup_kornia_pipeline has run (even on fallback paths
         # where _kornia_pipeline stays None), preventing redundant re-runs on repeated
         # setup("fit") calls (e.g. during validation loops in some PTL strategies).
@@ -215,6 +217,14 @@ class RFDETRDataModule(LightningDataModule):
         resolution = self.model_config.resolution
         ns = _namespace_from_configs(self.model_config, self.train_config)
         if stage == "fit":
+            if self.model_config.use_grouppose_keypoints and not self._keypoint_augmentation_warning_emitted:
+                warnings.warn(
+                    "Keypoint mode is enabled, but keypoint augmentation is not supported in this preview path. "
+                    "Image and box augmentation still runs; keypoint coordinates currently pass through unchanged.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                self._keypoint_augmentation_warning_emitted = True
             # Resolve 'auto' to an actual backend before building datasets so that
             # gpu_postprocess in dataset builders always matches what the DataModule
             # will actually do in on_after_batch_transfer.  Without this, 'auto' on

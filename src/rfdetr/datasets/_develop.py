@@ -17,7 +17,7 @@ import time
 import zipfile
 from contextlib import contextmanager, suppress
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Generator, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Generator, Literal, Optional, Tuple
 from urllib.request import urlretrieve
 
 import numpy as np
@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     import torch
 
 _COCO_URLS = {
+    "train2017": "http://images.cocodataset.org/zips/train2017.zip",
     "val2017": "http://images.cocodataset.org/zips/val2017.zip",
     "annotations": "http://images.cocodataset.org/annotations/annotations_trainval2017.zip",
 }
@@ -93,6 +94,11 @@ def _nonempty_file_exists(path: Path) -> bool:
         return path.is_file() and path.stat().st_size > 0
     except OSError:
         return False
+
+
+def get_coco_download_url(asset: Literal["train2017", "val2017", "annotations"]) -> str:
+    """Return the official COCO 2017 download URL for the requested asset."""
+    return _COCO_URLS[asset]
 
 
 class _SimpleDataset:

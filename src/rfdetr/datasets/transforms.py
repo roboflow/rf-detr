@@ -639,6 +639,9 @@ class AlbumentationsWrapper:
             # PIL.Image.size is (width, height); many detectors expect (height, width)
             width, height = image_out.size
             target_out["size"] = torch.as_tensor([height, width], dtype=torch.int64)
+        # TODO(keypoints): First public keypoint preview intentionally skips geometric keypoint augmentation in
+        # AlbumentationsWrapper to preserve current detection/segmentation behavior and avoid partial, fragile
+        # coordinate transforms. Implement full keypoint-aware augmentation and synchronize with box/mask filtering.
         return image_out, target_out
 
     @staticmethod
