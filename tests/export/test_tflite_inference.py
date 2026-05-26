@@ -123,8 +123,9 @@ class TestCreateInterpreter:
         parent_mod = types.ModuleType("tflite_runtime")
         parent_mod.interpreter = mod  # type: ignore[attr-defined]
 
-        # ``_create_interpreter`` tries ai_edge_litert before tflite_runtime, so mask it to force the
-        # tflite_runtime path even when ai_edge_litert is installed
+        # ``_create_interpreter`` prefers ai_edge_litert over tflite_runtime, so we mask the former
+        # in sys.modules. Without this, when ai_edge_litert is installed the real package is loaded
+        # and the mocked tflite_runtime Interpreter is never reached — the test fails.
         with mock.patch.dict(
             sys.modules,
             {
