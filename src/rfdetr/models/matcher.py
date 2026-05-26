@@ -23,6 +23,7 @@ import torch.nn.functional as F  # noqa: N812
 from scipy.optimize import linear_sum_assignment
 from torch import nn
 
+from rfdetr.models.heads.keypoints import compute_keypoint_matching_cost
 from rfdetr.models.heads.segmentation import point_sample
 from rfdetr.utilities.box_ops import batch_dice_loss, batch_sigmoid_ce_loss, box_cxcywh_to_xyxy, generalized_box_iou
 from rfdetr.utilities.logger import get_logger
@@ -50,6 +51,12 @@ class HungarianMatcher(nn.Module):
         mask_point_sample_ratio: int = 16,
         cost_mask_ce: float = 1,
         cost_mask_dice: float = 1,
+        num_keypoints_per_class: list[int] | None = None,
+        keypoint_l1_loss_coef: float = 0.0,
+        keypoint_findable_loss_coef: float = 0.0,
+        keypoint_visible_loss_coef: float = 0.0,
+        keypoint_nll_loss_coef: float = 0.0,
+        rle_loss_coef: float = 0.0,
     ):
         """Creates the matcher.
 
@@ -73,6 +80,12 @@ class HungarianMatcher(nn.Module):
         self.mask_point_sample_ratio = mask_point_sample_ratio
         self.cost_mask_ce = cost_mask_ce
         self.cost_mask_dice = cost_mask_dice
+        self.num_keypoints_per_class = num_keypoints_per_class or []
+        self.keypoint_l1_loss_coef = keypoint_l1_loss_coef
+        self.keypoint_findable_loss_coef = keypoint_findable_loss_coef
+        self.keypoint_visible_loss_coef = keypoint_visible_loss_coef
+        self.keypoint_nll_loss_coef = keypoint_nll_loss_coef
+        self.rle_loss_coef = rle_loss_coef
         self._warned_non_finite_costs = False
 
     @staticmethod
@@ -116,7 +129,7 @@ class HungarianMatcher(nn.Module):
         return sanitized_cost_matrix
 
     @torch.no_grad()
-    def forward(self, outputs, targets, group_detr=1):
+    def forward(self, outputs, targets, group_detr=1, flow=None):
         """Performs the matching
         Params:
             outputs: This is a dict that contains at least these entries:
@@ -146,8 +159,12 @@ class HungarianMatcher(nn.Module):
         # Also concat the target labels and boxes
         tgt_ids = torch.cat([v["labels"] for v in targets])
         tgt_bbox = torch.cat([v["boxes"] for v in targets])
+        tgt_keypoints = None
 
         masks_present = "masks" in targets[0]
+        keypoints_present = "pred_keypoints" in outputs and "keypoints" in targets[0]
+        if keypoints_present:
+            tgt_keypoints = torch.cat([v["keypoints"] for v in targets], dim=0)
 
         # Compute the giou cost between boxes
         giou = generalized_box_iou(box_cxcywh_to_xyxy(out_bbox), box_cxcywh_to_xyxy(tgt_bbox))
@@ -207,10 +224,36 @@ class HungarianMatcher(nn.Module):
             # Dice loss cost (1 - dice coefficient)
             cost_mask_dice = batch_dice_loss(pred_masks_logits, tgt_masks_flat)
 
+        if keypoints_present and tgt_keypoints is not None:
+            target_areas = tgt_bbox[:, 2] * tgt_bbox[:, 3]
+            cost_l1, cost_findable, cost_visible, cost_nll, cost_rle = compute_keypoint_matching_cost(
+                all_pred_keypoints=outputs["pred_keypoints"],
+                target_keypoints=tgt_keypoints,
+                target_classes=tgt_ids,
+                target_areas=target_areas,
+                num_keypoints_per_class=self.num_keypoints_per_class,
+                flow=flow,
+                keypoint_hidden_states=outputs.get("keypoint_hidden_states"),
+            )
+            cost_l1 = cost_l1.flatten(0, 1)
+            cost_findable = cost_findable.flatten(0, 1)
+            cost_visible = cost_visible.flatten(0, 1)
+            cost_nll = cost_nll.flatten(0, 1)
+            cost_rle = cost_rle.flatten(0, 1)
+
         # Final cost matrix
         cost_matrix = self.cost_bbox * cost_bbox + self.cost_class * cost_class + self.cost_giou * cost_giou
         if masks_present:
             cost_matrix = cost_matrix + self.cost_mask_ce * cost_mask_ce + self.cost_mask_dice * cost_mask_dice
+        if keypoints_present:
+            cost_matrix = (
+                cost_matrix
+                + self.keypoint_l1_loss_coef * cost_l1
+                + self.keypoint_findable_loss_coef * cost_findable
+                + self.keypoint_visible_loss_coef * cost_visible
+                + self.keypoint_nll_loss_coef * cost_nll
+                + self.rle_loss_coef * cost_rle
+            )
         cost_matrix = (
             cost_matrix.view(bs, num_queries, -1).float().cpu()
         )  # convert to float because bfloat16 doesn't play nicely with CPU
@@ -249,20 +292,24 @@ class HungarianMatcher(nn.Module):
 
 
 def build_matcher(args):
+    common_kwargs = {
+        "cost_class": args.set_cost_class,
+        "cost_bbox": args.set_cost_bbox,
+        "cost_giou": args.set_cost_giou,
+        "focal_alpha": args.focal_alpha,
+        "num_keypoints_per_class": getattr(args, "num_keypoints_per_class", []),
+        "keypoint_l1_loss_coef": getattr(args, "keypoint_l1_loss_coef", 0.0),
+        "keypoint_findable_loss_coef": getattr(args, "keypoint_findable_loss_coef", 0.0),
+        "keypoint_visible_loss_coef": getattr(args, "keypoint_visible_loss_coef", 0.0),
+        "keypoint_nll_loss_coef": getattr(args, "keypoint_nll_loss_coef", 0.0),
+        "rle_loss_coef": getattr(args, "rle_loss_coef", 0.0) if getattr(args, "rle", False) else 0.0,
+    }
     if args.segmentation_head:
         return HungarianMatcher(
-            cost_class=args.set_cost_class,
-            cost_bbox=args.set_cost_bbox,
-            cost_giou=args.set_cost_giou,
-            focal_alpha=args.focal_alpha,
+            **common_kwargs,
             cost_mask_ce=args.mask_ce_loss_coef,
             cost_mask_dice=args.mask_dice_loss_coef,
             mask_point_sample_ratio=args.mask_point_sample_ratio,
         )
     else:
-        return HungarianMatcher(
-            cost_class=args.set_cost_class,
-            cost_bbox=args.set_cost_bbox,
-            cost_giou=args.set_cost_giou,
-            focal_alpha=args.focal_alpha,
-        )
+        return HungarianMatcher(**common_kwargs)
