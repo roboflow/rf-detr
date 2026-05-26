@@ -568,8 +568,8 @@ class TestBuildCocoKeypointMode:
         assert kwargs["include_keypoints"] is True
         assert kwargs["remap_category_ids"] is False
 
-    def test_default_mode_uses_instances_annotations(self, tmp_path: Path) -> None:
-        """Default detection mode should keep ``instances_train2017.json`` annotations."""
+    def test_default_mode_uses_instances_annotations_with_raw_coco_ids(self, tmp_path: Path) -> None:
+        """Default COCO detection mode should keep raw sparse category IDs for pretrained checkpoints."""
         from unittest.mock import patch
 
         args = _make_coco_builder_args(tmp_path, use_grouppose_keypoints=False)
@@ -583,4 +583,4 @@ class TestBuildCocoKeypointMode:
         ann_file = str(mock_dataset.call_args.args[1])
         assert ann_file.endswith("annotations/instances_train2017.json")
         assert kwargs["include_keypoints"] is False
-        assert kwargs["remap_category_ids"] is True
+        assert kwargs["remap_category_ids"] is False
