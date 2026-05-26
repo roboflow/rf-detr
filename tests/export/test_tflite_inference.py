@@ -99,11 +99,17 @@ class TestCreateInterpreter:
 
     @pytest.fixture()
     def _mock_tflite_runtime(self):
-        """Inject a fake tflite_runtime.interpreter into sys.modules.
+        """Inject a fake tflite_runtime.interpreter into sys.modules and mask ai_edge_litert.
+
+        ``_create_interpreter`` probes backends in priority order: ``ai_edge_litert`` first, then
+        ``tflite_runtime``, then ``tensorflow``. Masking ``ai_edge_litert`` and
+        ``ai_edge_litert.interpreter`` to ``None`` forces the import loop to fall through to the
+        ``tflite_runtime`` path so tests exercise that branch regardless of what is installed.
 
         Python's import machinery resolves ``import tflite_runtime.interpreter`` by looking up
-        ``sys.modules["tflite_runtime.interpreter"]`` directly. We also set the ``interpreter`` attribute on the parent
-        package mock so attribute-path resolution is consistent regardless of Python version.
+        ``sys.modules["tflite_runtime.interpreter"]`` directly. We also set the ``interpreter``
+        attribute on the parent package mock so attribute-path resolution is consistent regardless
+        of Python version.
         """
         interp_instance = mock.MagicMock()
         interp_instance.get_input_details.return_value = [{"shape": [1, 640, 640, 3], "dtype": np.float32}]
