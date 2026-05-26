@@ -19,9 +19,10 @@ from rfdetr.utilities import box_ops
 class PostProcess(nn.Module):
     """This module converts the model's output into the format expected by the coco api."""
 
-    def __init__(self, num_select=300) -> None:
+    def __init__(self, num_select=300, num_keypoints_per_class: list[int] | None = None) -> None:
         super().__init__()
         self.num_select = num_select
+        self.num_keypoints_per_class = num_keypoints_per_class or []
 
     @torch.no_grad()
     def forward(self, outputs, target_sizes):
@@ -34,12 +35,19 @@ class PostProcess(nn.Module):
         """
         out_logits, out_bbox = outputs["pred_logits"], outputs["pred_boxes"]
         out_masks = outputs.get("pred_masks", None)
+        out_keypoints = outputs.get("pred_keypoints", None)
+
+        assert not (out_masks is not None and out_keypoints is not None), (
+            "masks and keypoints cannot be used together in postprocessing."
+        )
 
         assert len(out_logits) == len(target_sizes)
         assert target_sizes.shape[1] == 2
 
         prob = out_logits.sigmoid()
-        topk_values, topk_indexes = torch.topk(prob.view(out_logits.shape[0], -1), self.num_select, dim=1)
+        logits_for_topk = prob.view(out_logits.shape[0], -1)
+        num_to_select = min(self.num_select, logits_for_topk.shape[1])
+        topk_values, topk_indexes = torch.topk(logits_for_topk, num_to_select, dim=1)
         scores = topk_values
         topk_boxes = topk_indexes // out_logits.shape[2]
         labels = topk_indexes % out_logits.shape[2]
@@ -71,6 +79,49 @@ class PostProcess(nn.Module):
                 )  # [K,1,H,W]
                 res_i["masks"] = masks_i > 0.0
                 results.append(res_i)
+        elif out_keypoints is not None:
+            max_num_keypoints = max(self.num_keypoints_per_class, default=0)
+            num_keypoint_classes = len(self.num_keypoints_per_class)
+            for i in range(out_keypoints.shape[0]):
+                labels_i = labels[i]
+                boxes_i = boxes[i]
+                scores_i = scores[i]
+                keypoint_query_indices = topk_boxes[i]
+                keypoints_i = torch.gather(
+                    out_keypoints[i],
+                    0,
+                    keypoint_query_indices.unsqueeze(-1)
+                    .unsqueeze(-1)
+                    .repeat(
+                        1,
+                        out_keypoints.shape[-2],
+                        out_keypoints.shape[-1],
+                    ),
+                )
+
+                output_keypoints = keypoints_i.new_zeros((keypoints_i.shape[0], max_num_keypoints, 3))
+                if num_keypoint_classes > 0 and max_num_keypoints > 0:
+                    reshaped = keypoints_i.view(
+                        keypoints_i.shape[0], num_keypoint_classes, max_num_keypoints, keypoints_i.shape[-1]
+                    )
+                    valid_class_mask = labels_i < num_keypoint_classes
+                    if valid_class_mask.any():
+                        valid_indices = valid_class_mask.nonzero(as_tuple=True)[0]
+                        selected_labels = labels_i[valid_indices]
+                        selected_keypoints = reshaped[valid_indices, selected_labels]
+                        img_h, img_w = target_sizes[i]
+                        output_keypoints[valid_indices, :, 0] = selected_keypoints[:, :, 0] * img_w
+                        output_keypoints[valid_indices, :, 1] = selected_keypoints[:, :, 1] * img_h
+                        output_keypoints[valid_indices, :, 2] = selected_keypoints[:, :, 2].sigmoid()
+
+                results.append(
+                    {
+                        "scores": scores_i,
+                        "labels": labels_i,
+                        "boxes": boxes_i,
+                        "keypoints": output_keypoints,
+                    }
+                )
         else:
             results = [
                 {"scores": score, "labels": label, "boxes": box} for score, label, box in zip(scores, labels, boxes)

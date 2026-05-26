@@ -32,6 +32,7 @@ def test_lwdetr_default_detection_forward_after_backbone_change() -> None:
     backbone.return_value = (features, poss, None)
 
     transformer = MagicMock()
+    transformer.d_model = hidden_dim
     transformer_out = (
         torch.zeros(1, batch_size, num_queries, hidden_dim),
         torch.zeros(1, batch_size, num_queries, hidden_dim),
