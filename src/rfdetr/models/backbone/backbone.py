@@ -51,6 +51,7 @@ class Backbone(BackboneBase):
         patch_size: int = 14,
         num_windows: int = 4,
         positional_encoding_size: int = 0,
+        dual_projector: bool = False,
     ):
         super().__init__()
         # an example name here would be "dinov2_base" or "dinov2_registers_windowed_base"
@@ -106,6 +107,17 @@ class Backbone(BackboneBase):
             layer_norm=layer_norm,
             rms_norm=rms_norm,
         )
+        self.cross_attn_projector = (
+            MultiScaleProjector(
+                in_channels=self.encoder._out_feature_channels,
+                out_channels=out_channels,
+                scale_factors=scale_factors,
+                layer_norm=layer_norm,
+                rms_norm=rms_norm,
+            )
+            if dual_projector
+            else None
+        )
 
         self._export = False
 
@@ -133,8 +145,8 @@ class Backbone(BackboneBase):
     def forward(self, tensor_list: NestedTensor):
         """"""
         # (H, W, B, C)
-        feats = self.encoder(tensor_list.tensors)
-        feats = self.projector(feats)
+        raw_feats = self.encoder(tensor_list.tensors)
+        feats = self.projector(raw_feats)
         # x: [(B, C, H, W)]
         out = []
         for feat in feats:
@@ -142,11 +154,22 @@ class Backbone(BackboneBase):
             assert m is not None
             mask = F.interpolate(m[None].float(), size=feat.shape[-2:]).to(torch.bool)[0]
             out.append(NestedTensor(feat, mask))
-        return out
+
+        cross_attn_out = None
+        if self.cross_attn_projector is not None:
+            cross_attn_out = []
+            cross_attn_feats = self.cross_attn_projector(raw_feats)
+            for feat in cross_attn_feats:
+                m = tensor_list.mask
+                assert m is not None
+                mask = F.interpolate(m[None].float(), size=feat.shape[-2:]).to(torch.bool)[0]
+                cross_attn_out.append(NestedTensor(feat, mask))
+
+        return out, cross_attn_out
 
     def forward_export(self, tensors: torch.Tensor):
-        feats = self.encoder(tensors)
-        feats = self.projector(feats)
+        raw_feats = self.encoder(tensors)
+        feats = self.projector(raw_feats)
         out_feats = []
         out_masks = []
         for feat in feats:
@@ -154,7 +177,12 @@ class Backbone(BackboneBase):
             b, _, h, w = feat.shape
             out_masks.append(torch.zeros((b, h, w), dtype=torch.bool, device=feat.device))
             out_feats.append(feat)
-        return out_feats, out_masks
+
+        cross_attn_feats = None
+        if self.cross_attn_projector is not None:
+            cross_attn_feats = list(self.cross_attn_projector(raw_feats))
+
+        return out_feats, out_masks, cross_attn_feats
 
     def get_named_param_lr_pairs(self, args, prefix: str = "backbone.0"):
         num_layers = args.out_feature_indexes[-1] + 1
