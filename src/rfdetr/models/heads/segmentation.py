@@ -83,13 +83,15 @@ class _DepthwiseConvWithoutCuDNN(torch.autograd.Function):
             ``False``) get ``None``. Non-tensor inputs always get ``None``.
 
         Note:
-            Under AMP (``"16-mixed"``), ``grad_output`` arrives as ``fp16`` while the saved ``weight`` stays ``fp32``.
-            Both tensors are upcast to ``weight.dtype`` before calling ``conv2d_input`` / ``conv2d_weight``.
-            ``grad_input`` is then cast back to the original input dtype so downstream gradient accumulation uses the
-            expected dtype.
+            Under AMP (``"bf16-mixed"`` or ``"16-mixed"``), ``grad_output`` may arrive in a reduced dtype while the
+            saved ``weight`` stays ``fp32``.  Both tensors are upcast to ``weight.dtype`` before calling
+            ``conv2d_input`` / ``conv2d_weight``.  ``grad_input`` is kept in ``weight.dtype`` (fp32) so that upstream
+            gradient accumulation into fp32 leaf parameters stays in fp32 — matching standard ``F.conv2d`` backward
+            behaviour.  Casting back to the activation dtype (``x.dtype``) would propagate a reduced-precision gradient
+            to fp32 backbone parameters, causing a ``params, grads, exp_avgs, and exp_avg_sqs must have same dtype``
+            crash in fused AdamW (see issue #959).
         """
         x, weight = ctx.saved_tensors
-        input_dtype = x.dtype
 
         needs_x_grad = ctx.needs_input_grad[0]
         needs_w_grad = ctx.needs_input_grad[1]
@@ -100,9 +102,10 @@ class _DepthwiseConvWithoutCuDNN(torch.autograd.Function):
         grad_bias = None
 
         if needs_x_grad or needs_w_grad:
-            # Under AMP ("16-mixed" on T4/P100), grad_output arrives as fp16 while
+            # Under AMP, grad_output may arrive in a reduced dtype (fp16/bf16) while
             # weight stays fp32.  conv2d_input/conv2d_weight require matching dtypes,
-            # so upcast to weight.dtype (fp32); cast grad_input back afterward.
+            # so upcast to weight.dtype (fp32).  grad_input is kept in weight.dtype —
+            # casting back to x.dtype would inject a bf16 gradient into fp32 params.
             grad_output_cast = grad_output.to(dtype=weight.dtype)
             # Same process-global caveat as forward: safe under DDP, not under DataParallel.
             with torch.backends.cudnn.flags(enabled=False):
@@ -115,7 +118,7 @@ class _DepthwiseConvWithoutCuDNN(torch.autograd.Function):
                         padding=ctx.padding,
                         dilation=ctx.dilation,
                         groups=ctx.groups,
-                    ).to(dtype=input_dtype)
+                    )  # kept in weight.dtype (fp32) — do NOT cast back to x.dtype
                 if needs_w_grad:
                     grad_weight = torch.nn.grad.conv2d_weight(
                         x.to(dtype=weight.dtype),
