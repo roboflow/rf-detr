@@ -3,25 +3,18 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""COCO val2017 inference benchmarks for the PTL training stack.
-
-For every detection and segmentation model variant, this module:
-
-1. Loads pretrained weights via the :class:`~rfdetr.detr.RFDETR` wrapper.
-2. Copies the weights into a fresh :class:`~rfdetr.training.RFDETRModelModule`.
-3. Evaluates via ``Trainer.validate`` and asserts mAP thresholds.
+"""COCO val2017 inference benchmarks covering both the public ``RFDETR.predict()`` API and the PTL training stack.
 
 API contract tests (return type of ``predict()``) live in ``tests/models/test_predict.py`` and do not require a COCO
 download.
 
 Test functions:
 
-- :func:`test_inference_detection_rfdetr_predict` — asserts mAP@50 for detection
-  models (Nano/Small/Medium/Large).
-- :func:`test_inference_segmentation_rfdetr_predict` — asserts mAP@50 for
-  segmentation models (Nano through 2XLarge).
-- :func:`test_inference_detection_ptl_predict` — ``trainer.predict()`` exercises
-  the PTL predict loop (50 samples) then asserts mAP via ``Trainer.validate``.
+- :func:`test_inference_detection_rfdetr_predict` — calls ``RFDETR.predict()`` on COCO val images, scores via
+  ``torchmetrics.MeanAveragePrecision``, and asserts mAP@50 and macro-F1 thresholds for detection models.
+- :func:`test_inference_segmentation_rfdetr_predict` — same for segmentation models (bbox mAP; masks not required).
+- :func:`test_inference_detection_ptl_predict` — exercises the PTL predict loop (50 samples via
+  ``trainer.predict()``), then asserts mAP@50 and F1 via ``Trainer.validate`` on the full sample set.
 - :func:`test_inference_segmentation_ptl_predict` — same for segmentation models.
 """
 
@@ -29,9 +22,13 @@ import os
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
+import PIL.Image
 import pytest
 import torch
+from pycocotools.coco import COCO
 from pytorch_lightning import LightningModule
+from torchmetrics.detection import MeanAveragePrecision
 
 from rfdetr import (
     RFDETRLarge,
@@ -47,11 +44,121 @@ from rfdetr import (
 )
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.detr import RFDETR
+from rfdetr.evaluation.f1_sweep import sweep_confidence_thresholds
+from rfdetr.evaluation.matching import (
+    build_matching_data,
+    init_matching_accumulator,
+    merge_matching_data,
+)
 from rfdetr.training import RFDETRDataModule, RFDETRModelModule, build_trainer
 
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
+
+
+def _score_rfdetr_predict(
+    rfdetr_obj: RFDETR,
+    images_root: Path,
+    annotations_path: Path,
+    num_samples: int,
+    batch_size: int,
+) -> tuple[float, float]:
+    """Run ``RFDETR.predict()`` on a COCO val subset and return ``(mAP@50, macro-F1)``.
+
+    Loads images from disk as PIL images, calls ``rfdetr_obj.predict()`` in batches, converts
+    :class:`~supervision.Detections` to torchmetrics format, and computes bbox mAP@50 via
+    ``MeanAveragePrecision`` and macro-F1 via a confidence-threshold sweep.
+
+    Args:
+        rfdetr_obj: Pretrained :class:`~rfdetr.detr.RFDETR` instance.
+        images_root: Directory containing COCO val images (``val2017/``).
+        annotations_path: Path to ``instances_val2017.json``.
+        num_samples: Number of images to evaluate (first N by sorted image ID).
+        batch_size: Number of images per ``predict()`` call.
+
+    Returns:
+        Tuple ``(mAP@50, macro_f1)`` computed over the evaluated subset.
+    """
+    coco_gt = COCO(str(annotations_path))
+    img_ids = sorted(coco_gt.getImgIds())[:num_samples]
+
+    map_metric = MeanAveragePrecision(
+        iou_type="bbox",
+        class_metrics=True,
+        max_detection_thresholds=[1, 10, 500],
+        backend="faster_coco_eval",
+    )
+    f1_local = init_matching_accumulator()
+
+    for start in range(0, len(img_ids), batch_size):
+        batch_ids = img_ids[start : start + batch_size]
+        images = [PIL.Image.open(images_root / f"{img_id:012d}.jpg").convert("RGB") for img_id in batch_ids]
+        detections_batch = rfdetr_obj.predict(images, threshold=0.001, include_source_image=False)
+        if not isinstance(detections_batch, list):
+            detections_batch = [detections_batch]
+
+        preds: list[dict[str, torch.Tensor]] = []
+        targets: list[dict[str, torch.Tensor]] = []
+        for img_id, det in zip(batch_ids, detections_batch):
+            if len(det) > 0:
+                pred = {
+                    "boxes": torch.tensor(det.xyxy, dtype=torch.float32),
+                    "scores": torch.tensor(det.confidence, dtype=torch.float32),
+                    "labels": torch.tensor(det.class_id, dtype=torch.int64),
+                }
+            else:
+                pred = {
+                    "boxes": torch.zeros((0, 4), dtype=torch.float32),
+                    "scores": torch.zeros(0, dtype=torch.float32),
+                    "labels": torch.zeros(0, dtype=torch.int64),
+                }
+            preds.append(pred)
+
+            ann_ids = coco_gt.getAnnIds(imgIds=img_id)
+            anns = coco_gt.loadAnns(ann_ids)
+            gt_boxes: list[list[float]] = []
+            gt_labels: list[int] = []
+            iscrowd: list[int] = []
+            for ann in anns:
+                bx, by, bw, bh = ann["bbox"]
+                gt_boxes.append([bx, by, bx + bw, by + bh])
+                gt_labels.append(ann["category_id"])
+                iscrowd.append(int(ann.get("iscrowd", 0)))
+            if gt_boxes:
+                targets.append(
+                    {
+                        "boxes": torch.tensor(gt_boxes, dtype=torch.float32),
+                        "labels": torch.tensor(gt_labels, dtype=torch.int64),
+                        "iscrowd": torch.tensor(iscrowd, dtype=torch.uint8),
+                    }
+                )
+            else:
+                targets.append(
+                    {
+                        "boxes": torch.zeros((0, 4), dtype=torch.float32),
+                        "labels": torch.zeros(0, dtype=torch.int64),
+                        "iscrowd": torch.zeros(0, dtype=torch.uint8),
+                    }
+                )
+
+        map_metric.update(preds, targets)
+        batch_matching = build_matching_data(preds, targets, iou_threshold=0.5, iou_type="bbox")
+        merge_matching_data(f1_local, batch_matching)
+
+    metrics = map_metric.compute()
+    map50 = float(metrics["map_50"])
+
+    f1_val = 0.0
+    if f1_local:
+        sorted_ids = sorted(f1_local.keys())
+        per_class_list = [f1_local[cid] for cid in sorted_ids]
+        classes_with_gt = [i for i, cid in enumerate(sorted_ids) if f1_local[cid]["total_gt"] > 0]
+        f1_results = sweep_confidence_thresholds(per_class_list, np.linspace(0, 1, 101), classes_with_gt)
+        best = max(f1_results, key=lambda x: x["macro_f1"])
+        f1_val = float(best["macro_f1"])
+
+    return map50, f1_val
 
 
 def _build_train_config(coco_root: Path, tmp_path: Path, batch_size: int) -> TrainConfig:
@@ -158,7 +265,6 @@ def _build_ptl_module(rfdetr_obj: RFDETR, train_config: TrainConfig) -> RFDETRMo
     ],
 )
 def test_inference_detection_rfdetr_predict(
-    tmp_path: Path,
     download_coco_val: tuple[Path, Path],
     model_cls: type[RFDETR],
     threshold_map: float,
@@ -166,35 +272,24 @@ def test_inference_detection_rfdetr_predict(
     num_samples: int,
     batch_size: int,
 ) -> None:
-    """``RFDETR.predict()`` returns valid ``sv.Detections`` for detection models.
+    """``RFDETR.predict()`` meets mAP@50 and macro-F1 thresholds on COCO val for detection models.
 
-    Loads a pretrained detection model, runs ``predict()`` on a sample of COCO val images, and asserts
-    ``Trainer.validate`` meets the mAP and F1 thresholds.
+    Loads a pretrained detection model, calls ``predict()`` in batches on COCO val images, scores via
+    ``torchmetrics.MeanAveragePrecision`` and a confidence-threshold sweep, and asserts quality thresholds.
 
     Args:
-        tmp_path: Pytest-provided temporary directory.
         download_coco_val: Fixture providing ``(images_root, annotations_path)``.
         model_cls: Detection model class to instantiate with pretrained weights.
-        threshold_map: Minimum ``val/mAP_50`` required.
-        threshold_f1: Minimum ``val/F1`` (best macro-F1 across confidence sweep) required.
-        num_samples: Number of val images used for ``Trainer.validate``.
-        batch_size: DataLoader batch size for ``Trainer.validate``.
+        threshold_map: Minimum bbox mAP@50 required.
+        threshold_f1: Minimum macro-F1 (best across confidence sweep) required.
+        num_samples: Number of COCO val images to evaluate.
+        batch_size: Number of images per ``predict()`` call.
     """
     device_str = "cuda" if torch.cuda.is_available() else "cpu"
-    images_root, _ = download_coco_val
-    coco_root = images_root.parent
+    images_root, annotations_path = download_coco_val
 
     rfdetr = model_cls(device=device_str)
-
-    # Verify mAP and F1 via Trainer.validate on the pretrained weights.
-    tc = _build_train_config(coco_root, tmp_path, batch_size)
-    dm = _build_datamodule(rfdetr.model_config, tc, num_samples=num_samples)
-    module = _build_ptl_module(rfdetr, tc)
-    accelerator = "auto" if torch.cuda.is_available() else "cpu"
-    trainer = build_trainer(tc, rfdetr.model_config, accelerator=accelerator)
-    (metrics,) = trainer.validate(module, datamodule=dm)
-    map_val = metrics["val/mAP_50"]
-    f1_val = metrics["val/F1"]
+    map_val, f1_val = _score_rfdetr_predict(rfdetr, images_root, annotations_path, num_samples, batch_size)
     assert map_val >= threshold_map, f"mAP@50 {map_val:.4f} < {threshold_map}"
     assert f1_val >= threshold_f1, f"F1 {f1_val:.4f} < {threshold_f1}"
 
@@ -211,7 +306,6 @@ def test_inference_detection_rfdetr_predict(
     ],
 )
 def test_inference_segmentation_rfdetr_predict(
-    tmp_path: Path,
     download_coco_val: tuple[Path, Path],
     model_cls: type[RFDETR],
     threshold_map: float,
@@ -219,34 +313,24 @@ def test_inference_segmentation_rfdetr_predict(
     num_samples: int,
     batch_size: int,
 ) -> None:
-    """Asserts mAP and F1 thresholds for segmentation models via ``Trainer.validate``.
+    """``RFDETR.predict()`` meets bbox mAP@50 and macro-F1 thresholds on COCO val for segmentation models.
 
     Same structure as :func:`test_inference_detection_rfdetr_predict` but for segmentation variants.
+    Masks are not required; only bbox IoU is used for scoring.
 
     Args:
-        tmp_path: Pytest-provided temporary directory.
         download_coco_val: Fixture providing ``(images_root, annotations_path)``.
         model_cls: Segmentation model class to instantiate with pretrained weights.
-        threshold_map: Minimum ``val/mAP_50`` (bbox) required.
-        threshold_f1: Minimum ``val/F1`` (best macro-F1 across confidence sweep) required.
-        num_samples: Number of val images used for ``Trainer.validate``.
-        batch_size: DataLoader batch size for ``Trainer.validate``.
+        threshold_map: Minimum bbox mAP@50 required.
+        threshold_f1: Minimum macro-F1 (best across confidence sweep) required.
+        num_samples: Number of COCO val images to evaluate.
+        batch_size: Number of images per ``predict()`` call.
     """
     device_str = "cuda" if torch.cuda.is_available() else "cpu"
-    images_root, _ = download_coco_val
-    coco_root = images_root.parent
+    images_root, annotations_path = download_coco_val
 
     rfdetr = model_cls(device=device_str)
-
-    # Verify mAP and F1 via Trainer.validate on the pretrained weights.
-    tc = _build_train_config(coco_root, tmp_path, batch_size)
-    dm = _build_datamodule(rfdetr.model_config, tc, num_samples=num_samples)
-    module = _build_ptl_module(rfdetr, tc)
-    accelerator = "auto" if torch.cuda.is_available() else "cpu"
-    trainer = build_trainer(tc, rfdetr.model_config, accelerator=accelerator)
-    (metrics,) = trainer.validate(module, datamodule=dm)
-    map_val = metrics["val/mAP_50"]
-    f1_val = metrics["val/F1"]
+    map_val, f1_val = _score_rfdetr_predict(rfdetr, images_root, annotations_path, num_samples, batch_size)
     assert map_val >= threshold_map, f"mAP@50 {map_val:.4f} < {threshold_map}"
     assert f1_val >= threshold_f1, f"F1 {f1_val:.4f} < {threshold_f1}"
 
