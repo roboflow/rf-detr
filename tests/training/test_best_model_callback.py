@@ -133,6 +133,19 @@ class _ResumeProbeCallback(Callback):
 class TestBestModelCallback:
     """Verify best-model checkpoint saving and selection."""
 
+    def test_checkpoint_payload_includes_model_config_when_provided(self) -> None:
+        """Saved ``.pth`` checkpoints should carry the architecture schema needed for reload."""
+        trainer = _make_trainer({"val/mAP_50_95": 0.5})
+        payload = BestModelCallback._build_checkpoint_payload(
+            {"w": torch.zeros(1)},
+            {"num_classes": 1},
+            trainer,
+            model_name="RFDETRKeypointPreview",
+            model_config_dict={"num_keypoints_per_class": [0, 17], "use_grouppose_keypoints": True},
+        )
+
+        assert payload["model_config"] == {"num_keypoints_per_class": [0, 17], "use_grouppose_keypoints": True}
+
     @pytest.mark.parametrize(
         "monitor_ema, metrics, checkpoint_file",
         [

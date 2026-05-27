@@ -170,6 +170,7 @@ def _build_albu_transform(name: str, params: Dict[str, Any]) -> alb.BasicTransfo
         Instantiated Albumentations transform.
 
     Raises:
+        ImportError: If Albumentations is not installed.
         ValueError: If ``name`` is unknown or ``params`` is malformed.
 
     Examples:
@@ -184,6 +185,12 @@ def _build_albu_transform(name: str, params: Dict[str, Any]) -> alb.BasicTransfo
         >>> isinstance(container, OneOf)
         True
     """
+    if alb is None:
+        raise ImportError(
+            "Albumentations is required to build RF-DETR dataset transforms. "
+            "Install the project dependencies with `uv sync --all-groups` or install albumentations."
+        )
+
     if name in ALBUMENTATIONS_CONTAINERS:
         raw_nested = params.get("transforms", [])
         if not isinstance(raw_nested, list):
@@ -805,6 +812,7 @@ class AlbumentationsWrapper:
             List of :class:`AlbumentationsWrapper` instances in config order.
 
         Raises:
+            ImportError: If Albumentations is not installed.
             TypeError: If *config_dict* is neither a ``dict`` nor a ``list``.
 
         Examples:
@@ -830,6 +838,12 @@ class AlbumentationsWrapper:
         if not entries:
             logger.warning("Empty augmentation config provided, no transforms will be applied")
             return []
+
+        if alb is None:
+            raise ImportError(
+                "Albumentations is required to build RF-DETR dataset transforms. "
+                "Install the project dependencies with `uv sync --all-groups` or install albumentations."
+            )
 
         transforms = []
         for entry in entries:

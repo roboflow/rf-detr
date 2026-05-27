@@ -126,8 +126,7 @@ def compute_l1_keypoint_loss(
     num_classes = len(num_keypoints_per_class)
 
     if num_classes == 0:
-        empty = torch.zeros(n_targets, device=all_pred_keypoints.device, dtype=all_pred_keypoints.dtype)
-        return empty, empty, empty, empty, empty
+        raise ValueError("num_keypoints_per_class must be non-empty when computing keypoint losses.")
 
     kpad = total_padded_num_keypoints // num_classes
     split_pred_keypoints = all_pred_keypoints.view(n_targets, num_classes, kpad, pred_dim)
@@ -300,7 +299,10 @@ def compute_keypoint_matching_cost(
     n_targets = target_keypoints.shape[0]
     num_classes = len(num_keypoints_per_class)
 
-    if n_targets == 0 or num_classes == 0:
+    if num_classes == 0:
+        raise ValueError("num_keypoints_per_class must be non-empty when computing keypoint matching costs.")
+
+    if n_targets == 0:
         zeros = torch.zeros(
             (b, num_queries, n_targets),
             device=all_pred_keypoints.device,

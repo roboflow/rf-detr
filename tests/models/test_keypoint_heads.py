@@ -4,6 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+import pytest
 import torch
 
 from rfdetr.models.flows import RealNVP
@@ -71,6 +72,21 @@ def test_compute_l1_keypoint_loss_skips_visible_zero_area_rle_residuals() -> Non
         assert torch.isfinite(loss).all()
 
 
+def test_compute_l1_keypoint_loss_rejects_missing_schema() -> None:
+    """Missing keypoint schema should fail before producing zero supervision."""
+    pred_keypoints = torch.randn(1, 17, 7)
+    target_keypoints = torch.rand(1, 17, 3)
+
+    with pytest.raises(ValueError, match="num_keypoints_per_class must be non-empty"):
+        compute_l1_keypoint_loss(
+            all_pred_keypoints=pred_keypoints,
+            target_keypoints=target_keypoints,
+            target_classes=torch.tensor([0], dtype=torch.int64),
+            target_areas=torch.tensor([1.0], dtype=torch.float32),
+            num_keypoints_per_class=[],
+        )
+
+
 def test_compute_keypoint_matching_cost_smoke() -> None:
     """Matching-cost helper should return a five-term cost tensor for each target."""
     all_pred_keypoints = torch.randn(2, 4, 17, 7)
@@ -115,3 +131,19 @@ def test_compute_keypoint_matching_cost_skips_zero_area_rle_residuals() -> None:
 
     for cost in costs:
         assert torch.isfinite(cost).all()
+
+
+def test_compute_keypoint_matching_cost_rejects_missing_schema() -> None:
+    """Missing keypoint schema should fail before matcher costs become keypoint no-ops."""
+    all_pred_keypoints = torch.randn(1, 2, 17, 7)
+    target_keypoints = torch.rand(1, 17, 3)
+
+    with pytest.raises(ValueError, match="num_keypoints_per_class must be non-empty"):
+        compute_keypoint_matching_cost(
+            all_pred_keypoints=all_pred_keypoints,
+            target_keypoints=target_keypoints,
+            target_classes=torch.tensor([0], dtype=torch.int64),
+            target_areas=torch.tensor([1.0], dtype=torch.float32),
+            num_keypoints_per_class=[],
+            flow=None,
+        )

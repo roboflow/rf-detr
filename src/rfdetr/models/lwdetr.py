@@ -80,6 +80,20 @@ def _resize_linear(linear: nn.Linear, num_classes: int) -> nn.Linear:
     return new_linear
 
 
+def _resize_parameter_rows(parameter: nn.Parameter, num_rows: int) -> nn.Parameter:
+    """Return a parameter with the first dimension resized by tiling or truncating rows."""
+    current_rows = parameter.shape[0]
+    if current_rows == num_rows:
+        return parameter
+
+    if current_rows == 0:
+        new_data = parameter.detach().new_zeros((num_rows, *parameter.shape[1:]))
+    else:
+        repeats = [int(math.ceil(num_rows / current_rows)), *([1] * (parameter.dim() - 1))]
+        new_data = parameter.detach().repeat(*repeats)[:num_rows]
+    return nn.Parameter(new_data.clone(), requires_grad=parameter.requires_grad)
+
+
 class LWDETR(nn.Module):
     """This is the Group DETR v3 module that performs object detection."""
 
@@ -153,15 +167,7 @@ class LWDETR(nn.Module):
         else:
             self.keypoint_embed = None
 
-        if self.num_keypoints_per_class:
-            max_kp = max(self.num_keypoints_per_class)
-            num_keypoint_classes = len(self.num_keypoints_per_class)
-            kp_active = torch.zeros(num_keypoint_classes, max_kp, dtype=torch.bool)
-            for class_idx, num_keypoints in enumerate(self.num_keypoints_per_class):
-                kp_active[class_idx, :num_keypoints] = True
-            self.register_buffer("_kp_active_mask", kp_active)
-        else:
-            self.register_buffer("_kp_active_mask", torch.zeros(0, 0, dtype=torch.bool))
+        self.register_buffer("_kp_active_mask", self._create_kp_active_mask(self.num_keypoints_per_class))
 
         # init prior_prob setting for focal loss
         prior_prob = 0.01
@@ -206,6 +212,83 @@ class LWDETR(nn.Module):
             self.transformer.enc_out_class_embed = nn.ModuleList(
                 [_resize_linear(m, num_classes) for m in self.transformer.enc_out_class_embed]
             )
+
+    @staticmethod
+    def _create_kp_active_mask(num_keypoints_per_class: list[int]) -> torch.Tensor:
+        """Create a compact class-by-keypoint active mask for a keypoint schema."""
+        if not num_keypoints_per_class:
+            return torch.zeros(0, 0, dtype=torch.bool)
+
+        max_kp = max(num_keypoints_per_class)
+        kp_active = torch.zeros(len(num_keypoints_per_class), max_kp, dtype=torch.bool)
+        for class_idx, num_keypoints in enumerate(num_keypoints_per_class):
+            kp_active[class_idx, :num_keypoints] = True
+        return kp_active
+
+    @staticmethod
+    def _create_keypoint_class_mask(num_keypoints_per_class: list[int]) -> torch.Tensor:
+        """Create an attention mask that blocks cross-class keypoint interactions."""
+        if not num_keypoints_per_class:
+            return torch.zeros(1, 1, dtype=torch.bool)
+
+        total_keypoints = sum(num_keypoints_per_class)
+        mask = torch.zeros(1 + total_keypoints, 1 + total_keypoints, dtype=torch.bool)
+        for class_idx_i, num_keypoints_i in enumerate(num_keypoints_per_class):
+            if num_keypoints_i == 0:
+                continue
+            start_i = 1 + sum(num_keypoints_per_class[:class_idx_i])
+            end_i = start_i + num_keypoints_i
+            for class_idx_j, num_keypoints_j in enumerate(num_keypoints_per_class):
+                if num_keypoints_j == 0 or class_idx_i == class_idx_j:
+                    continue
+                start_j = 1 + sum(num_keypoints_per_class[:class_idx_j])
+                end_j = start_j + num_keypoints_j
+                mask[start_i:end_i, start_j:end_j] = True
+        return mask
+
+    def get_num_keypoints_per_class(self) -> list[int]:
+        """Return the current keypoint schema inferred from the active-keypoint mask."""
+        return [int(num_keypoints) for num_keypoints in self._kp_active_mask.sum(dim=1).tolist()]
+
+    @staticmethod
+    def get_num_keypoints_per_class_from_checkpoint(state_dict: dict[str, torch.Tensor]) -> list[int] | None:
+        """Infer the keypoint schema stored in a checkpoint state dict."""
+        active_mask = state_dict.get("_kp_active_mask")
+        if not isinstance(active_mask, torch.Tensor) or active_mask.ndim != 2:
+            return None
+        return [int(num_keypoints) for num_keypoints in active_mask.sum(dim=1).tolist()]
+
+    def reinitialize_keypoint_head(self, num_keypoints_per_class: list[int] | None) -> None:
+        """Resize schema-dependent GroupPose state to match ``num_keypoints_per_class``."""
+        if not self.use_grouppose_keypoints or not num_keypoints_per_class:
+            return
+
+        schema = list(num_keypoints_per_class)
+        total_keypoints = sum(schema)
+        self.num_keypoints_per_class = schema
+        self._kp_active_mask = self._create_kp_active_mask(schema).to(self._kp_active_mask.device)
+
+        if hasattr(self.transformer, "num_keypoints_per_class"):
+            self.transformer.num_keypoints_per_class = schema
+
+        decoder = getattr(self.transformer, "decoder", None)
+        if decoder is not None:
+            if hasattr(decoder, "num_keypoints_per_class"):
+                decoder.num_keypoints_per_class = schema
+            keypoint_pos_embed = getattr(decoder, "keypoint_pos_embed", None)
+            if isinstance(keypoint_pos_embed, nn.Parameter):
+                decoder.keypoint_pos_embed = _resize_parameter_rows(keypoint_pos_embed, total_keypoints)
+            if hasattr(decoder, "_create_keypoint_class_mask"):
+                decoder._create_keypoint_class_mask()
+            elif hasattr(decoder, "keypoint_class_mask"):
+                current_mask = decoder.keypoint_class_mask
+                decoder.keypoint_class_mask = self._create_keypoint_class_mask(schema).to(current_mask.device)
+
+        for initializer_name in ("keypoint_query_initializer", "keypoint_query_initializer_enc"):
+            initializer = getattr(self.transformer, initializer_name, None)
+            queries = getattr(initializer, "queries", None)
+            if isinstance(queries, nn.Parameter):
+                initializer.queries = _resize_parameter_rows(queries, total_keypoints)
 
     def export(self):
         self._export = True

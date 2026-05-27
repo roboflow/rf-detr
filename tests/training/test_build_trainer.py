@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from pytorch_lightning.callbacks import ModelCheckpoint
 
-from rfdetr.config import RFDETRBaseConfig, SegmentationTrainConfig, TrainConfig
+from rfdetr.config import RFDETRBaseConfig, RFDETRKeypointPreviewConfig, SegmentationTrainConfig, TrainConfig
 from rfdetr.training import build_trainer
 from rfdetr.training.callbacks.best_model import BestModelCallback, RFDETREarlyStopping
 from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
@@ -93,6 +93,13 @@ class TestBuildTrainerCallbacks:
         trainer = build_trainer(_tc(tmp_path, use_ema=False, skip_best_epochs=3), _mc())
         best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
         assert best_cb._skip_best_epochs == 3
+
+    def test_keypoint_best_model_monitors_keypoint_map(self, tmp_path):
+        """Keypoint training checkpoints should rank models by keypoint AP, not bbox mAP."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=True), RFDETRKeypointPreviewConfig(pretrain_weights=None))
+        best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
+        assert best_cb.monitor == "val/keypoint_map_50_95"
+        assert best_cb._monitor_ema is None
 
     def test_latest_model_checkpoint_present(self, tmp_path):
         """A ModelCheckpoint (not BestModelCallback) with every_n_epochs==1 is included when checkpoint_interval > 1."""
@@ -202,6 +209,16 @@ class TestBuildTrainerCallbacks:
         trainer = build_trainer(_tc(tmp_path, early_stopping=True, skip_best_epochs=4), _mc())
         early_stop_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RFDETREarlyStopping))
         assert early_stop_cb._skip_best_epochs == 4
+
+    def test_keypoint_early_stopping_monitors_keypoint_map(self, tmp_path):
+        """Keypoint early stopping should use keypoint AP as the regular metric."""
+        trainer = build_trainer(
+            _tc(tmp_path, early_stopping=True, early_stopping_use_ema=True),
+            RFDETRKeypointPreviewConfig(pretrain_weights=None),
+        )
+        early_stop_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RFDETREarlyStopping))
+        assert early_stop_cb._monitor_regular == "val/keypoint_map_50_95"
+        assert early_stop_cb._monitor_ema == "val/ema_keypoint_map_50_95"
 
     def test_no_early_stopping_when_disabled(self, tmp_path):
         """RFDETREarlyStopping is absent when early_stopping=False."""

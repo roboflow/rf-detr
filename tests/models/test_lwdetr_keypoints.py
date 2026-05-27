@@ -8,7 +8,9 @@
 from unittest.mock import MagicMock
 
 import torch
+from torch import nn
 
+from rfdetr.models.heads import ConditionalQueryInitializer
 from rfdetr.models.lwdetr import LWDETR
 from rfdetr.utilities.tensors import NestedTensor
 
@@ -20,6 +22,31 @@ def _build_feature_batch(batch_size: int, hidden_dim: int) -> list[NestedTensor]
             torch.zeros(batch_size, 4, 4, dtype=torch.bool),
         )
     ]
+
+
+class _DummyKeypointDecoder(nn.Module):
+    """Minimal decoder surface needed for keypoint schema resizing."""
+
+    def __init__(self, hidden_dim: int, num_keypoints_per_class: list[int]) -> None:
+        super().__init__()
+        self.num_keypoints_per_class = num_keypoints_per_class
+        self.keypoint_pos_embed = nn.Parameter(torch.randn(sum(num_keypoints_per_class), hidden_dim))
+        self.register_buffer(
+            "keypoint_class_mask",
+            torch.zeros(1 + sum(num_keypoints_per_class), 1 + sum(num_keypoints_per_class), dtype=torch.bool),
+        )
+
+
+class _DummyKeypointTransformer(nn.Module):
+    """Minimal transformer surface needed for LWDETR construction and keypoint schema resizing."""
+
+    def __init__(self, hidden_dim: int, num_keypoints_per_class: list[int]) -> None:
+        super().__init__()
+        self.d_model = hidden_dim
+        self.num_keypoints_per_class = num_keypoints_per_class
+        self.decoder = _DummyKeypointDecoder(hidden_dim, num_keypoints_per_class)
+        self.keypoint_query_initializer = ConditionalQueryInitializer(hidden_dim, sum(num_keypoints_per_class))
+        self.keypoint_query_initializer_enc = ConditionalQueryInitializer(hidden_dim, sum(num_keypoints_per_class))
 
 
 def test_lwdetr_keypoint_forward_outputs() -> None:
@@ -71,6 +98,47 @@ def test_lwdetr_keypoint_forward_outputs() -> None:
     assert outputs["keypoint_hidden_states"].shape == (batch_size, num_queries, 17, hidden_dim)
     assert "pred_keypoints" in outputs["aux_outputs"][0]
     assert "keypoint_hidden_states" in outputs["aux_outputs"][0]
+
+
+def test_lwdetr_reinitialize_keypoint_head_updates_schema_dependent_state() -> None:
+    """Keypoint schema reinit should resize masks and learned keypoint query embeddings."""
+    hidden_dim = 8
+    transformer = _DummyKeypointTransformer(hidden_dim=hidden_dim, num_keypoints_per_class=[17])
+    model = LWDETR(
+        backbone=MagicMock(),
+        transformer=transformer,
+        segmentation_head=None,
+        num_classes=3,
+        num_queries=2,
+        aux_loss=False,
+        group_detr=1,
+        two_stage=True,
+        lite_refpoint_refine=True,
+        bbox_reparam=False,
+        use_grouppose_keypoints=True,
+        num_keypoints_per_class=[17],
+        grouppose_keypoint_dim_downscale=1,
+    )
+
+    model.reinitialize_keypoint_head([2, 1])
+
+    assert model.num_keypoints_per_class == [2, 1]
+    assert model.get_num_keypoints_per_class() == [2, 1]
+    assert model._kp_active_mask.shape == (2, 2)
+    assert model._kp_active_mask.tolist() == [[True, True], [True, False]]
+    assert transformer.num_keypoints_per_class == [2, 1]
+    assert transformer.decoder.num_keypoints_per_class == [2, 1]
+    assert transformer.decoder.keypoint_pos_embed.shape == (3, hidden_dim)
+    assert transformer.decoder.keypoint_class_mask.shape == (4, 4)
+    assert transformer.keypoint_query_initializer.queries.shape == (3, hidden_dim)
+    assert transformer.keypoint_query_initializer_enc.queries.shape == (3, hidden_dim)
+
+
+def test_lwdetr_get_num_keypoints_per_class_from_checkpoint() -> None:
+    """Checkpoint keypoint schema should be recoverable from `_kp_active_mask`."""
+    state_dict = {"_kp_active_mask": torch.tensor([[True, True], [True, False]])}
+
+    assert LWDETR.get_num_keypoints_per_class_from_checkpoint(state_dict) == [2, 1]
 
 
 def test_lwdetr_default_detection_contract_unchanged() -> None:

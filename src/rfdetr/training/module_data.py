@@ -473,6 +473,17 @@ class RFDETRDataModule(LightningDataModule):
                 continue
             coco = getattr(dataset, "coco", None)
             if coco is not None and hasattr(coco, "cats"):
+                label2cat = getattr(dataset, "label2cat", None)
+                if label2cat is None:
+                    label2cat = getattr(coco, "label2cat", None)
+                if isinstance(label2cat, dict) and label2cat:
+                    max_label = max(label2cat)
+                    names = [""] * (max_label + 1)
+                    for label, category_id in sorted(label2cat.items()):
+                        category = coco.cats.get(category_id)
+                        if category is not None:
+                            names[label] = category["name"]
+                    return names
                 return [coco.cats[k]["name"] for k in sorted(coco.cats.keys())]
         return None
 

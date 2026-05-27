@@ -16,7 +16,7 @@ from faster_coco_eval import COCO
 from rfdetr.evaluation.coco_eval import CocoEvaluator
 
 
-def _write_person_keypoint_coco(path: Path) -> None:
+def _write_person_keypoint_coco(path: Path, *, include_num_keypoints: bool = True) -> None:
     """Write a minimal COCO keypoint annotation file."""
     keypoints = [
         "nose",
@@ -40,20 +40,20 @@ def _write_person_keypoint_coco(path: Path) -> None:
     coords = []
     for idx in range(len(keypoints)):
         coords.extend([20.0 + idx, 30.0 + idx, 2.0])
+    annotation = {
+        "id": 1,
+        "image_id": 1,
+        "category_id": 1,
+        "bbox": [10.0, 20.0, 50.0, 60.0],
+        "area": 3000.0,
+        "iscrowd": 0,
+        "keypoints": coords,
+    }
+    if include_num_keypoints:
+        annotation["num_keypoints"] = len(keypoints)
     payload = {
         "images": [{"id": 1, "width": 100, "height": 100, "file_name": "image.jpg"}],
-        "annotations": [
-            {
-                "id": 1,
-                "image_id": 1,
-                "category_id": 1,
-                "bbox": [10.0, 20.0, 50.0, 60.0],
-                "area": 3000.0,
-                "iscrowd": 0,
-                "num_keypoints": len(keypoints),
-                "keypoints": coords,
-            }
-        ],
+        "annotations": [annotation],
         "categories": [
             {
                 "id": 1,
@@ -117,6 +117,18 @@ def test_coco_evaluator_keypoints_accepts_pycocotools_coco_api(tmp_path: Path) -
 
     stats = evaluator.coco_eval["keypoints"].stats
     assert np.isfinite(stats[0])
+
+
+def test_coco_evaluator_backfills_missing_num_keypoints(tmp_path: Path) -> None:
+    """Keypoint GT without `num_keypoints` should not be ignored during OKS evaluation."""
+    annotation_path = tmp_path / "person_keypoints_val2017.json"
+    _write_person_keypoint_coco(annotation_path, include_num_keypoints=False)
+    coco_gt = COCO(str(annotation_path))
+    assert "num_keypoints" not in coco_gt.anns[1]
+
+    evaluator = CocoEvaluator(coco_gt, ["keypoints"])
+
+    assert evaluator.coco_gt.anns[1]["num_keypoints"] == 17
 
 
 def test_coco_evaluator_handles_empty_keypoint_predictions(tmp_path: Path) -> None:

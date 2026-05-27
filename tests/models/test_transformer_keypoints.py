@@ -5,10 +5,12 @@
 # ------------------------------------------------------------------------
 """Regression tests for GroupPose-oriented transformer streams."""
 
+from types import SimpleNamespace
+
 import torch
 from torch import nn
 
-from rfdetr.models.transformer import Transformer, TransformerDecoder, TransformerDecoderLayer
+from rfdetr.models.transformer import Transformer, TransformerDecoder, TransformerDecoderLayer, build_transformer
 
 
 def _build_transformer_inputs(
@@ -95,6 +97,34 @@ def test_transformer_keypoint_enabled_shapes() -> None:
     assert enc_kp_predictions is not None
     assert enc_kp_predictions.shape[-1] == 16
     assert keypoint_memory_ts is not None
+
+
+def test_build_transformer_defaults_inter_instance_keypoint_attention_to_config_default() -> None:
+    """Older args objects without `inter_instance_kp_attn` should keep the preview topology default."""
+    args = SimpleNamespace(
+        hidden_dim=16,
+        sa_nheads=4,
+        ca_nheads=4,
+        num_queries=6,
+        dropout=0.0,
+        dim_feedforward=32,
+        dec_layers=1,
+        group_detr=1,
+        num_feature_levels=2,
+        dec_n_points=1,
+        lite_refpoint_refine=True,
+        decoder_norm="LN",
+        bbox_reparam=False,
+        use_grouppose_keypoints=True,
+        num_keypoints_per_class=[17],
+    )
+
+    transformer = build_transformer(args)
+
+    decoder_layer = transformer.decoder.layers[0]
+    assert isinstance(decoder_layer, TransformerDecoderLayer)
+    assert decoder_layer.enable_keypoint_processing
+    assert not decoder_layer.inter_instance_kp_attn
 
 
 def test_keypoint_class_mask_person_only() -> None:

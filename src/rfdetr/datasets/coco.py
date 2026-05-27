@@ -372,6 +372,7 @@ class ConvertCoco(object):
         target["area"] = area[keep]
         target["iscrowd"] = iscrowd[keep]
 
+        keypoint_keep: torch.Tensor | None = None
         if self.include_keypoints:
             num_keypoints = self.num_keypoints
             if num_keypoints == 0:
@@ -401,6 +402,12 @@ class ConvertCoco(object):
             else:
                 keypoints_out = torch.zeros((0, num_keypoints, 3), dtype=torch.float32)
             target["keypoints"] = keypoints_out[keep]
+            keypoint_keep = (target["keypoints"][..., 2] > 0).any(dim=1)
+            target["boxes"] = target["boxes"][keypoint_keep]
+            target["labels"] = target["labels"][keypoint_keep]
+            target["area"] = target["area"][keypoint_keep]
+            target["iscrowd"] = target["iscrowd"][keypoint_keep]
+            target["keypoints"] = target["keypoints"][keypoint_keep]
 
         # add segmentation masks if requested, otherwise ensure consistent key when include_masks=True
         if self.include_masks:
@@ -415,6 +422,8 @@ class ConvertCoco(object):
                 target["masks"] = torch.zeros((0, h, w), dtype=torch.uint8)
 
             target["masks"] = target["masks"].bool()
+            if keypoint_keep is not None:
+                target["masks"] = target["masks"][keypoint_keep]
 
         target["orig_size"] = torch.as_tensor([int(h), int(w)])
         target["size"] = torch.as_tensor([int(h), int(w)])

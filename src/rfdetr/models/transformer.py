@@ -168,7 +168,7 @@ class Transformer(nn.Module):
         num_keypoints_per_class: list[int] | None = None,
         grouppose_keypoint_dim_downscale: int = 1,
         keypoint_cross_attn: bool = True,
-        inter_instance_kp_attn: bool = True,
+        inter_instance_kp_attn: bool = False,
         num_registers: int = 0,
         dual_projector_kp_only: bool = False,
     ) -> None:
@@ -567,7 +567,10 @@ class TransformerDecoder(nn.Module):
                     end_j = start_j + num_kp_j
                     mask[start_i:end_i, start_j:end_j] = True
 
-        self.register_buffer("keypoint_class_mask", mask, persistent=True)
+        if "keypoint_class_mask" in self._buffers:
+            self._buffers["keypoint_class_mask"] = mask
+        else:
+            self.register_buffer("keypoint_class_mask", mask, persistent=True)
         return self.keypoint_class_mask
 
     def refpoints_refine(self, refpoints_unsigmoid: Tensor, new_refpoints_delta: Tensor) -> Tensor:
@@ -759,7 +762,7 @@ class TransformerDecoderLayer(nn.Module):
         enable_keypoint_processing: bool = False,
         grouppose_keypoint_dim_downscale: int = 1,
         keypoint_cross_attn: bool = True,
-        inter_instance_kp_attn: bool = True,
+        inter_instance_kp_attn: bool = False,
     ) -> None:
         super().__init__()
         # Decoder Self-Attention
@@ -1071,7 +1074,7 @@ def build_transformer(args: BuilderArgs) -> Transformer:
         num_keypoints_per_class=getattr(args, "num_keypoints_per_class", []),
         grouppose_keypoint_dim_downscale=getattr(args, "grouppose_keypoint_dim_downscale", 1),
         keypoint_cross_attn=getattr(args, "keypoint_cross_attn", True),
-        inter_instance_kp_attn=getattr(args, "inter_instance_kp_attn", True),
+        inter_instance_kp_attn=getattr(args, "inter_instance_kp_attn", False),
         num_registers=getattr(args, "num_decoder_registers", 0),
         dual_projector_kp_only=getattr(args, "dual_projector_kp_only", False),
     )

@@ -436,11 +436,27 @@ class RFDETR:
         else:
             num_classes = getattr(args, "num_classes", None)
 
-        # pretrain_weights is placed after **kwargs so it always wins even if
-        # a caller accidentally passes pretrain_weights inside kwargs.
-        constructor_kwargs: dict[str, Any] = {**kwargs, "pretrain_weights": str(path)}
+        constructor_kwargs: dict[str, Any] = {}
+        saved_model_config = ckpt.get("model_config")
+        if isinstance(saved_model_config, dict):
+            model_config_class = getattr(model_cls, "_model_config_class", None)
+            model_fields = getattr(model_config_class, "model_fields", None)
+            if not isinstance(model_fields, dict):
+                model_fields = getattr(model_config_class, "__fields__", None)
+            if not isinstance(model_fields, dict):
+                model_fields = {}
+            for key, value in saved_model_config.items():
+                if key == "pretrain_weights":
+                    continue
+                if not model_fields or key in model_fields:
+                    constructor_kwargs[key] = value
+
         if num_classes is not None and "num_classes" not in kwargs:
             constructor_kwargs["num_classes"] = num_classes
+        constructor_kwargs.update(kwargs)
+        # pretrain_weights is placed after **kwargs so it always wins even if
+        # a caller accidentally passes pretrain_weights inside kwargs.
+        constructor_kwargs["pretrain_weights"] = str(path)
 
         return model_cls(**constructor_kwargs)
 
