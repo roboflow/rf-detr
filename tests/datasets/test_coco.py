@@ -77,6 +77,44 @@ class TestConvertCocoWithMapping:
         num_classes = len(_SPARSE_CAT_IDS)
         assert all(lbl < num_classes for lbl in target["labels"].tolist())
 
+    def test_keypoints_drop_instances_without_labeled_keypoints(self) -> None:
+        """Keypoint training targets should exclude boxes whose keypoint visibility is all zero."""
+        converter = ConvertCoco(include_keypoints=True, num_keypoints_per_class=[17])
+        visible_keypoints = [0.0, 0.0, 0.0] * 17
+        visible_keypoints[2] = 2.0
+        unlabeled_keypoints = [0.0, 0.0, 0.0] * 17
+
+        _, target = converter(
+            _IMAGE,
+            _make_target(
+                [
+                    {
+                        "id": 1,
+                        "image_id": 1,
+                        "category_id": 1,
+                        "bbox": [10.0, 10.0, 20.0, 20.0],
+                        "area": 400.0,
+                        "iscrowd": 0,
+                        "keypoints": unlabeled_keypoints,
+                    },
+                    {
+                        "id": 2,
+                        "image_id": 1,
+                        "category_id": 1,
+                        "bbox": [30.0, 30.0, 20.0, 20.0],
+                        "area": 400.0,
+                        "iscrowd": 0,
+                        "keypoints": visible_keypoints,
+                    },
+                ]
+            ),
+        )
+
+        assert target["boxes"].shape == (1, 4)
+        assert target["labels"].tolist() == [1]
+        assert target["keypoints"].shape == (1, 17, 3)
+        assert target["keypoints"][0, 0, 2].item() == 2.0
+
     def test_roboflow_zero_indexed_is_identity(self):
         """Roboflow datasets already use 0-indexed IDs — mapping must be identity."""
         roboflow_cat2label = {0: 0, 1: 1, 2: 2}
@@ -616,8 +654,8 @@ class TestConvertCocoKeypoints:
         assert target["labels"].shape == (1,)
         assert target["labels"].item() == 1
 
-    def test_num_keypoints_zero_annotation_keeps_shape(self) -> None:
-        """Annotations with zeroed keypoints should preserve configured keypoint dimensions."""
+    def test_num_keypoints_zero_annotation_drops_instance_but_keeps_keypoint_shape(self) -> None:
+        """Annotations with zeroed keypoints should be dropped while preserving configured keypoint dimensions."""
         converter = ConvertCoco(
             include_masks=False,
             include_keypoints=True,
@@ -629,7 +667,9 @@ class TestConvertCocoKeypoints:
             {"image_id": 3, "annotations": [_make_keypoint_annotation(keypoints=[0.0] * (17 * 3))]},
         )
 
-        assert target["keypoints"].shape == (1, 17, 3)
+        assert target["boxes"].shape == (0, 4)
+        assert target["labels"].shape == (0,)
+        assert target["keypoints"].shape == (0, 17, 3)
         assert torch.count_nonzero(target["keypoints"]) == 0
 
     def test_empty_image_uses_schema_max_shape(self) -> None:

@@ -273,11 +273,18 @@ def build_trainer(
         )
     )
 
-    # Best-model checkpointing — monitor EMA metric only when EMA is active.
+    monitor_regular = "val/keypoint_map_50_95" if has_keypoints else "val/mAP_50_95"
+    monitor_ema = None
+    early_stopping_monitor_ema = "val/ema_keypoint_map_50_95" if has_keypoints else "val/ema_mAP_50_95"
+    if enable_ema and not has_keypoints:
+        monitor_ema = "val/ema_mAP_50_95"
+
+    # Best-model checkpointing — monitor EMA metric only when EMA is active and emitted.
     callbacks.append(
         BestModelCallback(
             output_dir=tc.output_dir,
-            monitor_ema="val/ema_mAP_50_95" if enable_ema else None,
+            monitor_regular=monitor_regular,
+            monitor_ema=monitor_ema,
             run_test=tc.run_test,
             skip_best_epochs=tc.skip_best_epochs,
         )
@@ -290,6 +297,8 @@ def build_trainer(
                 patience=tc.early_stopping_patience,
                 min_delta=tc.early_stopping_min_delta,
                 use_ema=tc.early_stopping_use_ema,
+                monitor_regular=monitor_regular,
+                monitor_ema=early_stopping_monitor_ema,
                 skip_best_epochs=tc.skip_best_epochs,
             )
         )

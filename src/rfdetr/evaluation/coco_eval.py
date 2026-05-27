@@ -50,6 +50,26 @@ def _ensure_faster_coco(coco_gt: Any) -> COCO:
     return faster_coco
 
 
+def _backfill_num_keypoints(coco_gt: COCO) -> None:
+    """Populate missing COCO ``num_keypoints`` fields from visibility flags."""
+    annotations_by_id: dict[int, dict[str, Any]] = {}
+    for annotation in coco_gt.dataset.get("annotations", []):
+        annotation_id = annotation.get("id")
+        if isinstance(annotation_id, int):
+            annotations_by_id[annotation_id] = annotation
+        keypoints = annotation.get("keypoints")
+        if "num_keypoints" not in annotation and isinstance(keypoints, list):
+            annotation["num_keypoints"] = sum(1 for visibility in keypoints[2::3] if visibility > 0)
+
+    for annotation_id, annotation in coco_gt.anns.items():
+        keypoints = annotation.get("keypoints")
+        if "num_keypoints" not in annotation and isinstance(keypoints, list):
+            annotation["num_keypoints"] = sum(1 for visibility in keypoints[2::3] if visibility > 0)
+        dataset_annotation = annotations_by_id.get(annotation_id)
+        if dataset_annotation is not None and "num_keypoints" in annotation:
+            dataset_annotation["num_keypoints"] = annotation["num_keypoints"]
+
+
 def _load_coco_results(coco_gt: COCO, results: list[dict[str, Any]]) -> COCO:
     """Build a COCO detections object, including the empty-result case."""
     if results:
@@ -78,6 +98,8 @@ class CocoEvaluator:
     def __init__(self, coco_gt: Any, iou_types: list[str], max_dets: int = 100) -> None:
         assert isinstance(iou_types, (list, tuple))
         coco_gt = copy.deepcopy(_ensure_faster_coco(coco_gt))
+        if "keypoints" in iou_types:
+            _backfill_num_keypoints(coco_gt)
         self.coco_gt = coco_gt
         self.max_dets = max_dets
         # label2cat maps contiguous model label indices back to original COCO category_ids.

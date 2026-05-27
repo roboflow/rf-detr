@@ -755,6 +755,22 @@ class TestClassNames:
         dm._dataset_train = dataset
         assert dm.class_names == ["ant", "bee", "zebra"]
 
+    def test_class_names_follow_label_slots_when_categories_are_remapped(self, tmp_path):
+        """class_names should preserve empty label slots so prediction class IDs map to the right names."""
+        mc = _base_model_config()
+        tc = _base_train_config(tmp_path)
+        from rfdetr.training.module_data import RFDETRDataModule
+
+        dm = RFDETRDataModule(mc, tc)
+        dataset = _fake_dataset(50)
+        coco = MagicMock()
+        coco.cats = {0: {"name": "person"}}
+        dataset.coco = coco
+        dataset.label2cat = {1: 0}
+        dm._dataset_train = dataset
+
+        assert dm.class_names == ["", "person"]
+
 
 class TestSegmentationSupport:
     """DataModule accepts SegmentationTrainConfig without errors."""
