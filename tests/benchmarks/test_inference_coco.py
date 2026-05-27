@@ -25,6 +25,7 @@ from typing import Optional
 import numpy as np
 import PIL.Image
 import pytest
+import supervision as sv
 import torch
 from pycocotools.coco import COCO
 from pytorch_lightning import LightningModule
@@ -55,6 +56,60 @@ from rfdetr.training import RFDETRDataModule, RFDETRModelModule, build_trainer
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
+
+
+def _det_to_pred(det: "sv.Detections") -> dict[str, torch.Tensor]:
+    """Convert a single ``sv.Detections`` to a torchmetrics prediction dict.
+
+    Args:
+        det: Detection result from ``RFDETR.predict()`` for one image.
+
+    Returns:
+        Dict with ``boxes`` (N, 4) xyxy float, ``scores`` (N,) float, ``labels`` (N,) int64.
+    """
+    if len(det) > 0:
+        return {
+            "boxes": torch.tensor(det.xyxy, dtype=torch.float32),
+            "scores": torch.tensor(det.confidence, dtype=torch.float32),
+            "labels": torch.tensor(det.class_id, dtype=torch.int64),
+        }
+    return {
+        "boxes": torch.zeros((0, 4), dtype=torch.float32),
+        "scores": torch.zeros(0, dtype=torch.float32),
+        "labels": torch.zeros(0, dtype=torch.int64),
+    }
+
+
+def _coco_ann_to_target(coco_gt: "COCO", img_id: int) -> dict[str, torch.Tensor]:
+    """Build a torchmetrics target dict from COCO ground-truth annotations for one image.
+
+    Args:
+        coco_gt: Loaded ``pycocotools.coco.COCO`` object.
+        img_id: COCO image ID.
+
+    Returns:
+        Dict with ``boxes`` (M, 4) xyxy float, ``labels`` (M,) int64, ``iscrowd`` (M,) uint8.
+    """
+    anns = coco_gt.loadAnns(coco_gt.getAnnIds(imgIds=img_id))
+    gt_boxes: list[list[float]] = []
+    gt_labels: list[int] = []
+    iscrowd: list[int] = []
+    for ann in anns:
+        bx, by, bw, bh = ann["bbox"]
+        gt_boxes.append([bx, by, bx + bw, by + bh])
+        gt_labels.append(ann["category_id"])
+        iscrowd.append(int(ann.get("iscrowd", 0)))
+    if gt_boxes:
+        return {
+            "boxes": torch.tensor(gt_boxes, dtype=torch.float32),
+            "labels": torch.tensor(gt_labels, dtype=torch.int64),
+            "iscrowd": torch.tensor(iscrowd, dtype=torch.uint8),
+        }
+    return {
+        "boxes": torch.zeros((0, 4), dtype=torch.float32),
+        "labels": torch.zeros(0, dtype=torch.int64),
+        "iscrowd": torch.zeros(0, dtype=torch.uint8),
+    }
 
 
 def _score_rfdetr_predict(
@@ -98,49 +153,8 @@ def _score_rfdetr_predict(
         if not isinstance(detections_batch, list):
             detections_batch = [detections_batch]
 
-        preds: list[dict[str, torch.Tensor]] = []
-        targets: list[dict[str, torch.Tensor]] = []
-        for img_id, det in zip(batch_ids, detections_batch):
-            if len(det) > 0:
-                pred = {
-                    "boxes": torch.tensor(det.xyxy, dtype=torch.float32),
-                    "scores": torch.tensor(det.confidence, dtype=torch.float32),
-                    "labels": torch.tensor(det.class_id, dtype=torch.int64),
-                }
-            else:
-                pred = {
-                    "boxes": torch.zeros((0, 4), dtype=torch.float32),
-                    "scores": torch.zeros(0, dtype=torch.float32),
-                    "labels": torch.zeros(0, dtype=torch.int64),
-                }
-            preds.append(pred)
-
-            ann_ids = coco_gt.getAnnIds(imgIds=img_id)
-            anns = coco_gt.loadAnns(ann_ids)
-            gt_boxes: list[list[float]] = []
-            gt_labels: list[int] = []
-            iscrowd: list[int] = []
-            for ann in anns:
-                bx, by, bw, bh = ann["bbox"]
-                gt_boxes.append([bx, by, bx + bw, by + bh])
-                gt_labels.append(ann["category_id"])
-                iscrowd.append(int(ann.get("iscrowd", 0)))
-            if gt_boxes:
-                targets.append(
-                    {
-                        "boxes": torch.tensor(gt_boxes, dtype=torch.float32),
-                        "labels": torch.tensor(gt_labels, dtype=torch.int64),
-                        "iscrowd": torch.tensor(iscrowd, dtype=torch.uint8),
-                    }
-                )
-            else:
-                targets.append(
-                    {
-                        "boxes": torch.zeros((0, 4), dtype=torch.float32),
-                        "labels": torch.zeros(0, dtype=torch.int64),
-                        "iscrowd": torch.zeros(0, dtype=torch.uint8),
-                    }
-                )
+        preds = [_det_to_pred(det) for det in detections_batch]
+        targets = [_coco_ann_to_target(coco_gt, img_id) for img_id in batch_ids]
 
         map_metric.update(preds, targets)
         batch_matching = build_matching_data(preds, targets, iou_threshold=0.5, iou_type="bbox")
@@ -288,8 +302,8 @@ def test_inference_detection_rfdetr_predict(
     device_str = "cuda" if torch.cuda.is_available() else "cpu"
     images_root, annotations_path = download_coco_val
 
-    rfdetr = model_cls(device=device_str)
-    map_val, f1_val = _score_rfdetr_predict(rfdetr, images_root, annotations_path, num_samples, batch_size)
+    model = model_cls(device=device_str)
+    map_val, f1_val = _score_rfdetr_predict(model, images_root, annotations_path, num_samples, batch_size)
     assert map_val >= threshold_map, f"mAP@50 {map_val:.4f} < {threshold_map}"
     assert f1_val >= threshold_f1, f"F1 {f1_val:.4f} < {threshold_f1}"
 
@@ -329,8 +343,8 @@ def test_inference_segmentation_rfdetr_predict(
     device_str = "cuda" if torch.cuda.is_available() else "cpu"
     images_root, annotations_path = download_coco_val
 
-    rfdetr = model_cls(device=device_str)
-    map_val, f1_val = _score_rfdetr_predict(rfdetr, images_root, annotations_path, num_samples, batch_size)
+    model = model_cls(device=device_str)
+    map_val, f1_val = _score_rfdetr_predict(model, images_root, annotations_path, num_samples, batch_size)
     assert map_val >= threshold_map, f"mAP@50 {map_val:.4f} < {threshold_map}"
     assert f1_val >= threshold_f1, f"F1 {f1_val:.4f} < {threshold_f1}"
 
@@ -379,19 +393,19 @@ def test_inference_detection_ptl_predict(
     coco_root = images_root.parent
     accelerator = "auto" if torch.cuda.is_available() else "cpu"
 
-    rfdetr = model_cls(device=device_str)
+    model = model_cls(device=device_str)
     tc = _build_train_config(coco_root, tmp_path, batch_size)
-    module = _build_ptl_module(rfdetr, tc)
-    trainer = build_trainer(tc, rfdetr.model_config, accelerator=accelerator)
+    module = _build_ptl_module(model, tc)
+    trainer = build_trainer(tc, model.model_config, accelerator=accelerator)
 
     # Run trainer.predict() on a small slice — exercises RFDETRModelModule.predict_step.
-    predict_dm = _build_datamodule(rfdetr.model_config, tc, num_samples=50)
+    predict_dm = _build_datamodule(model.model_config, tc, num_samples=50)
     predictions = trainer.predict(module, dataloaders=predict_dm.val_dataloader())
     assert predictions is not None, "trainer.predict() returned None"
     assert len(predictions) > 0, "trainer.predict() returned empty list"
 
     # Verify mAP and F1 via Trainer.validate on the full num_samples.
-    val_dm = _build_datamodule(rfdetr.model_config, tc, num_samples=num_samples)
+    val_dm = _build_datamodule(model.model_config, tc, num_samples=num_samples)
     (metrics,) = trainer.validate(module, datamodule=val_dm)
     map_val = metrics["val/mAP_50"]
     f1_val = metrics["val/F1"]
@@ -437,19 +451,19 @@ def test_inference_segmentation_ptl_predict(
     coco_root = images_root.parent
     accelerator = "auto" if torch.cuda.is_available() else "cpu"
 
-    rfdetr = model_cls(device=device_str)
+    model = model_cls(device=device_str)
     tc = _build_train_config(coco_root, tmp_path, batch_size)
-    module = _build_ptl_module(rfdetr, tc)
-    trainer = build_trainer(tc, rfdetr.model_config, accelerator=accelerator)
+    module = _build_ptl_module(model, tc)
+    trainer = build_trainer(tc, model.model_config, accelerator=accelerator)
 
     # Run trainer.predict() on a small slice — exercises RFDETRModelModule.predict_step.
-    predict_dm = _build_datamodule(rfdetr.model_config, tc, num_samples=50)
+    predict_dm = _build_datamodule(model.model_config, tc, num_samples=50)
     predictions = trainer.predict(module, dataloaders=predict_dm.val_dataloader())
     assert predictions is not None, "trainer.predict() returned None"
     assert len(predictions) > 0, "trainer.predict() returned empty list"
 
     # Verify mAP and F1 via Trainer.validate on the full num_samples.
-    val_dm = _build_datamodule(rfdetr.model_config, tc, num_samples=num_samples)
+    val_dm = _build_datamodule(model.model_config, tc, num_samples=num_samples)
     (metrics,) = trainer.validate(module, datamodule=val_dm)
     map_val = metrics["val/mAP_50"]
     f1_val = metrics["val/F1"]
