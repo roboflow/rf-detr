@@ -40,7 +40,7 @@ _COCO_VAL_IMAGE_COUNT: int = 5000
 
 
 def _coco_val_images_complete(images_dir: Path) -> bool:
-    """Check whether the COCO val2017 image directory contains all expected images.
+    """Check whether the COCO val2017 image directory contains the expected number of JPEG files.
 
     Returns ``False`` for a missing or empty directory so callers can trigger a
     re-download without inspecting the directory manually.
@@ -50,7 +50,12 @@ def _coco_val_images_complete(images_dir: Path) -> bool:
 
     Returns:
         ``True`` if *images_dir* exists and contains at least ``_COCO_VAL_IMAGE_COUNT``
-        files, ``False`` otherwise.
+        ``.jpg`` files, ``False`` otherwise.
+
+    Raises:
+        OSError: If *images_dir* exists but cannot be read (e.g. ``PermissionError``
+            when the directory is not accessible, or ``FileNotFoundError`` on a
+            TOCTOU race between the ``is_dir()`` check and ``iterdir()``).
 
     Examples:
         >>> import tempfile
@@ -60,7 +65,10 @@ def _coco_val_images_complete(images_dir: Path) -> bool:
     """
     if not images_dir.is_dir():
         return False
-    return sum(1 for entry in images_dir.iterdir() if entry.is_file()) >= _COCO_VAL_IMAGE_COUNT
+    return (
+        sum(1 for entry in images_dir.iterdir() if entry.is_file() and entry.suffix.lower() == ".jpg")
+        >= _COCO_VAL_IMAGE_COUNT
+    )
 
 
 def _nonempty_file_exists(path: Path) -> bool:
