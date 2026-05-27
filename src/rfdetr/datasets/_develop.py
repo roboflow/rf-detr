@@ -36,6 +36,32 @@ _COCO_URLS = {
     "annotations": "http://images.cocodataset.org/annotations/annotations_trainval2017.zip",
 }
 
+_COCO_VAL_IMAGE_COUNT: int = 5000
+
+
+def _coco_val_images_complete(images_dir: Path) -> bool:
+    """Check whether the COCO val2017 image directory contains all expected images.
+
+    Returns ``False`` for a missing or empty directory so callers can trigger a
+    re-download without inspecting the directory manually.
+
+    Args:
+        images_dir: Path to the directory that should contain the val2017 images.
+
+    Returns:
+        ``True`` if *images_dir* exists and contains at least ``_COCO_VAL_IMAGE_COUNT``
+        files, ``False`` otherwise.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as tmpdir:
+        ...     _coco_val_images_complete(Path(tmpdir) / "val2017")
+        False
+    """
+    if not images_dir.is_dir():
+        return False
+    return sum(1 for entry in images_dir.iterdir() if entry.is_file()) >= _COCO_VAL_IMAGE_COUNT
+
 
 class _SimpleDataset:
     """Simple synthetic dataset for testing augmentations and training loops.
