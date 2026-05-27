@@ -82,6 +82,7 @@ def _nonempty_file_exists(path: Path) -> bool:
     """
     return path.is_file() and path.stat().st_size > 0
 
+
 _COCO_VAL_IMAGE_COUNT: int = 5000
 
 
