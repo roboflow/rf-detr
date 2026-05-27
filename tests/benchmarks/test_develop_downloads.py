@@ -5,7 +5,10 @@
 # ------------------------------------------------------------------------
 """Tests for private developer download helpers."""
 
+import io
+import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -26,24 +29,25 @@ class TestCocoValImagesComplete:
 
         assert not _develop._coco_val_images_complete(images_root)
 
-    def test_too_few_images_is_incomplete(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A partial image directory must not skip the image download."""
+    @pytest.mark.parametrize(
+        "file_count,expected",
+        [
+            pytest.param(1, False, id="below_threshold_is_incomplete"),
+            pytest.param(2, True, id="at_threshold_is_complete"),
+            pytest.param(3, True, id="above_threshold_is_complete"),
+        ],
+    )
+    def test_file_count_threshold(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, file_count: int, expected: bool
+    ) -> None:
+        """Directory completeness reflects the >= threshold semantics."""
         monkeypatch.setattr(_develop, "_COCO_VAL_IMAGE_COUNT", 2)
         images_root = tmp_path / "val2017"
         images_root.mkdir()
-        (images_root / "000000000139.jpg").write_bytes(b"jpeg")
+        for i in range(file_count):
+            (images_root / f"{i:012d}.jpg").write_bytes(b"jpeg")
 
-        assert not _develop._coco_val_images_complete(images_root)
-
-    def test_expected_image_count_is_complete(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A directory with the expected image count is accepted."""
-        monkeypatch.setattr(_develop, "_COCO_VAL_IMAGE_COUNT", 2)
-        images_root = tmp_path / "val2017"
-        images_root.mkdir()
-        (images_root / "000000000139.jpg").write_bytes(b"jpeg")
-        (images_root / "000000000285.jpg").write_bytes(b"jpeg")
-
-        assert _develop._coco_val_images_complete(images_root)
+        assert _develop._coco_val_images_complete(images_root) is expected
 
 
 class TestNonemptyFileExists:
@@ -68,3 +72,40 @@ class TestNonemptyFileExists:
         annotations_path.write_bytes(b"{}")
 
         assert _develop._nonempty_file_exists(annotations_path)
+
+
+class TestDownloadLock:
+    """Coverage for the cross-process file-lock context manager."""
+
+    def test_timeout_raises_when_lock_held(self, tmp_path: Path) -> None:
+        """TimeoutError is raised immediately when the lock file already exists and timeout_s=0."""
+        lock_path = tmp_path / "test.lock"
+        lock_path.touch()
+
+        with pytest.raises(TimeoutError):
+            with _develop._download_lock(lock_path, timeout_s=0, poll_s=0):
+                pass
+
+
+class TestDownloadAndExtract:
+    """Coverage for the ZIP download-and-extract helper."""
+
+    def _make_zip(self, members: dict) -> bytes:
+        """Build an in-memory ZIP archive from a mapping of filename→content."""
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            for name, content in members.items():
+                zf.writestr(name, content)
+        return buf.getvalue()
+
+    def test_path_traversal_raises_runtime_error(self, tmp_path: Path) -> None:
+        """A ZIP entry escaping dest_dir must raise RuntimeError (path-traversal guard)."""
+        zip_bytes = self._make_zip({"../evil.txt": "malicious"})
+        url = "http://example.com/test.zip"
+
+        def fake_urlretrieve(url: str, dest: str) -> None:
+            Path(dest).write_bytes(zip_bytes)
+
+        with patch("rfdetr.datasets._develop.urlretrieve", side_effect=fake_urlretrieve):
+            with pytest.raises(RuntimeError, match="Unsafe path detected"):
+                _develop._download_and_extract(url, tmp_path)
