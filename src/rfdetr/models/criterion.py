@@ -525,7 +525,7 @@ class SetCriterion(nn.Module):
         outputs_without_aux = {k: v for k, v in outputs.items() if k != "aux_outputs"}
 
         # Retrieve the matching between the outputs of the last layer and the targets
-        indices = self.matcher(outputs_without_aux, targets, group_detr=group_detr)
+        indices = self.matcher(outputs_without_aux, targets, group_detr=group_detr, flow=self.flow)
 
         # Compute the average number of target boxes across all nodes, for normalization purposes
         num_boxes = sum(len(t["labels"]) for t in targets)
@@ -544,7 +544,7 @@ class SetCriterion(nn.Module):
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
         if "aux_outputs" in outputs:
             for i, aux_outputs in enumerate(outputs["aux_outputs"]):
-                indices = self.matcher(aux_outputs, targets, group_detr=group_detr)
+                indices = self.matcher(aux_outputs, targets, group_detr=group_detr, flow=self.flow)
                 for loss in self.losses:
                     kwargs = {}
                     if loss == "labels":
@@ -556,7 +556,7 @@ class SetCriterion(nn.Module):
 
         if "enc_outputs" in outputs:
             enc_outputs = outputs["enc_outputs"]
-            indices = self.matcher(enc_outputs, targets, group_detr=group_detr)
+            indices = self.matcher(enc_outputs, targets, group_detr=group_detr, flow=self.flow)
             for loss in self.losses:
                 kwargs = {}
                 if loss == "labels":

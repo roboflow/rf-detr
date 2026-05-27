@@ -27,6 +27,28 @@ from rfdetr.utilities.box_ops import box_cxcywh_to_xyxy
 from rfdetr.utilities.distributed import all_gather, get_world_size, is_dist_avail_and_initialized
 
 
+def _get_ema_inner_module(ema_cb: Any) -> Any:
+    """Return the inner ``nn.Module`` wrapped by an EMA callback.
+
+    ``RFDETREMACallback._average_model`` is a private attribute holding a ``torch.optim.swa_utils.AveragedModel``
+    (which exposes the actual module on ``.module``).  This helper centralises the access so that consumers degrade
+    gracefully when the EMA model has not yet been initialised — preferable to reaching through two layers of
+    private attributes at every call site.
+
+    Args:
+        ema_cb: EMA callback instance (or ``None``).
+
+    Returns:
+        The inner module wrapped by ``AveragedModel``, or ``None`` when no EMA model is available.
+    """
+    if ema_cb is None:
+        return None
+    averaged = getattr(ema_cb, "_average_model", None)
+    if averaged is None:
+        return None
+    return getattr(averaged, "module", averaged)
+
+
 class COCOEvalCallback(Callback):
     """Validation callback that computes mAP (via torchmetrics) and macro-F1.
 
@@ -238,10 +260,11 @@ class COCOEvalCallback(Callback):
         # availability is rank-invariant (EMA updates fire on the same global step on every
         # rank), so per-rank EMA update counts stay consistent.
         ema_cb = self._get_ema_callback(trainer)
-        if ema_cb is not None and ema_cb._average_model is not None and self.map_metric_ema is not None:
+        ema_inner = _get_ema_inner_module(ema_cb)
+        if ema_cb is not None and ema_inner is not None and self.map_metric_ema is not None:
             samples, _ = batch
             orig_sizes = torch.stack([t["orig_size"] for t in outputs["targets"]]).to(pl_module.device)
-            ema_underlying = ema_cb._average_model.module.model
+            ema_underlying = ema_inner.model
             with torch.no_grad():
                 ema_underlying.eval()  # AveragedModel deepcopy is not managed by PTL
                 ema_outputs = ema_underlying(samples)

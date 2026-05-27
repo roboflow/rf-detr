@@ -224,7 +224,9 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         include_keypoints: If ``True``, parse COCO keypoints and include them in
             the target dict under the ``"keypoints"`` key.
         num_keypoints_per_class: Optional keypoint schema describing the number of
-            keypoints per class. When provided, keypoints are padded/truncated to ``sum(num_keypoints_per_class)``.
+            keypoints per class. When provided, keypoints are padded to
+            ``max(num_keypoints_per_class) * len(num_keypoints_per_class)`` per annotation, matching the per-class block
+            layout consumed by :meth:`LWDETR._format_keypoint_output`.
         remap_category_ids: If ``True``, build a ``cat2label`` mapping from the
             annotation file that remaps sparse category IDs to contiguous 0-based label indices.  The reverse mapping is
             stored as ``label2cat`` on both this object and the underlying COCO API object.  Defaults to ``False``.
@@ -303,7 +305,8 @@ class ConvertCoco(object):
             which is correct for datasets whose IDs are already 0-indexed.  Pass a non-``None`` mapping for sparse
             COCO-style datasets (e.g. IDs 1–90 with gaps) so that labels stay within the model's output range.
         num_keypoints_per_class: Optional keypoint schema. When provided, keypoints
-            are padded/truncated to ``sum(num_keypoints_per_class)`` in each annotation.
+            are padded to ``max(num_keypoints_per_class)`` slots per annotation — matching ``kpad``
+            in :func:`~rfdetr.models.heads.keypoints.compute_l1_keypoint_loss`.
     """
 
     def __init__(
@@ -316,7 +319,12 @@ class ConvertCoco(object):
         self.include_masks = include_masks
         self.include_keypoints = include_keypoints
         self.cat2label = cat2label
-        self.num_keypoints = sum(num_keypoints_per_class) if num_keypoints_per_class is not None else 0
+        if num_keypoints_per_class:
+            self.num_keypoints = max(num_keypoints_per_class)
+            self.num_keypoints_per_class = num_keypoints_per_class
+        else:
+            self.num_keypoints = 0
+            self.num_keypoints_per_class = None
 
     def __call__(self, image: Image.Image, target: Dict[str, Any]) -> Tuple[Image.Image, Dict[str, Any]]:
         w, h = image.size

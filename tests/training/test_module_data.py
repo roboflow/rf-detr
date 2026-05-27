@@ -335,21 +335,16 @@ class TestKeypointAugmentationWarning:
 
         assert not [w for w in caught if "Keypoint mode" in str(w.message)]
 
-    def test_keypoint_mode_gpu_augmentation_warning(self, tmp_path):
-        """Setup('fit') should warn once when keypoint mode uses Kornia augmentation."""
+    def test_keypoint_mode_gpu_augmentation_raises(self, tmp_path):
+        """Setup('fit') should raise ValueError when keypoint mode uses a GPU augmentation backend."""
         dm = self._build_dm(tmp_path, use_grouppose_keypoints=True, augmentation_backend="gpu")
 
         with (
             patch("rfdetr.training.module_data.build_dataset", side_effect=lambda *a, **k: _fake_dataset(10)),
             patch.object(dm, "_setup_kornia_pipeline"),
+            pytest.raises(ValueError, match="does not support keypoint transforms"),
         ):
-            with pytest.warns(UserWarning, match="Keypoint mode currently supports"):
-                dm.setup("fit")
-
-            with warnings.catch_warnings(record=True) as caught:
-                warnings.simplefilter("always")
-                dm.setup("fit")
-            assert not [w for w in caught if "Keypoint mode currently supports" in str(w.message)]
+            dm.setup("fit")
 
     def test_non_keypoint_mode_no_augmentation_warning(self, tmp_path):
         """Setup('fit') should not emit the keypoint augmentation warning in detection mode."""

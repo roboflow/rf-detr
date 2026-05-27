@@ -13,7 +13,7 @@ from rfdetr.models.criterion import SetCriterion
 class _MatcherStub:
     """Matcher stub used to avoid depending on Hungarian matching internals."""
 
-    def __call__(self, outputs, targets, group_detr=1):
+    def __call__(self, outputs, targets, group_detr=1, flow=None):
         indices = []
         for target in targets:
             num_targets = int(target["labels"].shape[0])

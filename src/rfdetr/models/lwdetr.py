@@ -230,16 +230,25 @@ class LWDETR(nn.Module):
 
         batch_size, num_queries, total_compact_keypoints, keypoint_dim = keypoints_compact.shape
         if batch_size != batch_size_expected or num_queries != num_queries_expected:
-            return keypoints_compact
+            raise ValueError(
+                f"_format_keypoint_output received tensor with batch_size={batch_size}, num_queries={num_queries} "
+                f"but expected batch_size={batch_size_expected}, num_queries={num_queries_expected}. "
+                "Shape mismatch silently bypassed in earlier versions; raise to surface upstream bugs."
+            )
 
         max_num_keypoints = max(self.num_keypoints_per_class)
         total_padded_keypoints = len(self.num_keypoints_per_class) * max_num_keypoints
         total_actual_keypoints = sum(self.num_keypoints_per_class)
 
         if total_compact_keypoints == total_padded_keypoints:
+            # Already in the per-class padded layout — pass through.
             return keypoints_compact
         if total_compact_keypoints != total_actual_keypoints:
-            return keypoints_compact
+            raise ValueError(
+                f"_format_keypoint_output received tensor with total_compact_keypoints={total_compact_keypoints} "
+                f"but schema expects either compact total={total_actual_keypoints} "
+                f"or padded total={total_padded_keypoints} for num_keypoints_per_class={self.num_keypoints_per_class}."
+            )
 
         padded = torch.zeros(
             batch_size,

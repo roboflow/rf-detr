@@ -632,8 +632,8 @@ class TestConvertCocoKeypoints:
         assert target["keypoints"].shape == (1, 17, 3)
         assert torch.count_nonzero(target["keypoints"]) == 0
 
-    def test_empty_image_uses_schema_sum_shape(self) -> None:
-        """Empty images should emit ``(0, sum(num_keypoints_per_class), 3)`` keypoint tensors."""
+    def test_empty_image_uses_schema_max_shape(self) -> None:
+        """Empty images should emit ``(0, max(num_keypoints_per_class), 3)`` keypoint tensors."""
         converter = ConvertCoco(
             include_masks=False,
             include_keypoints=True,
@@ -642,7 +642,7 @@ class TestConvertCocoKeypoints:
         )
         _, target = converter(_IMAGE, {"image_id": 99, "annotations": []})
 
-        assert target["keypoints"].shape == (0, 3, 3)
+        assert target["keypoints"].shape == (0, 2, 3)
 
 
 class TestBuildCocoKeypointMode:

@@ -22,6 +22,7 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
+from rfdetr.models._types import BuilderArgs
 from rfdetr.models.heads.keypoints import ConditionalQueryInitializer
 from rfdetr.models.ops.modules import MSDeformAttn
 
@@ -530,6 +531,10 @@ class TransformerDecoder(nn.Module):
         self.enable_keypoint_processing = enable_keypoint_processing
         self.num_keypoints_per_class = num_keypoints_per_class
         self.grouppose_keypoint_dim_downscale = grouppose_keypoint_dim_downscale
+        # Populated externally (e.g. by LWDETR) when iterative bbox refinement is active.
+        # Declared here so that ``hasattr(self, "bbox_embed")`` short-circuits even without an
+        # external injection, and so that mypy sees a stable attribute type.
+        self.bbox_embed: nn.Module | None = None
 
         self.ref_point_head = MLP(2 * d_model, d_model, d_model, 2)
         self.keypoint_pos_embed = None
@@ -948,7 +953,7 @@ class TransformerDecoderLayer(nn.Module):
                 )
                 q = swapped_keypoint_tgt + swapped_keypoint_pos
                 v = swapped_keypoint_tgt
-                swapped_out = self.inter_inst_kp_attn(q, k=q, v=v, need_weights=False)[0]
+                swapped_out = self.inter_inst_kp_attn(q, key=q, value=v, need_weights=False)[0]
                 swapped_out = swapped_out.view(bs, num_kp, num_queries, kp_dim).transpose(1, 2)
                 keypoint_tgt = keypoint_tgt + self.inter_inst_kp_dropout(swapped_out)
                 keypoint_tgt = self.inter_inst_kp_norm(keypoint_tgt)
@@ -1043,11 +1048,8 @@ def _get_clones(module: nn.Module, num_clones: int) -> nn.ModuleList:
     return nn.ModuleList([copy.deepcopy(module) for i in range(num_clones)])
 
 
-def build_transformer(args: object) -> Transformer:
-    try:
-        two_stage = args.two_stage
-    except Exception:
-        two_stage = False
+def build_transformer(args: BuilderArgs) -> Transformer:
+    two_stage = getattr(args, "two_stage", False)
 
     return Transformer(
         d_model=args.hidden_dim,
