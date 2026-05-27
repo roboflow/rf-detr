@@ -1539,9 +1539,9 @@ class TestMakeCocoTransformsOutputSize:
     def test_nonsquare_val_resizes_and_caps_longest_side(self) -> None:
         """Non-square val transform resizes the image and keeps the longest side within 1333 px.
 
-        Avoid asserting an exact output dimension here because Albumentations resize behavior can vary
-        across supported versions. The stable contract is that the image is resized and the longest
-        side does not exceed the configured maximum.
+        Avoid asserting an exact output dimension here because Albumentations resize behavior can vary across supported
+        versions. The stable contract is that the image is resized and the longest side does not exceed the configured
+        maximum.
         """
         transform = make_coco_transforms("val", self._RESOLUTION)
         tensor, _ = transform(self._make_image(), None)
