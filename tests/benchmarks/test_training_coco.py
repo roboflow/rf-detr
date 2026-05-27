@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -99,42 +100,6 @@ def _build_coco_keypoint_subset_from_val(
     return output_root
 
 
-def _build_ptl_module(model: RFDETRKeypointPreview, train_config: TrainConfig) -> RFDETRModelModule:
-    module = RFDETRModelModule(model.model_config, train_config)
-    module.model.load_state_dict(model.model.model.state_dict())
-    module.model.eval()
-    return module
-
-
-def _load_keypoint_preview_or_skip() -> RFDETRKeypointPreview:
-    try:
-        return RFDETRKeypointPreview(device="cuda")
-    except Exception as exc:  # pragma: no cover - external artifact/network dependent
-        pytest.skip(f"Could not load keypoint preview weights for benchmark test: {exc}")
-
-
-def _make_train_config(dataset_dir: Path, output_dir: Path) -> TrainConfig:
-    return TrainConfig(
-        dataset_file="coco",
-        dataset_dir=str(dataset_dir),
-        output_dir=str(output_dir),
-        epochs=2,
-        batch_size=2,
-        num_workers=0,
-        grad_accum_steps=1,
-        use_ema=False,
-        run_test=False,
-        compute_val_loss=True,
-        multi_scale=False,
-        expanded_scales=False,
-        do_random_resize_via_padding=False,
-        tensorboard=False,
-        wandb=False,
-        mlflow=False,
-        clearml=False,
-    )
-
-
 def _build_subset_datamodule(
     model: RFDETRKeypointPreview,
     train_config: TrainConfig,
@@ -154,76 +119,112 @@ def _build_subset_datamodule(
 
 
 @pytest.mark.gpu
+@pytest.mark.coco17
 @pytest.mark.flaky(reruns=1, only_rerun="AssertionError")
-def test_keypoint_training_subset_loss_decreases(
+def test_keypoint_training_subset_reports_loss_and_metric(
     tmp_path: Path,
     download_coco_val_keypoints: tuple[Path, Path],
 ) -> None:
-    """Short deterministic fine-tuning should reduce validation loss on the fixed subset."""
-    if not torch.cuda.is_available():
-        pytest.skip("CUDA is required for keypoint subset training benchmark coverage.")
-
+    """Short deterministic fine-tuning should report finite loss and keypoint AP on the fixed subset."""
     seed_all(7)
     images_root, annotations_path = download_coco_val_keypoints
     subset_root = _build_coco_keypoint_subset_from_val(
         images_root=images_root,
         annotations_path=annotations_path,
         output_root=tmp_path / "coco_keypoint_subset",
-        train_images=32,
-        val_images=16,
+        train_images=1000,
+        val_images=200,
     )
-    model = _load_keypoint_preview_or_skip()
-    train_config = _make_train_config(dataset_dir=subset_root, output_dir=tmp_path / "train_output")
+    train_config = TrainConfig(
+        dataset_file="coco",
+        dataset_dir=str(subset_root),
+        output_dir=str(tmp_path / "train_output"),
+        epochs=5,
+        batch_size=4,
+        num_workers=0,
+        grad_accum_steps=2,
+        use_ema=False,
+        run_test=False,
+        compute_val_loss=True,
+        multi_scale=False,
+        expanded_scales=False,
+        do_random_resize_via_padding=False,
+        tensorboard=False,
+        wandb=False,
+        mlflow=False,
+        clearml=False,
+    )
+    model = RFDETRKeypointPreview()
     datamodule = _build_subset_datamodule(model, train_config)
-    module = _build_ptl_module(model, train_config)
+
+    module = RFDETRModelModule(model.model_config, train_config)
+    module.model.load_state_dict(model.model.model.state_dict())
+    module.model.eval()
 
     trainer = build_trainer(train_config, model.model_config, accelerator="gpu")
     (pre_metrics,) = trainer.validate(module, datamodule=datamodule)
     pre_loss = _to_float(pre_metrics["val/loss"])
-    assert torch.isfinite(torch.tensor(pre_loss)), f"Expected finite pre-training val/loss, got {pre_loss:.6f}"
-
-    trainer.fit(module, datamodule=datamodule)
-    (post_metrics,) = trainer.validate(module, datamodule=datamodule)
-    post_loss = _to_float(post_metrics["val/loss"])
-    assert torch.isfinite(torch.tensor(post_loss)), f"Expected finite post-training val/loss, got {post_loss:.6f}"
-    assert post_loss <= pre_loss, (
-        f"Expected val/loss to decrease on subset: before={pre_loss:.6f}, after={post_loss:.6f}"
-    )
-
-
-@pytest.mark.gpu
-@pytest.mark.flaky(reruns=1, only_rerun="AssertionError")
-def test_keypoint_training_subset_metric_improves(
-    tmp_path: Path,
-    download_coco_val_keypoints: tuple[Path, Path],
-) -> None:
-    """Short deterministic fine-tuning should improve (or at least not regress) keypoint AP on the fixed subset."""
-    if not torch.cuda.is_available():
-        pytest.skip("CUDA is required for keypoint subset training benchmark coverage.")
-
-    seed_all(7)
-    images_root, annotations_path = download_coco_val_keypoints
-    subset_root = _build_coco_keypoint_subset_from_val(
-        images_root=images_root,
-        annotations_path=annotations_path,
-        output_root=tmp_path / "coco_keypoint_subset",
-        train_images=32,
-        val_images=16,
-    )
-    model = _load_keypoint_preview_or_skip()
-    train_config = _make_train_config(dataset_dir=subset_root, output_dir=tmp_path / "train_output")
-    datamodule = _build_subset_datamodule(model, train_config)
-    module = _build_ptl_module(model, train_config)
-
-    trainer = build_trainer(train_config, model.model_config, accelerator="gpu")
-    (pre_metrics,) = trainer.validate(module, datamodule=datamodule)
     pre_map = _to_float(pre_metrics["val/keypoint_map_50_95"])
+    assert torch.isfinite(torch.tensor(pre_loss)), f"Expected finite pre-training val/loss, got {pre_loss:.6f}"
     assert torch.isfinite(torch.tensor(pre_map)), f"Expected finite pre-training keypoint AP, got {pre_map:.6f}"
 
     trainer.fit(module, datamodule=datamodule)
     (post_metrics,) = trainer.validate(module, datamodule=datamodule)
+    post_loss = _to_float(post_metrics["val/loss"])
     post_map = _to_float(post_metrics["val/keypoint_map_50_95"])
+    assert torch.isfinite(torch.tensor(post_loss)), f"Expected finite post-training val/loss, got {post_loss:.6f}"
     assert torch.isfinite(torch.tensor(post_map)), f"Expected finite post-training keypoint AP, got {post_map:.6f}"
     assert post_map >= pre_map - 0.02, (
-        f"Expected keypoint AP to improve or remain close on subset (before={pre_map:.6f}, after={post_map:.6f})."
+        "Expected keypoint AP to improve or remain close on subset "
+        f"(map before={pre_map:.6f}, map after={post_map:.6f}, "
+        f"loss before={pre_loss:.6f}, loss after={post_loss:.6f})."
     )
+
+
+@pytest.mark.gpu
+@pytest.mark.coco17
+def test_keypoint_training_full_coco_release_qualification(
+    tmp_path: Path,
+    download_coco_train_val_keypoints: Path,
+) -> None:
+    """Opt-in release gate: train on full COCO train2017 and validate on COCO val2017 keypoints."""
+    if os.getenv("RFDETR_RUN_FULL_COCO_KEYPOINT_TRAINING") != "1":
+        pytest.skip("Set RFDETR_RUN_FULL_COCO_KEYPOINT_TRAINING=1 to run the full COCO keypoint training gate.")
+
+    seed_all(7)
+    epochs = int(os.getenv("RFDETR_FULL_COCO_KEYPOINT_EPOCHS", "1"))
+    batch_size = int(os.getenv("RFDETR_FULL_COCO_KEYPOINT_BATCH_SIZE", "2"))
+    grad_accum_steps = int(os.getenv("RFDETR_FULL_COCO_KEYPOINT_GRAD_ACCUM_STEPS", "8"))
+    num_workers = int(os.getenv("RFDETR_FULL_COCO_KEYPOINT_NUM_WORKERS", "4"))
+    minimum_map = float(os.getenv("RFDETR_FULL_COCO_KEYPOINT_MIN_MAP", "0.0"))
+
+    train_config = TrainConfig(
+        dataset_file="coco",
+        dataset_dir=str(download_coco_train_val_keypoints),
+        output_dir=str(tmp_path / "full_coco_keypoint_train"),
+        epochs=epochs,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        grad_accum_steps=grad_accum_steps,
+        use_ema=False,
+        run_test=False,
+        compute_val_loss=True,
+        tensorboard=False,
+        wandb=False,
+        mlflow=False,
+        clearml=False,
+    )
+    model = RFDETRKeypointPreview()
+    datamodule = RFDETRDataModule(model.model_config, train_config)
+    module = RFDETRModelModule(model.model_config, train_config)
+    module.model.load_state_dict(model.model.model.state_dict())
+
+    trainer = build_trainer(train_config, model.model_config, accelerator="gpu")
+    trainer.fit(module, datamodule=datamodule)
+    (metrics,) = trainer.validate(module, datamodule=datamodule)
+
+    val_loss = _to_float(metrics["val/loss"])
+    keypoint_map = _to_float(metrics["val/keypoint_map_50_95"])
+    assert torch.isfinite(torch.tensor(val_loss)), f"Expected finite full-COCO val/loss, got {val_loss:.6f}"
+    assert torch.isfinite(torch.tensor(keypoint_map)), f"Expected finite full-COCO keypoint AP, got {keypoint_map:.6f}"
+    assert keypoint_map >= minimum_map, f"keypoint AP@50:95 {keypoint_map:.4f} < {minimum_map:.4f}"

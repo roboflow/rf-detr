@@ -29,7 +29,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 
-from rfdetr.config import RFDETRBaseConfig, RFDETRSmallConfig, TrainConfig
+from rfdetr.config import RFDETRBaseConfig, RFDETRKeypointPreviewConfig, RFDETRSmallConfig, TrainConfig
 from rfdetr.detr import RFDETR, RFDETRLarge
 from rfdetr.detr import logger as detr_logger
 from rfdetr.training.auto_batch import AutoBatchResult
@@ -1825,6 +1825,29 @@ class TestRFDETRTrainNumClassesAutoDetect:
             RFDETR.train(mock_self)
 
         assert mock_self.model_config.num_classes == 3
+
+    def test_keypoint_coco_auto_detect_uses_schema_label_slots(self, mock_self, patch_lit):
+        """Keypoint COCO class-count detection should count RF-DETR schema label slots."""
+        mock_self.model_config = RFDETRKeypointPreviewConfig(pretrain_weights=None, device="cpu")
+        dataset_dir = Path(mock_self.get_train_config.return_value.dataset_dir)
+        self._write_coco_categories(
+            dataset_dir,
+            categories=[
+                {
+                    "id": 0,
+                    "name": "person",
+                    "keypoints": ["nose", "left_eye"],
+                    "skeleton": [],
+                },
+            ],
+        )
+
+        p_mod, p_dm, p_bt, *_ = patch_lit
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self)
+
+        assert mock_self.model_config.num_classes == 2
+        assert mock_self.model.args.num_classes == 2
 
     def test_auto_adjusts_when_default_explicitly_passed(self, mock_self, patch_lit):
         """Passing num_classes=<default> is treated the same as not setting it.

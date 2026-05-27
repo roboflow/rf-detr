@@ -2,7 +2,7 @@ name: CPU tests Workflow
 
 on:
   push:
-    branches: ["main", "release/*", "develop"]
+    branches: ["main", "release/*", "develop", "feat/*"]
   pull_request:
 
 permissions:

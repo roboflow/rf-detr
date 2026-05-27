@@ -22,6 +22,16 @@ from rfdetr.datasets.yolo import (
 )
 
 
+def _write_minimal_roboflow_yolo_dataset(tmp_path: Path) -> None:
+    """Create a minimal Roboflow YOLO dataset root."""
+    (tmp_path / "data.yaml").write_text("names:\n  - person\n", encoding="utf-8")
+    for split in ("train", "valid"):
+        (tmp_path / split / "images").mkdir(parents=True)
+        (tmp_path / split / "labels").mkdir(parents=True)
+        Image.new("RGB", (8, 6), color=(255, 255, 255)).save(tmp_path / split / "images" / "sample.png")
+        (tmp_path / split / "labels" / "sample.txt").write_text("0 0.5 0.5 0.5 0.5\n", encoding="utf-8")
+
+
 def _write_yolo_segmentation_dataset(tmp_path: Path) -> tuple[Path, Path, Path]:
     """Create a minimal YOLO segmentation dataset on disk."""
     image_dir = tmp_path / "images"
@@ -131,6 +141,18 @@ class TestBuildRoboflowFromYoloAugConfig:
 
         _, kwargs = mock_transform.call_args
         assert kwargs["gpu_postprocess"] is False
+
+    def test_keypoint_mode_rejects_yolo_format(self, tmp_path: Path) -> None:
+        """Keypoint preview training should not silently use detection-only YOLO labels."""
+        _write_minimal_roboflow_yolo_dataset(tmp_path)
+        args = self._make_args(square_resize_div_64=False, aug_config=None)
+        args.dataset_dir = str(tmp_path)
+        args.use_grouppose_keypoints = True
+
+        from rfdetr.datasets import build_roboflow
+
+        with pytest.raises(ValueError, match="YOLO keypoint"):
+            build_roboflow("train", args, resolution=64)
 
 
 class TestIsValidYoloDataset:

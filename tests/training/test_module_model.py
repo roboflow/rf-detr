@@ -651,27 +651,47 @@ class TestTrainingStep:
 
         assert loss.item() == pytest.approx(1.0)  # 4.0 / 4
 
-    def test_logs_train_loss_to_prog_bar(self, tmp_path):
-        """Aggregate training loss must be logged with prog_bar=True for visibility."""
+    def test_logs_live_train_loss_to_progress_bar(self, tmp_path):
+        """Aggregate training loss must be logged every step as a progress-only metric."""
         module, samples, targets, _, _ = self._run_step(tmp_path)
 
         module.training_step((samples, targets), batch_idx=0)
 
-        train_loss_calls = [c for c in module.log.call_args_list if c[0][0] == "train/loss"]
-        assert len(train_loss_calls) == 1
-        assert train_loss_calls[0].kwargs.get("prog_bar") is True
+        progress_loss_calls = [c for c in module.log.call_args_list if c[0][0] == "loss"]
+        assert len(progress_loss_calls) == 1
+        assert progress_loss_calls[0].kwargs.get("prog_bar") is True
+        assert progress_loss_calls[0].kwargs.get("logger") is False
+        assert progress_loss_calls[0].kwargs.get("on_step") is True
+        assert progress_loss_calls[0].kwargs.get("on_epoch") is False
 
-    def test_logs_learning_rate_to_prog_bar(self, tmp_path):
-        """Current learning rate must be logged as train/lr with prog_bar=True for monitoring."""
+    def test_logs_learning_rate_without_progress_bar(self, tmp_path):
+        """Current learning rate should be logged without occupying progress-bar metric slots."""
         module, samples, targets, _, _ = self._run_step(tmp_path)
 
         module.training_step((samples, targets), batch_idx=0)
 
         lr_calls = [c for c in module.log.call_args_list if c[0][0] == "train/lr"]
         assert len(lr_calls) == 1
-        assert lr_calls[0].kwargs.get("prog_bar") is True
+        assert lr_calls[0].kwargs.get("prog_bar") is False
         assert lr_calls[0].kwargs.get("on_step") is True
         assert lr_calls[0].kwargs.get("on_epoch") is False
+
+    def test_logs_convergence_components_to_progress_bar(self, tmp_path):
+        """Selected detection and keypoint losses should appear as compact progress-only metrics."""
+        loss_dict = {
+            "loss_ce": torch.tensor(0.5),
+            "loss_bbox": torch.tensor(0.3),
+            "loss_keypoints_l1": torch.tensor(0.4),
+            "loss_keypoints_nll": torch.tensor(0.2),
+            "loss_keypoints_rle": torch.tensor(0.1),
+        }
+        weight_dict = {key: 1.0 for key in loss_dict}
+        module, samples, targets, _, _ = self._run_step(tmp_path, loss_dict, weight_dict)
+
+        module.training_step((samples, targets), batch_idx=0)
+
+        progress_names = {c[0][0] for c in module.log.call_args_list if c.kwargs.get("prog_bar") is True}
+        assert {"loss_cls", "loss_box", "kp_l1", "kp_nll", "kp_rle"}.issubset(progress_names)
 
     def test_logs_individual_losses_as_dict(self, tmp_path):
         """Each component loss must be logged separately under train/ prefix."""
@@ -709,13 +729,19 @@ class TestValidationStep:
     """Tests for validation_step() — verifies output dict shape, postprocessor invocation with correct original sizes,
     and val/loss logging."""
 
-    def _run_val_step(self, tmp_path):
+    def _run_val_step(
+        self,
+        tmp_path,
+        loss_dict: dict[str, torch.Tensor] | None = None,
+        weight_dict: dict[str, float] | None = None,
+    ):
         module, fake_model, fake_criterion, fake_pp = _build_module(tmp_path=tmp_path)
         samples, targets = _make_batch()
         fake_model.return_value = {}
-        fake_criterion.return_value = {"loss_ce": torch.tensor(0.5)}
-        fake_criterion.weight_dict = {"loss_ce": 1.0}
+        fake_criterion.return_value = loss_dict or {"loss_ce": torch.tensor(0.5)}
+        fake_criterion.weight_dict = weight_dict or {"loss_ce": 1.0}
         module.log = MagicMock()
+        module.log_dict = MagicMock()
         result = module.validation_step((samples, targets), batch_idx=0)
         return result, fake_pp, module
 
@@ -743,6 +769,45 @@ class TestValidationStep:
         _, _, module = self._run_val_step(tmp_path)
         val_loss_calls = [c for c in module.log.call_args_list if c[0][0] == "val/loss"]
         assert len(val_loss_calls) == 1
+
+    def test_logs_val_keypoint_loss_components_once(self, tmp_path):
+        """Validation should expose full keypoint losses without duplicate progress aliases."""
+        loss_dict = {
+            "loss_ce": torch.tensor(0.5),
+            "loss_keypoints_l1": torch.tensor(0.4),
+            "loss_keypoints_findable": torch.tensor(0.3),
+            "loss_keypoints_visible": torch.tensor(0.2),
+            "loss_keypoints_nll": torch.tensor(0.1),
+            "loss_keypoints_rle": torch.tensor(0.05),
+        }
+        weight_dict = {key: 1.0 for key in loss_dict}
+
+        _, _, module = self._run_val_step(tmp_path, loss_dict=loss_dict, weight_dict=weight_dict)
+
+        module.log_dict.assert_called_once()
+        logged = module.log_dict.call_args.args[0]
+        assert "val/loss_keypoints_l1" in logged
+        assert "val/loss_keypoints_findable" in logged
+        logged_names = {c[0][0] for c in module.log.call_args_list}
+        assert "val/kp_l1" not in logged_names
+        assert "val/kp_find" not in logged_names
+
+    def test_val_detection_loss_components_are_not_relogged_as_progress_aliases(self, tmp_path):
+        """Validation component losses should be logged once under canonical ``val/loss_*`` names."""
+        loss_dict = {
+            "loss_ce": torch.tensor(0.5),
+            "loss_bbox": torch.tensor(0.3),
+            "loss_giou": torch.tensor(0.2),
+        }
+        weight_dict = {key: 1.0 for key in loss_dict}
+
+        _, _, module = self._run_val_step(tmp_path, loss_dict=loss_dict, weight_dict=weight_dict)
+
+        logged_loss_names = set(module.log_dict.call_args.args[0])
+        direct_log_names = {c[0][0] for c in module.log.call_args_list}
+        assert "val/loss_giou" in logged_loss_names
+        assert "val/loss_giou" not in direct_log_names
+        assert "val/giou" not in direct_log_names
 
     def test_can_disable_val_loss_computation(self, tmp_path):
         """compute_val_loss=False skips criterion call and val/loss logging."""
@@ -1223,9 +1288,11 @@ class TestOnLoadCheckpoint:
 
         pe_after = checkpoint["state_dict"][self._PE_KEY]
         expected_tokens = pe_tgt * pe_tgt + 1
-        assert pe_after.shape == (1, expected_tokens, 16), (
-            f"PE should have {expected_tokens} tokens, got shape {tuple(pe_after.shape)}"
-        )
+        assert pe_after.shape == (
+            1,
+            expected_tokens,
+            16,
+        ), f"PE should have {expected_tokens} tokens, got shape {tuple(pe_after.shape)}"
 
     def test_legacy_pth_normalised_and_pe_interpolated(self, build_module):
         """Legacy .pth checkpoint (no state_dict key) must be normalised and PE interpolated.

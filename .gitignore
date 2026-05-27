@@ -188,7 +188,7 @@ test_visualizations/
 
 # datasets
 data/
-datasets/
+/datasets/
 
 debugging/
 

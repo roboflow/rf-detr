@@ -33,6 +33,7 @@ __all__ = [
 from deprecate import deprecated_class
 
 from rfdetr.config import (
+    KeypointTrainConfig,
     ModelConfig,
     RFDETRBaseConfig,
     RFDETRKeypointPreviewConfig,
@@ -80,6 +81,7 @@ class RFDETRKeypointPreview(RFDETR):
 
     size = "rfdetr-keypoint-preview"
     _model_config_class = RFDETRKeypointPreviewConfig
+    _train_config_class = KeypointTrainConfig
 
 
 class RFDETRSmall(RFDETR):

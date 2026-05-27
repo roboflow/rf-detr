@@ -6,7 +6,7 @@
 """Public API tests for the keypoint preview variant."""
 
 from rfdetr import RFDETRKeypointPreview
-from rfdetr.config import RFDETRKeypointPreviewConfig
+from rfdetr.config import KeypointTrainConfig, RFDETRKeypointPreviewConfig
 from rfdetr.detr import RFDETRKeypointPreview as RFDETRKeypointPreviewFromDetr
 from rfdetr.variants import RFDETRKeypointPreview as RFDETRKeypointPreviewFromVariants
 
@@ -21,4 +21,5 @@ def test_keypoint_preview_variant_metadata() -> None:
     """RFDETRKeypointPreview exposes the expected variant metadata and config class."""
     assert RFDETRKeypointPreview.size == "rfdetr-keypoint-preview"
     assert RFDETRKeypointPreview._model_config_class is RFDETRKeypointPreviewConfig
+    assert RFDETRKeypointPreview._train_config_class is KeypointTrainConfig
     assert RFDETRKeypointPreviewConfig.model_fields["pretrain_weights"].default == "rf-detr-keypoint-preview-xlarge.pth"

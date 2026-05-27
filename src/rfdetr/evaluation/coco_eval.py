@@ -36,6 +36,20 @@ from rfdetr.utilities.logger import get_logger
 logger = get_logger()
 
 
+def _ensure_faster_coco(coco_gt: Any) -> COCO:
+    """Return a faster-coco-eval COCO object for evaluator construction."""
+    if isinstance(coco_gt, COCO) and hasattr(coco_gt, "cat_img_map"):
+        return coco_gt
+
+    faster_coco = COCO()
+    faster_coco.dataset = copy.deepcopy(coco_gt.dataset)
+    faster_coco.createIndex()
+    label2cat = getattr(coco_gt, "label2cat", None)
+    if label2cat is not None:
+        setattr(faster_coco, "label2cat", copy.deepcopy(label2cat))
+    return faster_coco
+
+
 def _load_coco_results(coco_gt: COCO, results: list[dict[str, Any]]) -> COCO:
     """Build a COCO detections object, including the empty-result case."""
     if results:
@@ -61,9 +75,9 @@ def _xyxy_to_xywh(boxes: np.ndarray) -> np.ndarray:
 class CocoEvaluator:
     """COCO evaluator that works in distributed mode."""
 
-    def __init__(self, coco_gt: COCO, iou_types: list[str], max_dets: int = 100) -> None:
+    def __init__(self, coco_gt: Any, iou_types: list[str], max_dets: int = 100) -> None:
         assert isinstance(iou_types, (list, tuple))
-        coco_gt = copy.deepcopy(coco_gt)
+        coco_gt = copy.deepcopy(_ensure_faster_coco(coco_gt))
         self.coco_gt = coco_gt
         self.max_dets = max_dets
         # label2cat maps contiguous model label indices back to original COCO category_ids.
@@ -85,8 +99,9 @@ class CocoEvaluator:
         """Resolve a predicted label to a COCO category_id."""
         if use_raw_category_ids:
             return label if label in self.cat_ids else None
-        if self.label2cat is not None and label in self.label2cat:
-            return self.label2cat[label]
+        if self.label2cat is not None:
+            category_id = self.label2cat.get(label)
+            return category_id if category_id in self.cat_ids else None
         if label in self.cat_ids:
             return label
         return None

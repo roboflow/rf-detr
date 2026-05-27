@@ -37,6 +37,74 @@ def is_valid_coco_dataset(dataset_dir: str) -> bool:
     return (Path(dataset_dir) / "train" / "_annotations.coco.json").exists()
 
 
+def _category_ids_with_keypoints(coco: Any) -> list[int]:
+    """Return sorted COCO category ids that carry keypoint metadata or annotations."""
+    category_ids = {
+        int(cat_id) for cat_id, category in coco.cats.items() if category.get("keypoints") or category.get("skeleton")
+    }
+    if category_ids:
+        return sorted(category_ids)
+
+    for annotation in coco.anns.values():
+        if annotation.get("keypoints") or int(annotation.get("num_keypoints", 0)) > 0:
+            category_ids.add(int(annotation["category_id"]))
+    return sorted(category_ids)
+
+
+def _build_keypoint_cat2label(coco: Any, num_keypoints_per_class: Optional[List[int]]) -> dict[int, int]:
+    """Map COCO category ids onto model label slots that have keypoint capacity.
+
+    RF-DETR keypoint schemas are indexed by model label. The preview person-keypoint schema is ``[0, 17]``: label slot
+    ``0`` has no keypoints while label slot ``1`` owns the 17 COCO person keypoints. Roboflow COCO exports often use
+    category id ``0`` for the only class, so standard contiguous remapping would silently place person into slot ``0``
+    and disable keypoint supervision. This helper maps keypoint-bearing categories onto the non-zero schema slots.
+    """
+    schema = list(num_keypoints_per_class or [])
+    active_slots = [idx for idx, count in enumerate(schema) if count > 0]
+    if not active_slots:
+        raise ValueError(
+            "Keypoint COCO dataset requested, but num_keypoints_per_class has no active keypoint slots. "
+            "Provide a schema such as [0, 17] for the keypoint preview model."
+        )
+
+    keypoint_cat_ids = _category_ids_with_keypoints(coco)
+    if not keypoint_cat_ids:
+        raise ValueError(
+            "Keypoint COCO dataset has no keypoint category metadata and no keypoint annotations. "
+            "Expected COCO categories with a 'keypoints' field or annotations with 'keypoints'/'num_keypoints'."
+        )
+    if len(keypoint_cat_ids) > len(active_slots):
+        raise ValueError(
+            "Keypoint COCO dataset has more keypoint-bearing categories "
+            f"({len(keypoint_cat_ids)}) than active schema slots ({len(active_slots)}). "
+            "Multi-class keypoint training needs an explicit num_keypoints_per_class schema."
+        )
+
+    sorted_cat_ids = sorted(int(cat_id) for cat_id in coco.cats.keys())
+    required_slots = max(len(sorted_cat_ids), max(active_slots) + 1)
+    assigned_slots: set[int] = set()
+    cat2label: dict[int, int] = {}
+
+    for cat_id, slot in zip(keypoint_cat_ids, active_slots):
+        if slot >= required_slots:
+            raise ValueError(
+                f"Keypoint schema slot {slot} for category_id {cat_id} exceeds the detected class count "
+                f"({len(sorted_cat_ids)}). Pass num_classes large enough to include this keypoint label slot."
+            )
+        cat2label[cat_id] = slot
+        assigned_slots.add(slot)
+
+    free_slots = [slot for slot in range(required_slots) if slot not in assigned_slots]
+    for cat_id in sorted_cat_ids:
+        if cat_id in cat2label:
+            continue
+        if not free_slots:
+            raise ValueError(f"No free model label slots remain for non-keypoint category_id {cat_id}.")
+        cat2label[cat_id] = free_slots.pop(0)
+
+    return cat2label
+
+
 def compute_multi_scale_scales(
     resolution: int,
     expanded_scales: bool = False,
@@ -178,7 +246,10 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         self.include_keypoints = include_keypoints
         if remap_category_ids:
             # Mapping from original COCO category_id to contiguous label indices
-            self.cat2label = {cat_id: i for i, cat_id in enumerate(sorted(self.coco.cats.keys()))}
+            if include_keypoints:
+                self.cat2label = _build_keypoint_cat2label(self.coco, num_keypoints_per_class)
+            else:
+                self.cat2label = {cat_id: i for i, cat_id in enumerate(sorted(self.coco.cats.keys()))}
             # Reverse mapping from contiguous label indices back to COCO category_id
             self.label2cat = {label: cat_id for cat_id, label in self.cat2label.items()}
             # Expose label-to-category mapping on the underlying COCO API object for evaluators

@@ -6,6 +6,7 @@
 
 import torch
 
+from rfdetr.models.flows import RealNVP
 from rfdetr.models.heads import ConditionalQueryInitializer
 from rfdetr.models.heads.keypoints import compute_keypoint_matching_cost, compute_l1_keypoint_loss
 
@@ -52,6 +53,24 @@ def test_compute_l1_keypoint_loss_smoke() -> None:
         assert torch.isfinite(loss).all()
 
 
+def test_compute_l1_keypoint_loss_skips_visible_zero_area_rle_residuals() -> None:
+    """Visible keypoints on zero-area targets should not send invalid residuals into RLE flow."""
+    pred_keypoints = torch.zeros(1, 17, 7)
+    target_keypoints = torch.rand(1, 17, 3)
+    target_keypoints[:, :, 2] = 2.0
+    losses = compute_l1_keypoint_loss(
+        all_pred_keypoints=pred_keypoints,
+        target_keypoints=target_keypoints,
+        target_classes=torch.tensor([0], dtype=torch.int64),
+        target_areas=torch.tensor([0.0], dtype=torch.float32),
+        num_keypoints_per_class=[17],
+        flow=RealNVP(),
+    )
+
+    for loss in losses:
+        assert torch.isfinite(loss).all()
+
+
 def test_compute_keypoint_matching_cost_smoke() -> None:
     """Matching-cost helper should return a five-term cost tensor for each target."""
     all_pred_keypoints = torch.randn(2, 4, 17, 7)
@@ -78,3 +97,21 @@ def test_compute_keypoint_matching_cost_smoke() -> None:
     assert torch.isfinite(cost_visible).all()
     assert torch.isfinite(cost_nll).all()
     assert torch.isfinite(cost_rle).all()
+
+
+def test_compute_keypoint_matching_cost_skips_zero_area_rle_residuals() -> None:
+    """Zero-area targets should not produce non-finite keypoint matching costs."""
+    all_pred_keypoints = torch.zeros(1, 2, 17, 7)
+    target_keypoints = torch.rand(1, 17, 3)
+    target_keypoints[:, :, 2] = 2.0
+    costs = compute_keypoint_matching_cost(
+        all_pred_keypoints=all_pred_keypoints,
+        target_keypoints=target_keypoints,
+        target_classes=torch.tensor([0], dtype=torch.int64),
+        target_areas=torch.tensor([0.0], dtype=torch.float32),
+        num_keypoints_per_class=[17],
+        flow=RealNVP(),
+    )
+
+    for cost in costs:
+        assert torch.isfinite(cost).all()

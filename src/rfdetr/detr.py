@@ -35,6 +35,7 @@ from rfdetr.config import (
     ModelConfig,
     TrainConfig,
 )
+from rfdetr.datasets._keypoint_schema import infer_coco_keypoint_schema
 from rfdetr.datasets.coco import is_valid_coco_dataset
 from rfdetr.datasets.yolo import is_valid_yolo_dataset
 from rfdetr.inference import ModelContext, _build_model_context
@@ -1105,15 +1106,18 @@ class RFDETR:
         )
 
     @staticmethod
-    def _detect_num_classes_for_training(dataset_dir: str) -> int:
+    def _detect_num_classes_for_training(dataset_dir: str, *, use_grouppose_keypoints: bool = False) -> int:
         """Detect the class count using the same category basis as training labels.
 
         For COCO-style datasets this counts all categories by ``id`` from ``train/_annotations.coco.json`` (matching the
-        remapping based on ``coco.cats`` used by the training datamodule). For YOLO-style datasets it falls back to
-        ``_load_classes``.
+        remapping based on ``coco.cats`` used by the training datamodule). In keypoint mode it instead counts the
+        inferred RF-DETR keypoint label slots, where slot ``0`` may be reserved for classes without keypoints. For
+        YOLO-style datasets it falls back to ``_load_classes``.
         """
         if is_valid_coco_dataset(dataset_dir):
             coco_path = os.path.join(dataset_dir, "train", "_annotations.coco.json")
+            if use_grouppose_keypoints:
+                return len(infer_coco_keypoint_schema(coco_path).class_names)
             with open(coco_path, encoding="utf-8") as f:
                 anns = json.load(f)
             categories = anns["categories"]
@@ -1140,7 +1144,10 @@ class RFDETR:
             dataset_dir: Path to the training dataset root directory.
         """
         try:
-            dataset_num_classes = RFDETR._detect_num_classes_for_training(dataset_dir)
+            dataset_num_classes = RFDETR._detect_num_classes_for_training(
+                dataset_dir,
+                use_grouppose_keypoints=getattr(self.model_config, "use_grouppose_keypoints", False),
+            )
         except (FileNotFoundError, ValueError, KeyError, OSError) as exc:
             # Best-effort only; do not block training if detection fails.
             logger.debug("Could not auto-detect num_classes from dataset '%s': %s", dataset_dir, exc)

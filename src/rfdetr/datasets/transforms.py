@@ -372,6 +372,11 @@ class AlbumentationsWrapper:
                     min_visibility=0.0,  # Remove boxes with zero visibility/area after transformation
                     clip=True,  # Clip box coordinates to image boundaries after transformation
                 ),
+                keypoint_params=alb.KeypointParams(
+                    format="xy",
+                    label_fields=["keypoint_instance_ids", "keypoint_point_ids", "keypoint_visibility"],
+                    remove_invisible=False,
+                ),
             )
         else:
             # Wrap non-geometric transform without bbox handling
@@ -412,6 +417,87 @@ class AlbumentationsWrapper:
         if len(boxes_np.shape) != 2 or boxes_np.shape[1] != 4:
             raise ValueError(f"boxes must have shape (N, 4), got {boxes_np.shape}")
         return boxes_np
+
+    @staticmethod
+    def _keypoints_to_numpy(keypoints: Union[torch.Tensor, np.ndarray], num_boxes: int) -> np.ndarray:
+        """Convert keypoints to numpy array and validate shape.
+
+        >>> import torch
+        >>> keypoints = torch.tensor([[[10.0, 20.0, 2.0]]])
+        >>> AlbumentationsWrapper._keypoints_to_numpy(keypoints, 1).shape
+        (1, 1, 3)
+        """
+        keypoints_np = keypoints.cpu().numpy() if torch.is_tensor(keypoints) else np.array(keypoints)
+        if len(keypoints_np.shape) != 3 or keypoints_np.shape[2] != 3:
+            raise ValueError(f"keypoints must have shape (N, K, 3), got {keypoints_np.shape}")
+        if keypoints_np.shape[0] != num_boxes:
+            raise ValueError(
+                f"keypoints first dimension must match number of boxes ({num_boxes}), got {keypoints_np.shape[0]}"
+            )
+        return keypoints_np
+
+    @staticmethod
+    def _build_albu_keypoints(
+        keypoints_np: np.ndarray,
+        idxs: List[int],
+    ) -> Dict[str, Any]:
+        """Flatten per-instance keypoints into Albumentations keypoint fields.
+
+        >>> keypoints = np.array([[[10.0, 20.0, 2.0], [0.0, 0.0, 0.0]]], dtype=np.float32)
+        >>> fields = AlbumentationsWrapper._build_albu_keypoints(keypoints, [0])
+        >>> fields["keypoints"]
+        [(10.0, 20.0), (0.0, 0.0)]
+        """
+        albu_keypoints: List[Tuple[float, float]] = []
+        instance_ids: List[float] = []
+        point_ids: List[float] = []
+        visibility: List[float] = []
+        for original_idx in idxs:
+            for point_idx, point in enumerate(keypoints_np[original_idx]):
+                x, y, visible = point.tolist()
+                albu_keypoints.append((float(x), float(y)))
+                instance_ids.append(float(original_idx))
+                point_ids.append(float(point_idx))
+                visibility.append(float(visible))
+        return {
+            "keypoints": albu_keypoints,
+            "keypoint_instance_ids": instance_ids,
+            "keypoint_point_ids": point_ids,
+            "keypoint_visibility": visibility,
+        }
+
+    @staticmethod
+    def _rebuild_keypoints_from_albu(
+        augmented: Dict[str, Any],
+        kept_idxs: List[int],
+        keypoints_np: np.ndarray,
+    ) -> torch.Tensor:
+        """Rebuild transformed keypoints and keep them synchronized with kept boxes."""
+        num_keypoints = keypoints_np.shape[1]
+        keypoints_out = np.zeros((len(kept_idxs), num_keypoints, 3), dtype=np.float32)
+        kept_position_by_idx = {int(original_idx): position for position, original_idx in enumerate(kept_idxs)}
+        height, width = augmented["image"].shape[:2]
+
+        for point, instance_id, point_id, visible in zip(
+            augmented.get("keypoints", []),
+            augmented.get("keypoint_instance_ids", []),
+            augmented.get("keypoint_point_ids", []),
+            augmented.get("keypoint_visibility", []),
+        ):
+            original_idx = int(instance_id)
+            if original_idx not in kept_position_by_idx:
+                continue
+            point_idx = int(point_id)
+            if point_idx < 0 or point_idx >= num_keypoints:
+                continue
+
+            x, y = float(point[0]), float(point[1])
+            visibility = float(visible)
+            if visibility <= 0 or x < 0 or y < 0 or x >= width or y >= height:
+                x, y, visibility = 0.0, 0.0, 0.0
+            keypoints_out[kept_position_by_idx[original_idx], point_idx] = (x, y, visibility)
+
+        return torch.as_tensor(keypoints_out, dtype=torch.float32)
 
     @staticmethod
     def _clear_per_instance_fields(target: Dict[str, Any], num_boxes: int) -> Dict[str, Any]:
@@ -501,6 +587,9 @@ class AlbumentationsWrapper:
                 raise ValueError(f"masks must have shape (N, H, W), got {masks_np.shape}")
             masks_np = masks_np.astype(np.uint8, copy=False)
             masks_list = [mask for mask in masks_np]
+        keypoints_np = None
+        if "keypoints" in target:
+            keypoints_np = self._keypoints_to_numpy(target["keypoints"], num_boxes)
         # Filter out degenerate boxes (zero-width or zero-height) before passing to
         # Albumentations. Such boxes arise when an annotation sits exactly on or beyond
         # the image boundary so that x_min == x_max (or y_min == y_max) after clipping.
@@ -518,10 +607,21 @@ class AlbumentationsWrapper:
         transform_kwargs = {"image": image_np, "bboxes": boxes_np, "category_ids": labels, "idxs": idxs}
         if masks_list is not None and len(masks_list) > 0:
             transform_kwargs["masks"] = masks_list
+        if keypoints_np is not None:
+            transform_kwargs.update(self._build_albu_keypoints(keypoints_np, idxs))
+        else:
+            transform_kwargs.update(
+                {
+                    "keypoints": [],
+                    "keypoint_instance_ids": [],
+                    "keypoint_point_ids": [],
+                    "keypoint_visibility": [],
+                }
+            )
         augmented = self.transform(**transform_kwargs)
         target_out: Dict[str, Any] = target.copy()
         bboxes_aug = augmented["bboxes"]
-        kept_idxs = augmented.get("idxs", idxs)
+        kept_idxs = [int(idx) for idx in augmented.get("idxs", idxs)]
         # Update target with transformed boxes and labels
         if len(bboxes_aug) == 0:
             target_out["boxes"] = torch.zeros((0, 4), dtype=torch.float32)
@@ -540,6 +640,8 @@ class AlbumentationsWrapper:
             if "area" in target_out:
                 boxes = target_out["boxes"]
                 target_out["area"] = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
+            if keypoints_np is not None:
+                target_out["keypoints"] = self._rebuild_keypoints_from_albu(augmented, kept_idxs, keypoints_np)
         image_out = Image.fromarray(augmented["image"])
         if masks_list is not None and "masks" in augmented:
             height, width = augmented["image"].shape[:2]
@@ -601,7 +703,16 @@ class AlbumentationsWrapper:
             image_np = np.array(image)
             if self._is_geometric:
                 # Geometric A.Compose requires label_fields even when there are no boxes
-                augmented = self.transform(image=image_np, bboxes=[], category_ids=[], idxs=[])
+                augmented = self.transform(
+                    image=image_np,
+                    bboxes=[],
+                    category_ids=[],
+                    idxs=[],
+                    keypoints=[],
+                    keypoint_instance_ids=[],
+                    keypoint_point_ids=[],
+                    keypoint_visibility=[],
+                )
             else:
                 augmented = self.transform(image=image_np)
             return Image.fromarray(augmented["image"]), None
@@ -639,9 +750,6 @@ class AlbumentationsWrapper:
             # PIL.Image.size is (width, height); many detectors expect (height, width)
             width, height = image_out.size
             target_out["size"] = torch.as_tensor([height, width], dtype=torch.int64)
-        # TODO(keypoints): First public keypoint preview intentionally skips geometric keypoint augmentation in
-        # AlbumentationsWrapper to preserve current detection/segmentation behavior and avoid partial, fragile
-        # coordinate transforms. Implement full keypoint-aware augmentation and synchronize with box/mask filtering.
         return image_out, target_out
 
     @staticmethod

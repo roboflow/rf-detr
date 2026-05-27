@@ -11,6 +11,7 @@ import torch.distributions as distributions
 from torch import nn
 
 FLOW_HIDDEN = 64
+INVALID_LOG_PROB = 0.0
 
 
 def _build_scale_net(input_dim: int) -> nn.Sequential:
@@ -143,7 +144,19 @@ class RealNVP(nn.Module):  # type: ignore[misc]
                 self.prior.loc.to(z.device), self.prior.covariance_matrix.to(z.device)
             )
 
-        return self.prior.log_prob(z) + log_det_jacobian
+        log_prob = z.new_full((z.shape[0],), INVALID_LOG_PROB)
+        finite_mask = torch.isfinite(z).all(dim=-1) & torch.isfinite(log_det_jacobian)
+        if finite_mask.any():
+            prior_log_prob = self.prior.log_prob(z[finite_mask])
+            valid_log_prob = prior_log_prob + log_det_jacobian[finite_mask]
+            log_prob[finite_mask] = torch.nan_to_num(
+                valid_log_prob,
+                nan=INVALID_LOG_PROB,
+                posinf=INVALID_LOG_PROB,
+                neginf=INVALID_LOG_PROB,
+            )
+
+        return log_prob
 
     def forward(self, x: torch.Tensor, cond: torch.Tensor | None = None) -> torch.Tensor:
         """Forward pass.
