@@ -1454,6 +1454,9 @@ class RFDETR:
             if "keypoints" in result:
                 keypoints = result["keypoints"][keep]
                 detections.data["keypoints"] = keypoints.float().cpu().numpy()
+            if "keypoint_precision_cholesky" in result:
+                keypoint_precision = result["keypoint_precision_cholesky"][keep]
+                detections.data["keypoint_precision_cholesky"] = keypoint_precision.float().cpu().numpy()
 
             if include_source_image:
                 detections.metadata["source_image"] = source_images[i]

@@ -24,6 +24,11 @@ def test_predict_returns_keypoints_in_detections_data() -> None:
     assert isinstance(keypoints, np.ndarray)
     assert keypoints.shape == (2, 17, 3)
     assert np.isfinite(keypoints).all()
+    assert "keypoint_precision_cholesky" in detections.data
+    keypoint_precision = detections.data["keypoint_precision_cholesky"]
+    assert isinstance(keypoint_precision, np.ndarray)
+    assert keypoint_precision.shape == (2, 17, 3)
+    assert np.isfinite(keypoint_precision).all()
 
 
 def test_predict_default_detection_without_keypoints_unchanged() -> None:
