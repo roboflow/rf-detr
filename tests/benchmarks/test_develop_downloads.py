@@ -12,7 +12,12 @@ from unittest.mock import patch
 
 import pytest
 
-from rfdetr.datasets import _develop
+from rfdetr.datasets._develop import (
+    _coco_val_images_complete,
+    _download_and_extract,
+    _download_lock,
+    _nonempty_file_exists,
+)
 
 
 class TestCocoValImagesComplete:
@@ -20,14 +25,14 @@ class TestCocoValImagesComplete:
 
     def test_missing_directory_is_incomplete(self, tmp_path: Path) -> None:
         """A missing image directory must trigger a download."""
-        assert not _develop._coco_val_images_complete(tmp_path / "val2017")
+        assert not _coco_val_images_complete(tmp_path / "val2017")
 
     def test_empty_existing_directory_is_incomplete(self, tmp_path: Path) -> None:
         """An empty ``val2017`` directory must not skip the image download."""
         images_root = tmp_path / "val2017"
         images_root.mkdir()
 
-        assert not _develop._coco_val_images_complete(images_root)
+        assert not _coco_val_images_complete(images_root)
 
     @pytest.mark.parametrize(
         "file_count,expected",
@@ -41,13 +46,15 @@ class TestCocoValImagesComplete:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, file_count: int, expected: bool
     ) -> None:
         """Directory completeness reflects the >= threshold semantics."""
-        monkeypatch.setattr(_develop, "_COCO_VAL_IMAGE_COUNT", 2)
+        import rfdetr.datasets._develop as _develop_mod
+
+        monkeypatch.setattr(_develop_mod, "_COCO_VAL_IMAGE_COUNT", 2)
         images_root = tmp_path / "val2017"
         images_root.mkdir()
         for i in range(file_count):
             (images_root / f"{i:012d}.jpg").write_bytes(b"jpeg")
 
-        assert _develop._coco_val_images_complete(images_root) is expected
+        assert _coco_val_images_complete(images_root) is expected
 
 
 class TestNonemptyFileExists:
@@ -57,21 +64,21 @@ class TestNonemptyFileExists:
         """A missing annotation file must trigger a download."""
         annotations_path = tmp_path / "instances_val2017.json"
 
-        assert not _develop._nonempty_file_exists(annotations_path)
+        assert not _nonempty_file_exists(annotations_path)
 
     def test_empty_file_is_incomplete(self, tmp_path: Path) -> None:
         """An empty annotation file must trigger a re-download."""
         annotations_path = tmp_path / "instances_val2017.json"
         annotations_path.write_bytes(b"")
 
-        assert not _develop._nonempty_file_exists(annotations_path)
+        assert not _nonempty_file_exists(annotations_path)
 
     def test_nonempty_file_is_complete(self, tmp_path: Path) -> None:
         """A non-empty annotation file is accepted without re-download."""
         annotations_path = tmp_path / "instances_val2017.json"
         annotations_path.write_bytes(b"{}")
 
-        assert _develop._nonempty_file_exists(annotations_path)
+        assert _nonempty_file_exists(annotations_path)
 
 
 class TestDownloadLock:
@@ -83,7 +90,7 @@ class TestDownloadLock:
         lock_path.touch()
 
         with pytest.raises(TimeoutError):
-            with _develop._download_lock(lock_path, timeout_s=0, poll_s=0):
+            with _download_lock(lock_path, timeout_s=0, poll_s=0):
                 pass
 
 
@@ -108,4 +115,4 @@ class TestDownloadAndExtract:
 
         with patch("rfdetr.datasets._develop.urlretrieve", side_effect=fake_urlretrieve):
             with pytest.raises(RuntimeError, match="Unsafe path detected"):
-                _develop._download_and_extract(url, tmp_path)
+                _download_and_extract(url, tmp_path)
