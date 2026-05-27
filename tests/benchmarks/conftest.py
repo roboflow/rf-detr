@@ -9,6 +9,7 @@ import pytest
 
 from rfdetr.datasets._develop import (
     _COCO_URLS,
+    _coco_val_images_complete,
     _download_and_extract,
     _download_lock,
 )
@@ -30,7 +31,7 @@ def download_coco_val() -> tuple[Path, Path]:
 
     lock_path = _DATA_DIR / ".coco_download.lock"
     with _download_lock(lock_path):
-        if not images_root.exists():
+        if not _coco_val_images_complete(images_root):
             _download_and_extract(_COCO_URLS["val2017"], _DATA_DIR)
         if not annotations_path.exists():
             _download_and_extract(_COCO_URLS["annotations"], _DATA_DIR)
