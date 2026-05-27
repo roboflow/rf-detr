@@ -56,6 +56,9 @@ class _DummyModel:
             }
             if self._include_keypoints:
                 result["keypoints"] = torch.full((len(self._labels), self._num_keypoints, 3), 0.5, dtype=torch.float32)
+                result["keypoint_precision_cholesky"] = torch.full(
+                    (len(self._labels), self._num_keypoints, 3), 0.25, dtype=torch.float32
+                )
             results.append(result)
         return results
 
@@ -268,6 +271,11 @@ class TestPredictSourceData:
         assert isinstance(keypoints, np.ndarray)
         assert keypoints.shape == (2, 17, 3)
         assert np.allclose(keypoints, 0.5)
+        assert "keypoint_precision_cholesky" in detections.data
+        keypoint_precision = detections.data["keypoint_precision_cholesky"]
+        assert isinstance(keypoint_precision, np.ndarray)
+        assert keypoint_precision.shape == (2, 17, 3)
+        assert np.allclose(keypoint_precision, 0.25)
 
     def test_predict_non_keypoint_no_keypoints_key_in_data(self) -> None:
         """Non-keypoint predictions keep the legacy detections.data contract."""

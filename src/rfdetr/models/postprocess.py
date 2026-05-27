@@ -100,6 +100,9 @@ class PostProcess(nn.Module):
                 )
 
                 output_keypoints = keypoints_i.new_zeros((keypoints_i.shape[0], max_num_keypoints, 3))
+                output_keypoint_precision = keypoints_i.new_full(
+                    (keypoints_i.shape[0], max_num_keypoints, 3), float("nan")
+                )
                 if num_keypoint_classes > 0 and max_num_keypoints > 0:
                     reshaped = keypoints_i.view(
                         keypoints_i.shape[0], num_keypoint_classes, max_num_keypoints, keypoints_i.shape[-1]
@@ -113,6 +116,8 @@ class PostProcess(nn.Module):
                         output_keypoints[valid_indices, :, 0] = selected_keypoints[:, :, 0] * img_w
                         output_keypoints[valid_indices, :, 1] = selected_keypoints[:, :, 1] * img_h
                         output_keypoints[valid_indices, :, 2] = selected_keypoints[:, :, 2].sigmoid()
+                        if selected_keypoints.shape[-1] >= 7:
+                            output_keypoint_precision[valid_indices] = selected_keypoints[:, :, 4:7]
 
                 results.append(
                     {
@@ -120,6 +125,7 @@ class PostProcess(nn.Module):
                         "labels": labels_i,
                         "boxes": boxes_i,
                         "keypoints": output_keypoints,
+                        "keypoint_precision_cholesky": output_keypoint_precision,
                     }
                 )
         else:
