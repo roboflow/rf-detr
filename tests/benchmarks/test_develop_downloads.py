@@ -46,23 +46,27 @@ class TestCocoValImagesComplete:
         assert _develop._coco_val_images_complete(images_root)
 
 
-class TestNonemptyFileExists:
-    """Coverage for file integrity checks used by benchmark downloads."""
+class TestAnnotationFilePreconditions:
+    """Coverage for annotation file preconditions used by benchmark downloads."""
 
-    def test_missing_file_is_false(self, tmp_path: Path) -> None:
+    def test_missing_file_is_incomplete(self, tmp_path: Path) -> None:
         """Missing files must trigger a download."""
-        assert not _develop._nonempty_file_exists(tmp_path / "instances_val2017.json")
+        annotations_path = tmp_path / "instances_val2017.json"
 
-    def test_empty_file_is_false(self, tmp_path: Path) -> None:
+        assert not annotations_path.exists()
+
+    def test_empty_file_is_incomplete(self, tmp_path: Path) -> None:
         """Empty files must trigger a download."""
         annotations_path = tmp_path / "instances_val2017.json"
         annotations_path.write_text("")
 
-        assert not _develop._nonempty_file_exists(annotations_path)
+        assert annotations_path.is_file()
+        assert annotations_path.stat().st_size == 0
 
-    def test_nonempty_file_is_true(self, tmp_path: Path) -> None:
+    def test_nonempty_file_is_complete(self, tmp_path: Path) -> None:
         """Non-empty files are accepted."""
         annotations_path = tmp_path / "instances_val2017.json"
         annotations_path.write_text("{}")
 
-        assert _develop._nonempty_file_exists(annotations_path)
+        assert annotations_path.is_file()
+        assert annotations_path.stat().st_size > 0
