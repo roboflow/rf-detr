@@ -5,7 +5,6 @@
 # ------------------------------------------------------------------------
 """LightningDataModule for RF-DETR dataset construction and loaders."""
 
-import warnings
 from typing import Any, List, Optional, Tuple
 
 import torch
@@ -169,7 +168,6 @@ class RFDETRDataModule(LightningDataModule):
         # GPU augmentation pipeline (Kornia); built lazily in setup("fit").
         self._kornia_pipeline: Any | None = None
         self._kornia_normalize: Any | None = None
-        self._keypoint_augmentation_warning_emitted: bool = False
         # Sentinel: True once _setup_kornia_pipeline has run (even on fallback paths
         # where _kornia_pipeline stays None), preventing redundant re-runs on repeated
         # setup("fit") calls (e.g. during validation loops in some PTL strategies).
@@ -225,18 +223,11 @@ class RFDETRDataModule(LightningDataModule):
             resolved = _resolve_augmentation_backend(self.train_config.augmentation_backend)
             if resolved != self.train_config.augmentation_backend:
                 ns.augmentation_backend = resolved
-            if (
-                self.model_config.use_grouppose_keypoints
-                and resolved != "cpu"
-                and not self._keypoint_augmentation_warning_emitted
-            ):
-                warnings.warn(
-                    "Keypoint mode currently supports keypoint-aware augmentation only with the CPU "
-                    "Albumentations backend. GPU/Kornia augmentation leaves keypoint coordinates unchanged.",
-                    UserWarning,
-                    stacklevel=2,
+            if self.model_config.use_grouppose_keypoints and resolved != "cpu":
+                raise ValueError(
+                    f"GPU augmentation backend '{resolved}' does not support keypoint transforms. "
+                    "Set augmentation_backend='cpu' when use_grouppose_keypoints=True."
                 )
-                self._keypoint_augmentation_warning_emitted = True
             if self._dataset_train is None:
                 self._dataset_train = build_dataset("train", ns, resolution)
             if self._dataset_val is None:

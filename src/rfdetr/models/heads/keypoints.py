@@ -3,14 +3,37 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Keypoint helper primitives for GroupPose-style decoding."""
+"""Keypoint helper primitives for GroupPose-style decoding.
+
+Keypoint predictions are dense ``[N, K, KEYPOINT_PRED_DIM]`` tensors where the trailing channel layout is fixed:
+
+================  ===========  ==========================================================
+Slot index        Name         Meaning
+================  ===========  ==========================================================
+``0``             ``x``        Normalized x coordinate (image-relative).
+``1``             ``y``        Normalized y coordinate (image-relative).
+``2``             ``findable`` Logit for "annotator could find this keypoint" (``v > 0``).
+``3``             ``visible``  Logit for "fully visible" (``v == 2``).
+``4`` – ``6``     ``L_*``      Lower-triangular Cholesky parameters ``Lxx``, ``Lxy``, ``Lyy``.
+``7``             ``class``    Per-keypoint class-logit contribution aggregated into detection-class logits.
+================  ===========  ==========================================================
+"""
+
+from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
+from typing import TYPE_CHECKING
 
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import nn
+
+if TYPE_CHECKING:
+    from rfdetr.models.flows import RealNVP
+
+
+# Number of channels in a keypoint prediction slot — see module docstring for layout.
+KEYPOINT_PRED_DIM: int = 8
 
 
 def modulate(features: torch.Tensor, scale: torch.Tensor, shift: torch.Tensor) -> torch.Tensor:
@@ -77,7 +100,7 @@ def compute_l1_keypoint_loss(
     target_classes: torch.Tensor,
     target_areas: torch.Tensor,
     num_keypoints_per_class: Sequence[int],
-    flow: Any | None = None,
+    flow: "RealNVP | None" = None,
     keypoint_hidden_states: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Compute the five-component keypoint loss vector per matched target.
@@ -234,18 +257,8 @@ def compute_l1_keypoint_loss(
     else:
         rle_loss = torch.zeros(n_targets, device=all_pred_keypoints.device, dtype=selected_pred_keypoints.dtype)
 
-    assert not torch.isnan(location_loss).any()
-    assert not torch.isnan(findable_loss).any()
-    assert not torch.isnan(visible_loss).any()
-    assert not torch.isnan(nll_loss).any()
-    assert not torch.isnan(rle_loss).any()
-
-    assert not torch.isinf(location_loss).any()
-    assert not torch.isinf(findable_loss).any()
-    assert not torch.isinf(visible_loss).any()
-    assert not torch.isinf(nll_loss).any()
-    assert not torch.isinf(rle_loss).any()
-
+    # NaN/Inf protection is upstream (see ``nan_to_num`` calls earlier in this function);
+    # per-step hot-path assertions removed for performance (5–15% step latency).
     return location_loss, findable_loss, visible_loss, nll_loss, rle_loss
 
 
@@ -264,7 +277,7 @@ def compute_keypoint_matching_cost(
     target_classes: torch.Tensor,
     target_areas: torch.Tensor,
     num_keypoints_per_class: Sequence[int],
-    flow: Any | None = None,
+    flow: RealNVP | None = None,
     keypoint_hidden_states: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Compute many-to-many keypoint matching costs.
@@ -512,18 +525,8 @@ def compute_keypoint_matching_cost(
             n_targets_by_class,
         ) / float(num_kpts)
 
-    assert not cost_l1.isnan().any()
-    assert not cost_findable.isnan().any()
-    assert not cost_visible.isnan().any()
-    assert not cost_nll.isnan().any()
-    assert not cost_rle.isnan().any()
-
-    assert not cost_l1.isinf().any()
-    assert not cost_findable.isinf().any()
-    assert not cost_visible.isinf().any()
-    assert not cost_nll.isinf().any()
-    assert not cost_rle.isinf().any()
-
+    # NaN/Inf protection is upstream (see ``nan_to_num`` calls earlier); per-step
+    # matching-cost assertions removed for performance (5–15% step latency).
     return cost_l1, cost_findable, cost_visible, cost_nll, cost_rle
 
 

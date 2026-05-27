@@ -1398,7 +1398,13 @@ class RFDETR:
                     "pred_boxes": predictions[0],
                 }
                 if len(predictions) == 3:
-                    return_predictions["pred_masks"] = predictions[2]
+                    # Distinguish keypoint vs mask output by inspecting the model config — both
+                    # heads can produce a third tuple element but route through different
+                    # postprocess paths.
+                    if getattr(getattr(self.model, "model_config", None), "use_grouppose_keypoints", False):
+                        return_predictions["pred_keypoints"] = predictions[2]
+                    else:
+                        return_predictions["pred_masks"] = predictions[2]
                 predictions = return_predictions
             target_sizes = torch.tensor(orig_sizes, device=self.model.device)
             results = self.model.postprocess(predictions, target_sizes=target_sizes)
