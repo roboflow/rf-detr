@@ -12,6 +12,7 @@ from rfdetr.datasets._develop import (
     _coco_val_images_complete,
     _download_and_extract,
     _download_lock,
+    _nonempty_file_exists,
 )
 from rfdetr.utilities.reproducibility import seed_all
 
@@ -33,7 +34,7 @@ def download_coco_val() -> tuple[Path, Path]:
     with _download_lock(lock_path):
         if not _coco_val_images_complete(images_root):
             _download_and_extract(_COCO_URLS["val2017"], _DATA_DIR)
-        if not annotations_path.exists():
+        if not _nonempty_file_exists(annotations_path):
             _download_and_extract(_COCO_URLS["annotations"], _DATA_DIR)
 
     return images_root, annotations_path

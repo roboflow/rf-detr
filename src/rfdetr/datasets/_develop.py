@@ -63,6 +63,31 @@ def _coco_val_images_complete(images_dir: Path) -> bool:
     return sum(1 for entry in images_dir.iterdir() if entry.is_file()) >= _COCO_VAL_IMAGE_COUNT
 
 
+def _nonempty_file_exists(path: Path) -> bool:
+    """Check whether a file exists and contains at least one byte.
+
+    Returns ``False`` for a missing or empty file so callers can trigger a
+    re-download without inspecting the file manually.
+
+    Args:
+        path: Path to the file to check.
+
+    Returns:
+        ``True`` if *path* refers to an existing file with ``size > 0``,
+        ``False`` otherwise.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as tmpdir:
+        ...     _nonempty_file_exists(Path(tmpdir) / "missing.json")
+        False
+    """
+    try:
+        return path.is_file() and path.stat().st_size > 0
+    except OSError:
+        return False
+
+
 class _SimpleDataset:
     """Simple synthetic dataset for testing augmentations and training loops.
 
