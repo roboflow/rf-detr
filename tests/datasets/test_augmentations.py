@@ -1552,8 +1552,8 @@ class TestMakeCocoTransformsOutputSize:
     def test_nonsquare_val_longest_side_at_most_1333(self) -> None:
         """Non-square val transform caps the longest side at 1333 px.
 
-        Use an input that still exceeds 1333 px on its longest side after SmallestMaxSize(640),
-        so this assertion specifically validates that LongestMaxSize(1333) is applied.
+        Use an input that still exceeds 1333 px on its longest side after SmallestMaxSize(640), so this assertion
+        specifically validates that LongestMaxSize(1333) is applied.
         """
         transform = make_coco_transforms("val", self._RESOLUTION)
         image = Image.new("RGB", (4000, 1000))
