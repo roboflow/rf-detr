@@ -1507,6 +1507,80 @@ class TestMakeCocoTransformsAugConfig:
         assert len(wrappers) == expected_resize_wrappers
 
 
+class TestMakeCocoTransformsOutputSize:
+    """Regression tests for #979: transforms must resize high-resolution images to the target resolution.
+
+    These tests verify that ``make_coco_transforms`` and ``make_coco_transforms_square_div_64``
+    actually produce output images at the requested ``resolution``, not at the original image size.
+    Existing tests only check pipeline *structure*; these check actual output *dimensions*.
+    """
+
+    # 1920x1080 (landscape) — larger than any typical training resolution.
+    # PIL size is (width, height), so Image.new("RGB", (1920, 1080)) gives a 1920-wide, 1080-tall image.
+    _INPUT_W = 1920
+    _INPUT_H = 1080
+    _RESOLUTION = 640
+
+    def _make_image(self) -> Image.Image:
+        return Image.new("RGB", (self._INPUT_W, self._INPUT_H))
+
+    def test_square_val_resizes_large_image(self) -> None:
+        """Square val transform resizes 1920x1080 to exactly 640x640."""
+        transform = make_coco_transforms_square_div_64("val", self._RESOLUTION)
+        tensor, _ = transform(self._make_image(), None)
+        assert tensor.shape[-2:] == (self._RESOLUTION, self._RESOLUTION)
+
+    def test_square_train_resizes_large_image(self) -> None:
+        """Square train transform resizes 1920x1080 to 640x640 regardless of OneOf branch."""
+        transform = make_coco_transforms_square_div_64("train", self._RESOLUTION, aug_config={})
+        tensor, _ = transform(self._make_image(), None)
+        assert tensor.shape[-2:] == (self._RESOLUTION, self._RESOLUTION)
+
+    def test_nonsquare_val_longest_side_equals_1333(self) -> None:
+        """Non-square val transform on 1920x1080 produces longest side == 1333.
+
+        Pipeline: SmallestMaxSize(640) → 640x1138, then LongestMaxSize(1333) upscales → 750x1333.
+        LongestMaxSize resizes to exactly 1333 (not a cap), so the result always has max side == 1333
+        for inputs where the longest side after SmallestMaxSize is less than 1333.
+        """
+        transform = make_coco_transforms("val", self._RESOLUTION)
+        tensor, _ = transform(self._make_image(), None)
+        height, width = tensor.shape[-2], tensor.shape[-1]
+        assert max(height, width) == 1333
+
+    def test_nonsquare_val_longest_side_at_most_1333(self) -> None:
+        """Non-square val transform caps the longest side at 1333 px."""
+        transform = make_coco_transforms("val", self._RESOLUTION)
+        tensor, _ = transform(self._make_image(), None)
+        height, width = tensor.shape[-2], tensor.shape[-1]
+        assert max(height, width) <= 1333
+
+    def test_nonsquare_val_does_not_pass_original_dimensions(self) -> None:
+        """Non-square val transform must not emit the original 1920x1080 dimensions — the core regression."""
+        transform = make_coco_transforms("val", self._RESOLUTION)
+        tensor, _ = transform(self._make_image(), None)
+        height, width = tensor.shape[-2], tensor.shape[-1]
+        assert (height, width) != (self._INPUT_H, self._INPUT_W), (
+            f"Transform emitted original {self._INPUT_H}x{self._INPUT_W} — resize was not applied"
+        )
+
+    def test_square_val_does_not_pass_original_dimensions(self) -> None:
+        """Square val transform must not emit the original 1920x1080 dimensions — the core regression."""
+        transform = make_coco_transforms_square_div_64("val", self._RESOLUTION)
+        tensor, _ = transform(self._make_image(), None)
+        height, width = tensor.shape[-2], tensor.shape[-1]
+        assert (height, width) != (self._INPUT_H, self._INPUT_W), (
+            f"Transform emitted original {self._INPUT_H}x{self._INPUT_W} — resize was not applied"
+        )
+
+    def test_output_is_float_tensor(self) -> None:
+        """Transform pipeline produces a float32 tensor, not a PIL Image."""
+        transform = make_coco_transforms_square_div_64("val", self._RESOLUTION)
+        tensor, _ = transform(self._make_image(), None)
+        assert isinstance(tensor, torch.Tensor)
+        assert tensor.dtype == torch.float32
+
+
 class TestAugPresets:
     """Regression tests for built-in augmentation presets."""
 
