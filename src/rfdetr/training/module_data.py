@@ -217,14 +217,6 @@ class RFDETRDataModule(LightningDataModule):
         resolution = self.model_config.resolution
         ns = _namespace_from_configs(self.model_config, self.train_config)
         if stage == "fit":
-            if self.model_config.use_grouppose_keypoints and not self._keypoint_augmentation_warning_emitted:
-                warnings.warn(
-                    "Keypoint mode is enabled, but keypoint augmentation is not supported in this preview path. "
-                    "Image and box augmentation still runs; keypoint coordinates currently pass through unchanged.",
-                    UserWarning,
-                    stacklevel=2,
-                )
-                self._keypoint_augmentation_warning_emitted = True
             # Resolve 'auto' to an actual backend before building datasets so that
             # gpu_postprocess in dataset builders always matches what the DataModule
             # will actually do in on_after_batch_transfer.  Without this, 'auto' on
@@ -233,6 +225,18 @@ class RFDETRDataModule(LightningDataModule):
             resolved = _resolve_augmentation_backend(self.train_config.augmentation_backend)
             if resolved != self.train_config.augmentation_backend:
                 ns.augmentation_backend = resolved
+            if (
+                self.model_config.use_grouppose_keypoints
+                and resolved != "cpu"
+                and not self._keypoint_augmentation_warning_emitted
+            ):
+                warnings.warn(
+                    "Keypoint mode currently supports keypoint-aware augmentation only with the CPU "
+                    "Albumentations backend. GPU/Kornia augmentation leaves keypoint coordinates unchanged.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                self._keypoint_augmentation_warning_emitted = True
             if self._dataset_train is None:
                 self._dataset_train = build_dataset("train", ns, resolution)
             if self._dataset_val is None:

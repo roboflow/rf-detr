@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pycocotools.coco as pycoco
 import torch
 from faster_coco_eval import COCO
 
@@ -92,6 +93,32 @@ def test_coco_evaluator_keypoints_uses_faster_evaluate_without_deprecated_evalua
     assert np.isfinite(stats[0])
 
 
+def test_coco_evaluator_keypoints_accepts_pycocotools_coco_api(tmp_path: Path) -> None:
+    """Keypoint evaluation should accept COCO APIs returned by torchvision datasets."""
+    annotation_path = tmp_path / "person_keypoints_val2017.json"
+    _write_person_keypoint_coco(annotation_path)
+    coco_gt = pycoco.COCO(str(annotation_path))
+    coco_gt.label2cat = {0: 1}
+
+    evaluator = CocoEvaluator(coco_gt, ["keypoints"])
+    keypoints = np.asarray(coco_gt.anns[1]["keypoints"], dtype=np.float32).reshape(1, 17, 3)
+    evaluator.update(
+        {
+            1: {
+                "boxes": torch.tensor([[10.0, 20.0, 60.0, 80.0]], dtype=torch.float32),
+                "scores": torch.tensor([0.99], dtype=torch.float32),
+                "labels": torch.tensor([0], dtype=torch.int64),
+                "keypoints": torch.as_tensor(keypoints, dtype=torch.float32),
+            }
+        }
+    )
+    evaluator.synchronize_between_processes()
+    evaluator.accumulate()
+
+    stats = evaluator.coco_eval["keypoints"].stats
+    assert np.isfinite(stats[0])
+
+
 def test_coco_evaluator_handles_empty_keypoint_predictions(tmp_path: Path) -> None:
     """Keypoint evaluation should handle images with no detections."""
     annotation_path = tmp_path / "person_keypoints_val2017.json"
@@ -114,3 +141,31 @@ def test_coco_evaluator_handles_empty_keypoint_predictions(tmp_path: Path) -> No
 
     stats = evaluator.coco_eval["keypoints"].stats
     assert stats.shape == (10,)
+
+
+def test_coco_evaluator_skips_unmapped_labels_when_label2cat_is_present(tmp_path: Path) -> None:
+    """A non-identity label2cat map should not fall back to raw category IDs for unmapped labels."""
+    annotation_path = tmp_path / "person_keypoints_val2017.json"
+    _write_person_keypoint_coco(annotation_path)
+    coco_gt = COCO(str(annotation_path))
+    coco_gt.label2cat = {1: 1}
+    evaluator = CocoEvaluator(coco_gt, ["keypoints"])
+    keypoints = np.asarray(coco_gt.anns[1]["keypoints"], dtype=np.float32).reshape(1, 17, 3)
+
+    evaluator.update(
+        {
+            1: {
+                "boxes": torch.tensor(
+                    [[10.0, 20.0, 60.0, 80.0], [10.0, 20.0, 60.0, 80.0]],
+                    dtype=torch.float32,
+                ),
+                "scores": torch.tensor([0.99, 0.98], dtype=torch.float32),
+                "labels": torch.tensor([0, 1], dtype=torch.int64),
+                "keypoints": torch.as_tensor(np.concatenate([keypoints, keypoints], axis=0), dtype=torch.float32),
+            }
+        }
+    )
+
+    results = evaluator.coco_results["keypoints"]
+    assert len(results) == 1
+    assert results[0]["category_id"] == 1

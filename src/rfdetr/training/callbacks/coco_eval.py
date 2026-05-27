@@ -633,16 +633,25 @@ class COCOEvalCallback(Callback):
         self._keypoint_eval_has_updates = True
 
     def _compute_and_log_keypoint_map(self, split: str, pl_module: Any, trainer: Any) -> None:
-        """Compute and log COCO keypoint AP (50:95) when keypoint mode is active."""
+        """Compute and log COCO keypoint AP/AR metrics when keypoint mode is active."""
         if not self._keypoint_mode or not self._keypoint_eval_has_updates or self._keypoint_coco_evaluator is None:
             return
 
         self._keypoint_coco_evaluator.synchronize_between_processes()
         self._keypoint_coco_evaluator.accumulate()
         coco_eval_keypoints = self._keypoint_coco_evaluator.coco_eval["keypoints"].stats
-        keypoint_map_50_95 = float(coco_eval_keypoints[0])
-        pl_module.log(f"{split}/keypoint_map_50_95", keypoint_map_50_95)
-        trainer.callback_metrics[f"{split}/keypoint_map_50_95"] = torch.tensor(keypoint_map_50_95)
+        keypoint_metrics = {
+            "keypoint_map_50_95": (0, True),
+            "keypoint_map_50": (1, True),
+            "keypoint_map_75": (2, False),
+            "keypoint_mAR": (5, False),
+        }
+        for metric_name, (stat_idx, prog_bar) in keypoint_metrics.items():
+            if len(coco_eval_keypoints) <= stat_idx:
+                continue
+            value = float(coco_eval_keypoints[stat_idx])
+            pl_module.log(f"{split}/{metric_name}", value, prog_bar=prog_bar)
+            trainer.callback_metrics[f"{split}/{metric_name}"] = torch.tensor(value)
 
         self._keypoint_coco_evaluator = None
         self._keypoint_eval_has_updates = False

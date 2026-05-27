@@ -118,15 +118,23 @@ def compute_l1_keypoint_loss(
 
     keypoints_loss_mask = active_keypoints_mask[target_classes]
     keypoints_per_target = keypoints_loss_mask.sum(-1).to(dtype=selected_pred_keypoints.dtype)
-    location_loss_mask = keypoints_loss_mask & (target_keypoints[:, :, 2] > 0)
+    area = target_areas.to(torch.float32)
+    area_eps = torch.finfo(area.dtype).eps
+    valid_area = torch.isfinite(area) & (area > area_eps)
+    valid_xy = torch.isfinite(selected_pred_keypoints[:, :, :2]).all(dim=-1) & torch.isfinite(
+        target_keypoints[:, :, :2]
+    ).all(dim=-1)
+    valid_visibility = torch.isfinite(target_keypoints[:, :, 2]) & (target_keypoints[:, :, 2] > 0)
+    location_loss_mask = keypoints_loss_mask & valid_visibility & valid_xy & valid_area.unsqueeze(1)
     location_count = location_loss_mask.sum(-1).to(dtype=selected_pred_keypoints.dtype)
     valid_count = location_count.clamp(min=1)
     denom_keypoints = keypoints_per_target.clamp(min=1).to(dtype=selected_pred_keypoints.dtype)
+    safe_area_sqrt = area.clamp_min(area_eps).sqrt()
 
     scaled_masked_l1 = (
         F.l1_loss(selected_pred_keypoints[:, :, :2], target_keypoints[:, :, :2], reduction="none").sum(-1)
         * location_loss_mask.to(selected_pred_keypoints.dtype)
-        / target_areas.sqrt().unsqueeze(1)
+        / safe_area_sqrt.unsqueeze(1)
     )
     location_loss = scaled_masked_l1.sum(-1) / valid_count
 
@@ -148,28 +156,37 @@ def compute_l1_keypoint_loss(
         * keypoints_loss_mask.to(selected_pred_keypoints.dtype)
     ).sum(-1) / denom_keypoints
 
-    area = target_areas.to(torch.float32)
     dxdy = (selected_pred_keypoints[:, :, :2] - target_keypoints[:, :, :2]).to(torch.float32)
     dx = dxdy[:, :, 0]
     dy = dxdy[:, :, 1]
 
-    log_l11 = selected_pred_keypoints[:, :, 4].to(torch.float32)
-    l21 = selected_pred_keypoints[:, :, 5].to(torch.float32)
-    log_l22 = selected_pred_keypoints[:, :, 6].to(torch.float32)
+    raw_log_l11 = selected_pred_keypoints[:, :, 4].to(torch.float32)
+    raw_l21 = selected_pred_keypoints[:, :, 5].to(torch.float32)
+    raw_log_l22 = selected_pred_keypoints[:, :, 6].to(torch.float32)
+    finite_uncertainty = torch.isfinite(raw_log_l11) & torch.isfinite(raw_l21) & torch.isfinite(raw_log_l22)
+    gaussian_loss_mask = location_loss_mask & finite_uncertainty
+
+    log_l11 = raw_log_l11.clamp(min=-20.0, max=20.0)
+    l21 = raw_l21.clamp(min=-1.0e4, max=1.0e4)
+    log_l22 = raw_log_l22.clamp(min=-20.0, max=20.0)
 
     l11 = log_l11.exp()
     l22 = log_l22.exp()
     u0 = l11 * dx + l21 * dy
     u1 = l22 * dy
     maha2 = u0 * u0 + u1 * u1
-    nll_keypoints = 0.5 * (maha2 / area.unsqueeze(1)) - (log_l11 + log_l22)
-    nll_keypoints = nll_keypoints.masked_fill(~location_loss_mask, 0.0)
-    nll_loss = nll_keypoints.sum(-1) / valid_count
-    no_valid = location_count <= 0
+    gaussian_loss_mask = gaussian_loss_mask & torch.isfinite(u0) & torch.isfinite(u1) & torch.isfinite(maha2)
+    gaussian_count = gaussian_loss_mask.sum(-1).to(dtype=selected_pred_keypoints.dtype)
+    gaussian_valid_count = gaussian_count.clamp(min=1)
+    nll_raw = 0.5 * (maha2 / area.clamp_min(area_eps).unsqueeze(1)) - (log_l11 + log_l22)
+    nll_raw = torch.nan_to_num(nll_raw, nan=0.0, posinf=0.0, neginf=0.0)
+    nll_keypoints = nll_raw.masked_fill(~gaussian_loss_mask, 0.0)
+    nll_loss = nll_keypoints.sum(-1) / gaussian_valid_count
+    no_valid = gaussian_count <= 0
     nll_loss = torch.where(no_valid, torch.zeros_like(nll_loss), nll_loss)
 
     if flow is not None:
-        area_sqrt = area.sqrt().unsqueeze(1).unsqueeze(-1)
+        area_sqrt = safe_area_sqrt.unsqueeze(1).unsqueeze(-1)
         whitened_residuals = torch.stack([u0, u1], dim=-1) / area_sqrt
         selected_kp_hs = None
         if keypoint_hidden_states is not None and n_targets > 0:
@@ -185,27 +202,33 @@ def compute_l1_keypoint_loss(
                 target_classes,
             ]
 
-        z_valid = whitened_residuals[location_loss_mask]
+        flow_loss_mask = gaussian_loss_mask & torch.isfinite(whitened_residuals).all(dim=-1)
         cond_valid = None
         if selected_kp_hs is not None:
-            cond_valid = selected_kp_hs[location_loss_mask]
+            finite_cond = torch.isfinite(selected_kp_hs).all(dim=-1)
+            flow_loss_mask = flow_loss_mask & finite_cond
+            cond_valid = selected_kp_hs[flow_loss_mask]
 
+        z_valid = whitened_residuals[flow_loss_mask]
         if z_valid.numel() > 0:
             rle_log_prob = flow.log_prob(
                 z_valid.to(torch.float32),
                 cond=cond_valid.to(torch.float32) if cond_valid is not None else None,
             )
+            rle_log_prob = torch.nan_to_num(rle_log_prob, nan=0.0, posinf=0.0, neginf=0.0)
             log_det_l = (log_l11 + log_l22).to(dtype=selected_pred_keypoints.dtype)
             rle_values = torch.zeros(
                 (n_targets, kpad),
                 device=selected_pred_keypoints.device,
                 dtype=selected_pred_keypoints.dtype,
             )
-            rle_values[location_loss_mask] = (-rle_log_prob).to(selected_pred_keypoints.dtype)
+            rle_values[flow_loss_mask] = (-rle_log_prob).to(selected_pred_keypoints.dtype)
             rle_values = rle_values - log_det_l
-            rle_values = rle_values.masked_fill(~location_loss_mask, 0.0)
-            rle_loss = rle_values.sum(-1) / valid_count
-            rle_loss = torch.where(no_valid, torch.zeros_like(rle_loss), rle_loss)
+            rle_values = rle_values.masked_fill(~flow_loss_mask, 0.0)
+            flow_count = flow_loss_mask.sum(-1).to(dtype=selected_pred_keypoints.dtype)
+            flow_valid_count = flow_count.clamp(min=1)
+            rle_loss = rle_values.sum(-1) / flow_valid_count
+            rle_loss = torch.where(flow_count <= 0, torch.zeros_like(rle_loss), rle_loss)
         else:
             rle_loss = torch.zeros(n_targets, device=all_pred_keypoints.device, dtype=selected_pred_keypoints.dtype)
     else:
@@ -322,16 +345,23 @@ def compute_keypoint_matching_cost(
         target_by_class = target_keypoints.index_select(0, target_indices)[:, :num_kpts, :]
         n_targets_by_class = target_by_class.shape[0]
 
-        visible = target_by_class[:, :, 2] > 0
+        areas = target_areas.index_select(0, target_indices).to(torch.float32)
+        area_eps = torch.finfo(areas.dtype).eps
+        valid_area = torch.isfinite(areas) & (areas > area_eps)
+        target_xy = target_by_class[:, :, :2]
+        visible = (
+            torch.isfinite(target_by_class[:, :, 2])
+            & (target_by_class[:, :, 2] > 0)
+            & torch.isfinite(target_xy).all(dim=-1)
+            & valid_area.unsqueeze(1)
+        )
         valid_per_target = visible.sum(dim=1).to(torch.float32)
         nll_denom = valid_per_target.clamp(min=1)
         has_visible = valid_per_target > 0
 
-        areas = target_areas.index_select(0, target_indices).to(torch.float32)
-        area_sqrt = areas.sqrt()
+        area_sqrt = areas.clamp_min(area_eps).sqrt()
 
         pred_xy = pred_by_class[:, :, :, :2]
-        target_xy = target_by_class[:, :, :2]
         scaled_loc = torch.zeros(
             (flat_bq, n_targets_by_class),
             device=all_pred_keypoints.device,
@@ -347,6 +377,7 @@ def compute_keypoint_matching_cost(
             distance.masked_fill_(~visibility, 0.0)
             scaled_loc.add_(distance)
         loc_cost = (scaled_loc / nll_denom.unsqueeze(0)).div(area_sqrt.unsqueeze(0))
+        loc_cost = torch.nan_to_num(loc_cost, nan=0.0, posinf=0.0, neginf=0.0)
         cost_l1[:, :, target_indices] = loc_cost.reshape(
             b,
             num_queries,
@@ -374,14 +405,28 @@ def compute_keypoint_matching_cost(
             dx = x_pred - x_tgt
             dy = y_pred - y_tgt
 
-            log_l11 = pred_by_class[:, :, keypoint_idx, 4].reshape(flat_bq).to(torch.float32)
-            l21 = pred_by_class[:, :, keypoint_idx, 5].reshape(flat_bq).to(torch.float32)
-            log_l22 = pred_by_class[:, :, keypoint_idx, 6].reshape(flat_bq).to(torch.float32)
+            raw_log_l11 = pred_by_class[:, :, keypoint_idx, 4].reshape(flat_bq).to(torch.float32)
+            raw_l21 = pred_by_class[:, :, keypoint_idx, 5].reshape(flat_bq).to(torch.float32)
+            raw_log_l22 = pred_by_class[:, :, keypoint_idx, 6].reshape(flat_bq).to(torch.float32)
+            finite_pred = (
+                torch.isfinite(x_pred.squeeze(1))
+                & torch.isfinite(y_pred.squeeze(1))
+                & torch.isfinite(raw_log_l11)
+                & torch.isfinite(raw_l21)
+                & torch.isfinite(raw_log_l22)
+            )
+
+            log_l11 = raw_log_l11.clamp(min=-20.0, max=20.0)
+            l21 = raw_l21.clamp(min=-1.0e4, max=1.0e4)
+            log_l22 = raw_log_l22.clamp(min=-20.0, max=20.0)
 
             l11 = log_l11.exp()
             l22 = log_l22.exp()
             dx.mul_(l11.unsqueeze(1)).addcmul_(dy, l21.unsqueeze(1))
             dy.mul_(l22.unsqueeze(1))
+            keypoint_mask = (
+                visibility_k.unsqueeze(0) & finite_pred.unsqueeze(1) & torch.isfinite(dx) & torch.isfinite(dy)
+            )
 
             if flow is not None:
                 z = torch.stack([dx, dy], dim=-1) / area_sqrt.unsqueeze(0).unsqueeze(-1)
@@ -404,15 +449,29 @@ def compute_keypoint_matching_cost(
                         )
                         .reshape(-1, hc_k.shape[-1])
                     )
-                flow_lp = flow.log_prob(z.reshape(-1, 2), cond=cond_kp)
+                flat_flow_mask = (keypoint_mask & torch.isfinite(z).all(dim=-1)).reshape(-1)
+                if cond_kp is not None:
+                    flat_flow_mask = flat_flow_mask & torch.isfinite(cond_kp).all(dim=-1)
+                flow_lp = z.new_zeros(flat_bq * n_targets_by_class)
+                if flat_flow_mask.any():
+                    cond_valid = cond_kp[flat_flow_mask] if cond_kp is not None else None
+                    flow_lp_valid = flow.log_prob(z.reshape(-1, 2)[flat_flow_mask], cond=cond_valid)
+                    flow_lp[flat_flow_mask] = torch.nan_to_num(
+                        flow_lp_valid,
+                        nan=0.0,
+                        posinf=0.0,
+                        neginf=0.0,
+                    )
                 rle_keypoint = (-flow_lp).reshape(flat_bq, n_targets_by_class) - ((log_l11 + log_l22).unsqueeze(1))
-                rle_keypoint.masked_fill_(~visibility_k.unsqueeze(0), 0.0)
+                rle_keypoint.masked_fill_(~flat_flow_mask.reshape(flat_bq, n_targets_by_class), 0.0)
                 if rle_sum is not None:
                     rle_sum.add_(rle_keypoint)
 
             maha2 = dx.square_().add_(dy.square_())
-            nll_k = 0.5 * (maha2 / areas.unsqueeze(0)) - (log_l11 + log_l22).unsqueeze(1)
-            nll_k.masked_fill_(~visibility_k.unsqueeze(0), 0.0)
+            keypoint_mask = keypoint_mask & torch.isfinite(maha2)
+            nll_k = 0.5 * (maha2 / areas.clamp_min(area_eps).unsqueeze(0)) - (log_l11 + log_l22).unsqueeze(1)
+            nll_k = torch.nan_to_num(nll_k, nan=0.0, posinf=0.0, neginf=0.0)
+            nll_k.masked_fill_(~keypoint_mask, 0.0)
             nll_sum.add_(nll_k)
 
         mean_nll = (nll_sum / nll_denom.unsqueeze(0)).reshape(b, num_queries, n_targets_by_class)

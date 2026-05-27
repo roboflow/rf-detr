@@ -19,7 +19,7 @@ import pytest
 import torch
 from PIL import Image
 
-from rfdetr.datasets.coco import ConvertCoco, build_coco
+from rfdetr.datasets.coco import ConvertCoco, build_coco, build_roboflow_from_coco
 from rfdetr.detr import RFDETR
 
 # Minimal image shared across all tests
@@ -99,6 +99,60 @@ def _write_coco_json(path: Path, categories: List[Dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     data = {"images": [], "annotations": [], "categories": categories}
     path.write_text(json.dumps(data))
+
+
+def _write_roboflow_keypoint_coco(path: Path, *, category_id: int = 0) -> None:
+    """Write a minimal Roboflow-style COCO keypoint split."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    image_path = path.parent / "person.png"
+    Image.new("RGB", (64, 48), color=(255, 255, 255)).save(image_path)
+    keypoint_names = [
+        "nose",
+        "left_eye",
+        "right_eye",
+        "left_ear",
+        "right_ear",
+        "left_shoulder",
+        "right_shoulder",
+        "left_elbow",
+        "right_elbow",
+        "left_wrist",
+        "right_wrist",
+        "left_hip",
+        "right_hip",
+        "left_knee",
+        "right_knee",
+        "left_ankle",
+        "right_ankle",
+    ]
+    keypoints = []
+    for idx in range(len(keypoint_names)):
+        keypoints.extend([10 + idx, 20 + idx, 2])
+    data = {
+        "images": [{"id": 1, "file_name": image_path.name, "width": 64, "height": 48}],
+        "annotations": [
+            {
+                "id": 1,
+                "image_id": 1,
+                "category_id": category_id,
+                "bbox": [8, 18, 24, 24],
+                "area": 576,
+                "iscrowd": 0,
+                "num_keypoints": len(keypoint_names),
+                "keypoints": keypoints,
+            }
+        ],
+        "categories": [
+            {
+                "id": category_id,
+                "name": "person",
+                "supercategory": "person",
+                "keypoints": keypoint_names,
+                "skeleton": [],
+            }
+        ],
+    }
+    path.write_text(json.dumps(data), encoding="utf-8")
 
 
 class TestLoadClassesHierarchy:
@@ -213,6 +267,50 @@ class TestLoadClassesHierarchy:
         _write_coco_json(tmp_path / "train" / "_annotations.coco.json", categories)
         result = RFDETR._load_classes(str(tmp_path))
         assert result == ["car", "truck", "person"]
+
+
+class TestRoboflowCocoKeypointFormat:
+    """Roboflow COCO keypoint datasets should align labels with the keypoint schema."""
+
+    def _make_args(self, dataset_dir: Path) -> types.SimpleNamespace:
+        """Return minimal args consumed by ``build_roboflow_from_coco`` in keypoint mode."""
+        return types.SimpleNamespace(
+            dataset_dir=str(dataset_dir),
+            square_resize_div_64=False,
+            segmentation_head=False,
+            multi_scale=False,
+            expanded_scales=False,
+            do_random_resize_via_padding=False,
+            patch_size=16,
+            num_windows=4,
+            use_grouppose_keypoints=True,
+            num_keypoints_per_class=[0, 17],
+            aug_config={},
+            augmentation_backend="cpu",
+        )
+
+    def test_keypoint_category_maps_to_active_schema_slot(self, tmp_path: Path) -> None:
+        """A one-class Roboflow keypoint dataset maps person to label 1 for the `[0, 17]` preview schema."""
+        _write_roboflow_keypoint_coco(tmp_path / "train" / "_annotations.coco.json", category_id=0)
+
+        dataset = build_roboflow_from_coco("train", self._make_args(tmp_path), resolution=64)
+        _, target = dataset[0]
+
+        assert target["labels"].tolist() == [1]
+        assert target["keypoints"].shape == (1, 17, 3)
+        assert dataset.cat2label == {0: 1}
+        assert dataset.label2cat == {1: 0}
+        assert dataset.coco.label2cat == {1: 0}
+
+    def test_keypoint_coco_without_keypoint_schema_raises(self, tmp_path: Path) -> None:
+        """Keypoint mode should fail clearly if a COCO dataset has no keypoint metadata or annotations."""
+        _write_coco_json(
+            tmp_path / "train" / "_annotations.coco.json",
+            [{"id": 0, "name": "person", "supercategory": "none"}],
+        )
+
+        with pytest.raises(ValueError, match="Keypoint COCO dataset"):
+            build_roboflow_from_coco("train", self._make_args(tmp_path), resolution=64)
 
 
 # ---------------------------------------------------------------------------

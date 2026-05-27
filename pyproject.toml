@@ -204,6 +204,7 @@ addopts = [
 pythonpath = ["src"]
 markers = [
     "gpu: tests that require GPU or are slow on CPU",
+    "coco17: tests that require COCO 2017 images or annotations",
     "flaky: tests that may fail due to nondeterminism",
     "tflite: tests requiring onnx2tf and TFLite dependencies",
 ]

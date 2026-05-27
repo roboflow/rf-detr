@@ -26,6 +26,19 @@ from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
+_TRAIN_PROGRESS_LOSS_ALIASES: dict[str, str] = {
+    "loss_ce": "loss_cls",
+    "loss_bbox": "loss_box",
+    "loss_giou": "loss_giou",
+    "loss_mask_ce": "mask_ce",
+    "loss_mask_dice": "mask_dice",
+    "loss_keypoints_l1": "kp_l1",
+    "loss_keypoints_findable": "kp_find",
+    "loss_keypoints_visible": "kp_vis",
+    "loss_keypoints_nll": "kp_nll",
+    "loss_keypoints_rle": "kp_rle",
+}
+
 
 class RFDETRModelModule(LightningModule):
     """LightningModule wrapping the RF-DETR model and training loop.
@@ -162,12 +175,13 @@ class RFDETRModelModule(LightningModule):
         self.log(
             "train/loss",
             loss,
-            prog_bar=True,
+            prog_bar=False,
             on_step=train_log_on_step,
             on_epoch=True,
             sync_dist=train_log_sync_dist,
             batch_size=batch_size,
         )
+        self._log_train_progress_metrics(loss, loss_dict, batch_size=batch_size)
         optimizer = self.optimizers()
         if isinstance(optimizer, list):
             optimizer = optimizer[0]
@@ -179,10 +193,72 @@ class RFDETRModelModule(LightningModule):
             base_lr = group_lrs[0]
             min_lr = min(group_lrs)
             max_lr = max(group_lrs)
-            self.log("train/lr", base_lr, prog_bar=True, on_step=True, on_epoch=False)
-            self.log("train/lr_min", min_lr, prog_bar=True, on_step=True, on_epoch=False)
-            self.log("train/lr_max", max_lr, prog_bar=True, on_step=True, on_epoch=False)
+            self.log("train/lr", base_lr, prog_bar=False, on_step=True, on_epoch=False)
+            self.log("train/lr_min", min_lr, prog_bar=False, on_step=True, on_epoch=False)
+            self.log("train/lr_max", max_lr, prog_bar=False, on_step=True, on_epoch=False)
         return loss_scaled
+
+    def _log_train_progress_metrics(
+        self,
+        loss: torch.Tensor,
+        loss_dict: dict[str, torch.Tensor],
+        *,
+        batch_size: int,
+    ) -> None:
+        """Log compact per-step convergence metrics for the progress bar only.
+
+        Args:
+            loss: Unscaled aggregate training loss.
+            loss_dict: Raw criterion loss dictionary.
+            batch_size: Current batch size used by Lightning for metric reduction metadata.
+        """
+
+        self.log(
+            "loss",
+            loss,
+            prog_bar=True,
+            logger=False,
+            on_step=True,
+            on_epoch=False,
+            batch_size=batch_size,
+        )
+        for loss_name, progress_name in _TRAIN_PROGRESS_LOSS_ALIASES.items():
+            value = loss_dict.get(loss_name)
+            if value is None:
+                continue
+            self.log(
+                progress_name,
+                value,
+                prog_bar=True,
+                logger=False,
+                on_step=True,
+                on_epoch=False,
+                batch_size=batch_size,
+            )
+
+    def _log_val_loss_metrics(
+        self,
+        loss: torch.Tensor,
+        loss_dict: dict[str, torch.Tensor],
+        *,
+        batch_size: int,
+    ) -> None:
+        """Log aggregate and component validation losses.
+
+        Args:
+            loss: Aggregate weighted validation loss.
+            loss_dict: Raw criterion loss dictionary.
+            batch_size: Current batch size used by Lightning for metric reduction metadata.
+        """
+
+        self.log_dict(
+            {f"val/{k}": v for k, v in loss_dict.items()},
+            on_step=False,
+            on_epoch=True,
+            sync_dist=True,
+            batch_size=batch_size,
+        )
+        self.log("val/loss", loss, prog_bar=True, on_epoch=True, sync_dist=True, batch_size=batch_size)
 
     def validation_step(self, batch: Tuple, batch_idx: int) -> Dict[str, Any]:
         """Run forward pass and postprocess for one validation step.
@@ -203,7 +279,7 @@ class RFDETRModelModule(LightningModule):
             loss_dict = self.criterion(outputs, targets)
             weight_dict = self.criterion.weight_dict
             loss = sum(loss_dict[k] * weight_dict[k] for k in loss_dict if k in weight_dict)
-            self.log("val/loss", loss, prog_bar=True, on_epoch=True, sync_dist=True, batch_size=len(targets))
+            self._log_val_loss_metrics(loss, loss_dict, batch_size=len(targets))
 
         orig_sizes = torch.stack([t["orig_size"] for t in targets])
         results = self.postprocess(outputs, orig_sizes)

@@ -404,8 +404,8 @@ class TestKeypointCocoEvalRouting:
         assert "keypoints" in predictions[12]
         assert predictions[12]["keypoints"].shape == (1, 1, 3)
 
-    def test_keypoint_coco_eval_exposes_map_50_95(self) -> None:
-        """Epoch-end logging should expose keypoint_map_50_95 from COCO keypoint stats[0]."""
+    def test_keypoint_coco_eval_exposes_keypoint_ap_and_ar_metrics(self) -> None:
+        """Epoch-end logging should expose keypoint AP and AR metrics from COCO keypoint stats."""
         cb = COCOEvalCallback(max_dets=500)
         module = _make_pl_module()
         module.model_config = SimpleNamespace(use_grouppose_keypoints=True)
@@ -416,7 +416,9 @@ class TestKeypointCocoEvalRouting:
         cb.map_metric.compute.return_value = _minimal_metrics()
 
         keypoint_eval = MagicMock(name="keypoint_coco_eval")
-        keypoint_eval.coco_eval = {"keypoints": SimpleNamespace(stats=np.array([0.42], dtype=np.float32))}
+        keypoint_eval.coco_eval = {
+            "keypoints": SimpleNamespace(stats=np.array([0.42, 0.72, 0.31, -1.0, -1.0, 0.55], dtype=np.float32))
+        }
         cb._keypoint_coco_evaluator = keypoint_eval
         cb._keypoint_eval_has_updates = True
 
@@ -424,8 +426,19 @@ class TestKeypointCocoEvalRouting:
 
         logged = {call.args[0]: call.args[1] for call in module.log.call_args_list}
         assert "val/keypoint_map_50_95" in logged
+        assert "val/keypoint_map_50" in logged
+        assert "val/keypoint_map_75" in logged
+        assert "val/keypoint_mAR" in logged
         assert float(logged["val/keypoint_map_50_95"]) == pytest.approx(0.42)
+        assert float(logged["val/keypoint_map_50"]) == pytest.approx(0.72)
+        assert float(logged["val/keypoint_map_75"]) == pytest.approx(0.31)
+        assert float(logged["val/keypoint_mAR"]) == pytest.approx(0.55)
+        keypoint_log_calls = [call for call in module.log.call_args_list if call.args[0] == "val/keypoint_map_50_95"]
+        assert keypoint_log_calls[0].kwargs.get("prog_bar") is True
         assert trainer.callback_metrics["val/keypoint_map_50_95"].item() == pytest.approx(0.42)
+        assert trainer.callback_metrics["val/keypoint_map_50"].item() == pytest.approx(0.72)
+        assert trainer.callback_metrics["val/keypoint_map_75"].item() == pytest.approx(0.31)
+        assert trainer.callback_metrics["val/keypoint_mAR"].item() == pytest.approx(0.55)
         keypoint_eval.synchronize_between_processes.assert_called_once()
         keypoint_eval.accumulate.assert_called_once()
 

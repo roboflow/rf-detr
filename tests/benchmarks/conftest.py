@@ -70,6 +70,27 @@ def download_coco_val_keypoints() -> tuple[Path, Path]:
     return images_root, keypoint_annotations
 
 
+@pytest.fixture(scope="session")
+def download_coco_train_val_keypoints() -> Path:
+    """Prepare full COCO train/val images plus person-keypoint annotations for release-qualification tests."""
+    if not _is_online(_COCO_HOST, _COCO_PORT):
+        pytest.skip("Offline environment, skipping full COCO keypoint training validation.")
+
+    lock_path = _DATA_DIR / ".coco_keypoint_train_val_download.lock"
+    with _download_lock(lock_path):
+        if not (_DATA_DIR / "train2017").exists():
+            _download_and_extract(_COCO_URLS["train2017"], _DATA_DIR)
+        if not (_DATA_DIR / "val2017").exists():
+            _download_and_extract(_COCO_URLS["val2017"], _DATA_DIR)
+        if (
+            not (_DATA_DIR / "annotations" / "person_keypoints_train2017.json").exists()
+            or not (_DATA_DIR / "annotations" / "person_keypoints_val2017.json").exists()
+        ):
+            _download_and_extract(_COCO_URLS["annotations"], _DATA_DIR)
+
+    return _DATA_DIR
+
+
 @pytest.fixture(autouse=True)
 def seed_everything(request: pytest.FixtureRequest) -> None:
     """Reset random, numpy, torch, and CUDA seeds before each test.
