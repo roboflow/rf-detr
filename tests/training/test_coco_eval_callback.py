@@ -442,6 +442,32 @@ class TestKeypointCocoEvalRouting:
         keypoint_eval.synchronize_between_processes.assert_called_once()
         keypoint_eval.accumulate.assert_called_once()
 
+    def test_keypoint_coco_evaluator_suppresses_verbose_summary(self) -> None:
+        """PTL keypoint validation should log scalar metrics without printing the full COCO summary block."""
+        cb = COCOEvalCallback(max_dets=500, keypoint_oks_sigmas=[0.05])
+        dataset = MagicMock(name="dataset")
+        datamodule = MagicMock()
+        datamodule._dataset_val = dataset
+        datamodule._dataset_test = None
+        datamodule._dataset_train = None
+        trainer = _make_trainer(datamodule=datamodule)
+        coco_api = MagicMock(name="coco_api")
+        evaluator = MagicMock(name="evaluator")
+
+        with (
+            patch("rfdetr.training.callbacks.coco_eval.get_coco_api_from_dataset", return_value=coco_api),
+            patch("rfdetr.evaluation.coco_eval.CocoEvaluator", return_value=evaluator) as coco_evaluator_cls,
+        ):
+            assert cb._get_or_create_keypoint_coco_evaluator(trainer) is evaluator
+
+        coco_evaluator_cls.assert_called_once_with(
+            coco_api,
+            ["keypoints"],
+            max_dets=500,
+            keypoint_oks_sigmas=[0.05],
+            log_summary=False,
+        )
+
 
 @pytest.mark.parametrize(
     "stage,hook,prefix",

@@ -303,7 +303,20 @@ class BestModelCallback(ModelCheckpoint):
             pth_path,
         )
         self._last_global_step_saved = trainer.global_step
-        logger.info("Best regular mAP saved to %s (epoch %d)", pth_path, trainer.current_epoch)
+        monitor_value = trainer.callback_metrics.get(self.monitor)
+        if torch.is_tensor(monitor_value):
+            monitor_display = f"{monitor_value.item():.6g}"
+        elif monitor_value is not None:
+            monitor_display = str(monitor_value)
+        else:
+            monitor_display = "unknown"
+        logger.info(
+            "Best regular checkpoint saved to %s (epoch %d, monitor=%s, value=%s)",
+            pth_path,
+            trainer.current_epoch,
+            self.monitor,
+            monitor_display,
+        )
 
     def on_validation_end(self, trainer: Trainer, pl_module: LightningModule) -> None:
         """Save best regular/EMA checkpoints when validation mAP improves.

@@ -10,33 +10,37 @@ from pathlib import Path
 
 import numpy as np
 import pycocotools.coco as pycoco
+import pytest
 import torch
 from faster_coco_eval import COCO
 
 from rfdetr.evaluation.coco_eval import CocoEvaluator
 
 
-def _write_person_keypoint_coco(path: Path, *, include_num_keypoints: bool = True) -> None:
+def _write_person_keypoint_coco(path: Path, *, include_num_keypoints: bool = True, keypoint_count: int = 17) -> None:
     """Write a minimal COCO keypoint annotation file."""
-    keypoints = [
-        "nose",
-        "left_eye",
-        "right_eye",
-        "left_ear",
-        "right_ear",
-        "left_shoulder",
-        "right_shoulder",
-        "left_elbow",
-        "right_elbow",
-        "left_wrist",
-        "right_wrist",
-        "left_hip",
-        "right_hip",
-        "left_knee",
-        "right_knee",
-        "left_ankle",
-        "right_ankle",
-    ]
+    if keypoint_count == 17:
+        keypoints = [
+            "nose",
+            "left_eye",
+            "right_eye",
+            "left_ear",
+            "right_ear",
+            "left_shoulder",
+            "right_shoulder",
+            "left_elbow",
+            "right_elbow",
+            "left_wrist",
+            "right_wrist",
+            "left_hip",
+            "right_hip",
+            "left_knee",
+            "right_knee",
+            "left_ankle",
+            "right_ankle",
+        ]
+    else:
+        keypoints = [f"point_{idx}" for idx in range(keypoint_count)]
     coords = []
     for idx in range(len(keypoints)):
         coords.extend([20.0 + idx, 30.0 + idx, 2.0])
@@ -117,6 +121,42 @@ def test_coco_evaluator_keypoints_accepts_pycocotools_coco_api(tmp_path: Path) -
 
     stats = evaluator.coco_eval["keypoints"].stats
     assert np.isfinite(stats[0])
+
+
+def test_coco_evaluator_keypoints_infers_custom_oks_sigmas(tmp_path: Path) -> None:
+    """Custom keypoint-count datasets should not use COCO's fixed 17-keypoint OKS sigmas."""
+    annotation_path = tmp_path / "custom_keypoints_val.json"
+    _write_person_keypoint_coco(annotation_path, keypoint_count=25)
+    coco_gt = COCO(str(annotation_path))
+    coco_gt.label2cat = {0: 1}
+    evaluator = CocoEvaluator(coco_gt, ["keypoints"])
+    keypoints = np.asarray(coco_gt.anns[1]["keypoints"], dtype=np.float32).reshape(1, 25, 3)
+
+    evaluator.update(
+        {
+            1: {
+                "boxes": torch.tensor([[10.0, 20.0, 60.0, 80.0]], dtype=torch.float32),
+                "scores": torch.tensor([0.99], dtype=torch.float32),
+                "labels": torch.tensor([0], dtype=torch.int64),
+                "keypoints": torch.as_tensor(keypoints, dtype=torch.float32),
+            }
+        }
+    )
+    evaluator.synchronize_between_processes()
+    evaluator.accumulate()
+
+    stats = evaluator.coco_eval["keypoints"].stats
+    assert np.isfinite(stats[0])
+
+
+def test_coco_evaluator_rejects_mismatched_custom_oks_sigmas(tmp_path: Path) -> None:
+    """Explicit OKS sigmas must match the dataset keypoint count."""
+    annotation_path = tmp_path / "custom_keypoints_val.json"
+    _write_person_keypoint_coco(annotation_path, keypoint_count=25)
+    coco_gt = COCO(str(annotation_path))
+
+    with pytest.raises(ValueError, match="keypoint_oks_sigmas length 17 does not match dataset keypoint count 25"):
+        CocoEvaluator(coco_gt, ["keypoints"], keypoint_oks_sigmas=[0.05] * 17)
 
 
 def test_coco_evaluator_backfills_missing_num_keypoints(tmp_path: Path) -> None:
