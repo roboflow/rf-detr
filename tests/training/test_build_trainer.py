@@ -82,6 +82,16 @@ class TestBuildTrainerCallbacks:
         assert coco_cb._eval_interval == 3
         assert coco_cb._log_per_class_metrics is False
 
+    def test_coco_eval_uses_keypoint_oks_sigmas(self, tmp_path):
+        """COCOEvalCallback receives custom keypoint OKS sigmas from TrainConfig."""
+        sigmas = [0.05] * 25
+        trainer = build_trainer(
+            _tc(tmp_path, use_ema=False, keypoint_oks_sigmas=sigmas),
+            RFDETRKeypointPreviewConfig(pretrain_weights=None),
+        )
+        coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
+        assert coco_cb._keypoint_oks_sigmas == sigmas
+
     def test_best_model_always_present(self, tmp_path):
         """BestModelCallback is always included."""
         trainer = build_trainer(_tc(tmp_path, use_ema=False), _mc())

@@ -658,6 +658,7 @@ class TrainConfig(BaseConfig):
     keypoint_findable_loss_coef: float = 0
     keypoint_visible_loss_coef: float = 0
     keypoint_nll_loss_coef: float = 0
+    keypoint_oks_sigmas: List[float] | None = None
     rle: bool = False
     rle_conditional: bool = False
     rle_loss_coef: float = 0

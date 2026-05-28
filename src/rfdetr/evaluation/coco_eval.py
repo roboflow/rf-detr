@@ -35,6 +35,33 @@ from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
+_COCO_PERSON_KEYPOINT_SIGMAS = (
+    np.asarray(
+        [
+            0.26,
+            0.25,
+            0.25,
+            0.35,
+            0.35,
+            0.79,
+            0.79,
+            0.72,
+            0.72,
+            0.62,
+            0.62,
+            1.07,
+            1.07,
+            0.87,
+            0.87,
+            0.89,
+            0.89,
+        ],
+        dtype=np.float32,
+    )
+    / 10.0
+)
+_DEFAULT_CUSTOM_KEYPOINT_OKS_SIGMA = 0.05
+
 
 def _ensure_faster_coco(coco_gt: Any) -> COCO:
     """Return a faster-coco-eval COCO object for evaluator construction."""
@@ -70,6 +97,61 @@ def _backfill_num_keypoints(coco_gt: COCO) -> None:
             dataset_annotation["num_keypoints"] = annotation["num_keypoints"]
 
 
+def _infer_keypoint_count(coco_gt: COCO) -> int | None:
+    """Infer a single keypoint count from COCO category metadata or annotations."""
+    counts: set[int] = set()
+    for category in coco_gt.cats.values():
+        keypoints = category.get("keypoints")
+        if isinstance(keypoints, list) and keypoints:
+            counts.add(len(keypoints))
+
+    if not counts:
+        for annotation in coco_gt.dataset.get("annotations", []):
+            keypoints = annotation.get("keypoints")
+            if isinstance(keypoints, list) and keypoints:
+                counts.add(len(keypoints) // 3)
+        for annotation in coco_gt.anns.values():
+            keypoints = annotation.get("keypoints")
+            if isinstance(keypoints, list) and keypoints:
+                counts.add(len(keypoints) // 3)
+
+    if not counts:
+        return None
+    if len(counts) > 1:
+        raise ValueError(
+            "COCO keypoint evaluation requires one keypoint count across evaluated categories; "
+            f"found counts {sorted(counts)}."
+        )
+    return next(iter(counts))
+
+
+def _resolve_keypoint_oks_sigmas(coco_gt: COCO, keypoint_oks_sigmas: list[float] | None) -> list[float] | None:
+    """Resolve OKS sigmas for faster-coco-eval keypoint evaluation."""
+    keypoint_count = _infer_keypoint_count(coco_gt)
+    if keypoint_oks_sigmas is not None:
+        sigmas = np.asarray(keypoint_oks_sigmas, dtype=np.float32)
+        if sigmas.ndim != 1 or sigmas.size == 0:
+            raise ValueError("keypoint_oks_sigmas must be a non-empty one-dimensional sequence.")
+        if not np.isfinite(sigmas).all() or np.any(sigmas <= 0):
+            raise ValueError("keypoint_oks_sigmas values must be positive finite numbers.")
+        if keypoint_count is not None and sigmas.size != keypoint_count:
+            raise ValueError(
+                f"keypoint_oks_sigmas length {sigmas.size} does not match dataset keypoint count {keypoint_count}."
+            )
+        return sigmas.tolist()
+
+    if keypoint_count is None or keypoint_count == len(_COCO_PERSON_KEYPOINT_SIGMAS):
+        return None
+
+    logger.warning(
+        "COCO keypoint metadata defines %s keypoints, but no keypoint_oks_sigmas were provided. "
+        "Using uniform OKS sigma %.3f for custom keypoint evaluation.",
+        keypoint_count,
+        _DEFAULT_CUSTOM_KEYPOINT_OKS_SIGMA,
+    )
+    return np.full(keypoint_count, _DEFAULT_CUSTOM_KEYPOINT_OKS_SIGMA, dtype=np.float32).tolist()
+
+
 def _load_coco_results(coco_gt: COCO, results: list[dict[str, Any]]) -> COCO:
     """Build a COCO detections object, including the empty-result case."""
     if results:
@@ -95,11 +177,20 @@ def _xyxy_to_xywh(boxes: np.ndarray) -> np.ndarray:
 class CocoEvaluator:
     """COCO evaluator that works in distributed mode."""
 
-    def __init__(self, coco_gt: Any, iou_types: list[str], max_dets: int = 100) -> None:
+    def __init__(
+        self,
+        coco_gt: Any,
+        iou_types: list[str],
+        max_dets: int = 100,
+        keypoint_oks_sigmas: list[float] | None = None,
+        log_summary: bool = True,
+    ) -> None:
         assert isinstance(iou_types, (list, tuple))
         coco_gt = copy.deepcopy(_ensure_faster_coco(coco_gt))
+        resolved_keypoint_oks_sigmas = None
         if "keypoints" in iou_types:
             _backfill_num_keypoints(coco_gt)
+            resolved_keypoint_oks_sigmas = _resolve_keypoint_oks_sigmas(coco_gt, keypoint_oks_sigmas)
         self.coco_gt = coco_gt
         self.max_dets = max_dets
         # label2cat maps contiguous model label indices back to original COCO category_ids.
@@ -109,13 +200,15 @@ class CocoEvaluator:
         self.iou_types = iou_types
         self.coco_eval: dict[str, COCOeval] = {}
         for iou_type in iou_types:
-            self.coco_eval[iou_type] = COCOeval(coco_gt, iouType=iou_type)
+            kwargs = {"kpt_oks_sigmas": resolved_keypoint_oks_sigmas} if iou_type == "keypoints" else {}
+            self.coco_eval[iou_type] = COCOeval(coco_gt, iouType=iou_type, **kwargs)
             self.coco_eval[iou_type].params.maxDets = [20] if iou_type == "keypoints" else [1, 10, max_dets]
 
         self.img_ids: list[int] = []
         self.coco_results: dict[str, list[dict[str, Any]]] = {k: [] for k in iou_types}
         self.cat_ids = set(coco_gt.cats.keys())
         self._prefer_raw_category_ids = False
+        self._log_summary = log_summary
 
     def _resolve_category_id(self, label: int, use_raw_category_ids: bool) -> int | None:
         """Resolve a predicted label to a COCO category_id."""
@@ -161,8 +254,13 @@ class CocoEvaluator:
         """Accumulate per-image evaluation results into mean metrics."""
         for iou_type, coco_eval in self.coco_eval.items():
             self._evaluate(iou_type, coco_eval)
-            coco_eval.accumulate()
-            patched_pycocotools_summarize(coco_eval)
+            if self._log_summary:
+                coco_eval.accumulate()
+                patched_pycocotools_summarize(coco_eval)
+            else:
+                with open(os.devnull, "w") as devnull:
+                    with contextlib.redirect_stdout(devnull):
+                        coco_eval.accumulate()
 
     def summarize(self) -> None:
         """Print and log COCO summary statistics."""

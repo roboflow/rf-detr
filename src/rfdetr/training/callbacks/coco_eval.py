@@ -79,6 +79,7 @@ class COCOEvalCallback(Callback):
         segmentation: bool = False,
         eval_interval: int = 1,
         log_per_class_metrics: bool = True,
+        keypoint_oks_sigmas: list[float] | None = None,
         in_notebook: bool | None = None,
     ) -> None:
         super().__init__()
@@ -97,6 +98,7 @@ class COCOEvalCallback(Callback):
         self._use_segm_metrics: bool = segmentation
         self._keypoint_coco_evaluator: Any | None = None
         self._keypoint_eval_has_updates: bool = False
+        self._keypoint_oks_sigmas = keypoint_oks_sigmas
         self._in_notebook: bool = False
         if in_notebook is None:
             with contextlib.suppress(ImportError):
@@ -619,7 +621,13 @@ class COCOEvalCallback(Callback):
             coco_api = get_coco_api_from_dataset(dataset)
             if coco_api is None:
                 continue
-            self._keypoint_coco_evaluator = CocoEvaluator(coco_api, ["keypoints"], max_dets=self._max_dets)
+            self._keypoint_coco_evaluator = CocoEvaluator(
+                coco_api,
+                ["keypoints"],
+                max_dets=self._max_dets,
+                keypoint_oks_sigmas=self._keypoint_oks_sigmas,
+                log_summary=False,
+            )
             return self._keypoint_coco_evaluator
         return None
 
