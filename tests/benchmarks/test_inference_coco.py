@@ -191,7 +191,7 @@ def _build_train_config(coco_root: Path, tmp_path: Path, batch_size: int) -> Tra
         dataset_dir=str(coco_root),
         output_dir=str(tmp_path),
         batch_size=batch_size,
-        num_workers=0 if not torch.cuda.is_available() else min(os.cpu_count() or 1, 4),
+        num_workers=0 if not torch.cuda.is_available() else min(os.cpu_count(), 4),
         tensorboard=False,
         wandb=False,
         mlflow=False,
