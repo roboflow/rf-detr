@@ -3,19 +3,28 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""COCO val2017 inference benchmarks covering both the public ``RFDETR.predict()`` API and the PTL training stack.
+"""COCO val2017 inference benchmarks asserting pretrained-weight accuracy on CPU and GPU.
 
-API contract tests (return type of ``predict()``) live in ``tests/models/test_predict.py`` and do not require a COCO
+Each model family (detection, segmentation) is covered by **two independent code paths**:
+
+``RFDETR.predict()`` path (public API)
+    Loads images as PIL, calls ``RFDETR.predict()`` in batches, accumulates predictions into
+    ``torchmetrics.MeanAveragePrecision`` and a confidence-threshold sweep for macro-F1.  Exercises the
+    end-to-end public inference surface — preprocessing, backbone, decoder, postprocessing — without any
+    PTL machinery.  Tests: :func:`test_inference_detection_rfdetr_predict`,
+    :func:`test_inference_segmentation_rfdetr_predict`.
+
+PTL training-stack path (``Trainer.validate``)
+    Copies pretrained weights into :class:`~rfdetr.training.RFDETRModelModule`, runs ``Trainer.validate``
+    with a :class:`~rfdetr.training.RFDETRDataModule`, and reads ``val/mAP_50`` / ``val/F1`` from the
+    callback metrics.  Exercises ``validation_step``, ``on_after_batch_transfer``, and
+    :class:`~rfdetr.training.COCOEvalCallback` — the same code path used during training.  Tests:
+    :func:`test_inference_detection_ptl_predict`, :func:`test_inference_segmentation_ptl_predict`.
+
+Both paths run on CPU (nano models) and GPU (small and larger models, ``@pytest.mark.gpu``).
+
+API contract tests (return type, shape) live in ``tests/models/test_predict.py`` and do not require a COCO
 download.
-
-Test functions:
-
-- :func:`test_inference_detection_rfdetr_predict` — calls ``RFDETR.predict()`` on COCO val images, scores via
-  ``torchmetrics.MeanAveragePrecision``, and asserts mAP@50 and macro-F1 thresholds for detection models.
-- :func:`test_inference_segmentation_rfdetr_predict` — same for segmentation models (bbox mAP; masks not required).
-- :func:`test_inference_detection_ptl_predict` — asserts mAP@50 and F1 via ``Trainer.validate`` for detection models,
-  exercising the PTL validation loop rather than the public predict API.
-- :func:`test_inference_segmentation_ptl_predict` — same for segmentation models.
 """
 
 import os
