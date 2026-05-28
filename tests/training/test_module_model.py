@@ -1003,6 +1003,14 @@ class TestConfigureOptimizers:
 
         assert optimizer.defaults.get("fused") is True
 
+    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=False)
+    def test_fused_optimizer_disabled_when_cuda_unavailable(self, mock_cuda_available, tmp_path):
+        """_use_fused_optimizer must return False when CUDA is not available, regardless of precision."""
+        module, _ = self._setup_module(tmp_path)
+        module._trainer.precision = "bf16-mixed"
+
+        assert not module._use_fused_optimizer
+
 
 class TestClipGradients:
     """Tests for clip_gradients() — verifies precision gating mirrors configure_optimizers()."""
