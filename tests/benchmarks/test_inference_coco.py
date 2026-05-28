@@ -25,7 +25,6 @@ from typing import Optional
 import numpy as np
 import PIL.Image
 import pytest
-import supervision as sv
 import torch
 from pycocotools.coco import COCO
 from pytorch_lightning import LightningModule
@@ -87,18 +86,6 @@ def _bbox_dict(
     if iscrowd is not None:
         result["iscrowd"] = torch.tensor(iscrowd, dtype=torch.uint8)
     return result
-
-
-def _det_to_pred(det: "sv.Detections") -> dict[str, torch.Tensor]:
-    """Convert a single ``sv.Detections`` to a torchmetrics prediction dict.
-
-    Args:
-        det: Detection result from ``RFDETR.predict()`` for one image.
-
-    Returns:
-        Dict with ``boxes`` (N, 4) xyxy float, ``scores`` (N,) float, ``labels`` (N,) int64.
-    """
-    return _bbox_dict(det.xyxy, det.class_id, scores=det.confidence)
 
 
 def _coco_ann_to_target(coco_gt: "COCO", img_id: int) -> dict[str, torch.Tensor]:
@@ -164,7 +151,7 @@ def _score_rfdetr_predict(
         if not isinstance(detections_batch, list):
             detections_batch = [detections_batch]
 
-        preds = [_det_to_pred(det) for det in detections_batch]
+        preds = [_bbox_dict(det.xyxy, det.class_id, scores=det.confidence) for det in detections_batch]
         targets = [_coco_ann_to_target(coco_gt, img_id) for img_id in batch_ids]
 
         map_metric.update(preds, targets)
