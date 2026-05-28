@@ -35,54 +35,6 @@ _COCO_URLS = {
     "val2017": "http://images.cocodataset.org/zips/val2017.zip",
     "annotations": "http://images.cocodataset.org/annotations/annotations_trainval2017.zip",
 }
-_COCO_VAL_IMAGE_COUNT = 5000
-
-
-def _coco_val_images_complete(images_root: Path) -> bool:
-    """Return whether a local COCO val2017 image directory appears complete.
-
-    The benchmark fixture may leave ``val2017/`` behind after an interrupted download. Checking only for directory
-    existence then skips the image download and fails later in a DataLoader worker. Counting JPEG files catches empty
-    or partial directories without relying on a specific image filename.
-
-    Args:
-        images_root: Path to the extracted ``val2017`` image directory.
-
-    Returns:
-        ``True`` when the directory contains the expected image set.
-
-    Examples:
-        >>> import tempfile
-        >>> from pathlib import Path
-        >>> with tempfile.TemporaryDirectory() as tmp:
-        ...     root = Path(tmp) / "val2017"
-        ...     _coco_val_images_complete(root)
-        False
-    """
-    if not images_root.is_dir():
-        return False
-    return sum(1 for _ in images_root.glob("*.jpg")) >= _COCO_VAL_IMAGE_COUNT
-
-
-def _nonempty_file_exists(path: Path) -> bool:
-    """Return whether *path* exists as a non-empty file.
-
-    Args:
-        path: File path to validate.
-
-    Returns:
-        ``True`` when *path* is a regular file with at least one byte.
-
-    Examples:
-        >>> import tempfile
-        >>> from pathlib import Path
-        >>> with tempfile.TemporaryDirectory() as tmp:
-        ...     _nonempty_file_exists(Path(tmp) / "missing.json")
-        False
-    """
-    return path.is_file() and path.stat().st_size > 0
-
-
 _COCO_VAL_IMAGE_COUNT: int = 5000
 
 
