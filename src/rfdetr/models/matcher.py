@@ -15,10 +15,7 @@
 # Modified from Deformable DETR (https://github.com/fundamentalvision/Deformable-DETR)
 # Copyright (c) 2020 SenseTime. All Rights Reserved.
 # ------------------------------------------------------------------------
-
-"""
-Modules to compute the matching cost and solve the corresponding LSAP.
-"""
+"""Modules to compute the matching cost and solve the corresponding LSAP."""
 
 import numpy as np
 import torch
@@ -35,10 +32,11 @@ _SANITIZED_COST_MARGIN = 1.0
 
 
 class HungarianMatcher(nn.Module):
-    """This class computes an assignment between the targets and the predictions of the network
-    For efficiency reasons, the targets don't include the no_object. Because of this, in general,
-    there are more predictions than targets. In this case, we do a 1-to-1 matching of the best predictions,
-    while the others are un-matched (and thus treated as non-objects).
+    """This class computes an assignment between the targets and the predictions of the network For efficiency reasons,
+    the targets don't include the no_object.
+
+    Because of this, in general, there are more predictions than targets. In this case, we do a 1-to-1 matching of the
+    best predictions, while the others are un-matched (and thus treated as non-objects).
     """
 
     def __init__(
@@ -90,8 +88,8 @@ class HungarianMatcher(nn.Module):
             cost_matrix: Cost matrix to sanitize before Hungarian assignment.
 
         Returns:
-            Cost matrix with all non-finite entries replaced by a finite
-            sentinel that is no smaller than any valid entry.
+            Cost matrix with all non-finite entries replaced by a finite sentinel that is no smaller than any valid
+            entry.
         """
         finite_mask = torch.isfinite(cost_matrix)
         if finite_mask.all():
@@ -127,9 +125,10 @@ class HungarianMatcher(nn.Module):
             targets: This is a list of targets (len(targets) = batch_size), where each target is a dict containing:
                  "labels": Tensor of dim [num_target_boxes] (where num_target_boxes is the number of ground-truth
                            objects in the target) containing the class labels
-                 "boxes": Tensor of dim [num_target_boxes, 4] containing the target box coordinates
-                 "masks": Tensor of dim [num_target_boxes, H, W] containing the target mask coordinates
+                 "boxes": Tensor of dim [num_target_boxes, 4] containing the target box coordinates "masks": Tensor of
+                 dim [num_target_boxes, H, W] containing the target mask coordinates
             group_detr: Number of groups used for matching.
+
         Returns:
             A list of size batch_size, containing tuples of (index_i, index_j) where:
                 - index_i is the indices of the selected predictions (in order)

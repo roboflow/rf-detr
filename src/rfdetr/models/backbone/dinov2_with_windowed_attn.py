@@ -11,17 +11,15 @@
 # ------------------------------------------------------------------------
 """DINOv2-with-Registers backbone with windowed self-attention.
 
-This module is a local copy of the HuggingFace Transformers DINOv2-with-Registers
-implementation, extended with windowed attention support for RF-DETR.  It targets
-the transformers v5 API (``transformers>=5.0.0``).
+This module is a local copy of the HuggingFace Transformers DINOv2-with-Registers implementation, extended with windowed
+attention support for RF-DETR.  It targets the transformers v5 API (``transformers>=5.0.0``).
 
 Transformers v5 API changes vs v4
 ----------------------------------
 ``head_mask`` removed:
     The ``head_mask`` parameter that appeared on every ``forward()`` in v4 has been
-    dropped in v5.  It defaulted to ``None`` throughout the call chain and callers
-    universally passed ``None``, so removing it produces **identical numerics**.
-    Permanent head pruning is still available via ``model._prune_heads()``.
+    dropped in v5.  It defaulted to ``None`` throughout the call chain and callers universally passed ``None``, so
+    removing it produces **identical numerics**. Permanent head pruning is still available via ``model._prune_heads()``.
 
 ``BackboneMixin._init_transformers_backbone`` signature:
     In v4 this method accepted ``(self, config)``.  In v5 it accepts only ``(self)``;
@@ -29,9 +27,9 @@ Transformers v5 API changes vs v4
 
 Helper functions copied locally:
     ``get_aligned_output_features_output_indices`` and
-    ``find_pruneable_heads_and_indices`` were removed from the transformers v5 public
-    API.  Private copies (``_get_aligned_output_features_output_indices`` and
-    ``_find_pruneable_heads_and_indices``) are kept in this module.
+    ``find_pruneable_heads_and_indices`` were removed from the transformers v5 public API.  Private copies
+    (``_get_aligned_output_features_output_indices`` and ``_find_pruneable_heads_and_indices``)
+    are kept in this module.
 """
 
 import collections.abc
@@ -68,8 +66,8 @@ def _find_pruneable_heads_and_indices(
 ) -> Tuple[Set[int], torch.LongTensor]:
     """Return the set of pruneable heads and their index mask for weight pruning.
 
-    Copied from transformers.pytorch_utils.find_pruneable_heads_and_indices
-    (removed from public API in transformers v5.0).
+    Copied from transformers.pytorch_utils.find_pruneable_heads_and_indices (removed from public API in transformers
+    v5.0).
     Source: https://github.com/huggingface/transformers/blob/v4.49.0/src/transformers/pytorch_utils.py#L127
     MAINTENANCE: if this function is moved to another module or deleted, update the
     "Copyright 2022 The HuggingFace Team" line in the file header accordingly.
@@ -81,8 +79,8 @@ def _find_pruneable_heads_and_indices(
         already_pruned_heads: Heads that have already been pruned.
 
     Returns:
-        A tuple of (heads, index) where heads is the adjusted set of head indices and
-        index is a LongTensor boolean mask selecting the remaining weights.
+        A tuple of (heads, index) where heads is the adjusted set of head indices and index is a LongTensor boolean mask
+        selecting the remaining weights.
     """
     mask = torch.ones(n_heads, head_size)
     heads = set(heads) - already_pruned_heads
@@ -116,8 +114,8 @@ def _get_aligned_output_features_output_indices(
 ) -> Tuple[List[str], List[int]]:
     """Align out_features and out_indices against stage_names, filling in defaults when either is None.
 
-    Copied from transformers.utils.backbone_utils.get_aligned_output_features_output_indices
-    (removed from public API in transformers v5.0).
+    Copied from transformers.utils.backbone_utils.get_aligned_output_features_output_indices (removed from public API in
+    transformers v5.0).
     Source: https://github.com/huggingface/transformers/blob/v4.49.0/src/transformers/utils/backbone_utils.py#L30
     MAINTENANCE: if this function is moved to another module or deleted, update the
     "Copyright 2023 The HuggingFace Inc. team" line in the file header accordingly.
@@ -287,11 +285,9 @@ class WindowedDinov2WithRegistersConfig(BackboneConfigMixin, PretrainedConfig):
 
 
 class Dinov2WithRegistersPatchEmbeddings(nn.Module):
-    """
-    This class turns `pixel_values` of shape `(batch_size, num_channels, height, width)` into the initial
+    """This class turns `pixel_values` of shape `(batch_size, num_channels, height, width)` into the initial
     `hidden_states` (patch embeddings) of shape `(batch_size, seq_length, hidden_size)` to be consumed by a
-    Transformer.
-    """
+    Transformer."""
 
     def __init__(self, config):
         super().__init__()
@@ -320,9 +316,7 @@ class Dinov2WithRegistersPatchEmbeddings(nn.Module):
 
 
 class WindowedDinov2WithRegistersEmbeddings(nn.Module):
-    """
-    Construct the CLS token, mask token, register tokens, position and patch embeddings.
-    """
+    """Construct the CLS token, mask token, register tokens, position and patch embeddings."""
 
     def __init__(self, config: WindowedDinov2WithRegistersConfig) -> None:
         super().__init__()
@@ -342,10 +336,9 @@ class WindowedDinov2WithRegistersEmbeddings(nn.Module):
         self.config = config
 
     def interpolate_pos_encoding(self, embeddings: torch.Tensor, height: int, width: int) -> torch.Tensor:
-        """
-        This method allows to interpolate the pre-trained position encodings, to be able to use the model on higher
-        resolution images. This implementation supports torch.jit tracing while maintaining backwards compatibility
-        with the original implementation.
+        """This method allows to interpolate the pre-trained position encodings, to be able to use the model on higher
+        resolution images. This implementation supports torch.jit tracing while maintaining backwards compatibility with
+        the original implementation.
 
         Adapted from:
         - https://github.com/facebookresearch/dino/blob/main/vision_transformer.py
@@ -405,10 +398,9 @@ class WindowedDinov2WithRegistersEmbeddings(nn.Module):
                 Masked positions are replaced with the learnable ``mask_token``.
 
         Returns:
-            Patch embedding tensor. When ``num_windows > 1`` the batch dimension
-            is expanded to ``B * num_windows ** 2`` and the sequence length
-            corresponds to patches within a single window (plus CLS token and
-            any register tokens).
+            Patch embedding tensor. When ``num_windows > 1`` the batch dimension is expanded to ``B * num_windows ** 2``
+            and the sequence length corresponds to patches within a single window (plus CLS token and any register
+            tokens).
 
         Raises:
             ValueError: If ``H`` or ``W`` is not divisible by
@@ -573,10 +565,8 @@ class Dinov2WithRegistersSdpaSelfAttention(Dinov2WithRegistersSelfAttention):
 
 
 class Dinov2WithRegistersSelfOutput(nn.Module):
-    """
-    The residual connection is defined in Dinov2WithRegistersLayer instead of here
-    (as is the case with other models), due to the layernorm applied before each block.
-    """
+    """The residual connection is defined in Dinov2WithRegistersLayer instead of here (as is the case with other
+    models), due to the layernorm applied before each block."""
 
     def __init__(self, config: WindowedDinov2WithRegistersConfig) -> None:
         super().__init__()
@@ -644,12 +634,11 @@ class Dinov2WithRegistersLayerScale(nn.Module):
 
 
 def drop_path(input: torch.Tensor, drop_prob: float = 0.0, training: bool = False) -> torch.Tensor:
-    """
-    Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks).
+    """Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks).
 
     Comment by Ross Wightman: This is the same as the DropConnect impl I created for EfficientNet, etc networks,
-    however, the original name is misleading as 'Drop Connect' is a different form of dropout in a separate paper...
-    See discussion: https://github.com/tensorflow/tpu/issues/494#issuecomment-532968956 ... I've opted for changing the
+    however, the original name is misleading as 'Drop Connect' is a different form of dropout in a separate paper... See
+    discussion: https://github.com/tensorflow/tpu/issues/494#issuecomment-532968956 ... I've opted for changing the
     layer and argument names to 'drop path' rather than mix DropConnect as a layer name and use 'survival rate' as the
     argument.
     """
@@ -847,10 +836,8 @@ class WindowedDinov2WithRegistersEncoder(nn.Module):
 
 
 class WindowedDinov2WithRegistersPreTrainedModel(PreTrainedModel):
-    """
-    An abstract class to handle weights initialization and a simple interface for downloading and loading pretrained
-    models.
-    """
+    """An abstract class to handle weights initialization and a simple interface for downloading and loading pretrained
+    models."""
 
     config_class = WindowedDinov2WithRegistersConfig
     base_model_prefix = "dinov2_with_registers"
@@ -860,7 +847,7 @@ class WindowedDinov2WithRegistersPreTrainedModel(PreTrainedModel):
     _supports_sdpa = True
 
     def _init_weights(self, module: Union[nn.Linear, nn.Conv2d, nn.LayerNorm]) -> None:
-        """Initialize the weights"""
+        """Initialize the weights."""
         if isinstance(module, (nn.Linear, nn.Conv2d)):
             # Upcast the input in `fp32` and cast it back to desired `dtype` to avoid
             # `trunc_normal_cpu` not implemented in `half` issues
@@ -939,8 +926,9 @@ class WindowedDinov2WithRegistersModel(WindowedDinov2WithRegistersPreTrainedMode
         return self.embeddings.patch_embeddings
 
     def _prune_heads(self, heads_to_prune: Dict[int, List[int]]) -> None:
-        """
-        Prunes heads of the model. heads_to_prune: dict of {layer_num: list of heads to prune in this layer} See base
+        """Prunes heads of the model.
+
+        heads_to_prune: dict of {layer_num: list of heads to prune in this layer} See base
         class PreTrainedModel
         """
         for layer, heads in heads_to_prune.items():
@@ -949,9 +937,9 @@ class WindowedDinov2WithRegistersModel(WindowedDinov2WithRegistersPreTrainedMode
     def set_attn_implementation(self, attn_implementation: str) -> None:
         """Switch the attention implementation without reloading the model.
 
-        This is useful when you want to change the attention implementation after the model has been
-        instantiated — for example, to use ``"eager"`` (manual) attention when inspecting attention
-        weights, without having to reconstruct the entire model from scratch.
+        This is useful when you want to change the attention implementation after the model has been instantiated — for
+        example, to use ``"eager"`` (manual) attention when inspecting attention weights, without having to reconstruct
+        the entire model from scratch.
 
         Args:
             attn_implementation: One of ``"eager"`` (manual attention) or ``"sdpa"``
@@ -1074,8 +1062,8 @@ DINOV2_WITH_REGISTERS_INPUTS_DOCSTRING = r"""
 
 @add_start_docstrings(
     """
-    Dinov2WithRegisters Model transformer with an image classification head on top
-    (a linear layer on top of the final hidden state of the [CLS] token) e.g. for ImageNet.
+    Dinov2WithRegisters Model transformer with an image classification head on top (a linear layer on top of the final
+    hidden state of the [CLS] token) e.g. for ImageNet.
     """,
     DINOV2_WITH_REGISTERS_START_DOCSTRING,
 )
@@ -1107,8 +1095,8 @@ class WindowedDinov2WithRegistersForImageClassification(WindowedDinov2WithRegist
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
     ) -> Union[tuple, ImageClassifierOutput]:
-        r"""
-        labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
+        r"""Labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
+
             Labels for computing the image classification/regression loss. Indices should be in `[0, ...,
             config.num_labels - 1]`. If `config.num_labels == 1` a regression loss is computed (Mean-Square loss), If
             `config.num_labels > 1` a classification loss is computed (Cross-Entropy).

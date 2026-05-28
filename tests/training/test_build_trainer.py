@@ -3,7 +3,6 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Tests for build_trainer() — PTL Ch3/T5 (callbacks) and Ch4/T1 (precision, loggers, trainer kwargs)."""
 
 import warnings
@@ -35,9 +34,8 @@ def _find_resume_checkpoints(trainer):
 def _tc(tmp_path, **kwargs):
     """Minimal TrainConfig for tests.
 
-    Loggers are disabled by default to avoid requiring optional deps (tensorboard,
-    wandb, mlflow) in the CPU test environment.  Logger-specific tests override these
-    explicitly via kwargs or mocking.
+    Loggers are disabled by default to avoid requiring optional deps (tensorboard, wandb, mlflow) in the CPU test
+    environment.  Logger-specific tests override these explicitly via kwargs or mocking.
     """
     defaults = dict(
         dataset_dir=str(tmp_path / "ds"),
@@ -232,12 +230,12 @@ class TestBuildTrainerPrecision:
     """build_trainer() must resolve training precision from model_config.amp + device caps."""
 
     def test_amp_false_gives_32_true(self, tmp_path):
-        """amp=False always produces '32-true' regardless of device."""
+        """Amp=False always produces '32-true' regardless of device."""
         trainer = build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=False))
         assert trainer.precision == "32-true"
 
     def test_amp_true_cpu_gives_32_true(self, tmp_path):
-        """amp=True on CPU (no CUDA, no MPS) must fall back to '32-true'."""
+        """Amp=True on CPU (no CUDA, no MPS) must fall back to '32-true'."""
         import unittest.mock as mock
 
         with (
@@ -248,7 +246,7 @@ class TestBuildTrainerPrecision:
         assert trainer.precision == "32-true"
 
     def test_amp_true_cuda_no_bf16_gives_16_mixed(self, tmp_path):
-        """amp=True with CUDA but no bf16 support must produce '16-mixed'."""
+        """Amp=True with CUDA but no bf16 support must produce '16-mixed'."""
         import unittest.mock as mock
 
         captured: dict = {}
@@ -266,7 +264,7 @@ class TestBuildTrainerPrecision:
         assert captured["precision"] == "16-mixed"
 
     def test_amp_true_cuda_bf16_supported_gives_bf16_mixed(self, tmp_path):
-        """amp=True with CUDA + bf16 hardware produces 'bf16-mixed'."""
+        """Amp=True with CUDA + bf16 hardware produces 'bf16-mixed'."""
         import unittest.mock as mock
 
         captured: dict = {}
@@ -291,9 +289,8 @@ class TestBuildTrainerPrecision:
     ):
         """ddp_notebook uses standard precision probing (spawn makes CUDA init safe).
 
-        With spawn-based DDP, child processes start fresh — CUDA init in the
-        parent does not propagate.  So ``is_bf16_supported()`` is safe to call
-        and pre-Ampere GPUs correctly get ``16-mixed`` instead of the slower
+        With spawn-based DDP, child processes start fresh — CUDA init in the parent does not propagate.  So
+        ``is_bf16_supported()`` is safe to call and pre-Ampere GPUs correctly get ``16-mixed`` instead of the slower
         bf16 emulation path.  Simulates pre-Ampere GPU: CUDA available, bf16 NOT supported.
         """
         captured: dict = {}
@@ -313,9 +310,8 @@ class TestBuildTrainerPrecision:
     def test_ddp_notebook_and_spawn_use_interactive_spawn(self, tmp_path, strategy_name):
         """ddp_notebook and ddp_spawn must be replaced with interactive spawn DDPStrategy.
 
-        Fork-based DDP inherits the parent's OpenMP thread pool which is
-        invalid after fork, causing SIGABRT in the autograd engine.
-        ddp_spawn is blocked by PTL in notebooks without the override.
+        Fork-based DDP inherits the parent's OpenMP thread pool which is invalid after fork, causing SIGABRT in the
+        autograd engine. ddp_spawn is blocked by PTL in notebooks without the override.
         """
         import unittest.mock as mock
 
@@ -361,9 +357,8 @@ class TestBuildTrainerPrecision:
 class TestBuildTrainerEMAShardingGuard:
     """EMA must be disabled and a UserWarning emitted for sharded strategies.
 
-    PTL validates strategy+accelerator compatibility at Trainer construction time,
-    so tests that exercise sharded strategies mock Trainer to capture the callback
-    list without triggering platform-specific validation.
+    PTL validates strategy+accelerator compatibility at Trainer construction time, so tests that exercise sharded
+    strategies mock Trainer to capture the callback list without triggering platform-specific validation.
     """
 
     @pytest.mark.parametrize(
@@ -482,7 +477,7 @@ class TestBuildTrainerLoggers:
         assert any(isinstance(lg, CSVLogger) for lg in trainer.loggers)
 
     def test_clearml_flag_raises_not_implemented(self, tmp_path):
-        """clearml=True must raise NotImplementedError (not yet supported)."""
+        """Clearml=True must raise NotImplementedError (not yet supported)."""
         with pytest.raises(NotImplementedError, match="ClearML"):
             build_trainer(
                 _tc(tmp_path, clearml=True, use_ema=False),
@@ -665,11 +660,10 @@ class TestBuildTrainerSegmentationDDP:
     """build_trainer() must enable find_unused_parameters when segmentation_head=True + strategy='ddp'."""
 
     def test_ddp_segmentation_enables_find_unused_parameters(self, tmp_path):
-        """strategy='ddp' + segmentation_head=True must produce DDPStrategy(find_unused_parameters=True).
+        """Strategy='ddp' + segmentation_head=True must produce DDPStrategy(find_unused_parameters=True).
 
-        The segmentation head's sparse_forward() leaves parameters unused on some
-        forward steps.  Plain DDP raises RuntimeError unless find_unused_parameters
-        is enabled.
+        The segmentation head's sparse_forward() leaves parameters unused on some forward steps.  Plain DDP raises
+        RuntimeError unless find_unused_parameters is enabled.
         """
         import unittest.mock as mock
 
@@ -691,11 +685,10 @@ class TestBuildTrainerSegmentationDDP:
         assert strategy_obj._ddp_kwargs.get("find_unused_parameters") is True
 
     def test_ddp_no_segmentation_strategy_unchanged(self, tmp_path):
-        """strategy='ddp' without segmentation_head must pass the string through unchanged.
+        """Strategy='ddp' without segmentation_head must pass the string through unchanged.
 
-        Only the segmentation path needs find_unused_parameters; standard detection
-        DDP must not be wrapped unnecessarily to avoid the autograd-graph traversal
-        overhead on every backward pass.
+        Only the segmentation path needs find_unused_parameters; standard detection DDP must not be wrapped
+        unnecessarily to avoid the autograd-graph traversal overhead on every backward pass.
         """
         import unittest.mock as mock
 
@@ -715,10 +708,9 @@ class TestBuildTrainerSegmentationDDP:
     def test_ddp_spawn_segmentation_preserves_find_unused_parameters(self, tmp_path):
         """strategy='ddp_spawn' + segmentation_head=True must keep find_unused_parameters=True.
 
-        ddp_spawn is already replaced with an interactive-spawn DDPStrategy that has
-        find_unused_parameters=True for notebook compatibility.  Segmentation must not
-        accidentally drop that flag when the ddp_spawn path is taken instead of the
-        plain 'ddp' path.
+        ddp_spawn is already replaced with an interactive-spawn DDPStrategy that has find_unused_parameters=True for
+        notebook compatibility.  Segmentation must not accidentally drop that flag when the ddp_spawn path is taken
+        instead of the plain 'ddp' path.
         """
         import unittest.mock as mock
 

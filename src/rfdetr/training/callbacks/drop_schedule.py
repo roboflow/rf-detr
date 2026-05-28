@@ -3,7 +3,6 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Drop-path / dropout schedule callback for RF-DETR Lightning training."""
 
 from __future__ import annotations
@@ -19,10 +18,8 @@ from rfdetr.training.drop_schedule import drop_scheduler
 class DropPathCallback(Callback):
     """Applies per-step drop-path and dropout rate schedules to the model.
 
-    Computes the full schedule array in ``on_train_start`` using
-    :func:`rfdetr.util.drop_scheduler.drop_scheduler`, then indexes into it
-    on every training batch to update the model's stochastic-depth and
-    dropout rates.
+    Computes the full schedule array in ``on_train_start`` using :func:`rfdetr.util.drop_scheduler.drop_scheduler`, then
+    indexes into it on every training batch to update the model's stochastic-depth and dropout rates.
 
     Args:
         drop_path: Peak drop-path rate.  ``0.0`` disables the schedule.

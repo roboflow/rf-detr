@@ -3,7 +3,6 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Exponential Moving Average callback compatible with ``ModelEma``."""
 
 from __future__ import annotations
@@ -21,16 +20,14 @@ from torch.optim.swa_utils import AveragedModel
 class RFDETREMACallback(Callback):
     """Exponential Moving Average with optional tau-based warm-up.
 
-    Drop-in replacement for ``rfdetr.util.utils.ModelEma`` implemented as a
-    plain Lightning callback around :class:`torch.optim.swa_utils.AveragedModel`.
-    The ``_avg_fn`` reproduces the exact same formula as ``ModelEma``
+    Drop-in replacement for ``rfdetr.util.utils.ModelEma`` implemented as a plain Lightning callback around
+    :class:`torch.optim.swa_utils.AveragedModel`. The ``_avg_fn`` reproduces the exact same formula as ``ModelEma``
     (1-indexed ``updates`` counter, optional ``tau`` warm-up).
 
     Args:
         decay: Base EMA decay factor. Corresponds to ``TrainConfig.ema_decay``.
         tau: Warm-up time constant (in optimizer steps). When > 0 the
-            effective decay ramps from 0 towards *decay* following
-            ``decay * (1 - exp(-updates / tau))``. Corresponds to
+            effective decay ramps from 0 towards *decay* following ``decay * (1 - exp(-updates / tau))``. Corresponds to
             ``TrainConfig.ema_tau``.
         use_buffers: Whether buffers are averaged in addition to parameters.
         update_interval_steps: Update EMA every N optimizer steps.
@@ -63,10 +60,9 @@ class RFDETREMACallback(Callback):
     ) -> torch.Tensor:
         """Compute the EMA update for a single parameter tensor.
 
-        Matches the ``ModelEma`` formula where ``updates`` is 1-indexed:
-        PTL's ``num_averaged`` starts at 0 (incremented *after* calling
-        ``avg_fn``), so ``updates = num_averaged + 1`` reproduces the
-        same sequence of effective decay values.
+        Matches the ``ModelEma`` formula where ``updates`` is 1-indexed: PTL's ``num_averaged`` starts at 0 (incremented
+        *after* calling ``avg_fn``), so ``updates = num_averaged + 1`` reproduces the same sequence of effective decay
+        values.
 
         Args:
             averaged_param: Current EMA parameter value.
@@ -129,9 +125,8 @@ class RFDETREMACallback(Callback):
     ) -> bool:
         """Return ``True`` after every optimizer step and every epoch end.
 
-        The base ``WeightAveraging`` only updates on steps. This override
-        also triggers an update at epoch boundaries, matching RF-DETR's
-        existing EMA behaviour.
+        The base ``WeightAveraging`` only updates on steps. This override also triggers an update at epoch boundaries,
+        matching RF-DETR's existing EMA behaviour.
 
         Args:
             step_idx: Index of the last optimizer step, or ``None``.

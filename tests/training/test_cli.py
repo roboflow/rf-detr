@@ -3,13 +3,11 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Tests for RFDETRCli — PTL Ch4/T4.
 
-Verifies that the CLI module is correctly structured: importable, subclasses
-LightningCLI, overrides add_arguments_to_parser, and exposes a callable
-main() entry point.  CLI integration / smoke tests (--help subprocess, YAML
-roundtrip) live in T4-7.
+Verifies that the CLI module is correctly structured: importable, subclasses LightningCLI, overrides
+add_arguments_to_parser, and exposes a callable main() entry point.  CLI integration / smoke tests (--help subprocess,
+YAML roundtrip) live in T4-7.
 """
 
 import pytest
@@ -31,7 +29,7 @@ class TestRFDETRCliStructure:
         from rfdetr.training.cli import RFDETRCli  # noqa: F401
 
     def test_main_importable(self):
-        """main() can be imported from rfdetr.training.cli."""
+        """Main() can be imported from rfdetr.training.cli."""
         from rfdetr.training.cli import main  # noqa: F401
 
     def test_rfdetr_cli_is_lightning_cli_subclass(self):
@@ -43,7 +41,7 @@ class TestRFDETRCliStructure:
         assert issubclass(RFDETRCli, LightningCLI)
 
     def test_main_is_callable(self):
-        """main must be a callable (function, not e.g. a string)."""
+        """Main must be a callable (function, not e.g. a string)."""
         from rfdetr.training.cli import main
 
         assert callable(main)

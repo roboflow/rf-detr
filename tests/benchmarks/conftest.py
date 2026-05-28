@@ -9,8 +9,10 @@ import pytest
 
 from rfdetr.datasets._develop import (
     _COCO_URLS,
+    _coco_val_images_complete,
     _download_and_extract,
     _download_lock,
+    _nonempty_file_exists,
 )
 from rfdetr.utilities.reproducibility import seed_all
 
@@ -30,9 +32,9 @@ def download_coco_val() -> tuple[Path, Path]:
 
     lock_path = _DATA_DIR / ".coco_download.lock"
     with _download_lock(lock_path):
-        if not images_root.exists():
+        if not _coco_val_images_complete(images_root):
             _download_and_extract(_COCO_URLS["val2017"], _DATA_DIR)
-        if not annotations_path.exists():
+        if not _nonempty_file_exists(annotations_path):
             _download_and_extract(_COCO_URLS["annotations"], _DATA_DIR)
 
     return images_root, annotations_path
@@ -57,9 +59,8 @@ def seed_everything(request: pytest.FixtureRequest) -> None:
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Reorder tests to prioritize long-running training test before xdist distribution.
 
-    This hook runs after collection but before xdist distributes tests to workers.
-    By moving the training test to the front, we ensure it gets scheduled early,
-    maximizing parallel resource utilization.
+    This hook runs after collection but before xdist distributes tests to workers. By moving the training test to the
+    front, we ensure it gets scheduled early, maximizing parallel resource utilization.
     """
     training_tests = []
     other_tests = []

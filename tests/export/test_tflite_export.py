@@ -3,7 +3,6 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Tests for the ONNX → TFLite export pipeline.
 
 Tests cover:
@@ -27,6 +26,7 @@ from unittest import mock
 import numpy as np
 import pytest
 
+from rfdetr.export._tflite import _IS_ONNX2TF_AVAILABLE
 from rfdetr.export._tflite.converter import (
     _DEFAULT_CALIB_SAMPLES,
     _DEFAULT_DIR_CALIB_SAMPLES,
@@ -40,6 +40,8 @@ from rfdetr.export._tflite.converter import (
     _prepare_calibration_data,
     export_tflite,
 )
+
+onnx2tf_available = pytest.mark.skipif(not _IS_ONNX2TF_AVAILABLE, reason="onnx2tf not installed")
 
 # ---------------------------------------------------------------------------
 # Helpers — fake onnx2tf module injected into sys.modules
@@ -59,9 +61,8 @@ _ONNX2TF_KEYS = ("onnx2tf", "onnx2tf.onnx2tf", "onnx2tf.utils", "onnx2tf.utils.c
 def _install_fake_onnx2tf() -> tuple[_FakeOnnx2tfModule, mock.MagicMock, dict[str, object]]:
     """Insert a fake ``onnx2tf`` package into ``sys.modules``.
 
-    Saves any pre-existing real modules under the same keys so they can be
-    restored by ``_remove_fake_onnx2tf`` (Copilot: do not silently clobber
-    real modules that a prior test may have imported).
+    Saves any pre-existing real modules under the same keys so they can be restored by ``_remove_fake_onnx2tf``
+    (Copilot: do not silently clobber real modules that a prior test may have imported).
 
     Returns:
         Tuple of (fake_module, convert_mock, saved_originals).
@@ -104,9 +105,8 @@ def _remove_fake_onnx2tf(saved: dict[str, object] | None = None) -> None:
 
     Args:
         saved: Snapshot returned by ``_install_fake_onnx2tf``.  If a key was
-            present before installation its original value is restored; if it
-            was absent it is deleted.  When *saved* is ``None`` all
-            ``onnx2tf*`` keys are simply deleted (legacy behaviour).
+            present before installation its original value is restored; if it was absent it is deleted.  When *saved* is
+            ``None`` all ``onnx2tf*`` keys are simply deleted (legacy behaviour).
     """
     if saved is not None:
         for key in _ONNX2TF_KEYS:
@@ -128,9 +128,17 @@ def _remove_fake_onnx2tf(saved: dict[str, object] | None = None) -> None:
 
 @pytest.fixture()
 def fake_onnx2tf():
-    """Provide a fake ``onnx2tf`` that records *convert()* calls."""
+    """Provide a fake ``onnx2tf`` that records *convert()* calls.
+
+    Also patches ``_replace_gridsample_for_tflite`` to return the input path unchanged so tests that supply stub ONNX
+    bytes do not depend on ``onnx.load`` tolerating those bytes.
+    """
     fake, convert_mock, saved = _install_fake_onnx2tf()
-    yield fake, convert_mock
+    with mock.patch(
+        "rfdetr.export._tflite.converter._replace_gridsample_for_tflite",
+        side_effect=lambda path, _dir: path,
+    ):
+        yield fake, convert_mock
     _remove_fake_onnx2tf(saved)
 
 
@@ -146,10 +154,9 @@ def onnx_model(tmp_path: Path) -> Path:
 def mock_prepare_calib(tmp_path: Path) -> Generator:
     """Mock ``_prepare_calibration_data`` so dummy ONNX files work.
 
-    ``export_tflite`` calls ``_prepare_calibration_data`` which calls
-    ``_get_onnx_input_info`` (requiring a real ONNX file).  Since the
-    ``onnx_model`` fixture writes only stub bytes, this mock prevents
-    the ONNX parse from being attempted.
+    ``export_tflite`` calls ``_prepare_calibration_data`` which calls ``_get_onnx_input_info`` (requiring a real ONNX
+    file).  Since the ``onnx_model`` fixture writes only stub bytes, this mock prevents the ONNX parse from being
+    attempted.
     """
     dummy_npy = tmp_path / "_rfdetr_calib_data.npy"
     np.save(str(dummy_npy), np.zeros((1, 64, 64, 3), dtype=np.float32))
@@ -174,6 +181,7 @@ def tflite_output(tmp_path: Path, onnx_model: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 
+@onnx2tf_available
 class TestExportTfliteConverter:
     """Tests for ``export_tflite()``."""
 
@@ -229,9 +237,8 @@ class TestExportTfliteConverter:
     ) -> None:
         """custom_input_op_name_np_data_path must NOT be passed to convert().
 
-        The onnx2tf custom_input code path triggers a tf.tile rank mismatch
-        with DINOv2-style backbones when N > 1.  We rely on patching
-        download_test_image_data() instead.
+        The onnx2tf custom_input code path triggers a tf.tile rank mismatch with DINOv2-style backbones when N > 1.  We
+        rely on patching download_test_image_data() instead.
         """
         _, convert_mock = fake_onnx2tf
         export_tflite(onnx_model, tflite_output)
@@ -248,9 +255,8 @@ class TestExportTfliteConverter:
     ) -> None:
         """output_signaturedefs must always be True.
 
-        Segmentation models produce ONNX node names with leading "/"
-        characters that violate the TF saved_model naming pattern.
-        Enabling signature defs bypasses this restriction.
+        Segmentation models produce ONNX node names with leading "/" characters that violate the TF saved_model naming
+        pattern. Enabling signature defs bypasses this restriction.
         """
         _, convert_mock = fake_onnx2tf
         export_tflite(onnx_model, tflite_output)
@@ -267,9 +273,8 @@ class TestExportTfliteConverter:
     ) -> None:
         """tflite_backend must always be 'tf_converter' to avoid the TFLite TopK_V2 kernel check.
 
-        onnx2tf 2.x defaults to flatbuffer_direct, which trips a
-        "k > internal dimension" error at AllocateTensors() time on
-        RF-DETR's encoder TopK node.  tf_converter is forced unconditionally.
+        onnx2tf 2.x defaults to flatbuffer_direct, which trips a "k > internal dimension" error at AllocateTensors()
+        time on RF-DETR's encoder TopK node.  tf_converter is forced unconditionally.
         """
         _, convert_mock = fake_onnx2tf
         export_tflite(onnx_model, tflite_output)
@@ -285,8 +290,8 @@ class TestExportTfliteConverter:
     ) -> None:
         """replace_to_pseudo_operators must include Erf and GeLU.
 
-        Without this, AllocateTensors() fails with "FlexErf failed to prepare"
-        because the TFLite runtime lacks native Erf / GeLU kernels.
+        Without this, AllocateTensors() fails with "FlexErf failed to prepare" because the TFLite runtime lacks native
+        Erf / GeLU kernels.
         """
         _, convert_mock = fake_onnx2tf
         export_tflite(onnx_model, tflite_output)
@@ -324,13 +329,11 @@ class TestExportTfliteConverter:
         fake_onnx2tf: Any,
         mock_prepare_calib: Any,
     ) -> None:
-        """int8 export derives a dynamic-range model and avoids onnx2tf's -oiqt path.
+        """Int8 export derives a dynamic-range model and avoids onnx2tf's -oiqt path.
 
-        onnx2tf's ``output_integer_quantized_tflite`` (-oiqt) only yields static
-        quantization, which RF-DETR's transformer activations do not survive.
-        The converter instead builds dynamic-range INT8 from the SavedModel via
-        ``_quantize_dynamic_range``, so the onnx2tf call must NOT carry the
-        ``output_integer_quantized_tflite`` flag.
+        onnx2tf's ``output_integer_quantized_tflite`` (-oiqt) only yields static quantization, which RF-DETR's
+        transformer activations do not survive. The converter instead builds dynamic-range INT8 from the SavedModel via
+        ``_quantize_dynamic_range``, so the onnx2tf call must NOT carry the ``output_integer_quantized_tflite`` flag.
         """
         _, convert_mock = fake_onnx2tf
         dyn_path = tflite_output / "model_dynamic_range_quant.tflite"
@@ -951,6 +954,7 @@ class TestLoadCalibrationImages:
 # ---------------------------------------------------------------------------
 
 
+@onnx2tf_available
 class TestCheckOnnx2tfAvailable:
     """Tests for ``_check_onnx2tf_available()``."""
 
@@ -966,64 +970,117 @@ class TestCheckOnnx2tfAvailable:
 
 
 # ---------------------------------------------------------------------------
-# TestGridSampleKwargDetection
+# TestGridSampleOnnxRewrite
 # ---------------------------------------------------------------------------
 
+onnx_gs_available = pytest.mark.skipif(
+    not all(
+        __import__("importlib").util.find_spec(p) is not None for p in ("onnx", "onnx_graphsurgeon", "onnxruntime")
+    ),
+    reason="onnx, onnx_graphsurgeon, and onnxruntime required",
+)
 
-class TestGridSampleKwargDetection:
-    """Tests for module-level detection of the onnx2tf GridSample replacement kwarg."""
 
-    def test_kwarg_name_contains_grid_and_pseudo_when_detected(self) -> None:
-        """If non-None, the detected kwarg name must embed both 'grid' and 'pseudo'."""
-        from rfdetr.export._tflite.converter import _GRIDSAMPLE_KWARG
+def _build_gridsample_onnx(
+    path: Path,
+    *,
+    n: int = 1,
+    c: int = 4,
+    h: int = 8,
+    w: int = 8,
+    h_out: int = 4,
+    w_out: int = 4,
+) -> None:
+    """Write a minimal ONNX model with one GridSample node to *path*."""
+    import onnx
+    from onnx import TensorProto, helper
 
-        if _GRIDSAMPLE_KWARG is not None:
-            lower = _GRIDSAMPLE_KWARG.lower()
-            assert "grid" in lower
-            assert "pseudo" in lower
+    im = helper.make_tensor_value_info("im", TensorProto.FLOAT, [n, c, h, w])
+    grid = helper.make_tensor_value_info("grid", TensorProto.FLOAT, [n, h_out, w_out, 2])
+    out = helper.make_tensor_value_info("out", TensorProto.FLOAT, [n, c, h_out, w_out])
+    node = helper.make_node(
+        "GridSample",
+        inputs=["im", "grid"],
+        outputs=["out"],
+        mode="bilinear",
+        padding_mode="zeros",
+        align_corners=0,
+    )
+    graph = helper.make_graph([node], "gs_test", [im, grid], [out])
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 16)])
+    onnx.save(model, str(path))
+
+
+@pytest.fixture()
+def gridsample_onnx(tmp_path: Path) -> Path:
+    """Build a tiny ONNX file with a single GridSample node."""
+    p = tmp_path / "gs_model.onnx"
+    _build_gridsample_onnx(p)
+    return p
+
+
+class TestGridSampleOnnxRewrite:
+    """Tests for the ONNX-level GridSample → Gather(axis=0) rewrite."""
 
     def test_module_import_does_not_raise(self) -> None:
         """Importing the converter module must succeed regardless of onnx2tf version."""
         import rfdetr.export._tflite.converter  # noqa: F401
 
+    @onnx_gs_available
+    def test_no_gridsample_nodes_after_rewrite(self, gridsample_onnx: Path, tmp_path: Path) -> None:
+        """_replace_gridsample_for_tflite removes all GridSample nodes from the graph."""
+        import onnx
+        import onnx_graphsurgeon as gs
 
-# ---------------------------------------------------------------------------
-# TestGridSampleKwargForwarded
-# ---------------------------------------------------------------------------
+        from rfdetr.export._tflite.converter import _replace_gridsample_for_tflite
 
+        patched_path = _replace_gridsample_for_tflite(gridsample_onnx, tmp_path)
 
-class TestGridSampleKwargForwarded:
-    """Tests that the GridSample replacement kwarg is forwarded to onnx2tf.convert."""
+        model = onnx.load(str(patched_path))
+        graph = gs.import_onnx(model)
+        remaining = [n for n in graph.nodes if n.op == "GridSample"]
+        assert remaining == [], f"Expected no GridSample nodes; found {len(remaining)}"
 
-    def test_kwarg_passed_as_true_when_set(
-        self,
-        onnx_model: Path,
-        tflite_output: Path,
-        fake_onnx2tf: Any,
-        mock_prepare_calib: Any,
-    ) -> None:
-        """_GRIDSAMPLE_KWARG is forwarded to convert() as True when non-None."""
-        from rfdetr.export._tflite import converter as conv_mod
+    @onnx_gs_available
+    def test_gather_nodes_present_after_rewrite(self, gridsample_onnx: Path, tmp_path: Path) -> None:
+        """Rewritten graph contains Gather nodes (the TFLite-safe replacement ops)."""
+        import onnx
+        import onnx_graphsurgeon as gs
 
-        _, convert_mock = fake_onnx2tf
-        sentinel = "replace_to_pseudo_gridsample_node"
-        with mock.patch.object(conv_mod, "_GRIDSAMPLE_KWARG", sentinel):
-            export_tflite(onnx_model, tflite_output)
+        from rfdetr.export._tflite.converter import _replace_gridsample_for_tflite
 
-        assert convert_mock.call_args.kwargs.get(sentinel) is True
+        patched_path = _replace_gridsample_for_tflite(gridsample_onnx, tmp_path)
 
-    def test_warning_logged_when_kwarg_is_none(
-        self,
-        onnx_model: Path,
-        tflite_output: Path,
-        fake_onnx2tf: Any,
-        mock_prepare_calib: Any,
-    ) -> None:
-        """A warning mentioning GridSample is logged when _GRIDSAMPLE_KWARG is None."""
-        from rfdetr.export._tflite import converter as conv_mod
+        model = onnx.load(str(patched_path))
+        graph = gs.import_onnx(model)
+        gather_nodes = [n for n in graph.nodes if n.op == "Gather"]
+        assert len(gather_nodes) >= 4, f"Expected ≥4 Gather nodes (one per bilinear corner); found {len(gather_nodes)}"
 
-        with mock.patch.object(conv_mod, "_GRIDSAMPLE_KWARG", None):
-            with mock.patch("rfdetr.export._tflite.converter.logger") as mock_logger:
-                export_tflite(onnx_model, tflite_output)
-                assert mock_logger.warning.called
-                assert "GridSample" in mock_logger.warning.call_args[0][0]
+    @onnx_gs_available
+    def test_numerical_equivalence_vs_pytorch(self, gridsample_onnx: Path, tmp_path: Path) -> None:
+        """Rewritten ONNX output matches torch.nn.functional.grid_sample within 1e-5."""
+        import onnxruntime as ort
+        import torch
+        import torch.nn.functional as F  # noqa: N812
+
+        from rfdetr.export._tflite.converter import _replace_gridsample_for_tflite
+
+        rng = np.random.default_rng(0)
+        im_np = rng.standard_normal((1, 4, 8, 8)).astype(np.float32)
+        grid_np = rng.uniform(-1, 1, (1, 4, 4, 2)).astype(np.float32)
+
+        ref = F.grid_sample(
+            torch.from_numpy(im_np),
+            torch.from_numpy(grid_np),
+            mode="bilinear",
+            padding_mode="zeros",
+            align_corners=False,
+        ).numpy()
+
+        patched_path = _replace_gridsample_for_tflite(gridsample_onnx, tmp_path)
+        sess = ort.InferenceSession(str(patched_path), providers=["CPUExecutionProvider"])
+        (result,) = sess.run(None, {"im": im_np, "grid": grid_np})
+
+        np.testing.assert_allclose(
+            result, ref, atol=1e-5, rtol=0, err_msg="Gather(axis=0) rewrite output diverges from F.grid_sample"
+        )

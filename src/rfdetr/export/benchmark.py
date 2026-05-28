@@ -6,12 +6,10 @@
 # Copied and modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
 # Copyright (c) 2024 Baidu. All Rights Reserved.
 # ------------------------------------------------------------------------
+"""This tool provides performance benchmarks by using ONNX Runtime and TensorRT to run inference on a given model with
+the COCO validation set.
 
-"""
-This tool provides performance benchmarks by using ONNX Runtime and TensorRT
-to run inference on a given model with the COCO validation set. It offers
-reliable measurements of inference latency using ONNX Runtime or TensorRT
-on the device.
+It offers reliable measurements of inference latency using ONNX Runtime or TensorRT on the device.
 """
 
 import contextlib
@@ -27,7 +25,7 @@ from PIL import Image
 from tqdm.auto import tqdm
 
 try:
-    import tensorrt as trt
+    import _tensorrt as trt
 except ImportError:
     trt = None
 
@@ -176,7 +174,7 @@ def infer_engine(model, coco_evaluator, time_profile, prefix, img_list, device, 
 
 
 class TRTInference(object):
-    """TensorRT inference engine"""
+    """TensorRT inference engine."""
 
     def __init__(
         self, engine_path="dino.engine", device="cuda:0", sync_mode: bool = False, max_batch_size=32, verbose=False
@@ -222,7 +220,7 @@ class TRTInference(object):
         return blob
 
     def load_engine(self, path):
-        """load engine"""
+        """Load engine."""
         trt.init_libnvinfer_plugins(self.logger, "")
         with open(path, "rb") as f, trt.Runtime(self.logger) as runtime:
             return runtime.deserialize_cuda_engine(f.read())
@@ -246,7 +244,7 @@ class TRTInference(object):
         return names
 
     def get_bindings(self, engine, context, max_batch_size=32, device=None):
-        """build binddings"""
+        """Build binddings."""
         Binding = namedtuple("Binding", ("name", "dtype", "shape", "data", "ptr"))
         bindings = OrderedDict()
 

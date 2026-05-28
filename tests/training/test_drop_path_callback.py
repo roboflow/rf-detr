@@ -3,7 +3,6 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Unit tests for :class:`rfdetr.training.callbacks.drop_schedule.DropPathCallback`."""
 
 from __future__ import annotations
@@ -75,7 +74,7 @@ class TestOnTrainStart:
         np.testing.assert_array_equal(cb._dp_schedule, expected)
 
     def test_do_schedule_matches_drop_scheduler_standard(self) -> None:
-        """dropout schedule matches ``drop_scheduler`` for standard mode."""
+        """Dropout schedule matches ``drop_scheduler`` for standard mode."""
         cb = DropPathCallback(dropout=0.1)
         trainer = _make_mock_trainer(estimated_stepping_batches=50)
         pl_module = _make_mock_pl_module(epochs=5)

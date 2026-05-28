@@ -3,11 +3,10 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Private developer tools for testing and benchmarking RF-DETR.
 
-These utilities are intended for internal use by developers and test suites.
-They are not part of the public API and may change without notice.
+These utilities are intended for internal use by developers and test suites. They are not part of the public API and may
+change without notice.
 """
 
 from __future__ import annotations
@@ -37,18 +36,74 @@ _COCO_URLS = {
     "annotations": "http://images.cocodataset.org/annotations/annotations_trainval2017.zip",
 }
 
+_COCO_VAL_IMAGE_COUNT: int = 5000
+
+
+def _coco_val_images_complete(images_dir: Path) -> bool:
+    """Check whether the COCO val2017 image directory contains the expected number of JPEG files.
+
+    Returns ``False`` for a missing or empty directory so callers can trigger a
+    re-download without inspecting the directory manually.
+
+    Args:
+        images_dir: Path to the directory that should contain the val2017 images.
+
+    Returns:
+        ``True`` if *images_dir* exists and contains at least ``_COCO_VAL_IMAGE_COUNT``
+        ``.jpg`` files, ``False`` otherwise.
+
+    Raises:
+        OSError: If *images_dir* exists but cannot be read (e.g. ``PermissionError``
+            when the directory is not accessible, or ``FileNotFoundError`` on a
+            TOCTOU race between the ``is_dir()`` check and ``iterdir()``).
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as tmpdir:
+        ...     _coco_val_images_complete(Path(tmpdir) / "val2017")
+        False
+    """
+    if not images_dir.is_dir():
+        return False
+    return (
+        sum(1 for entry in images_dir.iterdir() if entry.is_file() and entry.suffix.lower() == ".jpg")
+        >= _COCO_VAL_IMAGE_COUNT
+    )
+
+
+def _nonempty_file_exists(path: Path) -> bool:
+    """Check whether a file exists and contains at least one byte.
+
+    Returns ``False`` for a missing or empty file so callers can trigger a
+    re-download without inspecting the file manually.
+
+    Args:
+        path: Path to the file to check.
+
+    Returns:
+        ``True`` if *path* refers to an existing file with ``size > 0``,
+        ``False`` otherwise.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as tmpdir:
+        ...     _nonempty_file_exists(Path(tmpdir) / "missing.json")
+        False
+    """
+    try:
+        return path.is_file() and path.stat().st_size > 0
+    except OSError:
+        return False
+
 
 class _SimpleDataset:
     """Simple synthetic dataset for testing augmentations and training loops.
 
-    Creates synthetic images with varying numbers of bounding boxes to test
-    edge cases in augmentation pipelines, particularly the case where
-    num_boxes=2 (which matches orig_size shape [2]).
+    Creates synthetic images with varying numbers of bounding boxes to test edge cases in augmentation pipelines,
+    particularly the case where num_boxes=2 (which matches orig_size shape [2]).
 
-    Implements the ``__len__`` / ``__getitem__`` protocol expected by
-    ``torch.utils.data.DataLoader`` without inheriting from
-    ``torch.utils.data.Dataset``, so importing this class does not pull in
-    torch at module load time.
+    Implements the ``__len__`` / ``__getitem__`` protocol expected by ``torch.utils.data.DataLoader`` without inheriting
+    from ``torch.utils.data.Dataset``, so importing this class does not pull in torch at module load time.
 
     Args:
         num_samples: Number of samples in the dataset.

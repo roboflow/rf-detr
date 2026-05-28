@@ -3,7 +3,6 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Comprehensive unit tests for RFDETRModelModule (LightningModule wrapper)."""
 
 from types import SimpleNamespace
@@ -129,8 +128,8 @@ def _make_batch(batch_size=2, channels=3, h=16, w=16):
 def build_module(tmp_path):
     """Factory fixture — returns (module, fake_model, fake_criterion, fake_postprocess).
 
-    build_model and build_criterion_and_postprocessors are mocked automatically.
-    tmp_path is injected automatically so test methods do not need to declare it.
+    build_model and build_criterion_and_postprocessors are mocked automatically. tmp_path is injected automatically so
+    test methods do not need to declare it.
     """
     return lambda model_config=None, train_config=None: _build_module(model_config, train_config, tmp_path)
 
@@ -142,9 +141,8 @@ def make_batch():
 
 
 class TestInit:
-    """Tests for RFDETRModelModule.__init__ — covers attribute assignment and
-    delegation to build_model() / build_criterion_and_postprocessors()
-    when pretrain_weights is None."""
+    """Tests for RFDETRModelModule.__init__ — covers attribute assignment and delegation to build_model() /
+    build_criterion_and_postprocessors() when pretrain_weights is None."""
 
     def test_model_is_set(self, build_module):
         """__init__ must assign the built model to module.model."""
@@ -194,7 +192,7 @@ class TestInit:
     @patch("rfdetr.training.module_model.torch.compile")
     @patch("rfdetr.config.DEVICE", "cuda")
     def test_compile_disabled_when_train_accelerator_is_cpu(self, _mock_compile: MagicMock, tmp_path):
-        """compile stays disabled when training is explicitly forced to CPU."""
+        """Compile stays disabled when training is explicitly forced to CPU."""
         mc = _base_model_config(compile=True)
         tc = _base_train_config(tmp_path, multi_scale=False, accelerator="cpu")
         _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
@@ -202,9 +200,9 @@ class TestInit:
 
 
 class TestLoadPretrainWeights:
-    """Tests for _load_pretrain_weights() — covers checkpoint validation, detection-head
-    reinitialization on class-count mismatch, query-embedding trimming, re-download on
-    corruption, and class-name extraction from checkpoint metadata."""
+    """Tests for _load_pretrain_weights() — covers checkpoint validation, detection-head reinitialization on class-count
+    mismatch, query-embedding trimming, re-download on corruption, and class-name extraction from checkpoint
+    metadata."""
 
     def _make_checkpoint(self, num_classes_in_ckpt=91, num_queries=300, group_detr=13):
         """Build a fake checkpoint dict."""
@@ -337,12 +335,11 @@ class TestLoadPretrainWeights:
     def test_download_before_load_when_weights_absent(
         self, mock_torch_load, mock_validate, mock_download, mock_isfile, base_model_config, build_module
     ):
-        """download_pretrain_weights must be called before torch.load so a fresh
-        environment (e.g. Colab) downloads weights automatically.
+        """download_pretrain_weights must be called before torch.load so a fresh environment (e.g. Colab) downloads
+        weights automatically.
 
-        Regression test: previously download was only called as an except-block
-        fallback, but ModelWeights.from_filename received the absolute path and
-        returned None, causing a silent no-op and a FileNotFoundError.
+        Regression test: previously download was only called as an except-block fallback, but ModelWeights.from_filename
+        received the absolute path and returned None, causing a silent no-op and a FileNotFoundError.
         """
         mc = base_model_config(num_classes=90)
         checkpoint = self._make_checkpoint(num_classes_in_ckpt=91)
@@ -437,9 +434,8 @@ class TestLoadPretrainWeights:
 
 
 class TestApplyLora:
-    """Tests for _apply_lora() — verifies that PEFT LoraConfig is constructed with the
-    correct target modules and that the backbone encoder is replaced in-place with the
-    wrapped PEFT model."""
+    """Tests for _apply_lora() — verifies that PEFT LoraConfig is constructed with the correct target modules and that
+    the backbone encoder is replaced in-place with the wrapped PEFT model."""
 
     def _build_module_with_backbone(self, tmp_path):
         """Build module with a mock backbone that exposes backbone[0].encoder."""
@@ -512,8 +508,8 @@ class TestOnFitStart:
     def test_seed_rank_offset(self, mock_seed, base_train_config, build_module):
         """Non-zero rank: seed_everything(seed + global_rank) must be called.
 
-        Validates the rank-offset contract — each worker seeds with a unique
-        value to prevent correlated data augmentation across DDP processes.
+        Validates the rank-offset contract — each worker seeds with a unique value to prevent correlated data
+        augmentation across DDP processes.
         """
         tc = base_train_config(seed=7)
         module, _, _, _ = build_module(train_config=tc)
@@ -535,9 +531,8 @@ class TestOnFitStart:
 
 
 class TestOnTrainBatchStart:
-    """Tests for on_train_batch_start() — covers multi-scale interpolation of
-    NestedTensor inputs and verifies regularization scheduling is delegated to
-    DropPathCallback."""
+    """Tests for on_train_batch_start() — covers multi-scale interpolation of NestedTensor inputs and verifies
+    regularization scheduling is delegated to DropPathCallback."""
 
     def _setup_module(
         self,
@@ -615,9 +610,8 @@ class TestOnTrainBatchStart:
 
 
 class TestTrainingStep:
-    """Tests for training_step() — covers weighted loss aggregation, per-loss logging
-    under the train/ prefix, prog_bar visibility, scalar tensor output, and that losses
-    absent from weight_dict are excluded from the total."""
+    """Tests for training_step() — covers weighted loss aggregation, per-loss logging under the train/ prefix, prog_bar
+    visibility, scalar tensor output, and that losses absent from weight_dict are excluded from the total."""
 
     def _run_step(self, tmp_path, loss_dict=None, weight_dict=None, accumulate_grad_batches=1):
         module, fake_model, fake_criterion, _ = _build_module(tmp_path=tmp_path)
@@ -712,8 +706,8 @@ class TestTrainingStep:
 
 
 class TestValidationStep:
-    """Tests for validation_step() — verifies output dict shape, postprocessor
-    invocation with correct original sizes, and val/loss logging."""
+    """Tests for validation_step() — verifies output dict shape, postprocessor invocation with correct original sizes,
+    and val/loss logging."""
 
     def _run_val_step(self, tmp_path):
         module, fake_model, fake_criterion, fake_pp = _build_module(tmp_path=tmp_path)
@@ -767,11 +761,11 @@ class TestValidationStep:
 
 
 class TestTestStep:
-    """Tests for test_step() — verifies output dict shape, postprocessor
-    invocation with correct original sizes, and test/loss logging.
+    """Tests for test_step() — verifies output dict shape, postprocessor invocation with correct original sizes, and
+    test/loss logging.
 
-    Mirrors :class:`TestValidationStep` since both steps share the same
-    forward+postprocess logic and differ only in the logged metric prefix.
+    Mirrors :class:`TestValidationStep` since both steps share the same forward+postprocess logic and differ only in the
+    logged metric prefix.
     """
 
     def _run_test_step(self, tmp_path):
@@ -846,9 +840,8 @@ class TestTestStep:
 
 
 class TestConfigureOptimizers:
-    """Tests for configure_optimizers() — covers required output keys, AdamW optimizer
-    type, step-interval scheduler, LR lambda warmup ramp, and step-decay behaviour
-    before and after lr_drop."""
+    """Tests for configure_optimizers() — covers required output keys, AdamW optimizer type, step-interval scheduler, LR
+    lambda warmup ramp, and step-decay behaviour before and after lr_drop."""
 
     def _setup_module(self, tmp_path, **train_overrides):
         tc = _base_train_config(tmp_path, **train_overrides)
@@ -972,12 +965,10 @@ class TestConfigureOptimizers:
     ):
         """Fused AdamW must be disabled when trainer precision is not bf16-mixed.
 
-        On Ampere+ GPUs torch.cuda.is_bf16_supported() is True even when the
-        trainer is configured for 32-true precision.  The old code always enabled
-        fused AdamW based on GPU capability alone, crashing with
-        ``params, grads, exp_avgs, and exp_avg_sqs must have same dtype, device,
-        and layout`` when DDP gradient bucket views had non-matching strides.
-        The fix checks ``trainer.precision`` before enabling fused.
+        On Ampere+ GPUs torch.cuda.is_bf16_supported() is True even when the trainer is configured for 32-true
+        precision.  The old code always enabled fused AdamW based on GPU capability alone, crashing with ``params,
+        grads, exp_avgs, and exp_avg_sqs must have same dtype, device, and layout`` when DDP gradient bucket views had
+        non-matching strides. The fix checks ``trainer.precision`` before enabling fused.
         """
         module, param_dicts = self._setup_module(tmp_path)
         mock_get_param_dict.return_value = param_dicts
@@ -1000,9 +991,8 @@ class TestConfigureOptimizers:
     ):
         """Fused AdamW must be enabled when both GPU supports BF16 and trainer uses bf16-mixed.
 
-        The fused path is beneficial (and safe) only when training precision is
-        actually BF16: parameters, gradients, and optimizer state all stay in
-        the same dtype/layout, satisfying the fused kernel requirements.
+        The fused path is beneficial (and safe) only when training precision is actually BF16: parameters, gradients,
+        and optimizer state all stay in the same dtype/layout, satisfying the fused kernel requirements.
         """
         module, param_dicts = self._setup_module(tmp_path)
         mock_get_param_dict.return_value = param_dicts
@@ -1012,6 +1002,14 @@ class TestConfigureOptimizers:
         optimizer = module.configure_optimizers()["optimizer"]
 
         assert optimizer.defaults.get("fused") is True
+
+    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=False)
+    def test_fused_optimizer_disabled_when_cuda_unavailable(self, mock_cuda_available, tmp_path):
+        """_use_fused_optimizer must return False when CUDA is not available, regardless of precision."""
+        module, _ = self._setup_module(tmp_path)
+        module._trainer.precision = "bf16-mixed"
+
+        assert not module._use_fused_optimizer
 
 
 class TestClipGradients:
@@ -1044,9 +1042,9 @@ class TestClipGradients:
     ):
         """clip_gradients must delegate to super() when trainer precision is not a BF16 variant.
 
-        On Ampere+ GPUs is_bf16_supported() is True regardless of actual precision.
-        The method must check trainer.precision before choosing the fused path, mirroring
-        the same gate in configure_optimizers() to prevent silent divergence.
+        On Ampere+ GPUs is_bf16_supported() is True regardless of actual precision. The method must check
+        trainer.precision before choosing the fused path, mirroring the same gate in configure_optimizers() to prevent
+        silent divergence.
         """
         module = self._setup_module(tmp_path, precision=precision)
 
@@ -1067,9 +1065,8 @@ class TestClipGradients:
     ):
         """clip_gradients must call clip_grad_norm_ directly when precision is bf16-mixed.
 
-        When fused AdamW is active (BF16, no GradScaler), the standard PTL AMP plugin
-        refuses to clip gradients.  clip_grad_norm_ is called directly instead, bypassing
-        the scaler-aware path that would otherwise raise.
+        When fused AdamW is active (BF16, no GradScaler), the standard PTL AMP plugin refuses to clip gradients.
+        clip_grad_norm_ is called directly instead, bypassing the scaler-aware path that would otherwise raise.
         """
         module = self._setup_module(tmp_path, precision="bf16-mixed")
 
@@ -1082,9 +1079,8 @@ class TestClipGradients:
 
 
 class TestPredictStep:
-    """Tests for predict_step() — verifies that only samples (not targets) are passed
-    to the model, that postprocess receives the correct original sizes, and that the
-    postprocessor output is returned directly to the caller."""
+    """Tests for predict_step() — verifies that only samples (not targets) are passed to the model, that postprocess
+    receives the correct original sizes, and that the postprocessor output is returned directly to the caller."""
 
     def test_calls_postprocess_with_orig_sizes(self, build_module):
         """Postprocessor must receive a (batch, 2) tensor of original image sizes."""
@@ -1128,8 +1124,8 @@ class TestPredictStep:
 
 
 class TestReinitializeDetectionHead:
-    """Tests for reinitialize_detection_head() — verifies that the module delegates
-    to the underlying model and that arbitrary class counts are forwarded unchanged."""
+    """Tests for reinitialize_detection_head() — verifies that the module delegates to the underlying model and that
+    arbitrary class counts are forwarded unchanged."""
 
     def test_delegates_to_model(self, build_module):
         """Module must delegate head reinitialization to the underlying model."""
@@ -1157,8 +1153,8 @@ class TestReinitializeDetectionHead:
 
 
 class TestOnLoadCheckpoint:
-    """Tests for on_load_checkpoint() — covers legacy .pth normalisation and
-    positional-embedding interpolation for custom-resolution PTL checkpoints.
+    """Tests for on_load_checkpoint() — covers legacy .pth normalisation and positional-embedding interpolation for
+    custom-resolution PTL checkpoints.
 
     Regression: issue #998 — resume with custom resolution crashed because
     on_load_checkpoint did not interpolate PE before PTL applied the state dict.
@@ -1217,8 +1213,8 @@ class TestOnLoadCheckpoint:
     def test_ptl_checkpoint_pe_shape(self, pe_src, pe_tgt, build_module):
         """on_load_checkpoint must produce PE with tokens matching the model's positional_encoding_size.
 
-        Regression for #998: resume from .ckpt with custom resolution crashed because
-        PTL applied the checkpoint state dict before PE shapes were reconciled.
+        Regression for #998: resume from .ckpt with custom resolution crashed because PTL applied the checkpoint state
+        dict before PE shapes were reconciled.
         """
         checkpoint = self._make_ptl_checkpoint(pe_size_src=pe_src, _pe_size_tgt=pe_tgt)
 
@@ -1234,8 +1230,8 @@ class TestOnLoadCheckpoint:
     def test_legacy_pth_normalised_and_pe_interpolated(self, build_module):
         """Legacy .pth checkpoint (no state_dict key) must be normalised and PE interpolated.
 
-        on_load_checkpoint converts the raw "model" dict to PTL format and must
-        also interpolate PE so that PTL's subsequent load_state_dict does not crash.
+        on_load_checkpoint converts the raw "model" dict to PTL format and must also interpolate PE so that PTL's
+        subsequent load_state_dict does not crash.
         """
         pe_src, pe_tgt = 36, 56
         checkpoint = self._make_legacy_pth_checkpoint(pe_size_src=pe_src)

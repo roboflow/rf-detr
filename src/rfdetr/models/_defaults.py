@@ -3,12 +3,10 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Hardcoded architectural constants not exposed in ModelConfig or TrainConfig.
 
-These values correspond to the ``build_namespace()`` defaults in ``_namespace.py``
-that have no corresponding config field.  Making them explicit in a frozen
-dataclass enables testing, documentation, and (future) overrides without
+These values correspond to the ``build_namespace()`` defaults in ``_namespace.py`` that have no corresponding config
+field.  Making them explicit in a frozen dataclass enables testing, documentation, and (future) overrides without
 touching config validation.
 """
 
@@ -22,16 +20,13 @@ from typing import Dict, List, Optional
 class ModelDefaults:
     """Hardcoded architectural constants not exposed in ModelConfig or TrainConfig.
 
-    These values mirror the legacy ``build_namespace()`` hardcoded section
-    implemented in ``_namespace.py``. Making them explicit enables testing
-    and future overrides without touching config validation.
+    These values mirror the legacy ``build_namespace()`` hardcoded section implemented in ``_namespace.py``. Making them
+    explicit enables testing and future overrides without touching config validation.
 
     Note:
-        ``ModelDefaults`` is public API as of v1.7.  Fields that represent
-        true architectural decisions (e.g. ``dim_feedforward``, ``aux_loss``)
-        will be promoted to ``ModelConfig`` or ``TrainConfig`` in future
-        phases; field names and defaults may change across minor versions
-        during this transitional period.
+        ``ModelDefaults`` is public API as of v1.7.  Fields that represent true architectural decisions (e.g.
+        ``dim_feedforward``, ``aux_loss``) will be promoted to ``ModelConfig`` or ``TrainConfig`` in future phases;
+        field names and defaults may change across minor versions during this transitional period.
 
     Attributes:
         drop_mode: Drop-path mode used during training.

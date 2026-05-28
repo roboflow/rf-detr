@@ -3,12 +3,12 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Tests for TFLite inference helpers.
 
 Covers:
 * ``_create_interpreter()`` — interpreter loading with tflite_runtime / tensorflow fallback
 * ``_run_inference()`` — image preprocessing, invocation, and detection decoding
+* ``_decode_masks()`` — segmentation mask upsampling and thresholding
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ import pytest
 import supervision as sv
 from PIL import Image as PILImage
 
-from rfdetr.export._tflite.inference import _create_interpreter, _run_inference
+from rfdetr.export._tflite.inference import _create_interpreter, _decode_masks, _run_inference
 
 # ---------------------------------------------------------------------------
 # Shared helpers / factories
@@ -41,9 +41,8 @@ def _make_boxes() -> np.ndarray:
 def _make_logits(high_conf_idx: int | None = 0) -> np.ndarray:
     """Return (1, 10, 82) logits with one high-confidence entry when requested.
 
-    Background fill is -10.0 so sigmoid scores are near zero (~0.0001) for all
-    entries except the explicitly boosted one (logit=+10.0, sigmoid≈0.9999).
-    This ensures the helper works correctly under per-class sigmoid scoring.
+    Background fill is -10.0 so sigmoid scores are near zero (~0.0001) for all entries except the explicitly boosted one
+    (logit=+10.0, sigmoid≈0.9999). This ensures the helper works correctly under per-class sigmoid scoring.
     """
     logits = np.full((1, 10, 82), -10.0, dtype=np.float32)
     if high_conf_idx is not None:
@@ -94,18 +93,30 @@ def _save_grayscale_image(path: Path, size: tuple[int, int] = (64, 64)) -> None:
 # TestCreateInterpreter
 # ---------------------------------------------------------------------------
 
+# Shared masking entries for mock.patch.dict(sys.modules, ...) that force
+# ``_create_interpreter`` to skip the ai_edge_litert backend probe.
+_AI_EDGE_LITERT_MASK: dict[str, None] = {
+    "ai_edge_litert": None,
+    "ai_edge_litert.interpreter": None,
+}
+
 
 class TestCreateInterpreter:
     """Tests for ``_create_interpreter()``."""
 
     @pytest.fixture()
     def _mock_tflite_runtime(self):
-        """Inject a fake tflite_runtime.interpreter into sys.modules.
+        """Inject a fake tflite_runtime.interpreter into sys.modules and mask ai_edge_litert.
 
-        Python's import machinery resolves ``import tflite_runtime.interpreter``
-        by looking up ``sys.modules["tflite_runtime.interpreter"]`` directly.
-        We also set the ``interpreter`` attribute on the parent package mock so
-        attribute-path resolution is consistent regardless of Python version.
+        ``_create_interpreter`` probes backends in priority order: ``ai_edge_litert`` first, then
+        ``tflite_runtime``, then ``tensorflow``. Masking ``ai_edge_litert`` and
+        ``ai_edge_litert.interpreter`` to ``None`` forces the import loop to fall through to the
+        ``tflite_runtime`` path so tests exercise that branch regardless of what is installed.
+
+        Python's import machinery resolves ``import tflite_runtime.interpreter`` by looking up
+        ``sys.modules["tflite_runtime.interpreter"]`` directly. We also set the ``interpreter``
+        attribute on the parent package mock so attribute-path resolution is consistent regardless
+        of Python version.
         """
         interp_instance = mock.MagicMock()
         interp_instance.get_input_details.return_value = [{"shape": [1, 640, 640, 3], "dtype": np.float32}]
@@ -125,11 +136,18 @@ class TestCreateInterpreter:
         parent_mod = types.ModuleType("tflite_runtime")
         parent_mod.interpreter = mod  # type: ignore[attr-defined]
 
-        with mock.patch.dict(sys.modules, {"tflite_runtime": parent_mod, "tflite_runtime.interpreter": mod}):
+        with mock.patch.dict(
+            sys.modules,
+            {
+                **_AI_EDGE_LITERT_MASK,
+                "tflite_runtime": parent_mod,
+                "tflite_runtime.interpreter": mod,
+            },
+        ):
             yield interp_cls, interp_instance
 
-    def test_uses_tflite_runtime_when_available(self, _mock_tflite_runtime) -> None:
-        """Interpreter is constructed from tflite_runtime when it is importable."""
+    def test_uses_tflite_runtime_when_ai_edge_litert_absent(self, _mock_tflite_runtime) -> None:
+        """tflite_runtime is used as backend when ai_edge_litert is masked from the environment."""
         interp_cls, interp_instance = _mock_tflite_runtime
         _create_interpreter("model.tflite")
         interp_cls.assert_called_once_with(model_path="model.tflite")
@@ -152,11 +170,20 @@ class TestCreateInterpreter:
         tf_mod = mock.MagicMock()
         tf_mod.lite = tf_lite_mod
 
-        with mock.patch.dict(sys.modules, {"tflite_runtime": None, "tflite_runtime.interpreter": None}):
-            with mock.patch.dict(sys.modules, {"tensorflow": tf_mod}):
-                _create_interpreter("model.tflite")
+        with mock.patch.dict(
+            sys.modules,
+            {
+                **_AI_EDGE_LITERT_MASK,
+                "tflite_runtime": None,
+                "tflite_runtime.interpreter": None,
+                "tensorflow": tf_mod,
+                "tensorflow.lite": tf_lite_mod,
+            },
+        ):
+            _create_interpreter("model.tflite")
 
         tf_interp_cls.assert_called_once_with(model_path="model.tflite")
+        interp_instance.allocate_tensors.assert_called_once()
 
     def test_returns_interpreter(self, _mock_tflite_runtime) -> None:
         """Return value is the interpreter instance (not the class)."""
@@ -179,6 +206,74 @@ class TestCreateInterpreter:
         call_kwargs = interp_cls.call_args[1]
         assert call_kwargs["model_path"] == "model.tflite"
         assert isinstance(call_kwargs["model_path"], str)
+
+    @pytest.fixture()
+    def _mock_ai_edge_litert(self):
+        """Inject a fake ai_edge_litert.interpreter into sys.modules and mask lower-priority backends.
+
+        Mirrors ``_mock_tflite_runtime`` for the first-priority backend so the
+        ``ai_edge_litert.interpreter`` branch of ``_create_interpreter`` can be exercised
+        independently of whether the real package is installed.
+        """
+        interp_instance = mock.MagicMock()
+        interp_instance.get_input_details.return_value = [{"shape": [1, 640, 640, 3], "dtype": np.float32}]
+        interp_instance.get_output_details.return_value = [
+            {"shape": [1, 300, 4], "name": "dets"},
+            {"shape": [1, 300, 81], "name": "labels"},
+        ]
+        interp_cls = mock.MagicMock(return_value=interp_instance)
+
+        import types
+
+        mod = types.ModuleType("ai_edge_litert.interpreter")
+        mod.Interpreter = interp_cls  # type: ignore[attr-defined]
+
+        parent_mod = types.ModuleType("ai_edge_litert")
+        parent_mod.interpreter = mod  # type: ignore[attr-defined]
+
+        with mock.patch.dict(
+            sys.modules,
+            {
+                "ai_edge_litert": parent_mod,
+                "ai_edge_litert.interpreter": mod,
+                "tflite_runtime": None,
+                "tflite_runtime.interpreter": None,
+            },
+        ):
+            yield interp_cls, interp_instance
+
+    def test_uses_ai_edge_litert_when_available(self, _mock_ai_edge_litert) -> None:
+        """ai_edge_litert is used as the first-priority backend when it is importable."""
+        interp_cls, _ = _mock_ai_edge_litert
+        _create_interpreter("model.tflite")
+        interp_cls.assert_called_once_with(model_path="model.tflite")
+
+    def test_ai_edge_litert_allocate_tensors_called(self, _mock_ai_edge_litert) -> None:
+        """allocate_tensors() is called after construction via the ai_edge_litert backend."""
+        _, interp_instance = _mock_ai_edge_litert
+        _create_interpreter("model.tflite")
+        interp_instance.allocate_tensors.assert_called_once()
+
+    def test_ai_edge_litert_returns_interpreter(self, _mock_ai_edge_litert) -> None:
+        """Return value is the ai_edge_litert interpreter instance."""
+        _, interp_instance = _mock_ai_edge_litert
+        result = _create_interpreter("model.tflite")
+        assert result is interp_instance
+
+    def test_raises_when_no_backend_available(self) -> None:
+        """ImportError with a helpful install message is raised when all backends are absent."""
+        with mock.patch.dict(
+            sys.modules,
+            {
+                **_AI_EDGE_LITERT_MASK,
+                "tflite_runtime": None,
+                "tflite_runtime.interpreter": None,
+                "tensorflow": None,
+                "tensorflow.lite": None,
+            },
+        ):
+            with pytest.raises(ImportError, match="TFLite inference requires"):
+                _create_interpreter("model.tflite")
 
 
 # ---------------------------------------------------------------------------
@@ -225,7 +320,7 @@ class TestRunInference:
         assert len(dets) == 0
 
     def test_boxes_in_pixel_space(self, rgb_image: Path) -> None:
-        """xyxy coordinates are scaled to image pixel dimensions, not 0–1 range."""
+        """Xyxy coordinates are scaled to image pixel dimensions, not 0–1 range."""
         img_size = (200, 100)  # (width, height) for PIL
         PILImage.new("RGB", img_size, color=(100, 150, 200)).save(rgb_image)
 
@@ -323,7 +418,7 @@ class TestSigmoidScoring:
         assert len(dets) == 0
 
     def test_multiclass_class_id_is_argmax_of_logits(self, rgb_image: Path) -> None:
-        """argmax of sigmoid equals argmax of logits; query with [5,2,1,...] gets class_id==0."""
+        """Argmax of sigmoid equals argmax of logits; query with [5,2,1,...] gets class_id==0."""
         # Shape (1, 10, 82): first query has logits [5, 2, 1, 0, ...], rest are -100
         logits = np.full((1, 10, 82), -100.0, dtype=np.float32)
         logits[0, 0, 0] = 5.0
@@ -411,8 +506,8 @@ class TestShapeBasedOutputFallback:
     def test_three_outputs_with_rank4_masks_resolves_correctly(self, rgb_image: Path) -> None:
         """3-output segmentation export (boxes/logits/masks) with generic names resolves without error.
 
-        Ensures the shape fallback ignores the rank-4 masks tensor and correctly
-        identifies boxes [1,Q,4] and logits [1,Q,C+1] as rank-3 candidates.
+        Ensures the shape fallback ignores the rank-4 masks tensor and correctly identifies boxes [1,Q,4] and logits
+        [1,Q,C+1] as rank-3 candidates.
         """
         boxes = _make_boxes()
         logits = _make_logits(high_conf_idx=0)
@@ -439,3 +534,147 @@ class TestShapeBasedOutputFallback:
         dets, _ = _run_inference(interp, rgb_image, threshold=0.3)
         assert isinstance(dets, sv.Detections)
         assert len(dets) >= 1
+
+
+# ---------------------------------------------------------------------------
+# TestMaskDecoding
+# ---------------------------------------------------------------------------
+
+
+class TestMaskDecoding:
+    """Tests for ``_decode_masks()`` and mask decoding in ``_run_inference()``."""
+
+    @pytest.fixture()
+    def rgb_image(self, tmp_path: Path) -> Path:
+        """Write a small RGB JPEG to a temp file and return its path."""
+        p = tmp_path / "image.jpg"
+        _save_rgb_image(p)
+        return p
+
+    def test_decode_masks_shape_and_dtype(self) -> None:
+        """Output shape is (K, height, width) from out_size=(width, height); dtype is bool."""
+        out = _decode_masks(np.zeros((3, 10, 10), dtype=np.float32), (40, 20))
+        assert out.shape == (3, 20, 40)
+        assert out.dtype == bool
+
+    def test_decode_masks_thresholds_at_zero(self) -> None:
+        """Positive logits decode to True, negative logits to False."""
+        logits = np.stack(
+            [
+                np.full((8, 8), 5.0, dtype=np.float32),
+                np.full((8, 8), -5.0, dtype=np.float32),
+            ]
+        )
+        out = _decode_masks(logits, (16, 16))
+        assert out[0].all()
+        assert not out[1].any()
+
+    def test_decode_masks_empty_input(self) -> None:
+        """Zero masks in yields a (0, height, width) array, not an error."""
+        out = _decode_masks(np.zeros((0, 10, 10), dtype=np.float32), (32, 32))
+        assert out.shape == (0, 32, 32)
+
+    def test_run_inference_decodes_masks_for_seg_model(self, rgb_image: Path) -> None:
+        """A 3-output segmentation export populates Detections.mask at image size."""
+        boxes = _make_boxes()
+        logits = _make_logits(high_conf_idx=0)
+        masks = np.full((1, 10, 28, 28), -10.0, dtype=np.float32)
+        masks[0, 0] = 10.0  # query 0 (the kept detection) gets an all-positive mask
+
+        def _get_tensor(index: int) -> np.ndarray:
+            return {1: boxes, 2: logits, 3: masks}[index]
+
+        interp = mock.MagicMock()
+        interp.get_input_details.return_value = [{"shape": _INPUT_SHAPE, "index": 0, "dtype": np.float32}]
+        interp.get_output_details.return_value = [
+            {"shape": [1, 10, 4], "name": "Identity_0", "index": 1},
+            {"shape": [1, 10, 82], "name": "Identity_1", "index": 2},
+            {"shape": [1, 10, 28, 28], "name": "Identity_2", "index": 3},
+        ]
+        interp.get_tensor.side_effect = _get_tensor
+
+        dets, img = _run_inference(interp, rgb_image, threshold=0.3)
+        assert dets.mask is not None
+        assert dets.mask.shape == (len(dets), img.height, img.width)
+        assert dets.mask.dtype == bool
+        assert dets.mask[0].all()  # query 0's all-positive logits decode to a full mask
+
+    def test_run_inference_no_mask_for_detection_model(self, rgb_image: Path) -> None:
+        """A 2-output detection export leaves Detections.mask as None."""
+        interp = _make_interp(logits=_make_logits(high_conf_idx=0))
+        dets, _ = _run_inference(interp, rgb_image, threshold=0.3)
+        assert dets.mask is None
+
+    def test_run_inference_name_based_mask_detection(self, rgb_image: Path) -> None:
+        """Output named 'masks:0' exercises the name-based path and sets Detections.mask."""
+        boxes = _make_boxes()
+        logits = _make_logits(high_conf_idx=0)
+        masks = np.full((1, 10, 28, 28), 10.0, dtype=np.float32)
+
+        def _get_tensor(index: int) -> np.ndarray:
+            return {1: boxes, 2: logits, 3: masks}[index]
+
+        interp = mock.MagicMock()
+        interp.get_input_details.return_value = [{"shape": _INPUT_SHAPE, "index": 0, "dtype": np.float32}]
+        interp.get_output_details.return_value = [
+            {"shape": [1, 10, 4], "name": "serving_default_dets:0", "index": 1},
+            {"shape": [1, 10, 82], "name": "serving_default_labels:0", "index": 2},
+            {"shape": [1, 10, 28, 28], "name": "serving_default_masks:0", "index": 3},
+        ]
+        interp.get_tensor.side_effect = _get_tensor
+
+        dets, _ = _run_inference(interp, rgb_image, threshold=0.3)
+        assert dets.mask is not None
+
+    def test_run_inference_seg_model_no_detections_returns_none_mask(self, rgb_image: Path) -> None:
+        """Seg model with all scores below threshold returns mask=None (keep.any() is False)."""
+        boxes = _make_boxes()
+        logits = _make_logits(high_conf_idx=None)  # all scores near zero, below threshold
+        masks = np.full((1, 10, 28, 28), 10.0, dtype=np.float32)
+
+        def _get_tensor(index: int) -> np.ndarray:
+            return {1: boxes, 2: logits, 3: masks}[index]
+
+        interp = mock.MagicMock()
+        interp.get_input_details.return_value = [{"shape": _INPUT_SHAPE, "index": 0, "dtype": np.float32}]
+        interp.get_output_details.return_value = [
+            {"shape": [1, 10, 4], "name": "Identity_0", "index": 1},
+            {"shape": [1, 10, 82], "name": "Identity_1", "index": 2},
+            {"shape": [1, 10, 28, 28], "name": "Identity_2", "index": 3},
+        ]
+        interp.get_tensor.side_effect = _get_tensor
+
+        dets, _ = _run_inference(interp, rgb_image, threshold=0.3)
+        assert len(dets) == 0
+        assert dets.mask is None
+
+    def test_decode_masks_raises_on_wrong_rank(self) -> None:
+        """_decode_masks raises ValueError when input is not rank-3."""
+        with pytest.raises(ValueError, match="rank-3"):
+            _decode_masks(np.zeros((10, 28, 28, 1), dtype=np.float32), (56, 56))
+
+    def test_decode_masks_exact_zero_logit_decodes_to_false(self) -> None:
+        """Logit exactly 0.0 is not > 0.0 and decodes to False (strict threshold)."""
+        zero_logits = np.zeros((1, 8, 8), dtype=np.float32)
+        out = _decode_masks(zero_logits, (16, 16))
+        assert not out.any()
+
+    def test_decode_masks_non_square_logit_input(self) -> None:
+        """Non-square logit map (K, Hm, Wm) with Hm != Wm resizes to the correct output shape."""
+        logits = np.full((3, 7, 14), 5.0, dtype=np.float32)
+        out = _decode_masks(logits, (56, 28))  # out_size=(width=56, height=28)
+        assert out.shape == (3, 28, 56)
+        assert out.all()  # all-positive logits → all True
+
+    def test_decode_masks_parity_positive_negative_regions(self) -> None:
+        """Positive/negative logit regions map correctly after bilinear upsample + threshold.
+
+        Uses high-magnitude logits (±10) so no ambiguity near the boundary; verifies the core _decode_masks contract
+        matches the >0 PostProcess.forward equivalent.
+        """
+        logits = np.full((1, 14, 14), -10.0, dtype=np.float32)
+        logits[0, :7, :] = 10.0  # top half strongly positive, bottom half strongly negative
+        out = _decode_masks(logits, (28, 28))
+        # Interior rows well away from the half-way boundary
+        assert out[0, 1:6, :].all()  # top rows → all True
+        assert not out[0, 15:27, :].any()  # bottom rows → all False

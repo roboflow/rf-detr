@@ -150,7 +150,7 @@ class TestTrainConfigT42PromotedFields:
     # --- device field removed ---
 
     def test_device_not_in_model_fields(self):
-        """device must not appear in TrainConfig.model_fields (PTL auto-detects accelerator)."""
+        """Device must not appear in TrainConfig.model_fields (PTL auto-detects accelerator)."""
         assert "device" not in TrainConfig.model_fields
 
     def test_device_kwarg_silently_ignored(self, tmp_path):
@@ -166,7 +166,7 @@ class TestTrainConfigT42PromotedFields:
         assert self._tc(tmp_path).clip_max_norm == pytest.approx(0.1)
 
     def test_seed_default_is_none(self, tmp_path):
-        """seed defaults to None (no seeding)."""
+        """Seed defaults to None (no seeding)."""
         assert self._tc(tmp_path).seed is None
 
     def test_sync_bn_default_is_false(self, tmp_path):
@@ -259,7 +259,7 @@ class TestTrainConfigT42PromotedFields:
         ],
     )
     def test_interval_and_prefetch_reject_non_positive_values(self, tmp_path, field, value):
-        """eval/EMA intervals and prefetch_factor must be >= 1 when provided."""
+        """Eval/EMA intervals and prefetch_factor must be >= 1 when provided."""
         with pytest.raises((ValueError, ValidationError)):
             self._tc(tmp_path, **{field: value})
 
@@ -380,8 +380,8 @@ class TestDeprecatedTrainConfigFields:
     def test_segmentation_train_config_no_warning_on_default_fields(self, recwarn) -> None:
         """SegmentationTrainConfig() must NOT warn for its class-level defaults.
 
-        segmentation_head=True and num_select=None are SegmentationTrainConfig defaults,
-        not explicitly set by the user — they must not trigger DeprecationWarning.
+        segmentation_head=True and num_select=None are SegmentationTrainConfig defaults, not explicitly set by the user
+        — they must not trigger DeprecationWarning.
         """
         SegmentationTrainConfig(dataset_dir="/tmp")
         depr_warnings = [w for w in recwarn.list if issubclass(w.category, DeprecationWarning)]
@@ -420,9 +420,8 @@ class TestDeprecatedModelConfigClsLossCoef:
 class TestSyncPEWithResolutionAtConstruction:
     """Tests for the _sync_pe_with_resolution model_validator.
 
-    When a user provides a custom resolution at construction time (e.g.,
-    ``RFDETRLarge(resolution=640)``), positional_encoding_size must be updated
-    proportionally for configs where the default PE is formula-derived
+    When a user provides a custom resolution at construction time (e.g., ``RFDETRLarge(resolution=640)``),
+    positional_encoding_size must be updated proportionally for configs where the default PE is formula-derived
     (``default_pe == default_resolution // patch_size``).
     """
 
@@ -493,8 +492,8 @@ class TestDetectDevice:
 class TestPretrainWeightsCompatibilityWarning:
     """Config-time warning for overrides that prevent pretrained weights from loading.
 
-    These tests instantiate the variant *config* directly (not the wrapper class)
-    so they do not touch the network, the cache, or any model construction.
+    These tests instantiate the variant *config* directly (not the wrapper class) so they do not touch the network, the
+    cache, or any model construction.
     """
 
     def _capture(self, config_cls: type, **kwargs: object) -> list[warnings.WarningMessage]:
@@ -644,9 +643,8 @@ class TestPretrainWeightsCompatibilityWarning:
         assert self._capture(ModelConfig, **sample_model_config) == []
 
     def test_breaking_field_with_default_factory_skips_comparison(self) -> None:
-        """A subclass whose breaking field uses ``default_factory`` (so ``.default`` is
-        ``PydanticUndefined``) must be silently skipped — we have nothing to compare against.
-        """
+        """A subclass whose breaking field uses ``default_factory`` (so ``.default`` is ``PydanticUndefined``) must be
+        silently skipped — we have nothing to compare against."""
         from pydantic import Field
 
         class _DefaultFactoryConfig(RFDETRNanoConfig):
@@ -677,9 +675,8 @@ class TestPretrainWeightsCompatibilityWarning:
     def test_explicit_variant_default_path_runs_arch_override_check(self) -> None:
         """Passing the variant's own published-default path string must still check arch overrides.
 
-        Before the case-2 fix, any non-None explicit pretrain_weights bypassed the
-        architecture-override check entirely — including when the user passed the exact
-        variant default string such as "rf-detr-nano.pth".
+        Before the case-2 fix, any non-None explicit pretrain_weights bypassed the architecture-override check entirely
+        — including when the user passed the exact variant default string such as "rf-detr-nano.pth".
         """
         captured = self._capture(
             RFDETRNanoConfig,
@@ -692,10 +689,9 @@ class TestPretrainWeightsCompatibilityWarning:
     def test_product_preserving_group_detr_increase_still_warns(self) -> None:
         """Increasing group_detr while halving num_queries still warns — check is per-field, not product-aware.
 
-        This documents known current behaviour: the validator compares each field to its
-        variant default independently, not the combined query-slot product.  A product-
-        preserving change (group_detr=26, num_queries=150 vs defaults 13, 300) warns for
-        group_detr because 26 > 13, regardless of whether total slots are the same.
+        This documents known current behaviour: the validator compares each field to its variant default independently,
+        not the combined query-slot product.  A product- preserving change (group_detr=26, num_queries=150 vs defaults
+        13, 300) warns for group_detr because 26 > 13, regardless of whether total slots are the same.
         """
         captured = self._capture(RFDETRNanoConfig, num_queries=150, group_detr=26)
         assert len(captured) == 1

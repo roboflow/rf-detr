@@ -3,7 +3,6 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Tests for Albumentations augmentation wrappers."""
 
 from unittest import mock
@@ -168,10 +167,9 @@ class TestAlbumentationsWrapper:
     def test_orig_size_preserved_with_two_boxes(self):
         """Test that orig_size is not treated as per-instance field when num_boxes=2.
 
-        Regression test for bug where orig_size (shape [2] for [h, w]) was incorrectly
-        treated as a per-instance field when there were exactly 2 boxes, causing
-        orig_size to be filtered/indexed incorrectly and leading to inconsistent
-        tensor shapes in batches.
+        Regression test for bug where orig_size (shape [2] for [h, w]) was incorrectly treated as a per-instance field
+        when there were exactly 2 boxes, causing orig_size to be filtered/indexed incorrectly and leading to
+        inconsistent tensor shapes in batches.
         """
         transform = alb.HorizontalFlip(p=1.0)
         wrapper = AlbumentationsWrapper(transform)
@@ -203,8 +201,8 @@ class TestAlbumentationsWrapper:
     def test_orig_size_preserved_with_two_boxes_and_masks(self):
         """Test that orig_size and masks are handled correctly when num_boxes=2.
 
-        Critical regression test: With 2 boxes, both orig_size and masks have
-        first dimension = 2, but they must be treated differently:
+        Critical regression test: With 2 boxes, both orig_size and masks have first dimension = 2, but they must be
+        treated differently:
         - orig_size (shape [2]): global field, should NOT be filtered
         - masks (shape [2, H, W]): per-instance field, SHOULD be transformed
         """
@@ -443,9 +441,8 @@ class TestAlbumentationsWrapper:
     def test_geometric_transform_with_empty_masks_tensor(self):
         """Test that a geometric transform does not crash when masks tensor is empty (0 instances).
 
-        Regression test for: when a prior crop removes all annotations, target["masks"]
-        has shape (0, H, W). Passing an empty list to albumentations raises
-        ValueError: masks cannot be empty.
+        Regression test for: when a prior crop removes all annotations, target["masks"] has shape (0, H, W). Passing an
+        empty list to albumentations raises ValueError: masks cannot be empty.
         """
         transform = alb.HorizontalFlip(p=1.0)
         wrapper = AlbumentationsWrapper(transform)
@@ -570,10 +567,9 @@ class TestAlbumentationsWrapper:
     def test_degenerate_bbox_at_image_boundary_is_silently_dropped(self):
         """Degenerate boxes (x_min == x_max or y_min == y_max) must not raise ValueError.
 
-        Regression test: COCO annotations sometimes place a box exactly on the image
-        boundary so that both x coordinates equal the image width (normalized: 1.0).
-        Albumentations' check_bboxes rejects these with
-        "x_max is less than or equal to x_min", crashing the DataLoader worker.
+        Regression test: COCO annotations sometimes place a box exactly on the image boundary so that both x coordinates
+        equal the image width (normalized: 1.0). Albumentations' check_bboxes rejects these with "x_max is less than or
+        equal to x_min", crashing the DataLoader worker.
         """
         transform = alb.HorizontalFlip(p=1.0)
         wrapper = AlbumentationsWrapper(transform)
@@ -828,9 +824,8 @@ class TestRandomSizedCropCompat:
     def test_from_config_partial_height_is_silently_skipped(self):
         """from_config swallows the ValueError for partial height-only config and skips the transform.
 
-        This documents the intentional silent-skip behavior: from_config wraps
-        _build_albu_transform in a broad except clause so bad configs produce a
-        warning rather than an exception.
+        This documents the intentional silent-skip behavior: from_config wraps _build_albu_transform in a broad except
+        clause so bad configs produce a warning rather than an exception.
         """
 
         config = {
@@ -1279,9 +1274,9 @@ class TestTrainingLoop:
     def test_augmentation_in_dataloader(self):
         """Test that augmentations work correctly when used with DataLoader.
 
-        This is a critical integration test that simulates actual training conditions
-        where multiple samples with different numbers of boxes are batched together.
-        It specifically tests that orig_size remains consistent across the batch.
+        This is a critical integration test that simulates actual training conditions where multiple samples with
+        different numbers of boxes are batched together. It specifically tests that orig_size remains consistent across
+        the batch.
         """
         # Create augmentations
         aug_transforms = [
@@ -1323,8 +1318,8 @@ class TestTrainingLoop:
     def test_augmentation_with_varying_box_counts(self):
         """Test that samples with 1, 2, and 3 boxes all work correctly in same batch.
 
-        This specifically tests the edge case where some samples have 2 boxes
-        (which matches orig_size shape [2]), ensuring they don't get mixed up.
+        This specifically tests the edge case where some samples have 2 boxes (which matches orig_size shape [2]),
+        ensuring they don't get mixed up.
         """
         aug_transforms = [AlbumentationsWrapper(alb.HorizontalFlip(p=0.5))]
         transforms = Compose(aug_transforms)
@@ -1512,14 +1507,93 @@ class TestMakeCocoTransformsAugConfig:
         assert len(wrappers) == expected_resize_wrappers
 
 
+class TestMakeCocoTransformsOutputSize:
+    """Regression tests for #979: transforms must resize high-resolution images to the target resolution.
+
+    These tests verify that ``make_coco_transforms`` and ``make_coco_transforms_square_div_64``
+    actually produce output images at the requested ``resolution``, not at the original image size.
+    Existing tests only check pipeline *structure*; these check actual output *dimensions*.
+    """
+
+    # 1920x1080 (landscape) — larger than any typical training resolution.
+    # PIL size is (width, height), so Image.new("RGB", (1920, 1080)) gives a 1920-wide, 1080-tall image.
+    _INPUT_W = 1920
+    _INPUT_H = 1080
+    _RESOLUTION = 640
+
+    def _make_image(self) -> Image.Image:
+        return Image.new("RGB", (self._INPUT_W, self._INPUT_H))
+
+    def test_square_val_resizes_large_image(self) -> None:
+        """Square val transform resizes 1920x1080 to exactly 640x640."""
+        transform = make_coco_transforms_square_div_64("val", self._RESOLUTION)
+        tensor, _ = transform(self._make_image(), None)
+        assert tensor.shape[-2:] == (self._RESOLUTION, self._RESOLUTION)
+
+    def test_square_train_resizes_large_image(self) -> None:
+        """Square train transform resizes 1920x1080 to 640x640 regardless of OneOf branch."""
+        transform = make_coco_transforms_square_div_64("train", self._RESOLUTION, aug_config={})
+        tensor, _ = transform(self._make_image(), None)
+        assert tensor.shape[-2:] == (self._RESOLUTION, self._RESOLUTION)
+
+    def test_nonsquare_val_resizes_and_caps_longest_side(self) -> None:
+        """Non-square val transform resizes the image and keeps the longest side within 1333 px.
+
+        Avoid asserting an exact output dimension here because Albumentations resize behavior can vary across supported
+        versions. The stable contract is that the image is resized and the longest side does not exceed the configured
+        maximum.
+        """
+        transform = make_coco_transforms("val", self._RESOLUTION)
+        tensor, _ = transform(self._make_image(), None)
+        height, width = tensor.shape[-2], tensor.shape[-1]
+        assert (height, width) != (self._INPUT_H, self._INPUT_W)
+        assert max(height, width) <= 1333
+
+    def test_nonsquare_val_longest_side_at_most_1333(self) -> None:
+        """Non-square val transform caps the longest side at 1333 px.
+
+        Use an input that still exceeds 1333 px on its longest side after SmallestMaxSize(640), so this assertion
+        specifically validates that LongestMaxSize(1333) is applied.
+        """
+        transform = make_coco_transforms("val", self._RESOLUTION)
+        image = Image.new("RGB", (4000, 1000))
+        tensor, _ = transform(image, None)
+        height, width = tensor.shape[-2], tensor.shape[-1]
+        assert max(height, width) <= 1333
+
+    def test_nonsquare_val_does_not_pass_original_dimensions(self) -> None:
+        """Non-square val transform must not emit the original 1920x1080 dimensions — the core regression."""
+        transform = make_coco_transforms("val", self._RESOLUTION)
+        tensor, _ = transform(self._make_image(), None)
+        height, width = tensor.shape[-2], tensor.shape[-1]
+        assert (height, width) != (self._INPUT_H, self._INPUT_W), (
+            f"Transform emitted original {self._INPUT_H}x{self._INPUT_W} — resize was not applied"
+        )
+
+    def test_square_val_does_not_pass_original_dimensions(self) -> None:
+        """Square val transform must not emit the original 1920x1080 dimensions — the core regression."""
+        transform = make_coco_transforms_square_div_64("val", self._RESOLUTION)
+        tensor, _ = transform(self._make_image(), None)
+        height, width = tensor.shape[-2], tensor.shape[-1]
+        assert (height, width) != (self._INPUT_H, self._INPUT_W), (
+            f"Transform emitted original {self._INPUT_H}x{self._INPUT_W} — resize was not applied"
+        )
+
+    def test_output_is_float_tensor(self) -> None:
+        """Transform pipeline produces a float32 tensor, not a PIL Image."""
+        transform = make_coco_transforms_square_div_64("val", self._RESOLUTION)
+        tensor, _ = transform(self._make_image(), None)
+        assert isinstance(tensor, torch.Tensor)
+        assert tensor.dtype == torch.float32
+
+
 class TestAugPresets:
     """Regression tests for built-in augmentation presets."""
 
     def test_aug_aggressive_translate_percent_is_bidirectional(self) -> None:
         """AUG_AGGRESSIVE translate_percent must allow both positive and negative translations.
 
-        (0.1, 0.1) is a degenerate range that only shifts right/down;
-        the correct range is (-0.1, 0.1).
+        (0.1, 0.1) is a degenerate range that only shifts right/down; the correct range is (-0.1, 0.1).
         """
         translate = AUG_AGGRESSIVE["Affine"]["translate_percent"]
         lo, hi = translate

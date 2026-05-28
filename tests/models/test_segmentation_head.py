@@ -3,7 +3,6 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """Tests for DepthwiseConvBlock and _DepthwiseConvWithoutCuDNN (segmentation head)."""
 
 from contextlib import contextmanager
@@ -69,9 +68,8 @@ def test_depthwise_conv_forward_disables_cudnn(monkeypatch) -> None:
 def test_depthwise_conv_backward_disables_cudnn(monkeypatch) -> None:
     """Backward pass must also run with cuDNN disabled (issue #731).
 
-    The previous fix (PR #728) only wrapped the forward pass in a context
-    manager.  The backward kernels ran with cuDNN re-enabled, causing
-    RuntimeError on T4/P100 GPUs.
+    The previous fix (PR #728) only wrapped the forward pass in a context manager.  The backward kernels ran with cuDNN
+    re-enabled, causing RuntimeError on T4/P100 GPUs.
     """
     block = DepthwiseConvBlock(dim=8)
     enabled_calls: list[bool] = []
@@ -127,8 +125,8 @@ def test_depthwise_conv_backward_produces_correct_gradients(device: str) -> None
 def test_depthwise_conv_gradients_match_reference() -> None:
     """Custom autograd Function gradients match nn.Conv2d gradients.
 
-    Verifies that _DepthwiseConvWithoutCuDNN produces the same gradients as
-    a standard nn.Conv2d forward+backward (run with cuDNN disabled globally).
+    Verifies that _DepthwiseConvWithoutCuDNN produces the same gradients as a standard nn.Conv2d forward+backward (run
+    with cuDNN disabled globally).
     """
     torch.manual_seed(42)
     dim = 8
@@ -160,9 +158,8 @@ def test_depthwise_conv_gradients_match_reference() -> None:
 def test_depthwise_conv_backward_fp16_grad_output() -> None:
     """Backward must not crash when grad_output is fp16 (AMP 16-mixed on T4/P100).
 
-    On T4/P100, trainer resolves amp=True to '16-mixed'.  In that mode the
-    backward receives fp16 grad_output while the saved weight stays fp32.
-    Without explicit dtype casting, conv2d_input raises:
+    On T4/P100, trainer resolves amp=True to '16-mixed'.  In that mode the backward receives fp16 grad_output while the
+    saved weight stays fp32. Without explicit dtype casting, conv2d_input raises:
         RuntimeError: expected scalar type Half but found Float
     """
     dim = 8
@@ -179,11 +176,54 @@ def test_depthwise_conv_backward_fp16_grad_output() -> None:
     assert torch.isfinite(x.grad).all()
 
 
+def test_depthwise_conv_backward_bf16_activation_keeps_grads_fp32() -> None:
+    """grad_input and weight.grad must be fp32 when saved activation x is bf16 (issue #959).
+
+    Under bf16-mixed AMP, the activation x entering _DepthwiseConvWithoutCuDNN is bf16 while weight stays fp32.  The old
+    code cast grad_input back to x.dtype (bf16), propagating bf16 gradients to fp32 backbone parameters so that
+    param.grad.dtype became bf16.  Fused AdamW then crashed with 'params, grads, exp_avgs, and exp_avg_sqs must have
+    same dtype, device, and layout' (see issue #959).  The fix keeps grad_input in weight.dtype (fp32).
+
+    This test drives the backward directly with a bf16 saved activation to reproduce the dtype that is present at
+    training time without requiring a GPU.
+    """
+    import types
+
+    from rfdetr.models.heads.segmentation import _DepthwiseConvWithoutCuDNN
+
+    dim = 8
+    weight = torch.randn(dim, 1, 3, 3, requires_grad=True)  # fp32 parameter (never cast by AMP)
+    x_bf16 = torch.randn(1, dim, 4, 4, dtype=torch.bfloat16)  # bf16 activation (cast by AMP forward)
+    grad_output = torch.ones(1, dim, 4, 4, dtype=torch.bfloat16)  # bf16 grad (from bf16 backward)
+
+    # Build a minimal context mirroring what ctx would contain after the AMP forward pass.
+    ctx = types.SimpleNamespace()
+    ctx.saved_tensors = (x_bf16, weight)
+    ctx.has_bias = False
+    ctx.stride = (1, 1)
+    ctx.padding = (1, 1)
+    ctx.dilation = (1, 1)
+    ctx.groups = dim
+    ctx.needs_input_grad = [True, True, False, False, False, False, False]
+
+    grad_input, grad_weight, *_ = _DepthwiseConvWithoutCuDNN.backward(ctx, grad_output)
+
+    assert grad_input is not None, "grad_input should not be None when needs_input_grad[0] is True"
+    assert grad_input.dtype == torch.float32, (
+        f"grad_input is {grad_input.dtype} — bf16 grad_input propagates to fp32 backbone params "
+        "and crashes fused AdamW (issue #959)"
+    )
+    assert grad_weight is not None, "grad_weight should not be None when needs_input_grad[1] is True"
+    assert grad_weight.dtype == torch.float32, (
+        f"grad_weight is {grad_weight.dtype} — weight grad must stay fp32 to match param dtype"
+    )
+
+
 def test_depthwise_conv_no_cudnn_bias_none() -> None:
     """_DepthwiseConvWithoutCuDNN forward and backward work correctly with bias=None.
 
-    Exercises the ctx.has_bias=False branch in forward and the grad_bias=None
-    return in backward — never reached via DepthwiseConvBlock (always has bias).
+    Exercises the ctx.has_bias=False branch in forward and the grad_bias=None return in backward — never reached via
+    DepthwiseConvBlock (always has bias).
     """
     from rfdetr.models.heads.segmentation import _DepthwiseConvWithoutCuDNN
 
@@ -206,8 +246,8 @@ def test_depthwise_conv_no_cudnn_bias_none() -> None:
 def test_depthwise_conv_block_layer_scale(layer_scale_init_value: float) -> None:
     """DepthwiseConvBlock with and without layer scaling produces valid output and gradients.
 
-    Exercises the gamma=None (layer_scale_init_value=0) and gamma!=None
-    (layer_scale_init_value>0) branches in DepthwiseConvBlock.forward().
+    Exercises the gamma=None (layer_scale_init_value=0) and gamma!=None (layer_scale_init_value>0) branches in
+    DepthwiseConvBlock.forward().
     """
     block = DepthwiseConvBlock(dim=8, layer_scale_init_value=layer_scale_init_value)
     x = torch.randn(1, 8, 4, 4, requires_grad=True)
