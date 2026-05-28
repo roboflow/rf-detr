@@ -7,25 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+---
 
--
-
-### Changed
-
--
-
-### Deprecated
-
--
+## [1.7.1] — 2026-05-28
 
 ### Fixed
 
-- Fixed `import rfdetr` failing on NumPy 2.x when a transitive dependency references the removed `np.complex_` alias ([#1064](https://github.com/roboflow/rf-detr/pull/1064))
-
-### Security
-
--
+- Fixed `RFDETR.from_checkpoint` failing when loading a starter-style checkpoint with `pretrain_weights` unset or set to a sentinel value: the model variant is now inferred from the checkpoint filename as a fallback. ([#1065](https://github.com/roboflow/rf-detr/pull/1065))
+- Fixed segmentation backward pass in BF16 mixed-precision (`bf16-mixed` AMP): `grad_input` now stays in `fp32` (matching standard `F.conv2d` backward behaviour) instead of being cast to the activation dtype, preventing a `params, grads, exp_avgs, and exp_avg_sqs must have same dtype` crash in fused AdamW during mixed-precision training. ([#1076](https://github.com/roboflow/rf-detr/pull/1076))
+- Fixed `import rfdetr` failing on NumPy 2.x when a transitive dependency references the removed `np.complex_` alias. ([#1064](https://github.com/roboflow/rf-detr/pull/1064))
 
 ---
 
