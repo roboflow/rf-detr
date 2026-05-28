@@ -6,7 +6,7 @@
 
 
 import os
-import warnings
+from unittest.mock import patch
 
 import pytest
 
@@ -134,25 +134,10 @@ def test_model_weights_inherits_from_base():
     )
 
 
-def test_legacy_large_checkpoint_warns(monkeypatch, tmp_path) -> None:
-    """Legacy Large downloads warn so users do not confuse them with the current Large release."""
-    target = tmp_path / "rf-detr-large.pth"
-    monkeypatch.setattr("rfdetr.assets.model_weights._download_file", lambda **_: None)
+def test_rfdetr_large_deprecated_emits_future_warning() -> None:
+    """RFDETRLargeDeprecated emits FutureWarning on instantiation via the pyDeprecate class decorator."""
+    from rfdetr.variants import RFDETRLargeDeprecated
 
-    with pytest.warns(UserWarning, match="legacy RF-DETR Large checkpoint"):
-        from rfdetr.assets.model_weights import download_pretrain_weights
-
-        download_pretrain_weights(str(target))
-
-
-def test_current_large_checkpoint_no_warning(monkeypatch, tmp_path) -> None:
-    """Current Large downloads should not emit the legacy Large warning."""
-    monkeypatch.setattr("rfdetr.assets.model_weights._download_file", lambda **_: None)
-
-    from rfdetr.assets.model_weights import download_pretrain_weights
-
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        download_pretrain_weights(str(tmp_path / "rf-detr-large-2026.pth"))
-
-    assert not any("legacy RF-DETR Large checkpoint" in str(warning.message) for warning in caught)
+    with patch("rfdetr.detr.RFDETR.__init__", return_value=None):
+        with pytest.warns(FutureWarning):
+            RFDETRLargeDeprecated()

@@ -25,7 +25,6 @@ Download Priority Order:
 """
 
 import os
-import warnings
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
@@ -37,8 +36,6 @@ logger = get_logger()
 
 _RF_HOME_ENV_VAR = "RF_HOME"
 _DEFAULT_CACHE_DIR = "~/.roboflow/models"
-_LEGACY_LARGE_MODEL_NAME = "rf-detr-large.pth"
-_CURRENT_LARGE_MODEL_NAME = "rf-detr-large-2026.pth"
 
 
 @dataclass(frozen=True)
@@ -353,16 +350,6 @@ def download_pretrain_weights(
 
     # First, check local ModelWeights - rf-detr works standalone
     asset = ModelWeights.from_filename(model_name)
-
-    if model_name == _LEGACY_LARGE_MODEL_NAME:
-        warnings.warn(
-            f"{_LEGACY_LARGE_MODEL_NAME!r} is the legacy RF-DETR Large checkpoint kept for "
-            "backward compatibility. It is slower than the current RF-DETR Large "
-            f"release. For the current Large model, prefer "
-            f"{_CURRENT_LARGE_MODEL_NAME!r} or the RFDETRLarge class defaults.",
-            UserWarning,
-            stacklevel=2,
-        )
 
     # Only try rf-detr-plus if not found locally (lazy import)
     if asset is None:
