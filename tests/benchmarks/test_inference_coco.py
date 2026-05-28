@@ -191,7 +191,7 @@ def _build_train_config(coco_root: Path, tmp_path: Path, batch_size: int) -> Tra
         dataset_dir=str(coco_root),
         output_dir=str(tmp_path),
         batch_size=batch_size,
-        num_workers=min(os.cpu_count() or 1, 4),
+        num_workers=0 if not torch.cuda.is_available() else min(os.cpu_count() or 1, 4),
         tensorboard=False,
         wandb=False,
         mlflow=False,
@@ -373,9 +373,8 @@ def test_inference_detection_ptl_predict(
     """``trainer.predict()`` runs through the PTL predict loop for detection models.
 
     Loads a pretrained detection model, copies weights into a :class:`~rfdetr.training.RFDETRModelModule`, runs
-    ``trainer.predict()`` on a small subset (50 samples) to exercise
-    :meth:`~rfdetr.training.RFDETRModelModule.predict_step`, then runs ``Trainer.validate`` on the full *num_samples* to
-    assert mAP and F1.
+    ``trainer.predict()`` on *num_samples* to exercise :meth:`~rfdetr.training.RFDETRModelModule.predict_step`,
+    then runs ``Trainer.validate`` on the same datamodule to assert mAP and F1.
 
     Args:
         tmp_path: Pytest-provided temporary directory.
@@ -396,15 +395,12 @@ def test_inference_detection_ptl_predict(
     module = _build_ptl_module(model, tc)
     trainer = build_trainer(tc, model.model_config, accelerator=accelerator)
 
-    # Run trainer.predict() on a small slice — exercises RFDETRModelModule.predict_step.
-    predict_dm = _build_datamodule(model.model_config, tc, num_samples=50)
-    predictions = trainer.predict(module, dataloaders=predict_dm.val_dataloader())
+    dm = _build_datamodule(model.model_config, tc, num_samples=num_samples)
+    predictions = trainer.predict(module, dataloaders=dm.val_dataloader())
     assert predictions is not None, "trainer.predict() returned None"
     assert len(predictions) > 0, "trainer.predict() returned empty list"
 
-    # Verify mAP and F1 via Trainer.validate on the full num_samples.
-    val_dm = _build_datamodule(model.model_config, tc, num_samples=num_samples)
-    (metrics,) = trainer.validate(module, datamodule=val_dm)
+    (metrics,) = trainer.validate(module, datamodule=dm)
     map_val = metrics["val/mAP_50"]
     f1_val = metrics["val/F1"]
     assert map_val >= threshold_map, f"mAP@50 {map_val:.4f} < {threshold_map}"
@@ -454,15 +450,12 @@ def test_inference_segmentation_ptl_predict(
     module = _build_ptl_module(model, tc)
     trainer = build_trainer(tc, model.model_config, accelerator=accelerator)
 
-    # Run trainer.predict() on a small slice — exercises RFDETRModelModule.predict_step.
-    predict_dm = _build_datamodule(model.model_config, tc, num_samples=50)
-    predictions = trainer.predict(module, dataloaders=predict_dm.val_dataloader())
+    dm = _build_datamodule(model.model_config, tc, num_samples=num_samples)
+    predictions = trainer.predict(module, dataloaders=dm.val_dataloader())
     assert predictions is not None, "trainer.predict() returned None"
     assert len(predictions) > 0, "trainer.predict() returned empty list"
 
-    # Verify mAP and F1 via Trainer.validate on the full num_samples.
-    val_dm = _build_datamodule(model.model_config, tc, num_samples=num_samples)
-    (metrics,) = trainer.validate(module, datamodule=val_dm)
+    (metrics,) = trainer.validate(module, datamodule=dm)
     map_val = metrics["val/mAP_50"]
     f1_val = metrics["val/F1"]
     assert map_val >= threshold_map, f"mAP@50 {map_val:.4f} < {threshold_map}"
