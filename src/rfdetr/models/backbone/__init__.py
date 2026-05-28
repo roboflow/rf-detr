@@ -51,8 +51,11 @@ class Joiner(nn.Sequential):
             cross_attn_feats = None
         poss = []
         for feat, mask in zip(feats, masks):
-            poss.append(self[1](mask, align_dim_orders=False).to(feat.dtype))
-        return feats, None, poss, cross_attn_feats
+            pos = self[1](mask, align_dim_orders=False).to(feat.dtype)
+            if cross_attn_feats is None and pos.ndim == 4 and pos.shape[1] == 1:
+                pos = pos[:, 0]
+            poss.append(pos)
+        return feats, masks, poss, cross_attn_feats
 
 
 def build_backbone(

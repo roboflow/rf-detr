@@ -65,6 +65,8 @@ class BaseConfig(BaseModel):
     def catch_typo_kwargs(cls, values: Any) -> Any:
         if not isinstance(values, Mapping):
             return values
+        if cls.model_config.get("extra") != "forbid":
+            return values
         allowed_params = set(cls.model_fields.keys())
         provided_params = set(values)
         unknown_params = provided_params - allowed_params
@@ -626,6 +628,8 @@ class TrainConfig(BaseConfig):
           This avoids silently changing behavior when scaling from single-GPU to multi-GPU training.
     """
 
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="ignore", validate_assignment=True)
+
     lr: float = 1e-4
     lr_encoder: float = 1.5e-4
     batch_size: int | Literal["auto"] = 4
@@ -659,7 +663,7 @@ class TrainConfig(BaseConfig):
     rle_loss_coef: float = 0
     dataset_file: Literal["coco", "o365", "roboflow", "yolo"] = "roboflow"
     square_resize_div_64: bool = True
-    dataset_dir: str
+    dataset_dir: str | None
     output_dir: str = "output"
     multi_scale: bool = True
     expanded_scales: bool = True
@@ -810,7 +814,7 @@ class TrainConfig(BaseConfig):
 
     @field_validator("dataset_dir", "output_dir", mode="after")
     @classmethod
-    def expand_paths(cls, v: str) -> str:
+    def expand_paths(cls, v: str | None) -> str | None:
         """Expand user paths (e.g., '~' or paths with separators) but leave simple filenames (like 'rf-detr-base.pth')
         unchanged so they can match hosted model keys."""
         if v is None:

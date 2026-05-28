@@ -150,6 +150,10 @@ During training, multiple model checkpoints are saved to the output directory:
 
 - `checkpoint_best_total.pth` – final checkpoint selected for inference and benchmarking. It contains only the model weights (no optimizer state or scheduler) and is chosen as the better of the EMA and non-EMA models based on validation performance.
 
+For detection and segmentation models, the validation score is box mAP (`val/mAP_50_95`). For keypoint preview models,
+best-checkpoint selection uses COCO keypoint AP (`val/keypoint_map_50_95`) and checkpoints persist the model keypoint
+schema so `RFDETR.from_checkpoint()` can reconstruct the same label/keypoint slots.
+
 ??? note "Checkpoint file sizes"
 
     Checkpoint sizes vary based on what they contain:

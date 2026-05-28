@@ -402,12 +402,10 @@ class ConvertCoco(object):
             else:
                 keypoints_out = torch.zeros((0, num_keypoints, 3), dtype=torch.float32)
             target["keypoints"] = keypoints_out[keep]
-            keypoint_keep = (target["keypoints"][..., 2] > 0).any(dim=1)
-            target["boxes"] = target["boxes"][keypoint_keep]
-            target["labels"] = target["labels"][keypoint_keep]
-            target["area"] = target["area"][keypoint_keep]
-            target["iscrowd"] = target["iscrowd"][keypoint_keep]
-            target["keypoints"] = target["keypoints"][keypoint_keep]
+            # Do NOT filter instances with all-invisible keypoints (v=0).
+            # The keypoint loss already handles zero-visibility via valid_visibility
+            # masking; filtering here silently removes box/class supervision for
+            # occluded subjects and prevents training on valid person detections.
 
         # add segmentation masks if requested, otherwise ensure consistent key when include_masks=True
         if self.include_masks:
@@ -519,6 +517,7 @@ def make_coco_transforms(
     num_windows: int = 4,
     aug_config: Optional[Dict[str, Dict[str, Any]]] = None,
     gpu_postprocess: bool = False,
+    keypoint_flip_pairs: Optional[List[int]] = None,
 ) -> Compose:
     """Build the standard COCO transform pipeline for a given dataset split.
 
@@ -588,7 +587,9 @@ def make_coco_transforms(
         )
         pipeline = [*resize_wrappers]
         if not gpu_postprocess:
-            aug_wrappers = AlbumentationsWrapper.from_config(resolved_aug_config)
+            aug_wrappers = AlbumentationsWrapper.from_config(
+                resolved_aug_config, keypoint_flip_pairs=keypoint_flip_pairs
+            )
             pipeline += [*aug_wrappers]
         pipeline += [to_image, to_float]
         if not gpu_postprocess:
@@ -620,6 +621,7 @@ def make_coco_transforms_square_div_64(
     num_windows: int = 4,
     aug_config: Optional[Dict[str, Dict[str, Any]]] = None,
     gpu_postprocess: bool = False,
+    keypoint_flip_pairs: Optional[List[int]] = None,
 ) -> Compose:
     """Create COCO transforms with square resizing where the output size is divisible by 64.
 
@@ -673,7 +675,9 @@ def make_coco_transforms_square_div_64(
         resize_wrappers = AlbumentationsWrapper.from_config(_build_train_resize_config(scales, square=True))
         pipeline = [*resize_wrappers]
         if not gpu_postprocess:
-            aug_wrappers = AlbumentationsWrapper.from_config(resolved_aug_config)
+            aug_wrappers = AlbumentationsWrapper.from_config(
+                resolved_aug_config, keypoint_flip_pairs=keypoint_flip_pairs
+            )
             pipeline += [*aug_wrappers]
         pipeline += [to_image, to_float]
         if not gpu_postprocess:
@@ -708,6 +712,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
     include_keypoints = has_keypoints
     num_keypoints_per_class = getattr(args, "num_keypoints_per_class", [])
     aug_config = getattr(args, "aug_config", None)
+    keypoint_flip_pairs: list[int] = getattr(args, "keypoint_flip_pairs", []) or []
     augmentation_backend = getattr(args, "augmentation_backend", "cpu")
     resolved_augmentation_backend = _resolve_runtime_augmentation_backend(augmentation_backend)
     if resolved_augmentation_backend != augmentation_backend and resolved_augmentation_backend == "cpu":
@@ -732,6 +737,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
                 num_windows=args.num_windows,
                 aug_config=aug_config,
                 gpu_postprocess=gpu_postprocess,
+                keypoint_flip_pairs=keypoint_flip_pairs,
             ),
             include_masks=include_masks,
             include_keypoints=include_keypoints,
@@ -753,6 +759,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
                 num_windows=args.num_windows,
                 aug_config=aug_config,
                 gpu_postprocess=gpu_postprocess,
+                keypoint_flip_pairs=keypoint_flip_pairs,
             ),
             include_masks=include_masks,
             include_keypoints=include_keypoints,

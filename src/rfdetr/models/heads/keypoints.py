@@ -128,6 +128,13 @@ def compute_l1_keypoint_loss(
     if num_classes == 0:
         raise ValueError("num_keypoints_per_class must be non-empty when computing keypoint losses.")
 
+    if n_targets > 0 and target_classes.max().item() >= num_classes:
+        raise ValueError(
+            f"target_classes contains class index {target_classes.max().item()} but "
+            f"num_keypoints_per_class has only {num_classes} entries. "
+            "Schema length must cover every class present in the batch."
+        )
+
     kpad = total_padded_num_keypoints // num_classes
     split_pred_keypoints = all_pred_keypoints.view(n_targets, num_classes, kpad, pred_dim)
     selected_pred_keypoints = split_pred_keypoints[

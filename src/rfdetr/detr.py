@@ -994,6 +994,8 @@ class RFDETR:
                 output_names = ["features"]
             elif self.model_config.segmentation_head:
                 output_names = ["dets", "labels", "masks"]
+            elif getattr(self.model_config, "use_grouppose_keypoints", False):
+                output_names = ["dets", "labels", "keypoints"]
             else:
                 output_names = ["dets", "labels"]
 
@@ -1018,6 +1020,15 @@ class RFDETR:
                         )
                     else:
                         logger.debug(f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}")
+                elif getattr(self.model_config, "use_grouppose_keypoints", False):
+                    outputs = model(input_tensors)
+                    dets = outputs["pred_boxes"]
+                    labels = outputs["pred_logits"]
+                    keypoints = outputs["pred_keypoints"]
+                    logger.debug(
+                        f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}, "
+                        f"Keypoints: {keypoints.shape}",
+                    )
                 else:
                     outputs = model(input_tensors)
                     dets = outputs["pred_boxes"]

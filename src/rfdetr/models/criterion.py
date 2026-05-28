@@ -458,7 +458,13 @@ class SetCriterion(nn.Module):
         del target_masks
         return losses
 
-    def loss_keypoints(self, outputs, targets, indices, num_boxes):
+    def loss_keypoints(
+        self,
+        outputs: dict,
+        targets: list,
+        indices: list,
+        num_boxes: float,
+    ) -> dict[str, torch.Tensor]:
         """Compute keypoint losses on matched prediction/target pairs."""
         assert "pred_keypoints" in outputs
         idx = self._get_src_permutation_idx(indices)
@@ -469,7 +475,15 @@ class SetCriterion(nn.Module):
         target_areas = target_boxes[:, 2] * target_boxes[:, 3]
 
         keypoint_hidden_states = None
-        if self.flow is not None and "keypoint_hidden_states" in outputs:
+        if self.flow is not None and self.flow.cond_proj is not None:
+            if "keypoint_hidden_states" not in outputs:
+                raise ValueError(
+                    "Flow was configured with conditional projection (rle_hidden_dim set) "
+                    "but 'keypoint_hidden_states' is missing from model outputs. "
+                    "Ensure the keypoint head returns hidden states when rle_hidden_dim is set."
+                )
+            keypoint_hidden_states = outputs["keypoint_hidden_states"][idx]
+        elif self.flow is not None and "keypoint_hidden_states" in outputs:
             keypoint_hidden_states = outputs["keypoint_hidden_states"][idx]
 
         loss_l1, loss_findable, loss_visible, loss_nll, loss_rle = compute_l1_keypoint_loss(

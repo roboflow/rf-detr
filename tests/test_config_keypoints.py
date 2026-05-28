@@ -85,9 +85,11 @@ def test_keypoint_fields_propagate_to_namespace(tmp_path) -> None:
 
 
 def test_no_public_rle_hidden_dim_field() -> None:
-    """rle_hidden_dim is intentionally not a public config field."""
+    """rle_hidden_dim is not a public model config field and must be rejected by RFDETRBaseConfig."""
     with pytest.raises(ValueError, match="Unknown parameter"):
         RFDETRBaseConfig(num_classes=1, rle_hidden_dim=256)
 
-    with pytest.raises(ValueError, match="Unknown parameter"):
-        KeypointTrainConfig(dataset_dir="/tmp", rle_hidden_dim=256)
+    # KeypointTrainConfig (a TrainConfig subclass) uses extra="ignore" for Lightning
+    # compatibility, so unknown kwargs are silently dropped rather than raising.
+    kc = KeypointTrainConfig(dataset_dir="/tmp", rle_hidden_dim=256)
+    assert not hasattr(kc, "rle_hidden_dim")

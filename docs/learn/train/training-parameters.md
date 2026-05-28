@@ -122,13 +122,16 @@ During training, multiple checkpoints are saved:
 | `checkpoint_best_regular.pth` | Best validation performance (raw weights) |
 | `checkpoint_best_total.pth`   | Final best model for inference            |
 
+Best validation performance uses the task metric for the model family: box mAP for detection/segmentation and COCO
+keypoint AP for keypoint preview.
+
 ## Early Stopping Parameters
 
 | Parameter                  | Type    | Default | Description                                                                              |
 | -------------------------- | ------- | ------- | ---------------------------------------------------------------------------------------- |
-| `early_stopping`           | `bool`  | `False` | Enable early stopping based on validation mAP.                                           |
+| `early_stopping`           | `bool`  | `False` | Enable early stopping based on the validation task metric.                               |
 | `early_stopping_patience`  | `int`   | `10`    | Number of epochs without improvement before stopping.                                    |
-| `early_stopping_min_delta` | `float` | `0.001` | Minimum change in mAP to qualify as an improvement.                                      |
+| `early_stopping_min_delta` | `float` | `0.001` | Minimum metric change to qualify as an improvement.                                      |
 | `early_stopping_use_ema`   | `bool`  | `False` | Whether to track improvements using EMA model metrics.                                   |
 | `skip_best_epochs`         | `int`   | `0`     | Ignore the first N epochs (0..N-1) for best-model selection and early-stopping patience. |
 
@@ -150,15 +153,14 @@ This configuration will:
 
 - Train for up to 200 epochs
 - Ignore epochs 0-2 for best-checkpoint tracking and patience counting
-- Stop early if mAP doesn't improve by at least 0.005 for 15 consecutive epochs
+- Stop early if the validation metric doesn't improve by at least 0.005 for 15 consecutive epochs
 
 !!! note "Transfer learning with `pretrain_weights`"
 
-    When fine-tuning from `pretrain_weights`, the pretrained model's epoch-0 validation mAP
-    can be artificially high relative to the training trajectory on the new dataset. This causes
-    `checkpoint_best_total.pth` to always contain the untrained pretrained weights and may
-    trigger early stopping prematurely. Use `skip_best_epochs` to defer best-checkpoint
-    selection and patience counting until the model has had time to adapt.
+    When fine-tuning from `pretrain_weights`, the pretrained model's epoch-0 validation metric can be artificially high
+    relative to the training trajectory on the new dataset. This causes `checkpoint_best_total.pth` to always contain
+    the untrained pretrained weights and may trigger early stopping prematurely. Use `skip_best_epochs` to defer
+    best-checkpoint selection and patience counting until the model has had time to adapt.
 
 ## Logging Parameters
 
@@ -190,6 +192,22 @@ model.train(
 | `eval_interval`         | `int`               | `1`     | Run COCO evaluation every N epochs. Set to a higher value to reduce evaluation overhead during long training runs. |
 | `log_per_class_metrics` | `bool`              | `True`  | Log per-class AP metrics to the console and loggers. Disable to reduce log verbosity when there are many classes.  |
 | `progress_bar`          | str \| bool \| None | `None`  | Progress bar style: `"tqdm"`, `"rich"`, or `None`. Legacy booleans are still accepted.                             |
+
+## Keypoint Preview Parameters
+
+These parameters apply when training `RFDETRKeypointPreview` on COCO keypoint annotations.
+
+| Parameter                     | Type        | Default   | Description                                                                                  |
+| ----------------------------- | ----------- | --------- | -------------------------------------------------------------------------------------------- |
+| `num_keypoints_per_class`     | `list[int]` | `[0, 17]` | Keypoint schema by model label slot. A zero entry marks a detection-only class slot.         |
+| `keypoint_flip_pairs`         | `list[int]` | `[]`      | Flat left/right keypoint index pairs used to swap joints after horizontal-flip augmentation. |
+| `keypoint_l1_loss_coef`       | `float`     | `1.0`     | Weight for keypoint coordinate L1 loss in keypoint preview training.                         |
+| `keypoint_findable_loss_coef` | `float`     | `1.0`     | Weight for keypoint findable/objectness loss.                                                |
+| `keypoint_visible_loss_coef`  | `float`     | `1.0`     | Weight for keypoint visibility loss.                                                         |
+| `keypoint_nll_loss_coef`      | `float`     | `1.0`     | Weight for keypoint negative-log-likelihood loss.                                            |
+| `rle`                         | `bool`      | `True`    | Enable RealNVP/RLE keypoint residual modeling.                                               |
+| `rle_conditional`             | `bool`      | `True`    | Condition the RLE flow on keypoint hidden states.                                            |
+| `rle_loss_coef`               | `float`     | `1.0`     | Weight for the RLE loss term.                                                                |
 
 ## Advanced Parameters
 
@@ -248,7 +266,7 @@ Below is a summary table of all training parameters:
 | `run`                      | str                 | None           | W&B run name.                                                                            |
 | `early_stopping`           | bool                | False          | Enable early stopping.                                                                   |
 | `early_stopping_patience`  | int                 | 10             | Epochs without improvement before stopping.                                              |
-| `early_stopping_min_delta` | float               | 0.001          | Minimum mAP change to qualify as improvement.                                            |
+| `early_stopping_min_delta` | float               | 0.001          | Minimum validation metric change to qualify as improvement.                              |
 | `early_stopping_use_ema`   | bool                | False          | Use EMA model for early stopping metrics.                                                |
 | `eval_max_dets`            | int                 | 500            | Maximum detections per image considered during COCO evaluation.                          |
 | `eval_interval`            | int                 | 1              | Run COCO evaluation every N epochs.                                                      |

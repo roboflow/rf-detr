@@ -82,7 +82,8 @@ class RealNVP(nn.Module):  # type: ignore[misc]
 
         self.s = nn.ModuleList([_build_scale_net(coupling_input_dim) for _ in range(len(masks))])
         self.t = nn.ModuleList([_build_translate_net(coupling_input_dim) for _ in range(len(masks))])
-        self.prior = distributions.MultivariateNormal(torch.zeros(2), torch.eye(2))
+        self.register_buffer("prior_loc", torch.zeros(2))
+        self.register_buffer("prior_scale_tril", torch.eye(2))
         self._init_weights()
 
     def _init_weights(self) -> None:
@@ -139,15 +140,12 @@ class RealNVP(nn.Module):  # type: ignore[misc]
         projected_cond = self.cond_proj(cond) if (cond is not None and self.cond_proj is not None) else None
         z, log_det_jacobian = self._inverse(x, cond=projected_cond)
 
-        if self.prior.loc.device != z.device:
-            self.prior = distributions.MultivariateNormal(
-                self.prior.loc.to(z.device), self.prior.covariance_matrix.to(z.device)
-            )
+        prior = distributions.MultivariateNormal(self.prior_loc, scale_tril=self.prior_scale_tril)
 
         log_prob = z.new_full((z.shape[0],), INVALID_LOG_PROB)
         finite_mask = torch.isfinite(z).all(dim=-1) & torch.isfinite(log_det_jacobian)
         if finite_mask.any():
-            prior_log_prob = self.prior.log_prob(z[finite_mask])
+            prior_log_prob = prior.log_prob(z[finite_mask])
             valid_log_prob = prior_log_prob + log_det_jacobian[finite_mask]
             log_prob[finite_mask] = torch.nan_to_num(
                 valid_log_prob,
