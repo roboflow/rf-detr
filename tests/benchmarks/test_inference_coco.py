@@ -263,7 +263,7 @@ def _build_ptl_module(rfdetr_obj: RFDETR, train_config: TrainConfig) -> RFDETRMo
 
 
 # ---------------------------------------------------------------------------
-# Inference — RFDETR.predict() (GPU, COCO val2017)
+# Inference — RFDETR.predict() (CPU nano) / Trainer.validate() (GPU)
 # ---------------------------------------------------------------------------
 
 
@@ -277,6 +277,7 @@ def _build_ptl_module(rfdetr_obj: RFDETR, train_config: TrainConfig) -> RFDETRMo
     ],
 )
 def test_inference_detection_rfdetr_predict(
+    tmp_path: Path,
     download_coco_val: tuple[Path, Path],
     model_cls: type[RFDETR],
     threshold_map: float,
@@ -284,24 +285,42 @@ def test_inference_detection_rfdetr_predict(
     num_samples: int,
     batch_size: int,
 ) -> None:
-    """``RFDETR.predict()`` meets mAP@50 and macro-F1 thresholds on COCO val for detection models.
+    """Asserts mAP@50 and macro-F1 thresholds on COCO val for detection models.
 
-    Loads a pretrained detection model, calls ``predict()`` in batches on COCO val images, scores via
-    ``torchmetrics.MeanAveragePrecision`` and a confidence-threshold sweep, and asserts quality thresholds.
+    CPU (nano): uses ``RFDETR.predict()`` directly with PIL images scored via
+    ``torchmetrics.MeanAveragePrecision`` and a confidence-threshold sweep.
+
+    GPU (small/medium/large): uses ``Trainer.validate()`` via a PTL DataLoader —
+    the same path as :func:`test_inference_detection_ptl_predict` but without the
+    preceding ``trainer.predict()`` pass.  This avoids serial PIL-loop overhead for
+    large models and keeps the GPU test suite within the CI time budget.
 
     Args:
+        tmp_path: Pytest-provided temporary directory (GPU path only).
         download_coco_val: Fixture providing ``(images_root, annotations_path)``.
         model_cls: Detection model class to instantiate with pretrained weights.
         threshold_map: Minimum bbox mAP@50 required.
         threshold_f1: Minimum macro-F1 (best across confidence sweep) required.
         num_samples: Number of COCO val images to evaluate.
-        batch_size: Number of images per ``predict()`` call.
+        batch_size: Number of images per batch.
     """
     device_str = "cuda" if torch.cuda.is_available() else "cpu"
     images_root, annotations_path = download_coco_val
 
     model = model_cls(device=device_str)
-    map_val, f1_val = _score_rfdetr_predict(model, images_root, annotations_path, num_samples, batch_size)
+
+    if torch.cuda.is_available():
+        coco_root = images_root.parent
+        tc = _build_train_config(coco_root, tmp_path, batch_size)
+        module = _build_ptl_module(model, tc)
+        dm = _build_datamodule(model.model_config, tc, num_samples=num_samples)
+        trainer = build_trainer(tc, model.model_config, accelerator="auto")
+        (metrics,) = trainer.validate(module, datamodule=dm)
+        map_val = metrics["val/mAP_50"]
+        f1_val = metrics["val/F1"]
+    else:
+        map_val, f1_val = _score_rfdetr_predict(model, images_root, annotations_path, num_samples, batch_size)
+
     assert map_val >= threshold_map, f"mAP@50 {map_val:.4f} < {threshold_map}"
     assert f1_val >= threshold_f1, f"F1 {f1_val:.4f} < {threshold_f1}"
 
@@ -318,6 +337,7 @@ def test_inference_detection_rfdetr_predict(
     ],
 )
 def test_inference_segmentation_rfdetr_predict(
+    tmp_path: Path,
     download_coco_val: tuple[Path, Path],
     model_cls: type[RFDETR],
     threshold_map: float,
@@ -325,24 +345,38 @@ def test_inference_segmentation_rfdetr_predict(
     num_samples: int,
     batch_size: int,
 ) -> None:
-    """``RFDETR.predict()`` meets bbox mAP@50 and macro-F1 thresholds on COCO val for segmentation models.
+    """Asserts bbox mAP@50 and macro-F1 thresholds on COCO val for segmentation models.
 
-    Same structure as :func:`test_inference_detection_rfdetr_predict` but for segmentation variants.
+    Same dual-path structure as :func:`test_inference_detection_rfdetr_predict`:
+    CPU (nano) uses ``RFDETR.predict()``, GPU variants use ``Trainer.validate()``.
     Masks are not required; only bbox IoU is used for scoring.
 
     Args:
+        tmp_path: Pytest-provided temporary directory (GPU path only).
         download_coco_val: Fixture providing ``(images_root, annotations_path)``.
         model_cls: Segmentation model class to instantiate with pretrained weights.
         threshold_map: Minimum bbox mAP@50 required.
         threshold_f1: Minimum macro-F1 (best across confidence sweep) required.
         num_samples: Number of COCO val images to evaluate.
-        batch_size: Number of images per ``predict()`` call.
+        batch_size: Number of images per batch.
     """
     device_str = "cuda" if torch.cuda.is_available() else "cpu"
     images_root, annotations_path = download_coco_val
 
     model = model_cls(device=device_str)
-    map_val, f1_val = _score_rfdetr_predict(model, images_root, annotations_path, num_samples, batch_size)
+
+    if torch.cuda.is_available():
+        coco_root = images_root.parent
+        tc = _build_train_config(coco_root, tmp_path, batch_size)
+        module = _build_ptl_module(model, tc)
+        dm = _build_datamodule(model.model_config, tc, num_samples=num_samples)
+        trainer = build_trainer(tc, model.model_config, accelerator="auto")
+        (metrics,) = trainer.validate(module, datamodule=dm)
+        map_val = metrics["val/mAP_50"]
+        f1_val = metrics["val/F1"]
+    else:
+        map_val, f1_val = _score_rfdetr_predict(model, images_root, annotations_path, num_samples, batch_size)
+
     assert map_val >= threshold_map, f"mAP@50 {map_val:.4f} < {threshold_map}"
     assert f1_val >= threshold_f1, f"F1 {f1_val:.4f} < {threshold_f1}"
 
