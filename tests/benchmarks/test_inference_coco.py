@@ -58,6 +58,37 @@ from rfdetr.training import RFDETRDataModule, RFDETRModelModule, build_trainer
 # ---------------------------------------------------------------------------
 
 
+def _bbox_dict(
+    boxes: "list[list[float]] | np.ndarray",
+    labels: "list[int] | np.ndarray",
+    scores: "list[float] | np.ndarray | None" = None,
+    iscrowd: "list[int] | np.ndarray | None" = None,
+) -> dict[str, torch.Tensor]:
+    """Build a torchmetrics-compatible bounding-box dict from raw list or array data.
+
+    Handles empty inputs transparently — an empty *boxes* list produces a ``(0, 4)`` tensor.
+
+    Args:
+        boxes: Bounding boxes in xyxy format, shape (N, 4).
+        labels: Integer class labels, length N.
+        scores: Per-detection confidence scores, length N.  Present in prediction dicts only.
+        iscrowd: Crowd flags (0/1), length N.  Present in target dicts only.
+
+    Returns:
+        Dict always containing ``boxes`` (N, 4) float32 and ``labels`` (N,) int64; optionally
+        ``scores`` (N,) float32 and/or ``iscrowd`` (N,) uint8.
+    """
+    result: dict[str, torch.Tensor] = {
+        "boxes": torch.tensor(boxes, dtype=torch.float32).reshape(-1, 4),
+        "labels": torch.tensor(labels, dtype=torch.int64),
+    }
+    if scores is not None:
+        result["scores"] = torch.tensor(scores, dtype=torch.float32)
+    if iscrowd is not None:
+        result["iscrowd"] = torch.tensor(iscrowd, dtype=torch.uint8)
+    return result
+
+
 def _det_to_pred(det: "sv.Detections") -> dict[str, torch.Tensor]:
     """Convert a single ``sv.Detections`` to a torchmetrics prediction dict.
 
@@ -67,17 +98,7 @@ def _det_to_pred(det: "sv.Detections") -> dict[str, torch.Tensor]:
     Returns:
         Dict with ``boxes`` (N, 4) xyxy float, ``scores`` (N,) float, ``labels`` (N,) int64.
     """
-    if len(det) > 0:
-        return {
-            "boxes": torch.tensor(det.xyxy, dtype=torch.float32),
-            "scores": torch.tensor(det.confidence, dtype=torch.float32),
-            "labels": torch.tensor(det.class_id, dtype=torch.int64),
-        }
-    return {
-        "boxes": torch.zeros((0, 4), dtype=torch.float32),
-        "scores": torch.zeros(0, dtype=torch.float32),
-        "labels": torch.zeros(0, dtype=torch.int64),
-    }
+    return _bbox_dict(det.xyxy, det.class_id, scores=det.confidence)
 
 
 def _coco_ann_to_target(coco_gt: "COCO", img_id: int) -> dict[str, torch.Tensor]:
@@ -99,17 +120,7 @@ def _coco_ann_to_target(coco_gt: "COCO", img_id: int) -> dict[str, torch.Tensor]
         gt_boxes.append([bx, by, bx + bw, by + bh])
         gt_labels.append(ann["category_id"])
         iscrowd.append(int(ann.get("iscrowd", 0)))
-    if gt_boxes:
-        return {
-            "boxes": torch.tensor(gt_boxes, dtype=torch.float32),
-            "labels": torch.tensor(gt_labels, dtype=torch.int64),
-            "iscrowd": torch.tensor(iscrowd, dtype=torch.uint8),
-        }
-    return {
-        "boxes": torch.zeros((0, 4), dtype=torch.float32),
-        "labels": torch.zeros(0, dtype=torch.int64),
-        "iscrowd": torch.zeros(0, dtype=torch.uint8),
-    }
+    return _bbox_dict(gt_boxes, gt_labels, iscrowd=iscrowd)
 
 
 def _score_rfdetr_predict(
