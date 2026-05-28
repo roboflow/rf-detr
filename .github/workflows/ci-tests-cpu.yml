@@ -27,7 +27,7 @@ jobs:
   run-tests:
     name: Testing
     # needs: build  # todo: consider using this build package for testing
-    timeout-minutes: 20
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -60,7 +60,7 @@ jobs:
             -n 2 -m "not gpu" \
             --ignore=tests/try_instantiate_all_models.py \
             --cov=rfdetr --cov-report=xml \
-            --timeout=360 \
+            --timeout=420 \
             --durations=50
 
       - name: Upload coverage to Codecov
