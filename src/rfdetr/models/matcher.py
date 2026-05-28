@@ -17,6 +17,8 @@
 # ------------------------------------------------------------------------
 """Modules to compute the matching cost and solve the corresponding LSAP."""
 
+from __future__ import annotations
+
 import numpy as np
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -129,7 +131,13 @@ class HungarianMatcher(nn.Module):
         return sanitized_cost_matrix
 
     @torch.no_grad()
-    def forward(self, outputs, targets, group_detr=1, flow=None):
+    def forward(
+        self,
+        outputs: dict,
+        targets: list,
+        group_detr: int = 1,
+        flow: nn.Module | None = None,
+    ) -> list[tuple[torch.Tensor, torch.Tensor]]:
         """Performs the matching
         Params:
             outputs: This is a dict that contains at least these entries:

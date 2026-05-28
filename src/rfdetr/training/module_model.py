@@ -331,6 +331,13 @@ class RFDETRModelModule(LightningModule):
         model_for_params = getattr(self.model, "_orig_mod", self.model)
         param_dicts = get_param_dict(ns, model_for_params)
         param_dicts = [p for p in param_dicts if p["params"].requires_grad]
+        # Include RealNVP flow parameters from criterion; they live outside self.model
+        # so get_param_dict misses them, causing the flow to train with frozen weights.
+        flow = getattr(self.criterion, "flow", None)
+        if flow is not None:
+            for p in flow.parameters():
+                if p.requires_grad:
+                    param_dicts.append({"params": p, "lr": tc.lr})
         optimizer = torch.optim.AdamW(
             param_dicts,
             lr=tc.lr,
