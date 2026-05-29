@@ -147,7 +147,7 @@ def _score_rfdetr_predict(
 
     map_metric = MeanAveragePrecision(
         iou_type="bbox",
-        class_metrics=True,
+        class_metrics=False,
         max_detection_thresholds=[1, 10, 500],
         backend="faster_coco_eval",
     )
