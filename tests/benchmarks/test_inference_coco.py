@@ -155,11 +155,13 @@ def _score_rfdetr_predict(
 
     for start in range(0, len(img_ids), batch_size):
         batch_ids = img_ids[start : start + batch_size]
-        images = [PIL.Image.open(images_root / f"{img_id:012d}.jpg").convert("RGB") for img_id in batch_ids]
+        images: list[PIL.Image.Image] = []
+        for img_id in batch_ids:
+            with PIL.Image.open(images_root / f"{img_id:012d}.jpg") as im:
+                images.append(im.convert("RGB"))
         detections_batch = rfdetr_obj.predict(images, threshold=0.001, include_source_image=False)
         if not isinstance(detections_batch, list):
             detections_batch = [detections_batch]
-
         preds = [_bbox_dict(det.xyxy, det.class_id, scores=det.confidence) for det in detections_batch]
         targets = [_coco_ann_to_target(coco_gt, img_id) for img_id in batch_ids]
 
