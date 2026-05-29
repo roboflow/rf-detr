@@ -126,6 +126,10 @@ def build_trainer(
     def _resolve_precision() -> str:
         if not model_config.amp:
             return "32-true"
+        # CPU accelerator: bf16 autocast on macOS CPU (Apple Silicon) is ~13x slower
+        # than fp32 due to missing native bfloat16 kernels — no benefit, high cost.
+        if accelerator == "cpu":
+            return "32-true"
         # Ampere+ GPUs support bf16-mixed which is scaler-free —
         # no GradScaler.scale/unscale/update overhead per optimizer step.
         # BF16 is safe for fine-tuning (pretrained weights loaded by default).
