@@ -35,7 +35,6 @@ _COCO_URLS = {
     "val2017": "http://images.cocodataset.org/zips/val2017.zip",
     "annotations": "http://images.cocodataset.org/annotations/annotations_trainval2017.zip",
 }
-
 _COCO_VAL_IMAGE_COUNT: int = 5000
 
 

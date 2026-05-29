@@ -245,6 +245,29 @@ class TestBuildTrainerPrecision:
             trainer = build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=True))
         assert trainer.precision == "32-true"
 
+    def test_amp_true_explicit_cpu_accelerator_gives_32_true_even_with_mps(self, tmp_path):
+        """Amp=True with explicit accelerator='cpu' must produce '32-true' even when MPS is present.
+
+        bf16 autocast on macOS CPU (Apple Silicon) is ~13x slower than fp32 — no hardware support for bfloat16 in CPU
+        kernels causes software emulation.  When the caller explicitly opts into CPU (e.g. for test isolation), mixed
+        precision must not be used.
+        """
+        import unittest.mock as mock
+
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        with (
+            mock.patch("torch.cuda.is_available", return_value=False),
+            mock.patch("torch.backends.mps.is_available", return_value=True),
+            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
+        ):
+            build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=True), accelerator="cpu")
+        assert captured["precision"] == "32-true"
+
     def test_amp_true_cuda_no_bf16_gives_16_mixed(self, tmp_path):
         """Amp=True with CUDA but no bf16 support must produce '16-mixed'."""
         import unittest.mock as mock
