@@ -41,7 +41,6 @@ dependencies = [
     "tqdm",                            # progress bars during weight download
     "transformers>=5.1.0,<6.0.0",     # DINOv2 backbone loading
     "pydantic>=2.0,<3",               # ModelConfig / TrainConfig validation
-    "supervision",                     # inference output (Detections, Masks)
     "pyDeprecate>=0.6,<0.8",             # deprecation warnings for legacy APIs; >=0.6 for deprecated_class
 ]
 
@@ -59,6 +58,7 @@ train = [
     "albumentations>=1.4.24,<3.0.0",
     "roboflow",
     "rf100vl",
+    "supervision",                     # dataset/grid visualization (datasets.save_grids, datasets.synthetic)
 ]
 onnx = [
     "onnx>=1.16.0,<2.0",
@@ -66,6 +66,7 @@ onnx = [
     "onnx_graphsurgeon",
     "onnxruntime",
     "polygraphy",
+    "supervision",                     # inference output (Detections) from export._onnx.inference
 ]
 trt = [
     "pycuda",
@@ -79,6 +80,7 @@ tflite = [
     "onnx>=1.20.0,<2.0",
     "tf-keras>=2.16.0",
     "tensorflow>=2.16.0",
+    "supervision",                     # inference output (Detections) from export._tflite.inference
 ]
 kornia = [
     "kornia>=0.7,<1",              # GPU-side augmentation via on_after_batch_transfer
@@ -94,6 +96,7 @@ visual = [
     "matplotlib",
     "pandas",
     "seaborn",
+    "supervision",                     # annotators / Detections for visualize.data and dataset grids
 ]
 cli = ["jsonargparse[signatures]>=4.27.7"]
 plus = ["rfdetr_plus>=1.0.1, <2.0.0"]

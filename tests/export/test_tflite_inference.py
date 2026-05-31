@@ -19,10 +19,11 @@ from unittest import mock
 
 import numpy as np
 import pytest
-import supervision as sv
 from PIL import Image as PILImage
 
 from rfdetr.export._tflite.inference import _create_interpreter, _decode_masks, _run_inference
+
+sv = pytest.importorskip("supervision")
 
 # ---------------------------------------------------------------------------
 # Shared helpers / factories

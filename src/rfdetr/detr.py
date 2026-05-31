@@ -41,6 +41,7 @@ from rfdetr.inference import ModelContext, _build_model_context
 from rfdetr.utilities.decorators import deprecated
 from rfdetr.utilities.distributed import is_main_process
 from rfdetr.utilities.logger import get_logger
+from rfdetr.utilities.optional_imports import import_supervision
 
 try:
     torch.set_float32_matmul_precision("high")
@@ -1264,8 +1265,9 @@ class RFDETR:
                 if either dimension does not support the ``__index__`` protocol (e.g. ``float``) or is a ``bool``, if
                 either dimension is zero or negative, if either dimension is not divisible by ``patch_size *
                 num_windows``, or if ``patch_size`` is not a positive integer.
+            ImportError: If the optional ``supervision`` package is not installed.
         """
-        import supervision as sv
+        sv = import_supervision()
 
         _ensure_model_on_device(self.model)
 

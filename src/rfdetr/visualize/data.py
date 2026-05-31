@@ -10,6 +10,7 @@ import numpy as np
 from PIL import Image
 
 from rfdetr.utilities.logger import get_logger
+from rfdetr.utilities.optional_imports import import_supervision
 
 logger = get_logger()
 
@@ -31,7 +32,7 @@ def save_gt_predictions_visualization(
     Boxes are labeled with class ID and confidence (for predictions). For predictions with known IoU, the IoU value is
     also shown.
     """
-    import supervision as sv
+    sv = import_supervision()
 
     save_dir.mkdir(exist_ok=True)
 

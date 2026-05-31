@@ -7,7 +7,6 @@ import json
 
 import numpy as np
 import pytest
-import supervision as sv
 
 from rfdetr.datasets.synthetic import (
     DEFAULT_SPLIT_RATIOS,
@@ -20,6 +19,8 @@ from rfdetr.datasets.synthetic import (
     generate_coco_dataset,
     generate_synthetic_sample,
 )
+
+sv = pytest.importorskip("supervision")
 
 
 class TestCalculateBoundaryOverlap:

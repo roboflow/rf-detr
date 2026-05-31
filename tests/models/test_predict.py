@@ -10,11 +10,12 @@ from typing import Any
 import numpy as np
 import PIL.Image
 import pytest
-import supervision as sv
 import torch
 
 from rfdetr import RFDETRNano, RFDETRSegNano
 from rfdetr.detr import RFDETR
+
+sv = pytest.importorskip("supervision")
 
 _HTTP_IMAGE_URL = "http://images.cocodataset.org/val2017/000000397133.jpg"
 _HTTP_HOST = "images.cocodataset.org"

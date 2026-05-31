@@ -13,13 +13,16 @@ time.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import supervision as sv
 from PIL import Image as PILImage
 
 from rfdetr.utilities.logger import get_logger
+from rfdetr.utilities.optional_imports import import_supervision
+
+if TYPE_CHECKING:
+    import supervision as sv
 
 logger = get_logger()
 
@@ -206,4 +209,5 @@ def _run_inference(
     xyxy = np.stack([cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2], axis=1)
     xyxy *= np.array([ow, oh, ow, oh], dtype=np.float32)
 
+    sv = import_supervision()
     return sv.Detections(xyxy=xyxy, confidence=scores[keep], class_id=cls[keep].astype(int)), pil_img

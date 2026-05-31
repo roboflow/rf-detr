@@ -7,19 +7,25 @@
 #
 """Synthetic dataset generation with COCO formatting."""
 
+from __future__ import annotations
+
 import json
 import logging
 import math
 import random
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple, Union
+from typing import TYPE_CHECKING, Dict, List, Tuple, Union
 
 import cv2
 import numpy as np
-import supervision as sv
 from tqdm.auto import tqdm
 from typing_extensions import Literal
+
+from rfdetr.utilities.optional_imports import import_supervision
+
+if TYPE_CHECKING:
+    import supervision as sv
 
 logger = logging.getLogger(__name__)
 
@@ -112,8 +118,8 @@ def _normalize_split_ratios(split_ratios: SplitRatiosType) -> Dict[str, float]:
 
 # Available shapes for synthetic dataset generation
 SYNTHETIC_SHAPES = ["square", "triangle", "circle"]
-# Available colors for synthetic dataset generation (RGB format)
-SYNTHETIC_COLORS = {"red": sv.Color.RED, "green": sv.Color.GREEN, "blue": sv.Color.BLUE}
+# Available colors for synthetic dataset generation (resolved to sv.Color at use time)
+SYNTHETIC_COLORS = ["red", "green", "blue"]
 
 
 def draw_synthetic_shape(
@@ -134,6 +140,7 @@ def draw_synthetic_shape(
         Tuple of ``(image_with_shape, polygon)`` where ``polygon`` is a flat list ``[x1, y1, x2, y2, …]`` suitable for
         the COCO ``segmentation`` field.  Returns an empty polygon list for unknown shape names.
     """
+    sv = import_supervision()
     cx, cy = center
     half_size = size // 2
 
@@ -218,8 +225,9 @@ def generate_synthetic_sample(
         ``detections`` is an :class:`sv.Detections` instance whose ``data["polygons"]`` field contains one flat ``[x1,
         y1, x2, y2, …]`` polygon list per detection, matching the geometry returned by :func:`draw_synthetic_shape`.
     """
+    sv = import_supervision()
     img = np.ones((img_size, img_size, 3), dtype=np.uint8) * 128
-    color_names = list(SYNTHETIC_COLORS.keys())
+    color_names = list(SYNTHETIC_COLORS)
     num_objects = random.randint(min_objects, max_objects)
 
     xyxys = []
@@ -231,7 +239,7 @@ def generate_synthetic_sample(
     for _ in range(num_objects):
         shape = random.choice(SYNTHETIC_SHAPES)
         color_name = random.choice(color_names)
-        color = SYNTHETIC_COLORS[color_name]
+        color = getattr(sv.Color, color_name.upper())
 
         if class_mode == "shape":
             category_id = SYNTHETIC_SHAPES.index(shape)
@@ -457,7 +465,7 @@ def generate_coco_dataset(
     if class_mode == "shape":
         classes = SYNTHETIC_SHAPES
     else:
-        classes = list(SYNTHETIC_COLORS.keys())
+        classes = list(SYNTHETIC_COLORS)
 
     # Shuffle indices for splits
     all_indices = list(range(num_images))

@@ -24,6 +24,7 @@ from rfdetr.datasets.coco import (
     make_coco_transforms,
     make_coco_transforms_square_div_64,
 )
+from rfdetr.utilities.optional_imports import import_supervision
 
 REQUIRED_YOLO_YAML_FILES = ["data.yaml", "data.yml"]
 REQUIRED_SPLIT_DIRS = ["train", "valid"]
@@ -161,7 +162,7 @@ class _LazyYoloSample:
 
     def to_detections(self) -> "sv.Detections":
         """Materialize the current sample as a supervision ``Detections`` object."""
-        import supervision as sv
+        sv = import_supervision()
 
         if len(self.class_id) == 0:
             return sv.Detections.empty()

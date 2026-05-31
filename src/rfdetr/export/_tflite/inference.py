@@ -15,14 +15,17 @@ from __future__ import annotations
 import contextlib
 import importlib
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import supervision as sv
 from numpy.typing import NDArray
 from PIL import Image as PILImage
 
 from rfdetr.utilities.logger import get_logger
+from rfdetr.utilities.optional_imports import import_supervision
+
+if TYPE_CHECKING:
+    import supervision as sv
 
 logger = get_logger()
 
@@ -249,5 +252,6 @@ def _run_inference(
         raw_masks = interp.get_tensor(out_det[mask_idx]["index"])[0]  # (Q, Hm, Wm)
         masks = _decode_masks(raw_masks[keep], (ow, oh))
 
+    sv = import_supervision()
     detections = sv.Detections(xyxy=xyxy, confidence=scores[keep], class_id=cls[keep].astype(int), mask=masks)
     return detections, pil_img

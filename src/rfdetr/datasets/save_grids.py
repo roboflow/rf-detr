@@ -4,12 +4,13 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+from __future__ import annotations
+
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import matplotlib.pyplot as plt
 import numpy as np
-import supervision as sv
 import torch
 import torchvision.transforms as T  # noqa: N812
 from matplotlib.axes import Axes
@@ -17,6 +18,10 @@ from torch.utils.data import DataLoader
 
 from rfdetr.util.box_ops import box_cxcywh_to_xyxy
 from rfdetr.util.logger import get_logger
+from rfdetr.utilities.optional_imports import import_supervision
+
+if TYPE_CHECKING:
+    import supervision as sv
 
 logger = get_logger()
 
@@ -46,6 +51,7 @@ class DatasetGridSaver:
         Each grid is a 3x3 JPEG containing up to 9 images from a single batch, with bounding boxes and class labels
         drawn on top.
         """
+        sv = import_supervision()
         inv_normalize = T.Normalize(
             mean=[-0.485 / 0.229, -0.456 / 0.224, -0.406 / 0.225],
             std=[1 / 0.229, 1 / 0.224, 1 / 0.225],
@@ -102,6 +108,8 @@ class DatasetGridSaver:
             label_annotator: ``sv.LabelAnnotator`` instance for drawing class labels.
         """
         from PIL import Image as PILImage
+
+        sv = import_supervision()
 
         resized_size = single_target["size"]
         if isinstance(resized_size, torch.Tensor):
