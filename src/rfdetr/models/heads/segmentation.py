@@ -403,8 +403,9 @@ def get_uncertain_point_coords_with_randomness(
     oversample_ratio: int = 3,
     importance_sample_ratio: float = 0.75,
 ) -> torch.Tensor:
-    """Sample points in [0, 1] x [0, 1] coordinate space based on their uncertainty. The unceratinties are calculated
-    for each point using 'uncertainty_func' function that takes point's logit prediction as input. See PointRend paper
+    """Sample points in [0, 1] x [0, 1] coordinate space based on their uncertainty.
+
+    The unceratinties are calculated for each point using 'uncertainty_func' function that takes point's logit prediction as input. See PointRend paper
     for details.
 
     Args:

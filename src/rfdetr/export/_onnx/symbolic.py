@@ -8,7 +8,6 @@
 # ------------------------------------------------------------------------
 """CustomOpSymbolicRegistry class."""
 
-
 class CustomOpSymbolicRegistry:
     # _SYMBOLICS = {}
     _OPTIMIZER = []

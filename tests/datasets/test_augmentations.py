@@ -796,7 +796,6 @@ class TestRandomSizedCropCompat:
     @mock.patch("rfdetr.datasets.transforms.alb.RandomSizedCrop", new=_FakeRandomSizedCropV2)
     def test_adapts_height_width_for_v2_api(self):
         """RandomSizedCrop config with height/width is adapted to the Albumentations 2.x size API."""
-
         transform = _build_albu_transform(
             "RandomSizedCrop",
             {"min_max_height": [384, 600], "height": 640, "width": 640},
@@ -809,7 +808,6 @@ class TestRandomSizedCropCompat:
     @mock.patch("rfdetr.datasets.transforms.alb.RandomSizedCrop", new=_FakeRandomSizedCropV1)
     def test_adapts_size_for_v1_api(self):
         """RandomSizedCrop config with size is adapted to the Albumentations 1.x height/width API."""
-
         transform = _build_albu_transform(
             "RandomSizedCrop",
             {"min_max_height": [384, 600], "size": (640, 640)},
@@ -827,7 +825,6 @@ class TestRandomSizedCropCompat:
         This documents the intentional silent-skip behavior: from_config wraps _build_albu_transform in a broad except
         clause so bad configs produce a warning rather than an exception.
         """
-
         config = {
             "HorizontalFlip": {"p": 0.5},
             "RandomSizedCrop": {"min_max_height": [100, 200], "height": 256},
@@ -843,7 +840,6 @@ class TestRandomSizedCropCompat:
 
 class TestAlbumentationsWrapperNestedConfig:
     """Tests for nested container (OneOf, SomeOf, Sequential) support in from_config."""
-
     def test_one_of_geometric_detection(self):
         """OneOf containing a geometric transform is treated as geometric."""
         wrapper = AlbumentationsWrapper(alb.OneOf([alb.HorizontalFlip(p=1.0), alb.GaussianBlur(p=1.0)]))
@@ -1087,7 +1083,6 @@ class TestAlbumentationsWrapperNestedConfig:
 
 class TestIntegration:
     """Integration tests for full augmentation pipeline."""
-
     def test_full_pipeline_from_config(self):
         """Test complete pipeline from config to application."""
         config = {
@@ -1270,7 +1265,6 @@ class TestIntegration:
 
 class TestTrainingLoop:
     """Test augmentations work correctly in training loop scenario."""
-
     def test_augmentation_in_dataloader(self):
         """Test that augmentations work correctly when used with DataLoader.
 
@@ -1365,7 +1359,6 @@ class TestTrainingLoop:
     @pytest.mark.parametrize("include_masks", [False, True], ids=["detection", "segmentation"])
     def test_geometric_dataloader_compatibility(self, include_masks, transform_class, transform_kwargs):
         """Test geometric Albumentations transforms work in DataLoader for detection and segmentation."""
-
         class _TinyTrainDataset:
             def __init__(self, transforms):
                 self._transforms = transforms
@@ -1409,7 +1402,6 @@ class TestTrainingLoop:
 
 class TestMakeCocoTransformsAugConfig:
     """Tests for aug_config propagation in make_coco_transforms / make_coco_transforms_square_div_64."""
-
     @pytest.mark.parametrize(
         "make_transforms",
         [
@@ -1510,11 +1502,10 @@ class TestMakeCocoTransformsAugConfig:
 class TestMakeCocoTransformsOutputSize:
     """Regression tests for #979: transforms must resize high-resolution images to the target resolution.
 
-    These tests verify that ``make_coco_transforms`` and ``make_coco_transforms_square_div_64``
-    actually produce output images at the requested ``resolution``, not at the original image size.
-    Existing tests only check pipeline *structure*; these check actual output *dimensions*.
+    These tests verify that ``make_coco_transforms`` and ``make_coco_transforms_square_div_64`` actually produce output
+    images at the requested ``resolution``, not at the original image size. Existing tests only check pipeline
+    *structure*; these check actual output *dimensions*.
     """
-
     # 1920x1080 (landscape) — larger than any typical training resolution.
     # PIL size is (width, height), so Image.new("RGB", (1920, 1080)) gives a 1920-wide, 1080-tall image.
     _INPUT_W = 1920
@@ -1589,7 +1580,6 @@ class TestMakeCocoTransformsOutputSize:
 
 class TestAugPresets:
     """Regression tests for built-in augmentation presets."""
-
     def test_aug_aggressive_translate_percent_is_bidirectional(self) -> None:
         """AUG_AGGRESSIVE translate_percent must allow both positive and negative translations.
 

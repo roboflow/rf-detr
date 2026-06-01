@@ -147,7 +147,6 @@ def test_export_does_not_change_original_training_state(tmp_path: Path) -> None:
 @pytest.fixture
 def _detr_export_scaffold(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Shared scaffold for RFDETR.export() deprecated-argument tests."""
-
     model = types.SimpleNamespace(
         model=types.SimpleNamespace(
             model=_DummyCoreModel(),
@@ -190,7 +189,6 @@ def test_rfdetr_export_dynamic_batch_forwards_dynamic_axes(
 ) -> None:
     """`RFDETR.export(..., dynamic_batch=True)` must pass a non-None `dynamic_axes` dict to `export_onnx`;
     `dynamic_batch=False` must pass `None`."""
-
     model = types.SimpleNamespace(
         model=types.SimpleNamespace(
             model=_DummyCoreModel(segmentation_head=segmentation_head), device="cpu", resolution=14
@@ -567,7 +565,6 @@ class TestExportPatchSize:
         monkeypatch: pytest.MonkeyPatch, tmp_path: Path, patch_size: int, num_windows: int
     ) -> types.SimpleNamespace:
         """Build a minimal RFDETR-like namespace with controllable patch_size/num_windows."""
-
         model = types.SimpleNamespace(
             model=types.SimpleNamespace(
                 model=_DummyCoreModel(),
@@ -721,7 +718,6 @@ def test_make_infer_image_produces_correct_rectangular_shape() -> None:
 
 class TestExportOnnxVariantNaming:
     """Verify that export_onnx uses variant_name in the output filename."""
-
     def test_variant_name_in_filename(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """When variant_name is provided, the ONNX file is named after the variant."""
         captured: dict = {}

@@ -98,8 +98,8 @@ class TestHungarianMatcherNonFiniteCosts:
         matcher: HungarianMatcher,
         standard_target: dict[str, torch.Tensor],
     ) -> None:
-        """Regression test: when all finite costs are negative and one query
-        produces NaN, the matcher must select the valid query, not the NaN one.
+        """Regression test: when all finite costs are negative and one query produces NaN, the matcher must select the
+        valid query, not the NaN one.
 
         This guards against the bug where ``max_cost * 2`` (the old replacement formula) could be smaller than
         ``max_cost`` when all costs are negative, causing the NaN query to appear cheaper than valid queries.

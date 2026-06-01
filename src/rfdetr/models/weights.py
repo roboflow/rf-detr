@@ -9,8 +9,8 @@ Provides the canonical implementations of pretrained checkpoint loading and LoRA
 inference facade (``rfdetr.detr``) and the L2 LightningModule (``rfdetr.training.module_model``).
 
 The weight-loading logic is taken from ``RFDETRModelModule._load_pretrain_weights`` in ``module_model.py`` (more
-complete: Pydantic-aware user-override detection, auto-alignment for fine-tuned checkpoints) and augmented with
-class-name extraction from ``detr.py:_load_pretrain_weights_into``.
+complete: Pydantic-aware user-override detection, auto-alignment for fine-tuned checkpoints) and augmented with class-
+name extraction from ``detr.py:_load_pretrain_weights_into``.
 """
 
 from __future__ import annotations

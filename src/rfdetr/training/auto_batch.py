@@ -14,7 +14,8 @@ Probe assumptions (worst-case so training does not OOM):
   matcher and loss memory.
 - EMA: When use_ema is True, an EMA copy of the model is kept in memory. We
   apply auto_batch_ema_headroom (e.g. 0.7) to the probed batch size so the effective safe batch leaves room for the EMA
-  model."""
+  model.
+"""
 
 from __future__ import annotations
 

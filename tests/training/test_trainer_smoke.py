@@ -9,7 +9,8 @@ Verifies that the PTL training loop runs end-to-end without error for both detec
 All heavy operations (build_model, build_criterion_and_postprocessors, build_dataset, get_param_dict) are patched so no
 real dataset or GPU is required.
 
-Chapter 1 gate: these must pass before Chapter 2 begins."""
+Chapter 1 gate: these must pass before Chapter 2 begins.
+"""
 
 import sys
 from unittest.mock import MagicMock, patch

@@ -397,7 +397,6 @@ class TestGenEncoderOutputProposalsDynamicBatch:
         Regression for issue #949: exporting with a fixed trace batch baked `Reshape([8,...])` as a constant ONNX node,
         causing TRT engines to fail at inference for any batch != 8. Skipped when onnx or onnxruntime is not installed.
         """
-
         pytest.importorskip("onnx")
         onnxruntime = pytest.importorskip("onnxruntime")
 

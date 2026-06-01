@@ -231,7 +231,6 @@ def _random_sized_crop_uses_size_param(aug_cls: type) -> bool:
     Returns:
         ``True`` when the class accepts a ``size`` keyword argument; otherwise ``False``.
     """
-
     signature = inspect.signature(aug_cls.__init__)
     return "size" in signature.parameters
 
@@ -260,7 +259,6 @@ def _normalize_albu_params(name: str, params: Dict[str, Any], aug_cls: type) -> 
         ... )
         {'min_max_height': [384, 600], 'size': (640, 640)}
     """
-
     normalized_params = dict(params)
     if name != "RandomSizedCrop":
         return normalized_params

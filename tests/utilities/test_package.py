@@ -40,9 +40,8 @@ def test_get_sha_marks_dirty_worktree_when_diff_command_returns_exit_code_1() ->
 def test_peft_not_imported_eagerly_on_backbone_import_characterization() -> None:
     """Importing backbone.backbone must NOT pull peft into sys.modules (peft is optional).
 
-    This characterization test captures the invariant introduced in PR 1 (chore/packaging-peft-lora): after the
-    lazy-import refactor, importing backbone at module-load time must not trigger a top-level ``from peft import
-    PeftModel``.
+    This characterization test captures the invariant introduced in PR 1 (chore/packaging-peft-lora): after the lazy-
+    import refactor, importing backbone at module-load time must not trigger a top-level ``from peft import PeftModel``.
     """
     result = subprocess.run(
         [

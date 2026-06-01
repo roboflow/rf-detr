@@ -146,6 +146,7 @@ class TestLoadClassesHierarchy:
     def test_category_named_none_does_not_empty_list(self, tmp_path: Path) -> None:
         """If a category is literally named 'none' and all supercategories are placeholders, the loader must return all
         class names instead of []."""
+
         categories = [
             {"id": 1, "name": "none", "supercategory": "none"},
             {"id": 2, "name": "dog", "supercategory": "none"},
@@ -156,8 +157,9 @@ class TestLoadClassesHierarchy:
         assert result == ["none", "dog", "cat"]
 
     def test_mixed_hierarchy_leaf_and_standalone_forwarding(self, tmp_path: Path) -> None:
-        """Mixed hierarchy: only leaf classes + standalone top-level categories
-        should be forwarded. Parent/grouping nodes are dropped.
+        """Mixed hierarchy: only leaf classes + standalone top-level categories should be forwarded.
+
+        Parent/grouping nodes are dropped.
         """
         categories = [
             {"id": 1, "name": "animals", "supercategory": "none"},

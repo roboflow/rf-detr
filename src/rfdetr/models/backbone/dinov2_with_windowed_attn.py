@@ -1058,13 +1058,10 @@ DINOV2_WITH_REGISTERS_INPUTS_DOCSTRING = r"""
         return_dict (`bool`, *optional*):
             Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
 """
-
-
 @add_start_docstrings(
-    """
-    Dinov2WithRegisters Model transformer with an image classification head on top (a linear layer on top of the final
-    hidden state of the [CLS] token) e.g. for ImageNet.
-    """,
+    """Dinov2WithRegisters Model transformer with an image classification head on top (a linear layer on top of the
+    final hidden state of the [CLS] token) e.g. for ImageNet."""
+       ,
     DINOV2_WITH_REGISTERS_START_DOCSTRING,
 )
 class WindowedDinov2WithRegistersForImageClassification(WindowedDinov2WithRegistersPreTrainedModel):
@@ -1178,12 +1175,9 @@ class WindowedDinov2WithRegistersForImageClassification(WindowedDinov2WithRegist
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
-
-
 @add_start_docstrings(
-    """
-    Dinov2WithRegisters backbone, to be used with frameworks like DETR and MaskFormer.
-    """,
+    """Dinov2WithRegisters backbone, to be used with frameworks like DETR and MaskFormer."""
+       ,
     DINOV2_WITH_REGISTERS_START_DOCSTRING,
 )
 class WindowedDinov2WithRegistersBackbone(WindowedDinov2WithRegistersPreTrainedModel, BackboneMixin):

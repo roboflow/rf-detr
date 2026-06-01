@@ -5,9 +5,8 @@
 # ------------------------------------------------------------------------
 """ONNX Runtime inference helpers for RF-DETR exported models.
 
-These functions handle session creation, image preprocessing, and detection decoding without requiring PyTorch or
-the RF-DETR training stack — only ``onnxruntime``, ``numpy``, ``supervision``, and ``Pillow`` are needed at inference
-time.
+These functions handle session creation, image preprocessing, and detection decoding without requiring PyTorch or the
+RF-DETR training stack — only ``onnxruntime``, ``numpy``, ``supervision``, and ``Pillow`` are needed at inference time.
 """
 
 from __future__ import annotations
