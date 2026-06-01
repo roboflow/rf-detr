@@ -434,10 +434,10 @@ class COCOEvalCallback(Callback):
     def _prepare_ema_metric(self, trainer: Any, pl_module: Any) -> None:
         """Ensure ``map_metric_ema`` exists (and is reset) on EVERY rank when EMA is active.
 
-        Driven by the rank-invariant presence of the EMA callback rather than by per-batch state, so the EMA
-        ``compute()`` collective is issued symmetrically across DDP ranks.  Previously the metric was created lazily
-        in :meth:`on_validation_batch_end`, so a rank with an empty/uneven shard could finish without it, skip the
-        collective, and deadlock validation (#931 / #449).
+        Driven by the rank-invariant presence of the EMA callback rather than by per-batch state, so any cross-rank
+        state merge (via :meth:`_merge_metric_state_across_ranks`) is issued symmetrically across DDP ranks. Previously
+        the metric was created lazily in :meth:`on_validation_batch_end`, so a rank with an empty/uneven shard could
+        finish without it, skip the merge/compute path, and deadlock validation (#931 / #449).
 
         Args:
             trainer: The PTL Trainer.
