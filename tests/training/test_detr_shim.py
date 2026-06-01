@@ -1488,6 +1488,10 @@ class TestDeployToRoboflow:
         mock_self.model = MagicMock()
         mock_self.model.model.state_dict.return_value = {}
         mock_self.model.args = SimpleNamespace(num_classes=len(class_names))
+        # deploy_to_roboflow now delegates bundle-writing to export_for_roboflow; bind the
+        # real method so these end-to-end tests exercise it (a bare MagicMock attribute
+        # would no-op the class_names.txt / torch.save side effects).
+        mock_self.export_for_roboflow = lambda output_dir: RFDETR.export_for_roboflow(mock_self, output_dir)
         return mock_self
 
     @staticmethod
