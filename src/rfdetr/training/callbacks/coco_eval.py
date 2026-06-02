@@ -105,6 +105,22 @@ class COCOEvalCallback(Callback):
         )
         kwargs["backend"] = "faster_coco_eval"
         self.map_metric = MeanAveragePrecision(iou_type=iou_type, **kwargs)
+        # Verify _MAP_STATE_ATTRS is complete for the installed torchmetrics version.  A missing
+        # attr is silently skipped in _merge_metric_state_across_ranks, producing wrong mAP with
+        # no error — an upgrade that adds a list-type state would hit this silently without the check.
+        installed = {k for k, v in self.map_metric._defaults.items() if isinstance(v, list)}
+        declared = set(self._MAP_STATE_ATTRS)
+        if installed != declared:
+            raise RuntimeError(
+                f"COCOEvalCallback._MAP_STATE_ATTRS is out of sync with the installed torchmetrics "
+                f"(version {self.map_metric.__class__.__module__}). "
+                f"Missing from _MAP_STATE_ATTRS: {sorted(installed - declared)}. "
+                f"Stale in _MAP_STATE_ATTRS: {sorted(declared - installed)}. "
+                f'Re-run: python -c "from torchmetrics.detection import MeanAveragePrecision; '
+                f"m = MeanAveragePrecision(); "
+                f'print(sorted(k for k, v in m._defaults.items() if isinstance(v, list)))" '
+                f"and update COCOEvalCallback._MAP_STATE_ATTRS to match."
+            )
         # Separate metric for the EMA model.  Created deterministically on EVERY rank in
         # on_validation_epoch_start / on_test_epoch_start (see _prepare_ema_metric) so its
         # cross-rank compute() sync is issued symmetrically and cannot deadlock DDP val.
@@ -490,7 +506,14 @@ class COCOEvalCallback(Callback):
             vote = int(flag.item())
         return bool(vote)
 
-    # torchmetrics MeanAveragePrecision accumulates predictions/targets in these list states.
+    # torchmetrics MeanAveragePrecision list-type state attributes — verified against torchmetrics >=1.2,<2
+    # (pyproject.toml pin).  List states are identified by an empty-list default in metric._defaults.
+    # On any torchmetrics upgrade, re-verify and update:
+    #   python -c "from torchmetrics.detection import MeanAveragePrecision; \
+    #              m = MeanAveragePrecision(); \
+    #              print(sorted(k for k, v in m._defaults.items() if isinstance(v, list)))"
+    # setup() asserts this tuple matches installed torchmetrics on every run.
+    # TODO: remove this tuple (and the merge workaround) when Lightning-AI/torchmetrics#3199 is resolved.
     _MAP_STATE_ATTRS = (
         "detection_box",
         "detection_scores",
