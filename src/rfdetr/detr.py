@@ -14,7 +14,7 @@ import os
 import tempfile
 import warnings
 from collections import defaultdict
-from copy import deepcopy
+from copy import copy, deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -1532,12 +1532,11 @@ class RFDETR:
         with open(class_names_path, "w", encoding="utf-8", newline="\n") as f:
             f.write("\n".join(self.class_names))
 
-        # Also embed class_names in the args namespace so that any code path
-        # that loads the checkpoint directly (e.g. roboflow-python's second
-        # fallback) can find them.  Mutating the shared SimpleNamespace is
-        # intentional here: this mirrors reinitialize_detection_head(), which
-        # already mutates args.num_classes in-place.
-        args = self.model.args
+        # Embed class_names in a shallow copy of args so the saved bundle is
+        # self-contained (roboflow-python's second fallback reads args.class_names
+        # directly from the checkpoint).  Using a copy leaves self.model.args
+        # unmodified — each export call is independent regardless of call order.
+        args = copy(self.model.args)
         if not hasattr(args, "class_names") or args.class_names is None:
             args.class_names = self.class_names
 
