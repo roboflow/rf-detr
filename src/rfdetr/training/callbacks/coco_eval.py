@@ -462,16 +462,19 @@ class COCOEvalCallback(Callback):
     def _should_compute_ema(self, pl_module: Any) -> bool:
         """Decide — identically on every rank — whether to run the EMA metric ``compute()``.
 
-        The EMA ``compute()`` triggers a cross-rank metric sync.  Under DDP every rank must issue that collective
-        or none may, otherwise the collective sequence diverges and NCCL deadlocks (#931 / #449).  Each rank votes
-        ``1`` only when its EMA metric exists and has at least one update (so all synced state tensors are non-empty
-        and identically shaped across ranks); a cross-rank ``all_reduce(MIN)`` then makes the decision unanimous.
+        Under DDP, ``_merge_metric_state_across_ranks`` issues cross-rank collectives that every rank must
+        participate in, or none may — a rank that skips desynchronises the NCCL collective sequence and deadlocks
+        validation (#931 / #449).  Each rank votes ``1`` only when its EMA metric exists and received at least
+        one batch update this epoch; a cross-rank ``all_reduce(MIN)`` makes the decision unanimous — a single
+        rank voting 0 suppresses EMA compute on all ranks.
 
         Args:
             pl_module: The LightningModule (provides the device for the reduction).
 
         Returns:
-            ``True`` iff every rank has a populated EMA metric, i.e. the EMA ``compute()`` is safe to run everywhere.
+            ``True`` iff every rank both holds an EMA metric object and received at least one batch update this
+            epoch, making ``compute()`` safe to run identically on all ranks; ``False`` otherwise (EMA compute
+            skipped uniformly on all ranks).
         """
         has_ema = self.map_metric_ema is not None and self._ema_has_updates
         vote = 1 if has_ema else 0
