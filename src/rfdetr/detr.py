@@ -1493,6 +1493,10 @@ class RFDETR:
         Raises:
             ValueError: If the `api_key` is not provided and not found in the
                 environment variable `ROBOFLOW_API_KEY`, or if the `size` is not set for custom architectures.
+
+        Note:
+            Bundle creation is delegated to :meth:`export_for_roboflow`, which can be called independently
+            to write ``weights.pt`` and ``class_names.txt`` without a network round-trip.
         """
         from roboflow import Roboflow
 
@@ -1517,13 +1521,19 @@ class RFDETR:
     def export_for_roboflow(self, output_dir: str | os.PathLike[str]) -> None:
         """Write a Roboflow upload bundle (``weights.pt`` + ``class_names.txt``) into *output_dir*.
 
-        This is the network-free core of :meth:`deploy_to_roboflow`: it serialises the model state and training args
-        into ``weights.pt`` and writes the class labels to ``class_names.txt``.  The Roboflow SDK uses this format to
-        adapt raw PyTorch-Lightning checkpoints into a deploy-ready bundle.
+        This is the network-free core of :meth:`deploy_to_roboflow`: it serialises the model state and
+        training args into ``weights.pt``, always embedding ``class_names`` into a copy of the args so
+        the bundle is self-contained, and writes the class labels to ``class_names.txt``.  The Roboflow
+        SDK uses this format to adapt raw PyTorch-Lightning checkpoints into a deploy-ready bundle.
 
         Args:
-            output_dir: Directory into which ``weights.pt`` and ``class_names.txt`` are written.  Created if it does
-                not exist.
+            output_dir: Directory into which ``weights.pt`` and ``class_names.txt`` are written.  Created
+                if it does not exist.  Existing files are silently overwritten.
+
+        Raises:
+            PermissionError: If the process lacks write access to *output_dir* or its parent directory.
+            OSError: On disk-full, invalid path, or other filesystem failure during directory creation,
+                file write, or ``torch.save``.
         """
         os.makedirs(output_dir, exist_ok=True)
         # Write class_names.txt so the Roboflow upload pipeline can discover
