@@ -888,7 +888,7 @@ class TestMergeMetricStateAcrossRanks:
 
     @patch("rfdetr.training.callbacks.coco_eval.get_world_size", return_value=1)
     @patch("rfdetr.training.callbacks.coco_eval.is_dist_avail_and_initialized", return_value=True)
-    def test_no_op_when_world_size_is_one_in_initialized_group(self, _init, _ws) -> None:
+    def test_no_op_when_world_size_one(self, _init, _ws) -> None:
         """world_size==1 in an initialised group: state untouched, no gather issued."""
         cb = COCOEvalCallback()
         metric = _metric_with_state(n=1)
@@ -901,7 +901,7 @@ class TestMergeMetricStateAcrossRanks:
 class TestOnTestEpochStart:
     """on_test_epoch_start resets _ema_has_updates before test to prevent stale val state."""
 
-    def test_ema_metric_not_created_without_ema_callback_on_test_start(self) -> None:
+    def test_map_metric_ema_stays_none_without_ema_callback(self) -> None:
         """No EMA callback → map_metric_ema stays None after test hook fires."""
         cb = COCOEvalCallback()
         trainer = _make_trainer(callbacks=[])
@@ -912,7 +912,7 @@ class TestOnTestEpochStart:
 
         assert cb.map_metric_ema is None
 
-    def test_ema_has_updates_reset_on_test_epoch_start(self) -> None:
+    def test_resets_ema_has_updates_to_false(self) -> None:
         """on_test_epoch_start resets _ema_has_updates to False even when stale True from validation."""
         cb = COCOEvalCallback()
         trainer = _make_trainer(callbacks=[_ema_callback()])
@@ -928,7 +928,7 @@ class TestOnTestEpochStart:
 class TestPrepareEmaMetricSecondEpoch:
     """_prepare_ema_metric resets (not re-creates) the metric on subsequent epochs."""
 
-    def test_second_epoch_resets_existing_metric_not_recreates(self) -> None:
+    def test_resets_not_recreates_metric(self) -> None:
         """Calling on_validation_epoch_start twice resets the metric rather than replacing it."""
         cb = COCOEvalCallback()
         trainer = _make_trainer(callbacks=[_ema_callback()])
@@ -951,7 +951,7 @@ class TestPrepareEmaMetricSecondEpoch:
 class TestComputeAndLogEmaResetPath:
     """elif branch in _compute_and_log: gate False + metric not None → reset() fires."""
 
-    def test_ema_metric_reset_when_gate_false_but_metric_not_none(self) -> None:
+    def test_resets_ema_metric(self) -> None:
         """EMA not computed this epoch but metric exists → reset() clears state for the next epoch."""
         cb = COCOEvalCallback()
         trainer = _make_trainer()
