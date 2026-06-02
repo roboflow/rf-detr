@@ -557,6 +557,10 @@ class COCOEvalCallback(Callback):
             gathered = all_gather(local_cpu)  # list of per-rank lists (identical on every rank)
             merged = [item for rank_list in gathered for item in rank_list]
             setattr(metric, attr, merged)
+        # After merging, _update_count may still be 0 on ranks that received no local updates.
+        # torchmetrics 1.x compute() works correctly regardless, but emits a UserWarning
+        # ("compute called before update") that spams DDP logs on those ranks.
+        metric._update_count = max(getattr(metric, "_update_count", 0), 1)
 
     def _build_per_class_rows(
         self,

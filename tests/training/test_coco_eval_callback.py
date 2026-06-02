@@ -854,6 +854,7 @@ def _metric_with_state(n: int = 1) -> MagicMock:
     metric.groundtruth_mask = [((10, 10), b"rle") for _ in range(n)]
     metric.groundtruth_crowds = [torch.zeros(1) for _ in range(n)]
     metric.groundtruth_area = [torch.zeros(1) for _ in range(n)]
+    metric._update_count = 0
     return metric
 
 
