@@ -52,8 +52,7 @@ class TestExportForRoboflow:
 
         model.export_for_roboflow(str(tmp_path))
 
-        class_names_path = tmp_path / "class_names.txt"
-        assert class_names_path.read_text(encoding="utf-8").splitlines() == ["cat", "dog"]
+        assert (tmp_path / "class_names.txt").read_text(encoding="utf-8") == "cat\ndog"
 
     def test_embeds_class_names_in_args(self, tmp_path: Path) -> None:
         """class_names are embedded in the saved args namespace when absent."""
