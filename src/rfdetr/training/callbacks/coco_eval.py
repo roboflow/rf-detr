@@ -112,14 +112,14 @@ class COCOEvalCallback(Callback):
         declared = set(self._MAP_STATE_ATTRS)
         if installed != declared:
             raise RuntimeError(
-                f"COCOEvalCallback._MAP_STATE_ATTRS is out of sync with the installed torchmetrics "
+                "COCOEvalCallback._MAP_STATE_ATTRS is out of sync with the installed torchmetrics "
                 f"(version {self.map_metric.__class__.__module__}). "
                 f"Missing from _MAP_STATE_ATTRS: {sorted(installed - declared)}. "
                 f"Stale in _MAP_STATE_ATTRS: {sorted(declared - installed)}. "
-                f'Re-run: python -c "from torchmetrics.detection import MeanAveragePrecision; '
-                f"m = MeanAveragePrecision(); "
-                f'print(sorted(k for k, v in m._defaults.items() if isinstance(v, list)))" '
-                f"and update COCOEvalCallback._MAP_STATE_ATTRS to match."
+                'Re-run: python -c "from torchmetrics.detection import MeanAveragePrecision; '
+                "m = MeanAveragePrecision(); "
+                'print(sorted(k for k, v in m._defaults.items() if isinstance(v, list)))" '
+                "and update COCOEvalCallback._MAP_STATE_ATTRS to match."
             )
         # Separate metric for the EMA model.  Created deterministically on EVERY rank in
         # on_validation_epoch_start / on_test_epoch_start (see _prepare_ema_metric) so its
