@@ -63,6 +63,16 @@ class TestExportForRoboflow:
         bundle = torch.load(tmp_path / "weights.pt", map_location="cpu", weights_only=False)
         assert bundle["args"].class_names == ["cat", "dog"]
 
+    def test_does_not_overwrite_existing_args_class_names(self, tmp_path: Path) -> None:
+        """args.class_names already set on the model is preserved in the saved bundle."""
+        model = _make_stub_model(["cat", "dog"])
+        model.model.args.class_names = ["pre_existing"]
+
+        model.export_for_roboflow(str(tmp_path))
+
+        bundle = torch.load(tmp_path / "weights.pt", map_location="cpu", weights_only=False)
+        assert bundle["args"].class_names == ["pre_existing"]
+
     def test_creates_output_dir_when_missing(self, tmp_path: Path) -> None:
         """output_dir is created if it does not already exist."""
         model = _make_stub_model(["cat", "dog"])
