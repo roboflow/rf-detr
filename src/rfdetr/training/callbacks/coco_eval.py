@@ -510,6 +510,11 @@ class COCOEvalCallback(Callback):
 
         Args:
             metric: The ``MeanAveragePrecision`` instance whose state should be merged in place.
+
+        Note:
+            No-op when ``metric`` is ``None``, when the distributed process group is not
+            initialised, or when world size is 1 (single GPU / CPU training).  In these
+            cases the metric state is unchanged.
         """
         if metric is None or not is_dist_avail_and_initialized() or get_world_size() == 1:
             return
