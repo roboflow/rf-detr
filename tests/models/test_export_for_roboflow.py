@@ -73,6 +73,14 @@ class TestExportForRoboflow:
         bundle = torch.load(tmp_path / "weights.pt", map_location="cpu", weights_only=False)
         assert bundle["args"].class_names == ["pre_existing"]
 
+    def test_empty_class_names_writes_empty_file(self, tmp_path: Path) -> None:
+        """Empty class_names list produces an empty class_names.txt (no trailing newline)."""
+        model = _make_stub_model([])
+
+        model.export_for_roboflow(str(tmp_path))
+
+        assert (tmp_path / "class_names.txt").read_text(encoding="utf-8") == ""
+
     def test_creates_output_dir_when_missing(self, tmp_path: Path) -> None:
         """output_dir is created if it does not already exist."""
         model = _make_stub_model(["cat", "dog"])
