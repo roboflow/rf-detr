@@ -885,3 +885,94 @@ class TestMergeMetricStateAcrossRanks:
         assert len(metric.detection_scores) == 2
         assert len(metric.detection_mask) == 2
         assert len(metric.groundtruth_area) == 2
+
+    @patch("rfdetr.training.callbacks.coco_eval.get_world_size", return_value=1)
+    @patch("rfdetr.training.callbacks.coco_eval.is_dist_avail_and_initialized", return_value=True)
+    def test_no_op_when_world_size_is_one_in_initialized_group(self, _init, _ws) -> None:
+        """world_size==1 in an initialised group: state untouched, no gather issued."""
+        cb = COCOEvalCallback()
+        metric = _metric_with_state(n=1)
+        with patch("rfdetr.training.callbacks.coco_eval.all_gather") as mock_gather:
+            cb._merge_metric_state_across_ranks(metric)
+        mock_gather.assert_not_called()
+        assert len(metric.detection_box) == 1  # unchanged
+
+
+class TestOnTestEpochStart:
+    """on_test_epoch_start resets _ema_has_updates before test to prevent stale val state."""
+
+    def test_ema_metric_not_created_without_ema_callback_on_test_start(self) -> None:
+        """No EMA callback → map_metric_ema stays None after test hook fires."""
+        cb = COCOEvalCallback()
+        trainer = _make_trainer(callbacks=[])
+        module = _cpu_module()
+        cb.setup(trainer, module, stage="fit")
+
+        cb.on_test_epoch_start(trainer, module)
+
+        assert cb.map_metric_ema is None
+
+    def test_ema_has_updates_reset_on_test_epoch_start(self) -> None:
+        """on_test_epoch_start resets _ema_has_updates to False even when stale True from validation."""
+        cb = COCOEvalCallback()
+        trainer = _make_trainer(callbacks=[_ema_callback()])
+        module = _cpu_module()
+        cb.setup(trainer, module, stage="fit")
+        cb._ema_has_updates = True  # simulate stale value from a preceding validation epoch
+
+        cb.on_test_epoch_start(trainer, module)
+
+        assert cb._ema_has_updates is False
+
+
+class TestPrepareEmaMetricSecondEpoch:
+    """_prepare_ema_metric resets (not re-creates) the metric on subsequent epochs."""
+
+    def test_second_epoch_resets_existing_metric_not_recreates(self) -> None:
+        """Calling on_validation_epoch_start twice resets the metric rather than replacing it."""
+        cb = COCOEvalCallback()
+        trainer = _make_trainer(callbacks=[_ema_callback()])
+        module = _cpu_module()
+        cb.setup(trainer, module, stage="fit")
+
+        cb.on_validation_epoch_start(trainer, module)
+        assert cb.map_metric_ema is not None
+
+        # Replace with a spy mock so reset() calls are trackable on the second epoch
+        spy_metric = MagicMock(name="map_metric_ema")
+        cb.map_metric_ema = spy_metric
+
+        cb.on_validation_epoch_start(trainer, module)
+
+        assert cb.map_metric_ema is spy_metric  # same object, not replaced
+        spy_metric.reset.assert_called_once()
+
+
+class TestComputeAndLogEmaResetPath:
+    """elif branch in _compute_and_log: gate False + metric not None → reset() fires."""
+
+    def test_ema_metric_reset_when_gate_false_but_metric_not_none(self) -> None:
+        """EMA not computed this epoch but metric exists → reset() clears state for the next epoch."""
+        cb = COCOEvalCallback()
+        trainer = _make_trainer()
+        module = _cpu_module()
+        cb.setup(trainer, module, stage="fit")
+        trainer.callback_metrics = {}
+
+        # EMA metric exists but no batch updated it this epoch → gate returns False → elif fires
+        mock_ema = MagicMock(name="map_metric_ema")
+        cb.map_metric_ema = mock_ema
+        cb._ema_has_updates = False
+
+        cb.map_metric = MagicMock(name="map_metric")
+        cb.map_metric.compute.return_value = _minimal_metrics()
+
+        with (
+            patch.object(cb, "_merge_metric_state_across_ranks"),
+            patch.object(cb, "_build_per_class_rows", return_value=[]),
+            patch.object(cb, "_print_metrics_tables"),
+            patch("rfdetr.training.callbacks.coco_eval.distributed_merge_matching_data", return_value={}),
+        ):
+            cb._compute_and_log(trainer, module, "val")
+
+        mock_ema.reset.assert_called_once()
