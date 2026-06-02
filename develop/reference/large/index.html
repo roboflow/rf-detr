@@ -1869,6 +1869,34 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#rfdetr.variants.RFDETRLarge.export_for_roboflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;export_for_roboflow
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label=" export_for_roboflow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.variants.RFDETRLarge.export_for_roboflow(output_dir)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;output_dir
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#rfdetr.variants.RFDETRLarge.from_checkpoint" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3051,6 +3079,34 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#rfdetr.variants.RFDETRLarge.export_for_roboflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;export_for_roboflow
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label=" export_for_roboflow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.variants.RFDETRLarge.export_for_roboflow(output_dir)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;output_dir
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#rfdetr.variants.RFDETRLarge.from_checkpoint" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3696,6 +3752,12 @@ environment variable <code>ROBOFLOW_API_KEY</code>, or if the <code>size</code> 
     </table>
 
 
+<details class="note" open>
+  <summary>Note</summary>
+  <p>Bundle creation is delegated to :meth:<code>export_for_roboflow</code>, which can be called independently
+to write <code>weights.pt</code> and <code>class_names.txt</code> without a network round-trip.</p>
+</details>
+
             <details class="quote">
               <summary>Source code in <code>src/rfdetr/detr.py</code></summary>
               <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1469">1469</a></span>
@@ -3748,19 +3810,7 @@ environment variable <code>ROBOFLOW_API_KEY</code>, or if the <code>size</code> 
 <span class="normal"><a href="#__codelineno-0-1516">1516</a></span>
 <span class="normal"><a href="#__codelineno-0-1517">1517</a></span>
 <span class="normal"><a href="#__codelineno-0-1518">1518</a></span>
-<span class="normal"><a href="#__codelineno-0-1519">1519</a></span>
-<span class="normal"><a href="#__codelineno-0-1520">1520</a></span>
-<span class="normal"><a href="#__codelineno-0-1521">1521</a></span>
-<span class="normal"><a href="#__codelineno-0-1522">1522</a></span>
-<span class="normal"><a href="#__codelineno-0-1523">1523</a></span>
-<span class="normal"><a href="#__codelineno-0-1524">1524</a></span>
-<span class="normal"><a href="#__codelineno-0-1525">1525</a></span>
-<span class="normal"><a href="#__codelineno-0-1526">1526</a></span>
-<span class="normal"><a href="#__codelineno-0-1527">1527</a></span>
-<span class="normal"><a href="#__codelineno-0-1528">1528</a></span>
-<span class="normal"><a href="#__codelineno-0-1529">1529</a></span>
-<span class="normal"><a href="#__codelineno-0-1530">1530</a></span>
-<span class="normal"><a href="#__codelineno-0-1531">1531</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1469"><a id="__codelineno-0-1469" name="__codelineno-0-1469"></a><span class="k">def</span><span class="w"> </span><span class="nf">deploy_to_roboflow</span><span class="p">(</span>
+<span class="normal"><a href="#__codelineno-0-1519">1519</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1469"><a id="__codelineno-0-1469" name="__codelineno-0-1469"></a><span class="k">def</span><span class="w"> </span><span class="nf">deploy_to_roboflow</span><span class="p">(</span>
 </span><span id="__span-0-1470"><a id="__codelineno-0-1470" name="__codelineno-0-1470"></a>    <span class="bp">self</span><span class="p">,</span>
 </span><span id="__span-0-1471"><a id="__codelineno-0-1471" name="__codelineno-0-1471"></a>    <span class="n">workspace</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
 </span><span id="__span-0-1472"><a id="__codelineno-0-1472" name="__codelineno-0-1472"></a>    <span class="n">project_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
@@ -3787,42 +3837,30 @@ environment variable <code>ROBOFLOW_API_KEY</code>, or if the <code>size</code> 
 </span><span id="__span-0-1493"><a id="__codelineno-0-1493" name="__codelineno-0-1493"></a><span class="sd">    Raises:</span>
 </span><span id="__span-0-1494"><a id="__codelineno-0-1494" name="__codelineno-0-1494"></a><span class="sd">        ValueError: If the `api_key` is not provided and not found in the</span>
 </span><span id="__span-0-1495"><a id="__codelineno-0-1495" name="__codelineno-0-1495"></a><span class="sd">            environment variable `ROBOFLOW_API_KEY`, or if the `size` is not set for custom architectures.</span>
-</span><span id="__span-0-1496"><a id="__codelineno-0-1496" name="__codelineno-0-1496"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-1497"><a id="__codelineno-0-1497" name="__codelineno-0-1497"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">roboflow</span><span class="w"> </span><span class="kn">import</span> <span class="n">Roboflow</span>
-</span><span id="__span-0-1498"><a id="__codelineno-0-1498" name="__codelineno-0-1498"></a>
-</span><span id="__span-0-1499"><a id="__codelineno-0-1499" name="__codelineno-0-1499"></a>    <span class="k">if</span> <span class="n">api_key</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-1500"><a id="__codelineno-0-1500" name="__codelineno-0-1500"></a>        <span class="n">api_key</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">getenv</span><span class="p">(</span><span class="s2">&quot;ROBOFLOW_API_KEY&quot;</span><span class="p">)</span>
-</span><span id="__span-0-1501"><a id="__codelineno-0-1501" name="__codelineno-0-1501"></a>        <span class="k">if</span> <span class="n">api_key</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-1502"><a id="__codelineno-0-1502" name="__codelineno-0-1502"></a>            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Set api_key=&lt;KEY&gt; in deploy_to_roboflow or export ROBOFLOW_API_KEY=&lt;KEY&gt;&quot;</span><span class="p">)</span>
-</span><span id="__span-0-1503"><a id="__codelineno-0-1503" name="__codelineno-0-1503"></a>
-</span><span id="__span-0-1504"><a id="__codelineno-0-1504" name="__codelineno-0-1504"></a>    <span class="n">rf</span> <span class="o">=</span> <span class="n">Roboflow</span><span class="p">(</span><span class="n">api_key</span><span class="o">=</span><span class="n">api_key</span><span class="p">)</span>
-</span><span id="__span-0-1505"><a id="__codelineno-0-1505" name="__codelineno-0-1505"></a>    <span class="n">workspace</span> <span class="o">=</span> <span class="n">rf</span><span class="o">.</span><span class="n">workspace</span><span class="p">(</span><span class="n">workspace</span><span class="p">)</span>
-</span><span id="__span-0-1506"><a id="__codelineno-0-1506" name="__codelineno-0-1506"></a>
-</span><span id="__span-0-1507"><a id="__codelineno-0-1507" name="__codelineno-0-1507"></a>    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">size</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">size</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-1508"><a id="__codelineno-0-1508" name="__codelineno-0-1508"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Must set size for custom architectures&quot;</span><span class="p">)</span>
-</span><span id="__span-0-1509"><a id="__codelineno-0-1509" name="__codelineno-0-1509"></a>
-</span><span id="__span-0-1510"><a id="__codelineno-0-1510" name="__codelineno-0-1510"></a>    <span class="n">size</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">size</span> <span class="ow">or</span> <span class="n">size</span>
-</span><span id="__span-0-1511"><a id="__codelineno-0-1511" name="__codelineno-0-1511"></a>    <span class="k">with</span> <span class="n">tempfile</span><span class="o">.</span><span class="n">TemporaryDirectory</span><span class="p">(</span><span class="n">prefix</span><span class="o">=</span><span class="s2">&quot;roboflow_upload_&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">tmp_out_dir</span><span class="p">:</span>
-</span><span id="__span-0-1512"><a id="__codelineno-0-1512" name="__codelineno-0-1512"></a>        <span class="c1"># Write class_names.txt so the Roboflow upload pipeline can discover</span>
-</span><span id="__span-0-1513"><a id="__codelineno-0-1513" name="__codelineno-0-1513"></a>        <span class="c1"># the class labels without relying on args.class_names in the checkpoint.</span>
-</span><span id="__span-0-1514"><a id="__codelineno-0-1514" name="__codelineno-0-1514"></a>        <span class="n">class_names_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">tmp_out_dir</span><span class="p">,</span> <span class="s2">&quot;class_names.txt&quot;</span><span class="p">)</span>
-</span><span id="__span-0-1515"><a id="__codelineno-0-1515" name="__codelineno-0-1515"></a>        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">class_names_path</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">&quot;utf-8&quot;</span><span class="p">,</span> <span class="n">newline</span><span class="o">=</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
-</span><span id="__span-0-1516"><a id="__codelineno-0-1516" name="__codelineno-0-1516"></a>            <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">class_names</span><span class="p">))</span>
-</span><span id="__span-0-1517"><a id="__codelineno-0-1517" name="__codelineno-0-1517"></a>
-</span><span id="__span-0-1518"><a id="__codelineno-0-1518" name="__codelineno-0-1518"></a>        <span class="c1"># Also embed class_names in the args namespace so that any code path</span>
-</span><span id="__span-0-1519"><a id="__codelineno-0-1519" name="__codelineno-0-1519"></a>        <span class="c1"># that loads the checkpoint directly (e.g. roboflow-python&#39;s second</span>
-</span><span id="__span-0-1520"><a id="__codelineno-0-1520" name="__codelineno-0-1520"></a>        <span class="c1"># fallback) can find them.  Mutating the shared SimpleNamespace is</span>
-</span><span id="__span-0-1521"><a id="__codelineno-0-1521" name="__codelineno-0-1521"></a>        <span class="c1"># intentional here: this mirrors reinitialize_detection_head(), which</span>
-</span><span id="__span-0-1522"><a id="__codelineno-0-1522" name="__codelineno-0-1522"></a>        <span class="c1"># already mutates args.num_classes in-place.</span>
-</span><span id="__span-0-1523"><a id="__codelineno-0-1523" name="__codelineno-0-1523"></a>        <span class="n">args</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">args</span>
-</span><span id="__span-0-1524"><a id="__codelineno-0-1524" name="__codelineno-0-1524"></a>        <span class="k">if</span> <span class="ow">not</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">args</span><span class="p">,</span> <span class="s2">&quot;class_names&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="n">args</span><span class="o">.</span><span class="n">class_names</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-1525"><a id="__codelineno-0-1525" name="__codelineno-0-1525"></a>            <span class="n">args</span><span class="o">.</span><span class="n">class_names</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">class_names</span>
-</span><span id="__span-0-1526"><a id="__codelineno-0-1526" name="__codelineno-0-1526"></a>
-</span><span id="__span-0-1527"><a id="__codelineno-0-1527" name="__codelineno-0-1527"></a>        <span class="n">outpath</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">tmp_out_dir</span><span class="p">,</span> <span class="s2">&quot;weights.pt&quot;</span><span class="p">)</span>
-</span><span id="__span-0-1528"><a id="__codelineno-0-1528" name="__codelineno-0-1528"></a>        <span class="n">torch</span><span class="o">.</span><span class="n">save</span><span class="p">({</span><span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">state_dict</span><span class="p">(),</span> <span class="s2">&quot;args&quot;</span><span class="p">:</span> <span class="n">args</span><span class="p">},</span> <span class="n">outpath</span><span class="p">)</span>
-</span><span id="__span-0-1529"><a id="__codelineno-0-1529" name="__codelineno-0-1529"></a>        <span class="n">project</span> <span class="o">=</span> <span class="n">workspace</span><span class="o">.</span><span class="n">project</span><span class="p">(</span><span class="n">project_id</span><span class="p">)</span>
-</span><span id="__span-0-1530"><a id="__codelineno-0-1530" name="__codelineno-0-1530"></a>        <span class="n">project_version</span> <span class="o">=</span> <span class="n">project</span><span class="o">.</span><span class="n">version</span><span class="p">(</span><span class="n">version</span><span class="p">)</span>
-</span><span id="__span-0-1531"><a id="__codelineno-0-1531" name="__codelineno-0-1531"></a>        <span class="n">project_version</span><span class="o">.</span><span class="n">deploy</span><span class="p">(</span><span class="n">model_type</span><span class="o">=</span><span class="n">size</span><span class="p">,</span> <span class="n">model_path</span><span class="o">=</span><span class="n">tmp_out_dir</span><span class="p">,</span> <span class="n">filename</span><span class="o">=</span><span class="s2">&quot;weights.pt&quot;</span><span class="p">)</span>
+</span><span id="__span-0-1496"><a id="__codelineno-0-1496" name="__codelineno-0-1496"></a>
+</span><span id="__span-0-1497"><a id="__codelineno-0-1497" name="__codelineno-0-1497"></a><span class="sd">    Note:</span>
+</span><span id="__span-0-1498"><a id="__codelineno-0-1498" name="__codelineno-0-1498"></a><span class="sd">        Bundle creation is delegated to :meth:`export_for_roboflow`, which can be called independently</span>
+</span><span id="__span-0-1499"><a id="__codelineno-0-1499" name="__codelineno-0-1499"></a><span class="sd">        to write ``weights.pt`` and ``class_names.txt`` without a network round-trip.</span>
+</span><span id="__span-0-1500"><a id="__codelineno-0-1500" name="__codelineno-0-1500"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-1501"><a id="__codelineno-0-1501" name="__codelineno-0-1501"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">roboflow</span><span class="w"> </span><span class="kn">import</span> <span class="n">Roboflow</span>
+</span><span id="__span-0-1502"><a id="__codelineno-0-1502" name="__codelineno-0-1502"></a>
+</span><span id="__span-0-1503"><a id="__codelineno-0-1503" name="__codelineno-0-1503"></a>    <span class="k">if</span> <span class="n">api_key</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-1504"><a id="__codelineno-0-1504" name="__codelineno-0-1504"></a>        <span class="n">api_key</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">getenv</span><span class="p">(</span><span class="s2">&quot;ROBOFLOW_API_KEY&quot;</span><span class="p">)</span>
+</span><span id="__span-0-1505"><a id="__codelineno-0-1505" name="__codelineno-0-1505"></a>        <span class="k">if</span> <span class="n">api_key</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-1506"><a id="__codelineno-0-1506" name="__codelineno-0-1506"></a>            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Set api_key=&lt;KEY&gt; in deploy_to_roboflow or export ROBOFLOW_API_KEY=&lt;KEY&gt;&quot;</span><span class="p">)</span>
+</span><span id="__span-0-1507"><a id="__codelineno-0-1507" name="__codelineno-0-1507"></a>
+</span><span id="__span-0-1508"><a id="__codelineno-0-1508" name="__codelineno-0-1508"></a>    <span class="n">rf</span> <span class="o">=</span> <span class="n">Roboflow</span><span class="p">(</span><span class="n">api_key</span><span class="o">=</span><span class="n">api_key</span><span class="p">)</span>
+</span><span id="__span-0-1509"><a id="__codelineno-0-1509" name="__codelineno-0-1509"></a>    <span class="n">workspace</span> <span class="o">=</span> <span class="n">rf</span><span class="o">.</span><span class="n">workspace</span><span class="p">(</span><span class="n">workspace</span><span class="p">)</span>
+</span><span id="__span-0-1510"><a id="__codelineno-0-1510" name="__codelineno-0-1510"></a>
+</span><span id="__span-0-1511"><a id="__codelineno-0-1511" name="__codelineno-0-1511"></a>    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">size</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">size</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-1512"><a id="__codelineno-0-1512" name="__codelineno-0-1512"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Must set size for custom architectures&quot;</span><span class="p">)</span>
+</span><span id="__span-0-1513"><a id="__codelineno-0-1513" name="__codelineno-0-1513"></a>
+</span><span id="__span-0-1514"><a id="__codelineno-0-1514" name="__codelineno-0-1514"></a>    <span class="n">size</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">size</span> <span class="ow">or</span> <span class="n">size</span>
+</span><span id="__span-0-1515"><a id="__codelineno-0-1515" name="__codelineno-0-1515"></a>    <span class="k">with</span> <span class="n">tempfile</span><span class="o">.</span><span class="n">TemporaryDirectory</span><span class="p">(</span><span class="n">prefix</span><span class="o">=</span><span class="s2">&quot;roboflow_upload_&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">tmp_out_dir</span><span class="p">:</span>
+</span><span id="__span-0-1516"><a id="__codelineno-0-1516" name="__codelineno-0-1516"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">export_for_roboflow</span><span class="p">(</span><span class="n">tmp_out_dir</span><span class="p">)</span>
+</span><span id="__span-0-1517"><a id="__codelineno-0-1517" name="__codelineno-0-1517"></a>        <span class="n">project</span> <span class="o">=</span> <span class="n">workspace</span><span class="o">.</span><span class="n">project</span><span class="p">(</span><span class="n">project_id</span><span class="p">)</span>
+</span><span id="__span-0-1518"><a id="__codelineno-0-1518" name="__codelineno-0-1518"></a>        <span class="n">project_version</span> <span class="o">=</span> <span class="n">project</span><span class="o">.</span><span class="n">version</span><span class="p">(</span><span class="n">version</span><span class="p">)</span>
+</span><span id="__span-0-1519"><a id="__codelineno-0-1519" name="__codelineno-0-1519"></a>        <span class="n">project_version</span><span class="o">.</span><span class="n">deploy</span><span class="p">(</span><span class="n">model_type</span><span class="o">=</span><span class="n">size</span><span class="p">,</span> <span class="n">model_path</span><span class="o">=</span><span class="n">tmp_out_dir</span><span class="p">,</span> <span class="n">filename</span><span class="o">=</span><span class="s2">&quot;weights.pt&quot;</span><span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -4587,6 +4625,165 @@ information.</p>
 </span><span id="__span-0-1049"><a id="__codelineno-0-1049" name="__codelineno-0-1049"></a>        <span class="k">return</span> <span class="n">Path</span><span class="p">(</span><span class="n">output_file</span><span class="p">)</span>
 </span><span id="__span-0-1050"><a id="__codelineno-0-1050" name="__codelineno-0-1050"></a>    <span class="k">finally</span><span class="p">:</span>
 </span><span id="__span-0-1051"><a id="__codelineno-0-1051" name="__codelineno-0-1051"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">model</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+</span></code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="rfdetr.variants.RFDETRLarge.export_for_roboflow" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="n">export_for_roboflow</span><span class="p">(</span><span class="n">output_dir</span><span class="p">)</span></code>
+
+<a href="#rfdetr.variants.RFDETRLarge.export_for_roboflow" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Write a Roboflow upload bundle (<code>weights.pt</code> + <code>class_names.txt</code>) into <em>output_dir</em>.</p>
+<p>This is the network-free core of :meth:<code>deploy_to_roboflow</code>: it serialises the model state and
+training args into <code>weights.pt</code>, always embedding <code>class_names</code> into a copy of the args so
+the bundle is self-contained, and writes the class labels to <code>class_names.txt</code>.  The Roboflow
+SDK uses this format to adapt raw PyTorch-Lightning checkpoints into a deploy-ready bundle.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+<h4 id="rfdetr.variants.RFDETRLarge.export_for_roboflow(output_dir)" class="doc doc-heading doc-heading-parameter">                  <code>output_dir</code>
+<a href="#rfdetr.variants.RFDETRLarge.export_for_roboflow(output_dir)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
+            <td>
+                  <code><span title="str">str</span> | <span title="os.PathLike">PathLike</span>[<span title="str">str</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Directory into which <code>weights.pt</code> and <code>class_names.txt</code> are written.  Created
+if it does not exist.  Existing files are silently overwritten.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+<p><span class="doc-section-title">Raises:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="PermissionError">PermissionError</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>If the process lacks write access to <em>output_dir</em> or its parent directory.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="OSError">OSError</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>On disk-full, invalid path, or other filesystem failure during directory creation,
+file write, or <code>torch.save</code>.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+            <details class="quote">
+              <summary>Source code in <code>src/rfdetr/detr.py</code></summary>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1521">1521</a></span>
+<span class="normal"><a href="#__codelineno-0-1522">1522</a></span>
+<span class="normal"><a href="#__codelineno-0-1523">1523</a></span>
+<span class="normal"><a href="#__codelineno-0-1524">1524</a></span>
+<span class="normal"><a href="#__codelineno-0-1525">1525</a></span>
+<span class="normal"><a href="#__codelineno-0-1526">1526</a></span>
+<span class="normal"><a href="#__codelineno-0-1527">1527</a></span>
+<span class="normal"><a href="#__codelineno-0-1528">1528</a></span>
+<span class="normal"><a href="#__codelineno-0-1529">1529</a></span>
+<span class="normal"><a href="#__codelineno-0-1530">1530</a></span>
+<span class="normal"><a href="#__codelineno-0-1531">1531</a></span>
+<span class="normal"><a href="#__codelineno-0-1532">1532</a></span>
+<span class="normal"><a href="#__codelineno-0-1533">1533</a></span>
+<span class="normal"><a href="#__codelineno-0-1534">1534</a></span>
+<span class="normal"><a href="#__codelineno-0-1535">1535</a></span>
+<span class="normal"><a href="#__codelineno-0-1536">1536</a></span>
+<span class="normal"><a href="#__codelineno-0-1537">1537</a></span>
+<span class="normal"><a href="#__codelineno-0-1538">1538</a></span>
+<span class="normal"><a href="#__codelineno-0-1539">1539</a></span>
+<span class="normal"><a href="#__codelineno-0-1540">1540</a></span>
+<span class="normal"><a href="#__codelineno-0-1541">1541</a></span>
+<span class="normal"><a href="#__codelineno-0-1542">1542</a></span>
+<span class="normal"><a href="#__codelineno-0-1543">1543</a></span>
+<span class="normal"><a href="#__codelineno-0-1544">1544</a></span>
+<span class="normal"><a href="#__codelineno-0-1545">1545</a></span>
+<span class="normal"><a href="#__codelineno-0-1546">1546</a></span>
+<span class="normal"><a href="#__codelineno-0-1547">1547</a></span>
+<span class="normal"><a href="#__codelineno-0-1548">1548</a></span>
+<span class="normal"><a href="#__codelineno-0-1549">1549</a></span>
+<span class="normal"><a href="#__codelineno-0-1550">1550</a></span>
+<span class="normal"><a href="#__codelineno-0-1551">1551</a></span>
+<span class="normal"><a href="#__codelineno-0-1552">1552</a></span>
+<span class="normal"><a href="#__codelineno-0-1553">1553</a></span>
+<span class="normal"><a href="#__codelineno-0-1554">1554</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1521"><a id="__codelineno-0-1521" name="__codelineno-0-1521"></a><span class="k">def</span><span class="w"> </span><span class="nf">export_for_roboflow</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">output_dir</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">os</span><span class="o">.</span><span class="n">PathLike</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-1522"><a id="__codelineno-0-1522" name="__codelineno-0-1522"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Write a Roboflow upload bundle (``weights.pt`` + ``class_names.txt``) into *output_dir*.</span>
+</span><span id="__span-0-1523"><a id="__codelineno-0-1523" name="__codelineno-0-1523"></a>
+</span><span id="__span-0-1524"><a id="__codelineno-0-1524" name="__codelineno-0-1524"></a><span class="sd">    This is the network-free core of :meth:`deploy_to_roboflow`: it serialises the model state and</span>
+</span><span id="__span-0-1525"><a id="__codelineno-0-1525" name="__codelineno-0-1525"></a><span class="sd">    training args into ``weights.pt``, always embedding ``class_names`` into a copy of the args so</span>
+</span><span id="__span-0-1526"><a id="__codelineno-0-1526" name="__codelineno-0-1526"></a><span class="sd">    the bundle is self-contained, and writes the class labels to ``class_names.txt``.  The Roboflow</span>
+</span><span id="__span-0-1527"><a id="__codelineno-0-1527" name="__codelineno-0-1527"></a><span class="sd">    SDK uses this format to adapt raw PyTorch-Lightning checkpoints into a deploy-ready bundle.</span>
+</span><span id="__span-0-1528"><a id="__codelineno-0-1528" name="__codelineno-0-1528"></a>
+</span><span id="__span-0-1529"><a id="__codelineno-0-1529" name="__codelineno-0-1529"></a><span class="sd">    Args:</span>
+</span><span id="__span-0-1530"><a id="__codelineno-0-1530" name="__codelineno-0-1530"></a><span class="sd">        output_dir: Directory into which ``weights.pt`` and ``class_names.txt`` are written.  Created</span>
+</span><span id="__span-0-1531"><a id="__codelineno-0-1531" name="__codelineno-0-1531"></a><span class="sd">            if it does not exist.  Existing files are silently overwritten.</span>
+</span><span id="__span-0-1532"><a id="__codelineno-0-1532" name="__codelineno-0-1532"></a>
+</span><span id="__span-0-1533"><a id="__codelineno-0-1533" name="__codelineno-0-1533"></a><span class="sd">    Raises:</span>
+</span><span id="__span-0-1534"><a id="__codelineno-0-1534" name="__codelineno-0-1534"></a><span class="sd">        PermissionError: If the process lacks write access to *output_dir* or its parent directory.</span>
+</span><span id="__span-0-1535"><a id="__codelineno-0-1535" name="__codelineno-0-1535"></a><span class="sd">        OSError: On disk-full, invalid path, or other filesystem failure during directory creation,</span>
+</span><span id="__span-0-1536"><a id="__codelineno-0-1536" name="__codelineno-0-1536"></a><span class="sd">            file write, or ``torch.save``.</span>
+</span><span id="__span-0-1537"><a id="__codelineno-0-1537" name="__codelineno-0-1537"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-1538"><a id="__codelineno-0-1538" name="__codelineno-0-1538"></a>    <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">output_dir</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-0-1539"><a id="__codelineno-0-1539" name="__codelineno-0-1539"></a>    <span class="c1"># Write class_names.txt so the Roboflow upload pipeline can discover</span>
+</span><span id="__span-0-1540"><a id="__codelineno-0-1540" name="__codelineno-0-1540"></a>    <span class="c1"># the class labels without relying on args.class_names in the checkpoint.</span>
+</span><span id="__span-0-1541"><a id="__codelineno-0-1541" name="__codelineno-0-1541"></a>    <span class="n">class_names_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">output_dir</span><span class="p">,</span> <span class="s2">&quot;class_names.txt&quot;</span><span class="p">)</span>
+</span><span id="__span-0-1542"><a id="__codelineno-0-1542" name="__codelineno-0-1542"></a>    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">class_names_path</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">&quot;utf-8&quot;</span><span class="p">,</span> <span class="n">newline</span><span class="o">=</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+</span><span id="__span-0-1543"><a id="__codelineno-0-1543" name="__codelineno-0-1543"></a>        <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">class_names</span><span class="p">))</span>
+</span><span id="__span-0-1544"><a id="__codelineno-0-1544" name="__codelineno-0-1544"></a>
+</span><span id="__span-0-1545"><a id="__codelineno-0-1545" name="__codelineno-0-1545"></a>    <span class="c1"># Embed class_names in a shallow copy of args so the saved bundle is</span>
+</span><span id="__span-0-1546"><a id="__codelineno-0-1546" name="__codelineno-0-1546"></a>    <span class="c1"># self-contained (roboflow-python&#39;s second fallback reads args.class_names</span>
+</span><span id="__span-0-1547"><a id="__codelineno-0-1547" name="__codelineno-0-1547"></a>    <span class="c1"># directly from the checkpoint).  Using a copy leaves self.model.args</span>
+</span><span id="__span-0-1548"><a id="__codelineno-0-1548" name="__codelineno-0-1548"></a>    <span class="c1"># unmodified — each export call is independent regardless of call order.</span>
+</span><span id="__span-0-1549"><a id="__codelineno-0-1549" name="__codelineno-0-1549"></a>    <span class="n">args</span> <span class="o">=</span> <span class="n">copy</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">args</span><span class="p">)</span>
+</span><span id="__span-0-1550"><a id="__codelineno-0-1550" name="__codelineno-0-1550"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">args</span><span class="p">,</span> <span class="s2">&quot;class_names&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="n">args</span><span class="o">.</span><span class="n">class_names</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-1551"><a id="__codelineno-0-1551" name="__codelineno-0-1551"></a>        <span class="n">args</span><span class="o">.</span><span class="n">class_names</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">class_names</span>
+</span><span id="__span-0-1552"><a id="__codelineno-0-1552" name="__codelineno-0-1552"></a>
+</span><span id="__span-0-1553"><a id="__codelineno-0-1553" name="__codelineno-0-1553"></a>    <span class="n">outpath</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">output_dir</span><span class="p">,</span> <span class="s2">&quot;weights.pt&quot;</span><span class="p">)</span>
+</span><span id="__span-0-1554"><a id="__codelineno-0-1554" name="__codelineno-0-1554"></a>    <span class="n">torch</span><span class="o">.</span><span class="n">save</span><span class="p">({</span><span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">state_dict</span><span class="p">(),</span> <span class="s2">&quot;args&quot;</span><span class="p">:</span> <span class="n">args</span><span class="p">},</span> <span class="n">outpath</span><span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
