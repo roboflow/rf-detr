@@ -1514,7 +1514,7 @@ class RFDETR:
             project_version = project.version(version)
             project_version.deploy(model_type=size, model_path=tmp_out_dir, filename="weights.pt")
 
-    def export_for_roboflow(self, output_dir: str) -> None:
+    def export_for_roboflow(self, output_dir: str | os.PathLike[str]) -> None:
         """Write a Roboflow upload bundle (``weights.pt`` + ``class_names.txt``) into *output_dir*.
 
         This is the network-free core of :meth:`deploy_to_roboflow`: it serialises the model state and training args
