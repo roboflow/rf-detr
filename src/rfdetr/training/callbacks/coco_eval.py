@@ -156,7 +156,13 @@ class COCOEvalCallback(Callback):
         self._prepare_ema_metric(trainer, pl_module)
 
     def on_test_epoch_start(self, trainer: Any, pl_module: Any) -> None:
-        """Prepare the EMA metric on every rank before test (keeps DDP collectives symmetric).
+        """Reset ``_ema_has_updates`` before test to prevent stale validation state from triggering EMA compute.
+
+        ``on_test_batch_end`` never sets ``_ema_has_updates = True``, so EMA compute is always skipped during
+        test (test metrics already reflect the EMA model via checkpoint loading in
+        :class:`~rfdetr.lit.callbacks.best_model.BestModelCallback`).  Without this hook a stale ``True`` value
+        left by a preceding validation epoch would make ``_should_compute_ema`` return ``True``, causing an
+        empty-state EMA compute pass that logs sentinel ``-1`` values.
 
         Args:
             trainer: The PTL Trainer.
