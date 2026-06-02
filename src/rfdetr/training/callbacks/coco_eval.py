@@ -176,7 +176,7 @@ class COCOEvalCallback(Callback):
 
         ``on_test_batch_end`` never sets ``_ema_has_updates = True``, so EMA compute is always skipped during
         test (test metrics already reflect the EMA model via checkpoint loading in
-        :class:`~rfdetr.lit.callbacks.best_model.BestModelCallback`).  Without this hook a stale ``True`` value
+        :class:`~rfdetr.training.callbacks.best_model.BestModelCallback`).  Without this hook a stale ``True`` value
         left by a preceding validation epoch would make ``_should_compute_ema`` return ``True``, causing an
         empty-state EMA compute pass that logs sentinel ``-1`` values.
 
