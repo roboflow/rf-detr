@@ -411,6 +411,7 @@ class TestOnValidationEpochEnd:
         # Simulate map_metric_ema being populated by on_validation_batch_end.
         cb.map_metric_ema = MagicMock(name="map_metric_ema")
         cb.map_metric_ema.compute.return_value = _minimal_metrics()
+        cb._ema_has_updates = True
         module = _make_pl_module()
 
         cb.on_validation_epoch_end(_make_trainer(), module)
@@ -505,6 +506,7 @@ class TestOnValidationEpochEnd:
         cb.map_metric.compute.return_value = _minimal_metrics()
         cb.map_metric_ema = MagicMock(name="map_metric_ema")
         cb.map_metric_ema.compute.return_value = _minimal_metrics()
+        cb._ema_has_updates = True
 
         cb.on_validation_epoch_end(trainer, _make_pl_module())
 
@@ -535,6 +537,7 @@ class TestOnValidationEpochEnd:
         ema_metrics["segm_map_50"] = torch.tensor(0.65)
         cb.map_metric_ema = MagicMock(name="map_metric_ema")
         cb.map_metric_ema.compute.return_value = ema_metrics
+        cb._ema_has_updates = True
         module = _make_pl_module()
 
         cb.on_validation_epoch_end(trainer, module)
@@ -748,3 +751,228 @@ class TestConvertTargets:
         ]
         out = cb._convert_targets(targets)
         assert set(out[0].keys()) == {"boxes", "labels"}
+
+
+def _ema_callback() -> MagicMock:
+    """Return a mock that ``_get_ema_callback`` recognises (has ``get_ema_model_state_dict``)."""
+    cb = MagicMock(name="ema_callback")
+    cb.get_ema_model_state_dict = MagicMock(name="get_ema_model_state_dict")
+    return cb
+
+
+def _cpu_module() -> MagicMock:
+    """Mock LightningModule whose ``device`` is a real string so ``metric.to(device)`` works."""
+    module = MagicMock(name="pl_module")
+    module.device = "cpu"
+    return module
+
+
+class TestEmaCollectiveSymmetry:
+    """DDP-deadlock fix: the EMA metric's cross-rank sync must be issued symmetrically (#931/#449)."""
+
+    def test_ema_metric_created_on_val_epoch_start_when_ema_active(self) -> None:
+        """map_metric_ema is created on validation start whenever the EMA callback is present.
+
+        This makes the EMA ``compute()`` collective rank-invariant — created on every rank regardless of how many
+        (or zero) val batches that rank later processes — rather than lazily per-batch.
+        """
+        cb = COCOEvalCallback(max_dets=500)
+        trainer = _make_trainer(callbacks=[_ema_callback()])
+        module = _cpu_module()
+        cb.setup(trainer, module, stage="fit")
+        assert cb.map_metric_ema is None  # not created yet at setup
+
+        cb.on_validation_epoch_start(trainer, module)
+
+        assert cb.map_metric_ema is not None
+
+    def test_ema_metric_not_created_without_ema_callback(self) -> None:
+        """No EMA callback → map_metric_ema stays None (no EMA collective is ever issued)."""
+        cb = COCOEvalCallback()
+        trainer = _make_trainer(callbacks=[])
+        module = _cpu_module()
+        cb.setup(trainer, module, stage="fit")
+
+        cb.on_validation_epoch_start(trainer, module)
+
+        assert cb.map_metric_ema is None
+
+    def test_should_compute_ema_false_when_metric_has_no_updates(self) -> None:
+        """A rank whose EMA metric saw no updates votes against computing (avoids empty-state divergence)."""
+        cb = COCOEvalCallback()
+        cb.map_metric_ema = MagicMock(name="map_metric_ema")
+        cb._ema_has_updates = False
+
+        assert cb._should_compute_ema(_cpu_module()) is False
+
+    def test_should_compute_ema_true_when_metric_has_updates_single_process(self) -> None:
+        """With updates and no distributed group, the EMA compute proceeds."""
+        cb = COCOEvalCallback()
+        cb.map_metric_ema = MagicMock(name="map_metric_ema")
+        cb._ema_has_updates = True
+
+        assert cb._should_compute_ema(_cpu_module()) is True
+
+    @patch("rfdetr.training.callbacks.coco_eval.is_dist_avail_and_initialized", return_value=True)
+    @patch("rfdetr.training.callbacks.coco_eval.dist.all_reduce")
+    def test_unanimous_gate_skips_when_a_peer_lacks_ema(self, mock_all_reduce, _mock_init) -> None:
+        """Even with local updates, the gate returns False if any peer voted 0 (all_reduce MIN → 0)."""
+
+        def _peer_voted_zero(flag, op=None):  # simulate a rank with no EMA data
+            flag.zero_()
+
+        mock_all_reduce.side_effect = _peer_voted_zero
+        cb = COCOEvalCallback()
+        cb.map_metric_ema = MagicMock(name="map_metric_ema")
+        cb._ema_has_updates = True
+
+        assert cb._should_compute_ema(_cpu_module()) is False
+        mock_all_reduce.assert_called_once()
+
+    @patch("rfdetr.training.callbacks.coco_eval.is_dist_avail_and_initialized", return_value=True)
+    @patch("rfdetr.training.callbacks.coco_eval.dist.all_reduce")
+    def test_unanimous_gate_runs_when_all_ranks_have_ema(self, mock_all_reduce, _mock_init) -> None:
+        """When every rank has EMA updates (all_reduce MIN leaves the vote at 1), the gate returns True."""
+        mock_all_reduce.side_effect = lambda flag, op=None: None  # vote tensor stays [1]
+        cb = COCOEvalCallback()
+        cb.map_metric_ema = MagicMock(name="map_metric_ema")
+        cb._ema_has_updates = True
+
+        assert cb._should_compute_ema(_cpu_module()) is True
+        mock_all_reduce.assert_called_once()
+
+
+def _metric_with_state(n: int = 1) -> MagicMock:
+    """Mock MeanAveragePrecision carrying minimal per-image state lists (one entry each)."""
+    metric = MagicMock(name="map_metric")
+    metric.detection_box = [torch.zeros(2, 4) for _ in range(n)]
+    metric.detection_scores = [torch.zeros(2) for _ in range(n)]
+    metric.detection_labels = [torch.zeros(2, dtype=torch.long) for _ in range(n)]
+    metric.detection_mask = [((10, 10), b"rle") for _ in range(n)]
+    metric.groundtruth_box = [torch.zeros(1, 4) for _ in range(n)]
+    metric.groundtruth_labels = [torch.zeros(1, dtype=torch.long) for _ in range(n)]
+    metric.groundtruth_mask = [((10, 10), b"rle") for _ in range(n)]
+    metric.groundtruth_crowds = [torch.zeros(1) for _ in range(n)]
+    metric.groundtruth_area = [torch.zeros(1) for _ in range(n)]
+    metric._update_count = 0
+    return metric
+
+
+class TestMergeMetricStateAcrossRanks:
+    """The DDP-safe replacement for torchmetrics' internal sync (#931/#449)."""
+
+    def test_no_op_when_not_distributed(self) -> None:
+        """Single-process / non-distributed: state is left untouched and no gather happens."""
+        cb = COCOEvalCallback()
+        metric = _metric_with_state(n=1)
+        with patch("rfdetr.training.callbacks.coco_eval.all_gather") as mock_gather:
+            cb._merge_metric_state_across_ranks(metric)
+        mock_gather.assert_not_called()
+        assert len(metric.detection_box) == 1  # unchanged
+
+    @patch("rfdetr.training.callbacks.coco_eval.get_world_size", return_value=2)
+    @patch("rfdetr.training.callbacks.coco_eval.is_dist_avail_and_initialized", return_value=True)
+    def test_concatenates_each_state_across_ranks(self, _init, _ws) -> None:
+        """Distributed: every state list is gathered once and concatenated across ranks."""
+        cb = COCOEvalCallback()
+        metric = _metric_with_state(n=1)
+        # Simulate a 2-rank gather: this rank's list plus an identical "other rank" list.
+        with patch("rfdetr.training.callbacks.coco_eval.all_gather", side_effect=lambda local: [local, local]) as mg:
+            cb._merge_metric_state_across_ranks(metric)
+        # One gather per state tensor (9 states), each now holding both ranks' entries.
+        assert mg.call_count == 9
+        assert len(metric.detection_box) == 2
+        assert len(metric.detection_scores) == 2
+        assert len(metric.detection_mask) == 2
+        assert len(metric.groundtruth_area) == 2
+
+    @patch("rfdetr.training.callbacks.coco_eval.get_world_size", return_value=1)
+    @patch("rfdetr.training.callbacks.coco_eval.is_dist_avail_and_initialized", return_value=True)
+    def test_no_op_when_world_size_one(self, _init, _ws) -> None:
+        """world_size==1 in an initialised group: state untouched, no gather issued."""
+        cb = COCOEvalCallback()
+        metric = _metric_with_state(n=1)
+        with patch("rfdetr.training.callbacks.coco_eval.all_gather") as mock_gather:
+            cb._merge_metric_state_across_ranks(metric)
+        mock_gather.assert_not_called()
+        assert len(metric.detection_box) == 1  # unchanged
+
+
+class TestOnTestEpochStart:
+    """on_test_epoch_start resets _ema_has_updates before test to prevent stale val state."""
+
+    def test_map_metric_ema_stays_none_without_ema_callback(self) -> None:
+        """No EMA callback → map_metric_ema stays None after test hook fires."""
+        cb = COCOEvalCallback()
+        trainer = _make_trainer(callbacks=[])
+        module = _cpu_module()
+        cb.setup(trainer, module, stage="fit")
+
+        cb.on_test_epoch_start(trainer, module)
+
+        assert cb.map_metric_ema is None
+
+    def test_resets_ema_has_updates_to_false(self) -> None:
+        """on_test_epoch_start resets _ema_has_updates to False even when stale True from validation."""
+        cb = COCOEvalCallback()
+        trainer = _make_trainer(callbacks=[_ema_callback()])
+        module = _cpu_module()
+        cb.setup(trainer, module, stage="fit")
+        cb._ema_has_updates = True  # simulate stale value from a preceding validation epoch
+
+        cb.on_test_epoch_start(trainer, module)
+
+        assert cb._ema_has_updates is False
+
+
+class TestPrepareEmaMetricSecondEpoch:
+    """_prepare_ema_metric resets (not re-creates) the metric on subsequent epochs."""
+
+    def test_resets_not_recreates_metric(self) -> None:
+        """Calling on_validation_epoch_start twice resets the metric rather than replacing it."""
+        cb = COCOEvalCallback()
+        trainer = _make_trainer(callbacks=[_ema_callback()])
+        module = _cpu_module()
+        cb.setup(trainer, module, stage="fit")
+
+        cb.on_validation_epoch_start(trainer, module)
+        assert cb.map_metric_ema is not None
+
+        # Replace with a spy mock so reset() calls are trackable on the second epoch
+        spy_metric = MagicMock(name="map_metric_ema")
+        cb.map_metric_ema = spy_metric
+
+        cb.on_validation_epoch_start(trainer, module)
+
+        assert cb.map_metric_ema is spy_metric  # same object, not replaced
+        spy_metric.reset.assert_called_once()
+
+
+class TestComputeAndLogEmaResetPath:
+    """elif branch in _compute_and_log: gate False + metric not None → reset() fires."""
+
+    def test_resets_ema_metric(self) -> None:
+        """EMA not computed this epoch but metric exists → reset() clears state for the next epoch."""
+        cb = COCOEvalCallback()
+        trainer = _make_trainer()
+        module = _cpu_module()
+        cb.setup(trainer, module, stage="fit")
+        trainer.callback_metrics = {}
+
+        # EMA metric exists but no batch updated it this epoch → gate returns False → elif fires
+        mock_ema = MagicMock(name="map_metric_ema")
+        cb.map_metric_ema = mock_ema
+        cb._ema_has_updates = False
+
+        cb.map_metric = MagicMock(name="map_metric")
+        cb.map_metric.compute.return_value = _minimal_metrics()
+
+        with (
+            patch.object(cb, "_merge_metric_state_across_ranks"),
+            patch.object(cb, "_build_per_class_rows", return_value=[]),
+            patch.object(cb, "_print_metrics_tables"),
+            patch("rfdetr.training.callbacks.coco_eval.distributed_merge_matching_data", return_value={}),
+        ):
+            cb._compute_and_log(trainer, module, "val")
+
+        mock_ema.reset.assert_called_once()
