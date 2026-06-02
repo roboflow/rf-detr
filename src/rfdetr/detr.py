@@ -14,7 +14,7 @@ import os
 import tempfile
 import warnings
 from collections import defaultdict
-from copy import deepcopy
+from copy import copy, deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -1493,6 +1493,10 @@ class RFDETR:
         Raises:
             ValueError: If the `api_key` is not provided and not found in the
                 environment variable `ROBOFLOW_API_KEY`, or if the `size` is not set for custom architectures.
+
+        Note:
+            Bundle creation is delegated to :meth:`export_for_roboflow`, which can be called independently
+            to write ``weights.pt`` and ``class_names.txt`` without a network round-trip.
         """
         from roboflow import Roboflow
 
@@ -1509,26 +1513,45 @@ class RFDETR:
 
         size = self.size or size
         with tempfile.TemporaryDirectory(prefix="roboflow_upload_") as tmp_out_dir:
-            # Write class_names.txt so the Roboflow upload pipeline can discover
-            # the class labels without relying on args.class_names in the checkpoint.
-            class_names_path = os.path.join(tmp_out_dir, "class_names.txt")
-            with open(class_names_path, "w", encoding="utf-8", newline="\n") as f:
-                f.write("\n".join(self.class_names))
-
-            # Also embed class_names in the args namespace so that any code path
-            # that loads the checkpoint directly (e.g. roboflow-python's second
-            # fallback) can find them.  Mutating the shared SimpleNamespace is
-            # intentional here: this mirrors reinitialize_detection_head(), which
-            # already mutates args.num_classes in-place.
-            args = self.model.args
-            if not hasattr(args, "class_names") or args.class_names is None:
-                args.class_names = self.class_names
-
-            outpath = os.path.join(tmp_out_dir, "weights.pt")
-            torch.save({"model": self.model.model.state_dict(), "args": args}, outpath)
+            self.export_for_roboflow(tmp_out_dir)
             project = workspace.project(project_id)
             project_version = project.version(version)
             project_version.deploy(model_type=size, model_path=tmp_out_dir, filename="weights.pt")
+
+    def export_for_roboflow(self, output_dir: str | os.PathLike[str]) -> None:
+        """Write a Roboflow upload bundle (``weights.pt`` + ``class_names.txt``) into *output_dir*.
+
+        This is the network-free core of :meth:`deploy_to_roboflow`: it serialises the model state and
+        training args into ``weights.pt``, always embedding ``class_names`` into a copy of the args so
+        the bundle is self-contained, and writes the class labels to ``class_names.txt``.  The Roboflow
+        SDK uses this format to adapt raw PyTorch-Lightning checkpoints into a deploy-ready bundle.
+
+        Args:
+            output_dir: Directory into which ``weights.pt`` and ``class_names.txt`` are written.  Created
+                if it does not exist.  Existing files are silently overwritten.
+
+        Raises:
+            PermissionError: If the process lacks write access to *output_dir* or its parent directory.
+            OSError: On disk-full, invalid path, or other filesystem failure during directory creation,
+                file write, or ``torch.save``.
+        """
+        os.makedirs(output_dir, exist_ok=True)
+        # Write class_names.txt so the Roboflow upload pipeline can discover
+        # the class labels without relying on args.class_names in the checkpoint.
+        class_names_path = os.path.join(output_dir, "class_names.txt")
+        with open(class_names_path, "w", encoding="utf-8", newline="\n") as f:
+            f.write("\n".join(self.class_names))
+
+        # Embed class_names in a shallow copy of args so the saved bundle is
+        # self-contained (roboflow-python's second fallback reads args.class_names
+        # directly from the checkpoint).  Using a copy leaves self.model.args
+        # unmodified — each export call is independent regardless of call order.
+        args = copy(self.model.args)
+        if not hasattr(args, "class_names") or args.class_names is None:
+            args.class_names = self.class_names
+
+        outpath = os.path.join(output_dir, "weights.pt")
+        torch.save({"model": self.model.model.state_dict(), "args": args}, outpath)
 
 
 def __getattr__(name: str):
