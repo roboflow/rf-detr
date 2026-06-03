@@ -683,7 +683,6 @@ class TestTrainingStep:
             "loss_bbox": torch.tensor(0.3),
             "loss_keypoints_l1": torch.tensor(0.4),
             "loss_keypoints_nll": torch.tensor(0.2),
-            "loss_keypoints_rle": torch.tensor(0.1),
         }
         weight_dict = {key: 1.0 for key in loss_dict}
         module, samples, targets, _, _ = self._run_step(tmp_path, loss_dict, weight_dict)
@@ -691,7 +690,7 @@ class TestTrainingStep:
         module.training_step((samples, targets), batch_idx=0)
 
         progress_names = {c[0][0] for c in module.log.call_args_list if c.kwargs.get("prog_bar") is True}
-        assert {"loss_cls", "loss_box", "kp_l1", "kp_nll", "kp_rle"}.issubset(progress_names)
+        assert {"loss_cls", "loss_box", "kp_l1", "kp_nll"}.issubset(progress_names)
 
     def test_logs_individual_losses_as_dict(self, tmp_path):
         """Each component loss must be logged separately under train/ prefix."""
@@ -778,7 +777,6 @@ class TestValidationStep:
             "loss_keypoints_findable": torch.tensor(0.3),
             "loss_keypoints_visible": torch.tensor(0.2),
             "loss_keypoints_nll": torch.tensor(0.1),
-            "loss_keypoints_rle": torch.tensor(0.05),
         }
         weight_dict = {key: 1.0 for key in loss_dict}
 
@@ -791,6 +789,8 @@ class TestValidationStep:
         logged_names = {c[0][0] for c in module.log.call_args_list}
         assert "val/kp_l1" not in logged_names
         assert "val/kp_find" not in logged_names
+        assert "val/kp_vis" not in logged_names
+        assert "val/kp_nll" not in logged_names
 
     def test_val_detection_loss_components_are_not_relogged_as_progress_aliases(self, tmp_path):
         """Validation component losses should be logged once under canonical ``val/loss_*`` names."""

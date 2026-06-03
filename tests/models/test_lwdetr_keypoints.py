@@ -71,7 +71,7 @@ def test_lwdetr_keypoint_forward_outputs() -> None:
         torch.zeros(batch_size, num_queries, 4),  # ref_enc
         torch.zeros(2, batch_size, num_queries, 17, hidden_dim),  # keypoint_hs
         torch.zeros(batch_size, num_queries, 17, 8),  # enc_kp_predictions
-        torch.zeros(batch_size, num_queries, 17, hidden_dim),  # enc_kp_hidden
+        torch.zeros(batch_size, num_queries, 17, hidden_dim),  # unused keypoint encoder hidden state
     )
 
     model = LWDETR(
@@ -95,9 +95,9 @@ def test_lwdetr_keypoint_forward_outputs() -> None:
     assert outputs["pred_logits"].shape == (batch_size, num_queries, num_classes)
     assert outputs["pred_boxes"].shape == (batch_size, num_queries, 4)
     assert outputs["pred_keypoints"].shape == (batch_size, num_queries, 17, 8)
-    assert outputs["keypoint_hidden_states"].shape == (batch_size, num_queries, 17, hidden_dim)
+    assert "keypoint_hidden_states" not in outputs
     assert "pred_keypoints" in outputs["aux_outputs"][0]
-    assert "keypoint_hidden_states" in outputs["aux_outputs"][0]
+    assert "keypoint_hidden_states" not in outputs["aux_outputs"][0]
 
 
 def test_lwdetr_reinitialize_keypoint_head_updates_schema_dependent_state() -> None:

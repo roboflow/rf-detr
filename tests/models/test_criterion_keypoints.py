@@ -13,7 +13,7 @@ from rfdetr.models.criterion import SetCriterion
 class _MatcherStub:
     """Matcher stub used to avoid depending on Hungarian matching internals."""
 
-    def __call__(self, outputs, targets, group_detr=1, flow=None):
+    def __call__(self, outputs, targets, group_detr=1):
         indices = []
         for target in targets:
             num_targets = int(target["labels"].shape[0])
@@ -26,16 +26,12 @@ def _make_outputs(
     batch_size: int,
     num_queries: int,
     num_keypoints: int,
-    hidden_dim: int | None = None,
 ) -> dict[str, torch.Tensor]:
-    outputs: dict[str, torch.Tensor] = {
+    return {
         "pred_logits": torch.zeros(batch_size, num_queries, 2),
         "pred_boxes": torch.rand(batch_size, num_queries, 4).clamp(0.05, 0.95),
         "pred_keypoints": torch.randn(batch_size, num_queries, num_keypoints, 8),
     }
-    if hidden_dim is not None:
-        outputs["keypoint_hidden_states"] = torch.randn(batch_size, num_queries, num_keypoints, hidden_dim)
-    return outputs
 
 
 def test_loss_keypoints_list_of_dicts_targets() -> None:
@@ -69,7 +65,6 @@ def test_loss_keypoints_list_of_dicts_targets() -> None:
     assert "loss_keypoints_findable" in losses
     assert "loss_keypoints_visible" in losses
     assert "loss_keypoints_nll" in losses
-    assert "loss_keypoints_rle" in losses
     assert all(torch.isfinite(value) for value in losses.values())
 
 
@@ -98,7 +93,6 @@ def test_loss_keypoints_empty_targets() -> None:
     assert losses["loss_keypoints_findable"].item() == 0.0
     assert losses["loss_keypoints_visible"].item() == 0.0
     assert losses["loss_keypoints_nll"].item() == 0.0
-    assert losses["loss_keypoints_rle"].item() == 0.0
 
 
 def test_loss_keypoints_person_schema_shape() -> None:
@@ -131,37 +125,37 @@ def test_loss_keypoints_person_schema_shape() -> None:
     assert losses["loss_keypoints_findable"].ndim == 0
     assert losses["loss_keypoints_visible"].ndim == 0
     assert losses["loss_keypoints_nll"].ndim == 0
-    assert losses["loss_keypoints_rle"].ndim == 0
 
 
-def test_loss_keypoints_rle_flow_finite() -> None:
-    """Conditional RLE flow loss should stay finite when keypoint hidden states are present."""
-    hidden_dim = 16
+def test_loss_keypoints_multiclass_schema_kmax_targets() -> None:
+    """Heterogeneous keypoint classes should consume Kmax-padded targets."""
     criterion = SetCriterion(
-        num_classes=2,
+        num_classes=3,
         matcher=_MatcherStub(),
         weight_dict={},
         focal_alpha=0.25,
         losses=["keypoints"],
-        num_keypoints_per_class=[17],
-        rle=True,
-        rle_hidden_dim=hidden_dim,
+        num_keypoints_per_class=[2, 1],
     )
-    outputs = _make_outputs(batch_size=1, num_queries=1, num_keypoints=17, hidden_dim=hidden_dim)
+    outputs = _make_outputs(batch_size=1, num_queries=2, num_keypoints=4)
     targets = [
         {
-            "labels": torch.tensor([0], dtype=torch.int64),
-            "boxes": torch.tensor([[0.5, 0.5, 0.4, 0.4]], dtype=torch.float32),
-            "keypoints": torch.cat(
+            "labels": torch.tensor([0, 1], dtype=torch.int64),
+            "boxes": torch.tensor([[0.5, 0.5, 0.4, 0.4], [0.4, 0.6, 0.3, 0.5]], dtype=torch.float32),
+            "keypoints": torch.tensor(
                 [
-                    torch.rand(1, 17, 2),
-                    torch.full((1, 17, 1), 2.0),
+                    [[0.2, 0.3, 2.0], [0.4, 0.5, 2.0]],
+                    [[0.6, 0.7, 2.0], [0.0, 0.0, 0.0]],
                 ],
-                dim=-1,
+                dtype=torch.float32,
             ),
         }
     ]
 
     losses = criterion(outputs, targets)
 
-    assert torch.isfinite(losses["loss_keypoints_rle"])
+    assert losses["loss_keypoints_l1"].ndim == 0
+    assert losses["loss_keypoints_findable"].ndim == 0
+    assert losses["loss_keypoints_visible"].ndim == 0
+    assert losses["loss_keypoints_nll"].ndim == 0
+    assert all(torch.isfinite(value) for value in losses.values())

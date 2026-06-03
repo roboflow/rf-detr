@@ -31,7 +31,6 @@ def test_matcher_keypoint_cost_list_of_dicts_targets() -> None:
         keypoint_findable_loss_coef=0.0,
         keypoint_visible_loss_coef=0.0,
         keypoint_nll_loss_coef=0.0,
-        rle_loss_coef=0.0,
     )
     outputs = _base_outputs()
     outputs["pred_keypoints"] = torch.zeros((1, 2, 1, 8), dtype=torch.float32)
@@ -63,7 +62,6 @@ def test_matcher_keypoint_cost_coefficients_off() -> None:
         keypoint_findable_loss_coef=0.0,
         keypoint_visible_loss_coef=0.0,
         keypoint_nll_loss_coef=0.0,
-        rle_loss_coef=0.0,
     )
     outputs = _base_outputs()
     outputs["pred_logits"][0, 0, 0] = 10.0
@@ -97,7 +95,6 @@ def test_matcher_keypoint_empty_targets() -> None:
         keypoint_findable_loss_coef=1.0,
         keypoint_visible_loss_coef=1.0,
         keypoint_nll_loss_coef=1.0,
-        rle_loss_coef=0.0,
     )
     outputs = _base_outputs(num_queries=3)
     outputs["pred_keypoints"] = torch.zeros((1, 3, 1, 8), dtype=torch.float32)

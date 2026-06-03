@@ -659,9 +659,6 @@ class TrainConfig(BaseConfig):
     keypoint_visible_loss_coef: float = 0
     keypoint_nll_loss_coef: float = 0
     keypoint_oks_sigmas: List[float] | None = None
-    rle: bool = False
-    rle_conditional: bool = False
-    rle_loss_coef: float = 0
     dataset_file: Literal["coco", "o365", "roboflow", "yolo"] = "roboflow"
     square_resize_div_64: bool = True
     dataset_dir: str | None
@@ -840,6 +837,3 @@ class KeypointTrainConfig(TrainConfig):
     keypoint_findable_loss_coef: float = 1
     keypoint_visible_loss_coef: float = 1
     keypoint_nll_loss_coef: float = 1
-    rle: bool = True
-    rle_conditional: bool = True
-    rle_loss_coef: float = 1

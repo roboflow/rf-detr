@@ -434,12 +434,11 @@ class LWDETR(nn.Module):
             cross_attn_srcs=cross_attn_srcs,
         )
         if self.use_grouppose_keypoints:
-            hs, ref_unsigmoid, hs_enc, ref_enc, keypoint_hs, enc_kp_predictions, enc_kp_hidden = transformer_outputs
+            hs, ref_unsigmoid, hs_enc, ref_enc, keypoint_hs, enc_kp_predictions, _ = transformer_outputs
         else:
             hs, ref_unsigmoid, hs_enc, ref_enc = transformer_outputs[:4]
             keypoint_hs = None
             enc_kp_predictions = None
-            enc_kp_hidden = None
 
         if hs is not None:
             if self.bbox_reparam:
@@ -452,7 +451,6 @@ class LWDETR(nn.Module):
 
             outputs_class = self.class_embed(hs)
             outputs_keypoints = None
-            outputs_kp_hidden = None
 
             if self.use_grouppose_keypoints and self.keypoint_embed is not None:
                 if keypoint_hs is None:
@@ -466,10 +464,8 @@ class LWDETR(nn.Module):
                 outputs_keypoints_compact = torch.cat([keypoints_xy, keypoints_other], dim=-1)
 
                 layer_outputs_keypoints = []
-                layer_outputs_hidden = []
                 for layer_idx in range(outputs_keypoints_compact.shape[0]):
                     compact_preds = outputs_keypoints_compact[layer_idx]
-                    compact_hidden = keypoint_hs[layer_idx]
                     layer_outputs_keypoints.append(
                         self._format_keypoint_output(
                             compact_preds,
@@ -477,15 +473,7 @@ class LWDETR(nn.Module):
                             compact_preds.shape[1],
                         )
                     )
-                    layer_outputs_hidden.append(
-                        self._format_keypoint_output(
-                            compact_hidden,
-                            compact_hidden.shape[0],
-                            compact_hidden.shape[1],
-                        )
-                    )
                 outputs_keypoints = torch.stack(layer_outputs_keypoints, dim=0)
-                outputs_kp_hidden = torch.stack(layer_outputs_hidden, dim=0)
                 outputs_class = outputs_class + self._aggregate_keypoint_class_logits(outputs_keypoints)
 
             if self.segmentation_head is not None:
@@ -496,15 +484,12 @@ class LWDETR(nn.Module):
                 out["pred_masks"] = outputs_masks[-1]
             if outputs_keypoints is not None:
                 out["pred_keypoints"] = outputs_keypoints[-1]
-            if outputs_kp_hidden is not None:
-                out["keypoint_hidden_states"] = outputs_kp_hidden[-1]
             if self.aux_loss:
                 out["aux_outputs"] = self._set_aux_loss(
                     outputs_class,
                     outputs_coord,
                     outputs_masks if self.segmentation_head is not None else None,
                     outputs_keypoints,
-                    outputs_kp_hidden,
                 )
 
         if self.two_stage:
@@ -517,19 +502,12 @@ class LWDETR(nn.Module):
 
             cls_enc = torch.cat(cls_enc, dim=1)
             keypoints_enc = None
-            keypoint_hidden_enc = None
             if self.use_grouppose_keypoints and enc_kp_predictions is not None:
                 keypoints_enc = self._format_keypoint_output(
                     enc_kp_predictions,
                     enc_kp_predictions.shape[0],
                     enc_kp_predictions.shape[1],
                 )
-                if enc_kp_hidden is not None:
-                    keypoint_hidden_enc = self._format_keypoint_output(
-                        enc_kp_hidden,
-                        enc_kp_hidden.shape[0],
-                        enc_kp_hidden.shape[1],
-                    )
                 cls_enc = cls_enc + self._aggregate_keypoint_class_logits(keypoints_enc)
 
             if self.segmentation_head is not None:
@@ -548,16 +526,12 @@ class LWDETR(nn.Module):
                     out["enc_outputs"]["pred_masks"] = masks_enc
                 if keypoints_enc is not None:
                     out["enc_outputs"]["pred_keypoints"] = keypoints_enc
-                if keypoint_hidden_enc is not None:
-                    out["enc_outputs"]["keypoint_hidden_states"] = keypoint_hidden_enc
             else:
                 out = {"pred_logits": cls_enc, "pred_boxes": ref_enc}
                 if self.segmentation_head is not None:
                     out["pred_masks"] = masks_enc
                 if keypoints_enc is not None:
                     out["pred_keypoints"] = keypoints_enc
-                if keypoint_hidden_enc is not None:
-                    out["keypoint_hidden_states"] = keypoint_hidden_enc
 
         return out
 
@@ -654,7 +628,6 @@ class LWDETR(nn.Module):
         outputs_coord: torch.Tensor,
         outputs_masks: torch.Tensor | None,
         outputs_keypoints: torch.Tensor | None = None,
-        outputs_kp_hidden: torch.Tensor | None = None,
     ):
         # this is a workaround to make torchscript happy, as torchscript
         # doesn't support dictionary with non-homogeneous values, such
@@ -667,9 +640,6 @@ class LWDETR(nn.Module):
         if outputs_keypoints is not None:
             names.append("pred_keypoints")
             values.append(outputs_keypoints[:-1])
-        if outputs_kp_hidden is not None:
-            names.append("keypoint_hidden_states")
-            values.append(outputs_kp_hidden[:-1])
         return [{name: value for name, value in zip(names, layer_values)} for layer_values in zip(*values)]
 
     def _get_backbone_encoder_layers(self) -> Optional[nn.ModuleList]:
@@ -808,7 +778,6 @@ def build_criterion_and_postprocessors(args: "BuilderArgs"):
         weight_dict["loss_keypoints_findable"] = getattr(args, "keypoint_findable_loss_coef", 0.0)
         weight_dict["loss_keypoints_visible"] = getattr(args, "keypoint_visible_loss_coef", 0.0)
         weight_dict["loss_keypoints_nll"] = getattr(args, "keypoint_nll_loss_coef", 0.0)
-        weight_dict["loss_keypoints_rle"] = getattr(args, "rle_loss_coef", 0.0) if getattr(args, "rle", False) else 0.0
     # TODO this is a hack
     if args.aux_loss:
         aux_weight_dict = {}
@@ -823,11 +792,6 @@ def build_criterion_and_postprocessors(args: "BuilderArgs"):
         losses.append("masks")
     if has_keypoints:
         losses.append("keypoints")
-
-    rle_hidden_dim = None
-    if has_keypoints and getattr(args, "rle", False) and getattr(args, "rle_conditional", False):
-        kp_downscale = max(1, int(getattr(args, "grouppose_keypoint_dim_downscale", 1)))
-        rle_hidden_dim = max(1, int(args.hidden_dim) // kp_downscale)
 
     sum_group_losses = getattr(args, "sum_group_losses", False)
     if args.segmentation_head:
@@ -844,8 +808,6 @@ def build_criterion_and_postprocessors(args: "BuilderArgs"):
             ia_bce_loss=args.ia_bce_loss,
             mask_point_sample_ratio=args.mask_point_sample_ratio,
             num_keypoints_per_class=getattr(args, "num_keypoints_per_class", []),
-            rle=getattr(args, "rle", False),
-            rle_hidden_dim=rle_hidden_dim,
         )
     else:
         criterion = SetCriterion(
@@ -860,8 +822,6 @@ def build_criterion_and_postprocessors(args: "BuilderArgs"):
             use_position_supervised_loss=args.use_position_supervised_loss,
             ia_bce_loss=args.ia_bce_loss,
             num_keypoints_per_class=getattr(args, "num_keypoints_per_class", []),
-            rle=getattr(args, "rle", False),
-            rle_hidden_dim=rle_hidden_dim,
         )
     criterion.to(device)
     postprocess = PostProcess(
