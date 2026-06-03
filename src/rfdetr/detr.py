@@ -16,7 +16,7 @@ import warnings
 from collections import defaultdict
 from copy import copy, deepcopy
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, TypeAlias
+from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 import requests
@@ -199,48 +199,6 @@ def _ensure_model_on_device(model_ctx: Any) -> None:
         model_ctx.model = inner.to(target)
 
 
-_ModuleDtypeState: TypeAlias = dict[tuple[str, str], torch.dtype]
-
-
-def _capture_module_floating_dtypes(module: torch.nn.Module) -> _ModuleDtypeState:
-    """Capture floating-point parameter and buffer dtypes from a module.
-
-    Args:
-        module: Module whose floating-point dtype state should be captured.
-
-    Returns:
-        Mapping from parameter or buffer names to their current dtypes.
-    """
-    dtypes: _ModuleDtypeState = {}
-    for name, parameter in module.named_parameters():
-        if parameter.is_floating_point():
-            dtypes[("parameter", name)] = parameter.dtype
-    for name, buffer in module.named_buffers():
-        if buffer.is_floating_point():
-            dtypes[("buffer", name)] = buffer.dtype
-    return dtypes
-
-
-def _restore_module_floating_dtypes(module: torch.nn.Module, dtypes: _ModuleDtypeState) -> None:
-    """Restore floating-point parameter and buffer dtypes captured from a module.
-
-    Args:
-        module: Module whose dtype state should be restored.
-        dtypes: Dtype mapping returned by :func:`_capture_module_floating_dtypes`.
-    """
-    with torch.no_grad():
-        for name, parameter in module.named_parameters():
-            dtype = dtypes.get(("parameter", name))
-            if dtype is not None and parameter.dtype != dtype:
-                parameter.data = parameter.data.to(dtype=dtype)
-                if parameter.grad is not None:
-                    parameter.grad.data = parameter.grad.data.to(dtype=dtype)
-        for name, buffer in module.named_buffers():
-            dtype = dtypes.get(("buffer", name))
-            if dtype is not None and buffer.dtype != dtype:
-                buffer.data = buffer.data.to(dtype=dtype)
-
-
 class RFDETR:
     """The base RF-DETR class implements the core methods for training RF-DETR models, running inference on the models,
     optimising models, and uploading trained models for deployment."""
@@ -272,7 +230,6 @@ class RFDETR:
         self._optimized_resolution = None
         self._optimized_dtype = None
         self._optimized_inplace = False
-        self._optimized_inplace_original_dtypes = None
 
     def maybe_download_pretrain_weights(self):
         """Download pre-trained weights if they are not already downloaded.
@@ -751,7 +708,9 @@ class RFDETR:
         ``compile=True`` the model is traced with ``torch.jit.trace`` using a dummy input of ``batch_size`` images at
         the model's current resolution. By default, optimization deep-copies the loaded model before exporting it so the
         original module remains available. Set ``inplace=True`` for memory-constrained inference-only deployments; this
-        exports the loaded module itself and clears ``model.model`` after optimization succeeds.
+        exports the loaded module itself, may cast it to ``dtype``, and clears ``model.model`` after optimization
+        succeeds. In-place optimization is destructive and cannot be reversed with :meth:`remove_optimized_model`;
+        create or reload a new ``RFDETR`` instance to recover the original model.
 
         Args:
             compile: If ``True``, trace the model with ``torch.jit.trace`` to obtain
@@ -761,13 +720,14 @@ class RFDETR:
             dtype: Target floating-point dtype for the inference model. Accepts a
                 ``torch.dtype`` directly (e.g. ``torch.float16``) or its string name (e.g. ``"float16"``). Defaults to
                 ``torch.float32``.
-            inplace: If ``True``, optimize ``model.model`` directly instead of deep-copying it. This is an
-                inference-only path because ``export()`` mutates the module. Pair with ``compile=False`` to minimize
-                peak memory use.
+            inplace: If ``True``, optimize ``model.model`` directly instead of deep-copying it. This is a destructive,
+                inference-only path because ``export()`` mutates the module and dtype casting mutates its parameters.
+                Requires ``compile=False``.
 
         Raises:
             TypeError: If ``dtype`` is not a ``torch.dtype``, or if ``dtype`` is a
                 string that does not correspond to a valid ``torch.dtype`` attribute.
+            ValueError: If ``inplace=True`` is used with ``compile=True``.
 
         Examples:
             >>> from types import SimpleNamespace
@@ -809,6 +769,8 @@ class RFDETR:
                 raise TypeError(f"dtype must be a torch.dtype or a string name of a dtype, got {dtype!r}") from None
         if not isinstance(dtype, torch.dtype):
             raise TypeError(f"dtype must be a torch.dtype or a string name of a dtype, got {type(dtype)!r}")
+        if inplace and compile:
+            raise ValueError("optimize_for_inference(inplace=True) requires compile=False")
 
         # Clear any previously optimized state before starting a new optimization run.
         self.remove_optimized_model()
@@ -821,9 +783,6 @@ class RFDETR:
             with cuda_ctx:
                 inference_model = self.model.model if inplace else deepcopy(self.model.model)
                 inference_model.eval()
-                self._optimized_inplace_original_dtypes = (
-                    _capture_module_floating_dtypes(inference_model) if inplace else None
-                )
                 inference_model.export()
 
                 inference_model = inference_model.to(dtype=dtype)
@@ -861,10 +820,9 @@ class RFDETR:
         """Remove the optimized inference model and reset all optimization flags.
 
         Clears ``model.inference_model`` and resets all internal state set by :meth:`optimize_for_inference`. Safe to
-        call even if the model has not been optimized. If the model was optimized with ``inplace=True``, this restores
-        the exported callable module to ``model.model`` and restores its original floating-point dtype state before
-        clearing optimized state. The restored module is suitable for non-optimized prediction, but it is not guaranteed
-        to be a training-ready pre-export model.
+        call even if the model has not been optimized. If the model was optimized with ``inplace=True``, the original
+        module cannot be restored because ``export()`` and dtype casting mutate it; create or reload a new ``RFDETR``
+        instance instead.
 
         Examples:
             >>> from types import SimpleNamespace
@@ -898,11 +856,11 @@ class RFDETR:
             >>> model._is_optimized_for_inference
             False
         """
-        if getattr(self, "_optimized_inplace", False) and self.model.model is None:
-            self.model.model = self.model.inference_model
-        original_dtypes = getattr(self, "_optimized_inplace_original_dtypes", None)
-        if original_dtypes is not None and self.model.model is not None:
-            _restore_module_floating_dtypes(self.model.model, original_dtypes)
+        if getattr(self, "_optimized_inplace", False):
+            raise RuntimeError(
+                "Cannot remove an in-place optimized model because the original model cannot be restored. "
+                "Create or reload a new RFDETR instance instead.",
+            )
         self.model.inference_model = None
         self._is_optimized_for_inference = False
         self._optimized_has_been_compiled = False
@@ -910,7 +868,6 @@ class RFDETR:
         self._optimized_resolution = None
         self._optimized_dtype = None
         self._optimized_inplace = False
-        self._optimized_inplace_original_dtypes = None
 
     @deprecated(
         target=True,
