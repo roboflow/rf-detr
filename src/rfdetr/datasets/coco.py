@@ -364,7 +364,7 @@ def _build_train_resize_config(
             "Sequential": {
                 "transforms": [
                     {"SmallestMaxSize": {"max_size": [400, 500, 600]}},
-                    {"RandomCrop": {"height": 384, "width": 384}},
+                    {"RandomSizedCrop": {"min_max_height": [384, 600], "height": 384, "width": 384}},
                     {"SmallestMaxSize": {"max_size": size_param}},
                     {"LongestMaxSize": {"max_size": cap}},
                 ]

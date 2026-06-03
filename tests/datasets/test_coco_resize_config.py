@@ -146,7 +146,7 @@ class TestBuildTrainResizeConfigNonSquareSingleScale:
             "Sequential": {
                 "transforms": [
                     {"SmallestMaxSize": {"max_size": [400, 500, 600]}},
-                    {"RandomCrop": {"height": 384, "width": 384}},
+                    {"RandomSizedCrop": {"min_max_height": [384, 600], "height": 384, "width": 384}},
                     {"SmallestMaxSize": {"max_size": 640}},
                     {"LongestMaxSize": {"max_size": 1333}},
                 ]
@@ -181,7 +181,7 @@ class TestBuildTrainResizeConfigNonSquareMultiScale:
             "Sequential": {
                 "transforms": [
                     {"SmallestMaxSize": {"max_size": [400, 500, 600]}},
-                    {"RandomCrop": {"height": 384, "width": 384}},
+                    {"RandomSizedCrop": {"min_max_height": [384, 600], "height": 384, "width": 384}},
                     {"SmallestMaxSize": {"max_size": [480, 640]}},
                     {"LongestMaxSize": {"max_size": 1333}},
                 ]
@@ -194,6 +194,63 @@ class TestBuildTrainResizeConfigNonSquareMultiScale:
         option_b = result[0]["OneOf"]["transforms"][1]
         assert option_a["Sequential"]["transforms"][1] == {"LongestMaxSize": {"max_size": 1000}}
         assert option_b["Sequential"]["transforms"][3] == {"LongestMaxSize": {"max_size": 1000}}
+
+
+class TestBuildTrainResizeConfigNonSquareScaleJitter:
+    """Non-square option_b must use RandomSizedCrop (scale jitter), not fixed RandomCrop.
+
+    Regression tests for https://github.com/roboflow/rf-detr/issues/1018 — PR #752 replaced
+    RandomSizeCrop(384, 600) with a fixed RandomCrop(384, 384), silently removing scale jitter
+    from the non-square training pipeline.
+    """
+
+    @pytest.mark.parametrize(
+        "scales,square",
+        [
+            pytest.param([640], False, id="nonsquare-single"),
+            pytest.param([480, 640], False, id="nonsquare-multi"),
+        ],
+    )
+    def test_option_b_crop_step_is_random_sized_crop(self, scales, square):
+        """Non-square option_b crop step must be RandomSizedCrop, not RandomCrop."""
+        result = _build_train_resize_config(scales, square=square)
+        option_b = result[0]["OneOf"]["transforms"][1]
+        crop_step = option_b["Sequential"]["transforms"][1]
+        assert "RandomSizedCrop" in crop_step, (
+            "Non-square option_b must use RandomSizedCrop for scale jitter; "
+            f"found {list(crop_step.keys())} instead (regression: issue #1018)"
+        )
+        assert "RandomCrop" not in crop_step
+
+    @pytest.mark.parametrize(
+        "scales,square",
+        [
+            pytest.param([640], False, id="nonsquare-single"),
+            pytest.param([480, 640], False, id="nonsquare-multi"),
+        ],
+    )
+    def test_option_b_crop_uses_scale_jitter_range(self, scales, square):
+        """RandomSizedCrop min_max_height must span [384, 600] to restore scale jitter."""
+        result = _build_train_resize_config(scales, square=square)
+        option_b = result[0]["OneOf"]["transforms"][1]
+        crop_step = option_b["Sequential"]["transforms"][1]
+        assert crop_step["RandomSizedCrop"]["min_max_height"] == [384, 600]
+
+    @pytest.mark.parametrize(
+        "scales,square",
+        [
+            pytest.param([640], True, id="square-single"),
+            pytest.param([480, 640], True, id="square-multi"),
+        ],
+    )
+    def test_square_option_b_unchanged(self, scales, square):
+        """Square path must still use RandomSizedCrop parameterized by scale."""
+        result = _build_train_resize_config(scales, square=square)
+        option_b = result[0]["OneOf"]["transforms"][1]
+        inner_transforms = option_b["Sequential"]["transforms"][1]["OneOf"]["transforms"]
+        for entry in inner_transforms:
+            assert "RandomSizedCrop" in entry
+            assert entry["RandomSizedCrop"]["min_max_height"] == [384, 600]
 
 
 class TestBuildTrainResizeConfigCropBranch:
