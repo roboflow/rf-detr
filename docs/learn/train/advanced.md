@@ -274,7 +274,7 @@ model.train(
 Use a built-in preset by importing it from `rfdetr.datasets.aug_config`:
 
 ```python
-from rfdetr.datasets.aug_config import AUG_CONSERVATIVE, AUG_AGGRESSIVE, AUG_AERIAL, AUG_INDUSTRIAL
+from rfdetr.datasets.aug_configs import AUG_CONSERVATIVE, AUG_AGGRESSIVE, AUG_AERIAL, AUG_INDUSTRIAL
 
 model.train(dataset_dir="path/to/dataset", aug_config=AUG_AGGRESSIVE)
 ```
@@ -285,9 +285,15 @@ To disable all augmentations, pass an empty dict:
 model.train(dataset_dir="path/to/dataset", aug_config={})
 ```
 
-Passing `{}` also drops the training resize-and-crop branch, so images are resized
-directly to the target scale without random cropping. To keep the default resize
-pipeline, omit `aug_config` or pass `aug_config=None`.
+To also disable the resize-and-crop scale jitter branch, pass `scale_jitter=False`:
+
+```python
+model.train(dataset_dir="path/to/dataset", aug_config={}, scale_jitter=False)
+```
+
+`aug_config` controls only the augmentation stack (flips, colour jitter, etc.).
+`scale_jitter` is independent — set to `False` to skip the resize → crop → resize
+branch in the training pipeline regardless of `aug_config`.
 
 ---
 

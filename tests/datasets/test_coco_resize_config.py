@@ -253,16 +253,26 @@ class TestBuildTrainResizeConfigNonSquareScaleJitter:
             assert entry["RandomSizedCrop"]["min_max_height"] == [384, 600]
 
 
-class TestBuildTrainResizeConfigCropBranch:
-    """disable_augmentations=True drops the resize-and-crop branch so only Option A runs."""
+class TestBuildTrainResizeConfigScaleJitter:
+    """disable_scale_jitter=True drops Option B so only the direct-resize branch (Option A) runs."""
 
     @pytest.mark.parametrize(
         "square",
         [pytest.param(True, id="square"), pytest.param(False, id="nonsquare")],
     )
-    def test_disable_augmentations_drops_crop_branch(self, square):
-        """No RandomCrop/RandomSizedCrop appears in either square or non-square pipelines."""
-        result = _build_train_resize_config([480, 640], square=square, disable_augmentations=True)
-        flat = str(result)
-        assert "RandomSizedCrop" not in flat
-        assert "RandomCrop" not in flat
+    def test_disable_scale_jitter_drops_crop_branch(self, square):
+        """No RandomSizedCrop in output when scale jitter is disabled."""
+        result = _build_train_resize_config([480, 640], square=square, disable_scale_jitter=True)
+        assert len(result) == 1
+        assert "RandomSizedCrop" not in str(result)
+
+    @pytest.mark.parametrize(
+        "square",
+        [pytest.param(True, id="square"), pytest.param(False, id="nonsquare")],
+    )
+    def test_scale_jitter_enabled_produces_one_of_with_crop(self, square):
+        """Default (disable_scale_jitter=False) produces a two-branch OneOf containing RandomSizedCrop."""
+        result = _build_train_resize_config([480, 640], square=square, disable_scale_jitter=False)
+        assert len(result) == 1
+        assert "OneOf" in result[0]
+        assert "RandomSizedCrop" in str(result)

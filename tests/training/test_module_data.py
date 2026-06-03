@@ -875,7 +875,7 @@ class TestBackendResolution:
         import sys
         from unittest.mock import MagicMock, patch
 
-        from rfdetr.datasets.aug_config import AUG_CONFIG
+        from rfdetr.datasets.aug_configs import AUG_CONFIG
 
         dm = self._build_dm_with_backend(tmp_path, "auto")
         assert dm.train_config.aug_config is None, "precondition: aug_config must be None for this test"

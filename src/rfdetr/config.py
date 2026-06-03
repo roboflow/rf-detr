@@ -648,6 +648,7 @@ class TrainConfig(BaseModel):
     eval_interval: int = 1
     log_per_class_metrics: bool = True
     aug_config: Optional[Dict[str, Any]] = None
+    scale_jitter: bool = True
     augmentation_backend: Literal["cpu", "auto", "gpu"] = "cpu"
     save_dataset_grids: bool = False
     notes: Optional[Any] = Field(

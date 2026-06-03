@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader
 from rfdetr._namespace import _namespace_from_configs
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.datasets import build_dataset
-from rfdetr.datasets.aug_config import AUG_CONFIG
+from rfdetr.datasets.aug_configs import AUG_CONFIG
 from rfdetr.utilities.box_ops import box_xyxy_to_cxcywh
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.tensors import make_collate_fn

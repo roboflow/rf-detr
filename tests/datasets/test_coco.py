@@ -445,56 +445,61 @@ class TestBuilderGpuPostprocess:
         assert call_kwargs["gpu_postprocess"] is expected_gpu_postprocess
 
 
-class TestAugConfigDisablesCrop:
-    """``aug_config={}`` disables the training resize-and-crop branch.
-
-    ``aug_config=None`` (the default) and any non-empty config keep it.
-    """
+class TestScaleJitter:
+    """``scale_jitter`` controls the resize-and-crop branch independently of ``aug_config``."""
 
     @pytest.mark.parametrize(
-        "aug_config,expected",
+        "scale_jitter,expected_disable",
         [
-            pytest.param(None, False, id="none_keeps_augmentations"),
-            pytest.param({}, True, id="empty_disables_augmentations"),
-            pytest.param({"HorizontalFlip": {"p": 0.5}}, False, id="nonempty_keeps_augmentations"),
+            pytest.param(True, False, id="enabled_keeps_branch"),
+            pytest.param(False, True, id="disabled_drops_branch"),
         ],
     )
-    def test_augmentations_disabled(self, aug_config, expected):
-        """_augmentations_disabled maps aug_config to the explicit disable decision."""
-        from rfdetr.datasets.coco import _augmentations_disabled
-
-        assert _augmentations_disabled(aug_config) is expected
-
-    def test_empty_aug_config_warns(self):
-        """Passing aug_config={} logs a warning about the dropped resize-and-crop branch."""
-        from unittest.mock import patch
-
-        from rfdetr.datasets.coco import _augmentations_disabled
-
-        with patch("rfdetr.datasets.coco.logger") as mock_logger:
-            _augmentations_disabled({})
-        mock_logger.warning.assert_called_once()
-
-    @pytest.mark.parametrize(
-        "aug_config,expected",
-        [
-            pytest.param(None, False, id="none_keeps_augmentations"),
-            pytest.param({}, True, id="empty_disables_augmentations"),
-        ],
-    )
-    def test_make_coco_transforms_forwards_disable_augmentations(self, aug_config, expected):
-        """make_coco_transforms passes the aug_config-derived disable decision to resize config."""
+    def test_make_coco_transforms_forwards_scale_jitter(self, scale_jitter, expected_disable):
+        """make_coco_transforms passes disable_scale_jitter=not scale_jitter to resize config."""
         from unittest.mock import patch
 
         from rfdetr.datasets.coco import make_coco_transforms
 
-        # Patch AlbumentationsWrapper.from_config so the test exercises only argument
-        # forwarding; without it the mocked empty configs trigger unrelated
-        # "Empty augmentation config provided" warnings.
         with (
             patch("rfdetr.datasets.coco._build_train_resize_config", return_value=[]) as mock_build,
             patch("rfdetr.datasets.coco.AlbumentationsWrapper.from_config", return_value=[]),
         ):
-            make_coco_transforms("train", 640, aug_config=aug_config)
+            make_coco_transforms("train", 640, scale_jitter=scale_jitter)
 
-        assert mock_build.call_args.kwargs["disable_augmentations"] is expected
+        assert mock_build.call_args.kwargs["disable_scale_jitter"] is expected_disable
+
+    @pytest.mark.parametrize(
+        "scale_jitter,expected_disable",
+        [
+            pytest.param(True, False, id="enabled_keeps_branch"),
+            pytest.param(False, True, id="disabled_drops_branch"),
+        ],
+    )
+    def test_make_coco_transforms_square_forwards_scale_jitter(self, scale_jitter, expected_disable):
+        """make_coco_transforms_square_div_64 passes disable_scale_jitter=not scale_jitter."""
+        from unittest.mock import patch
+
+        from rfdetr.datasets.coco import make_coco_transforms_square_div_64
+
+        with (
+            patch("rfdetr.datasets.coco._build_train_resize_config", return_value=[]) as mock_build,
+            patch("rfdetr.datasets.coco.AlbumentationsWrapper.from_config", return_value=[]),
+        ):
+            make_coco_transforms_square_div_64("train", 640, scale_jitter=scale_jitter)
+
+        assert mock_build.call_args.kwargs["disable_scale_jitter"] is expected_disable
+
+    def test_aug_config_empty_does_not_affect_scale_jitter(self):
+        """aug_config={} no longer controls the resize-and-crop branch."""
+        from unittest.mock import patch
+
+        from rfdetr.datasets.coco import make_coco_transforms
+
+        with (
+            patch("rfdetr.datasets.coco._build_train_resize_config", return_value=[]) as mock_build,
+            patch("rfdetr.datasets.coco.AlbumentationsWrapper.from_config", return_value=[]),
+        ):
+            make_coco_transforms("train", 640, aug_config={})
+
+        assert mock_build.call_args.kwargs["disable_scale_jitter"] is False

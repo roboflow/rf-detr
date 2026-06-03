@@ -12,7 +12,8 @@ Pass `aug_config` to your training call. Import one of the built-in presets:
 
 ```python
 from rfdetr import RFDETRSmall
-from rfdetr.datasets.aug_config import AUG_CONSERVATIVE, AUG_AGGRESSIVE, AUG_AERIAL, AUG_INDUSTRIAL
+    
+from rfdetr.datasets.aug_configs import AUG_CONSERVATIVE, AUG_AGGRESSIVE, AUG_AERIAL, AUG_INDUSTRIAL
 
 model = RFDETRSmall()
 model.train(dataset_dir="path/to/dataset", epochs=100, aug_config=AUG_CONSERVATIVE)
@@ -32,7 +33,7 @@ model.train(
 )
 ```
 
-To disable augmentations: `aug_config={}`. This also drops the training resize-and-crop branch, so images are resized directly to the target scale without random cropping. Omitting it (or passing `aug_config=None`) uses the default (horizontal flip at 50%) and keeps the resize-and-crop branch.
+To disable augmentations: `aug_config={}`. To disable the resize-and-crop scale jitter branch independently, pass `scale_jitter=False`. The two are separate controls: `aug_config` governs colour/geometric augmentations; `scale_jitter` governs whether the training resize pipeline uses a resize → crop → resize branch for scale variation.
 
 ## Built-in Presets
 
@@ -46,7 +47,7 @@ To disable augmentations: `aug_config={}`. This also drops the training resize-a
 All presets are plain dicts — inspect or extend them before passing:
 
 ```python
-from rfdetr.datasets.aug_config import AUG_AGGRESSIVE
+from rfdetr.datasets.aug_configs import AUG_AGGRESSIVE
 
 my_config = {**AUG_AGGRESSIVE, "VerticalFlip": {"p": 0.1}}
 model.train(dataset_dir="...", aug_config=my_config)
