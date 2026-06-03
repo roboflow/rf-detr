@@ -454,36 +454,36 @@ class TestAugConfigDisablesCrop:
     @pytest.mark.parametrize(
         "aug_config,expected",
         [
-            pytest.param(None, True, id="none_keeps_crop"),
-            pytest.param({}, False, id="empty_disables_crop"),
-            pytest.param({"HorizontalFlip": {"p": 0.5}}, True, id="nonempty_keeps_crop"),
+            pytest.param(None, False, id="none_keeps_augmentations"),
+            pytest.param({}, True, id="empty_disables_augmentations"),
+            pytest.param({"HorizontalFlip": {"p": 0.5}}, False, id="nonempty_keeps_augmentations"),
         ],
     )
-    def test_crop_branch_enabled(self, aug_config, expected):
-        """_crop_branch_enabled maps aug_config to the crop-branch decision."""
-        from rfdetr.datasets.coco import _crop_branch_enabled
+    def test_augmentations_disabled(self, aug_config, expected):
+        """_augmentations_disabled maps aug_config to the explicit disable decision."""
+        from rfdetr.datasets.coco import _augmentations_disabled
 
-        assert _crop_branch_enabled(aug_config) is expected
+        assert _augmentations_disabled(aug_config) is expected
 
     def test_empty_aug_config_warns(self):
         """Passing aug_config={} logs a warning about the dropped resize-and-crop branch."""
         from unittest.mock import patch
 
-        from rfdetr.datasets.coco import _crop_branch_enabled
+        from rfdetr.datasets.coco import _augmentations_disabled
 
         with patch("rfdetr.datasets.coco.logger") as mock_logger:
-            _crop_branch_enabled({})
+            _augmentations_disabled({})
         mock_logger.warning.assert_called_once()
 
     @pytest.mark.parametrize(
         "aug_config,expected",
         [
-            pytest.param(None, True, id="none_keeps_crop"),
-            pytest.param({}, False, id="empty_disables_crop"),
+            pytest.param(None, False, id="none_keeps_augmentations"),
+            pytest.param({}, True, id="empty_disables_augmentations"),
         ],
     )
-    def test_make_coco_transforms_forwards_crop_decision(self, aug_config, expected):
-        """make_coco_transforms passes the aug_config-derived value to _build_train_resize_config."""
+    def test_make_coco_transforms_forwards_disable_augmentations(self, aug_config, expected):
+        """make_coco_transforms passes the aug_config-derived disable decision to resize config."""
         from unittest.mock import patch
 
         from rfdetr.datasets.coco import make_coco_transforms
@@ -497,4 +497,4 @@ class TestAugConfigDisablesCrop:
         ):
             make_coco_transforms("train", 640, aug_config=aug_config)
 
-        assert mock_build.call_args.kwargs["include_crop_branch"] is expected
+        assert mock_build.call_args.kwargs["disable_augmentations"] is expected

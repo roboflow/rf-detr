@@ -254,15 +254,15 @@ class TestBuildTrainResizeConfigNonSquareScaleJitter:
 
 
 class TestBuildTrainResizeConfigCropBranch:
-    """include_crop_branch=False drops the resize-and-crop branch so only Option A runs."""
+    """disable_augmentations=True drops the resize-and-crop branch so only Option A runs."""
 
     @pytest.mark.parametrize(
         "square",
         [pytest.param(True, id="square"), pytest.param(False, id="nonsquare")],
     )
-    def test_include_crop_branch_false_drops_crop_branch(self, square):
+    def test_disable_augmentations_drops_crop_branch(self, square):
         """No RandomCrop/RandomSizedCrop appears in either square or non-square pipelines."""
-        result = _build_train_resize_config([480, 640], square=square, include_crop_branch=False)
+        result = _build_train_resize_config([480, 640], square=square, disable_augmentations=True)
         flat = str(result)
         assert "RandomSizedCrop" not in flat
         assert "RandomCrop" not in flat
