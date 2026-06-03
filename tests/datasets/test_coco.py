@@ -19,6 +19,7 @@ import pytest
 import torch
 from PIL import Image
 
+from rfdetr.datasets._keypoint_schema import infer_coco_keypoint_schema
 from rfdetr.datasets.coco import ConvertCoco, build_coco, build_roboflow_from_coco
 from rfdetr.detr import RFDETR
 
@@ -349,6 +350,49 @@ class TestRoboflowCocoKeypointFormat:
 
         with pytest.raises(ValueError, match="Keypoint COCO dataset"):
             build_roboflow_from_coco("train", self._make_args(tmp_path), resolution=64)
+
+
+class TestInferCocoKeypointSchema:
+    """COCO keypoint schema inference."""
+
+    def test_reads_category_keypoint_metadata(self, tmp_path: Path) -> None:
+        """Category keypoint names define the per-class keypoint count."""
+        _write_roboflow_keypoint_coco(tmp_path / "train" / "_annotations.coco.json", category_id=0)
+
+        schema = infer_coco_keypoint_schema(tmp_path / "train" / "_annotations.coco.json")
+
+        assert schema.class_names == ["person"]
+        assert schema.num_keypoints_per_class == [17]
+        assert len(schema.keypoint_oks_sigmas) == 17
+
+    def test_falls_back_to_annotation_keypoint_vectors(self, tmp_path: Path) -> None:
+        """Annotation vectors can define keypoint count when category names are absent."""
+        annotation_path = tmp_path / "train" / "_annotations.coco.json"
+        annotation_path.parent.mkdir(parents=True, exist_ok=True)
+        annotation_path.write_text(
+            json.dumps(
+                {
+                    "images": [],
+                    "annotations": [
+                        {
+                            "id": 1,
+                            "image_id": 1,
+                            "category_id": 0,
+                            "bbox": [0, 0, 10, 10],
+                            "area": 100,
+                            "iscrowd": 0,
+                            "keypoints": [1, 2, 2, 3, 4, 2],
+                        }
+                    ],
+                    "categories": [{"id": 0, "name": "person", "supercategory": "none"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        schema = infer_coco_keypoint_schema(annotation_path)
+
+        assert schema.num_keypoints_per_class == [2]
 
 
 # ---------------------------------------------------------------------------
