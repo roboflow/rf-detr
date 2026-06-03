@@ -12,11 +12,11 @@ import numpy as np
 import pytest
 import torch
 from PIL import Image
+from rfdetr.datasets.aug_configs import AUG_AGGRESSIVE, AUG_CONFIG
 from torch.utils.data import DataLoader
 from torchvision.transforms.v2 import Compose
 
 from rfdetr.datasets._develop import _SimpleDataset
-from rfdetr.datasets.aug_configs import AUG_AGGRESSIVE, AUG_CONFIG
 from rfdetr.datasets.coco import make_coco_transforms, make_coco_transforms_square_div_64
 from rfdetr.datasets.transforms import AlbumentationsWrapper, _build_albu_transform
 from rfdetr.utilities import collate_fn

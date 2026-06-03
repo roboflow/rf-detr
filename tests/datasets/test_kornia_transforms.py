@@ -11,7 +11,6 @@ All tests in this module are CPU-compatible — Kornia operates on CPU tensors i
 
 import pytest
 import torch
-
 from rfdetr.datasets.aug_configs import (
     AUG_AERIAL,
     AUG_AGGRESSIVE,
