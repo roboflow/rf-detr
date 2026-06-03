@@ -58,7 +58,6 @@ class HungarianMatcher(nn.Module):
         keypoint_findable_loss_coef: float = 0.0,
         keypoint_visible_loss_coef: float = 0.0,
         keypoint_nll_loss_coef: float = 0.0,
-        rle_loss_coef: float = 0.0,
     ):
         """Creates the matcher.
 
@@ -87,7 +86,6 @@ class HungarianMatcher(nn.Module):
         self.keypoint_findable_loss_coef = keypoint_findable_loss_coef
         self.keypoint_visible_loss_coef = keypoint_visible_loss_coef
         self.keypoint_nll_loss_coef = keypoint_nll_loss_coef
-        self.rle_loss_coef = rle_loss_coef
         self._warned_non_finite_costs = False
 
     @staticmethod
@@ -136,7 +134,6 @@ class HungarianMatcher(nn.Module):
         outputs: dict,
         targets: list,
         group_detr: int = 1,
-        flow: nn.Module | None = None,
     ) -> list[tuple[torch.Tensor, torch.Tensor]]:
         """Performs the matching
         Params:
@@ -234,20 +231,17 @@ class HungarianMatcher(nn.Module):
 
         if keypoints_present and tgt_keypoints is not None:
             target_areas = tgt_bbox[:, 2] * tgt_bbox[:, 3]
-            cost_l1, cost_findable, cost_visible, cost_nll, cost_rle = compute_keypoint_matching_cost(
+            cost_l1, cost_findable, cost_visible, cost_nll = compute_keypoint_matching_cost(
                 all_pred_keypoints=outputs["pred_keypoints"],
                 target_keypoints=tgt_keypoints,
                 target_classes=tgt_ids,
                 target_areas=target_areas,
                 num_keypoints_per_class=self.num_keypoints_per_class,
-                flow=flow,
-                keypoint_hidden_states=outputs.get("keypoint_hidden_states"),
             )
             cost_l1 = cost_l1.flatten(0, 1)
             cost_findable = cost_findable.flatten(0, 1)
             cost_visible = cost_visible.flatten(0, 1)
             cost_nll = cost_nll.flatten(0, 1)
-            cost_rle = cost_rle.flatten(0, 1)
 
         # Final cost matrix
         cost_matrix = self.cost_bbox * cost_bbox + self.cost_class * cost_class + self.cost_giou * cost_giou
@@ -260,7 +254,6 @@ class HungarianMatcher(nn.Module):
                 + self.keypoint_findable_loss_coef * cost_findable
                 + self.keypoint_visible_loss_coef * cost_visible
                 + self.keypoint_nll_loss_coef * cost_nll
-                + self.rle_loss_coef * cost_rle
             )
         cost_matrix = (
             cost_matrix.view(bs, num_queries, -1).float().cpu()
@@ -310,7 +303,6 @@ def build_matcher(args):
         "keypoint_findable_loss_coef": getattr(args, "keypoint_findable_loss_coef", 0.0),
         "keypoint_visible_loss_coef": getattr(args, "keypoint_visible_loss_coef", 0.0),
         "keypoint_nll_loss_coef": getattr(args, "keypoint_nll_loss_coef", 0.0),
-        "rle_loss_coef": getattr(args, "rle_loss_coef", 0.0) if getattr(args, "rle", False) else 0.0,
     }
     if args.segmentation_head:
         return HungarianMatcher(

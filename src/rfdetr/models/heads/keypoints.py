@@ -22,14 +22,10 @@ Slot index        Name         Meaning
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
 
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import nn
-
-if TYPE_CHECKING:
-    from rfdetr.models.flows import RealNVP
 
 
 # Number of channels in a keypoint prediction slot — see module docstring for layout.
@@ -100,10 +96,8 @@ def compute_l1_keypoint_loss(
     target_classes: torch.Tensor,
     target_areas: torch.Tensor,
     num_keypoints_per_class: Sequence[int],
-    flow: "RealNVP | None" = None,
-    keypoint_hidden_states: torch.Tensor | None = None,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Compute the five-component keypoint loss vector per matched target.
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Compute the keypoint loss vector per matched target.
 
     The tensor layout follows GroupPose-style keypoints where each target class defines how many
     valid keypoints it owns.
@@ -114,11 +108,9 @@ def compute_l1_keypoint_loss(
         target_classes: Class ids per target with shape ``(N,)``.
         target_areas: Target box areas with shape ``(N,)``.
         num_keypoints_per_class: Number of keypoints per class.
-        flow: Optional RLE flow module.
-        keypoint_hidden_states: Optional keypoint hidden states matching ``all_pred_keypoints``.
 
     Returns:
-        Tuple of location, findable BCE, visible BCE, Gaussian NLL, and flow-based RLE loss.
+        Tuple of location, findable BCE, visible BCE, and Gaussian NLL losses.
     """
 
     n_targets, total_padded_num_keypoints, pred_dim = all_pred_keypoints.shape
@@ -214,58 +206,9 @@ def compute_l1_keypoint_loss(
     no_valid = gaussian_count <= 0
     nll_loss = torch.where(no_valid, torch.zeros_like(nll_loss), nll_loss)
 
-    if flow is not None:
-        area_sqrt = safe_area_sqrt.unsqueeze(1).unsqueeze(-1)
-        whitened_residuals = torch.stack([u0, u1], dim=-1) / area_sqrt
-        selected_kp_hs = None
-        if keypoint_hidden_states is not None and n_targets > 0:
-            hidden_dim = keypoint_hidden_states.shape[-1]
-            keypoint_hs_split = keypoint_hidden_states.view(
-                n_targets,
-                num_classes,
-                kpad,
-                hidden_dim,
-            )
-            selected_kp_hs = keypoint_hs_split[
-                torch.arange(n_targets, device=keypoint_hidden_states.device),
-                target_classes,
-            ]
-
-        flow_loss_mask = gaussian_loss_mask & torch.isfinite(whitened_residuals).all(dim=-1)
-        cond_valid = None
-        if selected_kp_hs is not None:
-            finite_cond = torch.isfinite(selected_kp_hs).all(dim=-1)
-            flow_loss_mask = flow_loss_mask & finite_cond
-            cond_valid = selected_kp_hs[flow_loss_mask]
-
-        z_valid = whitened_residuals[flow_loss_mask]
-        if z_valid.numel() > 0:
-            rle_log_prob = flow.log_prob(
-                z_valid.to(torch.float32),
-                cond=cond_valid.to(torch.float32) if cond_valid is not None else None,
-            )
-            rle_log_prob = torch.nan_to_num(rle_log_prob, nan=0.0, posinf=0.0, neginf=0.0)
-            log_det_l = (log_l11 + log_l22).to(dtype=selected_pred_keypoints.dtype)
-            rle_values = torch.zeros(
-                (n_targets, kpad),
-                device=selected_pred_keypoints.device,
-                dtype=selected_pred_keypoints.dtype,
-            )
-            rle_values[flow_loss_mask] = (-rle_log_prob).to(selected_pred_keypoints.dtype)
-            rle_values = rle_values - log_det_l
-            rle_values = rle_values.masked_fill(~flow_loss_mask, 0.0)
-            flow_count = flow_loss_mask.sum(-1).to(dtype=selected_pred_keypoints.dtype)
-            flow_valid_count = flow_count.clamp(min=1)
-            rle_loss = rle_values.sum(-1) / flow_valid_count
-            rle_loss = torch.where(flow_count <= 0, torch.zeros_like(rle_loss), rle_loss)
-        else:
-            rle_loss = torch.zeros(n_targets, device=all_pred_keypoints.device, dtype=selected_pred_keypoints.dtype)
-    else:
-        rle_loss = torch.zeros(n_targets, device=all_pred_keypoints.device, dtype=selected_pred_keypoints.dtype)
-
     # NaN/Inf protection is upstream (see ``nan_to_num`` calls earlier in this function);
     # per-step hot-path assertions removed for performance (5–15% step latency).
-    return location_loss, findable_loss, visible_loss, nll_loss, rle_loss
+    return location_loss, findable_loss, visible_loss, nll_loss
 
 
 def _cdist_bce_with_logits(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
@@ -283,9 +226,7 @@ def compute_keypoint_matching_cost(
     target_classes: torch.Tensor,
     target_areas: torch.Tensor,
     num_keypoints_per_class: Sequence[int],
-    flow: RealNVP | None = None,
-    keypoint_hidden_states: torch.Tensor | None = None,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Compute many-to-many keypoint matching costs.
 
     Args:
@@ -294,11 +235,9 @@ def compute_keypoint_matching_cost(
         target_classes: Class ids for each target with shape ``(N,)``.
         target_areas: Target box areas with shape ``(N,)``.
         num_keypoints_per_class: Number of keypoints per class.
-        flow: Optional RLE flow module.
-        keypoint_hidden_states: Optional keypoint hidden states of shape ``(B, Q, K_total, hidden_dim)``.
 
     Returns:
-        Tuple ``(cost_l1, cost_findable, cost_visible, cost_nll, cost_rle)`` each of shape ``(B, Q, N)``.
+        Tuple ``(cost_l1, cost_findable, cost_visible, cost_nll)`` each of shape ``(B, Q, N)``.
     """
 
     b, num_queries, total_num_keypoints, pred_dim = all_pred_keypoints.shape
@@ -315,15 +254,10 @@ def compute_keypoint_matching_cost(
             device=all_pred_keypoints.device,
             dtype=all_pred_keypoints.dtype,
         )
-        return zeros, zeros, zeros, zeros, zeros
+        return zeros, zeros, zeros, zeros
 
     kpad = total_num_keypoints // num_classes
     pred = all_pred_keypoints.view(b, num_queries, num_classes, kpad, pred_dim)
-    hidden_states_split = (
-        keypoint_hidden_states.view(b, num_queries, num_classes, kpad, -1)
-        if keypoint_hidden_states is not None
-        else None
-    )
 
     cost_l1 = torch.zeros(
         (b, num_queries, n_targets),
@@ -345,11 +279,6 @@ def compute_keypoint_matching_cost(
         device=all_pred_keypoints.device,
         dtype=all_pred_keypoints.dtype,
     )
-    cost_rle = torch.zeros(
-        (b, num_queries, n_targets),
-        device=all_pred_keypoints.device,
-        dtype=all_pred_keypoints.dtype,
-    )
 
     flat_bq = b * num_queries
     for class_idx in range(num_classes):
@@ -361,9 +290,6 @@ def compute_keypoint_matching_cost(
             continue
 
         pred_by_class = pred[:, :, class_idx, :num_kpts, :]
-        hidden_by_class = (
-            hidden_states_split[:, :, class_idx, :num_kpts, :] if hidden_states_split is not None else None
-        )
         target_by_class = target_keypoints.index_select(0, target_indices)[:, :num_kpts, :]
         n_targets_by_class = target_by_class.shape[0]
 
@@ -407,15 +333,6 @@ def compute_keypoint_matching_cost(
         ).to(all_pred_keypoints.dtype)
 
         nll_sum = torch.zeros((flat_bq, n_targets_by_class), device=all_pred_keypoints.device, dtype=torch.float32)
-        rle_sum = (
-            torch.zeros(
-                (flat_bq, n_targets_by_class),
-                device=all_pred_keypoints.device,
-                dtype=torch.float32,
-            )
-            if flow is not None
-            else None
-        )
 
         for keypoint_idx in range(num_kpts):
             visibility_k = visible[:, keypoint_idx]
@@ -450,45 +367,6 @@ def compute_keypoint_matching_cost(
                 visibility_k.unsqueeze(0) & finite_pred.unsqueeze(1) & torch.isfinite(dx) & torch.isfinite(dy)
             )
 
-            if flow is not None:
-                z = torch.stack([dx, dy], dim=-1) / area_sqrt.unsqueeze(0).unsqueeze(-1)
-                cond_kp = None
-                if hidden_by_class is not None:
-                    hc_k = (
-                        hidden_by_class[:, :, keypoint_idx, :]
-                        .reshape(
-                            flat_bq,
-                            -1,
-                        )
-                        .to(torch.float32)
-                    )
-                    cond_kp = (
-                        hc_k.unsqueeze(1)
-                        .expand(
-                            -1,
-                            n_targets_by_class,
-                            -1,
-                        )
-                        .reshape(-1, hc_k.shape[-1])
-                    )
-                flat_flow_mask = (keypoint_mask & torch.isfinite(z).all(dim=-1)).reshape(-1)
-                if cond_kp is not None:
-                    flat_flow_mask = flat_flow_mask & torch.isfinite(cond_kp).all(dim=-1)
-                flow_lp = z.new_zeros(flat_bq * n_targets_by_class)
-                if flat_flow_mask.any():
-                    cond_valid = cond_kp[flat_flow_mask] if cond_kp is not None else None
-                    flow_lp_valid = flow.log_prob(z.reshape(-1, 2)[flat_flow_mask], cond=cond_valid)
-                    flow_lp[flat_flow_mask] = torch.nan_to_num(
-                        flow_lp_valid,
-                        nan=0.0,
-                        posinf=0.0,
-                        neginf=0.0,
-                    )
-                rle_keypoint = (-flow_lp).reshape(flat_bq, n_targets_by_class) - ((log_l11 + log_l22).unsqueeze(1))
-                rle_keypoint.masked_fill_(~flat_flow_mask.reshape(flat_bq, n_targets_by_class), 0.0)
-                if rle_sum is not None:
-                    rle_sum.add_(rle_keypoint)
-
             maha2 = dx.square_().add_(dy.square_())
             keypoint_mask = keypoint_mask & torch.isfinite(maha2)
             nll_k = 0.5 * (maha2 / areas.clamp_min(area_eps).unsqueeze(0)) - (log_l11 + log_l22).unsqueeze(1)
@@ -499,11 +377,6 @@ def compute_keypoint_matching_cost(
         mean_nll = (nll_sum / nll_denom.unsqueeze(0)).reshape(b, num_queries, n_targets_by_class)
         mean_nll.masked_fill_(~has_visible.unsqueeze(0), 0.0)
         cost_nll[:, :, target_indices] = mean_nll.to(all_pred_keypoints.dtype)
-
-        if flow is not None and rle_sum is not None:
-            mean_rle = (rle_sum / nll_denom.unsqueeze(0)).reshape(b, num_queries, n_targets_by_class)
-            mean_rle.masked_fill_(~has_visible.unsqueeze(0), 0.0)
-            cost_rle[:, :, target_indices] = mean_rle.to(all_pred_keypoints.dtype)
 
         pred_findable = pred_by_class[:, :, :, 2].reshape(flat_bq, num_kpts)
         target_findable = (
@@ -536,7 +409,7 @@ def compute_keypoint_matching_cost(
 
     # NaN/Inf protection is upstream (see ``nan_to_num`` calls earlier); per-step
     # matching-cost assertions removed for performance (5–15% step latency).
-    return cost_l1, cost_findable, cost_visible, cost_nll, cost_rle
+    return cost_l1, cost_findable, cost_visible, cost_nll
 
 
 __all__ = [

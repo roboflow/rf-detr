@@ -7,7 +7,6 @@
 import pytest
 import torch
 
-from rfdetr.models.flows import RealNVP
 from rfdetr.models.heads import ConditionalQueryInitializer
 from rfdetr.models.heads.keypoints import compute_keypoint_matching_cost, compute_l1_keypoint_loss
 
@@ -34,7 +33,7 @@ def test_conditional_query_initializer_zero_adaln_identity() -> None:
 
 
 def test_compute_l1_keypoint_loss_smoke() -> None:
-    """Loss helper should emit five finite vectors with matching target batch shape."""
+    """Loss helper should emit four finite vectors with matching target batch shape."""
     pred_keypoints = torch.randn(3, 17, 7)
     target_keypoints = torch.rand(3, 17, 3)
     target_keypoints[:, :, 2] = 2.0
@@ -48,14 +47,14 @@ def test_compute_l1_keypoint_loss_smoke() -> None:
         num_keypoints_per_class=[17],
     )
 
-    assert len(losses) == 5
+    assert len(losses) == 4
     for loss in losses:
         assert loss.shape == (3,)
         assert torch.isfinite(loss).all()
 
 
-def test_compute_l1_keypoint_loss_skips_visible_zero_area_rle_residuals() -> None:
-    """Visible keypoints on zero-area targets should not send invalid residuals into RLE flow."""
+def test_compute_l1_keypoint_loss_skips_visible_zero_area_nll_residuals() -> None:
+    """Visible keypoints on zero-area targets should not produce non-finite Gaussian NLL."""
     pred_keypoints = torch.zeros(1, 17, 7)
     target_keypoints = torch.rand(1, 17, 3)
     target_keypoints[:, :, 2] = 2.0
@@ -65,7 +64,6 @@ def test_compute_l1_keypoint_loss_skips_visible_zero_area_rle_residuals() -> Non
         target_classes=torch.tensor([0], dtype=torch.int64),
         target_areas=torch.tensor([0.0], dtype=torch.float32),
         num_keypoints_per_class=[17],
-        flow=RealNVP(),
     )
 
     for loss in losses:
@@ -88,34 +86,31 @@ def test_compute_l1_keypoint_loss_rejects_missing_schema() -> None:
 
 
 def test_compute_keypoint_matching_cost_smoke() -> None:
-    """Matching-cost helper should return a five-term cost tensor for each target."""
+    """Matching-cost helper should return a four-term cost tensor for each target."""
     all_pred_keypoints = torch.randn(2, 4, 17, 7)
     target_keypoints = torch.rand(2, 17, 3)
     target_keypoints[:, :, 2] = 2.0
     target_classes = torch.tensor([0, 0], dtype=torch.int64)
     target_areas = torch.tensor([1.0, 2.0], dtype=torch.float32)
-    cost_l1, cost_findable, cost_visible, cost_nll, cost_rle = compute_keypoint_matching_cost(
+    cost_l1, cost_findable, cost_visible, cost_nll = compute_keypoint_matching_cost(
         all_pred_keypoints=all_pred_keypoints,
         target_keypoints=target_keypoints,
         target_classes=target_classes,
         target_areas=target_areas,
         num_keypoints_per_class=[17],
-        flow=None,
     )
 
     assert cost_l1.shape == (2, 4, 2)
     assert cost_findable.shape == (2, 4, 2)
     assert cost_visible.shape == (2, 4, 2)
     assert cost_nll.shape == (2, 4, 2)
-    assert cost_rle.shape == (2, 4, 2)
     assert torch.isfinite(cost_l1).all()
     assert torch.isfinite(cost_findable).all()
     assert torch.isfinite(cost_visible).all()
     assert torch.isfinite(cost_nll).all()
-    assert torch.isfinite(cost_rle).all()
 
 
-def test_compute_keypoint_matching_cost_skips_zero_area_rle_residuals() -> None:
+def test_compute_keypoint_matching_cost_skips_zero_area_nll_residuals() -> None:
     """Zero-area targets should not produce non-finite keypoint matching costs."""
     all_pred_keypoints = torch.zeros(1, 2, 17, 7)
     target_keypoints = torch.rand(1, 17, 3)
@@ -126,7 +121,6 @@ def test_compute_keypoint_matching_cost_skips_zero_area_rle_residuals() -> None:
         target_classes=torch.tensor([0], dtype=torch.int64),
         target_areas=torch.tensor([0.0], dtype=torch.float32),
         num_keypoints_per_class=[17],
-        flow=RealNVP(),
     )
 
     for cost in costs:
@@ -145,5 +139,4 @@ def test_compute_keypoint_matching_cost_rejects_missing_schema() -> None:
             target_classes=torch.tensor([0], dtype=torch.int64),
             target_areas=torch.tensor([1.0], dtype=torch.float32),
             num_keypoints_per_class=[],
-            flow=None,
         )

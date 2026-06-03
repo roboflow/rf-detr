@@ -26,9 +26,6 @@ def test_keypoint_config_defaults() -> None:
     assert model.num_keypoints_per_class == [0, 17]
     assert model.positional_encoding_size == 576 // 12
 
-    assert train.rle is True
-    assert train.rle_conditional is True
-    assert train.rle_loss_coef == pytest.approx(1.0)
     assert train.keypoint_l1_loss_coef == pytest.approx(1.0)
     assert train.keypoint_findable_loss_coef == pytest.approx(1.0)
     assert train.keypoint_visible_loss_coef == pytest.approx(1.0)
@@ -60,9 +57,6 @@ def test_keypoint_fields_propagate_to_namespace(tmp_path) -> None:
         keypoint_findable_loss_coef=2.5,
         keypoint_visible_loss_coef=3.5,
         keypoint_nll_loss_coef=4.5,
-        rle=False,
-        rle_conditional=False,
-        rle_loss_coef=5.5,
     )
 
     namespace = _namespace_from_configs(model, train)
@@ -79,17 +73,23 @@ def test_keypoint_fields_propagate_to_namespace(tmp_path) -> None:
     assert namespace.keypoint_findable_loss_coef == pytest.approx(2.5)
     assert namespace.keypoint_visible_loss_coef == pytest.approx(3.5)
     assert namespace.keypoint_nll_loss_coef == pytest.approx(4.5)
-    assert namespace.rle is False
-    assert namespace.rle_conditional is False
-    assert namespace.rle_loss_coef == pytest.approx(5.5)
 
 
-def test_no_public_rle_hidden_dim_field() -> None:
-    """rle_hidden_dim is not a public model config field and must be rejected by RFDETRBaseConfig."""
+def test_no_public_rle_fields() -> None:
+    """RLE keypoint flow fields are intentionally not public config fields."""
     with pytest.raises(ValueError, match="Unknown parameter"):
         RFDETRBaseConfig(num_classes=1, rle_hidden_dim=256)
 
     # KeypointTrainConfig (a TrainConfig subclass) uses extra="ignore" for Lightning
     # compatibility, so unknown kwargs are silently dropped rather than raising.
-    kc = KeypointTrainConfig(dataset_dir="/tmp", rle_hidden_dim=256)
+    kc = KeypointTrainConfig(
+        dataset_dir="/tmp",
+        rle_hidden_dim=256,
+        rle=True,
+        rle_conditional=True,
+        rle_loss_coef=1.0,
+    )
     assert not hasattr(kc, "rle_hidden_dim")
+    assert not hasattr(kc, "rle")
+    assert not hasattr(kc, "rle_conditional")
+    assert not hasattr(kc, "rle_loss_coef")

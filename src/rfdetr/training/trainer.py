@@ -177,8 +177,8 @@ def build_trainer(
         _is_distributed_strategy_requested(tc.strategy) or tc.num_nodes > 1 or _requests_multiple_devices(tc.devices)
     )
     if has_keypoints and distributed_requested:
-        # TODO(@keypoints-ddp): validate criterion-owned RealNVP parameter synchronization
-        # across processes before enabling keypoint distributed training.
+        # TODO(@keypoints-ddp): validate keypoint training under distributed strategies
+        # before enabling keypoint distributed training.
         raise NotImplementedError(
             "Keypoint training currently does not support distributed execution "
             f"(strategy={tc.strategy!r}, devices={tc.devices!r}, num_nodes={tc.num_nodes!r}). "

@@ -684,6 +684,40 @@ class TestConvertCocoKeypoints:
 
         assert target["keypoints"].shape == (0, 2, 3)
 
+    def test_multiclass_keypoints_use_schema_max_shape(self) -> None:
+        """Multi-class keypoint targets should be padded to Kmax, not schema sum."""
+        converter = ConvertCoco(
+            include_masks=False,
+            include_keypoints=True,
+            cat2label=None,
+            num_keypoints_per_class=[2, 1],
+        )
+        _, target = converter(
+            _IMAGE,
+            {
+                "image_id": 100,
+                "annotations": [
+                    _make_keypoint_annotation(category_id=0, keypoints=[1.0, 2.0, 2.0, 3.0, 4.0, 2.0]),
+                    _make_keypoint_annotation(category_id=1, keypoints=[5.0, 6.0, 2.0]),
+                ],
+            },
+        )
+
+        assert target["labels"].tolist() == [0, 1]
+        assert target["keypoints"].shape == (2, 2, 3)
+        torch.testing.assert_close(
+            target["keypoints"][0],
+            torch.tensor([[1.0, 2.0, 2.0], [3.0, 4.0, 2.0]], dtype=torch.float32),
+            rtol=1e-4,
+            atol=1e-6,
+        )
+        torch.testing.assert_close(
+            target["keypoints"][1],
+            torch.tensor([[5.0, 6.0, 2.0], [0.0, 0.0, 0.0]], dtype=torch.float32),
+            rtol=1e-4,
+            atol=1e-6,
+        )
+
 
 class TestBuildCocoKeypointMode:
     """COCO builder mode switch for person keypoints."""

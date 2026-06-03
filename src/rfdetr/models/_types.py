@@ -102,9 +102,6 @@ class BuilderArgs(Protocol):
     keypoint_findable_loss_coef: float
     keypoint_visible_loss_coef: float
     keypoint_nll_loss_coef: float
-    rle: bool
-    rle_conditional: bool
-    rle_loss_coef: float
     mask_ce_loss_coef: float
     mask_dice_loss_coef: float
     mask_point_sample_ratio: int

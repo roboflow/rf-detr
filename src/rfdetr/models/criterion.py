@@ -13,7 +13,6 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import nn
 
-from rfdetr.models.flows import RealNVP
 from rfdetr.models.heads.keypoints import compute_l1_keypoint_loss
 from rfdetr.models.heads.segmentation import (
     calculate_uncertainty,
@@ -149,8 +148,6 @@ class SetCriterion(nn.Module):
         ia_bce_loss=False,
         mask_point_sample_ratio: int = 16,
         num_keypoints_per_class: list[int] | None = None,
-        rle: bool = False,
-        rle_hidden_dim: int | None = None,
     ):
         """Create the criterion.
 
@@ -175,7 +172,6 @@ class SetCriterion(nn.Module):
         self.ia_bce_loss = ia_bce_loss
         self.mask_point_sample_ratio = mask_point_sample_ratio
         self.num_keypoints_per_class = num_keypoints_per_class or []
-        self.flow = RealNVP(hidden_dim=rle_hidden_dim) if rle else None
 
     def loss_labels(self, outputs, targets, indices, num_boxes, log=True):
         """Classification loss (Binary focal loss) targets dicts must contain the key "labels" containing a tensor of
@@ -474,26 +470,12 @@ class SetCriterion(nn.Module):
         target_boxes = torch.cat([target["boxes"][j] for target, (_, j) in zip(targets, indices)], dim=0)
         target_areas = target_boxes[:, 2] * target_boxes[:, 3]
 
-        keypoint_hidden_states = None
-        if self.flow is not None and self.flow.cond_proj is not None:
-            if "keypoint_hidden_states" not in outputs:
-                raise ValueError(
-                    "Flow was configured with conditional projection (rle_hidden_dim set) "
-                    "but 'keypoint_hidden_states' is missing from model outputs. "
-                    "Ensure the keypoint head returns hidden states when rle_hidden_dim is set."
-                )
-            keypoint_hidden_states = outputs["keypoint_hidden_states"][idx]
-        elif self.flow is not None and "keypoint_hidden_states" in outputs:
-            keypoint_hidden_states = outputs["keypoint_hidden_states"][idx]
-
-        loss_l1, loss_findable, loss_visible, loss_nll, loss_rle = compute_l1_keypoint_loss(
+        loss_l1, loss_findable, loss_visible, loss_nll = compute_l1_keypoint_loss(
             all_pred_keypoints=src_keypoints,
             target_keypoints=target_keypoints.to(src_keypoints.device),
             target_classes=target_classes.to(src_keypoints.device),
             target_areas=target_areas.to(src_keypoints.device),
             num_keypoints_per_class=self.num_keypoints_per_class,
-            flow=self.flow,
-            keypoint_hidden_states=keypoint_hidden_states,
         )
 
         return {
@@ -501,7 +483,6 @@ class SetCriterion(nn.Module):
             "loss_keypoints_findable": loss_findable.sum() / num_boxes,
             "loss_keypoints_visible": loss_visible.sum() / num_boxes,
             "loss_keypoints_nll": loss_nll.sum() / num_boxes,
-            "loss_keypoints_rle": loss_rle.sum() / num_boxes,
         }
 
     def _get_src_permutation_idx(self, indices):
@@ -539,7 +520,7 @@ class SetCriterion(nn.Module):
         outputs_without_aux = {k: v for k, v in outputs.items() if k != "aux_outputs"}
 
         # Retrieve the matching between the outputs of the last layer and the targets
-        indices = self.matcher(outputs_without_aux, targets, group_detr=group_detr, flow=self.flow)
+        indices = self.matcher(outputs_without_aux, targets, group_detr=group_detr)
 
         # Compute the average number of target boxes across all nodes, for normalization purposes
         num_boxes = sum(len(t["labels"]) for t in targets)
@@ -558,7 +539,7 @@ class SetCriterion(nn.Module):
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
         if "aux_outputs" in outputs:
             for i, aux_outputs in enumerate(outputs["aux_outputs"]):
-                indices = self.matcher(aux_outputs, targets, group_detr=group_detr, flow=self.flow)
+                indices = self.matcher(aux_outputs, targets, group_detr=group_detr)
                 for loss in self.losses:
                     kwargs = {}
                     if loss == "labels":
@@ -570,7 +551,7 @@ class SetCriterion(nn.Module):
 
         if "enc_outputs" in outputs:
             enc_outputs = outputs["enc_outputs"]
-            indices = self.matcher(enc_outputs, targets, group_detr=group_detr, flow=self.flow)
+            indices = self.matcher(enc_outputs, targets, group_detr=group_detr)
             for loss in self.losses:
                 kwargs = {}
                 if loss == "labels":
