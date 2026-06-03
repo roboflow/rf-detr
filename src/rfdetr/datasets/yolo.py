@@ -15,7 +15,7 @@ import numpy as np
 import torch
 
 if TYPE_CHECKING:
-    import supervision as sv
+    from supervision import Detections
 from PIL import Image, ImageDraw
 from torchvision.datasets import VisionDataset
 
@@ -159,24 +159,24 @@ class _LazyYoloSample:
     class_id: np.ndarray
     polygons: tuple[np.ndarray, ...]
 
-    def to_detections(self) -> "sv.Detections":
+    def to_detections(self) -> "Detections":
         """Materialize the current sample as a supervision ``Detections`` object."""
-        import supervision as sv
+        from supervision import Detections
 
         if len(self.class_id) == 0:
-            return sv.Detections.empty()
+            return Detections.empty()
         if len(self.polygons) == 0:
             # Detection-only path: no masks were computed, return bare boxes.
-            return sv.Detections(class_id=self.class_id, xyxy=self.xyxy)
+            return Detections(class_id=self.class_id, xyxy=self.xyxy)
         # TODO: once supervision v0.28 ships CompactMask, wrap the dense result:
         #   compact = sv.CompactMask.from_dense(mask, self.xyxy, (self.height, self.width))
-        #   return sv.Detections(..., mask=compact)
+        #   return Detections(..., mask=compact)
         # CompactMask stores crop-RLE instead of a full H×W bool array, reducing memory
         # at the detections level for large images with sparse objects.
         # Note: _polygon_to_mask / _polygons_to_masks remain required as the intermediate
         # rasterization step until supervision provides a direct from_polygon factory.
         mask = _polygons_to_masks(self.polygons, (self.width, self.height))
-        return sv.Detections(class_id=self.class_id, xyxy=self.xyxy, mask=mask)
+        return Detections(class_id=self.class_id, xyxy=self.xyxy, mask=mask)
 
 
 class _LazyYoloDetectionDataset:
@@ -189,7 +189,7 @@ class _LazyYoloDetectionDataset:
     def __len__(self) -> int:
         return len(self._samples)
 
-    def __getitem__(self, idx: int) -> tuple[str, np.ndarray, "sv.Detections"]:
+    def __getitem__(self, idx: int) -> tuple[str, np.ndarray, "Detections"]:
         import cv2
 
         sample = self._samples[idx]
@@ -500,11 +500,11 @@ class ConvertYolo:
 
     Examples:
         >>> import numpy as np
-        >>> import supervision as sv
+        >>> from supervision import Detections
         >>> from PIL import Image
         >>> # Create a sample image and target
         >>> image = Image.new("RGB", (100, 100))
-        >>> detections = sv.Detections(
+        >>> detections = Detections(
         ...     xyxy=np.array([[10, 20, 30, 40]]),
         ...     class_id=np.array([0])
         ... )
@@ -531,7 +531,7 @@ class ConvertYolo:
 
         Args:
             image: PIL Image
-            target: dict with 'image_id' and 'detections' (sv.Detections)
+            target: dict with 'image_id' and 'detections'
 
         Returns:
             tuple of (image, target_dict)

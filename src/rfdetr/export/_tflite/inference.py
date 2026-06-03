@@ -18,9 +18,9 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import supervision as sv
 from numpy.typing import NDArray
 from PIL import Image as PILImage
+from supervision import Detections
 
 from rfdetr.utilities.logger import get_logger
 
@@ -106,7 +106,7 @@ def _run_inference(
     interp: Any,
     image_path: str | Path,
     threshold: float = 0.3,
-) -> tuple[sv.Detections, PILImage.Image]:
+) -> tuple[Detections, PILImage.Image]:
     """Preprocess one image, run TFLite inference, and decode detections.
 
     Reads input shape from the interpreter (NHWC ``float32``), resizes and normalises the image with ImageNet
@@ -249,5 +249,5 @@ def _run_inference(
         raw_masks = interp.get_tensor(out_det[mask_idx]["index"])[0]  # (Q, Hm, Wm)
         masks = _decode_masks(raw_masks[keep], (ow, oh))
 
-    detections = sv.Detections(xyxy=xyxy, confidence=scores[keep], class_id=cls[keep].astype(int), mask=masks)
+    detections = Detections(xyxy=xyxy, confidence=scores[keep], class_id=cls[keep].astype(int), mask=masks)
     return detections, pil_img

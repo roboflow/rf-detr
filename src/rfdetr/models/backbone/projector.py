@@ -127,13 +127,13 @@ class Bottleneck(nn.Module):
         """ch_in, ch_out, shortcut, groups, kernels, expand."""
         super().__init__()
         c_ = int(c2 * e)  # hidden channels
-        self.cv1 = ConvX(c1, c_, k[0], 1, act=act, layer_norm=layer_norm, rms_norm=rms_norm)
-        self.cv2 = ConvX(c_, c2, k[1], 1, groups=g, act=act, layer_norm=layer_norm, rms_norm=rms_norm)
+        self.conv1 = ConvX(c1, c_, k[0], 1, act=act, layer_norm=layer_norm, rms_norm=rms_norm)
+        self.conv2 = ConvX(c_, c2, k[1], 1, groups=g, act=act, layer_norm=layer_norm, rms_norm=rms_norm)
         self.add = shortcut and c1 == c2
 
     def forward(self, x):
         """'forward()' applies the YOLOv5 FPN to input data."""
-        return x + self.cv2(self.cv1(x)) if self.add else self.cv2(self.cv1(x))
+        return x + self.conv2(self.conv1(x)) if self.add else self.conv2(self.conv1(x))
 
 
 class C2f(nn.Module):
@@ -143,8 +143,8 @@ class C2f(nn.Module):
         """ch_in, ch_out, number, shortcut, groups, expansion."""
         super().__init__()
         self.c = int(c2 * e)  # hidden channels
-        self.cv1 = ConvX(c1, 2 * self.c, 1, 1, act=act, layer_norm=layer_norm, rms_norm=rms_norm)
-        self.cv2 = ConvX(
+        self.conv1 = ConvX(c1, 2 * self.c, 1, 1, act=act, layer_norm=layer_norm, rms_norm=rms_norm)
+        self.conv2 = ConvX(
             (2 + n) * self.c, c2, 1, act=act, layer_norm=layer_norm, rms_norm=rms_norm
         )  # optional act=FReLU(c2)
         self.m = nn.ModuleList(
@@ -154,9 +154,9 @@ class C2f(nn.Module):
 
     def forward(self, x):
         """Forward pass using split() instead of chunk()."""
-        y = list(self.cv1(x).split((self.c, self.c), 1))
+        y = list(self.conv1(x).split((self.c, self.c), 1))
         y.extend(m(y[-1]) for m in self.m)
-        return self.cv2(torch.cat(y, 1))
+        return self.conv2(torch.cat(y, 1))
 
 
 class MultiScaleProjector(nn.Module):

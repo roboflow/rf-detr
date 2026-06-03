@@ -23,7 +23,7 @@ import requests
 import torch
 
 if TYPE_CHECKING:
-    import supervision as sv
+    from supervision import Detections
 
 import torchvision.transforms.functional as F  # noqa: N812
 import yaml
@@ -1211,7 +1211,7 @@ class RFDETR:
         patch_size: int | None = None,
         include_source_image: bool = True,
         **kwargs: Any,
-    ) -> sv.Detections | list[sv.Detections]:
+    ) -> "Detections" | list["Detections"]:
         """Performs object detection on the input images and returns bounding box predictions.
 
         This method accepts a single image or a list of images in various formats (file path, image url, PIL Image,
@@ -1265,7 +1265,7 @@ class RFDETR:
                 either dimension is zero or negative, if either dimension is not divisible by ``patch_size *
                 num_windows``, or if ``patch_size`` is not a positive integer.
         """
-        import supervision as sv
+        from supervision import Detections
 
         _ensure_model_on_device(self.model)
 
@@ -1422,14 +1422,14 @@ class RFDETR:
                 masks = result["masks"]
                 masks = masks[keep]
 
-                detections = sv.Detections(
+                detections = Detections(
                     xyxy=boxes.float().cpu().numpy(),
                     confidence=scores.float().cpu().numpy(),
                     class_id=labels.cpu().numpy(),
                     mask=masks.squeeze(1).cpu().numpy(),
                 )
             else:
-                detections = sv.Detections(
+                detections = Detections(
                     xyxy=boxes.float().cpu().numpy(),
                     confidence=scores.float().cpu().numpy(),
                     class_id=labels.cpu().numpy(),
