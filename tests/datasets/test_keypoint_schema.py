@@ -49,7 +49,7 @@ def _write_coco_annotations(
 
 
 def test_infer_coco_keypoint_schema_uses_declared_category_keypoints(tmp_path: Path) -> None:
-    """Declared category keypoints should produce the preview-style non-zero keypoint slot."""
+    """Declared category keypoints should produce a category-aligned keypoint schema."""
     annotation_path = tmp_path / "annotations.json"
     _write_coco_annotations(
         annotation_path,
@@ -59,9 +59,9 @@ def test_infer_coco_keypoint_schema_uses_declared_category_keypoints(tmp_path: P
     schema = infer_coco_keypoint_schema(annotation_path)
 
     assert schema == CocoKeypointSchema(
-        class_names=["", "person"],
-        num_keypoints_per_class=[0, 2],
-        keypoint_oks_sigmas=[0.05, 0.05],
+        class_names=["person"],
+        num_keypoints_per_class=[2],
+        keypoint_oks_sigmas=[0.1, 0.1],
     )
 
 
@@ -78,13 +78,13 @@ def test_infer_coco_keypoint_schema_uses_annotation_keypoints_when_category_meta
 
     schema = infer_coco_keypoint_schema(annotation_path, keypoint_oks_sigma=0.1)
 
-    assert schema.class_names == ["", "pose"]
-    assert schema.num_keypoints_per_class == [0, 2]
+    assert schema.class_names == ["pose"]
+    assert schema.num_keypoints_per_class == [2]
     assert schema.keypoint_oks_sigmas == [0.1, 0.1]
 
 
 def test_infer_coco_keypoint_schema_places_detection_only_categories_in_free_slots(tmp_path: Path) -> None:
-    """Detection-only categories should fill zero-keypoint slots without moving keypoint categories."""
+    """Detection-only categories should stay category-aligned with zero keypoint counts."""
     annotation_path = tmp_path / "annotations.json"
     _write_coco_annotations(
         annotation_path,
@@ -97,13 +97,13 @@ def test_infer_coco_keypoint_schema_places_detection_only_categories_in_free_slo
 
     schema = infer_coco_keypoint_schema(annotation_path)
 
-    assert schema.class_names == ["helmet", "person", "vest"]
-    assert schema.num_keypoints_per_class == [0, 2, 0]
-    assert schema.keypoint_oks_sigmas == [0.05, 0.05]
+    assert schema.class_names == ["person", "helmet", "vest"]
+    assert schema.num_keypoints_per_class == [2, 0, 0]
+    assert schema.keypoint_oks_sigmas == [0.1, 0.1]
 
 
 def test_infer_coco_keypoint_schema_supports_multiple_keypoint_categories_with_same_count(tmp_path: Path) -> None:
-    """Multiple keypoint classes with the same keypoint count should map to consecutive active slots."""
+    """Multiple keypoint classes with the same keypoint count should stay category-aligned."""
     annotation_path = tmp_path / "annotations.json"
     _write_coco_annotations(
         annotation_path,
@@ -115,9 +115,9 @@ def test_infer_coco_keypoint_schema_supports_multiple_keypoint_categories_with_s
 
     schema = infer_coco_keypoint_schema(annotation_path)
 
-    assert schema.class_names == ["", "adult", "child"]
-    assert schema.num_keypoints_per_class == [0, 2, 2]
-    assert schema.keypoint_oks_sigmas == [0.05, 0.05]
+    assert schema.class_names == ["adult", "child"]
+    assert schema.num_keypoints_per_class == [2, 2]
+    assert schema.keypoint_oks_sigmas == [0.1, 0.1]
 
 
 def test_infer_coco_keypoint_schema_rejects_missing_keypoints(tmp_path: Path) -> None:
@@ -129,8 +129,8 @@ def test_infer_coco_keypoint_schema_rejects_missing_keypoints(tmp_path: Path) ->
         infer_coco_keypoint_schema(annotation_path)
 
 
-def test_infer_coco_keypoint_schema_rejects_mixed_keypoint_counts(tmp_path: Path) -> None:
-    """Different keypoint counts cannot share one COCO OKS sigma vector."""
+def test_infer_coco_keypoint_schema_supports_mixed_keypoint_counts(tmp_path: Path) -> None:
+    """Different keypoint counts are represented per class and padded later by the dataset."""
     annotation_path = tmp_path / "annotations.json"
     _write_coco_annotations(
         annotation_path,
@@ -140,8 +140,11 @@ def test_infer_coco_keypoint_schema_rejects_mixed_keypoint_counts(tmp_path: Path
         ],
     )
 
-    with pytest.raises(ValueError, match="Expected one keypoint count"):
-        infer_coco_keypoint_schema(annotation_path)
+    schema = infer_coco_keypoint_schema(annotation_path)
+
+    assert schema.class_names == ["person", "animal"]
+    assert schema.num_keypoints_per_class == [1, 2]
+    assert schema.keypoint_oks_sigmas == [0.1, 0.1]
 
 
 def test_infer_coco_keypoint_schema_rejects_malformed_annotation_keypoint_length(tmp_path: Path) -> None:

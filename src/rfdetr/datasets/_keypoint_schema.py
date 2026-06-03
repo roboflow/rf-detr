@@ -3,7 +3,7 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Private helpers for inferring RF-DETR keypoint schemas from COCO annotations."""
+"""Private helpers for COCO keypoint schema extraction."""
 
 from __future__ import annotations
 
@@ -12,40 +12,35 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-__all__ = ["CocoKeypointSchema", "infer_coco_keypoint_schema"]
+__all__ = ["CocoKeypointSchema", "KeypointSchema", "active_keypoint_counts", "infer_coco_keypoint_schema"]
 
 
 @dataclass(frozen=True, slots=True)
 class CocoKeypointSchema:
-    """Container for keypoint model schema inferred from a COCO annotation file.
-
-    The schema mirrors RF-DETR keypoint dataset loading, where keypoint-bearing
-    categories are assigned to non-zero model label slots and non-keypoint
-    categories fill the remaining slots.
+    """Keypoint schema inferred from COCO category metadata.
 
     Args:
-        class_names: Class names in model label-slot order.
-        num_keypoints_per_class: Number of keypoints per model label slot.
-        keypoint_oks_sigmas: Per-keypoint OKS sigmas for COCO keypoint evaluation.
+        class_names: Category names sorted by category id.
+        num_keypoints_per_class: Number of keypoints for each sorted category.
+        keypoint_oks_sigmas: Default OKS sigmas matching the largest keypoint class.
 
     Returns:
-        Frozen keypoint schema metadata.
+        Immutable schema value used to configure keypoint training.
 
     Raises:
-        TypeError: If constructed with incompatible field values.
+        This value object does not raise.
 
     Example:
-        >>> CocoKeypointSchema(
-        ...     class_names=["", "person"],
-        ...     num_keypoints_per_class=[0, 17],
-        ...     keypoint_oks_sigmas=[0.05] * 17,
-        ... ).num_keypoints_per_class
-        [0, 17]
+        >>> CocoKeypointSchema(["person"], [17], [0.1] * 17).num_keypoints_per_class
+        [17]
     """
 
     class_names: list[str]
     num_keypoints_per_class: list[int]
     keypoint_oks_sigmas: list[float]
+
+
+KeypointSchema = CocoKeypointSchema
 
 
 def _load_coco_annotation(annotation_path: Path) -> dict[str, Any]:
@@ -73,44 +68,6 @@ def _load_coco_annotation(annotation_path: Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError(f"Expected COCO annotation root to be an object, got {type(data).__name__}.")
     return data
-
-
-def _category_keypoint_count(category: dict[str, Any], annotations: list[dict[str, Any]]) -> int:
-    """Return the declared or observed keypoint count for one COCO category.
-
-    Args:
-        category: COCO category object.
-        annotations: COCO annotation objects from the same file.
-
-    Returns:
-        Number of keypoints associated with the category, or ``0`` for a
-        detection-only category.
-
-    Raises:
-        ValueError: If keypoint annotation length is not divisible by three.
-
-    Example:
-        >>> _category_keypoint_count({"id": 1, "keypoints": ["a", "b"]}, [])
-        2
-        >>> _category_keypoint_count({"id": 1}, [{"category_id": 1, "keypoints": [1, 2, 2]}])
-        1
-    """
-    declared = category.get("keypoints") or []
-    if declared:
-        return len(declared)
-
-    category_id = category["id"]
-    for annotation in annotations:
-        if annotation.get("category_id") != category_id or not annotation.get("keypoints"):
-            continue
-        keypoints = annotation["keypoints"]
-        if len(keypoints) % 3 != 0:
-            raise ValueError(
-                f"COCO annotation for category_id {category_id!r} has {len(keypoints)} keypoint values; "
-                "expected a flat [x, y, v] list with length divisible by 3."
-            )
-        return len(keypoints) // 3
-    return 0
 
 
 def _validate_categories(categories: Any) -> list[dict[str, Any]]:
@@ -168,105 +125,117 @@ def _validate_annotations(annotations: Any) -> list[dict[str, Any]]:
     return annotations
 
 
-def _class_names_for_keypoint_schema(
-    categories: list[dict[str, Any]],
-    keypoint_counts: list[int],
-    num_keypoints_per_class: list[int],
-) -> list[str]:
-    """Return class names in RF-DETR keypoint label-slot order.
+def _keypoint_count_from_annotations(annotations: list[dict[str, Any]], category_id: int) -> int:
+    """Infer keypoint count for one category from annotation vectors.
 
     Args:
-        categories: COCO categories sorted by category id.
-        keypoint_counts: Keypoint count for each category.
-        num_keypoints_per_class: Inferred RF-DETR keypoint schema.
+        annotations: COCO annotation dictionaries.
+        category_id: Category id whose annotations should be inspected.
 
     Returns:
-        Class names ordered by model label slot.
+        Maximum keypoint vector length found for the category.
 
     Raises:
-        ValueError: If no label slot is available for a category.
+        ValueError: If keypoint annotation length is not divisible by three.
 
     Example:
-        >>> cats = [{"id": 0, "name": "person"}, {"id": 1, "name": "helmet"}]
-        >>> _class_names_for_keypoint_schema(cats, [17, 0], [0, 17])
-        ['helmet', 'person']
+        >>> anns = [{"category_id": 1, "keypoints": [1, 2, 2, 3, 4, 2]}]
+        >>> _keypoint_count_from_annotations(anns, 1)
+        2
     """
-    active_slots = [slot for slot, count in enumerate(num_keypoints_per_class) if count > 0]
-    keypoint_categories = [category for category, count in zip(categories, keypoint_counts) if count > 0]
-    required_slots = max(len(categories), max(active_slots) + 1)
-    slot_names = [""] * required_slots
-    assigned_slots: set[int] = set()
-    assigned_category_ids: set[int] = set()
-
-    for category, slot in zip(keypoint_categories, active_slots):
-        slot_names[slot] = str(category["name"])
-        assigned_slots.add(slot)
-        assigned_category_ids.add(int(category["id"]))
-
-    free_slots = [slot for slot in range(required_slots) if slot not in assigned_slots]
-    for category in categories:
-        if int(category["id"]) in assigned_category_ids:
+    keypoint_count = 0
+    for annotation in annotations:
+        if int(annotation.get("category_id", -1)) != category_id:
             continue
-        if not free_slots:
-            raise ValueError(f"No free model label slot remains for category_id {category['id']!r}.")
-        slot_names[free_slots.pop(0)] = str(category["name"])
-    return slot_names
+        raw_keypoints = annotation.get("keypoints")
+        if raw_keypoints is None or raw_keypoints == []:
+            continue
+        if not isinstance(raw_keypoints, list):
+            continue
+        if len(raw_keypoints) % 3 != 0:
+            raise ValueError(
+                f"COCO annotation for category_id {category_id!r} has {len(raw_keypoints)} keypoint values; "
+                "expected a flat [x, y, v] list with length divisible by 3."
+            )
+        keypoint_count = max(keypoint_count, len(raw_keypoints) // 3)
+    return keypoint_count
 
 
 def infer_coco_keypoint_schema(
     annotation_path: str | Path,
     *,
-    keypoint_oks_sigma: float = 0.05,
+    keypoint_oks_sigma: float = 0.1,
 ) -> CocoKeypointSchema:
-    """Infer RF-DETR keypoint schema metadata from a COCO annotation file.
-
-    Keypoint-bearing categories are assigned to non-zero label slots so the
-    inferred schema matches the keypoint COCO loader and the preview model
-    convention. Detection-only categories fill the remaining zero-keypoint slots.
+    """Infer a keypoint schema from a COCO annotation JSON file.
 
     Args:
         annotation_path: Path to a COCO annotation JSON file.
-        keypoint_oks_sigma: Default OKS sigma to repeat for each keypoint.
+        keypoint_oks_sigma: Default OKS sigma to repeat for the largest keypoint class.
 
     Returns:
-        Inferred class names, ``num_keypoints_per_class``, and OKS sigmas.
+        Category-aligned class names, ``num_keypoints_per_class``, and OKS sigmas.
 
     Raises:
-        ValueError: If the file has no keypoint category, malformed COCO fields,
-            or multiple keypoint counts that cannot share one OKS sigma vector.
-        OSError: If the annotation file cannot be read.
+        FileNotFoundError: If the annotation file does not exist.
+        ValueError: If the annotation file has no categories, no keypoint metadata,
+            malformed COCO fields, or malformed keypoint vectors.
+        KeyError: If required COCO keys are missing.
 
     Example:
-        >>> import tempfile
-        >>> path = Path(tempfile.mkdtemp()) / "annotations.json"
-        >>> _ = path.write_text(
-        ...     '{"images": [], "annotations": [], '
-        ...     '"categories": [{"id": 0, "name": "person", "keypoints": ["nose"]}]}',
-        ...     encoding="utf-8",
-        ... )
-        >>> infer_coco_keypoint_schema(path).num_keypoints_per_class
-        [0, 1]
+        >>> import json, tempfile
+        >>> with tempfile.NamedTemporaryFile("w+", suffix=".json") as f:
+        ...     _ = f.write(json.dumps({
+        ...         "categories": [{"id": 0, "name": "person", "keypoints": ["nose"]}],
+        ...         "annotations": [],
+        ...     }))
+        ...     _ = f.flush()
+        ...     infer_coco_keypoint_schema(f.name).num_keypoints_per_class
+        [1]
     """
-    annotation_path = Path(annotation_path)
-    data = _load_coco_annotation(annotation_path)
-    categories = _validate_categories(data.get("categories"))
+    path = Path(annotation_path)
+    data = _load_coco_annotation(path)
+    categories = _validate_categories(data["categories"])
     annotations = _validate_annotations(data.get("annotations", []))
 
-    keypoint_counts = [_category_keypoint_count(category, annotations) for category in categories]
-    active_keypoint_counts = [count for count in keypoint_counts if count > 0]
-    if not active_keypoint_counts:
-        raise ValueError(f"COCO annotation file {annotation_path} does not contain keypoint annotations.")
-    unique_keypoint_counts = sorted(set(active_keypoint_counts))
-    if len(unique_keypoint_counts) != 1:
+    class_names: list[str] = []
+    num_keypoints_per_class: list[int] = []
+    for category in categories:
+        category_id = int(category["id"])
+        class_names.append(str(category["name"]))
+        category_keypoints = category.get("keypoints")
+        if isinstance(category_keypoints, list) and category_keypoints:
+            num_keypoints_per_class.append(len(category_keypoints))
+        else:
+            num_keypoints_per_class.append(_keypoint_count_from_annotations(annotations, category_id))
+
+    if not any(count > 0 for count in num_keypoints_per_class):
         raise ValueError(
-            f"Expected one keypoint count across keypoint classes, got {unique_keypoint_counts} in {annotation_path}."
+            f"COCO annotation file '{path}' has no keypoint metadata. "
+            "Expected category 'keypoints' entries or annotation keypoint vectors."
         )
 
-    num_keypoints_per_class = [0, *active_keypoint_counts]
-    class_names = _class_names_for_keypoint_schema(categories, keypoint_counts, num_keypoints_per_class)
-    num_keypoints_per_class.extend([0] * (len(class_names) - len(num_keypoints_per_class)))
+    max_keypoints = max(num_keypoints_per_class, default=0)
     return CocoKeypointSchema(
         class_names=class_names,
         num_keypoints_per_class=num_keypoints_per_class,
-        keypoint_oks_sigmas=[keypoint_oks_sigma] * active_keypoint_counts[0],
+        keypoint_oks_sigmas=[keypoint_oks_sigma] * max_keypoints,
     )
+
+
+def active_keypoint_counts(num_keypoints_per_class: list[int]) -> list[int]:
+    """Return non-zero keypoint counts from a model schema.
+
+    Args:
+        num_keypoints_per_class: Model keypoint schema.
+
+    Returns:
+        Positive keypoint counts in schema order.
+
+    Raises:
+        This helper does not raise.
+
+    Example:
+        >>> active_keypoint_counts([0, 17, 25])
+        [17, 25]
+    """
+    return [count for count in num_keypoints_per_class if count > 0]

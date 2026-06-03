@@ -35,7 +35,7 @@ from rfdetr.config import (
     ModelConfig,
     TrainConfig,
 )
-from rfdetr.datasets._keypoint_schema import infer_coco_keypoint_schema
+from rfdetr.datasets._keypoint_schema import active_keypoint_counts, infer_coco_keypoint_schema
 from rfdetr.datasets.coco import is_valid_coco_dataset
 from rfdetr.datasets.yolo import is_valid_yolo_dataset
 from rfdetr.inference import ModelContext, _build_model_context
@@ -662,6 +662,7 @@ class RFDETR:
         # inside the module uses the correct (dataset-derived) class count.
         dataset_dir = getattr(config, "dataset_dir", None)
         if dataset_dir:
+            self._align_keypoint_schema_from_dataset(config)
             self._align_num_classes_from_dataset(dataset_dir)
 
         module = RFDETRModelModule(self.model_config, config)
@@ -1180,6 +1181,11 @@ class RFDETR:
             logger.debug("Could not auto-detect num_classes from dataset '%s': %s", dataset_dir, exc)
             return
 
+        if getattr(self.model_config, "use_grouppose_keypoints", False):
+            keypoint_schema = list(getattr(self.model_config, "num_keypoints_per_class", []) or [])
+            if keypoint_schema:
+                dataset_num_classes = max(dataset_num_classes, len(keypoint_schema))
+
         model_num_classes = self.model_config.num_classes
 
         if dataset_num_classes == model_num_classes:
@@ -1217,6 +1223,94 @@ class RFDETR:
                 model_num_classes,
                 dataset_num_classes,
             )
+
+    @staticmethod
+    def _roboflow_keypoint_annotation_path(dataset_dir: str) -> Path | None:
+        """Return the Roboflow COCO train annotation path when it exists.
+
+        Args:
+            dataset_dir: Path to the Roboflow dataset root.
+
+        Returns:
+            Train split annotation path, or ``None`` when the dataset is not Roboflow COCO style.
+
+        Raises:
+            This helper does not raise.
+
+        Example:
+            >>> RFDETR._roboflow_keypoint_annotation_path("/missing") is None
+            True
+        """
+
+        if not is_valid_coco_dataset(dataset_dir):
+            return None
+        annotation_path = Path(dataset_dir) / "train" / "_annotations.coco.json"
+        return annotation_path if annotation_path.exists() else None
+
+    def _align_keypoint_schema_from_dataset(self, config: TrainConfig) -> None:
+        """Infer or validate keypoint schema from Roboflow COCO metadata.
+
+        Args:
+            config: Training configuration containing dataset location and format.
+
+        Returns:
+            ``None``. The model config is updated in-place when dataset metadata is available.
+
+        Raises:
+            This method does not raise for missing or malformed metadata; later dataset construction still validates
+            keypoint-mode requirements.
+
+        Example:
+            >>> from rfdetr.config import RFDETRKeypointPreviewConfig, TrainConfig
+            >>> model = object.__new__(RFDETR)
+            >>> model.model_config = RFDETRKeypointPreviewConfig(pretrain_weights=None)
+            >>> model.model = type("Context", (), {"args": None})()
+            >>> model._align_keypoint_schema_from_dataset(TrainConfig(dataset_dir="/missing", tensorboard=False))
+        """
+
+        if not getattr(self.model_config, "use_grouppose_keypoints", False):
+            return
+        if getattr(config, "dataset_file", None) != "roboflow":
+            return
+        dataset_dir = getattr(config, "dataset_dir", None)
+        if not dataset_dir:
+            return
+        annotation_path = RFDETR._roboflow_keypoint_annotation_path(dataset_dir)
+        if annotation_path is None:
+            return
+
+        try:
+            inferred = infer_coco_keypoint_schema(annotation_path)
+        except (FileNotFoundError, ValueError, KeyError, OSError, TypeError) as exc:
+            logger.debug("Could not infer keypoint schema from dataset '%s': %s", dataset_dir, exc)
+            return
+
+        inferred_schema = inferred.num_keypoints_per_class
+        current_schema = list(getattr(self.model_config, "num_keypoints_per_class", []) or [])
+        user_set_schema = "num_keypoints_per_class" in getattr(self.model_config, "model_fields_set", set())
+
+        if user_set_schema and active_keypoint_counts(current_schema) == active_keypoint_counts(inferred_schema):
+            return
+
+        if current_schema != inferred_schema:
+            if user_set_schema:
+                logger.warning(
+                    "Configured num_keypoints_per_class=%s does not match dataset keypoint metadata %s from '%s'. "
+                    "Using dataset metadata as the source of truth.",
+                    current_schema,
+                    inferred_schema,
+                    annotation_path,
+                )
+            else:
+                logger.info(
+                    "Inferred num_keypoints_per_class=%s from Roboflow COCO keypoint metadata at '%s'.",
+                    inferred_schema,
+                    annotation_path,
+                )
+            self.model_config.num_keypoints_per_class = inferred_schema
+            model_args = getattr(self.model, "args", None)
+            if model_args is not None:
+                model_args.num_keypoints_per_class = inferred_schema
 
     def get_train_config(self, **kwargs) -> TrainConfig:
         """Retrieve the configuration parameters that will be used for training."""
