@@ -327,6 +327,28 @@ class TestOptimizeForInferenceInplace:
         output = rfdetr.model.model(torch.randn(1, 3, rfdetr.model.resolution, rfdetr.model.resolution))
         assert "pred_boxes" in output
 
+    @pytest.mark.parametrize(
+        "dtype",
+        [
+            pytest.param(torch.float16, id="float16"),
+            pytest.param(torch.bfloat16, id="bfloat16"),
+        ],
+    )
+    def test_remove_optimized_model_after_inplace_restores_original_dtype(self, dtype: torch.dtype) -> None:
+        """Removing an in-place optimized model should restore the base model dtype."""
+        rfdetr = _FakeRFDETR()
+        original_model = rfdetr.model.model
+        original_dtype = original_model.linear.weight.dtype
+
+        rfdetr.optimize_for_inference(compile=False, dtype=dtype, inplace=True)
+        rfdetr.remove_optimized_model()
+
+        assert rfdetr.model.model is original_model
+        assert original_model.linear.weight.dtype == original_dtype
+
+        output = original_model(torch.randn(1, 3, rfdetr.model.resolution, rfdetr.model.resolution))
+        assert "pred_boxes" in output
+
     def test_inplace_export_failure_keeps_base_model(self) -> None:
         """Export failure in the in-place path should not clear model.model."""
         rfdetr = _FakeRFDETR()
