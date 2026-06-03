@@ -727,7 +727,8 @@ class RFDETR:
         Raises:
             TypeError: If ``dtype`` is not a ``torch.dtype``, or if ``dtype`` is a
                 string that does not correspond to a valid ``torch.dtype`` attribute.
-            ValueError: If ``inplace=True`` is used with ``compile=True``.
+            ValueError: If ``dtype`` is not a floating-point dtype, or if ``inplace=True`` is used with
+                ``compile=True``.
 
         Examples:
             >>> from types import SimpleNamespace
@@ -769,6 +770,8 @@ class RFDETR:
                 raise TypeError(f"dtype must be a torch.dtype or a string name of a dtype, got {dtype!r}") from None
         if not isinstance(dtype, torch.dtype):
             raise TypeError(f"dtype must be a torch.dtype or a string name of a dtype, got {type(dtype)!r}")
+        if not dtype.is_floating_point:
+            raise ValueError(f"dtype must be a floating-point torch.dtype or string name of one, got {dtype}")
         if inplace and compile:
             raise ValueError("optimize_for_inference(inplace=True) requires compile=False")
 

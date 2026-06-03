@@ -363,6 +363,32 @@ class TestOptimizeForInferenceInplace:
         assert rfdetr._is_optimized_for_inference is False
         assert rfdetr._optimized_inplace is False
 
+    @pytest.mark.parametrize(
+        "dtype",
+        [
+            pytest.param(torch.int8, id="torch-int8"),
+            pytest.param("int8", id="string-int8"),
+        ],
+    )
+    def test_inplace_non_floating_dtype_raises_before_export(self, dtype: torch.dtype | str) -> None:
+        """In-place optimization rejects non-floating dtypes before mutating the base model."""
+        rfdetr = _FakeRFDETR()
+        original_model = rfdetr.model.model
+
+        with (
+            patch("rfdetr.detr.deepcopy") as mock_deepcopy,
+            patch.object(original_model, "export") as mock_export,
+            pytest.raises(ValueError, match="floating-point torch.dtype"),
+        ):
+            rfdetr.optimize_for_inference(compile=False, dtype=dtype, inplace=True)
+
+        mock_deepcopy.assert_not_called()
+        mock_export.assert_not_called()
+        assert rfdetr.model.model is original_model
+        assert rfdetr.model.inference_model is None
+        assert rfdetr._is_optimized_for_inference is False
+        assert rfdetr._optimized_inplace is False
+
     def test_inplace_compile_true_raises_before_export_or_trace(self) -> None:
         """In-place optimization rejects compile=True before mutating the base model."""
         rfdetr = _FakeRFDETR()
