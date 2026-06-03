@@ -60,6 +60,13 @@ Perform inference on an image using either the `rfdetr` package or the `inferenc
     annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections)
     ```
 
+For memory-constrained inference-only deployments with the `rfdetr` package, optimize the loaded model in place before
+calling `predict()`:
+
+```python
+model.optimize_for_inference(compile=False, inplace=True)
+```
+
 ## Run on video, webcam, or RTSP stream
 
 These examples use OpenCV for decoding and display. Replace `<SOURCE_VIDEO_PATH>`, `<WEBCAM_INDEX>`, and `<RTSP_STREAM_URL>` with your inputs. `<WEBCAM_INDEX>` is usually `0` for the default camera.

@@ -229,6 +229,7 @@ class RFDETR:
         self._optimized_batch_size = None
         self._optimized_resolution = None
         self._optimized_dtype = None
+        self._optimized_inplace = False
 
     def maybe_download_pretrain_weights(self):
         """Download pre-trained weights if they are not already downloaded.
@@ -694,13 +695,20 @@ class RFDETR:
                 logger.warning("Could not save training_config.json to %s: %s", config.output_dir, exc)
 
     def optimize_for_inference(
-        self, compile: bool = True, batch_size: int = 1, dtype: torch.dtype | str = torch.float32
+        self,
+        compile: bool = True,
+        batch_size: int = 1,
+        dtype: torch.dtype | str = torch.float32,
+        *,
+        inplace: bool = False,
     ) -> None:
         """Optimize the model for inference with optional JIT compilation and dtype casting.
 
         Operations are wrapped in the correct CUDA device context to prevent context leaks on multi-GPU setups. When
         ``compile=True`` the model is traced with ``torch.jit.trace`` using a dummy input of ``batch_size`` images at
-        the model's current resolution.
+        the model's current resolution. By default, optimization deep-copies the loaded model before exporting it so the
+        original module remains available. Set ``inplace=True`` for memory-constrained inference-only deployments; this
+        exports the loaded module itself and clears ``model.model`` after optimization succeeds.
 
         Args:
             compile: If ``True``, trace the model with ``torch.jit.trace`` to obtain
@@ -710,6 +718,9 @@ class RFDETR:
             dtype: Target floating-point dtype for the inference model. Accepts a
                 ``torch.dtype`` directly (e.g. ``torch.float16``) or its string name (e.g. ``"float16"``). Defaults to
                 ``torch.float32``.
+            inplace: If ``True``, optimize ``model.model`` directly instead of deep-copying it. This is an
+                inference-only path because ``export()`` mutates the module. Pair with ``compile=False`` to minimize
+                peak memory use.
 
         Raises:
             TypeError: If ``dtype`` is not a ``torch.dtype``, or if ``dtype`` is a
@@ -741,7 +752,8 @@ class RFDETR:
             >>> model._optimized_batch_size = None
             >>> model._optimized_resolution = None
             >>> model._optimized_dtype = None
-            >>> model.optimize_for_inference(compile=False, dtype="float16")
+            >>> model._optimized_inplace = False
+            >>> model.optimize_for_inference(compile=False, dtype="float16", inplace=True)
             >>> model._is_optimized_for_inference
             True
             >>> model._optimized_dtype
@@ -764,15 +776,15 @@ class RFDETR:
 
         try:
             with cuda_ctx:
-                self.model.inference_model = deepcopy(self.model.model)
-                self.model.inference_model.eval()
-                self.model.inference_model.export()
+                inference_model = self.model.model if inplace else deepcopy(self.model.model)
+                inference_model.eval()
+                inference_model.export()
 
-                self.model.inference_model = self.model.inference_model.to(dtype=dtype)
+                inference_model = inference_model.to(dtype=dtype)
 
                 if compile:
-                    self.model.inference_model = torch.jit.trace(
-                        self.model.inference_model,
+                    inference_model = torch.jit.trace(
+                        inference_model,
                         torch.randn(
                             batch_size,
                             self.model_config.num_channels,
@@ -786,9 +798,13 @@ class RFDETR:
                     self._optimized_batch_size = batch_size
 
                 # Set success flags only after all operations complete.
+                self.model.inference_model = inference_model
+                if inplace:
+                    self.model.model = None
                 self._optimized_resolution = self.model.resolution
                 self._is_optimized_for_inference = True
                 self._optimized_dtype = dtype
+                self._optimized_inplace = inplace
         except Exception:
             # Ensure the object is left in a consistent, unoptimized state if optimization fails.
             with contextlib.suppress(Exception):
@@ -799,7 +815,9 @@ class RFDETR:
         """Remove the optimized inference model and reset all optimization flags.
 
         Clears ``model.inference_model`` and resets all internal state set by :meth:`optimize_for_inference`. Safe to
-        call even if the model has not been optimized.
+        call even if the model has not been optimized. If the model was optimized with ``inplace=True``, this restores
+        the exported callable module to ``model.model`` before clearing optimized state. The restored module is suitable
+        for non-optimized prediction, but it is not guaranteed to be a training-ready pre-export model.
 
         Examples:
             >>> from types import SimpleNamespace
@@ -827,17 +845,21 @@ class RFDETR:
             >>> model._optimized_batch_size = None
             >>> model._optimized_resolution = None
             >>> model._optimized_dtype = None
+            >>> model._optimized_inplace = False
             >>> model.optimize_for_inference(compile=False)
             >>> model.remove_optimized_model()
             >>> model._is_optimized_for_inference
             False
         """
+        if getattr(self, "_optimized_inplace", False) and self.model.model is None:
+            self.model.model = self.model.inference_model
         self.model.inference_model = None
         self._is_optimized_for_inference = False
         self._optimized_has_been_compiled = False
         self._optimized_batch_size = None
         self._optimized_resolution = None
         self._optimized_dtype = None
+        self._optimized_inplace = False
 
     @deprecated(
         target=True,

@@ -276,6 +276,94 @@ class TestOptimizeForInferenceState:
         assert rfdetr._optimized_resolution is None
         assert rfdetr._optimized_has_been_compiled is False
         assert rfdetr._optimized_batch_size is None
+        assert rfdetr._optimized_inplace is False
+
+
+class TestOptimizeForInferenceInplace:
+    """Tests for the low-memory in-place optimization path."""
+
+    def test_inplace_false_keeps_deepcopy_behavior(self) -> None:
+        """The default path should still deep-copy the loaded module."""
+        rfdetr = _FakeRFDETR()
+        original_model = rfdetr.model.model
+        copied_model = _FakeModel()
+
+        with patch("rfdetr.detr.deepcopy", return_value=copied_model) as mock_deepcopy:
+            rfdetr.optimize_for_inference(compile=False)
+
+        mock_deepcopy.assert_called_once_with(original_model)
+        assert rfdetr.model.model is original_model
+        assert rfdetr.model.inference_model is copied_model
+        assert rfdetr._is_optimized_for_inference is True
+        assert rfdetr._optimized_inplace is False
+
+    def test_inplace_true_compile_false_does_not_deepcopy(self) -> None:
+        """Inplace=True with compile=False should use the loaded module directly."""
+        rfdetr = _FakeRFDETR()
+        original_model = rfdetr.model.model
+
+        with patch("rfdetr.detr.deepcopy") as mock_deepcopy:
+            rfdetr.optimize_for_inference(compile=False, inplace=True)
+
+        mock_deepcopy.assert_not_called()
+        assert rfdetr.model.model is None
+        assert rfdetr.model.inference_model is original_model
+        assert rfdetr._is_optimized_for_inference is True
+        assert rfdetr._optimized_inplace is True
+
+    def test_remove_optimized_model_after_inplace_restores_callable_model(self) -> None:
+        """Removing an in-place optimized model should not drop the only module reference."""
+        rfdetr = _FakeRFDETR()
+        original_model = rfdetr.model.model
+
+        rfdetr.optimize_for_inference(compile=False, inplace=True)
+        rfdetr.remove_optimized_model()
+
+        assert rfdetr.model.inference_model is None
+        assert rfdetr.model.model is original_model
+        assert rfdetr._is_optimized_for_inference is False
+        assert rfdetr._optimized_inplace is False
+
+        output = rfdetr.model.model(torch.randn(1, 3, rfdetr.model.resolution, rfdetr.model.resolution))
+        assert "pred_boxes" in output
+
+    def test_inplace_export_failure_keeps_base_model(self) -> None:
+        """Export failure in the in-place path should not clear model.model."""
+        rfdetr = _FakeRFDETR()
+        original_model = rfdetr.model.model
+
+        with (
+            patch("rfdetr.detr.deepcopy") as mock_deepcopy,
+            patch.object(original_model, "export", side_effect=RuntimeError("export failed")),
+            pytest.raises(RuntimeError, match="export failed"),
+        ):
+            rfdetr.optimize_for_inference(compile=False, inplace=True)
+
+        mock_deepcopy.assert_not_called()
+        assert rfdetr.model.model is original_model
+        assert rfdetr.model.inference_model is None
+        assert rfdetr._is_optimized_for_inference is False
+        assert rfdetr._optimized_inplace is False
+
+    def test_inplace_jit_trace_failure_keeps_base_model(self) -> None:
+        """JIT trace failure in the in-place path should leave the object unoptimized."""
+        rfdetr = _FakeRFDETR()
+        original_model = rfdetr.model.model
+
+        with (
+            patch("rfdetr.detr.deepcopy") as mock_deepcopy,
+            patch("torch.jit.trace", side_effect=RuntimeError("trace failed")),
+            pytest.raises(RuntimeError, match="trace failed"),
+        ):
+            rfdetr.optimize_for_inference(compile=True, inplace=True)
+
+        mock_deepcopy.assert_not_called()
+        assert rfdetr.model.model is original_model
+        assert rfdetr.model.inference_model is None
+        assert rfdetr._is_optimized_for_inference is False
+        assert rfdetr._optimized_has_been_compiled is False
+        assert rfdetr._optimized_batch_size is None
+        assert rfdetr._optimized_inplace is False
 
 
 class TestOptimizeForInferenceExceptionRecovery:
