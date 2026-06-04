@@ -6,6 +6,8 @@
 """COCOEvalCallback — torchmetrics-based mAP and F1 evaluation."""
 
 import contextlib
+import io
+import logging
 from typing import Any
 
 import numpy as np
@@ -101,7 +103,6 @@ class COCOEvalCallback(Callback):
         self._use_segm_metrics: bool = segmentation
         self._keypoint_coco_evaluator: Any | None = None
         self._keypoint_eval_has_updates: bool = False
-        self._keypoint_coco_eval_skipped_splits: set[str] = set()
         self._keypoint_oks_sigmas = keypoint_oks_sigmas
         self._in_notebook: bool = False
         if in_notebook is None:
@@ -410,11 +411,19 @@ class COCOEvalCallback(Callback):
             pl_module: The LightningModule.
             split: Metric namespace — ``"val"`` or ``"test"``.
         """
+        if not self._metric_has_updates(self.map_metric):
+            self.map_metric.reset()
+            self._f1_local = init_matching_accumulator()
+            self._keypoint_coco_evaluator = None
+            self._keypoint_eval_has_updates = False
+            logger.debug("Skipping %s COCO metric compute because no predictions were accumulated.", split)
+            return
+
         # Merge per-rank state across ranks ourselves (DDP-safe, fixed-shape gather) before the
         # metric computes locally — replaces torchmetrics' deadlock-prone internal sync. No-op when
         # not distributed. Called unconditionally on every rank, so the collectives stay symmetric.
         self._merge_metric_state_across_ranks(self.map_metric)
-        metrics = self.map_metric.compute()
+        metrics = self._compute_map_metric(trainer, self.map_metric)
 
         # torchmetrics prefixes all keys when iou_type is a list (e.g. "bbox_map")
         pfx = "bbox_" if self._use_segm_metrics else ""
@@ -449,7 +458,7 @@ class COCOEvalCallback(Callback):
         # (#931 / #449).  _should_compute_ema makes the decision unanimous across ranks.
         if self._should_compute_ema(pl_module):
             self._merge_metric_state_across_ranks(self.map_metric_ema)
-            ema_metrics = self.map_metric_ema.compute()
+            ema_metrics = self._compute_map_metric(trainer, self.map_metric_ema)
             pl_module.log(f"{split}/ema_mAP_50_95", ema_metrics[f"{pfx}map"], prog_bar=True)
             pl_module.log(f"{split}/ema_mAP_50", ema_metrics[f"{pfx}map_50"])
             pl_module.log(f"{split}/ema_mAR", ema_metrics[mar_key])
@@ -536,7 +545,8 @@ class COCOEvalCallback(Callback):
             metrics=metrics, pfx=pfx, split=split, pl_module=pl_module, ar_by_cid=ar_by_cid, f1_by_cid=f1_by_cid
         )
 
-        self._print_metrics_tables(trainer, split, overall, per_class)
+        if not self._has_progress_bar(trainer):
+            self._print_metrics_tables(trainer, split, overall, per_class)
         self._compute_and_log_keypoint_map(split, pl_module, trainer)
         if self._keypoint_mode and not self._keypoint_eval_has_updates:
             self._keypoint_coco_evaluator = None
@@ -549,6 +559,29 @@ class COCOEvalCallback(Callback):
             if callable(getattr(callback, "get_ema_model_state_dict", None)):
                 return callback
         return None
+
+    @staticmethod
+    def _has_progress_bar(trainer: Any) -> bool:
+        """Return whether the trainer has a Lightning progress bar callback."""
+        callbacks = getattr(trainer, "callbacks", [])
+        return any(callback.__class__.__name__.endswith("ProgressBar") for callback in callbacks)
+
+    def _compute_map_metric(self, trainer: Any, metric: Any) -> dict[str, Any]:
+        """Compute a torchmetrics mAP metric while suppressing duplicate terminal summaries under progress bars."""
+        if not self._has_progress_bar(trainer):
+            return metric.compute()
+
+        metric_loggers = (logger, logging.getLogger("faster_coco_eval"), logging.getLogger("faster_coco_eval.core"))
+        previous_levels = [(metric_logger, metric_logger.level) for metric_logger in metric_loggers]
+        try:
+            for metric_logger in metric_loggers:
+                if metric_logger.getEffectiveLevel() < logging.WARNING:
+                    metric_logger.setLevel(logging.WARNING)
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                return metric.compute()
+        finally:
+            for metric_logger, previous_level in previous_levels:
+                metric_logger.setLevel(previous_level)
 
     def _prepare_ema_metric(self, trainer: Any, pl_module: Any) -> None:
         """Ensure ``map_metric_ema`` exists (and is reset) on EVERY rank when EMA is active.
@@ -659,10 +692,18 @@ class COCOEvalCallback(Callback):
         # ("compute called before update") that spams DDP logs on those ranks.
         metric._update_count = max(getattr(metric, "_update_count", 0), 1)
 
+    @staticmethod
+    def _metric_has_updates(metric: Any) -> bool:
+        """Return whether a torchmetrics metric has accumulated at least one update."""
+        update_count = getattr(metric, "_update_count", None)
+        if isinstance(update_count, int):
+            return update_count > 0
+        if torch.is_tensor(update_count):
+            return bool(update_count.detach().cpu().item() > 0)
+        return True
+
     def _get_or_create_keypoint_coco_evaluator(self, trainer: Any, split: str) -> Any | None:
         """Create (or return) the COCO keypoint evaluator for this epoch."""
-        if split in self._keypoint_coco_eval_skipped_splits:
-            return None
         if self._keypoint_coco_evaluator is not None:
             return self._keypoint_coco_evaluator
 
@@ -684,20 +725,13 @@ class COCOEvalCallback(Callback):
             coco_api = get_coco_api_from_dataset(dataset)
             if coco_api is None:
                 continue
-            try:
-                self._keypoint_coco_evaluator = CocoEvaluator(
-                    coco_api,
-                    ["keypoints"],
-                    max_dets=self._max_dets,
-                    keypoint_oks_sigmas=self._keypoint_oks_sigmas,
-                    log_summary=False,
-                )
-            except ValueError as exc:
-                if "requires one keypoint count" not in str(exc):
-                    raise
-                self._keypoint_coco_eval_skipped_splits.add(split)
-                logger.warning("Skipping %s keypoint COCO mAP: %s", split, exc)
-                return None
+            self._keypoint_coco_evaluator = CocoEvaluator(
+                coco_api,
+                ["keypoints"],
+                max_dets=self._max_dets,
+                keypoint_oks_sigmas=self._keypoint_oks_sigmas,
+                log_summary=False,
+            )
             return self._keypoint_coco_evaluator
         return None
 

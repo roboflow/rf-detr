@@ -23,6 +23,7 @@ Implementation mirrors torchvision's evaluator structure but uses ``faster_coco_
 import contextlib
 import copy
 import os
+from dataclasses import dataclass
 from typing import Any
 
 import faster_coco_eval.core.mask as mask_util
@@ -61,6 +62,25 @@ _COCO_PERSON_KEYPOINT_SIGMAS = (
     / 10.0
 )
 _DEFAULT_CUSTOM_KEYPOINT_OKS_SIGMA = 0.05
+_WARNED_CUSTOM_KEYPOINT_OKS_COUNTS: set[int] = set()
+
+
+@dataclass(frozen=True, slots=True)
+class _KeypointCategoryGroup:
+    """Keypoint categories sharing one keypoint count and OKS sigma vector."""
+
+    category_ids: list[int]
+    keypoint_count: int
+    keypoint_oks_sigmas: list[float] | None
+
+
+@dataclass(slots=True)
+class _GroupedKeypointCOCOeval:
+    """Aggregate COCO keypoint stats for categories with different keypoint counts."""
+
+    groups: list[_KeypointCategoryGroup]
+    stats: np.ndarray
+    evals: list[COCOeval]
 
 
 def _ensure_faster_coco(coco_gt: Any) -> COCO:
@@ -99,21 +119,7 @@ def _backfill_num_keypoints(coco_gt: COCO) -> None:
 
 def _infer_keypoint_count(coco_gt: COCO) -> int | None:
     """Infer a single keypoint count from COCO category metadata or annotations."""
-    counts: set[int] = set()
-    for category in coco_gt.cats.values():
-        keypoints = category.get("keypoints")
-        if isinstance(keypoints, list) and keypoints:
-            counts.add(len(keypoints))
-
-    if not counts:
-        for annotation in coco_gt.dataset.get("annotations", []):
-            keypoints = annotation.get("keypoints")
-            if isinstance(keypoints, list) and keypoints:
-                counts.add(len(keypoints) // 3)
-        for annotation in coco_gt.anns.values():
-            keypoints = annotation.get("keypoints")
-            if isinstance(keypoints, list) and keypoints:
-                counts.add(len(keypoints) // 3)
+    counts = {count for count in _infer_keypoint_counts_by_category(coco_gt).values() if count > 0}
 
     if not counts:
         return None
@@ -123,6 +129,29 @@ def _infer_keypoint_count(coco_gt: COCO) -> int | None:
             f"found counts {sorted(counts)}."
         )
     return next(iter(counts))
+
+
+def _infer_keypoint_counts_by_category(coco_gt: COCO) -> dict[int, int]:
+    """Infer keypoint count for each category from COCO category metadata or annotations."""
+    counts: dict[int, int] = {}
+    for category_id, category in coco_gt.cats.items():
+        keypoints = category.get("keypoints")
+        if isinstance(keypoints, list) and keypoints:
+            counts[int(category_id)] = len(keypoints)
+
+    for annotation in coco_gt.dataset.get("annotations", []):
+        keypoints = annotation.get("keypoints")
+        if not isinstance(keypoints, list) or not keypoints:
+            continue
+        category_id = int(annotation["category_id"])
+        counts[category_id] = max(counts.get(category_id, 0), len(keypoints) // 3)
+    for annotation in coco_gt.anns.values():
+        keypoints = annotation.get("keypoints")
+        if not isinstance(keypoints, list) or not keypoints:
+            continue
+        category_id = int(annotation["category_id"])
+        counts[category_id] = max(counts.get(category_id, 0), len(keypoints) // 3)
+    return counts
 
 
 def _resolve_keypoint_oks_sigmas(coco_gt: COCO, keypoint_oks_sigmas: list[float] | None) -> list[float] | None:
@@ -143,13 +172,91 @@ def _resolve_keypoint_oks_sigmas(coco_gt: COCO, keypoint_oks_sigmas: list[float]
     if keypoint_count is None or keypoint_count == len(_COCO_PERSON_KEYPOINT_SIGMAS):
         return None
 
+    _warn_custom_keypoint_oks_sigma_once(keypoint_count)
+    return np.full(keypoint_count, _DEFAULT_CUSTOM_KEYPOINT_OKS_SIGMA, dtype=np.float32).tolist()
+
+
+def _resolve_group_keypoint_oks_sigmas(
+    keypoint_count: int,
+    keypoint_oks_sigmas: list[float] | None,
+) -> list[float] | None:
+    """Resolve OKS sigmas for one keypoint-count group."""
+    if keypoint_oks_sigmas is None:
+        if keypoint_count == len(_COCO_PERSON_KEYPOINT_SIGMAS):
+            return None
+        _warn_custom_keypoint_oks_sigma_once(keypoint_count)
+        return np.full(keypoint_count, _DEFAULT_CUSTOM_KEYPOINT_OKS_SIGMA, dtype=np.float32).tolist()
+
+    sigmas = np.asarray(keypoint_oks_sigmas, dtype=np.float32)
+    if sigmas.ndim != 1 or sigmas.size == 0:
+        raise ValueError("keypoint_oks_sigmas must be a non-empty one-dimensional sequence.")
+    if not np.isfinite(sigmas).all() or np.any(sigmas <= 0):
+        raise ValueError("keypoint_oks_sigmas values must be positive finite numbers.")
+    if sigmas.size < keypoint_count:
+        raise ValueError(
+            f"keypoint_oks_sigmas length {sigmas.size} does not match dataset keypoint count {keypoint_count}."
+        )
+    return sigmas[:keypoint_count].tolist()
+
+
+def _warn_custom_keypoint_oks_sigma_once(keypoint_count: int) -> None:
+    """Warn once per keypoint count when using uniform custom OKS sigmas."""
+    if keypoint_count in _WARNED_CUSTOM_KEYPOINT_OKS_COUNTS:
+        return
+    _WARNED_CUSTOM_KEYPOINT_OKS_COUNTS.add(keypoint_count)
     logger.warning(
         "COCO keypoint metadata defines %s keypoints, but no keypoint_oks_sigmas were provided. "
         "Using uniform OKS sigma %.3f for custom keypoint evaluation.",
         keypoint_count,
         _DEFAULT_CUSTOM_KEYPOINT_OKS_SIGMA,
     )
-    return np.full(keypoint_count, _DEFAULT_CUSTOM_KEYPOINT_OKS_SIGMA, dtype=np.float32).tolist()
+
+
+def _build_keypoint_category_groups(
+    coco_gt: COCO,
+    keypoint_oks_sigmas: list[float] | None,
+) -> list[_KeypointCategoryGroup]:
+    """Build category groups that can each be evaluated by one COCO keypoint evaluator."""
+    counts_by_category = _infer_keypoint_counts_by_category(coco_gt)
+    grouped_category_ids: dict[int, list[int]] = {}
+    for category_id, keypoint_count in counts_by_category.items():
+        if keypoint_count <= 0:
+            continue
+        grouped_category_ids.setdefault(keypoint_count, []).append(category_id)
+    return [
+        _KeypointCategoryGroup(
+            category_ids=sorted(category_ids),
+            keypoint_count=keypoint_count,
+            keypoint_oks_sigmas=_resolve_group_keypoint_oks_sigmas(keypoint_count, keypoint_oks_sigmas),
+        )
+        for keypoint_count, category_ids in sorted(grouped_category_ids.items())
+    ]
+
+
+def _filter_coco_by_category_ids(coco_gt: COCO, category_ids: list[int]) -> COCO:
+    """Return a COCO object containing only the requested categories and annotations."""
+    category_id_set = set(category_ids)
+    dataset = copy.deepcopy(coco_gt.dataset)
+    dataset["categories"] = [
+        category for category in dataset.get("categories", []) if int(category["id"]) in category_id_set
+    ]
+    dataset["annotations"] = [
+        annotation
+        for annotation in dataset.get("annotations", [])
+        if int(annotation.get("category_id", -1)) in category_id_set
+    ]
+
+    filtered = COCO()
+    filtered.dataset = dataset
+    filtered.createIndex()
+    label2cat = getattr(coco_gt, "label2cat", None)
+    if label2cat is not None:
+        setattr(
+            filtered,
+            "label2cat",
+            {label: cat_id for label, cat_id in label2cat.items() if cat_id in category_id_set},
+        )
+    return filtered
 
 
 def _load_coco_results(coco_gt: COCO, results: list[dict[str, Any]]) -> COCO:
@@ -174,6 +281,59 @@ def _xyxy_to_xywh(boxes: np.ndarray) -> np.ndarray:
     return boxes
 
 
+def _weighted_mean_coco_stats(stats: list[np.ndarray], weights: list[int]) -> np.ndarray:
+    """Compute category-weighted mean COCO stats, ignoring unavailable ``-1`` values."""
+    if not stats:
+        return np.full((10,), -1.0, dtype=np.float32)
+
+    max_len = max(len(item) for item in stats)
+    aggregated = np.full((max_len,), -1.0, dtype=np.float32)
+    for stat_idx in range(max_len):
+        numerator = 0.0
+        denominator = 0
+        for stat, weight in zip(stats, weights):
+            if len(stat) <= stat_idx or stat[stat_idx] < 0:
+                continue
+            numerator += float(stat[stat_idx]) * weight
+            denominator += weight
+        if denominator > 0:
+            aggregated[stat_idx] = numerator / denominator
+    return aggregated
+
+
+def _log_keypoint_stats(stats: np.ndarray) -> None:
+    """Log keypoint COCO stats from an already accumulated evaluator."""
+    labels = (
+        ("Average Precision", "(AP)", "0.50:0.95", "all", 20, 0),
+        ("Average Precision", "(AP)", "0.50", "all", 20, 1),
+        ("Average Precision", "(AP)", "0.75", "all", 20, 2),
+        ("Average Precision", "(AP)", "0.50:0.95", "medium", 20, 3),
+        ("Average Precision", "(AP)", "0.50:0.95", "large", 20, 4),
+        ("Average Recall", "(AR)", "0.50:0.95", "all", 20, 5),
+        ("Average Recall", "(AR)", "0.50", "all", 20, 6),
+        ("Average Recall", "(AR)", "0.75", "all", 20, 7),
+        ("Average Recall", "(AR)", "0.50:0.95", "medium", 20, 8),
+        ("Average Recall", "(AR)", "0.50:0.95", "large", 20, 9),
+    )
+    log_template = " {:<18} {} @[ IoU={:<9} | area={:>6s} | maxDets={:>3d} ] = {:0.3f}"
+    for title, metric_type, iou, area, max_dets, stat_idx in labels:
+        value = float(stats[stat_idx]) if len(stats) > stat_idx else -1.0
+        logger.info(log_template.format(title, metric_type, iou, area, max_dets, value))
+
+
+def _accumulate_and_summarize(coco_eval: COCOeval, *, log_summary: bool) -> None:
+    """Accumulate a COCO evaluator and populate ``stats`` regardless of log mode."""
+    if log_summary:
+        coco_eval.accumulate()
+        patched_pycocotools_summarize(coco_eval)
+        return
+
+    with open(os.devnull, "w") as devnull:
+        with contextlib.redirect_stdout(devnull):
+            coco_eval.accumulate()
+            patched_pycocotools_summarize(coco_eval, log_summary=False)
+
+
 class CocoEvaluator:
     """COCO evaluator that works in distributed mode."""
 
@@ -188,9 +348,12 @@ class CocoEvaluator:
         assert isinstance(iou_types, (list, tuple))
         coco_gt = copy.deepcopy(_ensure_faster_coco(coco_gt))
         resolved_keypoint_oks_sigmas = None
+        keypoint_category_groups: list[_KeypointCategoryGroup] = []
         if "keypoints" in iou_types:
             _backfill_num_keypoints(coco_gt)
-            resolved_keypoint_oks_sigmas = _resolve_keypoint_oks_sigmas(coco_gt, keypoint_oks_sigmas)
+            keypoint_category_groups = _build_keypoint_category_groups(coco_gt, keypoint_oks_sigmas)
+            if len(keypoint_category_groups) <= 1:
+                resolved_keypoint_oks_sigmas = _resolve_keypoint_oks_sigmas(coco_gt, keypoint_oks_sigmas)
         self.coco_gt = coco_gt
         self.max_dets = max_dets
         # label2cat maps contiguous model label indices back to original COCO category_ids.
@@ -198,15 +361,24 @@ class CocoEvaluator:
         self.label2cat: dict[int, int] | None = getattr(coco_gt, "label2cat", None)
 
         self.iou_types = iou_types
-        self.coco_eval: dict[str, COCOeval] = {}
+        self.coco_eval: dict[str, COCOeval | _GroupedKeypointCOCOeval] = {}
         for iou_type in iou_types:
+            if iou_type == "keypoints" and len(keypoint_category_groups) > 1:
+                self.coco_eval[iou_type] = _GroupedKeypointCOCOeval(
+                    groups=keypoint_category_groups,
+                    stats=np.full((10,), -1.0, dtype=np.float32),
+                    evals=[],
+                )
+                continue
             kwargs = {"kpt_oks_sigmas": resolved_keypoint_oks_sigmas} if iou_type == "keypoints" else {}
-            self.coco_eval[iou_type] = COCOeval(coco_gt, iouType=iou_type, **kwargs)
-            self.coco_eval[iou_type].params.maxDets = [20] if iou_type == "keypoints" else [1, 10, max_dets]
+            coco_eval = COCOeval(coco_gt, iouType=iou_type, **kwargs)
+            coco_eval.params.maxDets = [20] if iou_type == "keypoints" else [1, 10, max_dets]
+            self.coco_eval[iou_type] = coco_eval
 
         self.img_ids: list[int] = []
         self.coco_results: dict[str, list[dict[str, Any]]] = {k: [] for k in iou_types}
         self.cat_ids = set(coco_gt.cats.keys())
+        self._keypoint_counts_by_category = _infer_keypoint_counts_by_category(coco_gt)
         self._prefer_raw_category_ids = False
         self._log_summary = log_summary
 
@@ -253,20 +425,22 @@ class CocoEvaluator:
     def accumulate(self) -> None:
         """Accumulate per-image evaluation results into mean metrics."""
         for iou_type, coco_eval in self.coco_eval.items():
+            if isinstance(coco_eval, _GroupedKeypointCOCOeval):
+                self._evaluate_grouped_keypoints(coco_eval)
+                if self._log_summary:
+                    _log_keypoint_stats(coco_eval.stats)
+                continue
             self._evaluate(iou_type, coco_eval)
-            if self._log_summary:
-                coco_eval.accumulate()
-                patched_pycocotools_summarize(coco_eval)
-            else:
-                with open(os.devnull, "w") as devnull:
-                    with contextlib.redirect_stdout(devnull):
-                        coco_eval.accumulate()
+            _accumulate_and_summarize(coco_eval, log_summary=self._log_summary)
 
     def summarize(self) -> None:
         """Print and log COCO summary statistics."""
         for iou_type, coco_eval in self.coco_eval.items():
             logger.info("IoU metric: {}".format(iou_type))
-            patched_pycocotools_summarize(coco_eval)
+            if isinstance(coco_eval, _GroupedKeypointCOCOeval):
+                _log_keypoint_stats(coco_eval.stats)
+            else:
+                patched_pycocotools_summarize(coco_eval)
 
     def _evaluate(self, iou_type: str, coco_eval: COCOeval) -> None:
         """Run faster-coco-eval evaluation for accumulated COCO result records."""
@@ -276,6 +450,47 @@ class CocoEvaluator:
                 coco_dt = _load_coco_results(self.coco_gt, results)
                 coco_eval.cocoDt = coco_dt
                 coco_eval.params.imgIds = list(np.unique(self.img_ids))
+                coco_eval.evaluate()
+
+    def _evaluate_grouped_keypoints(self, grouped_eval: _GroupedKeypointCOCOeval) -> None:
+        """Run keypoint evaluation per keypoint-count group and aggregate stats."""
+        grouped_eval.evals = []
+        group_stats: list[np.ndarray] = []
+        group_weights: list[int] = []
+        all_results = self.coco_results["keypoints"]
+        img_ids = list(np.unique(self.img_ids))
+
+        for group in grouped_eval.groups:
+            category_id_set = set(group.category_ids)
+            group_gt = _filter_coco_by_category_ids(self.coco_gt, group.category_ids)
+            group_results = [result for result in all_results if int(result["category_id"]) in category_id_set]
+            group_coco_eval = COCOeval(
+                group_gt,
+                iouType="keypoints",
+                kpt_oks_sigmas=group.keypoint_oks_sigmas,
+            )
+            group_coco_eval.params.maxDets = [20]
+            self._evaluate_grouped_keypoint_results(group_coco_eval, group_gt, group_results, img_ids)
+            _accumulate_and_summarize(group_coco_eval, log_summary=False)
+            grouped_eval.evals.append(group_coco_eval)
+            group_stats.append(np.asarray(group_coco_eval.stats, dtype=np.float32))
+            group_weights.append(len(group.category_ids))
+
+        grouped_eval.stats = _weighted_mean_coco_stats(group_stats, group_weights)
+
+    @staticmethod
+    def _evaluate_grouped_keypoint_results(
+        coco_eval: COCOeval,
+        coco_gt: COCO,
+        results: list[dict[str, Any]],
+        img_ids: list[int],
+    ) -> None:
+        """Evaluate one grouped keypoint result set."""
+        with open(os.devnull, "w") as devnull:
+            with contextlib.redirect_stdout(devnull):
+                coco_dt = _load_coco_results(coco_gt, results)
+                coco_eval.cocoDt = coco_dt
+                coco_eval.params.imgIds = img_ids
                 coco_eval.evaluate()
 
     def prepare(self, predictions: dict[int, Any], iou_type: str) -> list[dict[str, Any]]:
@@ -371,6 +586,9 @@ class CocoEvaluator:
                 category_id = self._resolve_category_id(labels[k], use_raw_category_ids)
                 if category_id is None:
                     continue
+                keypoint_count = self._keypoint_counts_by_category.get(category_id)
+                if keypoint_count is not None:
+                    keypoint = keypoint[: keypoint_count * 3]
                 coco_results.append(
                     {
                         "image_id": original_id,
@@ -386,7 +604,7 @@ class CocoEvaluator:
 # From pycocotools, patched first _summarize() call to use
 # maxDets[-1] instead of hardcoded 100.
 #################################################################
-def patched_pycocotools_summarize(self: COCOeval) -> None:
+def patched_pycocotools_summarize(self: COCOeval, *, log_summary: bool = True) -> None:
     """Compute and display summary metrics for evaluation results."""
 
     def _summarize(ap: int = 1, iou_thr: float | None = None, area_rng: str = "all", max_dets: int = 100) -> float:
@@ -413,7 +631,8 @@ def patched_pycocotools_summarize(self: COCOeval) -> None:
                 s = s[t]
             s = s[:, :, aind, mind]
         mean_s = -1 if len(s[s > -1]) == 0 else float(np.mean(s[s > -1]))
-        logger.info(log_template.format(title_str, type_str, iou_str, area_rng, max_dets, mean_s))
+        if log_summary:
+            logger.info(log_template.format(title_str, type_str, iou_str, area_rng, max_dets, mean_s))
         return mean_s
 
     def _summarizeDets() -> np.ndarray:  # noqa: N802
