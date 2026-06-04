@@ -134,7 +134,7 @@ class RFDETRModelModule(LightningModule):
                     F.interpolate(samples.mask.unsqueeze(1).float(), size=scale, mode="nearest").squeeze(1).bool()
                 )
 
-    def training_step(self, batch: Tuple, batch_idx: int) -> torch.Tensor:
+    def training_step(self, batch: Tuple, batch_idx: int) -> torch.Tensor | dict[str, Any]:
         """Compute loss for one training step and log metrics.
 
         PTL handles gradient accumulation (``accumulate_grad_batches``), AMP (``precision``), and gradient clipping
@@ -147,7 +147,9 @@ class RFDETRModelModule(LightningModule):
             batch_idx: Batch index within the epoch.
 
         Returns:
-            Scalar loss tensor.
+            Scalar loss tensor by default. When ``compute_train_metrics=True``,
+            returns a Lightning-compatible dict containing ``loss`` plus
+            detached postprocessed predictions for train mAP logging.
         """
         samples, targets = batch
         batch_size = len(targets)
@@ -195,7 +197,27 @@ class RFDETRModelModule(LightningModule):
             self.log("train/lr", base_lr, prog_bar=False, on_step=True, on_epoch=False)
             self.log("train/lr_min", min_lr, prog_bar=False, on_step=True, on_epoch=False)
             self.log("train/lr_max", max_lr, prog_bar=False, on_step=True, on_epoch=False)
+        if self.train_config.compute_train_metrics:
+            with torch.no_grad():
+                orig_sizes = torch.stack([t["orig_size"] for t in targets])
+                results = self.postprocess(outputs, orig_sizes)
+            return {"loss": loss_scaled, "results": self._detach_results(results), "targets": targets}
         return loss_scaled
+
+    @staticmethod
+    def _detach_results(results: list[dict[str, torch.Tensor]]) -> list[dict[str, torch.Tensor]]:
+        """Detach postprocessed result tensors before handing them to callbacks.
+
+        Args:
+            results: Per-image postprocessed prediction dictionaries.
+
+        Returns:
+            Per-image dictionaries with tensor values detached from the graph.
+        """
+        return [
+            {key: value.detach() if torch.is_tensor(value) else value for key, value in result.items()}
+            for result in results
+        ]
 
     def _log_train_progress_metrics(
         self,

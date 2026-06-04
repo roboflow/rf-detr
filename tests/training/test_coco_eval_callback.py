@@ -272,6 +272,38 @@ class TestOnTestBatchEnd:
         cb.on_test_batch_end(_make_trainer(), _make_pl_module(), outputs, None, 0, dataloader_idx=0)
 
 
+class TestOnTrainBatchEnd:
+    """Train-loop-specific behaviour for optional train mAP logging."""
+
+    def test_train_metrics_update_only_when_enabled(self) -> None:
+        """on_train_batch_end should accumulate train predictions only with compute_train_metrics=True."""
+        cb = COCOEvalCallback()
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        cb.map_metric = MagicMock(name="map_metric")
+        module = _make_pl_module()
+        module.train_config = SimpleNamespace(compute_train_metrics=True)
+        outputs = {"results": _detection_preds(1), "targets": _detection_targets()}
+
+        cb.on_train_batch_end(_make_trainer(), module, outputs, None, 0)
+
+        cb.map_metric.update.assert_called_once()
+
+    def test_train_metrics_do_not_use_test_hook(self) -> None:
+        """Train mAP must be logged under train/* via the train epoch hook, not through test/* hooks."""
+        cb = COCOEvalCallback()
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        cb.map_metric = MagicMock(name="map_metric")
+        cb.map_metric.compute.return_value = _minimal_metrics()
+        module = _make_pl_module()
+        module.train_config = SimpleNamespace(compute_train_metrics=True)
+
+        cb.on_train_epoch_end(_make_trainer(), module)
+
+        logged_keys = {c.args[0] for c in module.log.call_args_list}
+        assert "train/mAP_50_95" in logged_keys
+        assert "test/mAP_50_95" not in logged_keys
+
+
 @pytest.mark.parametrize(
     "stage,hook,prefix",
     [
@@ -396,7 +428,7 @@ class TestKeypointCocoEvalRouting:
             "targets": [{"image_id": torch.tensor([12])}],
         }
 
-        cb._update_keypoint_coco_eval(trainer, outputs)
+        cb._update_keypoint_coco_eval(trainer, outputs, split="val")
 
         evaluator.update.assert_called_once()
         predictions = evaluator.update.call_args.args[0]
@@ -458,7 +490,7 @@ class TestKeypointCocoEvalRouting:
             patch("rfdetr.training.callbacks.coco_eval.get_coco_api_from_dataset", return_value=coco_api),
             patch("rfdetr.evaluation.coco_eval.CocoEvaluator", return_value=evaluator) as coco_evaluator_cls,
         ):
-            assert cb._get_or_create_keypoint_coco_evaluator(trainer) is evaluator
+            assert cb._get_or_create_keypoint_coco_evaluator(trainer, split="val") is evaluator
 
         coco_evaluator_cls.assert_called_once_with(
             coco_api,
@@ -467,6 +499,62 @@ class TestKeypointCocoEvalRouting:
             keypoint_oks_sigmas=[0.05],
             log_summary=False,
         )
+
+    def test_keypoint_train_eval_uses_train_dataset(self) -> None:
+        """Train keypoint mAP must build the COCO evaluator from the train dataset."""
+        cb = COCOEvalCallback(max_dets=500, keypoint_oks_sigmas=[0.05])
+        train_dataset = MagicMock(name="train_dataset")
+        val_dataset = MagicMock(name="val_dataset")
+        datamodule = MagicMock()
+        datamodule._dataset_train = train_dataset
+        datamodule._dataset_val = val_dataset
+        datamodule._dataset_test = None
+        trainer = _make_trainer(datamodule=datamodule)
+        train_coco_api = MagicMock(name="train_coco_api")
+        val_coco_api = MagicMock(name="val_coco_api")
+        evaluator = MagicMock(name="evaluator")
+
+        def _get_coco_api(dataset):
+            if dataset is train_dataset:
+                return train_coco_api
+            if dataset is val_dataset:
+                return val_coco_api
+            return None
+
+        with (
+            patch("rfdetr.training.callbacks.coco_eval.get_coco_api_from_dataset", side_effect=_get_coco_api),
+            patch("rfdetr.evaluation.coco_eval.CocoEvaluator", return_value=evaluator) as coco_evaluator_cls,
+        ):
+            assert cb._get_or_create_keypoint_coco_evaluator(trainer, split="train") is evaluator
+
+        assert coco_evaluator_cls.call_args.args[0] is train_coco_api
+
+    def test_mixed_keypoint_counts_skip_keypoint_map_without_crashing(self) -> None:
+        """Mixed keypoint counts should skip COCO keypoint mAP once while bbox mAP can still log."""
+        cb = COCOEvalCallback(max_dets=500)
+        dataset = MagicMock(name="dataset")
+        datamodule = MagicMock()
+        datamodule._dataset_train = dataset
+        datamodule._dataset_val = None
+        datamodule._dataset_test = None
+        trainer = _make_trainer(datamodule=datamodule)
+
+        with (
+            patch("rfdetr.training.callbacks.coco_eval.get_coco_api_from_dataset", return_value=MagicMock()),
+            patch(
+                "rfdetr.evaluation.coco_eval.CocoEvaluator",
+                side_effect=ValueError(
+                    "COCO keypoint evaluation requires one keypoint count across evaluated categories; "
+                    "found counts [4, 21]."
+                ),
+            ) as coco_evaluator_cls,
+            patch("rfdetr.training.callbacks.coco_eval.logger.warning") as warning,
+        ):
+            assert cb._get_or_create_keypoint_coco_evaluator(trainer, split="train") is None
+            assert cb._get_or_create_keypoint_coco_evaluator(trainer, split="train") is None
+
+        coco_evaluator_cls.assert_called_once()
+        warning.assert_called_once()
 
 
 @pytest.mark.parametrize(

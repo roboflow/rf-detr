@@ -758,6 +758,7 @@ class TrainConfig(BaseConfig):
     # PTL runtime/perf tuning knobs.
     train_log_sync_dist: bool = False
     train_log_on_step: bool = False
+    compute_train_metrics: bool = False
     compute_val_loss: bool = True
     compute_test_loss: bool = True
     pin_memory: Optional[bool] = None
