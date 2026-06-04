@@ -1626,13 +1626,15 @@ class RFDETR:
                     key_points = sv.KeyPoints.empty()
                     key_points.data = keypoint_data
                 else:
+                    keypoint_confidence = keypoints_array[:, :, 2].astype(np.float32)
                     key_points = sv.KeyPoints(
                         xy=keypoints_array[:, :, :2].astype(np.float32),
-                        keypoint_confidence=keypoints_array[:, :, 2].astype(np.float32),
+                        keypoint_confidence=keypoint_confidence,
                         detection_confidence=(
                             detections.confidence.astype(np.float32) if detections.confidence is not None else None
                         ),
                         class_id=detections.class_id.astype(int) if detections.class_id is not None else None,
+                        visible=keypoint_confidence > 0,
                         data=keypoint_data,
                     )
                 predictions_list.append(key_points)

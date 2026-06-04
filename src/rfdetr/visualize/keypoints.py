@@ -65,9 +65,9 @@ def _precision_cholesky_to_pixel_covariance(
         for keypoint_index, params in enumerate(detection_precision):
             if not np.isfinite(params).all():
                 continue
-            log_l11 = float(np.clip(params[0], -20.0, 20.0))
-            l21 = float(np.clip(params[1], -1.0e4, 1.0e4))
-            log_l22 = float(np.clip(params[2], -20.0, 20.0))
+            log_l11 = float(params[0])
+            l21 = float(params[1])
+            log_l22 = float(params[2])
             l11 = float(np.exp(log_l11))
             l22 = float(np.exp(log_l22))
             precision = np.array(

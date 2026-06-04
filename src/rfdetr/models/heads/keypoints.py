@@ -29,17 +29,6 @@ from torch import nn
 
 # Number of channels in a keypoint prediction slot — see module docstring for layout.
 KEYPOINT_PRED_DIM: int = 8
-KEYPOINT_LOG_CHOL_MIN: float = -20.0
-KEYPOINT_LOG_CHOL_MAX: float = 20.0
-# The original r-flow keypoint implementation returns the raw Gaussian NLL
-#   0.5 * maha2 / area - (log_l11 + log_l22)
-# with constants omitted. Because this is a continuous-density NLL, its optimum
-# is negative: at zero residual and max clamped precision,
-#   0.5 * 0 - (KEYPOINT_LOG_CHOL_MAX + KEYPOINT_LOG_CHOL_MAX) = -40.
-# Add the exact clamp-derived constant back to the reported/optimized NLL term
-# so the theoretical floor is 0 while preserving identical gradients. If the
-# log-Cholesky clamp changes, this constant must change with it.
-KEYPOINT_NLL_LOWER_BOUND_SHIFT: float = 2.0 * KEYPOINT_LOG_CHOL_MAX
 
 
 def modulate(features: torch.Tensor, scale: torch.Tensor, shift: torch.Tensor) -> torch.Tensor:
@@ -109,17 +98,12 @@ def compute_l1_keypoint_loss(
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Compute the keypoint loss vector per matched target.
 
-    The tensor layout follows GroupPose-style keypoints where each target class defines how many
-    valid keypoints it owns. The returned Gaussian NLL differs from the original
-    r-flow implementation by a constant ``KEYPOINT_NLL_LOWER_BOUND_SHIFT`` added
-    to non-empty target losses. That shift is derived from the precision
-    Cholesky log-diagonal clamp: with zero residual and both log-diagonals at
-    ``KEYPOINT_LOG_CHOL_MAX``, the raw continuous-density NLL floor is
-    ``-(KEYPOINT_LOG_CHOL_MAX + KEYPOINT_LOG_CHOL_MAX)``. Adding
-    ``2 * KEYPOINT_LOG_CHOL_MAX`` makes the theoretical floor 0 for easier
-    training-log interpretation. The offset is parameter-independent, so it
-    preserves the exact same gradients and convergence behavior as the original
-    raw NLL.
+    The tensor layout follows GroupPose-style keypoints where each target class
+    defines how many valid keypoints it owns. The returned Gaussian NLL follows
+    the r-flow formulation directly:
+    ``0.5 * maha2 / area - (log_l11 + log_l22)``. It intentionally omits the
+    normal Gaussian constant and does not clamp the precision Cholesky
+    parameters, so valid losses may be negative.
 
     Args:
         all_pred_keypoints: Predicted keypoints with shape ``(N, K_total, >=7)``.
@@ -129,7 +113,7 @@ def compute_l1_keypoint_loss(
         num_keypoints_per_class: Number of keypoints per class.
 
     Returns:
-        Tuple of location, findable BCE, visible BCE, and shifted Gaussian NLL losses.
+        Tuple of location, findable BCE, visible BCE, and raw Gaussian NLL losses.
     """
 
     n_targets, total_padded_num_keypoints, pred_dim = all_pred_keypoints.shape
@@ -206,9 +190,9 @@ def compute_l1_keypoint_loss(
     finite_uncertainty = torch.isfinite(raw_log_l11) & torch.isfinite(raw_l21) & torch.isfinite(raw_log_l22)
     gaussian_loss_mask = location_loss_mask & finite_uncertainty
 
-    log_l11 = raw_log_l11.clamp(min=KEYPOINT_LOG_CHOL_MIN, max=KEYPOINT_LOG_CHOL_MAX)
-    l21 = raw_l21.clamp(min=-1.0e4, max=1.0e4)
-    log_l22 = raw_log_l22.clamp(min=KEYPOINT_LOG_CHOL_MIN, max=KEYPOINT_LOG_CHOL_MAX)
+    log_l11 = raw_log_l11
+    l21 = raw_l21
+    log_l22 = raw_log_l22
 
     l11 = log_l11.exp()
     l22 = log_l22.exp()
@@ -223,7 +207,7 @@ def compute_l1_keypoint_loss(
     nll_keypoints = nll_raw.masked_fill(~gaussian_loss_mask, 0.0)
     nll_loss = nll_keypoints.sum(-1) / gaussian_valid_count
     no_valid = gaussian_count <= 0
-    nll_loss = torch.where(no_valid, torch.zeros_like(nll_loss), nll_loss + KEYPOINT_NLL_LOWER_BOUND_SHIFT)
+    nll_loss = torch.where(no_valid, torch.zeros_like(nll_loss), nll_loss)
 
     # NaN/Inf protection is upstream (see ``nan_to_num`` calls earlier in this function);
     # per-step hot-path assertions removed for performance (5–15% step latency).
@@ -374,9 +358,9 @@ def compute_keypoint_matching_cost(
                 & torch.isfinite(raw_log_l22)
             )
 
-            log_l11 = raw_log_l11.clamp(min=-20.0, max=20.0)
-            l21 = raw_l21.clamp(min=-1.0e4, max=1.0e4)
-            log_l22 = raw_log_l22.clamp(min=-20.0, max=20.0)
+            log_l11 = raw_log_l11
+            l21 = raw_l21
+            log_l22 = raw_log_l22
 
             l11 = log_l11.exp()
             l22 = log_l22.exp()

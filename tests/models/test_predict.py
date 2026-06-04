@@ -283,6 +283,7 @@ class TestPredictSourceData:
         assert key_points.xy.shape == (2, 17, 2)
         assert np.allclose(key_points.xy, 0.5)
         assert np.allclose(key_points.keypoint_confidence, 0.5)
+        np.testing.assert_array_equal(key_points.visible, np.full((2, 17), True))
         np.testing.assert_array_equal(key_points.class_id, np.array([0, 1]))
         np.testing.assert_allclose(key_points.data["xyxy"], np.array([[0, 0, 1, 1], [0, 0, 1, 1]], dtype=np.float32))
         np.testing.assert_allclose(key_points.detection_confidence, np.array([0.9, 0.9], dtype=np.float32))

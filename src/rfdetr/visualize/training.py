@@ -58,10 +58,10 @@ def _split_metric_column(column: str) -> tuple[str, str]:
 
 def _line_style_for_split(split: str) -> str:
     """Return the plotting line style for a metric split."""
-    if split == "val":
-        return "--"
-    if split == "test":
+    if split == "train":
         return ":"
+    if split == "test":
+        return "-."
     return "-"
 
 
@@ -83,7 +83,7 @@ def _plot_columns_on_axes(ax: Any, df: Any, metric_columns: list[str]) -> None:
             metric_colors[metric_name] = color_cycle[len(metric_colors) % len(color_cycle)] if color_cycle else "C0"
         ax.plot(
             df["epoch"],
-            _hide_negative_metric_sentinels(df[column]),
+            df[column],
             marker="o",
             linewidth=1.7,
             linestyle=_line_style_for_split(split),
@@ -314,19 +314,6 @@ def _plot_map_columns(df: Any, metric_columns: list[str], *, output_path: Option
     if output_path is not None:
         fig.savefig(output_path, dpi=150, bbox_inches="tight")
     return fig
-
-
-def _hide_negative_metric_sentinels(values: Any) -> list[Any]:
-    """Return plot values with negative COCO metric sentinels hidden."""
-    cleaned_values: list[Any] = []
-    for value in values:
-        try:
-            numeric_value = float(value)
-        except (TypeError, ValueError):
-            cleaned_values.append(value)
-            continue
-        cleaned_values.append(float("nan") if numeric_value < 0 else value)
-    return cleaned_values
 
 
 def plot_metrics(

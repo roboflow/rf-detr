@@ -113,11 +113,20 @@ class PostProcess(nn.Module):
                         selected_labels = labels_i[valid_indices]
                         selected_keypoints = reshaped[valid_indices, selected_labels]
                         img_h, img_w = target_sizes[i]
-                        output_keypoints[valid_indices, :, 0] = selected_keypoints[:, :, 0] * img_w
-                        output_keypoints[valid_indices, :, 1] = selected_keypoints[:, :, 1] * img_h
-                        output_keypoints[valid_indices, :, 2] = selected_keypoints[:, :, 2].sigmoid()
-                        if selected_keypoints.shape[-1] >= 7:
-                            output_keypoint_precision[valid_indices] = selected_keypoints[:, :, 4:7]
+                        for selected_pos, output_index in enumerate(valid_indices):
+                            selected_label = int(selected_labels[selected_pos].item())
+                            num_active_keypoints = self.num_keypoints_per_class[selected_label]
+                            if num_active_keypoints <= 0:
+                                continue
+
+                            active_keypoints = selected_keypoints[selected_pos, :num_active_keypoints]
+                            output_keypoints[output_index, :num_active_keypoints, 0] = active_keypoints[:, 0] * img_w
+                            output_keypoints[output_index, :num_active_keypoints, 1] = active_keypoints[:, 1] * img_h
+                            output_keypoints[output_index, :num_active_keypoints, 2] = active_keypoints[:, 2].sigmoid()
+                            if active_keypoints.shape[-1] >= 7:
+                                output_keypoint_precision[output_index, :num_active_keypoints] = active_keypoints[
+                                    :, 4:7
+                                ]
 
                 results.append(
                     {

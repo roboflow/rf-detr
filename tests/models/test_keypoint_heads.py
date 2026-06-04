@@ -9,7 +9,6 @@ import torch
 
 from rfdetr.models.heads import ConditionalQueryInitializer
 from rfdetr.models.heads.keypoints import (
-    KEYPOINT_LOG_CHOL_MAX,
     compute_keypoint_matching_cost,
     compute_l1_keypoint_loss,
 )
@@ -74,11 +73,11 @@ def test_compute_l1_keypoint_loss_skips_visible_zero_area_nll_residuals() -> Non
         assert torch.isfinite(loss).all()
 
 
-def test_compute_l1_keypoint_loss_shifts_nll_floor_to_zero() -> None:
-    """Perfect keypoints at max clamped precision should have zero shifted Gaussian NLL."""
+def test_compute_l1_keypoint_loss_uses_raw_rflow_gaussian_nll() -> None:
+    """Perfect keypoints should use raw r-flow NLL without a floor shift."""
     pred_keypoints = torch.zeros(1, 1, 7)
-    pred_keypoints[:, :, 4] = KEYPOINT_LOG_CHOL_MAX
-    pred_keypoints[:, :, 6] = KEYPOINT_LOG_CHOL_MAX
+    pred_keypoints[:, :, 4] = 0.3
+    pred_keypoints[:, :, 6] = -0.2
     target_keypoints = torch.tensor([[[0.0, 0.0, 2.0]]], dtype=torch.float32)
 
     _, _, _, nll = compute_l1_keypoint_loss(
@@ -89,23 +88,40 @@ def test_compute_l1_keypoint_loss_shifts_nll_floor_to_zero() -> None:
         num_keypoints_per_class=[1],
     )
 
-    torch.testing.assert_close(nll, torch.zeros_like(nll), rtol=1e-4, atol=1e-6)
+    torch.testing.assert_close(nll, torch.tensor([-0.1]), rtol=1e-4, atol=1e-6)
 
 
-def test_compute_l1_keypoint_loss_nll_shift_preserves_gradients() -> None:
-    """The constant NLL floor shift should not change gradients against the raw r-flow NLL."""
+def test_compute_l1_keypoint_loss_does_not_clamp_log_cholesky_nll() -> None:
+    """Large precision log-diagonals should remain raw to match r-flow."""
+    pred_keypoints = torch.zeros(1, 1, 7)
+    pred_keypoints[:, :, 4] = 25.0
+    target_keypoints = torch.tensor([[[0.0, 0.0, 2.0]]], dtype=torch.float32)
+
+    _, _, _, nll = compute_l1_keypoint_loss(
+        all_pred_keypoints=pred_keypoints,
+        target_keypoints=target_keypoints,
+        target_classes=torch.tensor([0], dtype=torch.int64),
+        target_areas=torch.tensor([1.0], dtype=torch.float32),
+        num_keypoints_per_class=[1],
+    )
+
+    torch.testing.assert_close(nll, torch.tensor([-25.0]), rtol=1e-4, atol=1e-6)
+
+
+def test_compute_l1_keypoint_loss_raw_nll_gradients_match_reference_formula() -> None:
+    """The implemented NLL gradients should match the raw r-flow Gaussian formula."""
     pred_keypoints = torch.tensor([[[0.2, -0.1, 0.0, 0.0, 0.3, 0.1, -0.2]]], requires_grad=True)
     target_keypoints = torch.tensor([[[0.0, 0.0, 2.0]]], dtype=torch.float32)
     target_areas = torch.tensor([1.0], dtype=torch.float32)
-    _, _, _, shifted_nll = compute_l1_keypoint_loss(
+    _, _, _, nll = compute_l1_keypoint_loss(
         all_pred_keypoints=pred_keypoints,
         target_keypoints=target_keypoints,
         target_classes=torch.tensor([0], dtype=torch.int64),
         target_areas=target_areas,
         num_keypoints_per_class=[1],
     )
-    shifted_nll.sum().backward()
-    shifted_grad = pred_keypoints.grad.detach().clone()
+    nll.sum().backward()
+    grad = pred_keypoints.grad.detach().clone()
 
     raw_pred_keypoints = pred_keypoints.detach().clone().requires_grad_(True)
     dx = raw_pred_keypoints[:, :, 0] - target_keypoints[:, :, 0]
@@ -118,7 +134,8 @@ def test_compute_l1_keypoint_loss_nll_shift_preserves_gradients() -> None:
     raw_nll = 0.5 * (u0 * u0 + u1 * u1) / target_areas.unsqueeze(1) - (log_l11 + log_l22)
     raw_nll.sum().backward()
 
-    torch.testing.assert_close(shifted_grad, raw_pred_keypoints.grad, rtol=1e-4, atol=1e-6)
+    torch.testing.assert_close(nll.detach(), raw_nll.detach().reshape(-1), rtol=1e-4, atol=1e-6)
+    torch.testing.assert_close(grad, raw_pred_keypoints.grad, rtol=1e-4, atol=1e-6)
 
 
 def test_compute_l1_keypoint_loss_rejects_missing_schema() -> None:
@@ -176,6 +193,23 @@ def test_compute_keypoint_matching_cost_skips_zero_area_nll_residuals() -> None:
 
     for cost in costs:
         assert torch.isfinite(cost).all()
+
+
+def test_compute_keypoint_matching_cost_does_not_clamp_log_cholesky_nll() -> None:
+    """Matching NLL should use raw precision log-diagonals to match r-flow."""
+    all_pred_keypoints = torch.zeros(1, 1, 1, 7)
+    all_pred_keypoints[:, :, :, 4] = 25.0
+    target_keypoints = torch.tensor([[[0.0, 0.0, 2.0]]], dtype=torch.float32)
+
+    _, _, _, cost_nll = compute_keypoint_matching_cost(
+        all_pred_keypoints=all_pred_keypoints,
+        target_keypoints=target_keypoints,
+        target_classes=torch.tensor([0], dtype=torch.int64),
+        target_areas=torch.tensor([1.0], dtype=torch.float32),
+        num_keypoints_per_class=[1],
+    )
+
+    torch.testing.assert_close(cost_nll, torch.tensor([[[-25.0]]]), rtol=1e-4, atol=1e-6)
 
 
 def test_compute_keypoint_matching_cost_rejects_missing_schema() -> None:
