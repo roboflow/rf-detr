@@ -29,6 +29,67 @@ if TYPE_CHECKING:
     from matplotlib.figure import Figure
 
 _AUXILIARY_LOSS_SUFFIX_RE = re.compile(r"_\d+$")
+_LEGEND_COLUMNS = 4
+
+
+def _place_legend_below_axes(ax: Any, *, n_columns: int = _LEGEND_COLUMNS) -> None:
+    """Place a compact multi-column legend below a matplotlib axes."""
+    handles, labels = ax.get_legend_handles_labels()
+    if not handles:
+        return
+    ax.legend(
+        handles,
+        labels,
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.18),
+        ncol=min(n_columns, max(1, len(labels))),
+        fontsize=9,
+        frameon=True,
+    )
+
+
+def _split_metric_column(column: str) -> tuple[str, str]:
+    """Split a CSVLogger metric column into split prefix and metric name."""
+    split, separator, metric_name = column.partition("/")
+    if separator and split in {"train", "val", "test"}:
+        return split, metric_name
+    return "", column
+
+
+def _line_style_for_split(split: str) -> str:
+    """Return the plotting line style for a metric split."""
+    if split == "val":
+        return "--"
+    if split == "test":
+        return ":"
+    return "-"
+
+
+def _plot_columns_on_axes(ax: Any, df: Any, metric_columns: list[str]) -> None:
+    """Plot columns with color by metric name and line style by split."""
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError as exc:
+        raise ImportError(
+            "matplotlib is required for training metric plots. Install it with: pip install matplotlib"
+        ) from exc
+
+    color_cycle = plt.rcParams["axes.prop_cycle"].by_key().get("color", [])
+    metric_colors: dict[str, str] = {}
+
+    for column in metric_columns:
+        split, metric_name = _split_metric_column(column)
+        if metric_name not in metric_colors:
+            metric_colors[metric_name] = color_cycle[len(metric_colors) % len(color_cycle)] if color_cycle else "C0"
+        ax.plot(
+            df["epoch"],
+            _hide_negative_metric_sentinels(df[column]),
+            marker="o",
+            linewidth=1.7,
+            linestyle=_line_style_for_split(split),
+            color=metric_colors[metric_name],
+            label=column,
+        )
 
 
 def _build_metric_groups(df: Any) -> dict[str, list[str]]:
@@ -96,7 +157,39 @@ def _read_metrics_csv(metrics_csv: str) -> Any:
     df = pd.read_csv(csv_path)
     if "epoch" not in df.columns:
         raise ValueError("metrics.csv does not contain an 'epoch' column.")
+    df = _drop_trailing_validation_only_epochs(df)
     return df.groupby("epoch").mean(numeric_only=True).reset_index()
+
+
+def _drop_trailing_validation_only_epochs(df: Any) -> Any:
+    """Remove post-fit validation rows that Lightning logs as a synthetic final epoch.
+
+    The Roboflow finetune demos run ``trainer.validate(...)`` after ``trainer.fit(...)`` to write a final metrics JSON.
+    PTL appends that validation pass to the same ``CSVLogger`` file using ``epoch == max_epochs``. That row is useful as
+    a standalone final validation result, but it is not part of the training curve and can create a misleading
+    last-epoch jump in plots. Only trailing epochs with validation/test metrics and no training metrics are removed, and
+    only when the CSV also contains real training rows. Pure validation CSV files are preserved.
+    """
+    train_columns = [column for column in df.columns if str(column).startswith("train/")]
+    eval_columns = [column for column in df.columns if str(column).startswith(("val/", "test/"))]
+    if not train_columns or not eval_columns:
+        return df
+    if not df[train_columns].notna().any(axis=None):
+        return df
+
+    cleaned = df
+    while len(cleaned) > 0:
+        last_epoch = cleaned["epoch"].iloc[-1]
+        epoch_mask = cleaned["epoch"] == last_epoch
+        epoch_rows = cleaned.loc[epoch_mask]
+        if cleaned.loc[~epoch_mask].empty:
+            return cleaned
+        has_train_metrics = epoch_rows[train_columns].notna().any(axis=None)
+        has_eval_metrics = epoch_rows[eval_columns].notna().any(axis=None)
+        if has_train_metrics or not has_eval_metrics:
+            return cleaned
+        cleaned = cleaned.loc[~epoch_mask]
+    return cleaned
 
 
 def _plot_metric_groups(
@@ -118,13 +211,6 @@ def _plot_metric_groups(
             "matplotlib is required for training metric plots. Install it with: pip install matplotlib"
         ) from exc
 
-    try:
-        import seaborn as sns
-    except ImportError as exc:
-        raise ImportError(
-            "seaborn is required for training metric plots. Install it with: pip install seaborn"
-        ) from exc
-
     if not metric_groups:
         raise ValueError("metrics.csv does not contain any supported non-empty metric columns.")
 
@@ -134,18 +220,17 @@ def _plot_metric_groups(
 
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(12, 5 * n_rows), squeeze=False)
     axes_flat = axes.flatten()
-    melted = df.melt(id_vars="epoch", var_name="metric", value_name="value")
 
     for idx, (subplot_title, metric_list) in enumerate(metric_groups.items()):
         ax = axes_flat[idx]
-        group_data = melted[melted["metric"].isin(metric_list)]
-        sns.lineplot(data=group_data, x="epoch", y="value", hue="metric", marker="o", ax=ax)
+        _plot_columns_on_axes(ax, df, metric_list)
         ax.set_title(subplot_title, fontsize=13, fontweight="bold")
         ax.set_xlabel("Epoch", fontsize=11)
         ax.set_ylabel(subplot_title, fontsize=11)
         ax.grid(True, alpha=0.3)
         if subplot_title == "Loss" and loss_log_scale:
-            if (group_data["value"] <= 0).any():
+            group_data = df[metric_list]
+            if (group_data <= 0).any(axis=None):
                 warnings.warn(
                     "loss_log_scale=True was requested, but at least one loss value is non-positive; "
                     "using linear scale for the Loss panel.",
@@ -154,12 +239,16 @@ def _plot_metric_groups(
                 )
             else:
                 ax.set_yscale("log")
+        if subplot_title == "Loss":
+            _place_legend_below_axes(ax)
 
     for idx in range(n_groups, len(axes_flat)):
         axes_flat[idx].set_visible(False)
 
     fig.suptitle(title, fontsize=14)
     fig.tight_layout()
+    if "Loss" in metric_groups:
+        fig.subplots_adjust(bottom=0.24 if n_groups == 1 else 0.12)
     if output_path is not None:
         fig.savefig(output_path, dpi=150, bbox_inches="tight")
     return fig
@@ -213,35 +302,15 @@ def _plot_map_columns(df: Any, metric_columns: list[str], *, output_path: Option
         ) from exc
 
     fig, ax = plt.subplots(figsize=(12, 6))
-    color_cycle = plt.rcParams["axes.prop_cycle"].by_key().get("color", [])
-    metric_colors: dict[str, str] = {}
-
-    for column in metric_columns:
-        split, _, metric_name = column.partition("/")
-        if not metric_name:
-            split = ""
-            metric_name = column
-        if metric_name not in metric_colors:
-            metric_colors[metric_name] = color_cycle[len(metric_colors) % len(color_cycle)] if color_cycle else "C0"
-        linestyle = "--" if split == "train" else "-"
-        if split == "test":
-            linestyle = ":"
-        ax.plot(
-            df["epoch"],
-            _hide_negative_metric_sentinels(df[column]),
-            marker="o",
-            linewidth=1.7,
-            linestyle=linestyle,
-            color=metric_colors[metric_name],
-            label=column,
-        )
+    _plot_columns_on_axes(ax, df, metric_columns)
 
     ax.set_title("RF-DETR mAP Metrics", fontsize=13, fontweight="bold")
     ax.set_xlabel("Epoch", fontsize=11)
     ax.set_ylabel("mAP", fontsize=11)
     ax.grid(True, alpha=0.3)
-    ax.legend(loc="best")
+    _place_legend_below_axes(ax)
     fig.tight_layout()
+    fig.subplots_adjust(bottom=0.24)
     if output_path is not None:
         fig.savefig(output_path, dpi=150, bbox_inches="tight")
     return fig

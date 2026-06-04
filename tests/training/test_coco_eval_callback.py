@@ -283,21 +283,21 @@ class TestOnTrainBatchEnd:
         """on_train_batch_end should accumulate train predictions only with compute_train_metrics=True."""
         cb = COCOEvalCallback()
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
-        cb.map_metric = MagicMock(name="map_metric")
+        cb.map_metric_train = MagicMock(name="map_metric_train")
         module = _make_pl_module()
         module.train_config = SimpleNamespace(compute_train_metrics=True)
         outputs = {"results": _detection_preds(1), "targets": _detection_targets()}
 
         cb.on_train_batch_end(_make_trainer(), module, outputs, None, 0)
 
-        cb.map_metric.update.assert_called_once()
+        cb.map_metric_train.update.assert_called_once()
 
     def test_train_metrics_do_not_use_test_hook(self) -> None:
         """Train mAP must be logged under train/* via the train epoch hook, not through test/* hooks."""
         cb = COCOEvalCallback()
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
-        cb.map_metric = MagicMock(name="map_metric")
-        cb.map_metric.compute.return_value = _minimal_metrics()
+        cb.map_metric_train = MagicMock(name="map_metric_train")
+        cb.map_metric_train.compute.return_value = _minimal_metrics()
         module = _make_pl_module()
         module.train_config = SimpleNamespace(compute_train_metrics=True)
 
@@ -311,15 +311,27 @@ class TestOnTrainBatchEnd:
         """Train mAP should not call torchmetrics compute() when no train batches updated it."""
         cb = COCOEvalCallback()
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
-        cb.map_metric = MagicMock(name="map_metric")
-        cb.map_metric._update_count = 0
+        cb.map_metric_train = MagicMock(name="map_metric_train")
+        cb.map_metric_train._update_count = 0
         module = _make_pl_module()
         module.train_config = SimpleNamespace(compute_train_metrics=True)
 
         cb.on_train_epoch_end(_make_trainer(), module)
 
-        cb.map_metric.compute.assert_not_called()
+        cb.map_metric_train.compute.assert_not_called()
+        cb.map_metric_train.reset.assert_called_once()
+
+    def test_validation_start_does_not_clear_train_metric_state(self) -> None:
+        """In-fit validation should reset only validation accumulators, leaving train metrics isolated."""
+        cb = COCOEvalCallback()
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        cb.map_metric = MagicMock(name="val_map_metric")
+        cb.map_metric_train = MagicMock(name="train_map_metric")
+
+        cb.on_validation_epoch_start(_make_trainer(), _make_pl_module())
+
         cb.map_metric.reset.assert_called_once()
+        cb.map_metric_train.reset.assert_not_called()
 
 
 @pytest.mark.parametrize(
