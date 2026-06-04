@@ -190,13 +190,13 @@ class _LazyYoloDetectionDataset:
         return len(self._samples)
 
     def __getitem__(self, idx: int) -> tuple[str, np.ndarray, "Detections"]:
-        import cv2
-
         sample = self._samples[idx]
-        image = cv2.imread(sample.image_path)
-        if image is None:
-            raise ValueError(f"Could not read image from path: {sample.image_path}")
-        return sample.image_path, image, sample.to_detections()
+        try:
+            with Image.open(sample.image_path) as image:
+                rgb_image = np.array(image.convert("RGB"))
+        except (FileNotFoundError, OSError, Image.UnidentifiedImageError) as exc:
+            raise ValueError(f"Could not read image from path: {sample.image_path}") from exc
+        return sample.image_path, rgb_image, sample.to_detections()
 
     def get_image_info(self, idx: int) -> _LazyYoloSample:
         """Return lightweight metadata without loading pixels or dense masks."""
@@ -430,8 +430,8 @@ def _build_coco_api_from_samples(classes: list[str], dataset: Any) -> Any:
             class_id = sample.class_id
             has_masks = len(sample.polygons) > 0
         else:
-            image_path, cv2_image, detections = dataset[img_id]
-            height, width = cv2_image.shape[:2]
+            image_path, image_array, detections = dataset[img_id]
+            height, width = image_array.shape[:2]
             xyxy = detections.xyxy
             class_id = detections.class_id
             has_masks = detections.mask is not None
@@ -636,10 +636,8 @@ class YoloDetection(VisionDataset):
 
     def __getitem__(self, idx: int):
         image_id = self.ids[idx]
-        image_path, cv2_image, detections = self.sv_dataset[idx]
+        image_path, rgb_image, detections = self.sv_dataset[idx]
 
-        # Convert BGR (OpenCV) to RGB (PIL)
-        rgb_image = cv2_image[:, :, ::-1]
         img = Image.fromarray(rgb_image)
 
         target = {"image_id": image_id, "detections": detections}
