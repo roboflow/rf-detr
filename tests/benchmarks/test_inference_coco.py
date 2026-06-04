@@ -38,7 +38,6 @@ import pytest
 import supervision as sv
 import torch
 from faster_coco_eval import COCO
-from pycocotools.coco import COCO
 from pytorch_lightning import LightningModule
 from torchmetrics.detection import MeanAveragePrecision
 
@@ -324,7 +323,7 @@ def _predict_keypoint_preview_batches(
     image_paths: Sequence[str],
     batch_size: int,
     threshold: float = 0.5,
-) -> list[sv.Detections]:
+) -> list[sv.KeyPoints]:
     """Run keypoint-preview inference in fixed-size batches.
 
     Args:
@@ -339,7 +338,7 @@ def _predict_keypoint_preview_batches(
     Raises:
         RuntimeError: If batched prediction unexpectedly returns a single detection object.
     """
-    predictions: list[sv.Detections] = []
+    predictions: list[sv.KeyPoints] = []
     for start_idx in range(0, len(image_paths), batch_size):
         batch_paths = list(image_paths[start_idx : start_idx + batch_size])
         batch_images: list[PIL.Image.Image] = []
@@ -349,16 +348,16 @@ def _predict_keypoint_preview_batches(
 
         batch_predictions = model.predict(batch_images, threshold=threshold, include_source_image=False)
         if not isinstance(batch_predictions, list):
-            raise RuntimeError("Expected batched keypoint preview inference to return list[Detections].")
+            raise RuntimeError("Expected batched keypoint preview inference to return list[KeyPoints].")
         predictions.extend(batch_predictions)
     return predictions
 
 
 def _detections_to_coco_predictions(
-    detections_batch: list[sv.Detections],
+    detections_batch: list[sv.KeyPoints],
     image_ids: list[int],
 ) -> dict[int, dict[str, torch.Tensor]]:
-    """Convert batched supervision detections into the COCO evaluator format.
+    """Convert batched supervision keypoints into the COCO evaluator format.
 
     Args:
         detections_batch: Per-image prediction batch returned by RF-DETR.
@@ -368,12 +367,17 @@ def _detections_to_coco_predictions(
         COCO evaluator prediction dictionary keyed by image ID.
     """
     predictions: dict[int, dict[str, torch.Tensor]] = {}
-    for image_id, detections in zip(image_ids, detections_batch):
-        keypoints = detections.data["keypoints"]
+    for image_id, key_points in zip(image_ids, detections_batch):
+        xyxy = key_points.data.get("xyxy")
+        if xyxy is None or key_points.detection_confidence is None or key_points.class_id is None:
+            raise ValueError("Expected keypoint preview predictions to populate detection details.")
+        if key_points.keypoint_confidence is None:
+            raise ValueError("Expected keypoint preview predictions to populate per-keypoint confidence.")
+        keypoints = np.concatenate((key_points.xy, key_points.keypoint_confidence[:, :, np.newaxis]), axis=2)
         predictions[image_id] = {
-            "boxes": torch.as_tensor(detections.xyxy, dtype=torch.float32),
-            "scores": torch.as_tensor(detections.confidence, dtype=torch.float32),
-            "labels": torch.as_tensor(detections.class_id, dtype=torch.int64),
+            "boxes": torch.as_tensor(xyxy, dtype=torch.float32),
+            "scores": torch.as_tensor(key_points.detection_confidence, dtype=torch.float32),
+            "labels": torch.as_tensor(key_points.class_id, dtype=torch.int64),
             "keypoints": torch.as_tensor(keypoints, dtype=torch.float32),
         }
     return predictions
@@ -382,7 +386,7 @@ def _detections_to_coco_predictions(
 @pytest.fixture(scope="session")
 def keypoint_preview_predictions(
     download_coco_val_keypoints: tuple[Path, Path],
-) -> tuple[list[sv.Detections], list[int], Path]:
+) -> tuple[list[sv.KeyPoints], list[int], Path]:
     """Run one deterministic keypoint-preview inference pass for the COCO benchmark tests."""
     images_root, annotations_path = download_coco_val_keypoints
     image_paths, image_ids = _select_fixed_person_images(images_root, annotations_path)
@@ -481,7 +485,7 @@ def test_inference_segmentation_rfdetr_predict(
 
 
 def test_keypoint_preview_pretrained_inference_thresholded(
-    keypoint_preview_predictions: tuple[list[sv.Detections], list[int], Path],
+    keypoint_preview_predictions: tuple[list[sv.KeyPoints], list[int], Path],
 ) -> None:
     """Pretrained preview inference should emit thresholded person keypoints."""
     predictions, _, _ = keypoint_preview_predictions
@@ -491,16 +495,17 @@ def test_keypoint_preview_pretrained_inference_thresholded(
     total_keypoint_sets = 0
     confidences: list[np.ndarray] = []
 
-    for detections in predictions:
-        total_detections += len(detections)
-        confidences.append(detections.confidence)
-        assert "keypoints" in detections.data
-        keypoints = np.asarray(detections.data["keypoints"])
-        assert keypoints.ndim == 3
-        assert keypoints.shape[1:] == (17, 3)
-        assert keypoints.shape[0] == len(detections)
-        assert np.isfinite(keypoints).all()
-        total_keypoint_sets += keypoints.shape[0]
+    for key_points in predictions:
+        total_detections += len(key_points)
+        assert key_points.detection_confidence is not None
+        confidences.append(key_points.detection_confidence)
+        assert key_points.keypoint_confidence is not None
+        assert key_points.xy.ndim == 3
+        assert key_points.xy.shape[1:] == (17, 2)
+        assert key_points.keypoint_confidence.shape == (len(key_points), 17)
+        assert np.isfinite(key_points.xy).all()
+        assert np.isfinite(key_points.keypoint_confidence).all()
+        total_keypoint_sets += key_points.xy.shape[0]
 
     assert total_detections > 0, "Expected at least one detection above threshold=0.5."
     assert total_keypoint_sets > 0, "Expected at least one emitted keypoint set."

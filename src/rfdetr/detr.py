@@ -1348,8 +1348,8 @@ class RFDETR:
         patch_size: int | None = None,
         include_source_image: bool = True,
         **kwargs: Any,
-    ) -> sv.Detections | list[sv.Detections]:
-        """Performs object detection on the input images and returns bounding box predictions.
+    ) -> sv.Detections | sv.KeyPoints | list[sv.Detections | sv.KeyPoints]:
+        """Performs model inference on the input images.
 
         This method accepts a single image or a list of images in various formats (file path, image url, PIL Image,
         NumPy array, or torch.Tensor). The images should be in RGB channel order. If a torch.Tensor is provided, it must
@@ -1371,24 +1371,27 @@ class RFDETR:
                 (typically 14 for large models, 16 for smaller ones). Divisibility is checked against ``patch_size *
                 num_windows``.
             include_source_image:
-                Whether to attach the original image as ``source_image`` in ``detections.metadata``. Defaults to
-                ``True``.  Set to ``False`` to reduce memory use when source images are not needed.
+                Whether to attach the original image to the returned prediction. Detection and segmentation outputs use
+                ``detections.metadata["source_image"]``. Keypoint outputs use per-object
+                ``key_points.data["source_image"]`` because Supervision ``KeyPoints`` currently has no collection-level
+                metadata field. Defaults to ``True``. Set to ``False`` to reduce memory use when source images are not
+                needed.
             **kwargs:
                 Additional keyword arguments.
 
         Returns:
-            A single or multiple Detections objects, each containing bounding box coordinates, confidence scores, and
-            class IDs. The ``data`` dict of each :class:`~supervision.Detections` object contains ``class_name`` as a
-            string array corresponding to each detection and ``source_shape`` as an ``int64`` array of shape ``(N, 2)``
-            with ``[height, width]`` rows. ``source_shape`` is stored per detection so supervision indexing works
-            correctly. It was previously a ``(height, width)`` Python ``tuple``; callers using ``isinstance(v, tuple)``
-            or ``v == (H, W)`` must be updated. The ``metadata`` dict contains ``source_image`` as the original
-            ``uint8`` image array of shape ``(H, W, 3)`` when ``include_source_image=True``. When keypoint predictions
-            are available, ``data["keypoints"]`` is attached with shape ``(N, K, 3)`` in pixel coordinates.
+            A single or multiple Supervision prediction objects. Detection and segmentation models return
+            :class:`~supervision.Detections`. Keypoint models return :class:`~supervision.KeyPoints`, with keypoint
+            coordinates in ``xy`` and per-keypoint scores in ``keypoint_confidence``. For keypoint models, object scores
+            are available in ``key_points.detection_confidence`` and detection boxes are preserved in
+            ``key_points.data["xyxy"]``. The ``data`` dict also contains ``class_name`` and ``source_shape`` as
+            per-object arrays. When ``include_source_image=True`` for keypoint models, ``source_image`` is stored as
+            per-object data until Supervision exposes collection-level metadata for ``KeyPoints``.
 
         Note:
-            ``source_image`` moved from ``detections.data`` to ``detections.metadata``. Update callers reading
-            ``detections.data["source_image"]`` to use ``detections.metadata["source_image"]``.
+            For ``Detections`` outputs, ``source_image`` moved from ``detections.data`` to ``detections.metadata``.
+            Update detection callers reading ``detections.data["source_image"]`` to use
+            ``detections.metadata["source_image"]``.
 
         Note:
             ``class_name`` mapping uses one of two modes depending on the checkpoint. For pretrained COCO checkpoints
@@ -1551,7 +1554,7 @@ class RFDETR:
             }
         else:
             _class_id_to_name = dict(enumerate(model_class_names))
-        detections_list = []
+        predictions_list: list[sv.Detections | sv.KeyPoints] = []
         for i, result in enumerate(results):
             scores = result["scores"]
             labels = result["labels"]
@@ -1561,6 +1564,11 @@ class RFDETR:
             scores = scores[keep]
             labels = labels[keep]
             boxes = boxes[keep]
+            keypoints_array = None
+            if "keypoints" in result:
+                keypoints = result["keypoints"][keep]
+                keypoints_array = keypoints.float().cpu().numpy()
+            has_keypoints = keypoints_array is not None
 
             if "masks" in result:
                 masks = result["masks"]
@@ -1578,9 +1586,6 @@ class RFDETR:
                     confidence=scores.float().cpu().numpy(),
                     class_id=labels.cpu().numpy(),
                 )
-            if "keypoints" in result:
-                keypoints = result["keypoints"][keep]
-                detections.data["keypoints"] = keypoints.float().cpu().numpy()
             if "keypoint_precision_cholesky" in result:
                 keypoint_precision = result["keypoint_precision_cholesky"][keep]
                 detections.data["keypoint_precision_cholesky"] = keypoint_precision.float().cpu().numpy()
@@ -1612,9 +1617,29 @@ class RFDETR:
                 ]
             detections.data["class_name"] = np.array(class_names, dtype=object)
 
-            detections_list.append(detections)
+            if has_keypoints and keypoints_array is not None:
+                keypoint_data = dict(detections.data)
+                keypoint_data["xyxy"] = detections.xyxy.astype(np.float32)
+                if include_source_image:
+                    keypoint_data["source_image"] = [source_images[i] for _ in range(len(detections))]
+                if len(detections) == 0:
+                    key_points = sv.KeyPoints.empty()
+                    key_points.data = keypoint_data
+                else:
+                    key_points = sv.KeyPoints(
+                        xy=keypoints_array[:, :, :2].astype(np.float32),
+                        keypoint_confidence=keypoints_array[:, :, 2].astype(np.float32),
+                        detection_confidence=(
+                            detections.confidence.astype(np.float32) if detections.confidence is not None else None
+                        ),
+                        class_id=detections.class_id.astype(int) if detections.class_id is not None else None,
+                        data=keypoint_data,
+                    )
+                predictions_list.append(key_points)
+            else:
+                predictions_list.append(detections)
 
-        return detections_list if len(detections_list) > 1 else detections_list[0]
+        return predictions_list if len(predictions_list) > 1 else predictions_list[0]
 
     def deploy_to_roboflow(
         self,
