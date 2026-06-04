@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from rfdetr.visualize.training import (
@@ -173,7 +174,7 @@ def test_split_loss_and_map_plots_return_separate_figures(tmp_path: Path) -> Non
 
 
 def test_map_plot_uses_line_style_for_train_and_val_splits(tmp_path: Path) -> None:
-    """mAP plot should use one axes with dashed train lines and solid val lines."""
+    """MAP plot should use one axes with dashed train lines and solid val lines."""
     pytest.importorskip("matplotlib")
     pd = pytest.importorskip("pandas")
     from matplotlib import pyplot as plt
@@ -201,7 +202,7 @@ def test_map_plot_uses_line_style_for_train_and_val_splits(tmp_path: Path) -> No
 
 
 def test_map_renderer_uses_line_style_for_train_and_val_splits() -> None:
-    """mAP renderer should use dashed train lines and solid val lines on one axes."""
+    """MAP renderer should use dashed train lines and solid val lines on one axes."""
     pytest.importorskip("matplotlib")
     from matplotlib import pyplot as plt
 
@@ -227,6 +228,27 @@ def test_map_renderer_uses_line_style_for_train_and_val_splits() -> None:
     assert linestyles["val/mAP_50_95"] == "-"
     assert linestyles["train/keypoint_map_50_95"] == "--"
     assert linestyles["val/keypoint_map_50_95"] == "-"
+    plt.close(figure)
+
+
+def test_map_renderer_hides_negative_coco_metric_sentinels() -> None:
+    """MAP renderer should not plot COCO -1 sentinel values as real metric values."""
+    pytest.importorskip("matplotlib")
+    from matplotlib import pyplot as plt
+
+    df = _FakePlotDataFrame(
+        {
+            "epoch": [0, 1, 2],
+            "val/keypoint_map_50_95": [-1.0, 0.15, -0.5],
+        }
+    )
+
+    figure = _plot_map_columns(df, ["val/keypoint_map_50_95"], output_path=None)
+
+    y_values = figure.axes[0].lines[0].get_ydata()
+    assert np.isnan(y_values[0])
+    assert y_values[1] == pytest.approx(0.15)
+    assert np.isnan(y_values[2])
     plt.close(figure)
 
 

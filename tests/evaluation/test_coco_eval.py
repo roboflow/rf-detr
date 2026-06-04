@@ -7,6 +7,7 @@
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pycocotools.coco as pycoco
@@ -14,6 +15,7 @@ import pytest
 import torch
 from faster_coco_eval import COCO
 
+from rfdetr.evaluation import coco_eval as coco_eval_module
 from rfdetr.evaluation.coco_eval import CocoEvaluator
 
 
@@ -71,6 +73,53 @@ def _write_person_keypoint_coco(path: Path, *, include_num_keypoints: bool = Tru
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
+def _write_mixed_keypoint_coco(path: Path) -> None:
+    """Write a COCO keypoint file with two categories using different keypoint counts."""
+    categories = [
+        {
+            "id": 1,
+            "name": "dart",
+            "supercategory": "object",
+            "keypoints": [f"dart_{idx}" for idx in range(4)],
+            "skeleton": [],
+        },
+        {
+            "id": 2,
+            "name": "person",
+            "supercategory": "person",
+            "keypoints": [f"person_{idx}" for idx in range(21)],
+            "skeleton": [],
+        },
+    ]
+    annotations = []
+    for annotation_id, (category_id, keypoint_count, x0, y0) in enumerate(
+        [(1, 4, 10.0, 20.0), (2, 21, 50.0, 60.0)],
+        start=1,
+    ):
+        keypoints = []
+        for idx in range(keypoint_count):
+            keypoints.extend([x0 + idx, y0 + idx, 2.0])
+        annotations.append(
+            {
+                "id": annotation_id,
+                "image_id": 1,
+                "category_id": category_id,
+                "bbox": [x0, y0, 20.0, 20.0],
+                "area": 400.0,
+                "iscrowd": 0,
+                "keypoints": keypoints,
+                "num_keypoints": keypoint_count,
+            }
+        )
+
+    payload = {
+        "images": [{"id": 1, "width": 100, "height": 100, "file_name": "image.jpg"}],
+        "annotations": annotations,
+        "categories": categories,
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
 def test_coco_evaluator_keypoints_uses_faster_evaluate_without_deprecated_evaluate_img(tmp_path: Path) -> None:
     """Keypoint evaluation should not call faster-coco-eval's deprecated ``evaluateImg`` shim."""
     annotation_path = tmp_path / "person_keypoints_val2017.json"
@@ -93,6 +142,35 @@ def test_coco_evaluator_keypoints_uses_faster_evaluate_without_deprecated_evalua
     evaluator.synchronize_between_processes()
     evaluator.accumulate()
 
+    stats = evaluator.coco_eval["keypoints"].stats
+    assert np.isfinite(stats[0])
+
+
+def test_coco_evaluator_keypoints_log_summary_false_suppresses_summary_rows(tmp_path: Path) -> None:
+    """Keypoint accumulation should compute stats without AP/AR logger spam when summaries are disabled."""
+    annotation_path = tmp_path / "person_keypoints_val2017.json"
+    _write_person_keypoint_coco(annotation_path)
+    coco_gt = COCO(str(annotation_path))
+    coco_gt.label2cat = {0: 1}
+    evaluator = CocoEvaluator(coco_gt, ["keypoints"], log_summary=False)
+    keypoints = np.asarray(coco_gt.anns[1]["keypoints"], dtype=np.float32).reshape(1, 17, 3)
+
+    evaluator.update(
+        {
+            1: {
+                "boxes": torch.tensor([[10.0, 20.0, 60.0, 80.0]], dtype=torch.float32),
+                "scores": torch.tensor([0.99], dtype=torch.float32),
+                "labels": torch.tensor([0], dtype=torch.int64),
+                "keypoints": torch.as_tensor(keypoints, dtype=torch.float32),
+            }
+        }
+    )
+
+    with patch.object(coco_eval_module.logger, "info") as info:
+        evaluator.synchronize_between_processes()
+        evaluator.accumulate()
+
+    info.assert_not_called()
     stats = evaluator.coco_eval["keypoints"].stats
     assert np.isfinite(stats[0])
 
@@ -149,6 +227,23 @@ def test_coco_evaluator_keypoints_infers_custom_oks_sigmas(tmp_path: Path) -> No
     assert np.isfinite(stats[0])
 
 
+def test_coco_evaluator_warns_once_per_custom_keypoint_count(tmp_path: Path) -> None:
+    """Repeated evaluator construction should not spam the same custom OKS fallback warning."""
+    annotation_path = tmp_path / "custom_keypoints_val.json"
+    _write_person_keypoint_coco(annotation_path, keypoint_count=25)
+    coco_gt = COCO(str(annotation_path))
+
+    coco_eval_module._WARNED_CUSTOM_KEYPOINT_OKS_COUNTS.clear()
+    try:
+        with patch.object(coco_eval_module.logger, "warning") as warning:
+            CocoEvaluator(coco_gt, ["keypoints"])
+            CocoEvaluator(coco_gt, ["keypoints"])
+    finally:
+        coco_eval_module._WARNED_CUSTOM_KEYPOINT_OKS_COUNTS.clear()
+
+    warning.assert_called_once()
+
+
 def test_coco_evaluator_rejects_mismatched_custom_oks_sigmas(tmp_path: Path) -> None:
     """Explicit OKS sigmas must match the dataset keypoint count."""
     annotation_path = tmp_path / "custom_keypoints_val.json"
@@ -157,6 +252,45 @@ def test_coco_evaluator_rejects_mismatched_custom_oks_sigmas(tmp_path: Path) -> 
 
     with pytest.raises(ValueError, match="keypoint_oks_sigmas length 17 does not match dataset keypoint count 25"):
         CocoEvaluator(coco_gt, ["keypoints"], keypoint_oks_sigmas=[0.05] * 17)
+
+
+def test_coco_evaluator_keypoints_handles_mixed_counts_and_multi_instance_image(tmp_path: Path) -> None:
+    """Mixed keypoint-count categories should evaluate by group instead of being skipped."""
+    annotation_path = tmp_path / "mixed_keypoints_val.json"
+    _write_mixed_keypoint_coco(annotation_path)
+    coco_gt = COCO(str(annotation_path))
+    coco_gt.label2cat = {0: 1, 1: 2}
+    evaluator = CocoEvaluator(coco_gt, ["keypoints"], keypoint_oks_sigmas=[0.05] * 21)
+
+    padded_keypoints = np.zeros((2, 21, 3), dtype=np.float32)
+    for detection_idx, annotation in enumerate(coco_gt.dataset["annotations"]):
+        keypoints = np.asarray(annotation["keypoints"], dtype=np.float32).reshape(-1, 3)
+        padded_keypoints[detection_idx, : keypoints.shape[0]] = keypoints
+
+    evaluator.update(
+        {
+            1: {
+                "boxes": torch.tensor([[10.0, 20.0, 30.0, 40.0], [50.0, 60.0, 70.0, 80.0]], dtype=torch.float32),
+                "scores": torch.tensor([0.99, 0.98], dtype=torch.float32),
+                "labels": torch.tensor([0, 1], dtype=torch.int64),
+                "keypoints": torch.as_tensor(padded_keypoints, dtype=torch.float32),
+            }
+        }
+    )
+
+    results = evaluator.coco_results["keypoints"]
+    assert len(results) == 2
+    assert len(results[0]["keypoints"]) == 4 * 3
+    assert len(results[1]["keypoints"]) == 21 * 3
+
+    evaluator.synchronize_between_processes()
+    evaluator.accumulate()
+
+    grouped_eval = evaluator.coco_eval["keypoints"]
+    assert len(grouped_eval.evals) == 2
+    stats = grouped_eval.stats
+    assert stats.shape == (10,)
+    assert np.isfinite(stats[0])
 
 
 def test_coco_evaluator_backfills_missing_num_keypoints(tmp_path: Path) -> None:

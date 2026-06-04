@@ -32,6 +32,10 @@ def _make_trainer(datamodule=None, callbacks: list[object] | None = None) -> Mag
     return trainer
 
 
+class _TQDMProgressBar:
+    """Minimal progress-bar stand-in for callback detection tests."""
+
+
 def _detection_preds(n: int = 0) -> list[dict]:
     """Return a list with one per-image prediction dict."""
     return [
@@ -303,6 +307,20 @@ class TestOnTrainBatchEnd:
         assert "train/mAP_50_95" in logged_keys
         assert "test/mAP_50_95" not in logged_keys
 
+    def test_train_epoch_end_skips_compute_when_no_train_updates(self) -> None:
+        """Train mAP should not call torchmetrics compute() when no train batches updated it."""
+        cb = COCOEvalCallback()
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        cb.map_metric = MagicMock(name="map_metric")
+        cb.map_metric._update_count = 0
+        module = _make_pl_module()
+        module.train_config = SimpleNamespace(compute_train_metrics=True)
+
+        cb.on_train_epoch_end(_make_trainer(), module)
+
+        cb.map_metric.compute.assert_not_called()
+        cb.map_metric.reset.assert_called_once()
+
 
 @pytest.mark.parametrize(
     "stage,hook,prefix",
@@ -529,8 +547,8 @@ class TestKeypointCocoEvalRouting:
 
         assert coco_evaluator_cls.call_args.args[0] is train_coco_api
 
-    def test_mixed_keypoint_counts_skip_keypoint_map_without_crashing(self) -> None:
-        """Mixed keypoint counts should skip COCO keypoint mAP once while bbox mAP can still log."""
+    def test_mixed_keypoint_counts_create_keypoint_evaluator(self) -> None:
+        """Mixed keypoint counts should be handled by the evaluator instead of being skipped by the callback."""
         cb = COCOEvalCallback(max_dets=500)
         dataset = MagicMock(name="dataset")
         datamodule = MagicMock()
@@ -538,23 +556,17 @@ class TestKeypointCocoEvalRouting:
         datamodule._dataset_val = None
         datamodule._dataset_test = None
         trainer = _make_trainer(datamodule=datamodule)
+        evaluator = MagicMock(name="evaluator")
 
         with (
             patch("rfdetr.training.callbacks.coco_eval.get_coco_api_from_dataset", return_value=MagicMock()),
-            patch(
-                "rfdetr.evaluation.coco_eval.CocoEvaluator",
-                side_effect=ValueError(
-                    "COCO keypoint evaluation requires one keypoint count across evaluated categories; "
-                    "found counts [4, 21]."
-                ),
-            ) as coco_evaluator_cls,
+            patch("rfdetr.evaluation.coco_eval.CocoEvaluator", return_value=evaluator) as coco_evaluator_cls,
             patch("rfdetr.training.callbacks.coco_eval.logger.warning") as warning,
         ):
-            assert cb._get_or_create_keypoint_coco_evaluator(trainer, split="train") is None
-            assert cb._get_or_create_keypoint_coco_evaluator(trainer, split="train") is None
+            assert cb._get_or_create_keypoint_coco_evaluator(trainer, split="train") is evaluator
 
         coco_evaluator_cls.assert_called_once()
-        warning.assert_called_once()
+        warning.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -660,6 +672,29 @@ class TestOnValidationEpochEnd:
 
         cb.on_validation_epoch_end(trainer, module)
 
+        cb.map_metric.compute.assert_called_once()
+        module.log.assert_called()
+
+    def test_progress_bar_suppresses_terminal_metric_summaries(self, capsys) -> None:
+        """Progress-bar training should keep scalar logs but suppress duplicate terminal summary text."""
+        cb = COCOEvalCallback(max_dets=500)
+        trainer = _make_trainer(callbacks=[_TQDMProgressBar()])
+        trainer.callback_metrics = {}
+        cb.map_metric = MagicMock(name="map_metric")
+        cb.map_metric_ema = None
+        module = _make_pl_module()
+
+        def _compute_with_terminal_summary() -> dict:
+            print("Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=500 ] = 0.000")
+            return _minimal_metrics()
+
+        cb.map_metric.compute.side_effect = _compute_with_terminal_summary
+
+        with patch.object(cb, "_print_metrics_tables") as print_metrics_tables:
+            cb._compute_and_log(trainer, module, "val")
+
+        assert "Average Precision" not in capsys.readouterr().out
+        print_metrics_tables.assert_not_called()
         cb.map_metric.compute.assert_called_once()
         module.log.assert_called()
 

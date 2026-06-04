@@ -228,7 +228,7 @@ def _plot_map_columns(df: Any, metric_columns: list[str], *, output_path: Option
             linestyle = ":"
         ax.plot(
             df["epoch"],
-            df[column],
+            _hide_negative_metric_sentinels(df[column]),
             marker="o",
             linewidth=1.7,
             linestyle=linestyle,
@@ -245,6 +245,19 @@ def _plot_map_columns(df: Any, metric_columns: list[str], *, output_path: Option
     if output_path is not None:
         fig.savefig(output_path, dpi=150, bbox_inches="tight")
     return fig
+
+
+def _hide_negative_metric_sentinels(values: Any) -> list[Any]:
+    """Return plot values with negative COCO metric sentinels hidden."""
+    cleaned_values: list[Any] = []
+    for value in values:
+        try:
+            numeric_value = float(value)
+        except (TypeError, ValueError):
+            cleaned_values.append(value)
+            continue
+        cleaned_values.append(float("nan") if numeric_value < 0 else value)
+    return cleaned_values
 
 
 def plot_metrics(
