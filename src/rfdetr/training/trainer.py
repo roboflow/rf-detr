@@ -218,9 +218,14 @@ def build_trainer(
     callbacks = []
 
     if tc.progress_bar == "rich":
-        callbacks.append(RichProgressBar(theme=RichProgressBarTheme(metrics_format=".3e")))
+        callbacks.append(
+            RichProgressBar(
+                refresh_rate=5,
+                theme=RichProgressBarTheme(metrics_format=".3e"),
+            )
+        )
     elif tc.progress_bar == "tqdm":
-        callbacks.append(TQDMProgressBar())
+        callbacks.append(TQDMProgressBar(refresh_rate=5))
 
     if enable_ema:
         callbacks.append(

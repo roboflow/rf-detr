@@ -713,6 +713,32 @@ class TestTrainingStep:
 
         assert loss.dim() == 0
 
+    def test_returns_detached_predictions_when_train_metrics_enabled(self, tmp_path):
+        """compute_train_metrics=True should expose detached predictions without changing the Lightning loss key."""
+        tc = _base_train_config(tmp_path, compute_train_metrics=True)
+        module, fake_model, fake_criterion, fake_postprocess = _build_module(train_config=tc, tmp_path=tmp_path)
+        samples, targets = _make_batch()
+        model_output = {"pred_logits": torch.randn(2, 3, requires_grad=True)}
+        fake_model.return_value = model_output
+        fake_criterion.return_value = {"loss_ce": torch.tensor(1.0)}
+        fake_criterion.weight_dict = {"loss_ce": 1.0}
+        fake_postprocess.return_value = [{"boxes": torch.randn(1, 4, requires_grad=True)}]
+        module.log = MagicMock()
+        module.log_dict = MagicMock()
+        real_param = nn.Parameter(torch.randn(4))
+        module.optimizers = MagicMock(return_value=torch.optim.SGD([real_param], lr=1e-3))
+        trainer = MagicMock()
+        trainer.accumulate_grad_batches = 1
+        module._trainer = trainer
+        type(module).trainer = property(lambda self: self._trainer)
+
+        result = module.training_step((samples, targets), batch_idx=0)
+
+        assert isinstance(result, dict)
+        assert result["loss"].dim() == 0
+        assert result["results"][0]["boxes"].requires_grad is False
+        assert result["targets"] is targets
+
     def test_ignores_losses_not_in_weight_dict(self, tmp_path):
         """Losses absent from weight_dict (e.g. cardinality_error) must not affect total."""
         loss_dict = {"loss_ce": torch.tensor(1.0), "cardinality_error": torch.tensor(99.0)}

@@ -25,6 +25,9 @@ from rfdetr.evaluation.matching import (
 )
 from rfdetr.utilities.box_ops import box_cxcywh_to_xyxy
 from rfdetr.utilities.distributed import all_gather, get_world_size, is_dist_avail_and_initialized
+from rfdetr.utilities.logger import get_logger
+
+logger = get_logger()
 
 
 def _get_ema_inner_module(ema_cb: Any) -> Any:
@@ -98,6 +101,7 @@ class COCOEvalCallback(Callback):
         self._use_segm_metrics: bool = segmentation
         self._keypoint_coco_evaluator: Any | None = None
         self._keypoint_eval_has_updates: bool = False
+        self._keypoint_coco_eval_skipped_splits: set[str] = set()
         self._keypoint_oks_sigmas = keypoint_oks_sigmas
         self._in_notebook: bool = False
         if in_notebook is None:
@@ -221,6 +225,58 @@ class COCOEvalCallback(Callback):
         """
         self._prepare_ema_metric(trainer, pl_module)
 
+    def on_train_batch_end(
+        self,
+        trainer: Any,
+        pl_module: Any,
+        outputs: Any,
+        batch: Any,
+        batch_idx: int,
+    ) -> None:
+        """Accumulate train predictions for optional train-split mAP logging.
+
+        Args:
+            trainer: The PTL Trainer.
+            pl_module: The LightningModule.
+            outputs: Return value of ``training_step``.
+            batch: The device-transferred batch (unused here).
+            batch_idx: Batch index within the training epoch.
+        """
+        if getattr(getattr(pl_module, "train_config", None), "compute_train_metrics", False) is not True:
+            return
+        if not isinstance(outputs, dict) or "results" not in outputs or "targets" not in outputs:
+            return
+
+        preds: list[dict[str, torch.Tensor]] = self._convert_preds(outputs["results"])
+        targets = self._convert_targets(outputs["targets"])
+        self.map_metric.update(preds, targets)
+
+        iou_type = "segm" if self._use_segm_metrics else "bbox"
+        batch_matching = build_matching_data(preds, targets, iou_threshold=0.5, iou_type=iou_type)
+        merge_matching_data(self._f1_local, batch_matching)
+        self._update_keypoint_coco_eval(trainer, outputs, split="train")
+
+    def on_train_epoch_end(self, trainer: Any, pl_module: Any) -> None:
+        """Compute optional train-split mAP at the end of the training epoch.
+
+        Args:
+            trainer: The PTL Trainer.
+            pl_module: The LightningModule.
+        """
+        if getattr(getattr(pl_module, "train_config", None), "compute_train_metrics", False) is not True:
+            self.map_metric.reset()
+            self._f1_local = init_matching_accumulator()
+            return
+        if self._eval_interval > 1:
+            current_epoch = int(getattr(trainer, "current_epoch", 0)) + 1
+            max_epochs = getattr(trainer, "max_epochs", None)
+            is_last_epoch = isinstance(max_epochs, int) and max_epochs > 0 and current_epoch >= max_epochs
+            if current_epoch % self._eval_interval != 0 and not is_last_epoch:
+                self.map_metric.reset()
+                self._f1_local = init_matching_accumulator()
+                return
+        self._compute_and_log(trainer, pl_module, "train")
+
     def on_validation_batch_end(
         self,
         trainer: Any,
@@ -252,7 +308,7 @@ class COCOEvalCallback(Callback):
         iou_type = "segm" if self._use_segm_metrics else "bbox"
         batch_matching = build_matching_data(preds, targets, iou_threshold=0.5, iou_type=iou_type)
         merge_matching_data(self._f1_local, batch_matching)
-        self._update_keypoint_coco_eval(trainer, outputs)
+        self._update_keypoint_coco_eval(trainer, outputs, split="val")
 
         # Run EMA model separately on the same batch so that base and EMA metrics
         # are computed from independent forward passes rather than being aliases.
@@ -324,7 +380,7 @@ class COCOEvalCallback(Callback):
         iou_type = "segm" if self._use_segm_metrics else "bbox"
         batch_matching = build_matching_data(preds, targets, iou_threshold=0.5, iou_type=iou_type)
         merge_matching_data(self._f1_local, batch_matching)
-        self._update_keypoint_coco_eval(trainer, outputs)
+        self._update_keypoint_coco_eval(trainer, outputs, split="test")
 
     def on_test_epoch_end(self, trainer: Any, pl_module: Any) -> None:
         """Compute and log mAP and F1 under ``test/`` prefix at end of test epoch.
@@ -603,8 +659,10 @@ class COCOEvalCallback(Callback):
         # ("compute called before update") that spams DDP logs on those ranks.
         metric._update_count = max(getattr(metric, "_update_count", 0), 1)
 
-    def _get_or_create_keypoint_coco_evaluator(self, trainer: Any) -> Any | None:
+    def _get_or_create_keypoint_coco_evaluator(self, trainer: Any, split: str) -> Any | None:
         """Create (or return) the COCO keypoint evaluator for this epoch."""
+        if split in self._keypoint_coco_eval_skipped_splits:
+            return None
         if self._keypoint_coco_evaluator is not None:
             return self._keypoint_coco_evaluator
 
@@ -614,29 +672,41 @@ class COCOEvalCallback(Callback):
         if datamodule is None:
             return None
 
-        for attr in ("_dataset_val", "_dataset_test", "_dataset_train"):
+        split_attrs = {
+            "train": ("_dataset_train",),
+            "val": ("_dataset_val",),
+            "test": ("_dataset_test",),
+        }.get(split, ("_dataset_val", "_dataset_test", "_dataset_train"))
+        for attr in split_attrs:
             dataset = getattr(datamodule, attr, None)
             if dataset is None:
                 continue
             coco_api = get_coco_api_from_dataset(dataset)
             if coco_api is None:
                 continue
-            self._keypoint_coco_evaluator = CocoEvaluator(
-                coco_api,
-                ["keypoints"],
-                max_dets=self._max_dets,
-                keypoint_oks_sigmas=self._keypoint_oks_sigmas,
-                log_summary=False,
-            )
+            try:
+                self._keypoint_coco_evaluator = CocoEvaluator(
+                    coco_api,
+                    ["keypoints"],
+                    max_dets=self._max_dets,
+                    keypoint_oks_sigmas=self._keypoint_oks_sigmas,
+                    log_summary=False,
+                )
+            except ValueError as exc:
+                if "requires one keypoint count" not in str(exc):
+                    raise
+                self._keypoint_coco_eval_skipped_splits.add(split)
+                logger.warning("Skipping %s keypoint COCO mAP: %s", split, exc)
+                return None
             return self._keypoint_coco_evaluator
         return None
 
-    def _update_keypoint_coco_eval(self, trainer: Any, outputs: dict[str, Any]) -> None:
+    def _update_keypoint_coco_eval(self, trainer: Any, outputs: dict[str, Any], split: str) -> None:
         """Accumulate batch predictions into the COCO keypoint evaluator."""
         if not self._keypoint_mode:
             return
 
-        evaluator = self._get_or_create_keypoint_coco_evaluator(trainer)
+        evaluator = self._get_or_create_keypoint_coco_evaluator(trainer, split)
         if evaluator is None:
             return
 
