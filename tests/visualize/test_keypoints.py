@@ -30,6 +30,24 @@ def test_precision_cholesky_to_pixel_covariance_identity_precision() -> None:
     )
 
 
+def test_precision_cholesky_to_pixel_covariance_does_not_clamp_log_cholesky() -> None:
+    """Covariance display should use raw RF-DETR precision parameters."""
+    precision_cholesky = np.array([[[25.0, 0.0, 0.0]]], dtype=np.float32)
+    source_shape = np.array([[1.0, 1.0]], dtype=np.float32)
+
+    covariance = _precision_cholesky_to_pixel_covariance(
+        precision_cholesky=precision_cholesky,
+        source_shape=source_shape,
+    )
+
+    np.testing.assert_allclose(
+        covariance[0, 0, 0, 0],
+        np.exp(-50.0),
+        rtol=1e-4,
+        atol=1e-28,
+    )
+
+
 def test_precision_cholesky_to_pixel_covariance_rejects_bad_shape() -> None:
     """Invalid precision and source shapes should fail before annotation."""
     with pytest.raises(ValueError, match=r"precision_cholesky must have shape"):

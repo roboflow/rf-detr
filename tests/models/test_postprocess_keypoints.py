@@ -56,8 +56,11 @@ def test_postprocess_keypoints_class_filtering() -> None:
     target_sizes = torch.tensor([[100, 200]], dtype=torch.int64)
     results = postprocess(outputs, target_sizes)
     keypoints = results[0]["keypoints"]
+    keypoint_precision = results[0]["keypoint_precision_cholesky"]
 
     assert keypoints.shape == (1, 2, 3)
     assert torch.allclose(keypoints[0, 0, 0], torch.tensor(50.0))
     assert torch.allclose(keypoints[0, 0, 1], torch.tensor(40.0))
     assert 0.0 < keypoints[0, 0, 2].item() < 1.0
+    torch.testing.assert_close(keypoints[0, 1], torch.zeros(3))
+    torch.testing.assert_close(keypoint_precision[0, 1], torch.full((3,), float("nan")), equal_nan=True)

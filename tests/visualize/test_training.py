@@ -15,6 +15,7 @@ import pytest
 from rfdetr.visualize.training import (
     _build_metric_groups,
     _plot_map_columns,
+    _plot_metric_groups,
     _read_metrics_csv,
     plot_loss_metrics,
     plot_map_metrics,
@@ -172,8 +173,8 @@ def test_split_loss_and_map_plots_return_separate_figures(tmp_path: Path) -> Non
     assert loss_legend is not None
     assert getattr(loss_legend, "_ncols") == 2
     loss_lines = {line.get_label(): line for line in loss_figure.axes[0].lines}
-    assert loss_lines["train/loss"].get_linestyle() == "-"
-    assert loss_lines["val/loss"].get_linestyle() == "--"
+    assert loss_lines["train/loss"].get_linestyle() == ":"
+    assert loss_lines["val/loss"].get_linestyle() == "-"
     assert loss_lines["train/loss"].get_color() == loss_lines["val/loss"].get_color()
     assert len(map_figure.axes) == 1
     assert map_figure.axes[0].get_title() == "RF-DETR mAP Metrics"
@@ -203,7 +204,7 @@ def test_metrics_reader_drops_trailing_post_fit_validation_epoch(tmp_path: Path)
 
 
 def test_map_plot_uses_line_style_for_train_and_val_splits(tmp_path: Path) -> None:
-    """MAP plot should use one axes with solid train lines and dashed val lines."""
+    """MAP plot should use one axes with dotted train lines and solid val lines."""
     pytest.importorskip("matplotlib")
     pd = pytest.importorskip("pandas")
     from matplotlib import pyplot as plt
@@ -223,10 +224,10 @@ def test_map_plot_uses_line_style_for_train_and_val_splits(tmp_path: Path) -> No
 
     assert len(figure.axes) == 1
     linestyles = {line.get_label(): line.get_linestyle() for line in figure.axes[0].lines}
-    assert linestyles["train/mAP_50_95"] == "-"
-    assert linestyles["val/mAP_50_95"] == "--"
-    assert linestyles["train/keypoint_map_50_95"] == "-"
-    assert linestyles["val/keypoint_map_50_95"] == "--"
+    assert linestyles["train/mAP_50_95"] == ":"
+    assert linestyles["val/mAP_50_95"] == "-"
+    assert linestyles["train/keypoint_map_50_95"] == ":"
+    assert linestyles["val/keypoint_map_50_95"] == "-"
     plt.close(figure)
 
 
@@ -253,18 +254,18 @@ def test_map_renderer_uses_line_style_for_train_and_val_splits() -> None:
 
     assert len(figure.axes) == 1
     lines = {line.get_label(): line for line in figure.axes[0].lines}
-    assert lines["train/mAP_50_95"].get_linestyle() == "-"
-    assert lines["val/mAP_50_95"].get_linestyle() == "--"
-    assert lines["train/keypoint_map_50_95"].get_linestyle() == "-"
-    assert lines["val/keypoint_map_50_95"].get_linestyle() == "--"
+    assert lines["train/mAP_50_95"].get_linestyle() == ":"
+    assert lines["val/mAP_50_95"].get_linestyle() == "-"
+    assert lines["train/keypoint_map_50_95"].get_linestyle() == ":"
+    assert lines["val/keypoint_map_50_95"].get_linestyle() == "-"
     assert lines["train/mAP_50_95"].get_color() == lines["val/mAP_50_95"].get_color()
     assert lines["train/keypoint_map_50_95"].get_color() == lines["val/keypoint_map_50_95"].get_color()
     assert lines["train/mAP_50_95"].get_color() != lines["train/keypoint_map_50_95"].get_color()
     plt.close(figure)
 
 
-def test_map_renderer_hides_negative_coco_metric_sentinels() -> None:
-    """MAP renderer should not plot COCO -1 sentinel values as real metric values."""
+def test_map_renderer_preserves_negative_values() -> None:
+    """MAP renderer should plot raw metric values from the CSV without sentinel masking."""
     pytest.importorskip("matplotlib")
     from matplotlib import pyplot as plt
 
@@ -278,9 +279,34 @@ def test_map_renderer_hides_negative_coco_metric_sentinels() -> None:
     figure = _plot_map_columns(df, ["val/keypoint_map_50_95"], output_path=None)
 
     y_values = figure.axes[0].lines[0].get_ydata()
-    assert np.isnan(y_values[0])
+    assert y_values[0] == pytest.approx(-1.0)
     assert y_values[1] == pytest.approx(0.15)
-    assert np.isnan(y_values[2])
+    assert y_values[2] == pytest.approx(-0.5)
+    plt.close(figure)
+
+
+def test_loss_renderer_preserves_negative_component_losses() -> None:
+    """Loss renderer should plot negative NLL values rather than treating them as COCO sentinels."""
+    pytest.importorskip("matplotlib")
+    from matplotlib import pyplot as plt
+
+    df = _FakePlotDataFrame(
+        {
+            "epoch": [0, 1],
+            "train/kp_nll": [-1.0, -2.0],
+        }
+    )
+
+    figure = _plot_metric_groups(
+        df,
+        {"Loss": ["train/kp_nll"]},
+        title="RF-DETR Loss Metrics",
+        output_path=None,
+        loss_log_scale=False,
+    )
+
+    lines = {line.get_label(): line for line in figure.axes[0].lines}
+    np.testing.assert_allclose(lines["train/kp_nll"].get_ydata(), [-1.0, -2.0])
     plt.close(figure)
 
 
@@ -303,5 +329,7 @@ def test_plot_metrics_warns_when_log_loss_has_non_positive_values(tmp_path: Path
     with pytest.warns(UserWarning, match="non-positive"):
         figure = plot_metrics(str(metrics_csv), loss_log_scale=True)
 
+    lines = {line.get_label(): line for line in figure.axes[0].lines}
+    np.testing.assert_allclose(lines["train/kp_nll"].get_ydata(), [-1.0, -2.0])
     assert not (tmp_path / "metrics_plot.png").exists()
     plt.close(figure)
