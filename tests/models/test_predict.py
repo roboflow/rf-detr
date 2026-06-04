@@ -99,6 +99,19 @@ class TestPredictReturnTypes:
             "Segmentation predict() must always set the mask field, even when no objects are detected"
         )
 
+    def test_keypoint_single_and_batch_return_sv_keypoints(self) -> None:
+        """Keypoint model returns one KeyPoints for one image and list[KeyPoints] for multiple images."""
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+        model = _DummyRFDETR()
+        model.model = _DummyModel(labels=[0, 1], include_keypoints=True)
+
+        single = model.predict(img)
+        batch = model.predict([img, img])
+
+        assert isinstance(single, sv.KeyPoints)
+        assert isinstance(batch, list)
+        assert all(isinstance(result, sv.KeyPoints) for result in batch)
+
 
 def test_predict_accepts_image_url() -> None:
     if not _is_online(_HTTP_HOST, _HTTP_PORT):
@@ -258,33 +271,52 @@ class TestPredictSourceData:
         assert "source_image" in single.metadata
         assert single.metadata["source_image"].shape == (48, 64, 3)
 
-    def test_predict_keypoints_attached_to_detections_data(self) -> None:
-        """Keypoint predictions are attached to detections.data['keypoints'] after threshold filtering."""
+    def test_predict_keypoints_return_supervision_keypoints(self) -> None:
+        """Keypoint predictions return ``sv.KeyPoints`` after threshold filtering."""
         img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
         model = _DummyRFDETR()
         model.model = _DummyModel(labels=[0, 1], include_keypoints=True)
 
-        detections = model.predict(img)
+        key_points = model.predict(img)
 
-        assert "keypoints" in detections.data
-        keypoints = detections.data["keypoints"]
-        assert isinstance(keypoints, np.ndarray)
-        assert keypoints.shape == (2, 17, 3)
-        assert np.allclose(keypoints, 0.5)
-        assert "keypoint_precision_cholesky" in detections.data
-        keypoint_precision = detections.data["keypoint_precision_cholesky"]
+        assert isinstance(key_points, sv.KeyPoints)
+        assert key_points.xy.shape == (2, 17, 2)
+        assert np.allclose(key_points.xy, 0.5)
+        assert np.allclose(key_points.keypoint_confidence, 0.5)
+        np.testing.assert_array_equal(key_points.class_id, np.array([0, 1]))
+        np.testing.assert_allclose(key_points.data["xyxy"], np.array([[0, 0, 1, 1], [0, 0, 1, 1]], dtype=np.float32))
+        np.testing.assert_allclose(key_points.detection_confidence, np.array([0.9, 0.9], dtype=np.float32))
+        assert "keypoint_precision_cholesky" in key_points.data
+        keypoint_precision = key_points.data["keypoint_precision_cholesky"]
         assert isinstance(keypoint_precision, np.ndarray)
         assert keypoint_precision.shape == (2, 17, 3)
         assert np.allclose(keypoint_precision, 0.25)
 
+    def test_predict_keypoints_empty_threshold_return_supervision_keypoints(self) -> None:
+        """Keypoint predictions remain ``sv.KeyPoints`` when all detections are filtered."""
+        img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+        model = _DummyRFDETR()
+        model.model = _DummyModel(labels=[0, 1], include_keypoints=True)
+
+        key_points = model.predict(img, threshold=1.1)
+
+        assert isinstance(key_points, sv.KeyPoints)
+        assert len(key_points) == 0
+        assert key_points.xy.shape == (0, 0, 2)
+        assert key_points.keypoint_confidence is None
+        assert key_points.detection_confidence is None
+        np.testing.assert_allclose(key_points.data["xyxy"], np.empty((0, 4), dtype=np.float32))
+        assert key_points.as_detections().is_empty()
+
     def test_predict_non_keypoint_no_keypoints_key_in_data(self) -> None:
-        """Non-keypoint predictions keep the legacy detections.data contract."""
+        """Non-keypoint predictions do not attach keypoint fields."""
         img = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
         model = _DummyRFDETR()
 
         detections = model.predict(img)
 
         assert "keypoints" not in detections.data
+        assert not hasattr(detections, "keypoints")
 
     def test_source_shape_survives_detections_indexing(self) -> None:
         """Integer and boolean-mask indexing of sv.Detections must work correctly.

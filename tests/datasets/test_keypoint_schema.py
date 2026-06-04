@@ -125,7 +125,7 @@ def test_infer_coco_keypoint_schema_rejects_missing_keypoints(tmp_path: Path) ->
     annotation_path = tmp_path / "annotations.json"
     _write_coco_annotations(annotation_path, categories=[{"id": 0, "name": "person"}])
 
-    with pytest.raises(ValueError, match="does not contain keypoint annotations"):
+    with pytest.raises(ValueError, match="has no keypoint metadata"):
         infer_coco_keypoint_schema(annotation_path)
 
 
