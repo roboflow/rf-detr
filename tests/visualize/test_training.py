@@ -15,6 +15,7 @@ import pytest
 from rfdetr.visualize.training import (
     _build_metric_groups,
     _plot_map_columns,
+    _read_metrics_csv,
     plot_loss_metrics,
     plot_map_metrics,
     plot_metrics,
@@ -167,14 +168,42 @@ def test_split_loss_and_map_plots_return_separate_figures(tmp_path: Path) -> Non
     assert isinstance(map_figure, Figure)
     assert loss_figure is not map_figure
     assert any("Loss" in ax.get_title() for ax in loss_figure.axes)
+    loss_legend = loss_figure.axes[0].get_legend()
+    assert loss_legend is not None
+    assert getattr(loss_legend, "_ncols") == 2
+    loss_lines = {line.get_label(): line for line in loss_figure.axes[0].lines}
+    assert loss_lines["train/loss"].get_linestyle() == "-"
+    assert loss_lines["val/loss"].get_linestyle() == "--"
+    assert loss_lines["train/loss"].get_color() == loss_lines["val/loss"].get_color()
     assert len(map_figure.axes) == 1
     assert map_figure.axes[0].get_title() == "RF-DETR mAP Metrics"
     plt.close(loss_figure)
     plt.close(map_figure)
 
 
+def test_metrics_reader_drops_trailing_post_fit_validation_epoch(tmp_path: Path) -> None:
+    """Post-fit ``trainer.validate()`` rows should not appear as training-curve epochs."""
+    pd = pytest.importorskip("pandas")
+
+    metrics_csv = tmp_path / "metrics.csv"
+    pd.DataFrame(
+        {
+            "epoch": [0, 0, 1, 1, 2],
+            "step": [0, 1, 2, 3, 4],
+            "train/loss": [2.0, None, 1.5, None, None],
+            "val/loss": [None, 2.2, None, 1.6, 1.6],
+            "val/mAP_50_95": [None, 0.1, None, 0.2, 0.99],
+        }
+    ).to_csv(metrics_csv, index=False)
+
+    df = _read_metrics_csv(str(metrics_csv))
+
+    assert df["epoch"].tolist() == [0, 1]
+    assert df["val/mAP_50_95"].tolist() == pytest.approx([0.1, 0.2])
+
+
 def test_map_plot_uses_line_style_for_train_and_val_splits(tmp_path: Path) -> None:
-    """MAP plot should use one axes with dashed train lines and solid val lines."""
+    """MAP plot should use one axes with solid train lines and dashed val lines."""
     pytest.importorskip("matplotlib")
     pd = pytest.importorskip("pandas")
     from matplotlib import pyplot as plt
@@ -194,15 +223,15 @@ def test_map_plot_uses_line_style_for_train_and_val_splits(tmp_path: Path) -> No
 
     assert len(figure.axes) == 1
     linestyles = {line.get_label(): line.get_linestyle() for line in figure.axes[0].lines}
-    assert linestyles["train/mAP_50_95"] == "--"
-    assert linestyles["val/mAP_50_95"] == "-"
-    assert linestyles["train/keypoint_map_50_95"] == "--"
-    assert linestyles["val/keypoint_map_50_95"] == "-"
+    assert linestyles["train/mAP_50_95"] == "-"
+    assert linestyles["val/mAP_50_95"] == "--"
+    assert linestyles["train/keypoint_map_50_95"] == "-"
+    assert linestyles["val/keypoint_map_50_95"] == "--"
     plt.close(figure)
 
 
 def test_map_renderer_uses_line_style_for_train_and_val_splits() -> None:
-    """MAP renderer should use dashed train lines and solid val lines on one axes."""
+    """MAP renderer should pair train/val lines by color and distinguish split by style."""
     pytest.importorskip("matplotlib")
     from matplotlib import pyplot as plt
 
@@ -223,11 +252,14 @@ def test_map_renderer_uses_line_style_for_train_and_val_splits() -> None:
     )
 
     assert len(figure.axes) == 1
-    linestyles = {line.get_label(): line.get_linestyle() for line in figure.axes[0].lines}
-    assert linestyles["train/mAP_50_95"] == "--"
-    assert linestyles["val/mAP_50_95"] == "-"
-    assert linestyles["train/keypoint_map_50_95"] == "--"
-    assert linestyles["val/keypoint_map_50_95"] == "-"
+    lines = {line.get_label(): line for line in figure.axes[0].lines}
+    assert lines["train/mAP_50_95"].get_linestyle() == "-"
+    assert lines["val/mAP_50_95"].get_linestyle() == "--"
+    assert lines["train/keypoint_map_50_95"].get_linestyle() == "-"
+    assert lines["val/keypoint_map_50_95"].get_linestyle() == "--"
+    assert lines["train/mAP_50_95"].get_color() == lines["val/mAP_50_95"].get_color()
+    assert lines["train/keypoint_map_50_95"].get_color() == lines["val/keypoint_map_50_95"].get_color()
+    assert lines["train/mAP_50_95"].get_color() != lines["train/keypoint_map_50_95"].get_color()
     plt.close(figure)
 
 
