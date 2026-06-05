@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 """Comprehensive unit tests for RFDETRDataModule (LightningDataModule wrapper)."""
 
+import builtins
 import warnings
 from unittest.mock import MagicMock, patch
 
@@ -84,6 +85,26 @@ class _FakeDataset(torch.utils.data.Dataset):
 def _fake_dataset(length: int = 100, with_coco: bool = False) -> _FakeDataset:
     """Return a minimal ``_FakeDataset`` with a controllable length."""
     return _FakeDataset(length, with_coco)
+
+
+class _VisualDataset(torch.utils.data.Dataset):
+    """Minimal transformed dataset item for DataModule sample visualization."""
+
+    def __len__(self) -> int:
+        """Return the fixed fake dataset length."""
+        return 1
+
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        """Return one normalized image tensor with box and keypoint targets."""
+        return (
+            torch.full((3, 16, 16), 0.5, dtype=torch.float32),
+            {
+                "boxes": torch.tensor([[0.5, 0.5, 0.5, 0.5]], dtype=torch.float32),
+                "labels": torch.tensor([0], dtype=torch.int64),
+                "keypoints": torch.tensor([[[0.25, 0.25, 2.0], [0.75, 0.75, 0.0]]], dtype=torch.float32),
+                "size": torch.tensor([16, 16], dtype=torch.int64),
+            },
+        )
 
 
 def _make_batch(batch_size: int = 2, channels: int = 3, h: int = 16, w: int = 16):
@@ -204,6 +225,50 @@ class TestInit:
         dm = build_datamodule(train_config=tc)
         assert dm._num_workers == 4
         assert dm._prefetch_factor == 2  # default prefetch_factor for num_workers>0
+
+
+class TestPrivateShowSamples:
+    """RFDETRDataModule._show_samples renders transformed input samples."""
+
+    def test_private_show_samples_returns_figure_for_keypoint_targets(self, build_datamodule, monkeypatch):
+        """_show_samples should render transformed boxes and keypoints without raw COCO parsing."""
+        import matplotlib
+
+        matplotlib.use("Agg", force=True)
+        from matplotlib import pyplot as plt
+        from matplotlib.figure import Figure
+
+        dm = build_datamodule()
+        monkeypatch.setattr(dm, "_get_dataset_for_visualization", lambda split: _VisualDataset())
+
+        figure = dm._show_samples(1, split="train", columns=1)
+
+        assert isinstance(figure, Figure)
+        assert len(figure.axes) == 1
+        plt.close(figure)
+
+    def test_private_show_samples_rejects_non_positive_count(self, build_datamodule):
+        """_show_samples should fail fast for invalid counts."""
+        dm = build_datamodule()
+
+        with pytest.raises(ValueError, match=r"count must be positive"):
+            dm._show_samples(0)
+
+    def test_private_show_samples_missing_visual_extra_has_install_hint(self, build_datamodule, monkeypatch):
+        """_show_samples should explain how to install optional visualization dependencies."""
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "matplotlib.pyplot":
+                raise ImportError("matplotlib is intentionally unavailable")
+            return real_import(name, *args, **kwargs)
+
+        dm = build_datamodule()
+        monkeypatch.setattr(dm, "_get_dataset_for_visualization", lambda split: _VisualDataset())
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+
+        with pytest.raises(ImportError, match=r"rfdetr\[visual\]"):
+            dm._show_samples(1)
 
 
 class TestSetup:
