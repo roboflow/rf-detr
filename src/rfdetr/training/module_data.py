@@ -371,6 +371,7 @@ class RFDETRDataModule(LightningDataModule):
         split: Literal["train", "val", "test"] = "train",
         *,
         columns: int = 3,
+        figure_size: tuple[float, float] | None = None,
     ) -> "Figure":
         """Build a private diagnostic figure for transformed dataset samples.
 
@@ -381,6 +382,8 @@ class RFDETRDataModule(LightningDataModule):
             count: Maximum number of samples to render.
             split: Dataset split to visualize.
             columns: Number of subplot columns.
+            figure_size: Optional Matplotlib figure size ``(width, height)`` in
+                inches. When omitted, the size is derived from the grid shape.
 
         Returns:
             Matplotlib figure containing the annotated sample grid.
@@ -409,6 +412,11 @@ class RFDETRDataModule(LightningDataModule):
             raise ValueError(f"count must be positive, got {count}.")
         if columns <= 0:
             raise ValueError(f"columns must be positive, got {columns}.")
+        if figure_size is not None:
+            if len(figure_size) != 2:
+                raise ValueError(f"figure_size must contain two values, got {figure_size}.")
+            if figure_size[0] <= 0 or figure_size[1] <= 0:
+                raise ValueError(f"figure_size values must be positive, got {figure_size}.")
 
         dataset = self._get_dataset_for_visualization(split)
         if dataset is None:
@@ -419,7 +427,7 @@ class RFDETRDataModule(LightningDataModule):
             std=[1 / 0.229, 1 / 0.224, 1 / 0.225],
         )
         rows = max(1, (min(count, len(dataset)) + columns - 1) // columns)
-        figure, axes = plt.subplots(rows, columns, figsize=(5 * columns, 5 * rows))
+        figure, axes = plt.subplots(rows, columns, figsize=figure_size or (5 * columns, 5 * rows))
         axes_array = np.asarray(axes, dtype=object).reshape(-1)
         for axis in axes_array:
             axis.axis("off")
@@ -470,11 +478,32 @@ class RFDETRDataModule(LightningDataModule):
                 scene = sv.VertexAnnotator(radius=3).annotate(scene=scene, key_points=key_points)
 
             axis.imshow(scene)
-            axis.set_title(image_path.name if image_path is not None else f"{split}[{sample_index}]", fontsize=10)
+            title = image_path.name if image_path is not None else f"{split}[{sample_index}]"
+            axis.set_title(self._ellipsize_sample_title(title), fontsize=10)
             axis.axis("off")
 
         figure.tight_layout()
         return figure
+
+    @staticmethod
+    def _ellipsize_sample_title(title: str, max_length: int = 48) -> str:
+        """Shorten long sample titles so subplot grids do not overflow.
+
+        Args:
+            title: Raw title text, usually an image file name.
+            max_length: Maximum returned character count including the ellipsis.
+
+        Returns:
+            Original title when it already fits, otherwise a middle-ellipsized
+            string that preserves the start and file suffix.
+        """
+        if len(title) <= max_length:
+            return title
+        if max_length <= 3:
+            return "." * max_length
+        keep_left = max(1, (max_length - 3) // 2)
+        keep_right = max_length - 3 - keep_left
+        return f"{title[:keep_left]}...{title[-keep_right:]}"
 
     def _get_dataset_for_visualization(
         self,

@@ -92,7 +92,7 @@ def test_postprocess_keypoints_trace_alpha_rescores_active_keypoints_only() -> N
 
 def test_postprocess_keypoints_trace_alpha_uses_log_space_for_extreme_trace() -> None:
     """Trace fusion should stay finite for extreme covariance terms."""
-    postprocess = PostProcess(num_select=1, num_keypoints_per_class=[1], trace_alpha=0.2)
+    postprocess = PostProcess(num_select=1, num_keypoints_per_class=[1])
     outputs = {
         "pred_logits": torch.tensor([[[0.0]]], dtype=torch.float32),
         "pred_boxes": torch.tensor([[[0.5, 0.5, 0.5, 0.5]]], dtype=torch.float32),

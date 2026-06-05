@@ -102,7 +102,7 @@ class ModelConfig(BaseConfig):
     # - ModelConfig is the authoritative source of `num_select` for PTL/inference; it is read via `build_namespace`.
     # - Any `num_select` field on TrainConfig / SegmentationTrainConfig is deprecated and ignored by PTL/inference.
     num_select: int = 300
-    postprocess_trace_alpha: float = Field(default=0.0, ge=0.0)
+    postprocess_trace_alpha: float = Field(default=0.2, ge=0.0)
     bbox_reparam: bool = True
     lite_refpoint_refine: bool = True
     layer_norm: bool = True

@@ -861,7 +861,7 @@ def build_criterion_and_postprocessors(args: "BuilderArgs"):
     postprocess = PostProcess(
         num_select=args.num_select,
         num_keypoints_per_class=getattr(args, "num_keypoints_per_class", []),
-        trace_alpha=getattr(args, "postprocess_trace_alpha", 0.0),
+        trace_alpha=getattr(args, "postprocess_trace_alpha", 0.2),
     )
 
     return criterion, postprocess
