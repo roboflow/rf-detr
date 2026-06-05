@@ -101,6 +101,12 @@ class TestModelConfigValidation:
         with pytest.raises(ValidationError):
             ModelConfig(**sample_model_config, postprocess_trace_alpha=-0.1)
 
+    def test_postprocess_trace_alpha_defaults_to_keypoint_fusion_value(self, sample_model_config) -> None:
+        """ModelConfig defaults to the keypoint uncertainty score-fusion exponent."""
+        config = ModelConfig(**sample_model_config)
+
+        assert config.postprocess_trace_alpha == 0.2
+
 
 class TestRFDETRBaseConfigEncoder:
     """Encoder field validation on RFDETRBaseConfig (no fixture needed — has defaults)."""

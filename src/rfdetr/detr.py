@@ -14,9 +14,11 @@ import os
 import tempfile
 import warnings
 from collections import defaultdict
+from collections.abc import Callable
 from copy import copy, deepcopy
+from functools import wraps
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Concatenate, Optional, ParamSpec, TypeVar
 
 import numpy as np
 import requests
@@ -49,6 +51,8 @@ except Exception:
     pass
 
 logger = get_logger()
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
 
 # ModelContext and _build_model_context are eagerly imported above (runtime use in get_model).
 _VARIANT_EXPORTS = (
@@ -181,7 +185,7 @@ def _resolve_patch_size(patch_size: int | None, model_config: object, caller: st
     return patch_size
 
 
-def _ensure_model_on_device(model_ctx: Any) -> None:
+def _move_model_context_to_device(model_ctx: Any) -> None:
     """Move model weights to the target device recorded in *model_ctx*.
 
     ``_build_model_context`` intentionally keeps the ``nn.Module`` on CPU so that ``RFDETR.__init__`` does not
@@ -200,6 +204,23 @@ def _ensure_model_on_device(model_ctx: Any) -> None:
     first_param = next(inner.parameters(), None)
     if first_param is not None and first_param.device != target:
         model_ctx.model = inner.to(target)
+
+
+def _ensure_model_on_device(method: Callable[Concatenate[Any, _P], _R]) -> Callable[Concatenate[Any, _P], _R]:
+    """Decorate RF-DETR instance methods that require lazy model device placement.
+
+    The wrapped method receives the same arguments and return value as the original method. Before calling it, the
+    decorator moves ``self.model.model`` to ``self.model.device`` if the model context is available and the weights are
+    still on a different device. This keeps public inference methods clean while preserving deferred CUDA initialization
+    during ``RFDETR.__init__``.
+    """
+
+    @wraps(method)
+    def wrapper(self: Any, *args: _P.args, **kwargs: _P.kwargs) -> _R:
+        _move_model_context_to_device(getattr(self, "model", None))
+        return method(self, *args, **kwargs)
+
+    return wrapper
 
 
 class RFDETR:
@@ -641,7 +662,7 @@ class RFDETR:
             # Auto-batch probing runs forward/backward on the actual model, which
             # must be on the target device (typically CUDA).  Lazy placement keeps
             # the model on CPU until first use — move it now.
-            _ensure_model_on_device(self.model)
+            _move_model_context_to_device(self.model)
             auto_batch = resolve_auto_batch_config(
                 model_context=self.model,
                 model_config=self.model_config,
@@ -720,6 +741,7 @@ class RFDETR:
             except OSError as exc:
                 logger.warning("Could not save training_config.json to %s: %s", config.output_dir, exc)
 
+    @_ensure_model_on_device
     def optimize_for_inference(
         self, compile: bool = True, batch_size: int = 1, dtype: torch.dtype | str = torch.float32
     ) -> None:
@@ -785,7 +807,6 @@ class RFDETR:
         # Clear any previously optimized state before starting a new optimization run.
         self.remove_optimized_model()
 
-        _ensure_model_on_device(self.model)
         device = self.model.device
         cuda_ctx = torch.cuda.device(device) if device.type == "cuda" else contextlib.nullcontext()
 
@@ -962,11 +983,11 @@ class RFDETR:
             raise
 
         device = self.model.device
-        # deepcopy(self.model.model.to("cpu")) moves the live model to CPU as a
-        # side-effect before copying.  The finally block guarantees the original
-        # model is restored to its original device even if export or conversion
-        # raises an exception (review H1).
-        model = deepcopy(self.model.model.to("cpu"))
+        # Move the live model to CPU before deepcopying and keep it there during export. ``nn.Module.to(...)`` mutates
+        # in place, so this frees GPU memory for the local export copy, ONNX tracing, TFLite conversion, and any
+        # calibration tensors. The ``finally`` block restores the live model even if export or conversion raises.
+        self.model.model = self.model.model.to("cpu")
+        model = deepcopy(self.model.model)
         model.to(device)
         try:
             os.makedirs(output_dir, exist_ok=True)
@@ -1340,6 +1361,8 @@ class RFDETR:
 
         return list(COCO_CLASS_NAMES)
 
+    @torch.no_grad()
+    @_ensure_model_on_device
     def predict(
         self,
         images: str | Image.Image | np.ndarray | torch.Tensor | list[str | np.ndarray | Image.Image | torch.Tensor],
@@ -1382,11 +1405,17 @@ class RFDETR:
         Returns:
             A single or multiple Supervision prediction objects. Detection and segmentation models return
             :class:`~supervision.Detections`. Keypoint models return :class:`~supervision.KeyPoints`, with keypoint
-            coordinates in ``xy`` and per-keypoint scores in ``keypoint_confidence``. For keypoint models, object scores
-            are available in ``key_points.detection_confidence`` and detection boxes are preserved in
-            ``key_points.data["xyxy"]``. The ``data`` dict also contains ``class_name`` and ``source_shape`` as
-            per-object arrays. When ``include_source_image=True`` for keypoint models, ``source_image`` is stored as
-            per-object data until Supervision exposes collection-level metadata for ``KeyPoints``.
+            coordinates in ``xy``. Keypoint predictions preserve the detection-level fields produced by RF-DETR:
+            ``key_points.detection_confidence`` is the per-object score used by ``threshold``. For keypoint models this
+            is the postprocessed detection score and, by default, includes keypoint uncertainty fusion controlled by
+            ``model_config.postprocess_trace_alpha``. ``key_points.keypoint_confidence`` is separate: it is a
+            ``(num_detections, num_keypoints)`` array of per-keypoint findability scores decoded from the keypoint head,
+            not a repeated copy of the detection score. ``key_points.data["xyxy"]`` stores the corresponding detection
+            boxes as a ``(num_detections, 4)`` array in the same row order as ``key_points.xy`` because Supervision
+            ``KeyPoints`` does not have a native bounding-box field. The ``data`` dict also contains ``class_name`` and
+            ``source_shape`` as per-object arrays. When ``include_source_image=True`` for keypoint models,
+            ``source_image`` is stored as per-object data until Supervision exposes collection-level metadata for
+            ``KeyPoints``.
 
         Note:
             For ``Detections`` outputs, ``source_image`` moved from ``detections.data`` to ``detections.metadata``.
@@ -1407,8 +1436,6 @@ class RFDETR:
                 num_windows``, or if ``patch_size`` is not a positive integer.
         """
         import supervision as sv
-
-        _ensure_model_on_device(self.model)
 
         patch_size = _resolve_patch_size(patch_size, self.model_config, "predict")
         num_windows = getattr(self.model_config, "num_windows", 1)
@@ -1511,27 +1538,26 @@ class RFDETR:
                         " by calling model.optimize_for_inference(batch_size=<new_batch_size>).",
                     )
 
-        with torch.no_grad():
-            if self._is_optimized_for_inference:
-                predictions = self.model.inference_model(batch_tensor.to(dtype=self._optimized_dtype))
-            else:
-                predictions = self.model.model(batch_tensor)
-            if isinstance(predictions, tuple):
-                return_predictions = {
-                    "pred_logits": predictions[1],
-                    "pred_boxes": predictions[0],
-                }
-                if len(predictions) == 3:
-                    # Distinguish keypoint vs mask output by inspecting the model config — both
-                    # heads can produce a third tuple element but route through different
-                    # postprocess paths.
-                    if getattr(getattr(self.model, "model_config", None), "use_grouppose_keypoints", False):
-                        return_predictions["pred_keypoints"] = predictions[2]
-                    else:
-                        return_predictions["pred_masks"] = predictions[2]
-                predictions = return_predictions
-            target_sizes = torch.tensor(orig_sizes, device=self.model.device)
-            results = self.model.postprocess(predictions, target_sizes=target_sizes)
+        if self._is_optimized_for_inference:
+            predictions = self.model.inference_model(batch_tensor.to(dtype=self._optimized_dtype))
+        else:
+            predictions = self.model.model(batch_tensor)
+        if isinstance(predictions, tuple):
+            return_predictions = {
+                "pred_logits": predictions[1],
+                "pred_boxes": predictions[0],
+            }
+            if len(predictions) == 3:
+                # Distinguish keypoint vs mask output by inspecting the model config — both
+                # heads can produce a third tuple element but route through different
+                # postprocess paths.
+                if getattr(getattr(self.model, "model_config", None), "use_grouppose_keypoints", False):
+                    return_predictions["pred_keypoints"] = predictions[2]
+                else:
+                    return_predictions["pred_masks"] = predictions[2]
+            predictions = return_predictions
+        target_sizes = torch.tensor(orig_sizes, device=self.model.device)
+        results = self.model.postprocess(predictions, target_sizes=target_sizes)
 
         model_class_names = self.class_names
         n = len(model_class_names)

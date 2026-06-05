@@ -7,6 +7,7 @@
 
 import builtins
 import warnings
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -247,12 +248,38 @@ class TestPrivateShowSamples:
         assert len(figure.axes) == 1
         plt.close(figure)
 
+    def test_private_show_samples_accepts_figure_size_and_shortens_long_titles(self, build_datamodule, monkeypatch):
+        """_show_samples should keep long image names inside subplot titles."""
+        import matplotlib
+
+        matplotlib.use("Agg", force=True)
+        from matplotlib import pyplot as plt
+
+        dm = build_datamodule()
+        monkeypatch.setattr(dm, "_get_dataset_for_visualization", lambda split: _VisualDataset())
+        monkeypatch.setattr(dm, "_source_image_path", lambda dataset, idx: Path(f"{'very_long_name_' * 8}.jpg"))
+
+        figure = dm._show_samples(1, split="train", columns=1, figure_size=(4.0, 3.0))
+
+        assert list(figure.get_size_inches()) == pytest.approx([4.0, 3.0])
+        title = figure.axes[0].get_title()
+        assert "..." in title
+        assert len(title) <= 48
+        plt.close(figure)
+
     def test_private_show_samples_rejects_non_positive_count(self, build_datamodule):
         """_show_samples should fail fast for invalid counts."""
         dm = build_datamodule()
 
         with pytest.raises(ValueError, match=r"count must be positive"):
             dm._show_samples(0)
+
+    def test_private_show_samples_rejects_invalid_figure_size(self, build_datamodule):
+        """_show_samples should fail fast for invalid figure sizes."""
+        dm = build_datamodule()
+
+        with pytest.raises(ValueError, match=r"figure_size values must be positive"):
+            dm._show_samples(1, figure_size=(4.0, 0.0))
 
     def test_private_show_samples_missing_visual_extra_has_install_hint(self, build_datamodule, monkeypatch):
         """_show_samples should explain how to install optional visualization dependencies."""
