@@ -62,6 +62,13 @@ class RFDETRModelModule(LightningModule):
             # per-group query slicing, class-name extraction, partial-load warnings,
             # and writes any auto-aligned ``num_classes`` back onto ``model_config``.
             load_pretrain_weights(self.model, self.model_config)
+            if model_config.use_grouppose_keypoints:
+                reset_keypoint_gaussian_parameters = getattr(self.model, "reset_keypoint_gaussian_parameters", None)
+                if callable(reset_keypoint_gaussian_parameters):
+                    reset_keypoint_gaussian_parameters()
+                    logger.info(
+                        "Reset keypoint Gaussian precision outputs to unit values after pretrained weight load."
+                    )
         if model_config.backbone_lora:
             apply_lora(self.model)
 

@@ -94,6 +94,22 @@ def _resize_parameter_rows(parameter: nn.Parameter, num_rows: int) -> nn.Paramet
     return nn.Parameter(new_data.clone(), requires_grad=parameter.requires_grad)
 
 
+def _reset_keypoint_gaussian_output_rows(module: nn.Module) -> None:
+    """Reset keypoint precision-Cholesky output rows to unit Gaussian values."""
+    layers = getattr(module, "layers", None)
+    if layers is None or len(layers) == 0:
+        return
+
+    final_layer = layers[-1]
+    if not isinstance(final_layer, nn.Linear) or final_layer.out_features <= 6:
+        return
+
+    with torch.no_grad():
+        final_layer.weight[4:7].zero_()
+        if final_layer.bias is not None:
+            final_layer.bias[4:7].zero_()
+
+
 class LWDETR(nn.Module):
     """This is the Group DETR v3 module that performs object detection."""
 
@@ -289,6 +305,24 @@ class LWDETR(nn.Module):
             queries = getattr(initializer, "queries", None)
             if isinstance(queries, nn.Parameter):
                 initializer.queries = _resize_parameter_rows(queries, total_keypoints)
+
+    def reset_keypoint_gaussian_parameters(self) -> None:
+        """Reset keypoint Gaussian precision outputs to unit values.
+
+        Keypoint channels 4, 5, and 6 encode the lower-triangular precision
+        Cholesky parameters ``log_l11``, ``l21``, and ``log_l22``. Zeroing the
+        final prediction rows gives ``L = identity`` at the start of finetuning
+        while preserving learned keypoint location, visibility, findability, and
+        class-logit channels loaded from the checkpoint.
+        """
+        if not self.use_grouppose_keypoints or self.keypoint_embed is None:
+            return
+
+        _reset_keypoint_gaussian_output_rows(self.keypoint_embed)
+        enc_keypoint_embed = getattr(self.transformer, "enc_out_keypoint_embed", None)
+        if isinstance(enc_keypoint_embed, nn.ModuleList):
+            for keypoint_embed in enc_keypoint_embed:
+                _reset_keypoint_gaussian_output_rows(keypoint_embed)
 
     def export(self):
         self._export = True
@@ -827,6 +861,7 @@ def build_criterion_and_postprocessors(args: "BuilderArgs"):
     postprocess = PostProcess(
         num_select=args.num_select,
         num_keypoints_per_class=getattr(args, "num_keypoints_per_class", []),
+        trace_alpha=getattr(args, "postprocess_trace_alpha", 0.0),
     )
 
     return criterion, postprocess

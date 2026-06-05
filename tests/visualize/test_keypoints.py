@@ -5,11 +5,17 @@
 # ------------------------------------------------------------------------
 """Tests for private RF-DETR keypoint visualization helpers."""
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 import supervision as sv
 
-from rfdetr.visualize.keypoints import _key_points_for_display, _precision_cholesky_to_pixel_covariance
+from rfdetr.visualize.keypoints import (
+    _key_points_for_display,
+    _keypoint_prediction_records,
+    _precision_cholesky_to_pixel_covariance,
+)
 
 
 def test_precision_cholesky_to_pixel_covariance_identity_precision() -> None:
@@ -127,3 +133,31 @@ def test_key_points_for_display_rejects_keypoints_without_confidence_channel() -
 
     with pytest.raises(ValueError, match=r"Expected RF-DETR keypoints"):
         _key_points_for_display(key_points)
+
+
+def test_keypoint_prediction_records_flattens_visible_keypoints() -> None:
+    """Prediction records should expose detection and keypoint confidence for visible non-zero points."""
+    key_points = sv.KeyPoints(
+        xy=np.array([[[1.0, 2.0], [0.0, 0.0], [3.0, 4.0]]], dtype=np.float32),
+        keypoint_confidence=np.array([[0.9, 0.99, 0.1]], dtype=np.float32),
+        detection_confidence=np.array([0.95], dtype=np.float32),
+        class_id=np.array([2], dtype=int),
+        visible=np.array([[True, True, False]]),
+        data={"class_name": np.array(["dartboard"], dtype=object)},
+    )
+
+    records = _keypoint_prediction_records(key_points, image=Path("/tmp/sample.jpg"), keypoint_threshold=0.2)
+
+    assert records == [
+        {
+            "image": "sample.jpg",
+            "detection_index": 0,
+            "class_id": 2,
+            "class_name": "dartboard",
+            "detection_confidence": pytest.approx(0.95),
+            "keypoint_index": 0,
+            "x": pytest.approx(1.0),
+            "y": pytest.approx(2.0),
+            "keypoint_confidence": pytest.approx(0.9),
+        }
+    ]

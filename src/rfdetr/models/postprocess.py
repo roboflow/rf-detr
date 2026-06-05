@@ -19,10 +19,16 @@ from rfdetr.utilities import box_ops
 class PostProcess(nn.Module):
     """This module converts the model's output into the format expected by the coco api."""
 
-    def __init__(self, num_select=300, num_keypoints_per_class: list[int] | None = None) -> None:
+    def __init__(
+        self,
+        num_select: int = 300,
+        num_keypoints_per_class: list[int] | None = None,
+        trace_alpha: float = 0.0,
+    ) -> None:
         super().__init__()
         self.num_select = num_select
         self.num_keypoints_per_class = num_keypoints_per_class or []
+        self.trace_alpha = trace_alpha
 
     @torch.no_grad()
     def forward(self, outputs, target_sizes):
@@ -112,6 +118,34 @@ class PostProcess(nn.Module):
                         valid_indices = valid_class_mask.nonzero(as_tuple=True)[0]
                         selected_labels = labels_i[valid_indices]
                         selected_keypoints = reshaped[valid_indices, selected_labels]
+                        if self.trace_alpha > 0 and selected_keypoints.shape[-1] >= 7:
+                            log_mean_traces = []
+                            for selected_pos, selected_label_tensor in enumerate(selected_labels):
+                                selected_label = int(selected_label_tensor.item())
+                                num_active_keypoints = self.num_keypoints_per_class[selected_label]
+                                if num_active_keypoints <= 0:
+                                    log_mean_traces.append(selected_keypoints.new_tensor(0.0))
+                                    continue
+
+                                active_keypoints = selected_keypoints[selected_pos, :num_active_keypoints]
+                                log_l11 = active_keypoints[:, 4]
+                                l21 = active_keypoints[:, 5]
+                                log_l22 = active_keypoints[:, 6]
+                                w_find = active_keypoints[:, 2].sigmoid()
+                                log_t1 = -2.0 * log_l11
+                                log_t2 = -2.0 * log_l22
+                                log_t3 = 2.0 * torch.log(l21.abs().clamp(min=1e-12)) + log_t1 + log_t2
+                                log_trace_sigma = torch.logsumexp(torch.stack([log_t1, log_t2, log_t3], dim=-1), dim=-1)
+                                log_w_find = torch.log(w_find.clamp(min=1e-12))
+                                log_mean_trace = torch.logsumexp(
+                                    log_trace_sigma + log_w_find, dim=-1
+                                ) - torch.logsumexp(log_w_find, dim=-1)
+                                log_mean_traces.append(log_mean_trace)
+
+                            scores_i = scores_i.clone()
+                            scores_i[valid_indices] = scores_i[valid_indices] * torch.exp(
+                                -self.trace_alpha * torch.stack(log_mean_traces)
+                            )
                         img_h, img_w = target_sizes[i]
                         for selected_pos, output_index in enumerate(valid_indices):
                             selected_label = int(selected_labels[selected_pos].item())

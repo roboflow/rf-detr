@@ -7,6 +7,9 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any
+
 import numpy as np
 from supervision import KeyPoints
 
@@ -123,3 +126,59 @@ def _key_points_for_display(
     visible = key_points.keypoint_confidence >= keypoint_threshold
     key_points.visible = visible if key_points.visible is None else key_points.visible & visible
     return key_points
+
+
+def _keypoint_prediction_records(
+    key_points: KeyPoints,
+    *,
+    image: str | Path | None = None,
+    keypoint_threshold: float = 0.0,
+) -> list[dict[str, Any]]:
+    """Build flat keypoint prediction rows for notebook or terminal display.
+
+    Args:
+        key_points: RF-DETR keypoint prediction output.
+        image: Optional image identifier added to each output row. Paths are
+            represented by their file name.
+        keypoint_threshold: Per-keypoint confidence threshold used when
+            ``key_points.visible`` is not already populated.
+
+    Returns:
+        A list of row dictionaries, one per visible/non-zero keypoint.
+    """
+    if key_points.keypoint_confidence is None:
+        return []
+
+    image_name = Path(image).name if image is not None else None
+    visible = (
+        key_points.visible if key_points.visible is not None else key_points.keypoint_confidence >= keypoint_threshold
+    )
+    class_names = key_points.data.get("class_name")
+    records: list[dict[str, Any]] = []
+    for detection_index, xy in enumerate(key_points.xy):
+        for keypoint_index, (point, confidence, is_visible) in enumerate(
+            zip(xy, key_points.keypoint_confidence[detection_index], visible[detection_index], strict=True)
+        ):
+            if not is_visible or np.allclose(point, 0):
+                continue
+            class_name = None
+            if isinstance(class_names, np.ndarray) and detection_index < len(class_names):
+                class_name = str(class_names[detection_index])
+            records.append(
+                {
+                    "image": image_name,
+                    "detection_index": detection_index,
+                    "class_id": int(key_points.class_id[detection_index]) if key_points.class_id is not None else None,
+                    "class_name": class_name,
+                    "detection_confidence": (
+                        float(key_points.detection_confidence[detection_index])
+                        if key_points.detection_confidence is not None
+                        else None
+                    ),
+                    "keypoint_index": keypoint_index,
+                    "x": float(point[0]),
+                    "y": float(point[1]),
+                    "keypoint_confidence": float(confidence),
+                }
+            )
+    return records

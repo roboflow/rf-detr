@@ -100,6 +100,38 @@ def _build_module(model_config=None, train_config=None, tmp_path=None):
     return module, fake_model, fake_criterion, fake_postprocess
 
 
+def test_keypoint_training_resets_gaussian_parameters_after_pretrained_load(tmp_path) -> None:
+    """Keypoint finetuning should reset pretrained Gaussian precision rows after loading weights."""
+    mc = _base_model_config(
+        pretrain_weights="/fake/keypoint.pth",
+        use_grouppose_keypoints=True,
+        num_keypoints_per_class=[17],
+    )
+    tc = _base_train_config(tmp_path)
+    fake_model = _fake_model()
+    fake_model.reset_keypoint_gaussian_parameters = MagicMock()
+    events: list[str] = []
+
+    with (
+        patch("rfdetr.training.module_model.build_model_from_config", return_value=fake_model),
+        patch("rfdetr.training.module_model.load_pretrain_weights") as mock_load_pretrain_weights,
+        patch(
+            "rfdetr.training.module_model.build_criterion_from_config",
+            return_value=(_fake_criterion(), _fake_postprocess()),
+        ),
+    ):
+        mock_load_pretrain_weights.side_effect = lambda *_args, **_kwargs: events.append("load")
+        fake_model.reset_keypoint_gaussian_parameters.side_effect = lambda: events.append("reset")
+
+        from rfdetr.training.module_model import RFDETRModelModule
+
+        RFDETRModelModule(mc, tc)
+
+    mock_load_pretrain_weights.assert_called_once_with(fake_model, mc)
+    fake_model.reset_keypoint_gaussian_parameters.assert_called_once_with()
+    assert events == ["load", "reset"]
+
+
 def _make_batch(batch_size=2, channels=3, h=16, w=16):
     """Build a (NestedTensor, targets) tuple for testing."""
     tensors = torch.randn(batch_size, channels, h, w)

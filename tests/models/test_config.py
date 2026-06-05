@@ -96,6 +96,11 @@ class TestModelConfigValidation:
         with pytest.raises(ValidationError):
             ModelConfig(**{**sample_model_config, "encoder": "dinov2_invalid_backbone"})
 
+    def test_rejects_negative_postprocess_trace_alpha(self, sample_model_config) -> None:
+        """ModelConfig rejects negative uncertainty score-fusion exponents."""
+        with pytest.raises(ValidationError):
+            ModelConfig(**sample_model_config, postprocess_trace_alpha=-0.1)
+
 
 class TestRFDETRBaseConfigEncoder:
     """Encoder field validation on RFDETRBaseConfig (no fixture needed — has defaults)."""
