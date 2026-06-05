@@ -279,11 +279,16 @@ def build_trainer(
         )
     )
 
-    monitor_regular = "val/keypoint_map_50_95" if has_keypoints else "val/mAP_50_95"
-    monitor_ema = None
-    early_stopping_monitor_ema = "val/ema_keypoint_map_50_95" if has_keypoints else "val/ema_mAP_50_95"
-    if enable_ema and not has_keypoints:
-        monitor_ema = "val/ema_mAP_50_95"
+    if has_keypoints:
+        monitor_regular = "val/keypoint_map_50_95"
+        early_stopping_monitor_ema = "val/ema_keypoint_map_50_95"
+    elif model_config.segmentation_head:
+        monitor_regular = "val/segm_mAP_50_95"
+        early_stopping_monitor_ema = "val/ema_segm_mAP_50_95"
+    else:
+        monitor_regular = "val/mAP_50_95"
+        early_stopping_monitor_ema = "val/ema_mAP_50_95"
+    monitor_ema = early_stopping_monitor_ema if enable_ema else None
 
     # Best-model checkpointing — monitor EMA metric only when EMA is active and emitted.
     callbacks.append(

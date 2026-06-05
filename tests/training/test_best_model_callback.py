@@ -312,8 +312,8 @@ class TestBestModelCallback:
         checkpoint = torch.load(tmp_path / "checkpoint_best_ema.pth", map_location="cpu", weights_only=False)
         assert checkpoint["model"] == ema_state
 
-    def test_regular_checkpoint_uses_ema_weights_when_ema_enabled(self, tmp_path: Path) -> None:
-        """Regular checkpoint must store EMA-evaluated weights when EMA is enabled."""
+    def test_regular_checkpoint_uses_live_weights_when_ema_enabled(self, tmp_path: Path) -> None:
+        """Regular checkpoint must store live weights even when EMA is tracked separately."""
         cb = BestModelCallback(
             output_dir=str(tmp_path),
             monitor_ema="val/ema_mAP_50_95",
@@ -331,7 +331,7 @@ class TestBestModelCallback:
         cb.on_validation_end(trainer, pl_module)
 
         checkpoint = torch.load(tmp_path / "checkpoint_best_regular.pth", map_location="cpu", weights_only=False)
-        assert checkpoint["model"] == ema_state
+        assert checkpoint["model"] == {"w": torch.zeros(1)}
 
     def test_best_total_regular_wins(self, tmp_path: Path) -> None:
         """Regular model wins when best_regular > best_ema."""

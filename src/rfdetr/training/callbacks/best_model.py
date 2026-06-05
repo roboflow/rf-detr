@@ -146,6 +146,20 @@ class BestModelCallback(ModelCheckpoint):
         return payload
 
     @staticmethod
+    def _get_live_model_state_dict(pl_module: LightningModule) -> dict[str, torch.Tensor]:
+        """Resolve live model weights from the active Lightning module.
+
+        Args:
+            pl_module: The ``RFDETRModelModule`` being trained.
+
+        Returns:
+            State dict from the live, non-EMA model, unwrapped from ``torch.compile`` when needed.
+        """
+        _orig = getattr(pl_module.model, "_orig_mod", None)
+        raw = _orig if isinstance(_orig, torch.nn.Module) else pl_module.model
+        return raw.state_dict()
+
+    @staticmethod
     def _get_ema_model_state_dict(
         trainer: Trainer,
         pl_module: LightningModule,
@@ -268,17 +282,10 @@ class BestModelCallback(ModelCheckpoint):
             )
         pth_path = Path(filepath)
         pth_path.parent.mkdir(parents=True, exist_ok=True)
-        # Validation metrics are produced with EMA weights when the EMA callback
-        # is active, so save the same weight source to keep metric/checkpoint
-        # consistency for the monitored "regular" key.
-        # Unwrap torch.compile's OptimizedModule (_orig_mod) so checkpoints always
-        # contain plain keys — non-compiled consumers (sync-back, compat.evaluate) can load them.
-        if self._monitor_ema is not None:
-            model_state_dict = self._get_ema_model_state_dict(trainer, pl_module)
-        else:
-            _orig = getattr(pl_module.model, "_orig_mod", None)
-            raw = _orig if isinstance(_orig, torch.nn.Module) else pl_module.model
-            model_state_dict = raw.state_dict()
+        # Regular metrics are produced from the live validation step.  Keep the regular
+        # checkpoint tied to live weights even when an EMA checkpoint is tracked in
+        # parallel; checkpoint_best_ema.pth is the only file that should save EMA weights.
+        model_state_dict = self._get_live_model_state_dict(pl_module)
         # Enrich train_config with dataset class names so reloaded checkpoints
         # return the correct labels, not COCO defaults (#509).
         train_config = pl_module.train_config

@@ -109,7 +109,14 @@ class TestBuildTrainerCallbacks:
         trainer = build_trainer(_tc(tmp_path, use_ema=True), RFDETRKeypointPreviewConfig(pretrain_weights=None))
         best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
         assert best_cb.monitor == "val/keypoint_map_50_95"
-        assert best_cb._monitor_ema is None
+        assert best_cb._monitor_ema == "val/ema_keypoint_map_50_95"
+
+    def test_segmentation_best_model_monitors_segmentation_map(self, tmp_path):
+        """Segmentation training checkpoints should rank models by segmentation AP, not bbox AP."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=True), _mc(segmentation_head=True))
+        best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
+        assert best_cb.monitor == "val/segm_mAP_50_95"
+        assert best_cb._monitor_ema == "val/ema_segm_mAP_50_95"
 
     def test_latest_model_checkpoint_present(self, tmp_path):
         """A ModelCheckpoint (not BestModelCallback) with every_n_epochs==1 is included when checkpoint_interval > 1."""
@@ -229,6 +236,16 @@ class TestBuildTrainerCallbacks:
         early_stop_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RFDETREarlyStopping))
         assert early_stop_cb._monitor_regular == "val/keypoint_map_50_95"
         assert early_stop_cb._monitor_ema == "val/ema_keypoint_map_50_95"
+
+    def test_segmentation_early_stopping_monitors_segmentation_map(self, tmp_path):
+        """Segmentation early stopping should use segmentation AP as the regular metric."""
+        trainer = build_trainer(
+            _tc(tmp_path, early_stopping=True, early_stopping_use_ema=True),
+            _mc(segmentation_head=True),
+        )
+        early_stop_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RFDETREarlyStopping))
+        assert early_stop_cb._monitor_regular == "val/segm_mAP_50_95"
+        assert early_stop_cb._monitor_ema == "val/ema_segm_mAP_50_95"
 
     def test_no_early_stopping_when_disabled(self, tmp_path):
         """RFDETREarlyStopping is absent when early_stopping=False."""
