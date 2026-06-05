@@ -134,6 +134,45 @@ def test_lwdetr_reinitialize_keypoint_head_updates_schema_dependent_state() -> N
     assert transformer.keypoint_query_initializer_enc.queries.shape == (3, hidden_dim)
 
 
+def test_lwdetr_reset_keypoint_gaussian_parameters_preserves_non_gaussian_rows() -> None:
+    """Gaussian reset should only zero precision-Cholesky output rows on decoder and encoder keypoint heads."""
+    hidden_dim = 8
+    transformer = _DummyKeypointTransformer(hidden_dim=hidden_dim, num_keypoints_per_class=[17])
+    model = LWDETR(
+        backbone=MagicMock(),
+        transformer=transformer,
+        segmentation_head=None,
+        num_classes=3,
+        num_queries=2,
+        aux_loss=False,
+        group_detr=1,
+        two_stage=True,
+        lite_refpoint_refine=True,
+        bbox_reparam=False,
+        use_grouppose_keypoints=True,
+        num_keypoints_per_class=[17],
+        grouppose_keypoint_dim_downscale=1,
+    )
+    with torch.no_grad():
+        model.keypoint_embed.layers[-1].weight.fill_(3.0)
+        model.keypoint_embed.layers[-1].bias.fill_(4.0)
+        model.transformer.enc_out_keypoint_embed[0].layers[-1].weight.fill_(5.0)
+        model.transformer.enc_out_keypoint_embed[0].layers[-1].bias.fill_(6.0)
+
+    model.reset_keypoint_gaussian_parameters()
+
+    torch.testing.assert_close(model.keypoint_embed.layers[-1].weight[:4], torch.full((4, hidden_dim), 3.0))
+    torch.testing.assert_close(model.keypoint_embed.layers[-1].weight[4:7], torch.zeros(3, hidden_dim))
+    torch.testing.assert_close(model.keypoint_embed.layers[-1].weight[7:], torch.full((1, hidden_dim), 3.0))
+    torch.testing.assert_close(model.keypoint_embed.layers[-1].bias[:4], torch.full((4,), 4.0))
+    torch.testing.assert_close(model.keypoint_embed.layers[-1].bias[4:7], torch.zeros(3))
+    torch.testing.assert_close(model.keypoint_embed.layers[-1].bias[7:], torch.full((1,), 4.0))
+    torch.testing.assert_close(
+        model.transformer.enc_out_keypoint_embed[0].layers[-1].weight[4:7], torch.zeros(3, hidden_dim)
+    )
+    torch.testing.assert_close(model.transformer.enc_out_keypoint_embed[0].layers[-1].bias[4:7], torch.zeros(3))
+
+
 def test_lwdetr_get_num_keypoints_per_class_from_checkpoint() -> None:
     """Checkpoint keypoint schema should be recoverable from `_kp_active_mask`."""
     state_dict = {"_kp_active_mask": torch.tensor([[True, True], [True, False]])}
