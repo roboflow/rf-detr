@@ -216,6 +216,7 @@ class COCOEvalCallback(Callback):
         self.map_metric.reset()
         self._f1_local = init_matching_accumulator()
         self._reset_keypoint_split("val")
+        self._reset_keypoint_split("val_ema")
         self._prepare_ema_metric(trainer, pl_module)
 
     def on_test_epoch_start(self, trainer: Any, pl_module: Any) -> None:
@@ -342,6 +343,11 @@ class COCOEvalCallback(Callback):
                 ema_results = pl_module.postprocess(ema_outputs, orig_sizes)
             ema_preds = self._convert_preds(ema_results)
             self.map_metric_ema.update(ema_preds, targets)
+            self._update_keypoint_coco_eval(
+                trainer,
+                {"results": ema_results, "targets": outputs["targets"]},
+                split="val_ema",
+            )
             self._ema_has_updates = True
 
     def on_validation_epoch_end(self, trainer: Any, pl_module: Any) -> None:
@@ -361,6 +367,7 @@ class COCOEvalCallback(Callback):
                     self.map_metric_ema.reset()
                 self._f1_local = init_matching_accumulator()
                 self._reset_keypoint_split("val")
+                self._reset_keypoint_split("val_ema")
                 return
         self._compute_and_log(trainer, pl_module, "val")
 
@@ -475,7 +482,8 @@ class COCOEvalCallback(Callback):
         # or none: a rank whose EMA metric is empty/absent would otherwise skip this
         # collective and desync the DDP collective sequence, deadlocking validation
         # (#931 / #449).  _should_compute_ema makes the decision unanimous across ranks.
-        if self._should_compute_ema(pl_module):
+        should_compute_ema = self._should_compute_ema(pl_module)
+        if should_compute_ema:
             self._merge_metric_state_across_ranks(self.map_metric_ema)
             ema_metrics = self._compute_map_metric(trainer, self.map_metric_ema)
             pl_module.log(
@@ -587,6 +595,10 @@ class COCOEvalCallback(Callback):
         if not self._has_progress_bar(trainer):
             self._print_metrics_tables(trainer, split, overall, per_class)
         self._compute_and_log_keypoint_map(split, pl_module, trainer)
+        if split == "val" and should_compute_ema:
+            self._compute_and_log_keypoint_map("val_ema", pl_module, trainer, log_split="val", metric_prefix="ema_")
+        elif split == "val":
+            self._reset_keypoint_split("val_ema")
         if self._keypoint_mode and split not in self._keypoint_eval_updated_splits:
             self._reset_keypoint_split(split)
         metric.reset()
@@ -762,11 +774,12 @@ class COCOEvalCallback(Callback):
         if datamodule is None:
             return None
 
+        source_split = split.removesuffix("_ema")
         split_attrs = {
             "train": ("_dataset_train",),
             "val": ("_dataset_val",),
             "test": ("_dataset_test",),
-        }.get(split, ("_dataset_val", "_dataset_test", "_dataset_train"))
+        }.get(source_split, ("_dataset_val", "_dataset_test", "_dataset_train"))
         for attr in split_attrs:
             dataset = getattr(datamodule, attr, None)
             if dataset is None:
@@ -829,7 +842,15 @@ class COCOEvalCallback(Callback):
         if split == "val":
             self._keypoint_eval_has_updates = True
 
-    def _compute_and_log_keypoint_map(self, split: str, pl_module: Any, trainer: Any) -> None:
+    def _compute_and_log_keypoint_map(
+        self,
+        split: str,
+        pl_module: Any,
+        trainer: Any,
+        *,
+        log_split: str | None = None,
+        metric_prefix: str = "",
+    ) -> None:
         """Compute and log COCO keypoint AP/AR metrics when keypoint mode is active."""
         evaluator = self._keypoint_coco_evaluators.get(split)
         if evaluator is None and split == "val" and self._keypoint_coco_evaluator is not None:
@@ -840,6 +861,7 @@ class COCOEvalCallback(Callback):
         if not self._keypoint_mode or not has_updates or evaluator is None:
             return
 
+        log_split = split if log_split is None else log_split
         evaluator.synchronize_between_processes()
         evaluator.accumulate()
         coco_eval_keypoints = evaluator.coco_eval["keypoints"].stats
@@ -853,8 +875,9 @@ class COCOEvalCallback(Callback):
             if len(coco_eval_keypoints) <= stat_idx:
                 continue
             value = float(coco_eval_keypoints[stat_idx])
-            pl_module.log(f"{split}/{metric_name}", value, prog_bar=prog_bar, logger=True, on_step=False, on_epoch=True)
-            trainer.callback_metrics[f"{split}/{metric_name}"] = torch.tensor(value)
+            log_key = f"{log_split}/{metric_prefix}{metric_name}"
+            pl_module.log(log_key, value, prog_bar=prog_bar, logger=True, on_step=False, on_epoch=True)
+            trainer.callback_metrics[log_key] = torch.tensor(value)
 
         self._reset_keypoint_split(split)
 
