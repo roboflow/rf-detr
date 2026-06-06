@@ -163,13 +163,21 @@ def build_trainer(
             "%s → spawn-based DDP to avoid OpenMP thread pool corruption after fork.",
             tc.strategy,
         )
-    elif strategy == "ddp" and model_config.segmentation_head:
+    elif strategy == "ddp":
         # The segmentation head's sparse_forward() returns dict intermediates and
         # leaves some parameters unused on certain forward steps, causing DDP to
         # raise "It looks like your LightningModule has parameters that were not
         # used in producing the loss" with plain ddp.  Enabling
         # find_unused_parameters lets DDP traverse the autograd graph after each
         # backward pass to detect which parameters contributed to the loss.
+        #
+        # Previously this was only enabled when a segmentation head was present.
+        # However, unused-parameter errors can also occur in detection models
+        # depending on the active branches and loss computation path. Therefore,
+        # the segmentation_head condition was removed so that the same DDP
+        # configuration is applied consistently across both detection and
+        # segmentation models.
+        
         strategy = _DDPStrategy(find_unused_parameters=True)
         _logger.info(
             "segmentation_head=True with strategy='ddp' → DDPStrategy(find_unused_parameters=True).",
