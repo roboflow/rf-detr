@@ -25,10 +25,12 @@ def import_supervision() -> ModuleType:
     """
     try:
         import supervision as sv
-    except ImportError as exc:
+    except ModuleNotFoundError as exc:
+        if exc.name != "supervision":
+            raise
         raise ImportError(
             "This feature requires the 'supervision' package. Install it with "
-            "`pip install supervision` (also bundled in the rfdetr[onnx], rfdetr[train], "
-            "and rfdetr[visual] extras)."
+            "`pip install supervision` (also bundled in the rfdetr[onnx], rfdetr[tflite], "
+            "rfdetr[train], and rfdetr[visual] extras)."
         ) from exc
     return cast(ModuleType, sv)
