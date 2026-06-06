@@ -177,7 +177,6 @@ def build_trainer(
         # the segmentation_head condition was removed so that the same DDP
         # configuration is applied consistently across both detection and
         # segmentation models.
-
         strategy = _DDPStrategy(find_unused_parameters=True)
         _logger.info(
             "segmentation_head=True with strategy='ddp' → DDPStrategy(find_unused_parameters=True).",
