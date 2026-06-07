@@ -179,7 +179,7 @@ def build_trainer(
         # segmentation models.
         strategy = _DDPStrategy(find_unused_parameters=True)
         _logger.info(
-            "segmentation_head=True with strategy='ddp' → DDPStrategy(find_unused_parameters=True).",
+            "strategy='ddp' → DDPStrategy(find_unused_parameters=True).",
         )
     sharded = any(s in str(strategy).lower() for s in ("fsdp", "deepspeed"))
     enable_ema = bool(tc.use_ema) and not sharded
