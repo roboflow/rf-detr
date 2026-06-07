@@ -42,6 +42,7 @@ dependencies = [
     "transformers>=5.1.0,<6.0.0",     # DINOv2 backbone loading
     "pydantic>=2.0,<3",               # ModelConfig / TrainConfig validation
     "pyDeprecate>=0.6,<0.8",             # deprecation warnings for legacy APIs; >=0.6 for deprecated_class
+    "scipy",                           # models/matcher.py linear_sum_assignment, on the core import path
 ]
 
 [project.optional-dependencies]
@@ -54,7 +55,6 @@ train = [
     "torchmetrics[detection]>=1.2",
     "faster-coco-eval>=1.7.2",
     "pycocotools",
-    "scipy",
     "albumentations>=1.4.24,<3.0.0",
     "roboflow",
     "rf100vl",
