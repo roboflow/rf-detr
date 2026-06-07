@@ -42,7 +42,7 @@ jobs:
         # Install PyTorch CPU-only first (UV_TORCH_BACKEND=cpu works with 'uv pip')
         # [visual] pulls in supervision, required by the predict() call in
         # tests/try_instantiate_all_models.py (supervision is optional since #1074).
-        run: uv pip install -e .[plus,visual]
+        run: uv pip install -e ".[plus,visual]"
 
       - name: 🔎 Validate model instantiation and downloads
         run: python tests/try_instantiate_all_models.py
