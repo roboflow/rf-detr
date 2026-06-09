@@ -665,25 +665,29 @@ class _KorniaAugmentationTransform(_DatasetTransform):
         """Apply the Kornia augmentation and sanitize target fields."""
         if target is None or "boxes" not in target:
             pipeline = self._build_pipeline(with_target=False, with_masks=False)
-            return pipeline(image), _sanitize_target(target, None, *image.shape[-2:])
+            image_height, image_width = image.shape[-2:]
+            return pipeline(image), _sanitize_target(target, None, image_height, image_width)
 
         if target["boxes"].shape[0] == 0:
             pipeline = self._build_pipeline(with_target=False, with_masks=False)
             image_out = pipeline(image)
-            return image_out, _sanitize_target(target, target["boxes"], *image_out.shape[-2:])
+            image_height, image_width = image_out.shape[-2:]
+            return image_out, _sanitize_target(target, target["boxes"], image_height, image_width)
 
         boxes = target["boxes"].unsqueeze(0)
         if "masks" in target:
             masks = target["masks"].unsqueeze(0).to(dtype=torch.float32)
             pipeline = self._build_pipeline(with_target=True, with_masks=True)
             image_out, boxes_out, masks_out = pipeline(image, boxes, masks)
+            image_height, image_width = image_out.shape[-2:]
             return image_out, _sanitize_target(
-                target, boxes_out.squeeze(0), *image_out.shape[-2:], masks_out.squeeze(0)
+                target, boxes_out.squeeze(0), image_height, image_width, masks_out.squeeze(0)
             )
 
         pipeline = self._build_pipeline(with_target=True, with_masks=False)
         image_out, boxes_out = pipeline(image, boxes)
-        return image_out, _sanitize_target(target, boxes_out.squeeze(0), *image_out.shape[-2:])
+        image_height, image_width = image_out.shape[-2:]
+        return image_out, _sanitize_target(target, boxes_out.squeeze(0), image_height, image_width)
 
 
 def _build_dataset_transform(name: str, params: Any) -> _DatasetTransform:
