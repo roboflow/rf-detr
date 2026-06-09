@@ -442,9 +442,7 @@ def make_coco_transforms(
 
     if image_set == "train":
         resolved_aug_config = aug_config if aug_config is not None else AUG_CONFIG
-        resize_wrappers = KorniaWrapper.from_config(
-            _build_train_resize_config(scales, square=False, max_size=1333)
-        )
+        resize_wrappers = KorniaWrapper.from_config(_build_train_resize_config(scales, square=False, max_size=1333))
         pipeline = [*resize_wrappers]
         if not gpu_postprocess:
             aug_wrappers = KorniaWrapper.from_config(resolved_aug_config)
