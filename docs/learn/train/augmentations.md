@@ -57,16 +57,16 @@ model.train(dataset_dir="...", aug_config=my_config)
 
 The public `aug_config` surface supports:
 
-| Key | Kornia operation |
-| --- | ---------------- |
-| `HorizontalFlip` | Horizontal flip |
-| `VerticalFlip` | Vertical flip |
-| `Rotate` | Random rotation |
-| `Affine` | Random affine |
-| `ColorJitter` | Color jiggle |
+| Key                        | Kornia operation               |
+| -------------------------- | ------------------------------ |
+| `HorizontalFlip`           | Horizontal flip                |
+| `VerticalFlip`             | Vertical flip                  |
+| `Rotate`                   | Random rotation                |
+| `Affine`                   | Random affine                  |
+| `ColorJitter`              | Color jiggle                   |
 | `RandomBrightnessContrast` | Brightness and contrast jitter |
-| `GaussianBlur` | Gaussian blur |
-| `GaussNoise` | Gaussian noise |
+| `GaussianBlur`             | Gaussian blur                  |
+| `GaussNoise`               | Gaussian noise                 |
 
 RF-DETR also uses these internal resize/container keys for training and evaluation pipelines: `Resize`,
 `SmallestMaxSize`, `LongestMaxSize`, `RandomSizedCrop`, `OneOf`, and `Sequential`.
@@ -111,7 +111,7 @@ batch augmentations and normalization after transfer to CUDA. Required resize st
 - **CPU-bound:** More transforms can slow data loading.
 - **Use `num_workers`:** Parallelize augmentation across data loader workers.
 - **Monitor training mAP vs validation mAP:** With strong augmentations, training mAP can be lower because training
-  images are harder than validation images.
+    images are harder than validation images.
 
 ## Troubleshooting
 
