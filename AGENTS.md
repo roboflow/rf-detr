@@ -211,6 +211,13 @@ uv run twine check --strict dist/*
 - Underlying PyTorch module: `self.model.model`
 - Segmentation models return `pred_masks` as `torch.Tensor` or dict with keys `['spatial_features', 'query_features', 'bias']`
 
+**Training Transforms:**
+
+- Training resize and augmentation use Kornia, not Albumentations.
+- Dataset-time transforms use `KorniaWrapper` from `src/rfdetr/datasets/kornia_transforms.py` and keep the existing `(PIL.Image, target)` dataset contract.
+- Required resize happens before collation; optional GPU augmentation and normalization happen in `RFDETRDataModule.on_after_batch_transfer` when `augmentation_backend` resolves to `"gpu"`.
+- `aug_config` supports RF-DETR's explicit Kornia keys only. Unsupported keys should raise clear `ValueError`s with the supported key list.
+
 **Imports:**
 
 ```python

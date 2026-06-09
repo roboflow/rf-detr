@@ -36,6 +36,7 @@ keywords = ["machine-learning", "deep-learning", "vision", "ML", "DL", "AI", "DE
 
 dependencies = [
     "requests",                        # weight download from remote URLs
+    "numpy",                           # tensor/image conversion and numeric utilities
     "torch>=2.2.0",                    # core tensor ops and model forward pass
     "torchvision>=0.17.0",             # image transforms and ops (aligned with torch>=2.2.0)
     "tqdm",                            # progress bars during weight download
@@ -56,7 +57,7 @@ train = [
     "faster-coco-eval>=1.7.2",
     "pycocotools",
     "scipy",
-    "albumentations>=1.4.24,<3.0.0",
+    "kornia>=0.7,<1",                  # training resize/augmentation backend
     "roboflow",
     "rf100vl",
 ]
@@ -81,7 +82,7 @@ tflite = [
     "tensorflow>=2.16.0",
 ]
 kornia = [
-    "kornia>=0.7,<1",              # GPU-side augmentation via on_after_batch_transfer
+    "kornia>=0.7,<1",              # compatibility extra; training installs this by default
 ]
 loggers = [
     "tensorboard>=2.13.0",

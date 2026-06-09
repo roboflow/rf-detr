@@ -217,9 +217,7 @@ class RFDETRDataModule(LightningDataModule):
         if stage == "fit":
             # Resolve 'auto' to an actual backend before building datasets so that
             # gpu_postprocess in dataset builders always matches what the DataModule
-            # will actually do in on_after_batch_transfer.  Without this, 'auto' on
-            # a machine without CUDA/kornia would strip CPU Normalize from datasets
-            # while _kornia_pipeline stays None, leaving training inputs unnormalized.
+            # will actually do in on_after_batch_transfer.
             resolved = _resolve_augmentation_backend(self.train_config.augmentation_backend)
             if resolved != self.train_config.augmentation_backend:
                 ns.augmentation_backend = resolved
@@ -383,7 +381,7 @@ class RFDETRDataModule(LightningDataModule):
                 import kornia.augmentation  # noqa: F401 # type: ignore[import-not-found]
             except ImportError as err:
                 raise ImportError(
-                    "GPU augmentation requires kornia. Install with: pip install 'rfdetr[kornia]'"
+                    "GPU augmentation requires kornia. Install with: pip install 'rfdetr[train]'"
                 ) from err
 
         from rfdetr.datasets.kornia_transforms import build_kornia_pipeline, build_normalize

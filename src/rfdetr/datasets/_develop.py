@@ -106,16 +106,13 @@ class _SimpleDataset:
 
     Args:
         num_samples: Number of samples in the dataset.
-        transforms: Optional transforms to apply (e.g., Compose of AlbumentationsWrapper).
+        transforms: Optional transforms to apply (e.g., Compose of KorniaWrapper).
 
     Examples:
-        >>> from albumentations import HorizontalFlip
         >>> from torchvision.transforms.v2 import Compose
-        >>> from rfdetr.datasets.transforms import AlbumentationsWrapper
+        >>> from rfdetr.datasets.kornia_transforms import KorniaWrapper
         >>>
-        >>> transforms = Compose([
-        ...     AlbumentationsWrapper(HorizontalFlip(p=0.5)),
-        ... ])
+        >>> transforms = Compose(KorniaWrapper.from_config({"HorizontalFlip": {"p": 0.5}}))
         >>> dataset = _SimpleDataset(num_samples=10, transforms=transforms)
         >>> image, target = dataset[0]
     """

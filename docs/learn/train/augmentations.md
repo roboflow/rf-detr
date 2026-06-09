@@ -1,10 +1,11 @@
 ---
-description: Configure RF-DETR data augmentations with Albumentations. Built-in presets for aerial, industrial, and small datasets plus custom transforms.
+description: Configure RF-DETR data augmentations with Kornia. Built-in presets for aerial, industrial, and small datasets plus supported custom transforms.
 ---
 
 # Augmentations
 
-RF-DETR supports custom data augmentations via [Albumentations](https://albumentations.ai/), with automatic bounding box and mask handling for geometric transforms. Albumentations 1.4.24+ and 2.x are supported.
+RF-DETR uses Kornia for training resize and augmentation. Kornia transforms keep images, bounding boxes, and segmentation
+masks aligned for COCO and YOLO training data.
 
 ## Quick Start
 
@@ -18,7 +19,7 @@ model = RFDETRSmall()
 model.train(dataset_dir="path/to/dataset", epochs=100, aug_config=AUG_CONSERVATIVE)
 ```
 
-Or pass a custom dict directly — keys are Albumentations transform names:
+Or pass a custom dict directly using RF-DETR's supported Kornia transform keys:
 
 ```python
 model.train(
@@ -32,7 +33,7 @@ model.train(
 )
 ```
 
-To disable augmentations: `aug_config={}`. Omitting it uses the default (horizontal flip at 50%).
+To disable optional augmentations: `aug_config={}`. Omitting it uses the default horizontal flip at 50%.
 
 ## Built-in Presets
 
@@ -43,7 +44,7 @@ To disable augmentations: `aug_config={}`. Omitting it uses the default (horizon
 | `AUG_AERIAL`       | Satellite / overhead imagery      |
 | `AUG_INDUSTRIAL`   | Manufacturing / inspection data   |
 
-All presets are plain dicts — inspect or extend them before passing:
+All presets are plain dicts:
 
 ```python
 from rfdetr.datasets.aug_config import AUG_AGGRESSIVE
@@ -52,17 +53,29 @@ my_config = {**AUG_AGGRESSIVE, "VerticalFlip": {"p": 0.1}}
 model.train(dataset_dir="...", aug_config=my_config)
 ```
 
-### Recommendations by Dataset Size
+## Supported Keys
 
-| Dataset Size     | Recommended preset                                              |
-| ---------------- | --------------------------------------------------------------- |
-| Under 500 images | `AUG_CONSERVATIVE` — flip + mild brightness/contrast            |
-| 500–2000 images  | Default or `AUG_CONSERVATIVE` with a few extra transforms added |
-| 2000+ images     | `AUG_AGGRESSIVE` — rotations, affine, color jitter              |
+The public `aug_config` surface supports:
+
+| Key | Kornia operation |
+| --- | ---------------- |
+| `HorizontalFlip` | Horizontal flip |
+| `VerticalFlip` | Vertical flip |
+| `Rotate` | Random rotation |
+| `Affine` | Random affine |
+| `ColorJitter` | Color jiggle |
+| `RandomBrightnessContrast` | Brightness and contrast jitter |
+| `GaussianBlur` | Gaussian blur |
+| `GaussNoise` | Gaussian noise |
+
+RF-DETR also uses these internal resize/container keys for training and evaluation pipelines: `Resize`,
+`SmallestMaxSize`, `LongestMaxSize`, `RandomSizedCrop`, `OneOf`, and `Sequential`.
+
+Unsupported keys raise `ValueError` with the supported key list.
 
 ## Nested Transforms
 
-RF-DETR supports `OneOf`, `SomeOf`, and `Sequential` container transforms from Albumentations. The most common pattern is `OneOf`, which randomly picks one transform from a group:
+`OneOf` and `Sequential` are supported for RF-DETR's Kornia configs:
 
 ```python
 aug_config = {
@@ -77,77 +90,38 @@ aug_config = {
 }
 ```
 
-Each child's `p` controls its relative selection weight. The container itself always fires.
+`OneOf` samples one child uniformly. `Sequential` runs children in order.
 
-If you need the same transform twice, or want explicit ordering, pass a list instead of a dict:
+## GPU Augmentation
 
-```python
-aug_config = [
-    {"HorizontalFlip": {"p": 0.5}},
-    {"Rotate": {"limit": 45, "p": 0.3}},
-    {"Rotate": {"limit": 5, "p": 0.5}},  # second Rotate — only possible with list format
-]
-```
-
-Bounding boxes are updated automatically when a container holds any geometric transform — no extra configuration needed.
-
-## Geometric vs. Pixel-Level Transforms
-
-RF-DETR automatically handles bounding boxes for **geometric transforms** (flips, rotations, crops, affine, perspective). **Pixel-level transforms** (blur, noise, color) preserve coordinates unchanged. You don't need to handle this distinction — it's automatic based on the transform name.
+By default, Kornia runs during dataset loading on CPU. Set `augmentation_backend="auto"` or `"gpu"` to run optional
+batch augmentations and normalization after transfer to CUDA. Required resize still runs before collation.
 
 ## Best Practices
 
 !!! tip "Start Conservative"
 
-    Begin with simple augmentations (horizontal flip, small brightness changes) and gradually add more as needed.
+    Begin with simple augmentations such as horizontal flip and mild brightness changes, then add stronger transforms as
+    validation results justify them.
 
 !!! warning "Geometric Transforms"
 
-    Be careful with aggressive rotations and crops on datasets where object orientation matters (e.g., text detection, oriented objects).
+    Be careful with aggressive rotations and crops on datasets where object orientation matters.
 
-- **CPU-bound:** Augmentations run on CPU during data loading — more transforms means slower loading
-- **Use `num_workers`:** Parallelize augmentation across data loader workers
-- **Monitor training mAP vs validation mAP:** With strong augmentations it's normal for training mAP to be lower — validation uses original images while training uses augmented (harder) ones
+- **CPU-bound:** More transforms can slow data loading.
+- **Use `num_workers`:** Parallelize augmentation across data loader workers.
+- **Monitor training mAP vs validation mAP:** With strong augmentations, training mAP can be lower because training
+  images are harder than validation images.
 
 ## Troubleshooting
 
-**Training is slow** — reduce the number of transforms or increase `num_workers`.
+**Training is slow** - reduce the number of transforms, increase `num_workers`, or use GPU augmentation when available.
 
-**Boxes disappear after augmentation** — aggressive rotations or crops can push boxes outside the image boundary. Reduce rotation angles or avoid large crops.
+**Boxes disappear after augmentation** - aggressive rotations or crops can push boxes outside the image boundary. Reduce
+rotation angles or avoid large crops.
 
-**Model not improving** — augmentations may be too aggressive. Start with `AUG_CONSERVATIVE` and add transforms gradually. Try removing geometric transforms first to isolate the cause.
-
-**Validation mAP is much higher than training mAP** — this is expected with strong augmentations and not a bug. See the monitoring tip above.
-
-**Upgrading albumentations to 2.x with existing `RandomSizedCrop` configs?** RF-DETR automatically adapts `height`/`width` kwargs to the `size=(height, width)` format required by albumentations 2.x. No config changes needed.
-
-## Advanced: Custom Transforms
-
-Any Albumentations transform works by name. If your custom transform is geometric, register it in `rfdetr/datasets/transforms.py` so boxes are updated automatically:
-
-```python
-GEOMETRIC_TRANSFORMS = {
-    ...,
-    "YourCustomTransform",
-}
-```
-
-Then use it like any other transform:
-
-```python
-model.train(
-    dataset_dir="...",
-    aug_config={
-        "HorizontalFlip": {"p": 0.5},
-        "YourCustomTransform": {"param": 1, "p": 0.3},
-    },
-)
-```
-
-## Reference
-
-- [Albumentations docs](https://albumentations.ai/docs/)
-- [All available transforms](https://albumentations.ai/docs/api_reference/augmentations/)
+**Model not improving** - augmentations may be too aggressive. Start with `AUG_CONSERVATIVE` and add transforms
+gradually.
 
 ## Next Steps
 

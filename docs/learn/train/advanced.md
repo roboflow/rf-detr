@@ -243,13 +243,13 @@ For fine-grained control over strategy, sync batch norm, precision, and other di
 
 ## Custom Augmentations
 
-RF-DETR supports advanced data augmentations using the [Albumentations](https://albumentations.ai/) library, providing access to over 70 different image transformations optimized for object detection.
+RF-DETR supports training augmentations using Kornia, with supported transform keys for detection and segmentation data.
 
 → **[Complete Augmentation Guide](augmentations.md)** - Configuration examples, best practices, troubleshooting, and advanced topics.
 
 ### Quick Start
 
-Pass an `aug_config` dictionary to `model.train()`. Each key is an Albumentations transform name; the value is a dict of keyword arguments for that transform:
+Pass an `aug_config` dictionary to `model.train()`. Each key is an RF-DETR Kornia transform key; the value is a dict of keyword arguments for that transform:
 
 ```python
 from rfdetr import RFDETRMedium

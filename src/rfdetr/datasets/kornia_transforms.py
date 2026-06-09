@@ -3,10 +3,11 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Kornia-based GPU augmentation pipeline for RF-DETR training.
+"""Kornia-based augmentation pipeline for RF-DETR training.
 
-This module provides GPU-side augmentation as an alternative to the CPU-based Albumentations pipeline.  All transforms
-run on the device where the batch already resides (typically CUDA), avoiding a CPU-GPU round-trip per sample.
+This module provides Kornia transforms for both RF-DETR dataset-time CPU preprocessing and optional GPU-side batch
+augmentation. Dataset-time transforms preserve the existing ``(PIL.Image, target)`` contract used by COCO and YOLO
+datasets while replacing the previous Albumentations wrapper.
 
 Supports detection (boxes only) and segmentation (boxes + instance masks).
 
@@ -40,10 +41,12 @@ Usage::
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
+import numpy as np
 import torch
+from PIL import Image
 from torch import Tensor
 
 from rfdetr.utilities.logger import get_logger
@@ -130,11 +133,11 @@ def _require_kornia() -> None:
     try:
         import kornia.augmentation  # noqa: F401
     except ImportError as e:
-        raise ImportError("GPU augmentation requires kornia. Install with: pip install 'rfdetr[kornia]'") from e
+        raise ImportError("Training augmentation requires kornia. Install with: pip install 'rfdetr[train]'") from e
 
 
 # ---------------------------------------------------------------------------
-# Registry: Albumentations key -> Kornia factory
+# Registry: RF-DETR augmentation key -> Kornia factory
 # ---------------------------------------------------------------------------
 
 
@@ -176,8 +179,8 @@ def _make_rotate(params: dict[str, Any]) -> Any:
 def _make_affine(params: dict[str, Any]) -> Any:
     """Build a ``K.RandomAffine`` from aug_config params.
 
-    Albumentations ``translate_percent`` is a ``(min, max)`` signed range (e.g. ``(-0.1, 0.1)``).  Kornia ``translate``
-    is a non-negative per-axis max fraction ``(tx, ty)`` where translation is sampled from ``[-tx, tx]``.  The
+    RF-DETR ``translate_percent`` is a ``(min, max)`` signed range (e.g. ``(-0.1, 0.1)``).  Kornia ``translate`` is a
+    non-negative per-axis max fraction ``(tx, ty)`` where translation is sampled from ``[-tx, tx]``.  The
     conversion takes ``max(|min|, |max|)`` for each axis, producing a symmetric range that matches the intent.
     """
     from kornia.augmentation import RandomAffine
@@ -273,6 +276,486 @@ _REGISTRY: dict[str, Callable[[dict[str, Any]], Any]] = {
     "GaussNoise": _make_gauss_noise,
 }
 
+_CONTAINER_KEYS = frozenset({"OneOf", "Sequential"})
+_RESIZE_KEYS = frozenset({"Resize", "SmallestMaxSize", "LongestMaxSize", "RandomSizedCrop"})
+SUPPORTED_KORNIA_TRANSFORMS = frozenset(_REGISTRY) | _CONTAINER_KEYS | _RESIZE_KEYS
+
+
+# ---------------------------------------------------------------------------
+# Dataset-time CPU transforms
+# ---------------------------------------------------------------------------
+
+
+def _as_config_entries(config_dict: dict[str, Any] | list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Normalize an augmentation config into ordered single-key entries.
+
+    Args:
+        config_dict: Mapping or list of single-key mappings.
+
+    Returns:
+        Ordered list of single-key transform entries.
+
+    Raises:
+        TypeError: If *config_dict* has an unsupported type.
+        ValueError: If any entry is not a single-key dictionary.
+    """
+    if isinstance(config_dict, list):
+        entries = config_dict
+    elif isinstance(config_dict, dict):
+        entries = [{k: v} for k, v in config_dict.items()]
+    else:
+        raise TypeError(f"config_dict must be a dictionary or list, got {type(config_dict).__name__}")
+
+    for entry in entries:
+        if not isinstance(entry, dict) or len(entry) != 1:
+            raise ValueError(f"Each transform config entry must be a single-key dict, got {entry!r}")
+    return entries
+
+
+def _choose_size(size: int | Sequence[int]) -> int:
+    """Choose an integer size from a scalar or sequence."""
+    if isinstance(size, Sequence) and not isinstance(size, (str, bytes)):
+        if not size:
+            raise ValueError("size sequence must not be empty")
+        index = int(torch.randint(0, len(size), ()).item())
+        return int(size[index])
+    return int(size)
+
+
+def _pil_to_float_tensor(image: Image.Image) -> Tensor:
+    """Convert a PIL image to a batched RGB float tensor in ``[0, 1]``."""
+    image_np = np.asarray(image.convert("RGB")).copy()
+    tensor = torch.from_numpy(image_np).permute(2, 0, 1).contiguous().to(dtype=torch.float32) / 255.0
+    return tensor.unsqueeze(0)
+
+
+def _float_tensor_to_pil(image: Tensor) -> Image.Image:
+    """Convert a batched float tensor in ``[0, 1]`` to a PIL RGB image."""
+    image = image.detach().squeeze(0).clamp(0.0, 1.0)
+    array = (image.permute(1, 2, 0).cpu().numpy() * 255.0).round().astype(np.uint8)
+    return Image.fromarray(array)
+
+
+def _resize_tensor(input_tensor: Tensor, size: tuple[int, int], interpolation: str) -> Tensor:
+    """Resize a tensor using Kornia, with compatibility across Kornia minor versions."""
+    from kornia.geometry.transform import resize
+
+    if interpolation == "nearest":
+        return resize(input_tensor, size, interpolation=interpolation)
+    try:
+        return resize(input_tensor, size, interpolation=interpolation, align_corners=False, antialias=True)
+    except TypeError:
+        return resize(input_tensor, size, interpolation=interpolation, align_corners=False)
+
+
+def _resize_masks(masks: Tensor, size: tuple[int, int]) -> Tensor:
+    """Resize instance masks to ``size`` with nearest-neighbour interpolation."""
+    if masks.numel() == 0:
+        return torch.zeros((masks.shape[0], size[0], size[1]), dtype=torch.float32, device=masks.device)
+    masks_4d = masks.to(dtype=torch.float32).unsqueeze(1)
+    return _resize_tensor(masks_4d, size, interpolation="nearest").squeeze(1)
+
+
+def _filter_instance_field(value: Any, keep: Tensor, n_orig: int) -> Any:
+    """Filter a per-instance target field if its leading dimension matches boxes."""
+    if torch.is_tensor(value):
+        if value.ndim >= 1 and value.shape[0] == n_orig:
+            return value[keep.to(device=value.device)]
+        return value
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)) and len(value) == n_orig:
+        keep_list = keep.cpu().tolist()
+        return [item for item, should_keep in zip(value, keep_list) if should_keep]
+    return value
+
+
+def _sanitize_target(
+    target: dict[str, Any] | None,
+    boxes: Tensor | None,
+    image_height: int,
+    image_width: int,
+    masks: Tensor | None = None,
+) -> dict[str, Any] | None:
+    """Clamp boxes, remove invalid instances, sync per-instance fields, and update target size."""
+    if target is None:
+        return None
+
+    target_out = target.copy()
+    target_out["size"] = torch.as_tensor([image_height, image_width], dtype=torch.int64)
+    if boxes is None or "boxes" not in target:
+        return target_out
+
+    n_orig = target["boxes"].shape[0]
+    boxes = boxes.to(dtype=torch.float32).clone()
+    if n_orig == 0:
+        target_out["boxes"] = boxes.reshape(0, 4)
+        if "labels" in target:
+            target_out["labels"] = target["labels"].new_empty((0,))
+        if "area" in target:
+            target_out["area"] = target["area"].new_empty((0,))
+        if "iscrowd" in target:
+            target_out["iscrowd"] = target["iscrowd"].new_empty((0,))
+        if "masks" in target:
+            target_out["masks"] = torch.zeros((0, image_height, image_width), dtype=torch.bool)
+        return target_out
+
+    boxes[:, 0].clamp_(min=0, max=image_width)
+    boxes[:, 1].clamp_(min=0, max=image_height)
+    boxes[:, 2].clamp_(min=0, max=image_width)
+    boxes[:, 3].clamp_(min=0, max=image_height)
+    keep = (boxes[:, 2] > boxes[:, 0]) & (boxes[:, 3] > boxes[:, 1])
+
+    global_fields = {"boxes", "orig_size", "size", "image_id"}
+    for key, value in target.items():
+        if key in global_fields:
+            continue
+        if key == "masks" and masks is not None:
+            continue
+        target_out[key] = _filter_instance_field(value, keep, n_orig)
+
+    kept_boxes = boxes[keep]
+    target_out["boxes"] = kept_boxes
+    if "area" in target_out:
+        target_out["area"] = (kept_boxes[:, 2] - kept_boxes[:, 0]) * (kept_boxes[:, 3] - kept_boxes[:, 1])
+    if masks is not None:
+        target_out["masks"] = masks[keep] > _MASK_BINARIZE_THRESHOLD
+    elif "masks" in target:
+        target_out["masks"] = target["masks"][keep].to(dtype=torch.bool)
+    return target_out
+
+
+def _resize_sample(
+    image: Tensor,
+    target: dict[str, Any] | None,
+    size: tuple[int, int],
+) -> tuple[Tensor, dict[str, Any] | None]:
+    """Resize image, boxes, and masks to ``size``."""
+    old_height, old_width = image.shape[-2:]
+    new_height, new_width = size
+    image_out = _resize_tensor(image, size, interpolation="bilinear")
+
+    if target is None or "boxes" not in target:
+        return image_out, _sanitize_target(target, None, new_height, new_width)
+
+    scale = target["boxes"].new_tensor(
+        [new_width / old_width, new_height / old_height, new_width / old_width, new_height / old_height]
+    )
+    boxes = target["boxes"] * scale
+    masks = _resize_masks(target["masks"], size) if "masks" in target else None
+    return image_out, _sanitize_target(target, boxes, new_height, new_width, masks)
+
+
+def _crop_sample(
+    image: Tensor,
+    target: dict[str, Any] | None,
+    top: int,
+    left: int,
+    height: int,
+    width: int,
+) -> tuple[Tensor, dict[str, Any] | None]:
+    """Crop image, boxes, and masks to the requested rectangle."""
+    image_out = image[..., top : top + height, left : left + width]
+    if target is None or "boxes" not in target:
+        return image_out, _sanitize_target(target, None, height, width)
+
+    boxes = target["boxes"].clone()
+    offset = boxes.new_tensor([left, top, left, top])
+    boxes = boxes - offset
+    masks = (
+        target["masks"][..., top : top + height, left : left + width].to(dtype=torch.float32)
+        if "masks" in target
+        else None
+    )
+    return image_out, _sanitize_target(target, boxes, height, width, masks)
+
+
+class _DatasetTransform:
+    """Base protocol for dataset-time Kornia transforms."""
+
+    def __call__(self, image: Tensor, target: dict[str, Any] | None) -> tuple[Tensor, dict[str, Any] | None]:
+        """Apply the transform to a batched image tensor and optional target."""
+        raise NotImplementedError
+
+
+class _SequentialTransform(_DatasetTransform):
+    """Apply child transforms in order."""
+
+    def __init__(self, transforms: list[_DatasetTransform]) -> None:
+        """Initialize with ordered child transforms."""
+        self.transforms = transforms
+
+    def __call__(self, image: Tensor, target: dict[str, Any] | None) -> tuple[Tensor, dict[str, Any] | None]:
+        """Apply all child transforms in order."""
+        for transform in self.transforms:
+            image, target = transform(image, target)
+        return image, target
+
+
+class _OneOfTransform(_DatasetTransform):
+    """Apply one child transform sampled uniformly."""
+
+    def __init__(self, transforms: list[_DatasetTransform]) -> None:
+        """Initialize with candidate child transforms."""
+        if not transforms:
+            raise ValueError("'OneOf' requires at least one transform")
+        self.transforms = transforms
+
+    def __call__(self, image: Tensor, target: dict[str, Any] | None) -> tuple[Tensor, dict[str, Any] | None]:
+        """Sample and apply one child transform."""
+        index = int(torch.randint(0, len(self.transforms), ()).item())
+        return self.transforms[index](image, target)
+
+
+class _ResizeTransform(_DatasetTransform):
+    """Resize to a fixed ``(height, width)``."""
+
+    def __init__(self, height: int, width: int) -> None:
+        """Initialize the target size."""
+        self.height = int(height)
+        self.width = int(width)
+
+    def __call__(self, image: Tensor, target: dict[str, Any] | None) -> tuple[Tensor, dict[str, Any] | None]:
+        """Resize image and target."""
+        return _resize_sample(image, target, (self.height, self.width))
+
+
+class _SmallestMaxSizeTransform(_DatasetTransform):
+    """Resize so the shortest side equals the selected size."""
+
+    def __init__(self, max_size: int | Sequence[int]) -> None:
+        """Initialize with one or more candidate short-side sizes."""
+        self.max_size = max_size
+
+    def __call__(self, image: Tensor, target: dict[str, Any] | None) -> tuple[Tensor, dict[str, Any] | None]:
+        """Resize image and target by shortest side."""
+        height, width = image.shape[-2:]
+        target_short = _choose_size(self.max_size)
+        scale = target_short / min(height, width)
+        new_height = max(1, int(round(height * scale)))
+        new_width = max(1, int(round(width * scale)))
+        return _resize_sample(image, target, (new_height, new_width))
+
+
+class _LongestMaxSizeTransform(_DatasetTransform):
+    """Cap the longest side at the selected size."""
+
+    def __init__(self, max_size: int | Sequence[int]) -> None:
+        """Initialize with one or more candidate long-side caps."""
+        self.max_size = max_size
+
+    def __call__(self, image: Tensor, target: dict[str, Any] | None) -> tuple[Tensor, dict[str, Any] | None]:
+        """Downscale image and target only when the longest side exceeds the cap."""
+        height, width = image.shape[-2:]
+        target_long = _choose_size(self.max_size)
+        current_long = max(height, width)
+        if current_long <= target_long:
+            return image, _sanitize_target(target, target.get("boxes") if target is not None else None, height, width)
+        scale = target_long / current_long
+        new_height = max(1, int(round(height * scale)))
+        new_width = max(1, int(round(width * scale)))
+        return _resize_sample(image, target, (new_height, new_width))
+
+
+class _RandomSizedCropTransform(_DatasetTransform):
+    """Random square crop followed by resize to the configured output size."""
+
+    def __init__(self, min_max_height: Sequence[int], height: int, width: int) -> None:
+        """Initialize crop height range and output size."""
+        if len(min_max_height) != 2:
+            raise ValueError("RandomSizedCrop.min_max_height must contain exactly two values")
+        self.min_height = int(min_max_height[0])
+        self.max_height = int(min_max_height[1])
+        self.output_height = int(height)
+        self.output_width = int(width)
+
+    def __call__(self, image: Tensor, target: dict[str, Any] | None) -> tuple[Tensor, dict[str, Any] | None]:
+        """Apply a random crop and resize the result."""
+        image_height, image_width = image.shape[-2:]
+        max_crop = max(1, min(self.max_height, image_height, image_width))
+        min_crop = max(1, min(self.min_height, max_crop))
+        crop_size = int(torch.randint(min_crop, max_crop + 1, ()).item())
+        max_top = image_height - crop_size
+        max_left = image_width - crop_size
+        top = int(torch.randint(0, max_top + 1, ()).item()) if max_top > 0 else 0
+        left = int(torch.randint(0, max_left + 1, ()).item()) if max_left > 0 else 0
+        image, target = _crop_sample(image, target, top, left, crop_size, crop_size)
+        return _resize_sample(image, target, (self.output_height, self.output_width))
+
+
+class _HorizontalFlipTransform(_DatasetTransform):
+    """Horizontally flip a sample with pixel-edge box semantics."""
+
+    def __init__(self, p: float = 0.5) -> None:
+        """Initialize the flip probability."""
+        self.p = float(p)
+
+    def __call__(self, image: Tensor, target: dict[str, Any] | None) -> tuple[Tensor, dict[str, Any] | None]:
+        """Flip image, boxes, and masks horizontally."""
+        if torch.rand(()).item() >= self.p:
+            return image, target
+
+        from kornia.geometry.transform import hflip
+
+        image_out = hflip(image)
+        height, width = image.shape[-2:]
+        if target is None or "boxes" not in target:
+            return image_out, _sanitize_target(target, None, height, width)
+
+        boxes = target["boxes"].clone()
+        x_min = boxes[:, 0].clone()
+        x_max = boxes[:, 2].clone()
+        boxes[:, 0] = width - x_max
+        boxes[:, 2] = width - x_min
+        masks = hflip(target["masks"].to(dtype=torch.float32).unsqueeze(1)).squeeze(1) if "masks" in target else None
+        return image_out, _sanitize_target(target, boxes, height, width, masks)
+
+
+class _VerticalFlipTransform(_DatasetTransform):
+    """Vertically flip a sample with pixel-edge box semantics."""
+
+    def __init__(self, p: float = 0.5) -> None:
+        """Initialize the flip probability."""
+        self.p = float(p)
+
+    def __call__(self, image: Tensor, target: dict[str, Any] | None) -> tuple[Tensor, dict[str, Any] | None]:
+        """Flip image, boxes, and masks vertically."""
+        if torch.rand(()).item() >= self.p:
+            return image, target
+
+        from kornia.geometry.transform import vflip
+
+        image_out = vflip(image)
+        height, width = image.shape[-2:]
+        if target is None or "boxes" not in target:
+            return image_out, _sanitize_target(target, None, height, width)
+
+        boxes = target["boxes"].clone()
+        y_min = boxes[:, 1].clone()
+        y_max = boxes[:, 3].clone()
+        boxes[:, 1] = height - y_max
+        boxes[:, 3] = height - y_min
+        masks = vflip(target["masks"].to(dtype=torch.float32).unsqueeze(1)).squeeze(1) if "masks" in target else None
+        return image_out, _sanitize_target(target, boxes, height, width, masks)
+
+
+class _KorniaAugmentationTransform(_DatasetTransform):
+    """Apply a Kornia augmentation module to image, boxes, and optional masks."""
+
+    def __init__(self, name: str, params: dict[str, Any]) -> None:
+        """Initialize the augmentation by RF-DETR transform key."""
+        factory = _REGISTRY.get(name)
+        if factory is None:
+            raise ValueError(
+                f"Unsupported Kornia transform {name!r}. Supported keys: {sorted(SUPPORTED_KORNIA_TRANSFORMS)}"
+            )
+        self.name = name
+        self.params = params
+
+    def _build_pipeline(self, with_target: bool, with_masks: bool) -> Any:
+        """Build a Kornia ``AugmentationSequential`` for the current input type."""
+        from kornia.augmentation import AugmentationSequential
+
+        module = _REGISTRY[self.name](self.params)
+        if not with_target:
+            data_keys = ["input"]
+        else:
+            data_keys = ["input", "bbox_xyxy", "mask"] if with_masks else ["input", "bbox_xyxy"]
+        return AugmentationSequential(module, data_keys=data_keys)
+
+    def __call__(self, image: Tensor, target: dict[str, Any] | None) -> tuple[Tensor, dict[str, Any] | None]:
+        """Apply the Kornia augmentation and sanitize target fields."""
+        if target is None or "boxes" not in target:
+            pipeline = self._build_pipeline(with_target=False, with_masks=False)
+            return pipeline(image), _sanitize_target(target, None, *image.shape[-2:])
+
+        if target["boxes"].shape[0] == 0:
+            pipeline = self._build_pipeline(with_target=False, with_masks=False)
+            image_out = pipeline(image)
+            return image_out, _sanitize_target(target, target["boxes"], *image_out.shape[-2:])
+
+        boxes = target["boxes"].unsqueeze(0)
+        if "masks" in target:
+            masks = target["masks"].unsqueeze(0).to(dtype=torch.float32)
+            pipeline = self._build_pipeline(with_target=True, with_masks=True)
+            image_out, boxes_out, masks_out = pipeline(image, boxes, masks)
+            return image_out, _sanitize_target(
+                target, boxes_out.squeeze(0), *image_out.shape[-2:], masks_out.squeeze(0)
+            )
+
+        pipeline = self._build_pipeline(with_target=True, with_masks=False)
+        image_out, boxes_out = pipeline(image, boxes)
+        return image_out, _sanitize_target(target, boxes_out.squeeze(0), *image_out.shape[-2:])
+
+
+def _build_dataset_transform(name: str, params: Any) -> _DatasetTransform:
+    """Build one dataset-time Kornia transform from an RF-DETR config entry."""
+    if isinstance(params, list) and name in _CONTAINER_KEYS:
+        params = {"transforms": params}
+    if not isinstance(params, dict):
+        raise ValueError(f"Parameters for transform {name!r} must be a dict, got {type(params).__name__}")
+
+    if name == "OneOf":
+        raw_nested = params.get("transforms", [])
+        if not isinstance(raw_nested, list):
+            raise ValueError("'OneOf.transforms' must be a list")
+        return _OneOfTransform([_build_dataset_transform(*next(iter(entry.items()))) for entry in raw_nested])
+    if name == "Sequential":
+        raw_nested = params.get("transforms", [])
+        if not isinstance(raw_nested, list):
+            raise ValueError("'Sequential.transforms' must be a list")
+        return _SequentialTransform([_build_dataset_transform(*next(iter(entry.items()))) for entry in raw_nested])
+    if name == "Resize":
+        return _ResizeTransform(height=params["height"], width=params["width"])
+    if name == "SmallestMaxSize":
+        return _SmallestMaxSizeTransform(max_size=params["max_size"])
+    if name == "LongestMaxSize":
+        return _LongestMaxSizeTransform(max_size=params["max_size"])
+    if name == "RandomSizedCrop":
+        return _RandomSizedCropTransform(
+            min_max_height=params["min_max_height"],
+            height=params["height"],
+            width=params["width"],
+        )
+    if name == "HorizontalFlip":
+        return _HorizontalFlipTransform(p=params.get("p", 0.5))
+    if name == "VerticalFlip":
+        return _VerticalFlipTransform(p=params.get("p", 0.5))
+    if name in _REGISTRY:
+        return _KorniaAugmentationTransform(name, params)
+    raise ValueError(f"Unsupported Kornia transform {name!r}. Supported keys: {sorted(SUPPORTED_KORNIA_TRANSFORMS)}")
+
+
+class KorniaWrapper:
+    """Apply Kornia dataset-time transforms to ``(PIL.Image, target)`` tuples."""
+
+    def __init__(self, transform: _DatasetTransform) -> None:
+        """Initialize the wrapper with a dataset-time transform."""
+        self.transform = transform
+
+    def __call__(self, image: Image.Image, target: dict[str, Any] | None) -> tuple[Image.Image, dict[str, Any] | None]:
+        """Apply the wrapped transform and convert the image back to PIL."""
+        _require_kornia()
+        image_tensor = _pil_to_float_tensor(image)
+        image_tensor, target = self.transform(image_tensor, target)
+        return _float_tensor_to_pil(image_tensor), target
+
+    @staticmethod
+    def from_config(config_dict: dict[str, Any] | list[dict[str, Any]]) -> list["KorniaWrapper"]:
+        """Build Kornia wrappers from an RF-DETR augmentation config.
+
+        Args:
+            config_dict: Either a transform-name mapping or an ordered list of single-key transform dictionaries.
+
+        Returns:
+            A list containing one sequential Kornia wrapper, or an empty list for an empty config.
+        """
+        entries = _as_config_entries(config_dict)
+        if not entries:
+            logger.warning("Empty augmentation config provided, no transforms will be applied")
+            return []
+        transforms = [_build_dataset_transform(*next(iter(entry.items()))) for entry in entries]
+        logger.info("Built %d Kornia dataset transforms from config", len(transforms))
+        return [KorniaWrapper(_SequentialTransform(transforms))]
+
 
 # ---------------------------------------------------------------------------
 # Pipeline builders
@@ -290,8 +773,8 @@ def build_kornia_pipeline(
     Unknown keys raise ``ValueError``.
 
     Args:
-        aug_config: Mapping of augmentation names to parameter dicts, identical
-            to the format accepted by the Albumentations path (e.g. ``{"HorizontalFlip": {"p": 0.5}}``).
+        aug_config: Mapping of RF-DETR Kornia augmentation names to parameter dicts
+            (e.g. ``{"HorizontalFlip": {"p": 0.5}}``).
         resolution: Target image resolution in pixels (currently reserved for
             future resolution-aware augmentations).
         with_masks: When ``True``, include ``"mask"`` in ``data_keys`` so

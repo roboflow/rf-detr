@@ -93,6 +93,7 @@ from tqdm.auto import tqdm  # NOT from tqdm import tqdm
 
 - **Logging:** Use `logger.debug()` for detailed tensor/shape info (not `logger.info()`)
 - **Segmentation models:** Return `pred_masks` as `torch.Tensor` or dict with keys `['spatial_features', 'query_features', 'bias']`
+- **Training transforms:** Use Kornia for training resize/augmentation; do not add Albumentations dependencies or config paths
 - **Checkpoint handling:** Always check file existence before operations
 - **License headers:** All Python files require Apache 2.0 header (enforced by pre-commit)
 

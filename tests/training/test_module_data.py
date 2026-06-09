@@ -860,7 +860,7 @@ class TestBackendResolution:
         with (
             patch("rfdetr.training.module_data._has_cuda_device", return_value=True),
             patch("builtins.__import__", side_effect=_mock_import),
-            pytest.raises(ImportError, match="rfdetr\\[kornia\\]"),
+            pytest.raises(ImportError, match="rfdetr\\[train\\]"),
         ):
             self._setup_with_mock_build(dm)
 

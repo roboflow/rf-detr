@@ -11,6 +11,7 @@ All tests in this module are CPU-compatible — Kornia operates on CPU tensors i
 
 import pytest
 import torch
+from PIL import Image
 
 from rfdetr.datasets.aug_config import (
     AUG_AERIAL,
@@ -358,9 +359,10 @@ class TestGpuPostprocessFlag:
     """gpu_postprocess flag controls whether aug + normalize appear in CPU pipeline."""
 
     def test_gpu_postprocess_true_omits_aug_and_normalize_from_train(self):
-        """gpu_postprocess=True: train pipeline has no Normalize; fewer AlbumentationsWrappers (no aug_wrappers)."""
+        """gpu_postprocess=True: train pipeline has no Normalize and fewer Kornia wrappers."""
         from rfdetr.datasets.coco import make_coco_transforms
-        from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize
+        from rfdetr.datasets.kornia_transforms import KorniaWrapper
+        from rfdetr.datasets.transforms import Normalize
 
         pipeline_gpu = make_coco_transforms("train", 560, gpu_postprocess=True)
         pipeline_cpu = make_coco_transforms("train", 560, gpu_postprocess=False)
@@ -371,11 +373,11 @@ class TestGpuPostprocessFlag:
         normalize_gpu = [s for s in steps_gpu if isinstance(s, Normalize)]
         assert len(normalize_gpu) == 0, "gpu_postprocess=True must omit Normalize from train pipeline"
 
-        # Resize wrappers (AlbumentationsWrapper) remain; aug wrappers are removed.
+        # Resize wrappers remain; aug wrappers are removed.
         # Default AUG_CONFIG adds 1 aug wrapper, so gpu version must have fewer wrappers.
-        n_alb_gpu = sum(isinstance(s, AlbumentationsWrapper) for s in steps_gpu)
-        n_alb_cpu = sum(isinstance(s, AlbumentationsWrapper) for s in steps_cpu)
-        assert n_alb_gpu < n_alb_cpu, "gpu_postprocess=True must remove aug AlbumentationsWrappers from train pipeline"
+        n_kornia_gpu = sum(isinstance(s, KorniaWrapper) for s in steps_gpu)
+        n_kornia_cpu = sum(isinstance(s, KorniaWrapper) for s in steps_cpu)
+        assert n_kornia_gpu < n_kornia_cpu, "gpu_postprocess=True must remove aug KorniaWrappers from train pipeline"
 
     def test_gpu_postprocess_false_includes_aug_and_normalize_from_train(self):
         """gpu_postprocess=False (default): train pipeline includes Normalize."""
@@ -682,3 +684,111 @@ class TestUnpackBoxesWithMasks:
 
         assert "masks" in result[0], "masks key must still be present when masks_aug=None"
         assert result[0]["masks"] is original_mask, "Original masks object must be preserved unchanged"
+
+
+# ---------------------------------------------------------------------------
+# TestDatasetKorniaWrapper — validates dataset-time Kornia transforms used by
+# COCO and YOLO loaders before tensor collation.
+# ---------------------------------------------------------------------------
+
+
+def _dataset_target(width: int = 100, height: int = 80) -> dict:
+    """Build a target with one box and one matching mask."""
+    mask = torch.zeros(1, height, width, dtype=torch.bool)
+    mask[:, 20:60, 10:50] = True
+    return {
+        "boxes": torch.tensor([[10.0, 20.0, 50.0, 60.0]], dtype=torch.float32),
+        "labels": torch.tensor([1], dtype=torch.long),
+        "area": torch.tensor([1600.0], dtype=torch.float32),
+        "iscrowd": torch.tensor([0], dtype=torch.long),
+        "masks": mask,
+        "size": torch.tensor([height, width]),
+        "orig_size": torch.tensor([height, width]),
+    }
+
+
+class TestDatasetKorniaWrapper:
+    """Dataset-time Kornia transform behavior."""
+
+    def test_resize_updates_boxes_masks_and_size(self) -> None:
+        """Fixed resize scales boxes, masks, area, and target size."""
+        from rfdetr.datasets.kornia_transforms import KorniaWrapper
+
+        image = Image.new("RGB", (100, 80))
+        transform = KorniaWrapper.from_config([{"Resize": {"height": 40, "width": 50}}])[0]
+
+        image_out, target_out = transform(image, _dataset_target())
+
+        assert image_out.size == (50, 40)
+        torch.testing.assert_close(target_out["boxes"], torch.tensor([[5.0, 10.0, 25.0, 30.0]]))
+        assert target_out["masks"].shape == (1, 40, 50)
+        torch.testing.assert_close(target_out["area"], torch.tensor([400.0]))
+        torch.testing.assert_close(target_out["size"], torch.tensor([40, 50]))
+
+    def test_horizontal_flip_uses_pixel_edge_xyxy_boxes(self) -> None:
+        """Horizontal flip maps x1/x2 with image width, not width - 1."""
+        from rfdetr.datasets.kornia_transforms import KorniaWrapper
+
+        image = Image.new("RGB", (100, 80))
+        transform = KorniaWrapper.from_config({"HorizontalFlip": {"p": 1.0}})[0]
+
+        _, target_out = transform(image, _dataset_target())
+
+        torch.testing.assert_close(target_out["boxes"], torch.tensor([[50.0, 20.0, 90.0, 60.0]]))
+
+    def test_invalid_boxes_filter_instance_fields(self) -> None:
+        """Degenerate boxes are removed with matching per-instance fields."""
+        from rfdetr.datasets.kornia_transforms import KorniaWrapper
+
+        image = Image.new("RGB", (100, 80))
+        target = _dataset_target()
+        target["boxes"] = torch.tensor([[0.0, 0.0, 0.0, 10.0]], dtype=torch.float32)
+        transform = KorniaWrapper.from_config([{"Resize": {"height": 40, "width": 50}}])[0]
+
+        _, target_out = transform(image, target)
+
+        assert target_out["boxes"].shape == (0, 4)
+        assert target_out["labels"].shape == (0,)
+        assert target_out["masks"].shape == (0, 40, 50)
+
+    def test_unsupported_key_raises_supported_keys(self) -> None:
+        """Unknown transform keys fail fast with supported-key guidance."""
+        from rfdetr.datasets.kornia_transforms import KorniaWrapper
+
+        with pytest.raises(ValueError, match="Supported keys"):
+            KorniaWrapper.from_config({"CLAHE": {"p": 1.0}})
+
+
+class TestCocoDatasetKorniaTransforms:
+    """COCO/YOLO shared transform-builder behavior."""
+
+    def test_standard_val_transform_outputs_normalized_boxes_and_masks(self) -> None:
+        """Standard val transform preserves aspect ratio and normalizes boxes."""
+        from rfdetr.datasets.coco import make_coco_transforms
+
+        image = Image.new("RGB", (100, 80))
+        transform = make_coco_transforms("val", resolution=50)
+
+        image_out, target_out = transform(image, _dataset_target())
+
+        assert image_out.shape == (3, 50, 62)
+        torch.testing.assert_close(
+            target_out["boxes"],
+            torch.tensor([[0.3, 0.5, 0.4, 0.5]], dtype=torch.float32),
+            rtol=1e-5,
+            atol=1e-6,
+        )
+        assert target_out["masks"].shape == (1, 50, 62)
+
+    def test_square_val_transform_outputs_square_masks(self) -> None:
+        """Square resize path resizes images and masks to the configured resolution."""
+        from rfdetr.datasets.coco import make_coco_transforms_square_div_64
+
+        image = Image.new("RGB", (100, 80))
+        transform = make_coco_transforms_square_div_64("val", resolution=64)
+
+        image_out, target_out = transform(image, _dataset_target())
+
+        assert image_out.shape == (3, 64, 64)
+        assert target_out["masks"].shape == (1, 64, 64)
+        torch.testing.assert_close(target_out["size"], torch.tensor([64, 64]))

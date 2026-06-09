@@ -27,7 +27,8 @@ from PIL import Image
 from torchvision.transforms.v2 import Compose, ToDtype, ToImage
 
 from rfdetr.datasets.aug_config import AUG_CONFIG
-from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize
+from rfdetr.datasets.kornia_transforms import KorniaWrapper
+from rfdetr.datasets.transforms import Normalize
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -295,10 +296,10 @@ def _build_train_resize_config(
     square: bool,
     max_size: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
-    """Build the training resize pipeline as an Albumentations config list.
+    """Build the training resize pipeline as a Kornia config list.
 
     Expresses the ``RandomSelect(resize_a, Compose([resize_b1, crop, resize_b2]))`` pattern as a config-driven
-    ``OneOf``/``Sequential`` for use with :meth:`AlbumentationsWrapper.from_config`.
+    ``OneOf``/``Sequential`` for use with :meth:`KorniaWrapper.from_config`.
 
     Two branches are selected with equal probability:
 
@@ -311,7 +312,7 @@ def _build_train_resize_config(
 
     Args:
         scales: Target resize scales in pixels.
-        square: If ``True``, produce square output using ``A.Resize``
+        square: If ``True``, produce square output using ``Resize``
             (one random scale from *scales*).  If ``False``, preserve aspect ratio using ``A.SmallestMaxSize`` with an
             optional long-side cap.
         max_size: Maximum long-side size for non-square resizes.  Defaults to
@@ -381,14 +382,14 @@ def make_coco_transforms(
     """Build the standard COCO transform pipeline for a given dataset split.
 
     Returns a composed transform that resizes images to the target ``resolution`` (with optional multi-scale jitter),
-    applies Albumentations-based augmentations during training, and normalises pixel values with ImageNet statistics.
+    applies Kornia-based augmentations during training, and normalises pixel values with ImageNet statistics.
 
     For the ``"train"`` split the pipeline uses a two-branch ``OneOf`` between a direct resize and a resize →
     random-crop → resize sequence (built via :func:`_build_train_resize_config`), followed by the augmentation stack and
     normalisation.  For ``"val"``, ``"test"``, and ``"val_speed"`` only resize and normalisation are applied — no
     augmentation.
 
-    When *gpu_postprocess* is ``True``, both the Albumentations augmentation wrappers and the ``Normalize`` step are
+    When *gpu_postprocess* is ``True``, both the Kornia CPU augmentation wrappers and the ``Normalize`` step are
     omitted from the ``"train"`` pipeline. The ``RFDETRDataModule`` then applies augmentation and normalization on the
     device in ``on_after_batch_transfer`` instead.
 
@@ -407,10 +408,10 @@ def make_coco_transforms(
             ensure all candidate resolutions are compatible with the backbone.
         num_windows: Number of attention windows; used by
             :func:`compute_multi_scale_scales` to derive candidate resolutions.
-        aug_config: Albumentations augmentation config dict passed to
-            :class:`~rfdetr.datasets.transforms.AlbumentationsWrapper`.  Falls back to the default
+        aug_config: RF-DETR Kornia augmentation config dict passed to
+            :class:`~rfdetr.datasets.kornia_transforms.KorniaWrapper`.  Falls back to the default
             :data:`~rfdetr.datasets.aug_config.AUG_CONFIG` when ``None``.
-        gpu_postprocess: When ``True``, skip Albumentations augmentation wrappers and
+        gpu_postprocess: When ``True``, skip Kornia CPU augmentation wrappers and
             ``Normalize`` from the CPU pipeline.  The ``RFDETRDataModule`` then applies both augmentation and
             normalization on the GPU in ``on_after_batch_transfer``.  Has no effect on val/test splits.
 
@@ -441,12 +442,12 @@ def make_coco_transforms(
 
     if image_set == "train":
         resolved_aug_config = aug_config if aug_config is not None else AUG_CONFIG
-        resize_wrappers = AlbumentationsWrapper.from_config(
+        resize_wrappers = KorniaWrapper.from_config(
             _build_train_resize_config(scales, square=False, max_size=1333)
         )
         pipeline = [*resize_wrappers]
         if not gpu_postprocess:
-            aug_wrappers = AlbumentationsWrapper.from_config(resolved_aug_config)
+            aug_wrappers = KorniaWrapper.from_config(resolved_aug_config)
             pipeline += [*aug_wrappers]
         pipeline += [to_image, to_float]
         if not gpu_postprocess:
@@ -454,7 +455,7 @@ def make_coco_transforms(
         return Compose(pipeline)
 
     if image_set in ("val", "test"):
-        resize_wrappers = AlbumentationsWrapper.from_config(
+        resize_wrappers = KorniaWrapper.from_config(
             [
                 {"SmallestMaxSize": {"max_size": resolution}},
                 {"LongestMaxSize": {"max_size": 1333}},
@@ -462,7 +463,7 @@ def make_coco_transforms(
         )
         return Compose([*resize_wrappers, to_image, to_float, normalize])
     if image_set == "val_speed":
-        resize_wrappers = AlbumentationsWrapper.from_config([{"Resize": {"height": resolution, "width": resolution}}])
+        resize_wrappers = KorniaWrapper.from_config([{"Resize": {"height": resolution, "width": resolution}}])
         return Compose([*resize_wrappers, to_image, to_float, normalize])
 
     raise ValueError(f"unknown {image_set}")
@@ -485,7 +486,7 @@ def make_coco_transforms_square_div_64(
     suitable for models that require spatial dimensions divisible by 64. It supports multi-scale training and optional
     random resizing and cropping for the training split.
 
-    When *gpu_postprocess* is ``True``, both the Albumentations augmentation wrappers and the ``Normalize`` step are
+    When *gpu_postprocess* is ``True``, both the Kornia CPU augmentation wrappers and the ``Normalize`` step are
     omitted from the ``"train"`` pipeline. The ``RFDETRDataModule`` then applies augmentation and normalization on the
     device in ``on_after_batch_transfer`` instead.
 
@@ -505,9 +506,9 @@ def make_coco_transforms_square_div_64(
         num_windows: Number of windows used by ``compute_multi_scale_scales`` to
             derive the list of candidate square resolutions.
         aug_config: Augmentation configuration dictionary compatible with
-            :class:`~rfdetr.datasets.transforms.AlbumentationsWrapper`. If ``None``, the default
+            :class:`~rfdetr.datasets.kornia_transforms.KorniaWrapper`. If ``None``, the default
             :data:`~rfdetr.datasets.aug_config.AUG_CONFIG` is used.
-        gpu_postprocess: When ``True``, skip Albumentations augmentation wrappers and
+        gpu_postprocess: When ``True``, skip Kornia CPU augmentation wrappers and
             ``Normalize`` from the CPU pipeline.  The ``RFDETRDataModule`` then applies both augmentation and
             normalization on the GPU in ``on_after_batch_transfer``.  Has no effect on val/test splits.
 
@@ -528,10 +529,10 @@ def make_coco_transforms_square_div_64(
 
     if image_set == "train":
         resolved_aug_config = aug_config if aug_config is not None else AUG_CONFIG
-        resize_wrappers = AlbumentationsWrapper.from_config(_build_train_resize_config(scales, square=True))
+        resize_wrappers = KorniaWrapper.from_config(_build_train_resize_config(scales, square=True))
         pipeline = [*resize_wrappers]
         if not gpu_postprocess:
-            aug_wrappers = AlbumentationsWrapper.from_config(resolved_aug_config)
+            aug_wrappers = KorniaWrapper.from_config(resolved_aug_config)
             pipeline += [*aug_wrappers]
         pipeline += [to_image, to_float]
         if not gpu_postprocess:
@@ -539,7 +540,7 @@ def make_coco_transforms_square_div_64(
         return Compose(pipeline)
 
     if image_set in ("val", "test", "val_speed"):
-        resize_wrappers = AlbumentationsWrapper.from_config([{"Resize": {"height": resolution, "width": resolution}}])
+        resize_wrappers = KorniaWrapper.from_config([{"Resize": {"height": resolution, "width": resolution}}])
         return Compose([*resize_wrappers, to_image, to_float, normalize])
 
     raise ValueError(f"unknown {image_set}")
