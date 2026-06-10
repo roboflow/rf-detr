@@ -32,7 +32,7 @@ All details live in CONTRIBUTING.md. Direct links:
 - **Deprecation rules:** [Deprecation Policy](.github/CONTRIBUTING.md#deprecation-policy) — `@deprecated` / `@deprecated_class`, version windows, migration-doc requirement
 - **Adding a model:** [Adding a New Model](.github/CONTRIBUTING.md#adding-a-new-model) — always discuss with maintainers first
 - **Security:** [Security Considerations](.github/CONTRIBUTING.md#security-considerations) — OWASP basics, no credentials
-- **CI/CD workflows:** [CI Testing](.github/CONTRIBUTING.md#ci-testing) — 5 workflow files, OS/Python matrix
+- **CI/CD workflows:** [CI Testing](.github/CONTRIBUTING.md#ci-testing) — key workflow files, OS/Python matrix
 
 > [!IMPORTANT]
 > **Agentic test command:** use `-n 1` (not `-n 2`) for reproducible failure output in agentic sessions. CI uses `-n 2`. Full command:
@@ -54,7 +54,7 @@ src/rfdetr/
 ├── utilities/     # Canonical utility home since v1.6.0
 │   ├── distributed.py  # get_rank, get_world_size, is_main_process, save_on_master
 │   ├── logger.py       # get_logger()
-│   └── decorators.py   # Re-exports @deprecated / @deprecated_class from deprecate
+│   └── decorators.py   # Re-exports @deprecated / void from deprecate; _warn_deprecated_module() for module shims
 ├── training/      # module_model.py, module_data.py, trainer.py, callbacks/
 ├── datasets/      # COCO, YOLO, Object365, synthetic, augmentation configs, transforms
 ├── models/        # Backbone + LWDETR transformer + heads, criterion, matcher, postprocess
@@ -66,8 +66,8 @@ src/rfdetr/
 ├── assets/        # ModelWeights enum, COCO class list
 ├── cli/           # Command-line entry points
 ├── visualize/     # Visualization utilities
-├── util/          # [DEPRECATED -> utilities/] removed v1.9.0
-└── deploy/        # [DEPRECATED -> export/]    removed v1.9.0
+├── util/          # [DEPRECATED -> utilities/] scheduled for removal in v1.9.0
+└── deploy/        # [DEPRECATED -> export/]    scheduled for removal in v1.9.0
 ```
 
 ## Key Code Patterns
@@ -85,7 +85,7 @@ src/rfdetr/
 from rfdetr.utilities.distributed import get_rank, get_world_size, is_main_process, save_on_master
 from rfdetr.utilities.logger import get_logger
 
-# WARNING: rfdetr.util.* and rfdetr.deploy.* are Phase-1 deprecated shims removed in v1.9.0.
+# WARNING: rfdetr.util.* and rfdetr.deploy.* are Phase-1 deprecated shims scheduled for removal in v1.9.0.
 # Never write new code against them — see src/rfdetr/__init__.py docstring for migration details.
 
 logger = get_logger()  # Default name: "rf-detr", reads LOG_LEVEL env var
@@ -132,9 +132,9 @@ Plus segmentation (main package): `RFDETRSegXLarge`, `RFDETRSeg2XLarge`
 
 | Class                   | Deprecated in | Removed in |
 | ----------------------- | ------------- | ---------- |
-| `RFDETRBase`            | v1.6.0        | v2.0.0     |
-| `RFDETRLargeDeprecated` | v1.6.0        | v2.0.0     |
-| `RFDETRSegPreview`      | v1.6.0        | v2.0.0     |
+| `RFDETRBase`            | v1.7.0        | v2.0.0     |
+| `RFDETRLargeDeprecated` | v1.7.0        | v2.0.0     |
+| `RFDETRSegPreview`      | v1.7.0        | v2.0.0     |
 
 **Default size in examples:** `RFDETRSmall` / `'rfdetr-small'` — never use `RFDETRBase`.
 
@@ -149,7 +149,7 @@ Plus segmentation (main package): `RFDETRSegXLarge`, `RFDETRSeg2XLarge`
 
 ## Deprecation Decorators
 
-Use `@deprecated` (functions/methods) and `@deprecated_class` (classes) from `deprecate` — never `warnings.warn`. Full rules and removal checklist: [CONTRIBUTING.md §Deprecation Policy](.github/CONTRIBUTING.md#deprecation-policy).
+Use `@deprecated` (functions/methods) and `@deprecated_class` (classes) from `deprecate` — never call `warnings.warn` directly; module-level deprecation shims use `_warn_deprecated_module()` from `utilities/decorators.py` instead. Full rules and removal checklist: [CONTRIBUTING.md §Deprecation Policy](.github/CONTRIBUTING.md#deprecation-policy).
 
 ## Inference Example
 

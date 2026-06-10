@@ -281,7 +281,7 @@ Our continuous integration tests run on:
 
 This ensures your changes work across all supported platforms and Python versions.
 
-**GitHub Actions workflow files** (in `.github/workflows/`):
+**Key GitHub Actions workflow files** (in `.github/workflows/`):
 
 - **ci-tests-cpu.yml** — CPU tests across Ubuntu/Windows/macOS × Python 3.10–3.13
 - **ci-tests-gpu.yml** — GPU-dependent tests

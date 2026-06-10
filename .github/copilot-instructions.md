@@ -53,7 +53,7 @@ pre-commit run --all-files
 
 - Always use direct imports: `from rfdetr.utilities.distributed import get_rank, is_main_process`
 - Logger: `from rfdetr.utilities.logger import get_logger` (reads `LOG_LEVEL` env var)
-- **Never use** `rfdetr.util.*` or `rfdetr.deploy.*` — deprecated shims removed in v1.9.0
+- **Never use** `rfdetr.util.*` or `rfdetr.deploy.*` — deprecated shims scheduled for removal in v1.9.0
 - TQDM: `from tqdm.auto import tqdm` (NOT `from tqdm import tqdm`)
 
 ## Testing & Development Workflow
