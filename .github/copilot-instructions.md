@@ -51,8 +51,9 @@ pre-commit run --all-files
 
 **Imports:**
 
-- Always use direct imports: `from rfdetr.util.misc import get_rank, is_main_process`
-- Logger: `from rfdetr.util.logger import get_logger` (reads `LOG_LEVEL` env var)
+- Always use direct imports: `from rfdetr.utilities.distributed import get_rank, is_main_process`
+- Logger: `from rfdetr.utilities.logger import get_logger` (reads `LOG_LEVEL` env var)
+- **Never use** `rfdetr.util.*` or `rfdetr.deploy.*` — deprecated shims scheduled for removal in v1.9.0
 - TQDM: `from tqdm.auto import tqdm` (NOT `from tqdm import tqdm`)
 
 ## Testing & Development Workflow
@@ -82,8 +83,8 @@ pre-commit run --all-files
 
 ```python
 # Always use direct imports (NOT import ... as pattern)
-from rfdetr.util.misc import get_rank, is_main_process, save_on_master
-from rfdetr.util.logger import get_logger
+from rfdetr.utilities.distributed import get_rank, is_main_process, save_on_master
+from rfdetr.utilities.logger import get_logger
 
 # TQDM (for environment compatibility)
 from tqdm.auto import tqdm  # NOT from tqdm import tqdm
