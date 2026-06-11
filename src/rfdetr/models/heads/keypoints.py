@@ -22,6 +22,7 @@ Slot index        Name         Meaning
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import cast
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -46,7 +47,7 @@ def modulate(features: torch.Tensor, scale: torch.Tensor, shift: torch.Tensor) -
     return (scale + 1.0) * features + shift
 
 
-class ConditionalQueryInitializer(nn.Module):  # type: ignore[misc]
+class ConditionalQueryInitializer(nn.Module):  # type: ignore[misc, unused-ignore]
     """Initialize keypoint query tokens with adaptive layer-normalization style modulation."""
 
     def __init__(self, dim: int, num_queries: int, out_dim: int | None = None) -> None:
@@ -68,8 +69,9 @@ class ConditionalQueryInitializer(nn.Module):  # type: ignore[misc]
             nn.GELU(),
             nn.Linear(dim, out_dim * 3),
         )
-        nn.init.constant_(self.adaLN_modulation[-1].weight, 0)
-        nn.init.constant_(self.adaLN_modulation[-1].bias, 0)
+        ada_ln_projection = cast(nn.Linear, self.adaLN_modulation[-1])
+        nn.init.constant_(ada_ln_projection.weight, 0)
+        nn.init.constant_(ada_ln_projection.bias, 0)
 
         self.out_proj = nn.Linear(out_dim, out_dim)
 
@@ -84,9 +86,10 @@ class ConditionalQueryInitializer(nn.Module):  # type: ignore[misc]
         """
 
         normed_query_features = self.query_norm(self.queries)
-        scale, shift, gate = self.adaLN_modulation(query_features.unsqueeze(-2)).chunk(3, dim=-1)
+        modulation: torch.Tensor = self.adaLN_modulation(query_features.unsqueeze(-2))
+        scale, shift, gate = modulation.chunk(3, dim=-1)
         modulated_query_features = self.out_proj(modulate(normed_query_features, scale, shift)) * gate + self.queries
-        return modulated_query_features
+        return cast(torch.Tensor, modulated_query_features)
 
 
 def compute_l1_keypoint_loss(

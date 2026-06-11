@@ -53,8 +53,9 @@ def _key_points_for_display(
     key_points = _copy_key_points(key_points)
 
     if len(key_points) == 0:
-        return KeyPoints.empty()
-    if key_points.keypoint_confidence is None:
+        return key_points
+    keypoint_confidence = key_points.keypoint_confidence
+    if keypoint_confidence is None:
         raise ValueError("Expected RF-DETR keypoints to include per-keypoint confidence.")
 
     raw_precision = key_points.data.get("keypoint_precision_cholesky")
@@ -68,8 +69,9 @@ def _key_points_for_display(
                 source_shape=source_shape,
             )
 
-    visible = key_points.keypoint_confidence >= keypoint_threshold
-    key_points.visible = visible if key_points.visible is None else key_points.visible & visible
+    visible = keypoint_confidence >= keypoint_threshold
+    existing_visible = key_points.visible
+    setattr(key_points, "visible", visible if existing_visible is None else existing_visible & visible)
     return key_points
 
 
@@ -91,18 +93,19 @@ def _keypoint_prediction_records(
     Returns:
         A list of row dictionaries, one per visible/non-zero keypoint.
     """
-    if key_points.keypoint_confidence is None:
+    keypoint_confidence = key_points.keypoint_confidence
+    if keypoint_confidence is None:
         return []
 
     image_name = Path(image).name if image is not None else None
-    visible = (
-        key_points.visible if key_points.visible is not None else key_points.keypoint_confidence >= keypoint_threshold
-    )
+    existing_visible = key_points.visible
+    visible = existing_visible if existing_visible is not None else keypoint_confidence >= keypoint_threshold
+    detection_confidence = key_points.detection_confidence
     class_names = key_points.data.get("class_name")
     records: list[dict[str, Any]] = []
     for detection_index, xy in enumerate(key_points.xy):
         for keypoint_index, (point, confidence, is_visible) in enumerate(
-            zip(xy, key_points.keypoint_confidence[detection_index], visible[detection_index], strict=True)
+            zip(xy, keypoint_confidence[detection_index], visible[detection_index], strict=True)
         ):
             if not is_visible or np.allclose(point, 0):
                 continue
@@ -116,9 +119,7 @@ def _keypoint_prediction_records(
                     "class_id": int(key_points.class_id[detection_index]) if key_points.class_id is not None else None,
                     "class_name": class_name,
                     "detection_confidence": (
-                        float(key_points.detection_confidence[detection_index])
-                        if key_points.detection_confidence is not None
-                        else None
+                        float(detection_confidence[detection_index]) if detection_confidence is not None else None
                     ),
                     "keypoint_index": keypoint_index,
                     "x": float(point[0]),

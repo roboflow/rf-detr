@@ -313,9 +313,10 @@ class TestPredictSourceData:
 
         assert isinstance(key_points, sv.KeyPoints)
         assert len(key_points) == 0
-        assert key_points.xy.shape == (0, 0, 2)
-        assert key_points.keypoint_confidence is None
-        assert key_points.detection_confidence is None
+        assert key_points.xy.shape == (0, 17, 2)
+        assert key_points.keypoint_confidence.shape == (0, 17)
+        assert key_points.detection_confidence.shape == (0,)
+        assert key_points.visible.shape == (0, 17)
         np.testing.assert_allclose(key_points.data["xyxy"], np.empty((0, 4), dtype=np.float32))
         assert key_points.as_detections().is_empty()
 

@@ -145,27 +145,27 @@ def test_resolve_auto_batch_config_returns_expected_values():
 @patch("rfdetr.training.build_trainer")
 @patch("rfdetr.training.RFDETRDataModule")
 @patch("rfdetr.training.RFDETRModelModule")
-@patch("rfdetr.detr._ensure_model_on_device")
+@patch("rfdetr.detr._move_model_context_to_device")
 def test_train_auto_batch_ensures_model_on_device_before_resolve(
-    mock_ensure: MagicMock,
+    mock_move: MagicMock,
     _mock_module: MagicMock,
     _mock_data_module: MagicMock,
     _mock_build_trainer: MagicMock,
     mock_resolve: MagicMock,
     _mock_is_main: MagicMock,
 ) -> None:
-    """_ensure_model_on_device must be called before resolve_auto_batch_config when batch_size='auto'."""
+    """Model weights must be moved before resolve_auto_batch_config when batch_size='auto'."""
     auto_result = SimpleNamespace(safe_micro_batch=4, recommended_grad_accum_steps=1, effective_batch_size=4)
     call_order: list[str] = []
 
-    def _ensure_side_effect(model: object) -> None:
+    def _move_side_effect(model: object) -> None:
         call_order.append("ensure")
 
     def _resolve_side_effect(**_kwargs: object) -> object:
         call_order.append("resolve")
         return auto_result
 
-    mock_ensure.side_effect = _ensure_side_effect
+    mock_move.side_effect = _move_side_effect
     mock_resolve.side_effect = _resolve_side_effect
 
     train_config = SimpleNamespace(
@@ -184,7 +184,7 @@ def test_train_auto_batch_ensures_model_on_device_before_resolve(
 
     assert train_config.batch_size == 4
     assert train_config.grad_accum_steps == 1
-    mock_ensure.assert_called_once_with(mock_self.model)
+    mock_move.assert_called_once_with(mock_self.model)
     mock_resolve.assert_called_once_with(
         model_context=mock_self.model,
         model_config=mock_self.model_config,

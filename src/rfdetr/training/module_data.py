@@ -471,8 +471,9 @@ class RFDETRDataModule(LightningDataModule):
                 keypoint_visibility = keypoints_array[..., 2] > 0
                 key_points = sv.KeyPoints(
                     xy=keypoint_xy,
-                    confidence=keypoint_visibility.astype(np.float32),
+                    keypoint_confidence=keypoint_visibility.astype(np.float32),
                     class_id=labels.detach().cpu().numpy().astype(int),
+                    visible=keypoint_visibility,
                     data={"visible": keypoint_visibility},
                 )
                 scene = sv.VertexAnnotator(radius=3).annotate(scene=scene, key_points=key_points)
