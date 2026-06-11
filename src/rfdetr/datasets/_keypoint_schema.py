@@ -180,17 +180,6 @@ def infer_coco_keypoint_schema(
         ValueError: If the annotation file has no categories, no keypoint metadata,
             malformed COCO fields, or malformed keypoint vectors.
         KeyError: If required COCO keys are missing.
-
-    Example:
-        >>> import json, tempfile
-        >>> with tempfile.NamedTemporaryFile("w+", suffix=".json") as f:
-        ...     _ = f.write(json.dumps({
-        ...         "categories": [{"id": 0, "name": "person", "keypoints": ["nose"]}],
-        ...         "annotations": [],
-        ...     }))
-        ...     _ = f.flush()
-        ...     infer_coco_keypoint_schema(f.name).num_keypoints_per_class
-        [1]
     """
     path = Path(annotation_path)
     data = _load_coco_annotation(path)

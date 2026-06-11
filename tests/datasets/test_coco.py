@@ -779,8 +779,9 @@ class TestBuildCocoKeypointMode:
             build_coco("train", args, resolution=640)
 
         _, kwargs = mock_dataset.call_args
-        ann_file = str(mock_dataset.call_args.args[1])
-        assert ann_file.endswith("annotations/person_keypoints_train2017.json")
+        ann_file = Path(mock_dataset.call_args.args[1])
+        assert ann_file.parent.name == "annotations"
+        assert ann_file.name == "person_keypoints_train2017.json"
         assert kwargs["include_keypoints"] is True
         assert kwargs["remap_category_ids"] is False
 
@@ -796,7 +797,8 @@ class TestBuildCocoKeypointMode:
             build_coco("train", args, resolution=640)
 
         _, kwargs = mock_dataset.call_args
-        ann_file = str(mock_dataset.call_args.args[1])
-        assert ann_file.endswith("annotations/instances_train2017.json")
+        ann_file = Path(mock_dataset.call_args.args[1])
+        assert ann_file.parent.name == "annotations"
+        assert ann_file.name == "instances_train2017.json"
         assert kwargs["include_keypoints"] is False
         assert kwargs["remap_category_ids"] is False
