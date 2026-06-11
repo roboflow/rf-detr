@@ -11,11 +11,8 @@ import numpy as np
 import pytest
 import supervision as sv
 
-from rfdetr.visualize.keypoints import (
-    _key_points_for_display,
-    _keypoint_prediction_records,
-    _precision_cholesky_to_pixel_covariance,
-)
+from rfdetr.utilities.keypoints import precision_cholesky_to_pixel_covariance
+from rfdetr.visualize.keypoints import _key_points_for_display, _keypoint_prediction_records
 
 
 def test_precision_cholesky_to_pixel_covariance_identity_precision() -> None:
@@ -23,7 +20,7 @@ def test_precision_cholesky_to_pixel_covariance_identity_precision() -> None:
     precision_cholesky = np.array([[[0.0, 0.0, 0.0]]], dtype=np.float32)
     source_shape = np.array([[10.0, 20.0]], dtype=np.float32)
 
-    covariance = _precision_cholesky_to_pixel_covariance(
+    covariance = precision_cholesky_to_pixel_covariance(
         precision_cholesky=precision_cholesky,
         source_shape=source_shape,
     )
@@ -41,7 +38,7 @@ def test_precision_cholesky_to_pixel_covariance_does_not_clamp_log_cholesky() ->
     precision_cholesky = np.array([[[25.0, 0.0, 0.0]]], dtype=np.float32)
     source_shape = np.array([[1.0, 1.0]], dtype=np.float32)
 
-    covariance = _precision_cholesky_to_pixel_covariance(
+    covariance = precision_cholesky_to_pixel_covariance(
         precision_cholesky=precision_cholesky,
         source_shape=source_shape,
     )
@@ -57,13 +54,13 @@ def test_precision_cholesky_to_pixel_covariance_does_not_clamp_log_cholesky() ->
 def test_precision_cholesky_to_pixel_covariance_rejects_bad_shape() -> None:
     """Invalid precision and source shapes should fail before annotation."""
     with pytest.raises(ValueError, match=r"precision_cholesky must have shape"):
-        _precision_cholesky_to_pixel_covariance(
+        precision_cholesky_to_pixel_covariance(
             precision_cholesky=np.zeros((1, 2, 4), dtype=np.float32),
             source_shape=np.zeros((1, 2), dtype=np.float32),
         )
 
     with pytest.raises(ValueError, match=r"source_shape must have shape"):
-        _precision_cholesky_to_pixel_covariance(
+        precision_cholesky_to_pixel_covariance(
             precision_cholesky=np.zeros((2, 1, 3), dtype=np.float32),
             source_shape=np.zeros((1, 2), dtype=np.float32),
         )
@@ -125,6 +122,24 @@ def test_key_points_for_display_accepts_keypoints_directly() -> None:
     np.testing.assert_array_equal(key_points.data["xyxy"], predictions.data["xyxy"])
     np.testing.assert_array_equal(key_points.detection_confidence, predictions.detection_confidence)
     assert "covariance" in key_points.data
+
+
+def test_key_points_for_display_preserves_existing_covariance() -> None:
+    """Display preparation should not overwrite covariance emitted by prediction."""
+    covariance = np.array([[[[1.0, 0.0], [0.0, 2.0]]]], dtype=np.float32)
+    predictions = sv.KeyPoints(
+        xy=np.array([[[1.0, 2.0]]], dtype=np.float32),
+        keypoint_confidence=np.array([[0.9]], dtype=np.float32),
+        data={
+            "covariance": covariance,
+            "keypoint_precision_cholesky": np.array([[[0.0, 0.0, 0.0]]], dtype=np.float32),
+            "source_shape": np.array([[10, 20]], dtype=np.int64),
+        },
+    )
+
+    key_points = _key_points_for_display(predictions)
+
+    np.testing.assert_array_equal(key_points.data["covariance"], covariance)
 
 
 def test_key_points_for_display_rejects_keypoints_without_confidence_channel() -> None:

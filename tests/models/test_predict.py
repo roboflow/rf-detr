@@ -15,6 +15,7 @@ import torch
 
 from rfdetr import RFDETRNano, RFDETRSegNano
 from rfdetr.detr import RFDETR
+from rfdetr.utilities.keypoints import precision_cholesky_to_pixel_covariance
 
 _HTTP_IMAGE_URL = "http://images.cocodataset.org/val2017/000000397133.jpg"
 _HTTP_HOST = "images.cocodataset.org"
@@ -292,6 +293,15 @@ class TestPredictSourceData:
         assert isinstance(keypoint_precision, np.ndarray)
         assert keypoint_precision.shape == (2, 17, 3)
         assert np.allclose(keypoint_precision, 0.25)
+        assert "covariance" in key_points.data
+        np.testing.assert_allclose(
+            key_points.data["covariance"],
+            precision_cholesky_to_pixel_covariance(
+                precision_cholesky=keypoint_precision, source_shape=key_points.data["source_shape"]
+            ),
+            rtol=1e-4,
+            atol=1e-6,
+        )
 
     def test_predict_keypoints_empty_threshold_return_supervision_keypoints(self) -> None:
         """Keypoint predictions remain ``sv.KeyPoints`` when all detections are filtered."""

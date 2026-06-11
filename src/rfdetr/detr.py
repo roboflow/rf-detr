@@ -43,6 +43,7 @@ from rfdetr.datasets.yolo import is_valid_yolo_dataset
 from rfdetr.inference import ModelContext, _build_model_context
 from rfdetr.utilities.decorators import deprecated
 from rfdetr.utilities.distributed import is_main_process
+from rfdetr.utilities.keypoints import precision_cholesky_to_pixel_covariance
 from rfdetr.utilities.logger import get_logger
 
 try:
@@ -1410,7 +1411,9 @@ class RFDETR:
             is the postprocessed detection score and, by default, includes keypoint uncertainty fusion controlled by
             ``model_config.postprocess_trace_alpha``. ``key_points.keypoint_confidence`` is separate: it is a
             ``(num_detections, num_keypoints)`` array of per-keypoint findability scores decoded from the keypoint head,
-            not a repeated copy of the detection score. ``key_points.data["xyxy"]`` stores the corresponding detection
+            not a repeated copy of the detection score. When RF-DETR emits keypoint precision parameters,
+            ``key_points.data["covariance"]`` stores per-keypoint pixel-space covariance matrices with shape
+            ``(num_detections, num_keypoints, 2, 2)``. ``key_points.data["xyxy"]`` stores the corresponding detection
             boxes as a ``(num_detections, 4)`` array in the same row order as ``key_points.xy`` because Supervision
             ``KeyPoints`` does not have a native bounding-box field. The ``data`` dict also contains ``class_name`` and
             ``source_shape`` as per-object arrays. When ``include_source_image=True`` for keypoint models,
@@ -1648,6 +1651,15 @@ class RFDETR:
                 keypoint_data["xyxy"] = detections.xyxy.astype(np.float32)
                 if include_source_image:
                     keypoint_data["source_image"] = [source_images[i] for _ in range(len(detections))]
+                raw_precision = keypoint_data.get("keypoint_precision_cholesky")
+                raw_source_shape = keypoint_data.get("source_shape")
+                if raw_precision is not None and raw_source_shape is not None and len(detections) > 0:
+                    precision = np.asarray(raw_precision, dtype=np.float32)
+                    source_shape = np.asarray(raw_source_shape, dtype=np.float32)
+                    if precision.shape[:2] == keypoints_array.shape[:2] and source_shape.shape == (len(detections), 2):
+                        keypoint_data["covariance"] = precision_cholesky_to_pixel_covariance(
+                            precision_cholesky=precision, source_shape=source_shape
+                        )
                 if len(detections) == 0:
                     key_points = sv.KeyPoints.empty()
                     key_points.data = keypoint_data
