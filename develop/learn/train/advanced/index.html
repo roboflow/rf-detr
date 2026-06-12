@@ -91,7 +91,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-04-21T10:57:53">
+  <meta property="article:modified_time" content="2026-05-28T18:32:08">
   
   <script type="application/ld+json">
   {
@@ -106,7 +106,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-04-21T10:57:53",
+    "dateModified": "2026-05-28T18:32:08",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -2857,7 +2857,8 @@
 </div>
 <hr />
 <h2 id="early-stopping">Early Stopping<a class="headerlink" href="#early-stopping" title="Permanent link">&para;</a></h2>
-<p>Early stopping monitors validation mAP and halts training if improvements remain below a threshold for a set number of epochs. This prevents wasted computation once the model has converged.</p>
+<p>Early stopping monitors the validation task metric and halts training if improvements remain below a threshold for a
+set number of epochs. Detection and segmentation models use box mAP; keypoint preview models use COCO keypoint AP.</p>
 <h3 id="basic-usage">Basic Usage<a class="headerlink" href="#basic-usage" title="Permanent link">&para;</a></h3>
 <div class="tabbed-set tabbed-alternate" data-tabs="2:2"><input checked="checked" id="__tabbed_2_1" name="__tabbed_2" type="radio" /><input id="__tabbed_2_2" name="__tabbed_2" type="radio" /><div class="tabbed-labels"><label for="__tabbed_2_1">Object Detection</label><label for="__tabbed_2_2">Image Segmentation</label></div>
 <div class="tabbed-content">
@@ -2913,12 +2914,12 @@
 <tr>
 <td><code>early_stopping_min_delta</code></td>
 <td>0.001</td>
-<td>Minimum mAP change to count as improvement</td>
+<td>Minimum metric change to count as improvement</td>
 </tr>
 <tr>
 <td><code>early_stopping_use_ema</code></td>
 <td>False</td>
-<td>Use EMA model's mAP for comparisons</td>
+<td>Use EMA model metrics for comparisons</td>
 </tr>
 </tbody>
 </table>
@@ -2928,15 +2929,15 @@
 </span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">200</span><span class="p">,</span>
 </span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="n">early_stopping</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
 </span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    <span class="n">early_stopping_patience</span><span class="o">=</span><span class="mi">15</span><span class="p">,</span>  <span class="c1"># Wait 15 epochs before stopping</span>
-</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    <span class="n">early_stopping_min_delta</span><span class="o">=</span><span class="mf">0.005</span><span class="p">,</span>  <span class="c1"># Require 0.5% mAP improvement</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    <span class="n">early_stopping_min_delta</span><span class="o">=</span><span class="mf">0.005</span><span class="p">,</span>  <span class="c1"># Require 0.5% validation metric improvement</span>
 </span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>    <span class="n">early_stopping_use_ema</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>  <span class="c1"># Track EMA model performance</span>
 </span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="p">)</span>
 </span></code></pre></div>
 <h3 id="how-it-works">How It Works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h3>
 <ol>
-<li>After each epoch, validation mAP is computed</li>
-<li>If mAP improves by at least <code>min_delta</code>, the patience counter resets</li>
-<li>If mAP doesn't improve, the patience counter increments</li>
+<li>After each epoch, the validation task metric is computed</li>
+<li>If the metric improves by at least <code>min_delta</code>, the patience counter resets</li>
+<li>If the metric doesn't improve, the patience counter increments</li>
 <li>When patience counter reaches <code>patience</code>, training stops</li>
 <li>The best checkpoint is already saved as <code>checkpoint_best_total.pth</code></li>
 </ol>
@@ -3209,7 +3210,7 @@ integer (e.g. <code>devices=4</code>). These values are forwarded to <code>build
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="April 21, 2026 10:57:53 UTC">2026-04-21 10:57:53</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="May 28, 2026 18:32:08 UTC">2026-05-28 18:32:08</span>
   </span>
 
     

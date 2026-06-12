@@ -2162,6 +2162,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>RFDETR.export_for_roboflow(output_dir)</code> — writes a Roboflow upload bundle (<code>weights.pt</code> + <code>class_names.txt</code>) without a network call; extracted from <code>deploy_to_roboflow</code>, which now uses it (<a href="https://github.com/roboflow/rf-detr/pull/1086">#1086</a>)</li>
+<li><code>RFDETRKeypointPreview</code> — keypoint detection model variant with GroupPose-style head, covariance-based uncertainty (precision-Cholesky parameterization), and COCO keypoint AP evaluation. Also adds <code>KeypointTrainConfig</code>, <code>infer_coco_keypoint_schema</code>, <code>CocoKeypointSchema</code>, and <code>active_keypoint_counts</code> to the public API (<a href="https://github.com/roboflow/rf-detr/pull/1099">#1099</a>)</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <p>-</p>
