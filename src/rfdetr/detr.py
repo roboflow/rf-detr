@@ -23,10 +23,6 @@ from typing import TYPE_CHECKING, Any, Concatenate, Optional, ParamSpec, TypeVar
 import numpy as np
 import requests
 import torch
-
-if TYPE_CHECKING:
-    from supervision import Detections, KeyPoints
-
 import torchvision.transforms.functional as F  # noqa: N812
 import yaml
 from PIL import Image
@@ -42,6 +38,9 @@ from rfdetr.utilities.decorators import deprecated
 from rfdetr.utilities.distributed import is_main_process
 from rfdetr.utilities.keypoints import precision_cholesky_to_pixel_covariance
 from rfdetr.utilities.logger import get_logger
+
+if TYPE_CHECKING:
+    from supervision import Detections, KeyPoints
 
 try:
     torch.set_float32_matmul_precision("high")
