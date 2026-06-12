@@ -77,6 +77,7 @@ def build_roboflow(image_set: str, args: Any, resolution: int) -> Dataset[Any]:
 
     dataset_format = detect_roboflow_format(root)
 
+    # Detection dataset args may omit the keypoint flag; missing means standard detection.
     if getattr(args, "use_grouppose_keypoints", False) and dataset_format == "yolo":
         raise ValueError(
             "YOLO keypoint training is not supported yet. "
@@ -96,6 +97,7 @@ def build_dataset(image_set: str, args: Any, resolution: int) -> Dataset[Any]:
     if args.dataset_file == "roboflow":
         return build_roboflow(image_set, args, resolution)
     if args.dataset_file == "yolo":
+        # Detection dataset args may omit the keypoint flag; missing means standard YOLO detection.
         if getattr(args, "use_grouppose_keypoints", False):
             raise ValueError(
                 "YOLO keypoint training is not supported yet. "

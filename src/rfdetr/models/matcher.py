@@ -293,6 +293,7 @@ class HungarianMatcher(nn.Module):
 
 
 def build_matcher(args):
+    # Detection-only matcher args may omit keypoint costs; zero defaults disable keypoint matching terms.
     common_kwargs = {
         "cost_class": args.set_cost_class,
         "cost_bbox": args.set_cost_bbox,

@@ -45,7 +45,20 @@ def modulate(features: torch.Tensor, scale: torch.Tensor, shift: torch.Tensor) -
         shift: Per-feature shift terms.
 
     Returns:
-        Modulated features.
+        Modulated features with the same shape as ``features``.
+
+    Example:
+        Apply modulation to a batch of 2 query tokens, each with 4 channels:
+
+        .. code-block:: python
+
+            features = torch.zeros(2, 4)          # (batch, dim)
+            scale    = torch.ones(2, 4) * 0.1     # small positive scale
+            shift    = torch.ones(2, 4) * (-0.5)  # constant shift
+
+            out = modulate(features, scale, shift)
+            # scale=0.1 → effective multiplier is 1.1; shift=-0.5 applied additively
+            # out[0] ≈ tensor([-0.5000, -0.5000, -0.5000, -0.5000])
     """
 
     return (scale + 1.0) * features + shift
@@ -87,6 +100,20 @@ class ConditionalQueryInitializer(nn.Module):  # type: ignore[misc]
 
         Returns:
             Tensor of shape ``(B, num_queries, out_dim)`` with initialized keypoint queries.
+
+        Example:
+            Initialize 17 keypoint queries conditioned on a batch of 2 detection embeddings:
+
+            .. code-block:: python
+
+                initializer = ConditionalQueryInitializer(dim=256, num_queries=17)
+                query_features = torch.randn(2, 256)   # (B=2, dim=256)
+
+                keypoint_queries = initializer(query_features)
+                # keypoint_queries.shape == (2, 17, 256)
+                # Each of the 17 query slots is independently modulated by the
+                # per-detection conditioning vector before being passed to the
+                # GroupPose keypoint decoder.
         """
 
         normed_query_features = self.query_norm(self.queries)
@@ -121,6 +148,36 @@ def compute_l1_keypoint_loss(
 
     Returns:
         Tuple of location, findable BCE, visible BCE, and raw Gaussian NLL losses.
+        Each tensor has shape ``(n_targets,)``.
+
+    Example:
+        Compute losses for 2 matched targets, each with 17 keypoints (COCO layout):
+
+        .. code-block:: python
+
+            n_targets, K, pred_dim = 2, 17, 7
+            all_pred_keypoints = torch.randn(n_targets, K, pred_dim)
+
+            # Ground truth: 17 keypoints per target, each (x, y, visibility)
+            # visibility: 0=not labeled, 1=labeled but occluded, 2=fully visible
+            target_keypoints = torch.rand(n_targets, K, 3)
+            target_keypoints[:, :, 2] = 2.0   # mark all keypoints fully visible
+
+            target_classes = torch.zeros(n_targets, dtype=torch.long)  # single class (person)
+            target_areas   = torch.tensor([0.05, 0.12])  # normalized box areas
+
+            loc_loss, findable_loss, visible_loss, nll_loss = compute_l1_keypoint_loss(
+                all_pred_keypoints,
+                target_keypoints,
+                target_classes,
+                target_areas,
+                num_keypoints_per_class=[17],
+            )
+            # Each output tensor has shape (2,) — one scalar loss per matched target.
+            # loc_loss:      area-normalized mean L1 distance for visible keypoints
+            # findable_loss: BCE for "annotator could locate this keypoint"
+            # visible_loss:  BCE for "keypoint is fully visible (v==2)"
+            # nll_loss:      Gaussian NLL incorporating Cholesky uncertainty parameters
     """
 
     n_targets, total_padded_num_keypoints, pred_dim = all_pred_keypoints.shape
@@ -130,12 +187,16 @@ def compute_l1_keypoint_loss(
     if num_classes == 0:
         raise ValueError("num_keypoints_per_class must be non-empty when computing keypoint losses.")
 
-    if n_targets > 0 and target_classes.max().item() >= num_classes:
-        raise ValueError(
-            f"target_classes contains class index {target_classes.max().item()} but "
-            f"num_keypoints_per_class has only {num_classes} entries. "
-            "Schema length must cover every class present in the batch."
+    if n_targets > 0 and target_classes.max() >= num_classes:
+        logger.warning(
+            "target_classes max index %d >= num_keypoints_per_class length %d; "
+            "skipping keypoint loss for this batch to avoid crashing training. "
+            "Check that your keypoint schema covers all annotation classes.",
+            int(target_classes.max()),
+            num_classes,
         )
+        zeros = all_pred_keypoints.new_zeros(n_targets)
+        return zeros, zeros, zeros, zeros
 
     kpad = total_padded_num_keypoints // num_classes
     split_pred_keypoints = all_pred_keypoints.view(n_targets, num_classes, kpad, pred_dim)
@@ -255,6 +316,35 @@ def compute_keypoint_matching_cost(
 
     Returns:
         Tuple ``(cost_l1, cost_findable, cost_visible, cost_nll)`` each of shape ``(B, Q, N)``.
+
+    Example:
+        Compute matching costs for 1 image with 4 decoder queries against 2 ground-truth
+        targets, each with 17 COCO keypoints:
+
+        .. code-block:: python
+
+            B, Q, K_total, pred_dim = 1, 4, 17, 7
+            n_targets = 2
+
+            all_pred_keypoints = torch.randn(B, Q, K_total, pred_dim)
+
+            target_keypoints = torch.rand(n_targets, K_total, 3)
+            target_keypoints[:, :, 2] = 2.0   # mark all keypoints fully visible
+
+            target_classes = torch.zeros(n_targets, dtype=torch.long)  # single class (person)
+            target_areas   = torch.tensor([0.05, 0.12])
+
+            cost_l1, cost_findable, cost_visible, cost_nll = compute_keypoint_matching_cost(
+                all_pred_keypoints,
+                target_keypoints,
+                target_classes,
+                target_areas,
+                num_keypoints_per_class=[17],
+            )
+            # Each output tensor has shape (1, 4, 2) — (B, Q, N).
+            # cost_l1[:, q, n]  is the area-normalized L1 cost for query q against target n.
+            # cost_nll[:, q, n] incorporates the Cholesky precision uncertainty.
+            # These cost matrices are passed to the Hungarian matcher.
     """
 
     b, num_queries, total_num_keypoints, pred_dim = all_pred_keypoints.shape

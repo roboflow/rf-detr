@@ -1204,6 +1204,7 @@ class RFDETR:
             return
 
         if self.model_config.use_grouppose_keypoints:
+            # Older configs may omit the schema; absence means no schema-based class-count expansion.
             keypoint_schema = list(getattr(self.model_config, "num_keypoints_per_class", []) or [])
             if keypoint_schema:
                 dataset_num_classes = max(dataset_num_classes, len(keypoint_schema))
@@ -1308,6 +1309,7 @@ class RFDETR:
             return
 
         inferred_schema = inferred.num_keypoints_per_class
+        # Older configs may omit the schema; absence lets dataset inference populate it.
         current_schema = list(getattr(self.model_config, "num_keypoints_per_class", []) or [])
         user_set_schema = "num_keypoints_per_class" in getattr(self.model_config, "model_fields_set", set())
 
@@ -1551,9 +1553,7 @@ class RFDETR:
                 "pred_boxes": predictions[0],
             }
             if len(predictions) == 3:
-                # Distinguish keypoint vs mask output by inspecting the model config — both
-                # heads can produce a third tuple element but route through different
-                # postprocess paths.
+                # Distinguish optional keypoint vs mask tuple output for legacy compiled/export shims.
                 if getattr(getattr(self.model, "model_config", None), "use_grouppose_keypoints", False):
                     return_predictions["pred_keypoints"] = predictions[2]
                 else:

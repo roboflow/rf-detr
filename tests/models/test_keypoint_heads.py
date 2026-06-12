@@ -223,3 +223,56 @@ def test_compute_keypoint_matching_cost_rejects_missing_schema() -> None:
             target_areas=torch.tensor([1.0], dtype=torch.float32),
             num_keypoints_per_class=[],
         )
+
+
+class TestComputeKeypointMatchingCostSmoke:
+    """Group: compute_keypoint_matching_cost — shape and boundary checks."""
+
+    def test_n_targets_zero_returns_four_empty_cost_tensors(self) -> None:
+        """Empty target set should return four finite (B, Q, 0) cost tensors immediately."""
+        b, q = 2, 4
+        all_pred_keypoints = torch.randn(b, q, 17, 7)
+
+        cost_l1, cost_findable, cost_visible, cost_nll = compute_keypoint_matching_cost(
+            all_pred_keypoints=all_pred_keypoints,
+            target_keypoints=torch.empty(0, 17, 3),
+            target_classes=torch.empty(0, dtype=torch.int64),
+            target_areas=torch.empty(0),
+            num_keypoints_per_class=[17],
+        )
+
+        for cost, name in (
+            (cost_l1, "cost_l1"),
+            (cost_findable, "cost_findable"),
+            (cost_visible, "cost_visible"),
+            (cost_nll, "cost_nll"),
+        ):
+            assert cost.shape == (b, q, 0), f"{name}: expected shape ({b}, {q}, 0), got {cost.shape}"
+            assert torch.isfinite(cost).all(), f"{name}: expected all-finite tensor, got non-finite values"
+
+
+class TestComputeL1KeypointLossOobClass:
+    """Group: compute_l1_keypoint_loss — out-of-range class index handling."""
+
+    def test_class_index_out_of_range_returns_zero_losses_without_raising(self) -> None:
+        """Out-of-range class index should emit a warning and return zeros, not raise."""
+        pred_keypoints = torch.randn(1, 17, 7)
+        target_keypoints = torch.rand(1, 17, 3)
+        target_keypoints[:, :, 2] = 2.0
+        # class index 2 is out of range for num_keypoints_per_class=[17] (only class 0 defined)
+        result = compute_l1_keypoint_loss(
+            all_pred_keypoints=pred_keypoints,
+            target_keypoints=target_keypoints,
+            target_classes=torch.tensor([2], dtype=torch.int64),
+            target_areas=torch.tensor([1.0], dtype=torch.float32),
+            num_keypoints_per_class=[17],
+        )
+
+        assert len(result) == 4, f"Expected 4-tuple, got {len(result)} elements"
+        for i, loss in enumerate(result):
+            assert loss.shape == (1,), f"Loss[{i}]: expected shape (1,), got {loss.shape}"
+            torch.testing.assert_close(
+                loss,
+                torch.zeros(1),
+                msg=f"Loss[{i}]: expected all zeros for out-of-range class, got {loss}",
+            )

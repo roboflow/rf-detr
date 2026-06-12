@@ -129,6 +129,7 @@ class COCOEvalCallback(Callback):
             stage: One of ``"fit"``, ``"validate"``, ``"test"``, ``"predict"``.
         """
         model_config = getattr(pl_module, "model_config", None)
+        # Some callback unit shims omit model_config; missing keypoint flag means bbox/segm evaluation.
         use_grouppose_keypoints = (
             getattr(model_config, "use_grouppose_keypoints", False) if model_config is not None else False
         )

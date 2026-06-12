@@ -40,6 +40,8 @@ class CocoKeypointSchema:
     keypoint_oks_sigmas: list[float]
 
 
+# Forward-compat alias: KeypointSchema is kept as the public name so future schema
+# variants (e.g. YOLOKeypointSchema) can be swapped in without touching call sites.
 KeypointSchema = CocoKeypointSchema
 
 

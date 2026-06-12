@@ -215,6 +215,12 @@ def _download_lock(lock_path: Path, timeout_s: float = 600.0, poll_s: float = 0.
 
     Raises:
         TimeoutError: If the lock cannot be acquired within the timeout.
+
+    Note:
+        Lock identity is file existence (``O_CREAT | O_EXCL``), not a held file descriptor.
+        A SIGKILL-terminated process will leak the lock file until ``timeout_s`` expires.
+        If all worker processes have exited but the lock persists, remove it manually:
+        ``rm <lock_path>``.
     """
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     start = time.time()
