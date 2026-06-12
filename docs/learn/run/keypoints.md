@@ -1,10 +1,12 @@
 ---
-description: Run RF-DETR keypoint detection on images, video, and streams. COCO-pretrained preview model predicts 17 person keypoints using a DINOv2 backbone.
+description: Run RF-DETR keypoint detection on images, video, and streams. COCO-pretrained preview model predicts 17 person keypoints with 71.9 AP at 9.8 ms on NVIDIA T4.
 ---
 
 # Run an RF-DETR Keypoint Model
 
-RF-DETR Keypoint is a transformer architecture for human pose estimation, built on a DINOv2 vision transformer backbone. The preview model is pretrained on the Microsoft COCO dataset and predicts 17 body keypoints for the "person" class.
+RF-DETR Keypoint is a real-time transformer architecture for human pose estimation, built on a DINOv2 vision transformer backbone. The preview model is pretrained on the Microsoft COCO dataset and predicts 17 body keypoints per detected person.
+
+![People walking on a bridge with RF-DETR keypoint skeleton overlays and bounding boxes](../../assets/keypoints/bridge-1.jpg)
 
 !!! note "Preview model"
 
@@ -12,15 +14,19 @@ RF-DETR Keypoint is a transformer architecture for human pose estimation, built 
 
 ## Pre-trained Checkpoints
 
-|     Size     |  RF-DETR package class  | COCO OKS AP | Params (M) | Resolution |
-| :----------: | :---------------------: | :---------: | :--------: | :--------: |
-| XL (Preview) | `RFDETRKeypointPreview` |      —      |   126.4    |  700x700   |
+RF-DETR Keypoint outperforms YOLO26-pose X and YOLO11-pose X at comparable latency on MS COCO. Latency measured on NVIDIA T4, TensorRT FP16, batch size 1.
 
-> The keypoint model is available only in the `rfdetr` package. It is not yet available via the `inference` package.
+![RF-DETR Keypoint mAP vs latency chart comparing against YOLO26-pose and YOLO11-pose on MS COCO](../../assets/keypoints/kp-map-latency.png){ width=560 }
+
+|     Size     |  RF-DETR package class  | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |  License   |
+| :----------: | :---------------------: | :---------------------: | :----------: | :--------: | :--------: | :--------: |
+| XL (Preview) | `RFDETRKeypointPreview` |          71.9           |     9.8      |   126.4    |  700x700   | Apache 2.0 |
+
+> The keypoint model is available in the `rfdetr` package only. It is not yet available via the `inference` package.
 
 ## Run on an Image
 
-Perform inference on an image using the `rfdetr` package. `model.predict()` returns an `sv.KeyPoints` object. The source image is stored per detection in `key_points.data["source_image"]`; all entries reference the same frame so index `[0]` retrieves it.
+Perform inference on an image using the `rfdetr` package. `model.predict()` returns an [`sv.KeyPoints`](https://supervision.roboflow.com/latest/keypoint/core/) object containing skeleton coordinates and per-keypoint confidence scores for each detected person.
 
 === "rfdetr"
 
@@ -30,15 +36,28 @@ Perform inference on an image using the `rfdetr` package. `model.predict()` retu
 
     model = RFDETRKeypointPreview()
 
-    key_points = model.predict("https://media.roboflow.com/dog.jpg", threshold=0.5)
+    key_points = model.predict("/path/to/image.jpg", threshold=0.5)
 
     source_image = key_points.data["source_image"][0]
     annotated_image = sv.VertexAnnotator().annotate(source_image, key_points)
     ```
 
-    !!! tip "Best results with person images"
+![People walking on a bridge — RF-DETR keypoint skeleton visualization without bounding boxes](../../assets/keypoints/bridge-2.jpg)
 
-        The model is trained on COCO person keypoints. Images containing people will produce the most meaningful predictions. Non-person images (such as the dog placeholder above) may return zero or low-confidence keypoints.
+## Understanding the Output
+
+`model.predict()` returns an `sv.KeyPoints` object. The fields most commonly used downstream:
+
+| Field                             | Shape          | Description                                                               |
+| --------------------------------- | -------------- | ------------------------------------------------------------------------- |
+| `key_points.xy`                   | `(N, 17, 2)`   | Pixel coordinates of each keypoint per person                             |
+| `key_points.keypoint_confidence`  | `(N, 17)`      | Per-keypoint findability score; use to filter low-confidence joints       |
+| `key_points.detection_confidence` | `(N,)`         | Per-person detection score; this is what `threshold` filters on           |
+| `key_points.class_id`             | `(N,)`         | Class index for each detection (all `1` for person on COCO)               |
+| `key_points.data["xyxy"]`         | `(N, 4)`       | Bounding box for each person in `[x1, y1, x2, y2]` format                 |
+| `key_points.data["source_image"]` | list of arrays | Source frame repeated per detection; access via `[0]` for the first frame |
+
+Low-confidence keypoints are hidden automatically by supervision annotators via the `visible` mask. To filter manually, threshold `key_points.keypoint_confidence` directly.
 
 ## Run on video, webcam, or RTSP stream
 
@@ -136,4 +155,32 @@ These examples use OpenCV for decoding and display. Replace `<SOURCE_VIDEO_PATH>
 
     video_capture.release()
     cv2.destroyAllWindows()
+    ```
+
+## Visualization
+
+`supervision` provides several keypoint annotators. Choose based on how much uncertainty information you want to surface.
+
+=== "VertexAnnotator"
+
+    Draws a dot at each keypoint. Low-confidence keypoints are skipped automatically.
+
+    ```python
+    annotated = sv.VertexAnnotator().annotate(image, key_points)
+    ```
+
+=== "VertexEllipseAnnotator"
+
+    Draws an ellipse whose area scales with `1 - confidence`, giving a visual footprint of per-keypoint uncertainty.
+
+    ```python
+    annotated = sv.VertexEllipseAnnotator().annotate(image, key_points)
+    ```
+
+=== "VertexEllipseHaloAnnotator"
+
+    Adds a soft halo ring around each ellipse for improved contrast on busy backgrounds.
+
+    ```python
+    annotated = sv.VertexEllipseHaloAnnotator().annotate(image, key_points)
     ```
