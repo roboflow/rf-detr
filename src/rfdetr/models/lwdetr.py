@@ -816,6 +816,7 @@ def build_model(args: "BuilderArgs"):
         two_stage=args.two_stage,
         lite_refpoint_refine=args.lite_refpoint_refine,
         bbox_reparam=args.bbox_reparam,
+        # Detection-only builder args may omit keypoint-only fields; default to the non-keypoint path.
         use_grouppose_keypoints=getattr(args, "use_grouppose_keypoints", False),
         num_keypoints_per_class=getattr(args, "num_keypoints_per_class", []),
         grouppose_keypoint_dim_downscale=getattr(args, "grouppose_keypoint_dim_downscale", 1),
@@ -831,6 +832,7 @@ def build_criterion_and_postprocessors(args: "BuilderArgs"):
     if args.segmentation_head:
         weight_dict["loss_mask_ce"] = args.mask_ce_loss_coef
         weight_dict["loss_mask_dice"] = args.mask_dice_loss_coef
+    # Detection-only training args may omit keypoint loss knobs; read them only for keypoint mode.
     has_keypoints = getattr(args, "use_grouppose_keypoints", False)
     if has_keypoints:
         weight_dict["loss_keypoints_l1"] = getattr(args, "keypoint_l1_loss_coef", 0.0)
@@ -886,6 +888,7 @@ def build_criterion_and_postprocessors(args: "BuilderArgs"):
     postprocess = PostProcess(
         num_select=args.num_select,
         num_keypoints_per_class=getattr(args, "num_keypoints_per_class", []),
+        # Older detection-only namespaces may omit keypoint postprocess knobs; keep the ModelConfig default.
         trace_alpha=getattr(args, "postprocess_trace_alpha", 0.2),
     )
 

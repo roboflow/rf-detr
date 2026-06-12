@@ -63,6 +63,7 @@ class RFDETRModelModule(LightningModule):
             # and writes any auto-aligned ``num_classes`` back onto ``model_config``.
             load_pretrain_weights(self.model, self.model_config)
             if model_config.use_grouppose_keypoints:
+                # Older model shims may omit the keypoint reset hook; call it only when implemented.
                 reset_keypoint_gaussian_parameters = getattr(self.model, "reset_keypoint_gaussian_parameters", None)
                 if callable(reset_keypoint_gaussian_parameters):
                     reset_keypoint_gaussian_parameters()

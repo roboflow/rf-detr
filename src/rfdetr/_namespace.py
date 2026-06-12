@@ -56,6 +56,7 @@ _MC_NAMESPACE_FIELDS = {
     "dual_projector_kp_only",
     "num_keypoints_per_class",
     "num_decoder_registers",
+    "postprocess_trace_alpha",
     "two_stage",
 }
 

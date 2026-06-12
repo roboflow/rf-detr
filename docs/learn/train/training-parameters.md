@@ -197,14 +197,19 @@ model.train(
 
 These parameters apply when training `RFDETRKeypointPreview` on COCO keypoint annotations.
 
-| Parameter                     | Type        | Default   | Description                                                                                  |
-| ----------------------------- | ----------- | --------- | -------------------------------------------------------------------------------------------- |
-| `num_keypoints_per_class`     | `list[int]` | `[0, 17]` | Keypoint schema by model label slot. A zero entry marks a detection-only class slot.         |
-| `keypoint_flip_pairs`         | `list[int]` | `[]`      | Flat left/right keypoint index pairs used to swap joints after horizontal-flip augmentation. |
-| `keypoint_l1_loss_coef`       | `float`     | `1.0`     | Weight for keypoint coordinate L1 loss in keypoint preview training.                         |
-| `keypoint_findable_loss_coef` | `float`     | `1.0`     | Weight for keypoint findable/objectness loss.                                                |
-| `keypoint_visible_loss_coef`  | `float`     | `1.0`     | Weight for keypoint visibility loss.                                                         |
-| `keypoint_nll_loss_coef`      | `float`     | `1.0`     | Weight for keypoint negative-log-likelihood loss.                                            |
+| Parameter                     | Type                  | Default   | Description                                                                                                                                                                                                                            |
+| ----------------------------- | --------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `num_keypoints_per_class`     | `list[int]`           | `[0, 17]` | Keypoint schema by model label slot. A zero entry marks a detection-only class slot.                                                                                                                                                   |
+| `keypoint_flip_pairs`         | `list[int]`           | `[]`      | Flat left/right keypoint index pairs used to swap joints after horizontal-flip augmentation.                                                                                                                                           |
+| `keypoint_l1_loss_coef`       | `float`               | `1.0`     | Weight for keypoint coordinate L1 loss in keypoint preview training.                                                                                                                                                                   |
+| `keypoint_findable_loss_coef` | `float`               | `1.0`     | Weight for keypoint findable/objectness loss.                                                                                                                                                                                          |
+| `keypoint_visible_loss_coef`  | `float`               | `1.0`     | Weight for keypoint visibility loss.                                                                                                                                                                                                   |
+| `keypoint_nll_loss_coef`      | `float`               | `1.0`     | Weight for keypoint negative-log-likelihood loss.                                                                                                                                                                                      |
+| `keypoint_oks_sigmas`         | `list[float] \| None` | `None`    | Per-keypoint OKS sigma values used for COCO AP evaluation. When `None`, falls back to the sigma values declared in the keypoint schema (default 0.1 per keypoint). Set to COCO official per-keypoint sigmas for comparable benchmarks. |
+
+!!! note "OKS sigma values: flat vs per-keypoint"
+
+    The default `infer_coco_keypoint_schema` uses a flat sigma of 0.1 for all keypoints. COCO's official per-keypoint sigmas range from 0.025 (eyes) to 0.107 (hips). Flat 0.1 over-penalizes tight keypoints and under-penalizes loose ones, producing AP numbers not directly comparable to official COCO benchmarks. Use `keypoint_oks_sigmas` with the official COCO values when reporting benchmark numbers.
 
 ## Advanced Parameters
 

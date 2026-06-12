@@ -469,6 +469,7 @@ def load_pretrain_weights(
                 checkpoint["model"][name] = tensor[: mc.num_queries * mc.group_detr]
 
     checkpoint["model"] = remap_projector_to_cross_attn(checkpoint["model"], nn_model)
+    # Detection checkpoints/configs may omit keypoint schema fields; absence means no keypoint reconciliation.
     configured_keypoint_schema = list(getattr(mc, "num_keypoints_per_class", []) or [])
     checkpoint_keypoint_schema = None
     should_restore_config_keypoint_schema = False

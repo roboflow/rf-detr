@@ -150,6 +150,15 @@ def test_key_points_for_display_rejects_keypoints_without_confidence_channel() -
         _key_points_for_display(key_points)
 
 
+def test_key_points_for_display_empty_detections_returns_without_raising() -> None:
+    """Empty KeyPoints (zero detections) should be returned unchanged without raising."""
+    empty_predictions = sv.KeyPoints.empty()
+
+    result = _key_points_for_display(empty_predictions)
+
+    assert len(result) == 0, f"Expected empty KeyPoints, got len={len(result)}"
+
+
 def test_keypoint_prediction_records_flattens_visible_keypoints() -> None:
     """Prediction records should expose detection and keypoint confidence for visible non-zero points."""
     key_points = sv.KeyPoints(

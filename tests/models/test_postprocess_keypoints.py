@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 """Unit tests for keypoint decoding in PostProcess."""
 
+import pytest
 import torch
 
 from rfdetr.models.postprocess import PostProcess
@@ -108,3 +109,18 @@ def test_postprocess_keypoints_trace_alpha_uses_log_space_for_extreme_trace() ->
 
     expected_score = torch.tensor([0.5], dtype=torch.float32) * torch.exp(torch.tensor([-20.0], dtype=torch.float32))
     torch.testing.assert_close(results[0]["scores"], expected_score, rtol=1e-4, atol=1e-12)
+
+
+def test_postprocess_validate_outputs_raises_when_masks_and_keypoints_both_present() -> None:
+    """PostProcess should raise ValueError when both pred_masks and pred_keypoints are present."""
+    postprocess = PostProcess(num_select=10)
+    outputs = {
+        "pred_logits": torch.zeros((1, 2, 2)),
+        "pred_boxes": torch.zeros((1, 2, 4)),
+        "pred_masks": torch.zeros((1, 2, 4, 4)),
+        "pred_keypoints": torch.zeros((1, 2, 17, 8)),
+    }
+    target_sizes = torch.tensor([[100, 200]], dtype=torch.int64)
+
+    with pytest.raises(ValueError, match="cannot be used together"):
+        postprocess(outputs, target_sizes)

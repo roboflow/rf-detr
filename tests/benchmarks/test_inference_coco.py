@@ -484,6 +484,7 @@ def test_inference_segmentation_rfdetr_predict(
     assert f1_val >= threshold_f1, f"F1 {f1_val:.4f} < {threshold_f1}"
 
 
+@pytest.mark.coco17
 def test_keypoint_preview_pretrained_inference_thresholded(
     keypoint_preview_predictions: tuple[list[sv.KeyPoints], list[int], Path],
 ) -> None:
@@ -516,6 +517,7 @@ def test_keypoint_preview_pretrained_inference_thresholded(
 
 
 @pytest.mark.gpu
+@pytest.mark.coco17
 @pytest.mark.parametrize(
     ("threshold_keypoint_map", "num_samples", "batch_size"),
     [

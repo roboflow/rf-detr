@@ -210,7 +210,13 @@ def remap_projector_to_cross_attn(state_dict: dict[str, Any], model: object) -> 
         The same ``state_dict`` object for convenience.
     """
     backbone = model.backbone[0] if hasattr(model, "backbone") else None
-    if backbone is None or getattr(backbone, "cross_attn_projector", None) is None:
+    if backbone is None:
+        return state_dict
+
+    # Real dual-projector backbones expose cross_attn_projector; compatibility shims may only carry dual_projector.
+    has_cross_attn_projector = getattr(backbone, "cross_attn_projector", None) is not None
+    dual_projector_enabled = bool(getattr(backbone, "dual_projector", False)) or has_cross_attn_projector
+    if not dual_projector_enabled:
         return state_dict
 
     if any(key.startswith("backbone.0.cross_attn_projector.") for key in state_dict):

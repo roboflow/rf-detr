@@ -178,7 +178,7 @@ class RFDETRLarge(RFDETR):
                     self.init_error,
                     exc_info=retry_exc,
                 )
-                raise self.init_error from None
+                raise self.init_error from retry_exc
 
     def get_model_config(self, **kwargs) -> ModelConfig:
         if not self.is_deprecated:

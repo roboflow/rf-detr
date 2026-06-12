@@ -158,3 +158,47 @@ def test_infer_coco_keypoint_schema_rejects_malformed_annotation_keypoint_length
 
     with pytest.raises(ValueError, match="length divisible by 3"):
         infer_coco_keypoint_schema(annotation_path)
+
+
+def test_infer_coco_keypoint_schema_raises_file_not_found(tmp_path: Path) -> None:
+    """Non-existent annotation file should raise FileNotFoundError before any parsing."""
+    missing = tmp_path / "does_not_exist.json"
+
+    with pytest.raises(FileNotFoundError):
+        infer_coco_keypoint_schema(missing)
+
+
+def test_infer_coco_keypoint_schema_raises_key_error_for_missing_categories_key(tmp_path: Path) -> None:
+    """JSON file missing the 'categories' key should raise KeyError."""
+    annotation_path = tmp_path / "no_categories.json"
+    annotation_path.write_text('{"images": [], "annotations": []}', encoding="utf-8")
+
+    with pytest.raises(KeyError):
+        infer_coco_keypoint_schema(annotation_path)
+
+
+def test_infer_coco_keypoint_schema_raises_value_error_for_list_root(tmp_path: Path) -> None:
+    """JSON file whose root is a list (not an object) should raise ValueError."""
+    annotation_path = tmp_path / "list_root.json"
+    annotation_path.write_text("[]", encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        infer_coco_keypoint_schema(annotation_path)
+
+
+@pytest.mark.parametrize(
+    "counts,expected",
+    [
+        pytest.param([0, 17, 25], [17, 25], id="leading-zero-filtered"),
+        pytest.param([0, 0], [], id="all-zero-returns-empty"),
+        pytest.param([5, 17], [5, 17], id="all-nonzero-returned-unchanged"),
+        pytest.param([], [], id="empty-input-returns-empty"),
+    ],
+)
+def test_active_keypoint_counts_filters_zeros(counts: list[int], expected: list[int]) -> None:
+    """active_keypoint_counts should return only positive counts in schema order."""
+    from rfdetr.datasets._keypoint_schema import active_keypoint_counts
+
+    result = active_keypoint_counts(counts)
+
+    assert result == expected, f"active_keypoint_counts({counts!r}) = {result!r}, expected {expected!r}"
