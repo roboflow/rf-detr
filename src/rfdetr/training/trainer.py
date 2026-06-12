@@ -131,7 +131,9 @@ def build_trainer(
 
     Args:
         train_config: Training hyperparameter configuration.
-        model_config: Architecture configuration (used for precision and segmentation).
+        model_config: Architecture configuration. Used for precision resolution
+            (``model_config.amp``) and to guard against unsupported distributed
+            configurations for keypoint models.
         accelerator: PTL accelerator string (e.g. ``"auto"``, ``"cpu"``, ``"gpu"``).
             Defaults to ``None`` which reads from ``train_config.accelerator`` (itself defaulting to ``"auto"``). Pass
             ``"cpu"`` to override auto-detection (e.g. when the caller explicitly requests CPU training via
@@ -186,6 +188,7 @@ def build_trainer(
     strategy = trainer_kwargs.get("strategy", tc.strategy)
     devices = trainer_kwargs.get("devices", tc.devices)
     num_nodes = trainer_kwargs.get("num_nodes", tc.num_nodes)
+    strategy_name = strategy.strip().lower() if isinstance(strategy, str) else None
     has_keypoints = bool(model_config.use_grouppose_keypoints)
     distributed_requested = (
         _is_distributed_strategy_requested(str(strategy))
@@ -203,23 +206,34 @@ def build_trainer(
 
     # Transparently replace fork-based DDP with spawn-based DDP — see the
     # module-level comment block above _InteractiveSpawnLauncher for rationale.
-    if strategy in ("ddp_notebook", "ddp_spawn"):
+    if strategy_name in ("ddp_notebook", "ddp_spawn"):
         strategy = _NotebookSpawnDDPStrategy(start_method="spawn", find_unused_parameters=True)
         _logger.info(
             "%s → spawn-based DDP to avoid OpenMP thread pool corruption after fork.",
-            tc.strategy,
+            strategy_name,
         )
-    elif strategy == "ddp" and model_config.segmentation_head:
-        # The segmentation head's sparse_forward() returns dict intermediates and
-        # leaves some parameters unused on certain forward steps, causing DDP to
-        # raise "It looks like your LightningModule has parameters that were not
-        # used in producing the loss" with plain ddp.  Enabling
-        # find_unused_parameters lets DDP traverse the autograd graph after each
-        # backward pass to detect which parameters contributed to the loss.
+    elif strategy_name == "ddp" or (strategy_name == "auto" and distributed_requested):
+        # DETR-family architectures can leave parameters unused on certain forward
+        # steps under DDP, causing "It looks like your LightningModule has parameters
+        # that were not used in producing the loss".  Sources include:
+        #   - segmentation_head.sparse_forward() returning dict intermediates;
+        #   - two-stage encoder query groups (group_detr ModuleLists) where per-group
+        #     matcher assignment can leave groups without targets on low-annotation
+        #     batches (issue #1093);
+        #   - conditional auxiliary-loss branches.
+        # Enabling find_unused_parameters lets DDP traverse the autograd graph after
+        # each backward pass to identify which parameters contributed to the loss.
+        # To opt out (e.g. configs with two_stage=False that never hit unused params),
+        # pass strategy=DDPStrategy(find_unused_parameters=False) via trainer_kwargs.
         strategy = _DDPStrategy(find_unused_parameters=True)
-        _logger.info(
-            "segmentation_head=True with strategy='ddp' → DDPStrategy(find_unused_parameters=True).",
-        )
+        if strategy_name == "auto":
+            _logger.info(
+                "strategy='auto' with distributed execution → DDPStrategy(find_unused_parameters=True).",
+            )
+        else:
+            _logger.info(
+                "strategy='ddp' → DDPStrategy(find_unused_parameters=True).",
+            )
     sharded = any(s in str(strategy).lower() for s in ("fsdp", "deepspeed"))
     enable_ema = bool(tc.use_ema) and not sharded
     if tc.use_ema and sharded:
@@ -399,4 +413,5 @@ def build_trainer(
         "deterministic": False,
     }
     trainer_config.update(trainer_kwargs)
+    trainer_config["strategy"] = strategy
     return Trainer(**trainer_config)
