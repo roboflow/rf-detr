@@ -1437,7 +1437,7 @@ class RFDETR:
                 either dimension is zero or negative, if either dimension is not divisible by ``patch_size *
                 num_windows``, or if ``patch_size`` is not a positive integer.
         """
-        from supervision import Detections
+        from supervision import Detections, KeyPoints
 
         patch_size = _resolve_patch_size(patch_size, self.model_config, "predict")
         num_windows = getattr(self.model_config, "num_windows", 1)
@@ -1580,7 +1580,7 @@ class RFDETR:
             }
         else:
             _class_id_to_name = dict(enumerate(model_class_names))
-        predictions_list: list[sv.Detections | sv.KeyPoints] = []
+        predictions_list: list[Detections | KeyPoints] = []
         for i, result in enumerate(results):
             scores = result["scores"]
             labels = result["labels"]
@@ -1659,7 +1659,7 @@ class RFDETR:
                         )
                 keypoints_array = keypoints_array.astype(np.float32, copy=False)
                 keypoint_confidence = keypoints_array[:, :, 2]
-                key_points = sv.KeyPoints(
+                key_points = KeyPoints(
                     xy=keypoints_array[:, :, :2],
                     keypoint_confidence=keypoint_confidence,
                     detection_confidence=detections.confidence.astype(np.float32)
