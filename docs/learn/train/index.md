@@ -6,8 +6,9 @@ description: Train RF-DETR detection and segmentation models on custom datasets.
 
 !!! tip "Key Takeaways"
 
-    - Train detection or segmentation models with a single `model.train(dataset_dir=...)` call
-    - Supports both COCO JSON and YOLO dataset formats with automatic detection
+    - Train detection, segmentation, or keypoint preview models with a single `model.train(dataset_dir=...)` call
+    - Detection and segmentation support COCO JSON and YOLO dataset formats with automatic detection
+    - Keypoint preview training supports COCO keypoint JSON; YOLO pose training is not supported yet
     - Fine-tune from COCO-pretrained checkpoints (Nano to 2XLarge) for fastest convergence
     - Built on PyTorch Lightning — use the high-level API or access PTL primitives directly for full control
     - EMA weights, early stopping, and best-model checkpointing are included by default
@@ -65,6 +66,23 @@ RF-DETR supports training on datasets in both **COCO** and **YOLO** formats. The
     )
     ```
 
+=== "Keypoint Preview"
+
+    ```python
+    from rfdetr import RFDETRKeypointPreview
+
+    model = RFDETRKeypointPreview()
+
+    model.train(
+        dataset_dir="<COCO_KEYPOINT_DATASET_PATH>",
+        epochs=50,
+        batch_size=2,
+        grad_accum_steps=8,
+        lr=1e-5,
+        output_dir="<OUTPUT_PATH>",
+    )
+    ```
+
 Different GPUs have different VRAM capacities, so adjust batch_size and grad_accum_steps to maintain a total batch size of 16. For example, on a powerful GPU like the A100, use `batch_size=16` and `grad_accum_steps=1`; on smaller GPUs like the T4, use `batch_size=4` and `grad_accum_steps=4`. This gradient accumulation strategy helps train effectively even with limited memory.
 
 For object detection, the RF-DETR-B checkpoint is used by default. To get started quickly with training an object detection model, please refer to our fine-tuning Google Colab [notebook](https://colab.research.google.com/github/roboflow-ai/notebooks/blob/main/notebooks/how-to-finetune-rf-detr-on-detection-dataset.ipynb).
@@ -77,6 +95,9 @@ RF-DETR **automatically detects** whether your dataset is in COCO or YOLO format
 | -------- | ---------------------------------------- | --------------------------------------------------- |
 | **COCO** | Looks for `train/_annotations.coco.json` | [COCO Format Guide](dataset-formats.md#coco-format) |
 | **YOLO** | Looks for `data.yaml` + `train/images/`  | [YOLO Format Guide](dataset-formats.md#yolo-format) |
+
+For keypoint preview training, use COCO keypoint JSON. YOLO pose/keypoint datasets are rejected with a clear error
+instead of being treated as detection-only labels.
 
 [Roboflow](https://roboflow.com/annotate) allows you to create object detection datasets from scratch and export them in either COCO JSON or YOLO format for training. You can also explore [Roboflow Universe](https://universe.roboflow.com/) to find pre-labeled datasets for a range of use cases.
 
@@ -128,6 +149,10 @@ During training, multiple model checkpoints are saved to the output directory:
 - `checkpoint_best_regular.pth` – best checkpoint based on validation score, using the raw (non-EMA) model weights.
 
 - `checkpoint_best_total.pth` – final checkpoint selected for inference and benchmarking. It contains only the model weights (no optimizer state or scheduler) and is chosen as the better of the EMA and non-EMA models based on validation performance.
+
+For detection and segmentation models, the validation score is box mAP (`val/mAP_50_95`). For keypoint preview models,
+best-checkpoint selection uses COCO keypoint AP (`val/keypoint_map_50_95`) and checkpoints persist the model keypoint
+schema so `RFDETR.from_checkpoint()` can reconstruct the same label/keypoint slots.
 
 ??? note "Checkpoint file sizes"
 

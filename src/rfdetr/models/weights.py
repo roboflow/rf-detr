@@ -26,7 +26,7 @@ from rfdetr.assets.model_weights import download_pretrain_weights, validate_pret
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.utilities.decorators import deprecated
 from rfdetr.utilities.logger import get_logger
-from rfdetr.utilities.state_dict import _ckpt_args_get, validate_checkpoint_compatibility
+from rfdetr.utilities.state_dict import _ckpt_args_get, remap_projector_to_cross_attn, validate_checkpoint_compatibility
 
 logger = get_logger()
 
@@ -468,9 +468,58 @@ def load_pretrain_weights(
                 # multi-group training, so in practice they are all group_detr == 1.
                 checkpoint["model"][name] = tensor[: mc.num_queries * mc.group_detr]
 
+    checkpoint["model"] = remap_projector_to_cross_attn(checkpoint["model"], nn_model)
+    # Detection checkpoints/configs may omit keypoint schema fields; absence means no keypoint reconciliation.
+    configured_keypoint_schema = list(getattr(mc, "num_keypoints_per_class", []) or [])
+    checkpoint_keypoint_schema = None
+    should_restore_config_keypoint_schema = False
+    if getattr(mc, "use_grouppose_keypoints", False) and hasattr(
+        nn_model, "get_num_keypoints_per_class_from_checkpoint"
+    ):
+        checkpoint_keypoint_schema = nn_model.get_num_keypoints_per_class_from_checkpoint(checkpoint["model"])
+        if checkpoint_keypoint_schema:
+            get_model_schema = getattr(nn_model, "get_num_keypoints_per_class", None)
+            model_keypoint_schema = get_model_schema() if callable(get_model_schema) else configured_keypoint_schema
+            if checkpoint_keypoint_schema != model_keypoint_schema and hasattr(nn_model, "reinitialize_keypoint_head"):
+                logger.warning(
+                    "load_pretrain_weights: temporarily resizing keypoint schema from %s to checkpoint schema %s.",
+                    model_keypoint_schema,
+                    checkpoint_keypoint_schema,
+                )
+                nn_model.reinitialize_keypoint_head(checkpoint_keypoint_schema)
+                should_restore_config_keypoint_schema = checkpoint_keypoint_schema != configured_keypoint_schema
+
+    # `_kp_active_mask` is a deterministic buffer derived from
+    # `num_keypoints_per_class` in the current config. Some checkpoints store a
+    # shape that reflects an earlier schema (for example [2, 17] vs [1, 17]).
+    # Dropping only this key avoids hard load failures while preserving all
+    # learned weights.
+    ckpt_kp_active_mask = checkpoint["model"].get("_kp_active_mask")
+    model_state_dict = nn_model.state_dict() if hasattr(nn_model, "state_dict") else {}
+    model_kp_active_mask = model_state_dict.get("_kp_active_mask") if isinstance(model_state_dict, dict) else None
+    if (
+        isinstance(ckpt_kp_active_mask, torch.Tensor)
+        and isinstance(model_kp_active_mask, torch.Tensor)
+        and ckpt_kp_active_mask.shape != model_kp_active_mask.shape
+        and not should_restore_config_keypoint_schema
+    ):
+        logger.warning(
+            "load_pretrain_weights: dropping checkpoint _kp_active_mask with shape %s "
+            "because current model expects %s (derived from current keypoint schema).",
+            tuple(ckpt_kp_active_mask.shape),
+            tuple(model_kp_active_mask.shape),
+        )
+        checkpoint["model"].pop("_kp_active_mask", None)
     interpolate_position_embeddings(checkpoint["model"], mc.positional_encoding_size)
     incompatible = nn_model.load_state_dict(checkpoint["model"], strict=False)
     _warn_on_partial_load(incompatible, pretrain_weights)
+
+    if should_restore_config_keypoint_schema and hasattr(nn_model, "reinitialize_keypoint_head"):
+        logger.warning(
+            "load_pretrain_weights: restoring configured keypoint schema %s after checkpoint load.",
+            configured_keypoint_schema,
+        )
+        nn_model.reinitialize_keypoint_head(configured_keypoint_schema)
 
     # If the user explicitly set a class count larger than the checkpoint,
     # expand/reinitialize the head back to the configured size after load.
