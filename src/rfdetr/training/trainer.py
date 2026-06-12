@@ -131,7 +131,9 @@ def build_trainer(
 
     Args:
         train_config: Training hyperparameter configuration.
-        model_config: Architecture configuration (used for precision and segmentation).
+        model_config: Architecture configuration. Used for precision resolution
+            (``model_config.amp``) and to guard against unsupported distributed
+            configurations for keypoint models.
         accelerator: PTL accelerator string (e.g. ``"auto"``, ``"cpu"``, ``"gpu"``).
             Defaults to ``None`` which reads from ``train_config.accelerator`` (itself defaulting to ``"auto"``). Pass
             ``"cpu"`` to override auto-detection (e.g. when the caller explicitly requests CPU training via
@@ -210,19 +212,18 @@ def build_trainer(
             tc.strategy,
         )
     elif strategy == "ddp":
-        # The segmentation head's sparse_forward() returns dict intermediates and
-        # leaves some parameters unused on certain forward steps, causing DDP to
-        # raise "It looks like your LightningModule has parameters that were not
-        # used in producing the loss" with plain ddp.  Enabling
-        # find_unused_parameters lets DDP traverse the autograd graph after each
-        # backward pass to detect which parameters contributed to the loss.
-        #
-        # Previously this was only enabled when a segmentation head was present.
-        # However, unused-parameter errors can also occur in detection models
-        # depending on the active branches and loss computation path. Therefore,
-        # the segmentation_head condition was removed so that the same DDP
-        # configuration is applied consistently across both detection and
-        # segmentation models.
+        # DETR-family architectures can leave parameters unused on certain forward
+        # steps under DDP, causing "It looks like your LightningModule has parameters
+        # that were not used in producing the loss".  Sources include:
+        #   - segmentation_head.sparse_forward() returning dict intermediates;
+        #   - two-stage encoder query groups (group_detr ModuleLists) where per-group
+        #     matcher assignment can leave groups without targets on low-annotation
+        #     batches (issue #1093);
+        #   - conditional aux_loss / keypoint branches.
+        # Enabling find_unused_parameters lets DDP traverse the autograd graph after
+        # each backward pass to identify which parameters contributed to the loss.
+        # To opt out (e.g. configs with two_stage=False that never hit unused params),
+        # pass strategy=DDPStrategy(find_unused_parameters=False) via trainer_kwargs.
         strategy = _DDPStrategy(find_unused_parameters=True)
         _logger.info(
             "strategy='ddp' → DDPStrategy(find_unused_parameters=True).",
