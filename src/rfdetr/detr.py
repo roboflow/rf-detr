@@ -33,7 +33,7 @@ from PIL import Image
 
 from rfdetr.assets.coco_classes import COCO_CLASS_NAMES, COCO_CLASSES
 from rfdetr.assets.model_weights import download_pretrain_weights, get_model_cache_dir
-from rfdetr.config import ModelConfig, TrainConfig 
+from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.datasets._keypoint_schema import active_keypoint_counts, infer_coco_keypoint_schema
 from rfdetr.datasets.coco import is_valid_coco_dataset
 from rfdetr.datasets.yolo import is_valid_yolo_dataset
@@ -1437,7 +1437,7 @@ class RFDETR:
                 either dimension is zero or negative, if either dimension is not divisible by ``patch_size *
                 num_windows``, or if ``patch_size`` is not a positive integer.
         """
-        from supervision import Detections, KeyPoints
+        from supervision import Detections
 
         patch_size = _resolve_patch_size(patch_size, self.model_config, "predict")
         num_windows = getattr(self.model_config, "num_windows", 1)
