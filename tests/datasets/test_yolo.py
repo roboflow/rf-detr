@@ -194,11 +194,18 @@ class TestIsValidYoloDataset:
 class TestYoloDetectionLazyMasks:
     """Segmentation masks should stay lightweight until a sample is fetched."""
 
-    def test_segmentation_init_builds_coco_metadata_without_cv2_loading(self, tmp_path: Path) -> None:
-        """Dataset construction should not call cv2.imread for every image."""
+    def test_segmentation_init_builds_coco_metadata_without_pixel_loading(self, tmp_path: Path) -> None:
+        """Dataset construction must not decode pixel data for every image (only metadata is needed at init)."""
         image_dir, label_dir, data_file = _write_yolo_segmentation_dataset(tmp_path)
 
-        with patch("cv2.imread", side_effect=AssertionError("cv2.imread should not run during init")):
+        # ``Image.open`` is allowed during init to read header metadata (``image.size``),
+        # but ``Image.Image.convert`` decodes the full pixel buffer and must not run until
+        # ``__getitem__`` is invoked on the lazy dataset.
+        with patch.object(
+            Image.Image,
+            "convert",
+            side_effect=AssertionError("Image.convert should not run during init"),
+        ):
             dataset = YoloDetection(
                 img_folder=str(image_dir),
                 lb_folder=str(label_dir),
@@ -515,8 +522,8 @@ class TestYoloDetectionLazyMasks:
         assert target["boxes"].shape == (2, 4), f"Expected (2, 4), got {target['boxes'].shape}"
         assert set(target["labels"].tolist()) == {0, 1}
 
-    def test_lazy_getitem_cv2_returns_none_raises_value_error(self, tmp_path: Path) -> None:
-        """Lazy mask loading should raise ValueError when cv2.imread cannot read the image."""
+    def test_lazy_getitem_unreadable_image_raises_value_error(self, tmp_path: Path) -> None:
+        """Lazy mask loading should raise ValueError when PIL cannot decode the image."""
         image_dir, label_dir, data_file = _write_yolo_segmentation_dataset(tmp_path)
         dataset = YoloDetection(
             img_folder=str(image_dir),
@@ -526,9 +533,12 @@ class TestYoloDetectionLazyMasks:
             include_masks=True,
         )
 
-        with patch("cv2.imread", return_value=None):
-            with pytest.raises(ValueError, match="Could not read image"):
-                dataset[0]
+        # Replace the on-disk image with non-decodable bytes after dataset init has
+        # already captured width/height from the original PNG header.
+        (image_dir / "sample.png").write_bytes(b"not a valid image file")
+
+        with pytest.raises(ValueError, match="Could not read image"):
+            dataset[0]
 
     def test_non_integer_class_id_in_label_raises_value_error(self, tmp_path: Path) -> None:
         """A label line with a non-integer class ID must raise ValueError during init."""

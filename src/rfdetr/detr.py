@@ -23,20 +23,13 @@ from typing import TYPE_CHECKING, Any, Concatenate, Optional, ParamSpec, TypeVar
 import numpy as np
 import requests
 import torch
-
-if TYPE_CHECKING:
-    import supervision as sv
-
 import torchvision.transforms.functional as F  # noqa: N812
 import yaml
 from PIL import Image
 
 from rfdetr.assets.coco_classes import COCO_CLASS_NAMES, COCO_CLASSES
 from rfdetr.assets.model_weights import download_pretrain_weights, get_model_cache_dir
-from rfdetr.config import (
-    ModelConfig,
-    TrainConfig,
-)
+from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.datasets._keypoint_schema import active_keypoint_counts, infer_coco_keypoint_schema
 from rfdetr.datasets.coco import is_valid_coco_dataset
 from rfdetr.datasets.yolo import is_valid_yolo_dataset
@@ -45,6 +38,9 @@ from rfdetr.utilities.decorators import deprecated
 from rfdetr.utilities.distributed import is_main_process
 from rfdetr.utilities.keypoints import precision_cholesky_to_pixel_covariance
 from rfdetr.utilities.logger import get_logger
+
+if TYPE_CHECKING:
+    from supervision import Detections, KeyPoints
 
 try:
     torch.set_float32_matmul_precision("high")
@@ -1374,7 +1370,7 @@ class RFDETR:
         patch_size: int | None = None,
         include_source_image: bool = True,
         **kwargs: Any,
-    ) -> sv.Detections | sv.KeyPoints | list[sv.Detections | sv.KeyPoints]:
+    ) -> Detections | KeyPoints | list[Detections | KeyPoints]:
         """Performs model inference on the input images.
 
         This method accepts a single image or a list of images in various formats (file path, image url, PIL Image,
@@ -1440,7 +1436,7 @@ class RFDETR:
                 either dimension is zero or negative, if either dimension is not divisible by ``patch_size *
                 num_windows``, or if ``patch_size`` is not a positive integer.
         """
-        import supervision as sv
+        from supervision import Detections, KeyPoints
 
         patch_size = _resolve_patch_size(patch_size, self.model_config, "predict")
         num_windows = getattr(self.model_config, "num_windows", 1)
@@ -1583,7 +1579,7 @@ class RFDETR:
             }
         else:
             _class_id_to_name = dict(enumerate(model_class_names))
-        predictions_list: list[sv.Detections | sv.KeyPoints] = []
+        predictions_list: list[Detections | KeyPoints] = []
         for i, result in enumerate(results):
             scores = result["scores"]
             labels = result["labels"]
@@ -1603,14 +1599,14 @@ class RFDETR:
                 masks = result["masks"]
                 masks = masks[keep]
 
-                detections = sv.Detections(
+                detections = Detections(
                     xyxy=boxes.float().cpu().numpy(),
                     confidence=scores.float().cpu().numpy(),
                     class_id=labels.cpu().numpy(),
                     mask=masks.squeeze(1).cpu().numpy(),
                 )
             else:
-                detections = sv.Detections(
+                detections = Detections(
                     xyxy=boxes.float().cpu().numpy(),
                     confidence=scores.float().cpu().numpy(),
                     class_id=labels.cpu().numpy(),
@@ -1662,7 +1658,7 @@ class RFDETR:
                         )
                 keypoints_array = keypoints_array.astype(np.float32, copy=False)
                 keypoint_confidence = keypoints_array[:, :, 2]
-                key_points = sv.KeyPoints(
+                key_points = KeyPoints(
                     xy=keypoints_array[:, :, :2],
                     keypoint_confidence=keypoint_confidence,
                     detection_confidence=detections.confidence.astype(np.float32)
