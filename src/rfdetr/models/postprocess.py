@@ -81,12 +81,13 @@ class PostProcess(nn.Module):
                 ``(B, 2)``.
 
         Raises:
-            AssertionError: If both masks and keypoints are present or if batch
-                dimensions do not match ``target_sizes``.
+            ValueError: If both masks and keypoints are present in the model
+                outputs at the same time. Mask and keypoint heads are mutually
+                exclusive at inference.
+            AssertionError: If batch dimensions do not match ``target_sizes``.
         """
-        assert not (out_masks is not None and out_keypoints is not None), (
-            "masks and keypoints cannot be used together in postprocessing."
-        )
+        if out_masks is not None and out_keypoints is not None:
+            raise ValueError("masks and keypoints cannot be used together in postprocessing.")
         assert len(out_logits) == len(target_sizes)
         assert target_sizes.shape[1] == 2
 
@@ -304,7 +305,17 @@ class PostProcess(nn.Module):
         Returns:
             Updated object scores, keypoint outputs, and precision outputs. The
             score tensor is cloned only when uncertainty fusion is applied.
+
+        Raises:
+            ValueError: If the padded keypoint dimension of ``keypoints_i`` is
+                not equal to ``num_keypoint_classes * max_num_keypoints``.
         """
+        total_padded_keypoint_slots = keypoints_i.shape[1]
+        if total_padded_keypoint_slots != num_keypoint_classes * max_num_keypoints:
+            raise ValueError(
+                f"keypoints_i padded slot dimension ({total_padded_keypoint_slots}) must equal "
+                f"num_keypoint_classes ({num_keypoint_classes}) * max_num_keypoints ({max_num_keypoints})."
+            )
         reshaped = keypoints_i.view(
             keypoints_i.shape[0], num_keypoint_classes, max_num_keypoints, keypoints_i.shape[-1]
         )
@@ -319,18 +330,25 @@ class PostProcess(nn.Module):
             scores_i = self._apply_keypoint_trace_fusion(scores_i, valid_indices, selected_labels, selected_keypoints)
 
         img_h, img_w = target_size
-        for selected_pos, output_index in enumerate(valid_indices):
-            selected_label = int(selected_labels[selected_pos].item())
-            num_active_keypoints = self.num_keypoints_per_class[selected_label]
+        has_precision = selected_keypoints.shape[-1] >= 7
+        # Iterate over the (small) set of keypoint classes rather than per detection.
+        # Avoids `num_select` GPU->CPU stream syncs from `.item()`; loop bound is
+        # `num_keypoint_classes` (typically 1-20) instead of `num_select` (up to 300).
+        for class_idx in range(num_keypoint_classes):
+            class_mask = selected_labels == class_idx
+            if not class_mask.any():
+                continue
+            num_active_keypoints = self.num_keypoints_per_class[class_idx]
             if num_active_keypoints <= 0:
                 continue
 
-            active_keypoints = selected_keypoints[selected_pos, :num_active_keypoints]
-            output_keypoints[output_index, :num_active_keypoints, 0] = active_keypoints[:, 0] * img_w
-            output_keypoints[output_index, :num_active_keypoints, 1] = active_keypoints[:, 1] * img_h
-            output_keypoints[output_index, :num_active_keypoints, 2] = active_keypoints[:, 2].sigmoid()
-            if active_keypoints.shape[-1] >= 7:
-                output_keypoint_precision[output_index, :num_active_keypoints] = active_keypoints[:, 4:7]
+            out_idx = valid_indices[class_mask]
+            active_keypoints = selected_keypoints[class_mask, :num_active_keypoints]
+            output_keypoints[out_idx, :num_active_keypoints, 0] = active_keypoints[..., 0] * img_w
+            output_keypoints[out_idx, :num_active_keypoints, 1] = active_keypoints[..., 1] * img_h
+            output_keypoints[out_idx, :num_active_keypoints, 2] = active_keypoints[..., 2].sigmoid()
+            if has_precision:
+                output_keypoint_precision[out_idx, :num_active_keypoints] = active_keypoints[..., 4:7]
 
         return scores_i, output_keypoints, output_keypoint_precision
 
@@ -358,19 +376,28 @@ class PostProcess(nn.Module):
             findability-weighted mean expected squared localization error
             implied by the predicted precision-Cholesky parameters.
         """
-        log_mean_traces = []
-        for selected_pos, selected_label_tensor in enumerate(selected_labels):
-            selected_label = int(selected_label_tensor.item())
-            num_active_keypoints = self.num_keypoints_per_class[selected_label]
+        num_keypoint_classes = len(self.num_keypoints_per_class)
+        log_mean_traces = selected_keypoints.new_zeros(selected_labels.shape[0])
+        # Iterate over the small set of classes rather than per detection — the
+        # per-detection loop required `.item()` on every iteration (GPU->CPU
+        # stream sync) and a final `torch.stack` over a Python list. Grouping by
+        # class lets us call `_keypoint_log_mean_trace` once on a batched tensor
+        # whose `num_active_keypoints` is constant within the class.
+        for class_idx in range(num_keypoint_classes):
+            class_mask = selected_labels == class_idx
+            if not class_mask.any():
+                continue
+            num_active_keypoints = self.num_keypoints_per_class[class_idx]
             if num_active_keypoints <= 0:
-                log_mean_traces.append(selected_keypoints.new_tensor(0.0))
+                # Defaults to 0.0 from `new_zeros` above — matches the legacy
+                # per-detection branch that appended a 0 tensor.
                 continue
 
-            active_keypoints = selected_keypoints[selected_pos, :num_active_keypoints]
-            log_mean_traces.append(self._keypoint_log_mean_trace(active_keypoints))
+            active_keypoints = selected_keypoints[class_mask, :num_active_keypoints]
+            log_mean_traces[class_mask] = self._keypoint_log_mean_trace(active_keypoints)
 
         scores_i = scores_i.clone()
-        scores_i[valid_indices] = scores_i[valid_indices] * torch.exp(-self.trace_alpha * torch.stack(log_mean_traces))
+        scores_i[valid_indices] = scores_i[valid_indices] * torch.exp(-self.trace_alpha * log_mean_traces)
         return scores_i
 
     @staticmethod
@@ -378,19 +405,25 @@ class PostProcess(nn.Module):
         """Compute log mean covariance trace for active keypoints.
 
         Args:
-            active_keypoints: Active keypoint predictions for one detection.
+            active_keypoints: Active keypoint predictions with shape
+                ``(..., K, D)`` where ``K`` is the active keypoint count for the
+                detection's class and ``D`` is the per-keypoint feature dim.
                 Columns ``4:7`` are ``(log_l11, l21, log_l22)`` precision
-                Cholesky parameters and column ``2`` is the findable logit.
+                Cholesky parameters and column ``2`` is the findable logit. A
+                leading batch dimension is supported so this can be called once
+                for an entire class group of detections.
 
         Returns:
-            Scalar log of the findability-weighted arithmetic mean trace of the
-            covariance matrix. The computation stays in log space for numerical
-            stability with very sharp or very uncertain predictions.
+            Tensor with the leading batch dimensions of ``active_keypoints``
+            (scalar when called on a single detection). Each entry is the log of
+            the findability-weighted arithmetic mean trace of the covariance
+            matrix. The computation stays in log space for numerical stability
+            with very sharp or very uncertain predictions.
         """
-        log_l11 = active_keypoints[:, 4]
-        l21 = active_keypoints[:, 5]
-        log_l22 = active_keypoints[:, 6]
-        w_find = active_keypoints[:, 2].sigmoid()
+        log_l11 = active_keypoints[..., 4]
+        l21 = active_keypoints[..., 5]
+        log_l22 = active_keypoints[..., 6]
+        w_find = active_keypoints[..., 2].sigmoid()
         log_t1 = -2.0 * log_l11
         log_t2 = -2.0 * log_l22
         log_t3 = 2.0 * torch.log(l21.abs().clamp(min=1e-12)) + log_t1 + log_t2

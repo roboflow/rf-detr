@@ -25,8 +25,12 @@ from collections.abc import Sequence
 from typing import cast
 
 import torch
-import torch.nn.functional as F  # noqa: N812
+import torch.nn.functional as F  # noqa: N812 — conventional PyTorch alias
 from torch import nn
+
+from rfdetr.utilities.logger import get_logger
+
+logger = get_logger()
 
 # Number of channels in a keypoint prediction slot — see module docstring for layout.
 KEYPOINT_PRED_DIM: int = 8
@@ -47,7 +51,7 @@ def modulate(features: torch.Tensor, scale: torch.Tensor, shift: torch.Tensor) -
     return (scale + 1.0) * features + shift
 
 
-class ConditionalQueryInitializer(nn.Module):  # type: ignore[misc, unused-ignore]
+class ConditionalQueryInitializer(nn.Module):  # type: ignore[misc]
     """Initialize keypoint query tokens with adaptive layer-normalization style modulation."""
 
     def __init__(self, dim: int, num_queries: int, out_dim: int | None = None) -> None:
@@ -191,8 +195,15 @@ def compute_l1_keypoint_loss(
     raw_l21 = selected_pred_keypoints[:, :, 5].to(torch.float32)
     raw_log_l22 = selected_pred_keypoints[:, :, 6].to(torch.float32)
     finite_uncertainty = torch.isfinite(raw_log_l11) & torch.isfinite(raw_l21) & torch.isfinite(raw_log_l22)
+    if not finite_uncertainty.all():
+        logger.debug(
+            "NLL loss: %d keypoint(s) with non-finite uncertainty dropped from loss.",
+            (~finite_uncertainty).sum().item(),
+        )
     gaussian_loss_mask = location_loss_mask & finite_uncertainty
 
+    # Intentionally unclamped: the model is expected to learn bounded log-scale values;
+    # clamping would mask divergence instead of exposing it during development.
     log_l11 = raw_log_l11
     l21 = raw_l21
     log_l22 = raw_log_l22
@@ -206,7 +217,7 @@ def compute_l1_keypoint_loss(
     gaussian_count = gaussian_loss_mask.sum(-1).to(dtype=selected_pred_keypoints.dtype)
     gaussian_valid_count = gaussian_count.clamp(min=1)
     nll_raw = 0.5 * (maha2 / area.clamp_min(area_eps).unsqueeze(1)) - (log_l11 + log_l22)
-    nll_raw = torch.nan_to_num(nll_raw, nan=0.0, posinf=0.0, neginf=0.0)
+    nll_raw = torch.nan_to_num(nll_raw, nan=0.0, posinf=0.0, neginf=torch.finfo(nll_raw.dtype).min)
     nll_keypoints = nll_raw.masked_fill(~gaussian_loss_mask, 0.0)
     nll_loss = nll_keypoints.sum(-1) / gaussian_valid_count
     no_valid = gaussian_count <= 0
@@ -315,21 +326,22 @@ def compute_keypoint_matching_cost(
 
         area_sqrt = areas.clamp_min(area_eps).sqrt()
 
-        pred_xy = pred_by_class[:, :, :, :2]
-        scaled_loc = torch.zeros(
-            (flat_bq, n_targets_by_class),
-            device=all_pred_keypoints.device,
-            dtype=torch.float32,
-        )
-        for keypoint_idx in range(num_kpts):
-            visibility = visible[:, keypoint_idx].unsqueeze(0)
-            distance = torch.cdist(
-                pred_xy[:, :, keypoint_idx].reshape(flat_bq, 2).to(torch.float32),
-                target_xy[:, keypoint_idx, :].to(torch.float32),
-                p=1.0,
-            )
-            distance.masked_fill_(~visibility, 0.0)
-            scaled_loc.add_(distance)
+        # Vectorize over `num_kpts` — avoids one CUDA kernel launch per keypoint.
+        # Shape conventions:
+        #   pred_xy_flat:   (flat_bq, num_kpts, 2)
+        #   target_xy_f32:  (n_targets_by_class, num_kpts, 2)
+        #   visible:        (n_targets_by_class, num_kpts)
+        #   diff tensors:   (flat_bq, n_targets_by_class, num_kpts)
+        pred_xy_flat = pred_by_class[:, :, :, :2].reshape(flat_bq, num_kpts, 2).to(torch.float32)
+        target_xy_f32 = target_xy.to(torch.float32)
+
+        # L1 cost: (flat_bq, 1, num_kpts, 2) - (1, n_targets, num_kpts, 2) -> (flat_bq, n_targets, num_kpts, 2)
+        diff = pred_xy_flat.unsqueeze(1) - target_xy_f32.unsqueeze(0)
+        per_kpt_l1 = diff.abs().sum(-1)  # (flat_bq, n_targets, num_kpts)
+        visible_btk = visible.unsqueeze(0)  # (1, n_targets, num_kpts)
+        per_kpt_l1 = per_kpt_l1.masked_fill(~visible_btk, 0.0)
+        scaled_loc = per_kpt_l1.sum(-1)  # (flat_bq, n_targets)
+
         loc_cost = (scaled_loc / nll_denom.unsqueeze(0)).div(area_sqrt.unsqueeze(0))
         loc_cost = torch.nan_to_num(loc_cost, nan=0.0, posinf=0.0, neginf=0.0)
         cost_l1[:, :, target_indices] = loc_cost.reshape(
@@ -338,47 +350,35 @@ def compute_keypoint_matching_cost(
             n_targets_by_class,
         ).to(all_pred_keypoints.dtype)
 
-        nll_sum = torch.zeros((flat_bq, n_targets_by_class), device=all_pred_keypoints.device, dtype=torch.float32)
+        # NLL cost: Cholesky params (flat_bq, num_kpts) broadcast over targets axis.
+        raw_log_l11 = pred_by_class[:, :, :, 4].reshape(flat_bq, num_kpts).to(torch.float32)
+        raw_l21 = pred_by_class[:, :, :, 5].reshape(flat_bq, num_kpts).to(torch.float32)
+        raw_log_l22 = pred_by_class[:, :, :, 6].reshape(flat_bq, num_kpts).to(torch.float32)
+        # Intentionally unclamped: model is expected to learn bounded log-scale values.
+        log_l11 = raw_log_l11
+        l21 = raw_l21
+        log_l22 = raw_log_l22
+        l11 = log_l11.exp()  # (flat_bq, num_kpts)
+        l22 = log_l22.exp()
 
-        for keypoint_idx in range(num_kpts):
-            visibility_k = visible[:, keypoint_idx]
-            x_pred = pred_by_class[:, :, keypoint_idx, 0].reshape(flat_bq, 1).to(torch.float32)
-            y_pred = pred_by_class[:, :, keypoint_idx, 1].reshape(flat_bq, 1).to(torch.float32)
-            x_tgt = target_xy[:, keypoint_idx, 0].reshape(1, n_targets_by_class).to(torch.float32)
-            y_tgt = target_xy[:, keypoint_idx, 1].reshape(1, n_targets_by_class).to(torch.float32)
+        finite_xy = torch.isfinite(pred_xy_flat).all(dim=-1)  # (flat_bq, num_kpts)
+        finite_pred = finite_xy & torch.isfinite(raw_log_l11) & torch.isfinite(raw_l21) & torch.isfinite(raw_log_l22)
 
-            dx = x_pred - x_tgt
-            dy = y_pred - y_tgt
+        dx = diff[..., 0]  # (flat_bq, n_targets, num_kpts)
+        dy = diff[..., 1]
+        u0 = l11.unsqueeze(1) * dx + l21.unsqueeze(1) * dy
+        u1 = l22.unsqueeze(1) * dy
+        maha2 = u0 * u0 + u1 * u1
 
-            raw_log_l11 = pred_by_class[:, :, keypoint_idx, 4].reshape(flat_bq).to(torch.float32)
-            raw_l21 = pred_by_class[:, :, keypoint_idx, 5].reshape(flat_bq).to(torch.float32)
-            raw_log_l22 = pred_by_class[:, :, keypoint_idx, 6].reshape(flat_bq).to(torch.float32)
-            finite_pred = (
-                torch.isfinite(x_pred.squeeze(1))
-                & torch.isfinite(y_pred.squeeze(1))
-                & torch.isfinite(raw_log_l11)
-                & torch.isfinite(raw_l21)
-                & torch.isfinite(raw_log_l22)
-            )
-
-            log_l11 = raw_log_l11
-            l21 = raw_l21
-            log_l22 = raw_log_l22
-
-            l11 = log_l11.exp()
-            l22 = log_l22.exp()
-            dx.mul_(l11.unsqueeze(1)).addcmul_(dy, l21.unsqueeze(1))
-            dy.mul_(l22.unsqueeze(1))
-            keypoint_mask = (
-                visibility_k.unsqueeze(0) & finite_pred.unsqueeze(1) & torch.isfinite(dx) & torch.isfinite(dy)
-            )
-
-            maha2 = dx.square_().add_(dy.square_())
-            keypoint_mask = keypoint_mask & torch.isfinite(maha2)
-            nll_k = 0.5 * (maha2 / areas.clamp_min(area_eps).unsqueeze(0)) - (log_l11 + log_l22).unsqueeze(1)
-            nll_k = torch.nan_to_num(nll_k, nan=0.0, posinf=0.0, neginf=0.0)
-            nll_k.masked_fill_(~keypoint_mask, 0.0)
-            nll_sum.add_(nll_k)
+        keypoint_mask = (
+            visible_btk & finite_pred.unsqueeze(1) & torch.isfinite(u0) & torch.isfinite(u1) & torch.isfinite(maha2)
+        )
+        nll_k = 0.5 * (maha2 / areas.clamp_min(area_eps).view(1, n_targets_by_class, 1)) - (
+            log_l11 + log_l22
+        ).unsqueeze(1)
+        nll_k = torch.nan_to_num(nll_k, nan=0.0, posinf=0.0, neginf=torch.finfo(nll_k.dtype).min)
+        nll_k = nll_k.masked_fill(~keypoint_mask, 0.0)
+        nll_sum = nll_k.sum(-1)  # (flat_bq, n_targets)
 
         mean_nll = (nll_sum / nll_denom.unsqueeze(0)).reshape(b, num_queries, n_targets_by_class)
         mean_nll.masked_fill_(~has_visible.unsqueeze(0), 0.0)

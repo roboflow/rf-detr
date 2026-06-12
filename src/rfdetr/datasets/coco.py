@@ -801,6 +801,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
     num_windows = getattr(args, "num_windows", 4)
     include_keypoints = getattr(args, "use_grouppose_keypoints", False)
     num_keypoints_per_class = getattr(args, "num_keypoints_per_class", [])
+    keypoint_flip_pairs: list[int] = getattr(args, "keypoint_flip_pairs", []) or []
     aug_config = getattr(args, "aug_config", None)
     resolved_augmentation_backend = _resolve_runtime_augmentation_backend(getattr(args, "augmentation_backend", "cpu"))
     gpu_postprocess = resolved_augmentation_backend != "cpu"
@@ -820,6 +821,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
                 num_windows=num_windows,
                 aug_config=aug_config,
                 gpu_postprocess=gpu_postprocess,
+                keypoint_flip_pairs=keypoint_flip_pairs,
             ),
             include_masks=include_masks,
             include_keypoints=include_keypoints,
@@ -841,6 +843,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
                 num_windows=num_windows,
                 aug_config=aug_config,
                 gpu_postprocess=gpu_postprocess,
+                keypoint_flip_pairs=keypoint_flip_pairs,
             ),
             include_masks=include_masks,
             include_keypoints=include_keypoints,

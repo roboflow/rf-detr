@@ -16,7 +16,6 @@ from rfdetr.models.heads.keypoints import (
 
 def test_conditional_query_initializer_shape() -> None:
     """Initializer output should have expected batch/query/out dimensions."""
-    torch.manual_seed(0)
     initializer = ConditionalQueryInitializer(dim=32, num_queries=11, out_dim=16)
     query_features = torch.randn(3, 32)
     queries = initializer(query_features)
@@ -26,7 +25,6 @@ def test_conditional_query_initializer_shape() -> None:
 
 def test_conditional_query_initializer_zero_adaln_identity() -> None:
     """A zeroed AdaLN gate should make initializer return the unmodified learned queries."""
-    torch.manual_seed(0)
     initializer = ConditionalQueryInitializer(dim=16, num_queries=5, out_dim=16)
     query_features = torch.randn(4, 16)
     output = initializer(query_features)

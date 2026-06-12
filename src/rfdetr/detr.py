@@ -1017,7 +1017,7 @@ class RFDETR:
                 output_names = ["features"]
             elif self.model_config.segmentation_head:
                 output_names = ["dets", "labels", "masks"]
-            elif getattr(self.model_config, "use_grouppose_keypoints", False):
+            elif self.model_config.use_grouppose_keypoints:
                 output_names = ["dets", "labels", "keypoints"]
             else:
                 output_names = ["dets", "labels"]
@@ -1043,7 +1043,7 @@ class RFDETR:
                         )
                     else:
                         logger.debug(f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}")
-                elif getattr(self.model_config, "use_grouppose_keypoints", False):
+                elif self.model_config.use_grouppose_keypoints:
                     outputs = model(input_tensors)
                     dets = outputs["pred_boxes"]
                     labels = outputs["pred_logits"]
@@ -1196,14 +1196,14 @@ class RFDETR:
         try:
             dataset_num_classes = RFDETR._detect_num_classes_for_training(
                 dataset_dir,
-                use_grouppose_keypoints=getattr(self.model_config, "use_grouppose_keypoints", False),
+                use_grouppose_keypoints=self.model_config.use_grouppose_keypoints,
             )
         except (FileNotFoundError, ValueError, KeyError, OSError) as exc:
             # Best-effort only; do not block training if detection fails.
             logger.debug("Could not auto-detect num_classes from dataset '%s': %s", dataset_dir, exc)
             return
 
-        if getattr(self.model_config, "use_grouppose_keypoints", False):
+        if self.model_config.use_grouppose_keypoints:
             keypoint_schema = list(getattr(self.model_config, "num_keypoints_per_class", []) or [])
             if keypoint_schema:
                 dataset_num_classes = max(dataset_num_classes, len(keypoint_schema))
@@ -1290,7 +1290,7 @@ class RFDETR:
             >>> model._align_keypoint_schema_from_dataset(TrainConfig(dataset_dir="/missing", tensorboard=False))
         """
 
-        if not getattr(self.model_config, "use_grouppose_keypoints", False):
+        if not self.model_config.use_grouppose_keypoints:
             return
         if getattr(config, "dataset_file", None) != "roboflow":
             return
@@ -1303,8 +1303,8 @@ class RFDETR:
 
         try:
             inferred = infer_coco_keypoint_schema(annotation_path)
-        except (FileNotFoundError, ValueError, KeyError, OSError, TypeError) as exc:
-            logger.debug("Could not infer keypoint schema from dataset '%s': %s", dataset_dir, exc)
+        except (FileNotFoundError, ValueError, KeyError, OSError) as exc:
+            logger.info("Could not infer keypoint schema from dataset '%s': %s", dataset_dir, exc)
             return
 
         inferred_schema = inferred.num_keypoints_per_class

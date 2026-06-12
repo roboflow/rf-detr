@@ -75,21 +75,17 @@ def test_keypoint_fields_propagate_to_namespace(tmp_path) -> None:
     assert namespace.keypoint_nll_loss_coef == pytest.approx(4.5)
 
 
-def test_no_public_rle_fields() -> None:
-    """RLE keypoint flow fields are intentionally not public config fields."""
+def test_unknown_keypoint_fields_are_not_public_config_fields() -> None:
+    """Private keypoint implementation fields are not accepted as public model config."""
     with pytest.raises(ValueError, match="Unknown parameter"):
-        RFDETRBaseConfig(num_classes=1, rle_hidden_dim=256)
+        RFDETRBaseConfig(num_classes=1, keypoint_private_hidden_dim=256)
 
     # KeypointTrainConfig (a TrainConfig subclass) uses extra="ignore" for Lightning
     # compatibility, so unknown kwargs are silently dropped rather than raising.
     kc = KeypointTrainConfig(
         dataset_dir="/tmp",
-        rle_hidden_dim=256,
-        rle=True,
-        rle_conditional=True,
-        rle_loss_coef=1.0,
+        keypoint_private_hidden_dim=256,
+        keypoint_private_loss_coef=1.0,
     )
-    assert not hasattr(kc, "rle_hidden_dim")
-    assert not hasattr(kc, "rle")
-    assert not hasattr(kc, "rle_conditional")
-    assert not hasattr(kc, "rle_loss_coef")
+    assert not hasattr(kc, "keypoint_private_hidden_dim")
+    assert not hasattr(kc, "keypoint_private_loss_coef")
