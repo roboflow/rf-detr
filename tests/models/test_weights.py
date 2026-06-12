@@ -175,6 +175,51 @@ class TestLoadPretrainWeightsReinitScenarios:
 
         nn_model.reinitialize_detection_head.assert_not_called()
 
+    def test_keypoint_active_mask_mismatch_is_dropped(self, monkeypatch, tmp_path):
+        """Checkpoint `_kp_active_mask` with mismatched shape is dropped before load_state_dict."""
+        from rfdetr.models.weights import load_pretrain_weights
+
+        mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu")
+        checkpoint = _make_checkpoint(num_classes=91)
+        checkpoint["model"]["_kp_active_mask"] = torch.ones(2, 17, dtype=torch.bool)
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+
+        nn_model = _fake_nn_model()
+        nn_model.state_dict = MagicMock(return_value={"_kp_active_mask": torch.ones(1, 17, dtype=torch.bool)})
+        nn_model.load_state_dict.return_value = SimpleNamespace(missing_keys=[], unexpected_keys=[])
+
+        load_pretrain_weights(nn_model, mc)
+
+        loaded_state = nn_model.load_state_dict.call_args[0][0]
+        assert "_kp_active_mask" not in loaded_state
+
+    def test_keypoint_checkpoint_schema_reinitializes_before_and_after_load(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Schema-dependent keypoint tensors should match checkpoint shape during load, then return to config schema."""
+        from rfdetr.models.weights import load_pretrain_weights
+
+        mc = RFDETRBaseConfig(
+            pretrain_weights="/fake/weights.pth",
+            device="cpu",
+            use_grouppose_keypoints=True,
+            num_keypoints_per_class=[0, 17],
+        )
+        checkpoint = _make_checkpoint(num_classes=91)
+        checkpoint["model"]["_kp_active_mask"] = torch.ones(1, 17, dtype=torch.bool)
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+
+        nn_model = _fake_nn_model()
+        nn_model.reinitialize_keypoint_head = MagicMock()
+        nn_model.get_num_keypoints_per_class_from_checkpoint = MagicMock(return_value=[17])
+        nn_model.state_dict = MagicMock(return_value={"_kp_active_mask": torch.ones(2, 17, dtype=torch.bool)})
+        nn_model.load_state_dict.return_value = SimpleNamespace(missing_keys=[], unexpected_keys=[])
+
+        load_pretrain_weights(nn_model, mc)
+
+        assert nn_model.reinitialize_keypoint_head.call_args_list == [call([17]), call([0, 17])]
+
 
 # ---------------------------------------------------------------------------
 # load_pretrain_weights — class_names extraction

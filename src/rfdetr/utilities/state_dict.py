@@ -196,6 +196,47 @@ def clean_state_dict(state_dict: dict[str, Any]) -> OrderedDict[str, Any]:
     return new_state_dict
 
 
+def remap_projector_to_cross_attn(state_dict: dict[str, Any], model: object) -> dict[str, Any]:
+    """Clone backbone projector weights into ``cross_attn_projector`` for dual-projector models.
+
+    Older checkpoints can contain only ``backbone.0.projector.*`` keys. Dual-projector models expect an additional
+    ``backbone.0.cross_attn_projector.*`` branch; this helper seeds it by cloning projector weights when missing.
+
+    Args:
+        state_dict: Checkpoint model-state dictionary (mutated in place).
+        model: Instantiated model used to detect whether dual projector mode is active.
+
+    Returns:
+        The same ``state_dict`` object for convenience.
+    """
+    backbone = model.backbone[0] if hasattr(model, "backbone") else None
+    if backbone is None:
+        return state_dict
+
+    # Real dual-projector backbones expose cross_attn_projector; compatibility shims may only carry dual_projector.
+    has_cross_attn_projector = getattr(backbone, "cross_attn_projector", None) is not None
+    dual_projector_enabled = bool(getattr(backbone, "dual_projector", False)) or has_cross_attn_projector
+    if not dual_projector_enabled:
+        return state_dict
+
+    if any(key.startswith("backbone.0.cross_attn_projector.") for key in state_dict):
+        return state_dict
+
+    projector_keys = {key: value for key, value in state_dict.items() if key.startswith("backbone.0.projector.")}
+    if not projector_keys:
+        return state_dict
+
+    logger.info(
+        "Cloning %d backbone projector key(s) into cross_attn_projector for dual-projector compatibility.",
+        len(projector_keys),
+    )
+    for key, value in projector_keys.items():
+        new_key = key.replace("backbone.0.projector.", "backbone.0.cross_attn_projector.", 1)
+        state_dict[new_key] = value.clone()
+
+    return state_dict
+
+
 def validate_checkpoint_compatibility(checkpoint: dict[str, Any], model_args: Any) -> None:
     """Validate that a checkpoint is compatible with the model configuration.
 
@@ -316,3 +357,18 @@ def validate_checkpoint_compatibility(checkpoint: dict[str, Any], model_args: An
     model_patch_size: int | None = getattr(model_args, "patch_size", None)
     if ckpt_patch_size is not None and model_patch_size is not None and ckpt_patch_size != model_patch_size:
         _raise_patch_size_mismatch(ckpt_patch_size, model_patch_size)
+
+    ckpt_keypoint_head: bool | None = _ckpt_args_get(ckpt_args, "use_grouppose_keypoints")
+    model_keypoint_head: bool | None = getattr(model_args, "use_grouppose_keypoints", None)
+
+    if ckpt_keypoint_head is not None and model_keypoint_head is not None and ckpt_keypoint_head != model_keypoint_head:
+        if ckpt_keypoint_head:
+            raise ValueError(
+                "The checkpoint was trained with a keypoint head, but the current model does not have one. "
+                "Load the weights into a keypoint model (e.g. RFDETRKeypointPreview) instead of a detection model."
+            )
+        else:
+            raise ValueError(
+                "The current model has a keypoint head, but the checkpoint was trained without one. "
+                "Load the weights into a detection model (e.g. RFDETRNano) instead of a keypoint model."
+            )

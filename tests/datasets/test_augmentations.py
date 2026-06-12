@@ -65,6 +65,83 @@ class TestAlbumentationsWrapper:
         assert torch.allclose(aug_target["boxes"], torch.tensor([box_out]), atol=1.0)
         assert torch.equal(aug_target["labels"], target["labels"])
 
+    def test_resize_transforms_keypoint_coordinates(self):
+        """Resize scales keypoint coordinates and preserves visibility values."""
+        wrapper = AlbumentationsWrapper(alb.Resize(height=100, width=200, p=1.0))
+        image = Image.new("RGB", (100, 50))
+        target = {
+            "boxes": torch.tensor([[10.0, 5.0, 30.0, 25.0]]),
+            "labels": torch.tensor([1]),
+            "keypoints": torch.tensor([[[15.0, 10.0, 2.0], [0.0, 0.0, 0.0]]]),
+        }
+
+        _, transformed = wrapper(image, target)
+
+        torch.testing.assert_close(
+            transformed["boxes"],
+            torch.tensor([[20.0, 10.0, 60.0, 50.0]]),
+            rtol=1e-4,
+            atol=1e-6,
+        )
+        torch.testing.assert_close(
+            transformed["keypoints"],
+            torch.tensor([[[30.0, 20.0, 2.0], [0.0, 0.0, 0.0]]]),
+            rtol=1e-4,
+            atol=1e-6,
+        )
+
+    def test_horizontal_flip_transforms_keypoint_coordinates(self):
+        """Horizontal flip mirrors keypoint coordinates using Albumentations geometry."""
+        wrapper = AlbumentationsWrapper(alb.HorizontalFlip(p=1.0))
+        image = Image.new("RGB", (100, 50))
+        target = {
+            "boxes": torch.tensor([[10.0, 5.0, 30.0, 25.0]]),
+            "labels": torch.tensor([1]),
+            "keypoints": torch.tensor([[[10.0, 5.0, 2.0], [30.0, 25.0, 2.0], [0.0, 0.0, 0.0]]]),
+        }
+
+        _, transformed = wrapper(image, target)
+
+        torch.testing.assert_close(
+            transformed["boxes"],
+            torch.tensor([[70.0, 5.0, 90.0, 25.0]]),
+            rtol=1e-4,
+            atol=1e-6,
+        )
+        torch.testing.assert_close(
+            transformed["keypoints"],
+            torch.tensor([[[89.0, 5.0, 2.0], [69.0, 25.0, 2.0], [0.0, 0.0, 0.0]]]),
+            rtol=1e-4,
+            atol=1e-6,
+        )
+
+    def test_crop_filters_keypoints_with_removed_boxes(self):
+        """When a crop removes a box, its keypoints are removed with the same instance."""
+        wrapper = AlbumentationsWrapper(alb.Crop(x_min=0, y_min=0, x_max=50, y_max=50, p=1.0))
+        image = Image.new("RGB", (100, 50))
+        target = {
+            "boxes": torch.tensor([[10.0, 5.0, 30.0, 25.0], [60.0, 5.0, 80.0, 25.0]]),
+            "labels": torch.tensor([1, 1]),
+            "area": torch.tensor([400.0, 400.0]),
+            "keypoints": torch.tensor(
+                [
+                    [[15.0, 10.0, 2.0], [25.0, 20.0, 2.0]],
+                    [[65.0, 10.0, 2.0], [75.0, 20.0, 2.0]],
+                ]
+            ),
+        }
+
+        _, transformed = wrapper(image, target)
+
+        assert transformed["boxes"].shape == (1, 4)
+        assert transformed["labels"].tolist() == [1]
+        torch.testing.assert_close(
+            transformed["keypoints"],
+            torch.tensor([[[15.0, 10.0, 2.0], [25.0, 20.0, 2.0]]]),
+            rtol=1e-4,
+            atol=1e-6,
+        )
+
     def test_non_geometric_transform_preserves_boxes(self):
         """Test that non-geometric transforms preserve bounding boxes."""
         transform = alb.GaussianBlur(blur_limit=3, p=1.0)

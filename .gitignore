@@ -188,7 +188,6 @@ test_visualizations/
 
 # datasets
 data/
-datasets/
 
 debugging/
 
@@ -211,3 +210,7 @@ cache-gh/
 checkpoints/
 releases/
 tasks/
+
+demo_*.jpg
+demo_*.py
+demo_*.ipynb

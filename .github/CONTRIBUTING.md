@@ -15,7 +15,8 @@ Thank you for helping to advance RF-DETR! Your participation is invaluable in ev
 9. [Google-Style Docstrings and Mandatory Type Hints](#google-style-docstrings-and-mandatory-type-hints)
 10. [Reporting Bugs](#reporting-bugs)
 11. [Adding a New Model](#adding-a-new-model)
-12. [License](#license)
+12. [Security Considerations](#security-considerations)
+13. [License](#license)
 
 ## How to Contribute
 
@@ -145,7 +146,7 @@ uv sync --group build      # Build tools only
 
 ```bash
 # Run CPU tests (default for local development; mirrors CI)
-uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --ignore=tests/try_instantiate_all_models.py --cov=rfdetr --cov-report=xml --timeout=240 --durations=50
+uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --ignore=tests/run_smoke_all_models.py --cov=rfdetr --cov-report=xml --timeout=240 --durations=50
 
 # Run GPU tests (requires GPU; mirrors CI)
 uv run --no-sync pytest tests/ -m gpu -n 3 --reruns 1 --only-rerun "OutOfMemoryError" --cov=rfdetr --cov-report=xml --timeout=600 --durations=20
@@ -280,11 +281,21 @@ Our continuous integration tests run on:
 
 This ensures your changes work across all supported platforms and Python versions.
 
+**Key GitHub Actions workflow files** (in `.github/workflows/`):
+
+- **ci-tests-cpu.yml** — CPU tests across Ubuntu/Windows/macOS × Python 3.10–3.13
+- **ci-tests-gpu.yml** — GPU-dependent tests
+- **build-package.yml** — Build and validate distributions (`uv build` + `twine check`)
+- **ci-build-docs.yml** — Documentation build validation
+- **publish-docs.yml** — Deploy docs to GitHub Pages on release
+
+**Concurrency:** PRs cancel in-progress runs on new pushes.
+
 ### Running Tests
 
 ```bash
 # Run tests with parallel execution (recommended)
-uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --ignore=tests/try_instantiate_all_models.py --timeout=240 --durations=50
+uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --ignore=tests/run_smoke_all_models.py --timeout=240 --durations=50
 
 # Run a specific test file
 uv run --no-sync pytest tests/models/test_model.py
@@ -373,6 +384,8 @@ Open [http://localhost:8000](http://localhost:8000) in your browser. The server 
 uv run mkdocs build
 ```
 
+**Note:** `mkdocs.yaml` uses custom YAML tags (`!!python/name`). The `check-yaml` pre-commit hook runs with `--unsafe` to allow this — do not remove that flag.
+
 ### Documentation Structure
 
 ```
@@ -457,6 +470,13 @@ Bug reports are vital for continued improvement. When reporting an issue, please
 6. **Submit PR** with reference to the discussion issue
 
 Maintainers will guide you on specific files to modify and patterns to follow based on current project architecture.
+
+## Security Considerations
+
+- **Write secure code:** Avoid injection vulnerabilities (XSS, SQL injection, command injection)
+- **Validate inputs:** Especially for file paths, URLs, and user-provided data
+- **No credentials:** Never commit API keys, tokens, or credentials to the repository
+- **Follow OWASP best practices** for any user-facing or network-facing code
 
 ## License
 

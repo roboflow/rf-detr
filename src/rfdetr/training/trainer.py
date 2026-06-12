@@ -87,6 +87,36 @@ class _NotebookSpawnDDPStrategy(_DDPStrategy):
         self._launcher = _InteractiveSpawnLauncher(self, start_method=self._start_method)
 
 
+def _is_distributed_strategy_requested(strategy: str) -> bool:
+    """Return whether a TrainConfig strategy string requests distributed execution."""
+    strategy_name = strategy.lower()
+    return any(token in strategy_name for token in ("ddp", "fsdp", "deepspeed"))
+
+
+def _accelerator_has_multiple_auto_devices(accelerator: str | None) -> bool:
+    """Return whether PTL auto/all device resolution can select multiple devices."""
+    accelerator_name = (accelerator or "auto").strip().lower()
+    if accelerator_name in ("auto", "cuda", "gpu"):
+        return torch.cuda.is_available() and torch.cuda.device_count() > 1
+    return False
+
+
+def _requests_multiple_devices(devices: int | str, accelerator: str | None = None) -> bool:
+    """Return whether the configured devices value explicitly requests multiple devices."""
+    if isinstance(devices, int):
+        if devices == -1:
+            return _accelerator_has_multiple_auto_devices(accelerator)
+        return devices > 1
+    devices_name = devices.strip().lower()
+    if devices_name in ("auto", "-1"):
+        return _accelerator_has_multiple_auto_devices(accelerator)
+    if devices_name.isdigit():
+        return int(devices_name) > 1
+    if "," in devices_name:
+        return len([entry for entry in devices_name.split(",") if entry.strip()]) > 1
+    return False
+
+
 def build_trainer(
     train_config: TrainConfig,
     model_config: ModelConfig,
@@ -153,7 +183,23 @@ def build_trainer(
         return "32-true"
 
     # --- Strategy + EMA sharding guard ---
-    strategy = tc.strategy
+    strategy = trainer_kwargs.get("strategy", tc.strategy)
+    devices = trainer_kwargs.get("devices", tc.devices)
+    num_nodes = trainer_kwargs.get("num_nodes", tc.num_nodes)
+    has_keypoints = bool(model_config.use_grouppose_keypoints)
+    distributed_requested = (
+        _is_distributed_strategy_requested(str(strategy))
+        or num_nodes > 1
+        or _requests_multiple_devices(devices, accelerator)
+    )
+    if has_keypoints and distributed_requested:
+        # TODO(@keypoints-ddp): validate keypoint training under distributed strategies
+        # before enabling keypoint distributed training.
+        raise NotImplementedError(
+            "Keypoint training currently does not support distributed execution "
+            f"(strategy={strategy!r}, devices={devices!r}, num_nodes={num_nodes!r}). "
+            "Use single-process training for now (for example strategy='auto', devices=1, num_nodes=1)."
+        )
 
     # Transparently replace fork-based DDP with spawn-based DDP — see the
     # module-level comment block above _InteractiveSpawnLauncher for rationale.
@@ -188,9 +234,14 @@ def build_trainer(
     callbacks = []
 
     if tc.progress_bar == "rich":
-        callbacks.append(RichProgressBar(theme=RichProgressBarTheme(metrics_format=".3e")))
+        callbacks.append(
+            RichProgressBar(
+                refresh_rate=5,
+                theme=RichProgressBarTheme(metrics_format=".3e"),
+            )
+        )
     elif tc.progress_bar == "tqdm":
-        callbacks.append(TQDMProgressBar())
+        callbacks.append(TQDMProgressBar(refresh_rate=5))
 
     if enable_ema:
         callbacks.append(
@@ -212,6 +263,7 @@ def build_trainer(
             segmentation=model_config.segmentation_head,
             eval_interval=tc.eval_interval,
             log_per_class_metrics=tc.log_per_class_metrics,
+            keypoint_oks_sigmas=tc.keypoint_oks_sigmas,
         )
     )
 
@@ -243,11 +295,23 @@ def build_trainer(
         )
     )
 
-    # Best-model checkpointing — monitor EMA metric only when EMA is active.
+    if has_keypoints:
+        monitor_regular = "val/keypoint_map_50_95"
+        early_stopping_monitor_ema = "val/ema_keypoint_map_50_95"
+    elif model_config.segmentation_head:
+        monitor_regular = "val/segm_mAP_50_95"
+        early_stopping_monitor_ema = "val/ema_segm_mAP_50_95"
+    else:
+        monitor_regular = "val/mAP_50_95"
+        early_stopping_monitor_ema = "val/ema_mAP_50_95"
+    monitor_ema = early_stopping_monitor_ema if enable_ema else None
+
+    # Best-model checkpointing — monitor EMA metric only when EMA is active and emitted.
     callbacks.append(
         BestModelCallback(
             output_dir=tc.output_dir,
-            monitor_ema="val/ema_mAP_50_95" if enable_ema else None,
+            monitor_regular=monitor_regular,
+            monitor_ema=monitor_ema,
             run_test=tc.run_test,
             skip_best_epochs=tc.skip_best_epochs,
         )
@@ -260,6 +324,8 @@ def build_trainer(
                 patience=tc.early_stopping_patience,
                 min_delta=tc.early_stopping_min_delta,
                 use_ema=tc.early_stopping_use_ema,
+                monitor_regular=monitor_regular,
+                monitor_ema=early_stopping_monitor_ema,
                 skip_best_epochs=tc.skip_best_epochs,
             )
         )

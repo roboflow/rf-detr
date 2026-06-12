@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rfdetr"
-version = "1.8.0.dev"
+version = "1.8.0.rc0"
 description = "RF-DETR"
 readme = "README.md"
 authors = [
@@ -36,13 +36,14 @@ keywords = ["machine-learning", "deep-learning", "vision", "ML", "DL", "AI", "DE
 
 dependencies = [
     "requests",                        # weight download from remote URLs
+    "numpy",                           # array conversion throughout inference, evaluation, export, and visualization
     "torch>=2.2.0",                    # core tensor ops and model forward pass
     "torchvision>=0.17.0",             # image transforms and ops (aligned with torch>=2.2.0)
     "tqdm",                            # progress bars during weight download
     "transformers>=5.1.0,<6.0.0",     # DINOv2 backbone loading
     "pydantic>=2.0,<3",               # ModelConfig / TrainConfig validation
-    "supervision",                     # inference output (Detections, Masks)
-    "pyDeprecate>=0.6,<0.8",             # deprecation warnings for legacy APIs; >=0.6 for deprecated_class
+    "supervision==0.29.0rc0",       # inference output (Detections, Masks)
+    "pyDeprecate>=0.9,<0.10",             # deprecation warnings for legacy APIs; >=0.6 for deprecated_class
 ]
 
 [project.optional-dependencies]
@@ -204,6 +205,7 @@ addopts = [
 pythonpath = ["src"]
 markers = [
     "gpu: tests that require GPU or are slow on CPU",
+    "coco17: tests that require COCO 2017 images or annotations",
     "flaky: tests that may fail due to nondeterminism",
     "tflite: tests requiring onnx2tf and TFLite dependencies",
 ]

@@ -36,6 +36,15 @@ class TestProgressBarCallbacks:
         assert TQDMProgressBar in cb_types
         assert RichProgressBar not in cb_types
 
+    def test_progress_bar_refresh_rate_is_five(self, base_model_config, base_train_config):
+        """The installed progress bar callback should refresh every five batches."""
+        mc = base_model_config()
+        tc = base_train_config(progress_bar="tqdm")
+        trainer = build_trainer(tc, mc, accelerator="cpu")
+        progress_bar = next(cb for cb in trainer.callbacks if isinstance(cb, TQDMProgressBar))
+
+        assert progress_bar.refresh_rate == 5
+
     def test_no_progress_bar_callback_for_none(self, base_model_config, base_train_config):
         """progress_bar=None must not add any progress bar callback."""
         mc = base_model_config()

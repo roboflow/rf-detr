@@ -69,6 +69,7 @@ class TestFromCheckpointNamespaceArgs:
             ("rf-detr-small.pth", "RFDETRSmall"),
             ("rf-detr-medium.pth", "RFDETRMedium"),
             ("rf-detr-large.pth", "RFDETRLarge"),
+            ("rf-detr-keypoint-preview-xlarge.pth", "RFDETRKeypointPreview"),
             ("rf-detr-base.pth", "RFDETRBase"),
             ("rf-detr-seg-nano.pt", "RFDETRSegNano"),
             ("rf-detr-seg-small.pt", "RFDETRSegSmall"),
@@ -240,6 +241,31 @@ class TestFromCheckpointEdgeCases:
         call_kwargs = mock_cls.call_args.kwargs
         assert call_kwargs["num_classes"] == 5
 
+    def test_checkpoint_model_config_forwarded_to_constructor(self, tmp_path: Path) -> None:
+        """Reload should preserve schema-dependent model config from PTL ``.pth`` checkpoints."""
+        ckpt = {
+            "args": {"pretrain_weights": "rf-detr-keypoint-preview-xlarge.pth", "num_classes": 1},
+            "model_name": "RFDETRKeypointPreview",
+            "model_config": {
+                "num_keypoints_per_class": [0, 17],
+                "use_grouppose_keypoints": True,
+                "dual_projector": True,
+                "pretrain_weights": "/old/path.pth",
+            },
+        }
+        _, mock_cls = _call_from_checkpoint(
+            ckpt,
+            tmp_path / "checkpoint_best_total.pth",
+            "rfdetr.variants.RFDETRKeypointPreview",
+        )
+
+        call_kwargs = mock_cls.call_args.kwargs
+        assert call_kwargs["num_keypoints_per_class"] == [0, 17]
+        assert call_kwargs["use_grouppose_keypoints"] is True
+        assert call_kwargs["dual_projector"] is True
+        assert call_kwargs["num_classes"] == 1
+        assert call_kwargs["pretrain_weights"] == str(tmp_path / "checkpoint_best_total.pth")
+
     @pytest.mark.skipif(_IS_RFDETR_PLUS_AVAILABLE, reason="rfdetr_plus is installed — guard not active")
     def test_characterization_xlarge_without_plus_raises_import_error(self, tmp_path: Path) -> None:
         """Xlarge checkpoint without rfdetr_plus raises ImportError instead of wrong class."""
@@ -316,6 +342,7 @@ class TestFromCheckpointModelName:
             ("RFDETRSmall", "RFDETRSmall"),
             ("RFDETRMedium", "RFDETRMedium"),
             ("RFDETRLarge", "RFDETRLarge"),
+            ("RFDETRKeypointPreview", "RFDETRKeypointPreview"),
             ("RFDETRBase", "RFDETRBase"),
             ("RFDETRSegNano", "RFDETRSegNano"),
             ("RFDETRSegPreview", "RFDETRSegPreview"),

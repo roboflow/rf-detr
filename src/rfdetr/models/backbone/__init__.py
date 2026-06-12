@@ -24,11 +24,15 @@ class Joiner(nn.Sequential):
 
     def forward(self, tensor_list: NestedTensor):
         """"""
-        x = self[0](tensor_list)
+        result = self[0](tensor_list)
+        if isinstance(result, tuple):
+            x, cross_attn_x = result
+        else:
+            x, cross_attn_x = result, None
         pos = []
         for x_ in x:
             pos.append(self[1](x_, align_dim_orders=False).to(x_.tensors.dtype))
-        return x, pos
+        return x, pos, cross_attn_x
 
     def export(self):
         self._export = True
@@ -39,11 +43,19 @@ class Joiner(nn.Sequential):
                 m.export()
 
     def forward_export(self, inputs: torch.Tensor):
-        feats, masks = self[0](inputs)
+        result = self[0](inputs)
+        if len(result) == 3:
+            feats, masks, cross_attn_feats = result
+        else:
+            feats, masks = result
+            cross_attn_feats = None
         poss = []
         for feat, mask in zip(feats, masks):
-            poss.append(self[1](mask, align_dim_orders=False).to(feat.dtype))
-        return feats, None, poss
+            pos = self[1](mask, align_dim_orders=False).to(feat.dtype)
+            if cross_attn_feats is None and pos.ndim == 4 and pos.shape[1] == 1:
+                pos = pos[:, 0]
+            poss.append(pos)
+        return feats, masks, poss, cross_attn_feats
 
 
 def build_backbone(
@@ -69,6 +81,7 @@ def build_backbone(
     patch_size,
     num_windows,
     positional_encoding_size,
+    dual_projector: bool = False,
 ):
     """
     Useful args:
@@ -99,6 +112,7 @@ def build_backbone(
         patch_size=patch_size,
         num_windows=num_windows,
         positional_encoding_size=positional_encoding_size,
+        dual_projector=dual_projector,
     )
 
     model = Joiner(backbone, position_embedding)
