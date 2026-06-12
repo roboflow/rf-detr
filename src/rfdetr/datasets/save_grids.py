@@ -9,10 +9,10 @@ from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
-import supervision as sv
 import torch
 import torchvision.transforms as T  # noqa: N812
 from matplotlib.axes import Axes
+from supervision import BoxAnnotator, Color, Detections, LabelAnnotator
 from torch.utils.data import DataLoader
 
 from rfdetr.util.box_ops import box_cxcywh_to_xyxy
@@ -50,9 +50,9 @@ class DatasetGridSaver:
             mean=[-0.485 / 0.229, -0.456 / 0.224, -0.406 / 0.225],
             std=[1 / 0.229, 1 / 0.224, 1 / 0.225],
         )
-        box_annotator = sv.BoxAnnotator(thickness=2)
-        label_annotator = sv.LabelAnnotator(
-            text_color=sv.Color.BLACK,
+        box_annotator = BoxAnnotator(thickness=2)
+        label_annotator = LabelAnnotator(
+            text_color=Color.BLACK,
             text_scale=0.5,
             text_padding=3,
         )
@@ -88,8 +88,8 @@ class DatasetGridSaver:
         single_target: dict[str, Any],
         ax: Axes,
         inv_normalize: T.Normalize,
-        box_annotator: sv.BoxAnnotator,
-        label_annotator: sv.LabelAnnotator,
+        box_annotator: BoxAnnotator,
+        label_annotator: LabelAnnotator,
     ) -> None:
         """De-normalize a single image tensor, annotate it with boxes and labels, and plot it on ``ax``.
 
@@ -98,8 +98,8 @@ class DatasetGridSaver:
             single_target: Target dict with keys ``'size'``, ``'boxes'`` (cx,cy,wh normalized), and ``'labels'``.
             ax: Matplotlib axis to plot the annotated image on.
             inv_normalize: Inverse normalization transform to convert the tensor back to pixel values.
-            box_annotator: ``sv.BoxAnnotator`` instance for drawing bounding boxes.
-            label_annotator: ``sv.LabelAnnotator`` instance for drawing class labels.
+            box_annotator: ``BoxAnnotator`` instance for drawing bounding boxes.
+            label_annotator: ``LabelAnnotator`` instance for drawing class labels.
         """
         from PIL import Image as PILImage
 
@@ -130,7 +130,7 @@ class DatasetGridSaver:
                 [[b[0] * w, b[1] * h, b[2] * w, b[3] * h] for box in boxes_iter for b in [box_cxcywh_to_xyxy(box)]],
                 dtype=np.float32,
             )
-            detections = sv.Detections(xyxy=xyxy, class_id=class_ids)
+            detections = Detections(xyxy=xyxy, class_id=class_ids)
             labels = [str(c) for c in class_ids]
             scene = box_annotator.annotate(scene=scene, detections=detections)
             scene = label_annotator.annotate(scene=scene, detections=detections, labels=labels)
