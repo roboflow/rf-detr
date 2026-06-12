@@ -93,11 +93,23 @@ def _is_distributed_strategy_requested(strategy: str) -> bool:
     return any(token in strategy_name for token in ("ddp", "fsdp", "deepspeed"))
 
 
-def _requests_multiple_devices(devices: int | str) -> bool:
+def _accelerator_has_multiple_auto_devices(accelerator: str | None) -> bool:
+    """Return whether PTL auto/all device resolution can select multiple devices."""
+    accelerator_name = (accelerator or "auto").strip().lower()
+    if accelerator_name in ("auto", "cuda", "gpu"):
+        return torch.cuda.is_available() and torch.cuda.device_count() > 1
+    return False
+
+
+def _requests_multiple_devices(devices: int | str, accelerator: str | None = None) -> bool:
     """Return whether the configured devices value explicitly requests multiple devices."""
     if isinstance(devices, int):
+        if devices == -1:
+            return _accelerator_has_multiple_auto_devices(accelerator)
         return devices > 1
     devices_name = devices.strip().lower()
+    if devices_name in ("auto", "-1"):
+        return _accelerator_has_multiple_auto_devices(accelerator)
     if devices_name.isdigit():
         return int(devices_name) > 1
     if "," in devices_name:
@@ -171,17 +183,21 @@ def build_trainer(
         return "32-true"
 
     # --- Strategy + EMA sharding guard ---
-    strategy = tc.strategy
+    strategy = trainer_kwargs.get("strategy", tc.strategy)
+    devices = trainer_kwargs.get("devices", tc.devices)
+    num_nodes = trainer_kwargs.get("num_nodes", tc.num_nodes)
     has_keypoints = bool(model_config.use_grouppose_keypoints)
     distributed_requested = (
-        _is_distributed_strategy_requested(tc.strategy) or tc.num_nodes > 1 or _requests_multiple_devices(tc.devices)
+        _is_distributed_strategy_requested(str(strategy))
+        or num_nodes > 1
+        or _requests_multiple_devices(devices, accelerator)
     )
     if has_keypoints and distributed_requested:
         # TODO(@keypoints-ddp): validate keypoint training under distributed strategies
         # before enabling keypoint distributed training.
         raise NotImplementedError(
             "Keypoint training currently does not support distributed execution "
-            f"(strategy={tc.strategy!r}, devices={tc.devices!r}, num_nodes={tc.num_nodes!r}). "
+            f"(strategy={strategy!r}, devices={devices!r}, num_nodes={num_nodes!r}). "
             "Use single-process training for now (for example strategy='auto', devices=1, num_nodes=1)."
         )
 

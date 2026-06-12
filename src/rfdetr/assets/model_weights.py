@@ -226,6 +226,7 @@ class ModelWeights(ModelWeightsBase):
     RF_DETR_KEYPOINT_PREVIEW = ModelWeightAsset(
         "rf-detr-keypoint-preview-xlarge.pth",
         "https://storage.googleapis.com/rfdetr/rf-detr-keypoint-preview-xlarge.pth",
+        "6de511943ee85a547d4c5cb527daf0eb",
     )
 
     # Segmentation Models

@@ -564,6 +564,51 @@ class TestBuildRoboflowFromCocoBackendResolution:
             build_roboflow_from_coco("train", args, resolution=640)
         assert mock_transforms.call_args.kwargs["gpu_postprocess"] is False
 
+    @pytest.mark.parametrize(
+        ("square_resize_div_64", "transform_factory"),
+        [
+            pytest.param(False, "make_coco_transforms", id="standard_resize"),
+            pytest.param(True, "make_coco_transforms_square_div_64", id="square_resize"),
+        ],
+    )
+    def test_keypoint_flip_pairs_forwarded_to_transforms(
+        self,
+        tmp_path: Path,
+        square_resize_div_64: bool,
+        transform_factory: str,
+    ) -> None:
+        """Roboflow keypoint datasets must pass flip pairs to CPU augmentation transforms."""
+        from unittest.mock import MagicMock, patch
+
+        from rfdetr.datasets.coco import build_roboflow_from_coco
+
+        args = types.SimpleNamespace(
+            dataset_dir=str(tmp_path),
+            augmentation_backend="cpu",
+            square_resize_div_64=square_resize_div_64,
+            segmentation_head=False,
+            multi_scale=False,
+            expanded_scales=False,
+            do_random_resize_via_padding=False,
+            patch_size=16,
+            num_windows=4,
+            use_grouppose_keypoints=True,
+            num_keypoints_per_class=[0, 4],
+            keypoint_flip_pairs=[0, 1, 2, 3],
+            aug_config={},
+        )
+
+        with (
+            patch(f"rfdetr.datasets.coco.{transform_factory}") as mock_transforms,
+            patch("rfdetr.datasets.coco.CocoDetection") as mock_coco,
+        ):
+            mock_transforms.return_value = MagicMock()
+            mock_coco.return_value = MagicMock()
+
+            build_roboflow_from_coco("train", args, resolution=640)
+
+        assert mock_transforms.call_args.kwargs["keypoint_flip_pairs"] == [0, 1, 2, 3]
+
 
 class TestBuilderGpuPostprocess:
     """Verify Roboflow COCO builder sets gpu_postprocess for segmentation models."""

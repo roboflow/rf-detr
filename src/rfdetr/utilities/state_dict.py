@@ -210,7 +210,7 @@ def remap_projector_to_cross_attn(state_dict: dict[str, Any], model: object) -> 
         The same ``state_dict`` object for convenience.
     """
     backbone = model.backbone[0] if hasattr(model, "backbone") else None
-    if backbone is None or not getattr(backbone, "dual_projector", False):
+    if backbone is None or getattr(backbone, "cross_attn_projector", None) is None:
         return state_dict
 
     if any(key.startswith("backbone.0.cross_attn_projector.") for key in state_dict):
@@ -351,3 +351,18 @@ def validate_checkpoint_compatibility(checkpoint: dict[str, Any], model_args: An
     model_patch_size: int | None = getattr(model_args, "patch_size", None)
     if ckpt_patch_size is not None and model_patch_size is not None and ckpt_patch_size != model_patch_size:
         _raise_patch_size_mismatch(ckpt_patch_size, model_patch_size)
+
+    ckpt_keypoint_head: bool | None = _ckpt_args_get(ckpt_args, "use_grouppose_keypoints")
+    model_keypoint_head: bool | None = getattr(model_args, "use_grouppose_keypoints", None)
+
+    if ckpt_keypoint_head is not None and model_keypoint_head is not None and ckpt_keypoint_head != model_keypoint_head:
+        if ckpt_keypoint_head:
+            raise ValueError(
+                "The checkpoint was trained with a keypoint head, but the current model does not have one. "
+                "Load the weights into a keypoint model (e.g. RFDETRKeypointPreview) instead of a detection model."
+            )
+        else:
+            raise ValueError(
+                "The current model has a keypoint head, but the checkpoint was trained without one. "
+                "Load the weights into a detection model (e.g. RFDETRNano) instead of a keypoint model."
+            )

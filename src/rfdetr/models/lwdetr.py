@@ -47,7 +47,10 @@ from rfdetr.models.matcher import build_matcher
 from rfdetr.models.math import MLP
 from rfdetr.models.postprocess import PostProcess
 from rfdetr.models.transformer import build_transformer
+from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.tensors import NestedTensor, nested_tensor_from_tensor_list
+
+logger = get_logger()
 
 
 def _resize_linear(linear: nn.Linear, num_classes: int) -> nn.Linear:
@@ -170,6 +173,14 @@ class LWDETR(nn.Module):
         self.use_grouppose_keypoints = use_grouppose_keypoints
         self.num_keypoints_per_class = num_keypoints_per_class or []
         self.grouppose_keypoint_dim_downscale = grouppose_keypoint_dim_downscale
+        if self.use_grouppose_keypoints and len(self.num_keypoints_per_class) > num_classes:
+            raise ValueError(
+                f"num_keypoints_per_class has {len(self.num_keypoints_per_class)} entries but the detection head "
+                f"only has {num_classes} classes. Class-logit boosts for keypoint classes with id >= {num_classes} "
+                "would be silently truncated. Increase num_classes or shorten num_keypoints_per_class."
+            )
+        # Flag to ensure the zero-pad warning in ``_aggregate_keypoint_class_logits`` is emitted at most once.
+        self._kp_zero_pad_warned = False
         if self.use_grouppose_keypoints:
             self.keypoint_embed = MLP(
                 hidden_dim // self.grouppose_keypoint_dim_downscale,
@@ -402,6 +413,17 @@ class LWDETR(nn.Module):
 
         detection_num_classes = self.class_embed.out_features
         if class_boost.shape[-1] < detection_num_classes:
+            if not self._kp_zero_pad_warned:
+                logger.warning(
+                    "Keypoint class-logit boost has %d classes but detection head has %d; "
+                    "zero-padding boost for classes %d..%d. Detection classes with no keypoint schema "
+                    "will receive zero boost. This warning is emitted once per model instance.",
+                    class_boost.shape[-1],
+                    detection_num_classes,
+                    class_boost.shape[-1],
+                    detection_num_classes - 1,
+                )
+                self._kp_zero_pad_warned = True
             class_boost = torch.cat(
                 [
                     class_boost,
@@ -410,6 +432,9 @@ class LWDETR(nn.Module):
                 dim=-1,
             )
         elif class_boost.shape[-1] > detection_num_classes:
+            # Unreachable under normal use: ``__init__`` raises ``ValueError`` when
+            # ``len(num_keypoints_per_class) > num_classes``. Kept defensively in case
+            # ``class_embed`` is resized post-init.
             class_boost = class_boost[..., :detection_num_classes]
         return class_boost
 

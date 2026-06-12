@@ -205,9 +205,6 @@ These parameters apply when training `RFDETRKeypointPreview` on COCO keypoint an
 | `keypoint_findable_loss_coef` | `float`     | `1.0`     | Weight for keypoint findable/objectness loss.                                                |
 | `keypoint_visible_loss_coef`  | `float`     | `1.0`     | Weight for keypoint visibility loss.                                                         |
 | `keypoint_nll_loss_coef`      | `float`     | `1.0`     | Weight for keypoint negative-log-likelihood loss.                                            |
-| `rle`                         | `bool`      | `True`    | Enable RealNVP/RLE keypoint residual modeling.                                               |
-| `rle_conditional`             | `bool`      | `True`    | Condition the RLE flow on keypoint hidden states.                                            |
-| `rle_loss_coef`               | `float`     | `1.0`     | Weight for the RLE loss term.                                                                |
 
 ## Advanced Parameters
 

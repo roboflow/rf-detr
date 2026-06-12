@@ -734,6 +734,18 @@ class TestBuildTrainerKeypointDistributedGuard:
         with pytest.raises(NotImplementedError, match="Keypoint training currently does not support distributed"):
             build_trainer(tc, mc)
 
+    def test_keypoint_auto_devices_raises_when_cuda_has_multiple_devices(self, tmp_path):
+        """Keypoint mode rejects devices='auto' when it would resolve to multi-GPU execution."""
+        tc = _tc(tmp_path, use_ema=False, devices="auto")
+        mc = _mc(use_grouppose_keypoints=True)
+
+        with (
+            patch("rfdetr.training.trainer.torch.cuda.is_available", return_value=True),
+            patch("rfdetr.training.trainer.torch.cuda.device_count", return_value=2),
+            pytest.raises(NotImplementedError, match="Keypoint training currently does not support distributed"),
+        ):
+            build_trainer(tc, mc)
+
     def test_non_keypoint_ddp_strategy_is_unchanged(self, tmp_path):
         """Non-keypoint mode keeps the existing ddp strategy behavior unchanged."""
         import unittest.mock as mock
