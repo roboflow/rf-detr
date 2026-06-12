@@ -64,7 +64,7 @@ def modulate(features: torch.Tensor, scale: torch.Tensor, shift: torch.Tensor) -
     return (scale + 1.0) * features + shift
 
 
-class ConditionalQueryInitializer(nn.Module):  # type: ignore[misc]
+class ConditionalQueryInitializer(nn.Module):
     """Initialize keypoint query tokens with adaptive layer-normalization style modulation."""
 
     def __init__(self, dim: int, num_queries: int, out_dim: int | None = None) -> None:
