@@ -678,11 +678,11 @@ class TestBuildTrainerDDPFields:
             captured.update(kwargs)
             return mock.MagicMock()
 
-        tc = _tc(tmp_path, use_ema=False, strategy="ddp")
+        tc = _tc(tmp_path, use_ema=False, strategy="auto")
         with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
             build_trainer(tc, _mc())
 
-        assert captured["strategy"] == "ddp"
+        assert captured["strategy"] == "auto"
 
     def test_default_devices_is_1(self, tmp_path):
         """Default TrainConfig.devices must produce devices=1 (single-GPU default)."""
@@ -746,9 +746,11 @@ class TestBuildTrainerKeypointDistributedGuard:
         ):
             build_trainer(tc, mc)
 
-    def test_non_keypoint_ddp_strategy_is_unchanged(self, tmp_path):
-        """Non-keypoint mode keeps the existing ddp strategy behavior unchanged."""
+    def test_non_keypoint_ddp_strategy_wrapped_with_find_unused_parameters(self, tmp_path):
+        """Non-keypoint mode with strategy='ddp' produces DDPStrategy(find_unused_parameters=True)."""
         import unittest.mock as mock
+
+        from pytorch_lightning.strategies import DDPStrategy
 
         captured: dict = {}
 
@@ -761,17 +763,20 @@ class TestBuildTrainerKeypointDistributedGuard:
         with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
             build_trainer(tc, mc)
 
-        assert captured["strategy"] == "ddp"
+        strategy_obj = captured["strategy"]
+        assert isinstance(strategy_obj, DDPStrategy)
+        assert strategy_obj._ddp_kwargs.get("find_unused_parameters") is True
 
 
-class TestBuildTrainerSegmentationDDP:
-    """build_trainer() must enable find_unused_parameters when segmentation_head=True + strategy='ddp'."""
+class TestBuildTrainerDDPFindUnusedParameters:
+    """build_trainer() must enable find_unused_parameters for strategy='ddp' on both detection and segmentation."""
 
     def test_ddp_segmentation_enables_find_unused_parameters(self, tmp_path):
         """Strategy='ddp' + segmentation_head=True must produce DDPStrategy(find_unused_parameters=True).
 
-        The segmentation head's sparse_forward() leaves parameters unused on some forward steps.  Plain DDP raises
-        RuntimeError unless find_unused_parameters is enabled.
+        One case of the broader unconditional rule: find_unused_parameters is enabled for all strategy='ddp'
+        requests.  The segmentation head's sparse_forward() is one source of conditionally-unused parameters under
+        DDP.
         """
         import unittest.mock as mock
 
@@ -792,13 +797,17 @@ class TestBuildTrainerSegmentationDDP:
         assert isinstance(strategy_obj, DDPStrategy)
         assert strategy_obj._ddp_kwargs.get("find_unused_parameters") is True
 
-    def test_ddp_no_segmentation_strategy_unchanged(self, tmp_path):
-        """Strategy='ddp' without segmentation_head must pass the string through unchanged.
+    def test_ddp_no_segmentation_enables_find_unused_parameters(self, tmp_path):
+        """Strategy='ddp' for detection-only must produce DDPStrategy(find_unused_parameters=True).
 
-        Only the segmentation path needs find_unused_parameters; standard detection DDP must not be wrapped
-        unnecessarily to avoid the autograd-graph traversal overhead on every backward pass.
+        Detection models can leave parameters unused under DDP (two-stage group_detr ModuleLists, conditional aux_loss
+        branches), so find_unused_parameters is enabled unconditionally for strategy='ddp' regardless of
+        segmentation_head. Regression test for
+        https://github.com/roboflow/rf-detr/issues/1093.
         """
         import unittest.mock as mock
+
+        from pytorch_lightning.strategies import DDPStrategy
 
         captured: dict = {}
 
@@ -811,7 +820,9 @@ class TestBuildTrainerSegmentationDDP:
         with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
             build_trainer(tc, mc)
 
-        assert captured["strategy"] == "ddp"
+        strategy_obj = captured["strategy"]
+        assert isinstance(strategy_obj, DDPStrategy)
+        assert strategy_obj._ddp_kwargs.get("find_unused_parameters") is True
 
     def test_ddp_spawn_segmentation_preserves_find_unused_parameters(self, tmp_path):
         """strategy='ddp_spawn' + segmentation_head=True must keep find_unused_parameters=True.
