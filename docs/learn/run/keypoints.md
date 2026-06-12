@@ -10,7 +10,7 @@ RF-DETR Keypoint is a real-time transformer architecture for human pose estimati
 
 !!! note "Preview model"
 
-    `RFDETRKeypointPreview` is an early-access release. Fine-tuning on custom keypoint datasets is the primary intended use case. API surface and checkpoint weights may change before the stable release.
+    `RFDETRKeypointPreview` is an early-access release. Fine-tuning on custom keypoint datasets is the primary intended use case. See [Keypoint Preview Parameters](../train/training-parameters.md#keypoint-preview-parameters) for training configuration. API surface and checkpoint weights may change before the stable release.
 
 ## Pre-trained Checkpoints
 
@@ -20,9 +20,11 @@ RF-DETR Keypoint outperforms YOLO26-pose X and YOLO11-pose X at comparable laten
 
 |     Size     |  RF-DETR package class  | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |  License   |
 | :----------: | :---------------------: | :---------------------: | :----------: | :--------: | :--------: | :--------: |
-| XL (Preview) | `RFDETRKeypointPreview` |          71.9           |     9.8      |   126.4    |  700x700   | Apache 2.0 |
+| XL (Preview) | `RFDETRKeypointPreview` |          71.9           |     9.8      |   126.4    |  576x576   | Apache 2.0 |
 
 > The keypoint model is available in the `rfdetr` package only. It is not yet available via the `inference` package.
+
+> Benchmark evaluated on COCO val2017 person keypoints (AP<sub>50:95</sub>) with OKS sigmas defaulting to 0.1 per keypoint; latency on NVIDIA T4, TensorRT FP16, batch size 1.
 
 ## Run on an Image
 
@@ -31,15 +33,17 @@ Perform inference on an image using the `rfdetr` package. `model.predict()` retu
 === "rfdetr"
 
     ```python
+    import cv2
     import supervision as sv
     from rfdetr import RFDETRKeypointPreview
 
     model = RFDETRKeypointPreview()
 
-    key_points = model.predict("/path/to/image.jpg", threshold=0.5)
+    image_bgr = cv2.imread("/path/to/image.jpg")
+    image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+    key_points = model.predict(image_rgb, threshold=0.5)
 
-    source_image = key_points.data["source_image"][0]
-    annotated_image = sv.VertexAnnotator().annotate(source_image, key_points)
+    annotated_image = sv.VertexAnnotator().annotate(image_rgb, key_points)
     ```
 
 ![People walking on a bridge — RF-DETR keypoint skeleton visualization without bounding boxes](../../assets/keypoints/bridge-2.jpg)
@@ -48,16 +52,16 @@ Perform inference on an image using the `rfdetr` package. `model.predict()` retu
 
 `model.predict()` returns an `sv.KeyPoints` object. The fields most commonly used downstream:
 
-| Field                             | Shape          | Description                                                               |
-| --------------------------------- | -------------- | ------------------------------------------------------------------------- |
-| `key_points.xy`                   | `(N, 17, 2)`   | Pixel coordinates of each keypoint per person                             |
-| `key_points.keypoint_confidence`  | `(N, 17)`      | Per-keypoint findability score; use to filter low-confidence joints       |
-| `key_points.detection_confidence` | `(N,)`         | Per-person detection score; this is what `threshold` filters on           |
-| `key_points.class_id`             | `(N,)`         | Class index for each detection (all `1` for person on COCO)               |
-| `key_points.data["xyxy"]`         | `(N, 4)`       | Bounding box for each person in `[x1, y1, x2, y2]` format                 |
-| `key_points.data["source_image"]` | list of arrays | Source frame repeated per detection; access via `[0]` for the first frame |
+| Field                             | Shape          | Description                                                                                       |
+| --------------------------------- | -------------- | ------------------------------------------------------------------------------------------------- |
+| `key_points.xy`                   | `(N, 17, 2)`   | Pixel coordinates of each keypoint per person                                                     |
+| `key_points.keypoint_confidence`  | `(N, 17)`      | Per-keypoint findability score; use to filter low-confidence joints                               |
+| `key_points.detection_confidence` | `(N,)`         | Per-person detection score; this is what `threshold` filters on                                   |
+| `key_points.class_id`             | `(N,)`         | COCO class ID for each detection (person = 1; COCO uses 1-based IDs, not sequential 0-based)      |
+| `key_points.data["xyxy"]`         | `(N, 4)`       | Bounding box for each person in `[x1, y1, x2, y2]` format                                         |
+| `key_points.data["source_image"]` | list of arrays | Source frame stored once per detection; all N entries are the same array — use `[0]` to access it |
 
-Low-confidence keypoints are hidden automatically by supervision annotators via the `visible` mask. To filter manually, threshold `key_points.keypoint_confidence` directly.
+Keypoints with `visible=False` are skipped by supervision annotators. To hide low-confidence joints manually, threshold `key_points.keypoint_confidence` and set matching entries to `False` in `key_points.visible`.
 
 ## Run on video, webcam, or RTSP stream
 
@@ -159,11 +163,19 @@ These examples use OpenCV for decoding and display. Replace `<SOURCE_VIDEO_PATH>
 
 ## Visualization
 
-`supervision` provides several keypoint annotators. Choose based on how much uncertainty information you want to surface.
+`supervision` provides several keypoint annotators. Choose based on what you want to draw.
+
+=== "EdgeAnnotator"
+
+    Draws skeleton edges (lines between connected joints). Edges where either endpoint has `visible=False` are skipped automatically.
+
+    ```python
+    annotated = sv.EdgeAnnotator().annotate(image, key_points)
+    ```
 
 === "VertexAnnotator"
 
-    Draws a dot at each keypoint. Low-confidence keypoints are skipped automatically.
+    Draws a dot at each keypoint. Keypoints with `visible=False` are skipped automatically.
 
     ```python
     annotated = sv.VertexAnnotator().annotate(image, key_points)
