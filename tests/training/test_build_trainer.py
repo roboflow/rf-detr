@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from pytorch_lightning.callbacks import ModelCheckpoint
 
-from rfdetr.config import RFDETRBaseConfig, SegmentationTrainConfig, TrainConfig
+from rfdetr.config import RFDETRBaseConfig, RFDETRKeypointPreviewConfig, SegmentationTrainConfig, TrainConfig
 from rfdetr.training import build_trainer
 from rfdetr.training.callbacks.best_model import BestModelCallback, RFDETREarlyStopping
 from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
@@ -82,6 +82,16 @@ class TestBuildTrainerCallbacks:
         assert coco_cb._eval_interval == 3
         assert coco_cb._log_per_class_metrics is False
 
+    def test_coco_eval_uses_keypoint_oks_sigmas(self, tmp_path):
+        """COCOEvalCallback receives custom keypoint OKS sigmas from TrainConfig."""
+        sigmas = [0.05] * 25
+        trainer = build_trainer(
+            _tc(tmp_path, use_ema=False, keypoint_oks_sigmas=sigmas),
+            RFDETRKeypointPreviewConfig(pretrain_weights=None),
+        )
+        coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
+        assert coco_cb._keypoint_oks_sigmas == sigmas
+
     def test_best_model_always_present(self, tmp_path):
         """BestModelCallback is always included."""
         trainer = build_trainer(_tc(tmp_path, use_ema=False), _mc())
@@ -93,6 +103,20 @@ class TestBuildTrainerCallbacks:
         trainer = build_trainer(_tc(tmp_path, use_ema=False, skip_best_epochs=3), _mc())
         best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
         assert best_cb._skip_best_epochs == 3
+
+    def test_keypoint_best_model_monitors_keypoint_map(self, tmp_path):
+        """Keypoint training checkpoints should rank models by keypoint AP, not bbox mAP."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=True), RFDETRKeypointPreviewConfig(pretrain_weights=None))
+        best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
+        assert best_cb.monitor == "val/keypoint_map_50_95"
+        assert best_cb._monitor_ema == "val/ema_keypoint_map_50_95"
+
+    def test_segmentation_best_model_monitors_segmentation_map(self, tmp_path):
+        """Segmentation training checkpoints should rank models by segmentation AP, not bbox AP."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=True), _mc(segmentation_head=True))
+        best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
+        assert best_cb.monitor == "val/segm_mAP_50_95"
+        assert best_cb._monitor_ema == "val/ema_segm_mAP_50_95"
 
     def test_latest_model_checkpoint_present(self, tmp_path):
         """A ModelCheckpoint (not BestModelCallback) with every_n_epochs==1 is included when checkpoint_interval > 1."""
@@ -202,6 +226,26 @@ class TestBuildTrainerCallbacks:
         trainer = build_trainer(_tc(tmp_path, early_stopping=True, skip_best_epochs=4), _mc())
         early_stop_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RFDETREarlyStopping))
         assert early_stop_cb._skip_best_epochs == 4
+
+    def test_keypoint_early_stopping_monitors_keypoint_map(self, tmp_path):
+        """Keypoint early stopping should use keypoint AP as the regular metric."""
+        trainer = build_trainer(
+            _tc(tmp_path, early_stopping=True, early_stopping_use_ema=True),
+            RFDETRKeypointPreviewConfig(pretrain_weights=None),
+        )
+        early_stop_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RFDETREarlyStopping))
+        assert early_stop_cb._monitor_regular == "val/keypoint_map_50_95"
+        assert early_stop_cb._monitor_ema == "val/ema_keypoint_map_50_95"
+
+    def test_segmentation_early_stopping_monitors_segmentation_map(self, tmp_path):
+        """Segmentation early stopping should use segmentation AP as the regular metric."""
+        trainer = build_trainer(
+            _tc(tmp_path, early_stopping=True, early_stopping_use_ema=True),
+            _mc(segmentation_head=True),
+        )
+        early_stop_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RFDETREarlyStopping))
+        assert early_stop_cb._monitor_regular == "val/segm_mAP_50_95"
+        assert early_stop_cb._monitor_ema == "val/ema_segm_mAP_50_95"
 
     def test_no_early_stopping_when_disabled(self, tmp_path):
         """RFDETREarlyStopping is absent when early_stopping=False."""
@@ -677,6 +721,47 @@ class TestBuildTrainerDDPFields:
         tc = _tc(tmp_path, use_ema=False, devices="auto")
         # Should not raise during config construction.
         assert tc.devices == "auto"
+
+
+class TestBuildTrainerKeypointDistributedGuard:
+    """Keypoint mode must fail fast for unsupported distributed training settings."""
+
+    def test_keypoint_ddp_strategy_raises_clear_error(self, tmp_path):
+        """Keypoint mode rejects explicit distributed strategy requests with a clear error."""
+        tc = _tc(tmp_path, use_ema=False, strategy="ddp")
+        mc = _mc(use_grouppose_keypoints=True)
+
+        with pytest.raises(NotImplementedError, match="Keypoint training currently does not support distributed"):
+            build_trainer(tc, mc)
+
+    def test_keypoint_auto_devices_raises_when_cuda_has_multiple_devices(self, tmp_path):
+        """Keypoint mode rejects devices='auto' when it would resolve to multi-GPU execution."""
+        tc = _tc(tmp_path, use_ema=False, devices="auto")
+        mc = _mc(use_grouppose_keypoints=True)
+
+        with (
+            patch("rfdetr.training.trainer.torch.cuda.is_available", return_value=True),
+            patch("rfdetr.training.trainer.torch.cuda.device_count", return_value=2),
+            pytest.raises(NotImplementedError, match="Keypoint training currently does not support distributed"),
+        ):
+            build_trainer(tc, mc)
+
+    def test_non_keypoint_ddp_strategy_is_unchanged(self, tmp_path):
+        """Non-keypoint mode keeps the existing ddp strategy behavior unchanged."""
+        import unittest.mock as mock
+
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        tc = _tc(tmp_path, use_ema=False, strategy="ddp")
+        mc = _mc(use_grouppose_keypoints=False)
+        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
+            build_trainer(tc, mc)
+
+        assert captured["strategy"] == "ddp"
 
 
 class TestBuildTrainerSegmentationDDP:

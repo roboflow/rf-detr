@@ -2,7 +2,7 @@ name: GPU tests Workflow
 
 on:
   push:
-    branches: ["main", "release/*", "develop"]
+    branches: ["main", "release/*", "develop", "feat/*"]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
 

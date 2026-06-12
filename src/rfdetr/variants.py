@@ -14,6 +14,7 @@ from __future__ import annotations
 
 __all__ = [
     "RFDETRBase",
+    "RFDETRKeypointPreview",
     "RFDETRNano",
     "RFDETRSmall",
     "RFDETRMedium",
@@ -32,8 +33,10 @@ __all__ = [
 from deprecate import deprecated_class
 
 from rfdetr.config import (
+    KeypointTrainConfig,
     ModelConfig,
     RFDETRBaseConfig,
+    RFDETRKeypointPreviewConfig,
     RFDETRLargeConfig,
     RFDETRLargeDeprecatedConfig,
     RFDETRMediumConfig,
@@ -71,6 +74,14 @@ class RFDETRNano(RFDETR):
 
     size = "rfdetr-nano"
     _model_config_class = RFDETRNanoConfig
+
+
+class RFDETRKeypointPreview(RFDETR):
+    """Train or run inference with the RF-DETR keypoint preview model."""
+
+    size = "rfdetr-keypoint-preview"
+    _model_config_class = RFDETRKeypointPreviewConfig
+    _train_config_class = KeypointTrainConfig
 
 
 class RFDETRSmall(RFDETR):
@@ -167,7 +178,7 @@ class RFDETRLarge(RFDETR):
                     self.init_error,
                     exc_info=retry_exc,
                 )
-                raise self.init_error from None
+                raise self.init_error from retry_exc
 
     def get_model_config(self, **kwargs) -> ModelConfig:
         if not self.is_deprecated:

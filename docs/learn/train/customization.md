@@ -325,9 +325,9 @@ trainer = build_trainer(
 | --------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
 | `RFDETREMACallback`   | Maintains an EMA copy of model weights                                                      | `train_config.use_ema=True` and strategy is not sharded |
 | `DropPathCallback`    | Anneals drop-path rate over training                                                        | `train_config.drop_path > 0`                            |
-| `COCOEvalCallback`    | Computes mAP and F1 after each validation epoch                                             | Always                                                  |
+| `COCOEvalCallback`    | Computes task validation metrics after each validation epoch                                | Always                                                  |
 | `BestModelCallback`   | Saves `checkpoint_best_regular.pth`, `checkpoint_best_ema.pth`, `checkpoint_best_total.pth` | Always                                                  |
-| `RFDETREarlyStopping` | Stops training when validation mAP stops improving                                          | `train_config.early_stopping=True`                      |
+| `RFDETREarlyStopping` | Stops training when the validation task metric stops improving                              | `train_config.early_stopping=True`                      |
 
 ---
 
@@ -344,29 +344,31 @@ trainer.loggers.append(NeptuneLogger(project="my-workspace/rf-detr"))
 trainer.fit(module, datamodule)
 ```
 
-All logged keys (`train/loss`, `val/mAP_50_95`, `val/F1`, `val/ema_mAP_50_95`, etc.) are written to every active logger in the list.
+All logged keys (`train/loss`, `val/mAP_50_95`, `val/keypoint_map_50_95`, `val/F1`, `val/ema_mAP_50_95`, etc.) are written to every active logger in the list.
 
 ---
 
 ## Logged metrics reference
 
-| Key                  | When logged            | Description                                               |
-| -------------------- | ---------------------- | --------------------------------------------------------- |
-| `train/loss`         | Every step / epoch     | Total weighted training loss                              |
-| `train/<term>`       | Every step / epoch     | Individual loss terms (e.g. `train/loss_bbox`)            |
-| `val/loss`           | Each epoch             | Validation loss (if `train_config.compute_val_loss=True`) |
-| `val/mAP_50_95`      | Each eval epoch        | COCO box mAP@[.50:.05:.95]                                |
-| `val/mAP_50`         | Each eval epoch        | COCO box mAP@.50                                          |
-| `val/mAP_75`         | Each eval epoch        | COCO box mAP@.75                                          |
-| `val/mAR`            | Each eval epoch        | COCO mean average recall                                  |
-| `val/ema_mAP_50_95`  | Each eval epoch        | EMA-model mAP@[.50:.05:.95] (if EMA active)               |
-| `val/F1`             | Each eval epoch        | Macro F1 at best confidence threshold                     |
-| `val/precision`      | Each eval epoch        | Precision at best F1 threshold                            |
-| `val/recall`         | Each eval epoch        | Recall at best F1 threshold                               |
-| `val/AP/<class>`     | Each eval epoch        | Per-class AP (if `log_per_class_metrics=True`)            |
-| `val/segm_mAP_50_95` | Each eval epoch        | Segmentation mAP (segmentation models only)               |
-| `val/segm_mAP_50`    | Each eval epoch        | Segmentation mAP@.50 (segmentation models only)           |
-| `test/*`             | After `trainer.test()` | Mirror of `val/*` keys                                    |
+| Key                      | When logged            | Description                                               |
+| ------------------------ | ---------------------- | --------------------------------------------------------- |
+| `train/loss`             | Every step / epoch     | Total weighted training loss                              |
+| `train/<term>`           | Every step / epoch     | Individual loss terms (e.g. `train/loss_bbox`)            |
+| `val/loss`               | Each epoch             | Validation loss (if `train_config.compute_val_loss=True`) |
+| `val/mAP_50_95`          | Each eval epoch        | COCO box mAP@[.50:.05:.95]                                |
+| `val/mAP_50`             | Each eval epoch        | COCO box mAP@.50                                          |
+| `val/mAP_75`             | Each eval epoch        | COCO box mAP@.75                                          |
+| `val/mAR`                | Each eval epoch        | COCO mean average recall                                  |
+| `val/ema_mAP_50_95`      | Each eval epoch        | EMA-model mAP@[.50:.05:.95] (if EMA active)               |
+| `val/F1`                 | Each eval epoch        | Macro F1 at best confidence threshold                     |
+| `val/precision`          | Each eval epoch        | Precision at best F1 threshold                            |
+| `val/recall`             | Each eval epoch        | Recall at best F1 threshold                               |
+| `val/AP/<class>`         | Each eval epoch        | Per-class AP (if `log_per_class_metrics=True`)            |
+| `val/segm_mAP_50_95`     | Each eval epoch        | Segmentation mAP (segmentation models only)               |
+| `val/segm_mAP_50`        | Each eval epoch        | Segmentation mAP@.50 (segmentation models only)           |
+| `val/keypoint_map_50_95` | Each eval epoch        | COCO keypoint AP@[.50:.05:.95] (keypoint preview only)    |
+| `val/keypoint_map_50`    | Each eval epoch        | COCO keypoint AP@.50 (keypoint preview only)              |
+| `test/*`                 | After `trainer.test()` | Mirror of `val/*` keys                                    |
 
 ---
 

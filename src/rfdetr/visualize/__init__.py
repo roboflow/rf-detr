@@ -6,9 +6,11 @@
 """Visualization utilities for RF-DETR."""
 
 from rfdetr.visualize.data import save_gt_predictions_visualization
-from rfdetr.visualize.training import plot_metrics
+from rfdetr.visualize.training import plot_loss_metrics, plot_map_metrics, plot_metrics
 
 __all__ = [
+    "plot_loss_metrics",
+    "plot_map_metrics",
     "plot_metrics",
     "save_gt_predictions_visualization",
 ]
