@@ -111,7 +111,7 @@ def test_segmentation_model_export_no_crash(tmp_path: Path) -> None:
 
     # This should not crash with "AttributeError: 'dict' object has no attribute 'shape'"
     with ignore_tracer_warnings():
-        model.export(output_dir=str(tmp_path), simplify=False, verbose=False)
+        model.export(output_dir=str(tmp_path), verbose=False)
 
     # Verify export produced output files
     onnx_files = list(tmp_path.glob("*.onnx"))
@@ -138,44 +138,10 @@ def test_export_does_not_change_original_training_state(tmp_path: Path) -> None:
 
     # Call export() on the high-level model; this should not change the original model's mode
     with ignore_tracer_warnings():
-        model.export(output_dir=str(tmp_path), simplify=False)
+        model.export(output_dir=str(tmp_path))
 
     # After export, the original underlying model should still be in training mode
     assert torch_model.training is True, "export() should not change the original model's training state"
-
-
-@pytest.fixture
-def _detr_export_scaffold(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    """Shared scaffold for RFDETR.export() deprecated-argument tests."""
-
-    model = types.SimpleNamespace(
-        model=types.SimpleNamespace(
-            model=_DummyCoreModel(),
-            device="cpu",
-            resolution=14,
-        ),
-        model_config=types.SimpleNamespace(
-            segmentation_head=False,
-            use_grouppose_keypoints=False,
-            num_channels=3,
-        ),
-        size=None,
-    )
-
-    export_called: dict[str, bool] = {"value": False}
-
-    def _fake_make_infer_image(*_args, **_kwargs):
-        return torch.zeros(1, 3, 14, 14)
-
-    def _fake_export_onnx(*_args, **_kwargs):
-        export_called["value"] = True
-        return str(tmp_path / "inference_model.onnx")
-
-    monkeypatch.setattr("rfdetr.export.main.make_infer_image", _fake_make_infer_image)
-    monkeypatch.setattr("rfdetr.export.main.export_onnx", _fake_export_onnx)
-    monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
-
-    return model, export_called
 
 
 @pytest.mark.parametrize(
@@ -235,22 +201,6 @@ def test_rfdetr_export_dynamic_batch_forwards_dynamic_axes(
     assert set(dynamic_axes.keys()) == expected_names, f"expected keys {expected_names}, got {set(dynamic_axes.keys())}"
 
 
-def test_export_simplify_flag_is_ignored_with_deprecation_warning(_detr_export_scaffold: tuple, tmp_path: Path) -> None:
-    """`simplify=True` should not run ONNX simplification and should emit a deprecation warning."""
-    model, export_called = _detr_export_scaffold
-    with pytest.deprecated_call(match=r".*`export`.*deprecated.*`simplify`.*"):
-        _detr_module.RFDETR.export(model, output_dir=str(tmp_path), simplify=True, verbose=False, shape=(14, 14))
-    assert export_called["value"] is True
-
-
-def test_export_force_flag_is_ignored_with_deprecation_warning(_detr_export_scaffold: tuple, tmp_path: Path) -> None:
-    """`force=True` should be a no-op and emit a deprecation warning."""
-    model, export_called = _detr_export_scaffold
-    with pytest.deprecated_call(match=r".*`export`.*deprecated.*`force`.*"):
-        _detr_module.RFDETR.export(model, output_dir=str(tmp_path), force=True, verbose=False, shape=(14, 14))
-    assert export_called["value"] is True
-
-
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
 @pytest.mark.parametrize("mode", ["train", "eval"], ids=["train_mode", "eval_mode"])
@@ -307,7 +257,6 @@ class TestCliExportMain:
         batch_size: int = 1,
         verbose: bool = False,
         opset_version: int = 17,
-        simplify: bool = False,
         tensorrt: bool = False,
         dynamic_batch: bool = False,
     ) -> types.SimpleNamespace:
@@ -324,7 +273,6 @@ class TestCliExportMain:
             batch_size=batch_size,
             verbose=verbose,
             opset_version=opset_version,
-            simplify=simplify,
             tensorrt=tensorrt,
             dynamic_batch=dynamic_batch,
         )
@@ -477,46 +425,6 @@ class TestCliExportMain:
             f"expected opset_version={args.opset_version!r}, got {kwargs.get('opset_version')!r}"
         )
         assert "backbone_only" in kwargs, "backbone_only kwarg missing from export_onnx call"
-
-    def test_simplify_flag_logs_warning_and_continues_export(self, output_dir: str) -> None:
-        """CLI --simplify=True must log a deprecation warning and still call export_onnx.
-
-        The flag is now a no-op: the logger emits a warning and export continues without running ONNX simplification.
-        """
-        args = self._make_args(output_dir=output_dir, simplify=True)
-        export_onnx_called: dict[str, bool] = {"value": False}
-
-        mock_model = MagicMock()
-        mock_model.parameters.return_value = []
-        mock_model.backbone.parameters.return_value = []
-        mock_model.backbone.__getitem__.return_value.projector.parameters.return_value = []
-        mock_model.backbone.__getitem__.return_value.encoder.parameters.return_value = []
-        mock_model.transformer.parameters.return_value = []
-        mock_model.to.return_value = mock_model
-        mock_model.cpu.return_value = mock_model
-        mock_model.eval.return_value = mock_model
-        mock_model.return_value = {"pred_boxes": torch.zeros(1, 300, 4), "pred_logits": torch.zeros(1, 300, 90)}
-
-        mock_tensor = MagicMock()
-        mock_tensor.to.return_value = mock_tensor
-        mock_tensor.cpu.return_value = mock_tensor
-
-        def fake_export_onnx(*_args, **_kwargs):
-            export_onnx_called["value"] = True
-            return str(output_dir) + "/inference_model.onnx"
-
-        with (
-            patch.object(_cli_export_module, "build_model", return_value=(mock_model, MagicMock(), MagicMock())),
-            patch.object(_cli_export_module, "make_infer_image", return_value=mock_tensor),
-            patch.object(_cli_export_module, "export_onnx", side_effect=fake_export_onnx),
-            patch.object(_cli_export_module, "get_rank", return_value=0),
-            patch.object(_cli_export_module, "logger") as mock_logger,
-        ):
-            _cli_export_module.main(args)
-
-        mock_logger.warning.assert_called_once()
-        assert "simplify" in mock_logger.warning.call_args[0][0].lower()
-        assert export_onnx_called["value"] is True, "export_onnx should still be called with simplify=True"
 
     @pytest.mark.parametrize(
         "dynamic_batch, segmentation_head, backbone_only",
