@@ -8,13 +8,17 @@ which renders each entry as a card via a Jinja loop.
 
 ## Converting a jupytext `.py` to `.ipynb`
 
-Cookbook source files live as jupytext percent-format `.py` scripts (e.g. `fine-tune_keypoints.py` at the project root). After editing the `.py`, regenerate the notebook with:
+Cookbook source files live as jupytext percent-format `.py` scripts (e.g. `fine-tune_keypoints.py` at the project root). Each script has **two output notebooks** that must be regenerated together after every edit:
 
 ```bash
+# Runnable copy (for users who want to run the notebook directly)
+jupytext --to notebook fine-tune_keypoints.py --output notebooks/fine-tune_keypoints.ipynb
+
+# Docs render copy (served by mkdocs-jupyter at /cookbooks/)
 jupytext --to notebook fine-tune_keypoints.py --output docs/cookbooks/fine-tune_keypoints.ipynb
 ```
 
-The `--output` flag writes directly into the cookbooks directory. Omit `--execute` — notebooks are rendered statically by `mkdocs-jupyter` with `execute: false`, so pre-run outputs in the `.ipynb` are displayed as-is.
+Both commands must be run to keep the two copies in sync. Omit `--execute` — notebooks are rendered statically by `mkdocs-jupyter` with `execute: false`, so pre-run outputs in the `.ipynb` are displayed as-is.
 
 If jupytext is not installed: `pip install jupytext` (or `uv add jupytext --dev`).
 

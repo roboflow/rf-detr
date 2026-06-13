@@ -52,7 +52,7 @@ from rfdetr.visualize.training import plot_loss_metrics, plot_map_metrics
 
 # %%
 PROJECT_ROOT = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd()
-DATASETS_DIR = Path("datasets")
+DATASETS_DIR = PROJECT_ROOT / "datasets"
 
 DATASETS: dict[str, dict[str, Any]] = {
     "dart": {
@@ -156,9 +156,21 @@ _enable_notebook_inline_matplotlib()
 try:
     from google.colab import userdata
 
-    ROBOFLOW_API_KEY = userdata.get("ROBOFLOW_API_KEY") or os.environ["ROBOFLOW_API_KEY"]
-except Exception:
-    ROBOFLOW_API_KEY = os.environ["ROBOFLOW_API_KEY"]
+    try:
+        ROBOFLOW_API_KEY = userdata.get("ROBOFLOW_API_KEY") or ""
+    except Exception:
+        ROBOFLOW_API_KEY = ""
+except ImportError:
+    ROBOFLOW_API_KEY = ""
+
+if not ROBOFLOW_API_KEY:
+    ROBOFLOW_API_KEY = os.environ.get("ROBOFLOW_API_KEY", "")
+if not ROBOFLOW_API_KEY:
+    raise RuntimeError(
+        "ROBOFLOW_API_KEY not found. "
+        "In Colab: add it via Secrets (key icon). "
+        "Locally: set the environment variable before running."
+    )
 
 rf = Roboflow(api_key=ROBOFLOW_API_KEY)
 dataset = (
@@ -397,11 +409,13 @@ print(f"saved_checkpoint_model={final_checkpoint}")
 # %% [markdown]
 # ## 7 - Validate metrics
 #
-# The validation pass that runs at the end of every training epoch uses the best weights seen so far and applies augmentation. This cell runs a clean post-training validation: no augmentation, the best checkpoint loaded via `BestModelCallback`, and results serialised to JSON for downstream comparison. Two metrics are most important to inspect here. `bbox/map` is the standard COCO bounding-box mAP at IoU 0.50:0.95 — it tells you how reliably the detector finds and bounds each object. `keypoint/oks` is the OKS-based mAP — it measures how precisely the model places each joint within the detected bounding boxes. A model can have a high `bbox/map` but a low `keypoint/oks` if it finds objects well but struggles to localise their joints; addressing that usually means more labelled data or tighter OKS sigmas.
+# The validation pass that runs at the end of every training epoch uses the best weights seen so far and applies augmentation. This cell runs a clean post-training validation: no augmentation, the best checkpoint loaded from `checkpoint_best_total.pth` written by `BestModelCallback`, and results serialised to JSON for downstream comparison. Two metrics are most important to inspect here. `bbox/map` is the standard COCO bounding-box mAP at IoU 0.50:0.95 — it tells you how reliably the detector finds and bounds each object. `keypoint/oks` is the OKS-based mAP — it measures how precisely the model places each joint within the detected bounding boxes. A model can have a high `bbox/map` but a low `keypoint/oks` if it finds objects well but struggles to localise their joints; addressing that usually means more labelled data or tighter OKS sigmas.
 
 
 # %%
-validation_results = trainer.validate(model, datamodule=datamodule, ckpt_path=None)
+validation_results = trainer.validate(
+    model, datamodule=datamodule, ckpt_path=str(OUTPUT_DIR / "checkpoint_best_total.pth")
+)
 validation_metrics = {key: float(value) for key, value in validation_results[0].items()} if validation_results else {}
 if not VALIDATE_KEYPOINT_METRICS:
     validation_metrics["keypoint_oks_skipped_mixed_keypoint_counts"] = 1.0
@@ -445,13 +459,22 @@ loaded_model = RFDETRKeypointPreview.from_checkpoint(FINAL_CHECKPOINT_PATH)
 
 
 # %%
-validation_image_paths = sorted((DATASET_DIR / "test").glob("*.jpg"))
+_IMAGE_EXTS = {".jpg", ".jpeg", ".png"}
+
+
+def _find_images(directory: Path) -> list[Path]:
+    if not directory.is_dir():
+        return []
+    return sorted(p for p in directory.iterdir() if p.suffix.lower() in _IMAGE_EXTS)
+
+
+validation_image_paths = _find_images(DATASET_DIR / "test")
 if not validation_image_paths:
-    validation_image_paths = sorted((DATASET_DIR / "valid").glob("*.jpg"))
+    validation_image_paths = _find_images(DATASET_DIR / "valid")
 if not validation_image_paths:
-    validation_image_paths = sorted((DATASET_DIR / "train").glob("*.jpg"))
+    validation_image_paths = _find_images(DATASET_DIR / "train")
 if not validation_image_paths:
-    raise FileNotFoundError(f"No JPG images found under {DATASET_DIR}")
+    raise FileNotFoundError(f"No images ({', '.join(sorted(_IMAGE_EXTS))}) found under {DATASET_DIR}")
 
 inference_image_paths = validation_image_paths[:INFERENCE_COUNT]
 print(f"inference_images={[str(path) for path in inference_image_paths]}")
