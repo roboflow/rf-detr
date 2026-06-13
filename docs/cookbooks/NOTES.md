@@ -44,8 +44,8 @@ Current tag colours are assigned dynamically by the docs UI, so they may change 
 
 ## Current notebooks
 
-| File | Card title | Version |
-| -------------------------------- | ---------------------------------------------------- | ------- |
-| `fine-tune_keypoints.ipynb`      | Fine-Tune RF-DETR Keypoint Detection                 | v1.8.0  |
-| `release-demo_1-5.ipynb`         | Custom Augmentations and Live Training Progress      | v1.5.0  |
-| `release-demo_1-6.ipynb`         | PyTorch Lightning Building Blocks                    | v1.6.0  |
+| File                        | Card title                                      | Version |
+| --------------------------- | ----------------------------------------------- | ------- |
+| `fine-tune_keypoints.ipynb` | Fine-Tune RF-DETR Keypoint Detection            | v1.8.0  |
+| `release-demo_1-5.ipynb`    | Custom Augmentations and Live Training Progress | v1.5.0  |
+| `release-demo_1-6.ipynb`    | PyTorch Lightning Building Blocks               | v1.6.0  |
