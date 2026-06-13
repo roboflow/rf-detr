@@ -29,6 +29,7 @@ from PIL import Image
 
 from rfdetr.assets.coco_classes import COCO_CLASS_NAMES, COCO_CLASSES
 from rfdetr.assets.model_weights import download_pretrain_weights, get_model_cache_dir
+from rfdetr.compat.supervision import _attach_detection_metadata, _make_keypoints
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.datasets._keypoint_schema import active_keypoint_counts, infer_coco_keypoint_schema
 from rfdetr.datasets.coco import is_valid_coco_dataset
@@ -179,84 +180,6 @@ def _resolve_patch_size(patch_size: int | None, model_config: object, caller: st
     if isinstance(patch_size, bool) or not isinstance(patch_size, int) or patch_size <= 0:
         raise ValueError(f"patch_size must be a positive integer, got {patch_size!r}")
     return patch_size
-
-
-def _attach_detection_metadata(detections: Any, key: str, value: Any) -> None:
-    """Attach metadata to Supervision Detections across supported versions.
-
-    Args:
-        detections: A Supervision Detections object.
-        key: Metadata key to set.
-        value: Metadata value to attach.
-    """
-    metadata = getattr(detections, "metadata", None)
-    if metadata is None:
-        metadata = {}
-        setattr(detections, "metadata", metadata)
-    metadata[key] = value
-
-
-def _make_keypoints(
-    keypoints_cls: Any,
-    xy: np.ndarray,
-    keypoint_confidence: np.ndarray,
-    detection_confidence: np.ndarray | None,
-    class_id: np.ndarray | None,
-    visible: np.ndarray,
-    data: dict[str, Any],
-) -> Any:
-    """Create a Supervision KeyPoints object across supported constructor versions.
-
-    Args:
-        keypoints_cls: Supervision KeyPoints class.
-        xy: Keypoint coordinates.
-        keypoint_confidence: Per-keypoint confidence values.
-        detection_confidence: Per-detection confidence values.
-        class_id: Per-detection class ids.
-        visible: Per-keypoint visibility mask.
-        data: Per-detection data to attach.
-
-    Returns:
-        A Supervision KeyPoints instance with RF-DETR-facing confidence attributes.
-    """
-    try:
-        return keypoints_cls(
-            xy=xy,
-            keypoint_confidence=keypoint_confidence,
-            detection_confidence=detection_confidence,
-            class_id=class_id,
-            visible=visible,
-            data=data,
-        )
-    except TypeError as exc:
-        if "keypoint_confidence" not in str(exc):
-            raise
-
-    constructor_xy = xy
-    constructor_confidence = keypoint_confidence
-    if xy.shape[0] == 0 and xy.shape[1] != 0:
-        constructor_xy = np.empty((0, 0, 2), dtype=xy.dtype)
-        constructor_confidence = np.empty((0, 0), dtype=keypoint_confidence.dtype)
-
-    key_points = keypoints_cls(
-        xy=constructor_xy,
-        class_id=class_id,
-        confidence=constructor_confidence,
-        data=data,
-    )
-    key_points.xy = xy
-    key_points.confidence = keypoint_confidence
-    key_points.keypoint_confidence = keypoint_confidence
-    key_points.detection_confidence = detection_confidence
-    key_points.visible = visible
-    if xy.shape[0] == 0:
-        key_points.is_empty = _empty_keypoints_is_empty
-    return key_points
-
-
-def _empty_keypoints_is_empty() -> bool:
-    """Return the empty-state override for older Supervision KeyPoints objects."""
-    return True
 
 
 def _move_model_context_to_device(model_ctx: Any) -> None:
@@ -503,7 +426,7 @@ class RFDETR:
 
                 raise ImportError(
                     f"Checkpoint model_name={saved_model_name!r}, pretrain_weights={weights_name!r} requires the "
-                    f"rfdetr_plus package. " + _INSTALL_MSG.format(name="platform model downloads")
+                    f"rfdetr_plus package. " + _INSTALL_MSG.format(name="platform model downloads"),
                 )
 
             for name, klass in _model_map:
@@ -523,7 +446,7 @@ class RFDETR:
             raise ValueError(
                 f"Could not infer model class from checkpoint at {path!r} "
                 f"(model_name={saved_model_name!r}, pretrain_weights={weights_name!r}). "
-                f"Please instantiate the model class directly."
+                f"Please instantiate the model class directly.",
             )
 
         if isinstance(args, dict):
@@ -702,7 +625,7 @@ class RFDETR:
                     f"resolution={_resolution} is not divisible by "
                     f"patch_size ({self.model_config.patch_size}) * num_windows "
                     f"({self.model_config.num_windows}) = {block_size}. "
-                    f"Choose a resolution that is a multiple of {block_size}."
+                    f"Choose a resolution that is a multiple of {block_size}.",
                 )
             # Smart PE update: only recompute positional_encoding_size when the
             # current config derives it formulaically (PE == resolution // patch_size).
@@ -817,7 +740,10 @@ class RFDETR:
 
     @_ensure_model_on_device
     def optimize_for_inference(
-        self, compile: bool = True, batch_size: int = 1, dtype: torch.dtype | str = torch.float32
+        self,
+        compile: bool = True,
+        batch_size: int = 1,
+        dtype: torch.dtype | str = torch.float32,
     ) -> None:
         """Optimize the model for inference with optional JIT compilation and dtype casting.
 
@@ -1071,7 +997,11 @@ class RFDETR:
                 shape = _validate_shape_dims(shape, block_size, patch_size, num_windows)
 
             input_tensors = make_infer_image(
-                infer_dir, shape, batch_size, device, num_channels=self.model_config.num_channels
+                infer_dir,
+                shape,
+                batch_size,
+                device,
+                num_channels=self.model_config.num_channels,
             ).to(device)
             input_names = ["input"]
             if backbone_only:
@@ -1325,7 +1255,6 @@ class RFDETR:
             >>> RFDETR._roboflow_keypoint_annotation_path("/missing") is None
             True
         """
-
         if not is_valid_coco_dataset(dataset_dir):
             return None
         annotation_path = Path(dataset_dir) / "train" / "_annotations.coco.json"
@@ -1351,7 +1280,6 @@ class RFDETR:
             >>> model.model = type("Context", (), {"args": None})()
             >>> model._align_keypoint_schema_from_dataset(TrainConfig(dataset_dir="/missing", tensorboard=False))
         """
-
         if not self.model_config.use_grouppose_keypoints:
             return
         if getattr(config, "dataset_file", None) != "roboflow":
@@ -1564,7 +1492,7 @@ class RFDETR:
                 raise ValueError(
                     "Invalid tensor image shape. Tensor inputs to `predict()` must be in (C, H, W) format "
                     f"with C matching the model configuration ({self.model_config.num_channels} channels). "
-                    f"Received tensor with shape {tuple(img.shape)}."
+                    f"Received tensor with shape {tuple(img.shape)}.",
                 )
             img_tensor = img
 
@@ -1634,7 +1562,7 @@ class RFDETR:
         if _model_args is None and model_class_names == list(COCO_CLASS_NAMES):
             logger.warning_once(
                 "predict(): model has no 'args' attribute — COCO sparse-ID mapping cannot activate; "
-                "class_ids are treated as 0-indexed (may be wrong for pretrained COCO checkpoints)"
+                "class_ids are treated as 0-indexed (may be wrong for pretrained COCO checkpoints)",
             )
         num_logit_slots: int = getattr(_model_args, "num_classes", n)
         _is_coco_pretrained = num_logit_slots > n and model_class_names == list(COCO_CLASS_NAMES)
@@ -1719,7 +1647,8 @@ class RFDETR:
                     source_shape = np.asarray(raw_source_shape, dtype=np.float32)
                     if precision.shape[:2] == keypoints_array.shape[:2] and source_shape.shape == (len(detections), 2):
                         keypoint_data["covariance"] = precision_cholesky_to_pixel_covariance(
-                            precision_cholesky=precision, source_shape=source_shape
+                            precision_cholesky=precision,
+                            source_shape=source_shape,
                         )
                 keypoints_array = keypoints_array.astype(np.float32, copy=False)
                 keypoint_confidence = keypoints_array[:, :, 2]
