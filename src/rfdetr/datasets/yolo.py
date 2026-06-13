@@ -662,7 +662,7 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
             ``dataset_dir``, ``square_resize_div_64``, ``aug_config``, ``segmentation_head``, ``multi_scale``,
             ``expanded_scales``, ``do_random_resize_via_padding``, ``patch_size``, ``num_windows``. ``aug_config`` is
             forwarded to the transform builder; when ``None`` the builder falls back to the default
-            :data:`~rfdetr.datasets.aug_config.AUG_CONFIG`.
+            :data:`~rfdetr.datasets.aug_configs.AUG_CONFIG`.
         resolution: Target square resolution in pixels.
 
     Returns:
