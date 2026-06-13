@@ -8,13 +8,13 @@ which renders each entry as a card via a Jinja loop.
 
 ## Adding a notebook
 
-1. Add the `.ipynb` file here, named `release-demo_<version>.ipynb` (e.g. `release-demo_1-8.ipynb`).
+1. Add the `.ipynb` file here, named after its content (e.g. `custom-augmentations.ipynb`, `onnx-export.ipynb`).
 2. Add a new entry to `docs/cookbooks/cards.yaml` under the `cards:` list:
 
 <!-- prettier-ignore -->
 
 ```yaml
-  - href: release-demo_X-Y/
+  - href: content-slug/
     name: Short Title
     labels: [LABEL1, LABEL2]
     version: vX.Y.0
@@ -28,11 +28,11 @@ Current tag colours are assigned dynamically by the docs UI, so they may change 
 ## Removing a notebook
 
 1. Delete the `.ipynb` file.
-2. Remove the matching entry (the `- href: release-demo_X-Y/` block) from `docs/cookbooks/cards.yaml`.
+2. Remove the matching entry (the `- href: content-slug/` block) from `docs/cookbooks/cards.yaml`.
 
 ## Current notebooks
 
-| File                     | Card title                                      | Version |
-| ------------------------ | ----------------------------------------------- | ------- |
-| `release-demo_1-5.ipynb` | Custom Augmentations and Live Training Progress | v1.5.0  |
-| `release-demo_1-6.ipynb` | PyTorch Lightning Building Blocks               | v1.6.0  |
+| File                          | Card title                                      | Version |
+| ----------------------------- | ----------------------------------------------- | ------- |
+| `custom-augmentations.ipynb`  | Custom Augmentations and Live Training Progress | v1.5.0  |
+| `pytorch-lightning.ipynb`     | Training with PyTorch Lightning                 | v1.6.0  |
