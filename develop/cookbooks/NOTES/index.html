@@ -87,7 +87,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-05-07T20:47:26">
+  <meta property="article:modified_time" content="2026-06-13T17:58:09">
   
   <script type="application/ld+json">
   {
@@ -102,7 +102,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-05-07T20:47:26",
+    "dateModified": "2026-06-13T17:58:09",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -2298,12 +2298,12 @@
 which renders each entry as a card via a Jinja loop.</p>
 <h2 id="adding-a-notebook">Adding a notebook<a class="headerlink" href="#adding-a-notebook" title="Permanent link">&para;</a></h2>
 <ol>
-<li>Add the <code>.ipynb</code> file here, named <code>release-demo_&lt;version&gt;.ipynb</code> (e.g. <code>release-demo_1-8.ipynb</code>).</li>
+<li>Add the <code>.ipynb</code> file here, named after its content (e.g. <code>custom-augmentations.ipynb</code>, <code>onnx-export.ipynb</code>).</li>
 <li>Add a new entry to <code>docs/cookbooks/cards.yaml</code> under the <code>cards:</code> list:</li>
 </ol>
 <!-- prettier-ignore -->
 
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">href</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">release-demo_X-Y/</span>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">href</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">content-slug/</span>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">    </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Short Title</span>
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">labels</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">LABEL1</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">LABEL2</span><span class="p p-Indicator">]</span>
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">    </span><span class="nt">version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">vX.Y.0</span>
@@ -2315,7 +2315,7 @@ Current tag colours are assigned dynamically by the docs UI, so they may change 
 <h2 id="removing-a-notebook">Removing a notebook<a class="headerlink" href="#removing-a-notebook" title="Permanent link">&para;</a></h2>
 <ol>
 <li>Delete the <code>.ipynb</code> file.</li>
-<li>Remove the matching entry (the <code>- href: release-demo_X-Y/</code> block) from <code>docs/cookbooks/cards.yaml</code>.</li>
+<li>Remove the matching entry (the <code>- href: content-slug/</code> block) from <code>docs/cookbooks/cards.yaml</code>.</li>
 </ol>
 <h2 id="current-notebooks">Current notebooks<a class="headerlink" href="#current-notebooks" title="Permanent link">&para;</a></h2>
 <table>
@@ -2328,13 +2328,13 @@ Current tag colours are assigned dynamically by the docs UI, so they may change 
 </thead>
 <tbody>
 <tr>
-<td><code>release-demo_1-5.ipynb</code></td>
+<td><code>custom-augmentations.ipynb</code></td>
 <td>Custom Augmentations and Live Training Progress</td>
 <td>v1.5.0</td>
 </tr>
 <tr>
-<td><code>release-demo_1-6.ipynb</code></td>
-<td>PyTorch Lightning Building Blocks</td>
+<td><code>pytorch-lightning.ipynb</code></td>
+<td>Training with PyTorch Lightning</td>
 <td>v1.6.0</td>
 </tr>
 </tbody>
@@ -2359,7 +2359,7 @@ Current tag colours are assigned dynamically by the docs UI, so they may change 
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="May 7, 2026 20:47:26 UTC">2026-05-07 20:47:26</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="June 13, 2026 17:58:09 UTC">2026-06-13 17:58:09</span>
   </span>
 
     
