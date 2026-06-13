@@ -4,7 +4,7 @@ description: Run RF-DETR keypoint detection on images, video, and streams. COCO-
 
 # Run an RF-DETR Keypoint Model
 
-RF-DETR Keypoint is a real-time transformer architecture for human pose estimation, built on a DINOv2 vision transformer backbone. The preview model is pretrained on the Microsoft COCO dataset and predicts 17 body keypoints per detected person.
+RF-DETR Keypoint is a real-time transformer architecture for keypoint detection, built on a DINOv2 vision transformer backbone. The preview model is pretrained on the Microsoft COCO dataset and predicts 17 body keypoints per detected person.
 
 ![People walking on a bridge with RF-DETR keypoint skeleton overlays and bounding boxes](../../assets/keypoints/bridge-1.jpg)
 
@@ -24,7 +24,7 @@ RF-DETR Keypoint outperforms YOLO26-pose X and YOLO11-pose X at comparable laten
 
 > The keypoint model is available in the `rfdetr` package only. It is not yet available via the `inference` package.
 
-> Benchmark evaluated on COCO val2017 person keypoints (AP<sub>50:95</sub>) with OKS sigmas defaulting to 0.1 per keypoint; latency on NVIDIA T4, TensorRT FP16, batch size 1.
+> Benchmark evaluated on COCO val2017 person keypoints (AP<sub>50:95</sub>) with the standard COCO 17-keypoint OKS sigmas; latency on NVIDIA T4, TensorRT FP16, batch size 1.
 
 ## Run on an Image
 
@@ -52,16 +52,21 @@ Perform inference on an image using the `rfdetr` package. `model.predict()` retu
 
 `model.predict()` returns an `sv.KeyPoints` object. The fields most commonly used downstream:
 
-| Field                             | Shape          | Description                                                                                       |
-| --------------------------------- | -------------- | ------------------------------------------------------------------------------------------------- |
-| `key_points.xy`                   | `(N, 17, 2)`   | Pixel coordinates of each keypoint per person                                                     |
-| `key_points.keypoint_confidence`  | `(N, 17)`      | Per-keypoint findability score; use to filter low-confidence joints                               |
-| `key_points.detection_confidence` | `(N,)`         | Per-person detection score; this is what `threshold` filters on                                   |
-| `key_points.class_id`             | `(N,)`         | COCO class ID for each detection (person = 1; COCO uses 1-based IDs, not sequential 0-based)      |
-| `key_points.data["xyxy"]`         | `(N, 4)`       | Bounding box for each person in `[x1, y1, x2, y2]` format                                         |
-| `key_points.data["source_image"]` | list of arrays | Source frame stored once per detection; all N entries are the same array — use `[0]` to access it |
+| Field                             | Shape          | Description                                                                                                                                    |
+| --------------------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `key_points.xy`                   | `(N, K, 2)`    | Pixel coordinates of each keypoint per detected instance                                                                                       |
+| `key_points.keypoint_confidence`  | `(N, K)`       | Per-keypoint findability score; use to filter low-confidence points                                                                            |
+| `key_points.detection_confidence` | `(N,)`         | Per-instance detection score; this is what `threshold` filters on                                                                              |
+| `key_points.class_id`             | `(N,)`         | Model label ID for each detection. COCO-pretrained checkpoints use sparse COCO category IDs; fine-tuned checkpoints use 0-based class indices. |
+| `key_points.data["class_name"]`   | `(N,)`         | Class names resolved from `class_id`; prefer this over indexing a class-name list directly.                                                    |
+| `key_points.data["xyxy"]`         | `(N, 4)`       | Bounding box for each detected instance in `[x1, y1, x2, y2]` format                                                                           |
+| `key_points.data["source_image"]` | list of arrays | Source frame stored once per detection; all N entries are the same array — use `[0]` to access it                                              |
+
+`K=17` for the pretrained COCO person-keypoint preview checkpoint. Fine-tuned checkpoints use the keypoint count from their dataset schema, so custom keypoint datasets can return any `K` supported by their COCO keypoint annotations.
 
 Keypoints with `visible=False` are skipped by supervision annotators. To hide low-confidence joints manually, threshold `key_points.keypoint_confidence` and set matching entries to `False` in `key_points.visible`.
+
+For fine-tuning on a custom keypoint dataset, see [Keypoint preview custom datasets](../train/index.md#keypoint-preview-custom-datasets).
 
 ## Run on video, webcam, or RTSP stream
 
@@ -183,7 +188,7 @@ These examples use OpenCV for decoding and display. Replace `<SOURCE_VIDEO_PATH>
 
 === "VertexEllipseAnnotator"
 
-    Draws an ellipse whose area scales with `1 - confidence`, giving a visual footprint of per-keypoint uncertainty.
+    Draws covariance ellipses from `key_points.data["covariance"]`, giving a visual footprint of per-keypoint uncertainty.
 
     ```python
     annotated = sv.VertexEllipseAnnotator().annotate(image, key_points)
@@ -191,7 +196,7 @@ These examples use OpenCV for decoding and display. Replace `<SOURCE_VIDEO_PATH>
 
 === "VertexEllipseHaloAnnotator"
 
-    Adds a soft halo ring around each ellipse for improved contrast on busy backgrounds.
+    Draws the same covariance uncertainty with a soft halo for improved contrast on busy backgrounds.
 
     ```python
     annotated = sv.VertexEllipseHaloAnnotator().annotate(image, key_points)
