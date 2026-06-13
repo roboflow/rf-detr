@@ -32,7 +32,7 @@ Current tag colours are assigned dynamically by the docs UI, so they may change 
 
 ## Current notebooks
 
-| File                          | Card title                                      | Version |
-| ----------------------------- | ----------------------------------------------- | ------- |
-| `custom-augmentations.ipynb`  | Custom Augmentations and Live Training Progress | v1.5.0  |
-| `pytorch-lightning.ipynb`     | Training with PyTorch Lightning                 | v1.6.0  |
+| File                         | Card title                                      | Version |
+| ---------------------------- | ----------------------------------------------- | ------- |
+| `custom-augmentations.ipynb` | Custom Augmentations and Live Training Progress | v1.5.0  |
+| `pytorch-lightning.ipynb`    | Training with PyTorch Lightning                 | v1.6.0  |
