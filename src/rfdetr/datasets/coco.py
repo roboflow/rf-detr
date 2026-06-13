@@ -26,7 +26,7 @@ import torchvision
 from PIL import Image
 from torchvision.transforms.v2 import Compose, ToDtype, ToImage
 
-from rfdetr.datasets.aug_config import AUG_CONFIG
+from rfdetr.datasets.aug_configs import AUG_CONFIG
 from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize
 from rfdetr.utilities.logger import get_logger
 

@@ -275,7 +275,7 @@ model.train(
 Use a built-in preset by importing it from `rfdetr.datasets.aug_config`:
 
 ```python
-from rfdetr.datasets.aug_config import AUG_CONSERVATIVE, AUG_AGGRESSIVE, AUG_AERIAL, AUG_INDUSTRIAL
+from rfdetr.datasets.aug_configs import AUG_CONSERVATIVE, AUG_AGGRESSIVE, AUG_AERIAL, AUG_INDUSTRIAL
 
 model.train(dataset_dir="path/to/dataset", aug_config=AUG_AGGRESSIVE)
 ```
