@@ -12,7 +12,7 @@ Pass `aug_config` to your training call. Import one of the built-in presets:
 
 ```python
 from rfdetr import RFDETRSmall
-from rfdetr.datasets.aug_config import AUG_CONSERVATIVE, AUG_AGGRESSIVE, AUG_AERIAL, AUG_INDUSTRIAL
+from rfdetr.datasets.aug_configs import AUG_CONSERVATIVE, AUG_AGGRESSIVE, AUG_AERIAL, AUG_INDUSTRIAL
 
 model = RFDETRSmall()
 model.train(dataset_dir="path/to/dataset", epochs=100, aug_config=AUG_CONSERVATIVE)
@@ -46,7 +46,7 @@ To disable augmentations: `aug_config={}`. Omitting it uses the default (horizon
 All presets are plain dicts — inspect or extend them before passing:
 
 ```python
-from rfdetr.datasets.aug_config import AUG_AGGRESSIVE
+from rfdetr.datasets.aug_configs import AUG_AGGRESSIVE
 
 my_config = {**AUG_AGGRESSIVE, "VerticalFlip": {"p": 0.1}}
 model.train(dataset_dir="...", aug_config=my_config)
