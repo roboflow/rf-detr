@@ -14,7 +14,13 @@ import supervision as sv
 import torch
 
 from rfdetr import RFDETRNano, RFDETRSegNano
-from rfdetr.detr import RFDETR, _attach_detection_metadata
+from rfdetr.compat.supervision import (
+    _KEYPOINTS_ACCEPTS_NEW_API,
+    _attach_detection_metadata,
+    _empty_keypoints_is_empty,
+    _make_keypoints,
+)
+from rfdetr.detr import RFDETR
 from rfdetr.utilities.keypoints import precision_cholesky_to_pixel_covariance
 
 _HTTP_IMAGE_URL = "http://images.cocodataset.org/val2017/000000397133.jpg"
@@ -123,17 +129,42 @@ def test_predict_accepts_image_url() -> None:
     assert detections.xyxy.shape == (1, 4)
 
 
+class TestAttachDetectionMetadata:
+    """Unit tests for ``_attach_detection_metadata`` from ``rfdetr.compat.supervision``."""
+
+    @pytest.mark.parametrize(
+        ("initial_metadata", "key", "value", "expected_extra_keys"),
+        [
+            pytest.param(None, "source_image", "img.jpg", [], id="creates-dict-when-missing"),
+            pytest.param({"existing": 1}, "source_image", "img.jpg", ["existing"], id="preserves-existing-keys"),
+            pytest.param({"source_image": "old.jpg"}, "source_image", "new.jpg", [], id="overwrites-existing-value"),
+        ],
+    )
+    def test_sets_metadata_key(
+        self,
+        initial_metadata: dict | None,
+        key: str,
+        value: object,
+        expected_extra_keys: list[str],
+    ) -> None:
+        """Metadata key is set correctly across all attach scenarios."""
+        det = SimpleNamespace() if initial_metadata is None else SimpleNamespace(metadata=initial_metadata)
+
+        _attach_detection_metadata(det, key, value)
+
+        assert det.metadata[key] is value
+        for extra_key in expected_extra_keys:
+            assert extra_key in det.metadata, f"pre-existing key {extra_key!r} must survive"
+
+    def test_raises_value_error_on_none_value(self) -> None:
+        """Passing value=None raises ValueError immediately."""
+        det = SimpleNamespace()
+        with pytest.raises(ValueError, match="must not be None"):
+            _attach_detection_metadata(det, "key", None)
+
+
 class TestPredictSourceData:
     """Verify ``predict()`` source metadata behavior."""
-
-    def test_attach_detection_metadata_handles_legacy_detections(self) -> None:
-        """Metadata attachment works when the Supervision object lacks metadata."""
-        detections = SimpleNamespace()
-        source_image = np.zeros((48, 64, 3), dtype=np.uint8)
-
-        _attach_detection_metadata(detections, "source_image", source_image)
-
-        assert detections.metadata["source_image"] is source_image
 
     def test_source_image_included_by_default(self) -> None:
         """source_image remains included by default for API compatibility."""
@@ -942,3 +973,88 @@ class TestPredictClassNameData:
         )
         unmapped_warnings = [msg for msg in logger._warned_once if "unmapped class_id" in msg]
         assert not unmapped_warnings, "class_id=90 (valid COCO category) must not trigger unmapped-class-id warning"
+
+
+class TestMakeKeypoints:
+    """Unit tests for ``_make_keypoints`` from ``rfdetr.compat.supervision``."""
+
+    def _xy(self, n: int = 1, k: int = 17) -> np.ndarray:
+        """Return a (N, K, 2) float32 coordinate array."""
+        return np.zeros((n, k, 2), dtype=np.float32)
+
+    def _conf(self, n: int = 1, k: int = 17) -> np.ndarray:
+        """Return a (N, K) float32 confidence array."""
+        return np.ones((n, k), dtype=np.float32)
+
+    def test_new_api_returns_sv_keypoints(self) -> None:
+        """New-API path returns a real ``sv.KeyPoints`` with correct shape."""
+        import supervision as sv
+
+        xy = self._xy()
+        kp_conf = self._conf()
+        result = _make_keypoints(sv.KeyPoints, xy, kp_conf, None, None, kp_conf > 0, {})
+
+        assert isinstance(result, sv.KeyPoints)
+        assert result.xy.shape == (1, 17, 2)
+
+    def test_flag_is_true_for_installed_supervision(self) -> None:
+        """``_KEYPOINTS_ACCEPTS_NEW_API`` is True for supervision 0.29.x."""
+        assert _KEYPOINTS_ACCEPTS_NEW_API is True
+
+    def test_2d_xy_raises_value_error(self) -> None:
+        """Passing a 2-D ``xy`` array raises ``ValueError`` before any constructor call."""
+        import supervision as sv
+
+        xy_2d = np.zeros((0, 2), dtype=np.float32)  # wrong: missing keypoints dim
+        kp_conf = np.empty((0, 0), dtype=np.float32)
+        with pytest.raises(ValueError, match="3-D ndarray"):
+            _make_keypoints(sv.KeyPoints, xy_2d, kp_conf, None, None, kp_conf > 0, {})
+
+    def test_fallback_path_patches_attributes(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Fallback path sets required attributes directly on the returned object."""
+        instances: list[SimpleNamespace] = []
+
+        class _LegacyKeyPoints:
+            def __init__(self, *, xy, class_id, confidence, data):
+                """Legacy constructor without keypoint_confidence."""
+                self.xy = xy
+                self.confidence = confidence
+                self.class_id = class_id
+                self.data = data
+                instances.append(self)  # type: ignore[arg-type]
+
+        monkeypatch.setattr("rfdetr.compat.supervision._KEYPOINTS_ACCEPTS_NEW_API", False)
+        xy = self._xy(n=2)
+        kp_conf = self._conf(n=2)
+        result = _make_keypoints(_LegacyKeyPoints, xy, kp_conf, np.array([0.9, 0.8]), None, kp_conf > 0, {})
+
+        assert result.keypoint_confidence is kp_conf
+        assert result.detection_confidence is not None
+        np.testing.assert_array_equal(result.xy, xy)
+
+    def test_fallback_empty_detections_sets_is_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Empty-detection fallback path sets ``is_empty`` override on the instance."""
+
+        class _LegacyKeyPoints:
+            def __init__(self, *, xy, class_id, confidence, data):
+                """Legacy constructor without keypoint_confidence."""
+                self.xy = xy
+                self.confidence = confidence
+                self.class_id = class_id
+                self.data = data
+
+        monkeypatch.setattr("rfdetr.compat.supervision._KEYPOINTS_ACCEPTS_NEW_API", False)
+        xy = np.zeros((0, 17, 2), dtype=np.float32)
+        kp_conf = np.ones((0, 17), dtype=np.float32)
+        result = _make_keypoints(_LegacyKeyPoints, xy, kp_conf, None, None, kp_conf > 0, {})
+
+        assert callable(result.is_empty)
+        assert result.is_empty()
+
+
+class TestEmptyKeypointsIsEmpty:
+    """Unit tests for ``_empty_keypoints_is_empty``."""
+
+    def test_returns_true(self) -> None:
+        """``_empty_keypoints_is_empty`` always returns ``True``."""
+        assert _empty_keypoints_is_empty() is True
