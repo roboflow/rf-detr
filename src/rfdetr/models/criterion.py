@@ -13,6 +13,7 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import nn
 
+from rfdetr.models.heads.keypoints import compute_l1_keypoint_loss
 from rfdetr.models.heads.segmentation import (
     calculate_uncertainty,
     get_uncertain_point_coords_with_randomness,
@@ -146,6 +147,7 @@ class SetCriterion(nn.Module):
         use_position_supervised_loss=False,
         ia_bce_loss=False,
         mask_point_sample_ratio: int = 16,
+        num_keypoints_per_class: list[int] | None = None,
     ):
         """Create the criterion.
 
@@ -169,6 +171,7 @@ class SetCriterion(nn.Module):
         self.use_position_supervised_loss = use_position_supervised_loss
         self.ia_bce_loss = ia_bce_loss
         self.mask_point_sample_ratio = mask_point_sample_ratio
+        self.num_keypoints_per_class = num_keypoints_per_class or []
 
     def loss_labels(self, outputs, targets, indices, num_boxes, log=True):
         """Classification loss (Binary focal loss) targets dicts must contain the key "labels" containing a tensor of
@@ -451,6 +454,37 @@ class SetCriterion(nn.Module):
         del target_masks
         return losses
 
+    def loss_keypoints(
+        self,
+        outputs: dict,
+        targets: list,
+        indices: list,
+        num_boxes: float,
+    ) -> dict[str, torch.Tensor]:
+        """Compute keypoint losses on matched prediction/target pairs."""
+        assert "pred_keypoints" in outputs
+        idx = self._get_src_permutation_idx(indices)
+        src_keypoints = outputs["pred_keypoints"][idx]
+        target_keypoints = torch.cat([target["keypoints"][j] for target, (_, j) in zip(targets, indices)], dim=0)
+        target_classes = torch.cat([target["labels"][j] for target, (_, j) in zip(targets, indices)], dim=0)
+        target_boxes = torch.cat([target["boxes"][j] for target, (_, j) in zip(targets, indices)], dim=0)
+        target_areas = target_boxes[:, 2] * target_boxes[:, 3]
+
+        loss_l1, loss_findable, loss_visible, loss_nll = compute_l1_keypoint_loss(
+            all_pred_keypoints=src_keypoints,
+            target_keypoints=target_keypoints.to(src_keypoints.device),
+            target_classes=target_classes.to(src_keypoints.device),
+            target_areas=target_areas.to(src_keypoints.device),
+            num_keypoints_per_class=self.num_keypoints_per_class,
+        )
+
+        return {
+            "loss_keypoints_l1": loss_l1.sum() / num_boxes,
+            "loss_keypoints_findable": loss_findable.sum() / num_boxes,
+            "loss_keypoints_visible": loss_visible.sum() / num_boxes,
+            "loss_keypoints_nll": loss_nll.sum() / num_boxes,
+        }
+
     def _get_src_permutation_idx(self, indices):
         # permute predictions following indices
         batch_idx = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])
@@ -469,6 +503,7 @@ class SetCriterion(nn.Module):
             "cardinality": self.loss_cardinality,
             "boxes": self.loss_boxes,
             "masks": self.loss_masks,
+            "keypoints": self.loss_keypoints,
         }
         assert loss in loss_map, f"do you really want to compute {loss} loss?"
         return loss_map[loss](outputs, targets, indices, num_boxes, **kwargs)

@@ -17,7 +17,7 @@ import time
 import zipfile
 from contextlib import contextmanager, suppress
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Generator, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Generator, Literal, Optional, Tuple
 from urllib.request import urlretrieve
 
 import numpy as np
@@ -32,9 +32,73 @@ if TYPE_CHECKING:
     import torch
 
 _COCO_URLS = {
+    "train2017": "http://images.cocodataset.org/zips/train2017.zip",
     "val2017": "http://images.cocodataset.org/zips/val2017.zip",
     "annotations": "http://images.cocodataset.org/annotations/annotations_trainval2017.zip",
 }
+_COCO_VAL_IMAGE_COUNT: int = 5000
+
+
+def _coco_val_images_complete(images_dir: Path) -> bool:
+    """Check whether the COCO val2017 image directory contains the expected number of JPEG files.
+
+    Returns ``False`` for a missing or empty directory so callers can trigger a
+    re-download without inspecting the directory manually.
+
+    Args:
+        images_dir: Path to the directory that should contain the val2017 images.
+
+    Returns:
+        ``True`` if *images_dir* exists and contains at least ``_COCO_VAL_IMAGE_COUNT``
+        ``.jpg`` files, ``False`` otherwise.
+
+    Raises:
+        OSError: If *images_dir* exists but cannot be read (e.g. ``PermissionError``
+            when the directory is not accessible, or ``FileNotFoundError`` on a
+            TOCTOU race between the ``is_dir()`` check and ``iterdir()``).
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as tmpdir:
+        ...     _coco_val_images_complete(Path(tmpdir) / "val2017")
+        False
+    """
+    if not images_dir.is_dir():
+        return False
+    return (
+        sum(1 for entry in images_dir.iterdir() if entry.is_file() and entry.suffix.lower() == ".jpg")
+        >= _COCO_VAL_IMAGE_COUNT
+    )
+
+
+def _nonempty_file_exists(path: Path) -> bool:
+    """Check whether a file exists and contains at least one byte.
+
+    Returns ``False`` for a missing or empty file so callers can trigger a
+    re-download without inspecting the file manually.
+
+    Args:
+        path: Path to the file to check.
+
+    Returns:
+        ``True`` if *path* refers to an existing file with ``size > 0``,
+        ``False`` otherwise.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as tmpdir:
+        ...     _nonempty_file_exists(Path(tmpdir) / "missing.json")
+        False
+    """
+    try:
+        return path.is_file() and path.stat().st_size > 0
+    except OSError:
+        return False
+
+
+def get_coco_download_url(asset: Literal["train2017", "val2017", "annotations"]) -> str:
+    """Return the official COCO 2017 download URL for the requested asset."""
+    return _COCO_URLS[asset]
 
 
 class _SimpleDataset:
@@ -151,6 +215,12 @@ def _download_lock(lock_path: Path, timeout_s: float = 600.0, poll_s: float = 0.
 
     Raises:
         TimeoutError: If the lock cannot be acquired within the timeout.
+
+    Note:
+        Lock identity is file existence (``O_CREAT | O_EXCL``), not a held file descriptor.
+        A SIGKILL-terminated process will leak the lock file until ``timeout_s`` expires.
+        If all worker processes have exited but the lock persists, remove it manually:
+        ``rm <lock_path>``.
     """
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     start = time.time()

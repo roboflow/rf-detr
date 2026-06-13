@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 """Unit tests for COCOEvalCallback."""
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -29,6 +30,10 @@ def _make_trainer(datamodule=None, callbacks: list[object] | None = None) -> Mag
     trainer.datamodule = datamodule
     trainer.callbacks = callbacks or []
     return trainer
+
+
+class _TQDMProgressBar:
+    """Minimal progress-bar stand-in for callback detection tests."""
 
 
 def _detection_preds(n: int = 0) -> list[dict]:
@@ -124,6 +129,16 @@ class TestSetup:
         cb = COCOEvalCallback(segmentation=True)
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
         assert cb.map_metric._coco_backend.backend == "faster_coco_eval"
+
+    def test_keypoint_mode_does_not_enable_torchmetrics_keypoint_iou(self) -> None:
+        """Keypoint mode must keep torchmetrics on bbox-only iou_type."""
+        cb = COCOEvalCallback(segmentation=True)
+        module = _make_pl_module()
+        module.model_config = SimpleNamespace(use_grouppose_keypoints=True)
+        cb.setup(_make_trainer(), module, stage="fit")
+        assert "bbox" in cb.map_metric.iou_type
+        assert "segm" not in cb.map_metric.iou_type
+        assert "keypoints" not in cb.map_metric.iou_type
 
 
 class TestOnFitStart:
@@ -261,6 +276,64 @@ class TestOnTestBatchEnd:
         cb.on_test_batch_end(_make_trainer(), _make_pl_module(), outputs, None, 0, dataloader_idx=0)
 
 
+class TestOnTrainBatchEnd:
+    """Train-loop-specific behaviour for optional train mAP logging."""
+
+    def test_train_metrics_update_only_when_enabled(self) -> None:
+        """on_train_batch_end should accumulate train predictions only with compute_train_metrics=True."""
+        cb = COCOEvalCallback()
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        cb.map_metric_train = MagicMock(name="map_metric_train")
+        module = _make_pl_module()
+        module.train_config = SimpleNamespace(compute_train_metrics=True)
+        outputs = {"results": _detection_preds(1), "targets": _detection_targets()}
+
+        cb.on_train_batch_end(_make_trainer(), module, outputs, None, 0)
+
+        cb.map_metric_train.update.assert_called_once()
+
+    def test_train_metrics_do_not_use_test_hook(self) -> None:
+        """Train mAP must be logged under train/* via the train epoch hook, not through test/* hooks."""
+        cb = COCOEvalCallback()
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        cb.map_metric_train = MagicMock(name="map_metric_train")
+        cb.map_metric_train.compute.return_value = _minimal_metrics()
+        module = _make_pl_module()
+        module.train_config = SimpleNamespace(compute_train_metrics=True)
+
+        cb.on_train_epoch_end(_make_trainer(), module)
+
+        logged_keys = {c.args[0] for c in module.log.call_args_list}
+        assert "train/mAP_50_95" in logged_keys
+        assert "test/mAP_50_95" not in logged_keys
+
+    def test_train_epoch_end_skips_compute_when_no_train_updates(self) -> None:
+        """Train mAP should not call torchmetrics compute() when no train batches updated it."""
+        cb = COCOEvalCallback()
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        cb.map_metric_train = MagicMock(name="map_metric_train")
+        cb.map_metric_train._update_count = 0
+        module = _make_pl_module()
+        module.train_config = SimpleNamespace(compute_train_metrics=True)
+
+        cb.on_train_epoch_end(_make_trainer(), module)
+
+        cb.map_metric_train.compute.assert_not_called()
+        cb.map_metric_train.reset.assert_called_once()
+
+    def test_validation_start_does_not_clear_train_metric_state(self) -> None:
+        """In-fit validation should reset only validation accumulators, leaving train metrics isolated."""
+        cb = COCOEvalCallback()
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        cb.map_metric = MagicMock(name="val_map_metric")
+        cb.map_metric_train = MagicMock(name="train_map_metric")
+
+        cb.on_validation_epoch_start(_make_trainer(), _make_pl_module())
+
+        cb.map_metric.reset.assert_called_once()
+        cb.map_metric_train.reset.assert_not_called()
+
+
 @pytest.mark.parametrize(
     "stage,hook,prefix",
     [
@@ -359,6 +432,232 @@ class TestEpochEndCommon:
         assert f"{prefix}segm_mAP_50_95" in logged_keys
         assert f"{prefix}segm_mAP_50" in logged_keys
 
+
+class TestKeypointCocoEvalRouting:
+    """Tests for keypoint COCO evaluation routing in keypoint mode."""
+
+    def test_coco_evaluator_accepts_keypoint_predictions(self) -> None:
+        """Keypoint mode should forward keypoint predictions to COCO evaluator update()."""
+        cb = COCOEvalCallback(max_dets=500)
+        module = _make_pl_module()
+        module.model_config = SimpleNamespace(use_grouppose_keypoints=True)
+        trainer = _make_trainer()
+        cb.setup(trainer, module, stage="fit")
+
+        evaluator = MagicMock(name="keypoint_coco_eval")
+        cb._get_or_create_keypoint_coco_evaluator = MagicMock(return_value=evaluator)  # type: ignore[method-assign]
+        outputs = {
+            "results": [
+                {
+                    "boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]], dtype=torch.float32),
+                    "scores": torch.tensor([0.9], dtype=torch.float32),
+                    "labels": torch.tensor([0], dtype=torch.int64),
+                    "keypoints": torch.tensor([[[1.0, 2.0, 0.8]]], dtype=torch.float32),
+                }
+            ],
+            "targets": [{"image_id": torch.tensor([12])}],
+        }
+
+        cb._update_keypoint_coco_eval(trainer, outputs, split="val")
+
+        evaluator.update.assert_called_once()
+        predictions = evaluator.update.call_args.args[0]
+        assert 12 in predictions
+        assert "keypoints" in predictions[12]
+        assert predictions[12]["keypoints"].shape == (1, 1, 3)
+
+    def test_keypoint_coco_eval_exposes_keypoint_ap_and_ar_metrics(self) -> None:
+        """Epoch-end logging should expose keypoint AP and AR metrics from COCO keypoint stats."""
+        cb = COCOEvalCallback(max_dets=500)
+        module = _make_pl_module()
+        module.model_config = SimpleNamespace(use_grouppose_keypoints=True)
+        trainer = _make_trainer()
+        trainer.callback_metrics = {}
+        cb.setup(trainer, module, stage="fit")
+        cb.map_metric = MagicMock(name="map_metric")
+        cb.map_metric.compute.return_value = _minimal_metrics()
+
+        keypoint_eval = MagicMock(name="keypoint_coco_eval")
+        keypoint_eval.coco_eval = {
+            "keypoints": SimpleNamespace(stats=np.array([0.42, 0.72, 0.31, -1.0, -1.0, 0.55], dtype=np.float32))
+        }
+        cb._keypoint_coco_evaluator = keypoint_eval
+        cb._keypoint_eval_has_updates = True
+
+        cb.on_validation_epoch_end(trainer, module)
+
+        logged = {call.args[0]: call.args[1] for call in module.log.call_args_list}
+        assert "val/keypoint_map_50_95" in logged
+        assert "val/keypoint_map_50" in logged
+        assert "val/keypoint_map_75" in logged
+        assert "val/keypoint_mAR" in logged
+        assert float(logged["val/keypoint_map_50_95"]) == pytest.approx(0.42)
+        assert float(logged["val/keypoint_map_50"]) == pytest.approx(0.72)
+        assert float(logged["val/keypoint_map_75"]) == pytest.approx(0.31)
+        assert float(logged["val/keypoint_mAR"]) == pytest.approx(0.55)
+        keypoint_log_calls = [call for call in module.log.call_args_list if call.args[0] == "val/keypoint_map_50_95"]
+        assert keypoint_log_calls[0].kwargs.get("prog_bar") is True
+        assert trainer.callback_metrics["val/keypoint_map_50_95"].item() == pytest.approx(0.42)
+        assert trainer.callback_metrics["val/keypoint_map_50"].item() == pytest.approx(0.72)
+        assert trainer.callback_metrics["val/keypoint_map_75"].item() == pytest.approx(0.31)
+        assert trainer.callback_metrics["val/keypoint_mAR"].item() == pytest.approx(0.55)
+        keypoint_eval.synchronize_between_processes.assert_called_once()
+        keypoint_eval.accumulate.assert_called_once()
+
+    def test_keypoint_coco_eval_exposes_ema_keypoint_ap_and_ar_metrics(self) -> None:
+        """EMA keypoint epoch-end logging should expose val/ema_keypoint_* metrics."""
+        cb = COCOEvalCallback(max_dets=500)
+        module = _make_pl_module()
+        module.model_config = SimpleNamespace(use_grouppose_keypoints=True)
+        trainer = _make_trainer()
+        trainer.callback_metrics = {}
+        cb.setup(trainer, module, stage="fit")
+
+        keypoint_eval = MagicMock(name="ema_keypoint_coco_eval")
+        keypoint_eval.coco_eval = {
+            "keypoints": SimpleNamespace(stats=np.array([0.25, 0.5, 0.2, -1.0, -1.0, 0.45], dtype=np.float32))
+        }
+        cb._keypoint_coco_evaluators["val_ema"] = keypoint_eval
+        cb._keypoint_eval_updated_splits.add("val_ema")
+
+        cb._compute_and_log_keypoint_map("val_ema", module, trainer, log_split="val", metric_prefix="ema_")
+
+        logged = {call.args[0]: call.args[1] for call in module.log.call_args_list}
+        assert "val/ema_keypoint_map_50_95" in logged
+        assert "val/ema_keypoint_map_50" in logged
+        assert "val/ema_keypoint_map_75" in logged
+        assert "val/ema_keypoint_mAR" in logged
+        assert float(logged["val/ema_keypoint_map_50_95"]) == pytest.approx(0.25)
+        assert float(logged["val/ema_keypoint_map_50"]) == pytest.approx(0.5)
+        assert float(logged["val/ema_keypoint_map_75"]) == pytest.approx(0.2)
+        assert float(logged["val/ema_keypoint_mAR"]) == pytest.approx(0.45)
+        keypoint_log_calls = [
+            call for call in module.log.call_args_list if call.args[0] == "val/ema_keypoint_map_50_95"
+        ]
+        assert keypoint_log_calls[0].kwargs.get("prog_bar") is True
+        assert trainer.callback_metrics["val/ema_keypoint_map_50_95"].item() == pytest.approx(0.25)
+        assert trainer.callback_metrics["val/ema_keypoint_map_50"].item() == pytest.approx(0.5)
+        assert trainer.callback_metrics["val/ema_keypoint_map_75"].item() == pytest.approx(0.2)
+        assert trainer.callback_metrics["val/ema_keypoint_mAR"].item() == pytest.approx(0.45)
+        keypoint_eval.synchronize_between_processes.assert_called_once()
+        keypoint_eval.accumulate.assert_called_once()
+
+    def test_keypoint_coco_evaluator_suppresses_verbose_summary(self) -> None:
+        """PTL keypoint validation should log scalar metrics without printing the full COCO summary block."""
+        cb = COCOEvalCallback(max_dets=500, keypoint_oks_sigmas=[0.05])
+        dataset = MagicMock(name="dataset")
+        datamodule = MagicMock()
+        datamodule._dataset_val = dataset
+        datamodule._dataset_test = None
+        datamodule._dataset_train = None
+        trainer = _make_trainer(datamodule=datamodule)
+        coco_api = MagicMock(name="coco_api")
+        evaluator = MagicMock(name="evaluator")
+
+        with (
+            patch("rfdetr.training.callbacks.coco_eval.get_coco_api_from_dataset", return_value=coco_api),
+            patch("rfdetr.evaluation.coco_eval.CocoEvaluator", return_value=evaluator) as coco_evaluator_cls,
+        ):
+            assert cb._get_or_create_keypoint_coco_evaluator(trainer, split="val") is evaluator
+
+        coco_evaluator_cls.assert_called_once_with(
+            coco_api,
+            ["keypoints"],
+            max_dets=500,
+            keypoint_oks_sigmas=[0.05],
+            log_summary=False,
+        )
+
+    def test_keypoint_train_eval_uses_train_dataset(self) -> None:
+        """Train keypoint mAP must build the COCO evaluator from the train dataset."""
+        cb = COCOEvalCallback(max_dets=500, keypoint_oks_sigmas=[0.05])
+        train_dataset = MagicMock(name="train_dataset")
+        val_dataset = MagicMock(name="val_dataset")
+        datamodule = MagicMock()
+        datamodule._dataset_train = train_dataset
+        datamodule._dataset_val = val_dataset
+        datamodule._dataset_test = None
+        trainer = _make_trainer(datamodule=datamodule)
+        train_coco_api = MagicMock(name="train_coco_api")
+        val_coco_api = MagicMock(name="val_coco_api")
+        evaluator = MagicMock(name="evaluator")
+
+        def _get_coco_api(dataset):
+            if dataset is train_dataset:
+                return train_coco_api
+            if dataset is val_dataset:
+                return val_coco_api
+            return None
+
+        with (
+            patch("rfdetr.training.callbacks.coco_eval.get_coco_api_from_dataset", side_effect=_get_coco_api),
+            patch("rfdetr.evaluation.coco_eval.CocoEvaluator", return_value=evaluator) as coco_evaluator_cls,
+        ):
+            assert cb._get_or_create_keypoint_coco_evaluator(trainer, split="train") is evaluator
+
+        assert coco_evaluator_cls.call_args.args[0] is train_coco_api
+
+    def test_keypoint_ema_eval_uses_validation_dataset(self) -> None:
+        """EMA keypoint mAP must build the COCO evaluator from the validation dataset."""
+        cb = COCOEvalCallback(max_dets=500, keypoint_oks_sigmas=[0.05])
+        train_dataset = MagicMock(name="train_dataset")
+        val_dataset = MagicMock(name="val_dataset")
+        datamodule = MagicMock()
+        datamodule._dataset_train = train_dataset
+        datamodule._dataset_val = val_dataset
+        datamodule._dataset_test = None
+        trainer = _make_trainer(datamodule=datamodule)
+        train_coco_api = MagicMock(name="train_coco_api")
+        val_coco_api = MagicMock(name="val_coco_api")
+        evaluator = MagicMock(name="evaluator")
+
+        def _get_coco_api(dataset):
+            if dataset is train_dataset:
+                return train_coco_api
+            if dataset is val_dataset:
+                return val_coco_api
+            return None
+
+        with (
+            patch("rfdetr.training.callbacks.coco_eval.get_coco_api_from_dataset", side_effect=_get_coco_api),
+            patch("rfdetr.evaluation.coco_eval.CocoEvaluator", return_value=evaluator) as coco_evaluator_cls,
+        ):
+            assert cb._get_or_create_keypoint_coco_evaluator(trainer, split="val_ema") is evaluator
+
+        assert coco_evaluator_cls.call_args.args[0] is val_coco_api
+
+    def test_mixed_keypoint_counts_create_keypoint_evaluator(self) -> None:
+        """Mixed keypoint counts should be handled by the evaluator instead of being skipped by the callback."""
+        cb = COCOEvalCallback(max_dets=500)
+        dataset = MagicMock(name="dataset")
+        datamodule = MagicMock()
+        datamodule._dataset_train = dataset
+        datamodule._dataset_val = None
+        datamodule._dataset_test = None
+        trainer = _make_trainer(datamodule=datamodule)
+        evaluator = MagicMock(name="evaluator")
+
+        with (
+            patch("rfdetr.training.callbacks.coco_eval.get_coco_api_from_dataset", return_value=MagicMock()),
+            patch("rfdetr.evaluation.coco_eval.CocoEvaluator", return_value=evaluator) as coco_evaluator_cls,
+            patch("rfdetr.training.callbacks.coco_eval.logger.warning") as warning,
+        ):
+            assert cb._get_or_create_keypoint_coco_evaluator(trainer, split="train") is evaluator
+
+        coco_evaluator_cls.assert_called_once()
+        warning.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "stage,hook,prefix",
+    [
+        pytest.param("fit", "on_validation_epoch_end", "val/", id="val"),
+        pytest.param("test", "on_test_epoch_end", "test/", id="test"),
+    ],
+)
+class TestPerClassAPLogging:
+    """Per-class AP logging behavior for validation and test loops."""
+
     def test_per_class_ap_logged_when_classes_present(self, stage, hook, prefix) -> None:
         """AP/<name> is logged for each class when class metrics are present."""
         cb = COCOEvalCallback()
@@ -411,6 +710,7 @@ class TestOnValidationEpochEnd:
         # Simulate map_metric_ema being populated by on_validation_batch_end.
         cb.map_metric_ema = MagicMock(name="map_metric_ema")
         cb.map_metric_ema.compute.return_value = _minimal_metrics()
+        cb._ema_has_updates = True
         module = _make_pl_module()
 
         cb.on_validation_epoch_end(_make_trainer(), module)
@@ -451,6 +751,29 @@ class TestOnValidationEpochEnd:
 
         cb.on_validation_epoch_end(trainer, module)
 
+        cb.map_metric.compute.assert_called_once()
+        module.log.assert_called()
+
+    def test_progress_bar_suppresses_terminal_metric_summaries(self, capsys) -> None:
+        """Progress-bar training should keep scalar logs but suppress duplicate terminal summary text."""
+        cb = COCOEvalCallback(max_dets=500)
+        trainer = _make_trainer(callbacks=[_TQDMProgressBar()])
+        trainer.callback_metrics = {}
+        cb.map_metric = MagicMock(name="map_metric")
+        cb.map_metric_ema = None
+        module = _make_pl_module()
+
+        def _compute_with_terminal_summary() -> dict:
+            print("Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=500 ] = 0.000")
+            return _minimal_metrics()
+
+        cb.map_metric.compute.side_effect = _compute_with_terminal_summary
+
+        with patch.object(cb, "_print_metrics_tables") as print_metrics_tables:
+            cb._compute_and_log(trainer, module, "val")
+
+        assert "Average Precision" not in capsys.readouterr().out
+        print_metrics_tables.assert_not_called()
         cb.map_metric.compute.assert_called_once()
         module.log.assert_called()
 
@@ -505,6 +828,7 @@ class TestOnValidationEpochEnd:
         cb.map_metric.compute.return_value = _minimal_metrics()
         cb.map_metric_ema = MagicMock(name="map_metric_ema")
         cb.map_metric_ema.compute.return_value = _minimal_metrics()
+        cb._ema_has_updates = True
 
         cb.on_validation_epoch_end(trainer, _make_pl_module())
 
@@ -535,6 +859,7 @@ class TestOnValidationEpochEnd:
         ema_metrics["segm_map_50"] = torch.tensor(0.65)
         cb.map_metric_ema = MagicMock(name="map_metric_ema")
         cb.map_metric_ema.compute.return_value = ema_metrics
+        cb._ema_has_updates = True
         module = _make_pl_module()
 
         cb.on_validation_epoch_end(trainer, module)
@@ -748,3 +1073,228 @@ class TestConvertTargets:
         ]
         out = cb._convert_targets(targets)
         assert set(out[0].keys()) == {"boxes", "labels"}
+
+
+def _ema_callback() -> MagicMock:
+    """Return a mock that ``_get_ema_callback`` recognises (has ``get_ema_model_state_dict``)."""
+    cb = MagicMock(name="ema_callback")
+    cb.get_ema_model_state_dict = MagicMock(name="get_ema_model_state_dict")
+    return cb
+
+
+def _cpu_module() -> MagicMock:
+    """Mock LightningModule whose ``device`` is a real string so ``metric.to(device)`` works."""
+    module = MagicMock(name="pl_module")
+    module.device = "cpu"
+    return module
+
+
+class TestEmaCollectiveSymmetry:
+    """DDP-deadlock fix: the EMA metric's cross-rank sync must be issued symmetrically (#931/#449)."""
+
+    def test_ema_metric_created_on_val_epoch_start_when_ema_active(self) -> None:
+        """map_metric_ema is created on validation start whenever the EMA callback is present.
+
+        This makes the EMA ``compute()`` collective rank-invariant — created on every rank regardless of how many
+        (or zero) val batches that rank later processes — rather than lazily per-batch.
+        """
+        cb = COCOEvalCallback(max_dets=500)
+        trainer = _make_trainer(callbacks=[_ema_callback()])
+        module = _cpu_module()
+        cb.setup(trainer, module, stage="fit")
+        assert cb.map_metric_ema is None  # not created yet at setup
+
+        cb.on_validation_epoch_start(trainer, module)
+
+        assert cb.map_metric_ema is not None
+
+    def test_ema_metric_not_created_without_ema_callback(self) -> None:
+        """No EMA callback → map_metric_ema stays None (no EMA collective is ever issued)."""
+        cb = COCOEvalCallback()
+        trainer = _make_trainer(callbacks=[])
+        module = _cpu_module()
+        cb.setup(trainer, module, stage="fit")
+
+        cb.on_validation_epoch_start(trainer, module)
+
+        assert cb.map_metric_ema is None
+
+    def test_should_compute_ema_false_when_metric_has_no_updates(self) -> None:
+        """A rank whose EMA metric saw no updates votes against computing (avoids empty-state divergence)."""
+        cb = COCOEvalCallback()
+        cb.map_metric_ema = MagicMock(name="map_metric_ema")
+        cb._ema_has_updates = False
+
+        assert cb._should_compute_ema(_cpu_module()) is False
+
+    def test_should_compute_ema_true_when_metric_has_updates_single_process(self) -> None:
+        """With updates and no distributed group, the EMA compute proceeds."""
+        cb = COCOEvalCallback()
+        cb.map_metric_ema = MagicMock(name="map_metric_ema")
+        cb._ema_has_updates = True
+
+        assert cb._should_compute_ema(_cpu_module()) is True
+
+    @patch("rfdetr.training.callbacks.coco_eval.is_dist_avail_and_initialized", return_value=True)
+    @patch("rfdetr.training.callbacks.coco_eval.dist.all_reduce")
+    def test_unanimous_gate_skips_when_a_peer_lacks_ema(self, mock_all_reduce, _mock_init) -> None:
+        """Even with local updates, the gate returns False if any peer voted 0 (all_reduce MIN → 0)."""
+
+        def _peer_voted_zero(flag, op=None):  # simulate a rank with no EMA data
+            flag.zero_()
+
+        mock_all_reduce.side_effect = _peer_voted_zero
+        cb = COCOEvalCallback()
+        cb.map_metric_ema = MagicMock(name="map_metric_ema")
+        cb._ema_has_updates = True
+
+        assert cb._should_compute_ema(_cpu_module()) is False
+        mock_all_reduce.assert_called_once()
+
+    @patch("rfdetr.training.callbacks.coco_eval.is_dist_avail_and_initialized", return_value=True)
+    @patch("rfdetr.training.callbacks.coco_eval.dist.all_reduce")
+    def test_unanimous_gate_runs_when_all_ranks_have_ema(self, mock_all_reduce, _mock_init) -> None:
+        """When every rank has EMA updates (all_reduce MIN leaves the vote at 1), the gate returns True."""
+        mock_all_reduce.side_effect = lambda flag, op=None: None  # vote tensor stays [1]
+        cb = COCOEvalCallback()
+        cb.map_metric_ema = MagicMock(name="map_metric_ema")
+        cb._ema_has_updates = True
+
+        assert cb._should_compute_ema(_cpu_module()) is True
+        mock_all_reduce.assert_called_once()
+
+
+def _metric_with_state(n: int = 1) -> MagicMock:
+    """Mock MeanAveragePrecision carrying minimal per-image state lists (one entry each)."""
+    metric = MagicMock(name="map_metric")
+    metric.detection_box = [torch.zeros(2, 4) for _ in range(n)]
+    metric.detection_scores = [torch.zeros(2) for _ in range(n)]
+    metric.detection_labels = [torch.zeros(2, dtype=torch.long) for _ in range(n)]
+    metric.detection_mask = [((10, 10), b"rle") for _ in range(n)]
+    metric.groundtruth_box = [torch.zeros(1, 4) for _ in range(n)]
+    metric.groundtruth_labels = [torch.zeros(1, dtype=torch.long) for _ in range(n)]
+    metric.groundtruth_mask = [((10, 10), b"rle") for _ in range(n)]
+    metric.groundtruth_crowds = [torch.zeros(1) for _ in range(n)]
+    metric.groundtruth_area = [torch.zeros(1) for _ in range(n)]
+    metric._update_count = 0
+    return metric
+
+
+class TestMergeMetricStateAcrossRanks:
+    """The DDP-safe replacement for torchmetrics' internal sync (#931/#449)."""
+
+    def test_no_op_when_not_distributed(self) -> None:
+        """Single-process / non-distributed: state is left untouched and no gather happens."""
+        cb = COCOEvalCallback()
+        metric = _metric_with_state(n=1)
+        with patch("rfdetr.training.callbacks.coco_eval.all_gather") as mock_gather:
+            cb._merge_metric_state_across_ranks(metric)
+        mock_gather.assert_not_called()
+        assert len(metric.detection_box) == 1  # unchanged
+
+    @patch("rfdetr.training.callbacks.coco_eval.get_world_size", return_value=2)
+    @patch("rfdetr.training.callbacks.coco_eval.is_dist_avail_and_initialized", return_value=True)
+    def test_concatenates_each_state_across_ranks(self, _init, _ws) -> None:
+        """Distributed: every state list is gathered once and concatenated across ranks."""
+        cb = COCOEvalCallback()
+        metric = _metric_with_state(n=1)
+        # Simulate a 2-rank gather: this rank's list plus an identical "other rank" list.
+        with patch("rfdetr.training.callbacks.coco_eval.all_gather", side_effect=lambda local: [local, local]) as mg:
+            cb._merge_metric_state_across_ranks(metric)
+        # One gather per state tensor (9 states), each now holding both ranks' entries.
+        assert mg.call_count == 9
+        assert len(metric.detection_box) == 2
+        assert len(metric.detection_scores) == 2
+        assert len(metric.detection_mask) == 2
+        assert len(metric.groundtruth_area) == 2
+
+    @patch("rfdetr.training.callbacks.coco_eval.get_world_size", return_value=1)
+    @patch("rfdetr.training.callbacks.coco_eval.is_dist_avail_and_initialized", return_value=True)
+    def test_no_op_when_world_size_one(self, _init, _ws) -> None:
+        """world_size==1 in an initialised group: state untouched, no gather issued."""
+        cb = COCOEvalCallback()
+        metric = _metric_with_state(n=1)
+        with patch("rfdetr.training.callbacks.coco_eval.all_gather") as mock_gather:
+            cb._merge_metric_state_across_ranks(metric)
+        mock_gather.assert_not_called()
+        assert len(metric.detection_box) == 1  # unchanged
+
+
+class TestOnTestEpochStart:
+    """on_test_epoch_start resets _ema_has_updates before test to prevent stale val state."""
+
+    def test_map_metric_ema_stays_none_without_ema_callback(self) -> None:
+        """No EMA callback → map_metric_ema stays None after test hook fires."""
+        cb = COCOEvalCallback()
+        trainer = _make_trainer(callbacks=[])
+        module = _cpu_module()
+        cb.setup(trainer, module, stage="fit")
+
+        cb.on_test_epoch_start(trainer, module)
+
+        assert cb.map_metric_ema is None
+
+    def test_resets_ema_has_updates_to_false(self) -> None:
+        """on_test_epoch_start resets _ema_has_updates to False even when stale True from validation."""
+        cb = COCOEvalCallback()
+        trainer = _make_trainer(callbacks=[_ema_callback()])
+        module = _cpu_module()
+        cb.setup(trainer, module, stage="fit")
+        cb._ema_has_updates = True  # simulate stale value from a preceding validation epoch
+
+        cb.on_test_epoch_start(trainer, module)
+
+        assert cb._ema_has_updates is False
+
+
+class TestPrepareEmaMetricSecondEpoch:
+    """_prepare_ema_metric resets (not re-creates) the metric on subsequent epochs."""
+
+    def test_resets_not_recreates_metric(self) -> None:
+        """Calling on_validation_epoch_start twice resets the metric rather than replacing it."""
+        cb = COCOEvalCallback()
+        trainer = _make_trainer(callbacks=[_ema_callback()])
+        module = _cpu_module()
+        cb.setup(trainer, module, stage="fit")
+
+        cb.on_validation_epoch_start(trainer, module)
+        assert cb.map_metric_ema is not None
+
+        # Replace with a spy mock so reset() calls are trackable on the second epoch
+        spy_metric = MagicMock(name="map_metric_ema")
+        cb.map_metric_ema = spy_metric
+
+        cb.on_validation_epoch_start(trainer, module)
+
+        assert cb.map_metric_ema is spy_metric  # same object, not replaced
+        spy_metric.reset.assert_called_once()
+
+
+class TestComputeAndLogEmaResetPath:
+    """elif branch in _compute_and_log: gate False + metric not None → reset() fires."""
+
+    def test_resets_ema_metric(self) -> None:
+        """EMA not computed this epoch but metric exists → reset() clears state for the next epoch."""
+        cb = COCOEvalCallback()
+        trainer = _make_trainer()
+        module = _cpu_module()
+        cb.setup(trainer, module, stage="fit")
+        trainer.callback_metrics = {}
+
+        # EMA metric exists but no batch updated it this epoch → gate returns False → elif fires
+        mock_ema = MagicMock(name="map_metric_ema")
+        cb.map_metric_ema = mock_ema
+        cb._ema_has_updates = False
+
+        cb.map_metric = MagicMock(name="map_metric")
+        cb.map_metric.compute.return_value = _minimal_metrics()
+
+        with (
+            patch.object(cb, "_merge_metric_state_across_ranks"),
+            patch.object(cb, "_build_per_class_rows", return_value=[]),
+            patch.object(cb, "_print_metrics_tables"),
+            patch("rfdetr.training.callbacks.coco_eval.distributed_merge_matching_data", return_value={}),
+        ):
+            cb._compute_and_log(trainer, module, "val")
+
+        mock_ema.reset.assert_called_once()

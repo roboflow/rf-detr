@@ -9,7 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
--
+- `RFDETR.export_for_roboflow(output_dir)` — writes a Roboflow upload bundle (`weights.pt` + `class_names.txt`) without a network call; extracted from `deploy_to_roboflow`, which now uses it ([#1086](https://github.com/roboflow/rf-detr/pull/1086))
+- `RFDETRKeypointPreview` — keypoint detection model variant with GroupPose-style head, covariance-based uncertainty (precision-Cholesky parameterization), and COCO keypoint AP evaluation. Also adds `KeypointTrainConfig`, `infer_coco_keypoint_schema`, `CocoKeypointSchema`, and `active_keypoint_counts` to the public API ([#1099](https://github.com/roboflow/rf-detr/pull/1099))
 
 ### Changed
 
@@ -21,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
--
+- Fixed `import rfdetr` failing on NumPy 2.x when a transitive dependency references the removed `np.complex_` alias ([#1064](https://github.com/roboflow/rf-detr/pull/1064))
 
 ### Security
 

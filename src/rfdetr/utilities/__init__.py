@@ -15,6 +15,7 @@ from rfdetr.utilities.distributed import (
     reduce_dict,
     save_on_master,
 )
+from rfdetr.utilities.keypoints import precision_cholesky_to_pixel_covariance
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.package import get_sha, get_version
 from rfdetr.utilities.reproducibility import seed_all
@@ -47,6 +48,8 @@ __all__ = [
     # package
     "get_sha",
     "get_version",
+    # keypoints
+    "precision_cholesky_to_pixel_covariance",
     # reproducibility
     "seed_all",
     # state_dict

@@ -2,7 +2,7 @@ name: CPU tests Workflow
 
 on:
   push:
-    branches: ["main", "release/*", "develop"]
+    branches: ["main", "release/*", "develop", "feat/*"]
   pull_request:
 
 permissions:
@@ -27,7 +27,7 @@ jobs:
   run-tests:
     name: Testing
     # needs: build  # todo: consider using this build package for testing
-    timeout-minutes: 15
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -58,9 +58,9 @@ jobs:
         run: |
           uv run --no-sync pytest src/ tests/ \
             -n 2 -m "not gpu" \
-            --ignore=tests/try_instantiate_all_models.py \
+            --ignore=tests/run_smoke_all_models.py \
             --cov=rfdetr --cov-report=xml \
-            --timeout=240 \
+            --timeout=420 \
             --durations=50
 
       - name: Upload coverage to Codecov

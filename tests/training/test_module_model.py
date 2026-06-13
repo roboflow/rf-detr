@@ -100,6 +100,38 @@ def _build_module(model_config=None, train_config=None, tmp_path=None):
     return module, fake_model, fake_criterion, fake_postprocess
 
 
+def test_keypoint_training_resets_gaussian_parameters_after_pretrained_load(tmp_path) -> None:
+    """Keypoint finetuning should reset pretrained Gaussian precision rows after loading weights."""
+    mc = _base_model_config(
+        pretrain_weights="/fake/keypoint.pth",
+        use_grouppose_keypoints=True,
+        num_keypoints_per_class=[17],
+    )
+    tc = _base_train_config(tmp_path)
+    fake_model = _fake_model()
+    fake_model.reset_keypoint_gaussian_parameters = MagicMock()
+    events: list[str] = []
+
+    with (
+        patch("rfdetr.training.module_model.build_model_from_config", return_value=fake_model),
+        patch("rfdetr.training.module_model.load_pretrain_weights") as mock_load_pretrain_weights,
+        patch(
+            "rfdetr.training.module_model.build_criterion_from_config",
+            return_value=(_fake_criterion(), _fake_postprocess()),
+        ),
+    ):
+        mock_load_pretrain_weights.side_effect = lambda *_args, **_kwargs: events.append("load")
+        fake_model.reset_keypoint_gaussian_parameters.side_effect = lambda: events.append("reset")
+
+        from rfdetr.training.module_model import RFDETRModelModule
+
+        RFDETRModelModule(mc, tc)
+
+    mock_load_pretrain_weights.assert_called_once_with(fake_model, mc)
+    fake_model.reset_keypoint_gaussian_parameters.assert_called_once_with()
+    assert events == ["load", "reset"]
+
+
 def _make_batch(batch_size=2, channels=3, h=16, w=16):
     """Build a (NestedTensor, targets) tuple for testing."""
     tensors = torch.randn(batch_size, channels, h, w)
@@ -651,27 +683,46 @@ class TestTrainingStep:
 
         assert loss.item() == pytest.approx(1.0)  # 4.0 / 4
 
-    def test_logs_train_loss_to_prog_bar(self, tmp_path):
-        """Aggregate training loss must be logged with prog_bar=True for visibility."""
+    def test_logs_live_train_loss_to_progress_bar(self, tmp_path):
+        """Aggregate training loss must be logged every step as a progress-only metric."""
         module, samples, targets, _, _ = self._run_step(tmp_path)
 
         module.training_step((samples, targets), batch_idx=0)
 
-        train_loss_calls = [c for c in module.log.call_args_list if c[0][0] == "train/loss"]
-        assert len(train_loss_calls) == 1
-        assert train_loss_calls[0].kwargs.get("prog_bar") is True
+        progress_loss_calls = [c for c in module.log.call_args_list if c[0][0] == "loss"]
+        assert len(progress_loss_calls) == 1
+        assert progress_loss_calls[0].kwargs.get("prog_bar") is True
+        assert progress_loss_calls[0].kwargs.get("logger") is False
+        assert progress_loss_calls[0].kwargs.get("on_step") is True
+        assert progress_loss_calls[0].kwargs.get("on_epoch") is False
 
-    def test_logs_learning_rate_to_prog_bar(self, tmp_path):
-        """Current learning rate must be logged as train/lr with prog_bar=True for monitoring."""
+    def test_logs_learning_rate_without_progress_bar(self, tmp_path):
+        """Current learning rate should be logged without occupying progress-bar metric slots."""
         module, samples, targets, _, _ = self._run_step(tmp_path)
 
         module.training_step((samples, targets), batch_idx=0)
 
         lr_calls = [c for c in module.log.call_args_list if c[0][0] == "train/lr"]
         assert len(lr_calls) == 1
-        assert lr_calls[0].kwargs.get("prog_bar") is True
+        assert lr_calls[0].kwargs.get("prog_bar") is False
         assert lr_calls[0].kwargs.get("on_step") is True
         assert lr_calls[0].kwargs.get("on_epoch") is False
+
+    def test_logs_convergence_components_to_progress_bar(self, tmp_path):
+        """Selected detection and keypoint losses should appear as compact progress-only metrics."""
+        loss_dict = {
+            "loss_ce": torch.tensor(0.5),
+            "loss_bbox": torch.tensor(0.3),
+            "loss_keypoints_l1": torch.tensor(0.4),
+            "loss_keypoints_nll": torch.tensor(0.2),
+        }
+        weight_dict = {key: 1.0 for key in loss_dict}
+        module, samples, targets, _, _ = self._run_step(tmp_path, loss_dict, weight_dict)
+
+        module.training_step((samples, targets), batch_idx=0)
+
+        progress_names = {c[0][0] for c in module.log.call_args_list if c.kwargs.get("prog_bar") is True}
+        assert {"loss_cls", "loss_box", "kp_l1", "kp_nll"}.issubset(progress_names)
 
     def test_logs_individual_losses_as_dict(self, tmp_path):
         """Each component loss must be logged separately under train/ prefix."""
@@ -694,6 +745,32 @@ class TestTrainingStep:
 
         assert loss.dim() == 0
 
+    def test_returns_detached_predictions_when_train_metrics_enabled(self, tmp_path):
+        """compute_train_metrics=True should expose detached predictions without changing the Lightning loss key."""
+        tc = _base_train_config(tmp_path, compute_train_metrics=True)
+        module, fake_model, fake_criterion, fake_postprocess = _build_module(train_config=tc, tmp_path=tmp_path)
+        samples, targets = _make_batch()
+        model_output = {"pred_logits": torch.randn(2, 3, requires_grad=True)}
+        fake_model.return_value = model_output
+        fake_criterion.return_value = {"loss_ce": torch.tensor(1.0)}
+        fake_criterion.weight_dict = {"loss_ce": 1.0}
+        fake_postprocess.return_value = [{"boxes": torch.randn(1, 4, requires_grad=True)}]
+        module.log = MagicMock()
+        module.log_dict = MagicMock()
+        real_param = nn.Parameter(torch.randn(4))
+        module.optimizers = MagicMock(return_value=torch.optim.SGD([real_param], lr=1e-3))
+        trainer = MagicMock()
+        trainer.accumulate_grad_batches = 1
+        module._trainer = trainer
+        type(module).trainer = property(lambda self: self._trainer)
+
+        result = module.training_step((samples, targets), batch_idx=0)
+
+        assert isinstance(result, dict)
+        assert result["loss"].dim() == 0
+        assert result["results"][0]["boxes"].requires_grad is False
+        assert result["targets"] is targets
+
     def test_ignores_losses_not_in_weight_dict(self, tmp_path):
         """Losses absent from weight_dict (e.g. cardinality_error) must not affect total."""
         loss_dict = {"loss_ce": torch.tensor(1.0), "cardinality_error": torch.tensor(99.0)}
@@ -709,13 +786,19 @@ class TestValidationStep:
     """Tests for validation_step() — verifies output dict shape, postprocessor invocation with correct original sizes,
     and val/loss logging."""
 
-    def _run_val_step(self, tmp_path):
+    def _run_val_step(
+        self,
+        tmp_path,
+        loss_dict: dict[str, torch.Tensor] | None = None,
+        weight_dict: dict[str, float] | None = None,
+    ):
         module, fake_model, fake_criterion, fake_pp = _build_module(tmp_path=tmp_path)
         samples, targets = _make_batch()
         fake_model.return_value = {}
-        fake_criterion.return_value = {"loss_ce": torch.tensor(0.5)}
-        fake_criterion.weight_dict = {"loss_ce": 1.0}
+        fake_criterion.return_value = loss_dict or {"loss_ce": torch.tensor(0.5)}
+        fake_criterion.weight_dict = weight_dict or {"loss_ce": 1.0}
         module.log = MagicMock()
+        module.log_dict = MagicMock()
         result = module.validation_step((samples, targets), batch_idx=0)
         return result, fake_pp, module
 
@@ -743,6 +826,46 @@ class TestValidationStep:
         _, _, module = self._run_val_step(tmp_path)
         val_loss_calls = [c for c in module.log.call_args_list if c[0][0] == "val/loss"]
         assert len(val_loss_calls) == 1
+
+    def test_logs_val_keypoint_loss_components_once(self, tmp_path):
+        """Validation should expose full keypoint losses without duplicate progress aliases."""
+        loss_dict = {
+            "loss_ce": torch.tensor(0.5),
+            "loss_keypoints_l1": torch.tensor(0.4),
+            "loss_keypoints_findable": torch.tensor(0.3),
+            "loss_keypoints_visible": torch.tensor(0.2),
+            "loss_keypoints_nll": torch.tensor(0.1),
+        }
+        weight_dict = {key: 1.0 for key in loss_dict}
+
+        _, _, module = self._run_val_step(tmp_path, loss_dict=loss_dict, weight_dict=weight_dict)
+
+        module.log_dict.assert_called_once()
+        logged = module.log_dict.call_args.args[0]
+        assert "val/loss_keypoints_l1" in logged
+        assert "val/loss_keypoints_findable" in logged
+        logged_names = {c[0][0] for c in module.log.call_args_list}
+        assert "val/kp_l1" not in logged_names
+        assert "val/kp_find" not in logged_names
+        assert "val/kp_vis" not in logged_names
+        assert "val/kp_nll" not in logged_names
+
+    def test_val_detection_loss_components_are_not_relogged_as_progress_aliases(self, tmp_path):
+        """Validation component losses should be logged once under canonical ``val/loss_*`` names."""
+        loss_dict = {
+            "loss_ce": torch.tensor(0.5),
+            "loss_bbox": torch.tensor(0.3),
+            "loss_giou": torch.tensor(0.2),
+        }
+        weight_dict = {key: 1.0 for key in loss_dict}
+
+        _, _, module = self._run_val_step(tmp_path, loss_dict=loss_dict, weight_dict=weight_dict)
+
+        logged_loss_names = set(module.log_dict.call_args.args[0])
+        direct_log_names = {c[0][0] for c in module.log.call_args_list}
+        assert "val/loss_giou" in logged_loss_names
+        assert "val/loss_giou" not in direct_log_names
+        assert "val/giou" not in direct_log_names
 
     def test_can_disable_val_loss_computation(self, tmp_path):
         """compute_val_loss=False skips criterion call and val/loss logging."""
@@ -1003,6 +1126,14 @@ class TestConfigureOptimizers:
 
         assert optimizer.defaults.get("fused") is True
 
+    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=False)
+    def test_fused_optimizer_disabled_when_cuda_unavailable(self, mock_cuda_available, tmp_path):
+        """_use_fused_optimizer must return False when CUDA is not available, regardless of precision."""
+        module, _ = self._setup_module(tmp_path)
+        module._trainer.precision = "bf16-mixed"
+
+        assert not module._use_fused_optimizer
+
 
 class TestClipGradients:
     """Tests for clip_gradients() — verifies precision gating mirrors configure_optimizers()."""
@@ -1215,9 +1346,11 @@ class TestOnLoadCheckpoint:
 
         pe_after = checkpoint["state_dict"][self._PE_KEY]
         expected_tokens = pe_tgt * pe_tgt + 1
-        assert pe_after.shape == (1, expected_tokens, 16), (
-            f"PE should have {expected_tokens} tokens, got shape {tuple(pe_after.shape)}"
-        )
+        assert pe_after.shape == (
+            1,
+            expected_tokens,
+            16,
+        ), f"PE should have {expected_tokens} tokens, got shape {tuple(pe_after.shape)}"
 
     def test_legacy_pth_normalised_and_pe_interpolated(self, build_module):
         """Legacy .pth checkpoint (no state_dict key) must be normalised and PE interpolated.

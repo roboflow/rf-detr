@@ -17,6 +17,7 @@ import torch
 from rfdetr._namespace import _namespace_from_configs
 from rfdetr.config import (
     RFDETRBaseConfig,
+    RFDETRKeypointPreviewConfig,
     RFDETRNanoConfig,
     RFDETRSegNanoConfig,
     SegmentationTrainConfig,
@@ -327,6 +328,13 @@ class TestBuildModelContextCharacterization:
         mc = RFDETRSegNanoConfig(pretrain_weights=None, device="cpu")
         ctx = _build_model_context(mc)
         assert ctx.postprocess.num_select == 100
+
+    def test_keypoint_preview_postprocess_has_keypoint_schema(self) -> None:
+        from rfdetr.detr import _build_model_context
+
+        mc = RFDETRKeypointPreviewConfig(pretrain_weights=None, device="cpu")
+        ctx = _build_model_context(mc)
+        assert ctx.postprocess.num_keypoints_per_class == [0, 17]
 
     def test_args_namespace_attached(self) -> None:
         from rfdetr.detr import _build_model_context

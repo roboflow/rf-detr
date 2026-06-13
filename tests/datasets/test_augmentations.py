@@ -65,6 +65,83 @@ class TestAlbumentationsWrapper:
         assert torch.allclose(aug_target["boxes"], torch.tensor([box_out]), atol=1.0)
         assert torch.equal(aug_target["labels"], target["labels"])
 
+    def test_resize_transforms_keypoint_coordinates(self):
+        """Resize scales keypoint coordinates and preserves visibility values."""
+        wrapper = AlbumentationsWrapper(alb.Resize(height=100, width=200, p=1.0))
+        image = Image.new("RGB", (100, 50))
+        target = {
+            "boxes": torch.tensor([[10.0, 5.0, 30.0, 25.0]]),
+            "labels": torch.tensor([1]),
+            "keypoints": torch.tensor([[[15.0, 10.0, 2.0], [0.0, 0.0, 0.0]]]),
+        }
+
+        _, transformed = wrapper(image, target)
+
+        torch.testing.assert_close(
+            transformed["boxes"],
+            torch.tensor([[20.0, 10.0, 60.0, 50.0]]),
+            rtol=1e-4,
+            atol=1e-6,
+        )
+        torch.testing.assert_close(
+            transformed["keypoints"],
+            torch.tensor([[[30.0, 20.0, 2.0], [0.0, 0.0, 0.0]]]),
+            rtol=1e-4,
+            atol=1e-6,
+        )
+
+    def test_horizontal_flip_transforms_keypoint_coordinates(self):
+        """Horizontal flip mirrors keypoint coordinates using Albumentations geometry."""
+        wrapper = AlbumentationsWrapper(alb.HorizontalFlip(p=1.0))
+        image = Image.new("RGB", (100, 50))
+        target = {
+            "boxes": torch.tensor([[10.0, 5.0, 30.0, 25.0]]),
+            "labels": torch.tensor([1]),
+            "keypoints": torch.tensor([[[10.0, 5.0, 2.0], [30.0, 25.0, 2.0], [0.0, 0.0, 0.0]]]),
+        }
+
+        _, transformed = wrapper(image, target)
+
+        torch.testing.assert_close(
+            transformed["boxes"],
+            torch.tensor([[70.0, 5.0, 90.0, 25.0]]),
+            rtol=1e-4,
+            atol=1e-6,
+        )
+        torch.testing.assert_close(
+            transformed["keypoints"],
+            torch.tensor([[[89.0, 5.0, 2.0], [69.0, 25.0, 2.0], [0.0, 0.0, 0.0]]]),
+            rtol=1e-4,
+            atol=1e-6,
+        )
+
+    def test_crop_filters_keypoints_with_removed_boxes(self):
+        """When a crop removes a box, its keypoints are removed with the same instance."""
+        wrapper = AlbumentationsWrapper(alb.Crop(x_min=0, y_min=0, x_max=50, y_max=50, p=1.0))
+        image = Image.new("RGB", (100, 50))
+        target = {
+            "boxes": torch.tensor([[10.0, 5.0, 30.0, 25.0], [60.0, 5.0, 80.0, 25.0]]),
+            "labels": torch.tensor([1, 1]),
+            "area": torch.tensor([400.0, 400.0]),
+            "keypoints": torch.tensor(
+                [
+                    [[15.0, 10.0, 2.0], [25.0, 20.0, 2.0]],
+                    [[65.0, 10.0, 2.0], [75.0, 20.0, 2.0]],
+                ]
+            ),
+        }
+
+        _, transformed = wrapper(image, target)
+
+        assert transformed["boxes"].shape == (1, 4)
+        assert transformed["labels"].tolist() == [1]
+        torch.testing.assert_close(
+            transformed["keypoints"],
+            torch.tensor([[[15.0, 10.0, 2.0], [25.0, 20.0, 2.0]]]),
+            rtol=1e-4,
+            atol=1e-6,
+        )
+
     def test_non_geometric_transform_preserves_boxes(self):
         """Test that non-geometric transforms preserve bounding boxes."""
         transform = alb.GaussianBlur(blur_limit=3, p=1.0)
@@ -1505,6 +1582,86 @@ class TestMakeCocoTransformsAugConfig:
         pipeline = make_transforms("test", 640, aug_config={"HorizontalFlip": {"p": 1.0}})
         wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
         assert len(wrappers) == expected_resize_wrappers
+
+
+class TestMakeCocoTransformsOutputSize:
+    """Regression tests for #979: transforms must resize high-resolution images to the target resolution.
+
+    These tests verify that ``make_coco_transforms`` and ``make_coco_transforms_square_div_64``
+    actually produce output images at the requested ``resolution``, not at the original image size.
+    Existing tests only check pipeline *structure*; these check actual output *dimensions*.
+    """
+
+    # 1920x1080 (landscape) — larger than any typical training resolution.
+    # PIL size is (width, height), so Image.new("RGB", (1920, 1080)) gives a 1920-wide, 1080-tall image.
+    _INPUT_W = 1920
+    _INPUT_H = 1080
+    _RESOLUTION = 640
+
+    def _make_image(self) -> Image.Image:
+        return Image.new("RGB", (self._INPUT_W, self._INPUT_H))
+
+    def test_square_val_resizes_large_image(self) -> None:
+        """Square val transform resizes 1920x1080 to exactly 640x640."""
+        transform = make_coco_transforms_square_div_64("val", self._RESOLUTION)
+        tensor, _ = transform(self._make_image(), None)
+        assert tensor.shape[-2:] == (self._RESOLUTION, self._RESOLUTION)
+
+    def test_square_train_resizes_large_image(self) -> None:
+        """Square train transform resizes 1920x1080 to 640x640 regardless of OneOf branch."""
+        transform = make_coco_transforms_square_div_64("train", self._RESOLUTION, aug_config={})
+        tensor, _ = transform(self._make_image(), None)
+        assert tensor.shape[-2:] == (self._RESOLUTION, self._RESOLUTION)
+
+    def test_nonsquare_val_resizes_and_caps_longest_side(self) -> None:
+        """Non-square val transform resizes the image and keeps the longest side within 1333 px.
+
+        Avoid asserting an exact output dimension here because Albumentations resize behavior can vary across supported
+        versions. The stable contract is that the image is resized and the longest side does not exceed the configured
+        maximum.
+        """
+        transform = make_coco_transforms("val", self._RESOLUTION)
+        tensor, _ = transform(self._make_image(), None)
+        height, width = tensor.shape[-2], tensor.shape[-1]
+        assert (height, width) != (self._INPUT_H, self._INPUT_W)
+        assert max(height, width) <= 1333
+
+    def test_nonsquare_val_longest_side_at_most_1333(self) -> None:
+        """Non-square val transform caps the longest side at 1333 px.
+
+        Use an input that still exceeds 1333 px on its longest side after SmallestMaxSize(640), so this assertion
+        specifically validates that LongestMaxSize(1333) is applied.
+        """
+        transform = make_coco_transforms("val", self._RESOLUTION)
+        image = Image.new("RGB", (4000, 1000))
+        tensor, _ = transform(image, None)
+        height, width = tensor.shape[-2], tensor.shape[-1]
+        assert max(height, width) <= 1333
+
+    def test_nonsquare_val_does_not_pass_original_dimensions(self) -> None:
+        """Non-square val transform must not emit the original 1920x1080 dimensions — the core regression."""
+        transform = make_coco_transforms("val", self._RESOLUTION)
+        tensor, _ = transform(self._make_image(), None)
+        height, width = tensor.shape[-2], tensor.shape[-1]
+        assert (height, width) != (self._INPUT_H, self._INPUT_W), (
+            f"Transform emitted original {self._INPUT_H}x{self._INPUT_W} — resize was not applied"
+        )
+
+    def test_square_val_does_not_pass_original_dimensions(self) -> None:
+        """Square val transform must not emit the original 1920x1080 dimensions — the core regression."""
+        transform = make_coco_transforms_square_div_64("val", self._RESOLUTION)
+        tensor, _ = transform(self._make_image(), None)
+        height, width = tensor.shape[-2], tensor.shape[-1]
+        assert (height, width) != (self._INPUT_H, self._INPUT_W), (
+            f"Transform emitted original {self._INPUT_H}x{self._INPUT_W} — resize was not applied"
+        )
+
+    def test_output_is_float_tensor(self) -> None:
+        """Transform pipeline produces a float32 tensor, not a PIL Image."""
+        transform = make_coco_transforms_square_div_64("val", self._RESOLUTION)
+        tensor, _ = transform(self._make_image(), None)
+        assert isinstance(tensor, torch.Tensor)
+        assert tensor.dtype == torch.float32
 
 
 class TestAugPresets:

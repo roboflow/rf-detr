@@ -5,10 +5,12 @@
 # ------------------------------------------------------------------------
 """Detection and segmentation head subpackage."""
 
+from rfdetr.models.heads.keypoints import ConditionalQueryInitializer
 from rfdetr.models.heads.segmentation import DepthwiseConvBlock, MLPBlock, SegmentationHead
 
 __all__ = [
     "SegmentationHead",
     "DepthwiseConvBlock",
     "MLPBlock",
+    "ConditionalQueryInitializer",
 ]

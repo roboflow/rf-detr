@@ -16,8 +16,8 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import supervision as sv
 from PIL import Image as PILImage
+from supervision import Detections
 
 from rfdetr.utilities.logger import get_logger
 
@@ -64,7 +64,7 @@ def _run_inference(
     session: Any,
     image_path: str | Path,
     threshold: float = 0.3,
-) -> tuple[sv.Detections, PILImage.Image]:
+) -> tuple[Detections, PILImage.Image]:
     """Preprocess one image, run ONNX Runtime inference, and decode detections.
 
     Reads input shape from the session (NCHW ``float32``), resizes and normalises the image with ImageNet statistics,
@@ -206,4 +206,4 @@ def _run_inference(
     xyxy = np.stack([cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2], axis=1)
     xyxy *= np.array([ow, oh, ow, oh], dtype=np.float32)
 
-    return sv.Detections(xyxy=xyxy, confidence=scores[keep], class_id=cls[keep].astype(int)), pil_img
+    return Detections(xyxy=xyxy, confidence=scores[keep], class_id=cls[keep].astype(int)), pil_img

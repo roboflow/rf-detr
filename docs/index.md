@@ -178,3 +178,5 @@ Call `model.export(format="onnx")` after training or loading a checkpoint. ONNX 
 
 **Which RF-DETR model size should I use?**
 RF-DETR-Nano (2.3 ms, 67.6 AP50 on COCO) is best for edge and real-time applications. RF-DETR-Large (6.8 ms, 56.5 AP50:95) offers the best accuracy–latency trade-off for server deployment. RF-DETR-2XLarge (17.2 ms, 60.1 AP50:95) maximizes accuracy when latency allows.
+
+> **Checkpoint note:** Current `RFDETRLarge` defaults to `rf-detr-large-2026.pth`. The older `rf-detr-large.pth` checkpoint is a legacy Large release kept for backward compatibility and has been superseded by the current release.

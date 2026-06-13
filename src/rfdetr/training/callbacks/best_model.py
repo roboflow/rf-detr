@@ -102,6 +102,7 @@ class BestModelCallback(ModelCheckpoint):
         args_dict: object,
         trainer: Trainer,
         model_name: str | None = None,
+        model_config_dict: object | None = None,
     ) -> dict[str, object]:
         """Build a PTL-compatible RF-DETR checkpoint payload.
 
@@ -110,6 +111,7 @@ class BestModelCallback(ModelCheckpoint):
             args_dict: Serialized training args/config payload.
             trainer: Active Lightning trainer providing epoch/step counters.
             model_name: Name of the model class (e.g. ``"RFDETRLarge"``).
+            model_config_dict: Serialized architecture config needed to reconstruct schema-dependent models.
 
         Returns:
             Checkpoint dictionary that supports ``Trainer.fit(ckpt_path=...)`` while intentionally omitting
@@ -133,6 +135,8 @@ class BestModelCallback(ModelCheckpoint):
         # so old-format and unresolved checkpoints are indistinguishable.
         if model_name is not None:
             payload["model_name"] = model_name
+        if model_config_dict is not None:
+            payload["model_config"] = model_config_dict
         # Record the rfdetr package version for provenance / compatibility hints.
         # Omit the key when the version cannot be resolved (e.g. editable install
         # without package metadata) so old-format checkpoints are indistinguishable.
@@ -140,6 +144,20 @@ class BestModelCallback(ModelCheckpoint):
         if version is not None:
             payload["rfdetr_version"] = version
         return payload
+
+    @staticmethod
+    def _get_live_model_state_dict(pl_module: LightningModule) -> dict[str, torch.Tensor]:
+        """Resolve live model weights from the active Lightning module.
+
+        Args:
+            pl_module: The ``RFDETRModelModule`` being trained.
+
+        Returns:
+            State dict from the live, non-EMA model, unwrapped from ``torch.compile`` when needed.
+        """
+        _orig = getattr(pl_module.model, "_orig_mod", None)
+        raw = _orig if isinstance(_orig, torch.nn.Module) else pl_module.model
+        return raw.state_dict()
 
     @staticmethod
     def _get_ema_model_state_dict(
@@ -168,6 +186,21 @@ class BestModelCallback(ModelCheckpoint):
         _orig = getattr(pl_module.model, "_orig_mod", None)
         raw = _orig if isinstance(_orig, torch.nn.Module) else pl_module.model
         return raw.state_dict()
+
+    @staticmethod
+    def _serialize_model_config(pl_module: LightningModule) -> dict[str, object] | None:
+        """Serialize the model architecture config when the module exposes one."""
+        model_config = getattr(pl_module, "model_config", None)
+        if model_config is None:
+            return None
+        if isinstance(model_config, dict):
+            return model_config
+        model_dump = getattr(model_config, "model_dump", None)
+        if callable(model_dump):
+            dumped = model_dump()
+            if isinstance(dumped, dict):
+                return dumped
+        return None
 
     @staticmethod
     def _resolve_model_name(pl_module: LightningModule) -> str | None:
@@ -249,17 +282,10 @@ class BestModelCallback(ModelCheckpoint):
             )
         pth_path = Path(filepath)
         pth_path.parent.mkdir(parents=True, exist_ok=True)
-        # Validation metrics are produced with EMA weights when the EMA callback
-        # is active, so save the same weight source to keep metric/checkpoint
-        # consistency for the monitored "regular" key.
-        # Unwrap torch.compile's OptimizedModule (_orig_mod) so checkpoints always
-        # contain plain keys — non-compiled consumers (sync-back, compat.evaluate) can load them.
-        if self._monitor_ema is not None:
-            model_state_dict = self._get_ema_model_state_dict(trainer, pl_module)
-        else:
-            _orig = getattr(pl_module.model, "_orig_mod", None)
-            raw = _orig if isinstance(_orig, torch.nn.Module) else pl_module.model
-            model_state_dict = raw.state_dict()
+        # Regular metrics are produced from the live validation step.  Keep the regular
+        # checkpoint tied to live weights even when an EMA checkpoint is tracked in
+        # parallel; checkpoint_best_ema.pth is the only file that should save EMA weights.
+        model_state_dict = self._get_live_model_state_dict(pl_module)
         # Enrich train_config with dataset class names so reloaded checkpoints
         # return the correct labels, not COCO defaults (#509).
         train_config = pl_module.train_config
@@ -272,11 +298,32 @@ class BestModelCallback(ModelCheckpoint):
             train_config = train_config.model_copy(update={"class_names": dataset_class_names})
         args_dict = train_config.model_dump() if hasattr(train_config, "model_dump") else train_config
         model_name = self._resolve_model_name(pl_module)
+        model_config_dict = self._serialize_model_config(pl_module)
         torch.save(
-            self._build_checkpoint_payload(model_state_dict, args_dict, trainer, model_name=model_name), pth_path
+            self._build_checkpoint_payload(
+                model_state_dict,
+                args_dict,
+                trainer,
+                model_name=model_name,
+                model_config_dict=model_config_dict,
+            ),
+            pth_path,
         )
         self._last_global_step_saved = trainer.global_step
-        logger.info("Best regular mAP saved to %s (epoch %d)", pth_path, trainer.current_epoch)
+        monitor_value = trainer.callback_metrics.get(self.monitor)
+        if torch.is_tensor(monitor_value):
+            monitor_display = f"{monitor_value.item():.6g}"
+        elif monitor_value is not None:
+            monitor_display = str(monitor_value)
+        else:
+            monitor_display = "unknown"
+        logger.info(
+            "Best regular checkpoint saved to %s (epoch %d, monitor=%s, value=%s)",
+            pth_path,
+            trainer.current_epoch,
+            self.monitor,
+            monitor_display,
+        )
 
     def on_validation_end(self, trainer: Trainer, pl_module: LightningModule) -> None:
         """Save best regular/EMA checkpoints when validation mAP improves.
@@ -323,8 +370,15 @@ class BestModelCallback(ModelCheckpoint):
                 ema_train_config.model_dump() if hasattr(ema_train_config, "model_dump") else ema_train_config
             )
             ema_model_name = self._resolve_model_name(pl_module)
+            ema_model_config_dict = self._serialize_model_config(pl_module)
             torch.save(
-                self._build_checkpoint_payload(ema_state_dict, ema_args_dict, trainer, model_name=ema_model_name),
+                self._build_checkpoint_payload(
+                    ema_state_dict,
+                    ema_args_dict,
+                    trainer,
+                    model_name=ema_model_name,
+                    model_config_dict=ema_model_config_dict,
+                ),
                 self._output_dir / "checkpoint_best_ema.pth",
             )
             logger.info(

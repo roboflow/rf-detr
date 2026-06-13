@@ -72,7 +72,7 @@ class TestImportPaths:
 
     After the split:
     - ``rfdetr.inference`` exports ``ModelContext`` and ``_build_model_context``
-    - ``rfdetr.variants`` exports all 14 concrete model classes
+    - ``rfdetr.variants`` exports all 15 concrete model classes
     - ``rfdetr.detr`` re-exports both for backward compatibility
     - ``rfdetr`` (top-level) continues to export public names unchanged
     """
@@ -122,6 +122,7 @@ class TestImportPaths:
         "class_name",
         [
             pytest.param("RFDETRBase", id="base"),
+            pytest.param("RFDETRKeypointPreview", id="keypoint-preview"),
             pytest.param("RFDETRNano", id="nano"),
             pytest.param("RFDETRSmall", id="small"),
             pytest.param("RFDETRMedium", id="medium"),
@@ -167,6 +168,36 @@ class TestImportPaths:
         from rfdetr import ModelContext
 
         assert ModelContext is not None
+
+    def test_top_level_import_sets_numpy_complex_alias(self) -> None:
+        """Verify rfdetr shim sets np.complex_ in a fresh interpreter with complex_ absent.
+
+        Runs in a subprocess so the shim code path is actually executed — importing rfdetr inside pytest is a no-op
+        because rfdetr is already cached in sys.modules.
+        """
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import numpy\n"
+                    "if hasattr(numpy, 'complex_'):\n"
+                    "    del numpy.complex_\n"
+                    "import rfdetr\n"
+                    "assert hasattr(numpy, 'complex_'), 'shim did not set numpy.complex_'\n"
+                    "assert numpy.complex_ is numpy.complex128, 'complex_ must alias complex128'\n"
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, (
+            "Subprocess for NumPy complex_ shim failed:\n"
+            f"return code: {result.returncode}\n"
+            f"stdout:\n{result.stdout}\n"
+            f"stderr:\n{result.stderr}"
+        )
 
     def test_identity_across_import_paths(self) -> None:
         """The same class object must be returned regardless of import path.

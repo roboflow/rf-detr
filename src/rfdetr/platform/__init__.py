@@ -12,7 +12,7 @@ _INSTALL_MSG = (
 )
 
 try:
-    _IS_RFDETR_PLUS_AVAILABLE = importlib.util.find_spec("rfdetr_plus.models") is not None
+    _IS_RFDETR_PLUS_AVAILABLE = importlib.util.find_spec("rfdetr_plus") is not None
 except ImportError:
     _IS_RFDETR_PLUS_AVAILABLE = False
 if not _IS_RFDETR_PLUS_AVAILABLE:
