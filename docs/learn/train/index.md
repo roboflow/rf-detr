@@ -87,6 +87,46 @@ Different GPUs have different VRAM capacities, so adjust batch_size and grad_acc
 
 For object detection, the RF-DETR-B checkpoint is used by default. To get started quickly with training an object detection model, please refer to our fine-tuning Google Colab [notebook](https://colab.research.google.com/github/roboflow-ai/notebooks/blob/main/notebooks/how-to-finetune-rf-detr-on-detection-dataset.ipynb).
 
+## Keypoint preview custom datasets
+
+The pretrained keypoint preview checkpoint predicts 17 COCO person keypoints. Fine-tuned keypoint preview models can use the keypoint schema from your own COCO keypoint dataset, so the output keypoint count is not limited to 17.
+
+Use COCO keypoint JSON for custom keypoint training. Roboflow COCO exports are supported when split annotations are named `train/_annotations.coco.json`, `valid/_annotations.coco.json`, and optionally `test/_annotations.coco.json`. YOLO pose/keypoint training is not supported yet.
+
+The keypoint fine-tuning demo infers the class names and keypoint schema from the training annotation file, then passes those values into `RFDETRKeypointPreview` and `model.train()`:
+
+```python
+from pathlib import Path
+
+from rfdetr import RFDETRKeypointPreview
+from rfdetr.datasets._keypoint_schema import infer_coco_keypoint_schema
+
+DATASET_DIR = Path("/path/to/coco-keypoint-dataset")
+schema = infer_coco_keypoint_schema(DATASET_DIR / "train" / "_annotations.coco.json")
+
+model = RFDETRKeypointPreview(
+    num_classes=len(schema.class_names),
+    num_keypoints_per_class=schema.num_keypoints_per_class,
+)
+
+model.train(
+    dataset_file="roboflow",
+    dataset_dir=str(DATASET_DIR),
+    class_names=schema.class_names,
+    keypoint_oks_sigmas=schema.keypoint_oks_sigmas,
+    epochs=50,
+    batch_size=8,
+    grad_accum_steps=2,
+    lr=2e-5,
+    lr_encoder=2e-5,
+    output_dir="output/keypoint_custom",
+    use_ema=False,
+    run_test=False,
+)
+```
+
+Set `keypoint_flip_pairs` if horizontal flips should swap left/right keypoints for your schema.
+
 ## Dataset Format
 
 RF-DETR **automatically detects** whether your dataset is in COCO or YOLO format. Simply pass your dataset directory to the `train()` method and the appropriate data loader will be used.
