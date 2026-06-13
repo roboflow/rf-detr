@@ -191,6 +191,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "notebooks/*.py" = ["E402"]  # cell-local imports are intentional in percent-format scripts
+"fine-tune_keypoints.py" = ["E501"]  # jupytext notebook — markdown prose lines are intentionally unwrapped
 
 [tool.docformatter]
 wrap-summaries = 120
