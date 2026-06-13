@@ -410,6 +410,8 @@ print(f"saved_checkpoint_model={final_checkpoint}")
 # ## 7 - Validate metrics
 #
 # The validation pass that runs at the end of every training epoch uses the best weights seen so far and applies augmentation. This cell runs a clean post-training validation: no augmentation, the best checkpoint loaded from `checkpoint_best_total.pth` written by `BestModelCallback`, and results serialised to JSON for downstream comparison. Two metrics are most important to inspect here. `bbox/map` is the standard COCO bounding-box mAP at IoU 0.50:0.95 — it tells you how reliably the detector finds and bounds each object. `keypoint/oks` is the OKS-based mAP — it measures how precisely the model places each joint within the detected bounding boxes. A model can have a high `bbox/map` but a low `keypoint/oks` if it finds objects well but struggles to localise their joints; addressing that usually means more labelled data or tighter OKS sigmas.
+#
+# **Note:** `checkpoint_best_total.pth` is written after the first completed validation epoch. If training was interrupted before any epoch finished, this file will not exist and the cell below will raise `FileNotFoundError`.
 
 
 # %%
@@ -465,7 +467,7 @@ _IMAGE_EXTS = {".jpg", ".jpeg", ".png"}
 def _find_images(directory: Path) -> list[Path]:
     if not directory.is_dir():
         return []
-    return sorted(p for p in directory.iterdir() if p.suffix.lower() in _IMAGE_EXTS)
+    return sorted(p for p in directory.iterdir() if p.is_file() and p.suffix.lower() in _IMAGE_EXTS)
 
 
 validation_image_paths = _find_images(DATASET_DIR / "test")
