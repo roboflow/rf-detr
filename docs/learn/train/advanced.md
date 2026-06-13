@@ -272,7 +272,7 @@ model.train(
 )
 ```
 
-Use a built-in preset by importing it from `rfdetr.datasets.aug_config`:
+Use a built-in preset by importing it from `rfdetr.datasets.aug_configs`:
 
 ```python
 from rfdetr.datasets.aug_configs import AUG_CONSERVATIVE, AUG_AGGRESSIVE, AUG_AERIAL, AUG_INDUSTRIAL

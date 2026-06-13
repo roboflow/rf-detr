@@ -542,7 +542,7 @@ def make_coco_transforms(
             :func:`compute_multi_scale_scales` to derive candidate resolutions.
         aug_config: Albumentations augmentation config dict passed to
             :class:`~rfdetr.datasets.transforms.AlbumentationsWrapper`.  Falls back to the default
-            :data:`~rfdetr.datasets.aug_config.AUG_CONFIG` when ``None``.
+            :data:`~rfdetr.datasets.aug_configs.AUG_CONFIG` when ``None``.
         gpu_postprocess: When ``True``, skip Albumentations augmentation wrappers and
             ``Normalize`` from the CPU pipeline.  The ``RFDETRDataModule`` then applies both augmentation and
             normalization on the GPU in ``on_after_batch_transfer``.  Has no effect on val/test splits.
@@ -642,7 +642,7 @@ def make_coco_transforms_square_div_64(
             derive the list of candidate square resolutions.
         aug_config: Augmentation configuration dictionary compatible with
             :class:`~rfdetr.datasets.transforms.AlbumentationsWrapper`. If ``None``, the default
-            :data:`~rfdetr.datasets.aug_config.AUG_CONFIG` is used.
+            :data:`~rfdetr.datasets.aug_configs.AUG_CONFIG` is used.
         gpu_postprocess: When ``True``, skip Albumentations augmentation wrappers and
             ``Normalize`` from the CPU pipeline.  The ``RFDETRDataModule`` then applies both augmentation and
             normalization on the GPU in ``on_after_batch_transfer``.  Has no effect on val/test splits.
