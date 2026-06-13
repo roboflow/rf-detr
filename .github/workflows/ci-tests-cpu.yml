@@ -54,6 +54,10 @@ jobs:
         # Install PyTorch CPU-only first (UV_TORCH_BACKEND=cpu works with 'uv pip')
         run: uv pip install -e ".[train,cli,visual,kornia]" --group tests
 
+      - name: 🔍 Verify headless extra resolves (Linux only)
+        if: runner.os == 'Linux'
+        run: uv pip install --dry-run ".[headless]"
+
       - name: 🧪 Run the Test
         run: |
           uv run --no-sync pytest src/ tests/ \

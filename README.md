@@ -26,11 +26,13 @@ To install RF-DETR, install the `rfdetr` package in a [**Python>=3.10**](https:/
 pip install rfdetr
 ```
 
-For Linux server or Docker inference images that should avoid GUI OpenCV system libraries, install the headless extra in a clean environment:
+For Linux server or Docker inference images that should avoid GUI OpenCV system libraries, install the headless extra into a **fresh virtual environment** (no prior `opencv-python` or `opencv-contrib-python` packages):
 
 ```bash
 pip install "rfdetr[headless]"
 ```
+
+> **Note:** Installing `rfdetr[headless]` alongside a default `rfdetr` environment causes `cv2` import conflicts because both `opencv-python` (GUI) and `opencv-python-headless` would be present. Use a clean environment for headless deployments. All model types — detection, segmentation, and keypoints — are fully supported.
 
 <details>
 <summary>Install from source</summary>

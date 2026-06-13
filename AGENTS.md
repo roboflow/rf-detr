@@ -76,7 +76,7 @@ See `pyproject.toml` for complete dependency specifications:
 
 - PyTorch: >=2.2.0, \<3.0.0
 - Transformers: >=5.0.0, \<6.0.0
-- Headless inference: `rfdetr[headless]` constrains Supervision to the headless-OpenCV-compatible line and should be installed in a clean environment so only one `cv2` provider is present
+- Headless inference: `rfdetr[headless]` must be installed into a new virtual environment that has no prior `opencv-python` or `opencv-contrib-python` packages. Installing it alongside a default `rfdetr` environment causes `cv2` import conflicts at runtime because both GUI and headless OpenCV providers would be present.
 
 ## Testing
 
