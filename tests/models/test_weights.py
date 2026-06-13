@@ -159,6 +159,28 @@ class TestLoadPretrainWeightsReinitScenarios:
         calls = nn_model.reinitialize_detection_head.call_args_list
         assert calls == [call(91), call(94)], f"Expected reinit to [91, 94] (load then expand), got {calls}"
 
+    def test_num_classes_assigned_after_construction_treated_as_explicit(self, monkeypatch, tmp_path):
+        """num_classes assigned post-construction wins over a smaller checkpoint (load then expand).
+
+        Scenario: config constructed without an explicit num_classes, then ``num_classes`` assigned to 5 — mirroring
+        what ``RFDETR._align_num_classes_from_dataset`` does during ``train()`` for a model loaded via
+        ``from_checkpoint`` (issue #1092).  Loading a 3-class checkpoint must align to the checkpoint for loading and
+        expand back to 6, NOT auto-align the config back down to the checkpoint's class count.
+        """
+        from rfdetr.models.weights import load_pretrain_weights
+
+        mc = RFDETRBaseConfig(pretrain_weights="/fake/weights.pth", device="cpu")
+        mc.num_classes = 5  # Pydantic records assigned fields in model_fields_set.
+        checkpoint = _make_checkpoint(num_classes=3)
+        monkeypatch.setattr("rfdetr.models.weights.torch.load", lambda *a, **kw: checkpoint)
+
+        nn_model = _fake_nn_model()
+        load_pretrain_weights(nn_model, mc)
+
+        calls = nn_model.reinitialize_detection_head.call_args_list
+        assert calls == [call(3), call(6)], f"Expected reinit to [3, 6] (load then expand), got {calls}"
+        assert mc.num_classes == 5, "Dataset-aligned num_classes must not be clobbered by the checkpoint."
+
     def test_characterization_no_mismatch_no_reinit(self, monkeypatch, tmp_path):
         """Checkpoint class count matches config → no reinit.
 

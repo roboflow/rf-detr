@@ -12,12 +12,15 @@ The inference logic is isolated by patching ``torch.load`` and the target model 
 from __future__ import annotations
 
 import argparse
+import logging
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import torch
 
 from rfdetr.detr import RFDETR
+from rfdetr.detr import logger as detr_logger
 from rfdetr.platform import _IS_RFDETR_PLUS_AVAILABLE
 from rfdetr.variants import RFDETRSmall
 
@@ -443,3 +446,98 @@ class TestFromCheckpointModelName:
         with patch("rfdetr.detr.torch.load", return_value=ckpt):
             with pytest.raises(ImportError, match="rfdetr_plus package"):
                 RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+
+
+# ---------------------------------------------------------------------------
+# num_classes provenance (fine-tuning a from_checkpoint model on a new dataset)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def two_class_checkpoint(tmp_path: Path) -> Path:
+    """Save a minimal synthetic 2-class checkpoint to disk (no downloads, no real weights).
+
+    Follows the lightweight checkpoint pattern used elsewhere in the suite (``test_detr_shim``,
+    ``test_load_pretrain_weights``): write only what ``from_checkpoint``/``load_pretrain_weights`` actually inspect —
+    the ``class_embed.bias`` tensor sized for 2 classes + background, plus the metadata used to resolve the model
+    (``model_name``) and the class count (``model_config`` carrying ``num_classes=2``).  A *non-default*
+    ``num_classes`` is what trips the user-override guards, so it is written explicitly rather than relying on a
+    published checkpoint (whose default 90 would not trip them).  ``from_checkpoint`` still builds a real model from
+    this, which is what the provenance and head-shape assertions exercise.
+
+    Args:
+        tmp_path: Pytest temporary directory.
+
+    Returns:
+        Path to the saved checkpoint file.
+    """
+    path = tmp_path / "small_two_class.pth"
+    torch.save(
+        {
+            "model": {"class_embed.bias": torch.zeros(3)},
+            "model_name": "RFDETRSmall",
+            "model_config": {"num_classes": 2},
+            "args": {"class_names": ["cat", "dog"]},
+        },
+        path,
+    )
+    return path
+
+
+class TestFromCheckpointNumClassesProvenance:
+    """Checkpoint-derived num_classes must not be treated as a user override.
+
+    Regression tests for https://github.com/roboflow/rf-detr/issues/1092: ``from_checkpoint`` copies ``num_classes``
+    out of the checkpoint into the constructor kwargs, which used to mark the field as explicitly user-set.  Both
+    provenance guards (``RFDETR._align_num_classes_from_dataset`` and the head re-init logic in
+    ``rfdetr.models.weights.load_pretrain_weights``) then refused to adapt the detection head to a new dataset's
+    class count, breaking fine-tuning from a checkpoint.
+    """
+
+    def test_checkpoint_num_classes_is_not_marked_user_set(self, two_class_checkpoint: Path) -> None:
+        """from_checkpoint adopts the checkpoint class count without marking it as a user override."""
+        model = RFDETR.from_checkpoint(two_class_checkpoint)
+
+        assert model.model_config.num_classes == 2
+        assert model.model.model.class_embed.bias.shape[0] == 3, "Head must match checkpoint (2 classes + background)."
+        assert "num_classes" not in model.model_config.model_fields_set, (
+            "Checkpoint-derived num_classes must not be recorded as explicitly user-set; "
+            "otherwise train() refuses to align the head to a new dataset's class count."
+        )
+
+    def test_train_alignment_adapts_head_to_new_dataset(
+        self, two_class_checkpoint: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Fine-tuning a from_checkpoint model on a dataset with a different class count adapts the head."""
+        model = RFDETR.from_checkpoint(two_class_checkpoint)
+        monkeypatch.setattr(RFDETR, "_detect_num_classes_for_training", staticmethod(lambda *a, **k: 5))
+
+        model._align_num_classes_from_dataset("<five-class-dataset>")
+
+        assert model.model_config.num_classes == 5
+        assert model.model.args.num_classes == 5
+        # train() rebuilds the model from model_config (inside RFDETRModelModule), reloading the checkpoint
+        # weights with the aligned class count; the rebuilt head must adopt the dataset class count.
+        rebuilt = model.get_model(model.model_config)
+        assert rebuilt.model.class_embed.bias.shape[0] == 6, "Rebuilt head must have 5 classes + background."
+
+    def test_explicit_num_classes_kwarg_still_wins(
+        self,
+        two_class_checkpoint: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """An explicit num_classes kwarg to from_checkpoint stays authoritative over the dataset."""
+        model = RFDETR.from_checkpoint(two_class_checkpoint, num_classes=7)
+
+        assert model.model_config.num_classes == 7
+        assert "num_classes" in model.model_config.model_fields_set
+        assert model.model.model.class_embed.bias.shape[0] == 8, "Head must expand to 7 classes + background."
+
+        monkeypatch.setattr(RFDETR, "_detect_num_classes_for_training", staticmethod(lambda *a, **k: 5))
+        monkeypatch.setattr(detr_logger, "propagate", True)
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            model._align_num_classes_from_dataset("<five-class-dataset>")
+
+        assert model.model_config.num_classes == 7, "Explicit user num_classes must be preserved."
+        assert any("Using the model's configured value" in record.message for record in caplog.records)
