@@ -18,7 +18,7 @@ from collections.abc import Callable
 from copy import copy, deepcopy
 from functools import wraps
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Concatenate, Optional, ParamSpec, TypeVar
+from typing import TYPE_CHECKING, Any, Concatenate, ParamSpec, TypeVar
 
 import numpy as np
 import requests
@@ -34,7 +34,6 @@ from rfdetr.datasets._keypoint_schema import active_keypoint_counts, infer_coco_
 from rfdetr.datasets.coco import is_valid_coco_dataset
 from rfdetr.datasets.yolo import is_valid_yolo_dataset
 from rfdetr.inference import ModelContext, _build_model_context
-from rfdetr.utilities.decorators import deprecated
 from rfdetr.utilities.distributed import is_main_process
 from rfdetr.utilities.keypoints import precision_cholesky_to_pixel_covariance
 from rfdetr.utilities.logger import get_logger
@@ -884,23 +883,13 @@ class RFDETR:
         self._optimized_resolution = None
         self._optimized_dtype = None
 
-    @deprecated(
-        target=True,
-        # `simplify` / `force` are retained for API compatibility and treated as no-op.
-        args_mapping={"simplify": None, "force": None},
-        deprecated_in="1.6.0",
-        remove_in="1.8.0",
-        num_warns=1,
-    )
     def export(
         self,
         output_dir: str = "output",
         infer_dir: str = None,
-        simplify: Optional[bool] = None,
         backbone_only: bool = False,
         opset_version: int = 17,
         verbose: bool = True,
-        force: Optional[bool] = None,
         shape: tuple[int, int] | None = None,
         batch_size: int = 1,
         dynamic_batch: bool = False,
@@ -919,11 +908,9 @@ class RFDETR:
         Args:
             output_dir: Directory to write the exported model to.
             infer_dir: Optional directory of sample images for dynamic-axes inference.
-            simplify: Deprecated and ignored. Simplification is no longer run.
             backbone_only: Export only the backbone (feature extractor).
             opset_version: ONNX opset version to target.
             verbose: Print export progress information.
-            force: Deprecated and ignored.
             shape: ``(height, width)`` tuple; defaults to square at model resolution.
                 Both dimensions must be divisible by ``patch_size * num_windows``.
             batch_size: Static batch size to bake into the ONNX graph.
