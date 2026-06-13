@@ -886,7 +886,7 @@ class RFDETR:
     def export(
         self,
         output_dir: str = "output",
-        infer_dir: str = None,
+        infer_dir: str | None = None,
         backbone_only: bool = False,
         opset_version: int = 17,
         verbose: bool = True,
