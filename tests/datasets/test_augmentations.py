@@ -917,6 +917,7 @@ class TestRandomSizedCropCompat:
 
 class TestAlbumentationsWrapperNestedConfig:
     """Tests for nested container (OneOf, SomeOf, Sequential) support in from_config."""
+
     def test_one_of_geometric_detection(self):
         """OneOf containing a geometric transform is treated as geometric."""
         wrapper = AlbumentationsWrapper(alb.OneOf([alb.HorizontalFlip(p=1.0), alb.GaussianBlur(p=1.0)]))
@@ -1160,6 +1161,7 @@ class TestAlbumentationsWrapperNestedConfig:
 
 class TestIntegration:
     """Integration tests for full augmentation pipeline."""
+
     def test_full_pipeline_from_config(self):
         """Test complete pipeline from config to application."""
         config = {
@@ -1342,6 +1344,7 @@ class TestIntegration:
 
 class TestTrainingLoop:
     """Test augmentations work correctly in training loop scenario."""
+
     def test_augmentation_in_dataloader(self):
         """Test that augmentations work correctly when used with DataLoader.
 
@@ -1436,6 +1439,7 @@ class TestTrainingLoop:
     @pytest.mark.parametrize("include_masks", [False, True], ids=["detection", "segmentation"])
     def test_geometric_dataloader_compatibility(self, include_masks, transform_class, transform_kwargs):
         """Test geometric Albumentations transforms work in DataLoader for detection and segmentation."""
+
         class _TinyTrainDataset:
             def __init__(self, transforms):
                 self._transforms = transforms
@@ -1479,6 +1483,7 @@ class TestTrainingLoop:
 
 class TestMakeCocoTransformsAugConfig:
     """Tests for aug_config propagation in make_coco_transforms / make_coco_transforms_square_div_64."""
+
     @pytest.mark.parametrize(
         "make_transforms",
         [
@@ -1583,6 +1588,7 @@ class TestMakeCocoTransformsOutputSize:
     images at the requested ``resolution``, not at the original image size. Existing tests only check pipeline
     *structure*; these check actual output *dimensions*.
     """
+
     # 1920x1080 (landscape) — larger than any typical training resolution.
     # PIL size is (width, height), so Image.new("RGB", (1920, 1080)) gives a 1920-wide, 1080-tall image.
     _INPUT_W = 1920
@@ -1657,6 +1663,7 @@ class TestMakeCocoTransformsOutputSize:
 
 class TestAugPresets:
     """Regression tests for built-in augmentation presets."""
+
     def test_aug_aggressive_translate_percent_is_bidirectional(self) -> None:
         """AUG_AGGRESSIVE translate_percent must allow both positive and negative translations.
 

@@ -1095,8 +1095,8 @@ class TestEmaCollectiveSymmetry:
     def test_ema_metric_created_on_val_epoch_start_when_ema_active(self) -> None:
         """map_metric_ema is created on validation start whenever the EMA callback is present.
 
-        This makes the EMA ``compute()`` collective rank-invariant — created on every rank regardless of how many
-        (or zero) val batches that rank later processes — rather than lazily per-batch.
+        This makes the EMA ``compute()`` collective rank-invariant — created on every rank regardless of how many (or
+        zero) val batches that rank later processes — rather than lazily per-batch.
         """
         cb = COCOEvalCallback(max_dets=500)
         trainer = _make_trainer(callbacks=[_ema_callback()])
@@ -1271,7 +1271,7 @@ class TestPrepareEmaMetricSecondEpoch:
 
 
 class TestComputeAndLogEmaResetPath:
-    """elif branch in _compute_and_log: gate False + metric not None → reset() fires."""
+    """Elif branch in _compute_and_log: gate False + metric not None → reset() fires."""
 
     def test_resets_ema_metric(self) -> None:
         """EMA not computed this epoch but metric exists → reset() clears state for the next epoch."""

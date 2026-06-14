@@ -1061,7 +1061,7 @@ DINOV2_WITH_REGISTERS_INPUTS_DOCSTRING = r"""
 @add_start_docstrings(
     """Dinov2WithRegisters Model transformer with an image classification head on top (a linear layer on top of the
     final hidden state of the [CLS] token) e.g. for ImageNet."""
-       ,
+                                                                ,
     DINOV2_WITH_REGISTERS_START_DOCSTRING,
 )
 class WindowedDinov2WithRegistersForImageClassification(WindowedDinov2WithRegistersPreTrainedModel):

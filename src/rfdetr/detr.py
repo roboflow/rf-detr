@@ -1181,8 +1181,8 @@ class RFDETR:
 
         For COCO-style datasets this counts all categories by ``id`` from ``train/_annotations.coco.json`` (matching the
         remapping based on ``coco.cats`` used by the training datamodule). In keypoint mode it instead counts the
-        inferred RF-DETR keypoint label slots, where slot ``0`` may be reserved for classes without keypoints. For
-        YOLO-style datasets it falls back to ``_load_classes``.
+        inferred RF-DETR keypoint label slots, where slot ``0`` may be reserved for classes without keypoints. For YOLO-
+        style datasets it falls back to ``_load_classes``.
         """
         if is_valid_coco_dataset(dataset_dir):
             coco_path = os.path.join(dataset_dir, "train", "_annotations.coco.json")
@@ -1284,7 +1284,6 @@ class RFDETR:
             >>> RFDETR._roboflow_keypoint_annotation_path("/missing") is None
             True
         """
-
         if not is_valid_coco_dataset(dataset_dir):
             return None
         annotation_path = Path(dataset_dir) / "train" / "_annotations.coco.json"
