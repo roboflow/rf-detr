@@ -268,12 +268,11 @@ def load_pretrain_weights(
 
     Uses the Pydantic-aware logic from ``module_model.py``:
 
-    - When the user did **not** explicitly override ``num_classes`` (left at the
-      ModelConfig default), the checkpoint class count is treated as authoritative and the model head is auto-aligned to
-      it.
-    - When the user **did** explicitly override ``num_classes`` to a value larger
-      than the checkpoint provides, the head is temporarily aligned to the checkpoint for loading, then expanded back to
-      the configured size.
+    - When the user did **not** explicitly set ``num_classes`` (it is left unset),
+      the checkpoint class count is treated as authoritative and the model head is auto-aligned to it.
+    - When the user **did** explicitly set ``num_classes`` (to any value, including the
+      class default) larger than the checkpoint provides, the head is temporarily aligned to the checkpoint for
+      loading, then expanded back to the configured size.
     - When the checkpoint has more classes than configured (backbone-pretrain
       scenario), both reinitializations are applied: expand to checkpoint size for loading, then trim to configured
       size.
@@ -369,15 +368,15 @@ def load_pretrain_weights(
 
     validate_checkpoint_compatibility(checkpoint, mc)
 
-    # Determine whether the user explicitly set num_classes on the ModelConfig,
-    # and whether that explicit value differs from the model default.
+    # Determine whether the user explicitly set num_classes on the ModelConfig.
+    # "num_classes" in model_fields_set is True only when the field was explicitly provided
+    # (or assigned afterwards, e.g. by dataset alignment); an explicit value is honored
+    # regardless of whether it equals the class default, so an intentional num_classes always
+    # wins over the checkpoint's class count.
     user_set_num_classes = False
     if hasattr(mc, "model_fields_set"):
         user_set_num_classes = "num_classes" in getattr(mc, "model_fields_set", set())
-    default_num_classes = type(mc).model_fields["num_classes"].default
     num_classes = mc.num_classes
-    # True only when the user explicitly set num_classes to a non-default value.
-    user_overrode_default_num_classes = user_set_num_classes and num_classes != default_num_classes
 
     checkpoint_num_classes = checkpoint["model"]["class_embed.bias"].shape[0]
     configured_num_classes_plus_bg = num_classes + 1
@@ -385,10 +384,9 @@ def load_pretrain_weights(
         # Align model head size before loading checkpoint weights.
         if checkpoint_num_classes < configured_num_classes_plus_bg:
             # Checkpoint has FEWER classes than configured.
-            if not user_overrode_default_num_classes:
-                # Auto-align to the checkpoint when the user did NOT provide a
-                # non-default override for num_classes (i.e., left it at the
-                # ModelConfig default): treat the checkpoint as authoritative.
+            if not user_set_num_classes:
+                # Auto-align to the checkpoint when the user did NOT explicitly set
+                # num_classes (i.e., left it unset): treat the checkpoint as authoritative.
                 num_classes = checkpoint_num_classes - 1
                 configured_num_classes_plus_bg = checkpoint_num_classes
                 mc.num_classes = num_classes
@@ -523,7 +521,7 @@ def load_pretrain_weights(
 
     # If the user explicitly set a class count larger than the checkpoint,
     # expand/reinitialize the head back to the configured size after load.
-    if checkpoint_num_classes < configured_num_classes_plus_bg and user_overrode_default_num_classes:
+    if checkpoint_num_classes < configured_num_classes_plus_bg and user_set_num_classes:
         nn_model.reinitialize_detection_head(configured_num_classes_plus_bg)
 
     # Only trim back down when loading a larger pretrain checkpoint into a

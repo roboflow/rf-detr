@@ -1202,10 +1202,10 @@ class RFDETR:
         Must be called before ``RFDETRModelModule`` is constructed so that weight loading inside the module uses the
         correct (dataset-derived) class count.
 
-        When the user did **not** explicitly override ``num_classes`` (or passed the class-config default),
-        ``model_config.num_classes`` and ``self.model.args.num_classes`` are updated to match the dataset.  When the
-        user *did* set a non-default value that differs from the dataset, the configured value is preserved and a
-        warning is emitted.
+        When the user did **not** explicitly set ``num_classes`` (it is left unset, e.g. inferred from a
+        checkpoint), ``model_config.num_classes`` and ``self.model.args.num_classes`` are updated to match the dataset.
+        When the user *did* set ``num_classes`` explicitly — to any value, including the class default — and it differs
+        from the dataset, the configured value is preserved and a warning is emitted.
 
         Failures from ``_detect_num_classes_for_training`` are caught and logged at DEBUG level so that training is
         never blocked by detection errors.
@@ -1234,13 +1234,13 @@ class RFDETR:
         if dataset_num_classes == model_num_classes:
             return
 
-        # Determine whether the user explicitly overrode num_classes to a non-default value.
-        # "num_classes" in model_fields_set is True when the field was explicitly set at
-        # construction time; comparing against the class default filters out cases where the
-        # user passed the default value explicitly (treat those like "not set").
-        user_set = "num_classes" in getattr(self.model_config, "model_fields_set", set())
-        default_nc = type(self.model_config).model_fields["num_classes"].default
-        user_overrode = user_set and model_num_classes != default_nc
+        # Determine whether the user explicitly set num_classes.  "num_classes" in
+        # model_fields_set is True only when the field was explicitly provided at construction
+        # (or assigned afterwards); an explicit value is honored regardless of whether it equals
+        # the class default, so an intentional num_classes is never silently overridden by the
+        # dataset count.  A checkpoint-derived num_classes is cleared from model_fields_set by
+        # ``from_checkpoint`` (see issue #1092), so it correctly counts as "not set" here.
+        user_overrode = "num_classes" in getattr(self.model_config, "model_fields_set", set())
 
         if not user_overrode:
             logger.debug(

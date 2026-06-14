@@ -581,15 +581,19 @@ class TestFromCheckpointNumClassesProvenance:
             "otherwise train() refuses to adapt the head to a new dataset's class count."
         )
 
-    def test_explicit_default_num_classes_does_not_block_alignment(
-        self, two_class_checkpoint: Path, monkeypatch: pytest.MonkeyPatch
+    def test_explicit_default_num_classes_pins_head(
+        self,
+        two_class_checkpoint: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Passing num_classes equal to the ModelConfig default does not pin the detection head.
+        """Passing num_classes equal to the ModelConfig default still pins the detection head.
 
-        _align_num_classes_from_dataset checks user_overrode = user_set AND value != default;
-        when the caller passes the class default explicitly, user_overrode is False and
-        adaptation still proceeds.  This documents the intended semantics and guards against
-        accidental removal of the ``value != default`` guard.
+        An explicit num_classes is honored regardless of whether it equals the class default:
+        ``_align_num_classes_from_dataset`` keys off whether the field was set, not whether the
+        value differs from the default, so the dataset count cannot silently override it.  This
+        guards against re-introducing the ``value != default`` clause, whose asymmetric behavior
+        (default silently aligned, non-default preserved) was the bug this test now pins.
         """
         model = RFDETR.from_checkpoint(two_class_checkpoint)
         default_nc = type(model.model_config).model_fields["num_classes"].default
@@ -599,12 +603,15 @@ class TestFromCheckpointNumClassesProvenance:
 
         assert "num_classes" in model.model_config.model_fields_set
         monkeypatch.setattr(RFDETR, "_detect_num_classes_for_training", staticmethod(lambda *a, **k: 5))
-        model._align_num_classes_from_dataset("<five-class-dataset>")
+        monkeypatch.setattr(detr_logger, "propagate", True)
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            model._align_num_classes_from_dataset("<five-class-dataset>")
 
-        assert model.model_config.num_classes == 5, (
-            "Passing the ModelConfig default for num_classes explicitly must not pin the head; "
-            "_align_num_classes_from_dataset must still adapt to the dataset class count."
+        assert model.model_config.num_classes == default_nc, (
+            "Explicitly passing the ModelConfig default for num_classes must pin the head; "
+            "the dataset class count must not silently override an explicit user setting."
         )
+        assert any("Using the model's configured value" in record.message for record in caplog.records)
 
     def test_equal_class_count_does_not_rebuild_head(
         self, two_class_checkpoint: Path, monkeypatch: pytest.MonkeyPatch
