@@ -467,7 +467,7 @@ class TestKeypointCocoEvalRouting:
         assert predictions[12]["keypoints"].shape == (1, 1, 3)
 
     def test_keypoint_coco_eval_exposes_keypoint_ap_and_ar_metrics(self) -> None:
-        """Epoch-end logging should expose keypoint AP and AR metrics from COCO keypoint stats."""
+        """Epoch-end logging should expose keypoint AP and AR metrics from MetricKeypointOKS.compute()."""
         cb = COCOEvalCallback(max_dets=500)
         module = _make_pl_module()
         module.model_config = SimpleNamespace(use_grouppose_keypoints=True)
@@ -477,12 +477,10 @@ class TestKeypointCocoEvalRouting:
         cb.map_metric = MagicMock(name="map_metric")
         cb.map_metric.compute.return_value = _minimal_metrics()
 
-        keypoint_eval = MagicMock(name="keypoint_coco_eval")
-        keypoint_eval.coco_eval = {
-            "keypoints": SimpleNamespace(stats=np.array([0.42, 0.72, 0.31, -1.0, -1.0, 0.55], dtype=np.float32))
-        }
-        cb._keypoint_coco_evaluator = keypoint_eval
-        cb._keypoint_eval_has_updates = True
+        keypoint_metric = MagicMock(name="keypoint_oks_metric")
+        keypoint_metric.has_updates = True
+        keypoint_metric.compute.return_value = {"map": 0.42, "map_50": 0.72, "map_75": 0.31, "mar": 0.55}
+        cb._keypoint_oks_metrics["val"] = keypoint_metric
 
         cb.on_validation_epoch_end(trainer, module)
 
@@ -501,8 +499,7 @@ class TestKeypointCocoEvalRouting:
         assert trainer.callback_metrics["val/keypoint_map_50"].item() == pytest.approx(0.72)
         assert trainer.callback_metrics["val/keypoint_map_75"].item() == pytest.approx(0.31)
         assert trainer.callback_metrics["val/keypoint_mAR"].item() == pytest.approx(0.55)
-        keypoint_eval.synchronize_between_processes.assert_called_once()
-        keypoint_eval.accumulate.assert_called_once()
+        keypoint_metric.compute.assert_called_once()
 
     def test_keypoint_coco_eval_exposes_ema_keypoint_ap_and_ar_metrics(self) -> None:
         """EMA keypoint epoch-end logging should expose val/ema_keypoint_* metrics."""
@@ -513,12 +510,10 @@ class TestKeypointCocoEvalRouting:
         trainer.callback_metrics = {}
         cb.setup(trainer, module, stage="fit")
 
-        keypoint_eval = MagicMock(name="ema_keypoint_coco_eval")
-        keypoint_eval.coco_eval = {
-            "keypoints": SimpleNamespace(stats=np.array([0.25, 0.5, 0.2, -1.0, -1.0, 0.45], dtype=np.float32))
-        }
-        cb._keypoint_coco_evaluators["val_ema"] = keypoint_eval
-        cb._keypoint_eval_updated_splits.add("val_ema")
+        keypoint_metric = MagicMock(name="ema_keypoint_oks_metric")
+        keypoint_metric.has_updates = True
+        keypoint_metric.compute.return_value = {"map": 0.25, "map_50": 0.5, "map_75": 0.2, "mar": 0.45}
+        cb._keypoint_oks_metrics["val_ema"] = keypoint_metric
 
         cb._compute_and_log_keypoint_map("val_ema", module, trainer, log_split="val", metric_prefix="ema_")
 
@@ -539,11 +534,10 @@ class TestKeypointCocoEvalRouting:
         assert trainer.callback_metrics["val/ema_keypoint_map_50"].item() == pytest.approx(0.5)
         assert trainer.callback_metrics["val/ema_keypoint_map_75"].item() == pytest.approx(0.2)
         assert trainer.callback_metrics["val/ema_keypoint_mAR"].item() == pytest.approx(0.45)
-        keypoint_eval.synchronize_between_processes.assert_called_once()
-        keypoint_eval.accumulate.assert_called_once()
+        keypoint_metric.compute.assert_called_once()
 
-    def test_keypoint_coco_evaluator_suppresses_verbose_summary(self) -> None:
-        """PTL keypoint validation should log scalar metrics without printing the full COCO summary block."""
+    def test_keypoint_oks_metric_created_with_correct_args(self) -> None:
+        """_get_or_create_keypoint_coco_evaluator must construct MetricKeypointOKS with coco_gt and sigmas."""
         cb = COCOEvalCallback(max_dets=500, keypoint_oks_sigmas=[0.05])
         dataset = MagicMock(name="dataset")
         datamodule = MagicMock()
@@ -552,24 +546,18 @@ class TestKeypointCocoEvalRouting:
         datamodule._dataset_train = None
         trainer = _make_trainer(datamodule=datamodule)
         coco_api = MagicMock(name="coco_api")
-        evaluator = MagicMock(name="evaluator")
 
         with (
             patch("rfdetr.training.callbacks.coco_eval.get_coco_api_from_dataset", return_value=coco_api),
-            patch("rfdetr.evaluation.coco_eval.CocoEvaluator", return_value=evaluator) as coco_evaluator_cls,
+            patch("rfdetr.training.callbacks.coco_eval.MetricKeypointOKS") as oks_metric_cls,
         ):
-            assert cb._get_or_create_keypoint_coco_evaluator(trainer, split="val") is evaluator
+            result = cb._get_or_create_keypoint_coco_evaluator(trainer, split="val")
 
-        coco_evaluator_cls.assert_called_once_with(
-            coco_api,
-            ["keypoints"],
-            max_dets=500,
-            keypoint_oks_sigmas=[0.05],
-            log_summary=False,
-        )
+        assert result is oks_metric_cls.return_value
+        oks_metric_cls.assert_called_once_with(coco_api, keypoint_oks_sigmas=[0.05], max_dets=500)
 
     def test_keypoint_train_eval_uses_train_dataset(self) -> None:
-        """Train keypoint mAP must build the COCO evaluator from the train dataset."""
+        """Train keypoint mAP must construct MetricKeypointOKS from the train dataset."""
         cb = COCOEvalCallback(max_dets=500, keypoint_oks_sigmas=[0.05])
         train_dataset = MagicMock(name="train_dataset")
         val_dataset = MagicMock(name="val_dataset")
@@ -580,7 +568,6 @@ class TestKeypointCocoEvalRouting:
         trainer = _make_trainer(datamodule=datamodule)
         train_coco_api = MagicMock(name="train_coco_api")
         val_coco_api = MagicMock(name="val_coco_api")
-        evaluator = MagicMock(name="evaluator")
 
         def _get_coco_api(dataset):
             if dataset is train_dataset:
@@ -591,14 +578,14 @@ class TestKeypointCocoEvalRouting:
 
         with (
             patch("rfdetr.training.callbacks.coco_eval.get_coco_api_from_dataset", side_effect=_get_coco_api),
-            patch("rfdetr.evaluation.coco_eval.CocoEvaluator", return_value=evaluator) as coco_evaluator_cls,
+            patch("rfdetr.training.callbacks.coco_eval.MetricKeypointOKS") as oks_metric_cls,
         ):
-            assert cb._get_or_create_keypoint_coco_evaluator(trainer, split="train") is evaluator
+            cb._get_or_create_keypoint_coco_evaluator(trainer, split="train")
 
-        assert coco_evaluator_cls.call_args.args[0] is train_coco_api
+        assert oks_metric_cls.call_args.args[0] is train_coco_api
 
     def test_keypoint_ema_eval_uses_validation_dataset(self) -> None:
-        """EMA keypoint mAP must build the COCO evaluator from the validation dataset."""
+        """EMA keypoint mAP must construct MetricKeypointOKS from the validation dataset."""
         cb = COCOEvalCallback(max_dets=500, keypoint_oks_sigmas=[0.05])
         train_dataset = MagicMock(name="train_dataset")
         val_dataset = MagicMock(name="val_dataset")
@@ -609,7 +596,6 @@ class TestKeypointCocoEvalRouting:
         trainer = _make_trainer(datamodule=datamodule)
         train_coco_api = MagicMock(name="train_coco_api")
         val_coco_api = MagicMock(name="val_coco_api")
-        evaluator = MagicMock(name="evaluator")
 
         def _get_coco_api(dataset):
             if dataset is train_dataset:
@@ -620,14 +606,14 @@ class TestKeypointCocoEvalRouting:
 
         with (
             patch("rfdetr.training.callbacks.coco_eval.get_coco_api_from_dataset", side_effect=_get_coco_api),
-            patch("rfdetr.evaluation.coco_eval.CocoEvaluator", return_value=evaluator) as coco_evaluator_cls,
+            patch("rfdetr.training.callbacks.coco_eval.MetricKeypointOKS") as oks_metric_cls,
         ):
-            assert cb._get_or_create_keypoint_coco_evaluator(trainer, split="val_ema") is evaluator
+            cb._get_or_create_keypoint_coco_evaluator(trainer, split="val_ema")
 
-        assert coco_evaluator_cls.call_args.args[0] is val_coco_api
+        assert oks_metric_cls.call_args.args[0] is val_coco_api
 
-    def test_mixed_keypoint_counts_create_keypoint_evaluator(self) -> None:
-        """Mixed keypoint counts should be handled by the evaluator instead of being skipped by the callback."""
+    def test_mixed_keypoint_counts_create_keypoint_oks_metric(self) -> None:
+        """Mixed keypoint counts should be handled by MetricKeypointOKS instead of being skipped."""
         cb = COCOEvalCallback(max_dets=500)
         dataset = MagicMock(name="dataset")
         datamodule = MagicMock()
@@ -635,16 +621,16 @@ class TestKeypointCocoEvalRouting:
         datamodule._dataset_val = None
         datamodule._dataset_test = None
         trainer = _make_trainer(datamodule=datamodule)
-        evaluator = MagicMock(name="evaluator")
 
         with (
             patch("rfdetr.training.callbacks.coco_eval.get_coco_api_from_dataset", return_value=MagicMock()),
-            patch("rfdetr.evaluation.coco_eval.CocoEvaluator", return_value=evaluator) as coco_evaluator_cls,
+            patch("rfdetr.training.callbacks.coco_eval.MetricKeypointOKS") as oks_metric_cls,
             patch("rfdetr.training.callbacks.coco_eval.logger.warning") as warning,
         ):
-            assert cb._get_or_create_keypoint_coco_evaluator(trainer, split="train") is evaluator
+            result = cb._get_or_create_keypoint_coco_evaluator(trainer, split="train")
 
-        coco_evaluator_cls.assert_called_once()
+        assert result is oks_metric_cls.return_value
+        oks_metric_cls.assert_called_once()
         warning.assert_not_called()
 
 
