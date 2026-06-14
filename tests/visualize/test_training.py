@@ -176,8 +176,11 @@ def test_split_loss_and_map_plots_return_separate_figures(tmp_path: Path) -> Non
     assert loss_lines["train/loss"].get_linestyle() == ":"
     assert loss_lines["val/loss"].get_linestyle() == "-"
     assert loss_lines["train/loss"].get_color() == loss_lines["val/loss"].get_color()
+    assert {line.get_marker() for line in loss_lines.values()} == {"None"}
     assert len(map_figure.axes) == 1
     assert map_figure.axes[0].get_title() == "RF-DETR mAP Metrics"
+    map_lines = {line.get_label(): line for line in map_figure.axes[0].lines}
+    assert {line.get_marker() for line in map_lines.values()} == {"None"}
     plt.close(loss_figure)
     plt.close(map_figure)
 
@@ -258,6 +261,7 @@ def test_map_renderer_uses_line_style_for_train_and_val_splits() -> None:
     assert lines["val/mAP_50_95"].get_linestyle() == "-"
     assert lines["train/keypoint_map_50_95"].get_linestyle() == ":"
     assert lines["val/keypoint_map_50_95"].get_linestyle() == "-"
+    assert {line.get_marker() for line in lines.values()} == {"None"}
     assert lines["train/mAP_50_95"].get_color() == lines["val/mAP_50_95"].get_color()
     assert lines["train/keypoint_map_50_95"].get_color() == lines["val/keypoint_map_50_95"].get_color()
     assert lines["train/mAP_50_95"].get_color() != lines["train/keypoint_map_50_95"].get_color()
