@@ -191,6 +191,10 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "notebooks/*.py" = ["E402"]  # cell-local imports are intentional in percent-format scripts
+"docs/cookbooks/*.ipynb" = [
+    "E402",  # cell-local imports are intentional in percent-format scripts
+    "E501",  # jupytext notebook — markdown prose lines are intentionally unwrapped
+]
 
 [tool.docformatter]
 wrap-summaries = 120

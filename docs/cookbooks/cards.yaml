@@ -1,4 +1,10 @@
 cards:
+  - href: fine-tune_keypoints/
+    name: "Fine-Tune RF-DETR Keypoint Detection"
+    labels: [TRAINING, PYTORCH LIGHTNING, INFERENCE]
+    version: v1.8.0
+    author: Borda
+    description: "Fine-tune RF-DETR keypoint detection on any COCO keypoint dataset from Roboflow Universe — covers training, metrics, and inference with uncertainty ellipses."
   - href: custom-augmentations/
     name: "Custom Augmentations and Live Training Progress"
     labels: [TRAINING, AUGMENTATION]
