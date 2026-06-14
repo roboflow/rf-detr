@@ -55,26 +55,30 @@ class MetricKeypointOKS:
         self._coco_gt = coco_gt
         self._keypoint_oks_sigmas = keypoint_oks_sigmas
         self._max_dets = max_dets
-        self._preds: dict[int, dict[str, Any]] = {}
+        # List of per-batch prediction dicts — NOT merged into a single dict.
+        # Using a list preserves all predictions when the same image_id appears in
+        # multiple batches (e.g. DDP DistributedSampler padding), matching the
+        # original CocoEvaluator.update()-per-batch append semantics.
+        self._batches: list[dict[int, dict[str, Any]]] = []
 
     @property
     def has_updates(self) -> bool:
         """Return whether any predictions have been accumulated since last reset.
 
         Returns:
-            ``True`` if :meth:`update` has been called with at least one non-empty
-            prediction dict since the last :meth:`reset`.
+            ``True`` if :meth:`update` has been called at least once since the
+            last :meth:`reset`.
 
         Examples:
             >>> from unittest.mock import MagicMock
             >>> metric = MetricKeypointOKS(MagicMock())
             >>> metric.has_updates
             False
-            >>> metric._preds[1] = {}
+            >>> metric.update({1: {}})
             >>> metric.has_updates
             True
         """
-        return bool(self._preds)
+        return bool(self._batches)
 
     def reset(self) -> None:
         """Clear accumulated predictions.
@@ -82,15 +86,19 @@ class MetricKeypointOKS:
         Examples:
             >>> from unittest.mock import MagicMock
             >>> metric = MetricKeypointOKS(MagicMock())
-            >>> metric._preds[0] = {}
+            >>> metric.update({1: {}})
             >>> metric.reset()
             >>> metric.has_updates
             False
         """
-        self._preds.clear()
+        self._batches.clear()
 
     def update(self, predictions: dict[int, dict[str, Any]]) -> None:
         """Accumulate per-batch predictions.
+
+        Each call appends one batch; predictions are replayed in order inside
+        :meth:`compute`.  Predictions for the same ``image_id`` across different
+        calls are preserved as separate entries — no overwrite.
 
         Args:
             predictions: Mapping from ``image_id`` to a prediction dict with keys
@@ -106,13 +114,15 @@ class MetricKeypointOKS:
             >>> metric.has_updates
             True
         """
-        self._preds.update(predictions)
+        self._batches.append(predictions)
 
     def compute(self) -> dict[str, float]:
         """Run OKS keypoint evaluation and return metric dict.
 
         Constructs a fresh :class:`~rfdetr.evaluation.coco_eval.CocoEvaluator`,
-        replays all accumulated predictions, synchronises across DDP ranks via
+        replays all accumulated per-batch predictions in order (matching the
+        original per-batch ``CocoEvaluator.update()`` call pattern), synchronises
+        across DDP ranks via
         :meth:`~rfdetr.evaluation.coco_eval.CocoEvaluator.synchronize_between_processes`,
         and accumulates COCO keypoint statistics.
 
@@ -141,8 +151,8 @@ class MetricKeypointOKS:
             keypoint_oks_sigmas=self._keypoint_oks_sigmas,
             log_summary=False,
         )
-        if self._preds:
-            evaluator.update(self._preds)
+        for batch in self._batches:
+            evaluator.update(batch)
         evaluator.synchronize_between_processes()
         evaluator.accumulate()
         stats = evaluator.coco_eval["keypoints"].stats
