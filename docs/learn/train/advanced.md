@@ -66,7 +66,8 @@ The training loop will automatically load:
 
 ## Early Stopping
 
-Early stopping monitors validation mAP and halts training if improvements remain below a threshold for a set number of epochs. This prevents wasted computation once the model has converged.
+Early stopping monitors the validation task metric and halts training if improvements remain below a threshold for a
+set number of epochs. Detection and segmentation models use box mAP; keypoint preview models use COCO keypoint AP.
 
 ### Basic Usage
 
@@ -111,8 +112,8 @@ Early stopping monitors validation mAP and halts training if improvements remain
 | Parameter                  | Default | Description                                          |
 | -------------------------- | ------- | ---------------------------------------------------- |
 | `early_stopping_patience`  | 10      | Number of epochs without improvement before stopping |
-| `early_stopping_min_delta` | 0.001   | Minimum mAP change to count as improvement           |
-| `early_stopping_use_ema`   | False   | Use EMA model's mAP for comparisons                  |
+| `early_stopping_min_delta` | 0.001   | Minimum metric change to count as improvement        |
+| `early_stopping_use_ema`   | False   | Use EMA model metrics for comparisons                |
 
 ### Advanced Example
 
@@ -122,16 +123,16 @@ model.train(
     epochs=200,
     early_stopping=True,
     early_stopping_patience=15,  # Wait 15 epochs before stopping
-    early_stopping_min_delta=0.005,  # Require 0.5% mAP improvement
+    early_stopping_min_delta=0.005,  # Require 0.5% validation metric improvement
     early_stopping_use_ema=True,  # Track EMA model performance
 )
 ```
 
 ### How It Works
 
-1. After each epoch, validation mAP is computed
-2. If mAP improves by at least `min_delta`, the patience counter resets
-3. If mAP doesn't improve, the patience counter increments
+1. After each epoch, the validation task metric is computed
+2. If the metric improves by at least `min_delta`, the patience counter resets
+3. If the metric doesn't improve, the patience counter increments
 4. When patience counter reaches `patience`, training stops
 5. The best checkpoint is already saved as `checkpoint_best_total.pth`
 
@@ -271,10 +272,10 @@ model.train(
 )
 ```
 
-Use a built-in preset by importing it from `rfdetr.datasets.aug_config`:
+Use a built-in preset by importing it from `rfdetr.datasets.aug_configs`:
 
 ```python
-from rfdetr.datasets.aug_config import AUG_CONSERVATIVE, AUG_AGGRESSIVE, AUG_AERIAL, AUG_INDUSTRIAL
+from rfdetr.datasets.aug_configs import AUG_CONSERVATIVE, AUG_AGGRESSIVE, AUG_AERIAL, AUG_INDUSTRIAL
 
 model.train(dataset_dir="path/to/dataset", aug_config=AUG_AGGRESSIVE)
 ```

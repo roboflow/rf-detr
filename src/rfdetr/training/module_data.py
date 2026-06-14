@@ -5,7 +5,8 @@
 # ------------------------------------------------------------------------
 """LightningDataModule for RF-DETR dataset construction and loaders."""
 
-from typing import Any, List, Optional, Tuple
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, List, Literal, Optional, Tuple
 
 import torch
 import torch.utils.data
@@ -15,7 +16,7 @@ from torch.utils.data import DataLoader
 from rfdetr._namespace import _namespace_from_configs
 from rfdetr.config import ModelConfig, TrainConfig
 from rfdetr.datasets import build_dataset
-from rfdetr.datasets.aug_config import AUG_CONFIG
+from rfdetr.datasets.aug_configs import AUG_CONFIG
 from rfdetr.utilities.box_ops import box_xyxy_to_cxcywh
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.tensors import make_collate_fn
@@ -23,6 +24,9 @@ from rfdetr.utilities.tensors import make_collate_fn
 logger = get_logger()
 
 _MIN_TRAIN_BATCHES = 5
+
+if TYPE_CHECKING:
+    from matplotlib.figure import Figure
 
 
 def _has_cuda_device() -> bool:
@@ -223,6 +227,11 @@ class RFDETRDataModule(LightningDataModule):
             resolved = _resolve_augmentation_backend(self.train_config.augmentation_backend)
             if resolved != self.train_config.augmentation_backend:
                 ns.augmentation_backend = resolved
+            if self.model_config.use_grouppose_keypoints and resolved != "cpu":
+                raise ValueError(
+                    f"GPU augmentation backend '{resolved}' does not support keypoint transforms. "
+                    "Set augmentation_backend='cpu' when use_grouppose_keypoints=True."
+                )
             if self._dataset_train is None:
                 self._dataset_train = build_dataset("train", ns, resolution)
             if self._dataset_val is None:
@@ -356,6 +365,175 @@ class RFDETRDataModule(LightningDataModule):
             prefetch_factor=self._prefetch_factor,
         )
 
+    def _show_samples(
+        self,
+        count: int,
+        split: Literal["train", "val", "test"] = "train",
+        *,
+        columns: int = 3,
+        figure_size: tuple[float, float] | None = None,
+    ) -> "Figure":
+        """Build a private diagnostic figure for transformed dataset samples.
+
+        Samples the dataset after RF-DETR dataset transforms, so boxes and
+        keypoints match the model input tensors rather than raw annotation JSON.
+
+        Args:
+            count: Maximum number of samples to render.
+            split: Dataset split to visualize.
+            columns: Number of subplot columns.
+            figure_size: Optional Matplotlib figure size ``(width, height)`` in
+                inches. When omitted, the size is derived from the grid shape.
+
+        Returns:
+            Matplotlib figure containing the annotated sample grid.
+
+        Raises:
+            ValueError: If ``count`` or ``columns`` is not positive.
+
+        Example:
+            >>> # dm = RFDETRDataModule(model_config, train_config)
+            >>> # figure = dm._show_samples(3, split="train")
+        """
+        try:
+            import matplotlib.pyplot as plt
+            import numpy as np
+            import supervision as sv
+            import torchvision.transforms as T  # noqa: N812
+        except ImportError as err:
+            raise ImportError(
+                "RFDETRDataModule._show_samples() requires visualization dependencies. "
+                "Install them with `pip install 'rfdetr[visual]'`."
+            ) from err
+
+        from rfdetr.utilities.box_ops import box_cxcywh_to_xyxy
+
+        if count <= 0:
+            raise ValueError(f"count must be positive, got {count}.")
+        if columns <= 0:
+            raise ValueError(f"columns must be positive, got {columns}.")
+        if figure_size is not None:
+            if len(figure_size) != 2:
+                raise ValueError(f"figure_size must contain two values, got {figure_size}.")
+            if figure_size[0] <= 0 or figure_size[1] <= 0:
+                raise ValueError(f"figure_size values must be positive, got {figure_size}.")
+
+        dataset = self._get_dataset_for_visualization(split)
+        if dataset is None:
+            raise RuntimeError(f"Could not build dataset split {split!r} for visualization.")
+
+        inv_normalize = T.Normalize(
+            mean=[-0.485 / 0.229, -0.456 / 0.224, -0.406 / 0.225],
+            std=[1 / 0.229, 1 / 0.224, 1 / 0.225],
+        )
+        rows = max(1, (min(count, len(dataset)) + columns - 1) // columns)
+        figure, axes = plt.subplots(rows, columns, figsize=figure_size or (5 * columns, 5 * rows))
+        axes_array = np.asarray(axes, dtype=object).reshape(-1)
+        for axis in axes_array:
+            axis.axis("off")
+
+        class_names = self.class_names
+        for axis, sample_index in zip(axes_array, range(min(count, len(dataset))), strict=False):
+            image_tensor, target = dataset[sample_index]
+            image_path = self._source_image_path(dataset, sample_index)
+            image = inv_normalize(image_tensor)
+            image_array = image.detach().cpu().numpy()
+            scene = np.ascontiguousarray((np.clip(image_array.transpose(1, 2, 0), 0.0, 1.0) * 255).astype(np.uint8))
+
+            size = target.get("size")
+            if isinstance(size, torch.Tensor):
+                height, width = int(size[0]), int(size[1])
+            else:
+                height, width = int(image_tensor.shape[-2]), int(image_tensor.shape[-1])
+
+            boxes = target.get("boxes", torch.zeros((0, 4), dtype=torch.float32))
+            labels = target.get("labels", torch.zeros((0,), dtype=torch.int64))
+            if boxes.numel() > 0:
+                scale = torch.tensor([width, height, width, height], dtype=torch.float32)
+                xyxy = box_cxcywh_to_xyxy(boxes.detach().cpu()) * scale
+                class_ids = labels.detach().cpu().numpy().astype(int)
+                detections = sv.Detections(xyxy=xyxy.numpy().astype(np.float32), class_id=class_ids)
+                labels_text = [
+                    class_names[class_id] if class_names is not None and class_id < len(class_names) else str(class_id)
+                    for class_id in class_ids
+                ]
+                scene = sv.BoxAnnotator(thickness=1).annotate(scene=scene, detections=detections)
+                scene = sv.LabelAnnotator(text_scale=0.4, text_padding=2).annotate(
+                    scene=scene,
+                    detections=detections,
+                    labels=labels_text,
+                )
+
+            keypoints = target.get("keypoints")
+            if keypoints is not None and keypoints.numel() > 0:
+                keypoints_array = keypoints.detach().cpu().numpy().astype(np.float32)
+                keypoint_xy = keypoints_array[..., :2] * np.asarray([width, height], dtype=np.float32)
+                keypoint_visibility = keypoints_array[..., 2] > 0
+                key_points = sv.KeyPoints(
+                    xy=keypoint_xy,
+                    keypoint_confidence=keypoint_visibility.astype(np.float32),
+                    class_id=labels.detach().cpu().numpy().astype(int),
+                    visible=keypoint_visibility,
+                    data={"visible": keypoint_visibility},
+                )
+                scene = sv.VertexAnnotator(radius=3).annotate(scene=scene, key_points=key_points)
+
+            axis.imshow(scene)
+            title = image_path.name if image_path is not None else f"{split}[{sample_index}]"
+            axis.set_title(self._ellipsize_sample_title(title), fontsize=10)
+            axis.axis("off")
+
+        figure.tight_layout()
+        return figure
+
+    @staticmethod
+    def _ellipsize_sample_title(title: str, max_length: int = 48) -> str:
+        """Shorten long sample titles so subplot grids do not overflow.
+
+        Args:
+            title: Raw title text, usually an image file name.
+            max_length: Maximum returned character count including the ellipsis.
+
+        Returns:
+            Original title when it already fits, otherwise a middle-ellipsized
+            string that preserves the start and file suffix.
+        """
+        if len(title) <= max_length:
+            return title
+        if max_length <= 3:
+            return "." * max_length
+        keep_left = max(1, (max_length - 3) // 2)
+        keep_right = max_length - 3 - keep_left
+        return f"{title[:keep_left]}...{title[-keep_right:]}"
+
+    def _get_dataset_for_visualization(
+        self,
+        split: Literal["train", "val", "test"],
+    ) -> torch.utils.data.Dataset | None:
+        """Return a built dataset split for private visualization."""
+        if split == "train":
+            self.setup("fit")
+            return self._dataset_train
+        if split == "val":
+            self.setup("validate")
+            return self._dataset_val
+        if split == "test":
+            self.setup("test")
+            return self._dataset_test
+        raise ValueError(f"Unsupported split {split!r}.")
+
+    @staticmethod
+    def _source_image_path(dataset: torch.utils.data.Dataset, sample_index: int) -> Path | None:
+        """Return a source image path for common COCO-style datasets."""
+        image_folder = getattr(dataset, "root", None)
+        image_ids = getattr(dataset, "ids", None)
+        coco = getattr(dataset, "coco", None)
+        if image_folder is None or image_ids is None or coco is None:
+            return None
+        image_id = image_ids[sample_index]
+        image_info = coco.loadImgs(image_id)[0]
+        return Path(image_folder) / image_info["file_name"]
+
     def _setup_kornia_pipeline(self) -> None:
         """Resolve augmentation backend and build the Kornia pipeline if applicable.
 
@@ -468,6 +646,17 @@ class RFDETRDataModule(LightningDataModule):
                 continue
             coco = getattr(dataset, "coco", None)
             if coco is not None and hasattr(coco, "cats"):
+                label2cat = getattr(dataset, "label2cat", None)
+                if label2cat is None:
+                    label2cat = getattr(coco, "label2cat", None)
+                if isinstance(label2cat, dict) and label2cat:
+                    max_label = max(label2cat)
+                    names = [""] * (max_label + 1)
+                    for label, category_id in sorted(label2cat.items()):
+                        category = coco.cats.get(category_id)
+                        if category is not None:
+                            names[label] = category["name"]
+                    return names
                 return [coco.cats[k]["name"] for k in sorted(coco.cats.keys())]
         return None
 

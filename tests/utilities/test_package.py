@@ -71,7 +71,7 @@ class TestImportPaths:
 
     After the split:
     - ``rfdetr.inference`` exports ``ModelContext`` and ``_build_model_context``
-    - ``rfdetr.variants`` exports all 14 concrete model classes
+    - ``rfdetr.variants`` exports all 15 concrete model classes
     - ``rfdetr.detr`` re-exports both for backward compatibility
     - ``rfdetr`` (top-level) continues to export public names unchanged
     """
@@ -121,6 +121,7 @@ class TestImportPaths:
         "class_name",
         [
             pytest.param("RFDETRBase", id="base"),
+            pytest.param("RFDETRKeypointPreview", id="keypoint-preview"),
             pytest.param("RFDETRNano", id="nano"),
             pytest.param("RFDETRSmall", id="small"),
             pytest.param("RFDETRMedium", id="medium"),

@@ -5,6 +5,9 @@
 # ------------------------------------------------------------------------
 """Comprehensive unit tests for RFDETRDataModule (LightningDataModule wrapper)."""
 
+import builtins
+import warnings
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -83,6 +86,26 @@ class _FakeDataset(torch.utils.data.Dataset):
 def _fake_dataset(length: int = 100, with_coco: bool = False) -> _FakeDataset:
     """Return a minimal ``_FakeDataset`` with a controllable length."""
     return _FakeDataset(length, with_coco)
+
+
+class _VisualDataset(torch.utils.data.Dataset):
+    """Minimal transformed dataset item for DataModule sample visualization."""
+
+    def __len__(self) -> int:
+        """Return the fixed fake dataset length."""
+        return 1
+
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        """Return one normalized image tensor with box and keypoint targets."""
+        return (
+            torch.full((3, 16, 16), 0.5, dtype=torch.float32),
+            {
+                "boxes": torch.tensor([[0.5, 0.5, 0.5, 0.5]], dtype=torch.float32),
+                "labels": torch.tensor([0], dtype=torch.int64),
+                "keypoints": torch.tensor([[[0.25, 0.25, 2.0], [0.75, 0.75, 0.0]]], dtype=torch.float32),
+                "size": torch.tensor([16, 16], dtype=torch.int64),
+            },
+        )
 
 
 def _make_batch(batch_size: int = 2, channels: int = 3, h: int = 16, w: int = 16):
@@ -205,6 +228,76 @@ class TestInit:
         assert dm._prefetch_factor == 2  # default prefetch_factor for num_workers>0
 
 
+class TestPrivateShowSamples:
+    """RFDETRDataModule._show_samples renders transformed input samples."""
+
+    def test_private_show_samples_returns_figure_for_keypoint_targets(self, build_datamodule, monkeypatch):
+        """_show_samples should render transformed boxes and keypoints without raw COCO parsing."""
+        import matplotlib
+
+        matplotlib.use("Agg", force=True)
+        from matplotlib import pyplot as plt
+        from matplotlib.figure import Figure
+
+        dm = build_datamodule()
+        monkeypatch.setattr(dm, "_get_dataset_for_visualization", lambda split: _VisualDataset())
+
+        figure = dm._show_samples(1, split="train", columns=1)
+
+        assert isinstance(figure, Figure)
+        assert len(figure.axes) == 1
+        plt.close(figure)
+
+    def test_private_show_samples_accepts_figure_size_and_shortens_long_titles(self, build_datamodule, monkeypatch):
+        """_show_samples should keep long image names inside subplot titles."""
+        import matplotlib
+
+        matplotlib.use("Agg", force=True)
+        from matplotlib import pyplot as plt
+
+        dm = build_datamodule()
+        monkeypatch.setattr(dm, "_get_dataset_for_visualization", lambda split: _VisualDataset())
+        monkeypatch.setattr(dm, "_source_image_path", lambda dataset, idx: Path(f"{'very_long_name_' * 8}.jpg"))
+
+        figure = dm._show_samples(1, split="train", columns=1, figure_size=(4.0, 3.0))
+
+        assert list(figure.get_size_inches()) == pytest.approx([4.0, 3.0])
+        title = figure.axes[0].get_title()
+        assert "..." in title
+        assert len(title) <= 48
+        plt.close(figure)
+
+    def test_private_show_samples_rejects_non_positive_count(self, build_datamodule):
+        """_show_samples should fail fast for invalid counts."""
+        dm = build_datamodule()
+
+        with pytest.raises(ValueError, match=r"count must be positive"):
+            dm._show_samples(0)
+
+    def test_private_show_samples_rejects_invalid_figure_size(self, build_datamodule):
+        """_show_samples should fail fast for invalid figure sizes."""
+        dm = build_datamodule()
+
+        with pytest.raises(ValueError, match=r"figure_size values must be positive"):
+            dm._show_samples(1, figure_size=(4.0, 0.0))
+
+    def test_private_show_samples_missing_visual_extra_has_install_hint(self, build_datamodule, monkeypatch):
+        """_show_samples should explain how to install optional visualization dependencies."""
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "matplotlib.pyplot":
+                raise ImportError("matplotlib is intentionally unavailable")
+            return real_import(name, *args, **kwargs)
+
+        dm = build_datamodule()
+        monkeypatch.setattr(dm, "_get_dataset_for_visualization", lambda split: _VisualDataset())
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+
+        with pytest.raises(ImportError, match=r"rfdetr\[visual\]"):
+            dm._show_samples(1)
+
+
 class TestSetup:
     """Setup(stage) builds the correct dataset(s) for each PTL stage."""
 
@@ -306,6 +399,57 @@ class TestSetup:
             mock_build.assert_not_called()
 
         assert dm._dataset_val is existing_val
+
+
+class TestKeypointAugmentationWarning:
+    """Keypoint mode warns only for keypoint-unsafe GPU augmentation."""
+
+    def _build_dm(self, tmp_path, *, use_grouppose_keypoints: bool, augmentation_backend: str = "cpu"):
+        mc = _base_model_config(
+            use_grouppose_keypoints=use_grouppose_keypoints,
+            num_keypoints_per_class=[0, 17] if use_grouppose_keypoints else [],
+        )
+        tc = _base_train_config(tmp_path, augmentation_backend=augmentation_backend)
+        from rfdetr.training.module_data import RFDETRDataModule
+
+        return RFDETRDataModule(mc, tc)
+
+    def test_keypoint_mode_cpu_augmentation_no_warning(self, tmp_path):
+        """Setup('fit') should not warn when keypoint mode uses Albumentations."""
+        dm = self._build_dm(tmp_path, use_grouppose_keypoints=True, augmentation_backend="cpu")
+
+        with (
+            patch("rfdetr.training.module_data.build_dataset", side_effect=lambda *a, **k: _fake_dataset(10)),
+            warnings.catch_warnings(record=True) as caught,
+        ):
+            warnings.simplefilter("always")
+            dm.setup("fit")
+
+        assert not [w for w in caught if "Keypoint mode" in str(w.message)]
+
+    def test_keypoint_mode_gpu_augmentation_raises(self, tmp_path):
+        """Setup('fit') should raise ValueError when keypoint mode uses a GPU augmentation backend."""
+        dm = self._build_dm(tmp_path, use_grouppose_keypoints=True, augmentation_backend="gpu")
+
+        with (
+            patch("rfdetr.training.module_data.build_dataset", side_effect=lambda *a, **k: _fake_dataset(10)),
+            patch.object(dm, "_setup_kornia_pipeline"),
+            pytest.raises(ValueError, match="does not support keypoint transforms"),
+        ):
+            dm.setup("fit")
+
+    def test_non_keypoint_mode_no_augmentation_warning(self, tmp_path):
+        """Setup('fit') should not emit the keypoint augmentation warning in detection mode."""
+        dm = self._build_dm(tmp_path, use_grouppose_keypoints=False)
+
+        with (
+            patch("rfdetr.training.module_data.build_dataset", side_effect=lambda *a, **k: _fake_dataset(10)),
+            warnings.catch_warnings(record=True) as caught,
+        ):
+            warnings.simplefilter("always")
+            dm.setup("fit")
+
+        assert not [w for w in caught if "Keypoint mode is enabled" in str(w.message)]
 
 
 class TestTrainDataloader:
@@ -703,6 +847,22 @@ class TestClassNames:
         dm._dataset_train = dataset
         assert dm.class_names == ["ant", "bee", "zebra"]
 
+    def test_class_names_follow_label_slots_when_categories_are_remapped(self, tmp_path):
+        """class_names should preserve empty label slots so prediction class IDs map to the right names."""
+        mc = _base_model_config()
+        tc = _base_train_config(tmp_path)
+        from rfdetr.training.module_data import RFDETRDataModule
+
+        dm = RFDETRDataModule(mc, tc)
+        dataset = _fake_dataset(50)
+        coco = MagicMock()
+        coco.cats = {0: {"name": "person"}}
+        dataset.coco = coco
+        dataset.label2cat = {1: 0}
+        dm._dataset_train = dataset
+
+        assert dm.class_names == ["", "person"]
+
 
 class TestSegmentationSupport:
     """DataModule accepts SegmentationTrainConfig without errors."""
@@ -875,7 +1035,7 @@ class TestBackendResolution:
         import sys
         from unittest.mock import MagicMock, patch
 
-        from rfdetr.datasets.aug_config import AUG_CONFIG
+        from rfdetr.datasets.aug_configs import AUG_CONFIG
 
         dm = self._build_dm_with_backend(tmp_path, "auto")
         assert dm.train_config.aug_config is None, "precondition: aug_config must be None for this test"
@@ -1134,6 +1294,27 @@ class TestOnAfterBatchTransfer:
         result_samples, _ = dm.on_after_batch_transfer((samples, targets), dataloader_idx=0)
 
         assert isinstance(result_samples, NestedTensor), f"Expected NestedTensor, got {type(result_samples).__name__}"
+
+    def test_gpu_augmentation_passes_through_keypoints_without_geometry(self, tmp_path):
+        """GPU augmentation path should leave keypoint coordinates unchanged in preview mode."""
+        dm = self._build_dm(tmp_path)
+        dm = self._attach_mock_trainer(dm, training=True)
+
+        samples, targets = self._make_kornia_batch()
+        keypoints = torch.tensor([[[3.0, 4.0, 2.0]]], dtype=torch.float32)
+        targets[0]["keypoints"] = keypoints.clone()
+        targets[1]["keypoints"] = keypoints.clone()
+        input_keypoints = [target["keypoints"].clone() for target in targets]
+
+        img_aug = samples.tensors.clone()
+        boxes_padded = torch.tensor([[[2.0, 2.0, 10.0, 10.0]]] * 2)
+        dm._kornia_pipeline = MagicMock(return_value=(img_aug, boxes_padded))
+        dm._kornia_normalize = MagicMock(side_effect=lambda x: x)
+
+        _, result_targets = dm.on_after_batch_transfer((samples, targets), dataloader_idx=0)
+
+        for idx, target in enumerate(result_targets):
+            torch.testing.assert_close(target["keypoints"], input_keypoints[idx], rtol=1e-4, atol=1e-6)
 
 
 # ---------------------------------------------------------------------------

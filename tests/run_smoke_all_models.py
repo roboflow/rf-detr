@@ -4,13 +4,14 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Comprehensive validation script to test model instantiation with all available weights.
+"""Smoke-test model instantiation and basic inference with all available weights.
 
-Tests detection and segmentation model classes from rf-detr by importing and instantiating them. Validates: imports,
-download, MD5 hash, model instantiation, and from_checkpoint round-trip.
+Tests detection, segmentation, and keypoint-preview model classes from rf-detr by importing and instantiating them.
+Validates: imports, download, MD5 hash, model instantiation, from_checkpoint round-trip, and basic inference smoke
+checks.
 
 Usage:
-    python tests/try_instantiate_all_models.py
+    python tests/run_smoke_all_models.py
 """
 
 import argparse
@@ -24,6 +25,7 @@ from tqdm.auto import tqdm
 
 import rfdetr as _rfdetr
 from rfdetr import (
+    RFDETRKeypointPreview,
     RFDETRLarge,
     RFDETRMedium,
     RFDETRNano,
@@ -49,6 +51,8 @@ MODELS_TO_TEST = [
     RFDETRSmall,
     RFDETRMedium,
     RFDETRLarge,
+    # Keypoint Models
+    RFDETRKeypointPreview,
     # Segmentation Models
     RFDETRSegNano,
     RFDETRSegSmall,
@@ -86,6 +90,7 @@ _HEAVY_MODEL_NAMES = {
     "rfdetr-xlarge",
     "rfdetr-2xlarge",
     "rfdetr-xxlarge",
+    "rfdetr-keypoint-preview",
     "rfdetr-seg-xlarge",
     "rfdetr-seg-2xlarge",
     "rfdetr-seg-xxlarge",

@@ -51,6 +51,7 @@ from rfdetr.detr import RFDETR
 from rfdetr.inference import ModelContext
 from rfdetr.variants import (
     RFDETRBase,  # DEPRECATED # noqa: F401
+    RFDETRKeypointPreview,
     RFDETRLarge,
     RFDETRLargeDeprecated,  # DEPRECATED # noqa: F401
     RFDETRMedium,
@@ -68,6 +69,7 @@ from rfdetr.variants import (
 __all__ = [
     "ModelContext",
     "from_checkpoint",
+    "RFDETRKeypointPreview",
     "RFDETRNano",
     "RFDETRSmall",
     "RFDETRMedium",

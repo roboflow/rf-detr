@@ -144,6 +144,63 @@ The `segmentation` field contains a list of polygons, where each polygon is a fl
 
 ---
 
+### Keypoint Annotations
+
+For training the keypoint preview model, use COCO JSON keypoint annotations. Roboflow-style COCO exports are supported
+when the split files are named `train/_annotations.coco.json` and `valid/_annotations.coco.json`.
+
+Each keypoint annotation must include a bounding box plus COCO keypoint fields:
+
+```json
+{
+  "id": 1,
+  "image_id": 1,
+  "category_id": 0,
+  "bbox": [
+    100,
+    150,
+    200,
+    180
+  ],
+  "area": 36000,
+  "iscrowd": 0,
+  "num_keypoints": 17,
+  "keypoints": [
+    110,
+    160,
+    2,
+    125,
+    158,
+    2
+  ]
+}
+```
+
+The category should declare the keypoint schema:
+
+```json
+{
+  "id": 0,
+  "name": "person",
+  "supercategory": "person",
+  "keypoints": [
+    "nose",
+    "left_eye",
+    "right_eye"
+  ],
+  "skeleton": []
+}
+```
+
+The `keypoints` array above is shortened for readability. In a valid COCO person-keypoint annotation it contains
+`17 * 3` values: `x`, `y`, and visibility for each keypoint.
+
+The keypoint preview model currently targets COCO person-style keypoints. Its default schema is `[0, 17]`, so
+keypoint-bearing categories are mapped onto the active keypoint label slot during COCO loading. YOLO keypoint/pose
+training is not supported yet; use COCO keypoint JSON for keypoint training.
+
+---
+
 ## YOLO Format
 
 YOLO format uses separate text files for each image's annotations and a `data.yaml` configuration file that defines class names.

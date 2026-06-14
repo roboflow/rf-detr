@@ -405,8 +405,8 @@ def get_uncertain_point_coords_with_randomness(
 ) -> torch.Tensor:
     """Sample points in [0, 1] x [0, 1] coordinate space based on their uncertainty.
 
-    The unceratinties are calculated for each point using 'uncertainty_func' function that takes point's logit prediction as input. See PointRend paper
-    for details.
+    The uncertainties are calculated for each point using 'uncertainty_func' function that takes point's logit
+    prediction as input. See PointRend paper for details.
 
     Args:
         coarse_logits: A tensor of shape (N, C, Hmask, Wmask) or (N, 1, Hmask, Wmask) for
@@ -415,7 +415,7 @@ def get_uncertain_point_coords_with_randomness(
             contains logit predictions for P points and returns their uncertainties as a Tensor of shape (N, 1, P).
         num_points: The number of points P to sample.
         oversample_ratio: Oversampling parameter.
-        importance_sample_ratio: Ratio of points that are sampled via importnace sampling.
+        importance_sample_ratio: Ratio of points that are sampled via importance sampling.
 
     Returns:
         A tensor of shape (N, P, 2) that contains the coordinates of sampled points.

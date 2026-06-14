@@ -13,6 +13,12 @@ from rfdetr.datasets.synthetic import DatasetSplitRatios, generate_coco_dataset
 from rfdetr.utilities.reproducibility import seed_all
 
 
+@pytest.fixture(autouse=True)
+def reset_random_seeds() -> None:
+    """Reset all RNG sources before every test for reproducibility."""
+    seed_all()
+
+
 @pytest.fixture
 def reset_build_namespace_warning_state() -> Generator[None, Any, None]:
     """Reset ``build_namespace`` deprecation call counters before each test.

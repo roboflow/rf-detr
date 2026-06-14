@@ -181,11 +181,6 @@ def main(args):
         variant_name=getattr(args, "variant_name", None),
     )
 
-    if args.simplify:
-        logger.warning(
-            "The simplify flag is deprecated and ignored. RF-DETR no longer runs ONNX simplification automatically."
-        )
-
     onnx_path = output_file  # preserve ONNX path before any post-processing step overwrites it
 
     if args.tensorrt:

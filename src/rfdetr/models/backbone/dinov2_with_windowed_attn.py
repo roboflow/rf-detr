@@ -1177,7 +1177,7 @@ class WindowedDinov2WithRegistersForImageClassification(WindowedDinov2WithRegist
         )
 @add_start_docstrings(
     """Dinov2WithRegisters backbone, to be used with frameworks like DETR and MaskFormer."""
-       ,
+                                                                                            ,
     DINOV2_WITH_REGISTERS_START_DOCSTRING,
 )
 class WindowedDinov2WithRegistersBackbone(WindowedDinov2WithRegistersPreTrainedModel, BackboneMixin):

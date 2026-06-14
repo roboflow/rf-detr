@@ -54,9 +54,8 @@ repos:
     rev: v2.1.0
     hooks:
       - id: mypy
-        # The hook runs in an isolated env without torch/torchvision/etc.
-        # Full strict checking (matching pyproject.toml) runs in CI via ci-typing.yml.
-        args: ["--ignore-missing-imports"]
+        # The isolated hook has no torch; CI runs strict mypy with project deps.
+        args: ["--ignore-missing-imports", "--allow-subclassing-any"]
         exclude: ^docs/(hooks|scripts)/.*\.py$
         additional_dependencies:
           - "types-PyYAML"
