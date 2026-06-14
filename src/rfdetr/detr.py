@@ -303,9 +303,11 @@ class RFDETR:
             path: Path to a checkpoint file (e.g. ``checkpoint_best_total.pth``).
             **kwargs: Additional keyword arguments forwarded to the model
                 constructor (e.g. ``accept_platform_model_license=True`` for XLarge / 2XLarge models).
-                ``num_classes`` defaults to the value stored in the checkpoint; that default does not count as a
-                user override, so :meth:`train` can still adapt the detection head to the training dataset's class
-                count.  Pass a non-default ``num_classes=...`` explicitly to pin it.
+                If ``num_classes`` is not supplied here, the value stored in the checkpoint is
+                used when present; otherwise the constructor default applies.  In either case the
+                field is not recorded as a user-set override, so :meth:`train` can still adapt the
+                detection head to the training dataset's class count.  Pass an explicit
+                ``num_classes=N`` to pin it and prevent head adaptation.
 
         Returns:
             An instance of the appropriate :class:`RFDETR` subclass loaded from the checkpoint.
@@ -457,6 +459,7 @@ class RFDETR:
             num_classes = getattr(args, "num_classes", None)
 
         constructor_kwargs: dict[str, Any] = {}
+        checkpoint_config_keys: set[str] = set()  # keys injected from checkpoint, not from caller
         saved_model_config = ckpt.get("model_config")
         if isinstance(saved_model_config, dict):
             model_config_class = getattr(model_cls, "_model_config_class", None)
@@ -470,26 +473,27 @@ class RFDETR:
                     continue
                 if not model_fields or key in model_fields:
                     constructor_kwargs[key] = value
+                    checkpoint_config_keys.add(key)
 
         if num_classes is not None and "num_classes" not in kwargs:
             constructor_kwargs["num_classes"] = num_classes
+            checkpoint_config_keys.add("num_classes")
         constructor_kwargs.update(kwargs)
         # pretrain_weights is placed after **kwargs so it always wins even if
         # a caller accidentally passes pretrain_weights inside kwargs.
         constructor_kwargs["pretrain_weights"] = str(path)
 
-        # num_classes is checkpoint-derived (from args or the saved model_config)
-        # unless the caller passed it explicitly in kwargs.
-        num_classes_from_checkpoint = "num_classes" in constructor_kwargs and "num_classes" not in kwargs
+        # Fields injected from the checkpoint but not supplied by the caller must not be
+        # treated as explicit user overrides in Pydantic's model_fields_set.  Downstream
+        # alignment guards (e.g. _align_num_classes_from_dataset,
+        # _align_keypoint_schema_from_dataset, load_pretrain_weights) all read
+        # model_fields_set to decide whether to adapt model internals to the training
+        # dataset — leaving checkpoint-derived fields marked as user-set breaks them.
+        checkpoint_derived_keys = checkpoint_config_keys - set(kwargs)
 
         model = model_cls(**constructor_kwargs)
 
-        if num_classes_from_checkpoint:
-            # num_classes was copied from the checkpoint, not chosen by the caller.
-            # Clear the Pydantic "explicitly set" provenance marker so that the
-            # user-override guards (RFDETR._align_num_classes_from_dataset and the
-            # head re-init logic in rfdetr.models.weights.load_pretrain_weights)
-            # can still adapt the head to a new dataset's class count in train().
+        if checkpoint_derived_keys:
             loaded_config = getattr(model, "model_config", None)
             # model_fields_set is the public API and returns the live backing set
             # in Pydantic v2; fall back to the private attribute only if that changes.
@@ -497,7 +501,16 @@ class RFDETR:
             if fields_set is None:
                 fields_set = getattr(loaded_config, "__pydantic_fields_set__", None)
             if fields_set is not None:
-                fields_set.discard("num_classes")
+                fields_set.difference_update(checkpoint_derived_keys)
+            # Verify num_classes specifically — if Pydantic ever returns a snapshot instead
+            # of the live backing set, this assertion will catch the silent regression before
+            # it causes a training-time head-adaptation failure.
+            if "num_classes" in checkpoint_derived_keys:
+                assert "num_classes" not in getattr(loaded_config, "model_fields_set", set()), (
+                    "num_classes still in model_fields_set after checkpoint load; "
+                    "Pydantic may return a snapshot rather than the live backing set — "
+                    "switch to model_construct(_fields_set=...) for Pydantic v3 compatibility."
+                )
 
         return model
 
